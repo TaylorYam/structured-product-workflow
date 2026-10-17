@@ -1,81 +1,65 @@
-# 架構概觀 / Architecture Overview
-
-> 本文件中英並列：上半為繁體中文，下半為英文。修改時請同步更新兩區。
->
-> This document is bilingual: Traditional Chinese first, English below. Update both sections together.
-
-[繁體中文](#繁體中文) | [English](#english)
+# 架構概觀／Architecture Overview
 
 ## 繁體中文
 
-本文件需與目前的系統保持一致。描述重要的邊界與其背後的理由；容易從程式碼直接看出的細節，改用連結指向程式碼。
+狀態：以下為規劃，並非已實作系統。已確認需求見 [CONTEXT](../CONTEXT.md)。
 
-### 目的與範圍
+```mermaid
+flowchart TD
+  A[既有詢價系統：範圍外] --> B[正式 Order]
+  subgraph W[本專案：作業流程]
+    B --> C[Order 歸一化與商品建檔]
+    C --> D[收件配對與原始文件歸檔]
+    D --> E[TS／IIS 辨識、轉檔與版本覆核]
+    E --> F{核對路由}
+    F -->|客製化或未支援| M[人工核對]
+    R[核對結果] --> N[問題處理與人工覆核]
+    N -->|需修正重跑| E
+    N -->|符合完成條件| G[確認版本歸檔與回填結果儲存]
+    M -->|人工完成| G
+    G --> H[確認庫存、準備商品表格與 FC 收件人]
+    H --> I[Outlook 草稿或寄送]
+  end
+  F -->|已支援產品與範本| Q[獨立核對專案]
+  Q --> R
+  X[庫存總表] --> H
+  Y[FC 對照資料：來源待定] --> H
+```
 
-說明本專案要解決的問題、使用者，以及不在範圍內的事項。
+### 模組與資料責任（建議）
 
-### 系統脈絡
+本專案負責案件進度、Order 輸入、文件準備、歸檔、庫存讀取與寄送；核對專案負責文件解析及核對規則。正式 Order 經確認後提供參考條件表；庫存總表提供寄送資訊，兩者不互相默默覆蓋。
 
-列出主要的外部系統、使用者，以及進出本專案的資料。
+建議以內部案件編號支援尚未取得 TDCC 的階段，取得後再綁定。保存 Order 修訂、原始附件、轉檔輸出、人工決定與寄送紀錄。資料儲存技術、多人併發及保存期限未定。
 
-### 元件與邊界
+建議每階段獨立保存進度及重試；自動核對不通過不等於可直接寄送。人工核對須記錄人員、時間、結論及文件版本。原始與確認版本分開管理，附件使用已確認版本的指紋。
 
-說明主要元件、各自的職責，以及彼此如何溝通。若圖表能讓邊界更容易理解，請加上圖表。
+### 產品擴充（規劃）
 
-### 資料與狀態
+Vanilla FCN 是目前優先範圍；EXPRESS FCN、BEN 是未來需求，尚未支援。產品類型、上手範本與樣態均需明確支援才走自動核對，未知或使用者指定時走人工。產品擴充的程式歸屬需另定，避免在流程專案複製核對規則。
 
-說明重要的資料實體、持久化方式、資料擁有者、保存期限，以及必須保留在本機或由程式產生的執行期資料。
+### 執行環境與決策
 
-### 執行與部署
-
-記錄支援的環境、部署架構、維運相依項目，以及設定值的提供方式。本文件不得放入憑證。
-
-### 品質屬性與限制
-
-列出影響設計選擇的需求，例如資安、可用性、效能、隱私、相容性與成本。
-
-### 重要決策
-
-連結到 `docs/adr/` 下已採納的架構決策紀錄。
-
-### 更新本文件
-
-當變更影響系統邊界、資料流、部署方式或重要限制時，更新本概觀。長期有效的選擇記錄在 ADR 中，並從這裡連結。
-
----
+公司 Windows、Outlook、Excel 與網路公槽是已知環境；部署、郵件接法及資料政策待確認。[串接提案](checker-integration.md) 為待驗證建議。[待定事項](open-questions.md) 必須在相關實作前處理。
 
 ## English
 
-Keep this document aligned with the current system. Describe the important boundaries and reasons behind them; link to code for details that are easy to inspect there.
+Status: proposed architecture, not implemented. Confirmed requirements are in [CONTEXT](../CONTEXT.md).
 
-### Purpose and scope
+The diagram above connects formal Orders, normalization/booking, incoming archiving, TS/IIS preparation, checking routes, approved archiving, inventory lookup, and Outlook distribution. Inquiry stays external. Automatic checking is an independent project; customized or unsupported cases route to manual review. Failed automatic checks return for remediation or explicit review rather than proceeding directly to distribution.
 
-Describe the problem this project solves, its users, and what is outside its scope.
+### Module and data ownership (recommended)
 
-### System context
+This repository owns case progress, Order ingestion, document preparation, archives, inventory lookup, and distribution. The checker owns parsing and checking rules. Confirmed formal Orders supply the checking reference workbook; inventory supplies distribution information. Neither silently overwrites the other.
 
-List the main external systems, users, and data entering or leaving the project.
+Use an internal case ID before TDCC is available, then bind it. Preserve Order revisions, original attachments, converted outputs, human decisions, and distribution records. Persistence technology, concurrency, and retention are unresolved.
 
-### Components and boundaries
+Persist progress and retry each stage independently. Manual checking records reviewer, time, conclusion, and document version. Separate incoming sources from approved versions; bind attachments to approved file hashes.
 
-Describe the major components, their responsibilities, and how they communicate. Add a diagram when it makes the boundaries easier to understand.
+### Product expansion (planned)
 
-### Data and state
+Vanilla FCN is the priority. EXPRESS FCN and BEN are future needs, not supported capabilities. Automatic routing requires explicit support for product, issuer template, and variant; unknown or operator-selected cases use manual checking. Decide future rule ownership separately and avoid duplicating checking rules here.
 
-Describe important data entities, persistence, ownership, retention, and any runtime data that must remain local or generated.
+### Runtime and decisions
 
-### Runtime and deployment
-
-Record the supported environments, deployment shape, operational dependencies, and how configuration is supplied. Keep credentials out of this document.
-
-### Quality attributes and constraints
-
-List the requirements that shape design choices, such as security, availability, performance, privacy, compatibility, and cost.
-
-### Important decisions
-
-Link to accepted architecture decision records under `docs/adr/`.
-
-### Updating this document
-
-Update this overview when a change alters system boundaries, data flow, deployment, or an important constraint. Record durable choices in an ADR and link them here.
+Known environment: company Windows, Outlook, Excel, and shared network folders. Deployment, mail integration, and data policies remain unresolved. The [integration proposal](checker-integration.md) requires validation; resolve relevant [open questions](open-questions.md) before implementation.
