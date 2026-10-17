@@ -10,6 +10,10 @@
 
 這份位於根目錄的檔案是本 repository 共用的 AI 開發政策。它定義**何時**使用各個工作流程；skill 則定義**如何**執行。若明確的任務要求縮小或擴充本指南的範圍，以該要求為準。
 
+### 專案導讀
+
+每次接手先讀 README.md、CONTEXT.md、docs/architecture.md 與 docs/open-questions.md；處理跨專案串接時另讀 docs/checker-integration.md。當前為設計階段，業務實作需另有使用者指示。區分已確認需求、建議與未定事項；核對規則保留在獨立核對專案。
+
 ### 工作分流
 
 建立 Issue 之前先選定路線：
@@ -70,6 +74,10 @@
 ## English
 
 This root-level file is the repository's shared AI development policy. It defines **when** to use each workflow; skills define **how** to carry it out. Follow an explicit task request when it narrows or extends this guide.
+
+### Project orientation
+
+On handoff, read README.md, CONTEXT.md, docs/architecture.md, and docs/open-questions.md. For cross-project integration, also read docs/checker-integration.md. This is the design stage; business implementation requires a separate user instruction. Distinguish confirmed requirements, recommendations, and unresolved matters. Keep checking rules in the independent checker repository.
 
 ### Work routing
 
