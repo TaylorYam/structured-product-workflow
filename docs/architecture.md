@@ -24,13 +24,17 @@ flowchart TD
   Q --> R
   X[庫存總表] --> H
   Y[FC 對照資料：來源待定] --> H
+  DB[(PostgreSQL：案件、條件版本、文件索引與歷程)] <--> C
+  DB <--> G
+  DB <--> H
+  DB <--> I
 ```
 
 ### 模組與資料責任（建議）
 
 本專案負責案件進度、Order 輸入、文件準備、歸檔、庫存讀取與寄送；核對專案負責文件解析及核對規則。正式 Order 經確認後提供參考條件表；庫存總表提供寄送資訊，兩者不互相默默覆蓋。
 
-建議以內部案件編號支援尚未取得 TDCC 的階段，取得後再綁定。保存 Order 修訂、原始附件、轉檔輸出、人工決定與寄送紀錄。資料儲存技術、多人併發及保存期限未定。
+建議以內部案件編號支援尚未取得 TDCC 的階段，取得後再綁定。保存 Order 修訂、原始附件、轉檔輸出、人工決定與寄送紀錄。資料庫選用 PostgreSQL，詳見 [ADR 0001](adr/0001-postgresql-workflow-storage.md)；schema、多人併發實作及保存期限未定。
 
 建議每階段獨立保存進度及重試；自動核對不通過不等於可直接寄送。人工核對須記錄人員、時間、結論及文件版本。原始與確認版本分開管理，附件使用已確認版本的指紋。
 
@@ -40,7 +44,7 @@ Vanilla FCN 是目前優先範圍；EXPRESS FCN、BEN 是未來需求，尚未�
 
 ### 執行環境與決策
 
-公司 Windows、Outlook、Excel 與網路公槽是已知環境；部署、郵件接法及資料政策待確認。[串接提案](checker-integration.md) 為待驗證建議。[待定事項](open-questions.md) 必須在相關實作前處理。
+公司 Windows、Outlook、Excel 與網路公槽是已知環境。先在本機開發 PostgreSQL，筆電與作業主機各有獨立資料庫，後續以公司伺服器支援協作為目標；公槽保存文件及備份。資料庫由本專案管理，checker 不直接存取。詳見 [資料庫與部署](database-and-deployment.md)。實際主機、權限、郵件接法及資料政策待確認。[串接提案](checker-integration.md) 為待驗證建議。[待定事項](open-questions.md) 必須在相關實作前處理。
 
 ## English
 
@@ -52,7 +56,7 @@ The diagram above connects formal Orders, normalization/booking, incoming archiv
 
 This repository owns case progress, Order ingestion, document preparation, archives, inventory lookup, and distribution. The checker owns parsing and checking rules. Confirmed formal Orders supply the checking reference workbook; inventory supplies distribution information. Neither silently overwrites the other.
 
-Use an internal case ID before TDCC is available, then bind it. Preserve Order revisions, original attachments, converted outputs, human decisions, and distribution records. Persistence technology, concurrency, and retention are unresolved.
+Use an internal case ID before TDCC is available, then bind it. Preserve Order revisions, original attachments, converted outputs, human decisions, and distribution records. PostgreSQL is selected; see [ADR 0001](adr/0001-postgresql-workflow-storage.md). Schema, concurrency implementation, and retention remain unresolved.
 
 Persist progress and retry each stage independently. Manual checking records reviewer, time, conclusion, and document version. Separate incoming sources from approved versions; bind attachments to approved file hashes.
 
@@ -62,4 +66,4 @@ Vanilla FCN is the priority. EXPRESS FCN and BEN are future needs, not supported
 
 ### Runtime and decisions
 
-Known environment: company Windows, Outlook, Excel, and shared network folders. Deployment, mail integration, and data policies remain unresolved. The [integration proposal](checker-integration.md) requires validation; resolve relevant [open questions](open-questions.md) before implementation.
+Known environment: company Windows, Outlook, Excel, and shared folders. Develop PostgreSQL locally with independent laptop/operational databases, targeting a company server for collaboration. Shared folders hold documents/backups. This project owns persistence; the checker does not access it. See [database and deployment](database-and-deployment.md). Actual host, access, mail integration, and policies remain unresolved. The [integration proposal](checker-integration.md) requires validation; resolve relevant [open questions](open-questions.md) before implementation.

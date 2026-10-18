@@ -8,6 +8,8 @@
 
 目前檢視基準：核對專案 commit `7db5786df8ca13a64066a4970a743be8a0565f3c`。現有 `fcn-batch` 接收參考條件表、多份 PDF 及輸出目錄；PDF 嚴格使用 `<12位TDCC>_TS.pdf`、`<12位TDCC>_IIS.pdf`。先預覽、再核對、再儲存。輸出含 Excel 結果與 JSON 核對紀錄；結束碼 0／1／2 分別代表 PASS／有不一致或需覆核／ERROR。這些是當時已觀察能力，實作時需重新驗證版本。
 
+資料庫選型已另記錄於 [ADR 0001](adr/0001-postgresql-workflow-storage.md)。流程專案從 PostgreSQL 讀取已確認條件，自動產生 Excel 交換檔，再接收結果回存；checker 不直接連 PostgreSQL。這是目標流程，尚未實作；回填與版本失效規則見 [資料庫與部署](database-and-deployment.md)。
+
 建議流程：
 
 1. 建立獨立 run 目錄，放入已確認的 PDF 與參考條件表快照。
@@ -28,6 +30,8 @@ Status: Proposed, neither implemented nor finalized. Repository separation is co
 Start with local CLI execution and file exchange. A checker adapter invokes an installed, pinned checker version without importing private functions, copying parsing rules, or requiring a network service.
 
 Inspected baseline: checker commit `7db5786df8ca13a64066a4970a743be8a0565f3c`. Existing `fcn-batch` accepts a reference workbook, multiple PDFs, and an output directory. PDF names must be `<12-digit-TDCC>_TS.pdf` or `<12-digit-TDCC>_IIS.pdf`. It previews, checks, then saves Excel results and JSON audit records. Exit codes 0/1/2 mean PASS, mismatch or review required, and ERROR. Revalidate these observed capabilities against the version used during implementation.
+
+Database selection is recorded separately in [ADR 0001](adr/0001-postgresql-workflow-storage.md). The workflow will read confirmed terms from PostgreSQL, generate exchange Excel automatically, and persist returned results. The checker never directly connects to PostgreSQL. This is unimplemented target behavior; see [database and deployment](database-and-deployment.md) for backfill/version invalidation rules.
 
 Recommended sequence:
 
