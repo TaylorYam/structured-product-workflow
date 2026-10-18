@@ -12,6 +12,7 @@
 - 寄送：把已核對 TS／IIS 寄給有承作該商品的 FC（輔銷人員），由 FC 再寄給顧客。郵件取庫存總表指定欄位，套用固定表格；庫存總表不是核對用參考條件表。
 - 產品：目前優先 Vanilla FCN，使用者估計占約 85%；未來希望擴展 EXPRESS FCN、BEN 等。高度客製化產品可選人工核對。
 - 專案分工：現有 fcn-term-sheet-checker 專心處理核對；另建本專案承載整體流程。
+- 資料管理方向：採用 PostgreSQL；先本機開發，未來希望由公司伺服器支援兩到三人接手協作，避免依賴個人電腦。筆電與作業主機的開發／正式資料分開；亦希望分析四年 FCN 並匯出 Excel。選型與限制見 [ADR 0001](docs/adr/0001-postgresql-workflow-storage.md)。
 - 當前授權：建立專案與保存設計文件。業務程式、真實信箱操作、寄信及公司資料處理尚未開始。
 
 名詞：Order 指正式交易指示；TS 指產品說明書；IIS 指投資人須知；TDCC 是商品配對代號；FC 指輔銷人員。
@@ -29,6 +30,7 @@ Source: user architecture discussions through 2026-10-18. This document records 
 - Distribution: send checked TS/IIS to FCs handling the product; FCs forward to customers. Build a fixed email table from selected inventory-master columns. The inventory master is separate from the checking reference workbook.
 - Products: prioritize Vanilla FCN, estimated by the user at approximately 85%; later expand to EXPRESS FCN, BEN, and others. Highly customized products may use manual checking.
 - Ownership: fcn-term-sheet-checker remains focused on checking; this new repository owns the overall workflow.
+- Data direction: select PostgreSQL, develop locally first, then target a company server for two or three collaborators independent of a personal computer. Separate laptop development and operational data; support future four-year FCN analysis and Excel export. See [ADR 0001](docs/adr/0001-postgresql-workflow-storage.md).
 - Current authorization: create the project and preserve design documentation. Business implementation, actual mailbox operations, sending, and company-data processing have not started.
 
 Terms: Order means formal trading instructions; TS means term sheet; IIS means investor information sheet; TDCC identifies a product; FC means sales support personnel.
