@@ -1,4 +1,4 @@
-"""每日匯入：把 `每日更新.xlsx` 與 `信箱.xlsx` 匯入最小 FCN 資料庫（#32、ADR 0003）。
+"""每日匯入：把 `每日更新.xlsx` 匯入最小 FCN 資料庫（#32、ADR 0003）。
 
 對外只有 `import_daily`。規則：
 - `每日更新.xlsx` 的 `交易明細`、`清單更新` 第 1 列是欄名，必須和來源表（交易清單月份工作表、庫存總表）
@@ -7,7 +7,7 @@
 - 以 TDCC 為單位、第一次寫入為準：資料庫已有的商品或交易不重複寫入，內容不同只列出差異、不覆蓋。
 - 已存在商品的庫存狀態這一版不更新。
 - 分公司對帳到每個分公司（交易明細各分公司金額加總 vs 庫存總表承作金額，PB 也算），差異只提醒。
-- 信箱表每次整份取代；格式有問題整批停止。
+- 信箱由資料庫直接維護（#35、ADR 0004）：匯入不修改 `mailbox`，只用它比對 FC 名字。
 - 整次匯入在一個 transaction 內完成，任何錯誤都不留下部分寫入。
 """
 
@@ -33,7 +33,6 @@ if TYPE_CHECKING:
 
 TRADE_SHEET = "交易明細"
 INVENTORY_SHEET = "清單更新"
-MAILBOX_ALIAS_SHEET = "別名"
 TDCC_DIGITS = 12
 FCN = "FCN"
 PB = "PB"
@@ -53,9 +52,6 @@ INVENTORY_HEADERS = (
     "UF", "Coupon p.a. (%)", "天期(月)", "Non-Call(月)", "Lookback 期間",
     *_UNDERLYING_HEADERS, *(f"U{i}_LAST" for i in range(1, 6)),
 )  # fmt: skip
-MAILBOX_HEADERS = ("使用者名稱", "公司信箱", "單位")
-MAILBOX_FIXED_CC = "固定副本"  # 選填欄；還沒加這欄時沒有人是固定副本
-ALIAS_HEADERS = ("交易清單寫法", "使用者名稱")
 
 KO_TYPES = {
     ("D", "Y"): "Daily Memory",
@@ -76,10 +72,10 @@ RECONCILE = "分公司對帳差異"
 INVENTORY_MISSING = "庫存尚未更新"
 TRADES_MISSING = "交易尚未匯入"
 NAME_UNMATCHED = "名字對不到信箱"
+MAILBOX_EMPTY = "信箱尚未建立"
 
 _PCT = Decimal("0.000001")
 _AMOUNT = Decimal("0.0001")
-_EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[^@\s]+")
 _STATUS_KO = re.compile(r"已於\s*(\d{4})/(\d{1,2})/(\d{1,2})\s*KO")
 _STATUS_DELIVERED = re.compile(r"已於\s*(\d{4})/(\d{1,2})/(\d{1,2})\s*承接\s*(.+)")
 _STATUS_DELIVERED_OLD = re.compile(r"接\s*(.+?)\s*股票")
@@ -98,7 +94,7 @@ _TRADE_COLUMNS = (
 
 
 class DailyImportError(Exception):
-    """整份無法匯入（檔案、欄名或信箱表有問題）；訊息是給作業人員看的中文。"""
+    """整份無法匯入（檔案或欄名有問題、資料表不是最新版本）；訊息是給作業人員看的中文。"""
 
 
 @dataclass(frozen=True)
@@ -154,21 +150,19 @@ class _Parsed:
     skipped_inventory_rows: int = 0
 
 
-def import_daily(daily_book: Path, mailbox_book: Path, conn: psycopg.Connection) -> ImportReceipt:
-    """匯入一份每日更新與信箱表；回傳每檔 TDCC 的結果。整份有問題時丟 `DailyImportError`、不寫入任何資料。"""
+def import_daily(daily_book: Path, conn: psycopg.Connection) -> ImportReceipt:
+    """匯入一份每日更新；回傳每檔 TDCC 的結果。整份有問題時丟 `DailyImportError`、不寫入任何資料。"""
     try:
         require_current_schema(conn)
     except DatabaseError as exc:
         raise DailyImportError(str(exc)) from exc
-    mailbox = read_mailbox(mailbox_book)
     parsed = _read_daily(daily_book)
 
     with conn.transaction():
-        _replace_mailbox(conn, mailbox)
+        mailbox = load_mailbox(conn)
         run_id = conn.execute(
-            "INSERT INTO workflow.import_run (daily_file_name, daily_sha256, mailbox_file_name, mailbox_sha256, summary)"
-            " VALUES (%s, %s, %s, %s, '{}') RETURNING run_id",
-            (daily_book.name, _sha256(daily_book), mailbox_book.name, _sha256(mailbox_book)),
+            "INSERT INTO workflow.import_run (daily_file_name, daily_sha256, summary) VALUES (%s, %s, '{}') RETURNING run_id",
+            (daily_book.name, _sha256(daily_book)),
         ).fetchone()[0]
         lines = list(parsed.blocked)
         lines += _write_products(conn, parsed, run_id)
@@ -190,89 +184,16 @@ def import_daily(daily_book: Path, mailbox_book: Path, conn: psycopg.Connection)
     return receipt
 
 
-# ---------- 信箱表 ----------
+# ---------- 信箱（資料庫直接維護，#35） ----------
 
 
-def read_mailbox(path: Path) -> Mailbox:
-    """讀 `信箱.xlsx`：第一張工作表是人員，選填的「別名」工作表是交易清單寫法 → 使用者名稱。"""
-    wb = _open(path)
-    try:
-        sheet = wb.worksheets[0]
-        rows = list(sheet.iter_rows(values_only=True))
-        if not rows:
-            raise DailyImportError(f"信箱表是空的：{path.name}")
-        header = [_text(v) for v in rows[0]]
-        missing = [h for h in MAILBOX_HEADERS if h not in header]
-        if missing:
-            raise DailyImportError(f"信箱表缺少欄位：{'、'.join(missing)}")
-        col = {h: header.index(h) for h in (*MAILBOX_HEADERS, MAILBOX_FIXED_CC) if h in header}
-        people: dict[str, Person] = {}
-        problems = []
-        for number, row in enumerate(rows[1:], 2):
-            name = _text(_cell(row, col["使用者名稱"]))
-            email = _text(_cell(row, col["公司信箱"]))
-            if name is None and email is None:
-                continue
-            if name is None or email is None or not _EMAIL.fullmatch(email):
-                problems.append(f"第 {number} 列使用者名稱或信箱不完整或格式不對")
-                continue
-            fixed = _text(_cell(row, col[MAILBOX_FIXED_CC])) if MAILBOX_FIXED_CC in col else None
-            if fixed is not None and fixed.upper() not in ("Y", "V"):
-                problems.append(f"第 {number} 列「{MAILBOX_FIXED_CC}」只能填 Y 或留白")
-                continue
-            person = Person(name, email, _text(_cell(row, col["單位"])), fixed is not None)
-            key = _name_key(name)
-            if key in people and people[key] != person:
-                problems.append(f"「{name}」出現多次但內容不同")
-                continue
-            people[key] = person
-        aliases = _read_aliases(wb, people, problems)
-    finally:
-        wb.close()
-    if problems:
-        raise DailyImportError("信箱表有問題，整批不匯入：" + "；".join(problems))
-    if not people:
-        raise DailyImportError("信箱表沒有任何人員")
-    return Mailbox(tuple(people.values()), aliases)
-
-
-def _read_aliases(wb: Any, people: Mapping[str, Person], problems: list[str]) -> dict[str, str]:
-    if MAILBOX_ALIAS_SHEET not in wb.sheetnames:
-        return {}
-    rows = list(wb[MAILBOX_ALIAS_SHEET].iter_rows(values_only=True))
-    if not rows:
-        return {}
-    header = [_text(v) for v in rows[0]]
-    if any(h not in header for h in ALIAS_HEADERS):
-        problems.append(f"「{MAILBOX_ALIAS_SHEET}」工作表要有欄位：{'、'.join(ALIAS_HEADERS)}")
-        return {}
-    a, p = header.index(ALIAS_HEADERS[0]), header.index(ALIAS_HEADERS[1])
-    aliases: dict[str, str] = {}
-    for number, row in enumerate(rows[1:], 2):
-        alias, target = _text(_cell(row, a)), _text(_cell(row, p))
-        if alias is None and target is None:
-            continue
-        if alias is None or target is None or _name_key(target) not in people:
-            problems.append(f"「{MAILBOX_ALIAS_SHEET}」第 {number} 列對不到信箱表的使用者名稱")
-        elif _name_key(alias) in people:
-            problems.append(f"「{MAILBOX_ALIAS_SHEET}」第 {number} 列的「{alias}」本身就是信箱表的使用者名稱")
-        else:
-            aliases[_name_key(alias)] = people[_name_key(target)].name
-    return aliases
-
-
-def _replace_mailbox(conn: psycopg.Connection, mailbox: Mailbox) -> None:
-    conn.execute("DELETE FROM mailbox.alias")
-    conn.execute("DELETE FROM mailbox.person")
-    with conn.cursor() as cur:
-        cur.executemany(
-            "INSERT INTO mailbox.person (name, name_key, email, unit, fixed_cc) VALUES (%s, %s, %s, %s, %s)",
-            [(p.name, _name_key(p.name), p.email, p.unit, p.fixed_cc) for p in mailbox.people],
-        )
-        cur.executemany(
-            "INSERT INTO mailbox.alias (alias_key, alias, person_name) VALUES (%s, %s, %s)",
-            [(key, key, name) for key, name in mailbox.aliases.items()],
-        )
+def load_mailbox(conn: psycopg.Connection) -> Mailbox:
+    """讀資料庫裡的人員與別名。"""
+    people = tuple(
+        Person(*row) for row in conn.execute("SELECT name, email, unit, fixed_cc FROM mailbox.person ORDER BY name")
+    )
+    aliases = dict(conn.execute("SELECT alias_key, person_name FROM mailbox.alias").fetchall())
+    return Mailbox(people, aliases)
 
 
 # ---------- 每日更新 ----------
@@ -566,6 +487,8 @@ def _reconcile(conn: psycopg.Connection, tdccs: Sequence[str]) -> list[ImportLin
 
 
 def _unmatched_names(parsed: _Parsed, mailbox: Mailbox) -> list[ImportLine]:
+    if not mailbox.people:
+        return [ImportLine("", MAILBOX_EMPTY, "mailbox.person 沒有任何人員，FC 名字無法比對")] if parsed.trades else []
     lines = []
     for tdcc, trades in parsed.trades.items():
         names = sorted(
@@ -605,10 +528,6 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: source.read(1 << 20), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _cell(row: Sequence[Any], index: int) -> Any:
-    return row[index] if index < len(row) else None
 
 
 def _name_key(name: str) -> str:

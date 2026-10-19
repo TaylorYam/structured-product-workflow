@@ -1,6 +1,6 @@
 # 0003: 最小 FCN 資料庫與每日更新範本／Minimal FCN Database and Daily Update Template
 
-- 狀態／Status: Accepted（尚未實作／not implemented）
+- 狀態／Status: Accepted（#34 實作；信箱維護方式由 [ADR 0004](0004-mailbox-maintained-in-database.md) 取代／implemented in #34; mailbox maintenance superseded by ADR 0004）
 - 日期／Date: 2026-10-19
 - 追蹤／Tracking: #32、#29
 

@@ -2,7 +2,7 @@
 
 - 準備批次：貼 TDCC、選根目錄與輸出位置，產生批次資料夾與準備清單。
 - 放回資料夾：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾。
-- 每日匯入：選每日更新與信箱表，匯入最小 FCN 資料庫（#32）。
+- 每日匯入：選每日更新，匯入最小 FCN 資料庫（#32）；信箱在資料庫直接維護（#35）。
 
 視窗只收輸入、在背景執行 `prepare_batch`／`return_to_folders`／`import_daily` 並顯示結果，不含判斷邏輯。
 """
@@ -219,19 +219,17 @@ class DailyImportTab(_Tab):
         self.password: str | None = None  # 這次開視窗輸入過的資料庫密碼，只留在記憶體
         folders = memory.load()
         self.daily_var = tk.StringVar(value=folders.get("daily", ""))
-        self.mailbox_var = tk.StringVar(value=folders.get("mailbox", ""))
-        self.status_var.set(f"選每日更新與信箱表，按「匯入」。資料庫連線設定：{env_path}")
+        self.status_var.set(f"選每日更新，按「匯入」。資料庫連線設定：{env_path}")
 
         self.path_row(0, "每日更新", self.daily_var, lambda: _ask_excel("選擇每日更新", self.daily_var))
-        self.path_row(1, "信箱表", self.mailbox_var, lambda: _ask_excel("選擇信箱表", self.mailbox_var))
         self.start_button = ttk.Button(self.buttons, text="匯入", command=self.start)
         self.start_button.pack(side=tk.LEFT)
-        self.place_bottom(2)
+        self.place_bottom(1)
 
     def start(self) -> None:
-        daily_text, mailbox_text = self.daily_var.get().strip(), self.mailbox_var.get().strip()
-        if not daily_text or not mailbox_text:
-            messagebox.showerror(TITLE, "請先選擇每日更新與信箱表。")
+        daily_text = self.daily_var.get().strip()
+        if not daily_text:
+            messagebox.showerror(TITLE, "請先選擇每日更新。")
             return
         try:
             settings = settings_from_env(self.env_path)
@@ -245,13 +243,13 @@ class DailyImportTab(_Tab):
             if not self.password:
                 return
             settings = settings.with_password(self.password)
-        daily, mailbox = Path(daily_text), Path(mailbox_text)
-        self.memory.remember(daily=str(daily), mailbox=str(mailbox))
+        daily = Path(daily_text)
+        self.memory.remember(daily=str(daily))
         self.start_button.configure(state=tk.DISABLED)
 
         def run() -> ImportReceipt:
             with connect(settings) as conn:
-                return import_daily(daily, mailbox, conn)
+                return import_daily(daily, conn)
 
         self.run_in_background(run, "匯入中…", self._done)
 
