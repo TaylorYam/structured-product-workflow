@@ -7,7 +7,8 @@ Word 無法啟動或逾時，整個商品跳過；個別 Word 轉不了只影響
 
 重新核對上手修正版（#21、#23）：放回過的 `_待確認` 檔不當候選，只標記「這個內容沒通過」；候選依內容指紋（全文）
 只算一份；上手寄來新版時排除和待確認檔內容相同的舊版，還沒新版時沿用上次沒通過的那一版，同一版可以重複核對；
-剩下不只一份時，再排除和上次放回的標準名檔內容相同的舊版，改用新寄來的。
+剩下不只一份時，上手檔名的版本優先：排除和上次放回的標準名檔內容相同的舊版，以及只以標準檔名存在的內容
+（上手修正版沿用舊檔名、覆蓋了舊原檔時，舊版只剩工具放回的標準名複本，#27）。
 """
 
 from __future__ import annotations
@@ -271,8 +272,8 @@ def _version_note(selections: dict[DocKind, _Selection]) -> str:
 class _Versions:
     """判斷候選是哪個版本：上次沒通過的（和待確認檔內容相同）、上次已放回的（標準名複本），或新寄來的。
 
-    內容指紋（全文）每個檔只算一次。標準名檔要和資料夾裡某份上手原檔內容相同，才算工具放回的複本；
-    沒有的話是上手自己取成標準名（例：UBS），當一般的上手原檔看待。
+    內容指紋（全文）每個檔只算一次。只有一份候選時，標準名檔照用（例：UBS 上手本來就給標準檔名）；
+    有多份內容不同時，上手檔名的版本優先，只以標準檔名存在的內容當成工具上次放回的舊版。
     """
 
     def __init__(self, pending: list[Path], sources: list[Path], standard_names: set[str]) -> None:
@@ -334,9 +335,11 @@ class _Versions:
             return _Selection([self._as_pending_pdf(c) for c in failed], [], [], reused_failed=True)
         superseded: list[_Candidate] = []
         if len(remaining) > 1:
-            newer = [k for k in remaining if k not in self.returned_keys]
+            # 上手檔名的版本優先：只以標準檔名存在的內容，或和上次放回的標準名檔相同的內容，都是舊版
+            standard_only = {k for k in remaining if all(c.source.name in self._standard_names for c in groups[k])}
+            newer = [k for k in remaining if k not in self.returned_keys and k not in standard_only]
             if newer:
-                superseded = [representative[k] for k in remaining if k in self.returned_keys]
+                superseded = [representative[k] for k in remaining if k not in newer]
                 remaining = newer
         return _Selection([representative[k] for k in remaining], failed, superseded)
 

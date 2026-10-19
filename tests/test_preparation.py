@@ -644,8 +644,8 @@ def test_word_copy_of_a_failed_pdf_is_not_mistaken_for_a_new_version(root: Path,
     assert converter.calls == []
 
 
-def test_issuer_standard_named_file_beside_another_version_is_ambiguous(root: Path, out: Path) -> None:
-    """UBS 原檔是標準檔名、旁邊又有一份內容不同的說明書：第一次準備時不能把原檔當成已放回的舊版。"""
+def test_issuer_named_version_wins_over_a_standard_named_file(root: Path, out: Path) -> None:
+    """標準名檔旁邊另有一份上手檔名、內容不同的說明書：上手檔名的版本優先，標準名檔當舊版排除（#27）。"""
     folder = root / A
     make_pdf(folder / f"{A}_TS.pdf", ts_lines(A))
     make_pdf(folder / f"{A}_IIS.pdf", iis_lines(A))
@@ -653,8 +653,37 @@ def test_issuer_standard_named_file_beside_another_version_is_ambiguous(root: Pa
 
     o = outcome(run(A, root, out), A)
 
-    assert o.status == SKIPPED
-    assert "中文產品說明書有 2 份候選" in o.reason
+    assert o.status == PREPARED, o.reason
+    assert {d.kind.value: d.source.name for d in o.documents}["TS"] == "another TS.pdf"
+    assert o.reason == f"已排除舊版：{A}_TS.pdf"
+
+
+def test_revision_that_overwrote_the_old_issuer_file_is_picked(root: Path, out: Path) -> None:
+    """HSBC：舊版放回了標準名複本，上手修正版沿用舊檔名覆蓋了舊原檔，只剩標準名複本代表舊版（#27）。"""
+    folder = returned_folder(root, A, ts_failed=False)
+    original = folder / f"XS0000000000_{A}_CN TS.pdf"
+    make_pdf(original, revised(ts_lines, A))  # 修正版覆蓋舊原檔
+
+    receipt = run(A, root, out)
+
+    o = outcome(receipt, A)
+    assert o.status == PREPARED, o.reason
+    assert {d.kind.value: d.source.name for d in o.documents}["TS"] == original.name
+    assert (receipt.batch_dir / f"{A}_TS.pdf").read_bytes() == original.read_bytes()
+    assert o.reason == f"已排除舊版：{A}_TS.pdf"
+
+
+def test_revision_that_overwrote_a_failed_issuer_file_is_picked(root: Path, out: Path) -> None:
+    """舊版沒通過（有待確認檔）、修正版覆蓋舊原檔：挑到修正版。"""
+    folder = returned_folder(root, A, ts_failed=True)
+    original = folder / f"XS0000000000_{A}_CN TS.pdf"
+    make_pdf(original, revised(ts_lines, A))
+
+    o = outcome(run(A, root, out), A)
+
+    assert o.status == PREPARED, o.reason
+    assert {d.kind.value: d.source.name for d in o.documents}["TS"] == original.name
+    assert o.reason == ""
 
 
 def test_skipped_product_still_lists_the_excluded_versions(root: Path, out: Path) -> None:
