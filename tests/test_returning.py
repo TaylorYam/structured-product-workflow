@@ -41,10 +41,10 @@ def make_result_file(path: Path, passed: list[str | int], failed: list[str] = ()
     for tdcc in passed:
         ws.append(["V", "2026-10-13", "FCN", tdcc, "XS0000000000"])
     errors = wb.create_sheet("錯誤清單")
-    errors.append(["TDCC Code", "PDF 檔名", "錯訊"])
+    errors.append(["TDCC Code", "PDF 檔名", "PDF 頁碼", "錯訊"])  # 核對工具現行格式：一條錯訊一列
     for item in failed:
         name = item if item.lower().endswith(".pdf") else f"{item}_TS.pdf"
-        errors.append([name[:12], name, "UL_1 進場價對不起來：參考條件表 123.4500／說明書 123.4000"])
+        errors.append([name[:12], name, 9, "UL_1 進場價對不起來：參考條件表 123.4500／說明書 123.4000"])
     wb.save(path)
     return path
 
@@ -346,7 +346,7 @@ def test_failed_document_is_returned_with_pending_suffix(root: Path, batch: Path
     assert (root / B / f"{B}_IIS.pdf").read_bytes() == (batch / f"{B}_IIS.pdf").read_bytes()
     assert not (root / B / f"{B}_TS.pdf").exists()
     assert o.reason == (
-        "核對沒通過（TS）：UL_1 進場價對不起來：參考條件表 123.4500／說明書 123.4000"
+        "核對沒通過（TS）：UL_1 進場價對不起來：參考條件表 123.4500／說明書 123.4000（第 9 頁）"
         f"；錯訊寫在 {B}_錯誤訊息_20261020-090000.xlsx"
     )
 
@@ -405,12 +405,12 @@ def test_failed_product_not_in_this_batch_is_not_returned(batch: Path, tmp_path:
 def test_multi_line_error_messages_are_joined_on_one_line(root: Path, batch: Path, tmp_path: Path) -> None:
     result = make_result_file(tmp_path / "r.xlsx", [], failed=[B])
     wb = openpyxl.load_workbook(result)
-    wb["錯誤清單"]["C2"] = "UL_1 進場價對不起來\n年利率對不起來"
+    wb["錯誤清單"]["D2"] = "UL_1 進場價對不起來\n年利率對不起來"
     wb.save(result)
 
     o = outcome(run(batch, result), B)
 
-    assert o.reason.startswith("核對沒通過（TS）：UL_1 進場價對不起來／年利率對不起來；")
+    assert o.reason.startswith("核對沒通過（TS）：UL_1 進場價對不起來（第 9 頁）／年利率對不起來（第 9 頁）；")
 
 
 def test_error_list_file_name_is_matched_case_insensitively(root: Path, batch: Path, tmp_path: Path) -> None:
@@ -486,17 +486,17 @@ def read_error_book(path: Path) -> list[tuple]:
 def test_error_book_is_written_next_to_the_pending_file(root: Path, batch: Path, tmp_path: Path) -> None:
     result = make_result_file(tmp_path / "r.xlsx", [], failed=[B, f"{B}_IIS.pdf"])
     wb = openpyxl.load_workbook(result)
-    wb["錯誤清單"]["C2"] = "UL_1 進場價對不起來\n年利率對不起來"
+    wb["錯誤清單"]["D2"] = "UL_1 進場價對不起來\n年利率對不起來"
     wb.save(result)
 
     run(batch, result)
 
     book = root / B / f"{B}_錯誤訊息_20261020-090000.xlsx"
     assert read_error_book(book) == [
-        ("TDCC", "種類", "放回檔名", "錯訊"),
-        (B, "TS", f"{B}_TS_待確認.pdf", "UL_1 進場價對不起來"),
-        (B, "TS", f"{B}_TS_待確認.pdf", "年利率對不起來"),
-        (B, "IIS", f"{B}_IIS_待確認.pdf", "UL_1 進場價對不起來：參考條件表 123.4500／說明書 123.4000"),
+        ("TDCC", "種類", "放回檔名", "PDF 頁碼", "錯訊"),
+        (B, "TS", f"{B}_TS_待確認.pdf", "9", "UL_1 進場價對不起來"),
+        (B, "TS", f"{B}_TS_待確認.pdf", "9", "年利率對不起來"),
+        (B, "IIS", f"{B}_IIS_待確認.pdf", "9", "UL_1 進場價對不起來：參考條件表 123.4500／說明書 123.4000"),
     ]
 
 
@@ -577,13 +577,13 @@ def test_old_error_book_is_reported_when_one_document_now_passes(root: Path, bat
 def test_empty_error_message_still_gets_a_row(root: Path, batch: Path, tmp_path: Path) -> None:
     result = make_result_file(tmp_path / "r.xlsx", [], failed=[B])
     wb = openpyxl.load_workbook(result)
-    wb["錯誤清單"]["C2"] = None
+    wb["錯誤清單"]["D2"] = None
     wb.save(result)
 
     run(batch, result)
 
     rows = read_error_book(root / B / f"{B}_錯誤訊息_20261020-090000.xlsx")
-    assert rows[1] == (B, "TS", f"{B}_TS_待確認.pdf", "（錯誤清單沒有寫錯訊）")
+    assert rows[1] == (B, "TS", f"{B}_TS_待確認.pdf", None, "（錯誤清單沒有寫錯訊）")
 
 
 def test_rechecking_the_same_version_with_new_errors_writes_a_new_error_book(
@@ -593,7 +593,7 @@ def test_rechecking_the_same_version_with_new_errors_writes_a_new_error_book(
     run(batch, make_result_file(tmp_path / "first.xlsx", [], failed=[B]))
     second = make_result_file(tmp_path / "second.xlsx", [], failed=[B])
     wb = openpyxl.load_workbook(second)
-    wb["錯誤清單"]["C2"] = "年利率對不起來"
+    wb["錯誤清單"]["D2"] = "年利率對不起來"
     wb.save(second)
 
     receipt = return_to_folders(batch, second, now=RETURNED_AT + dt.timedelta(hours=1))
@@ -604,20 +604,20 @@ def test_rechecking_the_same_version_with_new_errors_writes_a_new_error_book(
         f"{B}_錯誤訊息_20261020-090000.xlsx",
         f"{B}_錯誤訊息_20261020-100000.xlsx",
     ]
-    assert read_error_book(root / B / f"{B}_錯誤訊息_20261020-100000.xlsx")[1][3] == "年利率對不起來"
+    assert read_error_book(root / B / f"{B}_錯誤訊息_20261020-100000.xlsx")[1][4] == "年利率對不起來"
     assert f"資料夾仍有舊的錯訊檔 {B}_錯誤訊息_20261020-090000.xlsx" in o.reason
 
 
 def test_error_message_starting_with_equals_is_kept_as_text(root: Path, batch: Path, tmp_path: Path) -> None:
     result = make_result_file(tmp_path / "r.xlsx", [], failed=[B])
     wb = openpyxl.load_workbook(result)
-    wb["錯誤清單"]["C2"] = "'=期初價格對不起來"
+    wb["錯誤清單"]["D2"] = "'=期初價格對不起來"
     wb.save(result)
 
     run(batch, result)
 
     rows = read_error_book(root / B / f"{B}_錯誤訊息_20261020-090000.xlsx")
-    assert rows[1][3] == "'=期初價格對不起來"
+    assert rows[1][4] == "'=期初價格對不起來"
 
 
 def test_copies_of_error_books_are_not_taken_as_the_latest(root: Path, batch: Path, tmp_path: Path) -> None:
@@ -631,3 +631,69 @@ def test_copies_of_error_books_are_not_taken_as_the_latest(root: Path, batch: Pa
 
     assert "錯訊寫在" not in outcome(receipt, B).reason  # 和最新一份（不是複本）相同，不再寫
     assert first.exists()
+
+
+# ---- 錯誤清單一條錯訊一列、PDF 頁碼（#25）----
+
+
+def write_error_rows(result: Path, rows: list[list[object]], header: list[str] | None = None) -> Path:
+    """把錯誤清單換成指定的列（預設現行表頭）。"""
+    wb = openpyxl.load_workbook(result)
+    del wb["錯誤清單"]
+    ws = wb.create_sheet("錯誤清單")
+    ws.append(header or ["TDCC Code", "PDF 檔名", "PDF 頁碼", "錯訊"])
+    for row in rows:
+        ws.append(row)
+    wb.save(result)
+    return result
+
+
+def test_all_error_rows_of_one_pdf_are_kept_with_pages(root: Path, batch: Path, tmp_path: Path) -> None:
+    result = write_error_rows(
+        make_result_file(tmp_path / "r.xlsx", []),
+        [
+            [B, f"{B}_TS.pdf", 9, "年利率對不起來"],
+            [B, f"{B}_TS.pdf", "9、10", "UL_1 進場價對不起來"],
+            [B, f"{B}_TS.pdf", None, "英文商品名稱對不起來"],
+        ],
+    )
+
+    o = outcome(run(batch, result), B)
+
+    assert o.reason.startswith(
+        "核對沒通過（TS）：年利率對不起來（第 9 頁）／UL_1 進場價對不起來（第 9、10 頁）／英文商品名稱對不起來；"
+    )
+    assert read_error_book(root / B / f"{B}_錯誤訊息_20261020-090000.xlsx")[1:] == [
+        (B, "TS", f"{B}_TS_待確認.pdf", "9", "年利率對不起來"),
+        (B, "TS", f"{B}_TS_待確認.pdf", "9、10", "UL_1 進場價對不起來"),
+        (B, "TS", f"{B}_TS_待確認.pdf", None, "英文商品名稱對不起來"),
+    ]
+
+
+def test_old_error_list_format_without_pages_still_works(root: Path, batch: Path, tmp_path: Path) -> None:
+    result = write_error_rows(
+        make_result_file(tmp_path / "r.xlsx", []),
+        [[B, f"{B}_TS.pdf", "年利率對不起來\nUL_1 進場價對不起來"]],
+        header=["TDCC Code", "PDF 檔名", "錯訊"],
+    )
+
+    o = outcome(run(batch, result), B)
+
+    assert o.ts == PENDING_RETURNED
+    assert o.reason.startswith("核對沒通過（TS）：年利率對不起來／UL_1 進場價對不起來；")
+    rows = read_error_book(root / B / f"{B}_錯誤訊息_20261020-090000.xlsx")
+    assert [r[3:] for r in rows[1:]] == [(None, "年利率對不起來"), (None, "UL_1 進場價對不起來")]
+
+
+def test_same_text_with_different_bytes_counts_as_already_there(root: Path, batch: Path, tmp_path: Path) -> None:
+    """MS 沿用 Word 舊版重複核對：重新轉出的 PDF 位元組不同但文字相同，不能當成內容不同的檔擋下（#25）。"""
+    run(batch, make_result_file(tmp_path / "first.xlsx", [], failed=[B]))
+    pending = root / B / f"{B}_TS_待確認.pdf"
+    make_pdf(pending, ts_lines(B), pages=2)  # 文字相同、位元組不同（多一頁空白）
+    assert pending.read_bytes() != (batch / f"{B}_TS.pdf").read_bytes()
+
+    receipt = return_to_folders(
+        batch, make_result_file(tmp_path / "second.xlsx", [], failed=[B]), now=RETURNED_AT + dt.timedelta(hours=1)
+    )
+
+    assert outcome(receipt, B).ts == PENDING_ALREADY_THERE

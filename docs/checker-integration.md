@@ -17,7 +17,7 @@
 3. 讀取逐商品及逐文件結果，將程式執行失敗、需覆核、核對通過分開處理；不能只用整批結束碼判定單商品可寄送。
 4. 保存本次結果、輸出路徑及文件對應；檢查完成條件後才推進案件。
 
-目前已實作的 TS／IIS 準備（#5）只透過檔案銜接：輸出符合檔名規則的 PDF，放回時直接讀核對結果檔：「回填後」工作表（第 2 列表頭的 `TDCC Code`、`TS/IIS完成檢核`＝`V`）決定標準檔名放回，「錯誤清單」工作表（第 1 列表頭的 `TDCC Code`、`PDF 檔名`、`錯訊`）決定以「_待確認」放回（觀察基準 `34837cd`）；工作表或欄位改名時放回會整批停止並寫出原因。現有 JSON 是核對紀錄，不保證已是穩定的跨專案 interface。建議先以固定版本 adapter 驗證；若不足，在核對專案另開 Issue 設計正式結果格式或結果匯出指令。本專案初始化不修改核對專案。
+目前已實作的 TS／IIS 準備（#5）只透過檔案銜接：輸出符合檔名規則的 PDF，放回時直接讀核對結果檔：「回填後」工作表（第 2 列表頭的 `TDCC Code`、`TS/IIS完成檢核`＝`V`）決定標準檔名放回，「錯誤清單」工作表（第 1 列表頭的 `TDCC Code`、`PDF 檔名`、`PDF 頁碼`、`錯訊`，一條錯訊一列；`PDF 頁碼` 可沒有）決定以「_待確認」放回並寫錯訊檔（觀察基準 `acb5dbd`）；工作表或欄位改名時放回會整批停止並寫出原因。現有 JSON 是核對紀錄，不保證已是穩定的跨專案 interface。建議先以固定版本 adapter 驗證；若不足，在核對專案另開 Issue 設計正式結果格式或結果匯出指令。本專案初始化不修改核對專案。
 
 未來契約應明確定義 schema_version、run_id、每個商品與 TS／IIS 的狀態、人工放行、可歸檔判定、輸入輸出指紋、錯誤及取消狀態。這些是候選欄位，不是現有已支援參數。未知版本、損毀或缺少結果、來源變更均停止推進；重試新增 run，不覆蓋既有紀錄。
 
@@ -40,7 +40,7 @@ Recommended sequence:
 3. Read per-product and per-document results. Distinguish execution failures, review, and passes; batch exit codes alone cannot authorize distribution of individual products.
 4. Preserve results, output locations, and document mappings; advance only after completion conditions are satisfied.
 
-The implemented TS/IIS preparation (#5) integrates through files only: it outputs PDFs that follow the naming rule and, when returning files, reads the result workbook directly: the 回填後 sheet (`TDCC Code` and `TS/IIS完成檢核` = `V` in the row-2 header) selects standard-name returns and the 錯誤清單 sheet (`TDCC Code`, `PDF 檔名`, `錯訊` in the row-1 header) selects `_待確認` returns (observed at `34837cd`); renamed sheets or columns stop the whole return with a reason. Existing JSON is an audit record, not a guaranteed stable integration interface. Validate a pinned adapter first. If insufficient, open a separate checker issue to define a supported result format or export command. This bootstrap does not modify the checker.
+The implemented TS/IIS preparation (#5) integrates through files only: it outputs PDFs that follow the naming rule and, when returning files, reads the result workbook directly: the 回填後 sheet (`TDCC Code` and `TS/IIS完成檢核` = `V` in the row-2 header) selects standard-name returns and the 錯誤清單 sheet (`TDCC Code`, `PDF 檔名`, `PDF 頁碼`, `錯訊` in the row-1 header, one error per row; `PDF 頁碼` optional) selects `_待確認` returns and feeds the error workbook (observed at `acb5dbd`); renamed sheets or columns stop the whole return with a reason. Existing JSON is an audit record, not a guaranteed stable integration interface. Validate a pinned adapter first. If insufficient, open a separate checker issue to define a supported result format or export command. This bootstrap does not modify the checker.
 
 A future contract should define schema_version, run_id, per-product and TS/IIS states, manual releases, archiving eligibility, input/output hashes, errors, and cancellation. These are candidate fields, not existing supported parameters. Unknown versions, missing/corrupt results, and changed sources stop progress. Retries create new runs and preserve existing records.
 
