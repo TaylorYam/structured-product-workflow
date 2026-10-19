@@ -4,7 +4,8 @@
 - 「回填後」工作表 `TS/IIS完成檢核` 為 `V` 的商品（說明書與投資人須知都通過或人工放行）用標準檔名放回；
 - 「錯誤清單」上的 PDF（沒通過、也沒人工放行）檔名加 `_待確認` 放回，同商品通過的那份仍用標準檔名；
 - 核對結果檔裡沒出現的商品（還沒核對）不放回。
-放回標準檔名時，商品資料夾若還有同種的舊 `_待確認` 檔，只提醒、不刪。
+這次新放回了 `_待確認` 檔的商品，另在商品資料夾寫一份 `<TDCC>_錯誤訊息_<日期時間>.xlsx`（一條錯訊一列，#19）。
+放回標準檔名時，商品資料夾若還有同種的舊 `_待確認` 檔或舊錯訊檔，只提醒、不刪。
 目的地取準備清單記的商品資料夾；放回前重算指紋，和準備清單不符就不放。
 商品資料夾已有同名檔：內容相同算已在，內容不同不覆蓋、整個商品不放回。一個商品的兩份要嘛都處理、要嘛都不動。
 只複製；批次資料夾與準備清單不改。核對結果檔格式以 fcn-term-sheet-checker 現行版本為準（觀察基準 `34837cd`）。
@@ -52,6 +53,9 @@ _TEMP_SUFFIX = ".spw-tmp"  # 放回時先寫成暫存名，確認指紋後才改
 
 # 放回清單的欄（欄名, 欄寬）
 LIST_COLUMNS = (("TDCC", 15), ("TS", 10), ("IIS", 10), ("原因", 80))
+ERROR_BOOK_MARK = "_錯誤訊息_"  # 錯訊檔名：<TDCC>_錯誤訊息_<YYYYMMDD-HHMMSS>.xlsx
+# 錯訊檔的欄（欄名, 欄寬）
+ERROR_BOOK_COLUMNS = (("TDCC", 15), ("種類", 6), ("放回檔名", 28), ("錯訊", 100))
 
 
 class ReturnError(Exception):
@@ -100,14 +104,15 @@ def return_to_folders(batch_dir: Path, result_file: Path, *, now: dt.datetime | 
     prepared, skipped = _read_preparation_list(batch_dir / LIST_NAME)
     passed, all_failed = _read_result(result_file)
     failed = {t: msgs for t, msgs in all_failed.items() if t not in passed}  # 兩張表都有時以回填後為準
-    list_path = batch_dir / f"放回清單_{(now or dt.datetime.now()):%Y%m%d-%H%M%S}.xlsx"
+    stamp = f"{(now or dt.datetime.now()):%Y%m%d-%H%M%S}"  # 放回清單與錯訊檔用同一個時間戳
+    list_path = batch_dir / f"放回清單_{stamp}.xlsx"
     if list_path.exists():
         raise ReturnError(f"放回清單已存在：{list_path}")
 
     outcomes = []
     for tdcc in [*passed, *failed]:
         if tdcc in prepared:
-            outcomes.append(_return_product(tdcc, prepared[tdcc], batch_dir, failed.get(tdcc, {})))
+            outcomes.append(_return_product(tdcc, prepared[tdcc], batch_dir, failed.get(tdcc, {}), stamp))
         else:
             reason = "準備時已跳過這個商品" if tdcc in skipped else "這批準備清單沒有這個商品"
             outcomes.append(ReturnOutcome(tdcc, NOT_RETURNED, NOT_RETURNED, reason))
@@ -154,8 +159,8 @@ def _read_preparation_list(path: Path) -> tuple[dict[str, dict[DocKind, _Prepare
     return complete, skipped
 
 
-def _read_result(path: Path) -> tuple[list[str], dict[str, dict[str, str]]]:
-    """讀核對結果檔（開一次）：「回填後」打 V 的 TDCC（去重、保留順序），以及「錯誤清單」{TDCC: {PDF 檔名: 錯訊}}。"""
+def _read_result(path: Path) -> tuple[list[str], dict[str, dict[str, tuple[str, ...]]]]:
+    """讀核對結果檔（開一次）：「回填後」打 V 的 TDCC（去重、保留順序），以及「錯誤清單」{TDCC: {PDF 檔名: 各條錯訊}}。"""
     backfill, errors = _read_sheets(path, (RESULT_SHEET, ERROR_SHEET), "核對結果檔")
     rows, (tdcc_col, checked_col) = _columns(
         backfill, RESULT_SHEET, RESULT_HEADER_ROW, (RESULT_TDCC_COLUMN, RESULT_CHECKED_COLUMN)
@@ -166,13 +171,13 @@ def _read_result(path: Path) -> tuple[list[str], dict[str, dict[str, str]]]:
     rows, (code_col, pdf_col, message_col) = _columns(
         errors, ERROR_SHEET, ERROR_HEADER_ROW, (ERROR_TDCC_COLUMN, ERROR_PDF_COLUMN, ERROR_MESSAGE_COLUMN)
     )
-    failed: dict[str, dict[str, str]] = {}
+    failed: dict[str, dict[str, tuple[str, ...]]] = {}
     for row in rows:
         tdcc, name = _normalize_tdcc(row[code_col]), str(row[pdf_col] or "").strip()
         if tdcc and name:
-            # 多條錯訊在同一格換行；接成一行，視窗看得完整
-            message = "／".join(line.strip() for line in str(row[message_col] or "").splitlines() if line.strip())
-            failed.setdefault(tdcc, {})[name] = message
+            # 多條錯訊在同一格換行
+            lines = tuple(line.strip() for line in str(row[message_col] or "").splitlines() if line.strip())
+            failed.setdefault(tdcc, {})[name] = lines
     return list(dict.fromkeys(t for t in passed if t)), failed
 
 
@@ -226,7 +231,7 @@ def _normalize_tdcc(value: object) -> str:
 
 
 def _return_product(
-    tdcc: str, docs: dict[DocKind, _Prepared], batch_dir: Path, failed: dict[str, str]
+    tdcc: str, docs: dict[DocKind, _Prepared], batch_dir: Path, failed: dict[str, tuple[str, ...]], stamp: str
 ) -> ReturnOutcome:
     """failed 是這個商品在錯誤清單上的 PDF 與錯訊；它們以 `_待確認` 檔名放回，其餘用標準檔名。"""
     messages = {name.lower(): message for name, message in failed.items()}  # 檔名大小寫不同也算同一份
@@ -235,8 +240,10 @@ def _return_product(
         return ReturnOutcome(tdcc, NOT_RETURNED, NOT_RETURNED, f"錯誤清單上的檔名對不到這批的檔：{'、'.join(unknown)}")
     pending = {kind for kind, doc in docs.items() if doc.output_name.lower() in messages}
     names = {kind: _pending_name(doc.output_name) if kind in pending else doc.output_name for kind, doc in docs.items()}
-    check_notes = [
-        f"核對沒通過（{kind.value}）：{messages[docs[kind].output_name.lower()]}" for kind in DocKind if kind in pending
+    check_notes = [  # 多條錯訊接成一行，視窗看得完整
+        f"核對沒通過（{kind.value}）：{'／'.join(messages[docs[kind].output_name.lower()])}"
+        for kind in DocKind
+        if kind in pending
     ]
     problems = []
     for doc in docs.values():
@@ -287,13 +294,55 @@ def _return_product(
         return RETURNED if copy_needed[kind] else ALREADY_THERE
 
     notes = list(check_notes)
+    old_books = sorted(p.name for p in folder.glob(f"{tdcc}{ERROR_BOOK_MARK}*.xlsx"))  # 寫新的之前就有的錯訊檔
+    wrote_new = any(copy_needed[kind] for kind in pending)  # 這次新放回了待確認檔才寫，重複放回不會多一份
+    if wrote_new:
+        rows = [
+            (tdcc, kind.value, names[kind], line)
+            for kind in DocKind
+            if kind in pending
+            for line in messages[docs[kind].output_name.lower()] or ("（錯誤清單沒有寫錯訊）",)
+        ]
+        notes.append(_write_error_book(folder / f"{tdcc}{ERROR_BOOK_MARK}{stamp}.xlsx", rows))
     for kind in DocKind:
         standard, old_pending = docs[kind].output_name, _pending_name(docs[kind].output_name)
         if kind in pending and (folder / standard).exists():  # 例：UBS 上手本來就給標準檔名
             notes.append(f"資料夾已有標準檔名的 {standard}，不是這次核對確認的版本，請留意")
         if kind not in pending and (folder / old_pending).exists():
             notes.append(f"資料夾仍有舊的 {old_pending}，請確認後刪除")
+    # 有文件從待確認變成通過（資料夾還有它的舊待確認檔，舊錯訊已過時），或這次又寫了新的錯訊檔時，提醒舊的錯訊檔
+    now_passing = any(
+        kind not in pending and (folder / _pending_name(docs[kind].output_name)).exists() for kind in DocKind
+    )
+    if old_books and (now_passing or wrote_new):
+        notes.append(f"資料夾仍有舊的錯訊檔 {'、'.join(old_books)}，請確認後刪除")
     return ReturnOutcome(tdcc, status(DocKind.TS), status(DocKind.IIS), "；".join(notes))
+
+
+def _write_error_book(path: Path, rows: list[tuple[str, str, str, str]]) -> str:
+    """在商品資料夾寫錯訊檔（不覆蓋）；回傳要寫進原因欄的說明。寫不進去不影響已放回的檔。"""
+    if path.exists():
+        return f"錯訊檔已存在，沒有覆蓋：{path.name}"
+    temp = path.with_name(path.name + _TEMP_SUFFIX)
+    try:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "錯誤訊息"
+        ws.append([name for name, _ in ERROR_BOOK_COLUMNS])
+        for cell in ws[1]:
+            cell.font = Font(bold=True)
+        for row in rows:
+            ws.append(list(row))
+            ws.cell(ws.max_row, 1).number_format = "@"  # TDCC 是文字，保留前導零
+        for i, (_, width) in enumerate(ERROR_BOOK_COLUMNS, start=1):
+            ws.column_dimensions[get_column_letter(i)].width = width
+        ws.freeze_panes = "A2"
+        wb.save(temp)
+        os.rename(temp, path)  # Windows 上目的地已存在時會失敗，不會覆蓋
+    except OSError as exc:
+        temp.unlink(missing_ok=True)
+        return f"錯訊檔寫不進去：{path.name}（{exc}）"
+    return f"錯訊寫在 {path.name}"
 
 
 def _write_list(path: Path, outcomes: Iterable[ReturnOutcome]) -> None:
