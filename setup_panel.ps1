@@ -12,7 +12,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw '無法建立本機虛擬環境。' }
     & '.\.venv\Scripts\python.exe' -m pip install -c constraints.txt .
     if ($LASTEXITCODE -ne 0) { throw ('套件安裝失敗（Python ' + $pythonVersion + '）。請確認公司網路或套件來源；若訊息寫某個套件沒有適合這個環境的版本，請把整個畫面交給維護人員。') }
-    & '.\.venv\Scripts\python.exe' -c "import tkinter, sp_workflow.app, sp_workflow.word_worker, win32com.client"
+    & '.\.venv\Scripts\python.exe' -c "import tkinter, sp_workflow.app, sp_workflow.word_worker, win32com.client, psycopg"
     if ($LASTEXITCODE -ne 0) { throw '安裝驗證失敗。' }
     $openWith = 'launch_panel.cmd'
     try {

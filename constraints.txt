@@ -5,6 +5,9 @@ PyMuPDF==1.27.2.2
 openpyxl==3.1.5
 et-xmlfile==2.0.0
 pywin32==312; sys_platform == 'win32'
+psycopg==3.3.6
+psycopg-binary==3.3.6
+tzdata==2026.5
 # 開發／CI
 pytest==9.1.1
 iniconfig==2.3.0
@@ -13,7 +16,3 @@ pluggy==1.6.0
 pygments==2.19.1
 colorama==0.4.6
 ruff==0.16.8
-# 本機 PostgreSQL 工具（.[db]）
-psycopg==3.3.6
-psycopg-binary==3.3.6
-tzdata==2026.5

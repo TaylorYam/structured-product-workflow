@@ -2,13 +2,13 @@
 
 ## 繁體中文
 
-狀態：「TS／IIS 準備與放回」已完成，以真實樣本複本試跑過，等作業主機公槽實測（[#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)）。下一個功能「寄信草稿」需求已確認、待實作（[#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)）。本機 PostgreSQL 開發工具與庫存 Excel 測試匯入見 [#30](https://github.com/TaylorYam/structured-product-workflow/issues/30)。其他流程仍在設計階段。
+狀態：「TS／IIS 準備與放回」已完成，以真實樣本複本試跑過，等作業主機公槽實測（[#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)）。「每日匯入」最小 FCN 資料庫見 [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32)；「寄信草稿」需求已確認、待實作（[#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)，改讀資料庫）。其他流程仍在設計階段。
 
 本專案管理正式 Order、建檔、上手文件歸檔、核對串接及 FC 寄送。詢價端沿用既有系統。
 核對規則由獨立的 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) 負責。
 
 閱讀順序：[業務背景](CONTEXT.md) → [架構](docs/architecture.md) → [待定事項](docs/open-questions.md)。
-資料保存與部署先讀 [PostgreSQL 決策](docs/adr/0001-postgresql-workflow-storage.md) 與 [開發部署設計](docs/database-and-deployment.md)。選型已確定，尚未實作。
+資料保存與部署先讀 [PostgreSQL 決策](docs/adr/0001-postgresql-workflow-storage.md) 與 [開發部署設計](docs/database-and-deployment.md)。第一階段的資料範圍見 [ADR 0003](docs/adr/0003-minimal-fcn-database.md)。
 串接工作另讀 [核對工具串接提案](docs/checker-integration.md)。
 
 從 TaylorYam/ai-project-template 建立，初始化日期 2026-10-18。保留範本的 Issue、PR、CI 與 Agent 工作流程。
@@ -26,7 +26,7 @@
 python -m pip install -c constraints.txt -e ".[dev]"
 ```
 
-要用 `scripts/` 的本機 PostgreSQL 工具時，改裝 `.[dev,db]`（見[資料庫與部署](docs/database-and-deployment.md)）。
+PostgreSQL 驅動已包含在套件裡。
 
 開發時用指令開啟視窗：
 
@@ -50,17 +50,45 @@ spw-panel
 3. 放回前重算批次裡 PDF 的指紋，和準備清單不符就不放。商品資料夾已有同名檔：內容相同（位元組相同，或全文相同，例如同一份 Word 重新轉出的 PDF）算「已在」（例如 UBS 本來就給標準檔名），內容不同不覆蓋、整個商品不放回，由作業人員決定留哪份。
 4. 只複製，批次資料夾保留；結果寫在批次資料夾的 `放回清單_<日期時間>.xlsx`；這批準備了但還沒核對的商品也會列出，標「不放回」。修好未通過的商品、重新核對後可以再放一次，已放回的會顯示「已在」；改用標準檔名放回時，舊的「_待確認」檔和舊錯訊檔不會自動刪除，清單會提醒你確認後手動刪除。
 
-測試：`pytest -q`（資料全部虛構；真的 Word 轉檔測試只在本機有 Word 時執行，CI 自動略過）。真實樣本試跑只在本機執行：把環境變數 `SPW_REAL_SAMPLES_DIR` 設成放商品資料夾的目錄，CI 自動略過；真實資料不進 repo。
+### 每日匯入（最小 FCN 資料庫）
+
+把每天的 FCN 交易、商品條件與信箱表匯入 PostgreSQL（[#32](https://github.com/TaylorYam/structured-product-workflow/issues/32)、[ADR 0003](docs/adr/0003-minimal-fcn-database.md)）。寄信草稿之後只讀這個資料庫。
+
+**第一次設定（每台電腦一次）**：
+1. 安裝 PostgreSQL，建立資料庫與日常使用的帳號（可用 `scripts/provision_postgres_dev.py`）。
+2. 在安裝資料夾（開發時是 repo 根目錄）建立 `.env`，填 `PGHOST`、`PGPORT`、`PGDATABASE`、`PGUSER`；`PGPASSWORD` 可以不填，匯入時會詢問。`.env` 不進 Git。
+3. 用有建立權限的帳號建立資料表，並把讀寫權限給 `PGUSER`：
+
+```bash
+spw-db-migrate --admin-user postgres
+```
+
+之後程式更新、有新的資料表版本時，再執行一次同樣的指令。換電腦（例如從筆電到公司電腦）時不複製資料庫，照上面三步重建，再把每日更新重新匯入。
+
+**每天**：
+1. 打開 `每日更新.xlsx`：把前一天的交易整列貼到 `交易明細`（欄位同交易清單月份工作表），這些商品在庫存總表的列整列貼到 `清單更新`（欄位同 `FCN清單.xlsx`）。第 1 列欄名不要動。
+2. 視窗切到「每日匯入」，選 `每日更新.xlsx` 與 `信箱.xlsx`，按「匯入」。
+3. 看結果：
+   - 「新增商品」「新增交易」：寫入成功。「已存在」：之前匯過，這次沒有寫入。
+   - 「內容不同（未覆蓋）」：和資料庫裡的不一樣，資料庫保留第一次的內容。
+   - 「擋下」：這一列缺值或寫法不認得（例如庫存狀態、KO／KI 代碼），修正 Excel 後重新匯入。
+   - 「分公司對帳差異」：交易明細各分公司金額加總和庫存總表的承作金額不同（PB 也算），只提醒。
+   - 「庫存尚未更新」：交易已匯入、清單更新還沒有這檔；之後貼進來再匯入一次即可。
+   - 「名字對不到信箱」：交易明細的 FC 名字在信箱表找不到（大小寫不同視為同一人）；拼法不同請在信箱表的「別名」工作表加一列（欄位 `交易清單寫法`、`使用者名稱`）。
+
+只收 FCN，其他商品略過並計數；同一份重複匯入不會重複寫入；任何錯誤都不會留下一半的資料。已存在商品的庫存狀態這一版不更新。`信箱.xlsx` 每次整份取代資料庫裡的人員；選填欄「固定副本」填 Y 的人是寄信的固定副本。
+
+測試：`pytest -q`（資料全部虛構；真的 Word 轉檔測試只在本機有 Word 時執行，CI 自動略過）。資料庫測試需要一個名稱以 `_test` 結尾、可以清空的 PostgreSQL 資料庫，把連線字串設在環境變數 `SPW_TEST_DSN`（例如 `host=localhost dbname=spw_test user=...`）；沒設定時略過，CI 用 PostgreSQL 服務執行。真實樣本試跑只在本機執行：把環境變數 `SPW_REAL_SAMPLES_DIR` 設成放商品資料夾的目錄，CI 自動略過；真實資料不進 repo。
 
 ## English
 
-Status: TS/IIS preparation and return is complete and trial-run on copies of real samples; operational shared-drive testing is pending ([#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)). The next feature, mail drafts, has confirmed requirements and awaits implementation ([#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)). Local PostgreSQL development tools and the inventory-Excel test import are tracked in [#30](https://github.com/TaylorYam/structured-product-workflow/issues/30). Other workflows remain in design.
+Status: TS/IIS preparation and return is complete and trial-run on copies of real samples; operational shared-drive testing is pending ([#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)). The minimal FCN database with daily import is [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32); mail drafts have confirmed requirements and await implementation ([#29](https://github.com/TaylorYam/structured-product-workflow/issues/29), now reading the database). Other workflows remain in design.
 
 This project coordinates formal Orders, booking, issuer document archiving, checker integration, and FC distribution. Inquiry remains in the existing system.
 Checking rules belong to the independent [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker).
 
 Read [business context](CONTEXT.md), [architecture](docs/architecture.md), then [open questions](docs/open-questions.md).
-For persistence/deployment, read the [PostgreSQL decision](docs/adr/0001-postgresql-workflow-storage.md) and [development/deployment design](docs/database-and-deployment.md). Selection is settled; implementation has not started.
+For persistence/deployment, read the [PostgreSQL decision](docs/adr/0001-postgresql-workflow-storage.md) and [development/deployment design](docs/database-and-deployment.md). First-phase data scope is in [ADR 0003](docs/adr/0003-minimal-fcn-database.md).
 For integration, also read the [checker integration proposal](docs/checker-integration.md).
 
 Created from TaylorYam/ai-project-template on 2026-10-18, retaining its issue, PR, CI, and agent workflows.
@@ -78,7 +106,7 @@ Picks the Chinese term sheet and investor information sheet from TDCC-named prod
 python -m pip install -c constraints.txt -e ".[dev]"
 ```
 
-For the local PostgreSQL tools in `scripts/`, install `.[dev,db]` instead (see [database and deployment](docs/database-and-deployment.md)).
+The PostgreSQL driver is included in the package.
 
 Open the window from a terminal during development:
 
@@ -102,4 +130,32 @@ After checking and saving the checker result workbook, switch to the 放回資�
 3. Batch PDFs are re-hashed and must match the preparation list. When a product folder already has a same-named file, identical content (same bytes, or the same full text such as a PDF re-converted from the same Word file) counts as already there (for example UBS issuing standard names); different content is never overwritten and the whole product is not returned, leaving the decision to the operator.
 4. Files are copied only and the batch folder is kept; results go to `放回清單_<timestamp>.xlsx` in the batch folder, which also lists prepared products not yet checked as not returned. After fixing and rechecking failed products, returning again marks already returned files as already there; when a standard name is returned, old `_待確認` files and error workbooks are never deleted automatically and the list reminds you to remove them after review.
 
-Tests: `pytest -q` (synthetic data only; real Word conversion tests run locally only when Word is available and are skipped in CI). Real-sample runs are local only: set `SPW_REAL_SAMPLES_DIR` to the folder containing product folders; CI skips it, and real data never enters the repository.
+### Daily import (minimal FCN database)
+
+Imports each day's FCN trades, product terms, and the mailbox workbook into PostgreSQL ([#32](https://github.com/TaylorYam/structured-product-workflow/issues/32), [ADR 0003](docs/adr/0003-minimal-fcn-database.md)). Mail drafts will read only this database.
+
+**First-time setup (once per computer)**:
+1. Install PostgreSQL and create the database and the daily account (`scripts/provision_postgres_dev.py` can help).
+2. Create `.env` in the install folder (the repository root during development) with `PGHOST`, `PGPORT`, `PGDATABASE`, and `PGUSER`; `PGPASSWORD` is optional and is asked for at import time. `.env` never enters Git.
+3. Create the tables with an account that can create schemas, granting read/write to `PGUSER`:
+
+```bash
+spw-db-migrate --admin-user postgres
+```
+
+Run the same command again after updates that add schema versions. When moving to another computer (for example from the laptop to the company computer), do not copy the database: repeat the three steps and re-import the daily updates.
+
+**Daily**:
+1. Open `每日更新.xlsx`: paste yesterday's trade rows whole into `交易明細` (same columns as the trade-list monthly sheets) and those products' inventory rows whole into `清單更新` (same columns as `FCN清單.xlsx`). Do not change the header row.
+2. In the window, open "每日匯入", choose `每日更新.xlsx` and `信箱.xlsx`, and click "匯入".
+3. Review the results:
+   - "新增商品"/"新增交易": written. "已存在": imported before; nothing written this time.
+   - "內容不同（未覆蓋）": differs from the database, which keeps the first version.
+   - "擋下": a row is missing values or uses an unrecognized form (for example inventory status or KO/KI codes); fix the workbook and re-import.
+   - "分公司對帳差異": per-branch trade totals differ from the inventory allocation (PB included); warning only.
+   - "庫存尚未更新": trades are imported but `清單更新` lacks the product; paste it later and import again.
+   - "名字對不到信箱": an FC name is missing from the mailbox workbook (case is ignored); for spelling variants add a row to its "別名" sheet (columns `交易清單寫法`, `使用者名稱`).
+
+Only FCN is imported; other products are skipped and counted. Re-importing the same file writes nothing new, and any error leaves no partial data. Inventory status of existing products is not refreshed in this version. `信箱.xlsx` replaces the stored people on every import; people marked Y in the optional "固定副本" column are the fixed mail CCs.
+
+Tests: `pytest -q` (synthetic data only; real Word conversion tests run locally only when Word is available and are skipped in CI). Database tests need a disposable PostgreSQL database whose name ends in `_test`; put its connection string in `SPW_TEST_DSN` (for example `host=localhost dbname=spw_test user=...`). Without it they are skipped; CI runs them against a PostgreSQL service. Real-sample runs are local only: set `SPW_REAL_SAMPLES_DIR` to the folder containing product folders; CI skips it, and real data never enters the repository.

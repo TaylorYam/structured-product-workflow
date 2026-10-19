@@ -1,9 +1,10 @@
-"""本機視窗：兩個分頁。
+"""本機視窗：三個分頁。
 
 - 準備批次：貼 TDCC、選根目錄與輸出位置，產生批次資料夾與準備清單。
 - 放回資料夾：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾。
+- 每日匯入：選每日更新與信箱表，匯入最小 FCN 資料庫（#32）。
 
-視窗只收輸入、在背景執行 `prepare_batch`／`return_to_folders` 並顯示結果，不含判斷邏輯。
+視窗只收輸入、在背景執行 `prepare_batch`／`return_to_folders`／`import_daily` 並顯示結果，不含判斷邏輯。
 """
 
 from __future__ import annotations
@@ -17,14 +18,16 @@ import threading
 import tkinter as tk
 from collections.abc import Callable, Sequence
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
+from sp_workflow.daily_import import DailyImportError, ImportReceipt, import_daily
+from sp_workflow.database import DatabaseError, connect, default_env_path, settings_from_env
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.preparation import PREPARED, PreparationError, PrepareReceipt, prepare_batch
 from sp_workflow.returning import PENDING_SUFFIX, ReturnError, ReturnReceipt, return_to_folders
 
 TITLE = "TS／IIS 準備與放回"
-_EXPECTED_ERRORS = (PreparationError, ReturnError)  # 訊息本身就是給作業人員看的
+_EXPECTED_ERRORS = (PreparationError, ReturnError, DailyImportError, DatabaseError)  # 訊息本身就是給作業人員看的
 
 
 class _Tab:
@@ -208,8 +211,68 @@ class ReturnTab(_Tab):
         )
 
 
+class DailyImportTab(_Tab):
+    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, env_path: Path) -> None:
+        super().__init__(notebook, "每日匯入", (("tdcc", "TDCC", 130), ("kind", "結果", 150), ("detail", "說明", 440)))
+        self.memory = memory
+        self.env_path = env_path
+        self.password: str | None = None  # 這次開視窗輸入過的資料庫密碼，只留在記憶體
+        folders = memory.load()
+        self.daily_var = tk.StringVar(value=folders.get("daily", ""))
+        self.mailbox_var = tk.StringVar(value=folders.get("mailbox", ""))
+        self.status_var.set(f"選每日更新與信箱表，按「匯入」。資料庫連線設定：{env_path}")
+
+        self.path_row(0, "每日更新", self.daily_var, lambda: _ask_excel("選擇每日更新", self.daily_var))
+        self.path_row(1, "信箱表", self.mailbox_var, lambda: _ask_excel("選擇信箱表", self.mailbox_var))
+        self.start_button = ttk.Button(self.buttons, text="匯入", command=self.start)
+        self.start_button.pack(side=tk.LEFT)
+        self.place_bottom(2)
+
+    def start(self) -> None:
+        daily_text, mailbox_text = self.daily_var.get().strip(), self.mailbox_var.get().strip()
+        if not daily_text or not mailbox_text:
+            messagebox.showerror(TITLE, "請先選擇每日更新與信箱表。")
+            return
+        try:
+            settings = settings_from_env(self.env_path)
+        except DatabaseError as exc:
+            messagebox.showerror(TITLE, str(exc))
+            return
+        if settings.password is None:
+            self.password = self.password or simpledialog.askstring(
+                TITLE, f"{settings.user}@{settings.host} 的資料庫密碼", show="*", parent=self.master
+            )
+            if not self.password:
+                return
+            settings = settings.with_password(self.password)
+        daily, mailbox = Path(daily_text), Path(mailbox_text)
+        self.memory.remember(daily=str(daily), mailbox=str(mailbox))
+        self.start_button.configure(state=tk.DISABLED)
+
+        def run() -> ImportReceipt:
+            with connect(settings) as conn:
+                return import_daily(daily, mailbox, conn)
+
+        self.run_in_background(run, "匯入中…", self._done)
+
+    def _done(self, result: object) -> None:
+        self.start_button.configure(state=tk.NORMAL)
+        if isinstance(result, DatabaseError):
+            self.password = None  # 可能是密碼錯，下次重新詢問
+        if not isinstance(result, ImportReceipt):
+            return
+        for line in result.lines:
+            self.add_row((line.tdcc, line.kind, line.detail), problem=line.problem)
+        problems = sum(line.problem for line in result.lines)
+        self.status_var.set(
+            f"完成（第 {result.run_id} 次匯入）：{len(result.lines) - problems} 項正常、{problems} 項要注意；"
+            f"略過非 FCN 交易 {result.skipped_trade_rows} 列、清單 {result.skipped_inventory_rows} 列；"
+            f"信箱 {result.people} 人。"
+        )
+
+
 class PanelWindow:
-    def __init__(self, master: tk.Tk, memory: FolderMemory) -> None:
+    def __init__(self, master: tk.Tk, memory: FolderMemory, env_path: Path | None = None) -> None:
         master.title(TITLE)
         master.minsize(760, 560)
         notebook = ttk.Notebook(master)
@@ -217,11 +280,19 @@ class PanelWindow:
         self.returning = ReturnTab(notebook, memory)
         self.prepare = PrepareTab(notebook, memory, on_prepared=lambda batch: self.returning.batch_var.set(str(batch)))
         notebook.insert(0, self.prepare.frame)  # 準備批次排第一個分頁
+        self.daily = DailyImportTab(notebook, memory, env_path or default_env_path())
         notebook.select(0)
 
 
 def _ask_dir(title: str, current: tk.StringVar) -> str:
     return filedialog.askdirectory(title=title, initialdir=current.get() or None, mustexist=True)
+
+
+def _ask_excel(title: str, current: tk.StringVar) -> str:
+    start = Path(current.get()).parent if current.get() else None
+    return filedialog.askopenfilename(
+        title=title, initialdir=start, filetypes=[("Excel", "*.xlsx"), ("全部檔案", "*.*")]
+    )
 
 
 def _open_folder(folder: Path) -> None:
@@ -231,16 +302,21 @@ def _open_folder(folder: Path) -> None:
         subprocess.Popen(["xdg-open", str(folder)])
 
 
+def _install_root(argv: Sequence[str] | None) -> Path | None:
+    parser = argparse.ArgumentParser(description=TITLE)
+    parser.add_argument("--install-root", type=Path, help="安裝資料夾；上次選的資料夾與 .env 都在它底下")
+    return parser.parse_args(argv).install_root
+
+
 def folder_memory(argv: Sequence[str] | None = None) -> FolderMemory:
     """依啟動參數決定上次選的資料夾記在哪：有 --install-root 就記在它底下的 .local/。"""
-    parser = argparse.ArgumentParser(description=TITLE)
-    parser.add_argument("--install-root", type=Path, help="安裝資料夾；上次選的資料夾記在它底下的 .local/")
-    args = parser.parse_args(argv)
-    return FolderMemory.under(args.install_root) if args.install_root else FolderMemory()
+    root = _install_root(argv)
+    return FolderMemory.under(root) if root else FolderMemory()
 
 
 def main(argv: Sequence[str] | None = None) -> None:
     memory = folder_memory(argv)
+    env_path = default_env_path(_install_root(argv))
     if sys.platform == "win32":
         try:
             import ctypes
@@ -249,7 +325,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         except (AttributeError, OSError):
             pass
     master = tk.Tk()
-    PanelWindow(master, memory)
+    PanelWindow(master, memory, env_path)
     master.mainloop()
 
 
