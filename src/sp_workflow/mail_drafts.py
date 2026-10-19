@@ -35,11 +35,12 @@ PENDING = "待處理"
 NOT_NEEDED = "不需寄送"
 FAILED = "建立失敗"
 
-SUBJECT_SUFFIX = " 中文TS/IIS"
+SUBJECT_FORMAT = "TDCC : {tdcc} 中文TS/IIS"
 BODY_INTRO = "FYI"
 RISK_LEVEL = "RR4"  # 使用者確認：風險等級固定 RR4
 NAVY = "#002060"
 GREEN = "#00AB8E"
+ORANGE = "#C55A11"  # 格式檔分公司表頭：佈景主題「輔色 2、較深 25%」
 ROW_FILL = "#F0F0F0"
 DATE_FORMAT = "%m-%d-%y"
 
@@ -168,7 +169,7 @@ def _draft_one(
         tdcc=tdcc,
         to=tuple(p.email for p in to),
         cc=tuple(p.email for p in cc),
-        subject=tdcc + SUBJECT_SUFFIX,
+        subject=SUBJECT_FORMAT.format(tdcc=tdcc),
         html_body=render_body(tdcc, product, branches),
         attachments=attachments,
     )
@@ -236,7 +237,7 @@ def render_body(tdcc: str, product: dict[str, Any], branches: Sequence[str]) -> 
     branch_cells = [(f"分公司 {i}", b) for i, b in enumerate(branches, 1)]
     parts = [f"<p>{BODY_INTRO}</p>", _table(terms_1, NAVY), _table(terms_2, GREEN)]
     if branch_cells:
-        parts.append(_table(branch_cells, NAVY))
+        parts.append(_table(branch_cells, ORANGE))
     return (
         '<html><body style="font-family: Calibri, sans-serif; font-size: 11pt;">'
         + "<br>".join(parts)

@@ -96,7 +96,7 @@ def test_ready_product_gets_one_draft_to_its_fcs_with_fixed_cc(db, tmp_path: Pat
     assert [(o.tdcc, o.status, o.to, o.cc) for o in receipt.outcomes] == [(A, DRAFTED, ("Amy", "Ben"), ("Pat",))]
     (draft,) = drafter.drafts
     assert draft.to == ("amy@example.com", "ben@example.com") and draft.cc == ("pat@example.com",)
-    assert draft.subject == f"{A} 中文TS/IIS"
+    assert draft.subject == f"TDCC : {A} 中文TS/IIS"
     assert draft.attachments == (folder / f"{A}_TS.pdf", folder / f"{A}_IIS.pdf")
     assert draft.html_body.count("<table") == 3 and "<p>FYI</p>" in draft.html_body
 
@@ -125,6 +125,7 @@ def test_body_shows_the_terms_in_the_mail_format(db, tmp_path: Path, root: Path,
         ">南區<",
         "#002060",
         "#00AB8E",
+        'background: #C55A11; color: #FFFFFF; font-weight: bold;">分公司 1<',
     ):
         assert expected in body, expected
 
@@ -346,7 +347,7 @@ def sample_draft(tmp_path: Path) -> Draft:
         A,
         ("amy@example.com", "ben@example.com"),
         ("pat@example.com",),
-        f"{A} 中文TS/IIS",
+        f"TDCC : {A} 中文TS/IIS",
         "<p>FYI</p>",
         (tmp_path / "a.pdf", tmp_path / "b.pdf"),
     )
@@ -359,7 +360,7 @@ def test_outlook_drafter_fills_the_mail_and_only_saves_it(fake_com, tmp_path: Pa
     assert (mail.To, mail.CC, mail.Subject, mail.HTMLBody) == (
         "amy@example.com; ben@example.com",
         "pat@example.com",
-        f"{A} 中文TS/IIS",
+        f"TDCC : {A} 中文TS/IIS",
         "<p>FYI</p>",
     )
     assert mail.attached == [str(tmp_path / "a.pdf"), str(tmp_path / "b.pdf")]

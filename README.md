@@ -101,7 +101,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
    - 資料庫有這檔的商品條件與交易列；
    - 商品資料夾裡有 `<TDCC>_TS.pdf` 與 `<TDCC>_IIS.pdf`（放回資料夾只會以標準檔名放回核對通過的文件；`_待確認` 檔不算）；
    - 交易列上的 FC 都對得到信箱。
-4. 信件：一檔一封；收件人是承作的 FC（略過 PB，只有 PB 時標「不需寄送」），副本是信箱裡 `fixed_cc` 的人；主旨 `<TDCC> 中文TS/IIS`；內文 `FYI` 加三個表格（日期與期初價格、商品條件、分公司）；附上兩份 PDF。
+4. 信件：一檔一封；收件人是承作的 FC（略過 PB，只有 PB 時標「不需寄送」），副本是信箱裡 `fixed_cc` 的人；主旨 `TDCC : <TDCC> 中文TS/IIS`；內文 `FYI` 加三個表格（日期與期初價格、商品條件、分公司）；附上兩份 PDF。
 5. 結果清單 `寄信草稿清單_<日期時間>.xlsx` 列出每檔的狀態、收件人、副本與原因，並記錄最近一次每日匯入的時間；畫面上也會顯示，避免用到舊資料。
 
 同一檔重跑會再建一封草稿，重複的請自己刪除。某一檔建立失敗（例如 Outlook 沒回應）不影響其他檔。商品資料夾只讀不改。
@@ -209,7 +209,7 @@ Creates TS/IIS emails to the FCs handling each checked FCN in **your own classic
    - the database has the product's terms and trade rows;
    - the product folder holds `<TDCC>_TS.pdf` and `<TDCC>_IIS.pdf` (return-to-folders only writes standard names for checked documents; `_待確認` files do not count);
    - every FC on the trade rows matches the mailbox.
-4. Mail: one per product; recipients are the FCs (PB skipped; PB-only products are "不需寄送"), CC is everyone with `fixed_cc` in the mailbox; subject `<TDCC> 中文TS/IIS`; body `FYI` plus three tables (dates and initial pricing, terms, branches); both PDFs attached.
+4. Mail: one per product; recipients are the FCs (PB skipped; PB-only products are "不需寄送"), CC is everyone with `fixed_cc` in the mailbox; subject `TDCC : <TDCC> 中文TS/IIS`; body `FYI` plus three tables (dates and initial pricing, terms, branches); both PDFs attached.
 5. The result list `寄信草稿清單_<timestamp>.xlsx` records each product's status, recipients, CCs, and reasons, plus the time of the latest daily import, which the window also shows so stale data is noticed.
 
 Running a product again creates another draft; delete duplicates yourself. A failure on one product (for example Outlook not responding) does not affect the others. Product folders are read only.
