@@ -22,7 +22,7 @@ from sp_workflow.local_settings import load_folders, save_folders
 from sp_workflow.preparation import PREPARED, PreparationError, PrepareReceipt, prepare_batch
 from sp_workflow.returning import NOT_RETURNED, ReturnError, ReturnReceipt, return_to_folders
 
-TITLE = "TS／IIS 批次準備"
+TITLE = "TS／IIS 準備與放回"
 _EXPECTED_ERRORS = (PreparationError, ReturnError)  # 訊息本身就是給作業人員看的
 
 

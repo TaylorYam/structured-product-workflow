@@ -42,7 +42,7 @@ spw-panel
 1. 選批次資料夾（剛準備完會自動帶入）與核對 PANEL 存下的核對結果檔。
 2. 按「放回資料夾」。只放回核對結果檔「回填後」上 `TS/IIS完成檢核` 為 `V` 的商品（說明書與投資人須知都通過或人工放行）；「錯誤清單」上的不動。
 3. 放回前重算批次裡 PDF 的指紋，和準備清單不符就不放。商品資料夾已有同名檔：內容相同算「已在」（例如 UBS 本來就給標準檔名），內容不同不覆蓋、整個商品不放回，由作業人員決定留哪份。
-4. 只複製，批次資料夾保留；結果寫在批次資料夾的 `放回清單_<日期時間>.xlsx`。修好未通過的商品、重新核對後可以再放一次，已放回的會顯示「已在」。
+4. 只複製，批次資料夾保留；結果寫在批次資料夾的 `放回清單_<日期時間>.xlsx`；這批準備了但不在「回填後」的商品（沒通過或還沒核對）也會列出，標「不放回」。修好未通過的商品、重新核對後可以再放一次，已放回的會顯示「已在」。
 
 測試：`pytest -q`（資料全部虛構）。真實樣本試跑只在本機執行：把環境變數 `SPW_REAL_SAMPLES_DIR` 設成放商品資料夾的目錄，CI 自動略過；真實資料不進 repo。
 
@@ -88,6 +88,6 @@ After checking and saving the checker result workbook, switch to the 放回資�
 1. Choose the batch folder (filled in automatically after preparation) and the result workbook saved by the checker PANEL.
 2. Press Return. Only products whose `TS/IIS完成檢核` is `V` on the result workbook's 回填後 sheet (both documents passed or manually released) are returned; the error-list sheet is ignored.
 3. Batch PDFs are re-hashed and must match the preparation list. When a product folder already has a same-named file, identical content counts as already there (for example UBS issuing standard names); different content is never overwritten and the whole product is not returned, leaving the decision to the operator.
-4. Files are copied only and the batch folder is kept; results go to `放回清單_<timestamp>.xlsx` in the batch folder. After fixing and rechecking failed products, returning again marks already returned files as already there.
+4. Files are copied only and the batch folder is kept; results go to `放回清單_<timestamp>.xlsx` in the batch folder, which also lists prepared products missing from 回填後 (failed or not yet checked) as not returned. After fixing and rechecking failed products, returning again marks already returned files as already there.
 
 Tests: `pytest -q` (synthetic data only). Real-sample runs are local only: set `SPW_REAL_SAMPLES_DIR` to the folder containing product folders; CI skips it, and real data never enters the repository.

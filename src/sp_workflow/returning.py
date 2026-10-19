@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -25,12 +26,17 @@ RETURNED = "已放回"
 ALREADY_THERE = "已在"
 NOT_RETURNED = "不放回"
 
+_PREP_COLUMNS = ("TDCC", "種類", "商品資料夾", "輸出檔名", "SHA-256", "狀態")  # 讀準備清單用到的欄
+
 RESULT_SHEET = "回填後"
 RESULT_HEADER_ROW = 2
 RESULT_TDCC_COLUMN = "TDCC Code"
 RESULT_CHECKED_COLUMN = "TS/IIS完成檢核"
 RESULT_CHECKED_VALUE = "V"
 TDCC_DIGITS = 12
+
+NOT_PASSED_REASON = "核對結果檔「回填後」沒有這個商品（沒通過或還沒核對）"
+_TEMP_SUFFIX = ".spw-tmp"  # 放回時先寫成暫存名，確認指紋後才改成正式檔名
 
 # 放回清單的欄（欄名, 欄寬）
 LIST_COLUMNS = (("TDCC", 15), ("TS", 10), ("IIS", 10), ("原因", 80))
@@ -65,7 +71,10 @@ class _Prepared:
 
 
 def return_to_folders(batch_dir: Path, result_file: Path, *, now: dt.datetime | None = None) -> ReturnReceipt:
-    """放回核對通過的商品；回傳放回清單路徑與逐商品結果（依核對結果檔順序）。"""
+    """放回核對通過的商品；回傳放回清單路徑與逐商品結果。
+
+    先列核對結果檔上的商品（依其順序），再列這批已準備、但不在「回填後」的商品（不放回），方便看出哪些還沒放回。
+    """
     prepared, skipped = _read_preparation_list(batch_dir / LIST_NAME)
     passed = _read_passed_tdccs(result_file)
     list_path = batch_dir / f"放回清單_{(now or dt.datetime.now()):%Y%m%d-%H%M%S}.xlsx"
@@ -79,7 +88,14 @@ def return_to_folders(batch_dir: Path, result_file: Path, *, now: dt.datetime | 
         else:
             reason = "準備時已跳過這個商品" if tdcc in skipped else "這批準備清單沒有這個商品"
             outcomes.append(ReturnOutcome(tdcc, NOT_RETURNED, NOT_RETURNED, reason))
-    _write_list(list_path, outcomes)
+    for tdcc in prepared:
+        if tdcc not in passed:
+            outcomes.append(ReturnOutcome(tdcc, NOT_RETURNED, NOT_RETURNED, NOT_PASSED_REASON))
+    try:
+        _write_list(list_path, outcomes)
+    except OSError as exc:
+        returned = sum(RETURNED in (o.ts, o.iis) for o in outcomes)
+        raise ReturnError(f"已放回 {returned} 個商品，但放回清單寫不進去：{list_path}（{exc}）") from None
     return ReturnReceipt(list_path, tuple(outcomes))
 
 
@@ -91,15 +107,23 @@ def _read_preparation_list(path: Path) -> tuple[dict[str, dict[DocKind, _Prepare
     if not rows:
         raise ReturnError(f"準備清單是空的：{path}")
     header = [str(h) if h is not None else "" for h in rows[0]]
+    missing = [c for c in _PREP_COLUMNS if c not in header]
+    if missing:
+        raise ReturnError(f"準備清單少了欄：{'、'.join(missing)}（{path}）")
     prepared: dict[str, dict[DocKind, _Prepared]] = {}
     skipped: set[str] = set()
-    for row in rows[1:]:
+    for row_number, row in enumerate(rows[1:], start=2):
         record = dict(zip(header, row, strict=False))
-        tdcc = str(record.get("TDCC") or "")
-        if record.get("狀態") != PREPARED:
+        tdcc = str(record["TDCC"] or "")
+        if record["狀態"] != PREPARED:
             skipped.add(tdcc)
             continue
-        kind = DocKind(record["種類"])
+        try:
+            kind = DocKind(record["種類"])
+        except ValueError:
+            raise ReturnError(f"準備清單第 {row_number} 列的種類看不懂：{record['種類']}（{path}）") from None
+        if not all(record[c] for c in ("商品資料夾", "輸出檔名", "SHA-256")):
+            raise ReturnError(f"準備清單第 {row_number} 列缺少商品資料夾、輸出檔名或 SHA-256（{path}）")
         prepared.setdefault(tdcc, {})[kind] = _Prepared(
             kind, Path(str(record["商品資料夾"])), str(record["輸出檔名"]), str(record["SHA-256"])
         )
@@ -172,16 +196,23 @@ def _return_product(tdcc: str, docs: dict[DocKind, _Prepared], batch_dir: Path) 
     if problems:
         return ReturnOutcome(tdcc, NOT_RETURNED, NOT_RETURNED, "；".join(problems))
 
-    copied: list[Path] = []
+    to_copy = [doc for kind, doc in docs.items() if status[kind] == RETURNED]
+    temps = {doc.output_name: folder / (doc.output_name + _TEMP_SUFFIX) for doc in to_copy}
+    placed: list[Path] = []
     try:
-        for kind, doc in docs.items():
-            if status[kind] == RETURNED:
-                target = folder / doc.output_name
-                shutil.copyfile(batch_dir / doc.output_name, target)
-                copied.append(target)
+        # 先寫成暫存名並確認指紋，兩份都好了才改成正式檔名；複製到一半失敗也不會留下半個檔
+        for doc in to_copy:
+            temp = temps[doc.output_name]
+            shutil.copyfile(batch_dir / doc.output_name, temp)
+            if sha256(temp) != doc.sha256:
+                raise OSError(f"{doc.output_name} 複製後指紋不符")
+        for doc in to_copy:
+            target = folder / doc.output_name
+            os.rename(temps[doc.output_name], target)  # Windows 上目的地已存在時會失敗，不會覆蓋
+            placed.append(target)
     except OSError as exc:
-        for target in copied:  # 兩份要嘛都放、要嘛都不放
-            target.unlink(missing_ok=True)
+        for path in [*temps.values(), *placed]:  # 兩份要嘛都放、要嘛都不放
+            path.unlink(missing_ok=True)
         return ReturnOutcome(tdcc, NOT_RETURNED, NOT_RETURNED, f"複製失敗：{exc}")
     return ReturnOutcome(tdcc, status[DocKind.TS], status[DocKind.IIS])
 

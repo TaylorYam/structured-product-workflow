@@ -9,7 +9,14 @@ import openpyxl
 import pytest
 
 from sp_workflow.preparation import prepare_batch
-from sp_workflow.returning import ALREADY_THERE, NOT_RETURNED, RETURNED, ReturnError, return_to_folders
+from sp_workflow.returning import (
+    ALREADY_THERE,
+    NOT_PASSED_REASON,
+    NOT_RETURNED,
+    RETURNED,
+    ReturnError,
+    return_to_folders,
+)
 from synth import make_pdf, make_product_folder, snapshot, ts_lines
 
 PREPARED_AT = dt.datetime(2026, 10, 19, 10, 30, 0)
@@ -84,7 +91,7 @@ def test_copies_passed_products_back_to_their_product_folders(root: Path, batch:
     assert (root / A / f"{A}_TS.pdf").read_bytes() == (batch / f"{A}_TS.pdf").read_bytes()
     assert (root / A / f"{A}_IIS.pdf").read_bytes() == (batch / f"{A}_IIS.pdf").read_bytes()
     assert not (root / B / f"{B}_TS.pdf").exists()  # 錯誤清單上的不動
-    assert [o.tdcc for o in receipt.outcomes] == [A]
+    assert (outcome(receipt, B).ts, outcome(receipt, B).reason) == (NOT_RETURNED, NOT_PASSED_REASON)
 
 
 def test_only_rows_marked_v_are_returned(root: Path, batch: Path, tmp_path: Path) -> None:
@@ -95,7 +102,7 @@ def test_only_rows_marked_v_are_returned(root: Path, batch: Path, tmp_path: Path
 
     receipt = run(batch, result)
 
-    assert [o.tdcc for o in receipt.outcomes] == [A]
+    assert outcome(receipt, B).reason == NOT_PASSED_REASON
     assert not (root / B / f"{B}_TS.pdf").exists()
 
 
@@ -207,6 +214,29 @@ def test_missing_product_folder_is_not_returned(root: Path, batch: Path, tmp_pat
     assert "商品資料夾不存在" in o.reason
 
 
+def test_failure_halfway_through_a_copy_leaves_nothing_behind(
+    root: Path, batch: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """公槽斷線：IIS 寫了一半就失敗，商品資料夾不能留下半個檔或只有 TS。"""
+    from sp_workflow import returning
+
+    real_copy = returning.shutil.copyfile
+
+    def broken_copy(src, dst):
+        if f"{A}_IIS.pdf" in str(dst):
+            Path(dst).write_bytes(b"half")
+            raise OSError("網路中斷")
+        return real_copy(src, dst)
+
+    monkeypatch.setattr(returning.shutil, "copyfile", broken_copy)
+    before = snapshot(root / A)
+
+    o = outcome(run(batch, make_result_file(tmp_path / "r.xlsx", [A])), A)
+
+    assert (o.ts, o.iis) == (NOT_RETURNED, NOT_RETURNED)
+    assert snapshot(root / A) == before
+
+
 def test_copy_failure_does_not_leave_half_a_pair(
     root: Path, batch: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -215,7 +245,7 @@ def test_copy_failure_does_not_leave_half_a_pair(
     real_copy = returning.shutil.copyfile
 
     def flaky_copy(src, dst):
-        if str(dst).endswith(f"{A}_IIS.pdf"):
+        if f"{A}_IIS.pdf" in str(dst):
             raise PermissionError("檔案被鎖住")
         return real_copy(src, dst)
 
@@ -257,6 +287,15 @@ def test_folder_without_preparation_list_is_rejected(tmp_path: Path) -> None:
         return_to_folders(tmp_path, make_result_file(tmp_path / "r.xlsx", [A]), now=RETURNED_AT)
 
 
+def test_broken_preparation_list_is_rejected_with_a_readable_message(batch: Path, tmp_path: Path) -> None:
+    wb = openpyxl.load_workbook(batch / "準備清單.xlsx")
+    wb.active["B2"] = "XX"  # 種類
+    wb.save(batch / "準備清單.xlsx")
+
+    with pytest.raises(ReturnError, match="準備清單第 2 列的種類看不懂"):
+        return_to_folders(batch, make_result_file(tmp_path / "r.xlsx", [A]), now=RETURNED_AT)
+
+
 def test_unreadable_result_file_is_rejected(batch: Path, tmp_path: Path) -> None:
     broken = tmp_path / "broken.xlsx"
     broken.write_bytes(b"not excel")
@@ -282,5 +321,8 @@ def test_return_list_records_each_product(batch: Path, tmp_path: Path) -> None:
     assert receipt.list_path == batch / "放回清單_20261020-090000.xlsx"
     rows = read_list(receipt.list_path)
     assert list(rows[0]) == ["TDCC", "TS", "IIS", "原因"]
-    assert rows[0] == {"TDCC": A, "TS": RETURNED, "IIS": RETURNED, "原因": None}
-    assert rows[1] == {"TDCC": C, "TS": NOT_RETURNED, "IIS": NOT_RETURNED, "原因": "這批準備清單沒有這個商品"}
+    assert rows == [
+        {"TDCC": A, "TS": RETURNED, "IIS": RETURNED, "原因": None},
+        {"TDCC": C, "TS": NOT_RETURNED, "IIS": NOT_RETURNED, "原因": "這批準備清單沒有這個商品"},
+        {"TDCC": B, "TS": NOT_RETURNED, "IIS": NOT_RETURNED, "原因": NOT_PASSED_REASON},  # 準備了但不在回填後
+    ]
