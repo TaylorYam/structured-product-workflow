@@ -202,7 +202,7 @@ def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter
             [chosen] = candidates[kind]
             target = batch_dir / _output_name(tdcc, kind)
             shutil.copyfile(chosen.pdf, target)
-            docs.append(PreparedDocument(kind, chosen.source, target.name, _sha256(target), chosen.from_word))
+            docs.append(PreparedDocument(kind, chosen.source, target.name, sha256(target), chosen.from_word))
     return ProductOutcome(tdcc, PREPARED, "", folder, tuple(docs))
 
 
@@ -259,7 +259,7 @@ def _names(candidates: list[_Candidate]) -> str:
     return "、".join(c.source.name for c in candidates)
 
 
-def _sha256(path: Path) -> str:
+def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as f:
         for chunk in iter(lambda: f.read(1 << 20), b""):
