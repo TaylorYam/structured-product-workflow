@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from enum import Enum
@@ -68,6 +69,21 @@ def classify(text: str, tdcc: str) -> Reading:
     # 換行可能把代號切開，原始文字與去空白文字都要找
     has_other_code = bool(_TWELVE_DIGITS.search(text) or _TWELVE_DIGITS.search(compact))
     return Reading(kind, kind is DocKind.IIS and not has_other_code)
+
+
+def content_key(path: Path) -> str:
+    """內容指紋：全部頁面文字去掉空白後的 SHA-256；讀不到文字時用檔案位元組。
+
+    同一份 Word 每次轉出的 PDF 位元組不同但文字相同，所以比對版本用文字（#21）。
+    """
+    try:
+        with pymupdf.open(path) as doc:
+            text = "" if doc.needs_pass else "".join(page.get_text() for page in doc)
+    except Exception:  # PyMuPDF 對損毀檔丟出的例外型別不固定
+        text = ""
+    compact = _WHITESPACE.sub("", text)
+    data = compact.encode("utf-8") if compact else path.read_bytes()
+    return hashlib.sha256(data).hexdigest()
 
 
 def read_pdf(path: Path, tdcc: str) -> Reading:

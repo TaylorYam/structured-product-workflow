@@ -38,6 +38,7 @@ spw-panel
 4. 看第一頁內容判斷：開頭附近出現「中文產品說明書」或「中文投資人須知」；說明書第一頁要有資料夾的 TDCC，投資人須知有 12 碼代號時要相符。檔名只當參考。
 5. 有上手 PDF 就用 PDF；某種文件沒有 PDF 時（例如 MS、BNP 只給 Word），才把資料夾裡的 Word（`.docx`、`.doc`）複製到暫存區，用 Microsoft Word 轉成 PDF 再判斷（[ADR 0002](docs/adr/0002-word-to-pdf-with-microsoft-word.md)）。原始 Word 不動；轉檔失敗或逾時（Word 跳出對話框）時那個商品跳過。
 6. 說明書或投資人須知任一份找不到、或有兩份以上候選時，整個商品跳過並寫出原因與候選檔名。
+   **重新核對上手修正版**：資料夾裡上次放回的「_待確認」檔不當候選，跟它內容相同（比對全文）的舊版會自動排除；內容相同的幾份只算一份。上手寄來新版時會挑新版，連上次已放回的標準名舊版也一併換掉；上手還沒寄新版時，原因寫「只有上次沒通過的版本，等上手寄新版」。準備清單的原因欄會寫出排除了哪些舊版。MS、BNP 這類只給 Word 的上手，只有沒通過的那份會換成新版；如果兩份都改了，請先把舊的標準名檔移到子資料夾。
 7. 批次資料夾裡的 `準備清單.xlsx` 記錄每份文件的來源檔、是否由 Word 轉檔、輸出檔名、SHA-256 指紋、狀態與原因。完成後按「打開批次資料夾」，再到核對工具 PANEL 選參考條件表與這批 PDF。
 
 核對完、存下核對結果檔後，切到「放回資料夾」分頁：
@@ -87,6 +88,7 @@ spw-panel
 4. Identification uses page-one content: a 中文產品說明書 or 中文投資人須知 title near the top; the term sheet's first page must contain the folder TDCC, and an investor sheet's 12-digit code must match when present. File names are hints only.
 5. Issuer PDFs take precedence. Only when a document type has no PDF (for example MS and BNP provide Word only) are the folder's Word files (`.docx`, `.doc`) copied to a temporary area and converted with Microsoft Word before identification ([ADR 0002](docs/adr/0002-word-to-pdf-with-microsoft-word.md)). Original Word files stay untouched; a failed or timed-out conversion (for example a Word dialog) skips that product.
 6. If either document is missing or has multiple candidates, the whole product is skipped with the reason and candidate names.
+   **Rechecking revised issuer documents**: `_待確認` files returned last time are never candidates, and older versions with the same content (full-text comparison) are excluded automatically; identical copies count once. A newly sent version is picked, replacing even the previously returned standard-name version; until the issuer sends one, the reason says only the previously failed version exists. The preparation list's reason column names the excluded versions. For Word-only issuers such as MS and BNP, only the failed document is replaced; if both changed, move the old standard-name file into a subfolder first.
 7. `準備清單.xlsx` in the batch folder records each document's source, whether it was converted from Word, output name, SHA-256, status, and reason. Then open the batch folder and select the reference workbook and PDFs in the checker PANEL.
 
 After checking and saving the checker result workbook, switch to the 放回資料夾 (return to folders) tab:
