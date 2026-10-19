@@ -219,6 +219,13 @@ def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter
         problems = [p for p in problems if p]
         if problems:
             return _skipped(tdcc, problems, folder, selections)
+        # 沿用沒通過的版本時，資料夾裡其實可能有新檔、只是不能用：一起寫出來，不能只說「上手還沒寄新版」
+        unusable = [
+            note
+            for kind in DocKind
+            if selections[kind].reused_failed
+            for note in _unusable_notes(kind, mismatched[kind], failures, words if kind not in need_word else [])
+        ]
 
         docs = []
         for kind in DocKind:
@@ -226,7 +233,23 @@ def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter
             target = batch_dir / _output_name(tdcc, kind)
             shutil.copyfile(picked.pdf, target)
             docs.append(PreparedDocument(kind, picked.source, target.name, sha256(target), picked.from_word))
-    return ProductOutcome(tdcc, PREPARED, _version_note(selections), folder, tuple(docs))
+    reason = "；".join(p for p in [_version_note(selections), *unusable] if p)
+    return ProductOutcome(tdcc, PREPARED, reason, folder, tuple(docs))
+
+
+def _unusable_notes(
+    kind: DocKind, mismatched: list[_Candidate], failures: dict[Path, str], unconverted_words: list[Path]
+) -> list[str]:
+    """沿用舊版時，同一種文件不能用的新檔：封面商品代號不符、Word 轉檔失敗、沒拿來比對的 Word。"""
+    notes = []
+    if mismatched:
+        notes.append(f"{kind.label}另有 {_names(mismatched)}，封面商品代號不符")
+    if failures:
+        notes.append(f"{kind.label}另有 Word 轉檔失敗：{'；'.join(f'{w.name}：{r}' for w, r in failures.items())}")
+    if unconverted_words:
+        names = "、".join(w.name for w in unconverted_words)
+        notes.append(f"資料夾有 Word 檔（{names}）沒有拿來比對；若上手的修正版只有 Word，請上手補 PDF")
+    return notes
 
 
 def _skipped(tdcc: str, problems: list[str], folder: Path, selections: dict[DocKind, _Selection]) -> ProductOutcome:
@@ -270,7 +293,9 @@ class _Versions:
     @property
     def failed_keys(self) -> set[str]:
         if self._failed_keys is None:
-            self._failed_keys = {self.key(p) for p in self._pending}
+            # 待確認檔的內容如果也有標準名檔（後來沿用同一版核對通過、放回了），那一版已經通過，不算沒通過
+            passed = {self.key(p) for p in self._sources if p.name in self._standard_names}
+            self._failed_keys = {self.key(p) for p in self._pending} - passed
         return self._failed_keys
 
     @property
@@ -284,7 +309,7 @@ class _Versions:
         return self._returned_keys
 
     def select(self, candidates: list[_Candidate]) -> _Selection:
-        """內容相同只算一份（保留上手原檔名）、排除沒通過的版本；還有多份時排除已放回的舊版，改用新寄來的。"""
+        """內容相同只算一份（保留上手原檔名）；有新版時排除沒通過的版本，沒新版時沿用它；還有多份時排除已放回的舊版。"""
         if len(candidates) <= 1 and not self._pending:
             return _Selection(list(candidates), [], [])
         groups: dict[str, list[_Candidate]] = {}

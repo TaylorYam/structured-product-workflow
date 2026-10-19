@@ -606,3 +606,28 @@ def test_rechecking_the_same_version_with_new_errors_writes_a_new_error_book(
     ]
     assert read_error_book(root / B / f"{B}_錯誤訊息_20261020-100000.xlsx")[1][3] == "年利率對不起來"
     assert f"資料夾仍有舊的錯訊檔 {B}_錯誤訊息_20261020-090000.xlsx" in o.reason
+
+
+def test_error_message_starting_with_equals_is_kept_as_text(root: Path, batch: Path, tmp_path: Path) -> None:
+    result = make_result_file(tmp_path / "r.xlsx", [], failed=[B])
+    wb = openpyxl.load_workbook(result)
+    wb["錯誤清單"]["C2"] = "'=期初價格對不起來"
+    wb.save(result)
+
+    run(batch, result)
+
+    rows = read_error_book(root / B / f"{B}_錯誤訊息_20261020-090000.xlsx")
+    assert rows[1][3] == "'=期初價格對不起來"
+
+
+def test_copies_of_error_books_are_not_taken_as_the_latest(root: Path, batch: Path, tmp_path: Path) -> None:
+    run(batch, make_result_file(tmp_path / "first.xlsx", [], failed=[B]))
+    first = root / B / f"{B}_錯誤訊息_20261020-090000.xlsx"
+    (root / B / f"{B}_錯誤訊息_20261020-090000 - 複本.xlsx").write_bytes(b"not an excel file")
+
+    receipt = return_to_folders(
+        batch, make_result_file(tmp_path / "second.xlsx", [], failed=[B]), now=RETURNED_AT + dt.timedelta(hours=1)
+    )
+
+    assert "錯訊寫在" not in outcome(receipt, B).reason  # 和最新一份（不是複本）相同，不再寫
+    assert first.exists()

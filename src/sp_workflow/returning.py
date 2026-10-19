@@ -4,7 +4,8 @@
 - 「回填後」工作表 `TS/IIS完成檢核` 為 `V` 的商品（說明書與投資人須知都通過或人工放行）用標準檔名放回；
 - 「錯誤清單」上的 PDF（沒通過、也沒人工放行）檔名加 `_待確認` 放回，同商品通過的那份仍用標準檔名；
 - 核對結果檔裡沒出現的商品（還沒核對）不放回。
-這次新放回了 `_待確認` 檔的商品，另在商品資料夾寫一份 `<TDCC>_錯誤訊息_<日期時間>.xlsx`（一條錯訊一列，#19）。
+這次新放回了 `_待確認` 檔，或同一版重複核對而錯訊和最新一份錯訊檔不同時，另在商品資料夾寫一份
+`<TDCC>_錯誤訊息_<日期時間>.xlsx`（一條錯訊一列，#19、#23）。
 放回標準檔名時，商品資料夾若還有同種的舊 `_待確認` 檔或舊錯訊檔，只提醒、不刪。
 目的地取準備清單記的商品資料夾；放回前重算指紋，和準備清單不符就不放。
 商品資料夾已有同名檔：內容相同算已在，內容不同不覆蓋、整個商品不放回。一個商品的兩份要嘛都處理、要嘛都不動。
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import datetime as dt
 import os
+import re
 import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -302,7 +304,7 @@ def _return_product(
     ]
     # 新放回待確認檔時寫；同一版重複核對（待確認檔已在）時，錯訊和最新一份錯訊檔不同才寫，相同就不多一份
     wrote_new = bool(pending) and (
-        any(copy_needed[kind] for kind in pending) or _error_rows(folder / old_books[-1] if old_books else None) != rows
+        any(copy_needed[kind] for kind in pending) or _error_rows(_latest_error_book(folder, tdcc)) != rows
     )
     if wrote_new:
         notes.append(_write_error_book(folder / f"{tdcc}{ERROR_BOOK_MARK}{stamp}.xlsx", rows))
@@ -319,6 +321,13 @@ def _return_product(
     if old_books and (now_passing or wrote_new):
         notes.append(f"資料夾仍有舊的錯訊檔 {'、'.join(old_books)}，請確認後刪除")
     return ReturnOutcome(tdcc, status(DocKind.TS), status(DocKind.IIS), "；".join(notes))
+
+
+def _latest_error_book(folder: Path, tdcc: str) -> Path | None:
+    """名稱剛好是 `<TDCC>_錯誤訊息_<YYYYMMDD-HHMMSS>.xlsx` 的錯訊檔裡最新的一份（複本之類的檔不算）。"""
+    pattern = re.compile(rf"{re.escape(tdcc)}{ERROR_BOOK_MARK}\d{{8}}-\d{{6}}\.xlsx")
+    books = sorted(p for p in folder.iterdir() if pattern.fullmatch(p.name))
+    return books[-1] if books else None
 
 
 def _error_rows(path: Path | None) -> list[tuple] | None:
@@ -346,6 +355,8 @@ def _write_error_book(path: Path, rows: list[tuple[str, str, str, str]]) -> str:
             cell.font = Font(bold=True)
         for row in rows:
             ws.append(list(row))
+            for cell in ws[ws.max_row]:
+                cell.data_type = "s"  # 一律存成文字：錯訊以「=」開頭也不會變成公式
             ws.cell(ws.max_row, 1).number_format = "@"  # TDCC 是文字，保留前導零
         for i, (_, width) in enumerate(ERROR_BOOK_COLUMNS, start=1):
             ws.column_dimensions[get_column_letter(i)].width = width
