@@ -130,17 +130,35 @@ def test_body_shows_the_terms_in_the_mail_format(db, tmp_path: Path, root: Path,
         assert expected in body, expected
 
 
-def test_columns_wider_than_bbg_code_4_wrap_at_that_width(db, tmp_path: Path, root: Path, out: Path) -> None:
+@pytest.mark.parametrize(
+    ("text", "width"),
+    [
+        ("Guaranteed Periods (m)", 83),  # Guaranteed／Periods (m)：較長行 11 字
+        ("Upfront / NotePrice (%)", 98),  # Upfront /／NotePrice (%)：13 字
+        ("Final valuation date", 105),  # Final／valuation date：14 字
+        ("Daily Memory", 75),  # 較長行只有 6 字，欄寬取 BBG Code 4 的 10 字
+    ],
+)
+def test_wide_columns_wrap_into_at_most_two_lines(db, tmp_path: Path, root: Path, out: Path, text, width) -> None:
     load(db, tmp_path, [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])])
     passed_folder(root, A)
 
     (_, drafter) = run(db, root, out, A)
 
-    body = drafter.drafts[0].html_body
-    for wide in ("Guaranteed Periods (m)", "Upfront / NotePrice (%)", "Final valuation date", "Daily Memory"):
-        assert "width: 72px; white-space: normal;" in _cell_style(body, wide), wide
-    for narrow in ("BBG Code 4", "Product", "期初價格", "分公司 1"):
-        assert "white-space: nowrap;" in _cell_style(body, narrow), narrow
+    assert (
+        f' width="{width}" style="border: 1px solid #000000; padding: 2px 6px; width: {width}px; white-space: normal;'
+        in (_cell_style(drafter.drafts[0].html_body, text))
+    )
+
+
+def test_columns_no_wider_than_bbg_code_4_stay_on_one_line(db, tmp_path: Path, root: Path, out: Path) -> None:
+    load(db, tmp_path, [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])])
+    passed_folder(root, A)
+
+    (_, drafter) = run(db, root, out, A)
+
+    for narrow in ("BBG Code 4", "Product", "期初價格", "分公司 1", "Strike (%)"):
+        assert "white-space: nowrap;" in _cell_style(drafter.drafts[0].html_body, narrow), narrow
 
 
 def _cell_style(body: str, text: str) -> str:

@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import html
+import math
 import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -44,8 +45,8 @@ GREEN = "#00AB8E"
 ORANGE = "#C55A11"  # 格式檔分公司表頭：佈景主題「輔色 2、較深 25%」
 ROW_FILL = "#F0F0F0"
 DATE_FORMAT = "%m-%d-%y"
-MAX_COLUMN_TEXT = "BBG Code 4"  # 使用者指定：欄寬上限是這欄的寬度，超過換行
-MAX_COLUMN_PX = 72  # 「BBG Code 4」在 Calibri 11pt 粗體下的約略寬度
+WRAP_FROM_TEXT = "BBG Code 4"  # 使用者指定：比這欄寬的欄位才換行，每格最多兩行
+PX_PER_UNIT = 7.5  # Calibri 11pt 粗體每個半形字的約略寬度（全形算 2 個）
 
 LIST_COLUMNS = (("TDCC", 15), ("狀態", 10), ("收件人", 40), ("副本", 50), ("原因", 80))
 
@@ -249,24 +250,41 @@ def render_body(tdcc: str, product: dict[str, Any], branches: Sequence[str]) -> 
 
 
 def _table(cells: Sequence[tuple[str, str]], header_color: str) -> str:
-    """一列表頭、一列資料。欄寬上限是「BBG Code 4」那欄，比它寬的欄固定成這個寬度並換行。
+    """一列表頭、一列資料。比「BBG Code 4」寬的欄位換行，欄寬取能讓表頭與內容都在兩行內的最小寬度。
 
-    Outlook 不支援 max-width，所以用 width 屬性加 white-space: normal；沒超過的欄維持一行。
+    Outlook 不支援 max-width，所以用 width 屬性加 white-space: normal；不需要換行的欄維持一行。
     """
-    limit = _text_units(MAX_COLUMN_TEXT)
     border = "border: 1px solid #000000; padding: 2px 6px;"
     head, body = [], []
     for k, v in cells:
-        if max(_text_units(k), _text_units(v)) > limit:
-            width, wrap = f' width="{MAX_COLUMN_PX}"', f"width: {MAX_COLUMN_PX}px; white-space: normal;"
-        else:
+        px = _wrap_width(k, v)
+        if px is None:
             width, wrap = "", "white-space: nowrap;"
+        else:
+            width, wrap = f' width="{px}"', f"width: {px}px; white-space: normal;"
         head.append(
             f'<th{width} style="{border} {wrap} background: {header_color}; color: #FFFFFF; font-weight: bold;">'
             f"{html.escape(k)}</th>"
         )
         body.append(f'<td{width} style="{border} {wrap} background: {ROW_FILL};">{html.escape(v)}</td>')
     return f'<table style="border-collapse: collapse;"><tr>{"".join(head)}</tr><tr>{"".join(body)}</tr></table>'
+
+
+def _wrap_width(*texts: str) -> int | None:
+    """需要換行時回傳欄寬（px），不需要回傳 None。欄寬至少是「BBG Code 4」，並讓每段文字最多兩行。"""
+    limit = _text_units(WRAP_FROM_TEXT)
+    if max(_text_units(t) for t in texts) <= limit:
+        return None
+    units = max(limit, *(_two_line_units(t) for t in texts))
+    return math.ceil(units * PX_PER_UNIT)
+
+
+def _two_line_units(text: str) -> int:
+    """在空白處斷成兩行時，較長那行最短是多少；沒有空白就只能一行。"""
+    words = text.split(" ")
+    if len(words) == 1:
+        return _text_units(text)
+    return min(max(_text_units(" ".join(words[:i])), _text_units(" ".join(words[i:]))) for i in range(1, len(words)))
 
 
 def _text_units(text: str) -> int:
