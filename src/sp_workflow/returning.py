@@ -42,6 +42,7 @@ RESULT_CHECKED_COLUMN = "TS/IIS完成檢核"
 RESULT_CHECKED_VALUE = "V"
 ERROR_SHEET = "錯誤清單"
 ERROR_HEADER_ROW = 1
+ERROR_TDCC_COLUMN = "TDCC Code"
 ERROR_PDF_COLUMN = "PDF 檔名"
 ERROR_MESSAGE_COLUMN = "錯訊"
 TDCC_DIGITS = 12
@@ -63,6 +64,16 @@ class ReturnOutcome:
     ts: str
     iis: str
     reason: str = ""
+
+    @property
+    def blocked(self) -> bool:
+        """這個商品沒有放回。"""
+        return NOT_RETURNED in (self.ts, self.iis)
+
+    @property
+    def pending(self) -> bool:
+        """有一份以 `_待確認` 檔名放回（或已在）。"""
+        return any(s in (PENDING_RETURNED, PENDING_ALREADY_THERE) for s in (self.ts, self.iis))
 
 
 @dataclass(frozen=True)
@@ -87,8 +98,8 @@ def return_to_folders(batch_dir: Path, result_file: Path, *, now: dt.datetime | 
     依序列「回填後」的商品、錯誤清單的商品，再列這批已準備、但核對結果檔沒有的商品（還沒核對，不放回）。
     """
     prepared, skipped = _read_preparation_list(batch_dir / LIST_NAME)
-    passed = _read_passed_tdccs(result_file)
-    failed = {t: msgs for t, msgs in _read_failed_pdfs(result_file).items() if t not in passed}
+    passed, all_failed = _read_result(result_file)
+    failed = {t: msgs for t, msgs in all_failed.items() if t not in passed}  # 兩張表都有時以回填後為準
     list_path = batch_dir / f"放回清單_{(now or dt.datetime.now()):%Y%m%d-%H%M%S}.xlsx"
     if list_path.exists():
         raise ReturnError(f"放回清單已存在：{list_path}")
@@ -143,39 +154,39 @@ def _read_preparation_list(path: Path) -> tuple[dict[str, dict[DocKind, _Prepare
     return complete, skipped
 
 
-def _read_passed_tdccs(path: Path) -> list[str]:
-    """核對結果檔「回填後」上 TS/IIS完成檢核 為 V 的 TDCC（去重、保留順序）。"""
-    rows = _read_rows(path, RESULT_SHEET, "核對結果檔")[RESULT_HEADER_ROW - 1 :]
-    header = [str(h).strip() if h is not None else "" for h in (rows[0] if rows else ())]
-    missing = [c for c in (RESULT_TDCC_COLUMN, RESULT_CHECKED_COLUMN) if c not in header]
-    if missing:
-        raise ReturnError(f"核對結果檔「{RESULT_SHEET}」第 {RESULT_HEADER_ROW} 列找不到欄：{'、'.join(missing)}")
-    tdcc_col, checked_col = header.index(RESULT_TDCC_COLUMN), header.index(RESULT_CHECKED_COLUMN)
-    passed = (
-        _normalize_tdcc(row[tdcc_col])
-        for row in rows[1:]
-        if len(row) > max(tdcc_col, checked_col) and str(row[checked_col] or "").strip() == RESULT_CHECKED_VALUE
+def _read_result(path: Path) -> tuple[list[str], dict[str, dict[str, str]]]:
+    """讀核對結果檔（開一次）：「回填後」打 V 的 TDCC（去重、保留順序），以及「錯誤清單」{TDCC: {PDF 檔名: 錯訊}}。"""
+    backfill, errors = _read_sheets(path, (RESULT_SHEET, ERROR_SHEET), "核對結果檔")
+    rows, (tdcc_col, checked_col) = _columns(
+        backfill, RESULT_SHEET, RESULT_HEADER_ROW, (RESULT_TDCC_COLUMN, RESULT_CHECKED_COLUMN)
     )
-    return list(dict.fromkeys(t for t in passed if t))
-
-
-def _read_failed_pdfs(path: Path) -> dict[str, dict[str, str]]:
-    """核對結果檔「錯誤清單」上的 PDF：{TDCC: {PDF 檔名: 錯訊}}（依清單順序）；PDF 檔名不是標準名的略過。"""
-    rows = _read_rows(path, ERROR_SHEET, "核對結果檔")[ERROR_HEADER_ROW - 1 :]
-    header = [str(h).strip() if h is not None else "" for h in (rows[0] if rows else ())]
-    missing = [c for c in (ERROR_PDF_COLUMN, ERROR_MESSAGE_COLUMN) if c not in header]
-    if missing:
-        raise ReturnError(f"核對結果檔「{ERROR_SHEET}」第 {ERROR_HEADER_ROW} 列找不到欄：{'、'.join(missing)}")
-    pdf_col, message_col = header.index(ERROR_PDF_COLUMN), header.index(ERROR_MESSAGE_COLUMN)
+    passed = [
+        _normalize_tdcc(row[tdcc_col]) for row in rows if str(row[checked_col] or "").strip() == RESULT_CHECKED_VALUE
+    ]
+    rows, (code_col, pdf_col, message_col) = _columns(
+        errors, ERROR_SHEET, ERROR_HEADER_ROW, (ERROR_TDCC_COLUMN, ERROR_PDF_COLUMN, ERROR_MESSAGE_COLUMN)
+    )
     failed: dict[str, dict[str, str]] = {}
-    for row in rows[1:]:
-        if len(row) <= max(pdf_col, message_col):
-            continue
-        name = str(row[pdf_col] or "").strip()
-        tdcc, _, kind = name.removesuffix(".pdf").partition("_")
-        if len(tdcc) == TDCC_DIGITS and tdcc.isdigit() and kind in {k.value for k in DocKind}:
-            failed.setdefault(tdcc, {})[name] = str(row[message_col] or "").strip()
-    return failed
+    for row in rows:
+        tdcc, name = _normalize_tdcc(row[code_col]), str(row[pdf_col] or "").strip()
+        if tdcc and name:
+            # 多條錯訊在同一格換行；接成一行，視窗看得完整
+            message = "／".join(line.strip() for line in str(row[message_col] or "").splitlines() if line.strip())
+            failed.setdefault(tdcc, {})[name] = message
+    return list(dict.fromkeys(t for t in passed if t)), failed
+
+
+def _columns(
+    rows: list[tuple], sheet: str, header_row: int, required: tuple[str, ...]
+) -> tuple[list[tuple], list[int]]:
+    """表頭在第 header_row 列的工作表：回傳表頭以下、欄數夠的列，以及必要欄的位置；缺欄時整批停止。"""
+    rows = rows[header_row - 1 :]
+    header = [str(h).strip() if h is not None else "" for h in (rows[0] if rows else ())]
+    missing = [c for c in required if c not in header]
+    if missing:
+        raise ReturnError(f"核對結果檔「{sheet}」第 {header_row} 列找不到欄：{'、'.join(missing)}")
+    indices = [header.index(c) for c in required]
+    return [row for row in rows[1:] if len(row) > max(indices)], indices
 
 
 def _pending_name(output_name: str) -> str:
@@ -185,15 +196,22 @@ def _pending_name(output_name: str) -> str:
 
 
 def _read_rows(path: Path, sheet: str | None, label: str) -> list[tuple]:
-    """讀一張工作表的所有列（sheet 為 None 時讀第一張），讀完就關檔，不鎖住檔案。"""
+    """讀一張工作表的所有列（sheet 為 None 時讀第一張）。"""
+    [rows] = _read_sheets(path, (sheet,), label)
+    return rows
+
+
+def _read_sheets(path: Path, sheets: tuple[str | None, ...], label: str) -> list[list[tuple]]:
+    """一次讀幾張工作表的所有列（None 表示第一張），讀完就關檔，不鎖住檔案。"""
     try:
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
     except Exception as exc:  # openpyxl 對壞檔丟出的例外型別不固定
         raise ReturnError(f"讀不到{label}：{path}（{exc}）") from None
     try:
-        if sheet is not None and sheet not in wb.sheetnames:
-            raise ReturnError(f"{label}裡找不到「{sheet}」工作表：{path}")
-        return list((wb[sheet] if sheet else wb.worksheets[0]).iter_rows(values_only=True))
+        for sheet in sheets:
+            if sheet is not None and sheet not in wb.sheetnames:
+                raise ReturnError(f"{label}裡找不到「{sheet}」工作表：{path}")
+        return [list((wb[s] if s else wb.worksheets[0]).iter_rows(values_only=True)) for s in sheets]
     finally:
         wb.close()
 
@@ -211,8 +229,15 @@ def _return_product(
     tdcc: str, docs: dict[DocKind, _Prepared], batch_dir: Path, failed: dict[str, str]
 ) -> ReturnOutcome:
     """failed 是這個商品在錯誤清單上的 PDF 與錯訊；它們以 `_待確認` 檔名放回，其餘用標準檔名。"""
-    pending = {kind for kind, doc in docs.items() if doc.output_name in failed}
+    messages = {name.lower(): message for name, message in failed.items()}  # 檔名大小寫不同也算同一份
+    unknown = sorted(set(messages) - {doc.output_name.lower() for doc in docs.values()})
+    if unknown:
+        return ReturnOutcome(tdcc, NOT_RETURNED, NOT_RETURNED, f"錯誤清單上的檔名對不到這批的檔：{'、'.join(unknown)}")
+    pending = {kind for kind, doc in docs.items() if doc.output_name.lower() in messages}
     names = {kind: _pending_name(doc.output_name) if kind in pending else doc.output_name for kind, doc in docs.items()}
+    check_notes = [
+        f"核對沒通過（{kind.value}）：{messages[docs[kind].output_name.lower()]}" for kind in DocKind if kind in pending
+    ]
     problems = []
     for doc in docs.values():
         batch_file = batch_dir / doc.output_name
@@ -236,7 +261,7 @@ def _return_product(
         else:
             problems.append(f"商品資料夾已有內容不同的 {names[kind]}，請確認要留哪一份")
     if problems:
-        return ReturnOutcome(tdcc, NOT_RETURNED, NOT_RETURNED, "；".join(problems))
+        return ReturnOutcome(tdcc, NOT_RETURNED, NOT_RETURNED, "；".join([*problems, *check_notes]))
 
     to_copy = [kind for kind in docs if copy_needed[kind]]
     temps = {kind: folder / (names[kind] + _TEMP_SUFFIX) for kind in to_copy}
@@ -261,12 +286,13 @@ def _return_product(
             return PENDING_RETURNED if copy_needed[kind] else PENDING_ALREADY_THERE
         return RETURNED if copy_needed[kind] else ALREADY_THERE
 
-    notes = [f"核對沒通過（{kind.value}）：{failed[docs[kind].output_name]}" for kind in DocKind if kind in pending]
-    notes += [
-        f"資料夾仍有舊的 {_pending_name(docs[kind].output_name)}，請確認後刪除"
-        for kind in DocKind
-        if kind not in pending and (folder / _pending_name(docs[kind].output_name)).exists()
-    ]
+    notes = list(check_notes)
+    for kind in DocKind:
+        standard, old_pending = docs[kind].output_name, _pending_name(docs[kind].output_name)
+        if kind in pending and (folder / standard).exists():  # 例：UBS 上手本來就給標準檔名
+            notes.append(f"資料夾已有標準檔名的 {standard}，不是這次核對確認的版本，請留意")
+        if kind not in pending and (folder / old_pending).exists():
+            notes.append(f"資料夾仍有舊的 {old_pending}，請確認後刪除")
     return ReturnOutcome(tdcc, status(DocKind.TS), status(DocKind.IIS), "；".join(notes))
 
 

@@ -43,7 +43,7 @@ def make_result_file(path: Path, passed: list[str | int], failed: list[str] = ()
     errors = wb.create_sheet("錯誤清單")
     errors.append(["TDCC Code", "PDF 檔名", "錯訊"])
     for item in failed:
-        name = item if item.endswith(".pdf") else f"{item}_TS.pdf"
+        name = item if item.lower().endswith(".pdf") else f"{item}_TS.pdf"
         errors.append([name[:12], name, "UL_1 進場價對不起來：參考條件表 123.4500／說明書 123.4000"])
     wb.save(path)
     return path
@@ -399,6 +399,58 @@ def test_failed_product_not_in_this_batch_is_not_returned(batch: Path, tmp_path:
     assert (o.ts, o.iis, o.reason) == (NOT_RETURNED, NOT_RETURNED, "這批準備清單沒有這個商品")
 
 
+def test_multi_line_error_messages_are_joined_on_one_line(root: Path, batch: Path, tmp_path: Path) -> None:
+    result = make_result_file(tmp_path / "r.xlsx", [], failed=[B])
+    wb = openpyxl.load_workbook(result)
+    wb["錯誤清單"]["C2"] = "UL_1 進場價對不起來\n年利率對不起來"
+    wb.save(result)
+
+    o = outcome(run(batch, result), B)
+
+    assert o.reason == "核對沒通過（TS）：UL_1 進場價對不起來／年利率對不起來"
+
+
+def test_error_list_file_name_is_matched_case_insensitively(root: Path, batch: Path, tmp_path: Path) -> None:
+    o = outcome(run(batch, make_result_file(tmp_path / "r.xlsx", [], failed=[f"{B}_TS.PDF"])), B)
+
+    assert o.ts == PENDING_RETURNED
+
+
+def test_unknown_file_name_on_error_list_is_reported(root: Path, batch: Path, tmp_path: Path) -> None:
+    before = snapshot(root / B)
+
+    o = outcome(run(batch, make_result_file(tmp_path / "r.xlsx", [], failed=[f"{B}_TS_revised.pdf"])), B)
+
+    assert (o.ts, o.iis) == (NOT_RETURNED, NOT_RETURNED)
+    assert o.reason == f"錯誤清單上的檔名對不到這批的檔：{B}_ts_revised.pdf"
+    assert snapshot(root / B) == before
+
+
+def test_conflict_keeps_the_check_errors_in_the_reason(root: Path, batch: Path, tmp_path: Path) -> None:
+    make_pdf(root / B / f"{B}_TS_待確認.pdf", ["上一版的說明書"])
+
+    o = outcome(run(batch, make_result_file(tmp_path / "r.xlsx", [], failed=[B])), B)
+
+    assert "商品資料夾已有內容不同的" in o.reason and "核對沒通過（TS）" in o.reason
+
+
+def test_existing_standard_file_of_a_failed_document_is_flagged(root: Path, batch: Path, tmp_path: Path) -> None:
+    """UBS 上手本來就給標準檔名：沒通過時資料夾裡那份標準檔名不是確認版。"""
+    (root / B / f"{B}_TS.pdf").write_bytes((batch / f"{B}_TS.pdf").read_bytes())
+
+    o = outcome(run(batch, make_result_file(tmp_path / "r.xlsx", [], failed=[B])), B)
+
+    assert o.ts == PENDING_RETURNED
+    assert f"資料夾已有標準檔名的 {B}_TS.pdf，不是這次核對確認的版本" in o.reason
+
+
+def test_outcome_flags_for_the_window(root: Path, batch: Path, tmp_path: Path) -> None:
+    receipt = run(batch, make_result_file(tmp_path / "r.xlsx", [A], failed=[B]))
+
+    assert (outcome(receipt, A).pending, outcome(receipt, A).blocked) == (False, False)
+    assert (outcome(receipt, B).pending, outcome(receipt, B).blocked) == (True, False)
+
+
 def test_result_file_without_error_sheet_stops_everything(root: Path, batch: Path, tmp_path: Path) -> None:
     result = make_result_file(tmp_path / "r.xlsx", [A])
     wb = openpyxl.load_workbook(result)
@@ -414,7 +466,8 @@ def test_error_sheet_without_required_columns_stops_everything(batch: Path, tmp_
     result = make_result_file(tmp_path / "r.xlsx", [A])
     wb = openpyxl.load_workbook(result)
     wb["錯誤清單"]["B1"] = "檔名"
+    wb["錯誤清單"]["A1"] = "代號"
     wb.save(result)
 
-    with pytest.raises(ReturnError, match="PDF 檔名"):
+    with pytest.raises(ReturnError, match="TDCC Code、PDF 檔名"):
         return_to_folders(batch, result, now=RETURNED_AT)
