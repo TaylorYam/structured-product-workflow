@@ -117,7 +117,7 @@ def prepare_batch(
     converter 預設用 Microsoft Word 轉檔（只有需要轉 Word 時才會啟動）。
     """
     convert = converter or default_converter()
-    tokens = _parse_tokens(text)
+    tokens = parse_tdccs(text)
     if not tokens:
         raise PreparationError("沒有輸入 TDCC")
     if not root.is_dir():
@@ -131,7 +131,7 @@ def prepare_batch(
         raise PreparationError(f"批次資料夾已存在：{batch_dir}") from None
 
     valid = {t for t in tokens if _TDCC.fullmatch(t)}
-    folders, unreadable = _find_product_folders(root, valid)
+    folders, unreadable = find_product_folders(root, valid)
     outcomes = tuple(
         _prepare_product(t, folders.get(t, []), unreadable, batch_dir, convert)
         if t in valid
@@ -143,12 +143,12 @@ def prepare_batch(
     return PrepareReceipt(batch_dir, list_path, outcomes, tuple(unreadable))
 
 
-def _parse_tokens(text: str) -> list[str]:
+def parse_tdccs(text: str) -> list[str]:
     """換行、空白、逗號、頓號、分號都可以分隔；重複的只留第一次。"""
     return list(dict.fromkeys(t for t in _SEPARATORS.split(text) if t))
 
 
-def _find_product_folders(root: Path, wanted: set[str]) -> tuple[dict[str, list[Path]], list[Path]]:
+def find_product_folders(root: Path, wanted: set[str]) -> tuple[dict[str, list[Path]], list[Path]]:
     """根目錄底下任何深度、名稱剛好等於 TDCC 的資料夾（只走一次樹），以及讀不到的資料夾。"""
     found: dict[str, list[Path]] = {}
     unreadable: list[Path] = []

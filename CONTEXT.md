@@ -13,7 +13,7 @@
 - 產品：目前優先 Vanilla FCN，使用者估計占約 85%；未來希望擴展 EXPRESS FCN、BEN 等。高度客製化產品可選人工核對。
 - 專案分工：現有 fcn-term-sheet-checker 專心處理核對；另建本專案承載整體流程。
 - 資料管理方向：採用 PostgreSQL；先本機開發，未來希望由公司伺服器支援兩到三人接手協作，避免依賴個人電腦。筆電與作業主機的開發／正式資料分開；亦希望分析四年 FCN 並匯出 Excel。選型與限制見 [ADR 0001](docs/adr/0001-postgresql-workflow-storage.md)。
-- 當前授權：TS／IIS 準備與放回已實作；寄信草稿需求已確認（#29，只建草稿、不寄出），開始實作待使用者指示。自動寄信、Order 建檔等其他流程仍需另行授權。
+- 當前授權：TS／IIS 準備與放回、最小 FCN 資料庫與每日匯入（#32）、寄信草稿（#29，只建草稿、不寄出）已實作。自動寄信、Order 建檔等其他流程仍需另行授權。
 
 名詞：Order 指正式交易指示；TS 指產品說明書；IIS 指投資人須知；TDCC 是商品配對代號；FC 指輔銷人員。
 「原始歸檔」保存收到的文件；「確認版本歸檔」標記經核對、可供寄送的確切文件版本。
@@ -32,7 +32,7 @@ Source: user architecture discussions through 2026-10-18. This document records 
 - Products: prioritize Vanilla FCN, estimated by the user at approximately 85%; later expand to EXPRESS FCN, BEN, and others. Highly customized products may use manual checking.
 - Ownership: fcn-term-sheet-checker remains focused on checking; this new repository owns the overall workflow.
 - Data direction: select PostgreSQL, develop locally first, then target a company server for two or three collaborators independent of a personal computer. Separate laptop development and operational data; support future four-year FCN analysis and Excel export. See [ADR 0001](docs/adr/0001-postgresql-workflow-storage.md).
-- Current authorization: TS/IIS preparation and return are implemented; mail-draft requirements are confirmed (#29, drafts only, no sending), and implementation starts on user instruction. Automatic sending, Order booking, and other workflows require separate authorization.
+- Current authorization: TS/IIS preparation and return, the minimal FCN database with daily import (#32), and mail drafts (#29, drafts only, no sending) are implemented. Automatic sending, Order booking, and other workflows require separate authorization.
 
 Terms: Order means formal trading instructions; TS means term sheet; IIS means investor information sheet; TDCC identifies a product; FC means sales support personnel.
 Incoming archiving preserves received sources; approved-version archiving identifies the exact reviewed files eligible for distribution.
