@@ -18,6 +18,10 @@ dev = [
     "pytest>=8",
     "ruff>=0.6",
 ]
+# 本機 PostgreSQL 開發工具（scripts/）才需要
+db = [
+    "psycopg[binary]>=3.2,<4",
+]
 
 [project.scripts]
 spw-panel = "sp_workflow.app:main"

@@ -2,7 +2,7 @@
 
 ## 繁體中文
 
-狀態：第一個功能「TS／IIS 批次準備」開發中（[#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)）；其他流程仍在設計階段。
+狀態：「TS／IIS 準備與放回」已完成，以真實樣本複本試跑過，等作業主機公槽實測（[#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)）。下一個功能「寄信草稿」需求已確認、待實作（[#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)）。本機 PostgreSQL 開發工具與庫存 Excel 測試匯入見 [#30](https://github.com/TaylorYam/structured-product-workflow/issues/30)。其他流程仍在設計階段。
 
 本專案管理正式 Order、建檔、上手文件歸檔、核對串接及 FC 寄送。詢價端沿用既有系統。
 核對規則由獨立的 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) 負責。
@@ -52,7 +52,7 @@ spw-panel
 
 ## English
 
-Status: the first feature, TS/IIS batch preparation, is under development ([#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)); other workflows remain in design.
+Status: TS/IIS preparation and return is complete and trial-run on copies of real samples; operational shared-drive testing is pending ([#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)). The next feature, mail drafts, has confirmed requirements and awaits implementation ([#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)). Local PostgreSQL development tools and the inventory-Excel test import are tracked in [#30](https://github.com/TaylorYam/structured-product-workflow/issues/30). Other workflows remain in design.
 
 This project coordinates formal Orders, booking, issuer document archiving, checker integration, and FC distribution. Inquiry remains in the existing system.
 Checking rules belong to the independent [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker).

@@ -2,7 +2,7 @@
 
 ## 繁體中文
 
-狀態：PostgreSQL 選型已記錄於 [ADR 0001](adr/0001-postgresql-workflow-storage.md)；本文件其餘內容為待實作設計。未建立 schema、連線或實際資料搬遷，也未驗證使用者本機安裝結果。
+狀態：PostgreSQL 選型已記錄於 [ADR 0001](adr/0001-postgresql-workflow-storage.md)。已完成本機 PostgreSQL 測試連線及第一批庫存 Excel 的測試匯入；正式作業 schema、遷移流程與部署仍待另行確認。
 
 ### 資料責任
 
@@ -29,6 +29,20 @@
 結果回存需分開：完整核對紀錄、允許回填欄位、案件進度。依既有規則驗證後才回填 ISIN／日期等候選值；差異不覆蓋正式 Order。保存 run ID、條件版本、文件 hash、checker／設定版本。回存時若正式條件或文件選擇已變，保留舊 run 但不把目前版本標示通過；同一 run 重複匯入須能辨識。
 
 ### 開發與部署
+
+#### 庫存 Excel 第一次測試匯入
+
+`scripts/` 的 PostgreSQL 工具需要選用的 `db` 套件：`python -m pip install -c constraints.txt -e ".[dev,db]"`。不用資料庫的人照 README 安裝 `.[dev]` 即可。
+
+測試匯入器位於 `scripts/import_inventory_excel.py`，會主動讀取本機 `.env`；`.env` 必須維持在 Git ignore 範圍內，密碼不得寫入 repository、log 或輸出。匯入器預設只做 dry-run：
+
+```text
+python scripts/import_inventory_excel.py --excel <path> --sheet 工作表1 --env-file .env --check-connection
+python scripts/import_inventory_excel.py --excel <path> --sheet 工作表1 --env-file .env --dry-run
+python scripts/import_inventory_excel.py --excel <path> --sheet 工作表1 --env-file .env --write
+```
+
+第一次測試匯入使用 `(source_sha256, sheet_name, config_sha256)` 識別相同檔案、工作表與匯入設定的重跑。寫入在單一 transaction 中建立測試匯入表、保存原始 Excel 列、標準化 TDCC 商品、分公司配置及標的明細；失敗時整批 rollback，既有資料不刪除也不覆蓋。正式作業 schema、migration 及欄位規則仍需獨立審查。
 
 ```mermaid
 flowchart LR
@@ -59,7 +73,7 @@ flowchart LR
 
 ## English
 
-Status: PostgreSQL selection is recorded in [ADR 0001](adr/0001-postgresql-workflow-storage.md). Remaining sections are unimplemented design. No schema, connection, or actual migration exists, and the user's local installation has not been verified.
+Status: PostgreSQL selection is recorded in [ADR 0001](adr/0001-postgresql-workflow-storage.md). The local PostgreSQL connection and the first inventory-Excel test import are complete. The operational schema, migration process, and deployment remain subject to separate confirmation.
 
 ### Data ownership
 
@@ -78,6 +92,20 @@ The workflow reads confirmed terms and selected document versions from PostgreSQ
 Persist full results, allowed backfills, and case progress separately. Validate ISIN/date candidates under existing rules; discrepancies never overwrite formal Order terms. Bind each run to its term version, document hashes, checker/configuration versions. If current terms or selected documents change, retain the old run without marking the new version passed. Detect repeated imports of the same run.
 
 ### Development and deployment
+
+#### First inventory Excel test import
+
+The PostgreSQL tools in `scripts/` need the optional `db` extra: `python -m pip install -c constraints.txt -e ".[dev,db]"`. Without a database, install `.[dev]` as described in the README.
+
+The test importer is `scripts/import_inventory_excel.py`. It actively loads the local `.env`; `.env` must remain covered by Git ignore, and passwords must not enter the repository, logs, or output. The importer defaults to a dry-run:
+
+```text
+python scripts/import_inventory_excel.py --excel <path> --sheet 工作表1 --env-file .env --check-connection
+python scripts/import_inventory_excel.py --excel <path> --sheet 工作表1 --env-file .env --dry-run
+python scripts/import_inventory_excel.py --excel <path> --sheet 工作表1 --env-file .env --write
+```
+
+The first test import identifies reruns with `(source_sha256, sheet_name, config_sha256)`. A write runs in one transaction and creates the test-import tables, preserves raw Excel rows, and stores normalized TDCC products, branch allocations, and underlying details. A failure rolls back the batch; existing data is neither deleted nor overwritten. The operational schema, migrations, and final field rules require separate review.
 
 The diagram above separates laptop code/tests and a development PostgreSQL from the operational host/database. GitHub transfers code and migrations, not business data. Future users connect through the company network or an approved VPN.
 
