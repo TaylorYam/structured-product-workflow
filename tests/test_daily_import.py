@@ -25,6 +25,8 @@ from sp_workflow.daily_import import (
     UNCHANGED,
     DailyImportError,
     import_daily,
+    is_pb,
+    latest_import,
 )
 from sp_workflow.database import DatabaseError, require_current_schema
 
@@ -111,6 +113,22 @@ def test_other_products_are_skipped_and_counted(pg, tmp_path: Path, mailbox) -> 
 
     assert (receipt.skipped_trade_rows, receipt.skipped_inventory_rows) == (1, 1)
     assert count(pg, "workflow.product") == 1 and kinds(receipt, D) == []
+    assert pg.execute("SELECT tdcc, product FROM workflow.other_product").fetchall() == [(D, "BEN")]
+
+
+def test_latest_import_describes_the_newest_run(pg, tmp_path: Path, mailbox) -> None:
+    assert latest_import(pg) is None
+    import_daily(write_daily(tmp_path / "1.xlsx", [], []), pg)
+    import_daily(write_daily(tmp_path / "2.xlsx", [], []), pg)
+
+    info = latest_import(pg)
+
+    assert (info.run_id, info.file_name, len(info.sha256)) == (2, "2.xlsx", 64)
+
+
+@pytest.mark.parametrize("name", ["PB", " pb ", "Pb"])
+def test_pb_is_recognized_however_it_is_typed(name) -> None:
+    assert is_pb(name)
 
 
 def test_importing_the_same_file_again_adds_nothing(pg, tmp_path: Path, mailbox) -> None:

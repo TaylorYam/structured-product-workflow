@@ -21,7 +21,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from sp_workflow.daily_import import DailyImportError, ImportReceipt, import_daily
+from sp_workflow.daily_import import DailyImportError, ImportInfo, ImportReceipt, import_daily, latest_import
 from sp_workflow.database import ConnectionSettings, DatabaseError, connect, default_env_path, settings_from_env
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.mail_drafts import DRAFTED, NOT_NEEDED, DraftReceipt, MailDraftError, create_drafts
@@ -328,11 +328,33 @@ class MailDraftTab(_Tab):
         self.memory.remember(root=str(root), mail_out=str(out))
         self.start_button.configure(state=tk.DISABLED)
 
-        def run() -> DraftReceipt:
+        def check() -> ImportInfo | None:
             with connect(settings) as conn:
-                return create_drafts(text, root, out, conn)
+                return latest_import(conn)
 
-        self.run_in_background(run, "建立草稿中…（在根目錄底下搜尋商品資料夾）", self._done)
+        def confirm(result: object) -> None:
+            # 先讓作業人員看到用的是哪一次每日匯入，確認後才建草稿，避免用到舊資料
+            self.db.after_run(result)
+            if isinstance(result, Exception):
+                self.start_button.configure(state=tk.NORMAL)
+                return
+            question = (
+                f"最近一次每日匯入：{_import_text(result)}\n\n要用這份資料建立草稿嗎？"
+                if result is not None
+                else "資料庫還沒有任何每日匯入紀錄。仍要繼續嗎？"
+            )
+            if not messagebox.askyesno(TITLE, question, parent=self.master):
+                self.start_button.configure(state=tk.NORMAL)
+                self.status_var.set("已取消，沒有建立任何草稿。")
+                return
+
+            def run() -> DraftReceipt:
+                with connect(settings) as conn:
+                    return create_drafts(text, root, out, conn)
+
+            self.run_in_background(run, "建立草稿中…（在根目錄底下搜尋商品資料夾）", self._done)
+
+        self.run_in_background(check, "讀取最近一次每日匯入…", confirm)
 
     def _done(self, result: object) -> None:
         self.start_button.configure(state=tk.NORMAL)
@@ -342,11 +364,14 @@ class MailDraftTab(_Tab):
         for o in result.outcomes:
             self.add_row((o.tdcc, o.status, "、".join(o.to), o.reason), problem=o.status not in (DRAFTED, NOT_NEEDED))
         drafted = sum(o.status == DRAFTED for o in result.outcomes)
-        last = f"{result.last_import:%Y-%m-%d %H:%M}" if result.last_import else "沒有匯入紀錄"
-        self.status_var.set(
+        last = _import_text(result.last_import) if result.last_import else "沒有匯入紀錄"
+        status = (
             f"完成：{drafted} 封草稿已建立（在 Outlook 草稿匣，請確認後再寄出）、"
             f"{len(result.outcomes) - drafted} 檔沒有建立。最近一次每日匯入：{last}。結果清單：{result.list_path}"
         )
+        if result.unreadable_dirs:
+            status += f"\n注意：搜尋時有 {len(result.unreadable_dirs)} 個資料夾讀不到（例如 {result.unreadable_dirs[0]}），裡面的商品資料夾找不到。"
+        self.status_var.set(status)
 
 
 class PanelWindow:
@@ -366,6 +391,10 @@ class PanelWindow:
 
 def _ask_dir(title: str, current: tk.StringVar) -> str:
     return filedialog.askdirectory(title=title, initialdir=current.get() or None, mustexist=True)
+
+
+def _import_text(info: ImportInfo) -> str:
+    return f"{info.imported_at:%Y-%m-%d %H:%M}（第 {info.run_id} 次，{info.file_name}）"
 
 
 def _ask_excel(title: str, current: tk.StringVar) -> str:

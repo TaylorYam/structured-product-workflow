@@ -3,7 +3,7 @@
 對外只有 `import_daily`。規則：
 - `每日更新.xlsx` 的 `交易明細`、`清單更新` 第 1 列是欄名，必須和來源表（交易清單月份工作表、庫存總表）
   的欄名與順序完全相同；不同就整份不匯入。程式依欄名讀需要的欄位。
-- 只收 Product 為 FCN 的列，其他略過並計數。
+- 只收 Product 為 FCN 的列，其他略過並計數；略過的 TDCC 與 Product 記在 `workflow.other_product`。
 - 以 TDCC 為單位、第一次寫入為準：資料庫已有的商品或交易不重複寫入，內容不同只列出差異、不覆蓋。
 - 已存在商品的庫存狀態這一版不更新。
 - 分公司對帳到每個分公司（交易明細各分公司金額加總 vs 庫存總表承作金額，PB 也算），差異只提醒。
@@ -146,6 +146,7 @@ class _Parsed:
     allocations: dict[str, list[tuple[str, Decimal]]] = field(default_factory=dict)
     trades: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     blocked: list[ImportLine] = field(default_factory=list)
+    other_products: dict[str, str] = field(default_factory=dict)  # 略過的非 FCN：TDCC → Product
     skipped_trade_rows: int = 0
     skipped_inventory_rows: int = 0
 
@@ -167,6 +168,7 @@ def import_daily(daily_book: Path, conn: psycopg.Connection) -> ImportReceipt:
         lines = list(parsed.blocked)
         lines += _write_products(conn, parsed, run_id)
         lines += _write_trades(conn, parsed, run_id)
+        _write_other_products(conn, parsed, run_id)
         touched = sorted(set(parsed.products) | set(parsed.trades))
         lines += _reconcile(conn, touched)
         lines += _unmatched_names(parsed, mailbox)
@@ -182,6 +184,31 @@ def import_daily(daily_book: Path, conn: psycopg.Connection) -> ImportReceipt:
             (json.dumps(_summary(receipt), ensure_ascii=False), run_id),
         )
     return receipt
+
+
+@dataclass(frozen=True)
+class ImportInfo:
+    """一次每日匯入的紀錄（寄信前確認資料是不是最新的）。"""
+
+    run_id: int
+    imported_at: dt.datetime
+    file_name: str
+    sha256: str
+
+
+def latest_import(conn: psycopg.Connection) -> ImportInfo | None:
+    """最近一次每日匯入；還沒匯入過時回傳 None。"""
+    with conn.transaction():
+        row = conn.execute(
+            "SELECT run_id, imported_at, daily_file_name, daily_sha256 FROM workflow.import_run"
+            " ORDER BY run_id DESC LIMIT 1"
+        ).fetchone()
+    return None if row is None else ImportInfo(*row)
+
+
+def is_pb(name: str) -> bool:
+    """交易列的 FC/PB 是 PB（私銀），不寄信、但金額仍算進對帳。"""
+    return name.strip().upper() == PB
 
 
 # ---------- 信箱（資料庫直接維護，#35） ----------
@@ -245,6 +272,7 @@ def _parse_inventory(rows: Iterable[tuple[int, dict[str, Any]]], parsed: _Parsed
     for number, row in rows:
         if (_text(row["Product"]) or "").upper() != FCN:
             parsed.skipped_inventory_rows += 1
+            _remember_other(parsed, row["TDCC Code"], row["Product"])
             continue
         where = f"清單更新第 {number} 列"
         try:
@@ -338,6 +366,7 @@ def _parse_trades(rows: Iterable[tuple[int, dict[str, Any]]], parsed: _Parsed) -
     for number, row in rows:
         if (_text(row["Product"]) or "").upper() != FCN:
             parsed.skipped_trade_rows += 1
+            _remember_other(parsed, row["TDCC"], row["Product"])
             continue
         where = f"交易明細第 {number} 列"
         try:
@@ -450,6 +479,22 @@ def _write_trades(conn: psycopg.Connection, parsed: _Parsed, run_id: int) -> lis
     return lines
 
 
+def _remember_other(parsed: _Parsed, tdcc: Any, product: Any) -> None:
+    try:
+        parsed.other_products.setdefault(_tdcc(tdcc), _text(product) or "（空白）")
+    except ValueError:
+        pass  # TDCC 不完整的列只計數
+
+
+def _write_other_products(conn: psycopg.Connection, parsed: _Parsed, run_id: int) -> None:
+    with conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO workflow.other_product (tdcc, product, first_run_id) VALUES (%s, %s, %s)"
+            " ON CONFLICT (tdcc) DO NOTHING",
+            [(tdcc, product, run_id) for tdcc, product in parsed.other_products.items()],
+        )
+
+
 def _reconcile(conn: psycopg.Connection, tdccs: Sequence[str]) -> list[ImportLine]:
     """用資料庫裡的資料對帳：交易列各分公司金額加總 vs 庫存總表的分公司承作金額。"""
     lines = []
@@ -492,7 +537,7 @@ def _unmatched_names(parsed: _Parsed, mailbox: Mailbox) -> list[ImportLine]:
     lines = []
     for tdcc, trades in parsed.trades.items():
         names = sorted(
-            {t["fc_name"] for t in trades if t["fc_name"].upper() != PB and mailbox.match(t["fc_name"]) is None}
+            {t["fc_name"] for t in trades if not is_pb(t["fc_name"]) and mailbox.match(t["fc_name"]) is None}
         )
         if names:
             lines.append(ImportLine(tdcc, NAME_UNMATCHED, "、".join(names)))

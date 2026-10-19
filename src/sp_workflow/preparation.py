@@ -130,7 +130,7 @@ def prepare_batch(
     except FileExistsError:
         raise PreparationError(f"批次資料夾已存在：{batch_dir}") from None
 
-    valid = {t for t in tokens if _TDCC.fullmatch(t)}
+    valid = {t for t in tokens if is_tdcc(t)}
     folders, unreadable = find_product_folders(root, valid)
     outcomes = tuple(
         _prepare_product(t, folders.get(t, []), unreadable, batch_dir, convert)
@@ -141,6 +141,11 @@ def prepare_batch(
     list_path = batch_dir / LIST_NAME
     _write_list(list_path, outcomes)
     return PrepareReceipt(batch_dir, list_path, outcomes, tuple(unreadable))
+
+
+def is_tdcc(text: str) -> bool:
+    """剛好 12 個半形數字（全形數字不算）。"""
+    return _TDCC.fullmatch(text) is not None
 
 
 def parse_tdccs(text: str) -> list[str]:

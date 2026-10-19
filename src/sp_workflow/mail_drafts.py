@@ -5,8 +5,9 @@
 2. 根目錄底下找得到剛好一個商品資料夾，裡面有 `<TDCC>_TS.pdf` 與 `<TDCC>_IIS.pdf`
    （準備與放回工具只會以標準檔名放回核對通過的文件，所以這就代表核對通過）；
 3. 交易列上的 FC（略過 PB）都對得到信箱（不分大小寫、別名）。
-只有 PB 承作時「不需寄送」。符合的一檔建一封草稿：收件人是 FC，副本是信箱的固定副本（已在收件人的不重複）。
-只建草稿、不寄出；同一檔重跑會再建一封。結果寫成 `寄信草稿清單_<日期時間>.xlsx`。商品資料夾只讀。
+只有 PB 承作時「不需寄送」；每日匯入略過的非 FCN 商品標「不支援的商品類型」。符合的一檔建一封草稿：收件人是 FC，副本是信箱的固定副本（已在收件人的不重複）。
+只建草稿、不寄出；同一檔重跑會再建一封；某一檔出錯只影響那一檔。結果寫成 `寄信草稿清單_<日期時間>.xlsx`，
+並記錄用的是哪一次每日匯入。商品資料夾只讀。
 """
 
 from __future__ import annotations
@@ -25,9 +26,9 @@ import openpyxl
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
-from sp_workflow.daily_import import PB, Mailbox, load_mailbox
+from sp_workflow.daily_import import ImportInfo, Mailbox, is_pb, latest_import, load_mailbox
 from sp_workflow.database import DatabaseError, require_current_schema
-from sp_workflow.preparation import find_product_folders, parse_tdccs
+from sp_workflow.preparation import find_product_folders, is_tdcc, parse_tdccs
 
 if TYPE_CHECKING:
     import psycopg
@@ -37,7 +38,7 @@ PENDING = "待處理"
 NOT_NEEDED = "不需寄送"
 FAILED = "建立失敗"
 
-SUBJECT_FORMAT = "{product} {tdcc} 中文TS/IIS"  # 例：FCN 029100004610 中文TS/IIS
+SUBJECT_FORMAT = "{product} {tdcc} 中文TS/IIS"  # 例：FCN 029199990001 中文TS/IIS
 BODY_INTRO = "FYI"
 RISK_LEVEL = "RR4"  # 使用者確認：風險等級固定 RR4
 NAVY = "#002060"
@@ -81,7 +82,7 @@ class DraftOutcome:
 class DraftReceipt:
     list_path: Path
     outcomes: tuple[DraftOutcome, ...]
-    last_import: dt.datetime | None
+    last_import: ImportInfo | None
     unreadable_dirs: tuple[Path, ...] = ()
 
 
@@ -94,7 +95,7 @@ def create_drafts(
     drafter: Drafter | None = None,
     now: dt.datetime | None = None,
 ) -> DraftReceipt:
-    """依輸入順序處理每個 TDCC；回傳結果清單路徑、逐檔結果與最近一次每日匯入時間。
+    """依輸入順序處理每個 TDCC；回傳結果清單路徑、逐檔結果與最近一次每日匯入。
 
     drafter 預設用 Outlook 建草稿（只有真的要建時才會啟動 Outlook）。
     """
@@ -111,7 +112,7 @@ def create_drafts(
         raise MailDraftError(str(exc)) from exc
     with conn.transaction():
         mailbox = load_mailbox(conn)
-        last_import = conn.execute("SELECT max(imported_at) FROM workflow.import_run").fetchone()[0]
+    last_import = latest_import(conn)
     fixed_cc = tuple(p for p in mailbox.people if p.fixed_cc)
     if not fixed_cc:
         raise MailDraftError("信箱沒有任何固定副本（mailbox.person 的 fixed_cc），請先設定")
@@ -120,7 +121,7 @@ def create_drafts(
     if list_path.exists():
         raise MailDraftError(f"結果清單已存在：{list_path}")
 
-    valid = {t for t in tokens if t.isdigit() and len(t) == 12}
+    valid = {t for t in tokens if is_tdcc(t)}
     folders, unreadable = find_product_folders(root, valid)
     make_draft = drafter or OutlookDrafter()
     outcomes = []
@@ -128,8 +129,12 @@ def create_drafts(
         if tdcc not in valid:
             outcomes.append(DraftOutcome(tdcc, PENDING, reason="不是 12 碼數字"))
             continue
-        outcomes.append(_draft_one(tdcc, conn, mailbox, fixed_cc, folders.get(tdcc, []), make_draft))
-    _write_list(list_path, outcomes, last_import)
+        try:
+            outcome = _draft_one(tdcc, conn, mailbox, fixed_cc, folders.get(tdcc, []), unreadable, make_draft)
+        except Exception as exc:  # 一檔出錯（資料、內文、資料庫）只影響這一檔，結果清單照樣寫出
+            outcome = DraftOutcome(tdcc, FAILED, reason=f"處理失敗：{exc}")
+        outcomes.append(outcome)
+    _write_list(list_path, outcomes, last_import, unreadable)
     return DraftReceipt(list_path, tuple(outcomes), last_import, tuple(unreadable))
 
 
@@ -139,6 +144,7 @@ def _draft_one(
     mailbox: Mailbox,
     fixed_cc: Sequence[Any],
     folders: Sequence[Path],
+    unreadable: Sequence[Path],
     make_draft: Drafter,
 ) -> DraftOutcome:
     with conn.transaction():
@@ -149,19 +155,22 @@ def _draft_one(
         fc_names = [n for (n,) in conn.execute(
             "SELECT fc_name FROM workflow.trade_row WHERE tdcc = %s ORDER BY row_seq", (tdcc,)
         )]  # fmt: skip
+        other = conn.execute("SELECT product FROM workflow.other_product WHERE tdcc = %s", (tdcc,)).fetchone()
+    if product is None and not fc_names and other is not None:
+        return DraftOutcome(tdcc, PENDING, reason=f"不支援的商品類型：{other[0]}（目前只做 FCN）")
     problems = []
     if product is None:
         problems.append("資料庫沒有這檔的商品條件（每日匯入的清單更新還沒有這檔）")
     if not fc_names:
         problems.append("資料庫沒有這檔的交易列")
-    names = list(dict.fromkeys(n for n in fc_names if n.strip().upper() != PB))
+    names = list(dict.fromkeys(n for n in fc_names if not is_pb(n)))
     if fc_names and not names:
         return DraftOutcome(tdcc, NOT_NEEDED, reason="只有 PB 承作，不需寄送")
     people = [mailbox.match(n) for n in names]
     unmatched = [n for n, p in zip(names, people, strict=True) if p is None]
     if unmatched:
         problems.append("名字對不到信箱：" + "、".join(unmatched))
-    attachments, folder_problem = _attachments(tdcc, folders)
+    attachments, folder_problem = _attachments(tdcc, folders, unreadable)
     if folder_problem:
         problems.append(folder_problem)
     if problems:
@@ -197,9 +206,10 @@ def _product(conn: psycopg.Connection, tdcc: str) -> dict[str, Any] | None:
     return None if row is None else dict(zip(_PRODUCT_FIELDS, row, strict=True))
 
 
-def _attachments(tdcc: str, folders: Sequence[Path]) -> tuple[tuple[Path, ...], str]:
+def _attachments(tdcc: str, folders: Sequence[Path], unreadable: Sequence[Path]) -> tuple[tuple[Path, ...], str]:
     if not folders:
-        return (), "根目錄底下找不到商品資料夾"
+        hint = f"（搜尋時有 {len(unreadable)} 個資料夾讀不到，可能在裡面）" if unreadable else ""
+        return (), "根目錄底下找不到商品資料夾" + hint
     if len(folders) > 1:
         return (), f"有 {len(folders)} 個同名商品資料夾：" + "、".join(map(str, folders))
     files = tuple(folders[0] / f"{tdcc}_{kind}.pdf" for kind in ("TS", "IIS"))
@@ -338,7 +348,9 @@ class OutlookDrafter:
 # ---------- 結果清單 ----------
 
 
-def _write_list(path: Path, outcomes: Sequence[DraftOutcome], last_import: dt.datetime | None) -> None:
+def _write_list(
+    path: Path, outcomes: Sequence[DraftOutcome], last_import: ImportInfo | None, unreadable: Sequence[Path]
+) -> None:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "寄信草稿清單"
@@ -352,7 +364,16 @@ def _write_list(path: Path, outcomes: Sequence[DraftOutcome], last_import: dt.da
         ws.column_dimensions[get_column_letter(i)].width = width
     ws.freeze_panes = "A2"
     info = wb.create_sheet("資料來源")
-    info.append(["最近一次每日匯入", f"{last_import:%Y-%m-%d %H:%M:%S}" if last_import else "沒有匯入紀錄"])
+    if last_import is None:
+        info.append(["最近一次每日匯入", "沒有匯入紀錄"])
+    else:
+        info.append(["最近一次每日匯入", f"{last_import.imported_at:%Y-%m-%d %H:%M:%S}"])
+        info.append(["匯入編號", last_import.run_id])
+        info.append(["每日更新檔", last_import.file_name])
+        info.append(["SHA-256", last_import.sha256])
+    info.append(["讀不到的資料夾", len(unreadable)])
+    for folder in unreadable:
+        info.append([None, str(folder)])
     info.column_dimensions["A"].width = 20
-    info.column_dimensions["B"].width = 24
+    info.column_dimensions["B"].width = 70
     wb.save(path)

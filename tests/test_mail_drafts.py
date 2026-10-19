@@ -12,6 +12,7 @@ import openpyxl
 import pytest
 
 from db_synth import inventory, seed_mailbox, trade, write_daily
+from sp_workflow import mail_drafts
 from sp_workflow.daily_import import import_daily
 from sp_workflow.mail_drafts import (
     DRAFTED,
@@ -309,7 +310,74 @@ def test_result_list_records_outcomes_and_last_import(db, tmp_path: Path, root: 
     rows = list(wb["寄信草稿清單"].iter_rows(values_only=True))
     assert rows[0] == ("TDCC", "狀態", "收件人", "副本", "原因")
     assert rows[1][:4] == (A, DRAFTED, "Amy", "Pat") and rows[2][:2] == (B, PENDING)
-    assert wb["資料來源"]["A1"].value == "最近一次每日匯入" and wb["資料來源"]["B1"].value != "沒有匯入紀錄"
+    source = {row[0]: row[1] for row in wb["資料來源"].iter_rows(values_only=True)}
+    assert source["匯入編號"] == receipt.last_import.run_id == 1
+    assert source["每日更新檔"] == "d0.xlsx" and len(source["SHA-256"]) == 64
+    assert source["讀不到的資料夾"] == 0
+
+
+def test_full_width_digits_are_not_a_tdcc(db, root: Path, out: Path) -> None:
+    receipt, _ = run(db, root, out, "０２９１９９９９０００１")
+
+    assert [(o.status, o.reason) for o in receipt.outcomes] == [(PENDING, "不是 12 碼數字")]
+
+
+def test_pb_typed_with_spaces_is_still_pb(db, tmp_path: Path, root: Path, out: Path) -> None:
+    load(db, tmp_path, [trade(A, " pb ", "北區", 1)], [inventory(A, [("北區", 1)])])
+    passed_folder(root, A)
+
+    receipt, drafter = run(db, root, out, A)
+
+    assert receipt.outcomes[0].status == NOT_NEEDED and drafter.drafts == []
+
+
+def test_products_skipped_by_the_daily_import_are_unsupported(db, tmp_path: Path, root: Path, out: Path) -> None:
+    load(db, tmp_path, [trade(B, "Amy", "北區", 1, product="BEN")], [inventory(B, [("北區", 1)], Product="BEN")])
+
+    receipt, _ = run(db, root, out, B)
+
+    assert [(o.status, o.reason) for o in receipt.outcomes] == [(PENDING, "不支援的商品類型：BEN（目前只做 FCN）")]
+
+
+def test_unreadable_folders_are_mentioned(db, tmp_path: Path, root: Path, out: Path, monkeypatch) -> None:
+    load(db, tmp_path, [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])])
+    locked = root / "鎖住的資料夾"
+    monkeypatch.setattr(mail_drafts, "find_product_folders", lambda _root, _wanted: ({}, [locked]))
+
+    receipt, _ = run(db, root, out, A)
+
+    assert receipt.unreadable_dirs == (locked,)
+    assert "（搜尋時有 1 個資料夾讀不到，可能在裡面）" in receipt.outcomes[0].reason
+    source = {
+        row[0]: row[1] for row in openpyxl.load_workbook(receipt.list_path)["資料來源"].iter_rows(values_only=True)
+    }
+    assert source["讀不到的資料夾"] == 1
+
+
+def test_an_error_in_one_product_does_not_stop_the_batch(
+    db, tmp_path: Path, root: Path, out: Path, monkeypatch
+) -> None:
+    load(
+        db,
+        tmp_path,
+        [trade(A, "Amy", "北區", 1), trade(B, "Ben", "北區", 1)],
+        [inventory(A, [("北區", 1)]), inventory(B, [("北區", 1)])],
+    )
+    passed_folder(root, A)
+    passed_folder(root, B)
+    real_render = mail_drafts.render_body
+
+    def render(tdcc, product, branches):
+        if tdcc == A:
+            raise ValueError("內文產生失敗")
+        return real_render(tdcc, product, branches)
+
+    monkeypatch.setattr(mail_drafts, "render_body", render)
+
+    receipt, drafter = run(db, root, out, f"{A} {B}")
+
+    assert [(o.status, o.reason) for o in receipt.outcomes] == [(FAILED, "處理失敗：內文產生失敗"), (DRAFTED, "")]
+    assert [d.tdcc for d in drafter.drafts] == [B] and receipt.list_path.exists()
 
 
 def test_without_fixed_cc_nothing_is_drafted(pg, tmp_path: Path, root: Path, out: Path) -> None:
