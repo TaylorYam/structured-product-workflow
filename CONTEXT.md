@@ -17,7 +17,7 @@
 
 名詞：Order 指正式交易指示；TS 指產品說明書；IIS 指投資人須知；TDCC 是商品配對代號；FC 指輔銷人員。
 「原始歸檔」保存收到的文件；「確認版本歸檔」標記經核對、可供寄送的確切文件版本。
-「商品資料夾」指公槽 FCN 下名稱剛好是 TDCC 的資料夾，存放該商品的原始歸檔；「批次資料夾」是每次準備核對時另開的資料夾，放這批商品標準命名的 TS／IIS PDF；「準備清單」記錄批次中每份 PDF 的來源檔與指紋；「放回清單」記錄核對後哪些 TS／IIS 已放回商品資料夾：通過的用標準檔名，沒通過的檔名加「_待確認」。「錯訊檔」是放回待確認檔時一起寫進商品資料夾的 `<TDCC>_錯誤訊息_<日期時間>.xlsx`，列出沒通過的原因。「沒通過的版本」指和商品資料夾裡某個「_待確認」檔內容相同的上手文件；重新準備時會排除它，等上手寄修正版。
+「商品資料夾」指公槽 FCN 下名稱剛好是 TDCC 的資料夾，存放該商品的原始歸檔；「批次資料夾」是每次準備核對時另開的資料夾，放這批商品標準命名的 TS／IIS PDF；「準備清單」記錄批次中每份 PDF 的來源檔與指紋；「放回清單」記錄核對後哪些 TS／IIS 已放回商品資料夾：通過的用標準檔名，沒通過的檔名加「_待確認」。「錯訊檔」是放回待確認檔時一起寫進商品資料夾的 `<TDCC>_錯誤訊息_<日期時間>.xlsx`，列出沒通過的原因。「沒通過的版本」指和商品資料夾裡某個「_待確認」檔內容相同的上手文件；上手寄來修正版時，重新準備會排除它；還沒有修正版時沿用它，可以重複核對。
 
 ## English
 
@@ -36,4 +36,4 @@ Source: user architecture discussions through 2026-10-18. This document records 
 
 Terms: Order means formal trading instructions; TS means term sheet; IIS means investor information sheet; TDCC identifies a product; FC means sales support personnel.
 Incoming archiving preserves received sources; approved-version archiving identifies the exact reviewed files eligible for distribution.
-A product folder is the shared-FCN folder named exactly by a TDCC and holding that product's incoming archive. A batch folder is created for each checking preparation and holds that batch's standard-named TS/IIS PDFs. The preparation list records each batch PDF's source file and hash; the return list records which checked TS/IIS files were copied back into product folders, passing files under standard names and failed ones with `_待確認` appended. The error workbook is the `<TDCC>_錯誤訊息_<timestamp>.xlsx` written into the product folder alongside pending files, listing why they failed. A previously failed version is an issuer document whose content matches a `_待確認` file in the product folder; re-preparation excludes it and waits for the issuer's revision.
+A product folder is the shared-FCN folder named exactly by a TDCC and holding that product's incoming archive. A batch folder is created for each checking preparation and holds that batch's standard-named TS/IIS PDFs. The preparation list records each batch PDF's source file and hash; the return list records which checked TS/IIS files were copied back into product folders, passing files under standard names and failed ones with `_待確認` appended. The error workbook is the `<TDCC>_錯誤訊息_<timestamp>.xlsx` written into the product folder alongside pending files, listing why they failed. A previously failed version is an issuer document whose content matches a `_待確認` file in the product folder; re-preparation excludes it once a revision arrives and reuses it until then, so it can be rechecked.

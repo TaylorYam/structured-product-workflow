@@ -294,14 +294,17 @@ def _return_product(
 
     notes = list(check_notes)
     old_books = sorted(p.name for p in folder.glob(f"{tdcc}{ERROR_BOOK_MARK}*.xlsx"))  # 寫新的之前就有的錯訊檔
-    wrote_new = any(copy_needed[kind] for kind in pending)  # 這次新放回了待確認檔才寫，重複放回不會多一份
+    rows = [
+        (tdcc, kind.value, names[kind], line)
+        for kind in DocKind
+        if kind in pending
+        for line in messages[docs[kind].output_name.lower()] or ("（錯誤清單沒有寫錯訊）",)
+    ]
+    # 新放回待確認檔時寫；同一版重複核對（待確認檔已在）時，錯訊和最新一份錯訊檔不同才寫，相同就不多一份
+    wrote_new = bool(pending) and (
+        any(copy_needed[kind] for kind in pending) or _error_rows(folder / old_books[-1] if old_books else None) != rows
+    )
     if wrote_new:
-        rows = [
-            (tdcc, kind.value, names[kind], line)
-            for kind in DocKind
-            if kind in pending
-            for line in messages[docs[kind].output_name.lower()] or ("（錯誤清單沒有寫錯訊）",)
-        ]
         notes.append(_write_error_book(folder / f"{tdcc}{ERROR_BOOK_MARK}{stamp}.xlsx", rows))
     for kind in DocKind:
         standard, old_pending = docs[kind].output_name, _pending_name(docs[kind].output_name)
@@ -316,6 +319,17 @@ def _return_product(
     if old_books and (now_passing or wrote_new):
         notes.append(f"資料夾仍有舊的錯訊檔 {'、'.join(old_books)}，請確認後刪除")
     return ReturnOutcome(tdcc, status(DocKind.TS), status(DocKind.IIS), "；".join(notes))
+
+
+def _error_rows(path: Path | None) -> list[tuple] | None:
+    """錯訊檔的資料列（不含表頭）；沒有或讀不到時回傳 None。"""
+    if path is None:
+        return None
+    try:
+        rows = _read_rows(path, None, "錯訊檔")
+    except ReturnError:
+        return None
+    return [tuple("" if v is None else str(v) for v in row[: len(ERROR_BOOK_COLUMNS)]) for row in rows[1:]]
 
 
 def _write_error_book(path: Path, rows: list[tuple[str, str, str, str]]) -> str:

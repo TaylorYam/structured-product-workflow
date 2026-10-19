@@ -584,3 +584,25 @@ def test_empty_error_message_still_gets_a_row(root: Path, batch: Path, tmp_path:
 
     rows = read_error_book(root / B / f"{B}_錯誤訊息_20261020-090000.xlsx")
     assert rows[1] == (B, "TS", f"{B}_TS_待確認.pdf", "（錯誤清單沒有寫錯訊）")
+
+
+def test_rechecking_the_same_version_with_new_errors_writes_a_new_error_book(
+    root: Path, batch: Path, tmp_path: Path
+) -> None:
+    """同一版重複核對（例如改過參考條件表）：錯訊不同就再寫一份，相同就不寫（#23）。"""
+    run(batch, make_result_file(tmp_path / "first.xlsx", [], failed=[B]))
+    second = make_result_file(tmp_path / "second.xlsx", [], failed=[B])
+    wb = openpyxl.load_workbook(second)
+    wb["錯誤清單"]["C2"] = "年利率對不起來"
+    wb.save(second)
+
+    receipt = return_to_folders(batch, second, now=RETURNED_AT + dt.timedelta(hours=1))
+
+    o = outcome(receipt, B)
+    assert o.ts == PENDING_ALREADY_THERE
+    assert sorted(p.name for p in (root / B).glob("*_錯誤訊息_*.xlsx")) == [
+        f"{B}_錯誤訊息_20261020-090000.xlsx",
+        f"{B}_錯誤訊息_20261020-100000.xlsx",
+    ]
+    assert read_error_book(root / B / f"{B}_錯誤訊息_20261020-100000.xlsx")[1][3] == "年利率對不起來"
+    assert f"資料夾仍有舊的錯訊檔 {B}_錯誤訊息_20261020-090000.xlsx" in o.reason
