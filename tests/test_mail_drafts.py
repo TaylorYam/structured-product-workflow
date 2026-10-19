@@ -5,6 +5,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import sys
+import types
 from pathlib import Path
 
 import openpyxl
@@ -16,10 +17,12 @@ from sp_workflow.mail_drafts import (
     DRAFTED,
     FAILED,
     NOT_NEEDED,
+    OUTLOOK_FAILURE,
     PENDING,
     Draft,
     MailDraftError,
     OutlookDrafter,
+    OutlookError,
     create_drafts,
 )
 from synth import snapshot
@@ -287,6 +290,101 @@ def test_bad_paths_and_empty_input_stop_before_anything(db, root: Path, out: Pat
         run(db, tmp_path / "none", out, A)
     with pytest.raises(MailDraftError, match="結果清單的位置不存在"):
         run(db, root, tmp_path / "none", A)
+
+
+class FakeMail:
+    """假的 Outlook 郵件：記下被設定的欄位；Send() 被呼叫就記下來，讓測試抓出來。"""
+
+    def __init__(self) -> None:
+        self.attached: list[str] = []
+        self.Attachments = types.SimpleNamespace(Add=self.attached.append)
+        self.saved = self.sent = False
+
+    def Save(self) -> None:  # noqa: N802 — 對應 COM 方法名稱
+        self.saved = True
+
+    def Send(self) -> None:  # noqa: N802
+        self.sent = True
+
+
+@pytest.fixture
+def fake_com(monkeypatch):
+    """用假的 pythoncom／win32com 取代真的 Outlook；筆電與 CI 都能跑（#29）。"""
+
+    class ComError(Exception):
+        pass
+
+    state = types.SimpleNamespace(mail=FakeMail(), error=None, com_depth=0, ComError=ComError)
+
+    def dispatch(name: str):
+        assert name == "Outlook.Application"
+        if state.error is not None:
+            raise state.error
+
+        def create_item(kind: int) -> FakeMail:
+            assert kind == 0  # olMailItem
+            return state.mail
+
+        return types.SimpleNamespace(CreateItem=create_item)
+
+    pythoncom = types.ModuleType("pythoncom")
+    pythoncom.com_error = ComError
+    pythoncom.CoInitialize = lambda: setattr(state, "com_depth", state.com_depth + 1)
+    pythoncom.CoUninitialize = lambda: setattr(state, "com_depth", state.com_depth - 1)
+    client = types.ModuleType("win32com.client")
+    client.Dispatch = dispatch
+    package = types.ModuleType("win32com")
+    package.client = client
+    monkeypatch.setitem(sys.modules, "pythoncom", pythoncom)
+    monkeypatch.setitem(sys.modules, "win32com", package)
+    monkeypatch.setitem(sys.modules, "win32com.client", client)
+    return state
+
+
+def sample_draft(tmp_path: Path) -> Draft:
+    return Draft(
+        A,
+        ("amy@example.com", "ben@example.com"),
+        ("pat@example.com",),
+        f"{A} 中文TS/IIS",
+        "<p>FYI</p>",
+        (tmp_path / "a.pdf", tmp_path / "b.pdf"),
+    )
+
+
+def test_outlook_drafter_fills_the_mail_and_only_saves_it(fake_com, tmp_path: Path) -> None:
+    OutlookDrafter()(sample_draft(tmp_path))
+
+    mail = fake_com.mail
+    assert (mail.To, mail.CC, mail.Subject, mail.HTMLBody) == (
+        "amy@example.com; ben@example.com",
+        "pat@example.com",
+        f"{A} 中文TS/IIS",
+        "<p>FYI</p>",
+    )
+    assert mail.attached == [str(tmp_path / "a.pdf"), str(tmp_path / "b.pdf")]
+    assert mail.saved and not mail.sent
+    assert fake_com.com_depth == 0  # CoInitialize／CoUninitialize 成對
+
+
+def test_outlook_errors_are_explained_in_chinese(fake_com, tmp_path: Path) -> None:
+    fake_com.error = fake_com.ComError(-2147467260, "亂碼", None, None)
+
+    with pytest.raises(OutlookError) as info:
+        OutlookDrafter()(sample_draft(tmp_path))
+
+    assert str(info.value) == f"{OUTLOOK_FAILURE}，錯誤碼 0x80004004"
+    assert fake_com.com_depth == 0
+
+
+def test_outlook_failure_marks_only_that_product(fake_com, db, tmp_path: Path, root: Path, out: Path) -> None:
+    load(db, tmp_path, [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])])
+    passed_folder(root, A)
+    fake_com.error = fake_com.ComError(-2147467260, "亂碼", None, None)
+
+    receipt = create_drafts(A, root, out, db, drafter=OutlookDrafter(), now=NOW)
+
+    assert receipt.outcomes[0].status == FAILED and OUTLOOK_FAILURE in receipt.outcomes[0].reason
 
 
 @pytest.mark.skipif(

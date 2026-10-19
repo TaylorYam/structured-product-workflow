@@ -265,6 +265,13 @@ def _pct(value: Decimal) -> str:
 # ---------- Outlook ----------
 
 
+OUTLOOK_FAILURE = "Outlook 無法建立郵件（可能還沒設定 Outlook 帳號、Outlook 啟動時跳出對話框，或附件打不開）"
+
+
+class OutlookError(Exception):
+    """Outlook 建草稿失敗；訊息是給作業人員看的中文，附上 COM 錯誤碼方便維護人員查。"""
+
+
 class OutlookDrafter:
     """用傳統版 Outlook（COM）在執行者的預設信箱建草稿；只呼叫 Save()，不會寄出。"""
 
@@ -282,6 +289,10 @@ class OutlookDrafter:
             for path in draft.attachments:
                 mail.Attachments.Add(str(path))
             mail.Save()
+        except pythoncom.com_error as exc:  # 原始訊息常是系統語系的亂碼，改成中文說明
+            code = exc.args[0] if exc.args else ""
+            hresult = f"0x{code & 0xFFFFFFFF:08X}" if isinstance(code, int) else str(code)
+            raise OutlookError(f"{OUTLOOK_FAILURE}，錯誤碼 {hresult}") from exc
         finally:
             pythoncom.CoUninitialize()
 
