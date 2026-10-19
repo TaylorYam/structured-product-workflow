@@ -37,6 +37,13 @@ spw-panel
 5. 說明書或投資人須知任一份找不到、或有兩份以上候選時，整個商品跳過並寫出原因與候選檔名。這一版只處理上手 PDF，只有 Word 的商品（例如 MS、BNP）先跳過（#8 會處理轉檔）。
 6. 批次資料夾裡的 `準備清單.xlsx` 記錄每份文件的來源檔、輸出檔名、SHA-256 指紋、狀態與原因。完成後按「打開批次資料夾」，再到核對工具 PANEL 選參考條件表與這批 PDF。
 
+核對完、存下核對結果檔後，切到「放回資料夾」分頁：
+
+1. 選批次資料夾（剛準備完會自動帶入）與核對 PANEL 存下的核對結果檔。
+2. 按「放回資料夾」。只放回核對結果檔「回填後」上 `TS/IIS完成檢核` 為 `V` 的商品（說明書與投資人須知都通過或人工放行）；「錯誤清單」上的不動。
+3. 放回前重算批次裡 PDF 的指紋，和準備清單不符就不放。商品資料夾已有同名檔：內容相同算「已在」（例如 UBS 本來就給標準檔名），內容不同不覆蓋、整個商品不放回，由作業人員決定留哪份。
+4. 只複製，批次資料夾保留；結果寫在批次資料夾的 `放回清單_<日期時間>.xlsx`。修好未通過的商品、重新核對後可以再放一次，已放回的會顯示「已在」。
+
 測試：`pytest -q`（資料全部虛構）。真實樣本試跑只在本機執行：把環境變數 `SPW_REAL_SAMPLES_DIR` 設成放商品資料夾的目錄，CI 自動略過；真實資料不進 repo。
 
 ## English
@@ -75,5 +82,12 @@ spw-panel
 4. Identification uses page-one content: a 中文產品說明書 or 中文投資人須知 title near the top; the term sheet's first page must contain the folder TDCC, and an investor sheet's 12-digit code must match when present. File names are hints only.
 5. If either document is missing or has multiple candidates, the whole product is skipped with the reason and candidate names. This version handles issuer PDFs only; Word-only products (for example MS, BNP) are skipped until #8 adds conversion.
 6. `準備清單.xlsx` in the batch folder records each document's source, output name, SHA-256, status, and reason. Then open the batch folder and select the reference workbook and PDFs in the checker PANEL.
+
+After checking and saving the checker result workbook, switch to the 放回資料夾 (return to folders) tab:
+
+1. Choose the batch folder (filled in automatically after preparation) and the result workbook saved by the checker PANEL.
+2. Press Return. Only products whose `TS/IIS完成檢核` is `V` on the result workbook's 回填後 sheet (both documents passed or manually released) are returned; the error-list sheet is ignored.
+3. Batch PDFs are re-hashed and must match the preparation list. When a product folder already has a same-named file, identical content counts as already there (for example UBS issuing standard names); different content is never overwritten and the whole product is not returned, leaving the decision to the operator.
+4. Files are copied only and the batch folder is kept; results go to `放回清單_<timestamp>.xlsx` in the batch folder. After fixing and rechecking failed products, returning again marks already returned files as already there.
 
 Tests: `pytest -q` (synthetic data only). Real-sample runs are local only: set `SPW_REAL_SAMPLES_DIR` to the folder containing product folders; CI skips it, and real data never enters the repository.
