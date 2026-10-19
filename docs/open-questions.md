@@ -8,8 +8,7 @@
 - TDCC 取得時點、資料夾結構、候選附件配對與正式版本選擇規則。
 - 掃描文件處理、範本及座標解析相容性。Word 轉檔工具已選 Microsoft Word（[ADR 0002](adr/0002-word-to-pdf-with-microsoft-word.md)）。
 - 回填 Excel 的實際目的地、庫存匯入由誰執行、總表結構與讀取時點。
-- FC 與 Email 對照來源、同商品多列彙整、郵件欄位及一檔一封或逐 FC 寄送。
-- Outlook 傳統 COM 或 Microsoft Graph；草稿或直接寄送；權限、重複寄送與不確定結果的處理。草稿優先目前只是建議。
+- 自動寄出的時機與條件、重複寄送防護、寄送紀錄與不確定結果的處理。第一版寄信草稿已決定（傳統版 Outlook COM、只建草稿、FC 對照與郵件欄位），見 [#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)。
 - PostgreSQL 已選定，本機開發後目標為公司伺服器協作。仍待定：schema、主要版本、遷移工具、正式主機與 IT 核准、共享服務介面、權限、備份還原與保存期限、案件及狀態名稱。見 [資料庫與部署](database-and-deployment.md)。
 - CLI 串接正式契約與支援版本；EXPRESS FCN／BEN 規則歸屬與驗證範圍。
 - 正式 Order 歸一化是否需要 AI；範本中的 AI 指輔助開發，並不代表 runtime 必須使用 AI。既有核對專案採規則式 runtime；其限制不自動等同整個新專案的已決政策。
@@ -26,8 +25,7 @@ Unresolved items, not established requirements:
 - TDCC availability, folder hierarchy, attachment matching, and official-version selection.
 - Scanned documents, template and coordinate compatibility. Word conversion uses Microsoft Word ([ADR 0002](adr/0002-word-to-pdf-with-microsoft-word.md)).
 - Actual Excel writeback destination, inventory import ownership, master structure, and read timing.
-- FC/email mapping, repeated product rows, email columns, and product-wide versus per-FC messages.
-- Classic Outlook COM versus Graph; drafts versus direct sending; permissions, duplicate prevention, and uncertain outcomes. Draft-first is only a recommendation.
+- When and under what conditions to send automatically, duplicate prevention, send records, and uncertain outcomes. The first mail-draft version is decided (classic Outlook COM, drafts only, FC mapping, and email columns); see [#29](https://github.com/TaylorYam/structured-product-workflow/issues/29).
 - PostgreSQL is selected, starting locally and targeting company-server collaboration. Open: schema, major version, migration tooling, production host/IT approval, shared-service interface, access, backup/restore, retention, and case/status naming. See [database and deployment](database-and-deployment.md).
 - Supported CLI contract/versions and ownership/validation of EXPRESS FCN and BEN rules.
 - Whether Order normalization needs AI. AI in the template means development assistance, not a runtime requirement. The existing checker is deterministic; its policy does not automatically settle runtime policy for this entire project.

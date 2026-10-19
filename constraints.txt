@@ -13,3 +13,7 @@ pluggy==1.6.0
 pygments==2.19.1
 colorama==0.4.6
 ruff==0.16.8
+# 本機 PostgreSQL 工具（.[db]）
+psycopg==3.3.6
+psycopg-binary==3.3.6
+tzdata==2026.5
