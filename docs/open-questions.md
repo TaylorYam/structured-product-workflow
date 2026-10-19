@@ -6,7 +6,7 @@
 
 - 起單與建檔的正式確認時點、Order 修訂優先順序、各家格式及人工確認方式。
 - TDCC 取得時點、資料夾結構、候選附件配對與正式版本選擇規則。
-- Word 轉檔工具、掃描文件處理、範本及座標解析相容性。
+- 掃描文件處理、範本及座標解析相容性。Word 轉檔工具已選 Microsoft Word（[ADR 0002](adr/0002-word-to-pdf-with-microsoft-word.md)）。
 - 回填 Excel 的實際目的地、庫存匯入由誰執行、總表結構與讀取時點。
 - FC 與 Email 對照來源、同商品多列彙整、郵件欄位及一檔一封或逐 FC 寄送。
 - Outlook 傳統 COM 或 Microsoft Graph；草稿或直接寄送；權限、重複寄送與不確定結果的處理。草稿優先目前只是建議。
@@ -24,7 +24,7 @@ Unresolved items, not established requirements:
 
 - Formal confirmation points for placement/booking, Order revision precedence, issuer formats, and human confirmation.
 - TDCC availability, folder hierarchy, attachment matching, and official-version selection.
-- Word conversion, scanned documents, template and coordinate compatibility.
+- Scanned documents, template and coordinate compatibility. Word conversion uses Microsoft Word ([ADR 0002](adr/0002-word-to-pdf-with-microsoft-word.md)).
 - Actual Excel writeback destination, inventory import ownership, master structure, and read timing.
 - FC/email mapping, repeated product rows, email columns, and product-wide versus per-FC messages.
 - Classic Outlook COM versus Graph; drafts versus direct sending; permissions, duplicate prevention, and uncertain outcomes. Draft-first is only a recommendation.
