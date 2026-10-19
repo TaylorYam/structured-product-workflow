@@ -102,19 +102,27 @@ def make_fake_word(path: Path, lines: list[str]) -> Path:
 
 
 class FakeConverter:
-    """測試用轉檔器：把假 Word 的文字寫成 PDF；記下每次收到的工作，可指定失敗。"""
+    """測試用轉檔器：把假 Word 的文字寫成 PDF；記下每次收到的工作。
 
-    def __init__(self, *, error: str = "", produce: bool = True) -> None:
+    error：整批失敗（模擬 Word 無法啟動或逾時）；fail：{Word 檔名: 原因}，個別失敗；produce=False：回報成功卻沒產生 PDF。
+    """
+
+    def __init__(self, *, error: str = "", fail: dict[str, str] | None = None, produce: bool = True) -> None:
         self.calls: list[list[tuple[Path, Path]]] = []
         self.error = error
+        self.fail = fail or {}
         self.produce = produce
 
-    def __call__(self, jobs) -> None:
+    def __call__(self, jobs) -> dict[Path, str]:
         from sp_workflow.conversion import ConversionError
 
         self.calls.append(list(jobs))
         if self.error:
             raise ConversionError(self.error)
-        if self.produce:
-            for source, target in jobs:
+        failures = {}
+        for source, target in jobs:
+            if source.name in self.fail:
+                failures[source] = self.fail[source.name]
+            elif self.produce:
                 make_pdf(target, source.read_text(encoding="utf-8").splitlines())
+        return failures

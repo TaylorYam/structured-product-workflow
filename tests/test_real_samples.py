@@ -16,20 +16,20 @@ from sp_workflow.preparation import PREPARED, prepare_batch
 
 pytestmark = [pytest.mark.real_samples, pytest.mark.word]
 
-# 上手編號 → (說明書檔名特徵, 投資人須知檔名特徵, 是否由 Word 轉檔)
+# 上手編號 → (說明書檔名 regex, 投資人須知檔名 regex, 是否由 Word 轉檔)；不分大小寫
 EXPECTED: dict[str, tuple[str, str, bool]] = {
-    "029": ("CN TS", "CN IIS", False),  # BARC
-    "037": ("(ZH)", "IIS_Chinese", False),  # SG
-    "076": ("JPM_Chi_TS", "JPM_Chi_IIS", False),  # JPM
-    "082": ("_TS_", "_IIS_", True),  # BNP：只有 Word（舊版 .DOC），另有英文 DOCX
-    "086": ("PS_", "IIS_", False),  # CA：TS_ 開頭是英文版
-    "092": ("_TS.pdf", "_IIS.pdf", False),  # UBS
-    "147": ("_ATS_", "_AD_", True),  # MS：只有 Word，檔名 _TS_ 的是英文版
-    "148": ("Product Statement", "_IIS_", False),  # GS
-    "156": ("_CN_TS_", "_CN_IIS_", False),  # Nomura
-    "325": ("_CH_TS_", "_CH_KIID_", False),  # HSBC
-    "326": ("Chi TS", "Chi IIS", False),  # BBVA
-    "328": ("Final_TS_", "Final_IIS_", False),  # Natixis
+    "029": (r"_CN TS\.pdf$", r"_CN IIS\.pdf$", False),  # BARC
+    "037": (r"\(ZH\)\.pdf$", r"^IIS_Chinese_.*\.pdf$", False),  # SG
+    "076": (r"^JPM_Chi_TS_.*\.pdf$", r"^JPM_Chi_IIS_.*\.pdf$", False),  # JPM
+    "082": (r"_TS_.*\.doc$", r"_IIS_.*\.doc$", True),  # BNP：只有 Word（舊版 .DOC），另有英文 DOCX
+    "086": (r"^PS_.*\.pdf$", r"^IIS_.*\.pdf$", False),  # CA：TS_ 開頭是英文版
+    "092": (r"^\d{12}_TS\.pdf$", r"^\d{12}_IIS\.pdf$", False),  # UBS：另有同內容的 Word
+    "147": (r"_ATS_.*\.docx$", r"_AD_.*\.docx$", True),  # MS：只有 Word，檔名 _TS_ 的是英文版
+    "148": (r"_Product Statement_.*\.pdf$", r"_IIS_.*\.pdf$", False),  # GS
+    "156": (r"_CN_TS_.*\.pdf$", r"_CN_IIS_.*\.pdf$", False),  # Nomura
+    "325": (r"_CH_TS_.*\.pdf$", r"_CH_KIID_.*\.pdf$", False),  # HSBC
+    "326": (r"Chi TS_.*\.pdf$", r"Chi IIS_.*\.pdf$", False),  # BBVA
+    "328": (r"^Final_TS_.*\.pdf$", r"^Final_IIS_.*\.pdf$", False),  # Natixis
 }
 
 
@@ -52,6 +52,6 @@ def test_real_product_folders(tmp_path: Path) -> None:
         ts_mark, iis_mark, from_word = EXPECTED[o.tdcc[:3]]
         assert o.status == PREPARED, (o.tdcc, o.reason)
         names = {d.kind: d.source.name for d in o.documents}
-        assert ts_mark in names[DocKind.TS], (o.tdcc, names)
-        assert iis_mark in names[DocKind.IIS], (o.tdcc, names)
+        assert re.search(ts_mark, names[DocKind.TS], re.IGNORECASE), (o.tdcc, names)
+        assert re.search(iis_mark, names[DocKind.IIS], re.IGNORECASE), (o.tdcc, names)
         assert all(d.from_word == from_word for d in o.documents), (o.tdcc, names)

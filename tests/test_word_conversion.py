@@ -12,7 +12,8 @@ from pathlib import Path
 import pymupdf
 import pytest
 
-from sp_workflow.conversion import ConversionError, WordConverter
+from sp_workflow import word_worker
+from sp_workflow.conversion import WordConverter
 from sp_workflow.preparation import PREPARED, prepare_batch
 from synth import iis_lines, snapshot, ts_lines
 
@@ -72,12 +73,48 @@ def test_prepares_word_only_product_with_real_word(word, tmp_path: Path) -> None
     assert snapshot(root) == before  # 原始 Word 沒被動、沒有留下 Word 鎖定檔
 
 
-def test_corrupt_word_file_fails_without_hanging(tmp_path: Path, word) -> None:
-    source = tmp_path / "broken.docx"
-    source.write_bytes(b"this is not a word document")
+def test_corrupt_word_file_is_reported_without_hanging(tmp_path: Path, word) -> None:
+    good = save_word(word, tmp_path / "good.docx", ts_lines(A), WD_FORMAT_DOCUMENT_DEFAULT)
+    broken = tmp_path / "broken.docx"
+    broken.write_bytes(b"this is not a word document")
     started = time.monotonic()
 
-    with pytest.raises(ConversionError):
-        WordConverter(base_timeout=30, per_file_timeout=30)([(source, tmp_path / "broken.pdf")])
+    failures = WordConverter(base_timeout=30, per_file_timeout=30)(
+        [(broken, tmp_path / "broken.pdf"), (good, tmp_path / "good.pdf")]
+    )
 
-    assert time.monotonic() - started < 70
+    assert list(failures) == [broken]
+    assert (tmp_path / "good.pdf").is_file()
+    assert time.monotonic() - started < 90
+
+
+def test_worker_records_the_pid_of_its_own_word(tmp_path: Path, word) -> None:
+    """逾時時只結束這個 PID，所以它一定要是子程式自己開的 Word。"""
+    source = save_word(word, tmp_path / "a.docx", ts_lines(A), WD_FORMAT_DOCUMENT_DEFAULT)
+    pid_file = tmp_path / "word_pid.txt"
+
+    result = word_worker.convert([[str(source), str(tmp_path / "a.pdf")]], pid_file)
+
+    assert result == {"results": [{"ok": True}]}
+    pid = pid_file.read_text(encoding="utf-8")
+    assert pid.isdigit()
+    fixture_pids = _pids_of(word)
+    assert fixture_pids, "找不到測試自己開的 Word 視窗"
+    assert int(pid) not in fixture_pids  # 不是測試自己開著的那個 Word
+
+
+def _pids_of(word) -> set[int]:
+    import win32gui
+    import win32process
+
+    caption = "spw-test-fixture-word"
+    word.Caption = caption
+    found: set[int] = set()
+
+    def visit(hwnd: int, _: object) -> bool:
+        if caption in win32gui.GetWindowText(hwnd):
+            found.add(win32process.GetWindowThreadProcessId(hwnd)[1])
+        return True
+
+    win32gui.EnumWindows(visit, None)
+    return found

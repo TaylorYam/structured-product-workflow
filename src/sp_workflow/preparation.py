@@ -3,7 +3,7 @@
 對外只有 `prepare_batch`。商品資料夾只讀不寫；批次資料夾每次新開、已存在就不做。
 同一種文件剛好一份候選才採用；說明書或投資人須知任一份找不到或有多份，整個商品跳過。
 有上手 PDF 候選就只看 PDF；某種文件沒有 PDF 候選時，才把資料夾裡的 Word 複製到暫存區轉成 PDF 再判斷（#8、ADR 0002）。
-轉檔失敗或逾時，整個商品跳過。
+Word 無法啟動或逾時，整個商品跳過；個別 Word 轉不了只影響它自己（需要它卻沒有其他候選時，原因寫出轉檔失敗）。
 """
 
 from __future__ import annotations
@@ -180,17 +180,19 @@ def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter
     for pdf in (p for p in files if p.suffix.lower() == _PDF):
         read(_Candidate(pdf, pdf), tuple(DocKind))
 
-    with tempfile.TemporaryDirectory(prefix="spw-prepare-") as tmp:
+    # Word 逾時被強制結束時暫存檔可能還被鎖住，清不掉也不影響結果
+    with tempfile.TemporaryDirectory(prefix="spw-prepare-", ignore_cleanup_errors=True) as tmp:
         need_word = tuple(kind for kind in DocKind if not candidates[kind])
+        failures: dict[Path, str] = {}
         if need_word and words:
             try:
-                converted = _convert_words(words, Path(tmp), convert)
+                converted, failures = _convert_words(words, Path(tmp), convert)
             except ConversionError as exc:
                 return ProductOutcome(tdcc, SKIPPED, str(exc), folder, _found_documents(candidates))
             for candidate in converted:
                 read(candidate, need_word)
 
-        problems = [_problem(kind, candidates[kind], mismatched[kind]) for kind in DocKind]
+        problems = [_problem(kind, candidates[kind], mismatched[kind], failures) for kind in DocKind]
         problems = [p for p in problems if p]
         if problems:
             return ProductOutcome(tdcc, SKIPPED, "；".join(problems), folder, _found_documents(candidates))
@@ -204,20 +206,26 @@ def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter
     return ProductOutcome(tdcc, PREPARED, "", folder, tuple(docs))
 
 
-def _convert_words(words: list[Path], tmp: Path, convert: Converter) -> list[_Candidate]:
-    """把 Word 複製到暫存區再轉 PDF（原始 Word 不動、Word 鎖定檔也不會留在商品資料夾）。"""
-    jobs = []
+def _convert_words(words: list[Path], tmp: Path, convert: Converter) -> tuple[list[_Candidate], dict[Path, str]]:
+    """把 Word 複製到暫存區再轉 PDF（原始 Word 不動、Word 鎖定檔也不會留在商品資料夾）。
+
+    回傳轉好的候選，以及轉不了的原始 Word 與原因。
+    """
+    jobs: dict[Path, tuple[Path, Path]] = {}
     for i, word in enumerate(words):
         work = tmp / str(i)
         work.mkdir()
         copy = work / word.name
         shutil.copyfile(word, copy)
-        jobs.append((copy, work / "converted.pdf"))
-    convert(jobs)
-    missing = [w.name for w, (_, pdf) in zip(words, jobs, strict=True) if not pdf.is_file()]
-    if missing:
-        raise ConversionError(f"Word 轉檔失敗：{'、'.join(missing)}：沒有產生 PDF")
-    return [_Candidate(pdf, word, from_word=True) for word, (_, pdf) in zip(words, jobs, strict=True)]
+        jobs[word] = (copy, work / "converted.pdf")
+    reported = convert(list(jobs.values()))
+    converted, failures = [], {}
+    for word, (copy, pdf) in jobs.items():
+        if copy in reported or not pdf.is_file():
+            failures[word] = reported.get(copy, "沒有產生 PDF")
+        else:
+            converted.append(_Candidate(pdf, word, from_word=True))
+    return converted, failures
 
 
 def _found_documents(candidates: dict[DocKind, list[_Candidate]]) -> tuple[PreparedDocument, ...]:
@@ -234,13 +242,16 @@ def _output_name(tdcc: str, kind: DocKind) -> str:
     return f"{tdcc}_{kind.value}.pdf"
 
 
-def _problem(kind: DocKind, found: list[_Candidate], mismatched: list[_Candidate]) -> str:
+def _problem(kind: DocKind, found: list[_Candidate], mismatched: list[_Candidate], failures: dict[Path, str]) -> str:
     if len(found) == 1:
         return ""
     if found:
         return f"{kind.label}有 {len(found)} 份候選：{_names(found)}"
     if mismatched:
         return f"找不到{kind.label}（{_names(mismatched)} 封面商品代號不符）"
+    if failures:
+        details = "；".join(f"{word.name}：{reason}" for word, reason in failures.items())
+        return f"找不到{kind.label}（有 Word 轉檔失敗：{details}）"
     return f"找不到{kind.label}"
 
 

@@ -321,6 +321,35 @@ def test_conversion_without_output_skips_the_product(root: Path, out: Path) -> N
     assert "沒有產生 PDF" in o.reason
 
 
+def test_failure_of_an_unrelated_word_file_does_not_block_the_product(root: Path, out: Path) -> None:
+    make_word_only_folder(root, C)
+
+    converter = FakeConverter(fail={"2591320_1m_TS_Fixed Coupon.docx": "檔案損毀"})
+    o = outcome(run(C, root, out, converter), C)
+
+    assert o.status == PREPARED, o.reason
+
+
+def test_failed_word_is_reported_when_its_kind_is_missing(root: Path, out: Path) -> None:
+    make_word_only_folder(root, C)
+
+    converter = FakeConverter(fail={"2591320_1m_ATS_Fixed Coupon.docx": "檔案損毀"})
+    o = outcome(run(C, root, out, converter), C)
+
+    assert o.status == SKIPPED
+    assert o.reason == "找不到中文產品說明書（有 Word 轉檔失敗：2591320_1m_ATS_Fixed Coupon.docx：檔案損毀）"
+
+
+def test_two_chinese_word_term_sheets_skip_the_product(root: Path, out: Path) -> None:
+    folder = make_word_only_folder(root, C)
+    make_fake_word(folder / "2591320_1m_ATS_revised.docx", ts_lines(C))
+
+    o = outcome(run(C, root, out), C)
+
+    assert o.status == SKIPPED
+    assert "中文產品說明書有 2 份候選" in o.reason
+
+
 def test_english_word_only_is_not_a_candidate(root: Path, out: Path) -> None:
     folder = root / A
     make_pdf(folder / "ts.pdf", ts_lines(A))
