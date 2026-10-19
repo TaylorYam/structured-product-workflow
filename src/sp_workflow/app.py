@@ -1,10 +1,11 @@
-"""本機視窗：三個分頁。
+"""本機視窗：四個分頁。
 
 - 準備批次：貼 TDCC、選根目錄與輸出位置，產生批次資料夾與準備清單。
 - 放回資料夾：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾。
 - 每日匯入：選每日更新，匯入最小 FCN 資料庫（#32）；信箱在資料庫直接維護（#35）。
+- 寄信草稿：貼核對通過的 TDCC，在 Outlook 建 TS／IIS 草稿給承作的 FC（#29）。
 
-視窗只收輸入、在背景執行 `prepare_batch`／`return_to_folders`／`import_daily` 並顯示結果，不含判斷邏輯。
+視窗只收輸入、在背景執行 `prepare_batch`／`return_to_folders`／`import_daily`／`create_drafts` 並顯示結果，不含判斷邏輯。
 """
 
 from __future__ import annotations
@@ -20,14 +21,21 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
-from sp_workflow.daily_import import DailyImportError, ImportReceipt, import_daily
-from sp_workflow.database import DatabaseError, connect, default_env_path, settings_from_env
+from sp_workflow.daily_import import DailyImportError, ImportInfo, ImportReceipt, import_daily, latest_import
+from sp_workflow.database import ConnectionSettings, DatabaseError, connect, default_env_path, settings_from_env
 from sp_workflow.local_settings import FolderMemory
+from sp_workflow.mail_drafts import DRAFTED, NOT_NEEDED, DraftReceipt, MailDraftError, create_drafts
 from sp_workflow.preparation import PREPARED, PreparationError, PrepareReceipt, prepare_batch
 from sp_workflow.returning import PENDING_SUFFIX, ReturnError, ReturnReceipt, return_to_folders
 
 TITLE = "TS／IIS 準備與放回"
-_EXPECTED_ERRORS = (PreparationError, ReturnError, DailyImportError, DatabaseError)  # 訊息本身就是給作業人員看的
+_EXPECTED_ERRORS = (
+    PreparationError,
+    ReturnError,
+    DailyImportError,
+    DatabaseError,
+    MailDraftError,
+)  # 訊息本身就是給作業人員看的
 
 
 class _Tab:
@@ -212,14 +220,13 @@ class ReturnTab(_Tab):
 
 
 class DailyImportTab(_Tab):
-    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, env_path: Path) -> None:
+    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, db: _DatabaseLogin) -> None:
         super().__init__(notebook, "每日匯入", (("tdcc", "TDCC", 130), ("kind", "結果", 150), ("detail", "說明", 440)))
         self.memory = memory
-        self.env_path = env_path
-        self.password: str | None = None  # 這次開視窗輸入過的資料庫密碼，只留在記憶體
+        self.db = db
         folders = memory.load()
         self.daily_var = tk.StringVar(value=folders.get("daily", ""))
-        self.status_var.set(f"選每日更新，按「匯入」。資料庫連線設定：{env_path}")
+        self.status_var.set(f"選每日更新，按「匯入」。資料庫連線設定：{db.env_path}")
 
         self.path_row(0, "每日更新", self.daily_var, lambda: _ask_excel("選擇每日更新", self.daily_var))
         self.start_button = ttk.Button(self.buttons, text="匯入", command=self.start)
@@ -231,18 +238,9 @@ class DailyImportTab(_Tab):
         if not daily_text:
             messagebox.showerror(TITLE, "請先選擇每日更新。")
             return
-        try:
-            settings = settings_from_env(self.env_path)
-        except DatabaseError as exc:
-            messagebox.showerror(TITLE, str(exc))
+        settings = self.db.settings()
+        if settings is None:
             return
-        if settings.password is None:
-            self.password = self.password or simpledialog.askstring(
-                TITLE, f"{settings.user}@{settings.host} 的資料庫密碼", show="*", parent=self.master
-            )
-            if not self.password:
-                return
-            settings = settings.with_password(self.password)
         daily = Path(daily_text)
         self.memory.remember(daily=str(daily))
         self.start_button.configure(state=tk.DISABLED)
@@ -255,8 +253,7 @@ class DailyImportTab(_Tab):
 
     def _done(self, result: object) -> None:
         self.start_button.configure(state=tk.NORMAL)
-        if isinstance(result, DatabaseError):
-            self.password = None  # 可能是密碼錯，下次重新詢問
+        self.db.after_run(result)
         if not isinstance(result, ImportReceipt):
             return
         for line in result.lines:
@@ -269,6 +266,114 @@ class DailyImportTab(_Tab):
         )
 
 
+class _DatabaseLogin:
+    """各分頁共用的資料庫連線設定；`.env` 沒有密碼時詢問一次，只留在記憶體。"""
+
+    def __init__(self, master: tk.Misc, env_path: Path) -> None:
+        self.master = master
+        self.env_path = env_path
+        self.password: str | None = None
+
+    def settings(self) -> ConnectionSettings | None:
+        try:
+            settings = settings_from_env(self.env_path)
+        except DatabaseError as exc:
+            messagebox.showerror(TITLE, str(exc))
+            return None
+        if settings.password is not None:
+            return settings
+        self.password = self.password or simpledialog.askstring(
+            TITLE, f"{settings.user}@{settings.host} 的資料庫密碼", show="*", parent=self.master
+        )
+        return settings.with_password(self.password) if self.password else None
+
+    def after_run(self, result: object) -> None:
+        if isinstance(result, DatabaseError):
+            self.password = None  # 可能是密碼錯，下次重新詢問
+
+
+class MailDraftTab(_Tab):
+    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, db: _DatabaseLogin) -> None:
+        super().__init__(
+            notebook,
+            "寄信草稿",
+            (("tdcc", "TDCC", 130), ("status", "狀態", 80), ("to", "收件人", 160), ("reason", "原因", 380)),
+        )
+        self.memory = memory
+        self.db = db
+        folders = memory.load()
+        self.root_var = tk.StringVar(value=folders.get("root", ""))
+        self.out_var = tk.StringVar(value=folders.get("mail_out", ""))
+        self.status_var.set("貼上核對通過的 TDCC，選根目錄與結果清單位置，按「建立草稿」。只建草稿，不會寄出。")
+
+        ttk.Label(self.frame, text="TDCC（可貼多筆）").grid(row=0, column=0, sticky="nw", pady=4)
+        self.tdcc_text = tk.Text(self.frame, height=6, width=40)
+        self.tdcc_text.grid(row=0, column=1, columnspan=2, sticky="nsew", pady=4)
+        self.path_row(1, "根目錄", self.root_var, lambda: _ask_dir("選擇商品資料夾所在的根目錄", self.root_var))
+        self.path_row(2, "結果清單位置", self.out_var, lambda: _ask_dir("選擇寄信草稿清單要存在哪裡", self.out_var))
+        self.start_button = ttk.Button(self.buttons, text="建立草稿", command=self.start)
+        self.start_button.pack(side=tk.LEFT)
+        self.place_bottom(3)
+
+    def start(self) -> None:
+        text = self.tdcc_text.get("1.0", tk.END)
+        root_text, out_text = self.root_var.get().strip(), self.out_var.get().strip()
+        if not root_text or not out_text:
+            messagebox.showerror(TITLE, "請先選擇根目錄與結果清單位置。")
+            return
+        settings = self.db.settings()
+        if settings is None:
+            return
+        root, out = Path(root_text), Path(out_text)
+        self.memory.remember(root=str(root), mail_out=str(out))
+        self.start_button.configure(state=tk.DISABLED)
+
+        def check() -> ImportInfo | None:
+            with connect(settings) as conn:
+                return latest_import(conn)
+
+        def confirm(result: object) -> None:
+            # 先讓作業人員看到用的是哪一次每日匯入，確認後才建草稿，避免用到舊資料
+            self.db.after_run(result)
+            if isinstance(result, Exception):
+                self.start_button.configure(state=tk.NORMAL)
+                return
+            question = (
+                f"最近一次每日匯入：{_import_text(result)}\n\n要用這份資料建立草稿嗎？"
+                if result is not None
+                else "資料庫還沒有任何每日匯入紀錄。仍要繼續嗎？"
+            )
+            if not messagebox.askyesno(TITLE, question, parent=self.master):
+                self.start_button.configure(state=tk.NORMAL)
+                self.status_var.set("已取消，沒有建立任何草稿。")
+                return
+
+            def run() -> DraftReceipt:
+                with connect(settings) as conn:
+                    return create_drafts(text, root, out, conn)
+
+            self.run_in_background(run, "建立草稿中…（在根目錄底下搜尋商品資料夾）", self._done)
+
+        self.run_in_background(check, "讀取最近一次每日匯入…", confirm)
+
+    def _done(self, result: object) -> None:
+        self.start_button.configure(state=tk.NORMAL)
+        self.db.after_run(result)
+        if not isinstance(result, DraftReceipt):
+            return
+        for o in result.outcomes:
+            self.add_row((o.tdcc, o.status, "、".join(o.to), o.reason), problem=o.status not in (DRAFTED, NOT_NEEDED))
+        drafted = sum(o.status == DRAFTED for o in result.outcomes)
+        last = _import_text(result.last_import) if result.last_import else "沒有匯入紀錄"
+        status = (
+            f"完成：{drafted} 封草稿已建立（在 Outlook 草稿匣，請確認後再寄出）、"
+            f"{len(result.outcomes) - drafted} 檔沒有建立。最近一次每日匯入：{last}。結果清單：{result.list_path}"
+        )
+        if result.unreadable_dirs:
+            status += f"\n注意：搜尋時有 {len(result.unreadable_dirs)} 個資料夾讀不到（例如 {result.unreadable_dirs[0]}），裡面的商品資料夾找不到。"
+        self.status_var.set(status)
+
+
 class PanelWindow:
     def __init__(self, master: tk.Tk, memory: FolderMemory, env_path: Path | None = None) -> None:
         master.title(TITLE)
@@ -278,12 +383,18 @@ class PanelWindow:
         self.returning = ReturnTab(notebook, memory)
         self.prepare = PrepareTab(notebook, memory, on_prepared=lambda batch: self.returning.batch_var.set(str(batch)))
         notebook.insert(0, self.prepare.frame)  # 準備批次排第一個分頁
-        self.daily = DailyImportTab(notebook, memory, env_path or default_env_path())
+        db = _DatabaseLogin(master, env_path or default_env_path())
+        self.daily = DailyImportTab(notebook, memory, db)
+        self.mail = MailDraftTab(notebook, memory, db)
         notebook.select(0)
 
 
 def _ask_dir(title: str, current: tk.StringVar) -> str:
     return filedialog.askdirectory(title=title, initialdir=current.get() or None, mustexist=True)
+
+
+def _import_text(info: ImportInfo) -> str:
+    return f"{info.imported_at:%Y-%m-%d %H:%M}（第 {info.run_id} 次，{info.file_name}）"
 
 
 def _ask_excel(title: str, current: tk.StringVar) -> str:

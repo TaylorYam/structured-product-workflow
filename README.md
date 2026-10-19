@@ -2,7 +2,7 @@
 
 ## 繁體中文
 
-狀態：「TS／IIS 準備與放回」已完成，以真實樣本複本試跑過，等作業主機公槽實測（[#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)）。「每日匯入」最小 FCN 資料庫見 [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32)；「寄信草稿」需求已確認、待實作（[#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)，改讀資料庫）。其他流程仍在設計階段。
+狀態：「TS／IIS 準備與放回」已完成，以真實樣本複本試跑過，等作業主機公槽實測（[#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)）。「每日匯入」最小 FCN 資料庫見 [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32)；「寄信草稿」見 [#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)。其他流程仍在設計階段。
 
 本專案管理正式 Order、建檔、上手文件歸檔、核對串接及 FC 寄送。詢價端沿用既有系統。
 核對規則由獨立的 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) 負責。
@@ -91,11 +91,26 @@ UPDATE mailbox.person SET email = 'amy.new@example.com' WHERE name = 'Amy';
 DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 ```
 
-測試：`pytest -q`（資料全部虛構；真的 Word 轉檔測試只在本機有 Word 時執行，CI 自動略過）。資料庫測試需要一個名稱以 `_test` 結尾、可以清空的 PostgreSQL 資料庫，把連線字串設在環境變數 `SPW_TEST_DSN`（例如 `host=localhost dbname=spw_test user=...`）；沒設定時略過，CI 用 PostgreSQL 服務執行。真實樣本試跑只在本機執行：把環境變數 `SPW_REAL_SAMPLES_DIR` 設成放商品資料夾的目錄，CI 自動略過；真實資料不進 repo。
+### 寄信草稿
+
+為核對通過的 FCN，在**自己的傳統版 Outlook 草稿匣**建立 TS／IIS 信件給承作的 FC（[#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)）。**只建草稿，不會寄出**；請在 Outlook 逐封確認後自己按寄出。資料全部讀資料庫，所以先做完每日匯入。
+
+1. 視窗切到「寄信草稿」，貼上核對通過的 TDCC（分隔方式同「準備批次」）。
+2. 選根目錄（同準備批次，商品資料夾可以在底下任何一層）與結果清單位置，按「建立草稿」。視窗會先顯示最近一次每日匯入（時間、第幾次、檔名），確認後才開始建立。
+3. 每檔要符合才會建草稿，否則標「待處理」並寫出原因：
+   - 資料庫有這檔的商品條件與交易列；
+   - 商品資料夾裡有 `<TDCC>_TS.pdf` 與 `<TDCC>_IIS.pdf`（放回資料夾只會以標準檔名放回核對通過的文件；`_待確認` 檔不算）；
+   - 交易列上的 FC 都對得到信箱。
+4. 信件：一檔一封；收件人是承作的 FC（略過 PB，只有 PB 時標「不需寄送」），副本是信箱裡 `fixed_cc` 的人；主旨 `FCN <TDCC> 中文TS/IIS`；內文 `FYI` 加三個表格（日期與期初價格、商品條件、分公司）；附上兩份 PDF。
+5. 結果清單 `寄信草稿清單_<日期時間>.xlsx` 列出每檔的狀態、收件人、副本與原因；「資料來源」工作表記錄用的是哪一次每日匯入（時間、編號、檔名、SHA-256）與搜尋時讀不到的資料夾。
+
+每日匯入略過的非 FCN 商品會標「不支援的商品類型」。同一檔重跑會再建一封草稿，重複的請自己刪除。某一檔出錯（例如 Outlook 沒回應、資料有問題）只標那一檔「建立失敗」，其他檔照常處理。商品資料夾只讀不改。更新程式後請執行一次 `spw-db-migrate`（新增了資料表版本）。
+
+測試：`pytest -q`（資料全部虛構；真的 Word 轉檔測試只在本機有 Word 時執行，CI 自動略過）。資料庫測試需要一個名稱以 `_test` 結尾、可以清空的 PostgreSQL 資料庫，把連線字串設在環境變數 `SPW_TEST_DSN`（例如 `host=localhost dbname=spw_test user=...`）；沒設定時略過，CI 用 PostgreSQL 服務執行。真的 Outlook 建草稿測試只在本機設定 `SPW_OUTLOOK_TEST=1` 時執行（會在草稿匣建一封測試信再刪掉）。真實樣本試跑只在本機執行：把環境變數 `SPW_REAL_SAMPLES_DIR` 設成放商品資料夾的目錄，CI 自動略過；真實資料不進 repo。
 
 ## English
 
-Status: TS/IIS preparation and return is complete and trial-run on copies of real samples; operational shared-drive testing is pending ([#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)). The minimal FCN database with daily import is [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32); mail drafts have confirmed requirements and await implementation ([#29](https://github.com/TaylorYam/structured-product-workflow/issues/29), now reading the database). Other workflows remain in design.
+Status: TS/IIS preparation and return is complete and trial-run on copies of real samples; operational shared-drive testing is pending ([#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)). The minimal FCN database with daily import is [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32); mail drafts are [#29](https://github.com/TaylorYam/structured-product-workflow/issues/29). Other workflows remain in design.
 
 This project coordinates formal Orders, booking, issuer document archiving, checker integration, and FC distribution. Inquiry remains in the existing system.
 Checking rules belong to the independent [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker).
@@ -184,4 +199,19 @@ UPDATE mailbox.person SET email = 'amy.new@example.com' WHERE name = 'Amy';
 DELETE FROM mailbox.person WHERE name = 'Amy';  -- their aliases are deleted too
 ```
 
-Tests: `pytest -q` (synthetic data only; real Word conversion tests run locally only when Word is available and are skipped in CI). Database tests need a disposable PostgreSQL database whose name ends in `_test`; put its connection string in `SPW_TEST_DSN` (for example `host=localhost dbname=spw_test user=...`). Without it they are skipped; CI runs them against a PostgreSQL service. Real-sample runs are local only: set `SPW_REAL_SAMPLES_DIR` to the folder containing product folders; CI skips it, and real data never enters the repository.
+### Mail drafts
+
+Creates TS/IIS emails to the FCs handling each checked FCN in **your own classic Outlook Drafts folder** ([#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)). **It only creates drafts and never sends**; review each one in Outlook and send it yourself. All data comes from the database, so run the daily import first.
+
+1. In the window, open "寄信草稿" and paste the checked TDCCs (same separators as preparation).
+2. Choose the root folder (as in preparation; product folders may be at any depth) and the result-list location, then click "建立草稿". The window first shows the latest daily import (time, run number, file name) and creates drafts only after you confirm.
+3. A draft is created only when all of these hold; otherwise the product is marked "待處理" with reasons:
+   - the database has the product's terms and trade rows;
+   - the product folder holds `<TDCC>_TS.pdf` and `<TDCC>_IIS.pdf` (return-to-folders only writes standard names for checked documents; `_待確認` files do not count);
+   - every FC on the trade rows matches the mailbox.
+4. Mail: one per product; recipients are the FCs (PB skipped; PB-only products are "不需寄送"), CC is everyone with `fixed_cc` in the mailbox; subject `FCN <TDCC> 中文TS/IIS`; body `FYI` plus three tables (dates and initial pricing, terms, branches); both PDFs attached.
+5. The result list `寄信草稿清單_<timestamp>.xlsx` records each product's status, recipients, CCs, and reasons; its "資料來源" sheet records which daily import was used (time, run number, file name, SHA-256) and any folders that could not be read.
+
+Non-FCN products skipped by the daily import are marked "不支援的商品類型". Running a product again creates another draft; delete duplicates yourself. An error on one product (for example Outlook not responding or bad data) marks only that product "建立失敗"; the others continue. Product folders are read only. Run `spw-db-migrate` once after updating (a schema version was added).
+
+Tests: `pytest -q` (synthetic data only; real Word conversion tests run locally only when Word is available and are skipped in CI). Database tests need a disposable PostgreSQL database whose name ends in `_test`; put its connection string in `SPW_TEST_DSN` (for example `host=localhost dbname=spw_test user=...`). Without it they are skipped; CI runs them against a PostgreSQL service. The real Outlook draft test runs only when `SPW_OUTLOOK_TEST=1` is set locally (it creates and then deletes one test draft). Real-sample runs are local only: set `SPW_REAL_SAMPLES_DIR` to the folder containing product folders; CI skips it, and real data never enters the repository.

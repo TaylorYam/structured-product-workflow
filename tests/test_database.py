@@ -75,6 +75,7 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
         "mailbox.person",
         "workflow.branch_allocation",
         "workflow.import_run",
+        "workflow.other_product",
         "workflow.product",
         "workflow.trade_row",
     ]

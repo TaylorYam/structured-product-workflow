@@ -9,11 +9,11 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+from db_synth import inventory, seed_mailbox, trade, write_daily
 from sp_workflow import daily_import
 from sp_workflow.daily_import import (
     BLOCKED,
     DIFFERENT,
-    INVENTORY_HEADERS,
     INVENTORY_MISSING,
     MAILBOX_EMPTY,
     NAME_UNMATCHED,
@@ -25,6 +25,8 @@ from sp_workflow.daily_import import (
     UNCHANGED,
     DailyImportError,
     import_daily,
+    is_pb,
+    latest_import,
 )
 from sp_workflow.database import DatabaseError, require_current_schema
 
@@ -34,86 +36,6 @@ A = "029199990001"
 B = "037199990002"
 C = "076199990003"
 D = "325199990004"
-
-
-def trade(tdcc: str, fc: str, branch: str, amount: int, *, number: int | None = 1, product: str = "FCN") -> dict:
-    return {
-        "編號": number,
-        "交易日期": dt.datetime(2026, 10, 15),
-        "Product": product,
-        "TDCC": tdcc,
-        "幣別": "USD",
-        "金額": amount,
-        "FC/PB": fc,
-        "分公司": branch,
-        "UF": 0.0215,
-        "期初價格": "收盤價",
-        "募集": "N",
-        "起單人員": "A",
-    }
-
-
-def inventory(tdcc: str, branches: list[tuple[str, int]], **overrides) -> dict:
-    row = {name: "-" for name in INVENTORY_HEADERS}
-    row.update(
-        {
-            "庫存狀態": None,
-            "Product": "FCN",
-            "發行機構": "XBANK",
-            "TDCC Code": tdcc,
-            "ISIN Code": "XS0000000001",
-            "承作幣別": "USD",
-            "交易日": dt.datetime(2026, 10, 15),
-            "發行日": dt.datetime(2026, 10, 22),
-            "最終比價日": dt.datetime(2027, 4, 22),
-            "到期日": dt.datetime(2027, 4, 27),
-            "期初定價": "收盤價",
-            "KO(%)": 100,
-            "KO(Freq)": "D",
-            "KO(memo)": "Y",
-            "K(%)": 80,
-            "KI(%)": 65,
-            "KI(Freq)": "AM",
-            "UF": 2.1500000000000057,
-            "Coupon p.a. (%)": 12.5,
-            "天期(月)": 6,
-            "Non-Call(月)": 1,
-            "UL_1": "AAA UW",
-            "UL_2": "BBB UN",
-        }
-    )
-    for i, (branch, amount) in enumerate(branches, 1):
-        row[f"分公司_{i}"], row[f"分公司_{i}_承作金額"] = branch, amount
-    row.update(overrides)
-    return row
-
-
-def write_daily(path: Path, trades: list[dict], inventories: list[dict], *, trade_headers=TRADE_HEADERS) -> Path:
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = daily_import.TRADE_SHEET
-    ws.append(list(trade_headers))
-    for t in trades:
-        ws.append([t.get(h) for h in TRADE_HEADERS])
-    inv = wb.create_sheet(daily_import.INVENTORY_SHEET)
-    inv.append(list(INVENTORY_HEADERS))
-    for row in inventories:
-        inv.append([row.get(h) for h in INVENTORY_HEADERS])
-    wb.save(path)
-    return path
-
-
-def seed_mailbox(pg, people=None, aliases=()) -> None:
-    """像使用者用 SQL 維護信箱一樣直接寫入；比對鍵由資料庫產生。"""
-    people = people or [
-        ("Amy", "amy@example.com", "FC", False),
-        ("Ben", "ben@example.com", "FC", False),
-        ("Pat", "pat@example.com", "PM", True),
-    ]
-    for row in people:
-        pg.execute("INSERT INTO mailbox.person (name, email, unit, fixed_cc) VALUES (%s, %s, %s, %s)", row)
-    for row in aliases:
-        pg.execute("INSERT INTO mailbox.alias (alias, person_name) VALUES (%s, %s)", row)
 
 
 @pytest.fixture
@@ -191,6 +113,22 @@ def test_other_products_are_skipped_and_counted(pg, tmp_path: Path, mailbox) -> 
 
     assert (receipt.skipped_trade_rows, receipt.skipped_inventory_rows) == (1, 1)
     assert count(pg, "workflow.product") == 1 and kinds(receipt, D) == []
+    assert pg.execute("SELECT tdcc, product FROM workflow.other_product").fetchall() == [(D, "BEN")]
+
+
+def test_latest_import_describes_the_newest_run(pg, tmp_path: Path, mailbox) -> None:
+    assert latest_import(pg) is None
+    import_daily(write_daily(tmp_path / "1.xlsx", [], []), pg)
+    import_daily(write_daily(tmp_path / "2.xlsx", [], []), pg)
+
+    info = latest_import(pg)
+
+    assert (info.run_id, info.file_name, len(info.sha256)) == (2, "2.xlsx", 64)
+
+
+@pytest.mark.parametrize("name", ["PB", " pb ", "Pb"])
+def test_pb_is_recognized_however_it_is_typed(name) -> None:
+    assert is_pb(name)
 
 
 def test_importing_the_same_file_again_adds_nothing(pg, tmp_path: Path, mailbox) -> None:

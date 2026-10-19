@@ -53,4 +53,13 @@ def test_daily_import_tab_remembers_files_and_env_path(master, tmp_path: Path) -
     window = app.PanelWindow(master, memory, tmp_path / ".env")
 
     assert window.daily.daily_var.get() == "D:/每日更新.xlsx"
-    assert window.daily.env_path == tmp_path / ".env"
+    assert window.daily.db.env_path == tmp_path / ".env" and window.mail.db is window.daily.db
+
+
+def test_mail_draft_tab_reuses_the_root_and_remembers_its_output(master, tmp_path: Path) -> None:
+    memory = FolderMemory.under(tmp_path)
+    memory.remember(root="R:/FCN", mail_out="D:/寄信")
+
+    window = app.PanelWindow(master, memory, tmp_path / ".env")
+
+    assert (window.mail.root_var.get(), window.mail.out_var.get()) == ("R:/FCN", "D:/寄信")
