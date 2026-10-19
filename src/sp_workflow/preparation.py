@@ -224,7 +224,7 @@ def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter
             note
             for kind in DocKind
             if selections[kind].reused_failed
-            for note in _unusable_notes(kind, mismatched[kind], failures, words if kind not in need_word else [])
+            for note in _unusable_notes(kind, mismatched[kind], failures)
         ]
 
         docs = []
@@ -237,18 +237,16 @@ def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter
     return ProductOutcome(tdcc, PREPARED, reason, folder, tuple(docs))
 
 
-def _unusable_notes(
-    kind: DocKind, mismatched: list[_Candidate], failures: dict[Path, str], unconverted_words: list[Path]
-) -> list[str]:
-    """沿用舊版時，同一種文件不能用的新檔：封面商品代號不符、Word 轉檔失敗、沒拿來比對的 Word。"""
+def _unusable_notes(kind: DocKind, mismatched: list[_Candidate], failures: dict[Path, str]) -> list[str]:
+    """沿用舊版時，同一種文件不能用的新檔：封面商品代號不符、Word 轉檔失敗。
+
+    有 PDF 時不轉 Word，所以不知道哪個 Word 是說明書；資料夾裡一定有公司表單的 Word，不逐一提醒（見 README）。
+    """
     notes = []
     if mismatched:
         notes.append(f"{kind.label}另有 {_names(mismatched)}，封面商品代號不符")
     if failures:
         notes.append(f"{kind.label}另有 Word 轉檔失敗：{'；'.join(f'{w.name}：{r}' for w, r in failures.items())}")
-    if unconverted_words:
-        names = "、".join(w.name for w in unconverted_words)
-        notes.append(f"資料夾有 Word 檔（{names}）沒有拿來比對；若上手的修正版只有 Word，請上手補 PDF")
     return notes
 
 
