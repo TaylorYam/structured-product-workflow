@@ -92,3 +92,29 @@ def snapshot(root: Path) -> dict[str, tuple[bytes, int]]:
     return {
         str(p.relative_to(root)): (p.read_bytes(), p.stat().st_mtime_ns) for p in sorted(root.rglob("*")) if p.is_file()
     }
+
+
+def make_fake_word(path: Path, lines: list[str]) -> Path:
+    """假的 Word 檔：內容是要轉成 PDF 的文字，交給 FakeConverter 轉。"""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+class FakeConverter:
+    """測試用轉檔器：把假 Word 的文字寫成 PDF；記下每次收到的工作，可指定失敗。"""
+
+    def __init__(self, *, error: str = "", produce: bool = True) -> None:
+        self.calls: list[list[tuple[Path, Path]]] = []
+        self.error = error
+        self.produce = produce
+
+    def __call__(self, jobs) -> None:
+        from sp_workflow.conversion import ConversionError
+
+        self.calls.append(list(jobs))
+        if self.error:
+            raise ConversionError(self.error)
+        if self.produce:
+            for source, target in jobs:
+                make_pdf(target, source.read_text(encoding="utf-8").splitlines())

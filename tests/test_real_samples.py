@@ -12,24 +12,24 @@ from pathlib import Path
 import pytest
 
 from sp_workflow.documents import DocKind
-from sp_workflow.preparation import PREPARED, SKIPPED, prepare_batch
+from sp_workflow.preparation import PREPARED, prepare_batch
 
-pytestmark = pytest.mark.real_samples
+pytestmark = [pytest.mark.real_samples, pytest.mark.word]
 
-# 上手編號 → (說明書檔名特徵, 投資人須知檔名特徵)；None 表示只有 Word、這一版要跳過
-EXPECTED: dict[str, tuple[str, str] | None] = {
-    "029": ("CN TS", "CN IIS"),  # BARC
-    "037": ("(ZH)", "IIS_Chinese"),  # SG
-    "076": ("JPM_Chi_TS", "JPM_Chi_IIS"),  # JPM
-    "082": None,  # BNP：只有 Word
-    "086": ("PS_", "IIS_"),  # CA：TS_ 開頭是英文版
-    "092": ("_TS.pdf", "_IIS.pdf"),  # UBS
-    "147": None,  # MS：只有 Word
-    "148": ("Product Statement", "_IIS_"),  # GS
-    "156": ("_CN_TS_", "_CN_IIS_"),  # Nomura
-    "325": ("_CH_TS_", "_CH_KIID_"),  # HSBC
-    "326": ("Chi TS", "Chi IIS"),  # BBVA
-    "328": ("Final_TS_", "Final_IIS_"),  # Natixis
+# 上手編號 → (說明書檔名特徵, 投資人須知檔名特徵, 是否由 Word 轉檔)
+EXPECTED: dict[str, tuple[str, str, bool]] = {
+    "029": ("CN TS", "CN IIS", False),  # BARC
+    "037": ("(ZH)", "IIS_Chinese", False),  # SG
+    "076": ("JPM_Chi_TS", "JPM_Chi_IIS", False),  # JPM
+    "082": ("_TS_", "_IIS_", True),  # BNP：只有 Word（舊版 .DOC），另有英文 DOCX
+    "086": ("PS_", "IIS_", False),  # CA：TS_ 開頭是英文版
+    "092": ("_TS.pdf", "_IIS.pdf", False),  # UBS
+    "147": ("_ATS_", "_AD_", True),  # MS：只有 Word，檔名 _TS_ 的是英文版
+    "148": ("Product Statement", "_IIS_", False),  # GS
+    "156": ("_CN_TS_", "_CN_IIS_", False),  # Nomura
+    "325": ("_CH_TS_", "_CH_KIID_", False),  # HSBC
+    "326": ("Chi TS", "Chi IIS", False),  # BBVA
+    "328": ("Final_TS_", "Final_IIS_", False),  # Natixis
 }
 
 
@@ -45,15 +45,13 @@ def test_real_product_folders(tmp_path: Path) -> None:
     tdccs = sorted(p.name for p in root.iterdir() if p.is_dir() and re.fullmatch(r"\d{12}", p.name))
     assert tdccs, f"{root} 底下沒有以 TDCC 命名的商品資料夾"
 
-    receipt = prepare_batch("\n".join(tdccs), root, tmp_path)
+    receipt = prepare_batch("\n".join(tdccs), root, tmp_path)  # 用真的 Microsoft Word 轉檔
 
     for o in receipt.outcomes:
-        expected = EXPECTED.get(o.tdcc[:3], "unknown")
-        assert expected != "unknown", f"{o.tdcc}：EXPECTED 沒有這個上手編號"
-        if expected is None:
-            assert o.status == SKIPPED and "只有 Word" in o.reason, (o.tdcc, o.reason)
-            continue
+        assert o.tdcc[:3] in EXPECTED, f"{o.tdcc}：EXPECTED 沒有這個上手編號"
+        ts_mark, iis_mark, from_word = EXPECTED[o.tdcc[:3]]
         assert o.status == PREPARED, (o.tdcc, o.reason)
         names = {d.kind: d.source.name for d in o.documents}
-        assert expected[0] in names[DocKind.TS], (o.tdcc, names)
-        assert expected[1] in names[DocKind.IIS], (o.tdcc, names)
+        assert ts_mark in names[DocKind.TS], (o.tdcc, names)
+        assert iis_mark in names[DocKind.IIS], (o.tdcc, names)
+        assert all(d.from_word == from_word for d in o.documents), (o.tdcc, names)
