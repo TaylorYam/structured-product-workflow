@@ -32,7 +32,7 @@
 
 #### 庫存 Excel 第一次測試匯入
 
-`scripts/` 的 PostgreSQL 工具需要選用的 `db` 套件：`python -m pip install -c constraints.txt -e ".[dev,db]"`。不用資料庫的人照 README 安裝 `.[dev]` 即可。
+第一階段的正式資料表與每日匯入見 [ADR 0003](adr/0003-minimal-fcn-database.md) 與 README「每日匯入」：資料表版本在套件的 `migrations/`，以 `spw-db-migrate` 套用；換電腦以「建立資料表＋重新匯入」重建，不複製資料庫。以下 `scripts/` 的測試匯入表是早期試作，不被正式流程使用。PostgreSQL 驅動已包含在套件裡。
 
 測試匯入器位於 `scripts/import_inventory_excel.py`，會主動讀取本機 `.env`；`.env` 必須維持在 Git ignore 範圍內，密碼不得寫入 repository、log 或輸出。`PGPASSWORD` 只能放在本機 `.env`；沒放時匯入器會用隱藏輸入詢問。建立資料庫用的 `PGADMINPASSWORD`、`PGDEVPASSWORD` 不寫進任何檔案，只在執行時設成命令列環境變數。匯入器預設只做 dry-run；寫入時會在同一個 transaction 內完成對帳，對帳不符就整批 rollback：
 
@@ -95,7 +95,7 @@ Persist full results, allowed backfills, and case progress separately. Validate 
 
 #### First inventory Excel test import
 
-The PostgreSQL tools in `scripts/` need the optional `db` extra: `python -m pip install -c constraints.txt -e ".[dev,db]"`. Without a database, install `.[dev]` as described in the README.
+First-phase tables and the daily import are in [ADR 0003](adr/0003-minimal-fcn-database.md) and the README "Daily import" section: schema versions live in the package `migrations/` and are applied with `spw-db-migrate`; moving computers means rebuilding (create tables, re-import), not copying the database. The `scripts/` test-import tables below are an early experiment unused by the workflow. The PostgreSQL driver is included in the package.
 
 The test importer is `scripts/import_inventory_excel.py`. It actively loads the local `.env`; `.env` must remain covered by Git ignore, and passwords must not enter the repository, logs, or output. `PGPASSWORD` may live only in the local `.env`; without it the importer prompts with hidden input. The provisioning passwords `PGADMINPASSWORD` and `PGDEVPASSWORD` are never written to a file and are set only as shell environment variables for that run. The importer defaults to a dry-run; a write reconciles counts inside the same transaction and rolls back the whole batch on mismatch:
 

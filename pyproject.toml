@@ -5,12 +5,13 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sp-workflow"
 version = "0.1.0"
-description = "結構型商品作業流程：從商品資料夾準備 TS／IIS 批次（本機視窗工具）"
+description = "結構型商品作業流程：TS／IIS 準備與放回、每日匯入最小 FCN 資料庫（本機視窗工具）"
 requires-python = ">=3.11"
 dependencies = [
     "pymupdf>=1.24,<2",
     "openpyxl>=3.1,<4",
     "pywin32>=306; sys_platform == 'win32'",
+    "psycopg[binary]>=3.2,<4",
 ]
 
 [project.optional-dependencies]
@@ -18,16 +19,16 @@ dev = [
     "pytest>=8",
     "ruff>=0.6",
 ]
-# 本機 PostgreSQL 開發工具（scripts/）才需要
-db = [
-    "psycopg[binary]>=3.2,<4",
-]
 
 [project.scripts]
 spw-panel = "sp_workflow.app:main"
+spw-db-migrate = "sp_workflow.database:migrate_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+sp_workflow = ["migrations/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -35,6 +36,7 @@ addopts = "-ra"
 markers = [
     "real_samples: 只在本機設定 SPW_REAL_SAMPLES_DIR 時執行；CI 自動略過",
     "word: 需要 Windows 與 Microsoft Word；CI 自動略過",
+    "db: 需要測試用 PostgreSQL（設定 SPW_TEST_DSN）；沒設定時略過",
 ]
 
 [tool.ruff]
