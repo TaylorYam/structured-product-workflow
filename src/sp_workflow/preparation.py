@@ -2,7 +2,8 @@
 
 對外只有 `prepare_batch`。商品資料夾只讀不寫；批次資料夾每次新開、已存在就不做。
 同一種文件剛好一份候選才採用；說明書或投資人須知任一份找不到或有多份，整個商品跳過。
-這一版只處理上手 PDF：某種文件沒有 PDF 候選、資料夾裡有 Word 時，原因寫「只有 Word，尚未支援轉檔」（#8 處理）。
+有上手 PDF 候選就只看 PDF；某種文件沒有 PDF 候選時，才把資料夾裡的 Word 複製到暫存區轉成 PDF 再判斷（#8、ADR 0002）。
+Word 無法啟動或逾時，整個商品跳過；個別 Word 轉不了只影響它自己（需要它卻沒有其他候選時，原因寫出轉檔失敗）。
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ import hashlib
 import os
 import re
 import shutil
+import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +22,7 @@ import openpyxl
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
+from sp_workflow.conversion import ConversionError, Converter, default_converter
 from sp_workflow.documents import DocKind, read_pdf
 
 PREPARED = "已準備"
@@ -60,6 +63,15 @@ class PreparedDocument:
 
 
 @dataclass(frozen=True)
+class _Candidate:
+    """判讀用的 PDF（上手 PDF 本身，或 Word 轉出的暫存 PDF）與它的來源檔。"""
+
+    pdf: Path
+    source: Path
+    from_word: bool = False
+
+
+@dataclass(frozen=True)
 class ProductOutcome:
     tdcc: str
     status: str
@@ -76,8 +88,19 @@ class PrepareReceipt:
     unreadable_dirs: tuple[Path, ...] = ()  # 搜尋商品資料夾時讀不到的資料夾（例如沒有權限）
 
 
-def prepare_batch(text: str, root: Path, out_parent: Path, *, now: dt.datetime | None = None) -> PrepareReceipt:
-    """準備一個批次：回傳批次資料夾、準備清單路徑與逐商品結果（依輸入順序）。"""
+def prepare_batch(
+    text: str,
+    root: Path,
+    out_parent: Path,
+    *,
+    now: dt.datetime | None = None,
+    converter: Converter | None = None,
+) -> PrepareReceipt:
+    """準備一個批次：回傳批次資料夾、準備清單路徑與逐商品結果（依輸入順序）。
+
+    converter 預設用 Microsoft Word 轉檔（只有需要轉 Word 時才會啟動）。
+    """
+    convert = converter or default_converter()
     tokens = _parse_tokens(text)
     if not tokens:
         raise PreparationError("沒有輸入 TDCC")
@@ -94,7 +117,7 @@ def prepare_batch(text: str, root: Path, out_parent: Path, *, now: dt.datetime |
     valid = {t for t in tokens if _TDCC.fullmatch(t)}
     folders, unreadable = _find_product_folders(root, valid)
     outcomes = tuple(
-        _prepare_product(t, folders.get(t, []), unreadable, batch_dir)
+        _prepare_product(t, folders.get(t, []), unreadable, batch_dir, convert)
         if t in valid
         else ProductOutcome(t, SKIPPED, "不是 12 碼數字")
         for t in tokens
@@ -123,7 +146,9 @@ def _find_product_folders(root: Path, wanted: set[str]) -> tuple[dict[str, list[
     return found, unreadable
 
 
-def _prepare_product(tdcc: str, folders: list[Path], unreadable: list[Path], batch_dir: Path) -> ProductOutcome:
+def _prepare_product(
+    tdcc: str, folders: list[Path], unreadable: list[Path], batch_dir: Path, convert: Converter
+) -> ProductOutcome:
     if not folders:
         reason = "找不到商品資料夾"
         if unreadable:
@@ -134,56 +159,104 @@ def _prepare_product(tdcc: str, folders: list[Path], unreadable: list[Path], bat
         return ProductOutcome(tdcc, SKIPPED, f"找到 {len(folders)} 個同名商品資料夾：{paths}")
     folder = folders[0]
     try:
-        return _prepare_folder(tdcc, folder, batch_dir)
+        return _prepare_folder(tdcc, folder, batch_dir, convert)
     except OSError as exc:
         for kind in DocKind:  # 兩份要嘛都輸出、要嘛都不輸出
             (batch_dir / _output_name(tdcc, kind)).unlink(missing_ok=True)
         return ProductOutcome(tdcc, SKIPPED, f"讀取或複製失敗：{exc}", folder)
 
 
-def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path) -> ProductOutcome:
+def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter) -> ProductOutcome:
     files = sorted((p for p in folder.iterdir() if p.is_file()), key=lambda p: p.name)
-    has_word = any(p.suffix.lower() in _WORD for p in files)
-    candidates: dict[DocKind, list[Path]] = {kind: [] for kind in DocKind}
-    mismatched: dict[DocKind, list[Path]] = {kind: [] for kind in DocKind}
+    words = [p for p in files if p.suffix.lower() in _WORD and not p.name.startswith("~$")]  # ~$ 是 Word 鎖定檔
+    candidates: dict[DocKind, list[_Candidate]] = {kind: [] for kind in DocKind}
+    mismatched: dict[DocKind, list[_Candidate]] = {kind: [] for kind in DocKind}
+
+    def read(candidate: _Candidate, kinds: tuple[DocKind, ...]) -> None:
+        reading = read_pdf(candidate.pdf, tdcc)
+        if reading.kind in kinds:
+            (candidates if reading.code_matches else mismatched)[reading.kind].append(candidate)
+
     for pdf in (p for p in files if p.suffix.lower() == _PDF):
-        reading = read_pdf(pdf, tdcc)
-        if reading.kind is not None:
-            (candidates if reading.code_matches else mismatched)[reading.kind].append(pdf)
+        read(_Candidate(pdf, pdf), tuple(DocKind))
 
-    problems = [_problem(kind, candidates[kind], mismatched[kind], has_word) for kind in DocKind]
-    problems = [p for p in problems if p]
-    if problems:
-        docs = tuple(PreparedDocument(kind, c[0] if len(c := candidates[kind]) == 1 else None) for kind in DocKind)
-        return ProductOutcome(tdcc, SKIPPED, "；".join(problems), folder, docs)
+    # Word 逾時被強制結束時暫存檔可能還被鎖住，清不掉也不影響結果
+    with tempfile.TemporaryDirectory(prefix="spw-prepare-", ignore_cleanup_errors=True) as tmp:
+        need_word = tuple(kind for kind in DocKind if not candidates[kind])
+        failures: dict[Path, str] = {}
+        if need_word and words:
+            try:
+                converted, failures = _convert_words(words, Path(tmp), convert)
+            except ConversionError as exc:
+                return ProductOutcome(tdcc, SKIPPED, str(exc), folder, _found_documents(candidates))
+            for candidate in converted:
+                read(candidate, need_word)
 
-    docs = []
-    for kind in DocKind:
-        [source] = candidates[kind]
-        target = batch_dir / _output_name(tdcc, kind)
-        shutil.copyfile(source, target)
-        docs.append(PreparedDocument(kind, source, target.name, sha256(target)))
+        problems = [_problem(kind, candidates[kind], mismatched[kind], failures) for kind in DocKind]
+        problems = [p for p in problems if p]
+        if problems:
+            return ProductOutcome(tdcc, SKIPPED, "；".join(problems), folder, _found_documents(candidates))
+
+        docs = []
+        for kind in DocKind:
+            [chosen] = candidates[kind]
+            target = batch_dir / _output_name(tdcc, kind)
+            shutil.copyfile(chosen.pdf, target)
+            docs.append(PreparedDocument(kind, chosen.source, target.name, sha256(target), chosen.from_word))
     return ProductOutcome(tdcc, PREPARED, "", folder, tuple(docs))
+
+
+def _convert_words(words: list[Path], tmp: Path, convert: Converter) -> tuple[list[_Candidate], dict[Path, str]]:
+    """把 Word 複製到暫存區再轉 PDF（原始 Word 不動、Word 鎖定檔也不會留在商品資料夾）。
+
+    回傳轉好的候選，以及轉不了的原始 Word 與原因。
+    """
+    jobs: dict[Path, tuple[Path, Path]] = {}
+    for i, word in enumerate(words):
+        work = tmp / str(i)
+        work.mkdir()
+        copy = work / word.name
+        shutil.copyfile(word, copy)
+        jobs[word] = (copy, work / "converted.pdf")
+    reported = convert(list(jobs.values()))
+    converted, failures = [], {}
+    for word, (copy, pdf) in jobs.items():
+        if copy in reported or not pdf.is_file():
+            failures[word] = reported.get(copy, "沒有產生 PDF")
+        else:
+            converted.append(_Candidate(pdf, word, from_word=True))
+    return converted, failures
+
+
+def _found_documents(candidates: dict[DocKind, list[_Candidate]]) -> tuple[PreparedDocument, ...]:
+    """跳過的商品：有唯一候選的那種文件記下來源檔，沒有輸出。"""
+    return tuple(
+        PreparedDocument(kind, c[0].source, from_word=c[0].from_word)
+        if len(c := candidates[kind]) == 1
+        else PreparedDocument(kind)
+        for kind in DocKind
+    )
 
 
 def _output_name(tdcc: str, kind: DocKind) -> str:
     return f"{tdcc}_{kind.value}.pdf"
 
 
-def _problem(kind: DocKind, found: list[Path], mismatched: list[Path], has_word: bool) -> str:
+def _problem(kind: DocKind, found: list[_Candidate], mismatched: list[_Candidate], failures: dict[Path, str]) -> str:
     if len(found) == 1:
         return ""
     if found:
         return f"{kind.label}有 {len(found)} 份候選：{_names(found)}"
     if mismatched:
         return f"找不到{kind.label}（{_names(mismatched)} 封面商品代號不符）"
-    if has_word:
-        return f"找不到{kind.label} PDF（只有 Word，尚未支援轉檔）"
+    if failures:
+        details = "；".join(f"{word.name}：{reason}" for word, reason in failures.items())
+        return f"找不到{kind.label}（有 Word 轉檔失敗：{details}）"
     return f"找不到{kind.label}"
 
 
-def _names(paths: list[Path]) -> str:
-    return "、".join(p.name for p in paths)
+def _names(candidates: list[_Candidate]) -> str:
+    return "、".join(c.source.name for c in candidates)
 
 
 def sha256(path: Path) -> str:

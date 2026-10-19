@@ -10,6 +10,7 @@ requires-python = ">=3.11"
 dependencies = [
     "pymupdf>=1.24,<2",
     "openpyxl>=3.1,<4",
+    "pywin32>=306; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
@@ -29,6 +30,7 @@ testpaths = ["tests"]
 addopts = "-ra"
 markers = [
     "real_samples: 只在本機設定 SPW_REAL_SAMPLES_DIR 時執行；CI 自動略過",
+    "word: 需要 Windows 與 Microsoft Word；CI 自動略過",
 ]
 
 [tool.ruff]
