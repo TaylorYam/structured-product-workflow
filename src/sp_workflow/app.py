@@ -21,7 +21,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.preparation import PREPARED, PreparationError, PrepareReceipt, prepare_batch
-from sp_workflow.returning import NOT_RETURNED, ReturnError, ReturnReceipt, return_to_folders
+from sp_workflow.returning import PENDING_SUFFIX, ReturnError, ReturnReceipt, return_to_folders
 
 TITLE = "TS／IIS 準備與放回"
 _EXPECTED_ERRORS = (PreparationError, ReturnError)  # 訊息本身就是給作業人員看的
@@ -199,10 +199,12 @@ class ReturnTab(_Tab):
         if not isinstance(result, ReturnReceipt):
             return
         for o in result.outcomes:
-            self.add_row((o.tdcc, o.ts, o.iis, o.reason), problem=NOT_RETURNED in (o.ts, o.iis))
-        blocked = sum(NOT_RETURNED in (o.ts, o.iis) for o in result.outcomes)
+            self.add_row((o.tdcc, o.ts, o.iis, o.reason), problem=o.blocked or o.pending or bool(o.reason))
+        blocked = sum(o.blocked for o in result.outcomes)
+        pending = sum(o.pending and not o.blocked for o in result.outcomes)
         self.status_var.set(
-            f"完成：{len(result.outcomes) - blocked} 個商品已放回或已在、{blocked} 個不放回。放回清單：{result.list_path}"
+            f"完成：{len(result.outcomes) - blocked - pending} 個商品已放回或已在、{pending} 個含「{PENDING_SUFFIX}」檔、"
+            f"{blocked} 個不放回。放回清單：{result.list_path}"
         )
 
 
