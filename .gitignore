@@ -23,6 +23,7 @@ coverage/
 .coverage
 htmlcov/
 __pycache__/
+*.egg-info/
 *.py[cod]
 .venv/
 venv/
@@ -43,3 +44,6 @@ Thumbs.db
 *~
 .idea/
 .vscode/*.local.json
+
+# 安裝時建立的本機捷徑（記錄本機完整路徑）
+*.lnk
