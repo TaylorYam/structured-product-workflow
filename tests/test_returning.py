@@ -509,6 +509,7 @@ def test_returning_again_does_not_write_another_error_book(root: Path, batch: Pa
 
     assert sorted(p.name for p in (root / B).glob("*_錯誤訊息_*.xlsx")) == [f"{B}_錯誤訊息_20261020-090000.xlsx"]
     assert "錯訊寫在" not in outcome(receipt, B).reason
+    assert "舊的錯訊檔" not in outcome(receipt, B).reason  # 同樣的失敗重放，錯訊檔仍是現行的，不提醒
 
 
 def test_passed_and_unchecked_products_get_no_error_book(root: Path, batch: Path, tmp_path: Path) -> None:
@@ -557,3 +558,29 @@ def test_old_error_book_is_kept_and_reported_when_the_product_passes(root: Path,
     o = outcome(receipt, B)
     assert (root / B / f"{B}_錯誤訊息_20261020-090000.xlsx").exists()
     assert f"資料夾仍有舊的錯訊檔 {B}_錯誤訊息_20261020-090000.xlsx，請確認後刪除" in o.reason
+
+
+def test_old_error_book_is_reported_when_one_document_now_passes(root: Path, batch: Path, tmp_path: Path) -> None:
+    run(batch, make_result_file(tmp_path / "first.xlsx", [], failed=[B, f"{B}_IIS.pdf"]))
+
+    receipt = return_to_folders(
+        batch,
+        make_result_file(tmp_path / "second.xlsx", [], failed=[f"{B}_IIS.pdf"]),
+        now=RETURNED_AT + dt.timedelta(hours=1),
+    )
+
+    o = outcome(receipt, B)
+    assert (o.ts, o.iis) == (RETURNED, PENDING_ALREADY_THERE)
+    assert f"資料夾仍有舊的錯訊檔 {B}_錯誤訊息_20261020-090000.xlsx，請確認後刪除" in o.reason
+
+
+def test_empty_error_message_still_gets_a_row(root: Path, batch: Path, tmp_path: Path) -> None:
+    result = make_result_file(tmp_path / "r.xlsx", [], failed=[B])
+    wb = openpyxl.load_workbook(result)
+    wb["錯誤清單"]["C2"] = None
+    wb.save(result)
+
+    run(batch, result)
+
+    rows = read_error_book(root / B / f"{B}_錯誤訊息_20261020-090000.xlsx")
+    assert rows[1] == (B, "TS", f"{B}_TS_待確認.pdf", "（錯誤清單沒有寫錯訊）")

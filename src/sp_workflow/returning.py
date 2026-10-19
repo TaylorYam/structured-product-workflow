@@ -294,12 +294,14 @@ def _return_product(
         return RETURNED if copy_needed[kind] else ALREADY_THERE
 
     notes = list(check_notes)
-    if any(copy_needed[kind] for kind in pending):  # 這次新放回了待確認檔才寫，重複放回不會多一份
+    old_books = sorted(p.name for p in folder.glob(f"{tdcc}{ERROR_BOOK_MARK}*.xlsx"))  # 寫新的之前就有的錯訊檔
+    wrote_new = any(copy_needed[kind] for kind in pending)  # 這次新放回了待確認檔才寫，重複放回不會多一份
+    if wrote_new:
         rows = [
             (tdcc, kind.value, names[kind], line)
             for kind in DocKind
             if kind in pending
-            for line in messages[docs[kind].output_name.lower()]
+            for line in messages[docs[kind].output_name.lower()] or ("（錯誤清單沒有寫錯訊）",)
         ]
         notes.append(_write_error_book(folder / f"{tdcc}{ERROR_BOOK_MARK}{stamp}.xlsx", rows))
     for kind in DocKind:
@@ -308,10 +310,12 @@ def _return_product(
             notes.append(f"資料夾已有標準檔名的 {standard}，不是這次核對確認的版本，請留意")
         if kind not in pending and (folder / old_pending).exists():
             notes.append(f"資料夾仍有舊的 {old_pending}，請確認後刪除")
-    if not pending:
-        old_books = sorted(p.name for p in folder.glob(f"{tdcc}{ERROR_BOOK_MARK}*.xlsx"))
-        if old_books:
-            notes.append(f"資料夾仍有舊的錯訊檔 {'、'.join(old_books)}，請確認後刪除")
+    # 有文件從待確認變成通過（資料夾還有它的舊待確認檔，舊錯訊已過時），或這次又寫了新的錯訊檔時，提醒舊的錯訊檔
+    now_passing = any(
+        kind not in pending and (folder / _pending_name(docs[kind].output_name)).exists() for kind in DocKind
+    )
+    if old_books and (now_passing or wrote_new):
+        notes.append(f"資料夾仍有舊的錯訊檔 {'、'.join(old_books)}，請確認後刪除")
     return ReturnOutcome(tdcc, status(DocKind.TS), status(DocKind.IIS), "；".join(notes))
 
 
