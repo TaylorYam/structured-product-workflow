@@ -556,13 +556,15 @@ def test_returned_copies_do_not_count_as_extra_candidates(root: Path, out: Path)
     assert folder.exists()
 
 
-def test_only_the_failed_version_waits_for_a_new_one(root: Path, out: Path) -> None:
+def test_failed_version_is_reused_until_a_new_one_arrives(root: Path, out: Path) -> None:
+    """上手還沒寄新版：沿用上次沒通過的那一版，同一版可以重複核對（#23）。"""
     returned_folder(root, A, ts_failed=True)
 
     o = outcome(run(A, root, out), A)
 
-    assert o.status == SKIPPED
-    assert o.reason.startswith(f"中文產品說明書只有上次沒通過的版本（XS0000000000_{A}_CN TS.pdf），等上手寄新版")
+    assert o.status == PREPARED, o.reason
+    assert {d.kind.value: d.source.name for d in o.documents}["TS"] == f"XS0000000000_{A}_CN TS.pdf"
+    assert o.reason == f"沿用上次沒通過的版本（XS0000000000_{A}_CN TS.pdf），上手還沒寄新版"
 
 
 def test_revised_term_sheet_replaces_the_failed_one(root: Path, out: Path) -> None:
@@ -615,8 +617,8 @@ def test_word_source_failed_version_is_recognised_by_text(root: Path, out: Path)
     make_pdf(folder / f"{C}_IIS.pdf", iis_lines(C))  # 上次通過、放回的投資人須知
 
     o = outcome(run(C, root, out), C)
-    assert o.status == SKIPPED
-    assert "只有上次沒通過的版本（2591320_1m_ATS_Fixed Coupon.docx）" in o.reason
+    assert o.status == PREPARED, o.reason  # 還沒新版：沿用舊的 Word
+    assert "沿用上次沒通過的版本（2591320_1m_ATS_Fixed Coupon.docx）" in o.reason
 
     make_fake_word(folder / "2591320_1m_ATS_v2.docx", revised(ts_lines, C))
     out2 = out / "second"
@@ -637,8 +639,8 @@ def test_word_copy_of_a_failed_pdf_is_not_mistaken_for_a_new_version(root: Path,
 
     o = outcome(run(A, root, out, converter), A)
 
-    assert o.status == SKIPPED
-    assert "只有上次沒通過的版本" in o.reason
+    assert o.status == PREPARED, o.reason
+    assert {d.kind.value: d.source.name for d in o.documents}["TS"] == f"XS0000000000_{A}_CN TS.pdf"  # 沿用 PDF 版
     assert converter.calls == []
 
 
@@ -663,5 +665,29 @@ def test_skipped_product_still_lists_the_excluded_versions(root: Path, out: Path
     o = outcome(run(A, root, out), A)
 
     assert o.status == SKIPPED
-    assert "只有上次沒通過的版本" in o.reason
-    assert f"已排除舊版：XS0000000000_{A}_CN TS.pdf" in o.reason
+    assert "中文投資人須知有 2 份候選" in o.reason
+    assert f"沿用上次沒通過的版本（XS0000000000_{A}_CN TS.pdf）" in o.reason
+    assert f"已排除舊版：XS0000000000_{A}_CN IIS.pdf" in o.reason
+
+
+def test_reused_version_lists_unusable_new_files(root: Path, out: Path) -> None:
+    """上手寄了新版但封面商品代號不符：沿用舊版時要寫出來，不能只說上手還沒寄新版。"""
+    folder = returned_folder(root, A, ts_failed=True)
+    make_pdf(folder / "new TS wrong code.pdf", revised(ts_lines, B))
+
+    o = outcome(run(A, root, out), A)
+
+    assert o.status == PREPARED, o.reason
+    assert "沿用上次沒通過的版本" in o.reason
+    assert "中文產品說明書另有 new TS wrong code.pdf，封面商品代號不符" in o.reason
+
+
+def test_version_that_passed_after_reuse_is_not_treated_as_failed(root: Path, out: Path) -> None:
+    """沿用同一版、後來通過並放回標準名檔，待確認檔還沒刪：那一版已經通過，不再寫「沿用沒通過的版本」。"""
+    folder = returned_folder(root, A, ts_failed=True)
+    (folder / f"{A}_TS.pdf").write_bytes((folder / f"XS0000000000_{A}_CN TS.pdf").read_bytes())
+
+    o = outcome(run(A, root, out), A)
+
+    assert o.status == PREPARED, o.reason
+    assert o.reason == ""
