@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import math
 import os
 import re
 import shutil
@@ -184,16 +185,19 @@ def _read_result(path: Path) -> tuple[list[str], dict[str, dict[str, tuple[_Erro
     passed = [
         _normalize_tdcc(row[tdcc_col]) for row in rows if str(row[checked_col] or "").strip() == RESULT_CHECKED_VALUE
     ]
-    rows, (code_col, pdf_col, message_col) = _columns(
-        errors, ERROR_SHEET, ERROR_HEADER_ROW, (ERROR_TDCC_COLUMN, ERROR_PDF_COLUMN, ERROR_MESSAGE_COLUMN)
+    rows, (code_col, pdf_col, message_col, pages_col) = _columns(
+        errors,
+        ERROR_SHEET,
+        ERROR_HEADER_ROW,
+        (ERROR_TDCC_COLUMN, ERROR_PDF_COLUMN, ERROR_MESSAGE_COLUMN),
+        optional=(ERROR_PAGES_COLUMN,),
     )
-    pages_col = _optional_column(errors, ERROR_HEADER_ROW, ERROR_PAGES_COLUMN)
     failed: dict[str, dict[str, list[_ErrorLine]]] = {}
     for row in rows:
         tdcc, name = _normalize_tdcc(row[code_col]), str(row[pdf_col] or "").strip()
         if tdcc and name:
             lines = failed.setdefault(tdcc, {}).setdefault(name, [])  # 錯訊空白的列：PDF 仍算在錯誤清單上
-            pages = _page_text(row[pages_col] if pages_col is not None and len(row) > pages_col else None)
+            pages = _page_text(_cell(row, pages_col))
             for line in str(row[message_col] or "").splitlines():  # 舊格式：多條錯訊在同一格換行
                 if line.strip():
                     lines.append(_ErrorLine(pages, line.strip()))
@@ -201,34 +205,37 @@ def _read_result(path: Path) -> tuple[list[str], dict[str, dict[str, tuple[_Erro
     return passed_tdccs, {t: {n: tuple(lines) for n, lines in docs.items()} for t, docs in failed.items()}
 
 
-def _optional_column(rows: list[tuple], header_row: int, name: str) -> int | None:
-    """不是必要欄的位置；沒有這欄時回傳 None。"""
-    header = [
-        str(h).strip() if h is not None else "" for h in (rows[header_row - 1] if len(rows) >= header_row else ())
-    ]
-    return header.index(name) if name in header else None
-
-
 def _page_text(value: object) -> str:
     """PDF 頁碼欄：一頁是數字、多頁是「9、10」，一律轉成文字；空白回傳空字串。"""
     if value is None or isinstance(value, bool):
         return ""
-    if isinstance(value, int | float):
-        return str(int(value))
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            return ""
+        return str(int(value)) if value.is_integer() else str(value)
     return str(value).strip()
 
 
 def _columns(
-    rows: list[tuple], sheet: str, header_row: int, required: tuple[str, ...]
-) -> tuple[list[tuple], list[int]]:
-    """表頭在第 header_row 列的工作表：回傳表頭以下、欄數夠的列，以及必要欄的位置；缺欄時整批停止。"""
+    rows: list[tuple], sheet: str, header_row: int, required: tuple[str, ...], optional: tuple[str, ...] = ()
+) -> tuple[list[tuple], list[int | None]]:
+    """表頭在第 header_row 列的工作表：回傳表頭以下、必要欄都有值位的列，以及必要欄、選填欄的位置。
+
+    缺必要欄時整批停止；選填欄沒有時位置為 None，列太短時讀到的值也當成空白（見 `_cell`）。
+    """
     rows = rows[header_row - 1 :]
     header = [str(h).strip() if h is not None else "" for h in (rows[0] if rows else ())]
     missing = [c for c in required if c not in header]
     if missing:
         raise ReturnError(f"核對結果檔「{sheet}」第 {header_row} 列找不到欄：{'、'.join(missing)}")
     indices = [header.index(c) for c in required]
-    return [row for row in rows[1:] if len(row) > max(indices)], indices
+    data = [row for row in rows[1:] if len(row) > max(indices)]
+    return data, [*indices, *(header.index(c) if c in header else None for c in optional)]
+
+
+def _cell(row: tuple, index: int | None) -> object:
+    """選填欄的值：沒有這欄或這列比較短時為 None。"""
+    return row[index] if index is not None and index < len(row) else None
 
 
 def _pending_name(output_name: str) -> str:

@@ -306,6 +306,17 @@ class _Versions:
             self._returned_keys = {self.key(p) for p in standard} & originals
         return self._returned_keys
 
+    def _as_pending_pdf(self, candidate: _Candidate) -> _Candidate:
+        """沿用 Word 舊版時，改用資料夾裡那份待確認 PDF（內容相同）：同一份 Word 每次轉出的 PDF 不同，
+        用待確認檔才能讓這次核對的、放回的、錯訊頁碼對應的都是同一份檔（#25）。"""
+        if not candidate.from_word:
+            return candidate
+        key = self.key(candidate.pdf)
+        for pending in self._pending:
+            if self.key(pending) == key:
+                return _Candidate(pending, candidate.source, from_word=True)
+        return candidate
+
     def select(self, candidates: list[_Candidate]) -> _Selection:
         """內容相同只算一份（保留上手原檔名）；有新版時排除沒通過的版本，沒新版時沿用它；還有多份時排除已放回的舊版。"""
         if len(candidates) <= 1 and not self._pending:
@@ -320,7 +331,7 @@ class _Versions:
         failed = [representative[k] for k in groups if k in self.failed_keys]
         remaining = [k for k in groups if k not in self.failed_keys]
         if not remaining and failed:  # 上手還沒寄新版：沿用上次沒通過的版本，同一版可以重複核對
-            return _Selection(failed, [], [], reused_failed=True)
+            return _Selection([self._as_pending_pdf(c) for c in failed], [], [], reused_failed=True)
         superseded: list[_Candidate] = []
         if len(remaining) > 1:
             newer = [k for k in remaining if k not in self.returned_keys]

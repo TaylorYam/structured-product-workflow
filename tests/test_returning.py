@@ -697,3 +697,24 @@ def test_same_text_with_different_bytes_counts_as_already_there(root: Path, batc
     )
 
     assert outcome(receipt, B).ts == PENDING_ALREADY_THERE
+
+
+def test_error_sheet_with_pages_but_without_messages_stops_everything(batch: Path, tmp_path: Path) -> None:
+    result = make_result_file(tmp_path / "r.xlsx", [A])
+    wb = openpyxl.load_workbook(result)
+    wb["錯誤清單"]["D1"] = "說明"
+    wb.save(result)
+
+    with pytest.raises(ReturnError, match="錯訊"):
+        return_to_folders(batch, result, now=RETURNED_AT)
+
+
+def test_unusual_page_values_are_kept_readable(root: Path, batch: Path, tmp_path: Path) -> None:
+    result = write_error_rows(
+        make_result_file(tmp_path / "r.xlsx", []),
+        [[B, f"{B}_TS.pdf", 9.0, "年利率對不起來"], [B, f"{B}_TS.pdf", float("nan"), "英文商品名稱對不起來"]],
+    )
+
+    o = outcome(run(batch, result), B)
+
+    assert o.reason.startswith("核對沒通過（TS）：年利率對不起來（第 9 頁）／英文商品名稱對不起來；")
