@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import datetime as dt
 import html
+import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
@@ -43,6 +44,8 @@ GREEN = "#00AB8E"
 ORANGE = "#C55A11"  # 格式檔分公司表頭：佈景主題「輔色 2、較深 25%」
 ROW_FILL = "#F0F0F0"
 DATE_FORMAT = "%m-%d-%y"
+MAX_COLUMN_TEXT = "BBG Code 4"  # 使用者指定：欄寬上限是這欄的寬度，超過換行
+MAX_COLUMN_PX = 72  # 「BBG Code 4」在 Calibri 11pt 粗體下的約略寬度
 
 LIST_COLUMNS = (("TDCC", 15), ("狀態", 10), ("收件人", 40), ("副本", 50), ("原因", 80))
 
@@ -246,13 +249,29 @@ def render_body(tdcc: str, product: dict[str, Any], branches: Sequence[str]) -> 
 
 
 def _table(cells: Sequence[tuple[str, str]], header_color: str) -> str:
-    cell = "border: 1px solid #000000; padding: 2px 6px; white-space: nowrap;"
-    head = "".join(
-        f'<th style="{cell} background: {header_color}; color: #FFFFFF; font-weight: bold;">{html.escape(k)}</th>'
-        for k, _ in cells
-    )
-    body = "".join(f'<td style="{cell} background: {ROW_FILL};">{html.escape(v)}</td>' for _, v in cells)
-    return f'<table style="border-collapse: collapse;"><tr>{head}</tr><tr>{body}</tr></table>'
+    """一列表頭、一列資料。欄寬上限是「BBG Code 4」那欄，比它寬的欄固定成這個寬度並換行。
+
+    Outlook 不支援 max-width，所以用 width 屬性加 white-space: normal；沒超過的欄維持一行。
+    """
+    limit = _text_units(MAX_COLUMN_TEXT)
+    border = "border: 1px solid #000000; padding: 2px 6px;"
+    head, body = [], []
+    for k, v in cells:
+        if max(_text_units(k), _text_units(v)) > limit:
+            width, wrap = f' width="{MAX_COLUMN_PX}"', f"width: {MAX_COLUMN_PX}px; white-space: normal;"
+        else:
+            width, wrap = "", "white-space: nowrap;"
+        head.append(
+            f'<th{width} style="{border} {wrap} background: {header_color}; color: #FFFFFF; font-weight: bold;">'
+            f"{html.escape(k)}</th>"
+        )
+        body.append(f'<td{width} style="{border} {wrap} background: {ROW_FILL};">{html.escape(v)}</td>')
+    return f'<table style="border-collapse: collapse;"><tr>{"".join(head)}</tr><tr>{"".join(body)}</tr></table>'
+
+
+def _text_units(text: str) -> int:
+    """估計顯示寬度：全形字（中文）算 2，其他算 1。"""
+    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
 
 
 def _date(value: dt.date) -> str:

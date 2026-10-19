@@ -130,6 +130,25 @@ def test_body_shows_the_terms_in_the_mail_format(db, tmp_path: Path, root: Path,
         assert expected in body, expected
 
 
+def test_columns_wider_than_bbg_code_4_wrap_at_that_width(db, tmp_path: Path, root: Path, out: Path) -> None:
+    load(db, tmp_path, [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])])
+    passed_folder(root, A)
+
+    (_, drafter) = run(db, root, out, A)
+
+    body = drafter.drafts[0].html_body
+    for wide in ("Guaranteed Periods (m)", "Upfront / NotePrice (%)", "Final valuation date", "Daily Memory"):
+        assert "width: 72px; white-space: normal;" in _cell_style(body, wide), wide
+    for narrow in ("BBG Code 4", "Product", "期初價格", "分公司 1"):
+        assert "white-space: nowrap;" in _cell_style(body, narrow), narrow
+
+
+def _cell_style(body: str, text: str) -> str:
+    """回傳內容是 text 的那一格（th 或 td）的開頭標籤。"""
+    end = body.index(f">{text}<")
+    return body[body.rindex("<t", 0, end) : end]
+
+
 def test_no_ki_shows_none_and_a_dash(db, tmp_path: Path, root: Path, out: Path) -> None:
     load(db, tmp_path, [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)], **{"KI(Freq)": "-", "KI(%)": "-"})])
     passed_folder(root, A)
