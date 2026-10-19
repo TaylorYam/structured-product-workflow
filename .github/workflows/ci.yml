@@ -68,3 +68,27 @@ jobs:
       # 真實樣本測試只在本機設定 SPW_REAL_SAMPLES_DIR 時執行；CI 自動略過
       - name: Test
         run: pytest -q
+
+  windows-install:
+    name: Windows install resolution (Python 3.11-3.15)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # 作業人員在 Windows 用 setup_panel.cmd 安裝，Python 版本由他們的電腦決定（#15）。
+      # 模擬 Windows amd64 上每個支援的 Python 版本，確認 constraints.txt 的鎖定版本都有安裝檔。
+      # 執行期套件同 pyproject.toml 的 dependencies；環境標記在 Linux 上會被略過，所以先拿掉。
+      - name: Resolve pinned runtime packages for each Python version
+        run: |
+          sed 's/;.*//' constraints.txt | grep -v '^#' > "$RUNNER_TEMP/constraints.txt"
+          for version in 3.11 3.12 3.13 3.14 3.15; do
+            echo "::group::Python $version"
+            python -m pip install --dry-run --quiet --ignore-installed --only-binary=:all:               --implementation cp --platform win_amd64 --python-version "$version"               --target "$RUNNER_TEMP/target-$version" -c "$RUNNER_TEMP/constraints.txt"               pymupdf openpyxl pywin32
+            echo "::endgroup::"
+          done
