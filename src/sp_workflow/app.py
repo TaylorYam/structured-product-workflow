@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import queue
 import subprocess
@@ -18,7 +19,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from sp_workflow.local_settings import load_folders, save_folders
+from sp_workflow.local_settings import FolderMemory
 from sp_workflow.preparation import PREPARED, PreparationError, PrepareReceipt, prepare_batch
 from sp_workflow.returning import NOT_RETURNED, ReturnError, ReturnReceipt, return_to_folders
 
@@ -99,9 +100,11 @@ class _Tab:
 
 
 class PrepareTab(_Tab):
-    def __init__(self, notebook: ttk.Notebook, folders: dict[str, str], on_prepared: Callable[[Path], None]) -> None:
+    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, on_prepared: Callable[[Path], None]) -> None:
         super().__init__(notebook, "準備批次", (("tdcc", "TDCC", 130), ("status", "狀態", 70), ("reason", "原因", 520)))
         self.on_prepared = on_prepared
+        self.memory = memory
+        folders = memory.load()
         self.batch_dir: Path | None = None
         self.root_var = tk.StringVar(value=folders.get("root", ""))
         self.out_var = tk.StringVar(value=folders.get("out", ""))
@@ -125,7 +128,7 @@ class PrepareTab(_Tab):
             messagebox.showerror(TITLE, "請先選擇根目錄與輸出位置。")
             return
         root, out = Path(root_text), Path(out_text)
-        save_folders({**load_folders(), "root": str(root), "out": str(out)})
+        self.memory.remember(root=str(root), out=str(out))
         self.start_button.configure(state=tk.DISABLED)
         self.open_button.configure(state=tk.DISABLED)
         self.run_in_background(
@@ -157,13 +160,14 @@ class PrepareTab(_Tab):
 
 
 class ReturnTab(_Tab):
-    def __init__(self, notebook: ttk.Notebook, folders: dict[str, str]) -> None:
+    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory) -> None:
         super().__init__(
             notebook,
             "放回資料夾",
             (("tdcc", "TDCC", 130), ("ts", "TS", 70), ("iis", "IIS", 70), ("reason", "原因", 450)),
         )
-        self.batch_var = tk.StringVar(value=folders.get("batch", ""))
+        self.memory = memory
+        self.batch_var = tk.StringVar(value=memory.load().get("batch", ""))
         self.result_var = tk.StringVar()
         self.status_var.set("選批次資料夾與核對 PANEL 存下的核對結果檔，按「放回資料夾」。")
 
@@ -186,7 +190,7 @@ class ReturnTab(_Tab):
             messagebox.showerror(TITLE, "請先選擇批次資料夾與核對結果檔。")
             return
         batch, result = Path(batch_text), Path(result_text)
-        save_folders({**load_folders(), "batch": str(batch)})
+        self.memory.remember(batch=str(batch))
         self.start_button.configure(state=tk.DISABLED)
         self.run_in_background(lambda: return_to_folders(batch, result), "放回中…", self._done)
 
@@ -203,14 +207,13 @@ class ReturnTab(_Tab):
 
 
 class PanelWindow:
-    def __init__(self, master: tk.Tk) -> None:
+    def __init__(self, master: tk.Tk, memory: FolderMemory) -> None:
         master.title(TITLE)
         master.minsize(760, 560)
-        folders = load_folders()
         notebook = ttk.Notebook(master)
         notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        self.returning = ReturnTab(notebook, folders)
-        self.prepare = PrepareTab(notebook, folders, on_prepared=lambda batch: self.returning.batch_var.set(str(batch)))
+        self.returning = ReturnTab(notebook, memory)
+        self.prepare = PrepareTab(notebook, memory, on_prepared=lambda batch: self.returning.batch_var.set(str(batch)))
         notebook.insert(0, self.prepare.frame)  # 準備批次排第一個分頁
         notebook.select(0)
 
@@ -226,7 +229,16 @@ def _open_folder(folder: Path) -> None:
         subprocess.Popen(["xdg-open", str(folder)])
 
 
-def main() -> None:
+def folder_memory(argv: Sequence[str] | None = None) -> FolderMemory:
+    """依啟動參數決定上次選的資料夾記在哪：有 --install-root 就記在它底下的 .local/。"""
+    parser = argparse.ArgumentParser(description=TITLE)
+    parser.add_argument("--install-root", type=Path, help="安裝資料夾；上次選的資料夾記在它底下的 .local/")
+    args = parser.parse_args(argv)
+    return FolderMemory.under(args.install_root) if args.install_root else FolderMemory()
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    memory = folder_memory(argv)
     if sys.platform == "win32":
         try:
             import ctypes
@@ -235,7 +247,7 @@ def main() -> None:
         except (AttributeError, OSError):
             pass
     master = tk.Tk()
-    PanelWindow(master)
+    PanelWindow(master, memory)
     master.mainloop()
 
 

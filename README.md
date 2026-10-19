@@ -18,13 +18,15 @@
 
 從公槽 FCN 底下以 TDCC 命名的商品資料夾，挑出中文產品說明書與中文投資人須知，改名成核對工具要的 `<TDCC>_TS.pdf`、`<TDCC>_IIS.pdf`，放進新開的批次資料夾。商品資料夾裡的檔案只讀不改。
 
-安裝（Python ≥ 3.11，含 Tkinter；Word 轉檔需要安裝 Microsoft Word 的 Windows；雙擊安裝另見 #10）：
+**作業人員安裝（Windows）**：先安裝官方 Python 3.11 以上（包含 Tcl/Tk），把專案放到自己有寫入權限的資料夾，雙擊 `setup_panel.cmd`。安裝會建立專案自己的 `.venv`，依 `constraints.txt` 安裝套件，需要能連到公司允許的 Python 套件來源。看到「安裝完成」後，雙擊桌面或專案資料夾裡的「TS IIS 準備與放回」捷徑開啟視窗；捷徑建立失敗時改雙擊 `launch_panel.cmd`。日常操作不用打指令；上次選的資料夾記在安裝資料夾的 `.local/`。搬移資料夾或更新程式後請重新執行安裝。Word 轉檔需要這台電腦裝有 Microsoft Word。
+
+**開發者安裝**：
 
 ```bash
 python -m pip install -c constraints.txt -e ".[dev]"
 ```
 
-開啟視窗：
+開發時用指令開啟視窗：
 
 ```bash
 spw-panel
@@ -65,13 +67,15 @@ Commit documentation and synthetic examples only. Company messages, trades, cust
 
 Picks the Chinese term sheet and investor information sheet from TDCC-named product folders under the shared FCN directory, renames them to the checker's `<TDCC>_TS.pdf` and `<TDCC>_IIS.pdf`, and places them in a new batch folder. Product folders are read only.
 
-Install (Python ≥ 3.11 with Tkinter; Word conversion requires Windows with Microsoft Word; double-click setup is tracked in #10):
+**Operator setup (Windows)**: install official Python 3.11 or later (with Tcl/Tk), place the project in a folder you can write to, and double-click `setup_panel.cmd`. Setup creates the project's own `.venv` and installs pinned packages from `constraints.txt`, which requires access to the company-approved Python package source. After "安裝完成", double-click the "TS IIS 準備與放回" shortcut on the desktop or in the project folder; if shortcut creation failed, double-click `launch_panel.cmd`. Daily use needs no commands; the last chosen folders are remembered in the install folder's `.local/`. Rerun setup after moving the folder or updating the code. Word conversion requires Microsoft Word on this computer.
+
+**Developer setup**:
 
 ```bash
 python -m pip install -c constraints.txt -e ".[dev]"
 ```
 
-Open the window:
+Open the window from a terminal during development:
 
 ```bash
 spw-panel
