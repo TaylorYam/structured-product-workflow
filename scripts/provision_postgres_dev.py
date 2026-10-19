@@ -8,7 +8,6 @@ import sys
 import psycopg
 from psycopg import sql
 
-
 DATABASE_NAME = "structured_product_workflow_dev"
 ROLE_NAME = "workflow_dev"
 
@@ -183,4 +182,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except RuntimeError as exc:
         print(str(exc), file=sys.stderr)
-        raise SystemExit(2)
+        raise SystemExit(2) from None

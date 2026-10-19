@@ -9,19 +9,18 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import re
 import sys
 from collections import defaultdict
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from getpass import getpass
 from pathlib import Path
 from typing import Any
 
 import openpyxl
 import psycopg
 from openpyxl.utils import column_index_from_string
-
 
 SHEET_NAME = "工作表1"
 HEADER_ROW = 3
@@ -195,16 +194,20 @@ def load_env_file(path: Path) -> dict[str, str]:
 
 
 def connection_kwargs(env: dict[str, str]) -> dict[str, Any]:
-    required = ("PGDATABASE", "PGUSER", "PGPASSWORD")
+    required = ("PGDATABASE", "PGUSER")
     missing = [key for key in required if not env.get(key)]
     if missing:
         raise RuntimeError("Missing required database setting(s): " + ", ".join(missing))
+    host = env.get("PGHOST", "localhost")
+    port = env.get("PGPORT", "5432")
+    # PGPASSWORD may live only in the local, Git-ignored .env; otherwise prompt without echoing.
+    password = env.get("PGPASSWORD") or getpass(f"PostgreSQL password for {env['PGUSER']}@{host}:{port} (hidden): ")
     return {
-        "host": env.get("PGHOST", "localhost"),
-        "port": env.get("PGPORT", "5432"),
+        "host": host,
+        "port": port,
         "dbname": env["PGDATABASE"],
         "user": env["PGUSER"],
-        "password": env["PGPASSWORD"],
+        "password": password,
         "connect_timeout": 5,
     }
 
@@ -474,7 +477,7 @@ def mark_duplicate_conflicts(rows_by_tdcc: dict[str, list[dict[str, Any]]]) -> N
         "tenor_months",
         "non_call_months",
     )
-    for tdcc, rows in rows_by_tdcc.items():
+    for rows in rows_by_tdcc.values():
         reference = rows[0]["normalized"]
         for row in rows[1:]:
             differences = [field for field in consistency_fields if row["normalized"].get(field) != reference.get(field)]
@@ -555,7 +558,7 @@ def write_import(
     source_hash: str,
     config_hash: str,
     prepared: dict[str, Any],
-) -> int:
+) -> tuple[int, dict[str, Any]]:
     with connection.transaction():
         with connection.cursor() as cursor:
             cursor.execute(DDL)
@@ -684,7 +687,10 @@ def write_import(
                             ),
                         )
 
-    return batch_id
+        # Verify before the transaction commits so a failed reconciliation rolls back the whole batch.
+        verification = verify_import(connection, batch_id, prepared)
+
+    return batch_id, verification
 
 
 def verify_import(connection: psycopg.Connection[Any], batch_id: int, prepared: dict[str, Any]) -> dict[str, Any]:
@@ -729,11 +735,14 @@ def verify_import(connection: psycopg.Connection[Any], batch_id: int, prepared: 
         )
         underlying_count = cursor.fetchone()[0]
 
+        # Samples are picked from this batch's data; no real product code is hard-coded.
         cursor.execute(
             """
             SELECT tdcc, trade_date, maturity_date, ko_percent, coupon_percent
             FROM inventory_product_snapshot
-            WHERE batch_id = %s AND tdcc = '082001152980'
+            WHERE batch_id = %s AND tdcc LIKE '0%%'
+            ORDER BY tdcc
+            LIMIT 1
             """,
             (batch_id,),
         )
@@ -741,13 +750,17 @@ def verify_import(connection: psycopg.Connection[Any], batch_id: int, prepared: 
 
         cursor.execute(
             """
-            SELECT count(*)
+            SELECT tdcc, count(*)
             FROM inventory_branch_allocation
-            WHERE batch_id = %s AND tdcc = '156011017408'
+            WHERE batch_id = %s
+            GROUP BY tdcc
+            HAVING count(DISTINCT source_row_number) > 1
+            ORDER BY tdcc
+            LIMIT 1
             """,
             (batch_id,),
         )
-        duplicate_tdcc_allocation_count = cursor.fetchone()[0]
+        duplicate_tdcc_allocation_sample = cursor.fetchone()
 
     expected = {
         "source_rows": batch[0],
@@ -760,7 +773,7 @@ def verify_import(connection: psycopg.Connection[Any], batch_id: int, prepared: 
         "allocation_count": allocation_count,
         "underlying_count": underlying_count,
         "leading_zero_sample": leading_zero_sample,
-        "duplicate_tdcc_allocation_count": duplicate_tdcc_allocation_count,
+        "duplicate_tdcc_allocation_sample": duplicate_tdcc_allocation_sample,
     }
     if expected["source_rows"] != expected["batch_imported_rows"] + expected["batch_excluded_rows"]:
         raise RuntimeError("post-import verification failed: batch row totals do not reconcile")
@@ -851,9 +864,8 @@ def main() -> int:
             print("identical_import_detected=True")
             print("write_skipped=True")
             return 0
-        connection.commit()
-        batch_id = write_import(connection, args.excel, args.sheet, source_hash, config_hash, prepared)
-        verification = verify_import(connection, batch_id, prepared)
+        connection.commit()  # end the read-only checks' implicit transaction so the write runs as its own
+        batch_id, verification = write_import(connection, args.excel, args.sheet, source_hash, config_hash, prepared)
         print_summary(
             env_loaded=True,
             connection_ok=True,
@@ -871,7 +883,10 @@ def main() -> int:
         print(f"verified_unique_tdcc_products={verification['product_count']}")
         print(f"verified_branch_allocations={verification['allocation_count']}")
         print(f"verified_underlyings={verification['underlying_count']}")
-        print(f"verified_duplicate_tdcc_allocation_rows={verification['duplicate_tdcc_allocation_count']}")
+        if verification["duplicate_tdcc_allocation_sample"] is not None:
+            sample_tdcc, sample_allocation_count = verification["duplicate_tdcc_allocation_sample"]
+            print(f"verified_duplicate_tdcc={sample_tdcc}")
+            print(f"verified_duplicate_tdcc_allocation_rows={sample_allocation_count}")
         if verification["leading_zero_sample"] is not None:
             sample_tdcc, sample_trade_date, sample_maturity_date, sample_ko, sample_coupon = verification["leading_zero_sample"]
             print(f"verified_leading_zero_tdcc={sample_tdcc}")
@@ -888,4 +903,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (RuntimeError, OSError, psycopg.Error) as exc:
         print(f"import_failed: {type(exc).__name__}: {str(exc).splitlines()[0]}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from None

@@ -1,11 +1,10 @@
 """Run a read-only PostgreSQL connectivity check for local development."""
 
-from getpass import getpass
 import os
 import sys
+from getpass import getpass
 
 import psycopg
-
 
 QUERY = "SELECT version(), current_database();"
 

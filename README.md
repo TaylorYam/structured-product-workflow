@@ -26,6 +26,8 @@
 python -m pip install -c constraints.txt -e ".[dev]"
 ```
 
+要用 `scripts/` 的本機 PostgreSQL 工具時，改裝 `.[dev,db]`（見[資料庫與部署](docs/database-and-deployment.md)）。
+
 開發時用指令開啟視窗：
 
 ```bash
@@ -75,6 +77,8 @@ Picks the Chinese term sheet and investor information sheet from TDCC-named prod
 ```bash
 python -m pip install -c constraints.txt -e ".[dev]"
 ```
+
+For the local PostgreSQL tools in `scripts/`, install `.[dev,db]` instead (see [database and deployment](docs/database-and-deployment.md)).
 
 Open the window from a terminal during development:
 

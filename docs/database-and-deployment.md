@@ -34,7 +34,7 @@
 
 `scripts/` 的 PostgreSQL 工具需要選用的 `db` 套件：`python -m pip install -c constraints.txt -e ".[dev,db]"`。不用資料庫的人照 README 安裝 `.[dev]` 即可。
 
-測試匯入器位於 `scripts/import_inventory_excel.py`，會主動讀取本機 `.env`；`.env` 必須維持在 Git ignore 範圍內，密碼不得寫入 repository、log 或輸出。匯入器預設只做 dry-run：
+測試匯入器位於 `scripts/import_inventory_excel.py`，會主動讀取本機 `.env`；`.env` 必須維持在 Git ignore 範圍內，密碼不得寫入 repository、log 或輸出。`PGPASSWORD` 只能放在本機 `.env`；沒放時匯入器會用隱藏輸入詢問。建立資料庫用的 `PGADMINPASSWORD`、`PGDEVPASSWORD` 不寫進任何檔案，只在執行時設成命令列環境變數。匯入器預設只做 dry-run；寫入時會在同一個 transaction 內完成對帳，對帳不符就整批 rollback：
 
 ```text
 python scripts/import_inventory_excel.py --excel <path> --sheet 工作表1 --env-file .env --check-connection
@@ -97,7 +97,7 @@ Persist full results, allowed backfills, and case progress separately. Validate 
 
 The PostgreSQL tools in `scripts/` need the optional `db` extra: `python -m pip install -c constraints.txt -e ".[dev,db]"`. Without a database, install `.[dev]` as described in the README.
 
-The test importer is `scripts/import_inventory_excel.py`. It actively loads the local `.env`; `.env` must remain covered by Git ignore, and passwords must not enter the repository, logs, or output. The importer defaults to a dry-run:
+The test importer is `scripts/import_inventory_excel.py`. It actively loads the local `.env`; `.env` must remain covered by Git ignore, and passwords must not enter the repository, logs, or output. `PGPASSWORD` may live only in the local `.env`; without it the importer prompts with hidden input. The provisioning passwords `PGADMINPASSWORD` and `PGDEVPASSWORD` are never written to a file and are set only as shell environment variables for that run. The importer defaults to a dry-run; a write reconciles counts inside the same transaction and rolls back the whole batch on mismatch:
 
 ```text
 python scripts/import_inventory_excel.py --excel <path> --sheet 工作表1 --env-file .env --check-connection
