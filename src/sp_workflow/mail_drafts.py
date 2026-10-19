@@ -35,7 +35,7 @@ PENDING = "待處理"
 NOT_NEEDED = "不需寄送"
 FAILED = "建立失敗"
 
-SUBJECT_FORMAT = "TDCC : {tdcc} 中文TS/IIS"
+SUBJECT_FORMAT = "{product} {tdcc} 中文TS/IIS"  # 例：FCN 029100004610 中文TS/IIS
 BODY_INTRO = "FYI"
 RISK_LEVEL = "RR4"  # 使用者確認：風險等級固定 RR4
 NAVY = "#002060"
@@ -169,7 +169,7 @@ def _draft_one(
         tdcc=tdcc,
         to=tuple(p.email for p in to),
         cc=tuple(p.email for p in cc),
-        subject=SUBJECT_FORMAT.format(tdcc=tdcc),
+        subject=SUBJECT_FORMAT.format(product=product["product"], tdcc=tdcc),
         html_body=render_body(tdcc, product, branches),
         attachments=attachments,
     )
