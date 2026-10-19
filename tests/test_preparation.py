@@ -562,7 +562,7 @@ def test_only_the_failed_version_waits_for_a_new_one(root: Path, out: Path) -> N
     o = outcome(run(A, root, out), A)
 
     assert o.status == SKIPPED
-    assert o.reason == f"中文產品說明書只有上次沒通過的版本（XS0000000000_{A}_CN TS.pdf），等上手寄新版"
+    assert o.reason.startswith(f"中文產品說明書只有上次沒通過的版本（XS0000000000_{A}_CN TS.pdf），等上手寄新版")
 
 
 def test_revised_term_sheet_replaces_the_failed_one(root: Path, out: Path) -> None:
@@ -640,3 +640,28 @@ def test_word_copy_of_a_failed_pdf_is_not_mistaken_for_a_new_version(root: Path,
     assert o.status == SKIPPED
     assert "只有上次沒通過的版本" in o.reason
     assert converter.calls == []
+
+
+def test_issuer_standard_named_file_beside_another_version_is_ambiguous(root: Path, out: Path) -> None:
+    """UBS 原檔是標準檔名、旁邊又有一份內容不同的說明書：第一次準備時不能把原檔當成已放回的舊版。"""
+    folder = root / A
+    make_pdf(folder / f"{A}_TS.pdf", ts_lines(A))
+    make_pdf(folder / f"{A}_IIS.pdf", iis_lines(A))
+    make_pdf(folder / "another TS.pdf", revised(ts_lines, A))
+
+    o = outcome(run(A, root, out), A)
+
+    assert o.status == SKIPPED
+    assert "中文產品說明書有 2 份候選" in o.reason
+
+
+def test_skipped_product_still_lists_the_excluded_versions(root: Path, out: Path) -> None:
+    folder = returned_folder(root, A, ts_failed=True)
+    make_pdf(folder / f"XS0000000000_{A}_CN IIS_v2.pdf", revised(iis_lines, A))
+    make_pdf(folder / f"XS0000000000_{A}_CN IIS_v3.pdf", [*iis_lines(A), "（第三版）"])
+
+    o = outcome(run(A, root, out), A)
+
+    assert o.status == SKIPPED
+    assert "只有上次沒通過的版本" in o.reason
+    assert f"已排除舊版：XS0000000000_{A}_CN TS.pdf" in o.reason

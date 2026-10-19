@@ -184,12 +184,8 @@ def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter
     words = [p for p in files if p.suffix.lower() in _WORD and not p.name.startswith("~$")]  # ~$ 是 Word 鎖定檔
     pdfs = [p for p in files if p.suffix.lower() == _PDF]
     pending = [p for p in pdfs if p.stem.endswith(PENDING_SUFFIX)]  # 上次核對沒通過、放回的檔：只當標記
-    standard_names = {_output_name(tdcc, kind) for kind in DocKind}
-    marks = _VersionMarks(
-        failed={content_key(p) for p in pending},
-        returned={content_key(p) for p in pdfs if p.name in standard_names},
-        standard_names=standard_names,
-    )
+    sources = [p for p in pdfs if p not in pending]
+    versions = _Versions(pending, sources, {_output_name(tdcc, kind) for kind in DocKind})
     candidates: dict[DocKind, list[_Candidate]] = {kind: [] for kind in DocKind}
     mismatched: dict[DocKind, list[_Candidate]] = {kind: [] for kind in DocKind}
 
@@ -198,9 +194,9 @@ def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter
         if reading.kind in kinds:
             (candidates if reading.code_matches else mismatched)[reading.kind].append(candidate)
 
-    for pdf in (p for p in pdfs if p not in pending):
+    for pdf in sources:
         read(_Candidate(pdf, pdf), tuple(DocKind))
-    selections = {kind: marks.select(candidates[kind]) for kind in DocKind}
+    selections = {kind: versions.select(candidates[kind]) for kind in DocKind}
 
     # Word 逾時被強制結束時暫存檔可能還被鎖住，清不掉也不影響結果
     with tempfile.TemporaryDirectory(prefix="spw-prepare-", ignore_cleanup_errors=True) as tmp:
@@ -211,55 +207,92 @@ def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter
             try:
                 converted, failures = _convert_words(words, Path(tmp), convert)
             except ConversionError as exc:
-                return ProductOutcome(tdcc, SKIPPED, str(exc), folder, _found_documents(candidates))
+                return _skipped(tdcc, [str(exc)], folder, selections)
             for candidate in converted:
                 read(candidate, need_word)
             for kind in need_word:
-                selections[kind] = marks.select(candidates[kind])
+                selections[kind] = versions.select(candidates[kind])
 
         problems = [_problem(kind, selections[kind], mismatched[kind], failures) for kind in DocKind]
         problems = [p for p in problems if p]
-        chosen = {kind: selections[kind].chosen for kind in DocKind}
         if problems:
-            return ProductOutcome(tdcc, SKIPPED, "；".join(problems), folder, _found_documents(chosen))
+            return _skipped(tdcc, problems, folder, selections)
 
         docs = []
         for kind in DocKind:
-            [picked] = chosen[kind]
+            [picked] = selections[kind].chosen
             target = batch_dir / _output_name(tdcc, kind)
             shutil.copyfile(picked.pdf, target)
             docs.append(PreparedDocument(kind, picked.source, target.name, sha256(target), picked.from_word))
+    return ProductOutcome(tdcc, PREPARED, _excluded_note(selections), folder, tuple(docs))
+
+
+def _skipped(tdcc: str, problems: list[str], folder: Path, selections: dict[DocKind, _Selection]) -> ProductOutcome:
+    """跳過的商品：原因之外也寫出排除了哪些舊版；有唯一候選的那種文件記下來源檔。"""
+    reason = "；".join(p for p in [*problems, _excluded_note(selections)] if p)
+    return ProductOutcome(tdcc, SKIPPED, reason, folder, _found_documents({k: s.chosen for k, s in selections.items()}))
+
+
+def _excluded_note(selections: dict[DocKind, _Selection]) -> str:
     excluded = [c for kind in DocKind for c in selections[kind].failed + selections[kind].superseded]
-    note = f"已排除舊版：{_names(excluded)}" if excluded else ""
-    return ProductOutcome(tdcc, PREPARED, note, folder, tuple(docs))
+    return f"已排除舊版：{_names(excluded)}" if excluded else ""
 
 
-@dataclass(frozen=True)
-class _VersionMarks:
-    """商品資料夾裡上次放回留下的標記：沒通過版本（待確認檔）與已放回版本（標準名檔）的內容指紋。"""
+class _Versions:
+    """判斷候選是哪個版本：上次沒通過的（和待確認檔內容相同）、上次已放回的（標準名複本），或新寄來的。
 
-    failed: set[str]
-    returned: set[str]
-    standard_names: set[str]
+    內容指紋（全文）每個檔只算一次。標準名檔要和資料夾裡某份上手原檔內容相同，才算工具放回的複本；
+    沒有的話是上手自己取成標準名（例：UBS），當一般的上手原檔看待。
+    """
+
+    def __init__(self, pending: list[Path], sources: list[Path], standard_names: set[str]) -> None:
+        self._pending = pending
+        self._sources = sources
+        self._standard_names = standard_names
+        self._keys: dict[Path, str] = {}
+        self._failed_keys: set[str] | None = None
+        self._returned_keys: set[str] | None = None
+
+    def key(self, path: Path) -> str:
+        if path not in self._keys:
+            self._keys[path] = content_key(path)
+        return self._keys[path]
+
+    @property
+    def failed_keys(self) -> set[str]:
+        if self._failed_keys is None:
+            self._failed_keys = {self.key(p) for p in self._pending}
+        return self._failed_keys
+
+    @property
+    def returned_keys(self) -> set[str]:
+        if self._returned_keys is None:
+            standard = [p for p in self._sources if p.name in self._standard_names]
+            originals = (
+                {self.key(p) for p in self._sources if p.name not in self._standard_names} if standard else set()
+            )
+            self._returned_keys = {self.key(p) for p in standard} & originals
+        return self._returned_keys
 
     def select(self, candidates: list[_Candidate]) -> _Selection:
         """內容相同只算一份（保留上手原檔名）、排除沒通過的版本；還有多份時排除已放回的舊版，改用新寄來的。"""
-        if len(candidates) <= 1 and not self.failed:
+        if len(candidates) <= 1 and not self._pending:
             return _Selection(list(candidates), [], [])
         groups: dict[str, list[_Candidate]] = {}
         for candidate in candidates:
-            groups.setdefault(content_key(candidate.pdf), []).append(candidate)
+            groups.setdefault(self.key(candidate.pdf), []).append(candidate)
         representative = {
-            key: min(group, key=lambda c: (c.source.name in self.standard_names, c.source.name))
+            key: min(group, key=lambda c: (c.source.name in self._standard_names, c.source.name))
             for key, group in groups.items()
         }
-        failed = [representative[k] for k in groups if k in self.failed]
-        remaining = [k for k in groups if k not in self.failed]
+        failed = [representative[k] for k in groups if k in self.failed_keys]
+        remaining = [k for k in groups if k not in self.failed_keys]
         superseded: list[_Candidate] = []
-        newer = [k for k in remaining if k not in self.returned]
-        if len(remaining) > 1 and newer:
-            superseded = [representative[k] for k in remaining if k in self.returned]
-            remaining = newer
+        if len(remaining) > 1:
+            newer = [k for k in remaining if k not in self.returned_keys]
+            if newer:
+                superseded = [representative[k] for k in remaining if k in self.returned_keys]
+                remaining = newer
         return _Selection([representative[k] for k in remaining], failed, superseded)
 
 
