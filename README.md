@@ -52,7 +52,7 @@ spw-panel
 
 ### 每日匯入（最小 FCN 資料庫）
 
-把每天的 FCN 交易、商品條件與信箱表匯入 PostgreSQL（[#32](https://github.com/TaylorYam/structured-product-workflow/issues/32)、[ADR 0003](docs/adr/0003-minimal-fcn-database.md)）。寄信草稿之後只讀這個資料庫。
+把每天的 FCN 交易與商品條件匯入 PostgreSQL；信箱在資料庫直接維護（[ADR 0004](docs/adr/0004-mailbox-maintained-in-database.md)、[#35](https://github.com/TaylorYam/structured-product-workflow/issues/35)）（[#32](https://github.com/TaylorYam/structured-product-workflow/issues/32)、[ADR 0003](docs/adr/0003-minimal-fcn-database.md)）。寄信草稿之後只讀這個資料庫。
 
 **第一次設定（每台電腦一次）**：
 1. 安裝 PostgreSQL，建立資料庫與日常使用的帳號（可用 `scripts/provision_postgres_dev.py`）。
@@ -67,16 +67,29 @@ spw-db-migrate --admin-user postgres
 
 **每天**：
 1. 打開 `每日更新.xlsx`：把前一天的交易整列貼到 `交易明細`（欄位同交易清單月份工作表），這些商品在庫存總表的列整列貼到 `清單更新`（欄位同 `FCN清單.xlsx`）。第 1 列欄名不要動。
-2. 視窗切到「每日匯入」，選 `每日更新.xlsx` 與 `信箱.xlsx`，按「匯入」。
+2. 視窗切到「每日匯入」，選 `每日更新.xlsx`，按「匯入」。
 3. 看結果：
    - 「新增商品」「新增交易」：寫入成功。「已存在」：之前匯過，這次沒有寫入。
    - 「內容不同（未覆蓋）」：和資料庫裡的不一樣，資料庫保留第一次的內容。
    - 「擋下」：這一列缺值或寫法不認得（例如庫存狀態、KO／KI 代碼），修正 Excel 後重新匯入。
    - 「分公司對帳差異」：交易明細各分公司金額加總和庫存總表的承作金額不同（PB 也算），只提醒。
    - 「庫存尚未更新」：交易已匯入、清單更新還沒有這檔；之後貼進來再匯入一次即可。
-   - 「名字對不到信箱」：交易明細的 FC 名字在信箱表找不到（大小寫不同視為同一人）；拼法不同請在信箱表的「別名」工作表加一列（欄位 `交易清單寫法`、`使用者名稱`）。
+   - 「名字對不到信箱」：交易明細的 FC 名字在 `mailbox.person` 找不到（大小寫不同視為同一人）；拼法不同請在 `mailbox.alias` 加一筆別名。
+   - 「信箱尚未建立」：`mailbox.person` 還是空的，名字無法比對。
 
-只收 FCN，其他商品略過並計數；同一份重複匯入不會重複寫入；任何錯誤都不會留下一半的資料。已存在商品的庫存狀態這一版不更新。`信箱.xlsx` 每次整份取代資料庫裡的人員；選填欄「固定副本」填 Y 的人是寄信的固定副本。
+只收 FCN，其他商品略過並計數；同一份重複匯入不會重複寫入；任何錯誤都不會留下一半的資料。已存在商品的庫存狀態這一版不更新。每日匯入不會修改信箱。
+
+**信箱維護**：直接在資料庫的 `mailbox.person`（人員）、`mailbox.alias`（別名）新增或修改，例如用 pgAdmin 以有寫入權限的帳號執行 SQL。比對用的小寫鍵由資料庫自動產生；名字不分大小寫不能重複，信箱格式不對、別名指到不存在的人都會被拒絕。改名時別名會跟著改。
+
+```sql
+-- 新增人員（fixed_cc = true 是寄信的固定副本）
+INSERT INTO mailbox.person (name, email, unit, fixed_cc) VALUES ('Amy', 'amy@example.com', 'FC', false);
+-- 交易清單上的拼法不同時，加別名指到使用者名稱
+INSERT INTO mailbox.alias (alias, person_name) VALUES ('Amie', 'Amy');
+-- 修改、刪除
+UPDATE mailbox.person SET email = 'amy.new@example.com' WHERE name = 'Amy';
+DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
+```
 
 測試：`pytest -q`（資料全部虛構；真的 Word 轉檔測試只在本機有 Word 時執行，CI 自動略過）。資料庫測試需要一個名稱以 `_test` 結尾、可以清空的 PostgreSQL 資料庫，把連線字串設在環境變數 `SPW_TEST_DSN`（例如 `host=localhost dbname=spw_test user=...`）；沒設定時略過，CI 用 PostgreSQL 服務執行。真實樣本試跑只在本機執行：把環境變數 `SPW_REAL_SAMPLES_DIR` 設成放商品資料夾的目錄，CI 自動略過；真實資料不進 repo。
 
@@ -132,7 +145,7 @@ After checking and saving the checker result workbook, switch to the 放回資�
 
 ### Daily import (minimal FCN database)
 
-Imports each day's FCN trades, product terms, and the mailbox workbook into PostgreSQL ([#32](https://github.com/TaylorYam/structured-product-workflow/issues/32), [ADR 0003](docs/adr/0003-minimal-fcn-database.md)). Mail drafts will read only this database.
+Imports each day's FCN trades and product terms into PostgreSQL; the mailbox is maintained directly in the database ([ADR 0004](docs/adr/0004-mailbox-maintained-in-database.md), [#35](https://github.com/TaylorYam/structured-product-workflow/issues/35)) ([#32](https://github.com/TaylorYam/structured-product-workflow/issues/32), [ADR 0003](docs/adr/0003-minimal-fcn-database.md)). Mail drafts will read only this database.
 
 **First-time setup (once per computer)**:
 1. Install PostgreSQL and create the database and the daily account (`scripts/provision_postgres_dev.py` can help).
@@ -147,15 +160,28 @@ Run the same command again after updates that add schema versions. When moving t
 
 **Daily**:
 1. Open `每日更新.xlsx`: paste yesterday's trade rows whole into `交易明細` (same columns as the trade-list monthly sheets) and those products' inventory rows whole into `清單更新` (same columns as `FCN清單.xlsx`). Do not change the header row.
-2. In the window, open "每日匯入", choose `每日更新.xlsx` and `信箱.xlsx`, and click "匯入".
+2. In the window, open "每日匯入", choose `每日更新.xlsx`, and click "匯入".
 3. Review the results:
    - "新增商品"/"新增交易": written. "已存在": imported before; nothing written this time.
    - "內容不同（未覆蓋）": differs from the database, which keeps the first version.
    - "擋下": a row is missing values or uses an unrecognized form (for example inventory status or KO/KI codes); fix the workbook and re-import.
    - "分公司對帳差異": per-branch trade totals differ from the inventory allocation (PB included); warning only.
    - "庫存尚未更新": trades are imported but `清單更新` lacks the product; paste it later and import again.
-   - "名字對不到信箱": an FC name is missing from the mailbox workbook (case is ignored); for spelling variants add a row to its "別名" sheet (columns `交易清單寫法`, `使用者名稱`).
+   - "名字對不到信箱": an FC name is missing from `mailbox.person` (case is ignored); for spelling variants add an alias to `mailbox.alias`.
+   - "信箱尚未建立": `mailbox.person` is empty, so names cannot be matched.
 
-Only FCN is imported; other products are skipped and counted. Re-importing the same file writes nothing new, and any error leaves no partial data. Inventory status of existing products is not refreshed in this version. `信箱.xlsx` replaces the stored people on every import; people marked Y in the optional "固定副本" column are the fixed mail CCs.
+Only FCN is imported; other products are skipped and counted. Re-importing the same file writes nothing new, and any error leaves no partial data. Inventory status of existing products is not refreshed in this version. The daily import never changes the mailbox.
+
+**Mailbox maintenance**: add or edit rows directly in `mailbox.person` (people) and `mailbox.alias` (aliases), for example with SQL in pgAdmin using an account with write access. The lowercase matching keys are generated by the database; names must be unique ignoring case, and invalid email formats or aliases pointing to unknown people are rejected. Renaming a person updates their aliases.
+
+```sql
+-- Add a person (fixed_cc = true marks a fixed mail CC)
+INSERT INTO mailbox.person (name, email, unit, fixed_cc) VALUES ('Amy', 'amy@example.com', 'FC', false);
+-- Add an alias when the trade list spells the name differently
+INSERT INTO mailbox.alias (alias, person_name) VALUES ('Amie', 'Amy');
+-- Update or delete
+UPDATE mailbox.person SET email = 'amy.new@example.com' WHERE name = 'Amy';
+DELETE FROM mailbox.person WHERE name = 'Amy';  -- their aliases are deleted too
+```
 
 Tests: `pytest -q` (synthetic data only; real Word conversion tests run locally only when Word is available and are skipped in CI). Database tests need a disposable PostgreSQL database whose name ends in `_test`; put its connection string in `SPW_TEST_DSN` (for example `host=localhost dbname=spw_test user=...`). Without it they are skipped; CI runs them against a PostgreSQL service. Real-sample runs are local only: set `SPW_REAL_SAMPLES_DIR` to the folder containing product folders; CI skips it, and real data never enters the repository.

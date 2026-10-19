@@ -1,4 +1,4 @@
-"""每日匯入（#32）：虛構的每日更新與信箱表，對真的 PostgreSQL 匯入。資料全部虛構。"""
+"""每日匯入（#32、#35）：虛構的每日更新，對真的 PostgreSQL 匯入；信箱直接寫進資料庫。資料全部虛構。"""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from sp_workflow.daily_import import (
     DIFFERENT,
     INVENTORY_HEADERS,
     INVENTORY_MISSING,
+    MAILBOX_EMPTY,
     NAME_UNMATCHED,
     NEW_PRODUCT,
     NEW_TRADES,
@@ -24,7 +25,6 @@ from sp_workflow.daily_import import (
     UNCHANGED,
     DailyImportError,
     import_daily,
-    read_mailbox,
 )
 from sp_workflow.database import DatabaseError, require_current_schema
 
@@ -103,30 +103,22 @@ def write_daily(path: Path, trades: list[dict], inventories: list[dict], *, trad
     return path
 
 
-def write_mailbox(path: Path, people=None, aliases=None, *, fixed_cc_column: bool = True) -> Path:
+def seed_mailbox(pg, people=None, aliases=()) -> None:
+    """像使用者用 SQL 維護信箱一樣直接寫入；比對鍵由資料庫產生。"""
     people = people or [
-        ("Amy", "amy@example.com", "FC", ""),
-        ("Ben", "ben@example.com", "FC", ""),
-        ("Pat", "pat@example.com", "PM", "Y"),
+        ("Amy", "amy@example.com", "FC", False),
+        ("Ben", "ben@example.com", "FC", False),
+        ("Pat", "pat@example.com", "PM", True),
     ]
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "信箱"
-    ws.append(["使用者名稱", "公司信箱", "單位", *(["固定副本"] if fixed_cc_column else [])])
-    for name, email, unit, cc in people:
-        ws.append([name, email, unit, *([cc or None] if fixed_cc_column else [])])
-    if aliases is not None:
-        al = wb.create_sheet("別名")
-        al.append(["交易清單寫法", "使用者名稱"])
-        for row in aliases:
-            al.append(list(row))
-    wb.save(path)
-    return path
+    for row in people:
+        pg.execute("INSERT INTO mailbox.person (name, email, unit, fixed_cc) VALUES (%s, %s, %s, %s)", row)
+    for row in aliases:
+        pg.execute("INSERT INTO mailbox.alias (alias, person_name) VALUES (%s, %s)", row)
 
 
 @pytest.fixture
-def mailbox(tmp_path: Path) -> Path:
-    return write_mailbox(tmp_path / "信箱.xlsx")
+def mailbox(pg) -> None:
+    seed_mailbox(pg)
 
 
 def kinds(receipt, tdcc: str) -> list[str]:
@@ -137,7 +129,7 @@ def count(pg, table: str) -> int:
     return pg.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
 
 
-def test_new_products_trades_and_people_are_written(pg, tmp_path: Path, mailbox: Path) -> None:
+def test_new_products_trades_and_people_are_written(pg, tmp_path: Path, mailbox) -> None:
     daily = write_daily(
         tmp_path / "每日更新.xlsx",
         [
@@ -148,7 +140,7 @@ def test_new_products_trades_and_people_are_written(pg, tmp_path: Path, mailbox:
         [inventory(A, [("北區", 300000), ("南區", 100000)]), inventory(B, [("南區", 500000)])],
     )
 
-    receipt = import_daily(daily, mailbox, pg)
+    receipt = import_daily(daily, pg)
 
     assert kinds(receipt, A) == [NEW_PRODUCT, NEW_TRADES]
     assert kinds(receipt, B) == [NEW_PRODUCT, NEW_TRADES]
@@ -175,42 +167,37 @@ def test_new_products_trades_and_people_are_written(pg, tmp_path: Path, mailbox:
     assert pg.execute(
         "SELECT row_seq, number, fc_name, amount FROM workflow.trade_row WHERE tdcc = %s ORDER BY row_seq", (A,)
     ).fetchall() == [(1, 1, "Amy", Decimal("300000")), (2, None, "Ben", Decimal("100000"))]
-    assert pg.execute("SELECT name, fixed_cc FROM mailbox.person ORDER BY name").fetchall() == [
-        ("Amy", False),
-        ("Ben", False),
-        ("Pat", True),
-    ]
     summary = pg.execute("SELECT daily_file_name, summary FROM workflow.import_run").fetchone()
     assert summary[0] == "每日更新.xlsx" and summary[1]["counts"][NEW_PRODUCT] == 2
 
 
-def test_tdcc_loses_no_leading_zero(pg, tmp_path: Path, mailbox: Path) -> None:
+def test_tdcc_loses_no_leading_zero(pg, tmp_path: Path, mailbox) -> None:
     daily = write_daily(tmp_path / "d.xlsx", [trade(int(A), "Amy", "北區", 1)], [inventory(int(A), [("北區", 1)])])
 
-    import_daily(daily, mailbox, pg)
+    import_daily(daily, pg)
 
     assert pg.execute("SELECT tdcc FROM workflow.product").fetchall() == [(A,)]
     assert pg.execute("SELECT DISTINCT tdcc FROM workflow.trade_row").fetchall() == [(A,)]
 
 
-def test_other_products_are_skipped_and_counted(pg, tmp_path: Path, mailbox: Path) -> None:
+def test_other_products_are_skipped_and_counted(pg, tmp_path: Path, mailbox) -> None:
     daily = write_daily(
         tmp_path / "d.xlsx",
         [trade(A, "Amy", "北區", 1), trade(D, "Amy", "北區", 1, product="BEN")],
         [inventory(A, [("北區", 1)]), inventory(D, [("北區", 1)], Product="BEN")],
     )
 
-    receipt = import_daily(daily, mailbox, pg)
+    receipt = import_daily(daily, pg)
 
     assert (receipt.skipped_trade_rows, receipt.skipped_inventory_rows) == (1, 1)
     assert count(pg, "workflow.product") == 1 and kinds(receipt, D) == []
 
 
-def test_importing_the_same_file_again_adds_nothing(pg, tmp_path: Path, mailbox: Path) -> None:
+def test_importing_the_same_file_again_adds_nothing(pg, tmp_path: Path, mailbox) -> None:
     daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])])
-    import_daily(daily, mailbox, pg)
+    import_daily(daily, pg)
 
-    receipt = import_daily(daily, mailbox, pg)
+    receipt = import_daily(daily, pg)
 
     assert kinds(receipt, A) == [UNCHANGED, UNCHANGED]
     assert (count(pg, "workflow.product"), count(pg, "workflow.trade_row"), count(pg, "workflow.import_run")) == (
@@ -220,17 +207,15 @@ def test_importing_the_same_file_again_adds_nothing(pg, tmp_path: Path, mailbox:
     )
 
 
-def test_changed_terms_are_reported_not_overwritten(pg, tmp_path: Path, mailbox: Path) -> None:
-    import_daily(
-        write_daily(tmp_path / "1.xlsx", [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])]), mailbox, pg
-    )
+def test_changed_terms_are_reported_not_overwritten(pg, tmp_path: Path, mailbox) -> None:
+    import_daily(write_daily(tmp_path / "1.xlsx", [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])]), pg)
     changed = write_daily(
         tmp_path / "2.xlsx",
         [trade(A, "Amy", "北區", 2)],
         [inventory(A, [("北區", 1)], **{"Coupon p.a. (%)": 13, "庫存狀態": "已於2026/11/2 KO"})],
     )
 
-    receipt = import_daily(changed, mailbox, pg)
+    receipt = import_daily(changed, pg)
 
     assert [(line.kind, line.detail) for line in receipt.lines if line.tdcc == A and line.kind == DIFFERENT] == [
         (DIFFERENT, "商品條件和資料庫不同：coupon_pct"),
@@ -252,12 +237,10 @@ def test_changed_terms_are_reported_not_overwritten(pg, tmp_path: Path, mailbox:
         ("顧客贖回", ("顧客贖回", None, None)),
     ],
 )
-def test_inventory_status_is_split_into_event_date_and_underlying(
-    pg, tmp_path: Path, mailbox: Path, raw, expected
-) -> None:
+def test_inventory_status_is_split_into_event_date_and_underlying(pg, tmp_path: Path, mailbox, raw, expected) -> None:
     daily = write_daily(tmp_path / "d.xlsx", [], [inventory(A, [("北區", 1)], 庫存狀態=raw)])
 
-    import_daily(daily, mailbox, pg)
+    import_daily(daily, pg)
 
     assert pg.execute(
         "SELECT status_event, status_date, status_underlying, status_raw FROM workflow.product"
@@ -278,45 +261,45 @@ def test_inventory_status_is_split_into_event_date_and_underlying(
         ({"分公司_2": "南區"}, "分公司_2 與承作金額只有一邊有值"),
     ],
 )
-def test_bad_inventory_rows_are_blocked_with_a_reason(pg, tmp_path: Path, mailbox: Path, overrides, reason) -> None:
+def test_bad_inventory_rows_are_blocked_with_a_reason(pg, tmp_path: Path, mailbox, overrides, reason) -> None:
     daily = write_daily(
         tmp_path / "d.xlsx", [], [inventory(A, [("北區", 1)], **overrides), inventory(B, [("北區", 1)])]
     )
 
-    receipt = import_daily(daily, mailbox, pg)
+    receipt = import_daily(daily, pg)
 
     blocked = [line for line in receipt.lines if line.kind == BLOCKED]
     assert len(blocked) == 1 and blocked[0].tdcc == A and reason in blocked[0].detail
     assert pg.execute("SELECT tdcc FROM workflow.product").fetchall() == [(B,)]
 
 
-def test_no_ki_is_stored_as_none_barrier(pg, tmp_path: Path, mailbox: Path) -> None:
+def test_no_ki_is_stored_as_none_barrier(pg, tmp_path: Path, mailbox) -> None:
     daily = write_daily(tmp_path / "d.xlsx", [], [inventory(A, [("北區", 1)], **{"KI(Freq)": "-", "KI(%)": "-"})])
 
-    import_daily(daily, mailbox, pg)
+    import_daily(daily, pg)
 
     assert pg.execute("SELECT barrier_type, ki_pct FROM workflow.product").fetchone() == ("NONE", None)
 
 
-def test_a_bad_trade_row_blocks_all_rows_of_that_product(pg, tmp_path: Path, mailbox: Path) -> None:
+def test_a_bad_trade_row_blocks_all_rows_of_that_product(pg, tmp_path: Path, mailbox) -> None:
     bad = trade(A, "Ben", "南區", 1, number=None)
     bad["金額"] = None
     daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1), bad, trade(B, "Amy", "北區", 1)], [])
 
-    receipt = import_daily(daily, mailbox, pg)
+    receipt = import_daily(daily, pg)
 
     assert kinds(receipt, A) == [BLOCKED] and "金額 沒有值" in receipt.lines[0].detail
     assert pg.execute("SELECT DISTINCT tdcc FROM workflow.trade_row").fetchall() == [(B,)]
 
 
-def test_branch_amounts_that_do_not_reconcile_are_reported_only(pg, tmp_path: Path, mailbox: Path) -> None:
+def test_branch_amounts_that_do_not_reconcile_are_reported_only(pg, tmp_path: Path, mailbox) -> None:
     daily = write_daily(
         tmp_path / "d.xlsx",
         [trade(A, "Amy", "北區", 300000), trade(A, "PB", "南區", 50000, number=None)],
         [inventory(A, [("北區", 300000), ("南區", 100000)])],
     )
 
-    receipt = import_daily(daily, mailbox, pg)
+    receipt = import_daily(daily, pg)
 
     assert [line.detail for line in receipt.lines if line.kind == RECONCILE] == [
         "南區：庫存 100,000、交易 50,000、差額 -50,000"
@@ -324,22 +307,22 @@ def test_branch_amounts_that_do_not_reconcile_are_reported_only(pg, tmp_path: Pa
     assert count(pg, "workflow.product") == 1 and count(pg, "workflow.trade_row") == 2
 
 
-def test_trades_before_inventory_are_kept_until_inventory_arrives(pg, tmp_path: Path, mailbox: Path) -> None:
-    first = import_daily(write_daily(tmp_path / "1.xlsx", [trade(A, "Amy", "北區", 1)], []), mailbox, pg)
-    second = import_daily(write_daily(tmp_path / "2.xlsx", [], [inventory(A, [("北區", 1)])]), mailbox, pg)
+def test_trades_before_inventory_are_kept_until_inventory_arrives(pg, tmp_path: Path, mailbox) -> None:
+    first = import_daily(write_daily(tmp_path / "1.xlsx", [trade(A, "Amy", "北區", 1)], []), pg)
+    second = import_daily(write_daily(tmp_path / "2.xlsx", [], [inventory(A, [("北區", 1)])]), pg)
 
     assert INVENTORY_MISSING in kinds(first, A)
     assert kinds(second, A) == [NEW_PRODUCT]
 
 
-def test_inventory_without_trades_is_reported(pg, tmp_path: Path, mailbox: Path) -> None:
-    receipt = import_daily(write_daily(tmp_path / "d.xlsx", [], [inventory(A, [("北區", 1)])]), mailbox, pg)
+def test_inventory_without_trades_is_reported(pg, tmp_path: Path, mailbox) -> None:
+    receipt = import_daily(write_daily(tmp_path / "d.xlsx", [], [inventory(A, [("北區", 1)])]), pg)
 
     assert kinds(receipt, A) == [NEW_PRODUCT, TRADES_MISSING]
 
 
 def test_fc_names_match_ignoring_case_and_through_aliases(pg, tmp_path: Path) -> None:
-    mailbox = write_mailbox(tmp_path / "m.xlsx", aliases=[("Amie", "Amy")])
+    seed_mailbox(pg, aliases=[("Amie", "Amy")])
     daily = write_daily(
         tmp_path / "d.xlsx",
         [
@@ -351,72 +334,81 @@ def test_fc_names_match_ignoring_case_and_through_aliases(pg, tmp_path: Path) ->
         [],
     )
 
-    receipt = import_daily(daily, mailbox, pg)
+    receipt = import_daily(daily, pg)
 
     assert [(line.tdcc, line.detail) for line in receipt.lines if line.kind == NAME_UNMATCHED] == [(C, "Zoe")]
-    assert pg.execute("SELECT alias_key, person_name FROM mailbox.alias").fetchall() == [("amie", "Amy")]
 
 
-def test_mailbox_replaces_previous_people(pg, tmp_path: Path, mailbox: Path) -> None:
-    daily = write_daily(tmp_path / "d.xlsx", [], [])
-    import_daily(daily, mailbox, pg)
+def test_import_does_not_change_the_mailbox(pg, tmp_path: Path, mailbox) -> None:
+    before = pg.execute("SELECT name, email, unit, fixed_cc FROM mailbox.person ORDER BY name").fetchall()
 
-    import_daily(daily, write_mailbox(tmp_path / "m2.xlsx", [("Cat", "cat@example.com", "FC", "")]), pg)
+    receipt = import_daily(write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], []), pg)
 
-    assert pg.execute("SELECT name FROM mailbox.person").fetchall() == [("Cat",)]
-
-
-def test_mailbox_without_fixed_cc_column_is_accepted(tmp_path: Path) -> None:
-    box = read_mailbox(write_mailbox(tmp_path / "m.xlsx", fixed_cc_column=False))
-
-    assert [p.fixed_cc for p in box.people] == [False, False, False]
+    assert pg.execute("SELECT name, email, unit, fixed_cc FROM mailbox.person ORDER BY name").fetchall() == before
+    assert receipt.people == 3
 
 
-def test_identical_duplicate_people_count_once(tmp_path: Path) -> None:
-    people = [("Amy", "amy@example.com", "FC", ""), ("Amy", "amy@example.com", "FC", "")]
+def test_empty_mailbox_is_reported_once(pg, tmp_path: Path) -> None:
+    receipt = import_daily(write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], []), pg)
 
-    assert len(read_mailbox(write_mailbox(tmp_path / "m.xlsx", people)).people) == 1
+    assert [line.kind for line in receipt.lines if line.problem] == [MAILBOX_EMPTY, INVENTORY_MISSING]
+    assert count(pg, "workflow.trade_row") == 1
+
+
+def test_mailbox_keys_are_generated_by_the_database(pg) -> None:
+    seed_mailbox(pg, [(" Amy ", "amy@example.com", "FC", False)], aliases=[("Amie", " Amy ")])
+
+    assert pg.execute("SELECT name_key FROM mailbox.person").fetchone() == ("amy",)
+    assert pg.execute("SELECT alias_key FROM mailbox.alias").fetchone() == ("amie",)
 
 
 @pytest.mark.parametrize(
-    ("people", "aliases", "message"),
+    ("sql", "params"),
     [
-        ([("Amy", "not-an-email", "FC", "")], None, "格式不對"),
-        ([("Amy", "a@example.com", "FC", ""), ("amy", "b@example.com", "FC", "")], None, "出現多次但內容不同"),
-        ([("Amy", "a@example.com", "FC", "X")], None, "只能填 Y 或留白"),
-        ([("Amy", "a@example.com", "FC", "")], [("Amie", "Nobody")], "對不到信箱表的使用者名稱"),
+        ("INSERT INTO mailbox.person (name, email) VALUES (%s, %s)", ("amy", "other@example.com")),
+        ("INSERT INTO mailbox.person (name, email) VALUES (%s, %s)", ("Cat", "not-an-email")),
+        ("INSERT INTO mailbox.alias (alias, person_name) VALUES (%s, %s)", ("Zed", "Nobody")),
+        ("INSERT INTO mailbox.alias (alias, person_name) VALUES (%s, %s)", ("AMIE", "Ben")),
     ],
 )
-def test_mailbox_problems_stop_the_whole_import(pg, tmp_path: Path, people, aliases, message) -> None:
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])])
+def test_database_rejects_bad_mailbox_rows(pg, sql, params) -> None:
+    import psycopg
 
-    with pytest.raises(DailyImportError, match=message):
-        import_daily(daily, write_mailbox(tmp_path / "m.xlsx", people, aliases), pg)
+    seed_mailbox(pg, aliases=[("Amie", "Amy")])
 
-    assert count(pg, "workflow.import_run") == 0 and count(pg, "workflow.trade_row") == 0
+    with pytest.raises(psycopg.errors.IntegrityError):
+        pg.execute(sql, params)
 
 
-def test_wrong_header_rejects_the_whole_file(pg, tmp_path: Path, mailbox: Path) -> None:
+def test_renaming_a_person_keeps_their_aliases(pg) -> None:
+    seed_mailbox(pg, aliases=[("Amie", "Amy")])
+
+    pg.execute("UPDATE mailbox.person SET name = 'Amelia' WHERE name = 'Amy'")
+
+    assert pg.execute("SELECT alias, person_name FROM mailbox.alias").fetchall() == [("Amie", "Amelia")]
+
+
+def test_wrong_header_rejects_the_whole_file(pg, tmp_path: Path, mailbox) -> None:
     headers = list(TRADE_HEADERS)
     headers[3], headers[4] = headers[4], headers[3]
     daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [], trade_headers=headers)
 
     with pytest.raises(DailyImportError, match="D 欄應為「TDCC」，實際是「幣別」"):
-        import_daily(daily, mailbox, pg)
+        import_daily(daily, pg)
 
     assert count(pg, "workflow.import_run") == 0
 
 
-def test_missing_sheet_rejects_the_whole_file(pg, tmp_path: Path, mailbox: Path) -> None:
+def test_missing_sheet_rejects_the_whole_file(pg, tmp_path: Path, mailbox) -> None:
     wb = openpyxl.Workbook()
     wb.active.title = daily_import.TRADE_SHEET
     wb.save(tmp_path / "d.xlsx")
 
     with pytest.raises(DailyImportError, match="缺少工作表「清單更新」"):
-        import_daily(tmp_path / "d.xlsx", mailbox, pg)
+        import_daily(tmp_path / "d.xlsx", pg)
 
 
-def test_failure_halfway_leaves_nothing_behind(pg, tmp_path: Path, mailbox: Path, monkeypatch) -> None:
+def test_failure_halfway_leaves_nothing_behind(pg, tmp_path: Path, mailbox, monkeypatch) -> None:
     daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])])
 
     def broken(*_args):
@@ -424,17 +416,15 @@ def test_failure_halfway_leaves_nothing_behind(pg, tmp_path: Path, mailbox: Path
 
     monkeypatch.setattr(daily_import, "_reconcile", broken)
     with pytest.raises(RuntimeError):
-        import_daily(daily, mailbox, pg)
+        import_daily(daily, pg)
 
-    assert [
-        count(pg, t) for t in ("workflow.product", "workflow.trade_row", "workflow.import_run", "mailbox.person")
-    ] == [0, 0, 0, 0]
+    assert [count(pg, t) for t in ("workflow.product", "workflow.trade_row", "workflow.import_run")] == [0, 0, 0]
 
 
-def test_import_requires_the_latest_schema(pg, tmp_path: Path, mailbox: Path) -> None:
+def test_import_requires_the_latest_schema(pg, tmp_path: Path, mailbox) -> None:
     pg.execute("DELETE FROM public.spw_schema_version")
 
     with pytest.raises(DatabaseError):
         require_current_schema(pg)
     with pytest.raises(DailyImportError, match="spw-db-migrate"):
-        import_daily(write_daily(tmp_path / "d.xlsx", [], []), mailbox, pg)
+        import_daily(write_daily(tmp_path / "d.xlsx", [], []), pg)

@@ -48,9 +48,9 @@ def test_install_root_decides_where_folders_are_remembered(tmp_path: Path) -> No
 
 def test_daily_import_tab_remembers_files_and_env_path(master, tmp_path: Path) -> None:
     memory = FolderMemory.under(tmp_path)
-    memory.remember(daily="D:/每日更新.xlsx", mailbox="D:/信箱.xlsx")
+    memory.remember(daily="D:/每日更新.xlsx")
 
     window = app.PanelWindow(master, memory, tmp_path / ".env")
 
-    assert (window.daily.daily_var.get(), window.daily.mailbox_var.get()) == ("D:/每日更新.xlsx", "D:/信箱.xlsx")
+    assert window.daily.daily_var.get() == "D:/每日更新.xlsx"
     assert window.daily.env_path == tmp_path / ".env"

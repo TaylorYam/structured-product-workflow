@@ -78,3 +78,21 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
         "workflow.product",
         "workflow.trade_row",
     ]
+
+
+@pytest.mark.db
+def test_database_on_0001_upgrades_to_0002_keeping_data(pg) -> None:
+    """筆電的開發資料庫已套用 0001；升級後既有人員保留，比對鍵改由資料庫產生（#35）。"""
+    pg.execute("DROP SCHEMA mailbox, workflow CASCADE")
+    pg.execute(f"DELETE FROM public.{database.VERSION_TABLE}")
+    version, name, text = database.migration_files()[0]
+    pg.execute(text)
+    pg.execute(f"INSERT INTO public.{database.VERSION_TABLE} (version, name) VALUES (%s, %s)", (version, name))
+    pg.execute("INSERT INTO mailbox.person (name, name_key, email) VALUES ('Amy', 'amy', 'amy@example.com')")
+
+    applied = apply_migrations(pg)
+
+    assert applied == [n for _, n, _ in database.migration_files()[1:]]
+    assert pg.execute("SELECT name, name_key, email FROM mailbox.person").fetchall() == [
+        ("Amy", "amy", "amy@example.com")
+    ]
