@@ -4,6 +4,9 @@
 同一種文件剛好一份候選才採用；說明書或投資人須知任一份找不到或有多份，整個商品跳過。
 有上手 PDF 候選就只看 PDF；某種文件沒有 PDF 候選時，才把資料夾裡的 Word 複製到暫存區轉成 PDF 再判斷（#8、ADR 0002）。
 Word 無法啟動或逾時，整個商品跳過；個別 Word 轉不了只影響它自己（需要它卻沒有其他候選時，原因寫出轉檔失敗）。
+
+重新核對上手修正版（#21）：放回過的 `_待確認` 檔不當候選，只標記「這個內容沒通過」；候選依內容指紋（全文）
+只算一份、排除和待確認檔內容相同的舊版；剩下不只一份時，再排除和上次放回的標準名檔內容相同的舊版，改用新寄來的。
 """
 
 from __future__ import annotations
@@ -23,9 +26,10 @@ from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
 from sp_workflow.conversion import ConversionError, Converter, default_converter
-from sp_workflow.documents import DocKind, read_pdf
+from sp_workflow.documents import DocKind, content_key, read_pdf
 
 PREPARED = "已準備"
+PENDING_SUFFIX = "_待確認"  # 核對沒通過、放回時加在檔名最後（放回資料夾也用這個）
 SKIPPED = "跳過"
 LIST_NAME = "準備清單.xlsx"
 # 準備清單的欄（欄名, 欄寬）
@@ -69,6 +73,15 @@ class _Candidate:
     pdf: Path
     source: Path
     from_word: bool = False
+
+
+@dataclass(frozen=True)
+class _Selection:
+    """一種文件挑完舊版之後：剩下的候選，以及排除掉的沒通過版本與已放回舊版。"""
+
+    chosen: list[_Candidate]
+    failed: list[_Candidate]
+    superseded: list[_Candidate]
 
 
 @dataclass(frozen=True)
@@ -169,6 +182,14 @@ def _prepare_product(
 def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter) -> ProductOutcome:
     files = sorted((p for p in folder.iterdir() if p.is_file()), key=lambda p: p.name)
     words = [p for p in files if p.suffix.lower() in _WORD and not p.name.startswith("~$")]  # ~$ 是 Word 鎖定檔
+    pdfs = [p for p in files if p.suffix.lower() == _PDF]
+    pending = [p for p in pdfs if p.stem.endswith(PENDING_SUFFIX)]  # 上次核對沒通過、放回的檔：只當標記
+    standard_names = {_output_name(tdcc, kind) for kind in DocKind}
+    marks = _VersionMarks(
+        failed={content_key(p) for p in pending},
+        returned={content_key(p) for p in pdfs if p.name in standard_names},
+        standard_names=standard_names,
+    )
     candidates: dict[DocKind, list[_Candidate]] = {kind: [] for kind in DocKind}
     mismatched: dict[DocKind, list[_Candidate]] = {kind: [] for kind in DocKind}
 
@@ -177,11 +198,13 @@ def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter
         if reading.kind in kinds:
             (candidates if reading.code_matches else mismatched)[reading.kind].append(candidate)
 
-    for pdf in (p for p in files if p.suffix.lower() == _PDF):
+    for pdf in (p for p in pdfs if p not in pending):
         read(_Candidate(pdf, pdf), tuple(DocKind))
+    selections = {kind: marks.select(candidates[kind]) for kind in DocKind}
 
     # Word 逾時被強制結束時暫存檔可能還被鎖住，清不掉也不影響結果
     with tempfile.TemporaryDirectory(prefix="spw-prepare-", ignore_cleanup_errors=True) as tmp:
+        # 只有本來就沒有 PDF 的那種文件才轉 Word（例：MS、BNP）；有 PDF 但都是沒通過的舊版時，不改用同一份的 Word 版
         need_word = tuple(kind for kind in DocKind if not candidates[kind])
         failures: dict[Path, str] = {}
         if need_word and words:
@@ -191,19 +214,53 @@ def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter
                 return ProductOutcome(tdcc, SKIPPED, str(exc), folder, _found_documents(candidates))
             for candidate in converted:
                 read(candidate, need_word)
+            for kind in need_word:
+                selections[kind] = marks.select(candidates[kind])
 
-        problems = [_problem(kind, candidates[kind], mismatched[kind], failures) for kind in DocKind]
+        problems = [_problem(kind, selections[kind], mismatched[kind], failures) for kind in DocKind]
         problems = [p for p in problems if p]
+        chosen = {kind: selections[kind].chosen for kind in DocKind}
         if problems:
-            return ProductOutcome(tdcc, SKIPPED, "；".join(problems), folder, _found_documents(candidates))
+            return ProductOutcome(tdcc, SKIPPED, "；".join(problems), folder, _found_documents(chosen))
 
         docs = []
         for kind in DocKind:
-            [chosen] = candidates[kind]
+            [picked] = chosen[kind]
             target = batch_dir / _output_name(tdcc, kind)
-            shutil.copyfile(chosen.pdf, target)
-            docs.append(PreparedDocument(kind, chosen.source, target.name, sha256(target), chosen.from_word))
-    return ProductOutcome(tdcc, PREPARED, "", folder, tuple(docs))
+            shutil.copyfile(picked.pdf, target)
+            docs.append(PreparedDocument(kind, picked.source, target.name, sha256(target), picked.from_word))
+    excluded = [c for kind in DocKind for c in selections[kind].failed + selections[kind].superseded]
+    note = f"已排除舊版：{_names(excluded)}" if excluded else ""
+    return ProductOutcome(tdcc, PREPARED, note, folder, tuple(docs))
+
+
+@dataclass(frozen=True)
+class _VersionMarks:
+    """商品資料夾裡上次放回留下的標記：沒通過版本（待確認檔）與已放回版本（標準名檔）的內容指紋。"""
+
+    failed: set[str]
+    returned: set[str]
+    standard_names: set[str]
+
+    def select(self, candidates: list[_Candidate]) -> _Selection:
+        """內容相同只算一份（保留上手原檔名）、排除沒通過的版本；還有多份時排除已放回的舊版，改用新寄來的。"""
+        if len(candidates) <= 1 and not self.failed:
+            return _Selection(list(candidates), [], [])
+        groups: dict[str, list[_Candidate]] = {}
+        for candidate in candidates:
+            groups.setdefault(content_key(candidate.pdf), []).append(candidate)
+        representative = {
+            key: min(group, key=lambda c: (c.source.name in self.standard_names, c.source.name))
+            for key, group in groups.items()
+        }
+        failed = [representative[k] for k in groups if k in self.failed]
+        remaining = [k for k in groups if k not in self.failed]
+        superseded: list[_Candidate] = []
+        newer = [k for k in remaining if k not in self.returned]
+        if len(remaining) > 1 and newer:
+            superseded = [representative[k] for k in remaining if k in self.returned]
+            remaining = newer
+        return _Selection([representative[k] for k in remaining], failed, superseded)
 
 
 def _convert_words(words: list[Path], tmp: Path, convert: Converter) -> tuple[list[_Candidate], dict[Path, str]]:
@@ -242,11 +299,14 @@ def _output_name(tdcc: str, kind: DocKind) -> str:
     return f"{tdcc}_{kind.value}.pdf"
 
 
-def _problem(kind: DocKind, found: list[_Candidate], mismatched: list[_Candidate], failures: dict[Path, str]) -> str:
+def _problem(kind: DocKind, selection: _Selection, mismatched: list[_Candidate], failures: dict[Path, str]) -> str:
+    found = selection.chosen
     if len(found) == 1:
         return ""
     if found:
         return f"{kind.label}有 {len(found)} 份候選：{_names(found)}"
+    if selection.failed:
+        return f"{kind.label}只有上次沒通過的版本（{_names(selection.failed)}），等上手寄新版"
     if mismatched:
         return f"找不到{kind.label}（{_names(mismatched)} 封面商品代號不符）"
     if failures:

@@ -25,12 +25,11 @@ from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
 from sp_workflow.documents import DocKind
-from sp_workflow.preparation import LIST_NAME, PREPARED, sha256
+from sp_workflow.preparation import LIST_NAME, PENDING_SUFFIX, PREPARED, sha256
 
 RETURNED = "已放回"
 ALREADY_THERE = "已在"
 NOT_RETURNED = "不放回"
-PENDING_SUFFIX = "_待確認"  # 核對沒通過的檔，放回時加在檔名最後
 PENDING_RETURNED = f"{RETURNED}（待確認）"
 PENDING_ALREADY_THERE = f"{ALREADY_THERE}（待確認）"
 

@@ -191,7 +191,7 @@ def test_investor_sheet_of_another_product_is_not_a_candidate(root: Path, out: P
 
 def test_two_term_sheet_candidates_skip_the_whole_product(root: Path, out: Path) -> None:
     folder = make_product_folder(root, A)
-    make_pdf(folder / "revised TS.pdf", ts_lines(A))
+    make_pdf(folder / "revised TS.pdf", ts_lines(A, preamble=["（另一份說明書）"]))
 
     receipt = run(A, root, out)
 
@@ -290,7 +290,7 @@ def test_word_fills_only_the_kind_without_a_pdf(root: Path, out: Path) -> None:
 
 def test_two_term_sheet_pdfs_are_not_rescued_by_word(root: Path, out: Path) -> None:
     folder = make_product_folder(root, A)
-    make_pdf(folder / "revised TS.pdf", ts_lines(A))
+    make_pdf(folder / "revised TS.pdf", ts_lines(A, preamble=["（另一份說明書）"]))
     make_fake_word(folder / "ts.docx", ts_lines(A))
     converter = FakeConverter()
 
@@ -342,7 +342,7 @@ def test_failed_word_is_reported_when_its_kind_is_missing(root: Path, out: Path)
 
 def test_two_chinese_word_term_sheets_skip_the_product(root: Path, out: Path) -> None:
     folder = make_word_only_folder(root, C)
-    make_fake_word(folder / "2591320_1m_ATS_revised.docx", ts_lines(C))
+    make_fake_word(folder / "2591320_1m_ATS_revised.docx", ts_lines(C, preamble=["（另一份說明書）"]))
 
     o = outcome(run(C, root, out), C)
 
@@ -493,7 +493,7 @@ def test_skipped_product_rows_keep_the_candidate_found(root: Path, out: Path) ->
 def test_product_folders_are_never_modified(root: Path, out: Path) -> None:
     make_product_folder(root, A)
     folder = make_product_folder(root, B)
-    make_pdf(folder / "revised TS.pdf", ts_lines(B))
+    make_pdf(folder / "revised TS.pdf", ts_lines(B, preamble=["（另一份說明書）"]))
     before = snapshot(root)
 
     run(f"{A} {B} {C}", root, out)
@@ -522,3 +522,121 @@ def test_copy_failure_skips_the_product_without_leaving_half_a_pair(
     assert outcome(receipt, B).status == PREPARED
     assert batch_files(receipt) == [f"{B}_IIS.pdf", f"{B}_TS.pdf"]
     assert receipt.list_path.exists()
+
+
+# ---- 重新核對上手修正版（#21）----
+
+
+def revised(lines_func, tdcc: str) -> list[str]:
+    """上手修正版：內容和原版不同。"""
+    return lines_func(tdcc, preamble=["（修正版）"]) if lines_func is ts_lines else [*lines_func(tdcc), "（修正版）"]
+
+
+def returned_folder(root: Path, tdcc: str, *, ts_failed: bool) -> Path:
+    """模擬上次放回後的商品資料夾：上手原檔、放回的標準名檔或待確認檔。"""
+    folder = make_product_folder(root, tdcc)
+    ts = (folder / f"XS0000000000_{tdcc}_CN TS.pdf").read_bytes()
+    iis = (folder / f"XS0000000000_{tdcc}_CN IIS.pdf").read_bytes()
+    (folder / (f"{tdcc}_TS_待確認.pdf" if ts_failed else f"{tdcc}_TS.pdf")).write_bytes(ts)
+    (folder / f"{tdcc}_IIS.pdf").write_bytes(iis)
+    return folder
+
+
+def test_returned_copies_do_not_count_as_extra_candidates(root: Path, out: Path) -> None:
+    folder = returned_folder(root, A, ts_failed=False)
+
+    o = outcome(run(A, root, out), A)
+
+    assert o.status == PREPARED, o.reason
+    assert {d.kind.value: d.source.name for d in o.documents} == {
+        "TS": f"XS0000000000_{A}_CN TS.pdf",  # 內容相同時用上手原檔名
+        "IIS": f"XS0000000000_{A}_CN IIS.pdf",
+    }
+    assert o.reason == ""
+    assert folder.exists()
+
+
+def test_only_the_failed_version_waits_for_a_new_one(root: Path, out: Path) -> None:
+    returned_folder(root, A, ts_failed=True)
+
+    o = outcome(run(A, root, out), A)
+
+    assert o.status == SKIPPED
+    assert o.reason == f"中文產品說明書只有上次沒通過的版本（XS0000000000_{A}_CN TS.pdf），等上手寄新版"
+
+
+def test_revised_term_sheet_replaces_the_failed_one(root: Path, out: Path) -> None:
+    folder = returned_folder(root, A, ts_failed=True)
+    make_pdf(folder / f"XS0000000000_{A}_CN TS_v2.pdf", revised(ts_lines, A))
+
+    receipt = run(A, root, out)
+
+    o = outcome(receipt, A)
+    assert o.status == PREPARED, o.reason
+    assert {d.kind.value: d.source.name for d in o.documents}["TS"] == f"XS0000000000_{A}_CN TS_v2.pdf"
+    assert (receipt.batch_dir / f"{A}_TS.pdf").read_bytes() == (folder / f"XS0000000000_{A}_CN TS_v2.pdf").read_bytes()
+    assert o.reason == f"已排除舊版：XS0000000000_{A}_CN TS.pdf"
+
+
+def test_revised_investor_sheet_replaces_the_previously_returned_one(root: Path, out: Path) -> None:
+    folder = returned_folder(root, A, ts_failed=True)
+    make_pdf(folder / f"XS0000000000_{A}_CN TS_v2.pdf", revised(ts_lines, A))
+    make_pdf(folder / f"XS0000000000_{A}_CN IIS_v2.pdf", revised(iis_lines, A))
+
+    o = outcome(run(A, root, out), A)
+
+    assert o.status == PREPARED, o.reason
+    assert {d.kind.value: d.source.name for d in o.documents} == {
+        "TS": f"XS0000000000_{A}_CN TS_v2.pdf",
+        "IIS": f"XS0000000000_{A}_CN IIS_v2.pdf",
+    }
+    assert f"XS0000000000_{A}_CN IIS.pdf" in o.reason
+
+
+def test_issuer_standard_named_file_is_still_used_on_first_preparation(root: Path, out: Path) -> None:
+    """UBS 上手本來就給標準檔名，第一次準備照用。"""
+    folder = root / A
+    make_pdf(folder / f"{A}_TS.pdf", ts_lines(A))
+    make_pdf(folder / f"{A}_IIS.pdf", iis_lines(A))
+    make_fake_word(folder / f"{A}_Final_PS.docx", ts_lines(A))
+    converter = FakeConverter()
+
+    o = outcome(run(A, root, out, converter), A)
+
+    assert o.status == PREPARED, o.reason
+    assert {d.kind.value: d.source.name for d in o.documents} == {"TS": f"{A}_TS.pdf", "IIS": f"{A}_IIS.pdf"}
+    assert converter.calls == []
+
+
+def test_word_source_failed_version_is_recognised_by_text(root: Path, out: Path) -> None:
+    """MS：同一份 Word 每次轉出的 PDF 位元組不同，靠文字認出是上次沒通過的版本。"""
+    folder = make_word_only_folder(root, C)
+    make_pdf(folder / f"{C}_TS_待確認.pdf", ts_lines(C))  # 上次由同一份 ATS 轉出、沒通過
+    make_pdf(folder / f"{C}_IIS.pdf", iis_lines(C))  # 上次通過、放回的投資人須知
+
+    o = outcome(run(C, root, out), C)
+    assert o.status == SKIPPED
+    assert "只有上次沒通過的版本（2591320_1m_ATS_Fixed Coupon.docx）" in o.reason
+
+    make_fake_word(folder / "2591320_1m_ATS_v2.docx", revised(ts_lines, C))
+    out2 = out / "second"
+    out2.mkdir()
+    o = outcome(prepare_batch(C, root, out2, now=NOW, converter=FakeConverter()), C)
+    assert o.status == PREPARED, o.reason
+    assert {d.kind.value: (d.source.name, d.from_word) for d in o.documents} == {
+        "TS": ("2591320_1m_ATS_v2.docx", True),
+        "IIS": (f"{C}_IIS.pdf", False),
+    }
+
+
+def test_word_copy_of_a_failed_pdf_is_not_mistaken_for_a_new_version(root: Path, out: Path) -> None:
+    """JPM：上手同時給 PDF 和 Word。PDF 版沒通過時，不能改用同一份的 Word 版（轉出的文字和 PDF 版不完全一樣）。"""
+    folder = returned_folder(root, A, ts_failed=True)
+    make_fake_word(folder / f"XS0000000000_{A}_CN TS.docx", [*ts_lines(A), "（Word 版排版略有不同）"])
+    converter = FakeConverter()
+
+    o = outcome(run(A, root, out, converter), A)
+
+    assert o.status == SKIPPED
+    assert "只有上次沒通過的版本" in o.reason
+    assert converter.calls == []
