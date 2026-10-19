@@ -12,8 +12,10 @@ import pytest
 from sp_workflow import preparation
 from sp_workflow.preparation import PREPARED, SKIPPED, PreparationError, prepare_batch
 from synth import (
+    FakeConverter,
     english_ts_lines,
     iis_lines,
+    make_fake_word,
     make_pdf,
     make_product_folder,
     snapshot,
@@ -40,10 +42,10 @@ def out(tmp_path: Path) -> Path:
     return o
 
 
-def run(text: str, root: Path, out: Path):
-    """每次準備都確認商品資料夾（根目錄底下）的原始檔沒被改動。"""
+def run(text: str, root: Path, out: Path, converter: FakeConverter | None = None):
+    """每次準備都確認商品資料夾（根目錄底下）的原始檔沒被改動；預設用假的轉檔器，不啟動 Word。"""
     before = snapshot(root) if root.is_dir() else None
-    receipt = prepare_batch(text, root, out, now=NOW)
+    receipt = prepare_batch(text, root, out, now=NOW, converter=converter or FakeConverter())
     if before is not None:
         assert snapshot(root) == before
     return receipt
@@ -211,15 +213,151 @@ def test_missing_investor_sheet_skips_the_whole_product(root: Path, out: Path) -
     assert batch_files(receipt) == []
 
 
-def test_word_only_document_is_skipped_until_conversion_is_supported(root: Path, out: Path) -> None:
-    folder = root / C
-    make_pdf(folder / "iis.pdf", iis_lines(C))
-    (folder / "2591320_ATS_Fixed Coupon.docx").write_bytes(b"fake docx")
-    (folder / "2591320_TS_Fixed Coupon.DOC").write_bytes(b"fake doc")
+def make_word_only_folder(root: Path, tdcc: str) -> Path:
+    """MS 型：只有 Word，檔名寫 _TS_ 的是英文版，_ATS_ 才是中文說明書、_AD_ 是投資人須知。"""
+    folder = root / tdcc
+    make_fake_word(folder / "2591320_1m_AD_Fixed Coupon.docx", iis_lines(tdcc))
+    make_fake_word(folder / "2591320_1m_ATS_Fixed Coupon.docx", ts_lines(tdcc))
+    make_fake_word(folder / "2591320_1m_TS_Fixed Coupon.docx", english_ts_lines(tdcc))
+    make_pdf(folder / f"FCN高齡顧客適合度聲明書_MS_{tdcc}.pdf", ["高齡顧客商品適合度聲明書"])
+    return folder
+
+
+# ---- Word 轉檔 ----
+
+
+def test_word_only_product_is_converted_and_identified_by_content(root: Path, out: Path) -> None:
+    folder = make_word_only_folder(root, C)
+
+    receipt = run(C, root, out)
+
+    o = outcome(receipt, C)
+    assert o.status == PREPARED, o.reason
+    sources = {d.kind.value: d.source for d in o.documents}
+    assert sources == {
+        "TS": folder / "2591320_1m_ATS_Fixed Coupon.docx",
+        "IIS": folder / "2591320_1m_AD_Fixed Coupon.docx",
+    }
+    assert all(d.from_word for d in o.documents)
+    assert batch_files(receipt) == [f"{C}_IIS.pdf", f"{C}_TS.pdf"]
+    ts_row, iis_row = read_list(receipt.list_path)
+    assert ts_row["由 Word 轉檔"] == "是" and ts_row["來源檔"] == str(folder / "2591320_1m_ATS_Fixed Coupon.docx")
+    assert ts_row["SHA-256"] == hashlib.sha256((receipt.batch_dir / f"{C}_TS.pdf").read_bytes()).hexdigest()
+
+
+def test_converter_gets_copies_not_the_original_word_files(root: Path, out: Path) -> None:
+    make_word_only_folder(root, C)
+    (root / C / "~$591320_1m_ATS_Fixed Coupon.docx").write_bytes(b"word lock file")
+    converter = FakeConverter()
+
+    run(C, root, out, converter)
+
+    [jobs] = converter.calls
+    assert sorted(src.name for src, _ in jobs) == [
+        "2591320_1m_AD_Fixed Coupon.docx",
+        "2591320_1m_ATS_Fixed Coupon.docx",
+        "2591320_1m_TS_Fixed Coupon.docx",
+    ]
+    assert all(root not in src.parents for src, _ in jobs)
+
+
+def test_word_is_not_converted_when_pdfs_exist(root: Path, out: Path) -> None:
+    folder = make_product_folder(root, A)
+    make_fake_word(folder / f"XS0000000000_{A}_CN TS.docx", ts_lines(A))
+    converter = FakeConverter()
+
+    receipt = run(A, root, out, converter)
+
+    assert outcome(receipt, A).status == PREPARED
+    assert not any(d.from_word for d in outcome(receipt, A).documents)
+    assert converter.calls == []
+
+
+def test_word_fills_only_the_kind_without_a_pdf(root: Path, out: Path) -> None:
+    folder = root / A
+    make_pdf(folder / "ts.pdf", ts_lines(A))
+    make_fake_word(folder / "ts copy.docx", ts_lines(A))
+    make_fake_word(folder / "iis.doc", iis_lines(A))
+
+    o = outcome(run(A, root, out), A)
+
+    assert o.status == PREPARED, o.reason  # Word 版說明書不和 PDF 版搶候選
+    assert {d.kind.value: (d.source.name, d.from_word) for d in o.documents} == {
+        "TS": ("ts.pdf", False),
+        "IIS": ("iis.doc", True),
+    }
+
+
+def test_two_term_sheet_pdfs_are_not_rescued_by_word(root: Path, out: Path) -> None:
+    folder = make_product_folder(root, A)
+    make_pdf(folder / "revised TS.pdf", ts_lines(A))
+    make_fake_word(folder / "ts.docx", ts_lines(A))
+    converter = FakeConverter()
+
+    o = outcome(run(A, root, out, converter), A)
+
+    assert "中文產品說明書有 2 份候選" in o.reason
+    assert converter.calls == []
+
+
+def test_conversion_failure_skips_the_whole_product(root: Path, out: Path) -> None:
+    make_word_only_folder(root, C)
+    make_product_folder(root, A)
+
+    receipt = run(f"{C} {A}", root, out, FakeConverter(error="Word 轉檔逾時（240 秒），Word 可能跳出了對話框"))
+
+    o = outcome(receipt, C)
+    assert (o.status, o.reason) == (SKIPPED, "Word 轉檔逾時（240 秒），Word 可能跳出了對話框")
+    assert outcome(receipt, A).status == PREPARED
+    assert batch_files(receipt) == [f"{A}_IIS.pdf", f"{A}_TS.pdf"]
+
+
+def test_conversion_without_output_skips_the_product(root: Path, out: Path) -> None:
+    make_word_only_folder(root, C)
+
+    o = outcome(run(C, root, out, FakeConverter(produce=False)), C)
+
+    assert o.status == SKIPPED
+    assert "沒有產生 PDF" in o.reason
+
+
+def test_failure_of_an_unrelated_word_file_does_not_block_the_product(root: Path, out: Path) -> None:
+    make_word_only_folder(root, C)
+
+    converter = FakeConverter(fail={"2591320_1m_TS_Fixed Coupon.docx": "檔案損毀"})
+    o = outcome(run(C, root, out, converter), C)
+
+    assert o.status == PREPARED, o.reason
+
+
+def test_failed_word_is_reported_when_its_kind_is_missing(root: Path, out: Path) -> None:
+    make_word_only_folder(root, C)
+
+    converter = FakeConverter(fail={"2591320_1m_ATS_Fixed Coupon.docx": "檔案損毀"})
+    o = outcome(run(C, root, out, converter), C)
+
+    assert o.status == SKIPPED
+    assert o.reason == "找不到中文產品說明書（有 Word 轉檔失敗：2591320_1m_ATS_Fixed Coupon.docx：檔案損毀）"
+
+
+def test_two_chinese_word_term_sheets_skip_the_product(root: Path, out: Path) -> None:
+    folder = make_word_only_folder(root, C)
+    make_fake_word(folder / "2591320_1m_ATS_revised.docx", ts_lines(C))
 
     o = outcome(run(C, root, out), C)
+
     assert o.status == SKIPPED
-    assert "只有 Word，尚未支援轉檔" in o.reason
+    assert "中文產品說明書有 2 份候選" in o.reason
+
+
+def test_english_word_only_is_not_a_candidate(root: Path, out: Path) -> None:
+    folder = root / A
+    make_pdf(folder / "ts.pdf", ts_lines(A))
+    make_fake_word(folder / "TERMSHEET-ENGLISH.DOCX", english_ts_lines(A))
+
+    o = outcome(run(A, root, out), A)
+
+    assert (o.status, o.reason) == (SKIPPED, "找不到中文投資人須知")
 
 
 def test_files_in_sub_folders_of_a_product_folder_are_ignored(root: Path, out: Path) -> None:

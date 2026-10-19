@@ -18,7 +18,7 @@
 
 從公槽 FCN 底下以 TDCC 命名的商品資料夾，挑出中文產品說明書與中文投資人須知，改名成核對工具要的 `<TDCC>_TS.pdf`、`<TDCC>_IIS.pdf`，放進新開的批次資料夾。商品資料夾裡的檔案只讀不改。
 
-安裝（Python ≥ 3.11，含 Tkinter；雙擊安裝另見 #10）：
+安裝（Python ≥ 3.11，含 Tkinter；Word 轉檔需要安裝 Microsoft Word 的 Windows；雙擊安裝另見 #10）：
 
 ```bash
 python -m pip install -c constraints.txt -e ".[dev]"
@@ -34,10 +34,11 @@ spw-panel
 2. 選根目錄（商品資料夾可以在底下任何一層）與輸出位置；兩者都會記在本機 `.local/`，下次直接帶入。
 3. 按「開始準備」。每次在輸出位置開一個 `待核對_<日期時間>` 資料夾，已存在就不做。
 4. 看第一頁內容判斷：開頭附近出現「中文產品說明書」或「中文投資人須知」；說明書第一頁要有資料夾的 TDCC，投資人須知有 12 碼代號時要相符。檔名只當參考。
-5. 說明書或投資人須知任一份找不到、或有兩份以上候選時，整個商品跳過並寫出原因與候選檔名。這一版只處理上手 PDF，只有 Word 的商品（例如 MS、BNP）先跳過（#8 會處理轉檔）。
-6. 批次資料夾裡的 `準備清單.xlsx` 記錄每份文件的來源檔、輸出檔名、SHA-256 指紋、狀態與原因。完成後按「打開批次資料夾」，再到核對工具 PANEL 選參考條件表與這批 PDF。
+5. 有上手 PDF 就用 PDF；某種文件沒有 PDF 時（例如 MS、BNP 只給 Word），才把資料夾裡的 Word（`.docx`、`.doc`）複製到暫存區，用 Microsoft Word 轉成 PDF 再判斷（[ADR 0002](docs/adr/0002-word-to-pdf-with-microsoft-word.md)）。原始 Word 不動；轉檔失敗或逾時（Word 跳出對話框）時那個商品跳過。
+6. 說明書或投資人須知任一份找不到、或有兩份以上候選時，整個商品跳過並寫出原因與候選檔名。
+7. 批次資料夾裡的 `準備清單.xlsx` 記錄每份文件的來源檔、是否由 Word 轉檔、輸出檔名、SHA-256 指紋、狀態與原因。完成後按「打開批次資料夾」，再到核對工具 PANEL 選參考條件表與這批 PDF。
 
-測試：`pytest -q`（資料全部虛構）。真實樣本試跑只在本機執行：把環境變數 `SPW_REAL_SAMPLES_DIR` 設成放商品資料夾的目錄，CI 自動略過；真實資料不進 repo。
+測試：`pytest -q`（資料全部虛構；真的 Word 轉檔測試只在本機有 Word 時執行，CI 自動略過）。真實樣本試跑只在本機執行：把環境變數 `SPW_REAL_SAMPLES_DIR` 設成放商品資料夾的目錄，CI 自動略過；真實資料不進 repo。
 
 ## English
 
@@ -57,7 +58,7 @@ Commit documentation and synthetic examples only. Company messages, trades, cust
 
 Picks the Chinese term sheet and investor information sheet from TDCC-named product folders under the shared FCN directory, renames them to the checker's `<TDCC>_TS.pdf` and `<TDCC>_IIS.pdf`, and places them in a new batch folder. Product folders are read only.
 
-Install (Python ≥ 3.11 with Tkinter; double-click setup is tracked in #10):
+Install (Python ≥ 3.11 with Tkinter; Word conversion requires Windows with Microsoft Word; double-click setup is tracked in #10):
 
 ```bash
 python -m pip install -c constraints.txt -e ".[dev]"
@@ -73,7 +74,8 @@ spw-panel
 2. Choose the root folder (product folders may be at any depth) and the output location; both are remembered in local `.local/`.
 3. Press Start. Each run creates `待核對_<timestamp>` in the output location and refuses an existing folder.
 4. Identification uses page-one content: a 中文產品說明書 or 中文投資人須知 title near the top; the term sheet's first page must contain the folder TDCC, and an investor sheet's 12-digit code must match when present. File names are hints only.
-5. If either document is missing or has multiple candidates, the whole product is skipped with the reason and candidate names. This version handles issuer PDFs only; Word-only products (for example MS, BNP) are skipped until #8 adds conversion.
-6. `準備清單.xlsx` in the batch folder records each document's source, output name, SHA-256, status, and reason. Then open the batch folder and select the reference workbook and PDFs in the checker PANEL.
+5. Issuer PDFs take precedence. Only when a document type has no PDF (for example MS and BNP provide Word only) are the folder's Word files (`.docx`, `.doc`) copied to a temporary area and converted with Microsoft Word before identification ([ADR 0002](docs/adr/0002-word-to-pdf-with-microsoft-word.md)). Original Word files stay untouched; a failed or timed-out conversion (for example a Word dialog) skips that product.
+6. If either document is missing or has multiple candidates, the whole product is skipped with the reason and candidate names.
+7. `準備清單.xlsx` in the batch folder records each document's source, whether it was converted from Word, output name, SHA-256, status, and reason. Then open the batch folder and select the reference workbook and PDFs in the checker PANEL.
 
-Tests: `pytest -q` (synthetic data only). Real-sample runs are local only: set `SPW_REAL_SAMPLES_DIR` to the folder containing product folders; CI skips it, and real data never enters the repository.
+Tests: `pytest -q` (synthetic data only; real Word conversion tests run locally only when Word is available and are skipped in CI). Real-sample runs are local only: set `SPW_REAL_SAMPLES_DIR` to the folder containing product folders; CI skips it, and real data never enters the repository.

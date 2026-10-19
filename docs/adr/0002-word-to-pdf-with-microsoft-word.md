@@ -1,8 +1,8 @@
 # 0002: Word 轉 PDF 使用 Microsoft Word／Convert Word to PDF with Microsoft Word
 
-- 狀態／Status: Accepted（功能尚未實作／not implemented yet）
+- 狀態／Status: Accepted（#8 實作／implemented in #8）
 - 日期／Date: 2026-10-19
-- 追蹤／Tracking: #5
+- 追蹤／Tracking: #5、#8
 
 ## 繁體中文
 
