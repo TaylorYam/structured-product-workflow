@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
@@ -19,7 +20,7 @@ import pymupdf
 
 TITLE_WINDOW = 300
 _WHITESPACE = re.compile(r"\s+")
-_TWELVE_DIGITS = re.compile(r"(?<!\d)\d{12}(?!\d)")
+_TWELVE_DIGITS = re.compile(r"(?<![0-9])[0-9]{12}(?![0-9])")  # 只認半形數字
 
 
 class DocKind(Enum):
@@ -29,6 +30,18 @@ class DocKind(Enum):
     @property
     def label(self) -> str:
         return "中文產品說明書" if self is DocKind.TS else "中文投資人須知"
+
+
+@dataclass(frozen=True)
+class Reading:
+    """一份 PDF 第一頁的判讀：依標題是哪一種文件（不是說明書或須知時為 None），以及商品代號是否符合資料夾。"""
+
+    kind: DocKind | None
+    code_matches: bool = False
+
+    @property
+    def candidate(self) -> DocKind | None:
+        return self.kind if self.code_matches else None
 
 
 def first_page_text(path: Path) -> str | None:
@@ -42,21 +55,21 @@ def first_page_text(path: Path) -> str | None:
         return None
 
 
-def classify(text: str, tdcc: str) -> DocKind | None:
-    """第一頁文字屬於這個 TDCC 的哪一種文件；都不是時回傳 None。"""
+def classify(text: str, tdcc: str) -> Reading:
+    """判讀第一頁文字對這個 TDCC 而言是哪一種文件、商品代號符不符合。"""
     compact = _WHITESPACE.sub("", text)
     head = compact[:TITLE_WINDOW]
     found = {kind: head.find(kind.label) for kind in DocKind if kind.label in head}
     if not found:
-        return None
+        return Reading(None)
     kind = min(found, key=found.__getitem__)
     if tdcc in compact:
-        return kind
-    if kind is DocKind.IIS and not _TWELVE_DIGITS.search(text):
-        return kind
-    return None
+        return Reading(kind, True)
+    # 換行可能把代號切開，原始文字與去空白文字都要找
+    has_other_code = bool(_TWELVE_DIGITS.search(text) or _TWELVE_DIGITS.search(compact))
+    return Reading(kind, kind is DocKind.IIS and not has_other_code)
 
 
-def classify_pdf(path: Path, tdcc: str) -> DocKind | None:
+def read_pdf(path: Path, tdcc: str) -> Reading:
     text = first_page_text(path)
-    return None if text is None else classify(text, tdcc)
+    return Reading(None) if text is None else classify(text, tdcc)

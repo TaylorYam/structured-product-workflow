@@ -9,6 +9,7 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+from sp_workflow import preparation
 from sp_workflow.preparation import PREPARED, SKIPPED, PreparationError, prepare_batch
 from synth import (
     english_ts_lines,
@@ -40,7 +41,12 @@ def out(tmp_path: Path) -> Path:
 
 
 def run(text: str, root: Path, out: Path):
-    return prepare_batch(text, root, out, now=NOW)
+    """每次準備都確認商品資料夾（根目錄底下）的原始檔沒被改動。"""
+    before = snapshot(root) if root.is_dir() else None
+    receipt = prepare_batch(text, root, out, now=NOW)
+    if before is not None:
+        assert snapshot(root) == before
+    return receipt
 
 
 def outcome(receipt, tdcc: str):
@@ -134,8 +140,29 @@ def test_term_sheet_of_another_product_is_not_a_candidate(root: Path, out: Path)
     folder = root / A
     make_pdf(folder / "ts.pdf", ts_lines(B))
     make_pdf(folder / "iis.pdf", iis_lines(A))
+    (folder / "ts.docx").write_bytes(b"fake docx")
 
-    assert "找不到中文產品說明書" in outcome(run(A, root, out), A).reason
+    reason = outcome(run(A, root, out), A).reason
+    assert reason == "找不到中文產品說明書（ts.pdf 封面商品代號不符）"  # 有 PDF 只是代號不符，不能說成只有 Word
+
+
+def test_investor_sheet_code_split_by_a_line_break_still_counts_as_another_product(root: Path, out: Path) -> None:
+    folder = root / A
+    make_pdf(folder / "ts.pdf", ts_lines(A))
+    make_pdf(folder / "iis.pdf", ["第1頁，共4頁", "中文投資人須知", "TDCC商品代號325199", "990002"])
+
+    assert "找不到中文投資人須知（iis.pdf 封面商品代號不符）" in outcome(run(A, root, out), A).reason
+
+
+def test_pdf_is_used_when_word_copies_also_exist(root: Path, out: Path) -> None:
+    folder = make_product_folder(root, A)
+    (folder / f"XS0000000000_{A}_CN TS.docx").write_bytes(b"fake docx")
+    (folder / f"XS0000000000_{A}_CN IIS.docx").write_bytes(b"fake docx")
+
+    receipt = run(A, root, out)
+
+    assert outcome(receipt, A).status == PREPARED
+    assert batch_files(receipt) == [f"{A}_IIS.pdf", f"{A}_TS.pdf"]
 
 
 def test_investor_sheet_without_any_code_is_accepted(root: Path, out: Path) -> None:
@@ -246,11 +273,13 @@ def test_input_accepts_common_separators_and_merges_duplicates(root: Path, out: 
 def test_tokens_that_are_not_twelve_digits_are_listed(root: Path, out: Path) -> None:
     make_product_folder(root, A)
 
-    receipt = run(f"{A} 12345 ABC123456789", root, out)
+    full_width = "０２９１９９９９０００１"
+    receipt = run(f"{A} 12345 ABC123456789 {full_width}", root, out)
 
     assert outcome(receipt, A).status == PREPARED
     assert outcome(receipt, "12345").reason == "不是 12 碼數字"
     assert outcome(receipt, "ABC123456789").status == SKIPPED
+    assert outcome(receipt, full_width).reason == "不是 12 碼數字"
 
 
 @pytest.mark.parametrize("text", ["", "  \n ,、 "])
@@ -332,3 +361,26 @@ def test_product_folders_are_never_modified(root: Path, out: Path) -> None:
     run(f"{A} {B} {C}", root, out)
 
     assert snapshot(root) == before
+
+
+def test_copy_failure_skips_the_product_without_leaving_half_a_pair(
+    root: Path, out: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    make_product_folder(root, A)
+    make_product_folder(root, B)
+    real_copy = preparation.shutil.copyfile
+
+    def flaky_copy(src, dst):
+        if str(dst).endswith(f"{A}_IIS.pdf"):
+            raise PermissionError("檔案被鎖住")
+        return real_copy(src, dst)
+
+    monkeypatch.setattr(preparation.shutil, "copyfile", flaky_copy)
+
+    receipt = run(f"{A} {B}", root, out)
+
+    assert outcome(receipt, A).status == SKIPPED
+    assert "讀取或複製失敗" in outcome(receipt, A).reason
+    assert outcome(receipt, B).status == PREPARED
+    assert batch_files(receipt) == [f"{B}_IIS.pdf", f"{B}_TS.pdf"]
+    assert receipt.list_path.exists()

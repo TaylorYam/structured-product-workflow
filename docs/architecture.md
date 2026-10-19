@@ -2,7 +2,7 @@
 
 ## 繁體中文
 
-狀態：以下為規劃，並非已實作系統。已確認需求見 [CONTEXT](../CONTEXT.md)。
+狀態：以下為規劃，並非已實作系統；已實作的只有「TS／IIS 準備」中的準備批次（[#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)，用法見 [README](../README.md)）。已確認需求見 [CONTEXT](../CONTEXT.md)。
 
 ```mermaid
 flowchart TD
@@ -48,7 +48,7 @@ Vanilla FCN 是目前優先範圍；EXPRESS FCN、BEN 是未來需求，尚未�
 
 ## English
 
-Status: proposed architecture, not implemented. Confirmed requirements are in [CONTEXT](../CONTEXT.md).
+Status: proposed architecture, not implemented, except batch preparation within TS/IIS preparation ([#5](https://github.com/TaylorYam/structured-product-workflow/issues/5); usage in the [README](../README.md)). Confirmed requirements are in [CONTEXT](../CONTEXT.md).
 
 The diagram above connects formal Orders, normalization/booking, incoming archiving, TS/IIS preparation, checking routes, approved archiving, inventory lookup, and Outlook distribution. Inquiry stays external. Automatic checking is an independent project; customized or unsupported cases route to manual review. Failed automatic checks return for remediation or explicit review rather than proceeding directly to distribution.
 

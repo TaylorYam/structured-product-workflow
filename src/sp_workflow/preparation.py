@@ -18,16 +18,28 @@ from pathlib import Path
 
 import openpyxl
 from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
 
-from sp_workflow.documents import DocKind, classify_pdf
+from sp_workflow.documents import DocKind, read_pdf
 
 PREPARED = "已準備"
 SKIPPED = "跳過"
 LIST_NAME = "準備清單.xlsx"
-LIST_COLUMNS = ("TDCC", "種類", "來源檔", "商品資料夾", "由 Word 轉檔", "輸出檔名", "SHA-256", "狀態", "原因")
+# 準備清單的欄（欄名, 欄寬）
+LIST_COLUMNS = (
+    ("TDCC", 15),
+    ("種類", 6),
+    ("來源檔", 60),
+    ("商品資料夾", 40),
+    ("由 Word 轉檔", 12),
+    ("輸出檔名", 22),
+    ("SHA-256", 66),
+    ("狀態", 8),
+    ("原因", 60),
+)
 
 _SEPARATORS = re.compile(r"[\s,，、;；]+")
-_TDCC = re.compile(r"\d{12}")
+_TDCC = re.compile(r"[0-9]{12}")  # 只認半形數字
 _PDF = ".pdf"
 _WORD = (".docx", ".doc")
 
@@ -61,6 +73,7 @@ class PrepareReceipt:
     batch_dir: Path
     list_path: Path
     outcomes: tuple[ProductOutcome, ...]
+    unreadable_dirs: tuple[Path, ...] = ()  # 搜尋商品資料夾時讀不到的資料夾（例如沒有權限）
 
 
 def prepare_batch(text: str, root: Path, out_parent: Path, *, now: dt.datetime | None = None) -> PrepareReceipt:
@@ -78,17 +91,17 @@ def prepare_batch(text: str, root: Path, out_parent: Path, *, now: dt.datetime |
     except FileExistsError:
         raise PreparationError(f"批次資料夾已存在：{batch_dir}") from None
 
-    wanted = [t for t in tokens if _TDCC.fullmatch(t)]
-    folders = _find_product_folders(root, set(wanted))
+    valid = {t for t in tokens if _TDCC.fullmatch(t)}
+    folders, unreadable = _find_product_folders(root, valid)
     outcomes = tuple(
-        _prepare_product(t, folders.get(t, []), batch_dir)
-        if _TDCC.fullmatch(t)
+        _prepare_product(t, folders.get(t, []), unreadable, batch_dir)
+        if t in valid
         else ProductOutcome(t, SKIPPED, "不是 12 碼數字")
         for t in tokens
     )
     list_path = batch_dir / LIST_NAME
     _write_list(list_path, outcomes)
-    return PrepareReceipt(batch_dir, list_path, outcomes)
+    return PrepareReceipt(batch_dir, list_path, outcomes, tuple(unreadable))
 
 
 def _parse_tokens(text: str) -> list[str]:
@@ -96,37 +109,49 @@ def _parse_tokens(text: str) -> list[str]:
     return list(dict.fromkeys(t for t in _SEPARATORS.split(text) if t))
 
 
-def _find_product_folders(root: Path, wanted: set[str]) -> dict[str, list[Path]]:
-    """根目錄底下任何深度、名稱剛好等於 TDCC 的資料夾（只走一次樹）。"""
+def _find_product_folders(root: Path, wanted: set[str]) -> tuple[dict[str, list[Path]], list[Path]]:
+    """根目錄底下任何深度、名稱剛好等於 TDCC 的資料夾（只走一次樹），以及讀不到的資料夾。"""
     found: dict[str, list[Path]] = {}
+    unreadable: list[Path] = []
     if not wanted:
-        return found
-    for dirpath, dirnames, _ in os.walk(root):
+        return found, unreadable
+    for dirpath, dirnames, _ in os.walk(root, onerror=lambda e: unreadable.append(Path(e.filename))):
         dirnames.sort()
         for name in dirnames:
             if name in wanted:
                 found.setdefault(name, []).append(Path(dirpath) / name)
-    return found
+    return found, unreadable
 
 
-def _prepare_product(tdcc: str, folders: list[Path], batch_dir: Path) -> ProductOutcome:
+def _prepare_product(tdcc: str, folders: list[Path], unreadable: list[Path], batch_dir: Path) -> ProductOutcome:
     if not folders:
-        return ProductOutcome(tdcc, SKIPPED, "找不到商品資料夾")
+        reason = "找不到商品資料夾"
+        if unreadable:
+            reason += f"（搜尋時有 {len(unreadable)} 個資料夾讀不到，例如 {unreadable[0]}）"
+        return ProductOutcome(tdcc, SKIPPED, reason)
     if len(folders) > 1:
         paths = "、".join(str(f) for f in folders)
         return ProductOutcome(tdcc, SKIPPED, f"找到 {len(folders)} 個同名商品資料夾：{paths}")
     folder = folders[0]
+    try:
+        return _prepare_folder(tdcc, folder, batch_dir)
+    except OSError as exc:
+        for kind in DocKind:  # 兩份要嘛都輸出、要嘛都不輸出
+            (batch_dir / _output_name(tdcc, kind)).unlink(missing_ok=True)
+        return ProductOutcome(tdcc, SKIPPED, f"讀取或複製失敗：{exc}", folder)
+
+
+def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path) -> ProductOutcome:
     files = sorted((p for p in folder.iterdir() if p.is_file()), key=lambda p: p.name)
-    pdfs = [p for p in files if p.suffix.lower() == _PDF]
     has_word = any(p.suffix.lower() in _WORD for p in files)
-
     candidates: dict[DocKind, list[Path]] = {kind: [] for kind in DocKind}
-    for pdf in pdfs:
-        kind = classify_pdf(pdf, tdcc)
-        if kind is not None:
-            candidates[kind].append(pdf)
+    mismatched: dict[DocKind, list[Path]] = {kind: [] for kind in DocKind}
+    for pdf in (p for p in files if p.suffix.lower() == _PDF):
+        reading = read_pdf(pdf, tdcc)
+        if reading.kind is not None:
+            (candidates if reading.code_matches else mismatched)[reading.kind].append(pdf)
 
-    problems = [_problem(kind, candidates[kind], has_word) for kind in DocKind]
+    problems = [_problem(kind, candidates[kind], mismatched[kind], has_word) for kind in DocKind]
     problems = [p for p in problems if p]
     if problems:
         docs = tuple(PreparedDocument(kind, c[0] if len(c := candidates[kind]) == 1 else None) for kind in DocKind)
@@ -135,22 +160,30 @@ def _prepare_product(tdcc: str, folders: list[Path], batch_dir: Path) -> Product
     docs = []
     for kind in DocKind:
         [source] = candidates[kind]
-        output_name = f"{tdcc}_{kind.value}.pdf"
-        target = batch_dir / output_name
+        target = batch_dir / _output_name(tdcc, kind)
         shutil.copyfile(source, target)
-        docs.append(PreparedDocument(kind, source, output_name, _sha256(target)))
+        docs.append(PreparedDocument(kind, source, target.name, _sha256(target)))
     return ProductOutcome(tdcc, PREPARED, "", folder, tuple(docs))
 
 
-def _problem(kind: DocKind, found: list[Path], has_word: bool) -> str:
+def _output_name(tdcc: str, kind: DocKind) -> str:
+    return f"{tdcc}_{kind.value}.pdf"
+
+
+def _problem(kind: DocKind, found: list[Path], mismatched: list[Path], has_word: bool) -> str:
     if len(found) == 1:
         return ""
     if found:
-        names = "、".join(p.name for p in found)
-        return f"{kind.label}有 {len(found)} 份候選：{names}"
+        return f"{kind.label}有 {len(found)} 份候選：{_names(found)}"
+    if mismatched:
+        return f"找不到{kind.label}（{_names(mismatched)} 封面商品代號不符）"
     if has_word:
         return f"找不到{kind.label} PDF（只有 Word，尚未支援轉檔）"
     return f"找不到{kind.label}"
+
+
+def _names(paths: list[Path]) -> str:
+    return "、".join(p.name for p in paths)
 
 
 def _sha256(path: Path) -> str:
@@ -177,13 +210,13 @@ def _write_list(path: Path, outcomes: Iterable[ProductOutcome]) -> None:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "準備清單"
-    ws.append(LIST_COLUMNS)
+    ws.append([name for name, _ in LIST_COLUMNS])
     for cell in ws[1]:
         cell.font = Font(bold=True)
     for row in _list_rows(outcomes):
         ws.append([v or None for v in row])
         ws.cell(ws.max_row, 1).number_format = "@"  # TDCC 是文字，保留前導零
-    for col, width in zip("ABCDEFGHI", (15, 6, 60, 40, 12, 22, 66, 8, 60), strict=True):
-        ws.column_dimensions[col].width = width
+    for i, (_, width) in enumerate(LIST_COLUMNS, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = width
     ws.freeze_panes = "A2"
     wb.save(path)

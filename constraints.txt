@@ -5,4 +5,9 @@ openpyxl==3.1.5
 et-xmlfile==2.0.0
 # 開發／CI
 pytest==9.1.1
+iniconfig==2.3.0
+packaging==24.2
+pluggy==1.6.0
+pygments==2.19.1
+colorama==0.4.6
 ruff==0.16.8

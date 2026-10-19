@@ -120,7 +120,10 @@ class PrepareWindow:
         skipped = len(receipt.outcomes) - prepared
         self.batch_dir = receipt.batch_dir
         self.open_button.configure(state=tk.NORMAL)
-        self.status_var.set(f"完成：{prepared} 個商品已準備、{skipped} 個跳過。批次資料夾：{receipt.batch_dir}")
+        status = f"完成：{prepared} 個商品已準備、{skipped} 個跳過。批次資料夾：{receipt.batch_dir}"
+        if receipt.unreadable_dirs:
+            status += f"\n注意：搜尋時有 {len(receipt.unreadable_dirs)} 個資料夾讀不到（例如 {receipt.unreadable_dirs[0]}），裡面的商品資料夾找不到。"
+        self.status_var.set(status)
 
     def open_batch(self) -> None:
         if self.batch_dir is None:
