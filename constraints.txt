@@ -4,7 +4,7 @@
 PyMuPDF==1.27.2.2
 openpyxl==3.1.5
 et-xmlfile==2.0.0
-pywin32==311; sys_platform == 'win32'
+pywin32==312; sys_platform == 'win32'
 # 開發／CI
 pytest==9.1.1
 iniconfig==2.3.0
