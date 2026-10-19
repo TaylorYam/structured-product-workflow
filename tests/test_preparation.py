@@ -691,3 +691,16 @@ def test_version_that_passed_after_reuse_is_not_treated_as_failed(root: Path, ou
 
     assert o.status == PREPARED, o.reason
     assert o.reason == ""
+
+
+def test_reused_word_version_uses_the_pending_pdf_itself(root: Path, out: Path) -> None:
+    """沿用 Word 舊版時，批次裡放的是資料夾那份待確認 PDF，核對的、放回的、錯訊頁碼都是同一份（#25）。"""
+    folder = make_word_only_folder(root, C)
+    pending = make_pdf(folder / f"{C}_TS_待確認.pdf", ts_lines(C), pages=2)  # 上次轉出的版本（和這次重轉位元組不同）
+
+    receipt = run(C, root, out)
+
+    o = outcome(receipt, C)
+    assert o.status == PREPARED, o.reason
+    assert {d.kind.value: d.source.name for d in o.documents}["TS"] == "2591320_1m_ATS_Fixed Coupon.docx"
+    assert (receipt.batch_dir / f"{C}_TS.pdf").read_bytes() == pending.read_bytes()
