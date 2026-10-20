@@ -10,7 +10,7 @@ import ctypes
 import json
 import sys
 import tkinter as tk
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -654,14 +654,14 @@ class CheckTab(ttk.Frame):
             self.hint.hide()  # 自己選的 PDF 取代上一步帶入的
             self._select_pdfs(Path(p) for p in selected)
 
-    def _select_pdfs(self, paths) -> None:
+    def _select_pdfs(self, paths: Iterable[Path]) -> None:
         self.pdf_paths = tuple(paths)
         names = "、".join(p.name for p in self.pdf_paths[:3])
         more = f" 等 {len(self.pdf_paths)} 份" if len(self.pdf_paths) > 3 else ""
         self.pdf_text.set(f"已選 {len(self.pdf_paths)} 份：{names}{more}")
         self._selection_changed()
 
-    def receive_pdfs(self, paths, hint: str) -> bool:
+    def receive_pdfs(self, paths: Iterable[Path], hint: str) -> bool:
         """上一步帶入的 PDF（#76）：換掉目前選的 PDF、清除舊預覽並顯示提示條；參考條件表沿用目前選的。
 
         不自動載入預覽或核對。核對頁正在處理時不帶入；有還沒存檔的核對結果時先問。回傳是否帶入。

@@ -387,6 +387,20 @@ def test_an_unsaved_check_result_is_kept_unless_the_operator_agrees(master, tmp_
 
     assert len(asked) == 1 and "沒存檔的核對結果" in asked[0]
     assert bool(window.check.pdf_paths) is answer and window.check.hint.shown is answer
+    assert window.prepare.next_button.winfo_manager() == ("pack" if answer else ""), "沒帶入就沒有下一步"
+
+
+def test_a_busy_check_tab_does_not_take_the_batch(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    window.check.check_pending = Future()  # 核對還在背景跑
+    told = []
+    monkeypatch.setattr(fcn_checker.panel.messagebox, "showinfo", lambda *a, **k: told.append(a[1]))
+
+    window.prepare._done(prepared_receipt(tmp_path / "待核對_1"))
+
+    assert len(told) == 1 and "正在處理" in told[0]
+    assert window.check.pdf_paths == () and not window.check.hint.shown
+    assert window.prepare.next_button.winfo_manager() == ""
 
 
 class SavedSession(PanelSession):
@@ -396,6 +410,8 @@ class SavedSession(PanelSession):
 def test_saved_check_result_is_handed_to_the_return_tab(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path, SavedSession(install_root=tmp_path))
     batch = tmp_path / "待核對_1"
+    batch.mkdir()
+    (batch / "準備清單.xlsx").write_bytes(b"")
     window.check.receive_pdfs((batch / "147000000001_TS.pdf", batch / "147000000001_IIS.pdf"), "帶入")
     window.notebook.select(window.check)
     result = SavedSession.receipt.output
@@ -421,16 +437,21 @@ def test_next_step_after_checking_waits_for_a_saved_result(master, tmp_path: Pat
     assert window.check.next_button.winfo_manager() == "", "還沒存檔，不顯示下一步：放回"
 
 
-def test_pdfs_from_several_folders_leave_the_batch_folder_alone(master, tmp_path: Path) -> None:
+@pytest.mark.parametrize("where", ["several folders", "not a batch folder"])
+def test_pdfs_outside_one_batch_folder_leave_the_batch_folder_alone(master, tmp_path: Path, where) -> None:
+    """核對的 PDF 不在同一個資料夾，或那個資料夾沒有準備清單（例如自己從商品資料夾選的），就不動批次資料夾。"""
     window = new_window(master, tmp_path)
     window.returning.batch_var.set("D:/out/待核對_舊")
-    window.check.receive_pdfs((tmp_path / "a" / "1_TS.pdf", tmp_path / "b" / "1_IIS.pdf"), "帶入")
+    folders = ("a", "b") if where == "several folders" else ("a", "a")
+    window.check.receive_pdfs((tmp_path / folders[0] / "1_TS.pdf", tmp_path / folders[1] / "1_IIS.pdf"), "帶入")
     result = tmp_path / "核對結果.xlsx"
 
     window.check.on_saved(result)
 
     assert window.returning.batch_var.get() == "D:/out/待核對_舊" and window.returning.result_var.get() == str(result)
-    assert window.returning.hint.text.get().endswith("批次資料夾沒有帶入（PDF 不在同一個資料夾），請自己確認。")
+    assert window.returning.hint.text.get().endswith(
+        "批次資料夾沒有帶入（核對的 PDF 不在同一個批次資料夾），請自己確認。"
+    )
 
 
 @pytest.mark.parametrize("change", ["改選", "batch"])
