@@ -38,6 +38,10 @@ jobs:
           if [[ "$EVENT_NAME" != "pull_request" ]]; then
             workflow=true; checker=true; deps=true
           else
+            # 先寫到檔案：git diff 失敗時這一步就失敗（Actions 的 bash 有 -e），不會變成「什麼都沒改、全部略過」。
+            # --no-renames：搬檔時新舊路徑都列出；core.quotePath=false：中文檔名不加引號，才對得到 docs/*、*.md
+            changed="$RUNNER_TEMP/changed.txt"
+            git -c core.quotePath=false diff --name-only --no-renames "${BASE_SHA}...HEAD" > "$changed"
             while IFS= read -r file; do
               case "$file" in
                 tests/conftest.py|tests/shard.py)
@@ -52,7 +56,7 @@ jobs:
                   # pyproject、constraints、CI、安裝腳本與沒列到的檔案：全部跑
                   workflow=true; checker=true; deps=true ;;
               esac
-            done < <(git diff --name-only "${BASE_SHA}...HEAD")
+            done < "$changed"
           fi
           echo "workflow=$workflow checker=$checker deps=$deps"
           {
