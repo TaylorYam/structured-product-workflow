@@ -1197,3 +1197,52 @@ def test_barrier_type_is_not_defaulted_when_the_table_was_not_read() -> None:
 
     assert row["Barrier Type"] is None
     assert any("Barrier Type" in p for p in problems)
+
+
+def test_hsbc_dates_shared_by_several_tdccs(tmp_path: Path, root: Path) -> None:
+    # HSBC 回覆「TDCC: A / B」，日期表只有一欄值：兩檔日期相同
+    first, second = "325199990001", "325199990002"
+    header = ("Product", "Currency", "BBG Code 1", "Upfront / NotePrice (%)")
+    dates = table(
+        ("Strike Date", "16/10/2026"),
+        ("Issue Date", "23/10/2026"),
+        ("Final Valuation", "25/01/2027"),
+        ("Maturity Date", "28/01/2027"),
+    )
+    html = order_html(
+        f"We buy {first} CNH 3.1 mio @99.29、{second} CNH 3.3 mio @99.14",
+        "1.",
+        table(header, ("FCN", "CNH", "AAA UQ", "99.29")),
+        "2.",
+        table(header, ("FCN", "CNH", "BBB UQ", "99.14")),
+        quoted=f"<p>Please find indicative term sheet as attached.</p><p>TDCC: {first} / {second}</p>{dates}",
+    )
+    product_folder(root, first, "order.msg")
+
+    receipt, _ = run(tmp_path, first, {"order.msg": Mail(f"(Order)--{first}、{second}", SENT, html)})
+
+    for row in receipt.rows:
+        assert (row.values["發行日"], row.values["最終比價日"], row.values["到期日"]) == (
+            dt.date(2026, 10, 23),
+            dt.date(2027, 1, 25),
+            dt.date(2027, 1, 28),
+        ), row.tdcc
+        assert not [r for r in row.reasons if "日" in r], row.reasons
+
+
+def test_one_table_with_several_products_is_left_for_manual_entry(tmp_path: Path, root: Path) -> None:
+    # JPM 把兩檔放同一張表、沒有 TDCC 欄：不依列順序猜（使用者 2026-10-20：同一張表多列不核對）
+    first, second = "076199990001", "076199990002"
+    header = ("Capital size", "Product", "Currency", "BBG Code 1", "Upfront / NotePrice (%)")
+    html = order_html(
+        f"We buy {first} USD 1.1 mio @98.47、{second} USD 1 mio @97.97",
+        table(header, ("USD 1.1 mio", "FCN", "USD", "AAA UW", "98.47"), ("USD 1 mio", "FCN", "USD", "BBB UW", "97.97")),
+    )
+    product_folder(root, first, "order.msg")
+
+    receipt, _ = run(tmp_path, first, {"order.msg": Mail(f"(Order)--{first}、{second}", SENT, html)})
+
+    one, two = receipt.rows
+    assert one.status == two.status == PENDING
+    assert "標的1" not in one.values and "標的1" not in two.values
+    assert "條件表 1 對不到是哪一檔 TDCC" in one.reasons

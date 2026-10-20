@@ -613,6 +613,7 @@ def supplement_entries(tdcc: str, path: Path, mail: Mail, day_first: bool) -> li
 
     - 橫式表：表頭有 TDCC 欄，取 TDCC 相同的那列（GS 的 Order Summary）。
     - 直式表：每列「名稱 | 值」，而且緊接在寫了這檔 TDCC 的那一行後面（HSBC 回覆的「TDCC code: …」）。
+      那一行列了好幾檔（「TDCC: A / B」）而表只有一欄值時，代表各檔日期相同，每檔都採用。
       多檔一起下單的直式表（一檔一欄）不猜欄位順序，交給人工。
     """
     parser = _BodyParser()
@@ -620,7 +621,7 @@ def supplement_entries(tdcc: str, path: Path, mail: Mail, day_first: bool) -> li
     parser.close()
     source = f"{SUPPLEMENT_SOURCE}{path.name}"
     entries: list[RawEntry] = []
-    last_tdcc: str | None = None
+    last_tdccs: set[str] = set()
 
     def add(header: str, value: str) -> None:
         if value and ALIASES.get(header_key(header)) in SUPPLEMENT_FIELDS:
@@ -630,7 +631,7 @@ def supplement_entries(tdcc: str, path: Path, mail: Mail, day_first: bool) -> li
         if isinstance(item, _Line):
             found = _TDCC_IN_LINE.findall(item.text)
             if found:
-                last_tdcc = found[-1]
+                last_tdccs = set(found)
             continue
         rows = [r for r in item.rows if any(r)]
         header = rows[0] if rows else ()
@@ -640,12 +641,12 @@ def supplement_entries(tdcc: str, path: Path, mail: Mail, day_first: bool) -> li
                 if len(row) == len(header) and row[column] == tdcc:
                     for name, value in zip(header, row, strict=True):
                         add(name, value)
-        elif last_tdcc == tdcc:
+        elif tdcc in last_tdccs:
             for row in rows:
                 cells = [c for c in row if c]
-                if len(cells) == 2:
+                if len(cells) == 2:  # 只有一欄值；一檔一欄（三格以上）不猜
                     add(*cells)
-        last_tdcc = None  # 直式表只認緊接在 TDCC 那行後面的第一張表
+        last_tdccs = set()  # 直式表只認緊接在 TDCC 那行後面的第一張表
     return entries
 
 
