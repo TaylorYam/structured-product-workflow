@@ -356,6 +356,11 @@ class PanelSession:
         return self._receipt
 
     @property
+    def has_unsaved_result(self) -> bool:
+        """有核對結果但還沒寫出核對結果檔（或存過後又改了放行）；關閉視窗前提醒用（#74）。"""
+        return self._outcome is not None and (self._receipt is None or self._receipt.output is None)
+
+    @property
     def snapshot(self) -> SourceSnapshot | None:
         """目前預覽與結果所依據的來源快照；沒有預覽時為 None。"""
         return self._preview.snapshot if self._preview is not None else None

@@ -1,20 +1,22 @@
-"""本機視窗：五個分頁。
+"""FCN Workflow 視窗：六個分頁照每天的作業順序排（#73、#74）。
 
-- 準備批次：貼 TDCC、選根目錄與輸出位置，產生批次資料夾與準備清單。
-- 放回資料夾：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾。
-- 每日匯入：選每日更新，匯入最小 FCN 資料庫（#32）；信箱在資料庫直接維護（#35）。
-- 寄信草稿：貼核對通過的 TDCC，在 Outlook 建 TS／IIS 草稿給承作的 FC（#29）。
-- Order 條件：貼 TDCC，讀商品資料夾裡的 (Order) 原信，輸出 Order 條件清單（#40）。
+1. Order 條件：貼 TDCC，讀商品資料夾裡的 (Order) 原信，輸出 Order 條件清單（#40）。
+2. 每日匯入：選每日更新，匯入最小 FCN 資料庫（#32）；信箱在資料庫直接維護（#35）。
+3. 準備：貼 TDCC、選根目錄與輸出位置，產生批次資料夾與準備清單。
+4. 核對：參考條件表＋說明書／投資人須知 PDF 的預覽、核對與儲存（`fcn_checker.panel.CheckTab`）。
+5. 放回：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾。
+6. 寄信草稿：貼核對通過的 TDCC，在 Outlook 建 TS／IIS 草稿給承作的 FC（#29）。
 
-視窗只收輸入、在背景執行 `prepare_batch`／`return_to_folders`／`import_daily`／`create_drafts`／`read_orders`
+審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
+視窗只收輸入、在背景執行 `read_orders`／`import_daily`／`prepare_batch`／核對／`return_to_folders`／`create_drafts`
 並顯示結果，不含判斷邏輯。
 """
 
 from __future__ import annotations
 
-import argparse
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -23,6 +25,16 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+from fcn_checker.panel import (
+    CheckTab,
+    apply_style,
+    apply_window_icon,
+    enable_windows_dpi_awareness,
+    parse_args,
+    session_from_args,
+    set_windows_app_id,
+)
+from fcn_checker.panel_workflow import PanelSession
 from sp_workflow.daily_import import DailyImportError, ImportInfo, ImportReceipt, import_daily, latest_import
 from sp_workflow.database import ConnectionSettings, DatabaseError, connect, default_env_path, settings_from_env
 from sp_workflow.local_settings import FolderMemory
@@ -40,7 +52,7 @@ from sp_workflow.order_terms import OrderReceipt, OrderTermsError, read_orders
 from sp_workflow.preparation import PREPARED, PreparationError, PrepareReceipt, prepare_batch
 from sp_workflow.returning import PENDING_SUFFIX, ReturnError, ReturnReceipt, return_to_folders
 
-TITLE = "TS／IIS 準備與放回"
+TITLE = "FCN Workflow"
 _EXPECTED_ERRORS = (
     PreparationError,
     ReturnError,
@@ -73,9 +85,10 @@ class _Tab:
     def place_bottom(self, row: int) -> None:
         """按鈕列、狀態列與結果表放在第 row 列以下。"""
         self.buttons.grid(row=row, column=0, columnspan=3, sticky="w", pady=8)
-        ttk.Label(self.frame, textvariable=self.status_var, wraplength=720).grid(
-            row=row + 1, column=0, columnspan=3, sticky="w"
-        )
+        status = ttk.Label(self.frame, textvariable=self.status_var, wraplength=720)
+        status.grid(row=row + 1, column=0, columnspan=3, sticky="w")
+        # 視窗最大化時跟著分頁寬度換行，不擠在左邊
+        self.frame.bind("<Configure>", lambda event: status.configure(wraplength=max(300, event.width - 40)))
         self.frame.rowconfigure(row + 2, weight=1)
         self.table.grid(row=row + 2, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
         scroll = ttk.Scrollbar(self.frame, orient=tk.VERTICAL, command=self.table.yview)
@@ -129,7 +142,7 @@ class _Tab:
 
 class PrepareTab(_Tab):
     def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, on_prepared: Callable[[Path], None]) -> None:
-        super().__init__(notebook, "準備批次", (("tdcc", "TDCC", 130), ("status", "狀態", 70), ("reason", "原因", 520)))
+        super().__init__(notebook, "準備", (("tdcc", "TDCC", 130), ("status", "狀態", 70), ("reason", "原因", 520)))
         self.on_prepared = on_prepared
         self.memory = memory
         folders = memory.load()
@@ -191,13 +204,13 @@ class ReturnTab(_Tab):
     def __init__(self, notebook: ttk.Notebook, memory: FolderMemory) -> None:
         super().__init__(
             notebook,
-            "放回資料夾",
+            "放回",
             (("tdcc", "TDCC", 130), ("ts", "TS", 70), ("iis", "IIS", 70), ("reason", "原因", 450)),
         )
         self.memory = memory
         self.batch_var = tk.StringVar(value=memory.load().get("batch", ""))
         self.result_var = tk.StringVar()
-        self.status_var.set("選批次資料夾與核對 PANEL 存下的核對結果檔，按「放回資料夾」。")
+        self.status_var.set("選批次資料夾與「核對」分頁存下的核對結果檔，按「放回資料夾」。")
 
         self.path_row(0, "批次資料夾", self.batch_var, lambda: _ask_dir("選擇批次資料夾", self.batch_var))
         self.path_row(1, "核對結果檔", self.result_var, self._ask_result)
@@ -494,20 +507,130 @@ class OrderTermsTab(_Tab):
         _open_folder(result.folder)
 
 
+WINDOW_FILE = "window.json"  # 視窗上次的大小，和上次選的資料夾放在同一個 .local/
+APPROVAL_DATES, EXPORT_BUNDLE = "審查通過日期…", "匯出回報包…"  # 「維護」選單依名稱更新能不能按
+
+
+class WindowSize:
+    """記住視窗上次的大小與是否最大化；沒有紀錄時用預設大小，在 Windows 上最大化（沿用原核對視窗）。"""
+
+    def __init__(self, path: Path) -> None:
+        self.record = FolderMemory(path)  # 同一種本機紀錄：讀寫失敗當作沒有記錄
+
+    def restore(self, master: tk.Tk, pixels: Callable[[float], int]) -> None:
+        screen_width, screen_height = master.winfo_screenwidth(), master.winfo_screenheight()
+        width = min(pixels(1180), screen_width - pixels(40))
+        height = min(pixels(820), screen_height - pixels(80))
+        master.minsize(min(pixels(820), width), min(pixels(720), height))
+        record = self.record.load()
+        size = re.fullmatch(r"(\d+)x(\d+)", record.get("size", ""))
+        if size:  # 換到較小的螢幕時不超出螢幕
+            width, height = min(int(size[1]), screen_width), min(int(size[2]), screen_height)
+        master.geometry(f"{width}x{height}")
+        if sys.platform == "win32" and record.get("state", "zoomed") == "zoomed":
+            master.state("zoomed")
+
+    def remember(self, master: tk.Tk) -> None:
+        state = master.state()
+        if state == "zoomed":
+            self.record.remember(state="zoomed")  # 還原成一般大小時沿用上次記住的大小
+        elif state == "normal":
+            self.record.remember(state="normal", size=f"{master.winfo_width()}x{master.winfo_height()}")
+        # 縮到工作列時關閉：保留上一次的紀錄
+
+
 class PanelWindow:
-    def __init__(self, master: tk.Tk, memory: FolderMemory, env_path: Path | None = None) -> None:
+    """整個視窗：分頁、「維護」選單與關閉處理；各分頁的功能在各自的類別裡。"""
+
+    def __init__(
+        self,
+        master: tk.Tk,
+        memory: FolderMemory,
+        env_path: Path | None = None,
+        *,
+        session: PanelSession | None = None,
+        start_on_check: bool = False,
+    ) -> None:
+        """session 是核對的工作階段；沒給時用執行目錄的 config（開發時從專案根目錄執行）。"""
+        self.master = master
+        self.session = session if session is not None else PanelSession()
+        self.size = WindowSize(memory.path.with_name(WINDOW_FILE))
         master.title(TITLE)
-        master.minsize(760, 560)
-        notebook = ttk.Notebook(master)
-        notebook.pack(fill=tk.BOTH, expand=True, padx=8, pady=8)
-        self.returning = ReturnTab(notebook, memory)
-        self.prepare = PrepareTab(notebook, memory, on_prepared=lambda batch: self.returning.batch_var.set(str(batch)))
-        notebook.insert(0, self.prepare.frame)  # 準備批次排第一個分頁
+        self.pixels = apply_style(master)
+        ttk.Style(master).configure(
+            "Workflow.TNotebook.Tab",
+            font=("Microsoft JhengHei UI", 12, "bold"),
+            padding=(self.pixels(16), self.pixels(6)),
+        )
+        self.notebook = ttk.Notebook(master, style="Workflow.TNotebook")
+        self.notebook.pack(fill=tk.BOTH, expand=True, padx=self.pixels(8), pady=self.pixels(8))
         db = _DatabaseLogin(master, env_path or default_env_path())
-        self.daily = DailyImportTab(notebook, memory, db)
-        self.mail = MailDraftTab(notebook, memory, db)
-        self.orders = OrderTermsTab(notebook, memory)
-        notebook.select(0)
+        # 分頁照每天的作業順序建立，前面自動加上 1～6 的編號
+        self.orders = OrderTermsTab(self.notebook, memory)
+        self.daily = DailyImportTab(self.notebook, memory, db)
+        self.prepare = PrepareTab(
+            self.notebook, memory, on_prepared=lambda batch: self.returning.batch_var.set(str(batch))
+        )
+        self.check = CheckTab(self.notebook, self.session, self.pixels)
+        self.notebook.add(self.check, text="核對")
+        self.returning = ReturnTab(self.notebook, memory)
+        self.mail = MailDraftTab(self.notebook, memory, db)
+        for number, tab in enumerate(self.notebook.tabs(), 1):
+            self.notebook.tab(tab, text=f"{number} {self.notebook.tab(tab, 'text')}")
+        self.notebook.select(self.check if start_on_check else 0)
+        self.maintenance = self._maintenance_menu()
+        master.protocol("WM_DELETE_WINDOW", self.close)
+
+    def _maintenance_menu(self) -> tk.Menu:
+        """視窗上方的「維護」選單：不是每天的步驟，不放在分頁畫面上（#73）。"""
+        bar = tk.Menu(self.master)
+        menu = tk.Menu(bar, tearoff=False, postcommand=self._refresh_maintenance)
+        menu.add_command(label=APPROVAL_DATES, command=self.check.edit_approval_dates)
+        menu.add_command(label=EXPORT_BUNDLE, command=self._export_bundle)
+        menu.add_separator()
+        menu.add_command(label="使用的設定檔…", command=self.check.show_config_paths)
+        bar.add_cascade(label="維護", menu=menu)
+        self.master.configure(menu=bar)
+        return menu
+
+    def _refresh_maintenance(self) -> None:
+        """每次打開「維護」選單時，依核對頁目前的狀態決定能不能按。"""
+        for label, allowed in (
+            (APPROVAL_DATES, self.check.can_edit_approval_dates()),
+            (EXPORT_BUNDLE, self.check.can_export_bundle()),
+        ):
+            self.maintenance.entryconfigure(label, state=tk.NORMAL if allowed else tk.DISABLED)
+
+    def _export_bundle(self) -> None:
+        self.notebook.select(self.check)  # 匯出的進度與結果顯示在核對頁
+        self.check.export_bundle()
+
+    def restore_size(self) -> None:
+        """照上次的大小顯示；第一次開啟時在 Windows 最大化。"""
+        self.size.restore(self.master, self.pixels)
+
+    def _close_warning(self) -> str | None:
+        if self.check.working:
+            return "核對頁還在處理（讀檔、核對或存檔），關閉後要重新來。"
+        if self.session.has_unsaved_result:
+            return "核對結果還沒儲存，關閉後要重新核對。"
+        return None
+
+    def close(self) -> None:
+        """核對頁還在處理或有還沒存檔的核對結果時先問一次；關閉前記住視窗大小。"""
+        warning = self._close_warning()
+        if warning and not messagebox.askyesno(
+            TITLE,
+            f"{warning}\n\n確定要關閉嗎？",
+            icon=messagebox.WARNING,
+            default=messagebox.NO,
+            parent=self.master,
+        ):
+            self.notebook.select(self.check)
+            return
+        self.size.remember(self.master)
+        self.check.close()
+        self.master.destroy()
 
 
 def _ask_dir(title: str, current: tk.StringVar) -> str:
@@ -532,30 +655,30 @@ def _open_folder(folder: Path) -> None:
         subprocess.Popen(["xdg-open", str(folder)])
 
 
-def _install_root(argv: Sequence[str] | None) -> Path | None:
-    parser = argparse.ArgumentParser(description=TITLE)
-    parser.add_argument("--install-root", type=Path, help="安裝資料夾；上次選的資料夾與 .env 都在它底下")
-    return parser.parse_args(argv).install_root
-
-
-def folder_memory(argv: Sequence[str] | None = None) -> FolderMemory:
+def folder_memory(argv: list[str] | None = None) -> FolderMemory:
     """依啟動參數決定上次選的資料夾記在哪：有 --install-root 就記在它底下的 .local/。"""
-    root = _install_root(argv)
-    return FolderMemory.under(root) if root else FolderMemory()
+    return _memory_under(parse_args(argv).install_root)
 
 
-def main(argv: Sequence[str] | None = None) -> None:
-    memory = folder_memory(argv)
-    env_path = default_env_path(_install_root(argv))
-    if sys.platform == "win32":
-        try:
-            import ctypes
+def _memory_under(install_root: Path | None) -> FolderMemory:
+    return FolderMemory.under(install_root) if install_root else FolderMemory()
 
-            ctypes.windll.shcore.SetProcessDpiAwareness(1)
-        except (AttributeError, OSError):
-            pass
+
+def main(argv: list[str] | None = None, *, start_on_check: bool = False) -> None:
+    """開 FCN Workflow 視窗；參數和核對 PANEL 相同（`fcn_checker.panel.parse_args`），舊的啟動方式照舊有效。"""
+    args = parse_args(argv)
+    enable_windows_dpi_awareness()
+    set_windows_app_id()
     master = tk.Tk()
-    PanelWindow(master, memory, env_path)
+    window = PanelWindow(
+        master,
+        _memory_under(args.install_root),
+        default_env_path(args.install_root),
+        session=session_from_args(args),
+        start_on_check=start_on_check,
+    )
+    window.restore_size()
+    apply_window_icon(master)
     master.mainloop()
 
 
