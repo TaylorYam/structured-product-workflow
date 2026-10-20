@@ -1,6 +1,7 @@
 """Order 條件讀取：從商品資料夾裡我方寄出的 `(Order)` 原信讀出全部條件，統一欄名後輸出條件清單（#40）。
 
-對外只有 `read_orders`。商品資料夾只讀不寫；上手回覆信（RE:／FW:／DONE: 等）不讀。
+對外只有 `read_orders`。商品資料夾只讀不寫；條件以 Order 原信為準，上手回覆信（RE:／FW:／DONE: 等）不讀，
+唯一例外是 Order 沒寫的日期：依 `order_formats` 的 `supplement` 設定到指定的上手信補（GS、HSBC）。
 信件內文的固定開頭（`We buy <TDCC> <幣別> <金額> @<價格>`、`Risk level:` 等）各上手共用一套讀法；
 條件表（表頭一列、值一列的 HTML 表格）依 TDCC 前三碼的上手套用 `order_formats` 的欄名對照。
 規則式、不猜值：讀不到、格式不認得、兩處寫法不一致、值有修改（`→`）、出現沒列過的欄名，
@@ -27,7 +28,9 @@ from sp_workflow.order_formats import (
     ISSUERS,
     KNOWN_WITHOUT_FORMAT,
     REQUIRED,
+    SUPPLEMENT_FIELDS,
     TDCC_HEADERS,
+    DateSupplement,
     IssuerFormat,
     Kind,
     header_key,
@@ -51,6 +54,7 @@ TAIL_COLUMNS = ((OTHER_COLUMN, 50), ("來源信件", 50), ("寄件時間", 18))
 RAW_COLUMNS = (("TDCC", 15), ("來源信件", 40), ("位置", 12), ("原始欄名", 30), ("原始值", 40), ("統一欄位", 14))
 
 BUY_SOURCE = "We buy 行"
+SUPPLEMENT_SOURCE = "補日期："  # 後面接信件檔名
 LINE_SOURCE = "開頭行"
 _EMPTY_VALUES = frozenset({"", "-", "n/a", "na"})
 _ORDER_MARK = "(order)"
@@ -103,9 +107,10 @@ MailReader = Callable[[Path], Mail]
 class RawEntry:
     """信裡讀到的一個欄位：來源位置、原始欄名、原始值。"""
 
-    source: str  # We buy 行／開頭行／條件表 n
+    source: str  # We buy 行／開頭行／條件表 n／補日期：<信件檔名>
     header: str
     value: str
+    day_first: bool = False  # 日期寫成 日/月/年（只有指定的上手信）
 
 
 @dataclass(frozen=True)
@@ -120,6 +125,7 @@ class OrderRow:
     source: Path | None = None
     sent_on: dt.datetime | None = None
     template: tuple[object, ...] = ()  # 格式表的一列（order_template.COLUMNS 順序）
+    flagged: frozenset[int] = frozenset()  # 格式表裡要標淺紅底的欄（COLUMNS 的位置）
 
 
 @dataclass(frozen=True)
@@ -202,6 +208,7 @@ class _OrderLibrary:
     def __init__(self, reader: MailReader) -> None:
         self.reader = reader
         self.orders: list[_ParsedMail] = []
+        self.mails: dict[Path, Mail] = {}  # 讀過的每封信（補日期用）
         self._loaded: set[Path] = set()
 
     def load_folder(self, folder: Path) -> list[str]:
@@ -222,6 +229,7 @@ class _OrderLibrary:
             except (MailReadError, OSError) as exc:
                 notes.append(f"讀不到信件 {path.name}：{exc}")
                 continue
+            self.mails[path] = mail
             if is_order_subject(mail.subject):
                 self.orders.append(parse_order(path, mail))
         return notes
@@ -233,6 +241,13 @@ class _OrderLibrary:
             if tdcc in order.records:
                 unique.setdefault(order.identity, order)
         return list(unique.values())
+
+    def supplement_mails(self, order: _ParsedMail, tdcc: str, supplement: DateSupplement) -> list[tuple[Path, Mail]]:
+        """補日期用的信：同一個商品資料夾、主旨符合設定；沒設定主旨時就是 Order 原信本身（含下方引用）。"""
+        if supplement.subject is None:
+            return [(order.path, order.mail)]
+        pattern = re.compile(supplement.subject.replace("{tdcc}", re.escape(tdcc)), re.IGNORECASE)
+        return [(p, m) for p, m in self.mails.items() if p.parent == order.path.parent and pattern.search(m.subject)]
 
     def orders_in(self, folder: Path) -> list[_ParsedMail]:
         return [o for o in self.orders if o.path.parent == folder]
@@ -294,8 +309,20 @@ def _row_for(
             source=order.path,
             sent_on=order.mail.sent_on,
         )
-    values, others, mapped, problems = map_entries(raw, fmt)
-    template, template_problems = template_row(tdcc, values, others, order.mail.subject, order.mail.sent_on)
+    supplement_notes: list[str] = []
+    if fmt.supplement is not None:
+        sources = library.supplement_mails(order, tdcc, fmt.supplement)
+        for path, mail in sources:
+            raw += tuple(supplement_entries(tdcc, path, mail, fmt.supplement.day_first))
+        if not sources:
+            supplement_notes.append(f"沒找到補日期的上手信（主旨符合 {fmt.supplement.subject}）")
+    values, others, mapped, problems, flagged_fields = map_entries(raw, fmt)
+    if any(name not in values for name in SUPPLEMENT_FIELDS):
+        problems.extend(supplement_notes)
+    row_level = bool(order.mail_problems or order.problems.get(tdcc) or notes)
+    template, template_problems, flagged = template_row(
+        tdcc, values, others, order.mail.subject, order.mail.sent_on, flagged_fields | ({""} if row_level else set())
+    )
     reasons = (*order.mail_problems, *order.problems.get(tdcc, []), *problems, *template_problems, *notes)
     return OrderRow(
         tdcc,
@@ -308,6 +335,7 @@ def _row_for(
         order.path,
         order.mail.sent_on,
         template,
+        flagged,
     )
 
 
@@ -517,6 +545,46 @@ def buy_segments(line: str) -> list[tuple[str, list[tuple[str, str]]]]:
     return segments
 
 
+def supplement_entries(tdcc: str, path: Path, mail: Mail, day_first: bool) -> list[RawEntry]:
+    """從上手信整封（含下方引用）找這檔 TDCC 的日期；只收交易日、發行日、最終比價日、到期日。
+
+    - 橫式表：表頭有 TDCC 欄，取 TDCC 相同的那列（GS 的 Order Summary）。
+    - 直式表：每列「名稱 | 值」，而且緊接在寫了這檔 TDCC 的那一行後面（HSBC 回覆的「TDCC code: …」）。
+    """
+    parser = _BodyParser()
+    parser.feed(mail.html)
+    parser.close()
+    source = f"{SUPPLEMENT_SOURCE}{path.name}"
+    entries: list[RawEntry] = []
+    last_tdcc: str | None = None
+
+    def add(header: str, value: str) -> None:
+        if value and ALIASES.get(header_key(header)) in SUPPLEMENT_FIELDS:
+            entries.append(RawEntry(source, header, value, day_first))
+
+    for item in parser.items:
+        if isinstance(item, _Line):
+            found = _TDCC_IN_LINE.findall(item.text)
+            if found:
+                last_tdcc = found[-1]
+            continue
+        rows = [r for r in item.rows if any(r)]
+        header = rows[0] if rows else ()
+        column = next((i for i, h in enumerate(header) if header_key(h) in TDCC_HEADERS), None)
+        if column is not None:
+            for row in rows[1:]:
+                if len(row) == len(header) and row[column] == tdcc:
+                    for name, value in zip(header, row, strict=True):
+                        add(name, value)
+        elif last_tdcc == tdcc:
+            for row in rows:
+                cells = [c for c in row if c]
+                if len(cells) == 2:
+                    add(*cells)
+        last_tdcc = None  # 直式表只認緊接在 TDCC 那行後面的第一張表
+    return entries
+
+
 def _add_table(
     records: dict[str, list[RawEntry]],
     problems: dict[str, list[str]],
@@ -547,15 +615,17 @@ _SETTLE_FIELD = "交割說明"
 
 def map_entries(
     entries: Iterable[RawEntry], fmt: IssuerFormat
-) -> tuple[dict[str, object], tuple[tuple[str, str], ...], tuple[tuple[RawEntry, str], ...], list[str]]:
+) -> tuple[dict[str, object], tuple[tuple[str, str], ...], tuple[tuple[RawEntry, str], ...], list[str], set[str]]:
     """依上手讀法把原始欄位對到統一欄位並統一格式。
 
-    回傳 (統一欄位值, 其他欄位, 原文與對到的統一欄位, 待確認原因)。同一統一欄位有兩處寫法且統一後不同時留空。
+    回傳 (統一欄位值, 其他欄位, 原文與對到的統一欄位, 待確認原因, 有問題的統一欄位)。
+    同一統一欄位有兩處寫法且統一後不同時留空。不屬於某一欄的問題（例如沒列過的欄）在有問題的欄位裡記成空字串。
     """
     candidates: dict[str, list[tuple[RawEntry, str]]] = {}
     others: list[tuple[str, str]] = []
     mapped: list[tuple[RawEntry, str]] = []
     problems: list[str] = []
+    flagged: set[str] = set()
 
     def assign(entry: RawEntry, name: str | None, value: str) -> None:
         mapped.append((entry, name or ""))
@@ -569,11 +639,16 @@ def map_entries(
             assign(entry, _BUY_FIELDS[entry.header], entry.value)
         elif entry.header == "Please settle thru":
             assign(entry, _SETTLE_FIELD, entry.value)
+        elif entry.source.startswith(SUPPLEMENT_SOURCE):
+            name = ALIASES.get(header_key(entry.header))
+            if name in SUPPLEMENT_FIELDS:
+                assign(entry, name, entry.value)
         elif entry.source == LINE_SOURCE:
             assign(entry, fmt.field_for(entry.header), entry.value)
         else:
             if not fmt.knows(entry.header):
                 problems.append(f"條件表有沒列過的欄「{entry.header}」（上手格式可能改版）")
+                flagged.add("")
             labels = fmt.embedded_labels(entry.header)
             if not labels:
                 assign(entry, fmt.field_for(entry.header), entry.value)
@@ -594,14 +669,17 @@ def map_entries(
                 continue
             if revised:
                 problems.append(f"{name} 有修改：{raw}")
+                flagged.add(name)
             try:
-                normalized.append((entry, normalize(FIELDS[name], value)))
+                normalized.append((entry, normalize(FIELDS[name], value, day_first=entry.day_first)))
             except ValueError:
                 problems.append(f"{name} 格式不認得：{raw}（{entry.source}「{entry.header}」）")
+                flagged.add(name)
         distinct = {_compare_key(v) for _, v in normalized}
         if len(distinct) > 1:
             detail = "／".join(f"{e.source}「{e.header}」{e.value}" for e, _ in normalized)
             problems.append(f"{name} 不一致：{detail}")
+            flagged.add(name)
         elif normalized:
             values[name] = normalized[0][1]
     for name, shift in fmt.shifts.items():
@@ -613,7 +691,8 @@ def map_entries(
     for name in REQUIRED:
         if name not in values and not _has_problem(problems, name):
             problems.append(f"讀不到{name}")
-    return values, tuple(others), tuple(mapped), problems
+            flagged.add(name)
+    return values, tuple(others), tuple(mapped), problems, flagged
 
 
 def _has_problem(problems: Sequence[str], name: str) -> bool:
@@ -652,7 +731,7 @@ def _compare_key(value: object) -> object:
     return value.casefold() if isinstance(value, str) else value
 
 
-def normalize(kind: Kind, raw: str) -> object:
+def normalize(kind: Kind, raw: str, *, day_first: bool = False) -> object:
     """依欄位型別統一格式；不認得時丟 ValueError。"""
     text = _clean(raw)
     if kind is Kind.TEXT:
@@ -665,7 +744,7 @@ def normalize(kind: Kind, raw: str) -> object:
             raise ValueError(raw)
         return int(m.group(1))
     if kind is Kind.DATE:
-        return parse_date(text)
+        return parse_date(text, day_first=day_first)
     if kind is Kind.AMOUNT:
         return parse_amount(text)
     if kind is Kind.INITIAL_PRICE:
@@ -686,8 +765,12 @@ def _decimal(text: str) -> Decimal:
         raise ValueError(text) from exc
 
 
-def parse_date(text: str) -> dt.date:
-    """`15-Oct-26`、`20-Oct-2026`、`20Oct26`、`2026-10-13`、`2026/10/13`。"""
+def parse_date(text: str, *, day_first: bool = False) -> dt.date:
+    """`15-Oct-26`、`20-Oct-2026`、`20Oct26`、`2026-10-13`、`2026/10/13`；day_first 時另認 `13/10/2026`。"""
+    if day_first:  # 只用在指定的上手信，例：HSBC 13/10/2026
+        m = re.fullmatch(r"([0-9]{1,2})/([0-9]{1,2})/([0-9]{4})", text)
+        if m:
+            return dt.date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
     m = re.fullmatch(r"([0-9]{4})[-/]([0-9]{1,2})[-/]([0-9]{1,2})", text)
     if m:
         return dt.date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
@@ -746,8 +829,9 @@ class OutlookMsgReader:
 
 def _write_list(path: Path, rows: Sequence[OrderRow], root: Path, unreadable: Sequence[Path]) -> None:
     wb = openpyxl.Workbook()
-    # 第一張是作業人員既有的「Outlook orders 轉成 Excel」格式，只放已讀取的商品
-    write_template_sheet(wb.active, [row.template for row in rows if row.status == READ and row.template])
+    # 第一張是作業人員既有的「Outlook orders 轉成 Excel」格式
+    # 使用者 2026-10-20 改為：待確認的也照樣放，有問題的格子淺紅底；沒有讀到 Order 的（沒有格式表列）不放
+    write_template_sheet(wb.active, [(row.template, row.flagged) for row in rows if row.template])
     ws = wb.create_sheet(LIST_SHEET)
     columns = (*HEAD_COLUMNS, *((name, _field_width(name)) for name in FIELDS), *TAIL_COLUMNS)
     ws.append([name for name, _ in columns])

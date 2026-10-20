@@ -11,7 +11,7 @@ import pytest
 
 from sp_workflow.order_formats import ISSUERS, KNOWN_WITHOUT_FORMAT
 from sp_workflow.order_template import COLUMNS as TEMPLATE_COLUMNS
-from sp_workflow.order_template import template_row
+from sp_workflow.order_template import FLAG_FILL, template_row
 from sp_workflow.order_terms import (
     LIST_SHEET,
     NO_ORDER,
@@ -601,7 +601,7 @@ FULL_VALUES = {
 
 
 def cells(values: dict, others=(), subject: str = "(Order)_[Esun Sec] FCN_AAA_B--x", sent_on=SENT):
-    row, problems = template_row(BARC, values, others, subject, sent_on)
+    row, problems, _ = template_row(BARC, values, others, subject, sent_on)
     return dict(zip((c.header.strip() for c in TEMPLATE_COLUMNS), row, strict=True)), problems
 
 
@@ -715,7 +715,7 @@ def test_business_day_offset_is_not_used_to_guess_the_issue_date() -> None:
     assert problems == ["格式表缺：Effective Date Offset(Calendar Days)、Issue date"]
 
 
-def test_missing_dates_keep_the_product_out_of_the_template_sheet(tmp_path: Path, root: Path) -> None:
+def test_pending_products_stay_in_the_template_with_red_cells(tmp_path: Path, root: Path) -> None:
     product_folder(root, BARC, "order.msg")
     complete = "029199990002"
     product_folder(root, complete, "order2.msg")
@@ -734,10 +734,140 @@ def test_missing_dates_keep_the_product_out_of_the_template_sheet(tmp_path: Path
     ws = openpyxl.load_workbook(receipt.list_path).worksheets[0]
     assert ws.title == "example"
     assert [c.value for c in ws[2]][1:5] == ["TDCC", "Product", "Currency", "Guaranteed Periods (m) "]
-    assert ws["B3"].value == complete and ws["B3"].number_format == "@"
-    assert ws["X3"].value == dt.datetime(2026, 10, 22) and ws["X3"].number_format == "mm-dd-yy"
-    assert ws["V3"].value == 7 and ws["AA3"].value == "開盤價"
-    assert ws.max_row == 3  # 待確認的不放進格式表
+    assert ws.max_row == 4  # 待確認的也放進格式表
+    # 待確認那列：能確定的照填，讀不到的兩格空白、淺紅底，其他格不標
+    assert ws["B3"].value == BARC and ws["X3"].value == dt.datetime(2026, 10, 22)
+    assert (ws["Y3"].value, ws["Z3"].value) == (None, None)
+    assert {c.coordinate for c in ws[3] if c.fill.fgColor.rgb == FLAG_FILL} == {"Y3", "Z3"}
+    # 已讀取那列：格式照範例、沒有紅底
+    assert ws["B4"].value == complete and ws["B4"].number_format == "@"
+    assert ws["X4"].value == dt.datetime(2026, 10, 22) and ws["X4"].number_format == "mm-dd-yy"
+    assert ws["V4"].value == 7 and ws["AA4"].value == "開盤價"
+    assert not [c.coordinate for c in ws[4] if c.fill.fgColor.rgb == FLAG_FILL]
+
+
+@pytest.mark.parametrize(
+    ("values", "header", "red"),
+    [
+        # 價格寫成 96.20→96.15：照填最後的值，價格那格紅底
+        ((*PRICER_VALUES[:12], "98.60→98.50", *PRICER_VALUES[13:]), PRICER_HEADER, {"O3"}),
+        # 條件表有沒列過的欄：不屬於某一格，標在 TDCC
+        ((*PRICER_VALUES, "x"), (*PRICER_HEADER, "New Field"), {"B3"}),
+    ],
+)
+def test_problem_cells_are_marked_red(tmp_path: Path, root: Path, values, header, red) -> None:
+    product_folder(root, BARC, "order.msg")
+    mail = Mail(f"(Order)--{BARC}", SENT, standard_order(header=header, values=values))
+
+    receipt, _ = run(tmp_path, BARC, {"order.msg": mail})
+
+    assert receipt.rows[0].status == PENDING
+    ws = openpyxl.load_workbook(receipt.list_path).worksheets[0]
+    assert ws["O3"].value == pytest.approx(98.5)
+    assert {c.coordinate for c in ws[3] if c.fill.fgColor.rgb == FLAG_FILL} == red
+
+
+GS_HEADER = ("Action", "GS Quote ID", "Product", "Currency", "BBG Code 1", "Cost (%)", "Strike Date", "System Remark")
+
+
+def gs_order(tdcc: str) -> str:
+    row = ("IOI", "Q1", "FCN", "USD", "AAA UW", "97.5", "13-Oct-26", "[ Issue Date: 20Oct26 ]")
+    return order_html(f"We buy {tdcc} USD 1.06M @97.5", table(GS_HEADER, row))
+
+
+def test_gs_dates_come_from_the_indicative_docs_mail(tmp_path: Path, root: Path) -> None:
+    tdcc = "148199990001"
+    product_folder(root, tdcc, "order.msg", "docs.msg", "other.msg")
+    summary = table(
+        ("TDCC Code", "Issue Date", "Final Valuation Date", "Maturity Date"),
+        ("148199990009", "21-Oct-2026", "21-Oct-2027", "25-Oct-2027"),  # 別檔的列不取
+        (tdcc, "20-Oct-2026", "20-Oct-2027", "22-Oct-2027"),
+    )
+    mails = {
+        "order.msg": Mail(f"(Order)_[Esun Sec] FCN_AAA_B--{tdcc}", SENT, gs_order(tdcc)),
+        "docs.msg": Mail(
+            f"[External] Indicative Docs for {tdcc} - XS0000000000 - TD = 13Oct26",
+            SENT,
+            order_html("Order Summary", summary),
+        ),
+        "other.msg": Mail(
+            "[External] Trade Executed", SENT, order_html(table(("TDCC Code", "Maturity Date"), (tdcc, "01-Jan-2030")))
+        ),
+    }
+
+    receipt, _ = run(tmp_path, tdcc, mails)
+
+    (row,) = receipt.rows
+    assert (row.values["發行日"], row.values["最終比價日"], row.values["到期日"]) == (
+        dt.date(2026, 10, 20),
+        dt.date(2027, 10, 20),
+        dt.date(2027, 10, 22),
+    )
+    assert not [r for r in term_reasons(row) if "日" in r]
+    assert ("補日期：docs.msg", "Maturity Date", "22-Oct-2027") in {(e.source, e.header, e.value) for e, _ in row.raw}
+
+
+def test_gs_without_the_indicative_docs_mail_says_where_to_look(tmp_path: Path, root: Path) -> None:
+    tdcc = "148199990001"
+    product_folder(root, tdcc, "order.msg")
+
+    receipt, _ = run(tmp_path, tdcc, {"order.msg": Mail(f"(Order)--{tdcc}", SENT, gs_order(tdcc))})
+
+    (row,) = receipt.rows
+    assert row.status == PENDING
+    assert any(r.startswith("沒找到補日期的上手信") for r in row.reasons)
+
+
+def hsbc_order(tdcc: str, dates: tuple[str, str, str, str]) -> str:
+    header = ("Product", "Currency", "BBG Code 1", "Upfront / NotePrice (%)")
+    vertical = table(
+        ("Strike Date", dates[0]), ("Issue Date", dates[1]), ("Final Valuation", dates[2]), ("Maturity Date", dates[3])
+    )
+    quoted = f"<p>Dear team,</p><p>TDCC code: {tdcc}</p>{vertical}{table(header, ('FCN', 'USD', 'AAA UW', '96.15'))}"
+    return order_html(f"We buy {tdcc} USD 400K @96.15", table(header, ("FCN", "USD", "AAA UW", "96.15")), quoted=quoted)
+
+
+def test_hsbc_dates_come_from_its_reply_below_the_order(tmp_path: Path, root: Path) -> None:
+    tdcc = "325199990001"
+    product_folder(root, tdcc, "order.msg")
+    html = hsbc_order(tdcc, ("13/10/2026", "20/10/2026", "21/12/2026", "24/12/2026"))
+
+    receipt, _ = run(tmp_path, tdcc, {"order.msg": Mail(f"(Order)--{tdcc}", SENT, html)})
+
+    (row,) = receipt.rows
+    # 日/月/年
+    assert (row.values["交易日"], row.values["發行日"], row.values["最終比價日"], row.values["到期日"]) == (
+        dt.date(2026, 10, 13),
+        dt.date(2026, 10, 20),
+        dt.date(2026, 12, 21),
+        dt.date(2026, 12, 24),
+    )
+    assert not [r for r in term_reasons(row) if "日" in r]
+
+
+def test_supplement_dates_never_override_the_order(tmp_path: Path, root: Path) -> None:
+    tdcc = "325199990001"
+    header = ("Product", "Currency", "BBG Code 1", "Upfront / NotePrice (%)", "Issue Date")
+    vertical = table(
+        ("Issue Date", "21/10/2026"),
+    )
+    quoted = f"<p>TDCC code: {tdcc}</p>{vertical}"
+    html = order_html(
+        f"We buy {tdcc} USD 400K @96.15", table(header, ("FCN", "USD", "AAA UW", "96.15", "20-Oct-26")), quoted=quoted
+    )
+    product_folder(root, tdcc, "order.msg")
+
+    receipt, _ = run(tmp_path, tdcc, {"order.msg": Mail(f"(Order)--{tdcc}", SENT, html)})
+
+    (row,) = receipt.rows
+    assert "發行日" not in row.values
+    assert any(r.startswith("發行日 不一致") for r in row.reasons)
+
+
+def test_parse_date_day_first_only_when_asked() -> None:
+    assert parse_date("05/06/2026", day_first=True) == dt.date(2026, 6, 5)
+    with pytest.raises(ValueError):
+        parse_date("05/06/2026")
 
 
 @pytest.mark.parametrize(

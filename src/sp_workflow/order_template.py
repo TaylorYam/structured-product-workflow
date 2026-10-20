@@ -1,7 +1,8 @@
 """「Outlook orders 轉成 Excel」格式表（#40 追加）：把讀好的 Order 條件排成作業人員既有的格式。
 
 版面照作業人員提供的範例檔 `example` 工作表：第 2 列表頭、從 B 欄開始，一檔一列。
-這裡只放「已讀取」的商品；格式表要的欄位讀不到或換算不了時，整檔改標「待確認」並寫原因，不猜值。
+讀到 Order 的商品都放（含待確認）；讀不到、換算不了、有修改或不一致的格子照樣填能確定的值，
+並標淺紅底，該檔在條件清單標「待確認」並寫原因，不猜值。整列的問題（例如條件表有沒列過的欄）標在 TDCC 那格。
 
 信裡沒有直接寫、但依固定規則換算的欄位：
 - Product：條件表沒有時取主旨 `] FCN_…` 的商品別。
@@ -19,7 +20,7 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -72,6 +73,32 @@ COLUMNS: tuple[Column, ...] = (
     Column("起單FC", 10, fill=_NAVY),
 )
 
+_COLUMN_INDEX = {c.header.strip(): i for i, c in enumerate(COLUMNS)}
+# 統一欄位 → 格式表的欄（讀信時這個欄位有問題，就把這一格標淺紅底）
+FIELD_COLUMNS = {
+    "商品": "Product",
+    "幣別": "Currency",
+    "Non-Call(月)": "Guaranteed Periods (m)",
+    **{f"標的{n}": f"BBG Code {n}" for n in range(1, 6)},
+    "執行價(%)": "Strike (%)",
+    "KO觀察方式": "KO Type",
+    "KO(%)": "KO Barrier (%)",
+    "年利率(%)": "Coupon p.a. (%)",
+    "價格(%)": "Upfront / NotePrice (%)",
+    "UF(%)": "Upfront / NotePrice (%)",
+    "天期(月)": "Tenor (m)",
+    "KI型態": "Barrier Type",
+    "KI(%)": "KI Barrier (%)",
+    "觀察頻率(月)": "Observation Frequency (m)",
+    "發行日偏移": "Effective Date Offset(Calendar Days)",
+    "交易日": "Trade date",
+    "發行日": "Issue date",
+    "最終比價日": "Final valuation date",
+    "到期日": "Maturity date",
+    "期初定價": "期初價格",
+}
+FLAG_FILL = "FFFFC7CE"  # Excel 內建「淺紅色填滿」
+
 KO_TYPES = {k.lower(): k for k in ("Daily", "Daily Memory", "Period End", "Period End Memory")}
 _BARRIER_TYPES = {"none": "NONE", "eki": "EKI", "aki": "AKI", "european": "EKI", "american": "AKI", "no": "NONE"}
 _PRODUCT_IN_SUBJECT = re.compile(r"\]\s*([A-Za-z]{2,10})_")
@@ -89,9 +116,16 @@ def template_row(
     others: Sequence[tuple[str, str]],
     subject: str,
     sent_on: dt.datetime | None,
-) -> tuple[tuple[object, ...], list[str]]:
-    """一檔商品在格式表的一列（依 COLUMNS 順序）與換算不了的原因。"""
+    flagged_fields: Iterable[str] = (),
+) -> tuple[tuple[object, ...], list[str], frozenset[int]]:
+    """一檔商品在格式表的一列（依 COLUMNS 順序）、換算不了的原因，以及要標淺紅底的欄。
+
+    flagged_fields 是讀信時有問題的統一欄位；對不到格式表某一欄的（或空字串＝整列的問題）標在 TDCC 欄。
+    """
     problems: list[str] = []
+    flagged: set[int] = set()
+    for name in flagged_fields:
+        flagged.add(_COLUMN_INDEX.get(FIELD_COLUMNS.get(name, ""), 0))
 
     product = values.get("商品")
     if product is None:
@@ -117,6 +151,7 @@ def template_row(
 
     if values.get("標的6"):
         problems.append("標的超過 5 檔，格式表放不下")
+        flagged.add(_COLUMN_INDEX["BBG Code 5"])
     cells = (
         tdcc,
         product,
@@ -148,7 +183,10 @@ def template_row(
     missing = [c.header.strip() for c, v in zip(COLUMNS, cells, strict=True) if v is None and c.header not in optional]
     if missing:
         problems.append(f"格式表缺：{'、'.join(missing)}")
-    return cells, problems
+        flagged.update(_COLUMN_INDEX[name] for name in missing)
+    if any(p.startswith("Barrier Type 是 NONE") for p in problems):
+        flagged.add(_COLUMN_INDEX["KI Barrier (%)"])
+    return cells, problems, frozenset(flagged)
 
 
 def _ko_type(raw: object, memory: str, problems: list[str]) -> str | None:
@@ -197,8 +235,9 @@ def _barrier(raw: object, ki: object, problems: list[str]) -> tuple[str | None, 
     return barrier, ki
 
 
-def write_sheet(ws: Worksheet, rows: Sequence[tuple[object, ...]]) -> None:
-    """照範例檔版面寫表頭與資料列。"""
+def write_sheet(ws: Worksheet, rows: Sequence[tuple[tuple[object, ...], frozenset[int]]]) -> None:
+    """照範例檔版面寫表頭與資料列；rows 是 (一列的值, 要標淺紅底的欄位置)。"""
+    flag = PatternFill("solid", fgColor=FLAG_FILL)
     ws.title = SHEET_TITLE
     thin = Side(style="thin")
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
@@ -211,11 +250,13 @@ def write_sheet(ws: Worksheet, rows: Sequence[tuple[object, ...]]) -> None:
         cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
         cell.border = border
         ws.column_dimensions[cell.column_letter].width = column.width
-    for r, values in enumerate(rows, start=HEADER_ROW + 1):
+    for r, (values, flagged) in enumerate(rows, start=HEADER_ROW + 1):
         for i, (column, value) in enumerate(zip(COLUMNS, values, strict=True)):
             cell = ws.cell(r, FIRST_COLUMN + i, float(value) if isinstance(value, Decimal) else value)
             cell.number_format = column.number_format
             cell.font = Font(name="Calibri", size=11)
             cell.alignment = Alignment(horizontal=column.align)
             cell.border = border
+            if i in flagged:
+                cell.fill = flag
     ws.freeze_panes = ws.cell(HEADER_ROW + 1, FIRST_COLUMN + 1)

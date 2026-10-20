@@ -122,7 +122,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 從商品資料夾裡我方寄出的 `(Order)` 原信，依各上手格式讀出全部條件，統一欄名後輸出 `Order條件清單_<日期時間>.xlsx`，給人確認（[#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)）。這一版只輸出清單，不寫資料庫、不回填其他 Excel；回填到哪一份另外討論。
 
 1. 視窗切到「Order 條件」，貼上 TDCC（分隔方式同準備批次），選根目錄與輸出位置，按「讀取 Order」。
-2. 程式在商品資料夾（不含子資料夾）用傳統版 Outlook 開每個 `.msg`，只讀主旨含 `(Order)`、而且前面沒有 `RE:`、`FW:`、`DONE:` 的原信；上手回覆信不讀。信件只開來讀，不會修改或寄出。
+2. 程式在商品資料夾（不含子資料夾）用傳統版 Outlook 開每個 `.msg`，只讀主旨含 `(Order)`、而且前面沒有 `RE:`、`FW:`、`DONE:` 的原信；條件不讀上手回覆信。唯一例外是 Order 沒寫的日期：GS 到同資料夾主旨有「Indicative Docs for <TDCC>」的信的 Order Summary 表補，HSBC 到 Order 信下方引用的 HSBC 回覆（「TDCC code: <TDCC>」後面的表，日/月/年）補；只補交易日、發行日、最終比價日、到期日，和 Order 寫的不同時標待確認。信件只開來讀，不會修改或寄出。
 3. 讀法：
    - 開頭的 `We buy <TDCC> <幣別> <金額> @<價格>`、`Please settle thru …`、`Risk level`、`Initial price`、`PG rate`、`Capital size` 各家共用。
    - 條件表依 TDCC 前三碼的上手對照欄名（`src/sp_workflow/order_formats.py`），例如 `BBG Code 1`、`Underlying 1`、`Stock 1` 都是「標的1」。UBS 寫在 Quote Id 裡的日期、GS 寫在 System Remark 裡的發行日會拆出來。
@@ -137,12 +137,12 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
    - 資料夾裡有兩封以上 Order 原信，或有信讀不到。
 7. 找不到商品資料夾或 Order 原信時標「找不到 Order」。14 家上手（含 Citi）都有讀法；TDCC 前三碼不認得時標「未支援上手」。Citi 的 We buy 行只有 `UF=x%`，價格 = 100 − UF；Citi 的 Non Callable Periods 算法不同，統一 +1（0 → 1）。
 8. 清單有四個工作表：
-   - 「example」：作業人員既有的「Outlook orders 轉成 Excel」格式（第 2 列表頭、從 B 欄開始），**只放已讀取的商品**，可以直接複製貼上；起單FC 留空由人補。信裡沒直接寫的欄依固定規則換算（`src/sp_workflow/order_template.py`）：
+   - 「example」：作業人員既有的「Outlook orders 轉成 Excel」格式（第 2 列表頭、從 B 欄開始），讀到 Order 的商品都放（含待確認），**有問題的格子照填能確定的值、標淺紅底**（例如價格寫成 `→` 的那格；整列的問題標在 TDCC 那格），原因看「Order條件清單」；可以直接複製貼上；起單FC 留空由人補。信裡沒直接寫的欄依固定規則換算（`src/sp_workflow/order_template.py`）：
      - KO Type 統一成 Daily／Daily Memory／Period End／Period End Memory；MS 的 `OBSERVATION` 看 KO Memory，Citi 看 Daily KO 和 Memory Autocall 兩欄。
      - Barrier Type 統一成 NONE／EKI／AKI（`European` = EKI）；沒有 KI 時 KI Barrier 留空。
      - Product 條件表沒有或是上手自家名稱（Citi 的 FCA）時取主旨的 `FCN`；OTC 沒寫時填 `Note`；SG 的 Tenor = No. of Periods。
      - Trade date 條件表沒有時用 Order 寄出日；Issue date 沒有時 = Trade date + 日曆天數偏移；Effective Date Offset = Issue date − Trade date 的日曆天數。
-     - 換算不了或格式表要的欄讀不到（例如 HSBC、GS 的 Order 沒有最終比價日、到期日）時，整檔標「待確認」，不放進這張表。
+     - 換算不了或格式表要的欄讀不到時，那一格空白、淺紅底，整檔標「待確認」。
    - 「Order條件清單」：每檔一列，含待確認原因。
    - 「原文對照」：每個欄位的原始欄名、原始值與對到的統一欄位。
    - 「資料來源」：根目錄與讀不到的資料夾。
@@ -273,7 +273,7 @@ Non-FCN products skipped by the daily import are marked "不支援的商品類�
 Reads every term from our original `(Order)` email in each product folder using each issuer's format, normalizes the field names, and writes `Order條件清單_<timestamp>.xlsx` for review ([#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)). This version only writes the list; it does not touch the database or fill any other workbook. Where the terms are written back is decided separately.
 
 1. In the window, open "Order 條件", paste TDCCs (same separators as preparation), choose the root folder and output location, and click "讀取 Order".
-2. Each `.msg` directly inside the product folder is opened with classic Outlook. Only originals are read: the subject contains `(Order)` with no `RE:`, `FW:`, or `DONE:` before it. Issuer replies are skipped. Messages are opened read-only, never changed or sent.
+2. Each `.msg` directly inside the product folder is opened with classic Outlook. Only originals are read: the subject contains `(Order)` with no `RE:`, `FW:`, or `DONE:` before it. Terms never come from issuer replies, with one exception for dates the order omits: GS dates come from the Order Summary table in the same folder's "Indicative Docs for <TDCC>" email, and HSBC dates come from HSBC's reply quoted below the order (the table after "TDCC code: <TDCC>", day/month/year). Only trade, issue, final valuation, and maturity dates are filled this way, and a date differing from the order is 待確認. Messages are opened read-only, never changed or sent.
 3. Reading:
    - The opening `We buy <TDCC> <currency> <amount> @<price>`, `Please settle thru …`, `Risk level`, `Initial price`, `PG rate`, and `Capital size` lines are shared by all issuers.
    - The terms table is mapped by the issuer from the TDCC's first three digits (`src/sp_workflow/order_formats.py`); for example `BBG Code 1`, `Underlying 1`, and `Stock 1` all become 標的1. Dates inside the UBS Quote Id and the GS System Remark issue date are split out.
@@ -288,12 +288,12 @@ Reads every term from our original `(Order)` email in each product folder using 
    - A folder holds two or more original orders, or a message cannot be read.
 7. A missing product folder or original order is 找不到 Order. All 14 issuers (including Citi) have a reading; an unknown TDCC prefix is 未支援上手. Citi's We buy line only gives `UF=x%`, so the price is 100 − UF; Citi counts Non Callable Periods differently, so it is shifted by +1 (0 → 1).
 8. The workbook has four sheets:
-   - "example": the operators' existing "Outlook orders to Excel" layout (row-2 header starting in column B), **holding only 已讀取 products**, ready to copy and paste; 起單FC is left blank for a person to fill. Columns the email does not state directly follow fixed rules (`src/sp_workflow/order_template.py`):
+   - "example": the operators' existing "Outlook orders to Excel" layout (row-2 header starting in column B), holding every product whose order was read (including 待確認), **with problem cells filled with what is certain and shaded light red** (for example the price written with `→`; row-level problems mark the TDCC cell), reasons in "Order條件清單"; ready to copy and paste; 起單FC is left blank for a person to fill. Columns the email does not state directly follow fixed rules (`src/sp_workflow/order_template.py`):
      - KO Type becomes Daily, Daily Memory, Period End, or Period End Memory; MS `OBSERVATION` uses KO Memory, and Citi uses its Daily KO and Memory Autocall columns.
      - Barrier Type becomes NONE, EKI, or AKI (`European` = EKI); without KI, KI Barrier is blank.
      - Product falls back to the subject's `FCN` when the table lacks it or uses the issuer's own name (Citi's FCA); OTC defaults to `Note`; SG Tenor = No. of Periods.
      - Trade date falls back to the order's sent date; a missing Issue date = Trade date + calendar-day offset; Effective Date Offset = Issue date − Trade date in calendar days.
-     - When a value cannot be converted or a required column is missing (for example HSBC and GS orders lack final valuation and maturity dates), the product is 待確認 and left out of this sheet.
+     - When a value cannot be converted or a required column is missing, that cell is blank and light red, and the product is 待確認.
    - "Order條件清單": one row per product, with reasons to check.
    - "原文對照": each field's original name, original value, and normalized field.
    - "資料來源": the root folder and any folders that could not be read.

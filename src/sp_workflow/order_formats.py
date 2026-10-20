@@ -6,6 +6,7 @@
 - `IssuerFormat.others`：這家條件表上認得、但不屬於統一欄位的欄，原樣保留在「其他欄位」。
 - `IssuerFormat.embedded`：一格裡寫了好幾個「名稱: 值」（例：UBS 的 Quote Id），拆開再對照。
 - `IssuerFormat.shifts`：這家的數字算法和其他家差固定數時，統一後再加上（例：Citi 的 Non-Call +1）。
+- `IssuerFormat.supplement`：Order 沒寫的日期到哪一封上手信補（例：GS、HSBC）。
 條件表出現這家沒列過的欄名時，整檔標「待確認」（格式可能改版），欄位仍保留在「其他欄位」。
 """
 
@@ -120,6 +121,7 @@ ALIASES: dict[str, str] = _keys(
         "Issue Date": "發行日",
         "Issuance Date": "發行日",
         "Final Valuation Date": "最終比價日",
+        "Final Valuation": "最終比價日",
         "Redemption Valuation Date": "最終比價日",
         "Final Fixing Date": "最終比價日",
         "Maturity Date": "到期日",
@@ -148,12 +150,28 @@ COMMON_OTHERS = ("OTC", "Funding Spread (bps)")
 
 
 @dataclass(frozen=True)
+class DateSupplement:
+    """Order 沒寫的日期，到上手的另一封信（或 Order 信下方引用的上手回覆）補。
+
+    只取交易日、發行日、最終比價日、到期日，而且一定要對得到 TDCC：
+    橫式表（表頭有 TDCC 欄）取 TDCC 相同的那列；直式表（每列「名稱 | 值」）要緊接在寫了這檔 TDCC 的那一行之後。
+    """
+
+    subject: str | None  # 補日期用的信件主旨（regex，`{tdcc}` 會換成 TDCC）；None = Order 原信本身（含下方引用）
+    day_first: bool = False  # 日期寫成 日/月/年（例：HSBC 的 13/10/2026）
+
+
+SUPPLEMENT_FIELDS = ("交易日", "發行日", "最終比價日", "到期日")
+
+
+@dataclass(frozen=True)
 class IssuerFormat:
     name: str
     headers: tuple[str, ...]  # 這家條件表會出現的欄名（統一欄位與其他欄都要列）
     overrides: dict[str, str] = field(default_factory=dict)  # 欄名 → 統一欄位（優先於共用對照）
     embedded: dict[str, tuple[str, ...]] = field(default_factory=dict)  # 欄名 → 格內「名稱: 值」的名稱
     shifts: dict[str, int] = field(default_factory=dict)  # 統一欄位 → 這家寫法要加的數（例：Citi Non-Call +1）
+    supplement: DateSupplement | None = None  # Order 沒寫的日期去哪裡補
 
     def field_for(self, header: str) -> str | None:
         """欄名對到的統一欄位；不屬於統一欄位時回傳 None。"""
@@ -374,6 +392,8 @@ ISSUERS: dict[str, IssuerFormat] = {
         ),
         # GS 的發行日只寫在 System Remark：[ Issue Date: 20Oct26 ]
         embedded={"System Remark": ("Request ID", "RIC Quoted", "Issue Date", "Rounded Coupon", "Issuer")},
+        # 最終比價日、到期日在 GS 另寄的「Indicative Docs for <TDCC>」信的 Order Summary 表（使用者 2026-10-20 指定）
+        supplement=DateSupplement(r"Indicative Docs for {tdcc}\b"),
     ),
     "156": IssuerFormat(
         "NOMURA",
@@ -438,6 +458,8 @@ ISSUERS: dict[str, IssuerFormat] = {
             "Comments",
             "ID",
         ),
+        # 日期在 Order 信下方引用的 HSBC 回覆：「TDCC code: <TDCC>」後面的直式表，日/月/年（使用者 2026-10-20 指定）
+        supplement=DateSupplement(None, day_first=True),
     ),
     "326": IssuerFormat(
         "BBVA",
