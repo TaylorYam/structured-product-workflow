@@ -339,8 +339,9 @@ def _table(cells: Sequence[tuple[str, str]], header_color: str, template_units: 
     widths = []
     for index, (k, v) in enumerate(cells):
         required = _wrap_width(k, v) or 0
-        header_one_line = _text_units(k) * PX_PER_UNIT
-        px = max(math.ceil(template_units[index] * PX_PER_UNIT), math.ceil(required), math.ceil(header_one_line + 12))
+        if required == 0:
+            required = math.ceil(_text_units(k) * PX_PER_UNIT + 12)
+        px = max(math.ceil(template_units[index] * PX_PER_UNIT), math.ceil(required))
         widths.append(px)
         width = f' width="{px}"'
         wrap = f"width: {px}px; white-space: normal;"

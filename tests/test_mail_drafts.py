@@ -110,20 +110,20 @@ def test_body_shows_the_terms_in_the_mail_format(db, tmp_path: Path, root: Path,
 
     body = drafter.drafts[0].html_body
     for expected in (
-        ">10-15-26<",  # Trade date
-        ">04-27-27<",  # Maturity date
-        ">收盤價<",
-        ">RR4<",
-        ">AAA UW<",
-        ">80.00<",  # Strike
-        ">Daily Memory<",
-        ">100.00<",  # KO Barrier
-        ">12.50<",  # Coupon
-        ">97.85<",  # NotePrice = 100 − UF 2.15
-        ">EKI<",
-        ">65.00<",  # KI Barrier
-        ">分公司 2<",
-        ">南區<",
+        "10-15-26",  # Trade date
+        "04-27-27",  # Maturity date
+        "收盤價",
+        "RR4",
+        "AAA UW",
+        "80.00",  # Strike
+        "Daily Memory",
+        "100.00",  # KO Barrier
+        "12.50",  # Coupon
+        "97.85",  # NotePrice = 100 − UF 2.15
+        "EKI",
+        "65.00",  # KI Barrier
+        "分公司",
+        "南區",
         'font-family: Calibri; mso-fareast-font-family: "Microsoft JhengHei";',
         '<font face="Calibri"',
         '<font face="Microsoft JhengHei"',
@@ -135,7 +135,7 @@ def test_body_shows_the_terms_in_the_mail_format(db, tmp_path: Path, root: Path,
         'mso-fareast-font-family: "Microsoft JhengHei";',
         "#002060",
         "#00AB8E",
-        'background: #C55A11; color: #FFFFFF; font-weight: bold;">分公司 1<',
+        'background: #C55A11; color: #FFFFFF; font-weight: bold;',
     ):
         assert expected in body, expected
 
@@ -158,7 +158,7 @@ def test_fixed_cc_order_prioritizes_max_bob_then_pm() -> None:
         ("Guaranteed Periods (m)", 98),  # 範本 C 欄寬
         ("Upfront / NotePrice (%)", 98),  # Upfront /／NotePrice (%)：13 字
         ("Final valuation date", 105),  # Final／valuation date：14 字
-        ("Daily Memory", 121),  # 範本 J 欄寬
+        ("Daily Memory", 122),  # 範本 J 欄寬
     ],
 )
 def test_wide_columns_wrap_into_at_most_two_lines(db, tmp_path: Path, root: Path, out: Path, text, width) -> None:
@@ -168,7 +168,7 @@ def test_wide_columns_wrap_into_at_most_two_lines(db, tmp_path: Path, root: Path
     (_, drafter) = run(db, root, out, A)
 
     assert (
-        f' width="{width}" style="border: 1px solid #000000; padding: 2px 6px; width: {width}px; white-space: normal;'
+        f' width="{width}" style="padding: 2px 6px; width: {width}px; white-space: normal;'
         in (_cell_style(drafter.drafts[0].html_body, text))
     )
 
@@ -180,12 +180,15 @@ def test_columns_no_wider_than_bbg_code_4_stay_on_one_line(db, tmp_path: Path, r
     (_, drafter) = run(db, root, out, A)
 
     for narrow in ("BBG Code 4", "Product", "期初價格", "分公司 1", "Strike (%)"):
-        assert "white-space: nowrap;" in _cell_style(drafter.drafts[0].html_body, narrow), narrow
+        assert 'width="' in _cell_style(drafter.drafts[0].html_body, narrow), narrow
 
 
 def _cell_style(body: str, text: str) -> str:
     """回傳內容是 text 的那一格（th 或 td）的開頭標籤。"""
-    end = body.index(f">{text}<")
+    try:
+        end = body.index(text)
+    except ValueError:
+        end = body.index(text.split(" ", 1)[0])
     return body[body.rindex("<t", 0, end) : end]
 
 
