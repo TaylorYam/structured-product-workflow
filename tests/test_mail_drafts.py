@@ -135,7 +135,7 @@ def test_body_shows_the_terms_in_the_mail_format(db, tmp_path: Path, root: Path,
         'mso-fareast-font-family: "Microsoft JhengHei";',
         "#002060",
         "#00AB8E",
-        'background: #C55A11; color: #FFFFFF; font-weight: bold;',
+        "background: #C55A11; color: #FFFFFF; font-weight: bold;",
     ):
         assert expected in body, expected
 
@@ -167,9 +167,8 @@ def test_wide_columns_wrap_into_at_most_two_lines(db, tmp_path: Path, root: Path
 
     (_, drafter) = run(db, root, out, A)
 
-    assert (
-        f' width="{width}" style="padding: 2px 6px; width: {width}px; white-space: normal;'
-        in (_cell_style(drafter.drafts[0].html_body, text))
+    assert f' width="{width}" style="padding: 2px 6px; width: {width}px; white-space: normal;' in (
+        _cell_style(drafter.drafts[0].html_body, text)
     )
 
 

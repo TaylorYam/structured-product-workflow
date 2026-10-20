@@ -349,19 +349,18 @@ def _table(cells: Sequence[tuple[str, str]], header_color: str, template_units: 
         head.append(
             f'<th bgcolor="{header_color}" color="#FFFFFF"{width} '
             f'style="{cell_style} background: {header_color}; color: #FFFFFF; font-weight: bold;">'
-            f'{_font_html(k, "#FFFFFF")}</th>'
+            f"{_font_html(k, '#FFFFFF')}</th>"
         )
         body.append(
-            f'<td bgcolor="{ROW_FILL}"{width} style="{cell_style} background: {ROW_FILL};">'
-            f"{_font_html(v)}</td>"
+            f'<td bgcolor="{ROW_FILL}"{width} style="{cell_style} background: {ROW_FILL};">{_font_html(v)}</td>'
         )
     table_width = sum(widths)
     return (
         f'<table border="0" cellpadding="2" cellspacing="0" width="{table_width}" '
         f'style="border: 0; border-collapse: collapse; table-layout: fixed; width: {table_width}px; '
-        f'mso-table-lspace: 0pt; '
+        f"mso-table-lspace: 0pt; "
         f'mso-table-rspace: 0pt; {FONT_FAMILY} text-align: center;">'
-        f'<tr>{"".join(head)}</tr><tr>{"".join(body)}</tr></table>'
+        f"<tr>{''.join(head)}</tr><tr>{''.join(body)}</tr></table>"
     )
 
 

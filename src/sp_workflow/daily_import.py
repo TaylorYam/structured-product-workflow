@@ -581,11 +581,7 @@ def _unmatched_names(parsed: _Parsed, mailbox: Mailbox) -> list[ImportLine]:
     lines = []
     for tdcc, trades in parsed.trades.items():
         names = sorted(
-            {
-                t["fc_name"]
-                for t in trades
-                if not is_pb(t["fc_name"]) and mailbox.match(t["fc_name"]) is None
-            }
+            {t["fc_name"] for t in trades if not is_pb(t["fc_name"]) and mailbox.match(t["fc_name"]) is None}
         )
         if names:
             lines.append(ImportLine(tdcc, NAME_UNMATCHED, "、".join(names)))
