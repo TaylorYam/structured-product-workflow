@@ -7,14 +7,17 @@ import hashlib
 from pathlib import Path
 
 import openpyxl
+import pymupdf
 import pytest
 
 from sp_workflow import preparation
 from sp_workflow.preparation import PREPARED, SKIPPED, PreparationError, prepare_batch
 from synth import (
     FakeConverter,
+    docx_lines,
     english_ts_lines,
     iis_lines,
+    make_docx,
     make_fake_word,
     make_pdf,
     make_product_folder,
@@ -733,3 +736,74 @@ def test_reused_word_version_uses_the_pending_pdf_itself(root: Path, out: Path) 
     assert o.status == PREPARED, o.reason
     assert {d.kind.value: d.source.name for d in o.documents}["TS"] == "2591320_1m_ATS_Fixed Coupon.docx"
     assert (receipt.batch_dir / f"{C}_TS.pdf").read_bytes() == pending.read_bytes()
+
+
+# ---- MS 受託機構商品代號（#56）----
+
+
+def ms_ts_paragraphs(tdcc: str, trustee: str = "") -> list[str | list[str]]:
+    """MS 說明書封面：商品代號有填，受託機構商品代號空白（Word 把標籤拆成兩個 run）。"""
+    return [
+        "中文產品說明書",
+        f"商品代號：{tdcc}",
+        ["受託機構", f"商品代號：{trustee}"],
+        "國際證券編碼ISIN：XS0000000000",
+    ]
+
+
+def make_ms_docx_folder(root: Path, tdcc: str, trustee: str = "") -> Path:
+    folder = root / tdcc
+    make_docx(folder / "2591320_1m_ATS_Fixed Coupon.docx", ms_ts_paragraphs(tdcc, trustee))
+    make_docx(folder / "2591320_1m_AD_Fixed Coupon.docx", iis_lines(None))  # MS 投資人須知沒有商品代號
+    make_docx(folder / "2591320_1m_TS_Fixed Coupon.docx", english_ts_lines(tdcc))
+    return folder
+
+
+def batch_text(receipt, name: str) -> str:
+    with pymupdf.open(receipt.batch_dir / name) as doc:
+        return doc[0].get_text().replace("\n", "")
+
+
+def test_ms_trustee_code_is_filled_before_conversion(root: Path, out: Path) -> None:
+    folder = make_ms_docx_folder(root, C)
+
+    receipt = run(C, root, out)  # run() 也確認原始 Word 沒被改
+
+    o = outcome(receipt, C)
+    assert o.status == PREPARED, o.reason
+    assert f"受託機構商品代號：{C}" in batch_text(receipt, f"{C}_TS.pdf")
+    assert o.reason == "已補受託機構商品代號（2591320_1m_ATS_Fixed Coupon.docx）"
+    assert docx_lines(folder / "2591320_1m_ATS_Fixed Coupon.docx")[2] == "受託機構商品代號："
+    [ts_row] = [r for r in read_list(receipt.list_path) if r["種類"] == "TS"]
+    assert "已補受託機構商品代號" in ts_row["原因"]
+
+
+def test_ms_trustee_code_already_present_is_left_alone(root: Path, out: Path) -> None:
+    make_ms_docx_folder(root, C, trustee="147199990009")  # 有值但不一致：不改，交給核對工具判
+
+    receipt = run(C, root, out)
+
+    o = outcome(receipt, C)
+    assert o.status == PREPARED, o.reason
+    assert "受託機構商品代號：147199990009" in batch_text(receipt, f"{C}_TS.pdf")
+    assert not o.reason
+
+
+def test_other_issuers_trustee_code_is_not_filled(root: Path, out: Path) -> None:
+    bnp = "082199990004"
+    folder = root / bnp
+    make_docx(folder / "TS.docx", ms_ts_paragraphs(bnp))
+    make_docx(folder / "IIS.docx", iis_lines(bnp))
+
+    receipt = run(bnp, root, out)
+
+    assert outcome(receipt, bnp).status == PREPARED
+    assert batch_text(receipt, f"{bnp}_TS.pdf").count(bnp) == 1  # 只有封面商品代號
+
+
+def test_fill_skips_files_that_are_not_docx(tmp_path: Path) -> None:
+    from sp_workflow.trustee_code import fill_trustee_code
+
+    fake = make_fake_word(tmp_path / "old.doc", ["受託機構商品代號："])
+    assert not fill_trustee_code(fake, C)
+    assert fake.read_text(encoding="utf-8") == "受託機構商品代號："

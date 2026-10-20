@@ -11,8 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from sp_workflow.documents import DocKind
+from sp_workflow.documents import DocKind, first_page_text
 from sp_workflow.preparation import PREPARED, prepare_batch
+from sp_workflow.trustee_code import FILL_ISSUERS
 
 pytestmark = [pytest.mark.real_samples, pytest.mark.word]
 
@@ -57,3 +58,6 @@ def test_real_product_folders(tmp_path: Path) -> None:
         assert re.search(ts_mark, names[DocKind.TS], re.IGNORECASE), (o.tdcc, names)
         assert re.search(iis_mark, names[DocKind.IIS], re.IGNORECASE), (o.tdcc, names)
         assert all(d.from_word == from_word for d in o.documents), (o.tdcc, names)
+        if o.tdcc[:3] in FILL_ISSUERS:  # MS 封面空白的受託機構商品代號，轉出的 PDF 要已補上（#56）
+            text = first_page_text(receipt.batch_dir / f"{o.tdcc}_TS.pdf") or ""
+            assert f"受託機構商品代號：{o.tdcc}" in re.sub(r"\s+", "", text), o.tdcc
