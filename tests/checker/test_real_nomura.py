@@ -37,7 +37,7 @@ def test_every_sample_is_recognised_as_nomura(items):
 
 def test_samples_only_differ_where_the_exploration_said(items):
     term_sheets, investor_sheets = items
-    # 表上到期日少算一個美國假日（表填錯）；日股標的的觀察期間開始日跳過日本假日，交易所假日表有日本後通過（Issue #67）
+    # 表上到期日少算一個美國假日（表填錯）；日股標的的觀察期間開始日跳過日本假日，交易所假日表有日本後通過（structured-product-workflow#67）
     maturity = {("field.maturity_date", "value_mismatch"): 1}
     for docs in (term_sheets, investor_sheets):
         bad = Counter((r.rule_id, r.reason_code) for i in docs for r in i.report.results if r.status in PROBLEMS)

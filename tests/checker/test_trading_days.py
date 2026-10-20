@@ -71,7 +71,7 @@ def test_us_holidays_are_skipped_and_uk_holidays_are_not():
 
 
 def test_japanese_holidays_are_skipped_through_2027():
-    """東京證交所（JT）：2026-10-19 回報包的 BARC 日股商品，期始日因勤勞感謝日、天皇誕生日順延（Issue #67）。"""
+    """東京證交所（JT）：日股標的的期始日因勤勞感謝日、天皇誕生日等日本假日順延（structured-product-workflow#67）。"""
     jt = ["7203 JT", "6758 JT Equity"]
     assert REPO.next_trading_day(D(2026, 11, 20), jt).day == D(2026, 11, 24), "11/23 勤勞感謝日（週一）"
     assert REPO.next_trading_day(D(2027, 2, 22), jt).day == D(2027, 2, 24), "2/23 天皇誕生日"
@@ -88,7 +88,7 @@ def test_japanese_holidays_are_skipped_through_2027():
 
 
 def test_japanese_dates_after_2027_are_uncertain():
-    """JPX 只公布到 2027 年：2028 年之後的日期無法確定（2026-10-20 使用者決定不先推算 2028）。"""
+    """日本假日表只涵蓋 JPX 已公布的年份：之後的日期無法確定。"""
     late = REPO.next_trading_day(D(2028, 1, 7), ["7203 JT"])
     assert late.day == D(2028, 1, 10) and "涵蓋範圍" in late.uncertain and "2027-12-31" in late.uncertain
 
@@ -212,7 +212,7 @@ JT = Spec(underlyings=(UL("虛構日本株式會社", "東京證券交易所", "
 
 
 def test_barc_japanese_start_after_a_japanese_holiday_passes_and_without_shift_is_mismatch(tmp_path):
-    """日股標的：期始日落在日本休市日時順延到下一個交易日判通過；沒順延判不一致（Issue #67）。"""
+    """日股標的：期始日落在日本休市日時順延到下一個交易日判通過；沒順延判不一致（structured-product-workflow#67）。"""
     config = with_holidays(D(2030, 3, 11), market="JP")
     shifted = report(tmp_path, JT, edits=[START], config=config)
     assert [x.status for x in starts(shifted)] == [S.PASS]
