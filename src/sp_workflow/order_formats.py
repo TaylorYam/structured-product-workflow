@@ -80,6 +80,8 @@ ALIASES: dict[str, str] = _keys(
         "Currency": "幣別",
         "Curr": "幣別",
         "Capital size": "承作金額",
+        "ExpectedCapital size": "承作金額",  # HSBC 多檔一起下單時的表頭
+        "Expected Capital size": "承作金額",
         "Upfront / Note Price (%)": "價格(%)",
         "Upfront / NotePrice (%)": "價格(%)",
         "Cost (%)": "價格(%)",
@@ -457,6 +459,7 @@ ISSUERS: dict[str, IssuerFormat] = {
             "Effective Date Offset(Calendar Days)",
             "Comments",
             "ID",
+            "ExpectedCapital size",  # 多檔一起下單時表上有 TDCC code 與這欄
         ),
         # 日期在 Order 信下方引用的 HSBC 回覆：「TDCC code: <TDCC>」後面的直式表，日/月/年（使用者 2026-10-20 指定）
         supplement=DateSupplement(None, day_first=True),

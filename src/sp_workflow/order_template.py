@@ -8,7 +8,7 @@
 - Product：條件表沒有時取主旨 `] FCN_…` 的商品別。
 - KO Type：統一成 Daily／Daily Memory／Period End／Period End Memory；MS 的 `OBSERVATION` 依 KO Memory 判斷，
   Citi 依 Daily KO、Memory Autocall 兩欄（TRUE／FALSE）判斷。
-- Barrier Type：統一成 NONE／EKI／AKI（MS `EUROPEAN` = EKI、`AMERICAN` = AKI）；沒有 KI 時 KI Barrier 留空。
+- Barrier Type：統一成 NONE／EKI／AKI（MS `EUROPEAN`、SG `At Maturity` = EKI，`AMERICAN` = AKI）；沒有 KI 時 KI Barrier 留空。
 - SG：Tenor = No. of Periods、Observation Frequency = 1（Settlement Frequency 是 Monthly 時）。
 - OTC：信裡沒寫時填 `Note`。
 - Trade date：條件表沒有時用 Order 寄出日期。
@@ -100,7 +100,15 @@ FIELD_COLUMNS = {
 FLAG_FILL = "FFFFC7CE"  # Excel 內建「淺紅色填滿」
 
 KO_TYPES = {k.lower(): k for k in ("Daily", "Daily Memory", "Period End", "Period End Memory")}
-_BARRIER_TYPES = {"none": "NONE", "eki": "EKI", "aki": "AKI", "european": "EKI", "american": "AKI", "no": "NONE"}
+_BARRIER_TYPES = {
+    "none": "NONE",
+    "eki": "EKI",
+    "aki": "AKI",
+    "european": "EKI",  # MS
+    "american": "AKI",
+    "at maturity": "EKI",  # SG 的 KI Type
+    "no": "NONE",
+}
 _PRODUCT_IN_SUBJECT = re.compile(r"\]\s*([A-Za-z]{2,10})_")
 DEFAULT_OTC = "Note"
 
