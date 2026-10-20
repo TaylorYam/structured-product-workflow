@@ -7,9 +7,9 @@ from decimal import Decimal
 
 import pytest
 
+import barc_synth as synth
 import hsbc_synth
 import ms_synth
-import synth
 from bnp_synth import Spec, build_pdf, check
 from fcn_checker.issuers import BNP
 from fcn_checker.messages import problem_message

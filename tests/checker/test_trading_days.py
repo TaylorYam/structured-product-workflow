@@ -14,6 +14,7 @@ from pathlib import Path
 import pytest
 
 import hsbc_synth
+from barc_synth import Spec, build_pdf, next_weekday
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.config import load_exchange_holidays
 from fcn_checker.ingestion import IngestionError
@@ -29,7 +30,6 @@ from harness import (
 )
 from pdf_writer import Edit, zh_date
 from reference_synth import UL, build_reference_sheet, reference_row
-from synth import Spec, build_pdf, next_weekday
 
 REPO = load_exchange_holidays(EXCHANGE_HOLIDAYS)
 PATHS = ConfigPaths(REVIEW_STANDARD, REFERENCE_FORMAT, ISSUER_PREFIXES, EXCHANGE_HOLIDAYS)

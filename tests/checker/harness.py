@@ -27,7 +27,7 @@ from fcn_checker.issuers import REGISTRY, Issuer
 from fcn_checker.schema import CheckReport, CheckStatus
 from fcn_checker.trading_calendar import Market
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 REVIEW_STANDARD = ROOT / "config" / "review_standard.toml"
 REFERENCE_FORMAT = ROOT / "config" / "reference_sheet.toml"
 ISSUER_PREFIXES = ROOT / "config" / "issuer_prefixes.toml"

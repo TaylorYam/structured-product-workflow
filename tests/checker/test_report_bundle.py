@@ -10,13 +10,13 @@ from types import SimpleNamespace
 import openpyxl
 import pytest
 
+from barc_synth import Spec, build_pdf
 from fcn_checker import report_bundle
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.schema import CheckStatus, DocKind
 from harness import CONFIG, ROOT, check_all, with_iis
 from reference_synth import REFERENCE_HEADERS, build_reference_sheet, reference_row
-from synth import Spec, build_pdf
 
 NOW = dt.datetime(2030, 2, 3, 4, 5, 6)
 BUNDLE = "FCN參考條件_回報包_20300203-040506"

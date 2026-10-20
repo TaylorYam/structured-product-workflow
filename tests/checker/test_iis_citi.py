@@ -9,10 +9,10 @@ from decimal import Decimal
 
 import pytest
 
+import barc_synth as synth
 import bnp_synth
 import ms_synth
 import sg_synth
-import synth
 from citi_synth import IIS_GUARANTOR, MINIMUM_ISSUE, Spec, build_iis_pdf, check_item
 from fcn_checker.issuers import CITI
 from harness import MISMATCH, NA, PASS, REVIEW, check_all

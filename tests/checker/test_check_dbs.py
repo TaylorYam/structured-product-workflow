@@ -9,6 +9,7 @@ from decimal import Decimal
 
 import pytest
 
+import barc_synth as synth
 import bbva_synth
 import bnp_synth
 import ca_synth
@@ -20,7 +21,6 @@ import ms_synth
 import natixis_synth
 import nomura_synth
 import sg_synth
-import synth
 from dbs_synth import DIST_ADDRESS, PRODUCT_TYPE, WARNING, Spec, check, check_item
 from fcn_checker import standard_fields
 from fcn_checker.issuers import DBS

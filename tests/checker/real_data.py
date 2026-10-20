@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 DATA = Path(os.environ.get("FCN_TEST_DATA_DIR", ROOT / "data"))
 ORDERS = DATA / "orders"
 TERM_SHEETS = DATA / "term-sheets" / "IS"

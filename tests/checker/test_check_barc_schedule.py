@@ -9,10 +9,10 @@ import datetime as dt
 
 import pytest
 
+from barc_synth import Spec, check
 from fcn_checker.schema import CheckStatus
 from harness import MISMATCH, PASS, REVIEW, problems, results
 from pdf_writer import Edit
-from synth import Spec, check
 
 SCHEDULE_RULES = (
     "field.first_callable_period",

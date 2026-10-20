@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import hsbc_synth
+from barc_synth import Spec, barc_adapter, build_iis_pdf, build_pdf
 from fcn_checker.batch import DocKind
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.issuers import BARC
@@ -20,7 +21,6 @@ from fcn_checker.schema import CheckStatus
 from harness import CONFIG, REVIEW_STANDARD, ROOT, check_all, cli_root, iis_path, with_iis
 from pdf_writer import Edit
 from reference_synth import build_reference_sheet, reference_row
-from synth import Spec, barc_adapter, build_iis_pdf, build_pdf
 
 PASS, MISMATCH, REVIEW = CheckStatus.PASS, CheckStatus.MISMATCH, CheckStatus.REVIEW_REQUIRED
 NOW = dt.datetime(2030, 2, 3, 4, 5, 6)

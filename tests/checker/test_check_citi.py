@@ -7,10 +7,10 @@ from decimal import Decimal
 
 import pytest
 
+import barc_synth as synth
 import bnp_synth
 import ms_synth
 import sg_synth
-import synth
 from citi_synth import APPROVAL, GUARANTOR, Spec, check, zh_number
 from fcn_checker.backfill import BackfillAction
 from fcn_checker.issuers import CITI

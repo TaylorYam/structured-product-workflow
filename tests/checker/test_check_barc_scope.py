@@ -9,10 +9,10 @@ from decimal import Decimal
 
 import pytest
 
+from barc_synth import Spec, check
 from harness import MISMATCH, NA, PASS, REVIEW, problems, results
 from pdf_writer import Edit
 from reference_synth import UL
-from synth import Spec, check
 
 NEW_RULES = (
     "doc.name_consistency",

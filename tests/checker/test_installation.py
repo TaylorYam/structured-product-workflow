@@ -6,7 +6,7 @@ from pathlib import Path
 
 
 def test_pip_reads_constraints_with_cp950_locale():
-    constraints = Path(__file__).resolve().parents[1] / "constraints.txt"
+    constraints = Path(__file__).resolve().parents[2] / "constraints.txt"
     probe = """
 import locale
 import sys

@@ -10,9 +10,9 @@ from decimal import Decimal
 import fitz
 import pytest
 
+import barc_synth as synth
 import hsbc_synth
 import ms_synth
-import synth
 from bnp_synth import ADDRESS, DIST, GUARANTOR, ISSUER, PHONE, SPLIT, WARNING, Spec, build_pdf, check_pair
 from fcn_checker.extraction import extract_lines
 from fcn_checker.issuers import BNP, detect_iis

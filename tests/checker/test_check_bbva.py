@@ -7,9 +7,9 @@ from decimal import Decimal
 
 import pytest
 
+import barc_synth as synth
 import gs_synth
 import natixis_synth
-import synth
 from bbva_synth import ISSUER_EN, WARNING, Spec, build_pdf, check, check_item, row
 from fcn_checker.issuers import BBVA
 from fcn_checker.schema import CheckStatus as S

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from barc_synth import Spec, build_iis_pdf, build_pdf
 from fcn_checker.identification import Identification, PairingProblem, identify
 from fcn_checker.messages import Problem
 from fcn_checker.orders.reference import load_reference_sheet
@@ -18,7 +19,6 @@ from fcn_checker.result_file import ErrorRow
 from fcn_checker.schema import CheckStatus, DocKind
 from harness import CONFIG, iis_path, with_iis
 from reference_synth import build_reference_sheet, reference_row
-from synth import Spec, build_iis_pdf, build_pdf
 
 PASS, REVIEW = CheckStatus.PASS, CheckStatus.REVIEW_REQUIRED
 TS, IIS = DocKind.TERM_SHEET, DocKind.IIS

@@ -11,11 +11,11 @@ import pytest
 
 import hsbc_synth
 import ms_synth
+from barc_synth import Spec, build_pdf, check
 from fcn_checker.ingestion import IngestionError
 from harness import MISMATCH, PASS, REVIEW, REVIEW_STANDARD, STANDARD, check_sheet, load_config, results
 from pdf_writer import Edit
 from reference_synth import build_reference_sheet, reference_row
-from synth import Spec, build_pdf, check
 
 BARC_WARNING = STANDARD["risk"]["fixed_warning"]
 HSBC_WARNING = STANDARD["risk"]["fixed_warning_by_issuer"]["hsbc"]

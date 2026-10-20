@@ -7,8 +7,8 @@ from decimal import Decimal
 
 import pytest
 
+import barc_synth as synth
 import hsbc_synth
-import synth
 from fcn_checker.backfill import BackfillAction
 from fcn_checker.issuers import MS
 from fcn_checker.messages import problem_message

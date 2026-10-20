@@ -11,9 +11,9 @@ from decimal import Decimal
 
 import pytest
 
+import barc_synth as synth
 import hsbc_synth
 import ms_synth
-import synth
 from pdf_writer import Edit
 from reference_synth import ProductSpec, as_headers, issuer_value, reference_row
 

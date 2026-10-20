@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import pytest
 
+import barc_synth as synth
 import bbva_synth
 import bnp_synth
 import ca_synth
@@ -15,7 +16,6 @@ import ms_synth
 import natixis_synth
 import nomura_synth
 import sg_synth
-import synth
 from fcn_checker.issuers import UBS
 from fcn_checker.schema import CheckStatus as S
 from harness import check_all

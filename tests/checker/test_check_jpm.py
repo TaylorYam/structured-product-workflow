@@ -8,12 +8,12 @@ from decimal import Decimal
 
 import pytest
 
+import barc_synth as synth
 import bnp_synth
 import citi_synth
 import hsbc_synth
 import ms_synth
 import sg_synth
-import synth
 from fcn_checker.backfill import BackfillAction
 from fcn_checker.issuers import JPM
 from fcn_checker.schema import CheckStatus as S

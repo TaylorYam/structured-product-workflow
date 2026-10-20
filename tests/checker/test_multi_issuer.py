@@ -9,12 +9,12 @@ from collections import Counter
 
 import pytest
 
+from barc_synth import Spec, barc_adapter, build_not_barc_pdf, build_pdf, check, check_pdf
 from fcn_checker.cli import main
 from fcn_checker.issuers import BARC
 from fcn_checker.schema import CheckStatus
 from harness import CONFIG, REVIEW_STANDARD, check_all, cli_root, load_config, load_record, with_iis
 from reference_synth import build_reference_sheet, reference_row
-from synth import Spec, barc_adapter, build_not_barc_pdf, build_pdf, check, check_pdf
 
 PASS, REVIEW = CheckStatus.PASS, CheckStatus.REVIEW_REQUIRED
 
@@ -161,8 +161,8 @@ def test_adapter_withholding_a_review_standard_field_requires_review_naming_it(t
 
 @pytest.mark.parametrize("issuer", ["BARC", "HSBC"])
 def test_read_term_sheet_gives_missing_for_a_field_it_does_not_provide(tmp_path, issuer):
+    import barc_synth as synth
     import hsbc_synth
-    import synth
     from fcn_checker.extraction import extract_lines
     from fcn_checker.ingestion import open_pdf
     from fcn_checker.issuers import by_code
@@ -181,7 +181,7 @@ def test_read_term_sheet_gives_missing_for_a_field_it_does_not_provide(tmp_path,
 
 
 SYNTH_MODULES = (
-    "synth",
+    "barc_synth",
     "hsbc_synth",
     "ms_synth",
     "bnp_synth",

@@ -9,12 +9,12 @@ from decimal import Decimal
 
 import pytest
 
+import barc_synth as synth
 import bnp_synth
 import citi_synth
 import jpm_synth
 import ms_synth
 import sg_synth
-import synth
 from fcn_checker.issuers import NOMURA
 from harness import MISMATCH, NA, PASS, REVIEW, check_all
 from nomura_synth import WARNING, Spec, build_iis_pdf, check_item

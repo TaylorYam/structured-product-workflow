@@ -15,6 +15,7 @@ import fitz
 import pytest
 
 import hsbc_synth
+from barc_synth import ISSUER_NAME, Spec, build_pdf, check, check_rows
 from fcn_checker.issuers import by_code
 from fcn_checker.messages import Problem, problem_message, problems
 from fcn_checker.panel_workflow import PanelOutcome
@@ -24,7 +25,6 @@ from fcn_checker.standard_fields import not_provided
 from harness import CONFIG, check_all
 from pdf_writer import Edit
 from reference_synth import DEFAULT_ULS, REFERENCE_HEADERS, as_headers, build_reference_sheet, reference_row
-from synth import ISSUER_NAME, Spec, build_pdf, check, check_rows
 
 # 程式代碼：小寫英文以 . 或 _ 串接（例：doc.scenario_calculations、s1.profit.17、value_mismatch）
 CODE = re.compile(r"(?<![A-Za-z0-9])[a-z][a-z0-9]*(?:[._][a-z0-9]+)+")

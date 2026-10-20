@@ -10,12 +10,12 @@ from decimal import Decimal
 
 import pytest
 
+from barc_synth import APPROVAL_DATE, Spec, build_not_barc_pdf, build_pdf, check, check_pdf
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.messages import problem_message, show
 from harness import ERROR, MISMATCH, NA, PASS, REVIEW, check_sheet, problems, results
 from pdf_writer import Edit, zh_date
 from reference_synth import REFERENCE_HEADERS, UL, build_reference_sheet, reference_row
-from synth import APPROVAL_DATE, Spec, build_not_barc_pdf, build_pdf, check, check_pdf
 
 # ---------------------------------------------------------------- 全部一致
 
@@ -257,7 +257,7 @@ def test_fixed_warning_altered_by_one_character(tmp_path):
 
 
 def test_fixed_warning_wrong_occurrence_count(tmp_path):
-    from synth import FIXED_WARNING
+    from barc_synth import FIXED_WARNING
 
     report = check(tmp_path, edits=[Edit(FIXED_WARNING, "本商品之風險請參閱銷售說明書。", "ts.ch三")])
     r = results(report, "standard.fixed_warning")[0]

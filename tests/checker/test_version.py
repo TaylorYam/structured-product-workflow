@@ -22,7 +22,7 @@ def test_program_commit_prefers_git_then_installed_record(tmp_path):
     assert program_commit(tmp_path, package=installed) == OLD, "根目錄安裝：取安裝時記錄的 commit"
     assert program_commit(tmp_path / "elsewhere", package=installed) is None, "沒有版本紀錄時為 None"
 
-    repo = Path(__file__).resolve().parents[1]
+    repo = Path(__file__).resolve().parents[2]
     head = subprocess.run(["git", "-C", str(repo), "rev-parse", "HEAD"], capture_output=True, text=True)
     if head.returncode == 0 and (repo / ".git").exists():
         assert program_commit(tmp_path, package=repo / "src" / "fcn_checker") == head.stdout.strip(), "開發用 Git"

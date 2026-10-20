@@ -8,6 +8,7 @@ import openpyxl
 import pytest
 
 import hsbc_synth
+from barc_synth import Spec, build_pdf
 from fcn_checker.identification import PairingProblem
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.saving import run_batch
@@ -15,7 +16,6 @@ from fcn_checker.schema import CheckStatus
 from fcn_checker.variants import Terms, Variant, load_unsupported_variants, unsupported
 from harness import CONFIG, ISSUER_PREFIXES, load_config, with_iis
 from reference_synth import build_reference_sheet, reference_row
-from synth import Spec, build_pdf
 
 REVIEW = CheckStatus.REVIEW_REQUIRED
 V = Variant

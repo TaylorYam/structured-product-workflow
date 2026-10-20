@@ -7,10 +7,10 @@ from decimal import Decimal
 
 import pytest
 
+import barc_synth as synth
 import bnp_synth
 import hsbc_synth
 import ms_synth
-import synth
 from fcn_checker.issuers import SG
 from fcn_checker.messages import problem_message
 from fcn_checker.schema import CheckStatus as S

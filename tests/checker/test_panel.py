@@ -12,12 +12,12 @@ import fitz
 import openpyxl
 import pytest
 
+from barc_synth import SYNTH_ISIN, Spec, build_pdf
 from fcn_checker.ingestion import IngestionError, SourceSnapshot
 from fcn_checker.panel import parse_args, session_from_args
 from fcn_checker.panel_workflow import PanelOutcome, PanelSession
 from harness import ISSUER_PREFIXES, REVIEW_STANDARD, ROOT, with_iis
 from reference_synth import REFERENCE_FORMAT, build_reference_sheet, reference_row
-from synth import SYNTH_ISIN, Spec, build_pdf
 
 NOW = dt.datetime(2030, 2, 3, 4, 5, 6)
 

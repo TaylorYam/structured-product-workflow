@@ -13,11 +13,11 @@ import openpyxl
 from openpyxl.formatting.rule import FormulaRule
 from openpyxl.worksheet.datavalidation import DataValidation
 
+from barc_synth import SYNTH_ISIN, Spec, build_pdf
 from fcn_checker.saving import run_batch
 from fcn_checker.schema import CheckStatus
 from harness import CONFIG, with_iis
 from reference_synth import DATE_FORMAT, REFERENCE_HEADERS, build_reference_sheet, reference_row
-from synth import SYNTH_ISIN, Spec, build_pdf
 
 NOW = dt.datetime(2030, 2, 3, 4, 5, 6)
 IMPORT_HEADERS = [

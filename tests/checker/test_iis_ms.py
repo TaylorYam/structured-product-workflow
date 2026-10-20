@@ -10,8 +10,8 @@ import datetime as dt
 import fitz
 import pytest
 
+import barc_synth as synth
 import hsbc_synth
-import synth
 from fcn_checker.extraction import extract_lines
 from fcn_checker.issuers import MS, detect_iis
 from fcn_checker.parsers import ms as ms_parser

@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import pytest
 
+import barc_synth as synth
 import bnp_synth
 import citi_synth
 import hsbc_synth
@@ -13,7 +14,6 @@ import jpm_synth
 import ms_synth
 import nomura_synth
 import sg_synth
-import synth
 from fcn_checker.issuers import GS
 from fcn_checker.schema import CheckStatus as S
 from gs_synth import ADDRESS, ISIN, WARNING, Spec, build_pdf, check, check_item, row

@@ -79,12 +79,16 @@ jobs:
 
       - name: Lint
         run: |
-          ruff check src tests
-          ruff format --check src tests
+          ruff check src tests scripts/build_panel_icon.py panel_bootstrap.py installer/checker/launch_panel.pyw
+          ruff format --check src tests scripts/build_panel_icon.py panel_bootstrap.py installer/checker/launch_panel.pyw
 
       # 真實樣本測試只在本機設定 SPW_REAL_SAMPLES_DIR 時執行；CI 自動略過。資料庫測試用上面的 PostgreSQL 服務
+      # 資料庫測試每個都清空同一個測試資料庫，不能平行跑；核對測試（tests/checker）沒有資料庫，平行跑比較快
       - name: Test
-        run: pytest -q
+        run: pytest -q --ignore=tests/checker
+
+      - name: Test checker
+        run: pytest -q -n auto tests/checker
 
   windows-install:
     name: Windows install resolution (Python 3.11-3.15)

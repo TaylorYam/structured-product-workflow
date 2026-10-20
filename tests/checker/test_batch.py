@@ -17,6 +17,7 @@ from openpyxl.formatting.rule import CellIsRule
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
+from barc_synth import SYNTH_ISIN, Spec, barc_adapter, build_iis_pdf, build_pdf, schedule_rows
 from fcn_checker import __version__
 from fcn_checker.batch import check_batch, preview_batch
 from fcn_checker.ingestion import IngestionError, sha256_of
@@ -26,7 +27,6 @@ from fcn_checker.schema import CheckStatus, DetectionResult
 from harness import CONFIG, ISSUER_PREFIXES, REVIEW_STANDARD, check_all, load_config, with_iis
 from pdf_writer import Edit
 from reference_synth import DATE_FORMAT, REFERENCE_FORMAT, REFERENCE_HEADERS, build_reference_sheet, reference_row
-from synth import SYNTH_ISIN, Spec, barc_adapter, build_iis_pdf, build_pdf, schedule_rows
 from test_import_format import IMPORT_HEADERS
 
 PASS, MISMATCH, REVIEW, ERROR = (

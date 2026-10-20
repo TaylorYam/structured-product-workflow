@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from barc_synth import APPROVAL_DATE, Spec, build_pdf
 from fcn_checker.approval_dates import parse_input_date
 from fcn_checker.config import load_review_standard
 from fcn_checker.ingestion import IngestionError
@@ -18,7 +19,6 @@ from fcn_checker.panel_workflow import PanelSession
 from harness import MISMATCH, PASS, REVIEW, REVIEW_STANDARD, ROOT, check_sheet, load_config, results
 from pdf_writer import Edit, zh_date
 from reference_synth import build_reference_sheet, reference_row
-from synth import APPROVAL_DATE, Spec, build_pdf
 
 TODAY = dt.date(2031, 3, 4)
 D = dt.date

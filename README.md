@@ -5,7 +5,7 @@
 狀態：「TS／IIS 準備與放回」已完成，以真實樣本複本試跑過，等作業主機公槽實測（[#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)）。「每日匯入」最小 FCN 資料庫見 [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32)；「寄信草稿」見 [#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)；「Order 條件」讀取見 [#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)。其他流程仍在設計階段。
 
 本專案管理正式 Order、建檔、上手文件歸檔、核對串接及 FC 寄送。詢價端沿用既有系統。
-核對規則由獨立的 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) 負責；已決定併入本專案（[ADR 0005](docs/adr/0005-merge-checker-into-workflow.md)），新商品資料改由 Order、交易明細與股價建立（[ADR 0006](docs/adr/0006-new-product-data-from-order.md)）。
+核對規則由獨立的 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) 負責；已決定併入本專案（[ADR 0005](docs/adr/0005-merge-checker-into-workflow.md)）：程式與歷史已搬到 `src/fcn_checker/`，同一次安裝就有 `fcn-batch`、`fcn-panel`，原文件暫放 [docs/checker/](docs/checker/README.md)，安裝捷徑與文件整併見 #61、#62；新商品資料改由 Order、交易明細與股價建立（[ADR 0006](docs/adr/0006-new-product-data-from-order.md)）。
 
 閱讀順序：[業務背景](CONTEXT.md) → [架構](docs/architecture.md) → [待定事項](docs/open-questions.md)。
 資料保存與部署先讀 [PostgreSQL 決策](docs/adr/0001-postgresql-workflow-storage.md) 與 [開發部署設計](docs/database-and-deployment.md)。第一階段的資料範圍見 [ADR 0003](docs/adr/0003-minimal-fcn-database.md)。
@@ -163,7 +163,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 Status: TS/IIS preparation and return is complete and trial-run on copies of real samples; operational shared-drive testing is pending ([#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)). The minimal FCN database with daily import is [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32); mail drafts are [#29](https://github.com/TaylorYam/structured-product-workflow/issues/29); Order term reading is [#40](https://github.com/TaylorYam/structured-product-workflow/issues/40). Other workflows remain in design.
 
 This project coordinates formal Orders, booking, issuer document archiving, checker integration, and FC distribution. Inquiry remains in the existing system.
-Checking rules belong to the independent [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker), which will be merged into this repository ([ADR 0005](docs/adr/0005-merge-checker-into-workflow.md)); new product data will be built from Orders, trade rows, and prices ([ADR 0006](docs/adr/0006-new-product-data-from-order.md)).
+Checking rules belong to the independent [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker), which is being merged into this repository ([ADR 0005](docs/adr/0005-merge-checker-into-workflow.md)): its code and history now live in `src/fcn_checker/`, one installation provides `fcn-batch` and `fcn-panel`, its original documents sit in [docs/checker/](docs/checker/README.md) for now, and installer shortcuts and document consolidation follow in #61 and #62; new product data will be built from Orders, trade rows, and prices ([ADR 0006](docs/adr/0006-new-product-data-from-order.md)).
 
 Read [business context](CONTEXT.md), [architecture](docs/architecture.md), then [open questions](docs/open-questions.md).
 For persistence/deployment, read the [PostgreSQL decision](docs/adr/0001-postgresql-workflow-storage.md) and [development/deployment design](docs/database-and-deployment.md). First-phase data scope is in [ADR 0003](docs/adr/0003-minimal-fcn-database.md).

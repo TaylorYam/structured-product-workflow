@@ -11,10 +11,10 @@ from decimal import Decimal
 import fitz
 import pytest
 
+import barc_synth as synth
 import bnp_synth
 import hsbc_synth
 import ms_synth
-import synth
 from fcn_checker.extraction import extract_lines
 from fcn_checker.issuers import SG, detect_iis
 from fcn_checker.parsers import sg as sg_parser

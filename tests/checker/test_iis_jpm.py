@@ -9,12 +9,12 @@ from decimal import Decimal
 
 import pytest
 
+import barc_synth as synth
 import bnp_synth
 import citi_synth
 import hsbc_synth
 import ms_synth
 import sg_synth
-import synth
 from fcn_checker.issuers import JPM
 from harness import MISMATCH, NA, PASS, REVIEW, check_all
 from jpm_synth import AGENT, GUARANTOR, Spec, check_item, jdate
