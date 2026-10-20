@@ -79,7 +79,7 @@ jobs:
 
       - name: Lint
         env:
-          LINT_PATHS: src tests scripts/build_panel_icon.py panel_bootstrap.py installer/checker/launch_panel.pyw launch_panel.pyw
+          LINT_PATHS: src tests scripts/build_panel_icon.py panel_bootstrap.py launch_panel.pyw launch_checker_panel.pyw
         run: |
           ruff check $LINT_PATHS
           ruff format --check $LINT_PATHS
