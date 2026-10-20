@@ -63,3 +63,13 @@ def test_mail_draft_tab_reuses_the_root_and_remembers_its_output(master, tmp_pat
     window = app.PanelWindow(master, memory, tmp_path / ".env")
 
     assert (window.mail.root_var.get(), window.mail.out_var.get()) == ("R:/FCN", "D:/寄信")
+
+
+def test_order_terms_tab_reuses_the_root_and_remembers_its_output(master, tmp_path: Path) -> None:
+    memory = FolderMemory.under(tmp_path)
+    memory.remember(root="R:/FCN", order_out="D:/Order")
+
+    window = app.PanelWindow(master, memory, tmp_path / ".env")
+
+    assert (window.orders.root_var.get(), window.orders.out_var.get()) == ("R:/FCN", "D:/Order")
+    assert str(window.orders.open_button.cget("state")) == "disabled"
