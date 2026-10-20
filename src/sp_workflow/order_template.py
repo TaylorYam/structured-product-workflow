@@ -6,13 +6,14 @@
 
 信裡沒有直接寫、但依固定規則換算的欄位：
 - Product：條件表沒有時取主旨 `] FCN_…` 的商品別。
-- KO Type：統一成 Daily／Daily Memory／Period End／Period End Memory；MS 的 `OBSERVATION` 依 KO Memory 判斷，
+- KO Type：統一成 Daily／Daily Memory／Period End／Period End Memory；MS 依 KO Memory 欄決定是否記憶式
+  （`OBSERVATION` = 每期），
   Citi 依 Daily KO、Memory Autocall 兩欄（TRUE／FALSE）判斷。
 - Barrier Type：統一成 NONE／EKI／AKI（MS `EUROPEAN`、SG `At Maturity` = EKI，`AMERICAN` = AKI）；沒有 KI 時 KI Barrier 留空。
 - SG：Tenor = No. of Periods、Observation Frequency = 1（Settlement Frequency 是 Monthly 時）。
 - OTC：信裡沒寫時填 `Note`。
 - Trade date：條件表沒有時用 Order 寄出日期。
-- Issue date：條件表沒有、但有日曆天數的發行日偏移時 = Trade date + 偏移天數。
+- Issue date：只用信裡寫的日期，不從偏移天數推算（實測會差一天），讀不到就留空標紅。
 - Effective Date Offset：Issue date − Trade date 的日曆天數。
 """
 
@@ -143,7 +144,8 @@ def template_row(
     ko_type = _ko_type(values.get("KO觀察方式"), _other(others, "KO Memory"), problems)
     if values.get("KO觀察方式") is None:
         ko_type = _ko_from_flags(_other(others, "Daily KO"), _other(others, "Memory Autocall"), problems)
-    barrier, ki = _barrier(values.get("KI型態"), values.get("KI(%)"), problems)
+    # 條件表沒讀到（例如多檔對不上）時不能把 Barrier Type 預設成 NONE，要留空交給人工
+    barrier, ki = _barrier(values.get("KI型態"), values.get("KI(%)"), problems, table_read="標的1" in values)
 
     tenor, frequency = values.get("天期(月)"), values.get("觀察頻率(月)")
     periods, settlement = _other(others, "No. of Periods"), _other(others, "Settlement Frequency")
@@ -151,10 +153,8 @@ def template_row(
         tenor, frequency = int(periods), frequency or 1
 
     trade = values.get("交易日") or (sent_on.date() if sent_on else None)
+    # 發行日不從「交易日 + 偏移天數」推算：實測 HSBC 偏移 7 天、實際差 8 天（2026-10-20 與 10 月清單核對）
     issue = values.get("發行日")
-    offset_text = str(values.get("發行日偏移") or "")
-    if issue is None and trade is not None and offset_text.isdigit():
-        issue = trade + dt.timedelta(days=int(offset_text))
     offset = (issue - trade).days if isinstance(issue, dt.date) and isinstance(trade, dt.date) else None
 
     if values.get("標的6"):
@@ -198,20 +198,30 @@ def template_row(
 
 
 def _ko_type(raw: object, memory: str, problems: list[str]) -> str | None:
+    """KO Type 統一寫法；MS 另有 KO Memory 欄（Yes／No），以它決定是否記憶式。"""
     if raw is None:
         return None
     text = str(raw).strip()
-    if text.lower() == "observation":  # MS：每期觀察，記憶式另寫在 KO Memory
-        if memory.lower() in ("yes", "y"):
-            return "Period End Memory"
-        if memory.lower() in ("no", "n"):
-            return "Period End"
-        problems.append(f"KO Type 是 OBSERVATION，但 KO Memory 不認得：{memory or '（空白）'}")
+    base = "Period End" if text.lower() == "observation" else KO_TYPES.get(text.lower())  # MS：OBSERVATION = 每期
+    if base is None:
+        problems.append(f"KO Type 不認得：{text}")
         return None
-    if text.lower() in KO_TYPES:
-        return KO_TYPES[text.lower()]
-    problems.append(f"KO Type 不認得：{text}")
-    return None
+    flag = memory.strip().lower()
+    if not flag:
+        if text.lower() == "observation":
+            problems.append("KO Type 是 OBSERVATION，但 KO Memory 是空白")
+            return None
+        return base
+    if flag not in ("yes", "y", "no", "n"):
+        problems.append(f"KO Memory 不認得：{memory}")
+        return None
+    plain = base.removesuffix(" Memory")
+    if flag in ("yes", "y"):
+        return f"{plain} Memory"
+    if base.endswith("Memory"):
+        problems.append(f"KO Type 是 {text}，但 KO Memory 是 {memory}")
+        return None
+    return plain
 
 
 def _ko_from_flags(daily: str, memory: str, problems: list[str]) -> str | None:
@@ -226,10 +236,10 @@ def _ko_from_flags(daily: str, memory: str, problems: list[str]) -> str | None:
     return f"{kind} Memory" if flags[memory.lower()] else kind
 
 
-def _barrier(raw: object, ki: object, problems: list[str]) -> tuple[str | None, object]:
+def _barrier(raw: object, ki: object, problems: list[str], *, table_read: bool = True) -> tuple[str | None, object]:
     if raw is None:
         if ki is None:
-            return "NONE", None  # 例：SG 的 KI Type、KI 都是 N/A
+            return ("NONE", None) if table_read else (None, None)  # 例：SG 的 KI Type、KI 都是 N/A
         problems.append("有 KI 價格但沒有 Barrier Type")
         return None, ki
     barrier = _BARRIER_TYPES.get(str(raw).strip().lower())
