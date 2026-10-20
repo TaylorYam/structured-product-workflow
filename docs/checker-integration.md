@@ -2,7 +2,7 @@
 
 ## 繁體中文
 
-狀態：Proposed，尚未實作或正式決定。獨立專案分工已確認；以下為建議接法。
+狀態：Superseded。2026-10-20 決定把核對專案併入本專案（[ADR 0005](adr/0005-merge-checker-into-workflow.md)），核對直接讀寫資料庫（[ADR 0006](adr/0006-new-product-data-from-order.md)）；以下 CLI 與檔案交換的建議只留作歷史紀錄。合併完成前，「放回資料夾」仍照下方說明讀核對結果檔。
 
 初期採本機 CLI 與檔案交換。流程專案的 checker adapter 負責呼叫已安裝、固定版本的核對工具；不直接 import 私有函式、不複製解析規則，也不要求部署網路服務。
 
@@ -25,7 +25,7 @@
 
 ## English
 
-Status: Proposed, neither implemented nor finalized. Repository separation is confirmed; the integration approach below is a recommendation.
+Status: Superseded. On 2026-10-20 the checker was decided to merge into this repository ([ADR 0005](adr/0005-merge-checker-into-workflow.md)), with checking reading and writing the database directly ([ADR 0006](adr/0006-new-product-data-from-order.md)); the CLI and file-exchange recommendations below remain as history. Until the merge is done, returning to folders still reads the result workbook as described below.
 
 Start with local CLI execution and file exchange. A checker adapter invokes an installed, pinned checker version without importing private functions, copying parsing rules, or requiring a network service.
 
