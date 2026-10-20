@@ -1,10 +1,16 @@
-"""共用 fixture。`pg`：測試用 PostgreSQL（設定 SPW_TEST_DSN 才執行，CI 由 PostgreSQL 服務提供）。"""
+"""共用 fixture 與選項。
+
+- `pg`：測試用 PostgreSQL（設定 SPW_TEST_DSN 才執行，CI 由 PostgreSQL 服務提供）。
+- `--shard=i/n`：只跑第 i 份（依測試檔分組，見 shard.py；CI 用來把核對測試分給幾台機器同時跑，#69）。
+"""
 
 from __future__ import annotations
 
 import os
 
 import pytest
+
+from shard import assign_shards, parse_shard
 
 TEST_DSN_ENV = "SPW_TEST_DSN"
 
@@ -31,3 +37,27 @@ def pg():
     apply_migrations(conn)
     yield conn
     conn.close()
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption("--shard", default=None, help="i/n：只跑第 i 份（共 n 份，同一個測試檔在同一份）")
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    spec = config.getoption("--shard")
+    if not spec:
+        return
+    try:
+        index, total = parse_shard(spec)
+    except ValueError as exc:
+        raise pytest.UsageError(str(exc)) from None
+    counts: dict[str, int] = {}
+    for item in items:
+        path = item.nodeid.split("::", 1)[0]
+        counts[path] = counts.get(path, 0) + 1
+    keep = assign_shards(counts, total)[index - 1]
+    selected = [item for item in items if item.nodeid.split("::", 1)[0] in keep]
+    deselected = [item for item in items if item.nodeid.split("::", 1)[0] not in keep]
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+    items[:] = selected

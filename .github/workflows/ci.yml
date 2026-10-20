@@ -14,6 +14,53 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # 依 PR 改到的檔案決定要跑哪些測試（#69）；push 到 main 與手動執行一律全部跑
+  changes:
+    name: Decide what to test
+    runs-on: ubuntu-latest
+    outputs:
+      workflow: ${{ steps.classify.outputs.workflow }}
+      checker: ${{ steps.classify.outputs.checker }}
+      deps: ${{ steps.classify.outputs.deps }}
+    steps:
+      - name: Check out repository history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Classify changed files
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          workflow=false; checker=false; deps=false
+          if [[ "$EVENT_NAME" != "pull_request" ]]; then
+            workflow=true; checker=true; deps=true
+          else
+            while IFS= read -r file; do
+              case "$file" in
+                tests/conftest.py|tests/shard.py)
+                  workflow=true; checker=true ;;
+                *.md|docs/*)
+                  ;;
+                src/fcn_checker/*|tests/checker/*|config/*|panel_bootstrap.py|launch_checker_panel.*|scripts/build_panel_icon.py)
+                  checker=true ;;
+                src/sp_workflow/*|tests/*|scripts/*)
+                  workflow=true ;;
+                *)
+                  # pyproject、constraints、CI、安裝腳本與沒列到的檔案：全部跑
+                  workflow=true; checker=true; deps=true ;;
+              esac
+            done < <(git diff --name-only "${BASE_SHA}...HEAD")
+          fi
+          echo "workflow=$workflow checker=$checker deps=$deps"
+          {
+            echo "workflow=$workflow"
+            echo "checker=$checker"
+            echo "deps=$deps"
+          } >> "$GITHUB_OUTPUT"
+
   whitespace:
     name: Check patch whitespace
     runs-on: ubuntu-latest
@@ -39,6 +86,8 @@ jobs:
 
   python:
     name: Lint and test (Python ${{ matrix.python-version }})
+    needs: changes
+    if: needs.changes.outputs.workflow == 'true' || needs.changes.outputs.checker == 'true'
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -85,15 +134,45 @@ jobs:
           ruff format --check $LINT_PATHS
 
       # 真實樣本測試只在本機設定 SPW_REAL_SAMPLES_DIR 時執行；CI 自動略過。資料庫測試用上面的 PostgreSQL 服務
-      # 資料庫測試每個都清空同一個測試資料庫，不能平行跑；核對測試（tests/checker）沒有資料庫，平行跑比較快
+      # 資料庫測試每個都清空同一個測試資料庫，不能平行跑；核對測試在下面的 checker job 分 4 份跑
       - name: Test
+        if: needs.changes.outputs.workflow == 'true'
         run: pytest -q --ignore=tests/checker
 
+  checker:
+    name: Test checker ${{ matrix.shard }}/4 (Python ${{ matrix.python-version }})
+    needs: changes
+    if: needs.changes.outputs.checker == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+        shard: [1, 2, 3, 4]
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            constraints.txt
+
+      - name: Install package and dev dependencies
+        run: python -m pip install -c constraints.txt -e ".[dev]"
+
+      # 同一個測試檔一定在同一份，4 份加起來就是全部核對測試（tests/shard.py）
       - name: Test checker
-        run: pytest -q -n auto tests/checker
+        run: pytest -q -n auto tests/checker --shard=${{ matrix.shard }}/4
 
   windows-install:
     name: Windows install resolution (Python 3.11-3.15)
+    needs: changes
+    if: needs.changes.outputs.deps == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Check out repository
