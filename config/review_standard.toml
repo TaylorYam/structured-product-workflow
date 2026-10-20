@@ -5,7 +5,7 @@
 # 每次修改請更新 version 與 effective_date，並在 PR 說明變更原因。
 #
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
-# 規則說明見 docs/rules/review-standard.md。
+# 規則說明見 docs/checker/rules/review-standard.md。
 
 version = 25
 effective_date = 2026-10-19
@@ -617,7 +617,7 @@ GBP = 10000
 ZAR = 100000
 
 [iis]
-# 投資人須知（檔名結尾 _IIS，docs/rules/iis-check-rules.md）：必須剛好 N 頁。
+# 投資人須知（檔名結尾 _IIS，docs/checker/rules/iis-check-rules.md）：必須剛好 N 頁。
 # 使用者 2026-10-08 確認：比外規「不超過 5 頁」嚴格，5 頁也判不一致。
 pages = 4
 

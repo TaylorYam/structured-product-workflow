@@ -1,7 +1,7 @@
 """BARC 說明書合成器：把商品規格（tests/checker/reference_synth.py 的 `ProductSpec`）畫成仿 BARC 中文產品說明書版面的 PDF。
 
 所有數值、代號、名稱皆為虛構；不含任何真實交易資料。版面座標依範本規格
-docs/templates/barc-zh-product-description.md 觀察值設定。PDF 排版用 tests/checker/pdf_writer.py，
+docs/checker/templates/barc-zh-product-description.md 觀察值設定。PDF 排版用 tests/checker/pdf_writer.py，
 參考條件表列用 tests/checker/reference_synth.py、單份核對用 tests/checker/harness.py。
 
 改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的 `Edit`），段落代號：
@@ -652,7 +652,7 @@ def barc_adapter(**overrides: Any) -> Issuer:
     return Issuer(**{**fields, **overrides})
 
 
-# ---------------------------------------------------------------- 投資人須知（docs/templates/barc-zh-iis.md）
+# ---------------------------------------------------------------- 投資人須知（docs/checker/templates/barc-zh-iis.md）
 
 IIS_PAGES = 4  # 審查標準 iis.pages
 
@@ -715,7 +715,7 @@ def build_iis_pdf(
             f"(1) 配息金額：每單位商品面額乘以每月之配息率（為{s.monthly_value}%(顯示至小數點後第4位)，"
             f"即年利率為{s.annual}%）所計算之配息金額。"
         )
-        # 價格表：記憶式商品 KO 欄頭不寫百分比；有 KI 時多一欄「觸及生效價格」（docs/templates/barc-zh-iis.md）
+        # 價格表：記憶式商品 KO 欄頭不寫百分比；有 KI 時多一欄「觸及生效價格」（docs/checker/templates/barc-zh-iis.md）
         ko_head = (
             [
                 "自動提前出場觸發",

@@ -1,4 +1,4 @@
-"""UBS 投資人須知專屬規則（docs/rules/iis-check-rules.md §3 C25）：發行機構的發行分行要是倫敦分行（同說明書）。
+"""UBS 投資人須知專屬規則（docs/checker/rules/iis-check-rules.md §3 C25）：發行機構的發行分行要是倫敦分行（同說明書）。
 
 發行機構名稱本身（瑞士銀行）由共用規則和審查標準 `issuer_name.ubs` 比；發行分行是 UBS 才有的寫法，放這裡（判定與說明書
 `doc.issuing_branch` 共用 `rules.ubs.issuing_branch`）。只用投資人須知的讀出結果，不碰參考條件表；其他檢查點都是各上手共用的

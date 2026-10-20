@@ -1,4 +1,4 @@
-"""BNP 專屬規則（docs/rules/bnp-check-rules.md）：月配息率與年化報酬率、說明書內部交叉驗證、日期表結構、固定值重印。
+"""BNP 專屬規則（docs/checker/rules/bnp-check-rules.md）：月配息率與年化報酬率、說明書內部交叉驗證、日期表結構、固定值重印。
 
 參考條件表欄位、價格推算、審查標準（含 BNP 分節：保證機構、商品種類、最低金額倍數、發行不成立門檻）與回填是各上手
 共用的規則；情境分析見 rules/bnp_scenario.py。只有年利率要讀參考條件表（ADR 0009，見 REFERENCE_FIELDS）。

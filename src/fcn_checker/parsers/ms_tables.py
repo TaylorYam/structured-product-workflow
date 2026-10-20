@@ -1,6 +1,6 @@
 """MS 表格解析：日期表（第一章第 14 項(6)）、價格表（第 16 項與第 18 項重印；以 parsers/price_table.py 讀）、標的表（第 11 項）、費用表（第四章第 2 項）。
 
-擷取文字為「一格一行」的順序（由左到右、由上到下）；以表頭文字與結束錨點定位，不用頁碼（docs/templates/ms-zh-product-description.md §5）。
+擷取文字為「一格一行」的順序（由左到右、由上到下）；以表頭文字與結束錨點定位，不用頁碼（docs/checker/templates/ms-zh-product-description.md §5）。
 """
 
 from __future__ import annotations
@@ -162,7 +162,7 @@ def underlying_table(lines: list[Line]) -> ParsedField:
 def underlying_names(lines: list[Line]) -> ParsedField:
     """第 11 項標的表的名稱欄（依序）：彭博代碼欄左側、表頭以下到「相對權重」之前的文字（名稱可換行，也可能跨頁接在
     下一頁頂端）。多標的時依擷取順序歸到前一個列號（`1`、`2`…）；單一標的沒有列號欄，全部屬於那一列。
-    只用來和投資人須知的標的名稱比對（docs/rules/iis-check-rules.md B12）。"""
+    只用來和投資人須知的標的名稱比對（docs/checker/rules/iis-check-rules.md B12）。"""
     name = "underlying_names_art11"
     table = _art11_table(lines)
     if table is None:

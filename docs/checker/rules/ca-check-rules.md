@@ -221,7 +221,7 @@
 ## 6. 樣本缺口
 
 - 單一標的記憶式、KO 每期＋KI、KO 每期 Non-Call 介於 2 和天期之間、USD／EUR／JPY 以外的幣別：沒有樣本，依規則推得或轉人工覆核。
-- 樣本只有 5 份（`docs/issuer-onboarding.md` §1 建議 ≥ 10 份）；私有 Repo `fcn-oos-samples` 沒有 CA。
+- 樣本只有 5 份（`docs/checker/issuer-onboarding.md` §1 建議 ≥ 10 份）；私有 Repo `fcn-oos-samples` 沒有 CA。
 - 比價日填法（[CA 下單資料格式](../order-formats/ca-fcn-reference.md) §4）依條文推得；探勘用的表比價日欄空白，實作後以回填結果請作業人員確認。
 
 ## 7. 建議實作方式

@@ -57,7 +57,7 @@ spw-panel
 核對程式（`src/fcn_checker/`，原 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker)）把中文產品說明書與中文投資人須知 PDF 跟參考條件表逐欄比對：14 家上手、固定規則、不使用 LLM。同一檔的兩份都通過或人工放行，才輸出到核對結果檔的「回填後」（`TS/IIS完成檢核` 打 `V`，回填 ISIN、發行日、比價日；VWAP 商品另回填各標的價格）；沒通過的每條錯訊列在「錯誤清單」。上面的「放回資料夾」讀的就是這份核對結果檔。
 
 1. 雙擊「FCN Workflow」捷徑開核對 PANEL：選參考條件表，再選批次資料夾裡的 `<TDCC>_TS.pdf`、`<TDCC>_IIS.pdf`，按「載入／重新載入預覽」→「開始核對」。看過錯訊認定沒問題的可以「人工放行」，最後按「儲存核對結果…」。
-2. 指令版：`fcn-batch <參考條件表.xlsx> <PDF…> --out <輸出資料夾>`，一次完成預覽、核對與儲存，不能人工放行。結束碼 0 全部通過、1 有不一致或需人工覆核、2 錯誤。
+2. 指令版：`fcn-batch <參考條件表.xlsx> <PDF…> --out <輸出資料夾>`，一次完成預覽、核對與儲存，不能人工放行。結束碼 0 是已涵蓋的規則全部通過（沒涵蓋的項目仍要人工看）、1 有不一致或需人工覆核（含未支援上手）、2 錯誤。
 3. 每次儲存另寫一份內部核對紀錄（程式版本、設定與每份 PDF 的指紋、逐項結果），PANEL 寫在安裝資料夾的 `runtime/核對紀錄/`，指令版寫在執行目錄的 `runtime/核對紀錄/`。
 
 規則、範本、支援範圍、參考條件表格式與核對的 ADR 見 [docs/checker/](docs/checker/README.md)（只有中文，裡面的 Issue 編號指原 repo）；新增上手或範本改版依[新增上手流程](docs/checker/issuer-onboarding.md)。
@@ -227,7 +227,7 @@ After checking and saving the checker result workbook, switch to the 放回資�
 The checker (`src/fcn_checker/`, formerly [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker)) compares the Chinese term sheet and investor information sheet PDFs field by field with the reference workbook: 14 issuers, fixed rules, no LLM. Only when both documents of a product pass or are manually released does the product go to the result workbook's 回填後 sheet (`TS/IIS完成檢核` = `V`, with ISIN, issue date, and observation dates backfilled, plus underlying prices for VWAP products); every error for a failed document is listed on 錯誤清單. Returning to folders (above) reads this result workbook.
 
 1. Double-click the "FCN Workflow" shortcut to open the checker PANEL: choose the reference workbook, then the batch folder's `<TDCC>_TS.pdf` and `<TDCC>_IIS.pdf`, and press 載入／重新載入預覽 then 開始核對. After reviewing the errors, a document can be released manually (人工放行); finally press 儲存核對結果….
-2. Command line: `fcn-batch <reference.xlsx> <PDFs…> --out <output folder>` previews, checks, and saves in one go, without manual release. Exit code 0 means all passed, 1 mismatch or review required, 2 error.
+2. Command line: `fcn-batch <reference.xlsx> <PDFs…> --out <output folder>` previews, checks, and saves in one go, without manual release. Exit code 0 means every covered rule passed (uncovered items still need a person), 1 mismatch or review required (including unsupported issuers), 2 error.
 3. Each save also writes an internal check record (program version, configuration and PDF hashes, per-item results): the PANEL writes to the install folder's `runtime/核對紀錄/`, the command line to `runtime/核對紀錄/` under the working directory.
 
 Rules, templates, support scope, the reference workbook format, and the checker's ADRs are in [docs/checker/](docs/checker/README.md) (Chinese only; issue numbers there refer to the original repository). For a new issuer or template version, follow the [issuer onboarding flow](docs/checker/issuer-onboarding.md).

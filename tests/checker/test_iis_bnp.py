@@ -1,4 +1,4 @@
-"""BNP 中文投資人須知（Issue #197）：docs/templates/bnp-zh-iis.md、docs/rules/iis-check-rules.md §3 BNP 欄。
+"""BNP 中文投資人須知（Issue #197）：docs/checker/templates/bnp-zh-iis.md、docs/checker/rules/iis-check-rules.md §3 BNP 欄。
 
 合成 PDF 經公開批量入口核對（說明書＋投資人須知＋參考條件表一列）；商品、標的與價格皆虛構。
 """

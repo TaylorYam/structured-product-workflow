@@ -1,7 +1,7 @@
 """SG 表格解析：封面兩欄表、標的表（第一章 §8 末與 §15 重印）、日期表（§12）、費用表（第四章 §2）。
 
 擷取文字為「一格一行」；新版面長數字會拆成兩行（`12,345.0` / `000日圓`）。價格表以 parsers/price_table.py 讀
-（docs/templates/sg-zh-product-description.md §5）。
+（docs/checker/templates/sg-zh-product-description.md §5）。
 """
 
 from __future__ import annotations

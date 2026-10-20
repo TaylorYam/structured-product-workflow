@@ -1,6 +1,6 @@
 """BARC 中文產品說明書 parser（範本 barc-zh-pd）。
 
-依 docs/templates/barc-zh-product-description.md：以「章＋條號＋子項＋標籤」定位，
+依 docs/checker/templates/barc-zh-product-description.md：以「章＋條號＋子項＋標籤」定位，
 取得標準化欄位與證據。抓不到 → missing；多個不同值 → ambiguous；不猜值。
 """
 

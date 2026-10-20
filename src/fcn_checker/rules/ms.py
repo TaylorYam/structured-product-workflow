@@ -1,4 +1,4 @@
-"""MS 專屬規則（docs/rules/ms-check-rules.md）：月配息率與年化報酬率、說明書內部交叉驗證、日期表結構。
+"""MS 專屬規則（docs/checker/rules/ms-check-rules.md）：月配息率與年化報酬率、說明書內部交叉驗證、日期表結構。
 
 參考條件表欄位、價格推算、審查標準與回填是各上手共用的規則；情境分析見 rules/ms_scenario.py。
 只有年利率要讀參考條件表（ADR 0009，見 REFERENCE_FIELDS）。抓不到、歧義或寫法不在範本規格內一律轉人工覆核。

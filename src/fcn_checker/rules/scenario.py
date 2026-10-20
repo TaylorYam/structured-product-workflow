@@ -1,4 +1,4 @@
-"""情境分析的共用規則：重印價格表、情境假設值、較差情境寫出的價格（Issue #294；docs/rules/shared-check-rules.md §7）。
+"""情境分析的共用規則：重印價格表、情境假設值、較差情境寫出的價格（Issue #294；docs/checker/rules/shared-check-rules.md §7）。
 
 只讀標準欄位，範本沒有（上手交出 absent）的那一塊不產生結果：
 

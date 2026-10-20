@@ -1,4 +1,4 @@
-"""BBVA 中文產品說明書（docs/templates/bbva-zh-product-description.md）：章＋條號＋標籤定位，保留原文證據。
+"""BBVA 中文產品說明書（docs/checker/templates/bbva-zh-product-description.md）：章＋條號＋標籤定位，保留原文證據。
 
 沒有獨立封面：第 1 頁是編號清單 1.～14.（商品代號、ISIN 只在這裡，沒有發行機構名稱欄），第 2 頁末是刊印日期。
 章名「一、商品基本資料」～「六、存託憑證條款相關說明」（沒有「第N章」）；條號「N.」x≈28。每頁頁底只有「N/M」頁碼。

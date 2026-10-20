@@ -1,8 +1,8 @@
 # FCN Term Sheet Checker
 
-> **2026-10-20 起已併入 structured-product-workflow**（[ADR 0005](../adr/0005-merge-checker-into-workflow.md)）。程式在 `src/fcn_checker/`，設定在根目錄 `config/`，測試在 `tests/checker/`；安裝、開發規則與總覽見根目錄 [README](../../README.md)、[AGENTS](../../AGENTS.md)。本資料夾的核對文件只有中文，沿用原專案內容。文件與程式註解裡的 Issue／PR 編號（例如 Issue #199）指的是原本的 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) repo，不是本 repo。
+> **2026-10-20 起已併入 structured-product-workflow**（本專案 [ADR 0005](../adr/0005-merge-checker-into-workflow.md)）。程式在 `src/fcn_checker/`，設定在根目錄 `config/`，測試在 `tests/checker/`；安裝、開發規則與總覽見根目錄 [README](../../README.md)、[AGENTS](../../AGENTS.md)。本資料夾的核對文件只有中文，沿用原專案內容。文件與程式註解裡的 Issue／PR 編號（例如 Issue #199）指的是原本的 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) repo，不是本 repo。
 >
-> **Merged into structured-product-workflow on 2026-10-20** ([ADR 0005](../adr/0005-merge-checker-into-workflow.md)). Code is in `src/fcn_checker/`, configuration in the root `config/`, tests in `tests/checker/`; see the root [README](../../README.md) and [AGENTS](../../AGENTS.md) for setup and development rules. The checker documents in this folder are Chinese-only, carried over from the original project. Issue/PR numbers in these documents and in code comments (for example Issue #199) refer to the original [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) repository, not this one.
+> **Merged into structured-product-workflow on 2026-10-20** (this repository's [ADR 0005](../adr/0005-merge-checker-into-workflow.md)). Code is in `src/fcn_checker/`, configuration in the root `config/`, tests in `tests/checker/`; see the root [README](../../README.md) and [AGENTS](../../AGENTS.md) for setup and development rules. The checker documents in this folder are Chinese-only, carried over from the original project. Issue/PR numbers in these documents and in code comments (for example Issue #199) refer to the original [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) repository, not this one.
 
 FCN Term Sheet 自動核對專案：將條款文件與已確認的下單資料轉成相同資料結構，以可追溯規則產生差異與人工覆核清單。
 

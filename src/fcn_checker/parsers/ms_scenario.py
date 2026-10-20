@@ -1,4 +1,4 @@
-"""MS 第一章第 18 項情境分析：假設、重印價格表與各情境的算式（docs/templates/ms-zh-product-description.md §6、§7）。
+"""MS 第一章第 18 項情境分析：假設、重印價格表與各情境的算式（docs/checker/templates/ms-zh-product-description.md §6、§7）。
 
 只擷取文件上寫的值與原文行；核對在 rules/ms_scenario.py。抓不到的值為 None，由規則轉人工覆核。
 """

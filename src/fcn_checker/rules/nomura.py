@@ -1,4 +1,4 @@
-"""Nomura 專屬規則（docs/rules/nomura-check-rules.md）：每期配息率與年利率、說明書內部交叉驗證、日期表結構、情境投資單位數
+"""Nomura 專屬規則（docs/checker/rules/nomura-check-rules.md）：每期配息率與年利率、說明書內部交叉驗證、日期表結構、情境投資單位數
 與百分比表。第 14 項設定參數的年期、面額、固定配息率與投資金額算式的面額、發行價格由共用情境規則（rules/scenario.py，
 Issue #294）核對。
 

@@ -1,4 +1,4 @@
-"""BARC 專屬核對規則（docs/rules/barc-check-rules.md）：說明書內部規則與審查標準。
+"""BARC 專屬核對規則（docs/checker/rules/barc-check-rules.md）：說明書內部規則與審查標準。
 
 參考條件表欄位的比對見 rules/reference.py（各上手共用）；共用工具見 rules/kit.py。
 規則只接收標準化後的說明書欄位與審查標準；不讀檔、不改來源值。

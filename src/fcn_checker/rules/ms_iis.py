@@ -1,4 +1,4 @@
-"""MS 投資人須知專屬規則（docs/rules/iis-check-rules.md §3 D36、D37）：開始受理贖回日期 = 說明書、商品種類依標的數。
+"""MS 投資人須知專屬規則（docs/checker/rules/iis-check-rules.md §3 D36、D37）：開始受理贖回日期 = 說明書、商品種類依標的數。
 
 只用投資人須知讀出結果與同商品 MS 說明書的讀出結果（可讀 MS parser 的專屬欄位），不碰參考條件表；
 其他檢查點都是各上手共用的投資人須知規則（rules/iis.py、review_standard.iis_review_standard_rules）。

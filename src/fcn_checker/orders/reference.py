@@ -1,4 +1,4 @@
-"""參考條件表 adapter：多列表格，每列一檔商品（docs/order-formats/reference-sheet.md）。
+"""參考條件表 adapter：多列表格，每列一檔商品（docs/checker/order-formats/reference-sheet.md）。
 
 依格式設定把各列轉成標準欄位（`OrderRecord`），同時記下每個欄位的 Excel 欄名與儲存格位置，供核對結果與回填使用。
 標準欄位名怎麼組（`underlying_{i}`、`underlying_{i}_{價格}`、`autocall_date_{n}`）只在這裡定義，規則用型別化的讀法。

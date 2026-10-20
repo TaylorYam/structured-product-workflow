@@ -1,4 +1,4 @@
-"""Nomura 中文投資人須知（Issue #239）：docs/templates/nomura-zh-iis.md、docs/rules/iis-check-rules.md §3 Nomura 欄。
+"""Nomura 中文投資人須知（Issue #239）：docs/checker/templates/nomura-zh-iis.md、docs/checker/rules/iis-check-rules.md §3 Nomura 欄。
 
 合成 PDF 經公開批量入口核對（說明書＋投資人須知＋參考條件表一列）；商品、標的與價格皆虛構。
 """

@@ -1,4 +1,4 @@
-"""審查標準規則：各上手共用，依上手代號取得已解析的審查標準（docs/rules/review-standard.md）。
+"""審查標準規則：各上手共用，依上手代號取得已解析的審查標準（docs/checker/rules/review-standard.md）。
 
 只用說明書標準欄位、全文索引與審查標準；參考條件表只有禁用語特例要看的交易日，由呼叫端傳入。對外只有兩個進入點：說明書的 `review_standard_rules`，
 與投資人須知的 `iis_review_standard_rules`（只核對範本有的項目，ADR 0007）。
@@ -54,7 +54,7 @@ def _approval_date(ctx: Context) -> CheckResult:
     )
 
 
-# ---------------------------------------------------------------- 審查標準：說明書各出處（各上手共用，語意見 docs/rules/review-standard.md）
+# ---------------------------------------------------------------- 審查標準：說明書各出處（各上手共用，語意見 docs/checker/rules/review-standard.md）
 
 
 def _denomination(ctx: Context) -> CheckResult:

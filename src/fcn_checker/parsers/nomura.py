@@ -1,4 +1,4 @@
-"""Nomura 中文產品說明書（docs/templates/nomura-zh-product-description.md）：章＋條號＋子項＋標籤定位，保留原文證據。
+"""Nomura 中文產品說明書（docs/checker/templates/nomura-zh-product-description.md）：章＋條號＋子項＋標籤定位，保留原文證據。
 
 章名「一、商品基本資料」（中文數字＋頓號，五章）；第一章條號「N.」在左邊界（1.～9. 獨立一行、標題在下一行，10. 以後與標題
 同一行），共 21 條；封面以「◎ 標籤：值」分項。每頁頁首「N/M」不算內文。日期、數字在去空白的全文索引上比對（2025 年文件

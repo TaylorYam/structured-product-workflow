@@ -4,7 +4,7 @@
 - 參考條件表：[參考條件表格式](../order-formats/reference-sheet.md)（設定檔 `config/reference_sheet.toml`，[ADR 0008](../adr/0008-reference-sheet-and-import-format.md)）。
 - 標準欄位：`src/fcn_checker/standard_fields.py`；新上手要交出哪些欄位見[新增上手實作規範](../issuer-onboarding.md) §6.2a。
 - 會隨時間改變的基準（審查通過日期、固定警語、負責人、名稱格式、面額預設值、費率等）見[審查標準](review-standard.md)；投資人須知的共用規則見[投資人須知核對規則](iis-check-rules.md)。
-- 各上手專屬的說明書內部規則見各上手的核對規則文件（`docs/rules/<上手>-check-rules.md`）。
+- 各上手專屬的說明書內部規則見各上手的核對規則文件（`docs/checker/rules/<上手>-check-rules.md`）。
 - 本文件的內容原本寫在 [BARC 核對規則](barc-check-rules.md)（§3.4、§3.6、§3.8、§4、§9），2026-10-15 搬出；規則本身沒有改變。
 
 ## 1. 判定原則

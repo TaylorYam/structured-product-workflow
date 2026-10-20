@@ -1,4 +1,4 @@
-"""JPM 中文投資人須知（docs/templates/jpm-zh-iis.md）：段落標題＋標籤定位，一律在去空白的全文上讀。
+"""JPM 中文投資人須知（docs/checker/templates/jpm-zh-iis.md）：段落標題＋標籤定位，一律在去空白的全文上讀。
 
 依 5 份真實樣本建立（同說明書 JP1–JP5）。每頁頁碼「N/4」。KO／KI 寫法只在「二、境外結構型商品事項」到「三、投資風險」之間
 判斷，句型同說明書第 8 項（parsers/jpm.py 的 `ko_wording`、`ko_memory`、`ki_type`）；價格表同說明書第 9 項（`jpm.PRICE_TABLE`）。

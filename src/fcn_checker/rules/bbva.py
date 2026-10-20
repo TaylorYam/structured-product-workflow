@@ -1,4 +1,4 @@
-"""BBVA 專屬規則（docs/rules/bbva-check-rules.md）：配息率（KO 每日／每期兩種寫法）、說明書內部交叉驗證、日期表（KO 每日／
+"""BBVA 專屬規則（docs/checker/rules/bbva-check-rules.md）：配息率（KO 每日／每期兩種寫法）、說明書內部交叉驗證、日期表（KO 每日／
 每期兩種）、價格表表頭、記憶式與下限值寫法的一致性。第 16 項情境價格表、情境假設與情境二～四第 1 期配息率由共用情境規則
 （rules/scenario.py，Issue #294）核對。
 

@@ -1,4 +1,4 @@
-"""Citi 中文投資人須知（docs/templates/citi-zh-iis.md）：段落標題＋標籤定位，一律在去空白的全文上讀。
+"""Citi 中文投資人須知（docs/checker/templates/citi-zh-iis.md）：段落標題＋標籤定位，一律在去空白的全文上讀。
 
 依 8 份真實樣本建立（同說明書 CT1–CT8）。每頁頁首「第N頁，共4頁」。KO／KI 寫法與「記憶式」用字只在「二、商品事項」到
 「三、投資風險」之間判斷，KI 句型同說明書第 8 項（parsers/citi.py 的 `ki_type`）；三、投資風險也有類似句子。

@@ -1,4 +1,4 @@
-"""CA 專屬規則（docs/rules/ca-check-rules.md）：月配息率與其他出處、說明書內部交叉驗證、配息表與 KO 觀察日表（KO 每日／
+"""CA 專屬規則（docs/checker/rules/ca-check-rules.md）：月配息率與其他出處、說明書內部交叉驗證、配息表與 KO 觀察日表（KO 每日／
 每期兩種）、多標的非記憶式、贖回 % 與情境重複寫出的贖回 %（Issue #319）。情境基本假設、情境價格表與情境重複寫出的
 配息率、面額、配息月數由共用情境規則（rules/scenario.py，Issue #294）核對。
 

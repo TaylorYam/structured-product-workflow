@@ -1,4 +1,4 @@
-"""Citi 專屬規則（docs/rules/citi-check-rules.md）：配息率與年息、說明書內部交叉驗證、日期表結構。
+"""Citi 專屬規則（docs/checker/rules/citi-check-rules.md）：配息率與年息、說明書內部交叉驗證、日期表結構。
 
 第 15 項假設價格表、假設 d) 與各情境的配息率、假設 d) 的年息由共用情境規則（rules/scenario.py，Issue #294）核對。
 

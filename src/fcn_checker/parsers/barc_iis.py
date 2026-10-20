@@ -1,4 +1,4 @@
-"""BARC 中文投資人須知（docs/templates/barc-zh-iis.md）：段落標題＋點號＋標籤定位，價格表以 parsers/price_table.py 讀。
+"""BARC 中文投資人須知（docs/checker/templates/barc-zh-iis.md）：段落標題＋點號＋標籤定位，價格表以 parsers/price_table.py 讀。
 
 依 8 份真實樣本建立（單一／多標的、有無 KI、記憶式與否、USD／CNH）：價格表只讀認得的欄（樣本以外的欄頭或文字
 不再整張轉人工覆核，Issue #288）；價格個數不符、必要欄缺漏仍轉人工覆核。記憶式商品的 KO 欄頭不寫百分比（「為最初價格乘以自動提前出場觸發百分比」），

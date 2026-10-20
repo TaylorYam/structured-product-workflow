@@ -202,7 +202,7 @@ Issue #294 起，情境價格表（`scenario.reprint`）、基本假設的年期
 ## 6. 樣本缺口
 
 - **單一標的**（DBS 沒有任何單一標的樣本，2026-10-15 確認）、USD／AUD／JPY 以外的幣別、非美股標的、Non-Call ≥ 3、KO % ≠ 100：沒有樣本，依規則推得或轉人工覆核。
-- 樣本只有 4 份（`docs/issuer-onboarding.md` §1 建議 ≥ 10 份）；私有 Repo `fcn-oos-samples` 沒有 DBS。
+- 樣本只有 4 份（`docs/checker/issuer-onboarding.md` §1 建議 ≥ 10 份）；私有 Repo `fcn-oos-samples` 沒有 DBS。
 - 比價日填法（[DBS 下單資料格式](../order-formats/dbs-fcn-reference.md) §4）依條文推得；探勘用的表比價日欄空白，實作後以回填結果請作業人員確認。
 
 ## 7. 建議實作方式

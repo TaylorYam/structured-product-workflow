@@ -1,10 +1,10 @@
-"""SG 合成說明書（docs/templates/sg-zh-product-description.md）；商品、標的與價格皆虛構。
+"""SG 合成說明書（docs/checker/templates/sg-zh-product-description.md）；商品、標的與價格皆虛構。
 
 只用 tests/checker/pdf_writer.py 排版：封面兩欄表（標籤 x 100、值 x 270）；章名「一、商品基本資料」；第一章條號「N.」x 28、標題在
 同一列 x 50；子項「(n) …」x 50；表格一格一行。`legacy=True` 模擬舊版面（數字與單位、年月日之間有空白）。
 改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`、第一章各條 `ts.art{n}`
 （標的表 `ts.art8.table`、日期表 `ts.art12.table`、重印表 `ts.art15.table`、情境 `ts.scen.一`…）、其他各章 `ts.ch二`～`ts.ch五`。
-投資人須知（docs/templates/sg-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
+投資人須知（docs/checker/templates/sg-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
 段落代號 `iis.cover`、`iis.warn`（警語一～十）、`iis.org`（壹、相關機構）、`iis.summary`（商品簡介；標的表
 `iis.summary.table`）、`iis.coupon`（收益分配事項）、`iis.risk`、`iis.fees`、`iis.rest`。
 """
@@ -360,7 +360,7 @@ def _scenarios(d: _Doc, s: Spec) -> None:
 
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
-    """SG 中文投資人須知（docs/templates/sg-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
+    """SG 中文投資人須知（docs/checker/templates/sg-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
     d = _Doc(edits, "iis", used)
     w = d.w
     unit, worst = s.currency_zh, ("最差表現之連結標的" if s.count > 1 else "連結標的")

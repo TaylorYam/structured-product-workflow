@@ -1,4 +1,4 @@
-"""Natixis 中文投資人須知（docs/templates/natixis-zh-iis.md）：段落標題＋標籤定位，句型在去空白的全文上讀。
+"""Natixis 中文投資人須知（docs/checker/templates/natixis-zh-iis.md）：段落標題＋標籤定位，句型在去空白的全文上讀。
 
 依 8 份真實樣本建立（同說明書 NX1–NX8）。每頁頁底「第N頁/共M頁」與分類標記（`C1 - Public Natixis`、`C2 - Internal
 Natixis`）；第 1 頁第一行是標題與「刊印日期：」（同一行），中文名稱「(下稱「本商品」)」後緊接英文名稱。章名「壹、相關機構」

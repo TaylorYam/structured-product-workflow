@@ -1,4 +1,4 @@
-"""Natixis 專屬規則（docs/rules/natixis-check-rules.md）：月配息率與年利率其他出處、說明書內部交叉驗證、重複寫出的值、日期表（KO 每日／
+"""Natixis 專屬規則（docs/checker/rules/natixis-check-rules.md）：月配息率與年利率其他出處、說明書內部交叉驗證、重複寫出的值、日期表（KO 每日／
 每期兩種）、第 9 項價格表表頭、空白的受託機構商品代號。第 16 項情境價格表、情境假設與情境重複寫出的面額、年利率、實物交割
 算式的執行價格由共用情境規則（rules/scenario.py，Issue #294）核對。
 

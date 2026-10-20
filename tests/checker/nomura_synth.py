@@ -1,4 +1,4 @@
-"""Nomura 合成說明書（docs/templates/nomura-zh-product-description.md）；商品、標的與價格皆虛構。
+"""Nomura 合成說明書（docs/checker/templates/nomura-zh-product-description.md）；商品、標的與價格皆虛構。
 
 只用 tests/checker/pdf_writer.py 排版：封面「◎ 標籤：值」（標籤 x 45、跨行的值 x 159）；章名「一、商品基本資料」x 45；第一章條號「N.」
 x 45（1.～9. 獨立一行、10. 以後與標題同一行）、內文 x 70；表格一格一個文字單位（同一列同一高度）；每頁頁首「N/M」。
@@ -6,7 +6,7 @@ x 45（1.～9. 獨立一行、10. 以後與標題同一行）、內文 x 70；�
 改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`、`ts.warn`（封面警語）、第一章各條 `ts.art{n}`
 （標的表 `ts.art7.table`、日期表 `ts.art11.table`、下限觸發決定日表 `ts.art11.ki`、情境設定參數與百分比表
 `ts.art14.table`）、其他各章 `ts.ch二`～`ts.ch五`。
-投資人須知（docs/templates/nomura-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
+投資人須知（docs/checker/templates/nomura-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
 每頁頁碼「N/4」；段落代號 `iis.cover`、`iis.warn`（警語(一)～(十二)）、`iis.org`（第一 相關機構）、`iis.summary`（第二 商品簡介）、
 `iis.coupon`（第三 收益分配事項）、`iis.redeem`（第四、第五）、`iis.fees`（第七）、`iis.rest`（其他）。
 """
@@ -704,7 +704,7 @@ def _page_marks(doc: fitz.Document, x: float) -> None:
 
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
-    """Nomura 中文投資人須知（docs/templates/nomura-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
+    """Nomura 中文投資人須知（docs/checker/templates/nomura-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
     d = _Doc(edits, set() if used is None else used, "iis", width=575)
     w = d.w
     worst = "表現最差之連結標的" if s.basket else "連結標的"
