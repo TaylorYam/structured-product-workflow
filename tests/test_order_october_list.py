@@ -1,8 +1,8 @@
 """Order 條件讀取對照 10 月清單（#52）：只在本機設定 SPW_ORDER_CHECK_DIR 時執行，用真的 Outlook 開信，CI 自動略過。
 
 把 2026-10-20 的人工比對變成回歸測試：重跑私人樣本倉庫裡每個 `Order問題信件_*` 回報包，
-格式表逐欄對照作業人員確認過的 10 月清單，抓「無聲錯誤」——格子有值、沒標淺紅底，但和清單不同。
-已標淺紅底的格子、待確認列裡留空的格子交給人工，不算錯。
+格式表逐欄對照作業人員確認過的 10 月清單，抓「無聲錯誤」——格子沒標淺紅底，但和清單不同（含已讀取列漏值）。
+已標淺紅底的格子，以及整列有問題（TDCC 那格標紅）的待確認列裡留空的格子交給人工，不算錯。
 
 真實資料不進 repo；這裡只有欄位對應與允許清單（TDCC 與欄名）。
 """
@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 from openpyxl import load_workbook
 
+from sp_workflow.daily_import import BARRIER_TYPES, KO_TYPES  # ELN待建檔格式的代碼 → 格式表的寫法
 from sp_workflow.order_template import COLUMNS as TEMPLATE_COLUMNS
 from sp_workflow.order_terms import PENDING, read_orders
 
@@ -30,8 +31,8 @@ pytestmark = [
 ANSWER_FILE = "10月清單(用來核對order專案).xlsx"  # ELN待建檔格式，第 1 列表頭
 PACK_GLOB = "Order問題信件_*"
 
-# 格式表欄 → 10 月清單欄（值直接比）
-DIRECT = {
+# 格式表欄 → 10 月清單欄（值直接比）；KO Type、Barrier Type、價格另外換算
+LIST_COLUMNS = {
     "Product": "Product",
     "Currency": "計價幣別",
     "Guaranteed Periods (m)": "Non-Call(月)",
@@ -47,16 +48,7 @@ DIRECT = {
     "Maturity date": "到期日",
     "期初價格": "期初定價",
 }
-# (KO(Freq), KO(memo)) → KO Type
-KO_TYPES = {
-    ("D", "N"): "Daily",
-    ("D", "Y"): "Daily Memory",
-    ("P", "N"): "Period End",
-    ("P", "Y"): "Period End Memory",
-}
-# KI(Freq) → Barrier Type
-BARRIER_TYPES = {"-": "NONE", "AM": "EKI", "D": "AKI"}
-PRICE = "Upfront / NotePrice (%)"  # = 100 − UF
+PRICE_COLUMN = "Upfront / NotePrice (%)"  # = 100 − UF
 
 _UBS_DATES = "UBS Order 原文的日期與最終資料不同（發行日、最終比價日、到期日三個一起）"
 # Order 原文與最終資料本來就不同（清單是事後更正過的值），程式照原文讀是對的
@@ -70,8 +62,14 @@ KNOWN = {
     ("092001742900", "Final valuation date"): _UBS_DATES,
     ("092001742900", "Maturity date"): _UBS_DATES,
 }
+# 樣本回報包裡本來就讀不出格式表列的商品；其他檔讀不出列就算退步
+NO_TEMPLATE = {
+    "328000195113": "樣本商品資料夾裡沒有 (Order) 原信",
+    "328000195218": "樣本商品資料夾裡沒有 (Order) 原信",
+}
 
 _COLUMN_INDEX = {c.header.strip(): i for i, c in enumerate(TEMPLATE_COLUMNS)}
+_TDCC_INDEX = 0  # 整列的問題標在 TDCC 那格
 
 
 def _check_dir() -> Path:
@@ -95,17 +93,21 @@ def _norm(value: object) -> object:
     return value
 
 
+def _code(value: object) -> str:
+    return str(value or "").strip()
+
+
 def _expected(answer: dict[str, object]) -> dict[str, object]:
-    want = {column: _norm(answer.get(name)) for column, name in DIRECT.items()}
-    want["KO Type"] = KO_TYPES.get((answer.get("KO(Freq)"), answer.get("KO(memo)")))
-    want["Barrier Type"] = BARRIER_TYPES.get(answer.get("KI(Freq)"))
-    uf = answer.get("UF")
-    want[PRICE] = _norm(100 - uf) if isinstance(uf, (int, float)) else None
+    want = {column: _norm(answer.get(name)) for column, name in LIST_COLUMNS.items()}
+    want["KO Type"] = KO_TYPES.get((_code(answer.get("KO(Freq)")), _code(answer.get("KO(memo)"))))
+    want["Barrier Type"] = BARRIER_TYPES.get(_code(answer.get("KI(Freq)")))
+    uf = _norm(answer.get("UF"))
+    want[PRICE_COLUMN] = _norm(100 - uf) if isinstance(uf, Decimal) else None
     return want
 
 
 def _answers(path: Path) -> dict[str, list[dict[str, object]]]:
-    """TDCC → 清單裡的列（同一檔可能因通路不同出現多列，商品條件相同）。"""
+    """TDCC → 清單換算後的期望值（同一檔可能因通路不同出現多列，商品條件應該相同）。"""
     wb = load_workbook(path, read_only=True, data_only=True)
     try:
         rows = wb.worksheets[0].iter_rows(values_only=True)
@@ -129,9 +131,9 @@ def test_order_terms_match_october_list(tmp_path: Path) -> None:
     packs = sorted(p for p in root.glob(PACK_GLOB) if p.is_dir())
     assert packs, f"{root} 底下沒有 {PACK_GLOB} 回報包"
 
-    silent: list[str] = []
-    missing: list[str] = []
-    compared = 0
+    problems: list[str] = []
+    used: set[tuple[str, str]] = set()
+    templated: set[str] = set()
     for pack in packs:
         tdccs = sorted(p.name for p in pack.iterdir() if p.is_dir() and re.fullmatch(r"\d{12}", p.name))
         if not tdccs:
@@ -141,24 +143,36 @@ def test_order_terms_match_october_list(tmp_path: Path) -> None:
         receipt = read_orders("\n".join(tdccs), pack, out)
         for row in receipt.rows:
             if not row.template:  # 找不到 Order、未支援上手：沒有格式表列
+                if row.tdcc not in NO_TEMPLATE:
+                    problems.append(f"{pack.name} {row.tdcc} [{row.status}] 讀不出格式表列：{row.reasons}")
                 continue
+            templated.add(row.tdcc)
             wants = answers.get(row.tdcc)
             if not wants:
-                missing.append(f"{pack.name} {row.tdcc}")
+                problems.append(f"{pack.name} {row.tdcc} 10 月清單沒有這檔，無法核對")
                 continue
-            compared += 1
-            for column in wants[0]:
+            want = wants[0]
+            conflicts = [c for c in want if any(w[c] != want[c] for w in wants)]
+            if conflicts:
+                problems.append(f"{row.tdcc} 在 10 月清單有多列但條件不一致，無法核對：{'、'.join(conflicts)}")
+                continue
+            row_flagged = _TDCC_INDEX in row.flagged
+            for column, expected in want.items():
                 index = _COLUMN_INDEX[column]
                 got = _norm(row.template[index])
-                if any(got == want[column] for want in wants):
+                if got == expected or index in row.flagged:
                     continue
-                if index in row.flagged or (row.tdcc, column) in KNOWN:
+                if (row.tdcc, column) in KNOWN:
+                    used.add((row.tdcc, column))
                     continue
-                if got is None and row.status == PENDING:  # 待確認列留空的格子本來就要人補
+                if got is None and row.status == PENDING and row_flagged:  # 整列待人工補
                     continue
-                shown = " / ".join(repr(w[column]) for w in wants)
-                silent.append(f"{pack.name} {row.tdcc} [{row.status}] {column}：程式 {got!r}，清單 {shown}")
+                problems.append(
+                    f"{pack.name} {row.tdcc} [{row.status}] {column}：程式 {got!r}，清單 {expected!r}（沒標淺紅底）"
+                )
 
-    assert not missing, "10 月清單沒有這些 TDCC，無法核對：\n" + "\n".join(missing)
-    assert compared, "沒有任何一檔讀出格式表列（Outlook 是否能開信？）"
-    assert not silent, f"有 {len(silent)} 格沒標淺紅底但和 10 月清單不同：\n" + "\n".join(silent)
+    # 允許清單過時（樣本裡有這檔，但那格已經對了或已標紅）要拿掉，免得之後的錯誤被放過
+    problems += [f"KNOWN 過時：{t} {c}" for t, c in KNOWN if t in templated and (t, c) not in used]
+    problems += [f"NO_TEMPLATE 過時：{t} 已讀出格式表列" for t in NO_TEMPLATE if t in templated]
+    assert templated, "沒有任何一檔讀出格式表列（Outlook 是否能開信？）"
+    assert not problems, f"有 {len(problems)} 個問題：\n" + "\n".join(problems)

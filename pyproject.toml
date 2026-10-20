@@ -34,7 +34,7 @@ sp_workflow = ["migrations/*.sql"]
 testpaths = ["tests"]
 addopts = "-ra"
 markers = [
-    "real_samples: 只在本機設定 SPW_REAL_SAMPLES_DIR 時執行；CI 自動略過",
+    "real_samples: 只在本機設定 SPW_REAL_SAMPLES_DIR 或 SPW_ORDER_CHECK_DIR 時執行；CI 自動略過",
     "word: 需要 Windows 與 Microsoft Word；CI 自動略過",
     "db: 需要測試用 PostgreSQL（設定 SPW_TEST_DSN）；沒設定時略過",
 ]
