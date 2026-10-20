@@ -191,7 +191,7 @@ def test_remembered_size_never_exceeds_the_screen(tmp_path: Path) -> None:
 
 
 def test_both_entry_points_open_the_merged_window(monkeypatch) -> None:
-    """雙擊入口用安裝資料夾的設定開同一個視窗；核對的入口（`fcn-panel`、核對捷徑）停在核對頁。"""
+    """雙擊入口用安裝資料夾的設定開同一個視窗；核對的入口（`fcn-panel`、`launch_checker_panel.pyw`）停在核對頁。"""
     opened = []
     monkeypatch.setattr(app, "main", lambda argv, **kwargs: opened.append((argv, kwargs)))
     monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: pytest.fail(f"啟動失敗：{a}"))

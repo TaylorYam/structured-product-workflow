@@ -22,7 +22,7 @@ try {
     try {
         # 桌面與專案資料夾各放一個捷徑；捷徑記錄本機完整路徑，不進 Git
         $shell = New-Object -ComObject WScript.Shell
-        $project = [IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\') + '\'
+        $projectPrefix = [IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\') + '\'
         foreach ($folder in @([Environment]::GetFolderPath('Desktop'), $PSScriptRoot)) {
             $shortcut = $shell.CreateShortcut((Join-Path $folder 'FCN Workflow.lnk'))
             $shortcut.TargetPath = Join-Path $PSScriptRoot '.venv\Scripts\pythonw.exe'
@@ -31,14 +31,18 @@ try {
             $shortcut.Description = 'FCN Workflow'
             $shortcut.IconLocation = (Join-Path $PSScriptRoot 'src\fcn_checker\assets\panel.ico') + ',0'
             $shortcut.Save()
-            # 合併前另建的「TS IIS 準備與放回」：只刪指向本專案資料夾的那一個，指向別處的不動
-            $old = Join-Path $folder 'TS IIS 準備與放回.lnk'
-            if (Test-Path -LiteralPath $old) {
-                $target = $shell.CreateShortcut($old).TargetPath
-                if ($target -and [IO.Path]::GetFullPath($target).StartsWith($project, [StringComparison]::OrdinalIgnoreCase)) {
-                    Remove-Item -LiteralPath $old
-                    Write-Host ('已刪除舊捷徑：' + $old)
+            # 合併前另建的「TS IIS 準備與放回」：只刪指向本專案資料夾的那一個，指向別處的不動；刪不掉不影響新捷徑
+            $oldShortcut = Join-Path $folder 'TS IIS 準備與放回.lnk'
+            try {
+                if (Test-Path -LiteralPath $oldShortcut) {
+                    $target = $shell.CreateShortcut($oldShortcut).TargetPath
+                    if ($target -and [IO.Path]::GetFullPath($target).StartsWith($projectPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+                        Remove-Item -LiteralPath $oldShortcut
+                        Write-Host ('已刪除舊捷徑：' + $oldShortcut)
+                    }
                 }
+            } catch {
+                Write-Host ('舊捷徑沒有刪掉，請手動刪除：' + $oldShortcut + '（' + $_.Exception.Message + '）')
             }
         }
         $openWith = '桌面或專案資料夾裡的「FCN Workflow」捷徑'
