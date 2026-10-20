@@ -209,7 +209,7 @@ def test_window_builds_with_remembered_folders(master, tmp_path: Path) -> None:
 
     window = app.PanelWindow(master, memory)
 
-    assert (window.prepare.root_var.get(), window.prepare.out_var.get()) == ("R:/FCN", "D:/out")
+    assert (window.shared_root.var.get(), window.prepare.out_var.get()) == ("R:/FCN", "D:/out")
     assert str(window.prepare.open_button.cget("state")) == "disabled"
     assert window.returning.batch_var.get() == "D:/out/待核對_1"
 
@@ -243,7 +243,7 @@ def test_mail_draft_tab_reuses_the_root_and_remembers_its_output(master, tmp_pat
 
     window = app.PanelWindow(master, memory, tmp_path / ".env")
 
-    assert (window.mail.root_var.get(), window.mail.out_var.get()) == ("R:/FCN", "D:/寄信")
+    assert window.mail.shared_root is window.shared_root and window.mail.out_var.get() == "D:/寄信"
 
 
 def test_order_terms_tab_reuses_the_root_and_remembers_its_output(master, tmp_path: Path) -> None:
@@ -252,6 +252,67 @@ def test_order_terms_tab_reuses_the_root_and_remembers_its_output(master, tmp_pa
 
     window = app.PanelWindow(master, memory, tmp_path / ".env")
 
-    assert (window.orders.root_var.get(), window.orders.out_var.get()) == ("R:/FCN", "D:/Order")
+    assert window.orders.shared_root is window.shared_root and window.orders.out_var.get() == "D:/Order"
     assert str(window.orders.open_button.cget("state")) == "disabled"
     assert str(window.orders.export_button.cget("state")) == "disabled"  # 讀取完、有問題才可按
+
+
+# ---------------------------------------------------------------- 共用根目錄（#75）
+
+
+def labels(widget: tk.Misc) -> list[str]:
+    found = [widget.cget("text")] if isinstance(widget, ttk.Label) else []
+    for child in widget.winfo_children():
+        found += labels(child)
+    return found
+
+
+def test_root_is_set_once_at_the_top_for_three_tabs(master, tmp_path: Path, monkeypatch) -> None:
+    memory = FolderMemory.under(tmp_path)
+    window = app.PanelWindow(master, memory, session=PanelSession(install_root=tmp_path))
+    tabs = (window.orders, window.prepare, window.mail)
+    assert all(tab.shared_root is window.shared_root for tab in tabs)
+    assert not any("根目錄" in labels(tab.frame) for tab in tabs), "三頁不再各有根目錄欄位"
+    monkeypatch.setattr(app.filedialog, "askdirectory", lambda **kwargs: "R:/FCN")
+
+    window.shared_root.change()
+
+    assert window.shared_root.var.get() == str(Path("R:/FCN"))
+    assert app.SharedRoot(memory).var.get() == str(Path("R:/FCN")), "重開視窗仍是這個根目錄"
+
+
+def test_root_remembered_before_the_upgrade_is_kept(master, tmp_path: Path) -> None:
+    """升級前三頁共用 prepare_folders.json 的 root，升級後直接沿用，不用重選。"""
+    record = tmp_path / ".local" / "prepare_folders.json"
+    record.parent.mkdir()
+    record.write_text('{"root": "R:/FCN", "out": "D:/out", "mail_out": "D:/寄信"}', encoding="utf-8")
+
+    window = app.PanelWindow(master, FolderMemory.under(tmp_path), session=PanelSession(install_root=tmp_path))
+
+    assert window.shared_root.var.get() == "R:/FCN"
+
+
+@pytest.mark.parametrize("tab_name", ["orders", "prepare", "mail"])
+def test_starting_without_a_root_asks_to_set_it_first(master, tmp_path: Path, monkeypatch, tab_name) -> None:
+    window = app.PanelWindow(master, FolderMemory.under(tmp_path), session=PanelSession(install_root=tmp_path))
+    tab = getattr(window, tab_name)
+    tab.out_var.set("D:/out")
+    errors = []
+    monkeypatch.setattr(app.messagebox, "showerror", lambda title, message, **kwargs: errors.append(message))
+    monkeypatch.setattr(tab, "run_in_background", lambda *args, **kwargs: pytest.fail("不該開始執行"))
+
+    tab.start()
+
+    assert errors == ["請先在視窗最上方按「變更…」設定根目錄。"]
+
+
+def test_each_tab_still_remembers_its_own_output(master, tmp_path: Path, monkeypatch) -> None:
+    memory = FolderMemory.under(tmp_path)
+    memory.remember(root="R:/FCN")
+    window = app.PanelWindow(master, memory, session=PanelSession(install_root=tmp_path))
+    for tab, out in ((window.orders, "D:/Order"), (window.prepare, "D:/out")):
+        monkeypatch.setattr(tab, "run_in_background", lambda *args, **kwargs: None)
+        tab.out_var.set(out)
+        tab.start()
+
+    assert memory.load() == {"root": "R:/FCN", "order_out": str(Path("D:/Order")), "out": str(Path("D:/out"))}

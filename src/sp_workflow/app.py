@@ -2,11 +2,12 @@
 
 1. Order 條件：貼 TDCC，讀商品資料夾裡的 (Order) 原信，輸出 Order 條件清單（#40）。
 2. 每日匯入：選每日更新，匯入最小 FCN 資料庫（#32）；信箱在資料庫直接維護（#35）。
-3. 準備：貼 TDCC、選根目錄與輸出位置，產生批次資料夾與準備清單。
+3. 準備：貼 TDCC、選輸出位置，產生批次資料夾與準備清單。
 4. 核對：參考條件表＋說明書／投資人須知 PDF 的預覽、核對與儲存（`fcn_checker.panel.CheckTab`）。
 5. 放回：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾。
 6. 寄信草稿：貼核對通過的 TDCC，在 Outlook 建 TS／IIS 草稿給承作的 FC（#29）。
 
+商品資料夾所在的根目錄在視窗最上方設一次，1、3、6 三頁共用（#75）。
 審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
 視窗只收輸入、在背景執行 `read_orders`／`import_daily`／`prepare_batch`／核對／`return_to_folders`／`create_drafts`
 並顯示結果，不含判斷邏輯。
@@ -140,36 +141,67 @@ class _Tab:
         self.table.insert("", tk.END, values=list(values), tags=("problem",) if problem else ())
 
 
+class SharedRoot:
+    """商品資料夾所在的根目錄：整個視窗只在最上方設一次，Order 條件、準備、寄信草稿三頁共用（#75）。
+
+    記在上次選的資料夾紀錄的 `root`；以前三頁本來就共用這一筆，升級後直接沿用，不用重選。
+    """
+
+    def __init__(self, memory: FolderMemory) -> None:
+        self.memory = memory
+        self.var = tk.StringVar(value=memory.load().get("root", ""))
+
+    def change(self) -> None:
+        chosen = _ask_dir("選擇商品資料夾所在的根目錄", self.var)
+        if chosen:
+            self.var.set(str(Path(chosen)))
+            self.memory.remember(root=self.var.get())
+
+    def require(self) -> Path | None:
+        """設定好的根目錄；還沒設定時提示先到最上方設定，回傳 None。"""
+        text = self.var.get().strip()
+        if not text:
+            messagebox.showerror(TITLE, "請先在視窗最上方按「變更…」設定根目錄。")
+            return None
+        return Path(text)
+
+
 class PrepareTab(_Tab):
-    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, on_prepared: Callable[[Path], None]) -> None:
+    def __init__(
+        self,
+        notebook: ttk.Notebook,
+        memory: FolderMemory,
+        shared_root: SharedRoot,
+        on_prepared: Callable[[Path], None],
+    ) -> None:
         super().__init__(notebook, "準備", (("tdcc", "TDCC", 130), ("status", "狀態", 70), ("reason", "原因", 520)))
         self.on_prepared = on_prepared
         self.memory = memory
-        folders = memory.load()
+        self.shared_root = shared_root
         self.batch_dir: Path | None = None
-        self.root_var = tk.StringVar(value=folders.get("root", ""))
-        self.out_var = tk.StringVar(value=folders.get("out", ""))
-        self.status_var.set("貼上 TDCC，選好根目錄與輸出位置後按「開始準備」。")
+        self.out_var = tk.StringVar(value=memory.load().get("out", ""))
+        self.status_var.set("貼上 TDCC，選好輸出位置後按「開始準備」（在最上方的根目錄底下找商品資料夾）。")
 
         ttk.Label(self.frame, text="TDCC（可貼多筆）").grid(row=0, column=0, sticky="nw", pady=4)
         self.tdcc_text = tk.Text(self.frame, height=6, width=40)
         self.tdcc_text.grid(row=0, column=1, columnspan=2, sticky="nsew", pady=4)
-        self.path_row(1, "根目錄", self.root_var, lambda: _ask_dir("選擇商品資料夾所在的根目錄", self.root_var))
-        self.path_row(2, "輸出位置", self.out_var, lambda: _ask_dir("選擇批次資料夾要開在哪裡", self.out_var))
+        self.path_row(1, "輸出位置", self.out_var, lambda: _ask_dir("選擇批次資料夾要開在哪裡", self.out_var))
         self.start_button = ttk.Button(self.buttons, text="開始準備", command=self.start)
         self.start_button.pack(side=tk.LEFT)
         self.open_button = ttk.Button(self.buttons, text="打開批次資料夾", command=self.open_batch, state=tk.DISABLED)
         self.open_button.pack(side=tk.LEFT, padx=8)
-        self.place_bottom(3)
+        self.place_bottom(2)
 
     def start(self) -> None:
         text = self.tdcc_text.get("1.0", tk.END)
-        root_text, out_text = self.root_var.get().strip(), self.out_var.get().strip()
-        if not root_text or not out_text:
-            messagebox.showerror(TITLE, "請先選擇根目錄與輸出位置。")
+        root, out_text = self.shared_root.require(), self.out_var.get().strip()
+        if root is None:
             return
-        root, out = Path(root_text), Path(out_text)
-        self.memory.remember(root=str(root), out=str(out))
+        if not out_text:
+            messagebox.showerror(TITLE, "請先選擇輸出位置。")
+            return
+        out = Path(out_text)
+        self.memory.remember(out=str(out))
         self.start_button.configure(state=tk.DISABLED)
         self.open_button.configure(state=tk.DISABLED)
         self.run_in_background(
@@ -324,7 +356,9 @@ class _DatabaseLogin:
 
 
 class MailDraftTab(_Tab):
-    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, db: _DatabaseLogin) -> None:
+    def __init__(
+        self, notebook: ttk.Notebook, memory: FolderMemory, db: _DatabaseLogin, shared_root: SharedRoot
+    ) -> None:
         super().__init__(
             notebook,
             "寄信草稿",
@@ -332,25 +366,27 @@ class MailDraftTab(_Tab):
         )
         self.memory = memory
         self.db = db
-        folders = memory.load()
-        self.root_var = tk.StringVar(value=folders.get("root", ""))
-        self.out_var = tk.StringVar(value=folders.get("mail_out", ""))
-        self.status_var.set("貼上核對通過的 TDCC，選根目錄與結果清單位置，按「建立草稿」。只建草稿，不會寄出。")
+        self.shared_root = shared_root
+        self.out_var = tk.StringVar(value=memory.load().get("mail_out", ""))
+        self.status_var.set(
+            "貼上核對通過的 TDCC，選結果清單位置，按「建立草稿」（在最上方的根目錄底下找商品資料夾）。只建草稿，不會寄出。"
+        )
 
         ttk.Label(self.frame, text="TDCC（可貼多筆）").grid(row=0, column=0, sticky="nw", pady=4)
         self.tdcc_text = tk.Text(self.frame, height=6, width=40)
         self.tdcc_text.grid(row=0, column=1, columnspan=2, sticky="nsew", pady=4)
-        self.path_row(1, "根目錄", self.root_var, lambda: _ask_dir("選擇商品資料夾所在的根目錄", self.root_var))
-        self.path_row(2, "結果清單位置", self.out_var, lambda: _ask_dir("選擇寄信草稿清單要存在哪裡", self.out_var))
+        self.path_row(1, "結果清單位置", self.out_var, lambda: _ask_dir("選擇寄信草稿清單要存在哪裡", self.out_var))
         self.start_button = ttk.Button(self.buttons, text="建立草稿", command=self.start)
         self.start_button.pack(side=tk.LEFT)
-        self.place_bottom(3)
+        self.place_bottom(2)
 
     def start(self) -> None:
         text = self.tdcc_text.get("1.0", tk.END)
-        root_text, out_text = self.root_var.get().strip(), self.out_var.get().strip()
-        if not root_text or not out_text:
-            messagebox.showerror(TITLE, "請先選擇根目錄與結果清單位置。")
+        root, out_text = self.shared_root.require(), self.out_var.get().strip()
+        if root is None:
+            return
+        if not out_text:
+            messagebox.showerror(TITLE, "請先選擇結果清單位置。")
             return
         settings = self.db.settings()
         if settings is None:
@@ -360,8 +396,8 @@ class MailDraftTab(_Tab):
         except MailDraftError as exc:
             messagebox.showerror(TITLE, str(exc), parent=self.master)
             return
-        root, out = Path(root_text), Path(out_text)
-        self.memory.remember(root=str(root), mail_out=str(out))
+        out = Path(out_text)
+        self.memory.remember(mail_out=str(out))
         self.start_button.configure(state=tk.DISABLED)
 
         def check() -> ImportInfo | None:
@@ -411,27 +447,26 @@ class MailDraftTab(_Tab):
 
 
 class OrderTermsTab(_Tab):
-    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory) -> None:
+    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, shared_root: SharedRoot) -> None:
         super().__init__(
             notebook,
             "Order 條件",
             (("tdcc", "TDCC", 130), ("status", "狀態", 90), ("issuer", "上手", 70), ("reason", "待確認原因", 440)),
         )
         self.memory = memory
-        folders = memory.load()
+        self.shared_root = shared_root
         self.list_path: Path | None = None
         self.receipt: OrderReceipt | None = None
-        self.root_var = tk.StringVar(value=folders.get("root", ""))
-        self.out_var = tk.StringVar(value=folders.get("order_out", ""))
+        self.out_var = tk.StringVar(value=memory.load().get("order_out", ""))
         self.status_var.set(
-            "貼上 TDCC，選根目錄與輸出位置，按「讀取 Order」。只讀商品資料夾裡的 (Order) 原信，不會修改信件。"
+            "貼上 TDCC，選輸出位置，按「讀取 Order」（在最上方的根目錄底下找商品資料夾）。"
+            "只讀商品資料夾裡的 (Order) 原信，不會修改信件。"
         )
 
         ttk.Label(self.frame, text="TDCC（可貼多筆）").grid(row=0, column=0, sticky="nw", pady=4)
         self.tdcc_text = tk.Text(self.frame, height=6, width=40)
         self.tdcc_text.grid(row=0, column=1, columnspan=2, sticky="nsew", pady=4)
-        self.path_row(1, "根目錄", self.root_var, lambda: _ask_dir("選擇商品資料夾所在的根目錄", self.root_var))
-        self.path_row(2, "輸出位置", self.out_var, lambda: _ask_dir("選擇 Order 條件清單要存在哪裡", self.out_var))
+        self.path_row(1, "輸出位置", self.out_var, lambda: _ask_dir("選擇 Order 條件清單要存在哪裡", self.out_var))
         self.start_button = ttk.Button(self.buttons, text="讀取 Order", command=self.start)
         self.start_button.pack(side=tk.LEFT)
         self.open_button = ttk.Button(self.buttons, text="打開條件清單", command=self.open_list, state=tk.DISABLED)
@@ -440,16 +475,18 @@ class OrderTermsTab(_Tab):
             self.buttons, text="匯出問題信件", command=self.export_problems, state=tk.DISABLED
         )
         self.export_button.pack(side=tk.LEFT)
-        self.place_bottom(3)
+        self.place_bottom(2)
 
     def start(self) -> None:
         text = self.tdcc_text.get("1.0", tk.END)
-        root_text, out_text = self.root_var.get().strip(), self.out_var.get().strip()
-        if not root_text or not out_text:
-            messagebox.showerror(TITLE, "請先選擇根目錄與輸出位置。")
+        root, out_text = self.shared_root.require(), self.out_var.get().strip()
+        if root is None:
             return
-        root, out = Path(root_text), Path(out_text)
-        self.memory.remember(root=str(root), order_out=str(out))
+        if not out_text:
+            messagebox.showerror(TITLE, "請先選擇輸出位置。")
+            return
+        out = Path(out_text)
+        self.memory.remember(order_out=str(out))
         self.receipt = None
         self.start_button.configure(state=tk.DISABLED)
         self.open_button.configure(state=tk.DISABLED)
@@ -562,24 +599,39 @@ class PanelWindow:
             font=("Microsoft JhengHei UI", 12, "bold"),
             padding=(self.pixels(16), self.pixels(6)),
         )
+        self.shared_root = SharedRoot(memory)
+        self._root_bar()
         self.notebook = ttk.Notebook(master, style="Workflow.TNotebook")
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=self.pixels(8), pady=self.pixels(8))
         db = _DatabaseLogin(master, env_path or default_env_path())
         # 分頁照每天的作業順序建立，前面自動加上 1～6 的編號
-        self.orders = OrderTermsTab(self.notebook, memory)
+        self.orders = OrderTermsTab(self.notebook, memory, self.shared_root)
         self.daily = DailyImportTab(self.notebook, memory, db)
         self.prepare = PrepareTab(
-            self.notebook, memory, on_prepared=lambda batch: self.returning.batch_var.set(str(batch))
+            self.notebook,
+            memory,
+            self.shared_root,
+            on_prepared=lambda batch: self.returning.batch_var.set(str(batch)),
         )
         self.check = CheckTab(self.notebook, self.session, self.pixels)
         self.notebook.add(self.check, text="核對")
         self.returning = ReturnTab(self.notebook, memory)
-        self.mail = MailDraftTab(self.notebook, memory, db)
+        self.mail = MailDraftTab(self.notebook, memory, db, self.shared_root)
         for number, tab in enumerate(self.notebook.tabs(), 1):
             self.notebook.tab(tab, text=f"{number} {self.notebook.tab(tab, 'text')}")
         self.notebook.select(self.check if start_on_check else 0)
         self.maintenance = self._maintenance_menu()
         master.protocol("WM_DELETE_WINDOW", self.close)
+
+    def _root_bar(self) -> None:
+        """最上方固定顯示根目錄與「變更…」；只能用按鈕改，避免不小心打錯。"""
+        bar = ttk.Frame(self.master, padding=(self.pixels(12), self.pixels(10), self.pixels(12), 0))
+        bar.pack(fill=tk.X)
+        ttk.Label(bar, text="根目錄", style="Section.TLabel").pack(side=tk.LEFT)
+        ttk.Entry(bar, textvariable=self.shared_root.var, state="readonly").pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=self.pixels(10)
+        )
+        ttk.Button(bar, text="變更…", command=self.shared_root.change).pack(side=tk.LEFT)
 
     def _maintenance_menu(self) -> tk.Menu:
         """視窗上方的「維護」選單：不是每天的步驟，不放在分頁畫面上（#73）。"""

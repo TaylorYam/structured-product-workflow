@@ -20,7 +20,7 @@
 
 **作業人員安裝（Windows）**：先安裝官方 Python 3.11 以上（包含 Tcl/Tk），把專案放到自己有寫入權限的資料夾，雙擊 `setup_panel.cmd`。安裝會建立專案自己的 `.venv`，依 `constraints.txt` 安裝套件，需要能連到公司允許的 Python 套件來源。看到「安裝完成」後，桌面與專案資料夾裡的「FCN Workflow」捷徑開啟作業視窗（「TS IIS 準備與放回」捷徑也開同一個視窗）；捷徑建立失敗時改雙擊 `launch_panel.cmd`／`launch_checker_panel.cmd`。日常操作不用打指令；上次選的資料夾與視窗大小記在安裝資料夾的 `.local/`，核對紀錄寫在安裝資料夾的 `runtime/核對紀錄/`。搬移資料夾或更新程式後請重新執行安裝。Word 轉檔需要這台電腦裝有 Microsoft Word。
 
-**作業視窗**：一個「FCN Workflow」視窗，分頁照每天的順序排：1 Order 條件 → 2 每日匯入 → 3 準備 → 4 核對 → 5 放回 → 6 寄信草稿；切換分頁時各頁內容都保留。審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，在視窗上方的「維護」選單（[ADR 0007](docs/adr/0007-single-workflow-window.md)）。關閉視窗時，核對頁還在處理或有還沒存檔的核對結果會先提醒。第一次開啟時最大化，之後照上次調整的大小開啟。
+**作業視窗**：一個「FCN Workflow」視窗，分頁照每天的順序排：1 Order 條件 → 2 每日匯入 → 3 準備 → 4 核對 → 5 放回 → 6 寄信草稿；切換分頁時各頁內容都保留。商品資料夾所在的根目錄在視窗最上方設一次（按「變更…」），1 Order 條件、3 準備、6 寄信草稿三頁共用；各頁的輸出位置仍各自記住。審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，在視窗上方的「維護」選單（[ADR 0007](docs/adr/0007-single-workflow-window.md)）。關閉視窗時，核對頁還在處理或有還沒存檔的核對結果會先提醒。第一次開啟時最大化，之後照上次調整的大小開啟。
 
 **從舊的核對工具安裝移過來**：以前另外裝過 `fcn-term-sheet-checker` 的電腦，在本專案資料夾執行一次 `setup_panel.cmd`，之後改用「FCN Workflow」捷徑；桌面上舊的「Term Sheet 核對」捷徑還指向舊資料夾，請手動刪除。兩邊各用自己資料夾裡的 `.venv`，不會互相影響。舊資料夾 `runtime/核對紀錄/` 裡的核對紀錄要留查時，整個複製到本專案的 `runtime/核對紀錄/`（檔名是日期時間，不會重複）；核對 PANEL 記住的選檔資料夾不會帶過來，第一次重新選即可。確認新的捷徑能用之後，舊資料夾可以刪掉。
 
@@ -41,7 +41,7 @@ spw-panel
 在「3 準備」分頁：
 
 1. 在輸入框貼上要核對的 TDCC（換行、空白、逗號、頓號都可以分隔；重複的只算一次）。
-2. 選根目錄（商品資料夾可以在底下任何一層）與輸出位置；兩者都會記在本機 `.local/`，下次直接帶入。
+2. 確認視窗最上方的根目錄（商品資料夾可以在底下任何一層；要換時按「變更…」），再選輸出位置；兩者都會記在本機 `.local/`，下次直接帶入。
 3. 按「開始準備」。每次在輸出位置開一個 `待核對_<日期時間>` 資料夾，已存在就不做。
 4. 看第一頁內容判斷：開頭附近出現「中文產品說明書」或「中文投資人須知」；說明書第一頁要有資料夾的 TDCC，投資人須知有 12 碼代號時要相符。檔名只當參考。
 5. 有上手 PDF 就用 PDF；某種文件沒有 PDF 時（例如 MS、BNP 只給 Word），才把資料夾裡的 Word（`.docx`、`.doc`）複製到暫存區，用 Microsoft Word 轉成 PDF 再判斷（[ADR 0002](docs/adr/0002-word-to-pdf-with-microsoft-word.md)）。原始 Word 不動；轉檔失敗或逾時（Word 跳出對話框）時那個商品跳過。MS 說明書封面的「受託機構商品代號：」固定空白，轉檔前在暫存複本補上 TDCC（已有值不動），不用再手動改 Word；商品資料夾裡的原始 Word 仍是空白，放回與寄信用的是補好的 PDF；準備清單的原因欄會寫「已補受託機構商品代號」（[#56](https://github.com/TaylorYam/structured-product-workflow/issues/56)）。
@@ -122,7 +122,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 為核對通過的 FCN，在**自己的傳統版 Outlook 草稿匣**建立 TS／IIS 信件給承作的 FC（[#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)）。**只建草稿，不會寄出**；請在 Outlook 逐封確認後自己按寄出。資料全部讀資料庫，所以先做完每日匯入。
 
 1. 視窗切到「6 寄信草稿」，貼上核對通過的 TDCC（分隔方式同「3 準備」）。
-2. 選根目錄（同「3 準備」，商品資料夾可以在底下任何一層）與結果清單位置，按「建立草稿」。視窗會先顯示最近一次每日匯入（時間、第幾次、檔名），確認後才開始建立。
+2. 選結果清單位置（根目錄用視窗最上方的，同「3 準備」），按「建立草稿」。視窗會先顯示最近一次每日匯入（時間、第幾次、檔名），確認後才開始建立。
 3. 每檔要符合才會建草稿，否則標「待處理」並寫出原因：
    - 資料庫有這檔的商品條件與交易列；
    - 商品資料夾裡有 `<TDCC>_TS.pdf` 與 `<TDCC>_IIS.pdf`（放回資料夾只會以標準檔名放回核對通過的文件；`_待確認` 檔不算）；
@@ -137,7 +137,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 
 從商品資料夾裡我方寄出的 `(Order)` 原信，依各上手格式讀出全部條件，統一欄名後輸出 `Order條件清單_<日期時間>.xlsx`，給人確認（[#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)）。這一版只輸出清單，不寫資料庫、不回填其他 Excel；回填到哪一份另外討論。
 
-1. 視窗切到「1 Order 條件」，貼上 TDCC（分隔方式同「3 準備」），選根目錄與輸出位置，按「讀取 Order」。
+1. 視窗切到「1 Order 條件」，貼上 TDCC（分隔方式同「3 準備」），選輸出位置（根目錄用視窗最上方的），按「讀取 Order」。
 2. 程式在商品資料夾（不含子資料夾）用傳統版 Outlook 開每個 `.msg`，只讀主旨含 `(Order)` 或 `[Order]`、而且前面沒有 `RE:`、`FW:`、`DONE:` 的原信；條件不讀上手回覆信。唯一例外是 Order 沒寫的日期：GS 到同資料夾主旨有「Indicative Docs for <TDCC>」的信的 Order Summary 表補，HSBC 到 Order 信下方引用的 HSBC 回覆（「TDCC code: <TDCC>」後面的表，日/月/年；寫「TDCC: A / B」而表只有一欄值時兩檔共用）補；只補交易日、發行日、最終比價日、到期日，和 Order 寫的不同時標待確認。信件只開來讀，不會修改或寄出。
 3. 讀法：
    - 開頭的 `We buy <TDCC> <幣別> <金額> @<價格>`、`Please settle thru …`、`Risk level`、`Initial price`、`PG rate`、`Capital size` 各家共用。
@@ -194,7 +194,7 @@ Picks the Chinese term sheet and investor information sheet from TDCC-named prod
 
 **Operator setup (Windows)**: install official Python 3.11 or later (with Tcl/Tk), place the project in a folder you can write to, and double-click `setup_panel.cmd`. Setup creates the project's own `.venv` and installs pinned packages from `constraints.txt`, which requires access to the company-approved Python package source. After "安裝完成", the "FCN Workflow" shortcut on the desktop and in the project folder opens the working window (the "TS IIS 準備與放回" shortcut opens the same window); if shortcut creation failed, double-click `launch_panel.cmd` or `launch_checker_panel.cmd`. Daily use needs no commands; the last chosen folders and the window size are remembered in the install folder's `.local/`, and check records go to the install folder's `runtime/核對紀錄/`. Rerun setup after moving the folder or updating the code. Word conversion requires Microsoft Word on this computer.
 
-**Working window**: one "FCN Workflow" window with tabs in the daily order: 1 Order 條件 (Order terms) → 2 每日匯入 (daily import) → 3 準備 (prepare) → 4 核對 (check) → 5 放回 (return) → 6 寄信草稿 (mail drafts); each tab keeps its contents when you switch. Approval dates, report bundle export, and the configuration paths in use are not daily steps and live in the 「維護」 (maintenance) menu at the top ([ADR 0007](docs/adr/0007-single-workflow-window.md)). Closing the window warns while the check tab is still working or a check result has not been saved. The window opens maximized the first time and at the last adjusted size afterwards.
+**Working window**: one "FCN Workflow" window with tabs in the daily order: 1 Order 條件 (Order terms) → 2 每日匯入 (daily import) → 3 準備 (prepare) → 4 核對 (check) → 5 放回 (return) → 6 寄信草稿 (mail drafts); each tab keeps its contents when you switch. The root folder holding the product folders is set once at the top of the window (press 變更…) and shared by 1 Order 條件, 3 準備, and 6 寄信草稿; each tab still remembers its own output location. Approval dates, report bundle export, and the configuration paths in use are not daily steps and live in the 「維護」 (maintenance) menu at the top ([ADR 0007](docs/adr/0007-single-workflow-window.md)). Closing the window warns while the check tab is still working or a check result has not been saved. The window opens maximized the first time and at the last adjusted size afterwards.
 
 **Moving from a separate checker installation**: on a computer that had `fcn-term-sheet-checker` installed separately, run `setup_panel.cmd` once in this project folder and use the "FCN Workflow" shortcut from then on; the old desktop "Term Sheet 核對" shortcut still points to the old folder, so delete it manually. Each installation uses the `.venv` inside its own folder, so they do not interfere. To keep old check records, copy the old folder's `runtime/核對紀錄/` into this project's `runtime/核對紀錄/` (file names are timestamps and do not collide); the checker PANEL's remembered folders are not carried over, so choose them once again. After the new shortcuts work, the old folder can be deleted.
 
@@ -215,7 +215,7 @@ spw-panel
 On the 3 準備 (prepare) tab:
 
 1. Paste the TDCCs to check (newlines, spaces, commas, or ideographic commas; duplicates count once).
-2. Choose the root folder (product folders may be at any depth) and the output location; both are remembered in local `.local/`.
+2. Check the root folder at the top of the window (product folders may be at any depth; press 變更… to change it), then choose the output location; both are remembered in local `.local/`.
 3. Press Start. Each run creates `待核對_<timestamp>` in the output location and refuses an existing folder.
 4. Identification uses page-one content: a 中文產品說明書 or 中文投資人須知 title near the top; the term sheet's first page must contain the folder TDCC, and an investor sheet's 12-digit code must match when present. File names are hints only.
 5. Issuer PDFs take precedence. Only when a document type has no PDF (for example MS and BNP provide Word only) are the folder's Word files (`.docx`, `.doc`) copied to a temporary area and converted with Microsoft Word before identification ([ADR 0002](docs/adr/0002-word-to-pdf-with-microsoft-word.md)). Original Word files stay untouched; a failed or timed-out conversion (for example a Word dialog) skips that product. The MS term sheet cover always leaves 受託機構商品代號 (trustee product code) blank, so the TDCC is filled into the temporary copy before conversion (existing values are left alone) and nobody edits the Word by hand; the original Word in the product folder stays blank, while the returned and mailed PDF is the filled one; the preparation list's reason column says 已補受託機構商品代號 ([#56](https://github.com/TaylorYam/structured-product-workflow/issues/56)).
@@ -296,7 +296,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- their aliases are deleted too
 Creates TS/IIS emails to the FCs handling each checked FCN in **your own classic Outlook Drafts folder** ([#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)). **It only creates drafts and never sends**; review each one in Outlook and send it yourself. All data comes from the database, so run the daily import first.
 
 1. In the window, open "6 寄信草稿" and paste the checked TDCCs (same separators as preparation).
-2. Choose the root folder (as in preparation; product folders may be at any depth) and the result-list location, then click "建立草稿". The window first shows the latest daily import (time, run number, file name) and creates drafts only after you confirm.
+2. Choose the result-list location (the root folder is the one at the top of the window, as in preparation), then click "建立草稿". The window first shows the latest daily import (time, run number, file name) and creates drafts only after you confirm.
 3. A draft is created only when all of these hold; otherwise the product is marked "待處理" with reasons:
    - the database has the product's terms and trade rows;
    - the product folder holds `<TDCC>_TS.pdf` and `<TDCC>_IIS.pdf` (return-to-folders only writes standard names for checked documents; `_待確認` files do not count);
@@ -311,7 +311,7 @@ Non-FCN products skipped by the daily import are marked "不支援的商品類�
 
 Reads every term from our original `(Order)` email in each product folder using each issuer's format, normalizes the field names, and writes `Order條件清單_<timestamp>.xlsx` for review ([#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)). This version only writes the list; it does not touch the database or fill any other workbook. Where the terms are written back is decided separately.
 
-1. In the window, open "1 Order 條件", paste TDCCs (same separators as preparation), choose the root folder and output location, and click "讀取 Order".
+1. In the window, open "1 Order 條件", paste TDCCs (same separators as preparation), choose the output location (the root folder is the one at the top of the window), and click "讀取 Order".
 2. Each `.msg` directly inside the product folder is opened with classic Outlook. Only originals are read: the subject contains `(Order)` or `[Order]` with no `RE:`, `FW:`, or `DONE:` before it. Terms never come from issuer replies, with one exception for dates the order omits: GS dates come from the Order Summary table in the same folder's "Indicative Docs for <TDCC>" email, and HSBC dates come from HSBC's reply quoted below the order (the table after "TDCC code: <TDCC>", day/month/year; "TDCC: A / B" with a single value column means both share the dates). Only trade, issue, final valuation, and maturity dates are filled this way, and a date differing from the order is 待確認. Messages are opened read-only, never changed or sent.
 3. Reading:
    - The opening `We buy <TDCC> <currency> <amount> @<price>`, `Please settle thru …`, `Risk level`, `Initial price`, `PG rate`, and `Capital size` lines are shared by all issuers.
