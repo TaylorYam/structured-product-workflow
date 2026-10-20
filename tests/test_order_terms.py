@@ -837,6 +837,7 @@ def test_citi_gives_uf_instead_of_a_price(tmp_path: Path, root: Path) -> None:
         Decimal("300000"),
     )
     assert "商品" not in row.values and ("Product", "FCA") in row.others
+    assert row.values["Non-Call(月)"] == 1  # Citi 的 Non Callable Periods 0 統一 +1
     template = dict(zip((c.header.strip() for c in TEMPLATE_COLUMNS), row.template, strict=True))
     assert (template["Product"], template["KO Type"], template["Barrier Type"]) == ("FCN", "Daily Memory", "EKI")
     assert (template["Trade date"], template["Effective Date Offset(Calendar Days)"]) == (dt.date(2026, 10, 8), 8)

@@ -5,6 +5,7 @@
 - `IssuerFormat.overrides`：這家上手的欄名意思和共用對照不同時，以這裡為準。
 - `IssuerFormat.others`：這家條件表上認得、但不屬於統一欄位的欄，原樣保留在「其他欄位」。
 - `IssuerFormat.embedded`：一格裡寫了好幾個「名稱: 值」（例：UBS 的 Quote Id），拆開再對照。
+- `IssuerFormat.shifts`：這家的數字算法和其他家差固定數時，統一後再加上（例：Citi 的 Non-Call +1）。
 條件表出現這家沒列過的欄名時，整檔標「待確認」（格式可能改版），欄位仍保留在「其他欄位」。
 """
 
@@ -152,6 +153,7 @@ class IssuerFormat:
     headers: tuple[str, ...]  # 這家條件表會出現的欄名（統一欄位與其他欄都要列）
     overrides: dict[str, str] = field(default_factory=dict)  # 欄名 → 統一欄位（優先於共用對照）
     embedded: dict[str, tuple[str, ...]] = field(default_factory=dict)  # 欄名 → 格內「名稱: 值」的名稱
+    shifts: dict[str, int] = field(default_factory=dict)  # 統一欄位 → 這家寫法要加的數（例：Citi Non-Call +1）
 
     def field_for(self, header: str) -> str | None:
         """欄名對到的統一欄位；不屬於統一欄位時回傳 None。"""
@@ -424,6 +426,8 @@ ISSUERS: dict[str, IssuerFormat] = {
             "Non Callable Periods": "Non-Call(月)",
             "PriceID": "上手報價編號",
         },
+        # 使用者 2026-10-20 確認：Citi 的 Non Callable Periods 算法不同，統一要 +1（0 → 1）
+        shifts={"Non-Call(月)": 1},
     ),
     "325": IssuerFormat(
         "HSBC",

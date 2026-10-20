@@ -604,6 +604,9 @@ def map_entries(
             problems.append(f"{name} 不一致：{detail}")
         elif normalized:
             values[name] = normalized[0][1]
+    for name, shift in fmt.shifts.items():
+        if isinstance(values.get(name), int | Decimal):
+            values[name] += shift
     # Citi 只給 UF、沒有票面價格：價格 = 100 − UF（與庫存的 Upfront / NotePrice 相同算法）
     if "價格(%)" not in values and isinstance(values.get("UF(%)"), Decimal) and not _has_problem(problems, "價格(%)"):
         values["價格(%)"] = _HUNDRED - values["UF(%)"]

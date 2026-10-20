@@ -4,7 +4,7 @@
 
 以下尚未決定，不應由 Agent 當作既定需求：
 
-- 起單與建檔的正式確認時點、Order 修訂優先順序及人工確認方式。各家 Order 格式的第一版讀法已決定：以我方 `(Order)` 原信為準、規則式不用 AI（[#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)）；上手回覆信是否比對待定；Citi 的 Non Callable Periods（樣本為 0）是否等同其他家的 Guaranteed Periods 待確認。
+- 起單與建檔的正式確認時點、Order 修訂優先順序及人工確認方式。各家 Order 格式的第一版讀法已決定：以我方 `(Order)` 原信為準、規則式不用 AI（[#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)）；上手回覆信是否比對待定。Citi 的 Non Callable Periods 已確認統一 +1（2026-10-20）。
 - TDCC 取得時點、資料夾結構、候選附件配對與正式版本選擇規則。
 - 掃描文件處理、範本及座標解析相容性。Word 轉檔工具已選 Microsoft Word（[ADR 0002](adr/0002-word-to-pdf-with-microsoft-word.md)）。
 - 回填 Excel 的實際目的地、庫存匯入由誰執行、總表結構與讀取時點。
@@ -21,7 +21,7 @@
 
 Unresolved items, not established requirements:
 
-- Formal confirmation points for placement/booking, Order revision precedence, and human confirmation. The first issuer-format reading is decided: our original `(Order)` email is authoritative and parsing is rule-based without AI ([#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)); whether to compare issuer replies remains open, and whether Citi's Non Callable Periods (0 in the sample) equals other issuers' Guaranteed Periods needs confirmation.
+- Formal confirmation points for placement/booking, Order revision precedence, and human confirmation. The first issuer-format reading is decided: our original `(Order)` email is authoritative and parsing is rule-based without AI ([#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)); whether to compare issuer replies remains open. Citi's Non Callable Periods is confirmed to shift by +1 (2026-10-20).
 - TDCC availability, folder hierarchy, attachment matching, and official-version selection.
 - Scanned documents, template and coordinate compatibility. Word conversion uses Microsoft Word ([ADR 0002](adr/0002-word-to-pdf-with-microsoft-word.md)).
 - Actual Excel writeback destination, inventory import ownership, master structure, and read timing.

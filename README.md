@@ -135,7 +135,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
    - 讀不到幣別、承作金額、價格、標的1，或格式不認得。
    - 條件表欄數和值數對不上、有好幾列值，或出現這家沒列過的欄名（上手格式可能改版）。
    - 資料夾裡有兩封以上 Order 原信，或有信讀不到。
-7. 找不到商品資料夾或 Order 原信時標「找不到 Order」。14 家上手（含 Citi）都有讀法；TDCC 前三碼不認得時標「未支援上手」。Citi 的 We buy 行只有 `UF=x%`，價格 = 100 − UF。
+7. 找不到商品資料夾或 Order 原信時標「找不到 Order」。14 家上手（含 Citi）都有讀法；TDCC 前三碼不認得時標「未支援上手」。Citi 的 We buy 行只有 `UF=x%`，價格 = 100 − UF；Citi 的 Non Callable Periods 算法不同，統一 +1（0 → 1）。
 8. 清單有四個工作表：
    - 「example」：作業人員既有的「Outlook orders 轉成 Excel」格式（第 2 列表頭、從 B 欄開始），**只放已讀取的商品**，可以直接複製貼上；起單FC 留空由人補。信裡沒直接寫的欄依固定規則換算（`src/sp_workflow/order_template.py`）：
      - KO Type 統一成 Daily／Daily Memory／Period End／Period End Memory；MS 的 `OBSERVATION` 看 KO Memory，Citi 看 Daily KO 和 Memory Autocall 兩欄。
@@ -286,7 +286,7 @@ Reads every term from our original `(Order)` email in each product folder using 
    - Currency, amount, price, or 標的1 cannot be read, or a value's format is not recognized.
    - Header and value counts differ, a table has several value rows, or a column unknown for that issuer appears (the issuer format may have changed).
    - A folder holds two or more original orders, or a message cannot be read.
-7. A missing product folder or original order is 找不到 Order. All 14 issuers (including Citi) have a reading; an unknown TDCC prefix is 未支援上手. Citi's We buy line only gives `UF=x%`, so the price is 100 − UF.
+7. A missing product folder or original order is 找不到 Order. All 14 issuers (including Citi) have a reading; an unknown TDCC prefix is 未支援上手. Citi's We buy line only gives `UF=x%`, so the price is 100 − UF; Citi counts Non Callable Periods differently, so it is shifted by +1 (0 → 1).
 8. The workbook has four sheets:
    - "example": the operators' existing "Outlook orders to Excel" layout (row-2 header starting in column B), **holding only 已讀取 products**, ready to copy and paste; 起單FC is left blank for a person to fill. Columns the email does not state directly follow fixed rules (`src/sp_workflow/order_template.py`):
      - KO Type becomes Daily, Daily Memory, Period End, or Period End Memory; MS `OBSERVATION` uses KO Memory, and Citi uses its Daily KO and Memory Autocall columns.
