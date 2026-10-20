@@ -56,4 +56,3 @@ Keep `main` as the stable integration branch. For planned work, follow:
 ## Completion
 
 Review the diff, run applicable validation, and summarize changes, test results, and limitations before handing work back. Leave unrelated user changes untouched.
-
