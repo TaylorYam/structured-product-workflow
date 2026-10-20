@@ -1,10 +1,9 @@
-"""Windows 雙擊入口：上次選的資料夾記在這個安裝資料夾底下，不依賴啟動工作目錄。"""
+"""Windows 雙擊入口：開 FCN Workflow 視窗；設定與上次選的資料夾以這個安裝資料夾為準，不依賴啟動工作目錄。"""
 
 import tkinter as tk
-from pathlib import Path
 from tkinter import messagebox
 
-TITLE = "TS／IIS 準備與放回"
+TITLE = "FCN Workflow"
 
 
 def _show_error(message: str) -> None:
@@ -15,11 +14,13 @@ def _show_error(message: str) -> None:
 
 
 try:
+    from panel_bootstrap import arguments
+
     from sp_workflow.app import main
 except Exception as error:
     _show_error(f"無法啟動，請先雙擊 setup_panel.cmd 完成安裝。\n\n{error}")
 else:
     try:
-        main(["--install-root", str(Path(__file__).resolve().parent)])
+        main(arguments(__file__))
     except Exception as error:
         _show_error(f"執行時發生錯誤，請把這段訊息交給維護人員。\n\n{error!r}")

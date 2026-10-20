@@ -337,6 +337,27 @@ def test_record_failure_is_reported_and_the_result_file_is_kept(tmp_path):
     assert not receipt.complete and "核對紀錄" in receipt.summary
 
 
+def test_unsaved_result_is_flagged_until_a_result_file_is_written(tmp_path):
+    """關閉視窗前的提醒（#74）：有結果、還沒寫出核對結果檔，或存過後又改了放行時才提醒。"""
+    assert not PanelSession(REVIEW_STANDARD, ROOT / "config", install_root=tmp_path).has_unsaved_result, "還沒核對"
+    spec = Spec()
+    session, outcome = checked(tmp_path, spec, rows=[reference_row(spec, **{"K(%)": 71})])
+    assert session.has_unsaved_result
+    session.save(None)
+    assert session.has_unsaved_result, "取消儲存"
+    blocked = tmp_path / "blocked"
+    blocked.write_text("keep")
+    session.save(blocked, now=NOW)
+    assert session.has_unsaved_result, "寫不出核對結果檔"
+
+    item, _ = outcome.batch.items
+    session.release(item)
+    assert session.save(tmp_path / "reports", now=NOW).output is not None
+    assert not session.has_unsaved_result
+    session.cancel_release(item)
+    assert session.has_unsaved_result, "存過後又改了放行，要再存一次"
+
+
 def test_save_after_sources_changed_is_refused(tmp_path):
     sheet, pdfs = inputs(tmp_path)
     session = session_for(tmp_path, sheet, pdfs)

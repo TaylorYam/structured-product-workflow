@@ -40,7 +40,7 @@ flowchart TD
 
 ### 核對（`fcn_checker`）
 
-核對程式與流程程式在同一個 repository、同一個套件（[ADR 0005](adr/0005-merge-checker-into-workflow.md)），但模組分開：`src/fcn_checker/` 負責 PDF 擷取、各上手範本解析、共用核對規則與回填，`src/sp_workflow/` 負責準備、放回、資料庫與寄信。兩者目前只透過檔案銜接（標準檔名 PDF 與核對結果檔）；改成從資料庫讀條件、直接回填見 [ADR 0006](adr/0006-new-product-data-from-order.md)。核對內部的資料流、模組邊界與決策見 [核對架構](checker/architecture.md) 與 [核對 ADR](checker/adr/README.md)（另一套編號）。
+核對程式與流程程式在同一個 repository、同一個套件（[ADR 0005](adr/0005-merge-checker-into-workflow.md)），但模組分開：`src/fcn_checker/` 負責 PDF 擷取、各上手範本解析、共用核對規則與回填，`src/sp_workflow/` 負責準備、放回、資料庫與寄信。兩者目前只透過檔案銜接（標準檔名 PDF 與核對結果檔）；改成從資料庫讀條件、直接回填見 [ADR 0006](adr/0006-new-product-data-from-order.md)。畫面只有一個 FCN Workflow 視窗：外殼與流程分頁在 `sp_workflow.app`，核對頁是 `fcn_checker.panel.CheckTab`（[ADR 0007](adr/0007-single-workflow-window.md)）。核對內部的資料流、模組邊界與決策見 [核對架構](checker/architecture.md) 與 [核對 ADR](checker/adr/README.md)（另一套編號）。
 
 ### 產品擴充（規劃）
 
@@ -66,7 +66,7 @@ Persist progress and retry each stage independently. Manual checking records rev
 
 ### Checking (`fcn_checker`)
 
-The checker and the workflow share one repository and one package ([ADR 0005](adr/0005-merge-checker-into-workflow.md)) but stay separate modules: `src/fcn_checker/` owns PDF extraction, issuer template parsing, shared checking rules, and backfill; `src/sp_workflow/` owns preparation, returning, the database, and mail. They currently connect only through files (standard-name PDFs and the result workbook); reading terms from the database and backfilling directly is covered by [ADR 0006](adr/0006-new-product-data-from-order.md). The checker's internal data flow, module boundaries, and decisions are in the [checker architecture](checker/architecture.md) and the [checker ADRs](checker/adr/README.md) (a separate numbering).
+The checker and the workflow share one repository and one package ([ADR 0005](adr/0005-merge-checker-into-workflow.md)) but stay separate modules: `src/fcn_checker/` owns PDF extraction, issuer template parsing, shared checking rules, and backfill; `src/sp_workflow/` owns preparation, returning, the database, and mail. They currently connect only through files (standard-name PDFs and the result workbook); reading terms from the database and backfilling directly is covered by [ADR 0006](adr/0006-new-product-data-from-order.md). There is one FCN Workflow window: the shell and workflow tabs live in `sp_workflow.app`, and the check tab is `fcn_checker.panel.CheckTab` ([ADR 0007](adr/0007-single-workflow-window.md)). The checker's internal data flow, module boundaries, and decisions are in the [checker architecture](checker/architecture.md) and the [checker ADRs](checker/adr/README.md) (a separate numbering).
 
 ### Product expansion (planned)
 

@@ -18,9 +18,11 @@
 
 從公槽 FCN 底下以 TDCC 命名的商品資料夾，挑出中文產品說明書與中文投資人須知，改名成核對工具要的 `<TDCC>_TS.pdf`、`<TDCC>_IIS.pdf`，放進新開的批次資料夾。商品資料夾裡的檔案只讀不改。
 
-**作業人員安裝（Windows）**：先安裝官方 Python 3.11 以上（包含 Tcl/Tk），把專案放到自己有寫入權限的資料夾，雙擊 `setup_panel.cmd`。安裝會建立專案自己的 `.venv`，依 `constraints.txt` 安裝套件，需要能連到公司允許的 Python 套件來源。看到「安裝完成」後，桌面與專案資料夾裡會有兩個捷徑：「TS IIS 準備與放回」（準備、放回、每日匯入、寄信草稿、Order 條件）與「FCN Workflow」（核對 PANEL）；捷徑建立失敗時改雙擊 `launch_panel.cmd`／`launch_checker_panel.cmd`。日常操作不用打指令；兩個視窗上次選的資料夾都記在安裝資料夾的 `.local/`，核對紀錄寫在安裝資料夾的 `runtime/核對紀錄/`。搬移資料夾或更新程式後請重新執行安裝。Word 轉檔需要這台電腦裝有 Microsoft Word。
+**作業人員安裝（Windows）**：先安裝官方 Python 3.11 以上（包含 Tcl/Tk），把專案放到自己有寫入權限的資料夾，雙擊 `setup_panel.cmd`。安裝會建立專案自己的 `.venv`，依 `constraints.txt` 安裝套件，需要能連到公司允許的 Python 套件來源。看到「安裝完成」後，桌面與專案資料夾裡的「FCN Workflow」捷徑開啟作業視窗（「TS IIS 準備與放回」捷徑也開同一個視窗）；捷徑建立失敗時改雙擊 `launch_panel.cmd`／`launch_checker_panel.cmd`。日常操作不用打指令；上次選的資料夾與視窗大小記在安裝資料夾的 `.local/`，核對紀錄寫在安裝資料夾的 `runtime/核對紀錄/`。搬移資料夾或更新程式後請重新執行安裝。Word 轉檔需要這台電腦裝有 Microsoft Word。
 
-**從舊的核對工具安裝移過來**：以前另外裝過 `fcn-term-sheet-checker` 的電腦，在本專案資料夾執行一次 `setup_panel.cmd`，之後改用「FCN Workflow」捷徑開核對 PANEL；桌面上舊的「Term Sheet 核對」捷徑還指向舊資料夾，請手動刪除。兩邊各用自己資料夾裡的 `.venv`，不會互相影響。舊資料夾 `runtime/核對紀錄/` 裡的核對紀錄要留查時，整個複製到本專案的 `runtime/核對紀錄/`（檔名是日期時間，不會重複）；核對 PANEL 記住的選檔資料夾不會帶過來，第一次重新選即可。確認新的捷徑能用之後，舊資料夾可以刪掉。
+**作業視窗**：一個「FCN Workflow」視窗，分頁照每天的順序排：1 Order 條件 → 2 每日匯入 → 3 準備 → 4 核對 → 5 放回 → 6 寄信草稿；切換分頁時各頁內容都保留。審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，在視窗上方的「維護」選單（[ADR 0007](docs/adr/0007-single-workflow-window.md)）。關閉視窗時，有還沒存檔的核對結果會先提醒。第一次開啟時最大化，之後照上次調整的大小開啟。
+
+**從舊的核對工具安裝移過來**：以前另外裝過 `fcn-term-sheet-checker` 的電腦，在本專案資料夾執行一次 `setup_panel.cmd`，之後改用「FCN Workflow」捷徑；桌面上舊的「Term Sheet 核對」捷徑還指向舊資料夾，請手動刪除。兩邊各用自己資料夾裡的 `.venv`，不會互相影響。舊資料夾 `runtime/核對紀錄/` 裡的核對紀錄要留查時，整個複製到本專案的 `runtime/核對紀錄/`（檔名是日期時間，不會重複）；核對 PANEL 記住的選檔資料夾不會帶過來，第一次重新選即可。確認新的捷徑能用之後，舊資料夾可以刪掉。
 
 **開發者安裝**：
 
@@ -30,11 +32,13 @@ python -m pip install -c constraints.txt -e ".[dev]"
 
 PostgreSQL 驅動已包含在套件裡。核對程式（`fcn_checker`）也在同一個套件裡；如果這個 Python 環境以前另外裝過舊的 `fcn-term-sheet-checker`（套件名稱 `fcn-checker`），請先 `python -m pip uninstall fcn-checker`，避免兩份 `fcn_checker` 同時在 Python 路徑上。
 
-開發時用指令開啟視窗：
+開發時用指令開啟視窗（`fcn-panel` 開同一個視窗並停在「4 核對」）：
 
 ```bash
 spw-panel
 ```
+
+在「3 準備」分頁：
 
 1. 在輸入框貼上要核對的 TDCC（換行、空白、逗號、頓號都可以分隔；重複的只算一次）。
 2. 選根目錄（商品資料夾可以在底下任何一層）與輸出位置；兩者都會記在本機 `.local/`，下次直接帶入。
@@ -43,11 +47,11 @@ spw-panel
 5. 有上手 PDF 就用 PDF；某種文件沒有 PDF 時（例如 MS、BNP 只給 Word），才把資料夾裡的 Word（`.docx`、`.doc`）複製到暫存區，用 Microsoft Word 轉成 PDF 再判斷（[ADR 0002](docs/adr/0002-word-to-pdf-with-microsoft-word.md)）。原始 Word 不動；轉檔失敗或逾時（Word 跳出對話框）時那個商品跳過。MS 說明書封面的「受託機構商品代號：」固定空白，轉檔前在暫存複本補上 TDCC（已有值不動），不用再手動改 Word；商品資料夾裡的原始 Word 仍是空白，放回與寄信用的是補好的 PDF；準備清單的原因欄會寫「已補受託機構商品代號」（[#56](https://github.com/TaylorYam/structured-product-workflow/issues/56)）。
 6. 說明書或投資人須知任一份找不到、或有兩份以上候選時，整個商品跳過並寫出原因與候選檔名。
    **重新核對上手修正版**：資料夾裡上次放回的「_待確認」檔不當候選，只用來認出哪一版沒通過（比對全文）；內容相同的幾份只算一份。上手寄來新版時會挑新版，連上次已放回的標準名舊版也一併換掉（修正版沿用舊檔名、覆蓋了舊原檔也一樣：內容不同時上手檔名的版本優先，只以標準檔名存在的內容當成上次放回的舊版）；上手還沒寄新版時，沿用上次沒通過的那一版照常準備（原因寫「沿用上次沒通過的版本」；資料夾裡若另有封面商品代號不符或轉檔失敗的新檔，也會一起寫出），所以改過參考條件表或核對規則後，可以用同一版重複核對；同一版又沒通過時，錯訊和資料夾裡最新的錯訊檔不同才會再寫一份。準備清單的原因欄會寫出排除了哪些舊版。MS、BNP 這類只給 Word 的上手，只有沒通過的那份會換成新版；如果兩份都改了，請先把舊的標準名檔移到子資料夾。上次沒通過的是 PDF 時，修正版也要有 PDF 才會被挑到（例如 JPM 同時給 PDF 和 Word，修正版只有 Word 時請上手補 PDF）。
-7. 批次資料夾裡的 `準備清單.xlsx` 記錄每份文件的來源檔、是否由 Word 轉檔、輸出檔名、SHA-256 指紋、狀態與原因。完成後按「打開批次資料夾」，再到核對工具 PANEL 選參考條件表與這批 PDF。
+7. 批次資料夾裡的 `準備清單.xlsx` 記錄每份文件的來源檔、是否由 Word 轉檔、輸出檔名、SHA-256 指紋、狀態與原因。完成後按「打開批次資料夾」，再到「4 核對」分頁選參考條件表與這批 PDF。
 
-核對完、存下核對結果檔後，切到「放回資料夾」分頁：
+核對完、存下核對結果檔後，切到「5 放回」分頁：
 
-1. 選批次資料夾（剛準備完會自動帶入）與核對 PANEL 存下的核對結果檔。
+1. 選批次資料夾（剛準備完會自動帶入）與「4 核對」存下的核對結果檔。
 2. 按「放回資料夾」。核對結果檔「回填後」上 `TS/IIS完成檢核` 為 `V` 的商品（說明書與投資人須知都通過或人工放行）用標準檔名放回；「錯誤清單」上沒通過的那份，檔名最後加「_待確認」放回（例：`<TDCC>_TS_待確認.pdf`），同商品通過的那份仍用標準檔名，原因欄附上錯訊；同時在商品資料夾寫一份 `<TDCC>_錯誤訊息_<日期時間>.xlsx`（一條錯訊一列，附 PDF 頁碼，頁碼對應放回的「_待確認」檔），打開資料夾就看得到問題在哪裡。重複放回、待確認檔已經在時不會再寫。核對結果檔裡沒出現的商品（還沒核對）不放回。
 3. 放回前重算批次裡 PDF 的指紋，和準備清單不符就不放。商品資料夾已有同名檔：內容相同（位元組相同，或全文相同，例如同一份 Word 重新轉出的 PDF）算「已在」（例如 UBS 本來就給標準檔名），內容不同不覆蓋、整個商品不放回，由作業人員決定留哪份。
 4. 只複製，批次資料夾保留；結果寫在批次資料夾的 `放回清單_<日期時間>.xlsx`；這批準備了但還沒核對的商品也會列出，標「不放回」。修好未通過的商品、重新核對後可以再放一次，已放回的會顯示「已在」；改用標準檔名放回時，舊的「_待確認」檔和舊錯訊檔不會自動刪除，清單會提醒你確認後手動刪除。
@@ -56,7 +60,7 @@ spw-panel
 
 核對程式（`src/fcn_checker/`，原 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker)）把中文產品說明書與中文投資人須知 PDF 跟參考條件表逐欄比對：14 家上手、固定規則、不使用 LLM。同一檔的兩份都通過或人工放行，才輸出到核對結果檔的「回填後」（`TS/IIS完成檢核` 打 `V`，回填 ISIN、發行日、比價日；VWAP 商品另回填各標的價格）；沒通過的每條錯訊列在「錯誤清單」。上面的「放回資料夾」讀的就是這份核對結果檔。
 
-1. 雙擊「FCN Workflow」捷徑開核對 PANEL：選參考條件表，再選批次資料夾裡的 `<TDCC>_TS.pdf`、`<TDCC>_IIS.pdf`，按「載入／重新載入預覽」→「開始核對」。看過錯訊認定沒問題的可以「人工放行」，最後按「儲存核對結果…」。
+1. 在「4 核對」分頁選參考條件表，再選批次資料夾裡的 `<TDCC>_TS.pdf`、`<TDCC>_IIS.pdf`，按「載入／重新載入預覽」→「開始核對」。看過錯訊認定沒問題的可以「人工放行」，最後按「儲存核對結果…」。有未通過的商品時，可以從「維護」→「匯出回報包…」交給維護者。
 2. 指令版：`fcn-batch <參考條件表.xlsx> <PDF…> --out <輸出資料夾>`，一次完成預覽、核對與儲存，不能人工放行。結束碼 0 是已涵蓋的規則全部通過（沒涵蓋的項目仍要人工看）、1 有不一致或需人工覆核（含未支援上手）、2 錯誤。
 3. 每次儲存另寫一份內部核對紀錄（程式版本、設定與每份 PDF 的指紋、逐項結果），PANEL 寫在安裝資料夾的 `runtime/核對紀錄/`，指令版寫在執行目錄的 `runtime/核對紀錄/`。
 
@@ -188,9 +192,11 @@ Commit documentation and synthetic examples only. Company messages, trades, cust
 
 Picks the Chinese term sheet and investor information sheet from TDCC-named product folders under the shared FCN directory, renames them to the checker's `<TDCC>_TS.pdf` and `<TDCC>_IIS.pdf`, and places them in a new batch folder. Product folders are read only.
 
-**Operator setup (Windows)**: install official Python 3.11 or later (with Tcl/Tk), place the project in a folder you can write to, and double-click `setup_panel.cmd`. Setup creates the project's own `.venv` and installs pinned packages from `constraints.txt`, which requires access to the company-approved Python package source. After "安裝完成", the desktop and the project folder have two shortcuts: "TS IIS 準備與放回" (preparation, return, daily import, mail drafts, Order terms) and "FCN Workflow" (the checker PANEL); if shortcut creation failed, double-click `launch_panel.cmd` or `launch_checker_panel.cmd`. Daily use needs no commands; both windows remember their last chosen folders in the install folder's `.local/`, and check records go to the install folder's `runtime/核對紀錄/`. Rerun setup after moving the folder or updating the code. Word conversion requires Microsoft Word on this computer.
+**Operator setup (Windows)**: install official Python 3.11 or later (with Tcl/Tk), place the project in a folder you can write to, and double-click `setup_panel.cmd`. Setup creates the project's own `.venv` and installs pinned packages from `constraints.txt`, which requires access to the company-approved Python package source. After "安裝完成", the "FCN Workflow" shortcut on the desktop and in the project folder opens the working window (the "TS IIS 準備與放回" shortcut opens the same window); if shortcut creation failed, double-click `launch_panel.cmd` or `launch_checker_panel.cmd`. Daily use needs no commands; the last chosen folders and the window size are remembered in the install folder's `.local/`, and check records go to the install folder's `runtime/核對紀錄/`. Rerun setup after moving the folder or updating the code. Word conversion requires Microsoft Word on this computer.
 
-**Moving from a separate checker installation**: on a computer that had `fcn-term-sheet-checker` installed separately, run `setup_panel.cmd` once in this project folder and open the checker PANEL from the "FCN Workflow" shortcut from then on; the old desktop "Term Sheet 核對" shortcut still points to the old folder, so delete it manually. Each installation uses the `.venv` inside its own folder, so they do not interfere. To keep old check records, copy the old folder's `runtime/核對紀錄/` into this project's `runtime/核對紀錄/` (file names are timestamps and do not collide); the checker PANEL's remembered folders are not carried over, so choose them once again. After the new shortcuts work, the old folder can be deleted.
+**Working window**: one "FCN Workflow" window with tabs in the daily order: 1 Order 條件 (Order terms) → 2 每日匯入 (daily import) → 3 準備 (prepare) → 4 核對 (check) → 5 放回 (return) → 6 寄信草稿 (mail drafts); each tab keeps its contents when you switch. Approval dates, report bundle export, and the configuration paths in use are not daily steps and live in the 「維護」 (maintenance) menu at the top ([ADR 0007](docs/adr/0007-single-workflow-window.md)). Closing the window warns when a check result has not been saved. The window opens maximized the first time and at the last adjusted size afterwards.
+
+**Moving from a separate checker installation**: on a computer that had `fcn-term-sheet-checker` installed separately, run `setup_panel.cmd` once in this project folder and use the "FCN Workflow" shortcut from then on; the old desktop "Term Sheet 核對" shortcut still points to the old folder, so delete it manually. Each installation uses the `.venv` inside its own folder, so they do not interfere. To keep old check records, copy the old folder's `runtime/核對紀錄/` into this project's `runtime/核對紀錄/` (file names are timestamps and do not collide); the checker PANEL's remembered folders are not carried over, so choose them once again. After the new shortcuts work, the old folder can be deleted.
 
 **Developer setup**:
 
@@ -200,11 +206,13 @@ python -m pip install -c constraints.txt -e ".[dev]"
 
 The PostgreSQL driver is included in the package. The checker (`fcn_checker`) ships in the same package; if this Python environment previously had the old `fcn-term-sheet-checker` installed (package name `fcn-checker`), run `python -m pip uninstall fcn-checker` first so two copies of `fcn_checker` are never on the Python path.
 
-Open the window from a terminal during development:
+Open the window from a terminal during development (`fcn-panel` opens the same window on 4 核對):
 
 ```bash
 spw-panel
 ```
+
+On the 3 準備 (prepare) tab:
 
 1. Paste the TDCCs to check (newlines, spaces, commas, or ideographic commas; duplicates count once).
 2. Choose the root folder (product folders may be at any depth) and the output location; both are remembered in local `.local/`.
@@ -213,11 +221,11 @@ spw-panel
 5. Issuer PDFs take precedence. Only when a document type has no PDF (for example MS and BNP provide Word only) are the folder's Word files (`.docx`, `.doc`) copied to a temporary area and converted with Microsoft Word before identification ([ADR 0002](docs/adr/0002-word-to-pdf-with-microsoft-word.md)). Original Word files stay untouched; a failed or timed-out conversion (for example a Word dialog) skips that product. The MS term sheet cover always leaves 受託機構商品代號 (trustee product code) blank, so the TDCC is filled into the temporary copy before conversion (existing values are left alone) and nobody edits the Word by hand; the original Word in the product folder stays blank, while the returned and mailed PDF is the filled one; the preparation list's reason column says 已補受託機構商品代號 ([#56](https://github.com/TaylorYam/structured-product-workflow/issues/56)).
 6. If either document is missing or has multiple candidates, the whole product is skipped with the reason and candidate names.
    **Rechecking revised issuer documents**: `_待確認` files returned last time are never candidates and only identify which version failed (full-text comparison); identical copies count once. A newly sent version is picked, replacing even the previously returned standard-name version (also when the revision reuses the old file name and overwrites the old original: with differing contents the issuer-named version wins and content found only under the standard name is treated as the previous return); until the issuer sends one, the previously failed version is reused (the reason says so, and also lists new files that could not be used because of a cover-code mismatch or failed conversion), so the same version can be rechecked after fixing the reference workbook or checker rules; a new error workbook is written only when the errors differ from the latest one in the folder. The preparation list's reason column names the excluded versions. For Word-only issuers such as MS and BNP, only the failed document is replaced; if both changed, move the old standard-name file into a subfolder first. When the failed version was a PDF, the revision must also include a PDF to be picked (for example, ask JPM, which sends both PDF and Word, for a PDF when the revision is Word only).
-7. `準備清單.xlsx` in the batch folder records each document's source, whether it was converted from Word, output name, SHA-256, status, and reason. Then open the batch folder and select the reference workbook and PDFs in the checker PANEL.
+7. `準備清單.xlsx` in the batch folder records each document's source, whether it was converted from Word, output name, SHA-256, status, and reason. Then open the batch folder and select the reference workbook and PDFs on the 4 核對 (check) tab.
 
-After checking and saving the checker result workbook, switch to the 放回資料夾 (return to folders) tab:
+After checking and saving the checker result workbook, switch to the 5 放回 (return) tab:
 
-1. Choose the batch folder (filled in automatically after preparation) and the result workbook saved by the checker PANEL.
+1. Choose the batch folder (filled in automatically after preparation) and the result workbook saved on 4 核對.
 2. Press Return. Products whose `TS/IIS完成檢核` is `V` on the result workbook's 回填後 sheet (both documents passed or manually released) are returned under standard names. A document listed on the error-list sheet is returned with `_待確認` appended (for example `<TDCC>_TS_待確認.pdf`), while the product's passing document keeps its standard name and the reason column carries the error messages; a `<TDCC>_錯誤訊息_<timestamp>.xlsx` workbook (one error per row with the PDF page numbers, which refer to the returned `_待確認` file) is also written to the product folder so operators can see the problems there. It is not written again when the pending files are already in place. Products absent from the result workbook (not yet checked) are not returned.
 3. Batch PDFs are re-hashed and must match the preparation list. When a product folder already has a same-named file, identical content (same bytes, or the same full text such as a PDF re-converted from the same Word file) counts as already there (for example UBS issuing standard names); different content is never overwritten and the whole product is not returned, leaving the decision to the operator.
 4. Files are copied only and the batch folder is kept; results go to `放回清單_<timestamp>.xlsx` in the batch folder, which also lists prepared products not yet checked as not returned. After fixing and rechecking failed products, returning again marks already returned files as already there; when a standard name is returned, old `_待確認` files and error workbooks are never deleted automatically and the list reminds you to remove them after review.
@@ -226,7 +234,7 @@ After checking and saving the checker result workbook, switch to the 放回資�
 
 The checker (`src/fcn_checker/`, formerly [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker)) compares the Chinese term sheet and investor information sheet PDFs field by field with the reference workbook: 14 issuers, fixed rules, no LLM. Only when both documents of a product pass or are manually released does the product go to the result workbook's 回填後 sheet (`TS/IIS完成檢核` = `V`, with ISIN, issue date, and observation dates backfilled, plus underlying prices for VWAP products); every error for a failed document is listed on 錯誤清單. Returning to folders (above) reads this result workbook.
 
-1. Double-click the "FCN Workflow" shortcut to open the checker PANEL: choose the reference workbook, then the batch folder's `<TDCC>_TS.pdf` and `<TDCC>_IIS.pdf`, and press 載入／重新載入預覽 then 開始核對. After reviewing the errors, a document can be released manually (人工放行); finally press 儲存核對結果….
+1. On the 4 核對 (check) tab, choose the reference workbook, then the batch folder's `<TDCC>_TS.pdf` and `<TDCC>_IIS.pdf`, and press 載入／重新載入預覽 then 開始核對. After reviewing the errors, a document can be released manually (人工放行); finally press 儲存核對結果…. When products fail, 維護 → 匯出回報包… exports a report bundle for the maintainer.
 2. Command line: `fcn-batch <reference.xlsx> <PDFs…> --out <output folder>` previews, checks, and saves in one go, without manual release. Exit code 0 means every covered rule passed (uncovered items still need a person), 1 mismatch or review required (including unsupported issuers), 2 error.
 3. Each save also writes an internal check record (program version, configuration and PDF hashes, per-item results): the PANEL writes to the install folder's `runtime/核對紀錄/`, the command line to `runtime/核對紀錄/` under the working directory.
 

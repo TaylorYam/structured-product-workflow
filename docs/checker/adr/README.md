@@ -15,7 +15,7 @@ Use an Architecture Decision Record (ADR) for a choice that has a lasting effect
 | [0003](0003-public-github-panel-update.md) | Superseded by 0006：舊版公開 GitHub 自動更新 |
 | [0004](0004-reference-sheet-as-check-source.md) | Superseded by 0008：早期參考條件表輸入／輸出流程 |
 | [0005](0005-issuer-adapter-and-shared-rules.md) | Superseded by 0009：早期上手 adapter 與共用規則邊界 |
-| [0006](0006-panel-maintainer-only-no-self-update.md) | Accepted：維護者本機 PANEL，移除自動更新 |
+| [0006](0006-panel-maintainer-only-no-self-update.md) | Accepted：移除自動更新；「只供維護者使用」已由本專案 [ADR 0007](../../adr/0007-single-workflow-window.md) 取代 |
 | [0007](0007-iis-paired-with-term-sheet.md) | Accepted：TS／IIS 成對核對，三方一致才回填 |
 | [0008](0008-reference-sheet-and-import-format.md) | Accepted：參考條件表唯一來源、固定匯入格式輸出 |
 | [0009](0009-shared-rules-defined-per-rule.md) | Accepted：共用規則只實作一次，語意逐條定義 |

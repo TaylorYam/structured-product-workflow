@@ -1,6 +1,6 @@
 # 0006: PANEL 只供維護者使用，移除自動更新
 
-- Status: Accepted
+- Status: Accepted；「PANEL 只供維護者使用」一點已由本專案 [ADR 0007](../../adr/0007-single-workflow-window.md) 取代（2026-10-20），移除自動更新照舊
 - Date: 2026-10-02
 
 ## Context

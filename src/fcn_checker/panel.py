@@ -1,4 +1,7 @@
-"""Tkinter 本機桌面 PANEL：參考條件表＋多份說明書的預覽、核對、逐份結果與手動儲存。"""
+"""Tkinter 核對分頁：參考條件表＋多份說明書的預覽、核對、逐份結果與手動儲存。
+
+#74 起核對是 FCN Workflow 視窗（`sp_workflow.app`）的一個分頁；這裡提供分頁、對話框與整個視窗共用的樣式、圖示。
+"""
 
 from __future__ import annotations
 
@@ -84,6 +87,29 @@ def _set_window_icons(hwnd: int) -> None:
         icon = user32.LoadImageW(None, str(PANEL_ICON), 1, size, size, 0x10)  # IMAGE_ICON、LR_LOADFROMFILE
         if icon:
             user32.SendMessageW(hwnd, 0x80, kind, icon)  # WM_SETICON
+
+
+def apply_style(root: tk.Tk) -> Callable[[float], int]:
+    """整個視窗共用的底色與字型（#74 起 FCN Workflow 的每個分頁都用這一套）。
+
+    回傳 pixels：把 96 DPI 下的像素依目前螢幕縮放換算成實際像素。
+    """
+    scale = root.winfo_fpixels("1i") / 96
+
+    def pixels(value):
+        return round(value * scale)
+
+    root.configure(background="#f4f6f8")
+    style = ttk.Style(root)
+    style.theme_use("clam")
+    style.configure("TFrame", background="#f4f6f8")
+    style.configure("TLabel", background="#f4f6f8", foreground="#172b3a", font=("Microsoft JhengHei UI", 11))
+    style.configure("Section.TLabel", font=("Microsoft JhengHei UI", 12, "bold"))
+    style.configure("TButton", font=("Microsoft JhengHei UI", 11), padding=(12, 7))
+    style.configure("Treeview", font=("Microsoft JhengHei UI", 11), rowheight=pixels(30))
+    style.configure("Treeview.Heading", font=("Microsoft JhengHei UI", 11, "bold"))
+    style.map("Treeview", background=[("selected", "#d9e9f2")], foreground=[("selected", "#172b3a")])
+    return pixels
 
 
 FOLDERS_RECORD = Path(".local") / "panel_folders.json"  # 兩個選檔按鈕各自記住的上次資料夾（根目錄下）
@@ -422,9 +448,16 @@ class ApprovalDatesDialog(tk.Toplevel):
         self._run(self.session.remove_latest_approval_date, f"確定刪除最新一筆審查通過日期 {self.dates[-1]}？")
 
 
-class PanelWindow:
-    def __init__(self, root: tk.Tk, session: PanelSession):
-        self.root, self.session = root, session
+class CheckTab(ttk.Frame):
+    """「核對」分頁：選參考條件表與 PDF、預覽、核對、人工放行與儲存（#74 前是獨立的核對視窗）。
+
+    視窗本身（標題、大小、關閉）由 `sp_workflow.app` 建立；審查通過日期、匯出回報包與使用的設定檔
+    在視窗的「維護」選單，選單呼叫 edit_approval_dates、export_bundle、show_config_paths。
+    """
+
+    def __init__(self, parent: tk.Misc, session: PanelSession, pixels: Callable[[float], int]):
+        super().__init__(parent, padding=pixels(20))
+        self.root, self.session, self.pixels = self.winfo_toplevel(), session, pixels
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.pending: Future | None = None
         self.check_pending: Future[PanelOutcome] | None = None
@@ -439,77 +472,39 @@ class PanelWindow:
         self.sheet_path: Path | None = None
         self.pdf_paths: tuple[Path, ...] = ()
         self.folders = LastFolders(session.install_root / FOLDERS_RECORD)
-        root.title("FCN Term Sheet 核對")
-        scale = root.winfo_fpixels("1i") / 96
-
-        def pixels(value):
-            return round(value * scale)
-
-        width = min(pixels(1180), root.winfo_screenwidth() - pixels(40))
-        height = min(pixels(820), root.winfo_screenheight() - pixels(80))
-        root.geometry(f"{width}x{height}")
-        root.minsize(min(pixels(820), width), min(pixels(720), height))
-        if sys.platform == "win32":
-            root.state("zoomed")
-        root.configure(background="#f4f6f8")
-        root.protocol("WM_DELETE_WINDOW", self.close)
-        style = ttk.Style(root)
-        style.theme_use("clam")
-        style.configure("TFrame", background="#f4f6f8")
-        style.configure("TLabel", background="#f4f6f8", foreground="#172b3a", font=("Microsoft JhengHei UI", 11))
-        style.configure("Heading.TLabel", font=("Microsoft JhengHei UI", 20, "bold"))
-        style.configure("Section.TLabel", font=("Microsoft JhengHei UI", 12, "bold"))
-        style.configure("Small.TLabel", font=("Microsoft JhengHei UI", 9), foreground="#4a5a68")
-        style.configure("TButton", font=("Microsoft JhengHei UI", 11), padding=(12, 7))
-        style.configure("Treeview", font=("Microsoft JhengHei UI", 11), rowheight=pixels(30))
-        style.configure("Treeview.Heading", font=("Microsoft JhengHei UI", 11, "bold"))
-        style.map("Treeview", background=[("selected", "#d9e9f2")], foreground=[("selected", "#172b3a")])
-        frame = ttk.Frame(root, padding=pixels(20))
-        frame.pack(fill="both", expand=True)
-        frame.columnconfigure(1, weight=1)
-        frame.rowconfigure(7, weight=1)
-        ttk.Label(frame, text="Term Sheet 核對", style="Heading.TLabel").grid(row=0, column=0, columnspan=3, sticky="w")
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(5, weight=1)
         ttk.Label(
-            frame,
+            self,
             text="選取參考條件表與說明書、投資人須知 PDF（同一檔商品的 _TS 與 _IIS 一起選），先載入預覽確認每份對到的列，"
             "再按「開始核對」。上手由 PDF 檔名前三碼決定。",
-        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 10))
+        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 10))
         self.sheet_text = tk.StringVar()
         self.pdf_text = tk.StringVar()
         self.controls: list[ttk.Widget] = []
         for row, label, variable, kind in (
-            (2, "參考條件表", self.sheet_text, "sheet"),
-            (3, "說明書／投資人須知 PDF", self.pdf_text, "pdf"),
+            (1, "參考條件表", self.sheet_text, "sheet"),
+            (2, "說明書／投資人須知 PDF", self.pdf_text, "pdf"),
         ):
-            ttk.Label(frame, text=label).grid(row=row, column=0, sticky="w", padx=(0, 16), pady=5)
-            ttk.Entry(frame, textvariable=variable, state="readonly").grid(
+            ttk.Label(self, text=label).grid(row=row, column=0, sticky="w", padx=(0, 16), pady=5)
+            ttk.Entry(self, textvariable=variable, state="readonly").grid(
                 row=row, column=1, sticky="ew", padx=(0, 12), pady=5
             )
-            button = ttk.Button(frame, text="選取檔案…", command=lambda k=kind: self.choose_files(k))
+            button = ttk.Button(self, text="選取檔案…", command=lambda k=kind: self.choose_files(k))
             button.grid(row=row, column=2, pady=5)
             self.controls.append(button)
-        actions = ttk.Frame(frame)
-        actions.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 6))
+        actions = ttk.Frame(self)
+        actions.grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 6))
         self.reload = ttk.Button(actions, text="載入／重新載入預覽", command=self.load)
         self.reload.pack(side="left", padx=(0, 12))
         self.check_button = ttk.Button(actions, text="開始核對", command=self.start_check, state="disabled")
         self.check_button.pack(side="left")
         self.save_button = ttk.Button(actions, text="儲存核對結果…", command=self.save, state="disabled")
         self.save_button.pack(side="left", padx=(12, 0))
-        self.export_button = ttk.Button(actions, text="匯出回報包…", command=self.export_bundle, state="disabled")
-        self.export_button.pack(side="left", padx=(12, 0))
         self.controls += [self.reload]
-        configs = "；".join(f"{label}：{path}" for label, path in session.config_paths)
-        ttk.Label(frame, text="使用的設定檔：" + configs, style="Small.TLabel", wraplength=pixels(1000)).grid(
-            row=5, column=0, columnspan=2, sticky="w", pady=(0, 8)
-        )
-        self.pixels = pixels
-        approval_button = ttk.Button(frame, text="審查通過日期…", command=self.edit_approval_dates)
-        approval_button.grid(row=5, column=2, sticky="e", pady=(0, 8))
-        self.controls.append(approval_button)
-        ttk.Label(frame, text="預覽與核對結果", style="Section.TLabel").grid(row=6, column=0, columnspan=3, sticky="w")
-        self.tabs = ttk.Notebook(frame)
-        self.tabs.grid(row=7, column=0, columnspan=3, sticky="nsew", pady=(6, 10))
+        ttk.Label(self, text="預覽與核對結果", style="Section.TLabel").grid(row=4, column=0, columnspan=3, sticky="w")
+        self.tabs = ttk.Notebook(self)
+        self.tabs.grid(row=5, column=0, columnspan=3, sticky="nsew", pady=(6, 10))
         preview_frame = ttk.Frame(self.tabs, padding=8)
         preview_frame.columnconfigure(0, weight=1)
         preview_frame.rowconfigure(0, weight=1)
@@ -539,17 +534,17 @@ class PanelWindow:
         self.pending_text = _text(self.not_covered, 6)
         self.pending_text.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
         self.status = tk.StringVar(value=session.message)
-        self.status_label = ttk.Label(frame, textvariable=self.status, wraplength=960)
-        self.status_label.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(8, 10))
+        self.status_label = ttk.Label(self, textvariable=self.status, wraplength=960)
+        self.status_label.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(8, 10))
         ttk.Label(
-            frame,
+            self,
             text="按「儲存核對結果」才會寫出核對結果檔（原參考條件表不動）；錯誤清單上的說明書請交由人工核對。",
-        ).grid(row=9, column=0, columnspan=3, sticky="w")
-        root.bind("<Configure>", self._resize)
-        root.after(1000, self._watch_sources)
+        ).grid(row=7, column=0, columnspan=3, sticky="w")
+        self.bind("<Configure>", self._resize)
+        self.root.after(1000, self._watch_sources)
 
     def _resize(self, event):
-        if event.widget == self.root:
+        if event.widget is self:
             self.status_label.configure(wraplength=max(300, event.width - 60))
 
     def _busy_any(self) -> bool:
@@ -565,7 +560,6 @@ class PanelWindow:
     def _clear_results(self):
         self.has_result = False
         self.save_button.configure(state="disabled")
-        self.export_button.configure(state="disabled")
         self.results.clear()
         self.tabs.tab(self.not_covered, text="待處理")
         _write(self.pending_text, "")
@@ -605,8 +599,6 @@ class PanelWindow:
 
     def _busy(self, busy):
         self.save_button.configure(state="disabled" if busy or not self.has_result else "normal")
-        exportable = not busy and self.has_result and self.session.can_export_bundle
-        self.export_button.configure(state="normal" if exportable else "disabled")
         for control in self.controls:
             control.configure(state="disabled" if busy else "normal")
         self.check_button.configure(state="disabled" if busy or self.shown is None else "normal")
@@ -734,9 +726,20 @@ class PanelWindow:
             self._clear()
         self.status.set(receipt.summary)
 
+    def can_edit_approval_dates(self) -> bool:
+        """「維護」選單：核對頁在背景處理時不能改審查通過日期（改了會清除預覽與結果）。"""
+        return not self._busy_any()
+
+    def can_export_bundle(self) -> bool:
+        """「維護」選單：有核對結果、其中有未通過的商品，而且核對頁沒在處理時才能匯出回報包。"""
+        return self.has_result and not self._busy_any() and self.session.can_export_bundle
+
     def export_bundle(self):
         """未通過的商品匯出成回報包；資料夾已存在或寫不進去時只顯示原因，來源已變更時清空結果。"""
-        if not self.has_result or self._busy_any():
+        if not self.can_export_bundle():
+            messagebox.showinfo(
+                "匯出回報包", "核對完、有未通過的商品時才能匯出回報包；核對頁正在處理時請等它完成。", parent=self.root
+            )
             return
         self._busy(True)
         destination = filedialog.askdirectory(parent=self.root, title="選取回報包的保存資料夾")
@@ -759,7 +762,8 @@ class PanelWindow:
         self.root.after(80, lambda: self._after("export_pending", self.status.set, "匯出回報包失敗，核對結果仍保留"))
 
     def edit_approval_dates(self):
-        if self._busy_any():
+        if not self.can_edit_approval_dates():
+            messagebox.showinfo("審查通過日期", "核對頁正在處理，請等它完成再修改。", parent=self.root)
             return
         try:
             ApprovalDatesDialog(self.root, self.session, self.pixels, self._approval_dates_changed)
@@ -771,6 +775,10 @@ class PanelWindow:
         self._clear()
         self.status.set(self.session.message)
         self._busy(False)
+
+    def show_config_paths(self):
+        paths = "\n".join(f"{label}：{path}" for label, path in self.session.config_paths)
+        messagebox.showinfo("使用的設定檔", paths, parent=self.root)
 
     def _watch_sources(self):
         if self.closed:
@@ -796,14 +804,15 @@ class PanelWindow:
         self.root.after(100 if self.validation is not None else 1500, self._watch_sources)
 
     def close(self):
+        """視窗關閉前：停止背景工作與來源檢查（視窗由外殼關閉）。"""
         self.closed = True
         self.executor.shutdown(wait=False, cancel_futures=True)
-        self.root.destroy()
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="FCN 本機 PANEL：以參考條件表預覽並核對多份說明書 PDF，按儲存才寫出核對結果檔。"
+        description="FCN Workflow 視窗：Order 條件、每日匯入、準備、核對、放回與寄信草稿；"
+        "核對時以參考條件表預覽並核對多份說明書 PDF，按儲存才寫出核對結果檔。"
     )
     parser.add_argument(
         "--config-dir",
@@ -816,7 +825,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--order-formats-dir", type=Path, help=argparse.SUPPRESS)  # 舊版啟動器仍會傳入
     parser.add_argument("--review-standard", type=Path, default=DEFAULTS.review_standard, help="審查標準設定檔")
-    parser.add_argument("--install-root", type=Path, help="雙擊入口提供的安裝目錄")
+    parser.add_argument(
+        "--install-root", type=Path, help="雙擊入口提供的安裝目錄；上次選的資料夾、.env 與核對紀錄都在它底下"
+    )
     args = parser.parse_args(argv)
     if args.config_dir is None:
         args.config_dir = args.order_formats_dir.parent if args.order_formats_dir else CONFIG_DIR
@@ -834,14 +845,10 @@ def session_from_args(args: argparse.Namespace) -> PanelSession:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = parse_args(argv)
-    enable_windows_dpi_awareness()
-    set_windows_app_id()
-    root = tk.Tk()
-    session = session_from_args(args)
-    PanelWindow(root, session)
-    apply_window_icon(root)
-    root.mainloop()
+    """`fcn-panel` 與核對的雙擊入口：開 FCN Workflow 視窗並停在核對頁（#74），參數照舊。"""
+    from sp_workflow.app import main as open_window  # 視窗外殼在 sp_workflow；在函式裡 import，載入模組時不互相 import
+
+    open_window(argv, start_on_check=True)
     return 0
 
 
