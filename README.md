@@ -193,7 +193,7 @@ Run the same command again after updates that add schema versions. When moving t
    - "擋下": a row is missing values or uses an unrecognized form (for example inventory status or KO/KI codes); fix the workbook and re-import.
    - "分公司對帳差異": per-branch trade totals differ from the inventory allocation (PB included); warning only.
    - "庫存尚未更新": trades are imported but `清單更新` lacks the product; paste it later and import again.
-   - "交易已取消": the trade-row 備註, after trimming and case-folding, is `Cancel`; the row is not imported into the database.
+   - "交易已取消": the trade-row 備註, after trimming and case-folding, is `Cancel`, or it contains `取消`; the row is not imported into the database.
    - "名字對不到信箱": an FC name is missing from `mailbox.person` (case is ignored); for spelling variants add an alias to `mailbox.alias`.
    - "信箱尚未建立": `mailbox.person` is empty, so names cannot be matched.
 
