@@ -1,0 +1,82 @@
+"""HSBC 表格解析（配息表、定期 KO 表）：以章／子項提供的區域及表頭辨識，不用頁碼。價格表見 parsers/price_table.py。"""
+
+from __future__ import annotations
+
+import re
+
+from ..schema import Line, ParsedField
+from ..text import squash
+from .layout import TextIndex, parse_date
+
+
+def coupon_table(lines: list[Line], daily: bool) -> ParsedField:
+    name = "coupon_table"
+    if not lines:
+        return ParsedField.missing(name)
+    texts = [squash(x.text) for x in lines]
+    marker = "Nt" if daily else "付息日(如未在該計息期間自動提前到期)"
+    ti = TextIndex(lines)
+    hits = [
+        m
+        for m in re.finditer(re.escape(marker), ti.text)
+        if not daily or ti.lines_for(m.start(), m.end())[0].text == "Nt"
+    ]
+    ends = list(re.finditer("註1[:：]", ti.text))
+    if len(hits) != 1 or len(ends) != 1:
+        return ParsedField.invalid(name, lines, "配息表頭或結束錨點缺漏／重複")
+    first = ti.lines_for(hits[0].start(), hits[0].end())[-1]
+    last = ti.lines_for(ends[0].start(), ends[0].end())[0]
+    a, b = lines.index(first) + 1, lines.index(last)
+    cells = texts[a:b]
+    width = 5 if daily else 2
+    if not cells or len(cells) % width:
+        return ParsedField.invalid(name, lines[a:b], "配息表欄位數不完整")
+    rows = []
+    for offset in range(0, len(cells), width):
+        row = cells[offset : offset + width]
+        if not re.fullmatch(r"\d{1,2}", row[0]):
+            return ParsedField.invalid(name, lines[a:b], "配息期數格式未知")
+        dates = [None if x == "-" else parse_date(x) for x in row[1:4] if daily] if daily else [parse_date(row[1])]
+        if daily:
+            if (
+                any(d is None and t != "-" for d, t in zip(dates, row[1:4], strict=True))
+                or dates[1] is None
+                or dates[2] is None
+                or not re.fullmatch(r"-|\d+", row[4])
+            ):
+                return ParsedField.invalid(name, lines[a:b], "配息表日期或Nt格式未知")
+            rows.append(
+                {
+                    "period": int(row[0]),
+                    "start": dates[0],
+                    "end": dates[1],
+                    "payment": dates[2],
+                    "nt": None if row[4] == "-" else int(row[4]),
+                }
+            )
+        else:
+            if dates[0] is None:
+                return ParsedField.invalid(name, lines[a:b], "配息日不合法")
+            rows.append({"period": int(row[0]), "payment": dates[0]})
+    return ParsedField.present(name, rows, lines[a:b])
+
+
+def ko_table(lines: list[Line]) -> ParsedField:
+    name = "ko_table"
+    texts = [squash(x.text) for x in lines]
+    try:
+        a = texts.index("自動提前到期金額付款日") + 1
+        b = next(i for i in range(a, len(texts)) if "投資人應注意" in texts[i])
+    except (ValueError, StopIteration):
+        return ParsedField.missing(name, "找不到定期KO表頭或結束錨點")
+    cells = texts[a:b]
+    if not cells or len(cells) % 3:
+        return ParsedField.invalid(name, lines[a:b], "定期KO表列不完整")
+    rows = []
+    for i in range(0, len(cells), 3):
+        serial, decision, payment = cells[i : i + 3]
+        d, p = parse_date(decision), parse_date(payment)
+        if not re.fullmatch(r"\d+", serial) or d is None or p is None:
+            return ParsedField.invalid(name, lines[a:b], "定期KO表日期或流水號格式未知")
+        rows.append({"decision": d, "payment": p})
+    return ParsedField.present(name, rows, lines[a:b])

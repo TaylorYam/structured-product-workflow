@@ -1,0 +1,509 @@
+"""PANEL 公開工作流程：參考條件表＋多份說明書與投資人須知的唯讀預覽、核對、失效檢查、手動儲存與匯出回報包。
+
+核對、儲存與匯出回報包都呼叫批量入口與其輸出模組，PANEL 不另做規則；按「儲存」或「匯出回報包」之前不寫任何檔案。
+PANEL 操作員讀到的預覽列、結果清單列、結果明細、回填決策與放行說明文字都由 PanelOutcome 組好，Tk 視窗只負責顯示。
+每次載入預覽時載入一次核對設定；核對沿用預覽的辨識與讀出，同一份說明書只讀一次。
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
+from typing import NamedTuple
+
+from . import approval_dates as approvals
+from . import report_bundle
+from .batch import (
+    BatchItem,
+    BatchOutcome,
+    BatchPreview,
+    Category,
+    DocKind,
+    PreviewRow,
+    check_batch,
+    preview_batch,
+)
+from .check_config import CONFIG_DIR, DEFAULTS, ConfigPaths
+from .config import load_review_standard
+from .ingestion import IngestionError, SourceSnapshot
+from .issuers import REGISTRY, Issuer
+from .messages import STATUS_ZH, problem_message
+from .saving import SaveReceipt, save_batch
+from .schema import CheckResult, CheckStatus
+
+_SOURCES_CHANGED = "來源檔案或設定檔已變更，結果已失效，請重新載入預覽與核對。"
+
+
+def display_value(value: object) -> str:
+    return "未提供" if value is None else str(value)
+
+
+def kind_label(kind: DocKind | None) -> str:
+    """PDF 種類欄：說明書／投資人須知；檔名結尾不是 _TS／_IIS 時寫檔名無法辨識。"""
+    return kind.value if kind is not None else "檔名無法辨識"
+
+
+_DETAIL_DEFAULTS = {
+    CheckStatus.PASS: "此已核對項目一致。",
+    CheckStatus.NOT_APPLICABLE: "依明確規則，此項目不適用。",
+}
+
+
+class ResultRow(NamedTuple):
+    """結果明細清單一列（狀態、欄位、參考條件表／標準值、PDF 值、PDF 頁碼）與選取時顯示的明細。"""
+
+    values: tuple[str, ...]
+    detail: str
+
+
+class NotCoveredGroup(NamedTuple):
+    """待處理分頁的一組：某家上手的未涵蓋事項說明（同一 rule_id 只列一次）。"""
+
+    issuer: str
+    descriptions: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class PanelOutcome:
+    batch: BatchOutcome
+
+    @property
+    def ordered_items(self) -> tuple[BatchItem, ...]:
+        """有問題的說明書排前面（ERROR、不一致、需人工覆核／未支援上手），再列通過與人工放行。"""
+        return tuple(sorted(self.batch.items, key=lambda i: i.status.display_rank))
+
+    def selection_after_release_change(self, items: Sequence[BatchItem]) -> tuple[BatchItem, ...]:
+        """放行後選清單第一份（下一份要處理的說明書），不跟著放行的那幾份排到下方；取消放行後仍選那幾份。
+
+        items 是同一次一起放行或一起取消放行的那幾份，看第一份就知道是哪一種。
+        """
+        return (self.ordered_items[0],) if items[0].released else tuple(items)
+
+    @staticmethod
+    def ordered_results(item: BatchItem) -> tuple[CheckResult, ...]:
+        return tuple(sorted(item.report.results, key=lambda r: r.status.display_rank))
+
+    @staticmethod
+    def preview_row(row: PreviewRow) -> tuple[str, ...]:
+        """預覽表一列：PDF 檔名、種類、上手、商品代號、對到的列、狀態。"""
+        return (
+            row.term_sheet.name,
+            kind_label(row.kind),
+            "未支援上手" if row.unsupported else display_value(row.issuer),
+            display_value(row.product_code),
+            f"第 {row.reference_row} 列" if row.reference_row else "—",
+            row.problem or "可以核對",
+        )
+
+    @staticmethod
+    def item_row(item: BatchItem) -> tuple[str, ...]:
+        """結果清單一列：狀態標籤、種類、PDF 檔名、問題數。"""
+        problems = sum(r.status.is_problem for r in item.report.results)
+        return (item.status_label, kind_label(item.kind), item.term_sheet.name, str(problems))
+
+    @classmethod
+    def result_rows(cls, item: BatchItem) -> tuple[ResultRow, ...]:
+        """明細清單：有問題的項目排前面；每列帶選取時顯示的明細。"""
+        return tuple(
+            ResultRow(
+                (
+                    STATUS_ZH[r.status],
+                    r.item.name,
+                    display_value(r.expected),
+                    display_value(r.actual),
+                    "第 " + "、".join(str(p) for p in sorted({e.page for e in r.document_evidence})) + " 頁"
+                    if r.document_evidence
+                    else "無法定位",
+                ),
+                cls.detail(r, item),
+            )
+            for r in cls.ordered_results(item)
+        )
+
+    @staticmethod
+    def detail(result: CheckResult, item: BatchItem) -> str:
+        """結果明細：有問題的項目用共用錯訊（不含 rule_id），再列雙方值、來源、容差與 PDF 原文。"""
+        if result.status.is_problem:
+            reason = problem_message(result)
+        else:
+            reason = result.message or _DETAIL_DEFAULTS[result.status]
+        evidence = (
+            "\n".join(f"第 {e.page} 頁：{e.text}" for e in result.document_evidence)
+            or "無法定位：沒有可用的 PDF 原文證據。"
+        )
+        return (
+            f"{result.item.name}｜{STATUS_ZH[result.status]}\n"
+            f"原因：{reason}\n"
+            f"參考條件表／標準值：{display_value(result.expected)}\nPDF 值：{display_value(result.actual)}\n"
+            f"參考條件表來源：{'、'.join(result.order_source) or '非參考條件表欄位，依審查標準或文件內部規則核對。'}\n"
+            f"容差：{result.tolerance or '未設定'}\nPDF 原文：\n{evidence}"
+        )
+
+    @staticmethod
+    def backfill_text(item: BatchItem) -> str:
+        """選取一份 PDF 時顯示的回填決策：投資人須知本身沒有，說明書逐欄列表上值、說明書值與動作。"""
+        if item.kind == DocKind.IIS:
+            return "投資人須知本身沒有回填決策；同商品的說明書與投資人須知都通過或人工放行，才依說明書的回填決策回填（含 TS、IIS 打 V）。"
+        if not item.report.backfill:
+            return "這份說明書沒有回填決策（未配對到參考條件表或無法核對）。"
+        head = "回填欄位（說明書與投資人須知都通過或人工放行才會回填；按「儲存核對結果」後寫入核對結果檔）："
+        if item.not_filled_reason:
+            head = item.not_filled_reason + "\n" + head
+        lines = [
+            f"{d.column}（{d.cell}）：表上 {display_value(d.sheet_value)}／說明書 {display_value(d.expected)} → {d.action.label}"
+            for d in item.report.backfill
+        ]
+        return "\n".join([head, *lines])
+
+    @staticmethod
+    def release_prompt(item: BatchItem) -> str:
+        """人工放行確認視窗內文：PDF 檔名、這份的全部錯訊，再請操作員確認。"""
+        return (
+            f"{item.term_sheet.name}\n\n這份{item.document}的問題：\n"
+            + "\n".join(f"・{m}" for m in item.problem_messages)
+            + "\n\n確認人工放行？放行後視同通過：儲存時回填，不列入錯誤清單。"
+        )
+
+    @staticmethod
+    def release_plan_prompt(plan: ReleasePlan) -> str:
+        """多選人工放行確認視窗內文：逐份列 PDF 檔名與全部錯訊，再列略過的與原因（Issue #219）。"""
+        parts = [f"將人工放行以下 {len(plan.targets)} 份，放行後視同通過：儲存時回填，不列入錯誤清單。"]
+        parts += [
+            f"{n}. {item.term_sheet.name}（{item.document}）\n" + "\n".join(f"・{m}" for m in item.problem_messages)
+            for n, item in enumerate(plan.targets, 1)
+        ]
+        if plan.skipped:
+            parts.append(
+                f"略過以下 {len(plan.skipped)} 份（不能人工放行）：\n"
+                + "\n".join(f"・{item.term_sheet.name}：{reason}" for item, reason in plan.skipped)
+            )
+        parts.append(f"確認人工放行這 {len(plan.targets)} 份？")
+        return "\n\n".join(parts)
+
+    @staticmethod
+    def release_plan_button(plan: ReleasePlan) -> str:
+        """多選時人工放行按鈕的文字：要處理幾份；沒有可以放行的（按鈕不能按）時不寫份數。"""
+        if plan.cancel:
+            return f"取消放行（{len(plan.targets)} 份）"
+        return f"人工放行 {len(plan.targets)} 份…" if plan.targets else "人工放行…"
+
+    @staticmethod
+    def release_plan_confirm(plan: ReleasePlan) -> str:
+        """多選人工放行確認視窗的確認按鈕文字。"""
+        return f"人工放行 {len(plan.targets)} 份"
+
+    @staticmethod
+    def release_plan_note(plan: ReleasePlan) -> str:
+        """多選時人工放行按鈕旁的說明：選了幾份、各幾份可以放行／已放行／已通過／不能放行（列出不同的原因）。"""
+        selected = len(plan.selected)
+        if plan.cancel:
+            return f"已選 {selected} 份，都已人工放行：儲存時視同通過並回填，不列入錯誤清單。"
+        counts = (
+            ("可以放行", len(plan.targets)),
+            ("已放行", sum(i.released for i in plan.selected)),
+            ("已通過", sum(i.category == Category.PASSED for i in plan.selected)),
+            ("不能放行", len(plan.skipped)),
+        )
+        note = f"已選 {selected} 份：" + "、".join(f"{label} {n} 份" for label, n in counts if n)
+        if plan.skipped:
+            note += "（" + "；".join(dict.fromkeys(reason for _, reason in plan.skipped)) + "）"
+        return note + "。"
+
+    @staticmethod
+    def release_note(item: BatchItem, reason: str) -> str:
+        """人工放行按鈕旁的說明：已放行的說明怎麼處理；不能放行時說明原因（reason 來自 PanelSession.release_state）。"""
+        if item.released:
+            return "已人工放行：儲存時視同通過並回填，不列入錯誤清單。"
+        return f"不能人工放行：{reason}" if reason else ""
+
+    @property
+    def not_covered(self) -> tuple[NotCoveredGroup, ...]:
+        """待處理：依上手分組（依說明書順序），組內同一 rule_id 只列一次；不同上手的同一 rule_id 各自保留說明。"""
+        groups: dict[str, dict[str, str]] = {}
+        for item in self.batch.items:
+            for n in item.report.not_covered:
+                groups.setdefault(item.issuer or "", {}).setdefault(n["rule_id"], n["description"])
+        return tuple(NotCoveredGroup(issuer, tuple(d.values())) for issuer, d in groups.items())
+
+    @property
+    def not_covered_count(self) -> int:
+        return sum(len(g.descriptions) for g in self.not_covered)
+
+    @property
+    def headline(self) -> str:
+        if self.batch.errors:
+            return "核對未完成：" + "；".join(e.message for e in self.batch.errors)
+        items = self.batch.items
+        parts = [f"{sum(i.category == c for i in items)} 份{c.value}" for c in Category]
+        tail = "按「儲存核對結果」後才會寫出核對結果檔（說明書與投資人須知都通過或人工放行的商品回填在「回填後」）。"
+        return f"共 {len(items)} 份：" + "、".join(parts) + "。" + tail
+
+
+class ReleaseState(NamedTuple):
+    """PANEL 人工放行按鈕：能否按下，以及要顯示的不能放行原因（空字串表示不顯示）。"""
+
+    allowed: bool
+    reason: str
+
+
+class ReleasePlan(NamedTuple):
+    """PANEL 多選時按下人工放行按鈕要做的事（Issue #219）。
+
+    選取的全部都已放行時取消放行全部（cancel）；否則放行其中還沒放行、可以放行的（targets），
+    不能放行的與原因列在 skipped（已通過的不必說明，不列）。targets 為空時按鈕不能按。
+    """
+
+    selected: tuple[BatchItem, ...]
+    cancel: bool
+    targets: tuple[BatchItem, ...]
+    skipped: tuple[tuple[BatchItem, str], ...]
+
+
+class PanelSession:
+    """UI 與測試共用的工作階段；任何來源或設定檔變更都使預覽與結果失效。
+
+    讀取 preview／outcome 不讀檔、不改狀態；來源是否變更由 check_sources 明確檢查（開始核對、放行、
+    儲存時也各檢查一次）。PANEL 視窗在背景執行緒用 snapshot.still_valid() 計算，回主執行緒再 invalidate。
+    """
+
+    def __init__(
+        self,
+        review_standard: Path = DEFAULTS.review_standard,
+        config_dir: Path | None = CONFIG_DIR,
+        *,
+        builtin_config_dir: Path | None = None,
+        registry: Sequence[Issuer] = REGISTRY,
+        install_root: Path | None = None,
+    ):
+        """config_dir 有參考條件表格式與上手編號對照就用它的；沒有就用 builtin_config_dir（雙擊入口傳入專案的 config；未指定時為開發環境的 repo config）。
+
+        install_root 是根目錄（雙擊入口給的安裝根目錄；沒有時為執行目錄），核對紀錄寫到它的 runtime/核對紀錄。
+        """
+        self.install_root = Path(install_root or ".").resolve()
+        self.paths = ConfigPaths.with_fallback(review_standard, config_dir, builtin_config_dir)
+        self.registry = tuple(registry)
+        self.reference_sheet: Path | None = None
+        self.term_sheets: tuple[Path, ...] = ()
+        self.message = "請選取參考條件表與說明書 PDF。"
+        self._preview: BatchPreview | None = None  # 帶著核對設定、讀出結果與來源快照
+        self._outcome: PanelOutcome | None = None
+        self._receipt: SaveReceipt | None = None  # 目前結果最近一次儲存的收據；放行改變後即不再是目前的結果
+
+    @property
+    def review_standard(self) -> Path:
+        return self.paths.review_standard
+
+    @property
+    def reference_format(self) -> Path:
+        return self.paths.reference_format
+
+    @property
+    def issuer_prefixes(self) -> Path:
+        return self.paths.issuer_prefixes
+
+    @property
+    def config_paths(self) -> tuple[tuple[str, Path], ...]:
+        return self.paths.labelled
+
+    def approval_dates(self) -> tuple[dt.date, ...]:
+        """目前審查標準的歷次審查通過日期（由舊到新）；設定檔有問題時丟出 IngestionError。"""
+        return load_review_standard(self.review_standard).approval_dates
+
+    def add_approval_date(self, new: dt.date, *, today: dt.date | None = None) -> str:
+        """新增審查通過日期（須晚於最新一筆），寫回設定檔。"""
+        return self._write_approval_dates(approvals.add(self.approval_dates(), new), today)
+
+    def change_latest_approval_date(self, new: dt.date, *, today: dt.date | None = None) -> str:
+        """修改最新一筆審查通過日期（修正打錯）；較早的日期不能改。"""
+        return self._write_approval_dates(approvals.change_latest(self.approval_dates(), new), today)
+
+    def remove_latest_approval_date(self, *, today: dt.date | None = None) -> str:
+        """刪除最新一筆審查通過日期；至少保留一筆。"""
+        return self._write_approval_dates(approvals.remove_latest(self.approval_dates()), today)
+
+    def _write_approval_dates(self, dates: tuple[dt.date, ...], today: dt.date | None) -> str:
+        """寫回設定檔後清除預覽與結果（設定檔已變更），回傳 PANEL 要顯示的訊息。"""
+        version = approvals.write(self.review_standard, dates, today=today or dt.date.today())
+        self._clear()
+        self.message = (
+            f"審查通過日期已更新，最新為 {dates[-1]}（審查標準 version {version}），請重新載入預覽。"
+            "記得請 Claude 把設定提交到 main。"
+        )
+        return self.message
+
+    def select(self, reference_sheet: Path | None, term_sheets: Sequence[Path]) -> None:
+        self.reference_sheet = Path(reference_sheet).resolve() if reference_sheet is not None else None
+        self.term_sheets = tuple(Path(p).resolve() for p in term_sheets)
+        self._clear()
+        self.message = "來源已更新，請重新載入預覽。"
+
+    def _clear(self) -> None:
+        self._preview, self._outcome, self._receipt = None, None, None
+
+    @property
+    def preview(self) -> BatchPreview | None:
+        return self._preview
+
+    @property
+    def outcome(self) -> PanelOutcome | None:
+        return self._outcome
+
+    @property
+    def receipt(self) -> SaveReceipt | None:
+        """目前結果最近一次儲存的收據（含已回填的說明書）；還沒存過或存過後又改了放行時為 None。"""
+        return self._receipt
+
+    @property
+    def snapshot(self) -> SourceSnapshot | None:
+        """目前預覽與結果所依據的來源快照；沒有預覽時為 None。"""
+        return self._preview.snapshot if self._preview is not None else None
+
+    def invalidate(self, snapshot: SourceSnapshot) -> None:
+        """snapshot 已確認失效：它仍是目前的快照時清除預覽與結果（背景檢查回來時已重新載入就不動）。"""
+        if snapshot is not self.snapshot:
+            return
+        if self._preview is not None:
+            self._clear()
+            self.message = "來源檔案或設定檔已變更／無法讀取，請重新載入預覽。"
+
+    def check_sources(self) -> bool:
+        """明確檢查來源：預覽仍依據相同的來源時為 True；變更或讀不到時清除預覽與結果並回傳 False。"""
+        snapshot = self.snapshot
+        if snapshot is None:
+            return False
+        if snapshot.still_valid():
+            return True
+        self.invalidate(snapshot)
+        return False
+
+    def _require_sources(self) -> None:
+        if not self.check_sources():
+            raise IngestionError("source_changed", _SOURCES_CHANGED)
+
+    def load_preview(self) -> BatchPreview:
+        self._clear()
+        try:
+            if self.reference_sheet is None or not self.term_sheets:
+                raise IngestionError("selection_missing", "請先選取參考條件表與至少一份說明書 PDF。")
+            config = self.paths.load(self.registry)  # 設定檔有問題時在這裡回報
+            preview = preview_batch(config, self.reference_sheet, self.term_sheets)
+            if not preview.snapshot.still_valid():
+                raise IngestionError("source_changed", "讀取期間來源已變更，請重新載入預覽。")
+        except OSError as e:
+            self.message = "來源檔案或設定無法讀取，請確認檔案存在且有讀取權限。"
+            raise IngestionError("source_unreadable", self.message) from e
+        except IngestionError as e:
+            self.message = str(e)
+            raise
+        self._preview = preview
+        ready = sum(not r.problem for r in preview.rows)
+        self.message = f"預覽已載入：{ready}／{len(preview.rows)} 份可以核對。請確認商品代號與對到的列，再開始核對。"
+        return preview
+
+    def start_check(self) -> PanelOutcome:
+        """沿用預覽的辨識與讀出核對，不重讀 PDF；預覽後來源或設定檔變更時清除預覽，要求重新載入。"""
+        preview = self.preview
+        if preview is None:
+            raise IngestionError("preview_required", "請先載入並確認當次預覽，來源變更後須重新載入。")
+        self._outcome, self._receipt = None, None
+        try:
+            batch = check_batch(preview)  # 先以預覽的來源快照確認來源未變更
+        except IngestionError as e:
+            self._clear()
+            self.message = str(e)
+            raise
+        self._outcome = PanelOutcome(batch)
+        self.message = self._outcome.headline
+        return self._outcome
+
+    def _current(self, *items: BatchItem) -> PanelOutcome:
+        outcome = self.outcome
+        if outcome is None or not all(any(i is item for i in outcome.batch.items) for item in items):
+            raise IngestionError("result_required", "這份結果已失效，請重新核對後再人工放行。")
+        return outcome
+
+    def _current_checked(self, *items: BatchItem) -> PanelOutcome:
+        """放行／取消放行前：先確認是當次結果，再明確檢查來源（多份也只檢查一次）。"""
+        outcome = self._current(*items)
+        self._require_sources()
+        return outcome
+
+    def release_problem(self, item: BatchItem) -> str:
+        """不能人工放行的原因（PANEL 顯示用）；空字串表示可以放行。結果已失效時也不能放行。"""
+        try:
+            self._current(item)
+        except IngestionError as e:
+            return str(e)
+        return item.release_problem
+
+    def release_state(self, item: BatchItem) -> ReleaseState:
+        """PANEL 放行按鈕：能否按下，以及要顯示的不能放行原因（已通過的不必說明）。"""
+        problem = self.release_problem(item)
+        shown = "" if item.category == Category.PASSED else problem
+        return ReleaseState(not problem, shown)
+
+    def release_plan(self, items: Sequence[BatchItem]) -> ReleasePlan:
+        """PANEL 多選時的放行按鈕：全部已放行就取消放行全部，否則放行其中可以放行的；不讀檔。"""
+        selected = tuple(items)
+        if selected and all(i.released for i in selected):
+            return ReleasePlan(selected, True, selected, ())
+        problems = [(i, self.release_problem(i)) for i in selected if not i.released]
+        targets = tuple(i for i, problem in problems if not problem)
+        skipped = tuple((i, problem) for i, problem in problems if problem and i.category != Category.PASSED)
+        return ReleasePlan(selected, False, targets, skipped)
+
+    def release(self, *items: BatchItem) -> None:
+        """人工放行一份或多份：視同通過，儲存時回填、不列入錯誤清單；任一份不能放行時都不變。重新載入或重新核對即清除。"""
+        outcome = self._current_checked(*items)
+        outcome.batch.release(*items)
+        self._after_release_change(outcome)
+
+    def cancel_release(self, *items: BatchItem) -> None:
+        outcome = self._current_checked(*items)
+        outcome.batch.cancel_release(*items)
+        self._after_release_change(outcome)
+
+    def _after_release_change(self, outcome: PanelOutcome) -> None:
+        was_saved = self._receipt is not None and self._receipt.output is not None
+        self._receipt = None  # 上一次儲存的核對結果檔不再是目前的結果
+        stale = "上一次儲存的核對結果檔已不是目前的結果，請再儲存一次。" if was_saved else ""
+        self.message = stale + outcome.headline
+
+    def save(self, out_dir: Path | None, *, now: dt.datetime | None = None) -> SaveReceipt:
+        """寫核對結果檔到 out_dir、核對紀錄到根目錄；out_dir 為 None 表示使用者取消。"""
+        if out_dir is None:
+            return SaveReceipt(cancelled=True)
+        outcome = self.outcome
+        if outcome is None:
+            raise IngestionError("result_required", "請先核對當次來源；來源變更後須重新載入與核對。")
+        receipt = save_batch(outcome.batch, Path(out_dir), root=self.install_root, now=now)  # 儲存前確認整份來源快照
+        if receipt.source_changed:
+            self.invalidate(outcome.batch.snapshot)
+            raise IngestionError("source_changed", _SOURCES_CHANGED)
+        self._receipt = receipt
+        return receipt
+
+    @property
+    def can_export_bundle(self) -> bool:
+        """目前的結果有未通過的商品（已知不支援的不算）時才能匯出回報包。"""
+        outcome = self.outcome
+        return outcome is not None and bool(report_bundle.reportable(outcome.batch))
+
+    def export_bundle(self, out_dir: Path | None, *, now: dt.datetime | None = None) -> Path | None:
+        """把未通過的商品匯出成回報包資料夾並回傳路徑；out_dir 為 None 表示使用者取消。不需要先儲存核對結果。"""
+        if out_dir is None:
+            return None
+        outcome = self.outcome
+        if outcome is None:
+            raise IngestionError("result_required", "請先核對當次來源；來源變更後須重新載入與核對。")
+        try:
+            path = report_bundle.export_bundle(outcome.batch, Path(out_dir), root=self.install_root, now=now)
+        except IngestionError as e:
+            if e.reason_code == "source_changed":
+                self.invalidate(outcome.batch.snapshot)
+                raise IngestionError("source_changed", _SOURCES_CHANGED) from e
+            raise
+        self.message = f"回報包：{path}（含真實交易資料，只能放到 Private Repo）"
+        return path

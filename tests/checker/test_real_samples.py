@@ -1,0 +1,113 @@
+"""本機真實樣本測試（說明書內部規則）：只在本機 data/ 有真實說明書時執行，CI 自動略過。
+
+所有 BARC 樣本配一份只有商品代號與發行機構的合成參考條件表，讓說明書內部規則與審查標準對每份樣本都跑過；
+表上事先填好的欄位比對見 test_real_samples_batch.py。測試碼不含任何真實商品代號或數值。
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+
+import pytest
+
+from fcn_checker.schema import CheckStatus
+from harness import check_all
+from real_data import TERM_SHEETS, requires, term_sheets
+from reference_synth import build_reference_sheet
+
+PDFS = term_sheets()
+
+pytestmark = [
+    pytest.mark.real_samples,
+    requires(TERM_SHEETS / "*_TS.pdf"),
+]
+
+# 只看說明書本身的規則（不受參考條件表影響）
+DOC_ONLY_PREFIXES = ("standard.", "doc.", "derive.prices", "template.", "schedule.")
+
+
+@pytest.fixture(scope="module")
+def reports(tmp_path_factory):
+    tmp = tmp_path_factory.mktemp("real_doc_rules")
+    rows = [{"TDCC Code": p.name[:12], "發行機構": "Barclays"} for p in PDFS if p.name.startswith("029")]
+    sheet = build_reference_sheet(tmp / "codes_only.xlsx", rows)
+    outcome = check_all(sheet, PDFS)
+    return {i.term_sheet.name: i for i in outcome.items}
+
+
+def test_other_issuers_are_unsupported(reports):
+    others = [
+        i
+        for i in reports.values()
+        if not i.term_sheet.name.startswith(
+            ("029", "325", "147", "082", "037", "159", "076", "156", "148", "328", "086", "326", "078", "092")
+        )
+    ]  # MS 見 test_real_ms.py、BNP 見 test_real_bnp.py、SG 見 test_real_sg.py、Citi 見 test_real_citi.py、JPM 見 test_real_jpm.py、
+    # Nomura 見 test_real_nomura.py、GS 見 test_real_gs.py、Natixis 見 test_real_natixis.py、CA 見 test_real_ca.py、BBVA 見 test_real_bbva.py、
+    # DBS 見 test_real_dbs.py、UBS 見 test_real_ubs.py
+    if not others:  # 上手編號對照上的上手都有範本了；本機有未登記上手的樣本時才測得到
+        pytest.skip("本機沒有未支援上手的樣本")
+    assert all(i.unsupported and i.report.status == CheckStatus.REVIEW_REQUIRED for i in others)
+
+
+def test_no_other_issuer_is_recognised_as_nomura(reports):
+    """其他上手的說明書與投資人須知都不會被判成 Nomura 範本（Issue #239）。"""
+    nomura = {"nomura-zh-pd", "nomura-zh-iis"}
+    others = [i for i in reports.values() if not i.term_sheet.name.startswith("156")]
+    assert others and all(i.report.template not in nomura for i in others)
+
+
+def test_no_other_issuer_is_recognised_as_gs(reports):
+    """其他上手的說明書與投資人須知都不會被判成 GS 範本（Issue #248）。"""
+    gs = {"gs-zh-pd", "gs-zh-iis"}
+    others = [i for i in reports.values() if not i.term_sheet.name.startswith("148")]
+    assert others and all(i.report.template not in gs for i in others)
+
+
+def test_no_other_issuer_is_recognised_as_natixis(reports):
+    """其他上手的說明書與投資人須知都不會被判成 Natixis 範本（Issue #261）。"""
+    natixis = {"natixis-zh-pd", "natixis-zh-iis"}
+    others = [i for i in reports.values() if not i.term_sheet.name.startswith("328")]
+    assert others and all(i.report.template not in natixis for i in others)
+
+
+def test_no_other_issuer_is_recognised_as_ca(reports):
+    """其他上手的說明書與投資人須知都不會被判成 CA 範本（Issue #274）。"""
+    ca = {"ca-zh-pd", "ca-zh-iis"}
+    others = [i for i in reports.values() if not i.term_sheet.name.startswith("086")]
+    assert others and all(i.report.template not in ca for i in others)
+
+
+def test_no_other_issuer_is_recognised_as_dbs(reports):
+    """其他上手的說明書與投資人須知都不會被判成 DBS 範本（Issue #280）。"""
+    dbs = {"dbs-zh-pd", "dbs-zh-iis"}
+    others = [i for i in reports.values() if not i.term_sheet.name.startswith("078")]
+    assert others and all(i.report.template not in dbs for i in others)
+
+
+def test_document_rules_only_flag_old_format_documents(reports):
+    barc = {k: i.report for k, i in reports.items() if i.report.template == "barc-zh-pd"}
+    assert len(barc) == 6
+    flagged: Counter[tuple[str, str]] = Counter()
+    for r in barc.values():
+        for x in r.results:
+            if x.rule_id.startswith(DOC_ONLY_PREFIXES) and x.status not in (
+                CheckStatus.PASS,
+                CheckStatus.NOT_APPLICABLE,
+            ):
+                flagged[(x.rule_id, x.field)] += 1
+    # 探勘結論：較早 3 份中文名稱尚未加「（不保本）」；寫交易日當時審查通過日期的依交易日核對成立（#120）
+    assert flagged == Counter({("standard.product_name", "name_zh"): 3})
+
+
+def test_every_barc_sample_yields_isin_and_compare_dates_or_explicit_review(reports):
+    """ISIN 一律可擷取；比價日都推得出來（D 型第 1 期即開始比價的轉人工確認，樣本內沒有）。"""
+    barc = [i for i in reports.values() if i.report.template == "barc-zh-pd"]
+    review = Counter()
+    for item in barc:
+        isin = next(r for r in item.report.results if r.rule_id == "backfill.isin")
+        assert isin.actual, item.term_sheet.name
+        dates = next(r for r in item.report.results if r.rule_id == "backfill.compare_dates")
+        if dates.status == CheckStatus.REVIEW_REQUIRED:
+            review[dates.reason_code] += 1
+    assert len(barc) == 6 and review == Counter()

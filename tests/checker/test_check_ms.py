@@ -1,0 +1,512 @@
+"""MS 黑箱回歸（Issue #135）：合成說明書經批量入口（預覽＋核對）；不直接測擷取或解析的內部函式。"""
+
+from __future__ import annotations
+
+import datetime as dt
+from decimal import Decimal
+
+import pytest
+
+import hsbc_synth
+import synth
+from fcn_checker.backfill import BackfillAction
+from fcn_checker.issuers import MS
+from fcn_checker.messages import problem_message
+from fcn_checker.schema import CheckStatus as S
+from harness import ALL_VARIANTS, check_all, flagged
+from harness import field_problems as problems
+from harness import results as rule
+from ms_synth import Spec, build_pdf, check
+from pdf_writer import Edit, zh_date
+from reference_synth import build_reference_sheet, reference_row
+
+
+@pytest.mark.parametrize(
+    "spec",
+    [
+        Spec(ko_obs="D", memory=True, ki="AM", count=2),
+        Spec(ko_obs="D", memory=True, ki="D", count=4),
+        Spec(ko_obs="D", memory=True, ki="P", count=3),
+        Spec(ko_obs="D", memory=True, ki="none", count=4, tenor=3),
+        Spec(ko_obs="D", memory=False, ki="AM", count=1),
+        # D 型 Non-Call 5：第 15 項 j 係為6 至8（Issue #310）
+        Spec(ko_obs="D", memory=True, ki="AM", count=3, tenor=8, first_callable=5),
+        Spec(ko_obs="D", memory=True, ki="AM", count=3, tenor=12, annual=Decimal("15")),
+        Spec(ko_obs="P", memory=True, ki="AM", count=4),
+        Spec(ko_obs="P", memory=True, ki="AM", count=2, first_callable=2),
+        Spec(ko_obs="P", memory=False, ki="none", count=4, tenor=6, first_callable=6),
+        Spec(ko_obs="P", memory=False, ki="AM", count=1, tenor=6, first_callable=6),
+    ],
+    ids=lambda s: f"{s.ko_obs}-{'mem' if s.memory else 'plain'}-KI{s.ki}-{s.count}UL-{s.tenor}m-NC{s.first_callable}",
+)
+def test_supported_types_pass(tmp_path, spec):
+    # 範本推得的寫法都要讀得出；每期觀察 KI 是 MS 的不支援樣態（下一個測試），這裡以全部支援的設定測範本本身
+    r = check(tmp_path, spec, config=ALL_VARIANTS)
+    assert r.template == MS.template_id
+    assert r.status == S.PASS, problems(r)
+    ms_rules = [x for x in r.results if x.rule_id.startswith(("doc.", "derive.", "schedule."))]
+    assert ms_rules and all(x.document_evidence for x in ms_rules if x.status == S.PASS)
+    assert {x["rule_id"] for x in r.not_covered} == {x["rule_id"] for x in MS.not_covered}
+    # 年利率由 MS 專屬規則核對（說明書沒有年利率）；受理申購日範本沒有，不核對
+    assert rule(r, "field.coupon_pa_pct")[0].status == S.NOT_APPLICABLE
+    assert not [x for x in r.results if x.rule_id == "doc.subscription_start_date"]
+    assert {x.status for x in rule(r, "derive.monthly_coupon")} == {S.PASS}
+
+
+def test_periodic_ki_is_an_unsupported_variant_for_ms(tmp_path):
+    r = check(tmp_path, Spec(ko_obs="D", memory=True, ki="P", count=3))
+    assert [(x.rule_id, x.reason_code) for x in r.results if x.status.is_problem] == [
+        ("batch.variant", "variant_unsupported")
+    ]
+    assert not [x for x in r.results if x.rule_id.startswith(("field.", "doc."))]
+
+
+def test_monthly_kept_annual_and_scenario_annualized_follow_the_sheet(tmp_path):
+    r = check(tmp_path, Spec(annual=Decimal("15.8")))  # 15.8 ÷ 12 = 1.31666… → 1.3167
+    assert r.status == S.PASS, problems(r)
+    assert rule(r, "derive.monthly_coupon")[0].expected == Decimal("1.3167")
+    annualized = [x for x in rule(r, "scenario.params") if x.field.startswith("scenario_annualized_return")]
+    assert annualized and all(x.actual == Decimal("15.80") for x in annualized)  # 範本沒有年利率：和參考條件表比
+
+
+@pytest.mark.parametrize(
+    "column,value,rule_id",
+    [
+        ("Coupon p.a. (%)", 12.12, "derive.monthly_coupon"),
+        ("Coupon p.a. (%)", 12.12, "scenario.params"),  # 獲利情境年化報酬率
+        ("Coupon p.a. (%)", 12.12, "doc.scenario_calculations"),  # 每期配息依表上年利率推得的月配息率
+        ("KO(%)", 101, "field.ko_pct"),
+        ("K(%)", 71, "field.strike_pct"),
+        ("KI(%)", 61, "field.ki_pct"),
+        ("KI(Freq)", "D", "field.ki_type"),
+        ("KO(Freq)", "P", "field.ko_observation"),
+        ("KO(memo)", "N", "field.ko_memory"),
+        ("天期(月)", 5, "field.tenor_months"),
+        ("Non-Call(月)", 2, "field.first_callable_period"),
+        ("交易日", dt.datetime(2030, 1, 8), "field.trade_date"),
+        ("最終比價日", dt.datetime(2030, 5, 15), "field.final_valuation_date"),
+        ("到期日", dt.datetime(2030, 5, 21), "field.maturity_date"),
+        ("單位面額", 20000, "field.denomination"),
+        ("單位面額", 20000, "field.min_amounts"),
+        ("承作幣別", "JPY", "field.currency"),
+        ("UL_1", "ZZ9 UW", "field.underlyings"),
+        ("UL_1_執行價", 71, "field.underlying_prices"),
+        ("UL_2_KO價", 201, "field.underlying_prices"),
+        ("ISIN Code", "XS1999900002", "backfill.isin"),
+        ("發行日", dt.datetime(2030, 1, 15), "backfill.issue_date"),
+        ("比價日_2", dt.datetime(2030, 3, 14), "backfill.compare_dates"),
+    ],
+)
+def test_sheet_difference_is_reported(tmp_path, column, value, rule_id):
+    assert flagged(check(tmp_path, **{column: value}), rule_id)
+
+
+def test_issuer_column_must_be_ms(tmp_path):
+    r = check(tmp_path, **{"發行機構": "HSBC"})
+    assert r.status == S.REVIEW_REQUIRED and not [x for x in r.results if x.rule_id.startswith("doc.")]
+
+
+S0 = Spec()  # 預設：D 型、記憶式、到期 KI、2 檔、4 個月、Non-Call 1
+
+
+@pytest.mark.parametrize(
+    "change,rule_id,status",
+    [
+        # 月配息率與年化報酬率：正式條款正確、重印處錯誤也要抓到（核對規則 §3.8）
+        (("art15", "固定配息率 (1.0000%)", "固定配息率 (1.0100%)"), "derive.monthly_coupon", S.MISMATCH),
+        (("art15", "{1.0000%×n(j)/N(j)}", "{1.0100%×n(j)/N(j)}"), "derive.monthly_coupon", S.MISMATCH),
+        (("art18", "月配息率=1.0000%", "月配息率=1.0100%"), "scenario.params", S.MISMATCH),
+        (("scen.二", "×1.0000%", "×1.0100%"), "scenario.params", S.MISMATCH),
+        (("scen.一", "年化報酬率為12.00%", "年化報酬率為12.10%"), "scenario.params", S.MISMATCH),
+        (("scen.三", "年化報酬率為12.00%", "報酬率另計"), "scenario.params", S.REVIEW_REQUIRED),
+        # 封面與第一章交叉驗證
+        (("cover", "商品種類：股票與/或", "商品種類：股票或"), "doc.product_type", S.MISMATCH),
+        (("art1", "固定配息", "固定收益"), "doc.name_consistency", S.MISMATCH),
+        (("art5", "計價幣別：美元", "計價幣別：日幣"), "doc.currency_consistency", S.MISMATCH),
+        (("art15", "j 係為2 至4", "j 係為1 至4"), "doc.coupon_periods", S.MISMATCH),
+        (("cover", "發行4個月期", "發行5個月期"), "doc.coupon_periods", S.MISMATCH),
+        (("art16.table", "ZZ2 UW", "ZZ3 UW"), "doc.underlying_tickers", S.MISMATCH),
+        # 日期表與提前出場
+        (("art14.table", zh_date(S0.starts[1]), "2030 年2 月21 日"), "schedule.period_start", S.MISMATCH),
+        (("art14.table", zh_date(S0.starts[0]), "2030 年1 月15 日"), "schedule.period_start", S.MISMATCH),
+        (("art14.table", zh_date(S0.payments[-1]), "2030 年6 月20 日"), "schedule.last_payment", S.MISMATCH),
+        (("art14.table", zh_date(S0.payments[1]), "2030 年3 月13 日"), "schedule.observation_order", S.MISMATCH),
+        (
+            ("art17", f"終止日（{zh_date(S0.ends[0])}）", f"終止日（{zh_date(S0.ends[1])}）"),
+            "schedule.autocall_dates",
+            S.MISMATCH,
+        ),
+        (
+            ("art17", f"期末定價日（{zh_date(S0.ends[-1])}）", "期末定價日（2030 年5 月16 日）"),
+            "schedule.autocall_dates",
+            S.MISMATCH,
+        ),
+        # 價格表
+        (("art16.table", "60.00%）", "61.00%）"), "derive.prices", S.MISMATCH),
+        (("art16.table", "140.0000", "140.0001"), "derive.prices", S.MISMATCH),
+        (("art16", "若在期末定價日", "若在每個觀察日"), "field.ki_type", S.REVIEW_REQUIRED),
+        # 第 18 項情境（§16 正確、§18 重印錯）
+        (("art18.table", "70.0000", "70.0001"), "scenario.reprint", S.MISMATCH),
+        (("art18.table", "60.00%）", "61.00%）"), "scenario.reprint", S.MISMATCH),
+        (("scen.四", "小於其執行價=70.0000", "小於其執行價=70.0001"), "scenario.strike", S.MISMATCH),
+        (("art18", "年期：4 個月", "年期：5 個月"), "scenario.params", S.MISMATCH),
+        (("art18", "面額 = 10,000.00 美元", "面額 = 20,000.00 美元"), "scenario.params", S.MISMATCH),
+        (("scen.二", "=200.00 美元", "=201.00 美元"), "doc.scenario_calculations", S.MISMATCH),
+        (("scen.二", "100.00 美元×2", "100.00 美元×3"), "doc.scenario_calculations", S.MISMATCH),
+        (("scen.二", "=100.00 美元", "=101.00 美元"), "doc.scenario_calculations", S.MISMATCH),
+        (("scen.四", "=-3,600.00 美元", "=-3,500.00 美元"), "doc.scenario_calculations", S.MISMATCH),
+        (("scen.四", "100.00 美元×4+", "100.00 美元×3+"), "doc.scenario_calculations", S.MISMATCH),
+        (("scen.四", "較差情況", "保守情況"), "doc.scenario_parameters", S.REVIEW_REQUIRED),
+        (("scen.二", "%=100.00 美元", "%=100.0 美元"), "doc.scenario_calculations", S.REVIEW_REQUIRED),  # 算式讀不出來
+        # 第四章
+        (
+            ("ch四", "受理贖回日期：2030 年1 月15 日", "受理贖回日期：2030 年1 月16 日"),
+            "doc.redemption_start_date",
+            S.MISMATCH,
+        ),
+        (("ch四", "商品面額的 100%", "商品面額的 99%"), "standard.issue_price", S.REVIEW_REQUIRED),
+        (
+            ("ch四", "最低贖回金額為1 單位商品面額，即美元10,000", "最低贖回金額為1 單位商品面額，即美元20,000"),
+            "field.min_amounts",
+            S.MISMATCH,
+        ),
+        (
+            ("ch四", "10,000.00元(1 單位商品面額)為累加", "20,000.00元(1 單位商品面額)為累加"),
+            "field.min_amounts",
+            S.MISMATCH,
+        ),
+        (("ch四", "0%~5%", "0%~6%"), "standard.fees", S.MISMATCH),
+        # 審查標準（MS 版本）
+        (("ch三", "歸類為RR4", "歸類為【RR4】"), "standard.fixed_warning", S.MISMATCH),
+        (("ch三", "歸類為RR4", "歸類為RR3"), "standard.risk_level", S.MISMATCH),
+        (("art3", "發行機構為英商摩根士丹利國際", "發行機構為英商摩根士丹利證券"), "standard.issuer_name", S.MISMATCH),
+        (("ch二", "International Plc，係依", "International plc，係依"), "standard.issuer_name", S.MISMATCH),
+        (("cover", "電話: +886 2 5556 1313", "電話: +886 2 5556 1314"), "standard.distributor", S.MISMATCH),
+        (
+            ("ch二", "◎ 營業所在地：台北市松山區民生東路三段158號6樓", "◎ 營業所在地：台北市民生東路三段159號6樓"),
+            "standard.distributor",
+            S.MISMATCH,
+        ),
+        (("cover", "連結一籃子股票與/或", "連結股票或"), "standard.product_name", S.MISMATCH),
+        (("cover", "Worst of Shares", "Shares"), "standard.product_name", S.MISMATCH),
+    ],
+)
+def test_document_difference_is_reported(tmp_path, change, rule_id, status):
+    section, old, new = change
+    r = check(tmp_path, S0, edits=[Edit(old, new, f"ts.{section}")])
+    assert any(x.rule_id == rule_id and x.status == status for x in r.results), problems(r)
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        ("art1", "結構型商品(無保證機構)", "結構型商品（無保證機構）"),  # 括號全半形不計
+        ("art2", "本商品風險程度為RR4。", "本商品風險程度等級為RR4。"),  # 第一章第 2 項兩種開頭都視為正確
+        ("ch二", "International Plc，係依", "International Plc.，係依"),  # 英文名結尾句點不計
+        ("ch二", "股份有限公司Morgan", "股份有限公司（Morgan"),  # 括號不計
+        (
+            "ch二",
+            "◎ 營業所在地：台北市松山區民生東路三段158號6樓",
+            "◎ 營業所在地：台北市民生東路三段158 號6 樓",
+        ),  # 審查標準的地址等價寫法
+    ],
+)
+def test_allowed_variants_still_pass(tmp_path, change):
+    section, old, new = change
+    r = check(tmp_path, S0, edits=[Edit(old, new, f"ts.{section}")])
+    assert r.status == S.PASS, problems(r)
+
+
+def test_fixed_warning_counts_both_openings_and_risk_level_without_brackets(tmp_path):
+    r = check(tmp_path)
+    warning, level = rule(r, "standard.fixed_warning")[0], rule(r, "standard.risk_level")[0]
+    assert (warning.status, warning.actual) == (S.PASS, 3)
+    assert level.status == S.PASS and level.actual == ["RR4"]
+    names = {x.field: x for x in rule(r, "standard.issuer_name")}
+    assert set(names) == {"issuer_name_cover", "issuer_name_ch2", "issuer_name_ch1"}
+    assert all(x.status == S.PASS for x in names.values())
+
+
+def test_blank_trustee_product_code_is_a_mismatch(tmp_path):
+    r = check(tmp_path, Spec(trustee_code=""))
+    x = rule(r, "doc.trustee_product_code")[0]
+    assert x.status == S.MISMATCH and x.actual == "（空白）"
+    assert "受託機構商品代號" in problem_message(x) and x.document_evidence
+
+
+NON_CALL_AT_TENOR = Spec(ko_obs="P", memory=False, ki="none", count=2, tenor=6, first_callable=6)
+
+
+def test_non_call_equal_to_tenor_without_ko_column_checks_ko_at_the_initial_price(tmp_path):
+    """Non-Call = 天期時價格表沒有 KO 欄：KO 視為期初價格的 100%、KO 價 = 進場價，照常比對（Issue #202）。"""
+    r = check(tmp_path, NON_CALL_AT_TENOR, **{"KO(%)": 100, "UL_1_KO價": 100, "UL_2_KO價": 200})
+    assert r.status == S.PASS, problems(r)
+    ko = rule(r, "field.ko_pct")[0]
+    assert ko.status == S.PASS and ko.document_evidence
+    kos = [x for x in rule(r, "field.underlying_prices") if x.item.name.endswith("KO價")]
+    assert len(kos) == 2 and all(x.status == S.PASS for x in kos)
+
+
+@pytest.mark.parametrize(
+    "overrides, broken",
+    [
+        ({"KO(%)": 150}, "field.ko_pct"),
+        ({"UL_2_KO價": 300}, "field.underlying_prices"),
+    ],
+)
+def test_non_call_equal_to_tenor_flags_a_wrong_ko_on_the_sheet(tmp_path, overrides, broken):
+    r = check(tmp_path, NON_CALL_AT_TENOR, **{"KO(%)": 100, "UL_1_KO價": 100, "UL_2_KO價": 200, **overrides})
+    assert {(rule_id, status) for rule_id, _, status in problems(r)} == {(broken, S.MISMATCH)}, problems(r)
+
+
+def test_ko_column_missing_before_maturity_requires_review(tmp_path):
+    r = check(tmp_path, S0, pdf_spec=Spec(ko_column=False))
+    assert rule(r, "field.ko_pct")[0].status == S.REVIEW_REQUIRED
+    assert rule(r, "doc.ko_column")[0].status == S.REVIEW_REQUIRED
+
+
+def test_price_table_title_listing_other_columns_than_the_header_requires_review(tmp_path):
+    """第 16 項表上方標題列出的欄（少了下限價格）和表頭不一致：價格表轉人工覆核（Issue #288 保留的檢查）。"""
+    r = check(tmp_path, S0, edits=[Edit("、下限價格及", "及", "ts.art16")])
+    x = rule(r, "field.underlying_prices")[0]
+    assert x.status == S.REVIEW_REQUIRED
+    assert "第一章第 16 項價格表標題列出的欄與表頭不一致" in x.message
+
+
+def test_vwap_without_ko_column_overwrites_ko_prices_with_the_initial_price(tmp_path):
+    """期初定價 VWAP 的價格欄一律以說明書覆寫；說明書沒有 KO 欄（Non-Call = 天期）時 KO 價 = 期初價格（Issue #202）。"""
+    r = check(tmp_path, NON_CALL_AT_TENOR, **{"期初定價": "VWAP", "UL_1_KO價": 150})
+    assert r.status == S.PASS, problems(r)
+    cells = {d.column: d for d in r.backfill}
+    assert cells["UL_1_進場價"].expected == Decimal("100.0000")
+    assert cells["UL_1_KO價"].expected == Decimal("100.0000") and cells["UL_1_KO價"].action == BackfillAction.OVERWRITE
+    assert cells["UL_2_KO價"].expected == Decimal("200.0000")
+    assert cells["UL_1_下限價"].expected == "-" and cells["UL_1_下限價"].action == BackfillAction.MATCH
+    assert cells["UL_3_KO價"].expected == "-"  # 說明書沒有的標的
+
+
+def test_observation_wording_must_match_the_date_table(tmp_path):
+    d_sentence = f"記憶事件觀察日：每日觀察，為自第1 個配息週期終止日（{zh_date(S0.ends[0])}）"
+    r = check(
+        tmp_path,
+        S0,
+        edits=[Edit(d_sentence, "記憶事件觀察日：每一個定價日自第1 個定價日開始觀察（", "ts.art17")],
+    )
+    assert rule(r, "doc.ko_observation")[0].status == S.REVIEW_REQUIRED
+    assert rule(r, "field.ko_observation")[0].status == S.REVIEW_REQUIRED
+
+
+def test_memory_in_name_must_match_article_17(tmp_path):
+    plain = [
+        (
+            "art17",
+            "自動提前出場事件：若於記憶事件觀察日所有連結標的皆發生記憶事件成為自動提前出場標的，",
+            "自動提前出場事件：若於任一觀察日所有連結標的之收盤價皆等於或高於其自動提前出場價，",
+        ),
+        ("art17", "記憶事件：任何連結標的於記憶事件觀察日之收盤價大於或等於其自動提前出場價，則發生記憶事件。", ""),
+        ("art17", "記憶事件觀察日：每日觀察", "觀察日：每日觀察"),
+    ]
+    r = check(tmp_path, S0, edits=[Edit(old, new, f"ts.{section}") for section, old, new in plain])
+    assert rule(r, "doc.ko_memory")[0].status == S.REVIEW_REQUIRED
+    assert rule(r, "field.ko_memory")[0].status == S.MISMATCH
+
+
+def test_periodic_autocall_dates_follow_non_call(tmp_path):
+    spec = Spec(ko_obs="P", count=2, first_callable=2)
+    r = check(tmp_path, spec, edits=[Edit("無", zh_date(spec.payments[0]), "ts.art14.table")])
+    assert rule(r, "schedule.autocall_dates")[0].status == S.MISMATCH
+
+
+def test_d_type_coupon_range_starts_after_non_call(tmp_path):
+    """D 型第 15 項期別起點 = Non-Call + 1；照 Non-Call 1 的寫法（從 2 起）是錯的（Issue #310）。"""
+    spec = Spec(ko_obs="D", tenor=8, first_callable=5)
+    r = check(tmp_path, spec, edits=[Edit("j 係為6 至8", "j 係為2 至8", "ts.art15")])
+    assert [x.status for x in rule(r, "doc.coupon_periods") if x.field == "coupon_range"] == [S.MISMATCH]
+
+
+def test_one_month_coupon_range_with_a_single_period(tmp_path):
+    """1 個月期第 15 項只寫「j 係為1 的數字」：讀成 a = N = 1，照現行規則核對；英文名稱寫單數「1 Month」（Issue #343）。"""
+    edits = [
+        Edit("j 係為1 至1 的數字，代表第1 至1 個", "j 係為1 的數字，代表第1 個", "ts.art15"),
+        Edit("1 Months", "1 Month"),
+    ]
+    r = check(tmp_path, Spec(ko_obs="P", tenor=1), edits=edits)
+    assert r.status == S.PASS, problems(r)
+    [rng] = [x for x in rule(r, "doc.coupon_periods") if x.field == "coupon_range"]
+    assert (rng.status, rng.actual) == (S.PASS, (1, 1))
+
+
+def test_fee_rates_are_read_under_a_centred_two_line_header(tmp_path):
+    """表頭「費率」置中拆成兩行、比費率格右移時費率仍讀得到（Issue #310）。"""
+    r = check(tmp_path, Spec(fee_header_split=True))
+    fees = rule(r, "standard.fees")
+    assert fees and all(x.status == S.PASS for x in fees), problems(r)
+
+
+def test_tables_split_across_pages_are_still_read(tmp_path):
+    r = check(tmp_path, Spec(count=3, breaks={"date": 2, "price": 1}))
+    assert r.status == S.PASS, problems(r)
+
+
+def test_old_template_is_not_recognised(tmp_path):
+    old = [
+        Edit("International Plc issuance", "International plc issuance", "ts.cover"),
+        Edit("商品中文名稱：", "商品名稱：", "ts.art1"),
+    ]
+    r = check(tmp_path, S0, edits=old)
+    x = rule(r, "template.detect")[0]
+    assert (x.status, x.reason_code) == (S.REVIEW_REQUIRED, "template_unknown")
+    assert "MS：" in x.message and "舊版範本不支援" in x.message
+
+
+def test_ms_and_other_issuers_are_never_confused(tmp_path):
+    """MS 說明書只符合 MS 範本；BARC、HSBC 說明書也不符合 MS 範本（檔名上手編號故意給錯）。"""
+    ms = build_pdf(tmp_path / "029199990004_TS.pdf", Spec(product_code="029199990004"))
+    barc = synth.build_pdf(tmp_path / "147199990002_TS.pdf", synth.Spec(product_code="147199990002"))
+    hsbc = hsbc_synth.build_pdf(tmp_path / "147199990003_TS.pdf", hsbc_synth.Spec(product_code="147199990003"))
+    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [reference_row(Spec())])
+    outcome = check_all(sheet, [ms, barc, hsbc])
+    detected = {
+        i.term_sheet.name: next(r for r in i.report.results if r.rule_id == "template.detect")
+        for i in outcome.items
+        if i.term_sheet.name.endswith("_TS.pdf")
+    }
+    assert {name: (r.status, r.actual) for name, r in detected.items()} == {
+        ms.name: (S.PASS, "ms-zh-pd"),
+        barc.name: (S.PASS, "barc-zh-pd"),
+        hsbc.name: (S.PASS, "hsbc-zh-pd"),
+    }
+    assert all(i.report.status == S.REVIEW_REQUIRED for i in outcome.items)  # 內容上手與檔名不符
+
+
+def test_ms_term_sheet_is_filled_when_the_investor_sheet_passes_too(tmp_path):
+    """MS 投資人須知已有範本（Issue #137）：兩份都通過才回填；投資人須知的各檢查點見 test_iis_ms.py。"""
+    spec = Spec()
+    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", spec)
+    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [reference_row(spec)])
+    outcome = check_all(sheet, [pdf])
+    ts, iis = sorted(outcome.items, key=lambda i: i.term_sheet.name.endswith("_IIS.pdf"))
+    assert ts.report.status == S.PASS and iis.report.status == S.PASS and not iis.unsupported
+    assert ts.fills_sheet and ts.partner is iis
+    assert all(d.action in (BackfillAction.FILL, BackfillAction.MATCH) for d in ts.report.backfill)
+
+
+# ---------------------------------------------------------------- 金額旁的幣別（Issue #170）
+
+
+def test_product_currency_need_not_match_the_underlying_currency(tmp_path):
+    """商品幣別不必等於標的幣別：日圓計價、連結美股，全部通過（合成器照規格畫幣別，不再寫死美元）；
+    較差情境提醒句的美元收盤價被換行拆開也不算（Issue #179）。"""
+    r = check(tmp_path, Spec(currency_zh="日幣"))
+    assert r.status == S.PASS, problems(r)
+    currency = rule(r, "field.currency")
+    assert {x.field for x in currency} == {
+        "currency",
+        "denomination_currency",
+        "minimum_subscription_currency",
+        "minimum_additional_currency",
+        "minimum_redemption_currency",
+        "redemption_increment_currency",
+        "scenario_denomination_currency",
+        "情境一_currency",
+        "情境二_currency",
+        "情境三_currency",
+        "情境四_currency",
+    }
+    assert all(x.expected == "JPY" and x.document_evidence for x in currency)
+    assert rule(r, "doc.denomination")[0].status == S.PASS, "面額依日圓預設值"
+
+
+@pytest.mark.parametrize(
+    ("section", "old", "new", "field"),
+    [
+        ("art6", "每單位商品面額：美元 10,000.00 元", "每單位商品面額：日幣 10,000.00 元", "denomination_currency"),
+        (
+            "ch四",
+            "即美元10,000 元，並以美元10,000.00 元(1",
+            "即日幣10,000 元，並以美元10,000.00 元(1",
+            "minimum_subscription_currency",
+        ),
+        (
+            "ch四",
+            "並以美元10,000.00 元(1 單位商品面額)為最低加購單位",
+            "並以日幣10,000.00 元(1 單位商品面額)為最低加購單位",
+            "minimum_additional_currency",
+        ),
+        (
+            "ch四",
+            "最低贖回金額為1 單位商品面額，即美元10,000 元",
+            "最低贖回金額為1 單位商品面額，即日幣10,000 元",
+            "minimum_redemption_currency",
+        ),
+        (
+            "ch四",
+            "並以美元10,000.00元(1 單位商品面額)為累加贖回單位",
+            "並以日幣10,000.00元(1 單位商品面額)為累加贖回單位",
+            "redemption_increment_currency",
+        ),
+        (
+            "art18",
+            "總投資金額 = 1 單位商品面額 = 10,000.00 美元",
+            "總投資金額 = 1 單位商品面額 = 10,000.00 日幣",
+            "scenario_denomination_currency",
+        ),
+        ("scen.一", "-10,000.00 美元=100.00 美元", "-10,000.00 美元=100.00 日幣", "情境一_currency"),
+        (
+            "scen.四",
+            "+6,000.00 美元-10,000.00 美元=-3,600.00 美元",
+            "+6,000.00 美元-10,000.00 美元=-3,600.00 日幣",
+            "情境四_currency",
+        ),
+    ],
+    ids=lambda x: x if x.endswith("_currency") else "",
+)
+def test_wrong_currency_next_to_an_amount_is_reported_at_that_place(tmp_path, section, old, new, field):
+    r = check(tmp_path, edits=[Edit(old, new, f"ts.{section}")])
+    assert problems(r) == [("field.currency", field, S.MISMATCH)]
+    [x] = rule(r, "field.currency", field)
+    assert x.expected == "USD" and x.document_evidence
+    assert x.actual == "JPY" or "日幣" in str(x.actual), "單一出處顯示 ISO 代碼，情境列出不符的金額"
+
+
+def test_stock_prices_in_the_worse_scenario_are_not_product_currency(tmp_path):
+    """較差情境的收盤價、執行價與實物交割算式用標的幣別，不核對。"""
+    edits = [
+        Edit(
+            "收盤價=42.0000 美元小於其執行價=70.0000 美元", "收盤價=42.0000 日幣小於其執行價=70.0000 日幣", "ts.scen.四"
+        ),
+        Edit(
+            "=42.0000 美元×142 股/1+36.00 美元=6,000.00 美元",
+            "=42.0000 日幣×142 股/1+36.00 日幣=6,000.00 日幣",
+            "ts.scen.四",
+        ),
+    ]
+    r = check(tmp_path, edits=edits)
+    assert r.status == S.PASS, problems(r)
+
+
+@pytest.mark.parametrize("currency_zh", ["澳幣", "南非幣"])
+def test_currencies_seen_on_samples_are_in_the_review_standard_table(tmp_path, currency_zh):
+    """樣本上看過的澳幣、南非幣有對照（Issue #185）：封面、面額、商品名稱照常核對，不轉人工覆核。"""
+    r = check(tmp_path, Spec(currency_zh=currency_zh))
+    assert r.status == S.PASS, problems(r)
+
+
+def test_scenario_amounts_written_without_decimals_are_read_and_checked(tmp_path):
+    """日圓樣本的情境算式金額寫到整數位（1,000,000 日圓×1.0000%=10,000 日圓）：照常讀出並核對（Issue #181）。"""
+    s = Spec(currency_zh="日圓", integer_amounts=True)
+    r = check(tmp_path, s)
+    assert r.status == S.PASS, problems(r)
+    assert {x.status for x in rule(r, "doc.scenario_calculations")} == {S.PASS}
+    other = tmp_path / "other"
+    other.mkdir()
+    r = check(other, s, edits=[Edit("10,000 日圓×2", "10,000 日圓×3", "ts.scen.二")])
+    assert flagged(r, "doc.scenario_calculations", S.MISMATCH), problems(r)
+
+
+@pytest.mark.parametrize(("times", "status"), [("x2", S.PASS), ("X2", S.PASS), ("x3", S.MISMATCH)])
+def test_halfwidth_x_is_read_as_the_multiplication_sign(tmp_path, times, status):
+    """損益算式的乘號寫成半形 x（南非幣樣本）：照常讀出並核對（Issue #181）。"""
+    r = check(tmp_path, S0, edits=[Edit("100.00 美元×2", f"100.00 美元{times}", "ts.scen.二")])
+    assert {x.status for x in rule(r, "doc.scenario_calculations")} >= {status}, problems(r)
+    assert not flagged(r, "doc.scenario_calculations", S.REVIEW_REQUIRED), problems(r)

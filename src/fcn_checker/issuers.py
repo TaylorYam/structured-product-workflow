@@ -1,0 +1,470 @@
+"""上手註冊表：每家上手的識別資料、範本辨識、讀出、說明書內部規則與其可讀的參考條件表欄位（ADR 0009），
+以及投資人須知範本（ADR 0007；沒有範本的上手，投資人須知是未支援上手）。
+
+上手 adapter 只提供這五樣；參考條件表欄位、審查標準、Non-Call／ISIN／發行日／比價日與回填都是各上手共用的規則，
+由單份核對（single_check.py）依序執行。新增上手時在 `REGISTRY` 登記一筆，並在 `config/issuer_prefixes.toml`
+登記上手編號（docs/issuer-onboarding.md §6）；批量入口、CLI 與 PANEL 都由這裡分派。
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+
+from .investor_sheet import IisSheet
+from .parsers import barc as barc_parser
+from .parsers import (
+    barc_iis,
+    bbva_iis,
+    bnp_iis,
+    ca_iis,
+    citi_iis,
+    dbs_iis,
+    gs_iis,
+    hsbc_iis,
+    jpm_iis,
+    ms_iis,
+    natixis_iis,
+    nomura_iis,
+    sg_iis,
+    ubs_iis,
+)
+from .parsers import bbva as bbva_parser
+from .parsers import bnp as bnp_parser
+from .parsers import ca as ca_parser
+from .parsers import citi as citi_parser
+from .parsers import dbs as dbs_parser
+from .parsers import gs as gs_parser
+from .parsers import hsbc as hsbc_parser
+from .parsers import jpm as jpm_parser
+from .parsers import ms as ms_parser
+from .parsers import natixis as natixis_parser
+from .parsers import nomura as nomura_parser
+from .parsers import sg as sg_parser
+from .parsers import ubs as ubs_parser
+from .rules import barc as barc_rules
+from .rules import bbva as bbva_rules
+from .rules import bbva_iis as bbva_iis_rules
+from .rules import bnp as bnp_rules
+from .rules import ca as ca_rules
+from .rules import ca_iis as ca_iis_rules
+from .rules import citi as citi_rules
+from .rules import citi_iis as citi_iis_rules
+from .rules import dbs as dbs_rules
+from .rules import dbs_iis as dbs_iis_rules
+from .rules import gs as gs_rules
+from .rules import gs_iis as gs_iis_rules
+from .rules import hsbc as hsbc_rules
+from .rules import jpm as jpm_rules
+from .rules import jpm_iis as jpm_iis_rules
+from .rules import ms as ms_rules
+from .rules import ms_iis as ms_iis_rules
+from .rules import natixis as natixis_rules
+from .rules import natixis_iis as natixis_iis_rules
+from .rules import nomura as nomura_rules
+from .rules import nomura_iis as nomura_iis_rules
+from .rules import sg as sg_rules
+from .rules import sg_iis as sg_iis_rules
+from .rules import ubs as ubs_rules
+from .rules import ubs_iis as ubs_iis_rules
+from .rules.iis import IisIssuerContext
+from .rules.kit import IssuerContext
+from .schema import CheckResult, CheckStatus, DetectionResult, Evidence, Item, Line
+from .standard_fields import TermSheet
+
+
+@dataclass(frozen=True)
+class IisTemplate:
+    """某上手的投資人須知範本：檢查點依範本實際有的欄位（`IisSheet.provides`），規則各上手共用（rules/iis.py）。
+
+    範本另有共用規則表達不了的檢查（例：MS 商品種類依標的數）時，由 `rules` 提供；只拿到投資人須知與同商品說明書的
+    讀出結果，不含參考條件表（同上手說明書內部規則）。
+    """
+
+    template_id: str
+    label: str
+    parser_version: str
+    detect: Callable[[Sequence[Line]], DetectionResult]
+    read: Callable[[Sequence[Line]], IisSheet]
+    not_covered: tuple[dict[str, str], ...] = ()  # 範本未涵蓋的型態（PANEL「待處理」與核對紀錄）
+    rules: Callable[[IisIssuerContext], list[CheckResult]] | None = None  # 範本專屬的投資人須知規則
+
+
+@dataclass(frozen=True)
+class Issuer:
+    # 識別資料
+    code: str  # 上手代號（例：BARC），與上手編號對照、參考條件表「發行機構」設定相同
+    template_id: str
+    label: str
+    parser_version: str
+    not_covered: tuple[dict[str, str], ...]  # 「未涵蓋」的固定清單（PANEL「待處理」分頁與核對紀錄）
+    # 辨識：文字行 → 是否為這家上手的範本（含證據）；一次核對中每份說明書只呼叫一次
+    detect: Callable[[Sequence[Line]], DetectionResult]
+    # 讀出：文字行 → 標準欄位（standard_fields.STANDARD_FIELDS）＋該上手規則需要的專屬資料；每份只呼叫一次
+    read: Callable[[Sequence[Line]], TermSheet]
+    # 說明書內部規則：只用讀出結果與審查標準，拿不到參考條件表的列與格式設定
+    rules: Callable[[IssuerContext], list[CheckResult]]
+    # 說明書內部規則可讀的參考條件表欄位（ADR 0009，須逐一宣告：BARC 月配息率推算的年利率與天期（Issue #54）、
+    # MS 月配息率與年化報酬率的年利率（說明書沒有年利率，Issue #135））
+    reference_fields: tuple[str, ...] = ()
+    # 投資人須知範本；None → 這家上手的投資人須知是未支援上手
+    iis: IisTemplate | None = None
+
+
+_IIS_SAMPLES = {
+    "rule_id": "iis.template_variants",
+    "description": "投資人須知依各 5～8 份樣本建立（docs/templates/*-zh-iis.md 樣本總表；MS 只支援其中新版 6 份）："
+    "其他型態的寫法未驗證，範本以外的欄位或寫法會轉人工覆核",
+}
+
+BARC = Issuer(
+    code=barc_rules.ISSUER,
+    template_id=barc_parser.TEMPLATE_ID,
+    label="BARC 中文產品說明書",
+    parser_version=barc_parser.PARSER_VERSION,
+    not_covered=tuple(barc_rules.NOT_COVERED),
+    detect=lambda lines: barc_parser.detect(barc_parser.document(lines)),
+    read=barc_parser.read,
+    rules=barc_rules.run_all,
+    reference_fields=barc_rules.REFERENCE_FIELDS,
+    iis=IisTemplate(
+        template_id=barc_iis.TEMPLATE_ID,
+        label="BARC 中文投資人須知",
+        parser_version=barc_iis.PARSER_VERSION,
+        detect=barc_iis.detect,
+        read=barc_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+    ),
+)
+
+HSBC = Issuer(
+    code=hsbc_rules.ISSUER,
+    template_id=hsbc_parser.TEMPLATE_ID,
+    label="HSBC 中文產品說明書",
+    parser_version=hsbc_parser.PARSER_VERSION,
+    not_covered=tuple(hsbc_rules.NOT_COVERED),
+    detect=hsbc_parser.detect,
+    read=hsbc_parser.read,
+    rules=hsbc_rules.run_all,
+    iis=IisTemplate(
+        template_id=hsbc_iis.TEMPLATE_ID,
+        label="HSBC 中文投資人須知",
+        parser_version=hsbc_iis.PARSER_VERSION,
+        detect=hsbc_iis.detect,
+        read=hsbc_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+    ),
+)
+
+MS = Issuer(
+    code=ms_rules.ISSUER,
+    template_id=ms_parser.TEMPLATE_ID,
+    label="MS 中文產品說明書",
+    parser_version=ms_parser.PARSER_VERSION,
+    not_covered=tuple(ms_rules.NOT_COVERED),
+    detect=ms_parser.detect,
+    read=ms_parser.read,
+    rules=ms_rules.run_all,
+    reference_fields=ms_rules.REFERENCE_FIELDS,
+    iis=IisTemplate(
+        template_id=ms_iis.TEMPLATE_ID,
+        label="MS 中文投資人須知",
+        parser_version=ms_iis.PARSER_VERSION,
+        detect=ms_iis.detect,
+        read=ms_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=ms_iis_rules.run_all,
+    ),
+)
+
+BNP = Issuer(
+    code=bnp_rules.ISSUER,
+    template_id=bnp_parser.TEMPLATE_ID,
+    label="BNP 中文產品說明書",
+    parser_version=bnp_parser.PARSER_VERSION,
+    not_covered=tuple(bnp_rules.NOT_COVERED),
+    detect=bnp_parser.detect,
+    read=bnp_parser.read,
+    rules=bnp_rules.run_all,
+    reference_fields=bnp_rules.REFERENCE_FIELDS,
+    iis=IisTemplate(
+        template_id=bnp_iis.TEMPLATE_ID,
+        label="BNP 中文投資人須知",
+        parser_version=bnp_iis.PARSER_VERSION,
+        detect=bnp_iis.detect,
+        read=bnp_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+    ),
+)
+
+SG = Issuer(
+    code=sg_rules.ISSUER,
+    template_id=sg_parser.TEMPLATE_ID,
+    label="SG 中文產品說明書",
+    parser_version=sg_parser.PARSER_VERSION,
+    not_covered=tuple(sg_rules.NOT_COVERED),
+    detect=sg_parser.detect,
+    read=sg_parser.read,
+    rules=sg_rules.run_all,
+    reference_fields=sg_rules.REFERENCE_FIELDS,
+    iis=IisTemplate(
+        template_id=sg_iis.TEMPLATE_ID,
+        label="SG 中文投資人須知",
+        parser_version=sg_iis.PARSER_VERSION,
+        detect=sg_iis.detect,
+        read=sg_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=sg_iis_rules.run_all,
+    ),
+)
+
+CITI = Issuer(
+    code=citi_rules.ISSUER,
+    template_id=citi_parser.TEMPLATE_ID,
+    label="Citi 中文產品說明書",
+    parser_version=citi_parser.PARSER_VERSION,
+    not_covered=tuple(citi_rules.NOT_COVERED),
+    detect=citi_parser.detect,
+    read=citi_parser.read,
+    rules=citi_rules.run_all,
+    reference_fields=citi_rules.REFERENCE_FIELDS,
+    iis=IisTemplate(
+        template_id=citi_iis.TEMPLATE_ID,
+        label="Citi 中文投資人須知",
+        parser_version=citi_iis.PARSER_VERSION,
+        detect=citi_iis.detect,
+        read=citi_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=citi_iis_rules.run_all,
+    ),
+)
+
+JPM = Issuer(
+    code=jpm_rules.ISSUER,
+    template_id=jpm_parser.TEMPLATE_ID,
+    label="JPM 中文產品說明書",
+    parser_version=jpm_parser.PARSER_VERSION,
+    not_covered=tuple(jpm_rules.NOT_COVERED),
+    detect=jpm_parser.detect,
+    read=jpm_parser.read,
+    rules=jpm_rules.run_all,
+    reference_fields=jpm_rules.REFERENCE_FIELDS,
+    iis=IisTemplate(
+        template_id=jpm_iis.TEMPLATE_ID,
+        label="JPM 中文投資人須知",
+        parser_version=jpm_iis.PARSER_VERSION,
+        detect=jpm_iis.detect,
+        read=jpm_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=jpm_iis_rules.run_all,
+    ),
+)
+
+NOMURA = Issuer(
+    code=nomura_rules.ISSUER,
+    template_id=nomura_parser.TEMPLATE_ID,
+    label="Nomura 中文產品說明書",
+    parser_version=nomura_parser.PARSER_VERSION,
+    not_covered=tuple(nomura_rules.NOT_COVERED),
+    detect=nomura_parser.detect,
+    read=nomura_parser.read,
+    rules=nomura_rules.run_all,
+    iis=IisTemplate(
+        template_id=nomura_iis.TEMPLATE_ID,
+        label="Nomura 中文投資人須知",
+        parser_version=nomura_iis.PARSER_VERSION,
+        detect=nomura_iis.detect,
+        read=nomura_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=nomura_iis_rules.run_all,
+    ),
+)
+
+GS = Issuer(
+    code=gs_rules.ISSUER,
+    template_id=gs_parser.TEMPLATE_ID,
+    label="GS 中文產品說明書",
+    parser_version=gs_parser.PARSER_VERSION,
+    not_covered=tuple(gs_rules.NOT_COVERED),
+    detect=gs_parser.detect,
+    read=gs_parser.read,
+    rules=gs_rules.run_all,
+    reference_fields=gs_rules.REFERENCE_FIELDS,
+    iis=IisTemplate(
+        template_id=gs_iis.TEMPLATE_ID,
+        label="GS 中文投資人須知",
+        parser_version=gs_iis.PARSER_VERSION,
+        detect=gs_iis.detect,
+        read=gs_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=gs_iis_rules.run_all,
+    ),
+)
+
+NATIXIS = Issuer(
+    code=natixis_rules.ISSUER,
+    template_id=natixis_parser.TEMPLATE_ID,
+    label="Natixis 中文產品說明書",
+    parser_version=natixis_parser.PARSER_VERSION,
+    not_covered=tuple(natixis_rules.NOT_COVERED),
+    detect=natixis_parser.detect,
+    read=natixis_parser.read,
+    rules=natixis_rules.run_all,
+    reference_fields=natixis_rules.REFERENCE_FIELDS,
+    iis=IisTemplate(
+        template_id=natixis_iis.TEMPLATE_ID,
+        label="Natixis 中文投資人須知",
+        parser_version=natixis_iis.PARSER_VERSION,
+        detect=natixis_iis.detect,
+        read=natixis_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=natixis_iis_rules.run_all,
+    ),
+)
+
+CA = Issuer(
+    code=ca_rules.ISSUER,
+    template_id=ca_parser.TEMPLATE_ID,
+    label="CA 中文產品說明書",
+    parser_version=ca_parser.PARSER_VERSION,
+    not_covered=tuple(ca_rules.NOT_COVERED),
+    detect=ca_parser.detect,
+    read=ca_parser.read,
+    rules=ca_rules.run_all,
+    reference_fields=ca_rules.REFERENCE_FIELDS,
+    iis=IisTemplate(
+        template_id=ca_iis.TEMPLATE_ID,
+        label="CA 中文投資人須知",
+        parser_version=ca_iis.PARSER_VERSION,
+        detect=ca_iis.detect,
+        read=ca_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=ca_iis_rules.run_all,
+    ),
+)
+
+BBVA = Issuer(
+    code=bbva_rules.ISSUER,
+    template_id=bbva_parser.TEMPLATE_ID,
+    label="BBVA 中文產品說明書",
+    parser_version=bbva_parser.PARSER_VERSION,
+    not_covered=tuple(bbva_rules.NOT_COVERED),
+    detect=bbva_parser.detect,
+    read=bbva_parser.read,
+    rules=bbva_rules.run_all,
+    reference_fields=bbva_rules.REFERENCE_FIELDS,
+    iis=IisTemplate(
+        template_id=bbva_iis.TEMPLATE_ID,
+        label="BBVA 中文投資人須知",
+        parser_version=bbva_iis.PARSER_VERSION,
+        detect=bbva_iis.detect,
+        read=bbva_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=bbva_iis_rules.run_all,
+    ),
+)
+
+DBS = Issuer(
+    code=dbs_rules.ISSUER,
+    template_id=dbs_parser.TEMPLATE_ID,
+    label="DBS 中文產品說明書",
+    parser_version=dbs_parser.PARSER_VERSION,
+    not_covered=tuple(dbs_rules.NOT_COVERED),
+    detect=dbs_parser.detect,
+    read=dbs_parser.read,
+    rules=dbs_rules.run_all,
+    reference_fields=dbs_rules.REFERENCE_FIELDS,
+    iis=IisTemplate(
+        template_id=dbs_iis.TEMPLATE_ID,
+        label="DBS 中文投資人須知",
+        parser_version=dbs_iis.PARSER_VERSION,
+        detect=dbs_iis.detect,
+        read=dbs_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=dbs_iis_rules.run_all,
+    ),
+)
+
+UBS = Issuer(
+    code=ubs_rules.ISSUER,
+    template_id=ubs_parser.TEMPLATE_ID,
+    label="UBS 中文產品說明書",
+    parser_version=ubs_parser.PARSER_VERSION,
+    not_covered=tuple(ubs_rules.NOT_COVERED),
+    detect=ubs_parser.detect,
+    read=ubs_parser.read,
+    rules=ubs_rules.run_all,
+    reference_fields=ubs_rules.REFERENCE_FIELDS,
+    iis=IisTemplate(
+        template_id=ubs_iis.TEMPLATE_ID,
+        label="UBS 中文投資人須知",
+        parser_version=ubs_iis.PARSER_VERSION,
+        detect=ubs_iis.detect,
+        read=ubs_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=ubs_iis_rules.run_all,
+    ),
+)
+
+REGISTRY: tuple[Issuer, ...] = (BARC, HSBC, MS, BNP, SG, CITI, JPM, NOMURA, GS, NATIXIS, CA, BBVA, DBS, UBS)
+
+
+def by_code(code: str, registry: Sequence[Issuer] = REGISTRY) -> Issuer | None:
+    return next((i for i in registry if i.code == code), None)
+
+
+TEMPLATE = Item.note("範本")
+
+
+def detect(lines: Sequence[Line], registry: Sequence[Issuer] = REGISTRY) -> tuple[Issuer | None, CheckResult]:
+    """以每家已註冊上手辨識說明書範本；恰好一個命中才回傳該上手，零個或多個命中轉人工覆核。"""
+    return _detect(lines, [(i, i.detect, i.template_id, i.label) for i in registry], "說明書")
+
+
+def detect_iis(lines: Sequence[Line], registry: Sequence[Issuer] = REGISTRY) -> tuple[Issuer | None, CheckResult]:
+    """以每家有投資人須知範本的上手辨識投資人須知；恰好一個命中才回傳該上手，零個或多個命中轉人工覆核。"""
+    templates = [(i, i.iis.detect, i.iis.template_id, i.iis.label) for i in registry if i.iis is not None]
+    return _detect(lines, templates, "投資人須知")
+
+
+def _detect(
+    lines: Sequence[Line],
+    templates: Sequence[tuple[Issuer, Callable[[Sequence[Line]], DetectionResult], str, str]],
+    what: str,
+) -> tuple[Issuer | None, CheckResult]:
+    detections = [(i, d(lines), tid, label) for i, d, tid, label in templates]
+    hits = [(i, d, tid, label) for i, d, tid, label in detections if d.matched]
+    rid = "template.detect"
+    if len(hits) == 1:
+        issuer, det, tid, label = hits[0]
+        return issuer, CheckResult(
+            rule_id=rid,
+            field="template",
+            status=CheckStatus.PASS,
+            actual=tid,
+            document_evidence=det.evidence,
+            message=f"符合 {label} 範本",
+            item=TEMPLATE,
+        )
+    if hits:
+        return None, CheckResult(
+            rule_id=rid,
+            field="template",
+            status=CheckStatus.REVIEW_REQUIRED,
+            actual=[tid for _, _, tid, _ in hits],
+            reason_code="template_ambiguous",
+            document_evidence=[e for _, d, _, _ in hits for e in d.evidence],
+            message="同時符合多個範本，無法確定上手，請人工處理：" + "、".join(label for _, _, _, label in hits),
+            item=TEMPLATE,
+        )
+    evidence: list[Evidence] = [e for _, d, _, _ in detections for e in d.evidence]
+    reasons = "；".join(f"{i.code}：" + "；".join(d.failed) for i, d, _, _ in detections)
+    return None, CheckResult(
+        rule_id=rid,
+        field="template",
+        status=CheckStatus.REVIEW_REQUIRED,
+        reason_code="template_unknown",
+        document_evidence=evidence,
+        message=f"不是已支援的{what}範本，請人工處理：" + reasons,
+        item=TEMPLATE,
+    )

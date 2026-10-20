@@ -1,0 +1,352 @@
+"""SG 專屬規則（docs/rules/sg-check-rules.md）：配息率與平均年化報酬率、說明書內部交叉驗證、日期表結構、固定值重印。
+
+參考條件表欄位、價格推算、審查標準（含 SG 分節：保證機構與總代理人名稱、商品種類、最低申購倍數）與回填是各上手
+共用的規則；情境分析見 rules/sg_scenario.py。只有年利率要讀參考條件表（ADR 0009，見 REFERENCE_FIELDS）。
+抓不到、歧義或寫法不在範本規格內一律轉人工覆核。每筆結果的項目名稱寫在規則旁；預期值來自說明書其他位置、推算或審查標準。
+"""
+
+from __future__ import annotations
+
+import re
+
+from ..schema import CheckResult, FieldStatus, Item, ParsedField
+from ..schema import CheckStatus as S
+from ..text import squash
+from . import kit, sg_scenario
+from .kit import Check, IssuerContext
+
+ISSUER = "SG"
+# 本上手規則可讀的參考條件表欄位（ADR 0009，須在 reference_fields 宣告：配息率與平均年化報酬率依表上年利率核對，同 BARC／MS／BNP）
+REFERENCE_FIELDS = ("coupon_pa_pct",)
+NOT_COVERED = [
+    {
+        "rule_id": "doc.fixed_warnings_2_to_10",
+        "description": "固定警語二～十的全文不核對（只保留七的禁用語檢查；2026-10-13 確認）",
+    },
+    {
+        "rule_id": "doc.underlying_names",
+        "description": "連結標的中文名稱、資產種類與交易所不核對；以第 9 項(1) 彭博代碼為準",
+    },
+    {
+        "rule_id": "doc.initial_prices",
+        "description": "期初價格本身的外部正確性（沒有權威來源）；參考條件表「期初定價」欄不核對",
+    },
+    {
+        "rule_id": "doc.scenario_worse_details",
+        "description": "較差／最差情境的假設收盤價與匯率不核對（數額、應實際交付數、現金交割、總報酬率與平均年化報酬率依文件寫的收盤價與匯率驗算）",
+    },
+    {
+        "rule_id": "doc.agents_and_addresses",
+        "description": "發行機構、總代理人、保證機構的地址電話、總代理人負責人、基本公開說明書日期、發行不成立門檻、營業日城市不核對"
+        "（2026-10-13 確認）",
+    },
+    {
+        "rule_id": "doc.template_variants",
+        "description": "依規則推得、待樣本驗證：D 型多標的非記憶式、新版面的 P 型非記憶式與 KI 每期觀察、單一標的記憶式、5 檔標的、"
+        "HKD／AUD／EUR／GBP／ZAR 計價；範本以外的寫法會轉人工覆核",
+    },
+]
+AUTOCALL_DAY_LAG = 3  # D 型「自動提前出場日：為發生自動提前出場事件後第 3 個營業日」
+
+
+def _norm_name(value: str) -> str:
+    """名稱比對：忽略空白與全形／半形括號（2026-10-13 確認）。"""
+    return re.sub(r"[()（）]", "", squash(value))
+
+
+# ---------------------------------------------------------------- 配息率與平均年化報酬率（核對規則 §3.3，讀參考條件表）
+
+
+def monthly_coupon(ctx: IssuerContext) -> list[CheckResult]:
+    """第 8 項配息率 = 參考條件表年利率 ÷ 12，四捨五入（half-up）到 4 位（SG 固定 4 位，JPY 也是）。第 15 項假設與各情境
+    算式的配息率、獲利情境平均年化報酬率由共用情境規則 `scenario.params` 和第 8 項比（Issue #294）。"""
+    return kit.rate_mentions(
+        ctx,
+        "derive.monthly_coupon",
+        "monthly_coupon_pct",
+        "配息率",
+        ctx.ts.coupon_mentions,
+        lambda annual, value: (kit.monthly_of_annual(annual) == value, kit.monthly_of_annual(annual)),
+        "四捨五入（half-up）到 4 位",
+        lambda annual: f"推算：年利率 {annual}% ÷ 12",
+    )
+
+
+# ---------------------------------------------------------------- 說明書內部交叉驗證（核對規則 §3.5）
+
+
+def document_info(ctx: IssuerContext) -> list[CheckResult]:
+    f = ctx.ts.f
+    code, trustee = f("product_code"), f("trustee_product_code")
+    out = [
+        kit.doc_check(
+            ctx, "doc.trustee_product_code", "trustee_product_code", "受託或銷售機構商品代號", code, trustee
+        ).compare(
+            code.value,
+            trustee.value or "（空白）",
+            ok=code.ok and trustee.ok and trustee.value == code.value,
+            fail_message="封面受託或銷售機構商品代號須等於商品代號" + ("（說明書空白）" if trustee.value == "" else ""),
+        )
+    ]
+    isin, isin26 = f("isin"), f("isin_art26")
+    out.append(
+        kit.doc_check(ctx, "doc.isin_consistency", "isin_art26", "第一章第 26 項 ISIN", isin, isin26).compare(
+            isin.value, isin26.value, fail_message="第一章第 26 項 ISIN 代碼須等於封面 ISIN"
+        )
+    )
+    zh = f("name_zh")
+    for field, name, where in (
+        ("cover_title", "封面標題名稱", "封面標題"),
+        ("name_art1", "第一章第 1 項商品名稱", "第一章第 1 項商品名稱"),
+    ):
+        pf = f(field)
+        out.append(
+            kit.doc_check(ctx, "doc.name_consistency", field, name, zh, pf).compare(
+                _norm_name(zh.value) if zh.ok else None,
+                _norm_name(pf.value) if pf.ok else None,
+                tolerance="忽略空白與全形／半形括號",
+                fail_message=f"{where}須等於封面商品中文名稱（不含「（下稱「本商品」）」；忽略空白與括號）",
+            )
+        )
+    cz, c5 = f("currency_zh"), f("currency_art5")
+    out.append(
+        kit.doc_check(ctx, "doc.currency_consistency", "currency_art5", "第一章第 5 項計價幣別", cz, c5).compare(
+            squash(cz.value) if cz.ok else None, squash(c5.value) if c5.ok else None
+        )
+    )
+    return out
+
+
+def periods(ctx: IssuerContext) -> list[CheckResult]:
+    """天期 = 中英文名稱月數 = 第 15 項假設天期（日期表期數由共用規則 `schedule.period_count` 檢查）。"""
+    f = ctx.ts.f
+    tenor, zh, en = f("tenor_months"), f("name_zh"), f("name_en")
+    rid = "doc.coupon_periods"
+
+    def months(pf: ParsedField, pattern: str, what: str) -> ParsedField:
+        m = re.search(pattern, squash(pf.value)) if pf.ok else None
+        if pf.ok and m is None:
+            return ParsedField.invalid("name_months", [], f"{what}找不到月數")
+        return ParsedField("name_months", pf.status, int(m[1]) if m else None, pf.evidence, note=pf.note)
+
+    zh_months = months(zh, r"計價(\d+)個月", "商品中文名稱")
+    en_months = months(en, r"(\d+)-month", "商品英文名稱")
+    return [
+        kit.doc_check(ctx, rid, "name_months_zh", "商品中文名稱月數", tenor, zh_months).compare(
+            tenor.value, zh_months.value
+        ),
+        kit.doc_check(ctx, rid, "name_months_en", "商品英文名稱月數", tenor, en_months).compare(
+            tenor.value, en_months.value
+        ),
+    ]
+
+
+def _has(pf: ParsedField, word: str) -> bool | None:
+    return (word in squash(pf.value)) if pf.ok else None
+
+
+def autocall_terms(ctx: IssuerContext) -> list[CheckResult]:
+    """有無自動提前出場：第 8 項（自動提前出場事件段）⇔ 名稱字樣 ⇔ 標的表自動提前出場價欄 ⇔ 第 8 項觀察寫法與日期表表頭；
+    記憶式：第 8 項記憶事件 ⇔ 名稱「記憶式／Memory」。不一致轉人工覆核（寫法超出範本規格）。"""
+    f = ctx.ts.f
+    has, zh, en, table, wording, dtable = (
+        f(x) for x in ("has_autocall", "name_zh", "name_en", "underlying_table", "ko_wording", "date_table")
+    )
+    label = {True: "有自動提前出場", False: "無自動提前出場"}
+    out = []
+    for field, pf, word, name in (
+        ("name_zh", zh, "自動提前出場", "商品中文名稱的自動提前出場字樣"),
+        ("name_en", en, "Autocallable", "商品英文名稱的 Autocallable 字樣"),
+    ):
+        out.append(
+            kit.doc_check(ctx, "doc.autocall_wording", field, name, has, pf).compare(
+                label.get(has.value) if has.ok else None,
+                label.get(_has(pf, word)) if pf.ok else None,
+                fail=S.REVIEW_REQUIRED,
+                reason="document_inconsistent",
+                fail_message="名稱有無自動提前出場字樣須與第 8 項有無自動提前出場事件一致",
+            )
+        )
+    out.append(
+        kit.doc_check(ctx, "doc.autocall_wording", "underlying_table", "標的表自動提前出場價欄", has, table).compare(
+            label.get(has.value) if has.ok else None,
+            label.get("ko" in table.value.columns) if table.ok else None,
+            fail=S.REVIEW_REQUIRED,
+            reason="document_inconsistent",
+            fail_message="標的表有無自動提前出場價欄須與第 8 項有無自動提前出場事件一致",
+        )
+    )
+    kinds = {"D": "每日觀察", "P": "每期觀察", "none": "無自動提前出場"}
+    out.append(
+        kit.doc_check(
+            ctx, "doc.ko_observation", "ko_observation", "KO 觀察方式（第 8 項寫法與日期表）", wording, dtable
+        ).compare(
+            kinds.get(wording.value["type"]) if wording.ok else None,
+            ("每日觀察" if dtable.value["type"] == "D" else "每期觀察／無自動提前出場") if dtable.ok else None,
+            ok=wording.ok and dtable.ok and (wording.value["type"] == "D") == (dtable.value["type"] == "D"),
+            fail=S.REVIEW_REQUIRED,
+            reason="document_inconsistent",
+            fail_message="第 8 項觀察期間的寫法與第 12 項日期表表頭不一致",
+        )
+    )
+    mem = f("ko_memory")
+    mem_label = {True: "記憶式", False: "非記憶式"}
+    for field, pf, word, name in (
+        ("name_zh", zh, "記憶式", "商品中文名稱的記憶式字樣"),
+        ("name_en", en, "Memory", "商品英文名稱的 Memory 字樣"),
+    ):
+        out.append(
+            kit.doc_check(ctx, "doc.ko_memory", field, name, mem, pf).compare(
+                mem_label.get(mem.value) if mem.ok else None,
+                mem_label.get(_has(pf, word)) if pf.ok else None,
+                fail=S.REVIEW_REQUIRED,
+                reason="document_inconsistent",
+                fail_message="名稱有無記憶式字樣須與第 8 項有無記憶事件一致",
+            )
+        )
+    return out
+
+
+def ki_terms(ctx: IssuerContext) -> list[CheckResult]:
+    """KI：第 8 項到期贖回款（KI 型態）⇔ 有無「下限價：」行 ⇔ 標的表下限價欄；最差表現 k 數 = 標的數。"""
+    f = ctx.ts.f
+    ki, pct, table, uls, k = f("ki_type"), f("ki_pct"), f("underlying_table"), f("underlyings"), f("worst_k")
+    doc_ki = kit.doc_ki(ki)
+    label = {True: "有 KI", False: "無 KI"}
+    out = []
+    check = Check("doc.ki_consistency", "ki_pct", Item.expected("第 8 項下限價"), ctx.document)
+    if doc_ki is None:
+        out.append(check.review(ki))
+    else:
+        has_pct = pct.status == FieldStatus.PRESENT
+        out.append(
+            check.needs(ki).compare(
+                label[doc_ki != "none"],
+                label[has_pct] if has_pct or pct.status == FieldStatus.NOT_APPLICABLE else None,
+                ok=has_pct == (doc_ki != "none"),
+                fail=S.REVIEW_REQUIRED,
+                reason="document_inconsistent",
+                evidence=ki.evidence + pct.evidence,
+                fail_message="第 8 項有無「下限價：」須與到期贖回款的觀察寫法一致",
+            )
+        )
+        out.append(
+            kit.doc_check(ctx, "doc.ki_consistency", "underlying_table", "標的表下限價欄", ki, table).compare(
+                label[doc_ki != "none"],
+                label["ki" in table.value.columns] if table.ok else None,
+                fail=S.REVIEW_REQUIRED,
+                reason="document_inconsistent",
+                fail_message="標的表有無下限價欄須與 KI 型態一致",
+            )
+        )
+    out.append(
+        kit.doc_check(ctx, "doc.worst_of_count", "worst_k", "最差表現之連結標的 k 數", uls, k).compare(
+            len(uls.value) if uls.ok else None,
+            k.value,
+            fail_message="第 8 項「連結標的(k)(k=1、2…)」的個數須等於標的數",
+        )
+    )
+    return out
+
+
+def redemption(ctx: IssuerContext) -> list[CheckResult]:
+    """第 8 項自動提前出場贖回金額（有自動提前出場時）、到期贖回金額 = 每單位面額 × 100%（固定）。"""
+    f = ctx.ts.f
+    out = []
+    for field, name in (
+        ("autocall_redemption_pct", "第 8 項自動提前出場贖回金額"),
+        ("maturity_redemption_pct", "第 8 項到期贖回金額"),
+    ):
+        pf = f(field)
+        check = Check("doc.redemption_pct", field, Item.expected(name), ctx.document)
+        if pf.status == FieldStatus.NOT_APPLICABLE:
+            out.append(check.not_applicable(pf))
+            continue
+        out.append(check.needs(pf).compare(100, pf.value, fail_message=f"{name}須為每單位面額 × 100%"))
+    return out
+
+
+# ---------------------------------------------------------------- 日期表（核對規則 §3.5）
+
+
+def schedule(ctx: IssuerContext) -> list[CheckResult]:
+    """SG 獨有的日期表交叉驗證；期數、配息日與觀察日順序、末期日期、起始日由共用規則（rules/schedule.py）檢查。
+
+    - 末列標「（最終評價日）」「（到期日）」，其他列不標。
+    - D：第 k+1 期起始日 = 第 8 項觀察期間起始日；配息按比例條款與自動提前出場日寫法。P：第 8 項期數與評價日「不適用」列。
+    """
+    f = ctx.ts.f
+    table, wording, k = (f(x) for x in ("date_table", "ko_wording", "first_callable_period"))
+    names = {"schedule.row_labels": "日期表末列標籤", "schedule.autocall_dates": "提前出場期別與觀察期間"}
+    if not table.ok:
+        return [Check(rid, "date_table", Item.expected(n), ctx.document).review(table) for rid, n in names.items()]
+    rows = table.value["rows"]
+    last, issues = rows[-1]["period"], []
+    for key, text in (("final_label_rows", "（最終評價日）"), ("maturity_label_rows", "（到期日）")):
+        marked = table.value[key]
+        if last not in marked:
+            issues.append(f"末列沒有標「{text}」")
+        if other := sorted({p for p in marked if p != last}):
+            issues.append(f"第 {'、'.join(map(str, other))} 期不是末列卻標「{text}」")
+    out = [kit.structure_check(ctx, "schedule.row_labels", "row_labels", names["schedule.row_labels"], [table], issues)]
+
+    issues = []
+    if k.ok and wording.ok:
+        n, wtype = k.value, wording.value["type"]
+        if not 1 <= n <= len(rows):
+            issues.append(f"第一個可提前出場期 {n} 不在第 1～{len(rows)} 期之間")
+        elif wtype == "D":
+            if n < len(rows) and rows[n]["start"] != wording.value["start"]:
+                issues.append(
+                    f"第 {n + 1} 期起始日 {rows[n]['start']} 不等於第 8 項觀察期間起始日 {wording.value['start']}"
+                )
+            pr, day = f("prorate_range"), f("autocall_day")
+            if pr.ok and pr.value != (n + 1, len(rows)):
+                issues.append(
+                    f"配息按比例條款寫第 {pr.value[0]}-{pr.value[1]} 個配息週期，應為第 {n + 1}-{len(rows)} 個"
+                )
+            elif not pr.ok:
+                issues.append("找不到配息按比例條款「惟若自動提前出場事件發生於第k-n個配息週期」")
+            if day.ok and day.value != AUTOCALL_DAY_LAG:
+                issues.append(f"自動提前出場日寫事件後第 {day.value} 個營業日，應為第 {AUTOCALL_DAY_LAG} 個")
+            elif not day.ok:
+                issues.append("找不到「自動提前出場日：為發生自動提前出場事件後第3個營業日」")
+        elif wtype == "P":
+            if wording.value["n"] != len(rows):
+                issues.append(f"第 8 項「任一評價日i (i={n}-{wording.value['n']})」的期數不等於日期表 {len(rows)} 期")
+            for r in rows:
+                want = r["period"] >= n
+                if (r["pricing"] is not None) != want:
+                    issues.append(f"第 {r['period']} 期評價日{'應有日期' if want else '應為「不適用」'}")
+        else:
+            for r in rows:
+                want = r["period"] == len(rows)
+                if (r["pricing"] is not None) != want:
+                    issues.append(
+                        f"無自動提前出場：第 {r['period']} 期評價日{'應有日期' if want else '應為「不適用」'}"
+                    )
+    out.append(
+        kit.structure_check(
+            ctx,
+            "schedule.autocall_dates",
+            "autocall_dates",
+            names["schedule.autocall_dates"],
+            [table, k, wording],
+            issues,
+        )
+    )
+    return out
+
+
+def run_all(ctx: IssuerContext) -> list[CheckResult]:
+    """說明書內部規則：只用讀出結果、審查標準與宣告的參考條件表欄位（年利率）。"""
+    return [
+        *monthly_coupon(ctx),
+        *document_info(ctx),
+        *periods(ctx),
+        *autocall_terms(ctx),
+        *ki_terms(ctx),
+        *redemption(ctx),
+        *schedule(ctx),
+        *sg_scenario.run(ctx),
+    ]
