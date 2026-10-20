@@ -17,27 +17,31 @@ try {
     # 核對紀錄記下程式版本用（.local\installed.json）
     & '.\.venv\Scripts\python.exe' -m fcn_checker.version --record-installation $PSScriptRoot
     if ($LASTEXITCODE -ne 0) { throw '安裝版本紀錄失敗。' }
-    # 兩個視窗各一個捷徑；核對沿用合併前的圖示
-    $panels = @(
-        [pscustomobject]@{ Name = 'TS IIS 準備與放回'; Script = 'launch_panel.pyw'; Description = 'TS／IIS 準備與放回'; Icon = $null },
-        [pscustomobject]@{ Name = 'FCN Workflow'; Script = 'launch_checker_panel.pyw'; Description = 'FCN Term Sheet 核對'; Icon = 'src\fcn_checker\assets\panel.ico' }
-    )
-    $openWith = 'launch_panel.cmd（準備與放回）或 launch_checker_panel.cmd（核對）'
+    # 只建一個「FCN Workflow」捷徑，開合併後的視窗（#77）；沿用核對的圖示
+    $openWith = 'launch_panel.cmd'
     try {
         # 桌面與專案資料夾各放一個捷徑；捷徑記錄本機完整路徑，不進 Git
         $shell = New-Object -ComObject WScript.Shell
+        $project = [IO.Path]::GetFullPath($PSScriptRoot).TrimEnd('\') + '\'
         foreach ($folder in @([Environment]::GetFolderPath('Desktop'), $PSScriptRoot)) {
-            foreach ($panel in $panels) {
-                $shortcut = $shell.CreateShortcut((Join-Path $folder ($panel.Name + '.lnk')))
-                $shortcut.TargetPath = Join-Path $PSScriptRoot '.venv\Scripts\pythonw.exe'
-                $shortcut.Arguments = '"' + (Join-Path $PSScriptRoot $panel.Script) + '"'
-                $shortcut.WorkingDirectory = $PSScriptRoot
-                $shortcut.Description = $panel.Description
-                if ($panel.Icon) { $shortcut.IconLocation = (Join-Path $PSScriptRoot $panel.Icon) + ',0' }
-                $shortcut.Save()
+            $shortcut = $shell.CreateShortcut((Join-Path $folder 'FCN Workflow.lnk'))
+            $shortcut.TargetPath = Join-Path $PSScriptRoot '.venv\Scripts\pythonw.exe'
+            $shortcut.Arguments = '"' + (Join-Path $PSScriptRoot 'launch_panel.pyw') + '"'
+            $shortcut.WorkingDirectory = $PSScriptRoot
+            $shortcut.Description = 'FCN Workflow'
+            $shortcut.IconLocation = (Join-Path $PSScriptRoot 'src\fcn_checker\assets\panel.ico') + ',0'
+            $shortcut.Save()
+            # 合併前另建的「TS IIS 準備與放回」：只刪指向本專案資料夾的那一個，指向別處的不動
+            $old = Join-Path $folder 'TS IIS 準備與放回.lnk'
+            if (Test-Path -LiteralPath $old) {
+                $target = $shell.CreateShortcut($old).TargetPath
+                if ($target -and [IO.Path]::GetFullPath($target).StartsWith($project, [StringComparison]::OrdinalIgnoreCase)) {
+                    Remove-Item -LiteralPath $old
+                    Write-Host ('已刪除舊捷徑：' + $old)
+                }
             }
         }
-        $openWith = '桌面或專案資料夾裡的「TS IIS 準備與放回」或「FCN Workflow」（核對）捷徑'
+        $openWith = '桌面或專案資料夾裡的「FCN Workflow」捷徑'
     } catch {
         Write-Host ('捷徑建立失敗（不影響安裝）：' + $_.Exception.Message)
     }
