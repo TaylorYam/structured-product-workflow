@@ -17,10 +17,10 @@ try {
     # 核對紀錄記下程式版本用（.local\installed.json）
     & '.\.venv\Scripts\python.exe' -m fcn_checker.version --record-installation $PSScriptRoot
     if ($LASTEXITCODE -ne 0) { throw '安裝版本紀錄失敗。' }
-    # 兩個視窗各一個捷徑；核對沿用合併前的捷徑名稱與圖示
+    # 兩個視窗各一個捷徑；核對沿用合併前的圖示
     $panels = @(
         [pscustomobject]@{ Name = 'TS IIS 準備與放回'; Script = 'launch_panel.pyw'; Description = 'TS／IIS 準備與放回'; Icon = $null },
-        [pscustomobject]@{ Name = 'Term Sheet 核對'; Script = 'launch_checker_panel.pyw'; Description = 'FCN Term Sheet 核對'; Icon = 'src\fcn_checker\assets\panel.ico' }
+        [pscustomobject]@{ Name = 'FCN Workflow'; Script = 'launch_checker_panel.pyw'; Description = 'FCN Term Sheet 核對'; Icon = 'src\fcn_checker\assets\panel.ico' }
     )
     $openWith = 'launch_panel.cmd（準備與放回）或 launch_checker_panel.cmd（核對）'
     try {
@@ -37,7 +37,7 @@ try {
                 $shortcut.Save()
             }
         }
-        $openWith = '桌面或專案資料夾裡的「TS IIS 準備與放回」或「Term Sheet 核對」捷徑'
+        $openWith = '桌面或專案資料夾裡的「TS IIS 準備與放回」或「FCN Workflow」（核對）捷徑'
     } catch {
         Write-Host ('捷徑建立失敗（不影響安裝）：' + $_.Exception.Message)
     }
