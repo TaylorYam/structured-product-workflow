@@ -454,6 +454,21 @@ def test_release_note_explains_the_release_state(tmp_path):
     assert note.startswith("不能人工放行：") and "重新核對" in note
 
 
+def test_key_figures_count_each_category_and_flag_problems(tmp_path):
+    """核對頁的重點數字（#83）：四個常見類別一定列出，其他類別有才列；通過與人工放行以外的不是 0 就標成有問題。"""
+    ok, bad = Spec(), Spec(product_code="029199990002")
+    session, outcome = checked(tmp_path, ok, bad, rows=[reference_row(ok), reference_row(bad, **{"K(%)": 71})])
+    assert outcome.kpis == (("通過", 2, False), ("人工放行", 0, False), ("不一致", 2, True), ("需人工覆核", 0, False))
+
+    session.release(*(i for i in outcome.batch.items if i.category.value == "不一致"))
+    assert outcome.kpis[:3] == (("通過", 2, False), ("人工放行", 2, False), ("不一致", 0, False)), "放行後跟著變"
+
+    unknown = Spec(product_code="999199990001")
+    (tmp_path / "other").mkdir()
+    _, other = checked(tmp_path / "other", unknown, rows=[reference_row(ok)])
+    assert ("未支援上手", 2, True) in other.kpis, "有未支援上手時才列出"
+
+
 def test_released_items_sort_with_passed_ones(tmp_path):
     ok, bad, other = Spec(), Spec(product_code="029199990002"), Spec(product_code="029199990003")
     rows = [reference_row(ok), reference_row(bad, **{"K(%)": 71}), reference_row(other, **{"K(%)": 71})]

@@ -89,8 +89,25 @@ def _set_window_icons(hwnd: int) -> None:
             user32.SendMessageW(hwnd, 0x80, kind, icon)  # WM_SETICON
 
 
+# 整個視窗的配色（#83）：淺灰底、白色卡片、深藍字；只用一個亮藍當強調色，紅色只給有問題的、綠色只給完成
+BACKGROUND = "#F5F5F7"
+SURFACE = "#FFFFFF"
+BORDER = "#E3E3E8"
+CONTROL_BORDER = "#D2D2D7"
+TEXT = "#1D1D1F"
+TEXT_SECONDARY = "#6E6E73"
+NAVY = "#0B1F3A"
+ACCENT = "#2251FF"
+ACCENT_ACTIVE = "#1A3FCC"
+ACCENT_SOFT = "#EAF0FF"
+DANGER = "#C4262E"
+SUCCESS = "#1E7A4C"
+FONT = "Microsoft JhengHei UI"  # 公司 Windows 都有；重點數字另用 Segoe UI
+NUMBER_FONT = "Segoe UI"
+
+
 def apply_style(root: tk.Tk) -> Callable[[float], int]:
-    """整個視窗共用的底色與字型（#74 起 FCN Workflow 的每個分頁都用這一套）。
+    """整個視窗共用的配色、字型、按鈕與表格樣式（#74 起每個分頁都用這一套，#83 改成蘋果 × 麥肯錫風格）。
 
     回傳 pixels：把 96 DPI 下的像素依目前螢幕縮放換算成實際像素。
     """
@@ -99,20 +116,126 @@ def apply_style(root: tk.Tk) -> Callable[[float], int]:
     def pixels(value):
         return round(value * scale)
 
-    root.configure(background="#f4f6f8")
+    root.configure(background=BACKGROUND)
     style = ttk.Style(root)
     style.theme_use("clam")
-    style.configure("TFrame", background="#f4f6f8")
-    style.configure("TLabel", background="#f4f6f8", foreground="#172b3a", font=("Microsoft JhengHei UI", 11))
-    style.configure("Section.TLabel", font=("Microsoft JhengHei UI", 12, "bold"))
-    style.configure("TButton", font=("Microsoft JhengHei UI", 11), padding=(12, 7))
-    style.configure("Treeview", font=("Microsoft JhengHei UI", 11), rowheight=pixels(30))
-    style.configure("Treeview.Heading", font=("Microsoft JhengHei UI", 11, "bold"))
-    style.map("Treeview", background=[("selected", "#d9e9f2")], foreground=[("selected", "#172b3a")])
-    style.configure("Hint.TFrame", background="#dbeafe")
-    style.configure("Hint.TLabel", background="#dbeafe", foreground="#1e3a8a")
-    style.configure("Next.TButton", font=("Microsoft JhengHei UI", 11, "bold"))
+    base = (FONT, 11)
+    flat = {"bordercolor": BORDER, "lightcolor": BORDER, "darkcolor": BORDER}
+    style.configure(".", background=BACKGROUND, foreground=TEXT, font=base, focuscolor=ACCENT_SOFT, **flat)
+    style.configure("TFrame", background=BACKGROUND)
+    style.configure("Card.TFrame", background=SURFACE, relief="solid", borderwidth=1)
+    style.configure("CardBody.TFrame", background=SURFACE)
+    style.configure("TLabel", background=BACKGROUND, foreground=TEXT)
+    style.configure("Muted.TLabel", foreground=TEXT_SECONDARY)
+    style.configure("Step.TLabel", foreground=TEXT_SECONDARY, font=(FONT, 10))
+    style.configure("Title.TLabel", foreground=NAVY, font=(FONT, 18, "bold"))
+    style.configure("Card.TLabel", background=SURFACE)
+    style.configure("CardMuted.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=(FONT, 10))
+    style.configure("KpiCaption.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=(FONT, 10))
+    style.configure("KpiValue.TLabel", background=SURFACE, foreground=NAVY, font=(NUMBER_FONT, 18, "bold"))
+    style.configure("KpiBad.TLabel", background=SURFACE, foreground=DANGER, font=(NUMBER_FONT, 18, "bold"))
+    button = {"background": SURFACE, "lightcolor": SURFACE, "darkcolor": SURFACE, "bordercolor": CONTROL_BORDER}
+    style.configure("TButton", padding=(14, 7), **button)
+    style.map(
+        "TButton",
+        background=[("disabled", BACKGROUND), ("pressed", "#E8E8ED"), ("active", "#F2F2F7")],
+        lightcolor=[("disabled", BACKGROUND), ("pressed", "#E8E8ED"), ("active", "#F2F2F7")],
+        darkcolor=[("disabled", BACKGROUND), ("pressed", "#E8E8ED"), ("active", "#F2F2F7")],
+        foreground=[("disabled", "#A1A1A6")],
+    )
+    accent = {"background": ACCENT, "lightcolor": ACCENT, "darkcolor": ACCENT, "bordercolor": ACCENT}
+    style.configure("Primary.TButton", foreground=SURFACE, font=(FONT, 11, "bold"), **accent)
+    states = [("disabled", "#B9C7F5"), ("pressed", ACCENT_ACTIVE), ("active", ACCENT_ACTIVE)]
+    style.map(
+        "Primary.TButton",
+        background=states,
+        lightcolor=states,
+        darkcolor=states,
+        bordercolor=states,
+        foreground=[("disabled", SURFACE)],
+    )
+    style.configure("Next.TButton", foreground=ACCENT, font=(FONT, 11, "bold"))
+    field = {"fieldbackground": SURFACE, "bordercolor": CONTROL_BORDER, "lightcolor": SURFACE, "darkcolor": SURFACE}
+    style.configure("TEntry", padding=6, **field)
+    style.map("TEntry", fieldbackground=[("readonly", "#FAFAFC")], bordercolor=[("focus", ACCENT)])
+    style.configure("Treeview", background=SURFACE, fieldbackground=SURFACE, rowheight=pixels(32))
+    style.configure(
+        "Treeview.Heading", background=BACKGROUND, foreground=TEXT_SECONDARY, font=(FONT, 10, "bold"), relief="flat"
+    )
+    style.map("Treeview.Heading", background=[("active", "#ECECF0")])
+    style.map("Treeview", background=[("selected", ACCENT_SOFT)], foreground=[("selected", TEXT)])
+    style.configure("TNotebook", background=BACKGROUND, borderwidth=0)
+    style.configure("TNotebook.Tab", background=BACKGROUND, foreground=TEXT_SECONDARY, padding=(14, 6))
+    style.map("TNotebook.Tab", background=[("selected", SURFACE)], foreground=[("selected", TEXT)])
+    style.configure("TScrollbar", background=BACKGROUND, troughcolor=SURFACE, arrowcolor=TEXT_SECONDARY)
+    style.configure("Hint.TFrame", background=ACCENT_SOFT)
+    style.configure("Hint.TLabel", background=ACCENT_SOFT, foreground=NAVY)
+    # 視窗外殼：白色頂端列與左側步驟欄（sp_workflow.app 使用）
+    style.configure("Header.TFrame", background=SURFACE)
+    style.configure("Header.TLabel", background=SURFACE, foreground=TEXT_SECONDARY)
+    style.configure("HeaderTitle.TLabel", background=SURFACE, foreground=NAVY, font=(FONT, 13, "bold"))
+    style.configure("Sidebar.TFrame", background=SURFACE)
+    style.configure("SidebarTitle.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=(FONT, 10))
+    step = {"background": SURFACE, "lightcolor": SURFACE, "darkcolor": SURFACE, "bordercolor": SURFACE}
+    style.configure("Step.TButton", foreground=TEXT_SECONDARY, anchor="w", padding=(14, 9), focuscolor=SURFACE, **step)
+    style.map("Step.TButton", background=[("active", "#F2F2F7")], lightcolor=[("active", "#F2F2F7")])
+    current = {"background": ACCENT_SOFT, "lightcolor": ACCENT_SOFT, "darkcolor": ACCENT_SOFT}
+    style.configure(
+        "CurrentStep.TButton",
+        foreground=ACCENT,
+        font=(FONT, 11, "bold"),
+        anchor="w",
+        padding=(14, 9),
+        bordercolor=ACCENT_SOFT,
+        focuscolor=ACCENT_SOFT,
+        **current,
+    )
+    style.map("CurrentStep.TButton", background=[("active", ACCENT_SOFT)], lightcolor=[("active", ACCENT_SOFT)])
+    style.layout("Workflow.TNotebook.Tab", [])  # 用左側步驟欄切頁，不顯示分頁標籤
+    style.configure("Workflow.TNotebook", background=BACKGROUND, borderwidth=0)
     return pixels
+
+
+class PageHeader(ttk.Frame):
+    """分頁最上方：「步驟 N／6」、一句話標題（這一步要達成什麼）與一行說明（#83）。
+
+    步驟編號由視窗依分頁順序填入 step。
+    """
+
+    def __init__(self, parent: tk.Misc, title: str, description: str):
+        super().__init__(parent)
+        self.step = tk.StringVar()
+        ttk.Label(self, textvariable=self.step, style="Step.TLabel").pack(anchor="w")
+        ttk.Label(self, text=title, style="Title.TLabel").pack(anchor="w", pady=(2, 4))
+        text = ttk.Label(self, text=description, style="Muted.TLabel", wraplength=900)
+        text.pack(anchor="w", fill="x")
+        self.bind("<Configure>", lambda event: text.configure(wraplength=max(300, event.width - 20)))
+
+
+class KpiRow(ttk.Frame):
+    """完成後的重點數字（#83）：一格一個數字，有問題的用紅色；沒有結果時不顯示。
+
+    建立後由呼叫端 grid，再呼叫 hide()。values 是目前顯示的（標題, 數字, 是否有問題）。
+    """
+
+    def __init__(self, parent: tk.Misc, style: str = "TFrame"):
+        super().__init__(parent, style=style)  # 放在白色卡片裡時用 CardBody.TFrame
+        self.values: tuple[tuple[str, int, bool], ...] = ()
+
+    def show(self, values: Iterable[tuple[str, int, bool]]) -> None:
+        for tile in self.winfo_children():
+            tile.destroy()
+        self.values = tuple(values)
+        for column, (caption, value, bad) in enumerate(self.values):
+            tile = ttk.Frame(self, style="Card.TFrame", padding=(14, 6, 26, 6))
+            tile.grid(row=0, column=column, sticky="w", padx=(0, 10))
+            ttk.Label(tile, text=caption, style="KpiCaption.TLabel").pack(anchor="w")
+            ttk.Label(tile, text=str(value), style="KpiBad.TLabel" if bad else "KpiValue.TLabel").pack(anchor="w")
+        self.grid()
+
+    def hide(self) -> None:
+        self.values = ()
+        self.grid_remove()
 
 
 class HintBar(ttk.Frame):
@@ -254,11 +377,8 @@ class ResultPane(ttk.Frame):
         self.rows: dict[str, str] = {}  # 明細清單列 → 選取時顯示的明細
         self.outcome: PanelOutcome | None = None
         self.columnconfigure(1, weight=1)
-        self.rowconfigure(1, weight=1)
-        self.summary = tk.StringVar(value="尚未執行核對。")
-        ttk.Label(self, textvariable=self.summary, wraplength=pixels(1000)).grid(
-            row=0, column=0, columnspan=2, sticky="ew", pady=(0, 8)
-        )
+        # 上方內容變多時，結果清單也不會被擠掉；整批份數由核對頁的重點數字與狀態列顯示（#83）
+        self.rowconfigure(1, weight=1, minsize=pixels(170))
         self.item_table = _table(
             self,
             (("status", "狀態", 150), ("kind", "種類", 90), ("file", "PDF 檔名", 220), ("problems", "問題數", 70)),
@@ -302,7 +422,6 @@ class ResultPane(ttk.Frame):
         self.outcome = None
         self.item_table.delete(*self.item_table.get_children())
         self.table.delete(*self.table.get_children())
-        self.summary.set("尚未執行核對。")
         _write(self.detail, "")
         self._release_state(())
 
@@ -310,7 +429,6 @@ class ResultPane(ttk.Frame):
         """顯示結果並選取 select 裡的那幾份（沒給或都不在結果中時選第一份）；focus 也在選取中時游標停在那份，否則停在選取的第一份。"""
         self.clear()
         self.outcome = outcome
-        self.summary.set(outcome.headline)
         chosen = []
         for item in outcome.ordered_items:
             key = self.item_table.insert("", "end", values=outcome.item_row(item))
@@ -510,7 +628,7 @@ class CheckTab(ttk.Frame):
         *,
         on_saved: Callable[[Path], None] | None = None,
     ):
-        super().__init__(parent, padding=pixels(20))
+        super().__init__(parent, padding=(pixels(28), pixels(22)))
         self.root, self.session, self.pixels = self.winfo_toplevel(), session, pixels
         self.on_saved = on_saved
         self.next_button: NextButton | None = None
@@ -528,42 +646,54 @@ class CheckTab(ttk.Frame):
         self.sheet_path: Path | None = None
         self.pdf_paths: tuple[Path, ...] = ()
         self.folders = LastFolders(session.install_root / FOLDERS_RECORD)
-        self.columnconfigure(1, weight=1)
-        self.rowconfigure(6, weight=1)
-        self.hint = HintBar(self, lambda: self.choose_files("pdf"))
-        self.hint.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 10))
-        self.hint.hide()
-        ttk.Label(
+        self.columnconfigure(0, weight=1)
+        self.rowconfigure(3, weight=1)
+        self.header = PageHeader(
             self,
-            text="選取參考條件表與說明書、投資人須知 PDF（同一檔商品的 _TS 與 _IIS 一起選），先載入預覽確認每份對到的列，"
-            "再按「開始核對」。上手由 PDF 檔名前三碼決定。",
-        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 10))
+            "核對說明書與投資人須知",
+            "選參考條件表與這批 PDF（同一檔商品的 _TS 與 _IIS 一起選），先載入預覽確認每份對到的列，再開始核對。"
+            "按「儲存核對結果」才會寫出核對結果檔，原參考條件表不動；錯誤清單上的說明書請交由人工核對。",
+        )
+        self.header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
+        self.hint = HintBar(self, lambda: self.choose_files("pdf"))
+        self.hint.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        self.hint.hide()
+        card = ttk.Frame(self, style="Card.TFrame", padding=(18, 14))
+        card.grid(row=2, column=0, sticky="ew")
+        card.columnconfigure(1, weight=1)
         self.sheet_text = tk.StringVar()
         self.pdf_text = tk.StringVar()
         self.controls: list[ttk.Widget] = []
         for row, label, variable, kind in (
-            (2, "參考條件表", self.sheet_text, "sheet"),
-            (3, "說明書／投資人須知 PDF", self.pdf_text, "pdf"),
+            (0, "參考條件表", self.sheet_text, "sheet"),
+            (1, "說明書／投資人須知 PDF", self.pdf_text, "pdf"),
         ):
-            ttk.Label(self, text=label).grid(row=row, column=0, sticky="w", padx=(0, 16), pady=5)
-            ttk.Entry(self, textvariable=variable, state="readonly").grid(
+            ttk.Label(card, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 16), pady=5)
+            ttk.Entry(card, textvariable=variable, state="readonly").grid(
                 row=row, column=1, sticky="ew", padx=(0, 12), pady=5
             )
-            button = ttk.Button(self, text="選取檔案…", command=lambda k=kind: self.choose_files(k))
+            button = ttk.Button(card, text="選取檔案…", command=lambda k=kind: self.choose_files(k))
             button.grid(row=row, column=2, pady=5)
             self.controls.append(button)
-        self.actions = ttk.Frame(self)
-        self.actions.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 6))
+        bottom = ttk.Frame(card, style="CardBody.TFrame")  # 左邊按鈕、右邊核對完的重點數字
+        bottom.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        bottom.columnconfigure(1, weight=1)
+        self.actions = ttk.Frame(bottom, style="CardBody.TFrame")
+        self.actions.grid(row=0, column=0, sticky="sw")
         self.reload = ttk.Button(self.actions, text="載入／重新載入預覽", command=self.load)
         self.reload.pack(side="left", padx=(0, 12))
-        self.check_button = ttk.Button(self.actions, text="開始核對", command=self.start_check, state="disabled")
+        self.check_button = ttk.Button(
+            self.actions, text="開始核對", command=self.start_check, state="disabled", style="Primary.TButton"
+        )
         self.check_button.pack(side="left")
         self.save_button = ttk.Button(self.actions, text="儲存核對結果…", command=self.save, state="disabled")
         self.save_button.pack(side="left", padx=(12, 0))
         self.controls += [self.reload]
-        ttk.Label(self, text="預覽與核對結果", style="Section.TLabel").grid(row=5, column=0, columnspan=3, sticky="w")
+        self.kpis = KpiRow(bottom, style="CardBody.TFrame")
+        self.kpis.grid(row=0, column=2, sticky="e")
+        self.kpis.hide()
         self.tabs = ttk.Notebook(self)
-        self.tabs.grid(row=6, column=0, columnspan=3, sticky="nsew", pady=(6, 10))
+        self.tabs.grid(row=3, column=0, sticky="nsew", pady=(14, 8))
         preview_frame = ttk.Frame(self.tabs, padding=8)
         preview_frame.columnconfigure(0, weight=1)
         preview_frame.rowconfigure(0, weight=1)
@@ -594,11 +724,7 @@ class CheckTab(ttk.Frame):
         self.pending_text.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
         self.status = tk.StringVar(value=session.message)
         self.status_label = ttk.Label(self, textvariable=self.status, wraplength=960)
-        self.status_label.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(8, 10))
-        ttk.Label(
-            self,
-            text="按「儲存核對結果」才會寫出核對結果檔（原參考條件表不動）；錯誤清單上的說明書請交由人工核對。",
-        ).grid(row=8, column=0, columnspan=3, sticky="w")
+        self.status_label.grid(row=4, column=0, sticky="ew")
         self.bind("<Configure>", self._resize)
         self.root.after(1000, self._watch_sources)
 
@@ -620,6 +746,7 @@ class CheckTab(ttk.Frame):
         self.has_result = False
         self.save_button.configure(state="disabled")
         self._refresh_next()
+        self.kpis.hide()
         self.results.clear()
         self.tabs.tab(self.not_covered, text="待處理")
         _write(self.pending_text, "")
@@ -755,6 +882,7 @@ class CheckTab(ttk.Frame):
 
     def _show_outcome(self, outcome: PanelOutcome):
         self.results.show(outcome)
+        self.kpis.show(outcome.kpis)
         self.has_result = True
         groups = outcome.not_covered
         _write(self.pending_text, "\n\n".join(f"【{g.issuer}】\n" + "\n".join(g.descriptions) for g in groups))
@@ -808,6 +936,7 @@ class CheckTab(ttk.Frame):
             return
         outcome = self.session.outcome
         self.results.show(outcome, select=outcome.selection_after_release_change(items), focus=focus)
+        self.kpis.show(outcome.kpis)  # 放行改了類別的份數
         self.status.set(self.session.message)
 
     def save(self):

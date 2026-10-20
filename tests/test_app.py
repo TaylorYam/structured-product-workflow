@@ -356,7 +356,9 @@ def test_prepared_pdfs_are_handed_to_the_check_tab_without_switching(master, tmp
     window.prepare._done(prepared_receipt(batch))
 
     assert window.check.pdf_paths == (batch / "147000000001_TS.pdf", batch / "147000000001_IIS.pdf"), "只帶已準備的"
-    assert window.check.hint.text.get().startswith(f"已帶入「3 準備」的批次（2 份 PDF）：\n{batch}\n")
+    assert window.check.hint.text.get() == (
+        f"已帶入「3 準備」的批次（2 份 PDF），選好參考條件表後按「載入／重新載入預覽」：\n{batch}"
+    )
     assert window.notebook.select() == str(window.prepare.frame), "不自動切頁"
     assert window.session.preview is None and not window.check.working, "不自動載入預覽或核對"
     assert window.prepare.next_button.winfo_manager() == "pack"
@@ -467,3 +469,52 @@ def test_changing_what_was_handed_to_the_return_tab_hides_the_hint(master, tmp_p
         window.returning.batch_var.set(str(tmp_path / "待核對_2"))
 
     assert not window.returning.hint.shown
+
+
+# ---------------------------------------------------------------- 蘋果 × 麥肯錫風格範本（#83）
+
+
+def test_sidebar_switches_steps_and_follows_the_next_buttons(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    steps = window.sidebar.steps
+
+    assert [step.cget("text").split()[0] for step in steps.values()] == ["1", "2", "3", "4", "5", "6"]
+    steps[str(window.prepare.frame)].invoke()
+    master.update()
+    assert window.notebook.select() == str(window.prepare.frame)
+    assert steps[str(window.prepare.frame)].cget("style") == "CurrentStep.TButton"
+
+    window.prepare._done(prepared_receipt(tmp_path / "待核對_1"))
+    window.prepare.next_button.invoke()
+    master.update()
+
+    current = [tab for tab, step in steps.items() if step.cget("style") == "CurrentStep.TButton"]
+    assert current == [str(window.check)], "「下一步」切頁時步驟欄跟著換"
+
+
+def test_page_headers_show_their_step(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+
+    assert window.prepare.header.step.get() == "步驟 3／6"
+    assert window.check.header.step.get() == "步驟 4／6"
+
+
+def test_pasted_tdccs_are_counted_once_each(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+
+    window.prepare.tdcc_text.insert("1.0", "147000000001\n147000000002 147000000001、147000000003")
+    master.update()
+
+    assert window.prepare.count_var.get() == "已貼 3 筆", "重複的只算一次，分隔方式同準備"
+
+
+def test_prepare_shows_key_figures_when_done(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+
+    window.prepare._done(prepared_receipt(tmp_path / "待核對_1"))
+
+    assert window.prepare.kpis.values == (
+        ("已準備（檔）", 1, False),
+        ("跳過（檔）", 1, True),
+        ("Word 轉檔（份）", 0, False),
+    )

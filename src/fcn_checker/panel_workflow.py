@@ -240,6 +240,20 @@ class PanelOutcome:
         tail = "按「儲存核對結果」後才會寫出核對結果檔（說明書與投資人須知都通過或人工放行的商品回填在「回填後」）。"
         return f"共 {len(items)} 份：" + "、".join(parts) + "。" + tail
 
+    @property
+    def kpis(self) -> tuple[tuple[str, int, bool], ...]:
+        """核對頁的重點數字（#83）：（類別, 份數, 是否有問題）。
+
+        通過、人工放行、不一致、需人工覆核一定列出；未支援上手、執行錯誤有才列。通過與人工放行以外的份數不是 0 就算有問題。
+        """
+        always = (Category.PASSED, Category.RELEASED, Category.MISMATCH, Category.REVIEW)
+        counts = {c: sum(i.category == c for i in self.batch.items) for c in Category}
+        return tuple(
+            (c.value, n, c not in (Category.PASSED, Category.RELEASED) and n > 0)
+            for c, n in counts.items()
+            if c in always or n
+        )
+
 
 class ReleaseState(NamedTuple):
     """PANEL 人工放行按鈕：能否按下，以及要顯示的不能放行原因（空字串表示不顯示）。"""

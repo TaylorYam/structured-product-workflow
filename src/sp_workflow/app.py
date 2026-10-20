@@ -29,9 +29,15 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from fcn_checker.panel import (
+    ACCENT,
+    BORDER,
+    CONTROL_BORDER,
+    DANGER,
     CheckTab,
     HintBar,
+    KpiRow,
     NextButton,
+    PageHeader,
     apply_style,
     apply_window_icon,
     enable_windows_dpi_awareness,
@@ -54,7 +60,14 @@ from sp_workflow.mail_drafts import (
 from sp_workflow.order_export import ExportError, ExportReceipt, can_export, export_problem_mails
 from sp_workflow.order_terms import READ as ORDER_READ
 from sp_workflow.order_terms import OrderReceipt, OrderTermsError, read_orders
-from sp_workflow.preparation import LIST_NAME, PREPARED, PreparationError, PrepareReceipt, prepare_batch
+from sp_workflow.preparation import (
+    LIST_NAME,
+    PREPARED,
+    PreparationError,
+    PrepareReceipt,
+    parse_tdccs,
+    prepare_batch,
+)
 from sp_workflow.returning import PENDING_SUFFIX, ReturnError, ReturnReceipt, return_to_folders
 
 TITLE = "FCN Workflow"
@@ -75,7 +88,7 @@ class _Tab:
     def __init__(self, notebook: ttk.Notebook, title: str, columns: Sequence[tuple[str, str, int]]) -> None:
         self.master = notebook.winfo_toplevel()
         self.results: queue.Queue[object] = queue.Queue()
-        self.frame = ttk.Frame(notebook, padding=12)
+        self.frame = ttk.Frame(notebook, padding=(28, 22))
         notebook.add(self.frame, text=title)
         self.frame.columnconfigure(1, weight=1)
         self.status_var = tk.StringVar()
@@ -84,7 +97,7 @@ class _Tab:
         for col, label, width in columns:
             self.table.heading(col, text=label)
             self.table.column(col, width=width, stretch=col == columns[-1][0])
-        self.table.tag_configure("problem", foreground="#b00020")
+        self.table.tag_configure("problem", foreground=DANGER)
         self.buttons = ttk.Frame(self.frame)
 
     def place_bottom(self, row: int) -> None:
@@ -94,22 +107,22 @@ class _Tab:
         status.grid(row=row + 1, column=0, columnspan=3, sticky="w")
         # 視窗最大化時跟著分頁寬度換行，不擠在左邊
         self.frame.bind("<Configure>", lambda event: status.configure(wraplength=max(300, event.width - 40)))
-        self.frame.rowconfigure(row + 2, weight=1)
-        self.table.grid(row=row + 2, column=0, columnspan=3, sticky="nsew", pady=(8, 0))
+        self.place_table(row + 2)
+
+    def place_table(self, row: int, pady: tuple[int, int] = (8, 0)) -> None:
+        """結果表與捲軸放在第 row 列，並讓它佔滿剩下的高度。"""
+        self.frame.rowconfigure(row, weight=1)
+        self.table.grid(row=row, column=0, columnspan=3, sticky="nsew", pady=pady)
         scroll = ttk.Scrollbar(self.frame, orient=tk.VERTICAL, command=self.table.yview)
-        scroll.grid(row=row + 2, column=3, sticky="ns", pady=(8, 0))
+        scroll.grid(row=row, column=3, sticky="ns", pady=pady)
         self.table.configure(yscrollcommand=scroll.set)
 
     def path_row(self, row: int, label: str, var: tk.StringVar, choose: Callable[[], str]) -> None:
         ttk.Label(self.frame, text=label).grid(row=row, column=0, sticky="w", pady=4)
         ttk.Entry(self.frame, textvariable=var).grid(row=row, column=1, sticky="ew", pady=4)
-
-        def on_click() -> None:
-            chosen = choose()
-            if chosen:
-                var.set(chosen)
-
-        ttk.Button(self.frame, text="選擇…", command=on_click).grid(row=row, column=2, padx=(8, 0), pady=4)
+        ttk.Button(self.frame, text="選擇…", command=lambda: _set_if_chosen(var, choose)).grid(
+            row=row, column=2, padx=(8, 0), pady=4
+        )
 
     def run_in_background(
         self, action: Callable[[], object], busy: str, on_done: Callable[[object], None], *, clear: bool = True
@@ -161,15 +174,13 @@ class RootFolder:
             self.var.set(str(Path(chosen)))
             self.memory.remember(root=self.var.get())
 
-    def build_bar(self, master: tk.Misc, pixels: Callable[[float], int]) -> None:
-        """視窗最上方固定顯示根目錄與「變更…」；只能用按鈕改，避免不小心打錯。"""
-        bar = ttk.Frame(master, padding=(pixels(12), pixels(10), pixels(12), 0))
-        bar.pack(fill=tk.X)
-        ttk.Label(bar, text="根目錄", style="Section.TLabel").pack(side=tk.LEFT)
-        ttk.Entry(bar, textvariable=self.var, state="readonly").pack(
+    def build_bar(self, header: tk.Misc, pixels: Callable[[float], int]) -> None:
+        """視窗頂端列固定顯示根目錄與「變更…」；只能用按鈕改，避免不小心打錯。"""
+        ttk.Label(header, text="根目錄", style="Header.TLabel").pack(side=tk.LEFT)
+        ttk.Entry(header, textvariable=self.var, state="readonly").pack(
             side=tk.LEFT, fill=tk.X, expand=True, padx=pixels(10)
         )
-        ttk.Button(bar, text="變更…", command=self.change).pack(side=tk.LEFT)
+        ttk.Button(header, text="變更…", command=self.change).pack(side=tk.LEFT)
 
     def with_output(self, out_var: tk.StringVar, out_label: str) -> tuple[Path, Path] | None:
         """按「開始」前：根目錄與這一頁的輸出位置；任一個沒設定時提示，回傳 None。"""
@@ -198,18 +209,78 @@ class PrepareTab(_Tab):
         self.root_folder = root_folder
         self.batch_dir: Path | None = None
         self.out_var = tk.StringVar(value=memory.load().get("out", ""))
-        self.status_var.set("貼上 TDCC，選好輸出位置後按「開始準備」（在最上方的根目錄底下找商品資料夾）。")
-
-        ttk.Label(self.frame, text="TDCC（可貼多筆）").grid(row=0, column=0, sticky="nw", pady=4)
-        self.tdcc_text = tk.Text(self.frame, height=6, width=40)
-        self.tdcc_text.grid(row=0, column=1, columnspan=2, sticky="nsew", pady=4)
-        self.path_row(1, "輸出位置", self.out_var, lambda: _ask_dir("選擇批次資料夾要開在哪裡", self.out_var))
-        self.start_button = ttk.Button(self.buttons, text="開始準備", command=self.start)
+        self.status_var.set("貼上 TDCC，選好輸出位置後按「開始準備」。")
+        self.header = PageHeader(
+            self.frame,
+            "把今天的商品整理成待核對批次",
+            "在最上方的根目錄底下找出每個 TDCC 的中文說明書與投資人須知，改成標準檔名放進新的批次資料夾；"
+            "商品資料夾只讀不改。",
+        )
+        self.header.grid(row=0, column=0, columnspan=4, sticky="ew", pady=(0, 14))
+        card = ttk.Frame(self.frame, style="Card.TFrame", padding=(18, 14))
+        card.grid(row=1, column=0, columnspan=4, sticky="ew")
+        card.columnconfigure(1, weight=1)
+        self._tdcc_column(card)
+        right = ttk.Frame(card, style="CardBody.TFrame")
+        right.grid(row=0, column=1, sticky="nsew", padx=(28, 0))
+        right.columnconfigure(0, weight=1)
+        ttk.Label(right, text="輸出位置", style="Card.TLabel").grid(row=0, column=0, sticky="w")
+        ttk.Label(right, text="每次在這裡開一個新的「待核對_日期時間」資料夾", style="CardMuted.TLabel").grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(0, 6)
+        )
+        ttk.Entry(right, textvariable=self.out_var).grid(row=2, column=0, sticky="ew")
+        ttk.Button(right, text="選擇…", command=self._choose_out).grid(row=2, column=1, padx=(8, 0))
+        self.buttons.destroy()  # 按鈕放在卡片裡，不用分頁底部那一列
+        self.buttons = ttk.Frame(right, style="CardBody.TFrame")
+        self.buttons.grid(row=3, column=0, columnspan=2, sticky="w", pady=(16, 0))
+        self.start_button = ttk.Button(self.buttons, text="開始準備", command=self.start, style="Primary.TButton")
         self.start_button.pack(side=tk.LEFT)
         self.open_button = ttk.Button(self.buttons, text="打開批次資料夾", command=self.open_batch, state=tk.DISABLED)
         self.open_button.pack(side=tk.LEFT, padx=8)
         self.next_button = NextButton(self.buttons, "下一步：核對 →", on_next)
-        self.place_bottom(2)
+        self.kpis = KpiRow(right, style="CardBody.TFrame")
+        self.kpis.grid(row=4, column=0, columnspan=2, sticky="w", pady=(16, 0))
+        self.kpis.hide()
+        status = ttk.Label(right, textvariable=self.status_var, style="Card.TLabel", wraplength=600)
+        status.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(12, 0))
+        right.bind("<Configure>", lambda event: status.configure(wraplength=max(300, event.width - 20)))
+        self.place_table(2, pady=(16, 0))
+
+    def _tdcc_column(self, card: ttk.Frame) -> None:
+        """卡片左邊直的 TDCC 欄位（#83）：一次貼很多筆時往下長，底下即時顯示貼了幾筆（重複只算一次）。"""
+        column = ttk.Frame(card, style="CardBody.TFrame")
+        column.grid(row=0, column=0, sticky="ns")
+        ttk.Label(column, text="TDCC", style="Card.TLabel").pack(anchor="w")
+        ttk.Label(column, text="一行一筆，可以一次貼很多筆", style="CardMuted.TLabel").pack(anchor="w", pady=(0, 6))
+        box = ttk.Frame(column, style="CardBody.TFrame")
+        box.pack(anchor="w")
+        self.tdcc_text = tk.Text(
+            box,
+            height=12,
+            width=16,
+            font=("Consolas", 12),
+            relief="flat",
+            highlightthickness=1,
+            highlightbackground=CONTROL_BORDER,
+            highlightcolor=ACCENT,
+            padx=8,
+            pady=6,
+            undo=True,
+        )
+        scroll = ttk.Scrollbar(box, command=self.tdcc_text.yview)
+        self.tdcc_text.configure(yscrollcommand=scroll.set)
+        self.tdcc_text.pack(side=tk.LEFT)
+        scroll.pack(side=tk.LEFT, fill=tk.Y)
+        self.count_var = tk.StringVar(value="已貼 0 筆")
+        ttk.Label(column, textvariable=self.count_var, style="CardMuted.TLabel").pack(anchor="w", pady=(6, 0))
+        self.tdcc_text.bind("<<Modified>>", self._tdcc_changed)
+
+    def _choose_out(self) -> None:
+        _set_if_chosen(self.out_var, lambda: _ask_dir("選擇批次資料夾要開在哪裡", self.out_var))
+
+    def _tdcc_changed(self, _event: object = None) -> None:
+        self.tdcc_text.edit_modified(False)  # 清掉旗標，下一次修改才會再通知
+        self.count_var.set(f"已貼 {len(parse_tdccs(self.tdcc_text.get('1.0', tk.END)))} 筆")
 
     def start(self) -> None:
         text = self.tdcc_text.get("1.0", tk.END)
@@ -221,6 +292,7 @@ class PrepareTab(_Tab):
         self.start_button.configure(state=tk.DISABLED)
         self.open_button.configure(state=tk.DISABLED)
         self.next_button.withdraw()
+        self.kpis.hide()
         self.run_in_background(
             lambda: prepare_batch(text, root, out),
             "處理中…（在根目錄底下搜尋商品資料夾，公槽上可能要一點時間）",
@@ -234,6 +306,15 @@ class PrepareTab(_Tab):
         for o in result.outcomes:
             self.add_row((o.tdcc, o.status, o.reason), problem=o.status != PREPARED)
         prepared = sum(o.status == PREPARED for o in result.outcomes)
+        skipped = len(result.outcomes) - prepared
+        from_word = sum(d.from_word for o in result.outcomes if o.status == PREPARED for d in o.documents)
+        self.kpis.show(
+            (
+                ("已準備（檔）", prepared, False),
+                ("跳過（檔）", skipped, skipped > 0),
+                ("Word 轉檔（份）", from_word, False),
+            )
+        )
         status = (
             f"完成：{prepared} 個商品已準備、{len(result.outcomes) - prepared} 個跳過。批次資料夾：{result.batch_dir}"
         )
@@ -294,9 +375,7 @@ class ReturnTab(_Tab):
             self.hint.hide()
 
     def _change_result(self) -> None:
-        chosen = self._ask_result()
-        if chosen:
-            self.result_var.set(chosen)
+        _set_if_chosen(self.result_var, self._ask_result)
 
     def _ask_result(self) -> str:
         return filedialog.askopenfilename(
@@ -618,6 +697,34 @@ class WindowSize:
         # 縮到工作列時關閉：保留上一次的紀錄
 
 
+class StepSidebar(ttk.Frame):
+    """左側步驟欄（#83）：照每天的順序列出 1～6，按了切到那一步；目前所在的那一步用淺藍底標出。
+
+    分頁標籤已藏起來，切頁一律經過 notebook.select（「下一步 →」也是），步驟欄跟著 <<NotebookTabChanged>> 更新。
+    """
+
+    def __init__(self, parent: tk.Misc, notebook: ttk.Notebook, pixels: Callable[[float], int]) -> None:
+        super().__init__(parent, style="Sidebar.TFrame", padding=(pixels(10), pixels(18)))
+        self.notebook = notebook
+        ttk.Label(self, text="今天的流程", style="SidebarTitle.TLabel").pack(
+            anchor="w", padx=pixels(14), pady=(0, pixels(8))
+        )
+        self.steps: dict[str, ttk.Button] = {}
+        for tab in notebook.tabs():
+            number, _, name = notebook.tab(tab, "text").partition(" ")
+            step = ttk.Button(
+                self, text=f"{number}    {name}", style="Step.TButton", command=lambda t=tab: notebook.select(t)
+            )
+            step.pack(fill=tk.X, pady=1, ipadx=pixels(40))
+            self.steps[tab] = step
+        notebook.bind("<<NotebookTabChanged>>", lambda _event: self.refresh(), add="+")
+
+    def refresh(self) -> None:
+        current = self.notebook.select()
+        for tab, step in self.steps.items():
+            step.configure(style="CurrentStep.TButton" if tab == current else "Step.TButton")
+
+
 class PanelWindow:
     """整個視窗：分頁、「維護」選單與關閉處理；各分頁的功能在各自的類別裡。"""
 
@@ -636,15 +743,15 @@ class PanelWindow:
         self.size = WindowSize(memory.path.with_name(WINDOW_FILE))
         master.title(TITLE)
         self.pixels = apply_style(master)
-        ttk.Style(master).configure(
-            "Workflow.TNotebook.Tab",
-            font=("Microsoft JhengHei UI", 12, "bold"),
-            padding=(self.pixels(16), self.pixels(6)),
-        )
+        top_bar = ttk.Frame(master, style="Header.TFrame", padding=(self.pixels(18), self.pixels(10)))
+        top_bar.pack(fill=tk.X)
+        ttk.Label(top_bar, text=TITLE, style="HeaderTitle.TLabel").pack(side=tk.LEFT, padx=(0, self.pixels(28)))
         self.root_folder = RootFolder(memory)
-        self.root_folder.build_bar(master, self.pixels)
-        self.notebook = ttk.Notebook(master, style="Workflow.TNotebook")
-        self.notebook.pack(fill=tk.BOTH, expand=True, padx=self.pixels(8), pady=self.pixels(8))
+        self.root_folder.build_bar(top_bar, self.pixels)
+        tk.Frame(master, height=1, background=BORDER).pack(fill=tk.X)
+        body = ttk.Frame(master)
+        body.pack(fill=tk.BOTH, expand=True)
+        self.notebook = ttk.Notebook(body, style="Workflow.TNotebook")
         db = _DatabaseLogin(master, env_path or default_env_path())
         # 分頁照每天的作業順序建立，前面自動加上 1～6 的編號
         self.orders = OrderTermsTab(self.notebook, memory, self.root_folder)
@@ -661,9 +768,17 @@ class PanelWindow:
         self.notebook.add(self.check, text="核對")
         self.returning = ReturnTab(self.notebook, memory)
         self.mail = MailDraftTab(self.notebook, memory, db, self.root_folder)
-        for number, tab in enumerate(self.notebook.tabs(), 1):
+        tabs = self.notebook.tabs()
+        for number, tab in enumerate(tabs, 1):
             self.notebook.tab(tab, text=f"{number} {self.notebook.tab(tab, 'text')}")
+        for page, page_header in ((self.prepare.frame, self.prepare.header), (self.check, self.check.header)):
+            page_header.step.set(f"步驟 {self.notebook.index(page) + 1}／{len(tabs)}")
+        self.sidebar = StepSidebar(body, self.notebook, self.pixels)
+        self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
+        tk.Frame(body, width=1, background=BORDER).pack(side=tk.LEFT, fill=tk.Y)
+        self.notebook.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         self.notebook.select(self.check if start_on_check else 0)
+        self.sidebar.refresh()
         self.maintenance = self._maintenance_menu()
         master.protocol("WM_DELETE_WINDOW", self.close)
 
@@ -673,8 +788,7 @@ class PanelWindow:
         pdfs = receipt.prepared_pdfs
         return bool(pdfs) and self.check.receive_pdfs(
             pdfs,
-            f"已帶入「3 準備」的批次（{len(pdfs)} 份 PDF）：\n{receipt.batch_dir}\n"
-            "選好參考條件表後按「載入／重新載入預覽」。",
+            f"已帶入「3 準備」的批次（{len(pdfs)} 份 PDF），選好參考條件表後按「載入／重新載入預覽」：\n{receipt.batch_dir}",
         )
 
     def _check_saved(self, result: Path) -> None:
@@ -737,6 +851,13 @@ class PanelWindow:
 
 def _ask_dir(title: str, current: tk.StringVar) -> str:
     return filedialog.askdirectory(title=title, initialdir=current.get() or None, mustexist=True)
+
+
+def _set_if_chosen(var: tk.StringVar, choose: Callable[[], str]) -> None:
+    """打開選擇視窗；有選才換掉，按取消不動。"""
+    chosen = choose()
+    if chosen:
+        var.set(chosen)
 
 
 def _import_text(info: ImportInfo) -> str:
