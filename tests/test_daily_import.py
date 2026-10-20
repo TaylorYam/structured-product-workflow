@@ -13,6 +13,7 @@ from db_synth import inventory, seed_mailbox, trade, write_daily
 from sp_workflow import daily_import
 from sp_workflow.daily_import import (
     BLOCKED,
+    CANCELLED,
     DIFFERENT,
     INVENTORY_MISSING,
     MAILBOX_EMPTY,
@@ -243,6 +244,50 @@ def test_branch_amounts_that_do_not_reconcile_are_reported_only(pg, tmp_path: Pa
         "南區：庫存 100,000、交易 50,000、差額 -50,000"
     ]
     assert count(pg, "workflow.product") == 1 and count(pg, "workflow.trade_row") == 2
+    error_book = openpyxl.load_workbook(tmp_path / "每日匯入錯誤.xlsx", read_only=True, data_only=True)
+    assert list(error_book.active.values)[1][3:] == (
+        A,
+        RECONCILE,
+        "南區：庫存 100,000、交易 50,000、差額 -50,000",
+    )
+
+
+def test_cancel_note_is_skipped_and_excluded_from_reconciliation(pg, tmp_path: Path, mailbox) -> None:
+    cancelled = trade(A, "Ben", "南區", 100000, number=None)
+    cancelled["備註"] = "此筆取消"
+    daily = write_daily(
+        tmp_path / "d.xlsx",
+        [trade(A, "Amy", "北區", 300000), cancelled],
+        [inventory(A, [("北區", 300000)])],
+    )
+
+    receipt = import_daily(daily, pg)
+
+    assert receipt.cancelled_trade_rows == 1
+    assert CANCELLED in kinds(receipt, A)
+    assert RECONCILE not in kinds(receipt, A)
+    assert pg.execute(
+        "SELECT row_seq, fc_name, amount FROM workflow.trade_row WHERE tdcc = %s ORDER BY row_seq", (A,)
+    ).fetchall() == [(1, "Amy", Decimal("300000"))]
+
+
+def test_same_product_inventory_rows_merge_disjoint_branches(pg, tmp_path: Path, mailbox) -> None:
+    daily = write_daily(
+        tmp_path / "d.xlsx",
+        [
+            trade(A, "Amy", "北區", 300000),
+            trade(A, "Ben", "南區", 100000, number=None),
+            trade(A, "Amy", "東區", 50000, number=None),
+        ],
+        [inventory(A, [("北區", 300000), ("南區", 100000)]), inventory(A, [("東區", 50000)])],
+    )
+
+    receipt = import_daily(daily, pg)
+
+    assert kinds(receipt, A) == [NEW_PRODUCT, NEW_TRADES]
+    assert pg.execute(
+        "SELECT branch, amount FROM workflow.branch_allocation WHERE tdcc = %s ORDER BY seq", (A,)
+    ).fetchall() == [("北區", Decimal("300000")), ("南區", Decimal("100000")), ("東區", Decimal("50000"))]
 
 
 def test_trades_before_inventory_are_kept_until_inventory_arrives(pg, tmp_path: Path, mailbox) -> None:
