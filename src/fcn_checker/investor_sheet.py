@@ -1,0 +1,84 @@
+"""投資人須知讀出結果：上手投資人須知 parser 與共用規則之間的 seam（ADR 0007、docs/rules/iis-check-rules.md）。
+
+投資人須知只摘錄部分條件，各上手範本有的項目不同：讀出結果以 `provides` 宣告這份有哪些欄位，
+範本沒有的欄位不核對（不推定通過，也不報缺漏）；範本有但讀不到的欄位照常是缺漏，規則轉人工覆核。
+
+欄位名稱：和說明書意義相同的沿用標準欄位（standard_fields.STANDARD_FIELDS，例：`currency_zh`、
+`underlyings`、`issue_date`、`print_dates`、`fee_<費用項目>`），投資人須知才有的欄位見 `IIS_FIELDS`。
+共用規則一律經 `read_iis` 讀投資人須知的欄位（說明書標準欄位仍經 `rules/kit.read_standard`）。
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from . import standard_fields
+from .parsers.layout import TextIndex
+from .schema import ParsedField
+
+# 投資人須知才有的欄位：名稱 → 值的形狀
+IIS_FIELDS: dict[str, str] = {
+    "product_codes": "tuple[Occurrence, ...]：封面各處商品代號，須等於檔名前 12 碼",
+    "page_totals": "tuple[int, ...]：每頁頁首「第 N 頁，共 M 頁」的 M",
+    "risk_level_summary": "str：商品簡介「本商品風險程度」的風險等級（例：RR4，沒有【】）",
+    "underlying_names": "list[str]：標的中文名稱，依說明書順序",
+    "min_subscription": "int：最低申購金額",
+    "monthly_coupon_pct": "Decimal：每月配息率 %，保留顯示位數",
+    "monthly_coupon_shown_pct": "Decimal：月配息率 %，保留顯示位數（= 年利率 ÷ 12 四捨五入到顯示位數，BNP）",
+    "issuer_names": "tuple[Occurrence, ...]：各處發行機構名稱（中英文全名）",
+    "issuer_names_zh": "tuple[Occurrence, ...]：各處只寫中文的發行機構名稱（只比審查標準全名括號前的中文部分）",
+    "guarantor_names": "tuple[Occurrence, ...]：寫保證機構全名的出處（= 審查標準 guarantor_name.<上手>.cover，BNP）",
+    "guarantor_names_short": "tuple[Occurrence, ...]：寫保證機構簡稱的出處（= 審查標準 guarantor_name.<上手>.ch1，BNP）",
+    "guarantor_names_org": "tuple[Occurrence, ...]：相關機構寫保證機構全名的出處（= 審查標準 guarantor_name.<上手>.cover，另接受 guarantor_name_equivalents.<上手>，SG）",
+    "agent_names": "tuple[Occurrence, ...]：寫總代理人全名的出處（= 審查標準 agent_name.<上手>.cover，SG）",
+    "has_autocall": "bool：有沒有自動提前出場（SG；須等於同商品說明書）",
+    "distributor_names": "tuple[Occurrence, ...]：各處受託或銷售機構名稱",
+    "distributor_addresses": "tuple[Occurrence, ...]：各處受託或銷售機構地址",
+    "distributor_phones": "tuple[Occurrence, ...]：各處受託或銷售機構電話",
+    "monthly_coupons": "tuple[Occurrence, ...]：各處月配息率 %（每處 = 年利率 ÷ 12 四捨五入到 4 位後相等，MS）",
+    "first_callable_period": "int：第一個可提前出場期（「自第 k 個…開始」的 k）",
+    "ko_observation_start": "date：期間每日觀察的 KO 觀察起日（MS：第 k 期配息週期終止日；SG：說明書第 8 項觀察期間起日）",
+    "ko_observation_end": "date：期間每日觀察的 KO 觀察迄日（期末定價日）",
+    "product_type": "str：商品種類",
+    "redemption_start": "date：開始受理贖回日期",
+    "memory_wording": "int：商品事項段「記憶式」出現的次數（Citi：非記憶式商品不得出現）",
+    "coupon_pa_mentions": "tuple[Occurrence, ...]：年利率主來源以外的出處（JPM D 型自動提前出場配息金額；每處 = 主來源）",
+    "coupon_per_period_pct": "Decimal：每期配息率 %，保留顯示位數（= 年利率 ÷ 12 四捨五入到 4 位；Nomura、BBVA P 型）",
+    "underlying_names_en": "list[str]：標的英文名稱，依說明書順序（Nomura 商品簡介；= 說明書第一章第 8 項）",
+    "redemption_start_text": "str：開始受理贖回日期的文字（Nomura；= 說明書第四章 1.(3)）",
+    "redemption_later_text": "str：後續受理贖回日期的文字（Nomura；= 說明書第四章 1.(4)）",
+    "distributor_code": "str：「受託機構商品代號為」的值（Natixis 舊版有標籤但空白；沒有標籤的範本交 absent）",
+    "redemption_pcts": "tuple[Occurrence, ...]：贖回金額「商品面額 x N%」的 N，欄位名稱同說明書（CA；= 同商品說明書第 9 項）",
+    "has_ki": "bool：有沒有 KI（CA：只寫到期贖回「若未發生界限事件」、沒有界限事件定義；須等於同商品說明書）",
+    "ko_definition": "str：KO 價格定義原文（Natixis「自動提前到期贖回價格為…期初進場價格之Y%」；沒寫 % 判不一致）",
+    "ko_final_day": "str：KO 每日觀察到最終評價日「含」或「不含」（Natixis；依交易日決定，Issue #351）",
+    "no_ki_barrier_pct": "Decimal：無 KI 時到期條件「最差表現值大於或等於y%：100%」的 y（BBVA；= 說明書轉換比例）",
+    "ko_at_maturity_pct": "Decimal：記憶式到期條件「最佳表現值大於或等於x%（出場值）」的 x（BBVA；= 說明書 KO %）",
+    "day_count": "str：計息天數慣例（BBVA KO 每期型，例：1/1；= 說明書第 13 項）",
+    "issuing_branch": "str：相關機構「發行機構：」的完整寫法（UBS；發行分行須是倫敦分行，同說明書）",
+    "monthly_coupon_ceiling_pct": "Decimal：最大利率值 %（DBS；= 括號內年利率 ÷ 12 無條件進位到 4 位）",
+    "tenor_mentions": "tuple[Occurrence, ...]：天期（月）的其他出處（GS 匯兌風險、費用說明；每處 = 商品年期）",
+    "redemption_pct_mentions": "tuple[Occurrence, ...]：到期買回「每單位面額 × X%」的 X（GS；每處 = 100）",
+}
+
+
+@dataclass
+class IisSheet:
+    """一份投資人須知的讀出結果：`f(name)` 交出欄位，`full_text` 為全文索引（固定警語、風險等級、禁用語用）。"""
+
+    fields: dict[str, ParsedField]
+    full_text: TextIndex
+    provided: frozenset[str]  # 這份範本有的欄位；不在其中的不核對
+
+    def f(self, name: str) -> ParsedField:
+        return standard_fields.lookup(self.fields, name)
+
+    def provides(self, name: str) -> bool:
+        return name in self.provided
+
+
+def read_iis(sheet: IisSheet, name: str) -> ParsedField:
+    """共用規則讀投資人須知欄位的唯一方式：只能讀標準欄位或 `IIS_FIELDS`；沒交出時是缺漏。"""
+    if name not in IIS_FIELDS and not standard_fields.is_standard(name):
+        raise ValueError(f"{name} 不是投資人須知欄位；要先加進 investor_sheet.IIS_FIELDS")
+    return sheet.f(name)

@@ -1,0 +1,245 @@
+"""審查標準依上手解析：固定警語、商品名稱樣板、發行機構名稱、受託機構電話等價寫法。
+
+測試切點是批量核對入口（預覽＋核對）；設定檔問題在載入核對設定時回報；BARC 與 HSBC 都用合成說明書。
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+import hsbc_synth
+import ms_synth
+from barc_synth import Spec, build_pdf, check
+from fcn_checker.ingestion import IngestionError
+from harness import MISMATCH, PASS, REVIEW, REVIEW_STANDARD, STANDARD, check_sheet, load_config, results
+from pdf_writer import Edit
+from reference_synth import build_reference_sheet, reference_row
+
+BARC_WARNING = STANDARD["risk"]["fixed_warning"]
+HSBC_WARNING = STANDARD["risk"]["fixed_warning_by_issuer"]["hsbc"]
+PHONE = STANDARD["distributor"]["phone"]
+
+
+def sub(tmp_path: Path, name: str) -> Path:
+    (tmp_path / name).mkdir()
+    return tmp_path / name
+
+
+def standard_with(tmp_path: Path, old: str, new: str) -> Path:
+    text = REVIEW_STANDARD.read_text(encoding="utf-8")
+    assert old in text
+    path = tmp_path / "review_standard.toml"
+    path.write_text(text.replace(old, new), encoding="utf-8")
+    return path
+
+
+class _Filled(dict):
+    """沒給的佔位符填空字串。"""
+
+    def __missing__(self, key: str) -> str:
+        return ""
+
+
+def check_hsbc(
+    tmp_path: Path,
+    spec: hsbc_synth.Spec | None = None,
+    standard: Path = REVIEW_STANDARD,
+    edits: list[Edit] | None = None,
+):
+    s = spec or hsbc_synth.Spec()
+    pdf = hsbc_synth.build_pdf(tmp_path / f"{s.product_code}_TS.pdf", s, edits=edits or ())
+    sheet = build_reference_sheet(tmp_path / "order.xlsx", [reference_row(s)])
+    return check_sheet(pdf, sheet, load_config(review_standard=standard))
+
+
+def check_barc(tmp_path: Path, spec: Spec, standard: Path):
+    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", spec)
+    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [reference_row(spec)])
+    return check_sheet(pdf, sheet, load_config(review_standard=standard))
+
+
+# ---------------------------------------------------------------- 固定警語
+
+
+def test_each_issuer_uses_its_own_fixed_warning(tmp_path):
+    assert results(check(sub(tmp_path, "barc")), "standard.fixed_warning")[0].status == PASS
+    assert results(check_hsbc(sub(tmp_path, "hsbc")), "standard.fixed_warning")[0].status == PASS
+
+
+def test_hsbc_document_with_barc_warning_is_mismatch(tmp_path):
+    report = check_hsbc(tmp_path, edits=[Edit(HSBC_WARNING, BARC_WARNING, "ts")])
+    r = results(report, "standard.fixed_warning")[0]
+    assert (r.status, r.actual) == (MISMATCH, 0)
+
+
+def test_barc_document_with_hsbc_warning_is_mismatch(tmp_path):
+    r = results(check(tmp_path, edits=[Edit(BARC_WARNING, HSBC_WARNING, "ts")]), "standard.fixed_warning")[0]
+    assert (r.status, r.actual) == (MISMATCH, 0)
+
+
+# ---------------------------------------------------------------- 商品名稱樣板
+
+
+def test_unknown_product_name_placeholder_is_a_batch_config_error(tmp_path):
+    standard = standard_with(
+        tmp_path,
+        'en = "{maxi_en}{daily_en}{memory_en}Autocallable',
+        'en = "{maxi_en}{daily_en}{memory_en}{fancy_en}Autocallable',
+    )
+    with pytest.raises(IngestionError) as raised:
+        load_config(review_standard=standard)
+    err = raised.value
+    assert err.reason_code == "config_invalid"
+    assert "fancy_en" in str(err) and "product_name.hsbc" in str(err)
+
+
+def test_product_name_placeholders_are_filled_from_the_document_for_any_issuer(tmp_path):
+    """名稱樣板的 maxi／daily 佔位符依說明書欄位填入，不依上手：BARC 樣板加上 {daily_en} 也照填。"""
+    text = standard_with(
+        tmp_path,
+        'en = "{tenor} Months {ccy} {memory_en}Autocallable',
+        'en = "{tenor} Months {ccy} {daily_en}{memory_en}Autocallable',
+    ).read_text(encoding="utf-8")
+    path = tmp_path / "with_daily.toml"
+    text = text.replace('memory_en = "Memory "\n', 'memory_en = "Memory "\ndaily_en = "Daily "\n', 1)
+    path.write_text(text, encoding="utf-8")
+    spec = Spec()  # D 型、記憶式
+    report = check_barc(tmp_path, spec, path)
+    r = results(report, "standard.product_name", "name_en")[0]
+    assert r.status == MISMATCH
+    assert r.expected.startswith("6 Months USD Daily Memory Autocallable")
+
+
+@pytest.mark.parametrize(
+    ("tenor", "written", "status"),
+    [(1, None, MISMATCH), (1, "1 Month USD", PASS), (3, None, PASS), (3, "3 Month USD", MISMATCH)],
+    ids=["1-Months", "1-Month", "3-Months", "3-Month"],
+)
+def test_english_name_is_singular_only_for_a_one_month_tenor(tmp_path, tenor, written, status):
+    """天期 1 個月時英文名稱樣板的 Months 改成 Month、只接受單數；其他天期照舊 Months（Issue #343）。"""
+    edits = [Edit(f"{tenor} Months USD", written, "ts")] if written else []
+    report = check(tmp_path, Spec(tenor=tenor), edits=edits)
+    assert results(report, "standard.product_name", "name_en")[0].status == status
+
+
+@pytest.mark.parametrize(
+    ("issuer", "one", "three"),
+    [
+        ("BARC", "1 Month USD", "3 Months USD"),
+        ("MS", "issuance of 1 Month USD", "issuance of 3 Months USD"),
+        ("BNP", "1 Month USD", "3 Months USD"),
+        ("JPM", "JPMorgan 1Month USD", "JPMorgan 3Months USD"),
+        ("GS", "1 Month USD", "3 Months USD"),
+        ("CITI", "1-Month USD", "3-Month USD"),
+    ],
+)
+def test_months_templates_take_the_singular_for_one_month(issuer, one, three):
+    """所有用 `{tenor} Months`／`{tenor}Months` 的樣板天期 1 時改單數；寫 `-Month` 的上手不受影響（Issue #343）。"""
+    tpl = load_config().review_standard.for_issuer(issuer).product_name
+    assert one in tpl.template("en", 1).format_map(_Filled(tenor=1, ccy="USD"))
+    assert three in tpl.template("en", 3).format_map(_Filled(tenor=3, ccy="USD"))
+
+
+def test_missing_issuer_name_requires_review(tmp_path):
+    standard = standard_with(tmp_path, '\nhsbc = "香港商', '\nfake = "香港商')
+    report = check_hsbc(tmp_path, standard=standard)
+    for r in results(report, "standard.issuer_name"):
+        assert (r.status, r.reason_code) == (REVIEW, "standard_missing")
+
+
+# ---------------------------------------------------------------- 受託機構電話
+
+
+def test_international_phone_listed_as_equivalent_passes_for_every_issuer(tmp_path):
+    assert (
+        results(check_hsbc(sub(tmp_path, "hsbc")), "standard.distributor", "distributor_phone_cover")[0].status == PASS
+    )
+    edits = [Edit(PHONE, "+886-2-5556-1313", "ts.cover.distributor")]
+    r = results(check(sub(tmp_path, "barc"), edits=edits), "standard.distributor", "distributor_phone_cover")[0]
+    assert (r.status, r.actual) == (PASS, "+886-2-5556-1313")
+
+
+def test_phone_form_not_listed_in_standard_is_mismatch(tmp_path):
+    edits = [Edit(PHONE, "02.5556.1313", "ts.cover.distributor")]
+    r = results(check(sub(tmp_path, "barc"), edits=edits), "standard.distributor", "distributor_phone_cover")[0]
+    assert r.status == MISMATCH
+
+    standard = standard_with(
+        tmp_path,
+        'phone_equivalents = ["+886-2-5556-1313", "+886 2 5556 1313", "+886 (2) 5556 1313", "(+886)2-5556-1313", "(02)5556-1313"]',
+        "phone_equivalents = []",
+    )
+    r = results(
+        check_hsbc(sub(tmp_path, "hsbc"), standard=standard), "standard.distributor", "distributor_phone_cover"
+    )[0]
+    assert r.status == MISMATCH
+
+
+# ---------------------------------------------------------------- MS 分節的設定檢查（Issue #135）
+
+
+@pytest.mark.parametrize(
+    "old,new,where",
+    [
+        ('basket_en = "Worst of Shares and/or ETFs"\n', "", "basket_en"),
+        ('ms = ["風險程度等級為{level}"', 'ms = ["風險程度等級為RRn"', "risk.level_formats.ms"),
+        ('ms = ["brackets", "trailing_period"]', 'ms = ["brackets", "commas"]', "issuer_name_ignore.ms"),
+        ('ms = ["本商品風險程度為RR4。"]', 'ms = ["本商品風險程度為RR4"]', "risk.fixed_warning_openings.ms"),
+        ('ms = ["本商品風險程度為RR4。"]', 'ms = ["本商品風險程度等級為RR4。"]', "risk.fixed_warning_openings.ms"),
+        # SG 分節（Issue #194）：依幣別的倍數、固定警語其他寫法、英文名稱幣別代碼對照
+        (
+            "minimum_subscription = { USD = 10, JPY = 1, CNH = 1 }",
+            "minimum_subscription = { USD = 10, JPY = 0, CNH = 1 }",
+            "min_amount_multiples.sg",
+        ),
+        (
+            'autocall_en = "Autocallable "\nccy_aliases = { CNH = "CNY" }',  # SG 才有這兩行相連（BNP、GS 也有 ccy_aliases）
+            'autocall_en = "Autocallable "\nccy_aliases = { CNH = 1 }',
+            "product_name.sg.ccy_aliases",
+        ),
+        # Nomura 分節（Issue #239）：上手別說明書固定警語次數須是正整數
+        ("nomura = 2\n", "nomura = 0\n", "risk.fixed_warning_occurrences_by_issuer.nomura"),
+        ("nomura = 2\n", 'nomura = "2"\n', "risk.fixed_warning_occurrences_by_issuer.nomura"),
+        # UBS 分節（Issue #279）：名稱用了 {ko_observation_*} 就要有每日與每期兩種寫法
+        ('periodic_zh = "定期觀察"\n', "", "periodic_zh"),
+    ],
+)
+def test_invalid_ms_review_standard_is_a_batch_config_error(tmp_path, old, new, where):
+    with pytest.raises(IngestionError) as raised:
+        load_config(review_standard=standard_with(tmp_path, old, new))
+    assert raised.value.reason_code == "config_invalid" and where in str(raised.value)
+
+
+def test_issuer_name_ignores_apply_only_to_the_configured_issuer(tmp_path):
+    """BARC 沒有設定 issuer_name_ignore：第二章少了括號仍是不一致。"""
+    plain = STANDARD["issuer_name"]["barc"].replace("（", "").replace("）", "")
+    r = results(
+        check(tmp_path, edits=[Edit(STANDARD["issuer_name"]["barc"], plain, "ts.ch二.1")]),
+        "standard.issuer_name",
+        "issuer_name_ch2",
+    )[0]
+    assert r.status == MISMATCH
+
+
+def test_address_form_not_listed_in_standard_is_mismatch(tmp_path):
+    """MS 第二章沒有「松山區」的地址靠審查標準 address_equivalents 才算相符；清單拿掉就判不一致。"""
+    variant = [
+        Edit("◎ 營業所在地：台北市松山區民生東路三段158號6樓", "◎ 營業所在地：台北市民生東路三段158號6樓", "ts.ch二")
+    ]
+    r = results(
+        ms_synth.check(sub(tmp_path, "listed"), edits=variant), "standard.distributor", "distributor_address_ch2"
+    )[0]
+    assert r.status == PASS and "address_equivalents" in r.tolerance
+    standard = standard_with(
+        tmp_path,
+        'address_equivalents = ["台北市民生東路三段158號6樓", "臺北市105民生東路三段158號6樓", "台北市松山區民生東路3段158號6樓"]',
+        "address_equivalents = []",
+    )
+    r = results(
+        ms_synth.check(sub(tmp_path, "unlisted"), edits=variant, config=load_config(review_standard=standard)),
+        "standard.distributor",
+        "distributor_address_ch2",
+    )[0]
+    assert r.status == MISMATCH

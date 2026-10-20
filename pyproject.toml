@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "sp-workflow"
 version = "0.1.0"
-description = "結構型商品作業流程：TS／IIS 準備與放回、每日匯入最小 FCN 資料庫（本機視窗工具）"
+description = "結構型商品作業流程：TS／IIS 準備、核對（fcn_checker，規則式、不使用 LLM）與放回、每日匯入最小 FCN 資料庫（本機視窗工具）"
 requires-python = ">=3.11"
 dependencies = [
     "pymupdf>=1.24,<2",
@@ -17,24 +17,28 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+    "pytest-xdist>=3",
     "ruff>=0.6",
 ]
 
 [project.scripts]
 spw-panel = "sp_workflow.app:main"
 spw-db-migrate = "sp_workflow.database:migrate_main"
+fcn-batch = "fcn_checker.cli:main"
+fcn-panel = "fcn_checker.panel:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
 sp_workflow = ["migrations/*.sql"]
+fcn_checker = ["assets/*.ico"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
 markers = [
-    "real_samples: 只在本機設定 SPW_REAL_SAMPLES_DIR 或 SPW_ORDER_CHECK_DIR 時執行；CI 自動略過",
+    "real_samples: 只在本機有真實樣本時執行（SPW_REAL_SAMPLES_DIR、SPW_ORDER_CHECK_DIR，或核對的 data/／FCN_TEST_DATA_DIR）；CI 自動略過",
     "word: 需要 Windows 與 Microsoft Word；CI 自動略過",
     "db: 需要測試用 PostgreSQL（設定 SPW_TEST_DSN）；沒設定時略過",
 ]
@@ -42,7 +46,7 @@ markers = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-src = ["src", "tests"]
+src = ["src", "tests", "tests/checker"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]

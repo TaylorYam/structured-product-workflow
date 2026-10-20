@@ -1,0 +1,641 @@
+# 審查標準（Review Standard）
+#
+# 受託機構會隨時間更新的審查基準集中在這個檔案。
+# 基準改變時（例如受託機構重新審查、風險警語改版），只修改本檔，不改程式。
+# 每次修改請更新 version 與 effective_date，並在 PR 說明變更原因。
+#
+# 本檔只放公開的條款文字與日期，不放客戶或交易資料。
+# 規則說明見 docs/rules/review-standard.md。
+
+version = 25
+effective_date = 2026-10-19
+
+[distributor]
+# 受託或銷售機構審查通過之日期（說明書封面 p1）：歷次日期都保留，由舊到新。
+# 每份說明書應寫「交易日當天或之前最近一次」的日期。重新審查後在 PANEL「審查通過日期…」新增，
+# 或在清單最後加一筆（同時更新上面的 version 與 effective_date）。
+# 2025-06-24：受託機構真實的歷次審查日期（Nomura 2025 年文件寫這一天；2026-10-15 作業人員確認，Issue #239）。
+# 比 PANEL 可新增的日期早，所以直接寫在設定檔；交易日早於 2025-12-18 的說明書改和這一天比。
+# 2024-03-20、2024-08-28：受託機構真實的歷次審查日期（Natixis 2024 年文件、Citi 2024 年文件分別寫這兩天；2026-10-15
+# 作業人員確認，Issue #261）。
+approval_dates = [2024-03-20, 2024-08-28, 2025-06-24, 2025-12-18, 2026-06-11]
+
+# 受託或銷售機構負責人（第二章「受託或銷售機構」→「負責人姓名」）
+# 注意：「晋」為古字 U+664B，不可寫成「晉」U+6649；比對時逐字（含字碼）相等。
+chairman = "林晋輝"
+
+# 受託或銷售機構名稱、電話、地址（封面「受託或銷售機構之名稱、電話及地址」、第二章「受託或銷售機構」條）
+# 比對時忽略空白與換行，其餘逐字相等。
+name = "玉山綜合證券股份有限公司"
+phone = "02-5556-1313"
+# 電話可接受的其他寫法（所有上手適用）；忽略空白後與其中之一相等即視為相符，沒列出的寫法判定不一致。
+# 國際寫法：HSBC 封面使用（2026-10-02 確認）；空格分隔的國際寫法：MS 封面使用（2026-10-08 確認）；
+# 區碼加括號：BNP 封面與第四章使用（2026-10-13 確認）；國碼加括號：Citi 封面使用（2026-10-14 確認，Issue #220）。
+# 區碼加括號、沒有空白：DBS 封面使用（2026-10-15 確認，Issue #280）。
+phone_equivalents = ["+886-2-5556-1313", "+886 2 5556 1313", "+886 (2) 5556 1313", "(+886)2-5556-1313", "(02)5556-1313"]
+address = "台北市松山區民生東路三段158號6樓"
+# 地址可接受的其他寫法（所有上手適用，用法同 phone_equivalents）。
+# 沒有「松山區」：MS 第二章受託機構營業所在地使用（2026-10-09 確認視為正確）。
+# 「臺」、郵遞區號、沒有「松山區」：BNP 封面與第二章使用（2026-10-13 確認視為正確）。
+# 阿拉伯數字「3段」：SG 封面使用（2026-10-13 確認視為正確）。
+address_equivalents = ["台北市民生東路三段158號6樓", "臺北市105民生東路三段158號6樓", "台北市松山區民生東路3段158號6樓"]
+# 名稱可接受的其他寫法（所有上手適用，用法同 phone_equivalents）。
+# 簡稱「玉山證券」：SG 第二章受託或銷售機構的事業名稱使用（2026-10-13 確認視為正確）。
+# 帶「(含國際證券業務分公司)」：DBS 說明書封面、投資人須知相關機構使用（2026-10-15 確認，Issue #280）。
+name_equivalents = ["玉山證券", "玉山綜合證券股份有限公司(含國際證券業務分公司)"]
+
+[risk]
+# 風險等級（說明書中以【RRn】出現；寫法不同的上手見下方 [risk.level_formats]）
+level = "RR4"
+
+# 固定風險警語：由我方提供給上手，應逐字出現在說明書中。
+# 比對時忽略所有空白與換行，其餘字元（含全形／半形標點）須完全相同。
+# BARC 範本中應出現 3 次：封面警語 1、第一章第 2 條、第三章投資風險警語。
+fixed_warning = """\
+本商品風險程度等級為【RR4】。根據受託機構的風險等級分類，由於本商品並不保本，連結標的為【證券交易所交易證券】，\
+在綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託機構受託買賣境外商品審查管理辦法之\
+境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為【RR4】。*投資人請注意，受託機構將風險等級區分為\
+RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託機構釐定及提供，發行機構及/或\
+總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之\
+專業投資人或依據國際證券業務分公司(下稱「OSU」)辦理受託買賣相關規定允許投資本商品之中華民國境外客戶(此類客戶\
+依受託機構審核適合投資本產品)(下稱「OSU客戶」) (專業投資人與OSU客戶以下合稱「投資人」)。"""
+fixed_warning_occurrences = 3
+
+# 說明書固定警語次數的上手別設定（鍵為上手代號小寫）；沒列出的上手用上面的 fixed_warning_occurrences。
+# Nomura：封面警語(一)、第三章 6.(1) 共 2 次，第一章第 2 項只寫「商品風險程度：RR4」（2026-10-15 確認，Issue #239）。
+[risk.fixed_warning_occurrences_by_issuer]
+nomura = 2
+# DBS：封面警語 1.、商品主要風險揭露 五、1. 共 2 次（2026-10-15 確認，Issue #280）。
+dbs = 2
+
+# 依上手不同的固定警語版本（鍵為上手代號小寫）。未列出的上手使用上面的 fixed_warning。
+# HSBC：前 4 處「受託機構」寫成「受託或銷售機構」，第 5 處「依受託機構審核」不變（2026-10-01 確認視為正確）。
+# HSBC 範本中同樣出現 3 次：封面警語 1、第一章第 2 條、第三章。
+[risk.fixed_warning_by_issuer]
+hsbc = """\
+本商品風險程度等級為【RR4】。根據受託或銷售機構的風險等級分類，由於本商品並不保本，連結標的為【證券交易所交易證券】，\
+在綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託或銷售機構受託買賣境外商品審查管理辦法之\
+境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為【RR4】。*投資人請注意，受託或銷售機構將風險等級區分為\
+RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託或銷售機構釐定及提供，發行機構及/或\
+總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之\
+專業投資人或依據國際證券業務分公司(下稱「OSU」)辦理受託買賣相關規定允許投資本商品之中華民國境外客戶(此類客戶\
+依受託機構審核適合投資本產品)(下稱「OSU客戶」) (專業投資人與OSU客戶以下合稱「投資人」)。"""
+# MS：去掉【】（【RR4】→RR4、【證券交易所交易證券】→證券交易所交易證券），結尾沒有句號（2026-10-08 確認視為正確）。
+# MS 範本中同樣出現 3 次：封面警語 1)、第一章第 2 項、第三章第 4 項 1)。
+ms = """本商品風險程度等級為RR4。根據受託機構的風險等級分類，由於本商品並不保本，連結標的為證券交易所交易證券，在綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託機構受託買賣境外商品審查管理辦法之境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為RR4。*投資人請注意，受託機構將風險等級區分為RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託機構釐定及提供，發行機構及/或總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人或依據國際證券業務分公司(下稱「OSU」)辦理受託買賣相關規定允許投資本商品之中華民國境外客戶(此類客戶依受託機構審核適合投資本產品)(下稱「OSU客戶」) (專業投資人與OSU客戶以下合稱「投資人」)"""
+# BNP：【RR4】寫成半形方括號 [RR4]、【證券交易所交易證券】去掉【】、沒有「*」，結尾有句號（2026-10-13 確認視為正確）。
+# BNP 範本中同樣出現 3 次：封面警語 (1)、第一章第 2 項、第三章第 6 項(1)；只算 (1) 段，(2)～(9) 不核對。
+bnp = """本商品風險程度等級為[RR4]。根據受託機構的風險等級分類，由於本商品並不保本，連結標的為證券交易所交易證券，在綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託機構受託買賣境外商品審查管理辦法之境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為[RR4]。投資人請注意，受託機構將風險等級區分為RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託機構釐定及提供，發行機構及/或總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人或依據國際證券業務分公司(下稱「OSU」)辦理受託買賣相關規定允許投資本商品之中華民國境外客戶(此類客戶依受託機構審核適合投資本產品)(下稱「OSU客戶」) (專業投資人與OSU客戶以下合稱「投資人」)。"""
+
+# SG：同 MS 版本（無【】、有「*」）但結尾有句號；封面警語一與第三章第 5 項一用這個版本，第一章第 2 項的風險等級寫
+# 半形方括號 [RR4]（見下方 [risk.fixed_warning_variants]）。SG 範本中同樣出現 3 次（2026-10-13 確認）。
+sg = """本商品風險程度等級為RR4。根據受託機構的風險等級分類，由於本商品並不保本，連結標的為證券交易所交易證券，在綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託機構受託買賣境外商品審查管理辦法之境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為RR4。*投資人請注意，受託機構將風險等級區分為RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託機構釐定及提供，發行機構及/或總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人或依據國際證券業務分公司(下稱「OSU」)辦理受託買賣相關規定允許投資本商品之中華民國境外客戶(此類客戶依受託機構審核適合投資本產品)(下稱「OSU客戶」) (專業投資人與OSU客戶以下合稱「投資人」)。"""
+
+# Citi：Citi 商品 OSU 客戶不能承作，沒有 OSU 客戶段屬特例、視為正確（2026-10-14 確認，Issue #220）；另外
+# 【證券交易所交易證券】去掉【】、「在綜合評量」寫「再綜合評量」、多處「受託機構」寫「受託機構或銷售機構」／「受託或銷售機構」。
+# Citi 範本中出現 3 次：封面警語 1.、第一章第 2 項、第三章第 4 項(1)。
+citi = """本商品風險程度等級為【RR4】。根據受託機構的風險等級分類，由於本商品並不保本，連結標的為證券交易所交易證券，再綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託機構或銷售機構受託買賣境外商品審查管理辦法之境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為【RR4】。*投資人請注意，受託或銷售機構將風險等級區分為RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託或銷售機構釐定及提供，發行機構及/或總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人(專業投資人以下簡稱「投資人」)。"""
+
+# JPM：去掉【】、4 處「受託機構」寫「受託或銷售機構」、OSU 段改寫成「(包括OSU客戶)以下稱「投資人」)」（括號不成對，照原文）、
+# 結尾多一句 Product Risk Rating（2026-10-15 確認視為正確，Issue #233）。
+# JPM 範本中出現 3 次：封面警語 1.、第 I 部分第 2 項、第 III 部分 6.(1)。
+jpm = """本商品風險程度等級為RR4。根據受託或銷售機構的風險等級分類，由於本商品並不保本，連結標的為證券交易所交易證券，在綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託或銷售機構受託買賣境外商品審查管理辦法之境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為RR4。*投資人請注意，受託或銷售機構將風險等級區分為RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託或銷售機構釐定及提供，發行機構及/或總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人(包括OSU客戶)以下稱「投資人」)。本商品風險等級(Product Risk Rating)由受託機構釐定及提供，發行機構及總代理人不對此評級之準確性負任何責任。"""
+
+# Nomura：同 SG 版本（無【】、有「*」、結尾有句號；2026-10-15 確認視為正確，Issue #239）。
+# Nomura 範本中出現 2 次（見 [risk.fixed_warning_occurrences_by_issuer]）：封面警語(一)、第三章 6.(1)。
+nomura = """本商品風險程度等級為RR4。根據受託機構的風險等級分類，由於本商品並不保本，連結標的為證券交易所交易證券，在綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託機構受託買賣境外商品審查管理辦法之境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為RR4。*投資人請注意，受託機構將風險等級區分為RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託機構釐定及提供，發行機構及/或總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人或依據國際證券業務分公司(下稱「OSU」)辦理受託買賣相關規定允許投資本商品之中華民國境外客戶(此類客戶依受託機構審核適合投資本產品)(下稱「OSU客戶」) (專業投資人與OSU客戶以下合稱「投資人」)。"""
+# GS：= HSBC 版本去掉 OSU 客戶段（4 處「受託或銷售機構」、有【】與「*」），結尾「專業投資人(以下稱「投資人」)。」
+# （2026-10-15 確認視為正確，Issue #248）。GS 範本中出現 3 次：第 1 頁警語 (1)、第一章第 2 項、第三章 5.(1)。
+gs = """本商品風險程度等級為【RR4】。根據受託或銷售機構的風險等級分類，由於本商品並不保本，連結標的為【證券交易所交易證券】，在綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託或銷售機構受託買賣境外商品審查管理辦法之境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為【RR4】。*投資人請注意，受託或銷售機構將風險等級區分為RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託或銷售機構釐定及提供，發行機構及/或總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人(以下稱「投資人」)。"""
+# Natixis：= BNP 版本（[RR4]、「證券交易所交易證券」沒有【】）在「投資人請注意」前加「*」，5 處「受託機構」、有 OSU 段
+# （2026-10-15 確認視為正確，Issue #261）。Natixis 範本中出現 3 次：封面警語 (1)、第一章第 2 項、第三章 5.(1)；新舊兩版相同。
+natixis = """本商品風險程度等級為[RR4]。根據受託機構的風險等級分類，由於本商品並不保本，連結標的為證券交易所交易證券，在綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託機構受託買賣境外商品審查管理辦法之境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為[RR4]。*投資人請注意，受託機構將風險等級區分為RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託機構釐定及提供，發行機構及/或總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人或依據國際證券業務分公司(下稱「OSU」)辦理受託買賣相關規定允許投資本商品之中華民國境外客戶(此類客戶依受託機構審核適合投資本產品)(下稱「OSU客戶」) (專業投資人與OSU客戶以下合稱「投資人」)。"""
+# CA：= HSBC 版本，第 5 處「依受託機構審核」也寫「依受託或銷售機構審核」（5 處都是受託或銷售機構；2026-10-15 確認視為正確，
+# Issue #274）。CA 範本中出現 3 次：封面警語 1、第一章第 2 項（去掉【】，見 [risk.fixed_warning_variants]）、第三章 6.(1)。
+ca = """本商品風險程度等級為【RR4】。根據受託或銷售機構的風險等級分類，由於本商品並不保本，連結標的為【證券交易所交易證券】，在綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託或銷售機構受託買賣境外商品審查管理辦法之境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為【RR4】。*投資人請注意，受託或銷售機構將風險等級區分為RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託或銷售機構釐定及提供，發行機構及/或總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人或依據國際證券業務分公司(下稱「OSU」)辦理受託買賣相關規定允許投資本商品之中華民國境外客戶(此類客戶依受託或銷售機構審核適合投資本產品)(下稱「OSU客戶」) (專業投資人與OSU客戶以下合稱「投資人」)。"""
+# BBVA：= GS 版本（逐字相同；2026-10-15 確認視為正確，Issue #269）。BBVA 範本中出現 3 次：第 1 頁警語 (1)、第一章第 2 項、
+# 第三章 5.(1)；BV1 第三章另多貼的不完整段落不算次數、也不另判錯。
+bbva = """本商品風險程度等級為【RR4】。根據受託或銷售機構的風險等級分類，由於本商品並不保本，連結標的為【證券交易所交易證券】，在綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託或銷售機構受託買賣境外商品審查管理辦法之境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為【RR4】。*投資人請注意，受託或銷售機構將風險等級區分為RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託或銷售機構釐定及提供，發行機構及/或總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人(以下稱「投資人」)。"""
+# DBS：= CA 版本，在「辦理受託買賣相關規定」之後多「(下稱「OSU相關規範」)」；說明書 2 次、投資人須知 1 次（2026-10-15 確認，
+# Issue #280）。
+dbs = """本商品風險程度等級為【RR4】。根據受託或銷售機構的風險等級分類，由於本商品並不保本，連結標的為【證券交易所交易證券】，在綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託或銷售機構受託買賣境外商品審查管理辦法之境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為【RR4】。*投資人請注意，受託或銷售機構將風險等級區分為RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託或銷售機構釐定及提供，發行機構及/或總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人或依據國際證券業務分公司(下稱「OSU」)辦理受託買賣相關規定(下稱「OSU相關規範」)允許投資本商品之中華民國境外客戶(此類客戶依受託或銷售機構審核適合投資本產品)(下稱「OSU客戶」) (專業投資人與OSU客戶以下合稱「投資人」)。"""
+# UBS：= 共用版本只差 3 處（開頭「風險程度為」少「等級」、「證券交易所交易證券」沒有【】、「再綜合評量」；有「*」、
+# 有 OSU 段、5 處「受託機構」；2026-10-15 確認視為正確，Issue #279）。UBS 範本中出現 3 次：第 1 頁警語 1.、商品基本資料二、
+# 投資風險警語段第一點。
+ubs = """本商品風險程度為【RR4】。根據受託機構的風險等級分類，由於本商品並不保本，連結標的為證券交易所交易證券，再綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託機構受託買賣境外商品審查管理辦法之境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為【RR4】。*投資人請注意，受託機構將風險等級區分為RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託機構釐定及提供，發行機構及/或總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人或依據國際證券業務分公司(下稱「OSU」)辦理受託買賣相關規定允許投資本商品之中華民國境外客戶(此類客戶依受託機構審核適合投資本產品)(下稱「OSU客戶」) (專業投資人與OSU客戶以下合稱「投資人」)。"""
+
+# 固定警語開頭句（到第一個「。」）的其他允許寫法（鍵為上手代號小寫）；只換開頭句，其餘仍須與該上手的警語逐字相同。
+# MS：第一章第 2 項寫成「本商品風險程度為RR4。」（少「等級」），2026-10-08 確認視為正確。
+[risk.fixed_warning_openings]
+ms = ["本商品風險程度為RR4。"]
+
+# 風險等級的寫法（鍵為上手代號小寫；{level} 為 RRn 的位置）。未列出的上手為【{level}】。
+# MS：沒有【】，寫在固定警語的「風險程度等級為」「風險程度為」「歸類為」之後（2026-10-08 確認）。
+# BNP：半形方括號，寫在固定警語的「風險程度等級為」「歸類為」之後（2026-10-13 確認）。
+[risk.level_formats]
+ms = ["風險程度等級為{level}", "風險程度為{level}", "歸類為{level}"]
+bnp = ["風險程度等級為[{level}]", "歸類為[{level}]"]
+# SG：封面與第三章沒有括號、第一章第 2 項為半形方括號（2026-10-13 確認）。
+sg = ["風險程度等級為{level}", "歸類為{level}", "風險程度等級為[{level}]", "歸類為[{level}]"]
+# JPM：沒有【】，寫在固定警語的「風險程度等級為」「歸類為」之後（2026-10-15 確認，Issue #233）。
+jpm = ["風險程度等級為{level}", "歸類為{level}"]
+# Nomura：沒有【】，寫在固定警語的「風險程度等級為」「歸類為」之後；說明書第一章第 2 項「商品風險程度：RR4」、
+# 投資人須知第二 3.「本商品風險程度：RR4」（2026-10-15 確認，Issue #239）。
+nomura = ["風險程度等級為{level}", "歸類為{level}", "風險程度：{level}"]
+# Natixis：半形方括號，寫在固定警語的「風險程度等級為」「歸類為」之後（同 BNP；2026-10-15 確認，Issue #261）。
+natixis = ["風險程度等級為[{level}]", "歸類為[{level}]"]
+# CA：封面、第三章、投資人須知警語 1. 為【】；說明書第一章第 2 項沒有【】；投資人須知二、1.(3)「本商品風險等級為RR4」
+# （2026-10-15 確認都核對，Issue #274）。
+ca = ["【{level}】", "風險程度等級為{level}", "歸類為{level}", "本商品風險等級為{level}"]
+# DBS：警語【】；說明書商品基本資料「商品風險程度：RR4」、投資人須知商品簡介「本商品風險程度：RR4」（2026-10-15 確認都核對，
+# Issue #280）。
+dbs = ["【{level}】", "風險程度：{level}"]
+
+# 固定警語的其他完整寫法（鍵為上手代號小寫）：整段逐字比對，每出現一處都算一次（與該上手的 fixed_warning 合計）。
+# SG：第一章第 2 項的兩處風險等級寫成半形方括號 [RR4]，其餘與 sg 版本相同（2026-10-13 確認視為正確）。
+[risk.fixed_warning_variants]
+sg = ["""本商品風險程度等級為[RR4]。根據受託機構的風險等級分類，由於本商品並不保本，連結標的為證券交易所交易證券，在綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託機構受託買賣境外商品審查管理辦法之境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為[RR4]。*投資人請注意，受託機構將風險等級區分為RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託機構釐定及提供，發行機構及/或總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人或依據國際證券業務分公司(下稱「OSU」)辦理受託買賣相關規定允許投資本商品之中華民國境外客戶(此類客戶依受託機構審核適合投資本產品)(下稱「OSU客戶」) (專業投資人與OSU客戶以下合稱「投資人」)。"""]
+# CA：第一章第 2 項是同一段去掉【】（【RR4】→RR4、【證券交易所交易證券】→證券交易所交易證券），也算一次（2026-10-15 確認，Issue #274）。
+ca = ["""本商品風險程度等級為RR4。根據受託或銷售機構的風險等級分類，由於本商品並不保本，連結標的為證券交易所交易證券，在綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託或銷售機構受託買賣境外商品審查管理辦法之境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為RR4。*投資人請注意，受託或銷售機構將風險等級區分為RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託或銷售機構釐定及提供，發行機構及/或總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人或依據國際證券業務分公司(下稱「OSU」)辦理受託買賣相關規定允許投資本商品之中華民國境外客戶(此類客戶依受託或銷售機構審核適合投資本產品)(下稱「OSU客戶」) (專業投資人與OSU客戶以下合稱「投資人」)。"""]
+
+[issuer_name]
+# 發行機構中英文法人全名（鍵為上手代號小寫）：封面「發行機構」與第二章「發行機構」條的「事業名稱」；
+# 範本另有只寫中文的出處（MS 第一章第 3 項）時只比中文（第一個括號以前）。
+# 比對時忽略空白與換行，其餘（含全形括號）逐字相等；上手另有寫法差異時見 [issuer_name_ignore]。
+barc = "英商巴克萊銀行股份有限公司（Barclays Bank PLC）"
+
+hsbc = "香港商香港上海滙豐銀行股份有限公司（THE HONGKONG AND SHANGHAI BANKING CORPORATION LIMITED）"
+
+ms = "英商摩根士丹利國際股份有限公司(Morgan Stanley & Co. International Plc.)"
+
+# BNP：只有英文法人名；封面第 5 項、第一章第 3 項、第二章第 1 項(1) 三處寫法相同（2026-10-13 確認）。
+bnp = "BNP Paribas Issuance B.V."
+
+# SG：只有英文法人名；封面與第二章第 1 項(1) 兩處相同，第一章沒有出處（第 3 項寫的是保證機構；2026-10-13 確認）。
+sg = "SG ISSUER"
+
+# Citi：只有英文法人名；封面（名稱後的 (“CGMHI”) 不算名稱）、第一章第 3 項、第二章第 1 項(1) 三處相同（2026-10-14 確認，Issue #220）。
+citi = "Citigroup Global Markets Holdings Inc."
+
+# JPM：中文前綴＋英文法人名；封面（「發行機構註冊地」句內）、第 II 部分 1.(1) 兩處相同，第 I 部分沒有出處；目前只有這一個發行主體
+# （2026-10-15 確認，Issue #233）。
+jpm = "荷蘭商J.P. Morgan Structured Products B.V."
+
+# Nomura：只有英文法人名；封面、第二章 1.(1) 兩處相同，第一章沒有出處（第 3 項只寫保證機構）；目前只有這一個發行主體
+# （2026-10-15 確認，Issue #239）。
+nomura = "Nomura International Funding Pte. Ltd."
+
+# GS：中文名＋括號英文名；第 1 頁第 7 項、第一章第 3 項、第二章 1.(1) 三處相同；投資人須知一. 1. 只寫中文（比中文部分）；
+# 目前只有這一個發行主體（2026-10-15 確認，Issue #248）。
+gs = "英商高盛國際公司（Goldman Sachs International）"
+
+# Natixis：只有中文名；封面、第一章第 3 項、第二章 1.(1)、投資人須知壹 1. 都相同；目前只有這一個發行主體
+# （2026-10-15 確認，Issue #261）。
+natixis = "法國外貿銀行"
+
+# CA：只有英文法人名；封面、第一章第 3 項、第二章 1.(1)、投資人須知一、1. 都相同；目前只有這一個發行主體
+# （2026-10-15 確認，Issue #274）。
+ca = "Crédit Agricole CIB Financial Solutions"
+# BBVA：中文國籍前綴＋英文法人名；第二章 1.(1)(a)、投資人須知一、 1. 相同；第一章 3.(1) 沒有「荷蘭商」，parser 補上後比對
+# （2026-10-15 確認也算一致，Issue #269）；第 1 頁沒有發行機構名稱欄。目前只有這一個發行主體。
+bbva = "荷蘭商BBVA GLOBAL MARKETS, B.V."
+# UBS：名稱本身「瑞士銀行」（第 1 頁四、後接「（下稱…）」、相關機構事業概況後接「（UBS AG）」，都不屬於名稱）；
+# 發行分行（倫敦分行）由 UBS 專屬規則另外核對（2026-10-15 確認，Issue #279）。
+ubs = "瑞士銀行"
+
+# DBS：中文名＋括號英文名；封面、相關機構事業概況 1.(1)、投資人須知相關機構 1. 都相同；目前只有這一個發行主體
+# （2026-10-15 確認，Issue #280）。
+dbs = "新加坡商星展銀行股份有限公司(DBS Bank Ltd)"
+
+# 發行機構全名比對時另外忽略的寫法差異（鍵為上手代號小寫）：brackets 括號（全形／半形）、trailing_period 英文名結尾的句點。
+# MS：第二章中英文之間沒有括號、英文名結尾沒有句點（2026-10-08 確認）。
+[issuer_name_ignore]
+ms = ["brackets", "trailing_period"]
+
+[fees]
+# 第四章「投資人應負擔的各項費用」表的費率區間（鍵為表中費用項目名稱）；忽略空白後逐字相等。
+"申購費用" = "0%~5%"
+"提前贖回費用" = "0%~5%"
+"分銷費用" = "0%~5%"
+
+[issue_price]
+# 第一章第 6 條「發行價格為商品面額之 N%」。不等於此值時轉人工覆核，不直接判為錯誤。
+pct = 100
+
+[wording]
+# 「受託投資」須改為「受託買賣」；但法規原文片語「受託投資或受託買賣」允許出現。
+forbidden = ["受託投資"]
+allowed_phrases = [
+    "受託投資或受託買賣",
+    # HSBC 封面警語 7 與第三章：境外結構型商品管理規則的列舉寫法（2026-10-01 確認允許）
+    "受託投資、受託買賣或為投資型保單",
+    # Citi 警語 7.：管理規則的列舉寫法（2026-10-14 確認允許，Issue #220）
+    "受託投資、受託買賣之投資標的",
+    # Citi 投資人須知警語 9.（2026-10-14 確認允許，Issue #220）；寫窄，不連帶放過其他上手的「受託投資或銷售時」
+    "受託投資或銷售本商品",
+    # JPM 警語七：管理規則的列舉寫法（2026-10-15 確認允許，Issue #233）；本機樣本只有 JPM 有這個寫法
+    "受託投資/受託買賣",
+    # CA 說明書與投資人須知的寫法（2026-10-15 確認加入允許片語，不走 Issue #247 特例；Issue #274）：
+    # 封面警語 6、第三章 6.(6)、投資人須知警語 6.「…受託投資或銷售時）」
+    "受託投資或銷售時",
+    # 封面警語 7（逗號；上面 HSBC 的寫法是頓號）
+    "受託投資，受託買賣或為投資型保單",
+    # 第三章 6.(7)
+    "受託投資或銷售或OSU",
+    # 封面警語 11、第三章 6.(11)「為OSU 客戶受託投資之特別風險警語」
+    "客戶受託投資之特別風險警語",
+    # 第二章 4.「依境外結構型商品管理規則受託投資或受託銷售時」
+    "受託投資或受託銷售時",
+]
+# 交易日（參考條件表）在這天（含）以前的文件，出現上列禁用語時特例通過（結果註明）：作業人員 2026-10-15 已通知
+# 各上手改版，改版前的舊範本不再判錯（Issue #247）；2026-10-17 延至 10/30（含）（Issue #338）。拿掉這行即恢復一律判錯。
+exempt_until = 2026-10-30
+
+# 商品名稱樣板（所有上手）：天期 1 個月時，英文樣板的 `{tenor} Months`／`{tenor}Months` 改成單數 `Month` 比對（只接受單數；
+# BARC、MS、BNP、JPM、GS 適用，寫 `-Month` 的上手不受影響；2026-10-19 確認，Issue #343）。
+[product_name.barc]
+# 商品名稱格式（依最新 5 份 BARC 說明書，2026-10-01 確認）
+# 佔位符：{tenor} 天期月數、{ccy_zh}／{ccy} 幣別中文／ISO 代碼、{memory_zh}／{memory_en} 記憶式時填入
+zh = "英商巴克萊銀行{tenor}個月{ccy_zh}計價連結股權{memory_zh}自動提前出場結構型商品（不保本）（無擔保及無保證機構）（下稱「本商品」）"
+en = "{tenor} Months {ccy} {memory_en}Autocallable Equity Linked Note issued by Barclays Bank PLC (unsecured and non-guaranteed)"
+memory_zh = "記憶式"
+memory_en = "Memory "
+# 半形／全形括號差異不視為錯誤（比對前統一為全形）
+normalize_brackets = true
+
+[product_name.hsbc]
+# 商品名稱格式（依 8 份 HSBC 說明書推得，2026-10-01 確認照此核對）
+# 佔位符同 BARC；{maxi_en} 標的數 ≥ 2 時填入、{daily_en} 提前出場每日觀察時填入
+zh = "香港上海滙豐銀行{tenor}個月{ccy_zh}計價{memory_zh}自動提前到期固定配息股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）"
+en = "{maxi_en}{daily_en}{memory_en}Autocallable Fixed Coupon Notes (Non Guaranteed, Unsecured)"
+memory_zh = "記憶式"
+memory_en = "Memory "
+maxi_en = "Maxi "
+daily_en = "Daily "
+normalize_brackets = true
+# 英文名稱在 PDF 換行處常黏字（例 CouponNotes），比對時忽略所有空白
+ignore_whitespace_en = true
+
+[product_name.ms]
+# 商品名稱格式（依 6 份新版 MS 說明書推得，2026-10-08 確認照此核對）
+# 佔位符同 BARC；{underlying_zh}／{underlying_en} 標的寫法：1 檔填 single_*、2 檔以上填 basket_*；英文沒有記憶式字樣
+zh = "英商摩根士丹利發行{tenor}個月期{ccy_zh}計價連結{underlying_zh}固定配息{memory_zh}結構型商品(無保證機構)(無擔保)(不保本)(下稱「本商品」)"
+en = "Morgan Stanley & Co. International Plc issuance of {tenor} Months {ccy} Fixed Coupon Notes linked to {underlying_en} (non-guaranteed)(unsecured)(non-principal protected)"
+memory_zh = "（記憶式自動提前出場）"
+memory_en = ""
+single_zh = "股票或指數股票型基金"
+single_en = "Shares or ETFs"
+basket_zh = "一籃子股票與/或指數股票型基金"
+basket_en = "Worst of Shares and/or ETFs"
+normalize_brackets = true
+# 英文名稱在 PDF 換行處常黏字（例 Noteslinked），比對時忽略所有空白
+ignore_whitespace_en = true
+
+[product_name.bnp]
+# 商品名稱格式（依 7 份 BNP 說明書推得，2026-10-13 確認照此核對）
+# 佔位符同 MS；{autocall_zh}／{autocall_en} 只在 Non-Call < 天期（會提前出場）時填入；沒有記憶式字樣。
+# 境外人民幣（CNH）在英文名稱寫 CNY（ccy_aliases；2026-10-19 使用者決定，Issue #345）。
+zh = "法國巴黎銀行{tenor}個月期{ccy_zh}計價固定配息{autocall_zh}連結{underlying_zh}股票/交易所買賣基金結構型商品(不保本)(無擔保)"
+en = "{tenor} Months {ccy} Fixed Coupon {autocall_en}Note linked to {underlying_en} issued by BNP Paribas Issuance B.V. (unsecured)"
+memory_zh = ""
+memory_en = ""
+single_zh = "單一"
+single_en = "a Single Share/ETI"
+basket_zh = "一籃子"
+basket_en = "a Basket of Shares/ETIs"
+autocall_zh = "自動提前贖回"
+autocall_en = "Early Redeemable "
+ccy_aliases = { CNH = "CNY" }
+normalize_brackets = true
+# 英文名稱在 PDF 換行處常黏字，比對時忽略所有空白
+ignore_whitespace_en = true
+
+[product_name.sg]
+# 商品名稱格式（依 6 份 SG 說明書推得，2026-10-13 確認照此核對）
+# 佔位符同 BNP；{autocall_zh} 三值：會提前出場且記憶式填 autocall_memory_zh「（記憶式自動提前出場）」、非記憶式填
+# autocall_zh「可自動提前出場」、不會提前出場（Non-Call = 天期）空白；英文 {memory_en}「Memory 」＋{autocall_en}「Autocallable 」。
+# 沒有單一／一籃子字樣；{ccy} 的 CNH 在英文名稱寫 CNY（ccy_aliases）。
+zh = "SG ISSUER {ccy_zh}計價{tenor}個月固定配息{autocall_zh}股權連結結構型商品（不保本及無擔保）"
+en = "SG ISSUER {ccy} {tenor}-month {memory_en}{autocall_en}Fixed Coupon Equity Linked Notes (Non Principal Guaranteed and Unsecured)"
+memory_zh = ""
+memory_en = "Memory "
+autocall_zh = "可自動提前出場"
+autocall_memory_zh = "（記憶式自動提前出場）"
+autocall_en = "Autocallable "
+ccy_aliases = { CNH = "CNY" }
+normalize_brackets = true
+# 英文名稱在 PDF 換行處常黏字，比對時忽略所有空白
+ignore_whitespace_en = true
+
+[product_name.citi]
+# 商品名稱格式（依 8 份 Citi 說明書推得，2026-10-14 確認，Issue #220）
+# {autocall_zh} 三值：會提前出場且記憶式「(記憶式自動提前出場)」、非記憶式「(自動提前出場)」、不會提前出場（Non-Call = 天期）空白；
+# 英文不分記憶式（{autocall_en}「Autocall 」）；{underlying_*} 依標的數 1 檔／2 檔以上。CNH 英文名稱就寫 CNH。
+zh = "CGMHI {tenor} 個月{ccy_zh}計價{autocall_zh}連結{underlying_zh}並由花旗集團保證之固定配息結構型商品(無擔保) (不保本)"
+en = "{tenor}-Month {ccy} Fixed Coupon {autocall_en}Note linked to {underlying_en} issued by Citigroup Global Markets Holdings Inc. and guaranteed by Citigroup Inc. (Unsecured) (Non-principal protected)"
+memory_zh = ""
+memory_en = ""
+autocall_zh = "(自動提前出場)"
+autocall_memory_zh = "(記憶式自動提前出場)"
+autocall_en = "Autocall "
+single_zh = "單一連結標的"
+basket_zh = "一籃子連結標的中表現最差"
+single_en = "Single Underlying"
+basket_en = "the Worst Performing Underlying in the basket"
+normalize_brackets = true
+# 英文名稱在 PDF 換行處可能黏字，比對時忽略所有空白
+ignore_whitespace_en = true
+
+[product_name.jpm]
+# 商品名稱格式（依 5 份 JPM 說明書推得，2026-10-15 確認，Issue #233）：不分記憶式、KI、標的數、Non-Call，只有天期與幣別
+zh = "摩根大通{tenor}個月{ccy_zh}計價連結股權固定配息可自動提前出場結構型商品(無擔保)(不保本)"
+en = "JPMorgan {tenor}Months {ccy} Link to Equity Securities Callable Fixed Coupon Note (Unsecured)(Non-Principal Protected)"
+memory_zh = ""
+memory_en = ""
+normalize_brackets = true
+# 英文名稱跨行處可能多空白（例：(Non- Principal Protected)），比對時忽略所有空白
+ignore_whitespace_en = true
+
+[product_name.nomura]
+# 商品名稱格式（依 8 份 Nomura 說明書推得，2026-10-15 確認，Issue #239）：依記憶式、單一／多標的；不分 KI、Non-Call
+# （Non-Call = 天期也寫「(自動提前出場)」）；連結 ETF 也寫「連結一籃子股票」。封面名稱後的 (ISIN No. … / TDCC…) 不屬於名稱。
+zh = "Nomura International Funding Pte. Ltd.發行{tenor}個月{ccy_zh}計價固定配息({memory_zh}自動提前出場){underlying_zh}結構型商品(無擔保)"
+en = "{tenor}-Month {ccy} Autocall Fixed Coupon Notes {memory_en}linked to {underlying_en} issued by Nomura International Funding Pte. Ltd. (unsecured)"
+memory_zh = "記憶式"
+memory_en = "with Memory Knock-Out "
+single_zh = "股票連結"
+basket_zh = "連結一籃子股票"
+single_en = "a Single Stock"
+basket_en = "a basket of stocks"
+normalize_brackets = true
+# 英文名稱有雙空白（Knock-Out  linked），比對時忽略所有空白
+ignore_whitespace_en = true
+
+[product_name.gs]
+# 商品名稱格式（依 5 份 GS 說明書推得，2026-10-15 確認，Issue #248）：依天期、幣別、記憶式；不分 KI、標的數、Non-Call。
+# 名稱後的「（TDCC商品代號為…）」「(TDCC Product Code: …)」不屬於名稱；CNH 在英文名稱寫 CNY（ccy_aliases，同 SG）。
+zh = "{tenor}個月英商高盛國際公司{ccy_zh}計價固定配息{memory_zh}自動提前出場股權連結結構型商品（無擔保）（不保本）"
+en = "{tenor} Months {ccy} {memory_en}Autocallable Fixed Coupon Equity Linked Notes by Goldman Sachs International (Unsecured) (Non-principal protected)"
+memory_zh = "記憶式"
+memory_en = "Memory "
+ccy_aliases = { CNH = "CNY" }
+normalize_brackets = true
+ignore_whitespace_en = true
+
+[product_name.natixis]
+# 商品名稱格式（依 8 份 Natixis 說明書推得，2026-10-15 確認，Issue #261）：只依天期、幣別；不分標的數（單一標的也寫
+# 「一籃子」）、記憶式、KI、Non-Call。名稱後的「(下稱「本商品」)」不屬於名稱。第一章第 1 項與投資人須知的英文名稱寫
+# 「(Non Principal」，parser 正規化成「(Non-Principal」後比對（封面不正規化）。
+zh = "法國外貿銀行{tenor}個月{ccy_zh}計價固定配息(自動提前到期)連結一籃子標的結構型商品(不保本、無擔保及無保證機構)"
+en = "Natixis – {tenor}-Month {ccy} – Autocallable Fixed Coupon Note Linked to Basket of Equities (Non-Principal Protected, Unsecured and Non-Guaranteed)"
+memory_zh = ""
+memory_en = ""
+normalize_brackets = true
+ignore_whitespace_en = true
+
+[product_name.ca]
+# 商品名稱格式（依 5 份 CA 說明書推得，2026-10-15 確認，Issue #274）：只依天期、幣別；不分標的數、記憶式、KI、Non-Call。
+# 名稱後的「(ISIN：…)」「(下稱「商品」或「本商品」)」不屬於名稱。
+zh = "Crédit Agricole CIB Financial Solutions {tenor} 個月{ccy_zh}計價固定配息自動提前出場結構型商品(無擔保) (不保本)"
+en = "Crédit Agricole CIB Financial Solutions {ccy} {tenor}-Month Fixed Coupon Autocall Note (Unsecured)(Non-principal protected)"
+memory_zh = ""
+memory_en = ""
+normalize_brackets = true
+ignore_whitespace_en = true
+
+[product_name.bbva]
+# 商品名稱格式（依 5 份 BBVA 說明書推得，2026-10-15 確認，Issue #269）：只依天期、幣別；不分標的數（單一標的也寫
+# 「一籃子」）、記憶式、KO／KI 型態、Non-Call。中文名稱後的「(下稱「本商品」)」、英文名稱後的「(the "Product")」不屬於名稱。
+zh = "BBVA GLOBAL MARKETS, B.V. {tenor} 個月期{ccy_zh}計價自動提前贖回連結一籃子股票結構型商品 (無擔保及不保本)"
+en = "BBVA GLOBAL MARKETS, B.V. {ccy} {tenor}-month Autocallable Basket of Equity Linked Notes (Non Principal Guaranteed and Unsecured)"
+memory_zh = ""
+memory_en = ""
+normalize_brackets = true
+ignore_whitespace_en = true
+
+[product_name.dbs]
+# 商品名稱格式（依 4 份 DBS 說明書推得，2026-10-15 確認，Issue #280）：依天期、幣別、Quanto（承作幣別 ≠ 標的報價幣別）、
+# 有無 KI；只支援 KO 每日觀察記憶式，固定字樣寫在樣板裡。單一標的沒有樣本（名稱轉人工覆核）。名稱後的「(下稱「本商品」)」不屬於名稱。
+zh = "星展銀行{tenor}個月期{ccy_zh}計價{quanto_zh}固定利率記憶型每日觀察自動提前出場{ki_zh}{underlying_zh}股權連結結構型商品(無擔保及無保證機構)(不保本)"
+en = "DBS Bank Ltd {tenor}-Month {ccy} {quanto_en}Fixed Coupon Memory Daily Knock-Out {ki_en}{underlying_en}Equity Linked Notes (unsecured and non-guaranteed) (non-principal protected)"
+memory_zh = ""
+memory_en = ""
+quanto_zh = "Quanto"
+quanto_en = "Quanto "
+ki_zh = "及定價日觸發(歐式)"
+ki_en = "European Knock-In "
+basket_zh = "一籃子中表現最差"
+basket_en = "Worst of Basket "
+single_unsupported = true
+# 人民幣在英文名稱與計價幣別括號內都寫 RMB（1 份 OOS 樣本，2026-10-16 確認，Issue #296）
+ccy_aliases = { CNH = "RMB" }
+normalize_brackets = true
+# 英文名稱跨行處可能多空白，比對時忽略所有空白
+ignore_whitespace_en = true
+
+[product_name.ubs]
+# 商品名稱格式（依 5 份新版 UBS 說明書推得，2026-10-15 確認，Issue #279）：依 KO 觀察方式（每日／定期觀察，要和條文一致）、
+# 記憶式、有無 KI 變化；不分幣別、天期、標的數。「瑞銀（定期觀察）」括號版與句尾「。」由 parser 正規化。
+zh = "瑞銀{ko_observation_zh}{memory_zh}提前出場固定配息連結股票（不保本）{ki_zh}（無擔保）（無保證機構）結構型商品"
+en = "UBS {ko_observation_en} {memory_en}Callable Variable Maturity Equity Linked Notes with {ki_en}Fixed Coupon"
+memory_zh = "記憶式"
+memory_en = "Memory "
+daily_zh = "每日觀察"
+daily_en = "Daily"
+periodic_zh = "定期觀察"
+periodic_en = "Periodic"
+ki_zh = "（含觸及下限價事件）"
+ki_en = "Kick-In Event and "
+normalize_brackets = true
+ignore_whitespace_en = true
+
+# 保證機構名稱（BNP 特有角色，2026-10-13 確認；鍵為上手代號小寫，再分出處 cover 封面、ch1 第一章、ch2 第二章）：
+# 三處寫法不同，各自為固定值；忽略空白後逐字相等。地址不核對。沒有該上手分節的上手不核對。
+# 投資人須知（2026-10-14 確認，Issue #197）：寫全名的相關機構第 3 點用 cover，寫簡稱的警語 5 兩處與「信用風險」用 ch1。
+[guarantor_name.bnp]
+cover = "法商法國巴黎銀行股份有限公司 (BNP Paribas)"
+ch1 = "法國巴黎銀行"
+ch2 = "法國巴黎銀行 (BNP Paribas)"
+
+# SG：三處皆同一寫法（2026-10-13 確認）；地址電話不核對。
+[guarantor_name.sg]
+cover = "法商法國興業銀行股份有限公司(Societe Generale)"
+ch1 = "法商法國興業銀行股份有限公司(Societe Generale)"
+ch2 = "法商法國興業銀行股份有限公司(Societe Generale)"
+
+# Citi：封面、第一章第 3 項、第二章第 2 項(1) 三處皆同一寫法（2026-10-14 確認，Issue #220）；地址不核對。
+[guarantor_name.citi]
+cover = "Citigroup Inc.花旗集團"
+ch1 = "Citigroup Inc.花旗集團"
+ch2 = "Citigroup Inc.花旗集團"
+
+# JPM：封面、第 II 部分 2.(2) 全名；第 I 部分第 3 項簡稱（2026-10-15 確認，Issue #233）；地址不核對。
+# 投資人須知：相關機構 2. 用 cover，警語 5. 用 ch1。
+[guarantor_name.jpm]
+cover = "美商摩根大通銀行股份有限公司(JPMorgan Chase Bank, N.A.)"
+ch1 = "美商摩根大通銀行股份有限公司"
+ch2 = "美商摩根大通銀行股份有限公司(JPMorgan Chase Bank, N.A.)"
+
+# Nomura：封面、第一章第 3 項、第二章 2.(1) 三處皆同一寫法（2026-10-15 確認，Issue #239）；地址電話不核對。
+# 投資人須知：第一 2. 用 cover。
+[guarantor_name.nomura]
+cover = "Nomura Holdings, Inc."
+ch1 = "Nomura Holdings, Inc."
+ch2 = "Nomura Holdings, Inc."
+
+# 投資人須知相關機構的保證機構名稱可接受的其他寫法（鍵為上手代號小寫）：忽略空白後與其中之一相等即視為相符；
+# 只用在那一處（說明書與投資人須知警語仍須等於上面的固定值）。
+# SG：投資人須知相關機構壹 2. 的英文名沒有括號（6 份樣本都是，2026-10-14 確認視為正確，Issue #213）。
+[guarantor_name_equivalents]
+sg = ["法商法國興業銀行股份有限公司Societe Generale"]
+# Citi：投資人須知相關機構 2. 只寫中文「花旗集團」（8 份樣本都是，2026-10-14 確認視為正確，Issue #220）。
+citi = ["花旗集團"]
+
+# 總代理人名稱（SG 特有，2026-10-13 確認只核對名稱；鍵為上手代號小寫，再分出處 cover 封面、ch2 第二章第 3 項(1)）：
+# 忽略空白後逐字相等。地址電話、負責人不核對。沒有該上手分節的上手不核對（MS、BNP 決定不核對總代理人）。
+[agent_name.sg]
+cover = "法商法國興業銀行股份有限公司台北分行"
+ch2 = "法商法國興業銀行股份有限公司台北分行"
+
+# Citi：封面、第二章第 3 項(1) 皆同一寫法（2026-10-14 確認，Issue #220）；地址電話、負責人不核對。
+[agent_name.citi]
+cover = "花旗環球證券股份有限公司"
+ch2 = "花旗環球證券股份有限公司"
+
+# JPM：封面、第 II 部分 3.(1) 皆同一寫法（2026-10-15 確認，Issue #233）；地址電話、負責人不核對。
+[agent_name.jpm]
+cover = "美商摩根大通銀行股份有限公司台北分公司"
+ch2 = "美商摩根大通銀行股份有限公司台北分公司"
+
+# Nomura：封面、第二章 3.(1)(a) 皆同一寫法（2026-10-15 確認，Issue #239）；地址電話、負責人不核對。
+[agent_name.nomura]
+cover = "香港商野村國際證券有限公司台北分公司"
+ch2 = "香港商野村國際證券有限公司台北分公司"
+
+# 封面「商品種類」固定值（鍵為上手代號小寫）；忽略空白後逐字相等。
+# BNP 不隨標的數改變（2026-10-13 確認）；MS 依標的數，由 MS 專屬規則核對，不列在這裡。
+[product_type]
+bnp = "股權連結結構型商品"
+# SG 寫「債券」，不隨標的數改變（2026-10-13 確認）。
+sg = "股權連結結構型債券"
+# Citi：不隨標的數改變（2026-10-14 確認，Issue #220）。
+citi = "連結股權結構型商品"
+# JPM：同 BNP 寫法，不隨標的數改變（2026-10-15 確認，Issue #233）。
+jpm = "股權連結結構型商品"
+# Nomura：不隨標的數改變（2026-10-15 確認，Issue #239）。
+nomura = "連結股權之結構型債券"
+# GS：同 SG 寫「債券」，不隨標的數改變（2026-10-15 確認，Issue #248）。
+gs = "股權連結結構型債券"
+# Natixis：同 BNP、JPM 寫法，不隨標的數改變（2026-10-15 確認，Issue #261）。
+natixis = "股權連結結構型商品"
+# CA：同 BNP、JPM、Natixis 寫法，不隨標的數改變（2026-10-15 確認，Issue #274）。
+ca = "股權連結結構型商品"
+# BBVA：同 BNP、JPM、Natixis 寫法，不隨標的數改變（2026-10-15 確認，Issue #269）。
+bbva = "股權連結結構型商品"
+# DBS：寫「債券」，不隨標的數改變（2026-10-15 確認，Issue #280）。
+dbs = "股權連結債券"
+# UBS：新版寫法（舊版「股權結構型債券」不支援；2026-10-15 確認，Issue #279）。
+ubs = "股權結構型商品"
+
+# 第四章「發行不成立之情形」的最低有效申購金額寫法（鍵為上手代號小寫）；忽略空白後逐字相等。
+# BNP：7 份樣本皆為 (等值)300,000 美元（2026-10-13 確認納入）。
+[minimum_issue_size]
+bnp = "(等值)300,000 美元"
+# Citi：8 份樣本皆為「等值30 萬美元」（JPY、CNH 商品也寫美元；2026-10-14 確認納入，Issue #220）。
+citi = "等值30 萬美元"
+# Nomura：8 份樣本皆為「三十萬美元」（AUD、JPY 商品也寫美元；2026-10-15 確認，Issue #239）。
+nomura = "三十萬美元"
+
+# 各最低金額出處 = 參考條件表「單位面額」× 倍數（鍵為上手代號小寫，再分出處欄位名稱）；沒列出的出處倍數為 1。
+# BNP：最低申購、最低贖回為 5 倍，最低加購、增加贖回單位為 1 倍（2026-10-13 使用者確認為 BNP 專屬規則）。
+[min_amount_multiples.bnp]
+minimum_subscription = 5
+minimum_additional = 1
+minimum_redemption = 5
+redemption_increment = 1
+
+# SG：最低申購金額依承作幣別為單位面額的倍數（USD 10 倍、JPY／CNH 1 倍；沒列的幣別轉人工覆核），
+# 最低加購、最低贖回為 1 倍（2026-10-13 使用者確認）。倍數寫成 {ISO 代碼 = 倍數} 時依參考條件表「承作幣別」選。
+[min_amount_multiples.sg]
+minimum_subscription = { USD = 10, JPY = 1, CNH = 1 }
+minimum_additional = 1
+minimum_redemption = 1
+
+# GS：最低申購為單位面額的倍數依承作幣別（USD 5 倍、JPY／CNH 1 倍；沒列的幣別轉人工覆核），最低加購、最低贖回、
+# 增加贖回單位 1 倍（2026-10-15 確認，Issue #248）。說明書寫單位數，parser 換算成金額。
+[min_amount_multiples.gs]
+minimum_subscription = { USD = 5, JPY = 1, CNH = 1 }
+minimum_additional = 1
+minimum_redemption = 1
+redemption_increment = 1
+
+# DBS：最低申購為單位面額的倍數依承作幣別（USD 5、AUD 7、JPY 8 單位；沒列的幣別轉人工覆核），最低加購、最低贖回、
+# 增加贖回單位 1 倍（2026-10-15 確認，Issue #280）。說明書寫單位數與金額，parser 交出金額。CNH 4 單位（1 份 OOS 樣本，
+# 2026-10-16 確認，Issue #296）。
+[min_amount_multiples.dbs]
+minimum_subscription = { USD = 5, AUD = 7, JPY = 8, CNH = 4 }
+minimum_additional = 1
+minimum_redemption = 1
+redemption_increment = 1
+
+# UBS：最低交易金額（商品基本資料八）與最低申購金額 5 倍，最低累加申購、最低提前贖回、累加提前贖回 1 倍；不分幣別
+# （USD、JPY、AUD 樣本都相同；2026-10-15 確認，Issue #279）。
+[min_amount_multiples.ubs]
+minimum_trade = 5
+minimum_subscription = 5
+minimum_additional = 1
+minimum_redemption = 1
+redemption_increment = 1
+
+[currency]
+# 說明書中文幣別 → ISO 代碼。封面與金額旁的幣別字都查這張表（金額旁的幣別字 parser 認得的寫法見
+# src/fcn_checker/parsers/money.py）；商品幣別不必等於標的幣別（Issue #170）。
+# 只收說明書樣本看過的寫法（不猜），沒看過的寫法轉人工覆核（2026-10-10 使用者決定，Issue #170）。
+# AUD、EUR、GBP、ZAR 有樣本後加入樣本上的寫法；澳元、南非蘭特等同義寫法沒有樣本，不加（2026-10-13，Issue #185）。
+"美元" = "USD"
+"日幣" = "JPY"
+"日圓" = "JPY"  # 同義寫法，尚無樣本（2026-10-10 使用者同意先加）
+"人民幣" = "CNH"
+"境外人民幣" = "CNH"  # BARC 第四章最低金額旁的寫法
+"港幣" = "HKD"  # MS 樣本的寫法
+"港元" = "HKD"  # 同義寫法，尚無樣本
+"澳幣" = "AUD"  # HSBC、MS 樣本的寫法
+"歐元" = "EUR"  # HSBC 樣本的寫法
+"英鎊" = "GBP"  # HSBC 樣本的寫法
+"南非幣" = "ZAR"  # MS 樣本的寫法
+
+[denomination]
+# 每單位商品面額預設值（依計價幣別；可承作的八種幣別，2026-10-10 使用者提供的承作幣別表）。客戶可要求不同面額，
+# 因此說明書面額不等於預設值時「轉人工審查」，不直接判為錯誤。
+USD = 10000
+JPY = 1000000
+CNH = 100000
+HKD = 100000
+AUD = 10000
+EUR = 10000
+GBP = 10000
+ZAR = 100000
+
+[iis]
+# 投資人須知（檔名結尾 _IIS，docs/rules/iis-check-rules.md）：必須剛好 N 頁。
+# 使用者 2026-10-08 確認：比外規「不超過 5 頁」嚴格，5 頁也判不一致。
+pages = 4
+
+# 固定風險警語（依上手版本，同上）在投資人須知出現的次數（鍵為上手代號小寫）；沒列出的上手轉人工覆核。
+# BARC：警語第 1 點；HSBC：警語一、商品簡介第 3 點（2026-10-08 依樣本確認）；MS：警語 1)（2026-10-09 確認，Issue #137）；
+# BNP：警語 1、商品簡介「商品風險程度」整段重寫一次（2026-10-14 確認，Issue #197）；SG：警語一（2026-10-14 確認，Issue #213）。
+[iis.fixed_warning_occurrences]
+barc = 1
+hsbc = 2
+ms = 1
+bnp = 2
+sg = 1
+citi = 1  # 警語 1.（2026-10-14 確認，Issue #220）
+jpm = 1  # 警語 1.（2026-10-15 確認，Issue #233）
+nomura = 1  # 警語(一)（2026-10-15 確認，Issue #239）
+gs = 1  # 警語一（2026-10-15 確認，Issue #248）
+natixis = 2  # 警語 (1)、貳 1. 商品簡介（2026-10-15 確認，Issue #261）
+ca = 1  # 警語 1.（2026-10-15 確認，Issue #274）
+bbva = 2  # 警語 1.、二、 1.(3) 商品簡介（2026-10-15 確認，Issue #269）
+dbs = 1  # 警語 1.（2026-10-15 確認，Issue #280）
+ubs = 1  # 警語 1.（2026-10-15 確認，Issue #279）

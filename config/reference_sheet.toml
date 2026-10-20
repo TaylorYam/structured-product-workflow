@@ -1,0 +1,154 @@
+# 參考條件表格式（所有上手共用）：FCN參考條件 的「樣本清單」或公司原始的待建檔表都可以，只看第一張工作表
+#
+# 核對條件的來源（ADR 0004）；核對後匯入資料庫的是核對結果檔「回填後」（[import_format]）。每列一檔商品、多家上手混在同一張表。
+# 以說明書商品代號找 TDCC Code 相同的列；表上有發行機構欄時，該列的發行機構必須是對應上手的值。
+# 回填欄位（TS、IIS、ISIN Code、發行日、比價日_1～12）由工具填入；其他欄位由作業人員事先填好，只做核對。
+# TS、IIS：說明書與投資人須知都通過或人工放行的商品打勾（checked_value，Issue #127）。
+# 期初定價為 VWAP 的商品，UL_n 四個價格欄不比對，核對通過後以說明書價格覆寫（Issue #122）。
+# 核對結果檔「回填後」一律照 [import_format]（匯入格式）重新產生，不論表上欄位怎麼排（Issue #203）。
+# 規則說明見 docs/order-formats/reference-sheet.md。
+
+version = 17
+effective_date = 2026-10-15
+
+[layout]
+# 只讀第一張工作表（不看名稱）；表頭是前 header_search_rows 列裡有 key_column 欄名的那一列，下一列起是資料（Issue #199）
+header_search_rows = 10
+key_column = "TDCC Code"  # 商品代號，用來配對說明書；同一代號出現多列 → 轉人工覆核
+issuer_column = "發行機構"  # 不是必要欄：表上有才確認該列是對應上手的寫法
+# 必要欄 = [columns] 的欄名扣掉 optional_columns：少了任何一個（同一標準欄位的欄名有一個就算有）或重複 → 整批錯誤。
+# 其他欄（不在 [columns] 的欄）一律略過，不提示。
+optional_columns = ["TS", "IIS"]  # 表上沒有也照常核對
+empty_value = "-"         # 空值寫法（比價日不需要填的期別也寫 -）
+checked_value = "V"       # TS、IIS 欄的打勾寫法（半形英文字母 V，同「當日比價」「私銀註記」）
+
+# 匯入格式（Issue #203）：核對結果檔「回填後」固定的版面，比照公司原始待建檔表，不論參考條件表長什麼樣子。
+# 每格依欄名取參考條件表同名欄的值（回填欄位取回填後的值；同一標準欄位的其他欄名也算，例：計價幣別取承作幣別）；
+# 參考條件表沒有的欄留空白，參考條件表上不在這裡的欄不帶入。只帶值、顯示格式與欄寬。
+[import_format]
+title = "最新交易日"                # 第 1 列 A1；B1 寫留在「回填後」的列裡最晚的交易日（值，不是公式）
+header_row = 2
+checked_column = "TS/IIS完成檢核"   # 一律寫打勾寫法 checked_value（留下的都是兩份都通過或人工放行的商品）
+fallbacks = { "交易日期" = "交易日" }  # 參考條件表沒有這欄時改取另一欄
+columns = [
+    "TS/IIS完成檢核", "交易日期", "Product", "TDCC Code", "ISIN Code", "私銀註記", "UF", "計價幣別", "單位面額",
+    "分公司_1", "分公司_1_承作金額", "分公司_2", "分公司_2_承作金額", "分公司_3", "分公司_3_承作金額", "分公司_4", "分公司_4_承作金額",
+    "分公司_5", "分公司_5_承作金額", "分公司_6", "分公司_6_承作金額", "分公司_7", "分公司_7_承作金額",
+    "交易日", "發行日",
+    "比價日_1", "比價日_2", "比價日_3", "比價日_4", "比價日_5", "比價日_6", "比價日_7", "比價日_8", "比價日_9", "比價日_10", "比價日_11", "比價日_12",
+    "下一比價日", "最終比價日", "到期日", "期初定價", "KO(%)", "KO(Freq)", "KO(memo)", "K(%)", "KI(%)", "KI(Freq)",
+    "Coupon p.a. (%)", "天期(月)", "Non-Call(月)",
+    "UL_1", "UL_1_進場價", "UL_1_執行價", "UL_1_下限價", "UL_1_KO價", "UL_1_Memo",
+    "UL_2", "UL_2_進場價", "UL_2_執行價", "UL_2_下限價", "UL_2_KO價", "UL_2_Memo",
+    "UL_3", "UL_3_進場價", "UL_3_執行價", "UL_3_下限價", "UL_3_KO價", "UL_3_Memo",
+    "UL_4", "UL_4_進場價", "UL_4_執行價", "UL_4_下限價", "UL_4_KO價", "UL_4_Memo",
+    "UL_5", "UL_5_進場價", "UL_5_執行價", "UL_5_下限價", "UL_5_KO價", "UL_5_Memo",
+]
+
+# 上手代號 → 該上手在「發行機構」欄的寫法
+[issuer_values]
+BARC = "Barclays"
+HSBC = "HSBC"
+MS = "MS"
+BNP = "BNP"
+SG = "SG"
+CITI = "Citi"  # 2026-10-14 作業人員確認（Issue #220）
+JPM = "JPM"  # 2026-10-15 作業人員確認（Issue #233）
+NOMURA = "Nomura"  # 2026-10-15 作業人員確認（Issue #239）
+GS = "GS"  # 2026-10-15 作業人員確認（Issue #248）
+NATIXIS = "Natixis"  # 2026-10-15 作業人員確認（Issue #261）
+CA = "CA"  # 2026-10-15 確認（Issue #274）
+BBVA = "BBVA"  # 2026-10-15 作業人員確認（Issue #269）
+DBS = "DBS"  # 2026-10-15 作業人員確認（Issue #280）
+UBS = "UBS"  # 2026-10-15 確認（Issue #279）
+
+# 標的不看順序的上手（上手代號）：表上 UL_1～UL_5 與說明書是同一組彭博代號（數量相同、不重複）就算相符，
+# 各價格欄依代號配對後比對，VWAP 回填也寫到相同代號那一格；其他上手須依順序逐字相等。
+# Citi：表上排序常和說明書不同（2026-10-14 確認，Issue #220）；JPM：說明書依英文公司名稱字母順序排列標的（2026-10-15 確認，Issue #233）。
+# BBVA：說明書順序可能和表上不同（BV2；2026-10-15 確認，Issue #269）。
+[underlyings]
+any_order_issuers = ["CITI", "JPM", "GS", "BBVA"]
+
+# Excel 欄名 → 標準欄位
+[columns]
+"TS" = "checked_term_sheet"  # 回填欄位：說明書核對沒問題
+"IIS" = "checked_iis"        # 回填欄位：投資人須知核對沒問題
+"TDCC Code" = "product_code"
+"ISIN Code" = "isin"
+"單位面額" = "denomination"
+"承作幣別" = "currency"
+"計價幣別" = "currency"  # 公司原始待建檔表的欄名（Issue #199）；與承作幣別同時出現算重複
+"交易日" = "trade_date"
+"發行日" = "issue_date"
+"最終比價日" = "final_valuation_date"
+"到期日" = "maturity_date"
+"期初定價" = "initial_pricing"
+"KO(%)" = "ko_pct"
+"KO(Freq)" = "ko_observation"
+"KO(memo)" = "ko_memory"
+"K(%)" = "strike_pct"
+"KI(%)" = "ki_pct"
+"KI(Freq)" = "ki_type"
+"Coupon p.a. (%)" = "coupon_pa_pct"
+"天期(月)" = "tenor_months"
+"Non-Call(月)" = "first_callable_period"
+"比價日_1" = "autocall_date_1"
+"比價日_2" = "autocall_date_2"
+"比價日_3" = "autocall_date_3"
+"比價日_4" = "autocall_date_4"
+"比價日_5" = "autocall_date_5"
+"比價日_6" = "autocall_date_6"
+"比價日_7" = "autocall_date_7"
+"比價日_8" = "autocall_date_8"
+"比價日_9" = "autocall_date_9"
+"比價日_10" = "autocall_date_10"
+"比價日_11" = "autocall_date_11"
+"比價日_12" = "autocall_date_12"
+"UL_1" = "underlying_1"
+"UL_1_進場價" = "underlying_1_initial_price"
+"UL_1_執行價" = "underlying_1_strike_price"
+"UL_1_下限價" = "underlying_1_ki_price"
+"UL_1_KO價" = "underlying_1_ko_price"
+"UL_2" = "underlying_2"
+"UL_2_進場價" = "underlying_2_initial_price"
+"UL_2_執行價" = "underlying_2_strike_price"
+"UL_2_下限價" = "underlying_2_ki_price"
+"UL_2_KO價" = "underlying_2_ko_price"
+"UL_3" = "underlying_3"
+"UL_3_進場價" = "underlying_3_initial_price"
+"UL_3_執行價" = "underlying_3_strike_price"
+"UL_3_下限價" = "underlying_3_ki_price"
+"UL_3_KO價" = "underlying_3_ko_price"
+"UL_4" = "underlying_4"
+"UL_4_進場價" = "underlying_4_initial_price"
+"UL_4_執行價" = "underlying_4_strike_price"
+"UL_4_下限價" = "underlying_4_ki_price"
+"UL_4_KO價" = "underlying_4_ko_price"
+"UL_5" = "underlying_5"
+"UL_5_進場價" = "underlying_5_initial_price"
+"UL_5_執行價" = "underlying_5_strike_price"
+"UL_5_下限價" = "underlying_5_ki_price"
+"UL_5_KO價" = "underlying_5_ko_price"
+
+# KO(Freq)：D 期間每日觀察／P 每期定日觀察
+[values.ko_observation]
+"D" = "D"
+"P" = "P"
+
+# KO(memo)：記憶式
+[values.ko_memory]
+"Y" = true
+"N" = false
+
+# KI(Freq)：none 無／AM 到期觀察／D 每日觀察／P 每期觀察（每個配息週期終止日，含期末定價日；2026-10-08 確認新增）
+[values.ki_type]
+"-" = "none"
+"AM" = "AM"
+"D" = "D"
+"P" = "P"
+
+# 期初定價：說明書不寫，由作業人員標示；只有 VWAP 會改變價格欄的處理
+[values.initial_pricing]
+"開盤價" = "open"
+"收盤價" = "close"
+"VWAP" = "vwap"
