@@ -62,7 +62,8 @@ LINE_SOURCE = "開頭行"
 _EMPTY_VALUES = frozenset({"", "-", "n/a", "na"})
 _ORDER_MARK = re.compile(r"(?i)[(\[]order[)\]]")  # (Order) 或 [Order]
 _REPLY_MARK = re.compile(r"(?i)\b(re|fw|fwd|done)\s*[:：]|回覆\s*[:：]|轉寄\s*[:：]")
-_SECTION_TDCC = re.compile(r"(?i)^\s*(?:[0-9]{1,2}\s*[.)、]\s*)?(?:TDCC(?:\s*code)?\s*[=:：]\s*)?([0-9]{12})\s*$")
+_SECTION_TDCC = re.compile(r"(?i)^\s*(?:[0-9]{1,2}\s*[.)、]\s*)?(?:TDCC(?:\s*code)?\s*[=:：]?\s*)?([0-9]{12})\s*$")
+_SECTION_NUMBER = re.compile(r"^\s*([0-9]{1,2})\s*[.)、]\s*$")
 _WE_BUY = re.compile(r"(?i)\bwe\s+buy\b")
 _TDCC_IN_LINE = re.compile(r"(?<![0-9])[0-9]{12}(?![0-9])")
 _BUY_PRICE = re.compile(r"@\s*([0-9]+(?:\.[0-9]+)?)")
@@ -73,7 +74,7 @@ _SETTLE = re.compile(r"(?i)please\s+settle\s+thru\s+(.+?)\.?\s*$")
 _KEY_VALUE = re.compile(r"^([A-Za-z][A-Za-z0-9 .()%/?+\-]*?)\s*[:：]\s*(.+)$")
 # 回覆信引用的上一封信從這裡開始，之後的內容不讀
 _QUOTE_START = re.compile(r"(?i)^\s*(from|寄件者|sent|寄件日期)\s*[:：]|^\s*-{3,}\s*original message")
-_ARROW = re.compile(r"→|->|=>|>>")  # 改價寫法
+_ARROW = re.compile(r"→|->|=>|>>|(?<=[0-9])\s*>\s*(?=[0-9])")  # 改價寫法；單一個 > 只認兩邊都是數字
 _MONTHS = {
     m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)
 }
@@ -451,7 +452,8 @@ def parse_order(path: Path, mail: Mail) -> _ParsedMail:
     """拆出一封 Order 原信裡每檔 TDCC 的原始欄位（還沒對照統一欄位）。
 
     開頭的「名稱: 值」行屬於所有 TDCC；分段標記之後的行與表格屬於那檔。分段標記是單獨一行的 TDCC
-    （可帶「1.」「TDCC =」「TDCC code:」）；只寫「1.」「2.」沒寫 TDCC 的不猜是哪一檔，交給人工回填
+    （可帶「1.」「TDCC =」「TDCC code:」「TDCC」）、分段裡只寫一檔的 We buy 行，或只寫「1.」「2.」時
+    依 We buy 行的 TDCC 順序對應（有安全條件，見 `_resolve_numbered_sections`）；對不上的交給人工回填
     （使用者 2026-10-20：不過度客製，偏離常態的信接受人工回填）。
     表格屬於哪檔：表上有 TDCC 欄 → 依欄；前面有分段標記 → 那檔；整封信只有一檔 → 那檔。
     """
@@ -465,11 +467,21 @@ def parse_order(path: Path, mail: Mail) -> _ParsedMail:
     unassigned: list[tuple[str, tuple[str, ...], list[tuple[str, ...]]]] = []
     mail_problems: list[str] = []
     context: str | None = None
+    buy_order: list[str] = []  # We buy 行的 TDCC 順序
+    section_tables: dict[str, int] = {}  # 「1.」「2.」分段（暫用 #1、#2）各有幾張條件表
     tables = 0
     seen_table = False
 
     def entries_for(tdcc: str | None) -> list[RawEntry]:
         return common if tdcc is None else records.setdefault(tdcc, [])
+
+    def switch_to(tdcc: str) -> str:
+        """「1.」之後又寫了這段是哪檔（SG 的「TDCC = …」或一行 We buy）：暫用的 #1 併進那檔。"""
+        if context in section_tables and section_tables[context] == 0:
+            del section_tables[context]
+            records.setdefault(tdcc, []).extend(records.pop(context, []))
+        records.setdefault(tdcc, [])
+        return tdcc
 
     for item in parser.items:
         if isinstance(item, _Line):
@@ -477,14 +489,23 @@ def parse_order(path: Path, mail: Mail) -> _ParsedMail:
             if _QUOTE_START.search(line):
                 break
             standalone = _SECTION_TDCC.match(line)
-            if standalone:  # 例：「156…」「1. 029…」「TDCC = 037…」
-                context = standalone.group(1)
-                records.setdefault(context, [])
+            if standalone:  # 例：「156…」「1. 029…」「TDCC = 037…」「TDCC 086…」
+                context = switch_to(standalone.group(1))
+                continue
+            numbered = _SECTION_NUMBER.match(line)
+            if numbered:  # 只寫「1.」「2.」：先記成 #1、#2，讀完整封再依 We buy 行的順序對應
+                context = f"#{int(numbered.group(1))}"
+                section_tables.setdefault(context, 0)
                 continue
             if _WE_BUY.search(line):
-                for tdcc, parts in buy_segments(line):
+                segments = buy_segments(line)
+                for tdcc, parts in segments:
                     target = entries_for(tdcc)
                     target.extend(RawEntry(BUY_SOURCE, name, value) for name, value in parts)
+                    if tdcc not in buy_order:
+                        buy_order.append(tdcc)
+                if len(segments) == 1 and context is not None:
+                    context = switch_to(segments[0][0])  # 分段裡各自一行 We buy（SG），這段就是那檔
             settle = _SETTLE.search(line)
             if settle:
                 entries_for(context).append(RawEntry(LINE_SOURCE, "Please settle thru", settle.group(1).strip()))
@@ -513,9 +534,12 @@ def parse_order(path: Path, mail: Mail) -> _ParsedMail:
                 _add_table(records, problems, tdcc, source, header, [row])
         elif context is not None:
             _add_table(records, problems, context, source, header, values)
+            if context in section_tables:
+                section_tables[context] += 1
         else:
             unassigned.append((source, header, values))
 
+    _resolve_numbered_sections(records, problems, section_tables, buy_order, mail_problems)
     for source, header, values in unassigned:
         if len(records) == 1:
             _add_table(records, problems, next(iter(records)), source, header, values)
@@ -526,6 +550,35 @@ def parse_order(path: Path, mail: Mail) -> _ParsedMail:
     for tdcc in records:
         records[tdcc] = [*common, *records[tdcc]]
     return _ParsedMail(path, mail, records, problems, tuple(mail_problems))
+
+
+def _resolve_numbered_sections(
+    records: dict[str, list[RawEntry]],
+    problems: dict[str, list[str]],
+    section_tables: dict[str, int],
+    buy_order: list[str],
+    mail_problems: list[str],
+) -> None:
+    """「1.」「2.」分段依 We buy 行的 TDCC 順序對應（使用者 2026-10-20 確認，交易室多檔下單的固定寫法）。
+
+    安全條件：分段剛好是 #1～#n、n 等於 We buy 行的 TDCC 數，而且每段剛好一張條件表；不符合就不猜，交給人工。
+    """
+    if not section_tables:
+        return
+    expected = [f"#{n}" for n in range(1, len(buy_order) + 1)]
+    ok = sorted(section_tables, key=lambda s: int(s[1:])) == expected and all(section_tables[s] == 1 for s in expected)
+    for n, section in enumerate(sorted(section_tables, key=lambda s: int(s[1:]))):
+        entries = records.pop(section, [])
+        found = problems.pop(section, [])
+        if ok:
+            tdcc = buy_order[n]
+            records.setdefault(tdcc, []).extend(entries)
+            problems.setdefault(tdcc, []).extend(found)
+    if not ok:
+        mail_problems.append(
+            f"分段「1.」「2.」…有 {len(section_tables)} 段、We buy 行有 {len(buy_order)} 檔，或某段不是剛好一張條件表，"
+            "無法對應是哪一檔 TDCC"
+        )
 
 
 def buy_segments(line: str) -> list[tuple[str, list[tuple[str, str]]]]:

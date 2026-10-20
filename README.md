@@ -128,10 +128,10 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
    - 條件表依 TDCC 前三碼的上手對照欄名（`src/sp_workflow/order_formats.py`），例如 `BBG Code 1`、`Underlying 1`、`Stock 1` 都是「標的1」。UBS 寫在 Quote Id 裡的日期、GS 寫在 System Remark 裡的發行日會拆出來。
    - 信件下方引用的上一封信不讀。
 4. 統一格式：百分比存數字（`80.00`、`75%` 都是 80），金額換算成數字（`200K` → 200000），日期為 `YYYY-MM-DD`，TDCC 保留前導零。不屬於統一欄位的欄原樣放在「其他欄位」。
-5. 一封信下兩檔以上時拆成多列；只貼了其中一檔，同一封信的其他檔也會接在後面。每段屬於哪檔，看表上的 TDCC 欄，或段落前的「1. <TDCC>」「TDCC = <TDCC>」；只寫「1.」「2.」沒寫 TDCC 的不猜，標待確認由人工回填。
+5. 一封信下兩檔以上時拆成多列；只貼了其中一檔，同一封信的其他檔也會接在後面。每段屬於哪檔，看表上的 TDCC 欄、段落前的「1. <TDCC>」「TDCC = <TDCC>」「TDCC <TDCC>」，或段落裡只寫一檔的 We buy 行；只寫「1.」「2.」時依 We buy 行的 TDCC 順序對應，但段數和每段的條件表都要剛好對得上，對不上就標待確認由人工回填。
 原則：不過度客製，格式明顯偏離常態的信（例如一封信下多檔、又沒寫清楚哪段是哪檔）接受人工回填。
 6. 下面情況標「待確認」並寫原因，不猜值：
-   - 值有修改，例如 `96.20%→96.15%`、`99.65->99.62`、`99.92 >> 99.89`：取最後的值，同時寫出原文。
+   - 值有修改，例如 `96.20%→96.15%`、`99.65->99.62`、`99.92 >> 99.89`、`97.50>97.47`：取最後的值，同時寫出原文。
    - 同一欄兩處寫法不同，例如 We buy 行的價格和條件表不同：這一欄留空。
    - 讀不到幣別、承作金額、價格、標的1，或格式不認得。
    - 條件表欄數和值數對不上、有好幾列值，或出現這家沒列過的欄名（上手格式可能改版）。
@@ -139,10 +139,10 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 7. 找不到商品資料夾或 Order 原信時標「找不到 Order」。14 家上手（含 Citi）都有讀法；TDCC 前三碼不認得時標「未支援上手」。Citi 的 We buy 行只有 `UF=x%`，價格 = 100 − UF；Citi 的 Non Callable Periods 算法不同，統一 +1（0 → 1）。
 8. 清單有四個工作表：
    - 「example」：作業人員既有的「Outlook orders 轉成 Excel」格式（第 2 列表頭、從 B 欄開始），讀到 Order 的商品都放（含待確認），**有問題的格子照填能確定的值、標淺紅底**（例如價格寫成 `→` 的那格；整列的問題標在 TDCC 那格），原因看「Order條件清單」；可以直接複製貼上；起單FC 留空由人補。信裡沒直接寫的欄依固定規則換算（`src/sp_workflow/order_template.py`）：
-     - KO Type 統一成 Daily／Daily Memory／Period End／Period End Memory；MS 的 `OBSERVATION` 看 KO Memory，Citi 看 Daily KO 和 Memory Autocall 兩欄。
+     - KO Type 統一成 Daily／Daily Memory／Period End／Period End Memory；MS 看 KO Memory 欄決定是否記憶式（`OBSERVATION` 是每期），Citi 看 Daily KO 和 Memory Autocall 兩欄。
      - Barrier Type 統一成 NONE／EKI／AKI（`European` = EKI）；沒有 KI 時 KI Barrier 留空。
      - Product 條件表沒有或是上手自家名稱（Citi 的 FCA）時取主旨的 `FCN`；OTC 沒寫時填 `Note`；SG 的 Tenor = No. of Periods。
-     - Trade date 條件表沒有時用 Order 寄出日；Issue date 沒有時 = Trade date + 日曆天數偏移；Effective Date Offset = Issue date − Trade date 的日曆天數。
+     - Trade date 條件表沒有時用 Order 寄出日；Issue date 只用信裡寫的，不從偏移天數推算（實測會差一天），讀不到就留空標紅；Effective Date Offset = Issue date − Trade date 的日曆天數。
      - 換算不了或格式表要的欄讀不到時，那一格空白、淺紅底，整檔標「待確認」。
    - 「Order條件清單」：每檔一列，含待確認原因。
    - 「原文對照」：每個欄位的原始欄名、原始值與對到的統一欄位。
@@ -286,10 +286,10 @@ Reads every term from our original `(Order)` email in each product folder using 
    - The terms table is mapped by the issuer from the TDCC's first three digits (`src/sp_workflow/order_formats.py`); for example `BBG Code 1`, `Underlying 1`, and `Stock 1` all become 標的1. Dates inside the UBS Quote Id and the GS System Remark issue date are split out.
    - Quoted earlier messages below the order are ignored.
 4. Normalization: percentages become numbers (`80.00` and `75%` are both 80), amounts are expanded (`200K` → 200000), dates are `YYYY-MM-DD`, and TDCCs keep leading zeros. Columns outside the normalized fields are kept as-is in 其他欄位.
-5. A message ordering several TDCCs is split into rows; when only one of them is pasted, the others from the same message follow it. Each section belongs to the TDCC in the table's TDCC column or in a preceding "1. <TDCC>" or "TDCC = <TDCC>" line; bare "1." and "2." without a TDCC are not guessed and are left 待確認 for manual entry.
+5. A message ordering several TDCCs is split into rows; when only one of them is pasted, the others from the same message follow it. Each section belongs to the TDCC in the table's TDCC column, in a preceding "1. <TDCC>", "TDCC = <TDCC>", or "TDCC <TDCC>" line, or in a We buy line inside the section naming one TDCC; bare "1." and "2." follow the TDCC order of the We buy line only when the section count and one table per section match exactly, otherwise they are left 待確認 for manual entry.
 Principle: avoid over-customizing; emails that stray far from the normal format (for example several TDCCs without saying which section is which) are filled in manually.
 6. The following cases are marked 待確認 with reasons, without guessing:
-   - A revised value such as `96.20%→96.15%`, `99.65->99.62`, or `99.92 >> 99.89`: the last value is used and the original text is shown.
+   - A revised value such as `96.20%→96.15%`, `99.65->99.62`, `99.92 >> 99.89`, or `97.50>97.47`: the last value is used and the original text is shown.
    - A field that differs between two places, for example the We buy price and the table: that field is left blank.
    - Currency, amount, price, or 標的1 cannot be read, or a value's format is not recognized.
    - Header and value counts differ, a table has several value rows, or a column unknown for that issuer appears (the issuer format may have changed).
@@ -297,10 +297,10 @@ Principle: avoid over-customizing; emails that stray far from the normal format 
 7. A missing product folder or original order is 找不到 Order. All 14 issuers (including Citi) have a reading; an unknown TDCC prefix is 未支援上手. Citi's We buy line only gives `UF=x%`, so the price is 100 − UF; Citi counts Non Callable Periods differently, so it is shifted by +1 (0 → 1).
 8. The workbook has four sheets:
    - "example": the operators' existing "Outlook orders to Excel" layout (row-2 header starting in column B), holding every product whose order was read (including 待確認), **with problem cells filled with what is certain and shaded light red** (for example the price written with `→`; row-level problems mark the TDCC cell), reasons in "Order條件清單"; ready to copy and paste; 起單FC is left blank for a person to fill. Columns the email does not state directly follow fixed rules (`src/sp_workflow/order_template.py`):
-     - KO Type becomes Daily, Daily Memory, Period End, or Period End Memory; MS `OBSERVATION` uses KO Memory, and Citi uses its Daily KO and Memory Autocall columns.
+     - KO Type becomes Daily, Daily Memory, Period End, or Period End Memory; MS uses its KO Memory column for memory (`OBSERVATION` means per period), and Citi uses its Daily KO and Memory Autocall columns.
      - Barrier Type becomes NONE, EKI, or AKI (`European` = EKI); without KI, KI Barrier is blank.
      - Product falls back to the subject's `FCN` when the table lacks it or uses the issuer's own name (Citi's FCA); OTC defaults to `Note`; SG Tenor = No. of Periods.
-     - Trade date falls back to the order's sent date; a missing Issue date = Trade date + calendar-day offset; Effective Date Offset = Issue date − Trade date in calendar days.
+     - Trade date falls back to the order's sent date; Issue date is never inferred from the offset (it was a day off in testing) and stays blank and red when missing; Effective Date Offset = Issue date − Trade date in calendar days.
      - When a value cannot be converted or a required column is missing, that cell is blank and light red, and the product is 待確認.
    - "Order條件清單": one row per product, with reasons to check.
    - "原文對照": each field's original name, original value, and normalized field.

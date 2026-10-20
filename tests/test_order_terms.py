@@ -694,25 +694,26 @@ def test_values_the_template_cannot_hold_need_checking(change: dict, problem: st
 
 
 def test_values_missing_from_the_order_are_derived_by_fixed_rules() -> None:
-    values = {k: v for k, v in FULL_VALUES.items() if k not in ("商品", "天期(月)", "觀察頻率(月)", "交易日", "發行日")}
-    values["發行日偏移"] = "7"
+    values = {k: v for k, v in FULL_VALUES.items() if k not in ("商品", "天期(月)", "觀察頻率(月)", "交易日")}
     others = (("No. of Periods", "12"), ("Settlement Frequency", "Monthly"))
 
     row, problems = cells(values, others, subject="(Order)_[Esun Sec] FCN_AAA/BBB_Leo -- x")
 
     assert problems == []
     assert (row["Product"], row["Tenor (m)"], row["Observation Frequency (m)"], row["OTC"]) == ("FCN", 12, 1, "Note")
-    # 交易日用 Order 寄出日期，發行日 = 交易日 + 日曆天數偏移
+    # 交易日用 Order 寄出日期；Offset = 發行日 − 交易日
     assert (row["Trade date"], row["Issue date"], row["Effective Date Offset(Calendar Days)"]) == (
         SENT.date(),
-        SENT.date() + dt.timedelta(days=7),
-        7,
+        dt.date(2026, 10, 26),
+        (dt.date(2026, 10, 26) - SENT.date()).days,
     )
 
 
-def test_business_day_offset_is_not_used_to_guess_the_issue_date() -> None:
+@pytest.mark.parametrize("offset", ["7", "5BD"])
+def test_issue_date_is_never_guessed_from_the_offset(offset: str) -> None:
+    # 實測 HSBC 偏移寫 7 天、實際差 8 天，所以不推算
     values = {k: v for k, v in FULL_VALUES.items() if k != "發行日"}
-    values["發行日偏移"] = "5BD"
+    values["發行日偏移"] = offset
 
     row, problems = cells(values)
 
@@ -1026,22 +1027,80 @@ def test_sections_of_a_multi_order_mail(tmp_path: Path, root: Path, markers) -> 
     assert term_reasons(one) == term_reasons(two) == ()
 
 
-def test_numbered_sections_without_tdcc_are_left_for_manual_entry(tmp_path: Path, root: Path) -> None:
-    # JPM 只寫「1.」「2.」：不依 We buy 行的順序猜（使用者：偏離常態的信接受人工回填）
-    first, second = "076199990001", "076199990002"
+def test_numbered_sections_follow_the_we_buy_order(tmp_path: Path, root: Path) -> None:
+    # BARC／Citi／JPM／BNP：各段只寫「1.」「2.」，依 We buy 行的 TDCC 順序對應（使用者確認）
+    first, second = "029199990001", "029199990002"
     html = multi_order((first, second), ("1.", "2."))
     product_folder(root, first, "order.msg")
 
     receipt, _ = run(tmp_path, first, {"order.msg": Mail(f"(Order)--{first}、{second}", SENT, html)})
 
     one, two = receipt.rows
+    assert (one.values["標的1"], two.values["標的1"]) == ("AAA UW", "BBB UW")
+    assert term_reasons(one) == term_reasons(two) == ()
+
+
+@pytest.mark.parametrize("markers", [("1.", "2.", "3."), ("1.", "1.")])
+def test_numbered_sections_that_do_not_fit_are_left_for_manual_entry(tmp_path: Path, root: Path, markers) -> None:
+    # 段數和 We buy 行的檔數不同，或某段不是剛好一張表：不猜
+    first, second = "029199990001", "029199990002"
+    header = ("Product", "Currency", "BBG Code 1", "Upfront / Note Price (%)")
+    sections = []
+    for n, marker in enumerate(markers):
+        sections += [marker, table(header, ("FCN", "USD", f"U{n} UW", "97.50"))]
+    html = order_html(f"We buy {first} USD 300K @97.50、{second} USD 550K @97.50", *sections)
+    product_folder(root, first, "order.msg")
+
+    receipt, _ = run(tmp_path, first, {"order.msg": Mail(f"(Order)--{first}、{second}", SENT, html)})
+
+    one, two = receipt.rows
     assert one.status == two.status == PENDING
-    assert "條件表 1 對不到是哪一檔 TDCC" in one.reasons
     assert "標的1" not in one.values and one.values["承作金額"] == Decimal("300000")  # We buy 行照樣讀
+    assert any(r.startswith("分段「1.」「2.」") for r in one.reasons)
     assert 0 in one.flagged  # 整列的問題標在 TDCC
 
 
-@pytest.mark.parametrize("price", ["98.60->98.50", "98.60 >> 98.50", "98.60=>98.50"])
+@pytest.mark.parametrize(
+    "layout",
+    [
+        "sg",  # 「1.」之後各段自己一行 We buy
+        "ca",  # 「TDCC 086…」沒有等號或冒號
+    ],
+)
+def test_more_section_styles(tmp_path: Path, root: Path, layout: str) -> None:
+    first, second = "086199990001", "086199990002"
+    header = ("Product", "Currency", "BBG Code 1", "Reoffer (%)")
+    one_table = table(header, ("FCN", "USD", "AAA UW", "97.2"))
+    two_table = table(header, ("FCN", "USD", "BBB UW", "97.3"))
+    if layout == "sg":
+        html = order_html(
+            "We have two orders.",
+            "1.",
+            f"We buy {first} USD 300K @97.2",
+            one_table,
+            "2.",
+            f"We buy {second} USD 400K @97.3",
+            two_table,
+        )
+    else:
+        html = order_html(
+            f"We buy {first} USD 300K @97.2、{second} USD 400K @97.3",
+            f"TDCC {first}",
+            one_table,
+            f"TDCC {second}",
+            two_table,
+        )
+    product_folder(root, first, "order.msg")
+
+    receipt, _ = run(tmp_path, first, {"order.msg": Mail(f"(Order)--{first}、{second}", SENT, html)})
+
+    one, two = receipt.rows
+    assert (one.values["標的1"], one.values["價格(%)"]) == ("AAA UW", Decimal("97.2"))
+    assert (two.values["標的1"], two.values["價格(%)"]) == ("BBB UW", Decimal("97.3"))
+    assert term_reasons(one) == term_reasons(two) == ()
+
+
+@pytest.mark.parametrize("price", ["98.60->98.50", "98.60 >> 98.50", "98.60=>98.50", "98.60>98.50"])
 def test_other_revision_arrows(tmp_path: Path, root: Path, price: str) -> None:
     product_folder(root, BARC, "order.msg")
     values = (*PRICER_VALUES[:12], price, *PRICER_VALUES[13:])
@@ -1112,3 +1171,29 @@ def test_long_path_prefix(path: str, expected: str, monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(order_terms.sys, "platform", "win32")
 
     assert order_terms._long_path(Path(path)) == expected
+
+
+@pytest.mark.parametrize(
+    ("ko_type", "memory", "expected"),
+    [("DAILY", "Yes", "Daily Memory"), ("DAILY", "No", "Daily"), ("OBSERVATION", "Yes", "Period End Memory")],
+)
+def test_ms_ko_memory_column_decides_memory(ko_type: str, memory: str, expected: str) -> None:
+    row, problems = cells({**FULL_VALUES, "KO觀察方式": ko_type}, (("KO Memory", memory),))
+
+    assert (row["KO Type"], problems) == (expected, [])
+
+
+def test_conflicting_ko_memory_needs_checking() -> None:
+    row, problems = cells({**FULL_VALUES, "KO觀察方式": "Daily Memory"}, (("KO Memory", "No"),))
+
+    assert row["KO Type"] is None
+    assert "KO Type 是 Daily Memory，但 KO Memory 是 No" in problems
+
+
+def test_barrier_type_is_not_defaulted_when_the_table_was_not_read() -> None:
+    values = {k: v for k, v in FULL_VALUES.items() if k not in ("KI型態", "KI(%)", "標的1")}
+
+    row, problems = cells(values)
+
+    assert row["Barrier Type"] is None
+    assert any("Barrier Type" in p for p in problems)
