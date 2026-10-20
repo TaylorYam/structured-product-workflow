@@ -13,8 +13,11 @@ import pytest
 import fcn_checker.panel
 from fcn_checker.panel import parse_args
 from fcn_checker.panel_workflow import PanelSession
+from fcn_checker.saving import SaveReceipt
 from sp_workflow import app
+from sp_workflow.documents import DocKind
 from sp_workflow.local_settings import FolderMemory
+from sp_workflow.preparation import PREPARED, SKIPPED, PreparedDocument, PrepareReceipt, ProductOutcome
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -218,7 +221,7 @@ def test_window_builds_with_remembered_folders(master, tmp_path: Path) -> None:
 def test_prepared_batch_is_filled_into_the_return_tab(master, tmp_path: Path) -> None:
     window = app.PanelWindow(master, FolderMemory.under(tmp_path))
 
-    window.prepare.on_prepared(Path("D:/out/待核對_20261019-103000"))
+    window.prepare.on_prepared(prepared_receipt(Path("D:/out/待核對_20261019-103000")))
 
     assert window.returning.batch_var.get() == str(Path("D:/out/待核對_20261019-103000"))
 
@@ -317,3 +320,129 @@ def test_each_tab_still_remembers_its_own_output(master, tmp_path: Path, monkeyp
         "out": str(Path("D:/out")),
         "mail_out": str(Path("D:/寄信")),
     }, "按開始只記各頁的輸出位置，根目錄不變"
+
+
+# ---------------------------------------------------------------- 步驟銜接（#76）
+
+
+def prepared_receipt(batch: Path) -> PrepareReceipt:
+    """一檔已準備（TS＋IIS）、一檔跳過的準備結果。"""
+    ready = ProductOutcome(
+        "147000000001",
+        PREPARED,
+        documents=(
+            PreparedDocument(DocKind.TS, output_name="147000000001_TS.pdf"),
+            PreparedDocument(DocKind.IIS, output_name="147000000001_IIS.pdf"),
+        ),
+    )
+    skipped = ProductOutcome("147000000002", SKIPPED, "找不到說明書")
+    return PrepareReceipt(batch, batch / "準備清單.xlsx", (ready, skipped))
+
+
+def new_window(master, tmp_path: Path, session: PanelSession | None = None) -> app.PanelWindow:
+    return app.PanelWindow(master, FolderMemory.under(tmp_path), session=session or PanelSession(install_root=tmp_path))
+
+
+def hint_change_button(hint) -> ttk.Button:
+    (button,) = [w for w in hint.winfo_children() if isinstance(w, ttk.Button)]
+    return button
+
+
+def test_prepared_pdfs_are_handed_to_the_check_tab_without_switching(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    window.notebook.select(window.prepare.frame)
+    batch = tmp_path / "待核對_20261020-103000"
+
+    window.prepare._done(prepared_receipt(batch))
+
+    assert window.check.pdf_paths == (batch / "147000000001_TS.pdf", batch / "147000000001_IIS.pdf"), "只帶已準備的"
+    assert window.check.hint.text.get() == f"已帶入「3 準備」的批次：{batch}（2 份 PDF）"
+    assert window.notebook.select() == str(window.prepare.frame), "不自動切頁"
+    assert window.session.preview is None and not window.check.working, "不自動載入預覽或核對"
+    assert window.prepare.next_button.winfo_manager() == "pack"
+
+    window.prepare.next_button.invoke()
+
+    assert window.notebook.select() == str(window.check)
+
+
+def test_choosing_other_pdfs_hides_the_hint(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    window.prepare._done(prepared_receipt(tmp_path / "待核對_1"))
+    other = tmp_path / "其他" / "147000000009_TS.pdf"
+    monkeypatch.setattr(fcn_checker.panel.filedialog, "askopenfilenames", lambda **kwargs: (str(other),))
+
+    hint_change_button(window.check.hint).invoke()
+
+    assert window.check.pdf_paths == (other,) and not window.check.hint.shown
+
+
+@pytest.mark.parametrize("answer", [False, True])
+def test_an_unsaved_check_result_is_kept_unless_the_operator_agrees(master, tmp_path, monkeypatch, answer) -> None:
+    window = new_window(master, tmp_path, UnsavedSession(install_root=tmp_path))
+    asked = []
+    monkeypatch.setattr(fcn_checker.panel.messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or answer)
+
+    window.prepare._done(prepared_receipt(tmp_path / "待核對_1"))
+
+    assert len(asked) == 1 and "沒存檔的核對結果" in asked[0]
+    assert bool(window.check.pdf_paths) is answer and window.check.hint.shown is answer
+
+
+class SavedSession(PanelSession):
+    receipt = SaveReceipt(output=Path("D:/reports/參考條件表_核對結果_20261020-110000.xlsx"))
+
+
+def test_saved_check_result_is_handed_to_the_return_tab(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path, SavedSession(install_root=tmp_path))
+    batch = tmp_path / "待核對_1"
+    window.check.receive_pdfs((batch / "147000000001_TS.pdf", batch / "147000000001_IIS.pdf"), "帶入")
+    window.notebook.select(window.check)
+    result = SavedSession.receipt.output
+
+    window.check._show_receipt(SavedSession.receipt)
+    window.check._busy(False)
+
+    assert (window.returning.batch_var.get(), window.returning.result_var.get()) == (str(batch), str(result))
+    assert window.returning.hint.text.get() == f"已帶入「4 核對」剛存的核對結果檔：{result}；批次資料夾：{batch}"
+    assert window.notebook.select() == str(window.check), "不自動切頁"
+    assert window.check.next_button.winfo_manager() == "pack", "存過檔才出現下一步"
+
+    window.check.next_button.invoke()
+
+    assert window.notebook.select() == str(window.returning.frame)
+
+
+def test_next_step_after_checking_waits_for_a_saved_result(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+
+    window.check._busy(False)
+
+    assert window.check.next_button.winfo_manager() == "", "還沒存檔，不顯示下一步：放回"
+
+
+def test_pdfs_from_several_folders_leave_the_batch_folder_alone(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    window.returning.batch_var.set("D:/out/待核對_舊")
+    window.check.receive_pdfs((tmp_path / "a" / "1_TS.pdf", tmp_path / "b" / "1_IIS.pdf"), "帶入")
+    result = tmp_path / "核對結果.xlsx"
+
+    window.check.on_saved(result)
+
+    assert window.returning.batch_var.get() == "D:/out/待核對_舊" and window.returning.result_var.get() == str(result)
+    assert window.returning.hint.text.get().endswith("批次資料夾請自己確認")
+
+
+@pytest.mark.parametrize("change", ["改選", "batch"])
+def test_changing_what_was_handed_to_the_return_tab_hides_the_hint(master, tmp_path, monkeypatch, change) -> None:
+    window = new_window(master, tmp_path)
+    window.returning.receive(tmp_path / "核對結果.xlsx", tmp_path / "待核對_1")
+    assert window.returning.hint.shown
+    if change == "改選":
+        monkeypatch.setattr(app.filedialog, "askopenfilename", lambda **kwargs: str(tmp_path / "另一份.xlsx"))
+        hint_change_button(window.returning.hint).invoke()
+        assert window.returning.result_var.get() == str(tmp_path / "另一份.xlsx")
+    else:
+        window.returning.batch_var.set(str(tmp_path / "待核對_2"))
+
+    assert not window.returning.hint.shown
