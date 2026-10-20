@@ -24,7 +24,14 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from sp_workflow.daily_import import DailyImportError, ImportInfo, ImportReceipt, import_daily, latest_import
 from sp_workflow.database import ConnectionSettings, DatabaseError, connect, default_env_path, settings_from_env
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.mail_drafts import DRAFTED, NOT_NEEDED, DraftReceipt, MailDraftError, create_drafts
+from sp_workflow.mail_drafts import (
+    DRAFTED,
+    NOT_NEEDED,
+    DraftReceipt,
+    MailDraftError,
+    create_drafts,
+    mail_template_from_env,
+)
 from sp_workflow.preparation import PREPARED, PreparationError, PrepareReceipt, prepare_batch
 from sp_workflow.returning import PENDING_SUFFIX, ReturnError, ReturnReceipt, return_to_folders
 
@@ -262,7 +269,8 @@ class DailyImportTab(_Tab):
         self.status_var.set(
             f"完成（第 {result.run_id} 次匯入）：{len(result.lines) - problems} 項正常、{problems} 項要注意；"
             f"略過非 FCN 交易 {result.skipped_trade_rows} 列、清單 {result.skipped_inventory_rows} 列；"
-            f"信箱 {result.people} 人。"
+            f"取消交易 {result.cancelled_trade_rows} 列；信箱 {result.people} 人。"
+            f"\n錯誤清單：{result.error_book_path}"
         )
 
 
@@ -324,6 +332,11 @@ class MailDraftTab(_Tab):
         settings = self.db.settings()
         if settings is None:
             return
+        try:
+            template_path = mail_template_from_env(self.db.env_path)
+        except MailDraftError as exc:
+            messagebox.showerror(TITLE, str(exc), parent=self.master)
+            return
         root, out = Path(root_text), Path(out_text)
         self.memory.remember(root=str(root), mail_out=str(out))
         self.start_button.configure(state=tk.DISABLED)
@@ -350,7 +363,7 @@ class MailDraftTab(_Tab):
 
             def run() -> DraftReceipt:
                 with connect(settings) as conn:
-                    return create_drafts(text, root, out, conn)
+                    return create_drafts(text, root, out, conn, template_path=template_path)
 
             self.run_in_background(run, "建立草稿中…（在根目錄底下搜尋商品資料夾）", self._done)
 

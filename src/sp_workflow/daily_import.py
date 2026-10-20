@@ -25,6 +25,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import openpyxl
+from openpyxl.styles import Font
+from openpyxl.utils import get_column_letter
 
 from sp_workflow.database import DatabaseError, require_current_schema
 
@@ -73,6 +75,9 @@ INVENTORY_MISSING = "庫存尚未更新"
 TRADES_MISSING = "交易尚未匯入"
 NAME_UNMATCHED = "名字對不到信箱"
 MAILBOX_EMPTY = "信箱尚未建立"
+CANCELLED = "交易已取消"
+IMPORT_ERROR_BOOK_NAME = "每日匯入錯誤.xlsx"
+_SUCCESS_KINDS = frozenset((NEW_PRODUCT, NEW_TRADES, UNCHANGED, CANCELLED))
 
 _PCT = Decimal("0.000001")
 _AMOUNT = Decimal("0.0001")
@@ -105,7 +110,7 @@ class ImportLine:
 
     @property
     def problem(self) -> bool:
-        return self.kind not in (NEW_PRODUCT, NEW_TRADES, UNCHANGED)
+        return self.kind not in (NEW_PRODUCT, NEW_TRADES, UNCHANGED, CANCELLED)
 
 
 @dataclass(frozen=True)
@@ -115,6 +120,8 @@ class ImportReceipt:
     people: int
     skipped_trade_rows: int
     skipped_inventory_rows: int
+    cancelled_trade_rows: int
+    error_book_path: Path
 
     def count(self, kind: str) -> int:
         return sum(line.kind == kind for line in self.lines)
@@ -140,15 +147,23 @@ class Mailbox:
         return next((p for p in self.people if _name_key(p.name) == target), None)
 
 
+@dataclass(frozen=True)
+class _SheetRow:
+    number: int
+    values: dict[str, Any]
+
+
 @dataclass
 class _Parsed:
     products: dict[str, dict[str, Any]] = field(default_factory=dict)
     allocations: dict[str, list[tuple[str, Decimal]]] = field(default_factory=dict)
     trades: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     blocked: list[ImportLine] = field(default_factory=list)
+    cancelled_lines: list[ImportLine] = field(default_factory=list)
     other_products: dict[str, str] = field(default_factory=dict)  # 略過的非 FCN：TDCC → Product
     skipped_trade_rows: int = 0
     skipped_inventory_rows: int = 0
+    cancelled_trade_rows: int = 0
 
 
 def import_daily(daily_book: Path, conn: psycopg.Connection) -> ImportReceipt:
@@ -165,24 +180,28 @@ def import_daily(daily_book: Path, conn: psycopg.Connection) -> ImportReceipt:
             "INSERT INTO workflow.import_run (daily_file_name, daily_sha256, summary) VALUES (%s, %s, '{}') RETURNING run_id",
             (daily_book.name, _sha256(daily_book)),
         ).fetchone()[0]
-        lines = list(parsed.blocked)
+        lines = [*parsed.blocked, *parsed.cancelled_lines]
         lines += _write_products(conn, parsed, run_id)
         lines += _write_trades(conn, parsed, run_id)
         _write_other_products(conn, parsed, run_id)
         touched = sorted(set(parsed.products) | set(parsed.trades))
         lines += _reconcile(conn, touched)
         lines += _unmatched_names(parsed, mailbox)
+        error_book_path = daily_book.parent / IMPORT_ERROR_BOOK_NAME
         receipt = ImportReceipt(
             run_id=run_id,
             lines=tuple(sorted(lines, key=lambda line: line.tdcc)),
             people=len(mailbox.people),
             skipped_trade_rows=parsed.skipped_trade_rows,
             skipped_inventory_rows=parsed.skipped_inventory_rows,
+            cancelled_trade_rows=parsed.cancelled_trade_rows,
+            error_book_path=error_book_path,
         )
         conn.execute(
             "UPDATE workflow.import_run SET summary = %s::jsonb WHERE run_id = %s",
             (json.dumps(_summary(receipt), ensure_ascii=False), run_id),
         )
+        _write_error_book(conn, error_book_path)
     return receipt
 
 
@@ -242,7 +261,7 @@ def _read_daily(path: Path) -> _Parsed:
     return parsed
 
 
-def _rows_with_header(sheet: Any, expected: Sequence[str]) -> list[tuple[int, dict[str, Any]]]:
+def _rows_with_header(sheet: Any, expected: Sequence[str]) -> list[_SheetRow]:
     """檢查第 1 列欄名和順序完全相同（後面多出的空白欄不算），回傳 (列號, {欄名: 值})。"""
     rows = sheet.iter_rows(values_only=True)
     header = [_text(v) for v in next(rows, ())]
@@ -262,14 +281,15 @@ def _rows_with_header(sheet: Any, expected: Sequence[str]) -> list[tuple[int, di
     for number, row in enumerate(rows, 2):
         values = (tuple(row) + (None,) * width)[:width]
         if any(_text(v) is not None for v in values):
-            result.append((number, dict(zip(expected, values, strict=True))))
+            result.append(_SheetRow(number, dict(zip(expected, values, strict=True))))
     return result
 
 
-def _parse_inventory(rows: Iterable[tuple[int, dict[str, Any]]], parsed: _Parsed) -> None:
+def _parse_inventory(rows: Iterable[_SheetRow], parsed: _Parsed) -> None:
     seen: dict[str, tuple[dict[str, Any], list[tuple[str, Decimal]]]] = {}
     conflicted: set[str] = set()
-    for number, row in rows:
+    for sheet_row in rows:
+        number, row = sheet_row.number, sheet_row.values
         if (_text(row["Product"]) or "").upper() != FCN:
             parsed.skipped_inventory_rows += 1
             _remember_other(parsed, row["TDCC Code"], row["Product"])
@@ -281,9 +301,21 @@ def _parse_inventory(rows: Iterable[tuple[int, dict[str, Any]]], parsed: _Parsed
         except ValueError as exc:
             parsed.blocked.append(ImportLine(_tdcc_or_raw(row["TDCC Code"]), BLOCKED, f"{where}：{exc}"))
             continue
-        if tdcc in seen and seen[tdcc] != (product, allocations):
+        if tdcc not in seen:
+            seen[tdcc] = (product, allocations)
+            continue
+        stored_product, stored_allocations = seen[tdcc]
+        if stored_product != product:
             conflicted.add(tdcc)
-        seen.setdefault(tdcc, (product, allocations))
+            continue
+        amounts = dict(stored_allocations)
+        for branch, amount in allocations:
+            if branch in amounts and amounts[branch] != amount:
+                conflicted.add(tdcc)
+                break
+            amounts[branch] = amount
+        else:
+            seen[tdcc] = (stored_product, list(amounts.items()))
     for tdcc, (product, allocations) in seen.items():
         if tdcc in conflicted:
             parsed.blocked.append(ImportLine(tdcc, BLOCKED, "清單更新同一檔出現多列且內容不同"))
@@ -360,22 +392,34 @@ def _status(value: Any) -> tuple[str, dt.date | None, str | None, str | None]:
     raise ValueError(f"庫存狀態的寫法不認得：「{raw}」")
 
 
-def _parse_trades(rows: Iterable[tuple[int, dict[str, Any]]], parsed: _Parsed) -> None:
+def _parse_trades(rows: Iterable[_SheetRow], parsed: _Parsed) -> None:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     errors: dict[str, list[str]] = defaultdict(list)
-    for number, row in rows:
+    for sheet_row in rows:
+        number, row = sheet_row.number, sheet_row.values
         if (_text(row["Product"]) or "").upper() != FCN:
             parsed.skipped_trade_rows += 1
             _remember_other(parsed, row["TDCC"], row["Product"])
             continue
         where = f"交易明細第 {number} 列"
+        if _is_cancel_note(row["備註"]):
+            parsed.cancelled_trade_rows += 1
+            parsed.cancelled_lines.append(
+                ImportLine(
+                    _tdcc_or_raw(row["TDCC"]),
+                    CANCELLED,
+                    f"{where}：備註為 Cancel，未匯入資料庫",
+                )
+            )
+            continue
         try:
             tdcc = _tdcc(row["TDCC"])
         except ValueError as exc:
             parsed.blocked.append(ImportLine(_tdcc_or_raw(row["TDCC"]), BLOCKED, f"{where}：{exc}"))
             continue
         try:
-            groups[tdcc].append(_trade(row))
+            trade = _trade(row)
+            groups[tdcc].append(trade)
         except ValueError as exc:
             errors[tdcc].append(f"{where}：{exc}")
     for tdcc, trades in groups.items():
@@ -537,7 +581,11 @@ def _unmatched_names(parsed: _Parsed, mailbox: Mailbox) -> list[ImportLine]:
     lines = []
     for tdcc, trades in parsed.trades.items():
         names = sorted(
-            {t["fc_name"] for t in trades if not is_pb(t["fc_name"]) and mailbox.match(t["fc_name"]) is None}
+            {
+                t["fc_name"]
+                for t in trades
+                if not is_pb(t["fc_name"]) and mailbox.match(t["fc_name"]) is None
+            }
         )
         if names:
             lines.append(ImportLine(tdcc, NAME_UNMATCHED, "、".join(names)))
@@ -555,6 +603,49 @@ def _summary(receipt: ImportReceipt) -> dict[str, Any]:
         "skipped_inventory_rows": receipt.skipped_inventory_rows,
         "lines": [[line.tdcc, line.kind, line.detail] for line in receipt.lines],
     }
+
+
+def _write_error_book(conn: psycopg.Connection, path: Path) -> None:
+    rows = []
+    runs = conn.execute(
+        "SELECT run_id, imported_at, daily_file_name, summary FROM workflow.import_run ORDER BY run_id"
+    ).fetchall()
+    for run_id, imported_at, file_name, summary in runs:
+        for tdcc, kind, detail in summary.get("lines", []):
+            if kind in _SUCCESS_KINDS:
+                continue
+            rows.append(
+                (
+                    imported_at.strftime("%Y-%m-%d %H:%M:%S%z"),
+                    run_id,
+                    file_name,
+                    tdcc,
+                    kind,
+                    detail,
+                )
+            )
+
+    temp = path.with_name(path.name + ".tmp")
+    try:
+        workbook = openpyxl.Workbook()
+        sheet = workbook.active
+        sheet.title = "匯入錯誤"
+        headers = ("匯入時間", "批次", "來源檔案", "TDCC", "錯誤類型", "說明")
+        sheet.append(headers)
+        for cell in sheet[1]:
+            cell.font = Font(bold=True)
+        for row in rows:
+            sheet.append(row)
+        sheet.freeze_panes = "A2"
+        sheet.auto_filter.ref = sheet.dimensions
+        widths = (22, 10, 30, 16, 24, 80)
+        for index, width in enumerate(widths, 1):
+            sheet.column_dimensions[get_column_letter(index)].width = width
+        workbook.save(temp)
+        temp.replace(path)
+    except OSError as exc:
+        temp.unlink(missing_ok=True)
+        raise DailyImportError(f"錯誤清單寫入失敗：{path}（{exc}）") from exc
 
 
 # ---------- 值的轉換 ----------
@@ -588,6 +679,11 @@ def _text(value: Any, *, dash_is_none: bool = True) -> str | None:
     if not text or (dash_is_none and text == "-"):
         return None
     return text
+
+
+def _is_cancel_note(value: Any) -> bool:
+    text = (_text(value, dash_is_none=False) or "").casefold()
+    return text == "cancel" or "取消" in text
 
 
 def _tdcc(value: Any) -> str:

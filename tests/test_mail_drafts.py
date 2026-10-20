@@ -13,7 +13,7 @@ import pytest
 
 from db_synth import inventory, seed_mailbox, trade, write_daily
 from sp_workflow import mail_drafts
-from sp_workflow.daily_import import import_daily
+from sp_workflow.daily_import import Person, import_daily
 from sp_workflow.mail_drafts import (
     DRAFTED,
     FAILED,
@@ -124,6 +124,15 @@ def test_body_shows_the_terms_in_the_mail_format(db, tmp_path: Path, root: Path,
         ">65.00<",  # KI Barrier
         ">分公司 2<",
         ">南區<",
+        'font-family: Calibri; mso-fareast-font-family: "Microsoft JhengHei";',
+        '<font face="Calibri"',
+        '<font face="Microsoft JhengHei"',
+        "text-align: center;",
+        'border="0"',
+        'bgcolor="#002060"',
+        'bgcolor="#F0F0F0"',
+        'cellspacing="0"',
+        'mso-fareast-font-family: "Microsoft JhengHei";',
         "#002060",
         "#00AB8E",
         'background: #C55A11; color: #FFFFFF; font-weight: bold;">分公司 1<',
@@ -131,13 +140,25 @@ def test_body_shows_the_terms_in_the_mail_format(db, tmp_path: Path, root: Path,
         assert expected in body, expected
 
 
+def test_fixed_cc_order_prioritizes_max_bob_then_pm() -> None:
+    people = (
+        Person("PM2", "pm2@example.com", "PM", True),
+        Person("Zed", "zed@example.com", "FC", True),
+        Person("BOB", "bob@example.com", "FC", True),
+        Person("MAX", "max@example.com", "FC", True),
+        Person("PM1", "pm1@example.com", "PM", True),
+    )
+
+    assert [person.name for person in mail_drafts._order_fixed_cc(people)] == ["MAX", "BOB", "PM1", "PM2", "Zed"]
+
+
 @pytest.mark.parametrize(
     ("text", "width"),
     [
-        ("Guaranteed Periods (m)", 83),  # Guaranteed／Periods (m)：較長行 11 字
+        ("Guaranteed Periods (m)", 98),  # 範本 C 欄寬
         ("Upfront / NotePrice (%)", 98),  # Upfront /／NotePrice (%)：13 字
         ("Final valuation date", 105),  # Final／valuation date：14 字
-        ("Daily Memory", 75),  # 較長行只有 6 字，欄寬取 BBG Code 4 的 10 字
+        ("Daily Memory", 121),  # 範本 J 欄寬
     ],
 )
 def test_wide_columns_wrap_into_at_most_two_lines(db, tmp_path: Path, root: Path, out: Path, text, width) -> None:
@@ -498,6 +519,7 @@ def test_outlook_failure_marks_only_that_product(fake_com, db, tmp_path: Path, r
     reason="真的 Outlook 測試只在本機設定 SPW_OUTLOOK_TEST 時執行",
 )
 def test_outlook_creates_a_draft_without_sending(tmp_path: Path) -> None:
+    import pythoncom
     import win32com.client
 
     attachment = tmp_path / "test.pdf"
@@ -506,10 +528,12 @@ def test_outlook_creates_a_draft_without_sending(tmp_path: Path) -> None:
 
     OutlookDrafter()(Draft("000000000000", ("nobody@example.com",), (), subject, "<p>FYI</p>", (attachment,)))
 
-    drafts = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI").GetDefaultFolder(16).Items  # 草稿匣
-    found = [m for m in drafts if m.Subject == subject]
+    pythoncom.CoInitialize()
     try:
+        drafts = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI").GetDefaultFolder(16).Items
+        found = [m for m in drafts if m.Subject == subject]
         assert len(found) == 1 and found[0].Attachments.Count == 1 and not found[0].Sent
     finally:
-        for mail in found:
+        for mail in locals().get("found", []):
             mail.Delete()
+        pythoncom.CoUninitialize()
