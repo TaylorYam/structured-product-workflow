@@ -141,7 +141,7 @@ class _Tab:
         self.table.insert("", tk.END, values=list(values), tags=("problem",) if problem else ())
 
 
-class SharedRoot:
+class RootFolder:
     """商品資料夾所在的根目錄：整個視窗只在最上方設一次，Order 條件、準備、寄信草稿三頁共用（#75）。
 
     記在上次選的資料夾紀錄的 `root`；以前三頁本來就共用這一筆，升級後直接沿用，不用重選。
@@ -157,13 +157,26 @@ class SharedRoot:
             self.var.set(str(Path(chosen)))
             self.memory.remember(root=self.var.get())
 
-    def require(self) -> Path | None:
-        """設定好的根目錄；還沒設定時提示先到最上方設定，回傳 None。"""
-        text = self.var.get().strip()
-        if not text:
+    def build_bar(self, master: tk.Misc, pixels: Callable[[float], int]) -> None:
+        """視窗最上方固定顯示根目錄與「變更…」；只能用按鈕改，避免不小心打錯。"""
+        bar = ttk.Frame(master, padding=(pixels(12), pixels(10), pixels(12), 0))
+        bar.pack(fill=tk.X)
+        ttk.Label(bar, text="根目錄", style="Section.TLabel").pack(side=tk.LEFT)
+        ttk.Entry(bar, textvariable=self.var, state="readonly").pack(
+            side=tk.LEFT, fill=tk.X, expand=True, padx=pixels(10)
+        )
+        ttk.Button(bar, text="變更…", command=self.change).pack(side=tk.LEFT)
+
+    def with_output(self, out_var: tk.StringVar, out_label: str) -> tuple[Path, Path] | None:
+        """按「開始」前：根目錄與這一頁的輸出位置；任一個沒設定時提示，回傳 None。"""
+        root_text, out_text = self.var.get().strip(), out_var.get().strip()
+        if not root_text:
             messagebox.showerror(TITLE, "請先在視窗最上方按「變更…」設定根目錄。")
             return None
-        return Path(text)
+        if not out_text:
+            messagebox.showerror(TITLE, f"請先選擇{out_label}。")
+            return None
+        return Path(root_text), Path(out_text)
 
 
 class PrepareTab(_Tab):
@@ -171,13 +184,13 @@ class PrepareTab(_Tab):
         self,
         notebook: ttk.Notebook,
         memory: FolderMemory,
-        shared_root: SharedRoot,
+        root_folder: RootFolder,
         on_prepared: Callable[[Path], None],
     ) -> None:
         super().__init__(notebook, "準備", (("tdcc", "TDCC", 130), ("status", "狀態", 70), ("reason", "原因", 520)))
         self.on_prepared = on_prepared
         self.memory = memory
-        self.shared_root = shared_root
+        self.root_folder = root_folder
         self.batch_dir: Path | None = None
         self.out_var = tk.StringVar(value=memory.load().get("out", ""))
         self.status_var.set("貼上 TDCC，選好輸出位置後按「開始準備」（在最上方的根目錄底下找商品資料夾）。")
@@ -194,13 +207,10 @@ class PrepareTab(_Tab):
 
     def start(self) -> None:
         text = self.tdcc_text.get("1.0", tk.END)
-        root, out_text = self.shared_root.require(), self.out_var.get().strip()
-        if root is None:
+        paths = self.root_folder.with_output(self.out_var, "輸出位置")
+        if paths is None:
             return
-        if not out_text:
-            messagebox.showerror(TITLE, "請先選擇輸出位置。")
-            return
-        out = Path(out_text)
+        root, out = paths
         self.memory.remember(out=str(out))
         self.start_button.configure(state=tk.DISABLED)
         self.open_button.configure(state=tk.DISABLED)
@@ -357,7 +367,7 @@ class _DatabaseLogin:
 
 class MailDraftTab(_Tab):
     def __init__(
-        self, notebook: ttk.Notebook, memory: FolderMemory, db: _DatabaseLogin, shared_root: SharedRoot
+        self, notebook: ttk.Notebook, memory: FolderMemory, db: _DatabaseLogin, root_folder: RootFolder
     ) -> None:
         super().__init__(
             notebook,
@@ -366,7 +376,7 @@ class MailDraftTab(_Tab):
         )
         self.memory = memory
         self.db = db
-        self.shared_root = shared_root
+        self.root_folder = root_folder
         self.out_var = tk.StringVar(value=memory.load().get("mail_out", ""))
         self.status_var.set(
             "貼上核對通過的 TDCC，選結果清單位置，按「建立草稿」（在最上方的根目錄底下找商品資料夾）。只建草稿，不會寄出。"
@@ -382,12 +392,10 @@ class MailDraftTab(_Tab):
 
     def start(self) -> None:
         text = self.tdcc_text.get("1.0", tk.END)
-        root, out_text = self.shared_root.require(), self.out_var.get().strip()
-        if root is None:
+        paths = self.root_folder.with_output(self.out_var, "結果清單位置")
+        if paths is None:
             return
-        if not out_text:
-            messagebox.showerror(TITLE, "請先選擇結果清單位置。")
-            return
+        root, out = paths
         settings = self.db.settings()
         if settings is None:
             return
@@ -396,7 +404,6 @@ class MailDraftTab(_Tab):
         except MailDraftError as exc:
             messagebox.showerror(TITLE, str(exc), parent=self.master)
             return
-        out = Path(out_text)
         self.memory.remember(mail_out=str(out))
         self.start_button.configure(state=tk.DISABLED)
 
@@ -447,14 +454,14 @@ class MailDraftTab(_Tab):
 
 
 class OrderTermsTab(_Tab):
-    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, shared_root: SharedRoot) -> None:
+    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, root_folder: RootFolder) -> None:
         super().__init__(
             notebook,
             "Order 條件",
             (("tdcc", "TDCC", 130), ("status", "狀態", 90), ("issuer", "上手", 70), ("reason", "待確認原因", 440)),
         )
         self.memory = memory
-        self.shared_root = shared_root
+        self.root_folder = root_folder
         self.list_path: Path | None = None
         self.receipt: OrderReceipt | None = None
         self.out_var = tk.StringVar(value=memory.load().get("order_out", ""))
@@ -479,13 +486,10 @@ class OrderTermsTab(_Tab):
 
     def start(self) -> None:
         text = self.tdcc_text.get("1.0", tk.END)
-        root, out_text = self.shared_root.require(), self.out_var.get().strip()
-        if root is None:
+        paths = self.root_folder.with_output(self.out_var, "輸出位置")
+        if paths is None:
             return
-        if not out_text:
-            messagebox.showerror(TITLE, "請先選擇輸出位置。")
-            return
-        out = Path(out_text)
+        root, out = paths
         self.memory.remember(order_out=str(out))
         self.receipt = None
         self.start_button.configure(state=tk.DISABLED)
@@ -599,39 +603,29 @@ class PanelWindow:
             font=("Microsoft JhengHei UI", 12, "bold"),
             padding=(self.pixels(16), self.pixels(6)),
         )
-        self.shared_root = SharedRoot(memory)
-        self._root_bar()
+        self.root_folder = RootFolder(memory)
+        self.root_folder.build_bar(master, self.pixels)
         self.notebook = ttk.Notebook(master, style="Workflow.TNotebook")
         self.notebook.pack(fill=tk.BOTH, expand=True, padx=self.pixels(8), pady=self.pixels(8))
         db = _DatabaseLogin(master, env_path or default_env_path())
         # 分頁照每天的作業順序建立，前面自動加上 1～6 的編號
-        self.orders = OrderTermsTab(self.notebook, memory, self.shared_root)
+        self.orders = OrderTermsTab(self.notebook, memory, self.root_folder)
         self.daily = DailyImportTab(self.notebook, memory, db)
         self.prepare = PrepareTab(
             self.notebook,
             memory,
-            self.shared_root,
+            self.root_folder,
             on_prepared=lambda batch: self.returning.batch_var.set(str(batch)),
         )
         self.check = CheckTab(self.notebook, self.session, self.pixels)
         self.notebook.add(self.check, text="核對")
         self.returning = ReturnTab(self.notebook, memory)
-        self.mail = MailDraftTab(self.notebook, memory, db, self.shared_root)
+        self.mail = MailDraftTab(self.notebook, memory, db, self.root_folder)
         for number, tab in enumerate(self.notebook.tabs(), 1):
             self.notebook.tab(tab, text=f"{number} {self.notebook.tab(tab, 'text')}")
         self.notebook.select(self.check if start_on_check else 0)
         self.maintenance = self._maintenance_menu()
         master.protocol("WM_DELETE_WINDOW", self.close)
-
-    def _root_bar(self) -> None:
-        """最上方固定顯示根目錄與「變更…」；只能用按鈕改，避免不小心打錯。"""
-        bar = ttk.Frame(self.master, padding=(self.pixels(12), self.pixels(10), self.pixels(12), 0))
-        bar.pack(fill=tk.X)
-        ttk.Label(bar, text="根目錄", style="Section.TLabel").pack(side=tk.LEFT)
-        ttk.Entry(bar, textvariable=self.shared_root.var, state="readonly").pack(
-            side=tk.LEFT, fill=tk.X, expand=True, padx=self.pixels(10)
-        )
-        ttk.Button(bar, text="變更…", command=self.shared_root.change).pack(side=tk.LEFT)
 
     def _maintenance_menu(self) -> tk.Menu:
         """視窗上方的「維護」選單：不是每天的步驟，不放在分頁畫面上（#73）。"""
