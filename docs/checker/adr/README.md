@@ -1,5 +1,9 @@
 # Architecture Decision Records
 
+> 這裡是原 fcn-term-sheet-checker 的 ADR，只留作歷史紀錄，編號和本專案的 [docs/adr/](../../adr/README.md) 互不相干。**新的決策（包含核對）一律寫在 docs/adr/**，不再在這裡新增；下方「建立紀錄」的步驟已不適用。
+>
+> These are the original fcn-term-sheet-checker ADRs, kept as history with numbering independent of this repository's [docs/adr/](../../adr/README.md). **New decisions, including checker ones, go in docs/adr/**; do not add records here, and the record-creation steps below no longer apply.
+
 Use an Architecture Decision Record (ADR) for a choice that has a lasting effect on system structure, dependencies, data, operations, security, or compatibility. Keep routine implementation details in the code and pull request.
 
 ## 現行決策索引
@@ -23,7 +27,7 @@ ADR 保留當時決策，不改寫歷史樣本數或當時程式切點；目前�
 1. Discuss the question and options in an issue using the architecture decision proposal template.
 2. After the decision is made, add a numbered file such as `0001-use-managed-database.md`.
 3. Record the context, decision, alternatives, and consequences. Keep the record concise and specific.
-4. Link to the ADR from `docs/architecture.md` and from relevant code or documentation when useful.
+4. Link to the ADR from `docs/checker/architecture.md` and from relevant code or documentation when useful.
 
 ## Suggested format
 

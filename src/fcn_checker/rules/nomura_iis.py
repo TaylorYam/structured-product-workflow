@@ -1,4 +1,4 @@
-"""Nomura 投資人須知專屬規則（docs/rules/iis-check-rules.md §3 B12、B16、D34、D36 的 Nomura 欄）：每期配息率、D 型 KO 起日、
+"""Nomura 投資人須知專屬規則（docs/checker/rules/iis-check-rules.md §3 B12、B16、D34、D36 的 Nomura 欄）：每期配息率、D 型 KO 起日、
 標的英文名稱、開始／後續受理贖回日期文字都要等於同商品說明書。
 
 只用投資人須知讀出結果與同商品 Nomura 說明書的讀出結果，不碰參考條件表（每期配息率 = 年利率 ÷ 12 是共用規則

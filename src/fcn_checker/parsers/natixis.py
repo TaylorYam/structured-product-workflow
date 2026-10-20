@@ -1,4 +1,4 @@
-"""Natixis 中文產品說明書（docs/templates/natixis-zh-product-description.md）：章＋條號＋標籤定位，保留原文證據。
+"""Natixis 中文產品說明書（docs/checker/templates/natixis-zh-product-description.md）：章＋條號＋標籤定位，保留原文證據。
 
 封面（第 1–2 頁）是「標籤：值」兩欄（標籤 x≈41、值 x≈241，值的行可能比標籤高或低），商品代號與 ISIN 只在封面
 「TDCC 商品代號為…，ISIN 為…」一處；第 2 頁末是刊印日期。章名「第一章、商品基本資料」～「第五章、特別記載事項」

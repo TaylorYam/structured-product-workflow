@@ -1,4 +1,4 @@
-"""GS 專屬規則（docs/rules/gs-check-rules.md）：每月配息率與年利率其他出處、說明書內部交叉驗證、觀察時程表、價格表表頭、
+"""GS 專屬規則（docs/checker/rules/gs-check-rules.md）：每月配息率與年利率其他出處、說明書內部交叉驗證、觀察時程表、價格表表頭、
 情境 1 期別與情境的申購單位數。情境重複寫出的年利率、面額與情境 4 第 1 檔價格由共用情境規則（rules/scenario.py，
 Issue #294）核對。
 

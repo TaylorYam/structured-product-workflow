@@ -1,4 +1,4 @@
-"""說明書標準欄位：上手 adapter 與共用規則之間的 seam（CONTEXT.md「標準欄位」）。
+"""說明書標準欄位：上手 adapter 與共用規則之間的 seam（docs/checker/glossary.md「標準欄位」）。
 
 各上手 parser 以 `ts.f(name)` 交出下列欄位（`ParsedField`，含狀態與證據）；各上手共用的規則
 （參考條件表欄位、審查標準、Non-Call／ISIN／發行日／比價日與回填）只讀這些欄位與全文索引，不碰上手專屬的擷取結果。
@@ -108,7 +108,7 @@ class PeriodStart:
 
 @dataclass(frozen=True)
 class DateTable:
-    """說明書的日期表（CONTEXT.md「日期表」）：每期一列，加上表的位置與期始日的定義。"""
+    """說明書的日期表（docs/checker/glossary.md「日期表」）：每期一列，加上表的位置與期始日的定義。"""
 
     where: str  # 表在說明書的位置，用在項目名稱（例：第 13 條日期表）
     rows: tuple[DateRow, ...]
@@ -349,12 +349,12 @@ STANDARD_FIELDS: dict[str, str] = {
     "print_dates": "tuple[Occurrence, ...]：須在交易日當天至允許天數內的刊印日期出處",
     "monthly_coupon_pct": "Decimal：說明書正式的月配息率 %（例：配息表、條款寫的每月配息率），保留說明書顯示位數；"
     "只有情境假設值要比它時才讀（rules/scenario.py）；範本沒有時交出 absent",
-    # 情境分析（docs/rules/shared-check-rules.md §7，Issue #294）；範本沒有時交出 absent
+    # 情境分析（docs/checker/rules/shared-check-rules.md §7，Issue #294）；範本沒有時交出 absent
     "main_price_table": "TableAt：說明書主價格表的位置與讀出的表；情境重印價格表要等於它",
     "scenario_reprint_table": "TableAt：情境分析重印的價格表；逐格、表頭百分比、代碼、列數 = `main_price_table`",
     "scenario_params": "tuple[ScenarioParam, ...]：情境假設值的各出處（出處代號、位置、值、倍數），每處 = 對應的正式值",
     "scenario_prices": "tuple[ScenarioPrice, ...]：較差情境寫出的價格（對到 `underlying_prices` 第幾檔的哪一欄）",
-    # 審查標準規則（docs/rules/review-standard.md）
+    # 審查標準規則（docs/checker/rules/review-standard.md）
     "name_zh": "str：商品中文名稱",
     "name_en": "str：商品英文名稱",
     "approval_date": "date：受託或銷售機構審查通過之日期",

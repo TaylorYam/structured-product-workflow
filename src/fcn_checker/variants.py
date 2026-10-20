@@ -1,4 +1,4 @@
-"""樣態：一檔商品的結構類型，與上手支援樣態表標為不支援的樣態（Issue #207，見 CONTEXT.md「樣態」「不支援樣態」）。
+"""樣態：一檔商品的結構類型，與上手支援樣態表標為不支援的樣態（Issue #207，見 docs/checker/glossary.md「樣態」「不支援樣態」）。
 
 上手支援樣態表在 `config/issuer_prefixes.toml` 的 `[unsupported_variants]`，採黑名單：只有表上列出的樣態不支援，
 沒列的組合（例：KO 每日觀察＋記憶式、KI 到期觀察、無 KI）一律算支援。

@@ -1,4 +1,4 @@
-"""JPM 專屬規則（docs/rules/jpm-check-rules.md）：年利率其他出處、說明書內部交叉驗證、日期表結構。
+"""JPM 專屬規則（docs/checker/rules/jpm-check-rules.md）：年利率其他出處、說明書內部交叉驗證、日期表結構。
 
 第 15 項假設價格表、情境重複寫出的本金與年利率、情境 (iii) 執行價由共用情境規則（rules/scenario.py，Issue #294）核對。
 

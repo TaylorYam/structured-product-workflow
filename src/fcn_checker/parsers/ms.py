@@ -1,4 +1,4 @@
-"""MS 中文產品說明書（docs/templates/ms-zh-product-description.md）：章＋條號＋子項＋標籤定位，保留原文證據。
+"""MS 中文產品說明書（docs/checker/templates/ms-zh-product-description.md）：章＋條號＋子項＋標籤定位，保留原文證據。
 
 只支援新版範本（2025-10 起；第一章第 1 項「商品中文名稱」、英文「International Plc」）；舊版範本辨識失敗，轉人工覆核。
 """

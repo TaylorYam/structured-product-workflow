@@ -1,4 +1,4 @@
-"""SG 中文產品說明書（docs/templates/sg-zh-product-description.md）：章＋條號＋子項＋標籤定位，保留原文證據。
+"""SG 中文產品說明書（docs/checker/templates/sg-zh-product-description.md）：章＋條號＋子項＋標籤定位，保留原文證據。
 
 章名「一、商品基本資料」（中文數字＋頓號，五章）；條號「N.」獨立一行、標題在同一列右側（第 10 條起「N. 標題」同一行）；
 封面是兩欄表（標籤在左、值在右）。兩種版面（Smart Communications 與數字後帶空白的舊版面）在去空白後寫法相同，

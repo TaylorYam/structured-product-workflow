@@ -1,4 +1,4 @@
-"""Natixis 投資人須知專屬規則（docs/rules/iis-check-rules.md §3 B19、A4）：KO 價格定義的寫法、空白的受託機構商品代號。
+"""Natixis 投資人須知專屬規則（docs/checker/rules/iis-check-rules.md §3 B19、A4）：KO 價格定義的寫法、空白的受託機構商品代號。
 
 只用投資人須知讀出結果，不碰參考條件表；其他檢查點都是各上手共用的投資人須知規則（rules/iis.py、
 review_standard.iis_review_standard_rules）。KO 定義寫了 % 時由共用規則比 KO %（`ko_pct`）；沒寫 % 是參照說明書，不核對。

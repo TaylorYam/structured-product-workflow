@@ -1,7 +1,7 @@
 """BNP 表格解析：標的表（第一章第 11 項與第 18 項重印）、日期表（第 14 項）、費用表（第四章第 2 項）。
 
 擷取文字為「一格一行」的順序（由左到右、由上到下），格內文字再依寬度拆行，標籤格與第一格有時在同一行
-（docs/templates/bnp-zh-product-description.md §5）。價格表以列標籤切段、在去空白的全文上讀值，不依座標。
+（docs/checker/templates/bnp-zh-product-description.md §5）。價格表以列標籤切段、在去空白的全文上讀值，不依座標。
 """
 
 from __future__ import annotations

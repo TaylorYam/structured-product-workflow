@@ -19,6 +19,9 @@
 - 當前授權：TS／IIS 準備與放回、最小 FCN 資料庫與每日匯入（#32）、寄信草稿（#29，只建草稿、不寄出）、Order 條件讀取（#40，只輸出清單）已實作。2026-10-20 授權規劃合併 repo 與新商品資料流程（ADR 0005、0006），依 Issue 逐步實作；自動寄信等其他流程仍需另行授權。
 
 名詞：Order 指正式交易指示；TS 指產品說明書；IIS 指投資人須知；TDCC 是商品配對代號；FC 指輔銷人員。
+
+核對名詞（完整定義見 [核對名詞表](docs/checker/glossary.md)）：「上手編號」是 TDCC 前三碼，決定用哪家上手的範本；「參考條件表」是核對條件的 Excel 來源，只看第一張工作表、依欄名找欄；「必要欄」少一欄整批不核對；「回填」是把說明書讀出的 ISIN、發行日、比價日（VWAP 商品另含價格）填進核對結果；「人工放行」是作業人員看過錯訊、認定可以通過；「錯訊」是一條中文的不一致說明，寫出兩邊各是多少；「核對結果檔」有「回填後」與「錯誤清單」兩個工作表；「核對紀錄」是每次儲存寫的內部追查紀錄。
+
 「原始歸檔」保存收到的文件；「確認版本歸檔」標記經核對、可供寄送的確切文件版本。
 「商品資料夾」指公槽 FCN 下名稱剛好是 TDCC 的資料夾，存放該商品的原始歸檔；「批次資料夾」是每次準備核對時另開的資料夾，放這批商品標準命名的 TS／IIS PDF；「準備清單」記錄批次中每份 PDF 的來源檔與指紋；「放回清單」記錄核對後哪些 TS／IIS 已放回商品資料夾：通過的用標準檔名，沒通過的檔名加「_待確認」。「錯訊檔」是放回待確認檔時一起寫進商品資料夾的 `<TDCC>_錯誤訊息_<日期時間>.xlsx`，列出沒通過的原因。「沒通過的版本」指和商品資料夾裡某個「_待確認」檔內容相同的上手文件；上手寄來修正版時，重新準備會排除它；還沒有修正版時沿用它，可以重複核對。
 
@@ -41,5 +44,8 @@ Source: user architecture discussions through 2026-10-18. This document records 
 - Current authorization: TS/IIS preparation and return, the minimal FCN database with daily import (#32), mail drafts (#29, drafts only, no sending), and Order term reading (#40, list output only) are implemented. On 2026-10-20 the repository merge and new product data flow (ADR 0005, 0006) were authorized for planning and step-by-step implementation through issues; automatic sending and other workflows require separate authorization.
 
 Terms: Order means formal trading instructions; TS means term sheet; IIS means investor information sheet; TDCC identifies a product; FC means sales support personnel.
+
+Checker terms (full definitions in the [checker glossary](docs/checker/glossary.md), Chinese only): the issuer prefix (上手編號) is the TDCC's first three digits and selects the issuer template; the reference workbook (參考條件表) is the Excel source of checking terms, read from its first sheet by column name; a missing required column (必要欄) stops the whole batch; backfill (回填) writes the ISIN, issue date, and observation dates (plus prices for VWAP products) read from the term sheet into the result; manual release (人工放行) means an operator reviewed the errors and accepts the document; an error message (錯訊) is one Chinese line stating both sides of a mismatch; the result workbook (核對結果檔) has the 回填後 and 錯誤清單 sheets; the check record (核對紀錄) is the internal audit record written on each save.
+
 Incoming archiving preserves received sources; approved-version archiving identifies the exact reviewed files eligible for distribution.
 A product folder is the shared-FCN folder named exactly by a TDCC and holding that product's incoming archive. A batch folder is created for each checking preparation and holds that batch's standard-named TS/IIS PDFs. The preparation list records each batch PDF's source file and hash; the return list records which checked TS/IIS files were copied back into product folders, passing files under standard names and failed ones with `_待確認` appended. The error workbook is the `<TDCC>_錯誤訊息_<timestamp>.xlsx` written into the product folder alongside pending files, listing why they failed. A previously failed version is an issuer document whose content matches a `_待確認` file in the product folder; re-preparation excludes it once a revision arrives and reuses it until then, so it can be rechecked.

@@ -1,4 +1,4 @@
-"""DBS 合成說明書（docs/templates/dbs-zh-product-description.md）；商品、標的與價格皆虛構。
+"""DBS 合成說明書（docs/checker/templates/dbs-zh-product-description.md）；商品、標的與價格皆虛構。
 
 只用 tests/checker/pdf_writer.py 排版：第 1 頁「中文產品說明書(最終版本)」、「• 標籤：值」清單、警語 1.～11. 與刊印日期；段落標題
 （商品基本資料…特別記載事項）置中單獨一行，沒有章號；商品基本資料是兩欄表（標籤 x 56、值 x 170，標籤每 10 字換行）。
@@ -8,7 +8,7 @@
 （封面警語）、`ts.basic`（商品基本資料；表1 `ts.basic.table`、日期格 `ts.basic.dates`（表A 各列 `ts.basic.dates.table`）、配息 `ts.basic.coupon`、強制贖回
 `ts.basic.ko`、到期贖回 `ts.basic.maturity`）、`ts.scenario`（情境；情境價格表 `ts.scenario.table`、情境三最終價格表 `ts.scenario.final`）、`ts.org`（相關機構
 事業概況）、`ts.risk`、`ts.trading`（一般交易事項；費用表 `ts.trading.fees`）、`ts.rest`。
-投資人須知（docs/templates/dbs-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
+投資人須知（docs/checker/templates/dbs-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
 （真實文件寫異體字「視爲」，合成字型畫不出來，改寫「視為」；parser 兩種都收）段落代號 `iis.cover`、`iis.warn`、`iis.org`、`iis.summary`（商品簡介；價格表 `iis.summary.table`）、`iis.terms`（收益分配事項、
 贖回價金之計算）、`iis.fees`、`iis.rest`；每頁頁首刊印日期 `iis.head`。
 """
@@ -620,7 +620,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
-    """DBS 中文投資人須知（docs/templates/dbs-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
+    """DBS 中文投資人須知（docs/checker/templates/dbs-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
     d = _Doc(edits, set() if used is None else used, "iis", right=575)
     w = d.w
     w.line(226, "中文投資人須知(最終版本)", size=12, gap=16)

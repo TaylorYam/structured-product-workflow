@@ -1,4 +1,4 @@
-"""Citi 中文產品說明書（docs/templates/citi-zh-product-description.md）：章＋條號＋子項＋標籤定位，保留原文證據。
+"""Citi 中文產品說明書（docs/checker/templates/citi-zh-product-description.md）：章＋條號＋子項＋標籤定位，保留原文證據。
 
 章名「一、商品基本資料」（中文數字＋頓號，五章）；條號「N.」在左邊界（新文件獨立一行、舊文件與標題同一行）；
 封面是 `‧` 兩欄表（標籤在左、值在右）。頁尾「第N頁，共M頁」不算內文。所有欄位都在去空白的全文索引上比對。

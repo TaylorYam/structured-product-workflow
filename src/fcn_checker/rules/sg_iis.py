@@ -1,4 +1,4 @@
-"""SG 投資人須知專屬規則（docs/rules/iis-check-rules.md §3 D38、D39）：有無自動提前出場與期間每日觀察的觀察起日
+"""SG 投資人須知專屬規則（docs/checker/rules/iis-check-rules.md §3 D38、D39）：有無自動提前出場與期間每日觀察的觀察起日
 都要等於同商品說明書第 8 項。
 
 只用投資人須知讀出結果與同商品 SG 說明書的讀出結果（可讀 SG parser 的專屬欄位 `has_autocall`、`ko_wording`），

@@ -1,4 +1,4 @@
-"""投資人須知規則（docs/rules/iis-check-rules.md §3 A、B 類，ADR 0007）：各上手共用，只核對範本有的項目。
+"""投資人須知規則（docs/checker/rules/iis-check-rules.md §3 A、B 類，ADR 0007）：各上手共用，只核對範本有的項目。
 
 - 文件本身：頁數、頁首總頁數、封面商品代號（= 檔名前 12 碼）。
 - 參考條件表有的欄位：沿用參考條件表共用規則（rules/reference.py），文件那一邊是投資人須知。
@@ -40,7 +40,7 @@ from .kit import (
     to_int,
 )
 
-MONTHLY_TOLERANCE = Decimal("0.0001")  # 同 BARC 說明書月配息率推算（docs/rules/barc-check-rules.md）
+MONTHLY_TOLERANCE = Decimal("0.0001")  # 同 BARC 說明書月配息率推算（docs/checker/rules/barc-check-rules.md）
 NO_TERM_SHEET = "沒有可比對的同商品說明書（這批沒有、讀不到或沒有配對成功），無法比對"
 _NAME_TAIL = re.compile(r"（(?:以下簡稱|下稱)「本商品」）.*$")
 
@@ -305,7 +305,7 @@ def reference_fields(ctx: Context) -> list[CheckResult]:
         ("ko_pct", lambda: table["ko_pct"].check(ctx)),
         ("ki_pct", lambda: _KI_PCT.check(ctx)),
         ("underlying_prices", lambda: _prices(ctx)),
-        # 日期與提前出場、觸及下限條件（docs/rules/iis-check-rules.md §3 D 類，MS）
+        # 日期與提前出場、觸及下限條件（docs/checker/rules/iis-check-rules.md §3 D 類，MS）
         ("trade_date", lambda: table["trade_date"].check(ctx)),
         ("final_valuation_date", lambda: table["final_valuation_date"].check(ctx)),
         ("monthly_coupons", lambda: _monthly_coupons(ctx)),

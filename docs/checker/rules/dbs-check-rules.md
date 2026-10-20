@@ -202,7 +202,7 @@ Issue #294 起，情境價格表（`scenario.reprint`）、基本假設的年期
 ## 6. 樣本缺口
 
 - **單一標的**（DBS 沒有任何單一標的樣本，2026-10-15 確認）、USD／AUD／JPY 以外的幣別、非美股標的、Non-Call ≥ 3、KO % ≠ 100：沒有樣本，依規則推得或轉人工覆核。
-- 樣本只有 4 份（`docs/issuer-onboarding.md` §1 建議 ≥ 10 份）；私有 Repo `fcn-oos-samples` 沒有 DBS。
+- 樣本只有 4 份（`docs/checker/issuer-onboarding.md` §1 建議 ≥ 10 份）；私有 Repo `fcn-oos-samples` 沒有 DBS。
 - 比價日填法（[DBS 下單資料格式](../order-formats/dbs-fcn-reference.md) §4）依條文推得；探勘用的表比價日欄空白，實作後以回填結果請作業人員確認。
 
 ## 7. 建議實作方式
@@ -215,7 +215,7 @@ Issue #294 起，情境價格表（`scenario.reprint`）、基本假設的年期
 | 投資人須知 | `parsers/dbs_iis.py`、`IisTemplate`（頁底 `第N 頁/共M 頁` 的 `page_totals`；每頁頁首刊印日期；價格表表頭跨頁、費用表列跨頁）；範本專屬規則 `rules/dbs_iis.py`（頁首刊印日期 4 處相同且 = 說明書）；[投資人須知核對規則](iis-check-rules.md) DBS 欄 |
 | 共用設定 | 審查標準 DBS 分節（`fixed_warning_by_issuer.dbs`、`fixed_warning_occurrences_by_issuer.dbs = 2`、`level_formats.dbs`、`product_name.dbs`、`issuer_name.dbs`、`product_type.dbs`、`min_amount_multiples.dbs`、`iis.fixed_warning_occurrences.dbs = 1`）；`distributor.name_equivalents`、`phone_equivalents` 各加一種寫法；共用名稱規則加 `{quanto_*}`、`{ki_*}` 佔位符與 `single_unsupported`；`config/reference_sheet.toml` 的 `[issuer_values] DBS = "DBS"`；`config/issuer_prefixes.toml` 把 `078` 移到「已有範本」 |
 
-要有合成 PDF 測試（KO D 記憶式 × KI AM／無、Non-Call 1 與 2、USD 與 Quanto（AUD、JPY）、3 檔與 4 檔、非整數 K %、最大利率值無條件進位 ≠ 四捨五入、表1 表頭 % 同行／另起一行、情境表全形表頭、投資人須知價格表表頭跨頁、費用表列跨頁、每頁頁首刊印日期、單一標的名稱轉人工覆核）、本機 4 份真實樣本測試（`tests/test_real_dbs.py`，結果與 §5 一致：4 組都通過並回填），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura、GS、Natixis、CA、BBVA（及 UBS）樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變（受託機構等價寫法與名稱佔位符新增造成的改變要逐份列出，預期沒有）。
+要有合成 PDF 測試（KO D 記憶式 × KI AM／無、Non-Call 1 與 2、USD 與 Quanto（AUD、JPY）、3 檔與 4 檔、非整數 K %、最大利率值無條件進位 ≠ 四捨五入、表1 表頭 % 同行／另起一行、情境表全形表頭、投資人須知價格表表頭跨頁、費用表列跨頁、每頁頁首刊印日期、單一標的名稱轉人工覆核）、本機 4 份真實樣本測試（`tests/checker/test_real_dbs.py`，結果與 §5 一致：4 組都通過並回填），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura、GS、Natixis、CA、BBVA（及 UBS）樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變（受託機構等價寫法與名稱佔位符新增造成的改變要逐份列出，預期沒有）。
 
 ### 7.1 規則對照（建議 rule_id）
 

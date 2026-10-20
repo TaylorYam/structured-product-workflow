@@ -1,5 +1,5 @@
 """MS 條款句型表：說明書第 16、17 項與投資人須知「贖回價金之計算」段共用的觸及下限（KI）、自動提前出場（KO）觀察、
-記憶式寫法與判斷（範本規格 docs/templates/ms-zh-product-description.md §4.1–4.4、ms-zh-iis.md §4.1–4.3；Issue #146）。
+記憶式寫法與判斷（範本規格 docs/checker/templates/ms-zh-product-description.md §4.1–4.4、ms-zh-iis.md §4.1–4.3；Issue #146）。
 
 MS 改版只改這裡。句型比對一律去空白、括號統一全形；兩份文件的寫法只差「第k 期／個定價日」、「（含）」與
 「觸及下限事件」有沒有「」，表內一併接受。兩份 parser 各自決定在哪一段文字判斷、以及讀不到時的說明文字。

@@ -1,4 +1,4 @@
-"""BNP 合成說明書（docs/templates/bnp-zh-product-description.md）；商品、標的與價格皆虛構。
+"""BNP 合成說明書（docs/checker/templates/bnp-zh-product-description.md）；商品、標的與價格皆虛構。
 
 只用 tests/checker/pdf_writer.py 排版：封面項號「N.」獨立一行、內容在下一行；章名「第X章、」；第一章條號「N.」獨立一行、
 標題在下一行；子項「(n)」；表格一格一行（標籤格與第一格有時同一行）。`breaks` 在表格某列之後強制換頁。
@@ -6,7 +6,7 @@
 （標的表 `ts.art11.table`、日期表 `ts.art14.table`、重印表 `ts.art18.table`、情境 `ts.scen.一`…）、其他各章 `ts.ch二`～`ts.ch五`。
 境外人民幣計價（`currency_zh="境外人民幣"`）照真實樣本的寫法：計價幣別後接人民幣定義句、第 10 項後多一項「人民幣付款中斷
 事件」（段落代號 `ts.art_rmb`）使之後條號 +1、英文名稱寫 CNY（Issue #345）；第一章段落代號仍用美元版條號。
-投資人須知（docs/templates/bnp-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
+投資人須知（docs/checker/templates/bnp-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
 段落代號 `iis.cover`、`iis.warn`（警語 5 的「(發行機構)與法國巴黎銀行(保證機構)」一字一個文字單位，同真實樣本）、`iis.org`、
 `iis.summary`（標的表 `iis.summary.table`）、`iis.coupon`、`iis.issue`、`iis.risk`、`iis.fees`、`iis.rest`。
 """
@@ -352,7 +352,7 @@ def _split_line(d: _Doc, text: str) -> None:
 
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
-    """BNP 中文投資人須知（docs/templates/bnp-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
+    """BNP 中文投資人須知（docs/checker/templates/bnp-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
     d = _Doc(edits, "iis", used)
     w = d.w
     dist, unit, short = DIST["name"], s.currency_zh, GUARANTOR["ch1"]

@@ -1,4 +1,4 @@
-"""MS 合成說明書與投資人須知（docs/templates/ms-zh-product-description.md、ms-zh-iis.md）；商品、標的與價格皆虛構。
+"""MS 合成說明書與投資人須知（docs/checker/templates/ms-zh-product-description.md、ms-zh-iis.md）；商品、標的與價格皆虛構。
 
 只用 tests/checker/pdf_writer.py 排版：封面「N. 標籤：值」、章名「第X章、」、第一章條號「N. 標題：」與內文同一行、子項「(n)」，
 表格一格一行（價格表為真實欄列版面）。`breaks` 在表格某列之後強制換頁，`iis_pages`／`iis_page_total` 改投資人須知頁數與頁底總頁數。
@@ -529,7 +529,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
-    """MS 中文投資人須知（新版，docs/templates/ms-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
+    """MS 中文投資人須知（新版，docs/checker/templates/ms-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
     d = _Doc(edits, "iis", used)
     w = d.w
     ends, payments, k, final = s.ends, s.payments, s.first_callable, s.ends[-1]

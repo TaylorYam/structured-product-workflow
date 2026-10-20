@@ -1,4 +1,4 @@
-"""UBS 專屬規則（docs/rules/ubs-check-rules.md）：配息率與其他出處、說明書內部交叉驗證（受託機構商品代號、名稱、幣別、
+"""UBS 專屬規則（docs/checker/rules/ubs-check-rules.md）：配息率與其他出處、說明書內部交叉驗證（受託機構商品代號、名稱、幣別、
 發行分行、面額的其他出處）、KO 每日型固定／變動配息期別、KO 條款的 KO %、配息表。商品基本資料十五的情境價格表、設定參數
 與情境算式代入的面額、配息率由共用情境規則（rules/scenario.py，Issue #294）核對。
 

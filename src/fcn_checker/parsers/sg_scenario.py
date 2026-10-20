@@ -1,4 +1,4 @@
-"""SG 第一章 §15(3) 情境分析：假設、重印標的表與各情境的算式（docs/templates/sg-zh-product-description.md §4.7）。
+"""SG 第一章 §15(3) 情境分析：假設、重印標的表與各情境的算式（docs/checker/templates/sg-zh-product-description.md §4.7）。
 
 只擷取文件上寫的值與原文行；核對在 rules/sg_scenario.py。抓不到的值為 None，由規則轉人工覆核。
 兩種版面在去空白後的寫法相同（舊版面只是數字與單位間多了空白），所有句型都在去空白的全文上比對。

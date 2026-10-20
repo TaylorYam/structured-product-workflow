@@ -1,4 +1,4 @@
-"""DBS 專屬規則（docs/rules/dbs-check-rules.md）：最大利率值（無條件進位）與其他出處、第 1～k 期、說明書內部交叉驗證、
+"""DBS 專屬規則（docs/checker/rules/dbs-check-rules.md）：最大利率值（無條件進位）與其他出處、第 1～k 期、說明書內部交叉驗證、
 表A、情境投資金額與情境三表現最差連結標的。情境價格表、情境基本假設、情境重複寫出的最大利率值與情境三的價格由共用情境
 規則（rules/scenario.py，Issue #294）核對。
 

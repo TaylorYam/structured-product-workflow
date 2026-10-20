@@ -191,7 +191,7 @@
 | 投資人須知 | `parsers/nomura_iis.py`、`IisTemplate`（頁首 `N/4` 的 `page_totals`，與 JPM 共用讀法；`print_dates` 交 `absent`）、範本專屬規則：每期配息率（= 年利率 ÷ 12、= 說明書）、D 型 KO 起日 = 說明書、標的英文名稱 = 說明書第 8 項、受理贖回日期文字 = 說明書；[投資人須知核對規則](iis-check-rules.md) Nomura 欄 |
 | 共用設定 | 審查標準 Nomura 分節（`fixed_warning_by_issuer.nomura`、**新增**上手別說明書固定警語次數、`risk.level_formats.nomura`、名稱樣板、發行機構、保證機構、總代理人、商品種類、`minimum_issue_size.nomura`、`iis.fixed_warning_occurrences.nomura`）、`approval_dates` 加 2025-06-24；`config/reference_sheet.toml` 的 `[issuer_values] NOMURA` |
 
-要有合成 PDF 測試（D／P、記憶式／非記憶式／單一標的、KI 無／AM／D／P、Non-Call = 天期的 P 型、日期表 KO 價欄、JPY、AUD、VWAP、NR1 式多空白、頁首 `N/4`、投資人須知沒有刊印日期）、本機 8 份真實樣本測試（`tests/test_real_nomura.py`，結果與 §5 一致：NR6 說明書與投資人須知因到期日不一致不通過，其餘 7 組通過並回填），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM 樣本的負面測試；新增 `approval_dates` 與上手別次數設定後，既有上手的合成與本機真實樣本測試結果須逐份比較，變化只能來自 2025-06-24（交易日早於 2025-12-18 的樣本）。
+要有合成 PDF 測試（D／P、記憶式／非記憶式／單一標的、KI 無／AM／D／P、Non-Call = 天期的 P 型、日期表 KO 價欄、JPY、AUD、VWAP、NR1 式多空白、頁首 `N/4`、投資人須知沒有刊印日期）、本機 8 份真實樣本測試（`tests/checker/test_real_nomura.py`，結果與 §5 一致：NR6 說明書與投資人須知因到期日不一致不通過，其餘 7 組通過並回填），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM 樣本的負面測試；新增 `approval_dates` 與上手別次數設定後，既有上手的合成與本機真實樣本測試結果須逐份比較，變化只能來自 2025-06-24（交易日早於 2025-12-18 的樣本）。
 
 ### 7.1 實作對照（Issue #239）
 

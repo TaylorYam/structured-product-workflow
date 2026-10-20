@@ -1,4 +1,4 @@
-"""投資人須知（IIS）核對：說明書與投資人須知成對核對，三方一致才回填（ADR 0007、docs/rules/iis-check-rules.md）。
+"""投資人須知（IIS）核對：說明書與投資人須知成對核對，三方一致才回填（ADR 0007、docs/checker/rules/iis-check-rules.md）。
 
 測試切點：批量入口（預覽＋核對＋儲存）與 PANEL 工作階段；合成 PDF 由各上手合成器產生，數值皆虛構。
 """

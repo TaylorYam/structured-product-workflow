@@ -1,6 +1,6 @@
 """程式版本（核對紀錄用）：開發用 Git 工作目錄的 HEAD，或 setup_panel.cmd 安裝時記錄的版本。
 
-更新方式：在專案資料夾 `git pull` 後重新執行 `setup_panel.cmd`（ADR 0006）。
+更新方式：在專案資料夾 `git pull` 後重新執行 `setup_panel.cmd`（核對 ADR 0006：`docs/checker/adr/0006-panel-maintainer-only-no-self-update.md`）。
 """
 
 from __future__ import annotations

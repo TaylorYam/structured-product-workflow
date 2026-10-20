@@ -12,7 +12,7 @@
 
 ### 專案導讀
 
-每次接手先讀 README.md、CONTEXT.md、docs/architecture.md 與 docs/open-questions.md；處理跨專案串接時另讀 docs/checker-integration.md；涉及資料保存、開發環境或部署時先讀 docs/adr/0001-postgresql-workflow-storage.md 與 docs/database-and-deployment.md。當前為設計階段，業務實作需另有使用者指示。區分已確認需求、建議與未定事項；核對專案已併入本專案（docs/adr/0005-merge-checker-into-workflow.md）：核對規則在 `src/fcn_checker/`、`config/`，原文件暫放 `docs/checker/`。
+每次接手先讀 README.md、CONTEXT.md、docs/architecture.md 與 docs/open-questions.md；處理跨專案串接時另讀 docs/checker-integration.md；涉及資料保存、開發環境或部署時先讀 docs/adr/0001-postgresql-workflow-storage.md 與 docs/database-and-deployment.md。當前為設計階段，業務實作需另有使用者指示。區分已確認需求、建議與未定事項；核對專案已併入本專案（docs/adr/0005-merge-checker-into-workflow.md）：核對規則在 `src/fcn_checker/`、`config/`，處理核對時另讀 docs/checker/README.md 與相關規則、範本文件；那些文件只有中文，裡面的 Issue 編號指原 fcn-term-sheet-checker repo。
 
 ### 工作分流
 
@@ -23,6 +23,7 @@
 - Bug、原因與正確行為都明確：檢查相關程式碼 → 建立 GitHub Issue → `/implement <issue>` → `/code-review`。合理時加入回歸測試（regression test）。
 - Bug、原因不明：`/diagnosing-bugs` → 建立重現方式 → 找出根本原因 → 確認正確行為 → 建立 GitHub Issue → `/implement <issue>` → `/code-review`。假設與已確認的原因要分開記錄。
 - 外部或他人提出的 Issue：既有 Issue → `/triage <issue>` → `ready-for-agent` → `/implement <issue>` → `/code-review`。
+- 新上手或範本改版（核對）：依 `docs/checker/issuer-onboarding.md`（樣本 → 探勘 → 開發者與作業人員各自標記、取交集 → 規格文件 PR → 實作 Issue → `/implement` → `/code-review` → 試跑）。
 
 `/triage` 主要用於他人建立的 Issue。由本 agent、`/to-spec` 或 `/to-tickets` 建立且已可直接實作的 Issue，不需要再 triage。只有工作量超過單一 Issue／PR 時才使用 `/to-tickets`。
 
@@ -57,7 +58,7 @@
 
 - 遵循既有的架構、命名、格式與相依套件，除非任務本身要改變它們。以符合驗收條件的最小且一致的變更為原則；避免無關的重構與新增相依套件。
 - 行為、設定方式或介面改變時更新文件。持久的架構決策依 `docs/adr/` 的格式記錄。
-- 中英並列的文件（`AGENTS.md`、`CLAUDE.md`、`README.md`、`docs/`）修改時，中文與英文兩區必須同步更新。
+- 中英並列的文件（`AGENTS.md`、`CLAUDE.md`、`README.md`、`docs/`）修改時，中文與英文兩區必須同步更新。例外：`docs/checker/` 是從核對專案搬來的文件，只有中文；修改時維持中文即可，不必補英文。
 
 ### 機密與本機資料
 
@@ -77,7 +78,7 @@ This root-level file is the repository's shared AI development policy. It define
 
 ### Project orientation
 
-On handoff, read README.md, CONTEXT.md, docs/architecture.md, and docs/open-questions.md. For cross-project integration, also read docs/checker-integration.md. For persistence, development environments, or deployment, first read docs/adr/0001-postgresql-workflow-storage.md and docs/database-and-deployment.md. This is the design stage; business implementation requires a separate user instruction. Distinguish confirmed requirements, recommendations, and unresolved matters. The checker has been merged into this repository (docs/adr/0005-merge-checker-into-workflow.md): checking rules live in `src/fcn_checker/` and `config/`, with its original documents in `docs/checker/` for now.
+On handoff, read README.md, CONTEXT.md, docs/architecture.md, and docs/open-questions.md. For cross-project integration, also read docs/checker-integration.md. For persistence, development environments, or deployment, first read docs/adr/0001-postgresql-workflow-storage.md and docs/database-and-deployment.md. This is the design stage; business implementation requires a separate user instruction. Distinguish confirmed requirements, recommendations, and unresolved matters. The checker has been merged into this repository (docs/adr/0005-merge-checker-into-workflow.md): checking rules live in `src/fcn_checker/` and `config/`; for checker work also read docs/checker/README.md and the relevant rule and template documents, which are Chinese-only and whose issue numbers refer to the original fcn-term-sheet-checker repository.
 
 ### Work routing
 
@@ -88,6 +89,7 @@ Choose the route before creating an Issue:
 - Bug, cause and correct behavior clear: inspect relevant code → create a GitHub Issue → `/implement <issue>` → `/code-review`. Add a regression test when reasonable.
 - Bug, cause unclear: `/diagnosing-bugs` → establish reproduction → identify root cause → confirm correct behavior → create a GitHub Issue → `/implement <issue>` → `/code-review`. Keep hypotheses separate from confirmed causes.
 - External or incoming Issue: existing Issue → `/triage <issue>` → `ready-for-agent` → `/implement <issue>` → `/code-review`.
+- New issuer or new template version (checker): follow `docs/checker/issuer-onboarding.md` (samples → exploration → independent developer and operator highlights merged by intersection → spec docs PR → implementation Issue → `/implement` → `/code-review` → trial run).
 
 Use `/triage` mainly for Issues created by others. An implementation-ready Issue created by this agent, `/to-spec`, or `/to-tickets` does not need another triage. Use `/to-tickets` only when the work is too large for one Issue / PR.
 
@@ -122,7 +124,7 @@ Keep `main` as the stable integration branch. For planned work, follow:
 
 - Follow existing architecture, naming, formatting, and dependencies unless the task changes them. Make the smallest coherent change that meets acceptance criteria; avoid unrelated refactors and dependencies.
 - Update documentation when behavior, setup, or interfaces change. Record lasting architecture decisions in `docs/adr/` using its format.
-- When editing a bilingual document (`AGENTS.md`, `CLAUDE.md`, `README.md`, `docs/`), update the Chinese and English sections together.
+- When editing a bilingual document (`AGENTS.md`, `CLAUDE.md`, `README.md`, `docs/`), update the Chinese and English sections together. Exception: `docs/checker/` holds documents carried over from the checker project and is Chinese-only; keep edits there in Chinese without adding English.
 
 ### Secrets and local data
 

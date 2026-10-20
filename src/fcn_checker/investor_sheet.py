@@ -1,4 +1,4 @@
-"""投資人須知讀出結果：上手投資人須知 parser 與共用規則之間的 seam（ADR 0007、docs/rules/iis-check-rules.md）。
+"""投資人須知讀出結果：上手投資人須知 parser 與共用規則之間的 seam（ADR 0007、docs/checker/rules/iis-check-rules.md）。
 
 投資人須知只摘錄部分條件，各上手範本有的項目不同：讀出結果以 `provides` 宣告這份有哪些欄位，
 範本沒有的欄位不核對（不推定通過，也不報缺漏）；範本有但讀不到的欄位照常是缺漏，規則轉人工覆核。

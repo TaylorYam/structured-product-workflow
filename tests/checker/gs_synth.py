@@ -1,11 +1,11 @@
-"""GS 合成說明書（docs/templates/gs-zh-product-description.md）；商品、標的與價格皆虛構。
+"""GS 合成說明書（docs/checker/templates/gs-zh-product-description.md）；商品、標的與價格皆虛構。
 
 只用 tests/checker/pdf_writer.py 排版：第 1 頁「中文產品說明書」「受託機構商品代號為…」＋編號項目 1.～13.（x 72、續行 x 86）；
 章名「第一章:商品基本資料」在左邊界 x 72，第一章起每頁右上角另有重複的章名頁首（x 458）、每頁頁底置中「第- N -頁，共M頁」；
 條號「N.」與標題同一行。表格一格一個文字單位（同一列同一高度），表頭一格拆成多行。
 改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`（第 1–2 頁）、`ts.warn`（第 1 頁警語）、
 第一章各條 `ts.art{n}`（觀察時程表 `ts.art13.table`、價格表 `ts.art15.table`）、其他各章 `ts.ch二`～`ts.ch六`。
-投資人須知（docs/templates/gs-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
+投資人須知（docs/checker/templates/gs-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
 段落代號 `iis.cover`、`iis.warn`、`iis.org`（一. 相關機構）、`iis.summary`（二. 1. 商品簡介，價格表 `iis.table`）、
 `iis.coupon`（二. 2.）、`iis.redeem`（二. 3.、4.）、`iis.fees`（四.）、`iis.rest`（其他）。
 """
@@ -687,7 +687,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
-    """GS 中文投資人須知（docs/templates/gs-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
+    """GS 中文投資人須知（docs/checker/templates/gs-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
     d = _Doc(edits, set() if used is None else used, "iis", width=590)
     w = d.w
     li = "利"  # 真實文件是相容字 U+F9DD；內建 CJK 字型畫不出來，合成文件寫標準字（相容字轉換由本機真實樣本測試涵蓋）

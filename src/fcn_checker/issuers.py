@@ -3,7 +3,7 @@
 
 上手 adapter 只提供這五樣；參考條件表欄位、審查標準、Non-Call／ISIN／發行日／比價日與回填都是各上手共用的規則，
 由單份核對（single_check.py）依序執行。新增上手時在 `REGISTRY` 登記一筆，並在 `config/issuer_prefixes.toml`
-登記上手編號（docs/issuer-onboarding.md §6）；批量入口、CLI 與 PANEL 都由這裡分派。
+登記上手編號（docs/checker/issuer-onboarding.md §6）；批量入口、CLI 與 PANEL 都由這裡分派。
 """
 
 from __future__ import annotations
@@ -113,7 +113,7 @@ class Issuer:
 
 _IIS_SAMPLES = {
     "rule_id": "iis.template_variants",
-    "description": "投資人須知依各 5～8 份樣本建立（docs/templates/*-zh-iis.md 樣本總表；MS 只支援其中新版 6 份）："
+    "description": "投資人須知依各 5～8 份樣本建立（docs/checker/templates/*-zh-iis.md 樣本總表；MS 只支援其中新版 6 份）："
     "其他型態的寫法未驗證，範本以外的欄位或寫法會轉人工覆核",
 }
 

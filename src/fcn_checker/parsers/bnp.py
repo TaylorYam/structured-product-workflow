@@ -1,4 +1,4 @@
-"""BNP 中文產品說明書（docs/templates/bnp-zh-product-description.md）：章＋條號＋子項＋標籤定位，保留原文證據。
+"""BNP 中文產品說明書（docs/checker/templates/bnp-zh-product-description.md）：章＋條號＋子項＋標籤定位，保留原文證據。
 
 五章、章名用頓號；封面與第一章的條號「N.」獨立一行，內容在下一行；全文半形括號；風險等級寫 [RR4]。
 """

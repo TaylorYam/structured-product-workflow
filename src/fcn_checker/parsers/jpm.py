@@ -1,4 +1,4 @@
-"""JPM 中文產品說明書（docs/templates/jpm-zh-product-description.md）：部分＋條號＋子項＋標籤定位，保留原文證據。
+"""JPM 中文產品說明書（docs/checker/templates/jpm-zh-product-description.md）：部分＋條號＋子項＋標籤定位，保留原文證據。
 
 章名「I. 商品基本資料」（羅馬數字＋句點，五部分；`III.` 後沒有空白）；條號「N.」在左邊界（常獨立一行、標題在下一行）；
 封面是兩欄表（標籤在左、值在右）。頁碼「N/M」不算內文。頁尾註腳的上標數字會夾在本文中（例：`中斷日效果` / `2 」條款`、

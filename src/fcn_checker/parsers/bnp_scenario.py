@@ -1,4 +1,4 @@
-"""BNP 第一章第 18 項(3) 情境分析：假設、重印標的表與各情境的算式（docs/templates/bnp-zh-product-description.md §4.7、§5.2）。
+"""BNP 第一章第 18 項(3) 情境分析：假設、重印標的表與各情境的算式（docs/checker/templates/bnp-zh-product-description.md §4.7、§5.2）。
 
 只擷取文件上寫的值與原文行；核對在 rules/bnp_scenario.py。抓不到的值為 None，由規則轉人工覆核。
 """

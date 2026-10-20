@@ -1,4 +1,4 @@
-"""CA 合成說明書（docs/templates/ca-zh-product-description.md）；商品、標的與價格皆虛構。
+"""CA 合成說明書（docs/checker/templates/ca-zh-product-description.md）；商品、標的與價格皆虛構。
 
 只用 tests/checker/pdf_writer.py 排版：第 1 頁「中文產品說明書」、「● 標籤：值」清單（值跨行時接在下一行）、警語 1～12 與刊印日期；
 章名「第一章、商品基本資料」～「第七章、股權連結商品的額外條款及條件」在左邊界，條號「N.」x 36。每頁頁底「第N 頁，共M頁」。
@@ -6,7 +6,7 @@
 價格後接標的報價幣別字。改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`（第 1–2 頁）、
 `ts.warn`（封面警語）、第一章各條 `ts.art{n}`（配息表 `ts.art9.coupon`、KO 觀察日表 `ts.art9.ko`、價格表 `ts.art9.table`、
 第 10 項代碼表 `ts.art10.table`、情境價格表 `ts.art16.table`）、其他各章 `ts.ch二`～`ts.ch七`。
-投資人須知（docs/templates/ca-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
+投資人須知（docs/checker/templates/ca-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
 段落代號 `iis.cover`、`iis.warn`、`iis.org`（一）、`iis.summary`（二、1.）、`iis.coupon`（二、2.）、`iis.fees`（四）、`iis.rest`。
 真實投資人須知日期的「年」是 CJK 相容字 U+F98E；合成用的字型畫不出這個字（擷取時整行後面會掉），改由
 tests/checker/test_iis_ca.py 直接以擷取後的行測正規化。
@@ -627,7 +627,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
-    """CA 中文投資人須知（docs/templates/ca-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
+    """CA 中文投資人須知（docs/checker/templates/ca-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
     d = _Doc(edits, set() if used is None else used, "iis", width=565)
     w = d.w
 

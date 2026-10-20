@@ -347,7 +347,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     return w.save(path)
 
 
-# ---------------------------------------------------------------- 投資人須知（docs/templates/hsbc-zh-iis.md）
+# ---------------------------------------------------------------- 投資人須知（docs/checker/templates/hsbc-zh-iis.md）
 
 IIS_PAGES = 4  # 審查標準 iis.pages
 

@@ -1,4 +1,4 @@
-"""日期表的結構檢查：各上手共用，只讀標準欄位 `schedule_table`（Issue #289；docs/rules/shared-check-rules.md §6.1）。
+"""日期表的結構檢查：各上手共用，只讀標準欄位 `schedule_table`（Issue #289；docs/checker/rules/shared-check-rules.md §6.1）。
 
 六項檢查各自一個結果，項目名稱前加上上手交出的表位置（例：第 13 條日期表期數）：
 

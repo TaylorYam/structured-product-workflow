@@ -1,6 +1,6 @@
 # 審查標準（Review Standard）
 
-- 設定檔：[`config/review_standard.toml`](../../config/review_standard.toml)
+- 設定檔：[`config/review_standard.toml`](../../../config/review_standard.toml)
 - 狀態：2026-10-01 與使用者確認；已實作為 `standard.*` 規則（Issue #7），並在本機以 14 份 BARC 樣本驗證（結果同 §3）。HSBC 差異（§2.2、§3.1）已確認並實作（Issue #32、#34）；MS 差異（§2.6）已確認並實作（Issue #132、#135）；BNP 差異（§2.7）已確認並實作（Issue #189、#191）；SG 差異（§2.8）已確認並實作（Issue #192、#194）
 
 ## 1. 為什麼要獨立成設定檔

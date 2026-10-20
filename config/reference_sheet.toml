@@ -6,7 +6,7 @@
 # TS、IIS：說明書與投資人須知都通過或人工放行的商品打勾（checked_value，Issue #127）。
 # 期初定價為 VWAP 的商品，UL_n 四個價格欄不比對，核對通過後以說明書價格覆寫（Issue #122）。
 # 核對結果檔「回填後」一律照 [import_format]（匯入格式）重新產生，不論表上欄位怎麼排（Issue #203）。
-# 規則說明見 docs/order-formats/reference-sheet.md。
+# 規則說明見 docs/checker/order-formats/reference-sheet.md。
 
 version = 17
 effective_date = 2026-10-15

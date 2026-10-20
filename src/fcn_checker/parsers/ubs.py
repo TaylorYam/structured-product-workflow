@@ -1,4 +1,4 @@
-"""UBS（瑞銀）中文產品說明書（docs/templates/ubs-zh-product-description.md）：段名＋項號＋標籤定位，保留原文證據。
+"""UBS（瑞銀）中文產品說明書（docs/checker/templates/ubs-zh-product-description.md）：段名＋項號＋標籤定位，保留原文證據。
 
 沒有封面與章號：第 1～2 頁是「一、」～「十二、」清單，之後各段只有段名（單獨一行：商品基本資料、相關機構事業概況、
 商品風險揭露、投資風險警語、一般交易事項、特別記載事項），段內項號「一、」起重新起算（x≈36）。每頁頁底

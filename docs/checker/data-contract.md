@@ -1,6 +1,6 @@
 # 現行資料契約
 
-核實日期：2026-10-18。依目前 Python 型別與 JSON 序列化描述，不是另外維護的 JSON Schema。來源為 [`schema.py`](../src/fcn_checker/schema.py)、[`standard_fields.py`](../src/fcn_checker/standard_fields.py)、[`investor_sheet.py`](../src/fcn_checker/investor_sheet.py)、[`orders/reference.py`](../src/fcn_checker/orders/reference.py) 與 [`reporting.py`](../src/fcn_checker/reporting.py)。
+核實日期：2026-10-18。依目前 Python 型別與 JSON 序列化描述，不是另外維護的 JSON Schema。來源為 [`schema.py`](../../src/fcn_checker/schema.py)、[`standard_fields.py`](../../src/fcn_checker/standard_fields.py)、[`investor_sheet.py`](../../src/fcn_checker/investor_sheet.py)、[`orders/reference.py`](../../src/fcn_checker/orders/reference.py) 與 [`reporting.py`](../../src/fcn_checker/reporting.py)。
 
 ## 1. 輸入、快照與證據
 

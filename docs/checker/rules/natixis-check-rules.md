@@ -203,7 +203,7 @@
 | 投資人須知 | `parsers/natixis_iis.py`、`IisTemplate`（頁底 `第N頁/共M頁` 的 `page_totals`；刊印日期在第 1 行標題同一行）；投資人須知的 KO 定義沒寫 % 是參照說明書第一章第 14 項、不核對 KO %（Issue #272），其他寫法判不一致（不是讀不到就轉人工）；[投資人須知核對規則](iis-check-rules.md) Natixis 欄 |
 | 共用設定 | 審查標準 Natixis 分節（`fixed_warning_by_issuer.natixis`、`level_formats.natixis`、`product_name.natixis`、`issuer_name.natixis`、`product_type.natixis`、`iis.fixed_warning_occurrences.natixis = 2`）；`distributor.approval_dates` 加 2024-03-20；`config/reference_sheet.toml` 的 `[issuer_values] NATIXIS = "Natixis"` |
 
-要有合成 PDF 測試（KO D 記憶式／非記憶式、KO P（含 Non-Call = 天期、觀察日表 1 列）、KI 無／AM／D／P、單一／多標的、JPY 整數期初價格、AUD、VWAP、新舊兩版標籤、頁底英文名稱兩行、連結標的表數字拆行、欄序 KO → KI → K、投資人須知 5 頁、投資人須知 KO 定義少 %）、本機 8 份真實樣本測試（`tests/test_real_natixis.py`，結果與 §5 一致：NX6 投資人須知頁數判不一致，該組不回填；NX8 沒有參考條件表列；其餘有表上列的組別通過並回填），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura、GS 樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變（`approval_dates` 加 2024-03-20 造成的改變要逐份列出）。
+要有合成 PDF 測試（KO D 記憶式／非記憶式、KO P（含 Non-Call = 天期、觀察日表 1 列）、KI 無／AM／D／P、單一／多標的、JPY 整數期初價格、AUD、VWAP、新舊兩版標籤、頁底英文名稱兩行、連結標的表數字拆行、欄序 KO → KI → K、投資人須知 5 頁、投資人須知 KO 定義少 %）、本機 8 份真實樣本測試（`tests/checker/test_real_natixis.py`，結果與 §5 一致：NX6 投資人須知頁數判不一致，該組不回填；NX8 沒有參考條件表列；其餘有表上列的組別通過並回填），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura、GS 樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變（`approval_dates` 加 2024-03-20 造成的改變要逐份列出）。
 
 ### 7.1 實作對照（Issue #261）
 

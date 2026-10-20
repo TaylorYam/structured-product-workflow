@@ -1,4 +1,4 @@
-"""BBVA 合成說明書（docs/templates/bbva-zh-product-description.md）；商品、標的與價格皆虛構。
+"""BBVA 合成說明書（docs/checker/templates/bbva-zh-product-description.md）；商品、標的與價格皆虛構。
 
 只用 tests/checker/pdf_writer.py 排版：第 1 頁「(僅適用於專業投資人)」「中文產品說明書」、編號清單 1.～14.、第 2 頁末刊印日期；
 章名「一、商品基本資料」～「六、存託憑證條款相關說明」在左邊界、各章新頁；條號「N.」x 28、子項「(n)」x 50。
@@ -9,7 +9,7 @@
 `ts.art{n}`（連結標的表 `ts.art9.table`、日期表 `ts.art12.table`（每期型的自動提前贖回表 `ts.art12.table.ko`）、價格表
 `ts.art14.table`、情境價格表 `ts.art16.table`）、其他各章 `ts.ch二`～`ts.ch六`。第 8、15、18 項、第 16 項情境二～四、
 第三章匯率風險有重複寫出的幣別、%、起算日（Issue #305）。
-投資人須知（docs/templates/bbva-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
+投資人須知（docs/checker/templates/bbva-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
 段落代號 `iis.cover`、`iis.warn`、`iis.org`（一、）、`iis.summary`（二、 1.）、`iis.coupon`（二、 2.）、`iis.fees`（四、）、
 `iis.rest`（其他）。
 """
@@ -687,7 +687,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
-    """BBVA 中文投資人須知（docs/templates/bbva-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
+    """BBVA 中文投資人須知（docs/checker/templates/bbva-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
     d = _Doc(edits, set() if used is None else used, "iis")
     w = d.w
     di = s.date_iis
