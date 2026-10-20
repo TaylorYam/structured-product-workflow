@@ -32,6 +32,8 @@ from sp_workflow.order_formats import (
     Kind,
     header_key,
 )
+from sp_workflow.order_template import template_row
+from sp_workflow.order_template import write_sheet as write_template_sheet
 from sp_workflow.preparation import find_product_folders, is_tdcc, parse_tdccs
 
 READ = "已讀取"
@@ -55,7 +57,10 @@ _ORDER_MARK = "(order)"
 _REPLY_MARK = re.compile(r"(?i)\b(re|fw|fwd|done)\s*[:：]|回覆\s*[:：]|轉寄\s*[:：]")
 _STANDALONE_TDCC = re.compile(r"^\s*([0-9]{12})\s*$")
 _WE_BUY = re.compile(r"(?i)\bwe\s+buy\b")
-_BUY_SEGMENT = re.compile(r"(?<![0-9])([0-9]{12})(?![0-9])\s*(.*?)\s*@\s*([0-9]+(?:\.[0-9]+)?)")
+_TDCC_IN_LINE = re.compile(r"(?<![0-9])[0-9]{12}(?![0-9])")
+_BUY_PRICE = re.compile(r"@\s*([0-9]+(?:\.[0-9]+)?)")
+_BUY_UF = re.compile(r"(?i)\bUF\s*[=:]\s*([0-9]+(?:\.[0-9]+)?)\s*%?")
+_BUY_BODY_END = re.compile(r"(?i)[,，]|\bUF\b")
 _CURRENCY = re.compile(r"\b([A-Z]{3})\b")
 _SETTLE = re.compile(r"(?i)please\s+settle\s+thru\s+(.+?)\.?\s*$")
 _KEY_VALUE = re.compile(r"^([A-Za-z][A-Za-z0-9 .()%/?+\-]*?)\s*[:：]\s*(.+)$")
@@ -114,6 +119,7 @@ class OrderRow:
     raw: tuple[tuple[RawEntry, str], ...] = ()  # (原文, 對到的統一欄位或空字串)
     source: Path | None = None
     sent_on: dt.datetime | None = None
+    template: tuple[object, ...] = ()  # 格式表的一列（order_template.COLUMNS 順序）
 
 
 @dataclass(frozen=True)
@@ -289,7 +295,8 @@ def _row_for(
             sent_on=order.mail.sent_on,
         )
     values, others, mapped, problems = map_entries(raw, fmt)
-    reasons = (*order.mail_problems, *order.problems.get(tdcc, []), *problems, *notes)
+    template, template_problems = template_row(tdcc, values, others, order.mail.subject, order.mail.sent_on)
+    reasons = (*order.mail_problems, *order.problems.get(tdcc, []), *problems, *template_problems, *notes)
     return OrderRow(
         tdcc,
         PENDING if reasons else READ,
@@ -300,6 +307,7 @@ def _row_for(
         mapped,
         order.path,
         order.mail.sent_on,
+        template,
     )
 
 
@@ -436,14 +444,9 @@ def parse_order(path: Path, mail: Mail) -> _ParsedMail:
                 records.setdefault(context, [])
                 continue
             if _WE_BUY.search(line):
-                for tdcc, middle, price in _BUY_SEGMENT.findall(line):
-                    currency = _CURRENCY.search(middle)
-                    amount = _CURRENCY.sub(" ", middle).strip()
+                for tdcc, parts in buy_segments(line):
                     target = entries_for(tdcc)
-                    if currency:
-                        target.append(RawEntry(BUY_SOURCE, "幣別", currency.group(1)))
-                    target.append(RawEntry(BUY_SOURCE, "金額", amount))
-                    target.append(RawEntry(BUY_SOURCE, "價格", price))
+                    target.extend(RawEntry(BUY_SOURCE, name, value) for name, value in parts)
             settle = _SETTLE.search(line)
             if settle:
                 entries_for(context).append(RawEntry(LINE_SOURCE, "Please settle thru", settle.group(1).strip()))
@@ -487,6 +490,33 @@ def parse_order(path: Path, mail: Mail) -> _ParsedMail:
     return _ParsedMail(path, mail, records, problems, tuple(mail_problems))
 
 
+def buy_segments(line: str) -> list[tuple[str, list[tuple[str, str]]]]:
+    """拆 We buy 行：每檔 TDCC 後面到下一檔 TDCC 之前是它的幣別、金額、`@價格` 或 `UF=x%`。
+
+    例：`We buy 0291… USD 200K @98.50`、`We buy 0760… 45 million JPY @97.9. Please …`、
+    `We buy 3281… USD 950K @96.15、3281… USD 1 mio @96.15`、`We buy 1594… USD 300K , UF=0.85%`。
+    """
+    matches = list(_TDCC_IN_LINE.finditer(line))
+    segments = []
+    for i, m in enumerate(matches):
+        text = line[m.end() : matches[i + 1].start() if i + 1 < len(matches) else len(line)]
+        text = re.split(r"(?i)\bplease\b", text)[0]
+        price = _BUY_PRICE.search(text)
+        uf = _BUY_UF.search(text)
+        body = text[: price.start()] if price else _BUY_BODY_END.split(text)[0]
+        parts = []
+        currency = _CURRENCY.search(body)
+        if currency:
+            parts.append(("幣別", currency.group(1)))
+        parts.append(("金額", _CURRENCY.sub(" ", body).strip(" ,，、.")))
+        if price:
+            parts.append(("價格", price.group(1)))
+        if uf:
+            parts.append(("UF", uf.group(1)))
+        segments.append((m.group(0), parts))
+    return segments
+
+
 def _add_table(
     records: dict[str, list[RawEntry]],
     problems: dict[str, list[str]],
@@ -510,7 +540,8 @@ def _add_table(
 
 # ---------- 對照統一欄位 ----------
 
-_BUY_FIELDS = {"幣別": "幣別", "金額": "承作金額", "價格": "價格(%)"}
+_BUY_FIELDS = {"幣別": "幣別", "金額": "承作金額", "價格": "價格(%)", "UF": "UF(%)"}
+_HUNDRED = Decimal(100)
 _SETTLE_FIELD = "交割說明"
 
 
@@ -573,10 +604,17 @@ def map_entries(
             problems.append(f"{name} 不一致：{detail}")
         elif normalized:
             values[name] = normalized[0][1]
+    # Citi 只給 UF、沒有票面價格：價格 = 100 − UF（與庫存的 Upfront / NotePrice 相同算法）
+    if "價格(%)" not in values and isinstance(values.get("UF(%)"), Decimal) and not _has_problem(problems, "價格(%)"):
+        values["價格(%)"] = _HUNDRED - values["UF(%)"]
     for name in REQUIRED:
-        if name not in values and not any(p.startswith(f"{name} ") for p in problems):
+        if name not in values and not _has_problem(problems, name):
             problems.append(f"讀不到{name}")
     return values, tuple(others), tuple(mapped), problems
+
+
+def _has_problem(problems: Sequence[str], name: str) -> bool:
+    return any(p.startswith(f"{name} ") for p in problems)
 
 
 def split_embedded(text: str, labels: Sequence[str]) -> tuple[str, list[tuple[str, str]]]:
@@ -682,7 +720,7 @@ class OutlookMsgReader:
         pythoncom.CoInitialize()  # 視窗在背景執行緒呼叫，COM 要在這個執行緒初始化
         try:
             namespace = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
-            item = namespace.OpenSharedItem(str(path))
+            item = namespace.OpenSharedItem(str(path.resolve()))  # Outlook 依它自己的工作目錄解讀相對路徑
             try:
                 subject, html, sent = str(item.Subject or ""), str(item.HTMLBody or ""), item.SentOn
             finally:
@@ -705,8 +743,9 @@ class OutlookMsgReader:
 
 def _write_list(path: Path, rows: Sequence[OrderRow], root: Path, unreadable: Sequence[Path]) -> None:
     wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = LIST_SHEET
+    # 第一張是作業人員既有的「Outlook orders 轉成 Excel」格式，只放已讀取的商品
+    write_template_sheet(wb.active, [row.template for row in rows if row.status == READ and row.template])
+    ws = wb.create_sheet(LIST_SHEET)
     columns = (*HEAD_COLUMNS, *((name, _field_width(name)) for name in FIELDS), *TAIL_COLUMNS)
     ws.append([name for name, _ in columns])
     for cell in ws[1]:

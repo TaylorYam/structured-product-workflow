@@ -9,8 +9,11 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from sp_workflow.order_formats import ISSUERS
+from sp_workflow.order_formats import ISSUERS, KNOWN_WITHOUT_FORMAT
+from sp_workflow.order_template import COLUMNS as TEMPLATE_COLUMNS
+from sp_workflow.order_template import template_row
 from sp_workflow.order_terms import (
+    LIST_SHEET,
     NO_ORDER,
     PENDING,
     RAW_SHEET,
@@ -19,6 +22,7 @@ from sp_workflow.order_terms import (
     Mail,
     MailReadError,
     OrderTermsError,
+    buy_segments,
     is_order_subject,
     parse_amount,
     parse_date,
@@ -145,6 +149,11 @@ def run(tmp_path: Path, text: str, mails: dict[str, Mail | Exception]):
     return receipt, reader
 
 
+def term_reasons(row) -> tuple[str, ...]:
+    """讀信本身的問題（不含格式表缺欄）；只放部分欄位的測試信用。"""
+    return tuple(r for r in row.reasons if not r.startswith("格式表缺"))
+
+
 @pytest.fixture
 def root(tmp_path: Path) -> Path:
     path = tmp_path / "root"
@@ -200,7 +209,7 @@ def test_list_workbook_keeps_tdcc_as_text_and_raw_values(tmp_path: Path, root: P
 
     assert receipt.list_path.name == "Order條件清單_20261020-093000.xlsx"
     wb = openpyxl.load_workbook(receipt.list_path)
-    ws = wb.worksheets[0]
+    ws = wb[LIST_SHEET]
     header = [c.value for c in ws[1]]
     assert header[:4] == ["TDCC", "狀態", "上手", "待確認原因"]
     assert header[-3:] == ["其他欄位", "來源信件", "寄件時間"]
@@ -286,10 +295,10 @@ def test_one_mail_with_two_tdccs_is_split_and_the_sibling_follows(tmp_path: Path
 
     assert [r.tdcc for r in receipt.rows] == [first, second]
     one, two = receipt.rows
-    assert (one.status, one.reasons) == (PENDING, ("價格(%) 有修改：96.20%→96.15%",))
+    assert term_reasons(one) == ("價格(%) 有修改：96.20%→96.15%",)  # 這裡的表只有部分欄位，格式表缺的另外測
     assert one.values["價格(%)"] == Decimal("96.15") and one.values["承作金額"] == Decimal("950000")
     assert (one.values["標的1"], one.values["天期(月)"], one.values["上手報價編號"]) == ("AAA UW", 12, "R1")
-    assert (two.status, two.reasons) == (READ, ())
+    assert term_reasons(two) == ()
     assert (two.values["標的1"], two.values["承作金額"], two.values["風險等級"]) == (
         "BBB UW",
         Decimal("1000000"),
@@ -320,7 +329,7 @@ def test_sections_after_a_standalone_tdcc_belong_to_it(tmp_path: Path, root: Pat
     receipt, _ = run(tmp_path, f"{first}\n{second}", {"order.msg": mail, "copy.msg": mail})
 
     one, two = receipt.rows
-    assert (one.status, two.status) == (READ, READ)
+    assert (term_reasons(one), term_reasons(two)) == ((), ())
     assert (one.values["期初定價"], one.values["交割說明"], one.values["承作金額"]) == (
         "收盤價",
         "Euroclear by acct DSU",
@@ -355,7 +364,7 @@ def test_ms_table_carries_its_tdcc_and_its_issue_date_column(tmp_path: Path, roo
     receipt, _ = run(tmp_path, tdcc, {"order.msg": Mail(f"(Order)--{tdcc}", SENT, html)})
 
     (row,) = receipt.rows
-    assert row.status == READ, row.reasons
+    assert term_reasons(row) == ()
     assert (row.values["發行日"], row.values["天期(月)"], row.values["價格(%)"]) == (
         dt.date(2026, 10, 20),
         1,
@@ -377,7 +386,7 @@ def test_ubs_dates_inside_quote_id_are_split_out(tmp_path: Path, root: Path) -> 
     receipt, _ = run(tmp_path, tdcc, {"order.msg": Mail(f"(Order)--{tdcc}", SENT, html)})
 
     (row,) = receipt.rows
-    assert row.status == READ, row.reasons
+    assert term_reasons(row) == ()
     assert (row.values["發行日"], row.values["最終比價日"], row.values["到期日"], row.values["上手報價編號"]) == (
         dt.date(2026, 10, 20),
         dt.date(2027, 4, 20),
@@ -519,9 +528,12 @@ def test_unreadable_mail_needs_checking(tmp_path: Path, root: Path) -> None:
 
 @pytest.mark.parametrize(
     ("tdcc", "reason"),
-    [("159199990001", "這家上手還沒有 Order 讀法（需要樣本）"), ("999199990001", "TDCC 前三碼不是已知上手")],
+    [("998199990001", "這家上手還沒有 Order 讀法（需要樣本）"), ("999199990001", "TDCC 前三碼不是已知上手")],
 )
-def test_issuers_without_a_format_are_unsupported(tmp_path: Path, root: Path, tdcc: str, reason: str) -> None:
+def test_issuers_without_a_format_are_unsupported(
+    tmp_path: Path, root: Path, monkeypatch: pytest.MonkeyPatch, tdcc: str, reason: str
+) -> None:
+    monkeypatch.setitem(KNOWN_WITHOUT_FORMAT, "998", "NEWBANK")
     product_folder(root, tdcc, "order.msg")
 
     receipt, _ = run(tmp_path, tdcc, {"order.msg": Mail(f"(Order)--{tdcc}", SENT, standard_order(tdcc))})
@@ -562,3 +574,286 @@ def test_parse_date(text: str) -> None:
 def test_parse_date_rejects_unknown_forms(text: str) -> None:
     with pytest.raises(ValueError):
         parse_date(text)
+
+
+# ---------- 「Outlook orders 轉成 Excel」格式表 ----------
+
+FULL_VALUES = {
+    "商品": "FCN",
+    "幣別": "USD",
+    "Non-Call(月)": 1,
+    "標的1": "AAA UW",
+    "執行價(%)": Decimal("80"),
+    "KO觀察方式": "Daily Memory",
+    "KO(%)": Decimal("100"),
+    "年利率(%)": Decimal("10"),
+    "價格(%)": Decimal("98"),
+    "天期(月)": 6,
+    "KI型態": "EKI",
+    "KI(%)": Decimal("65"),
+    "觀察頻率(月)": 1,
+    "交易日": dt.date(2026, 10, 19),
+    "發行日": dt.date(2026, 10, 26),
+    "最終比價日": dt.date(2027, 4, 26),
+    "到期日": dt.date(2027, 4, 29),
+    "期初定價": "收盤價",
+}
+
+
+def cells(values: dict, others=(), subject: str = "(Order)_[Esun Sec] FCN_AAA_B--x", sent_on=SENT):
+    row, problems = template_row(BARC, values, others, subject, sent_on)
+    return dict(zip((c.header.strip() for c in TEMPLATE_COLUMNS), row, strict=True)), problems
+
+
+def test_template_row_follows_the_example_columns() -> None:
+    row, problems = cells(FULL_VALUES, (("OTC", "Note"),))
+
+    assert problems == []
+    assert row == {
+        "TDCC": BARC,
+        "Product": "FCN",
+        "Currency": "USD",
+        "Guaranteed Periods (m)": 1,
+        "BBG Code 1": "AAA UW",
+        "BBG Code 2": None,
+        "BBG Code 3": None,
+        "BBG Code 4": None,
+        "BBG Code 5": None,
+        "Strike (%)": Decimal("80"),
+        "KO Type": "Daily Memory",
+        "KO Barrier (%)": Decimal("100"),
+        "Coupon p.a. (%)": Decimal("10"),
+        "Upfront / NotePrice (%)": Decimal("98"),
+        "Tenor (m)": 6,
+        "Barrier Type": "EKI",
+        "KI Barrier (%)": Decimal("65"),
+        "Observation Frequency (m)": 1,
+        "OTC": "Note",
+        "Funding Spread (bps)": None,
+        "Effective Date Offset(Calendar Days)": 7,
+        "Trade date": dt.date(2026, 10, 19),
+        "Issue date": dt.date(2026, 10, 26),
+        "Final valuation date": dt.date(2027, 4, 26),
+        "Maturity date": dt.date(2027, 4, 29),
+        "期初價格": "收盤價",
+        "起單FC": None,
+    }
+
+
+@pytest.mark.parametrize(
+    ("ko_type", "memory", "expected"),
+    [
+        ("DAILY MEMORY", "", "Daily Memory"),
+        ("Daily", "", "Daily"),
+        ("OBSERVATION", "No", "Period End"),
+        ("OBSERVATION", "Yes", "Period End Memory"),
+    ],
+)
+def test_ko_type_is_normalized(ko_type: str, memory: str, expected: str) -> None:
+    row, problems = cells({**FULL_VALUES, "KO觀察方式": ko_type}, (("KO Memory", memory),))
+
+    assert (row["KO Type"], problems) == (expected, [])
+
+
+@pytest.mark.parametrize(
+    ("ki_type", "ki", "expected"),
+    [
+        ("NONE", Decimal("0"), ("NONE", None)),  # BARC 沒有 KI 時寫 0
+        (None, None, ("NONE", None)),  # SG：KI Type、KI 都是 N/A
+        ("EUROPEAN", Decimal("80"), ("EKI", Decimal("80"))),  # MS
+        ("AKI", Decimal("55"), ("AKI", Decimal("55"))),
+    ],
+)
+def test_barrier_type_is_normalized(ki_type, ki, expected) -> None:
+    values = {k: v for k, v in FULL_VALUES.items() if k not in ("KI型態", "KI(%)")}
+    values.update({k: v for k, v in (("KI型態", ki_type), ("KI(%)", ki)) if v is not None})
+
+    row, problems = cells(values)
+
+    assert ((row["Barrier Type"], row["KI Barrier (%)"]), problems) == (expected, [])
+
+
+@pytest.mark.parametrize(
+    ("change", "problem"),
+    [
+        ({"KO觀察方式": "Weekly"}, "KO Type 不認得：Weekly"),
+        ({"KI型態": "XKI"}, "Barrier Type 不認得：XKI"),
+        ({"KI型態": "NONE", "KI(%)": Decimal("60")}, "Barrier Type 是 NONE，但 KI Barrier 有值：60"),
+        ({"標的6": "FFF UW"}, "標的超過 5 檔，格式表放不下"),
+    ],
+)
+def test_values_the_template_cannot_hold_need_checking(change: dict, problem: str) -> None:
+    _, problems = cells({**FULL_VALUES, **change})
+
+    assert problem in problems
+
+
+def test_values_missing_from_the_order_are_derived_by_fixed_rules() -> None:
+    values = {k: v for k, v in FULL_VALUES.items() if k not in ("商品", "天期(月)", "觀察頻率(月)", "交易日", "發行日")}
+    values["發行日偏移"] = "7"
+    others = (("No. of Periods", "12"), ("Settlement Frequency", "Monthly"))
+
+    row, problems = cells(values, others, subject="(Order)_[Esun Sec] FCN_AAA/BBB_Leo -- x")
+
+    assert problems == []
+    assert (row["Product"], row["Tenor (m)"], row["Observation Frequency (m)"], row["OTC"]) == ("FCN", 12, 1, "Note")
+    # 交易日用 Order 寄出日期，發行日 = 交易日 + 日曆天數偏移
+    assert (row["Trade date"], row["Issue date"], row["Effective Date Offset(Calendar Days)"]) == (
+        SENT.date(),
+        SENT.date() + dt.timedelta(days=7),
+        7,
+    )
+
+
+def test_business_day_offset_is_not_used_to_guess_the_issue_date() -> None:
+    values = {k: v for k, v in FULL_VALUES.items() if k != "發行日"}
+    values["發行日偏移"] = "5BD"
+
+    row, problems = cells(values)
+
+    assert row["Issue date"] is None
+    assert problems == ["格式表缺：Effective Date Offset(Calendar Days)、Issue date"]
+
+
+def test_missing_dates_keep_the_product_out_of_the_template_sheet(tmp_path: Path, root: Path) -> None:
+    product_folder(root, BARC, "order.msg")
+    complete = "029199990002"
+    product_folder(root, complete, "order2.msg")
+    header = tuple(h for h in PRICER_HEADER if h not in ("Final Valuation Date", "Maturity Date"))
+    values = tuple(v for h, v in zip(PRICER_HEADER, PRICER_VALUES, strict=True) if h in header)
+    mails = {
+        "order.msg": Mail(f"(Order)--{BARC}", SENT, standard_order(header=header, values=values)),
+        "order2.msg": Mail(f"(Order)--{complete}", SENT, standard_order(complete)),
+    }
+
+    receipt, _ = run(tmp_path, f"{BARC} {complete}", mails)
+
+    first, second = receipt.rows
+    assert (first.status, first.reasons) == (PENDING, ("格式表缺：Final valuation date、Maturity date",))
+    assert second.status == READ
+    ws = openpyxl.load_workbook(receipt.list_path).worksheets[0]
+    assert ws.title == "example"
+    assert [c.value for c in ws[2]][1:5] == ["TDCC", "Product", "Currency", "Guaranteed Periods (m) "]
+    assert ws["B3"].value == complete and ws["B3"].number_format == "@"
+    assert ws["X3"].value == dt.datetime(2026, 10, 22) and ws["X3"].number_format == "mm-dd-yy"
+    assert ws["V3"].value == 7 and ws["AA3"].value == "開盤價"
+    assert ws.max_row == 3  # 待確認的不放進格式表
+
+
+@pytest.mark.parametrize(
+    ("line", "expected"),
+    [
+        (
+            "We buy 029199990001 USD 200K @98.50",
+            [("029199990001", [("幣別", "USD"), ("金額", "200K"), ("價格", "98.50")])],
+        ),
+        (
+            "We buy 076199990001 45 million JPY @97.9. Please settle thru Euroclear by acct DSU.",
+            [("076199990001", [("幣別", "JPY"), ("金額", "45 million"), ("價格", "97.9")])],
+        ),
+        (
+            "We buy 328199990001 USD 950K @96.15、328199990002 USD 1 mio @96.15",
+            [
+                ("328199990001", [("幣別", "USD"), ("金額", "950K"), ("價格", "96.15")]),
+                ("328199990002", [("幣別", "USD"), ("金額", "1 mio"), ("價格", "96.15")]),
+            ],
+        ),
+        (
+            "We buy 159199990001 USD 300K , UF=0.85%",
+            [("159199990001", [("幣別", "USD"), ("金額", "300K"), ("UF", "0.85")])],
+        ),
+    ],
+)
+def test_buy_segments(line: str, expected) -> None:
+    assert buy_segments(line) == expected
+
+
+CITI_HEADER = (
+    "Product",
+    "Strike Date",
+    "Currency",
+    "Tenor (m)",
+    "Issue T+",
+    "BBG Code 1",
+    "Strike (%)",
+    "Barrier Type",
+    "KI Barrier (%)",
+    "Observation Frequency (m)",
+    "Non Callable Periods",
+    "KO Barrier (%)",
+    "Memory Autocall",
+    "Daily KO",
+    "Coupon p.a. (%)",
+    "Upfront (%)",
+    "Notional Amount",
+    "Issue Date",
+    "Final Valuation Date",
+    "Maturity Date",
+    "PriceID",
+)
+
+
+def test_citi_gives_uf_instead_of_a_price(tmp_path: Path, root: Path) -> None:
+    tdcc = "159199990001"
+    values = (
+        "FCA",
+        "8-Oct-26",
+        "USD",
+        "7",
+        "5",
+        "AAA UN",
+        "80",
+        "European",
+        "75",
+        "1",
+        "0",
+        "105",
+        "TRUE",
+        "TRUE",
+        "15.60",
+        "0.85",
+        "500,000",
+        "16-Oct-26",
+        "17-May-27",
+        "20-May-27",
+        "P1",
+    )
+    html = order_html(
+        f"We buy {tdcc} USD 300K , UF=0.85%",
+        "Initial price: Closing price",
+        table(CITI_HEADER, values),
+    )
+    product_folder(root, tdcc, "order.msg")
+    mail = Mail(f"(Order)_[Esun Sec] FCN_AAA_LU--{tdcc}", SENT, html)
+
+    receipt, _ = run(tmp_path, tdcc, {"order.msg": mail})
+
+    (row,) = receipt.rows
+    assert (row.status, row.issuer, row.reasons) == (READ, "CITI", ())
+    # 價格 = 100 − UF；Notional Amount 是報價名目本金，不是承作金額
+    assert (row.values["價格(%)"], row.values["UF(%)"], row.values["承作金額"]) == (
+        Decimal("99.15"),
+        Decimal("0.85"),
+        Decimal("300000"),
+    )
+    assert "商品" not in row.values and ("Product", "FCA") in row.others
+    template = dict(zip((c.header.strip() for c in TEMPLATE_COLUMNS), row.template, strict=True))
+    assert (template["Product"], template["KO Type"], template["Barrier Type"]) == ("FCN", "Daily Memory", "EKI")
+    assert (template["Trade date"], template["Effective Date Offset(Calendar Days)"]) == (dt.date(2026, 10, 8), 8)
+
+
+@pytest.mark.parametrize(
+    ("daily", "memory", "expected"),
+    [
+        ("TRUE", "TRUE", "Daily Memory"),
+        ("TRUE", "FALSE", "Daily"),
+        ("FALSE", "TRUE", "Period End Memory"),
+        ("FALSE", "FALSE", "Period End"),
+    ],
+)
+def test_citi_ko_flags(daily: str, memory: str, expected: str) -> None:
+    values = {k: v for k, v in FULL_VALUES.items() if k != "KO觀察方式"}
+
+    row, problems = cells(values, (("Daily KO", daily), ("Memory Autocall", memory)))
+
+    assert (row["KO Type"], problems) == (expected, [])

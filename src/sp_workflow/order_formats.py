@@ -30,6 +30,7 @@ FIELDS: dict[str, Kind] = {
     "幣別": Kind.TEXT,
     "承作金額": Kind.AMOUNT,
     "價格(%)": Kind.PERCENT,
+    "UF(%)": Kind.PERCENT,
     "標的1": Kind.TEXT,
     "標的2": Kind.TEXT,
     "標的3": Kind.TEXT,
@@ -157,7 +158,7 @@ class IssuerFormat:
         key = header_key(header)
         overrides = _keys(self.overrides)
         if key in overrides:
-            return overrides[key]
+            return overrides[key] or None  # 空字串：這家的這欄不屬於統一欄位
         return ALIASES.get(key)
 
     def knows(self, header: str) -> bool:
@@ -385,6 +386,45 @@ ISSUERS: dict[str, IssuerFormat] = {
             "Max Size",
         ),
     ),
+    "159": IssuerFormat(
+        "CITI",
+        (
+            "Product",
+            "Strike Date",
+            "Currency",
+            "Tenor (m)",
+            "Issue T+",
+            *(f"BBG Code {n}" for n in range(1, 6)),
+            "Strike (%)",
+            "Barrier Type",
+            "KI Barrier (%)",
+            "Observation Frequency (m)",
+            "Non Callable Periods",
+            "KO Barrier (%)",
+            "Memory Autocall",
+            "Daily KO",
+            "Coupon p.a. (%)",
+            "Upfront (%)",
+            "Notional Amount",
+            "Format",
+            "Swap Index",
+            "Funding Spread (bps)",
+            "Issue Date",
+            "Final Valuation Date",
+            "Maturity Date",
+            *(f"RefSpot_{n}" for n in range(1, 6)),
+            "Remarks",
+            "PriceID",
+            "Quote Validity (UTC)",
+        ),
+        overrides={
+            "Product": "",  # Citi 寫 FCA（自家商品名），商品別以主旨為準
+            "Upfront (%)": "UF(%)",  # Citi 給 UF，不是票面價格；We buy 行也沒有 @價格
+            "Issue T+": "發行日偏移",
+            "Non Callable Periods": "Non-Call(月)",
+            "PriceID": "上手報價編號",
+        },
+    ),
     "325": IssuerFormat(
         "HSBC",
         (
@@ -425,5 +465,5 @@ ISSUERS: dict[str, IssuerFormat] = {
     ),
 }
 
-# 已知上手、但還沒有 Order 樣本與讀法
-KNOWN_WITHOUT_FORMAT: dict[str, str] = {"159": "CITI"}
+# 已知上手、但還沒有 Order 樣本與讀法（目前 14 家都有）
+KNOWN_WITHOUT_FORMAT: dict[str, str] = {}

@@ -135,9 +135,15 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
    - 讀不到幣別、承作金額、價格、標的1，或格式不認得。
    - 條件表欄數和值數對不上、有好幾列值，或出現這家沒列過的欄名（上手格式可能改版）。
    - 資料夾裡有兩封以上 Order 原信，或有信讀不到。
-7. 找不到商品資料夾或 Order 原信時標「找不到 Order」。Citi 還沒有樣本，標「未支援上手」。
-8. 清單有三個工作表：
-   - 「Order條件清單」：每檔一列。
+7. 找不到商品資料夾或 Order 原信時標「找不到 Order」。14 家上手（含 Citi）都有讀法；TDCC 前三碼不認得時標「未支援上手」。Citi 的 We buy 行只有 `UF=x%`，價格 = 100 − UF。
+8. 清單有四個工作表：
+   - 「example」：作業人員既有的「Outlook orders 轉成 Excel」格式（第 2 列表頭、從 B 欄開始），**只放已讀取的商品**，可以直接複製貼上；起單FC 留空由人補。信裡沒直接寫的欄依固定規則換算（`src/sp_workflow/order_template.py`）：
+     - KO Type 統一成 Daily／Daily Memory／Period End／Period End Memory；MS 的 `OBSERVATION` 看 KO Memory，Citi 看 Daily KO 和 Memory Autocall 兩欄。
+     - Barrier Type 統一成 NONE／EKI／AKI（`European` = EKI）；沒有 KI 時 KI Barrier 留空。
+     - Product 條件表沒有或是上手自家名稱（Citi 的 FCA）時取主旨的 `FCN`；OTC 沒寫時填 `Note`；SG 的 Tenor = No. of Periods。
+     - Trade date 條件表沒有時用 Order 寄出日；Issue date 沒有時 = Trade date + 日曆天數偏移；Effective Date Offset = Issue date − Trade date 的日曆天數。
+     - 換算不了或格式表要的欄讀不到（例如 HSBC、GS 的 Order 沒有最終比價日、到期日）時，整檔標「待確認」，不放進這張表。
+   - 「Order條件清單」：每檔一列，含待確認原因。
    - 「原文對照」：每個欄位的原始欄名、原始值與對到的統一欄位。
    - 「資料來源」：根目錄與讀不到的資料夾。
 
@@ -280,9 +286,15 @@ Reads every term from our original `(Order)` email in each product folder using 
    - Currency, amount, price, or 標的1 cannot be read, or a value's format is not recognized.
    - Header and value counts differ, a table has several value rows, or a column unknown for that issuer appears (the issuer format may have changed).
    - A folder holds two or more original orders, or a message cannot be read.
-7. A missing product folder or original order is 找不到 Order. Citi has no sample yet and is 未支援上手.
-8. The workbook has three sheets:
-   - "Order條件清單": one row per product.
+7. A missing product folder or original order is 找不到 Order. All 14 issuers (including Citi) have a reading; an unknown TDCC prefix is 未支援上手. Citi's We buy line only gives `UF=x%`, so the price is 100 − UF.
+8. The workbook has four sheets:
+   - "example": the operators' existing "Outlook orders to Excel" layout (row-2 header starting in column B), **holding only 已讀取 products**, ready to copy and paste; 起單FC is left blank for a person to fill. Columns the email does not state directly follow fixed rules (`src/sp_workflow/order_template.py`):
+     - KO Type becomes Daily, Daily Memory, Period End, or Period End Memory; MS `OBSERVATION` uses KO Memory, and Citi uses its Daily KO and Memory Autocall columns.
+     - Barrier Type becomes NONE, EKI, or AKI (`European` = EKI); without KI, KI Barrier is blank.
+     - Product falls back to the subject's `FCN` when the table lacks it or uses the issuer's own name (Citi's FCA); OTC defaults to `Note`; SG Tenor = No. of Periods.
+     - Trade date falls back to the order's sent date; a missing Issue date = Trade date + calendar-day offset; Effective Date Offset = Issue date − Trade date in calendar days.
+     - When a value cannot be converted or a required column is missing (for example HSBC and GS orders lack final valuation and maturity dates), the product is 待確認 and left out of this sheet.
+   - "Order條件清單": one row per product, with reasons to check.
    - "原文對照": each field's original name, original value, and normalized field.
    - "資料來源": the root folder and any folders that could not be read.
 
