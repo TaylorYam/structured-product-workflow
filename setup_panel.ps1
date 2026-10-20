@@ -12,20 +12,31 @@ try {
     if ($LASTEXITCODE -ne 0) { throw '無法建立本機虛擬環境。' }
     & '.\.venv\Scripts\python.exe' -m pip install -c constraints.txt .
     if ($LASTEXITCODE -ne 0) { throw ('套件安裝失敗（Python ' + $pythonVersion + '）。請確認公司網路或套件來源；若訊息寫某個套件沒有適合這個環境的版本，請把整個畫面交給維護人員。') }
-    & '.\.venv\Scripts\python.exe' -c "import tkinter, sp_workflow.app, sp_workflow.word_worker, win32com.client, psycopg"
+    & '.\.venv\Scripts\python.exe' -c "import tkinter, sp_workflow.app, sp_workflow.word_worker, win32com.client, psycopg, fcn_checker.panel"
     if ($LASTEXITCODE -ne 0) { throw '安裝驗證失敗。' }
-    $openWith = 'launch_panel.cmd'
+    # 核對紀錄記下程式版本用（.local\installed.json）
+    & '.\.venv\Scripts\python.exe' -m fcn_checker.version --record-installation $PSScriptRoot
+    if ($LASTEXITCODE -ne 0) { throw '安裝版本紀錄失敗。' }
+    # 兩個視窗各一個捷徑：（捷徑名稱, 啟動檔, 說明, 圖示）；核對沿用合併前的捷徑名稱與圖示
+    $panels = @(
+        @('TS IIS 準備與放回', 'launch_panel.pyw', 'TS／IIS 準備與放回', $null),
+        @('Term Sheet 核對', 'launch_checker_panel.pyw', 'FCN Term Sheet 核對', 'src\fcn_checker\assets\panel.ico')
+    )
+    $openWith = 'launch_panel.cmd（準備與放回）或 launch_checker_panel.cmd（核對）'
     try {
         # 桌面與專案資料夾各放一個捷徑；捷徑記錄本機完整路徑，不進 Git
         foreach ($folder in @([Environment]::GetFolderPath('Desktop'), $PSScriptRoot)) {
-            $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $folder 'TS IIS 準備與放回.lnk'))
-            $shortcut.TargetPath = Join-Path $PSScriptRoot '.venv\Scripts\pythonw.exe'
-            $shortcut.Arguments = '"' + (Join-Path $PSScriptRoot 'launch_panel.pyw') + '"'
-            $shortcut.WorkingDirectory = $PSScriptRoot
-            $shortcut.Description = 'TS／IIS 準備與放回'
-            $shortcut.Save()
+            foreach ($panel in $panels) {
+                $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $folder ($panel[0] + '.lnk')))
+                $shortcut.TargetPath = Join-Path $PSScriptRoot '.venv\Scripts\pythonw.exe'
+                $shortcut.Arguments = '"' + (Join-Path $PSScriptRoot $panel[1]) + '"'
+                $shortcut.WorkingDirectory = $PSScriptRoot
+                $shortcut.Description = $panel[2]
+                if ($panel[3]) { $shortcut.IconLocation = (Join-Path $PSScriptRoot $panel[3]) + ',0' }
+                $shortcut.Save()
+            }
         }
-        $openWith = '桌面或專案資料夾裡的「TS IIS 準備與放回」捷徑'
+        $openWith = '桌面或專案資料夾裡的「TS IIS 準備與放回」或「Term Sheet 核對」捷徑'
     } catch {
         Write-Host ('捷徑建立失敗（不影響安裝）：' + $_.Exception.Message)
     }

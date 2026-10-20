@@ -5,7 +5,7 @@
 狀態：「TS／IIS 準備與放回」已完成，以真實樣本複本試跑過，等作業主機公槽實測（[#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)）。「每日匯入」最小 FCN 資料庫見 [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32)；「寄信草稿」見 [#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)；「Order 條件」讀取見 [#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)。其他流程仍在設計階段。
 
 本專案管理正式 Order、建檔、上手文件歸檔、核對串接及 FC 寄送。詢價端沿用既有系統。
-核對規則原本在獨立的 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker)，已併入本專案（[ADR 0005](docs/adr/0005-merge-checker-into-workflow.md)）：程式與歷史在 `src/fcn_checker/`，同一次安裝就有 `fcn-batch`、`fcn-panel`，原文件暫放 [docs/checker/](docs/checker/README.md)，安裝捷徑與文件整併見 #61、#62；新商品資料改由 Order、交易明細與股價建立（[ADR 0006](docs/adr/0006-new-product-data-from-order.md)）。
+核對規則原本在獨立的 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker)，已併入本專案（[ADR 0005](docs/adr/0005-merge-checker-into-workflow.md)）：程式與歷史在 `src/fcn_checker/`，同一次安裝就有 `fcn-batch`、`fcn-panel`，原文件暫放 [docs/checker/](docs/checker/README.md)，文件整併見 #62；新商品資料改由 Order、交易明細與股價建立（[ADR 0006](docs/adr/0006-new-product-data-from-order.md)）。
 
 閱讀順序：[業務背景](CONTEXT.md) → [架構](docs/architecture.md) → [待定事項](docs/open-questions.md)。
 資料保存與部署先讀 [PostgreSQL 決策](docs/adr/0001-postgresql-workflow-storage.md) 與 [開發部署設計](docs/database-and-deployment.md)。第一階段的資料範圍見 [ADR 0003](docs/adr/0003-minimal-fcn-database.md)。
@@ -18,7 +18,9 @@
 
 從公槽 FCN 底下以 TDCC 命名的商品資料夾，挑出中文產品說明書與中文投資人須知，改名成核對工具要的 `<TDCC>_TS.pdf`、`<TDCC>_IIS.pdf`，放進新開的批次資料夾。商品資料夾裡的檔案只讀不改。
 
-**作業人員安裝（Windows）**：先安裝官方 Python 3.11 以上（包含 Tcl/Tk），把專案放到自己有寫入權限的資料夾，雙擊 `setup_panel.cmd`。安裝會建立專案自己的 `.venv`，依 `constraints.txt` 安裝套件，需要能連到公司允許的 Python 套件來源。看到「安裝完成」後，雙擊桌面或專案資料夾裡的「TS IIS 準備與放回」捷徑開啟視窗；捷徑建立失敗時改雙擊 `launch_panel.cmd`。日常操作不用打指令；上次選的資料夾記在安裝資料夾的 `.local/`。搬移資料夾或更新程式後請重新執行安裝。Word 轉檔需要這台電腦裝有 Microsoft Word。
+**作業人員安裝（Windows）**：先安裝官方 Python 3.11 以上（包含 Tcl/Tk），把專案放到自己有寫入權限的資料夾，雙擊 `setup_panel.cmd`。安裝會建立專案自己的 `.venv`，依 `constraints.txt` 安裝套件，需要能連到公司允許的 Python 套件來源。看到「安裝完成」後，桌面與專案資料夾裡會有兩個捷徑：「TS IIS 準備與放回」（準備、放回、每日匯入、寄信草稿、Order 條件）與「Term Sheet 核對」（核對 PANEL）；捷徑建立失敗時改雙擊 `launch_panel.cmd`／`launch_checker_panel.cmd`。日常操作不用打指令；兩個視窗上次選的資料夾都記在安裝資料夾的 `.local/`，核對紀錄寫在安裝資料夾的 `runtime/核對紀錄/`。搬移資料夾或更新程式後請重新執行安裝。Word 轉檔需要這台電腦裝有 Microsoft Word。
+
+**從舊的核對工具安裝移過來**：以前另外裝過 `fcn-term-sheet-checker` 的電腦，在本專案資料夾執行一次 `setup_panel.cmd` 即可；桌面上同名的「Term Sheet 核對」捷徑會改指向本專案。兩邊各用自己資料夾裡的 `.venv`，不會互相影響。舊資料夾 `runtime/核對紀錄/` 裡的核對紀錄要留查時，整個複製到本專案的 `runtime/核對紀錄/`（檔名是日期時間，不會重複）；核對 PANEL 記住的選檔資料夾不會帶過來，第一次重新選即可。確認新的捷徑能用之後，舊資料夾可以刪掉。
 
 **開發者安裝**：
 
@@ -163,7 +165,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 Status: TS/IIS preparation and return is complete and trial-run on copies of real samples; operational shared-drive testing is pending ([#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)). The minimal FCN database with daily import is [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32); mail drafts are [#29](https://github.com/TaylorYam/structured-product-workflow/issues/29); Order term reading is [#40](https://github.com/TaylorYam/structured-product-workflow/issues/40). Other workflows remain in design.
 
 This project coordinates formal Orders, booking, issuer document archiving, checker integration, and FC distribution. Inquiry remains in the existing system.
-Checking rules used to live in the independent [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) and have been merged into this repository ([ADR 0005](docs/adr/0005-merge-checker-into-workflow.md)): their code and history live in `src/fcn_checker/`, one installation provides `fcn-batch` and `fcn-panel`, its original documents sit in [docs/checker/](docs/checker/README.md) for now, and installer shortcuts and document consolidation follow in #61 and #62; new product data will be built from Orders, trade rows, and prices ([ADR 0006](docs/adr/0006-new-product-data-from-order.md)).
+Checking rules used to live in the independent [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) and have been merged into this repository ([ADR 0005](docs/adr/0005-merge-checker-into-workflow.md)): their code and history live in `src/fcn_checker/`, one installation provides `fcn-batch` and `fcn-panel`, its original documents sit in [docs/checker/](docs/checker/README.md) for now, and document consolidation follows in #62; new product data will be built from Orders, trade rows, and prices ([ADR 0006](docs/adr/0006-new-product-data-from-order.md)).
 
 Read [business context](CONTEXT.md), [architecture](docs/architecture.md), then [open questions](docs/open-questions.md).
 For persistence/deployment, read the [PostgreSQL decision](docs/adr/0001-postgresql-workflow-storage.md) and [development/deployment design](docs/database-and-deployment.md). First-phase data scope is in [ADR 0003](docs/adr/0003-minimal-fcn-database.md).
@@ -176,7 +178,9 @@ Commit documentation and synthetic examples only. Company messages, trades, cust
 
 Picks the Chinese term sheet and investor information sheet from TDCC-named product folders under the shared FCN directory, renames them to the checker's `<TDCC>_TS.pdf` and `<TDCC>_IIS.pdf`, and places them in a new batch folder. Product folders are read only.
 
-**Operator setup (Windows)**: install official Python 3.11 or later (with Tcl/Tk), place the project in a folder you can write to, and double-click `setup_panel.cmd`. Setup creates the project's own `.venv` and installs pinned packages from `constraints.txt`, which requires access to the company-approved Python package source. After "安裝完成", double-click the "TS IIS 準備與放回" shortcut on the desktop or in the project folder; if shortcut creation failed, double-click `launch_panel.cmd`. Daily use needs no commands; the last chosen folders are remembered in the install folder's `.local/`. Rerun setup after moving the folder or updating the code. Word conversion requires Microsoft Word on this computer.
+**Operator setup (Windows)**: install official Python 3.11 or later (with Tcl/Tk), place the project in a folder you can write to, and double-click `setup_panel.cmd`. Setup creates the project's own `.venv` and installs pinned packages from `constraints.txt`, which requires access to the company-approved Python package source. After "安裝完成", the desktop and the project folder have two shortcuts: "TS IIS 準備與放回" (preparation, return, daily import, mail drafts, Order terms) and "Term Sheet 核對" (the checker PANEL); if shortcut creation failed, double-click `launch_panel.cmd` or `launch_checker_panel.cmd`. Daily use needs no commands; both windows remember their last chosen folders in the install folder's `.local/`, and check records go to the install folder's `runtime/核對紀錄/`. Rerun setup after moving the folder or updating the code. Word conversion requires Microsoft Word on this computer.
+
+**Moving from a separate checker installation**: on a computer that had `fcn-term-sheet-checker` installed separately, run `setup_panel.cmd` once in this project folder; the desktop "Term Sheet 核對" shortcut of the same name is repointed here. Each installation uses the `.venv` inside its own folder, so they do not interfere. To keep old check records, copy the old folder's `runtime/核對紀錄/` into this project's `runtime/核對紀錄/` (file names are timestamps and do not collide); the checker PANEL's remembered folders are not carried over, so choose them once again. After the new shortcuts work, the old folder can be deleted.
 
 **Developer setup**:
 

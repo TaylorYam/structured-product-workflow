@@ -4,4 +4,4 @@ if not exist "%~dp0.venv\Scripts\pythonw.exe" (
   pause
   exit /b 1
 )
-start "" /D "%~dp0" "%~dp0.venv\Scripts\pythonw.exe" "%~dp0launch_panel.pyw"
+start "" /D "%~dp0" "%~dp0.venv\Scripts\pythonw.exe" "%~dp0launch_checker_panel.pyw"
