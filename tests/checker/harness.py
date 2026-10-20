@@ -6,7 +6,7 @@
 `CONFIG` 是以 repo config 載入一次的核對設定 fixture（交易所假日表的涵蓋範圍延到合成說明書的年份，見 `cover_synthetic_years`）；要換某個設定檔或上手註冊表時用 `load_config`／
 `CheckConfig.with_registry`。審查標準的原始內容 `STANDARD` 也只在這裡讀一次，三家合成器都從這裡取固定文字。
 
-說明書與參考條件表列由各上手的合成器產生（商品規格與參考條件表列在 tests/reference_synth.py）；
+說明書與參考條件表列由各上手的合成器產生（商品規格與參考條件表列在 tests/checker/reference_synth.py）；
 這裡不引用任何上手的版面或預設值，也不 import 合成器。
 """
 

@@ -1,8 +1,8 @@
 """MS 合成說明書與投資人須知（docs/templates/ms-zh-product-description.md、ms-zh-iis.md）；商品、標的與價格皆虛構。
 
-只用 tests/pdf_writer.py 排版：封面「N. 標籤：值」、章名「第X章、」、第一章條號「N. 標題：」與內文同一行、子項「(n)」，
+只用 tests/checker/pdf_writer.py 排版：封面「N. 標籤：值」、章名「第X章、」、第一章條號「N. 標題：」與內文同一行、子項「(n)」，
 表格一格一行（價格表為真實欄列版面）。`breaks` 在表格某列之後強制換頁，`iis_pages`／`iis_page_total` 改投資人須知頁數與頁底總頁數。
-改字製造錯誤用 `edits`（tests/pdf_writer.py 的 `Edit`），段落代號：說明書 `ts.cover`、第一章各條 `ts.art{n}`
+改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的 `Edit`），段落代號：說明書 `ts.cover`、第一章各條 `ts.art{n}`
 （日期表 `ts.art14.table`、價格表 `ts.art16.table`／`ts.art18.table`、情境 `ts.scen.一`…）、其他各章 `ts.ch二`～`ts.ch六`；
 投資人須知 `iis.cover`、`iis.warn`、`iis.org`、`iis.summary`、`iis.coupon`、`iis.redeem`、`iis.risk`、`iis.fees`、`iis.rest`。
 """

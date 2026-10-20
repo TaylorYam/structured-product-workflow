@@ -1,6 +1,6 @@
 """合成說明書與投資人須知用的 PDF 寫入工具（不分上手），以及三家共用的改字 `Edit`。
 
-各上手的合成器（tests/synth.py、tests/ms_synth.py、tests/hsbc_synth.py）都只透過這裡的公開工具排版；
+各上手的合成器（tests/checker/barc_synth.py、tests/checker/ms_synth.py、tests/checker/hsbc_synth.py）都只透過這裡的公開工具排版；
 頁尾等版面細節由各合成器自行加上。
 """
 

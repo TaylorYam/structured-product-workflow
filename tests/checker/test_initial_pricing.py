@@ -2,7 +2,7 @@
 空白時當成不是 VWAP，價格照常比對。
 
 測試切點是批量入口（run_batch／check_all、save_batch）與 PANEL 回填決策文字（PanelOutcome.backfill_text）；回填結果讀核對結果檔「回填後」。
-只用合成資料（tests/synth.py）；預期價格是依合成說明書的期初價格與百分比手算的字面值。
+只用合成資料（tests/checker/barc_synth.py）；預期價格是依合成說明書的期初價格與百分比手算的字面值。
 """
 
 from __future__ import annotations

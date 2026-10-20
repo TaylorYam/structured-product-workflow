@@ -1,6 +1,6 @@
-"""BARC 說明書核對：透過批量核對入口（預覽＋核對，tests/harness.py），一次一份說明書。
+"""BARC 說明書核對：透過批量核對入口（預覽＋核對，tests/checker/harness.py），一次一份說明書。
 
-只用合成資料（tests/synth.py），不直接測擷取或解析的內部函式。回填與批量流程本身見 test_batch.py。
+只用合成資料（tests/checker/barc_synth.py），不直接測擷取或解析的內部函式。回填與批量流程本身見 test_batch.py。
 """
 
 from __future__ import annotations

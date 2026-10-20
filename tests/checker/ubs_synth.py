@@ -1,15 +1,15 @@
 """UBS 合成說明書（docs/templates/ubs-zh-product-description.md）；商品、標的與價格皆虛構。
 
-只用 tests/pdf_writer.py 排版：第 1 頁「中文產品說明書」、項號「一、」～「十二、」（x 36，值跨行時接在 x 60）、警語 1.～10.、
+只用 tests/checker/pdf_writer.py 排版：第 1 頁「中文產品說明書」、項號「一、」～「十二、」（x 36，值跨行時接在 x 60）、警語 1.～10.、
 刊印日期；之後段名單獨一行（商品基本資料、相關機構事業概況、商品風險揭露、投資風險警語、一般交易事項、特別記載事項），
 段內項號「一、」起重新起算。每頁頁底「第N頁，共M頁」。價格表（商品基本資料八、十五）表頭一格拆成兩行（欄名、
-「（即期初價格的X%）」），欄序 K → KI → KO；價格後接標的報價幣別字。改字製造錯誤用 `edits`（tests/pdf_writer.py 的
+「（即期初價格的X%）」），欄序 K → KI → KO；價格後接標的報價幣別字。改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的
 `Edit`），段落代號：`ts.cover`（第 1～2 頁）、`ts.warn`（第 1 頁警語）、商品基本資料各項 `ts.art{n}`（配息表
 `ts.art8.coupon`、價格表 `ts.art8.table`、第九項標的表 `ts.art9.table`、情境價格表 `ts.art15.table`）、`ts.org`
 （相關機構事業概況）、`ts.risk`、`ts.warnings`（投資風險警語段）、`ts.general`（一般交易事項）、`ts.special`。
 投資人須知（docs/templates/ubs-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
 段落代號 `iis.cover`、`iis.warn`、`iis.org`（相關機構）、`iis.summary`（商品簡介）、`iis.fees`、`iis.rest`。
-真實文件每頁的私用區字元 U+F020 合成字型畫不出來，改由 tests/test_iis_ubs.py 直接以擷取後的行測刪除（說明書與投資人須知
+真實文件每頁的私用區字元 U+F020 合成字型畫不出來，改由 tests/checker/test_iis_ubs.py 直接以擷取後的行測刪除（說明書與投資人須知
 共用 `parsers.ubs.clean_lines`）。
 """
 

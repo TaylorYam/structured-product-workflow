@@ -1,9 +1,9 @@
 """Citi 合成說明書（docs/templates/citi-zh-product-description.md）；商品、標的與價格皆虛構。
 
-只用 tests/pdf_writer.py 排版：封面 `‧` 兩欄表（標籤 x 60、‧ x 260、值 x 273）；章名「一、商品基本資料」x 42；第一章條號「N.」
+只用 tests/checker/pdf_writer.py 排版：封面 `‧` 兩欄表（標籤 x 60、‧ x 260、值 x 273）；章名「一、商品基本資料」x 42；第一章條號「N.」
 x 42、標題同一列 x 67（`legacy=True` 舊文件：「N. 標題」同一行、價格固定 4 位、受託機構商品代號 `[ ]`、分銷費用單列）；
 子項「(n)」x 42、內容同一列 x 67；表格一格一行。
-改字製造錯誤用 `edits`（tests/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`、第一章各條 `ts.art{n}`（價格表
+改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`、第一章各條 `ts.art{n}`（價格表
 `ts.art9.table`、日期表 `ts.art12.table`、假設價格表 `ts.art15.table`）、其他各章 `ts.ch二`～`ts.ch五`。
 投資人須知（docs/templates/citi-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
 每頁頁首「第N頁，共M頁」；段落代號 `iis.cover`、`iis.warn`（警語 1.～13.）、`iis.org`（一、相關機構）、`iis.summary`

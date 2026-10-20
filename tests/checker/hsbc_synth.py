@@ -1,8 +1,8 @@
-"""HSBC 合成說明書與投資人須知 PDF：把商品規格（tests/reference_synth.py 的 `ProductSpec`）畫成仿 HSBC 版面；
+"""HSBC 合成說明書與投資人須知 PDF：把商品規格（tests/checker/reference_synth.py 的 `ProductSpec`）畫成仿 HSBC 版面；
 商品、標的與價格皆虛構。參考條件表列不在這裡產生（`reference_synth.reference_row`）。
 
 百分比、價格表、期數與日期、面額、幣別與 Non-Call 都由規格算出；預設值下兩份文件與參考條件表列完全一致。
-改字製造錯誤用 `edits`（tests/pdf_writer.py 的 `Edit`），段落代號：說明書 `ts.cover`（第一章之前）、第一章各條
+改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的 `Edit`），段落代號：說明書 `ts.cover`（第一章之前）、第一章各條
 `ts.art{n}`（第 12 條價格表 `ts.art12.table`、第 18 條情境表 `ts.art18.table`）、其他各章 `ts.ch二`～`ts.ch五`；
 投資人須知 `iis.p1`～`iis.p4`（依頁）。
 """

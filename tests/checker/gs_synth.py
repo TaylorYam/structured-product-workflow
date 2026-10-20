@@ -1,9 +1,9 @@
 """GS 合成說明書（docs/templates/gs-zh-product-description.md）；商品、標的與價格皆虛構。
 
-只用 tests/pdf_writer.py 排版：第 1 頁「中文產品說明書」「受託機構商品代號為…」＋編號項目 1.～13.（x 72、續行 x 86）；
+只用 tests/checker/pdf_writer.py 排版：第 1 頁「中文產品說明書」「受託機構商品代號為…」＋編號項目 1.～13.（x 72、續行 x 86）；
 章名「第一章:商品基本資料」在左邊界 x 72，第一章起每頁右上角另有重複的章名頁首（x 458）、每頁頁底置中「第- N -頁，共M頁」；
 條號「N.」與標題同一行。表格一格一個文字單位（同一列同一高度），表頭一格拆成多行。
-改字製造錯誤用 `edits`（tests/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`（第 1–2 頁）、`ts.warn`（第 1 頁警語）、
+改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`（第 1–2 頁）、`ts.warn`（第 1 頁警語）、
 第一章各條 `ts.art{n}`（觀察時程表 `ts.art13.table`、價格表 `ts.art15.table`）、其他各章 `ts.ch二`～`ts.ch六`。
 投資人須知（docs/templates/gs-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
 段落代號 `iis.cover`、`iis.warn`、`iis.org`（一. 相關機構）、`iis.summary`（二. 1. 商品簡介，價格表 `iis.table`）、

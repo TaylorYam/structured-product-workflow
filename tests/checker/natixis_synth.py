@@ -1,10 +1,10 @@
 """Natixis 合成說明書（docs/templates/natixis-zh-product-description.md）；商品、標的與價格皆虛構。
 
-只用 tests/pdf_writer.py 排版：封面「中文產品說明書」「(適用於專業投資人及OSU 客戶)」、標題名稱、「TDCC 商品代號為…，ISIN 為…」，
+只用 tests/checker/pdf_writer.py 排版：封面「中文產品說明書」「(適用於專業投資人及OSU 客戶)」、標題名稱、「TDCC 商品代號為…，ISIN 為…」，
 再來是「標籤：值」兩欄（標籤 x 41、值 x 241，標籤放在值的中間那一行，跨行的標籤拆兩行）；章名「第一章、商品基本資料」在左邊界，
 條號「N.」第一章 x 54、其他章 x 36。每頁頁底有英文名稱兩行、「第N頁/共計M頁」與分類標記（真實文件的頁尾，擷取時排除）。
 表格（連結標的表、情境價格表）的格子置中於欄中心，表頭一格拆成多行；`split_numbers` 時價格從小數點後拆行。
-改字製造錯誤用 `edits`（tests/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`（封面；標題名稱 `ts.cover.title`）、`ts.warn`（封面警語）、第一章各條
+改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`（封面；標題名稱 `ts.cover.title`）、`ts.warn`（封面警語）、第一章各條
 `ts.art{n}`（連結標的表 `ts.art9.table`、日期表 `ts.art12.table`（每期型的自動提前到期觀察日表 `ts.art12.table.ko`）、情境價格表 `ts.art16.table`）、其他各章 `ts.ch二`～`ts.ch五`。
 投資人須知（docs/templates/natixis-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
 段落代號 `iis.cover`、`iis.warn`、`iis.org`（壹）、`iis.summary`（貳 1.）、`iis.coupon`（貳 2.）、`iis.fees`（肆）、`iis.rest`（其他）。

@@ -1,7 +1,7 @@
 """測試切點：批量核對入口 run_batch(核對設定, 參考條件表, 說明書們, 輸出資料夾) → 結果與儲存收據、核對結果檔與核對紀錄；
 PANEL 的用法是 preview_batch → check_batch → save_batch。儲存的結果只看寫出的檔案與收據。
 
-只用合成資料（tests/synth.py）；以 openpyxl 讀回產出的 Excel 觀察回填結果。
+只用合成資料（tests/checker/barc_synth.py）；以 openpyxl 讀回產出的 Excel 觀察回填結果。
 """
 
 from __future__ import annotations

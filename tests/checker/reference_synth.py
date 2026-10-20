@@ -2,7 +2,7 @@
 以及仿 FCN參考條件 Excel `樣本清單` 的 `build_reference_sheet`（Issue #145）。
 
 各上手的合成器（tests/<上手>_synth.py）以 `ProductSpec` 的子類別加上該上手專屬的文件選項，只負責把規格畫成說明書與
-投資人須知 PDF（製造錯誤用 `edits`，見 tests/pdf_writer.py 的 `Edit`）；參考條件表列不由上手產生。欄名對照與「發行機構」欄寫法取自參考條件表格式設定
+投資人須知 PDF（製造錯誤用 `edits`，見 tests/checker/pdf_writer.py 的 `Edit`）；參考條件表列不由上手產生。欄名對照與「發行機構」欄寫法取自參考條件表格式設定
 （config/reference_sheet.toml）。所有數值皆為虛構。
 """
 

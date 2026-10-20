@@ -1,9 +1,9 @@
 """Nomura 合成說明書（docs/templates/nomura-zh-product-description.md）；商品、標的與價格皆虛構。
 
-只用 tests/pdf_writer.py 排版：封面「◎ 標籤：值」（標籤 x 45、跨行的值 x 159）；章名「一、商品基本資料」x 45；第一章條號「N.」
+只用 tests/checker/pdf_writer.py 排版：封面「◎ 標籤：值」（標籤 x 45、跨行的值 x 159）；章名「一、商品基本資料」x 45；第一章條號「N.」
 x 45（1.～9. 獨立一行、10. 以後與標題同一行）、內文 x 70；表格一格一個文字單位（同一列同一高度）；每頁頁首「N/M」。
 `spaced=True` 為 2025 年文件寫法（數字與單位之間多一個空白）。
-改字製造錯誤用 `edits`（tests/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`、`ts.warn`（封面警語）、第一章各條 `ts.art{n}`
+改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`、`ts.warn`（封面警語）、第一章各條 `ts.art{n}`
 （標的表 `ts.art7.table`、日期表 `ts.art11.table`、下限觸發決定日表 `ts.art11.ki`、情境設定參數與百分比表
 `ts.art14.table`）、其他各章 `ts.ch二`～`ts.ch五`。
 投資人須知（docs/templates/nomura-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；

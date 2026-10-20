@@ -78,9 +78,11 @@ jobs:
         run: python -m pip install -c constraints.txt -e ".[dev]"
 
       - name: Lint
+        env:
+          LINT_PATHS: src tests scripts/build_panel_icon.py panel_bootstrap.py installer/checker/launch_panel.pyw launch_panel.pyw
         run: |
-          ruff check src tests scripts/build_panel_icon.py panel_bootstrap.py installer/checker/launch_panel.pyw
-          ruff format --check src tests scripts/build_panel_icon.py panel_bootstrap.py installer/checker/launch_panel.pyw
+          ruff check $LINT_PATHS
+          ruff format --check $LINT_PATHS
 
       # 真實樣本測試只在本機設定 SPW_REAL_SAMPLES_DIR 時執行；CI 自動略過。資料庫測試用上面的 PostgreSQL 服務
       # 資料庫測試每個都清空同一個測試資料庫，不能平行跑；核對測試（tests/checker）沒有資料庫，平行跑比較快

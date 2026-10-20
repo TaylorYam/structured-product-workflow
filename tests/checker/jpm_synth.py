@@ -1,8 +1,8 @@
 """JPM 合成說明書（docs/templates/jpm-zh-product-description.md）；商品、標的與價格皆虛構。
 
-只用 tests/pdf_writer.py 排版：封面兩欄表（標籤 x 20、值 x 190）；章名「I. 商品基本資料」x 20；第 I 部分條號「N.」x 15
+只用 tests/checker/pdf_writer.py 排版：封面兩欄表（標籤 x 20、值 x 190）；章名「I. 商品基本資料」x 20；第 I 部分條號「N.」x 15
 獨立一行、標題在下一行 x 35（10. 以後同一行）；子項「(n)」x 25；表格一格一行（價格下一行為幣別字）；每頁頁面底部頁碼「N/M」。
-改字製造錯誤用 `edits`（tests/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`、第 I 部分各條 `ts.art{n}`（標的表
+改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`、第 I 部分各條 `ts.art{n}`（標的表
 `ts.art9.table`、日期表 `ts.art12.table`、假設價格表 `ts.art15.table`）、其他各部分 `ts.chII`～`ts.chV`。
 投資人須知（docs/templates/jpm-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
 段落代號 `iis.cover`、`iis.warn`（警語 1.～10.）、`iis.org`（一、相關機構）、`iis.summary`（商品簡介，含標的表）、

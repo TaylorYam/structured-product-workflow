@@ -1,8 +1,8 @@
 """BNP 合成說明書（docs/templates/bnp-zh-product-description.md）；商品、標的與價格皆虛構。
 
-只用 tests/pdf_writer.py 排版：封面項號「N.」獨立一行、內容在下一行；章名「第X章、」；第一章條號「N.」獨立一行、
+只用 tests/checker/pdf_writer.py 排版：封面項號「N.」獨立一行、內容在下一行；章名「第X章、」；第一章條號「N.」獨立一行、
 標題在下一行；子項「(n)」；表格一格一行（標籤格與第一格有時同一行）。`breaks` 在表格某列之後強制換頁。
-改字製造錯誤用 `edits`（tests/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`、第一章各條 `ts.art{n}`
+改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`、第一章各條 `ts.art{n}`
 （標的表 `ts.art11.table`、日期表 `ts.art14.table`、重印表 `ts.art18.table`、情境 `ts.scen.一`…）、其他各章 `ts.ch二`～`ts.ch五`。
 境外人民幣計價（`currency_zh="境外人民幣"`）照真實樣本的寫法：計價幣別後接人民幣定義句、第 10 項後多一項「人民幣付款中斷
 事件」（段落代號 `ts.art_rmb`）使之後條號 +1、英文名稱寫 CNY（Issue #345）；第一章段落代號仍用美元版條號。

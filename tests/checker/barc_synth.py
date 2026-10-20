@@ -1,10 +1,10 @@
-"""BARC 說明書合成器：把商品規格（tests/reference_synth.py 的 `ProductSpec`）畫成仿 BARC 中文產品說明書版面的 PDF。
+"""BARC 說明書合成器：把商品規格（tests/checker/reference_synth.py 的 `ProductSpec`）畫成仿 BARC 中文產品說明書版面的 PDF。
 
 所有數值、代號、名稱皆為虛構；不含任何真實交易資料。版面座標依範本規格
-docs/templates/barc-zh-product-description.md 觀察值設定。PDF 排版用 tests/pdf_writer.py，
-參考條件表列用 tests/reference_synth.py、單份核對用 tests/harness.py。
+docs/templates/barc-zh-product-description.md 觀察值設定。PDF 排版用 tests/checker/pdf_writer.py，
+參考條件表列用 tests/checker/reference_synth.py、單份核對用 tests/checker/harness.py。
 
-改字製造錯誤用 `edits`（tests/pdf_writer.py 的 `Edit`），段落代號：
+改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的 `Edit`），段落代號：
 - 說明書封面 `ts.cover`：各欄的值 `ts.cover.{欄}`（product_code、distributor_code、isin、name_zh、name_en、kind、
   issuer、currency、distributor、approval_date），標題 `ts.title`。
 - 說明書第一章各條 `ts.art{n}`：第 13 條配息表 `ts.art13.coupon.{t}.{欄}`（valuation、payment）、觀察期／提前出場表

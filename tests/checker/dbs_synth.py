@@ -1,10 +1,10 @@
 """DBS 合成說明書（docs/templates/dbs-zh-product-description.md）；商品、標的與價格皆虛構。
 
-只用 tests/pdf_writer.py 排版：第 1 頁「中文產品說明書(最終版本)」、「• 標籤：值」清單、警語 1.～11. 與刊印日期；段落標題
+只用 tests/checker/pdf_writer.py 排版：第 1 頁「中文產品說明書(最終版本)」、「• 標籤：值」清單、警語 1.～11. 與刊印日期；段落標題
 （商品基本資料…特別記載事項）置中單獨一行，沒有章號；商品基本資料是兩欄表（標籤 x 56、值 x 170，標籤每 10 字換行）。
 表1 表頭：欄名一行、「(期初價格的X%)」下一行，欄序 K → KO → KI；每格「美元 123.4567」。情境價格表表頭「（期初價格」／
 「X%）」（全形、沒有「的」），每格幣別字與數字分兩行。費用表的分銷費用子列標籤（報酬／費用／折讓）佔費率欄、費率在右邊一欄。
-每頁頁底「N / M頁」。改字製造錯誤用 `edits`（tests/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`（第 1–2 頁）、`ts.warn`
+每頁頁底「N / M頁」。改字製造錯誤用 `edits`（tests/checker/pdf_writer.py 的 `Edit`），段落代號：`ts.cover`（第 1–2 頁）、`ts.warn`
 （封面警語）、`ts.basic`（商品基本資料；表1 `ts.basic.table`、日期格 `ts.basic.dates`（表A 各列 `ts.basic.dates.table`）、配息 `ts.basic.coupon`、強制贖回
 `ts.basic.ko`、到期贖回 `ts.basic.maturity`）、`ts.scenario`（情境；情境價格表 `ts.scenario.table`、情境三最終價格表 `ts.scenario.final`）、`ts.org`（相關機構
 事業概況）、`ts.risk`、`ts.trading`（一般交易事項；費用表 `ts.trading.fees`）、`ts.rest`。
