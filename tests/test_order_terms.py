@@ -9,6 +9,7 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+from sp_workflow import order_terms
 from sp_workflow.order_formats import ISSUERS, KNOWN_WITHOUT_FORMAT
 from sp_workflow.order_template import COLUMNS as TEMPLATE_COLUMNS
 from sp_workflow.order_template import FLAG_FILL, template_row
@@ -246,6 +247,8 @@ def test_list_is_never_overwritten(tmp_path: Path, root: Path) -> None:
         ("[External] [TS/IIS] RE: (Order)_[Esun Sec] FCN", False),
         ("FW: (Order) FCN", False),
         ("[Esun Sec] FCN_AAA_B--TDCC", False),
+        ("[Order][Esun Sec] FCN_AAA_WS---TDCC_092199990001", True),
+        ("[External] RE: [Order][Esun Sec] FCN_AAA--TDCC_092199990001", False),
     ],
 )
 def test_only_original_order_mails_are_read(subject: str, expected: bool) -> None:
@@ -990,3 +993,122 @@ def test_citi_ko_flags(daily: str, memory: str, expected: str) -> None:
     row, problems = cells(values, (("Daily KO", daily), ("Memory Autocall", memory)))
 
     assert (row["KO Type"], problems) == (expected, [])
+
+
+def multi_order(tdccs: tuple[str, str], markers: tuple[str, str]) -> str:
+    """一封信下兩檔，各自一段：分段標記 + 開頭行 + 條件表。"""
+    header = ("Product", "Currency", "BBG Code 1", "Upfront / Note Price (%)")
+    sections = []
+    for marker, under in zip(markers, ("AAA UW", "BBB UW"), strict=True):
+        sections += [marker, "Risk level: RR4", table(header, ("FCN", "USD", under, "97.50"))]
+    return order_html(
+        f"We buy {tdccs[0]} USD 300K @97.50(OSU)、{tdccs[1]} USD 550K @97.50(DSU 150K + OSU 400K)", *sections
+    )
+
+
+@pytest.mark.parametrize(
+    "markers",
+    [
+        ("1. {0}", "2. {1}"),  # BARC
+        ("TDCC = {0}", "TDCC = {1}"),  # SG（前面另有「1.」也一樣）
+    ],
+)
+def test_sections_of_a_multi_order_mail(tmp_path: Path, root: Path, markers) -> None:
+    first, second = "029199990001", "029199990002"
+    html = multi_order((first, second), tuple(m.format(first, second) for m in markers))
+    product_folder(root, first, "order.msg")
+
+    receipt, _ = run(tmp_path, first, {"order.msg": Mail(f"(Order)--{first}、{second}", SENT, html)})
+
+    one, two = receipt.rows
+    assert (one.tdcc, one.values["標的1"], one.values["承作金額"]) == (first, "AAA UW", Decimal("300000"))
+    assert (two.tdcc, two.values["標的1"], two.values["承作金額"]) == (second, "BBB UW", Decimal("550000"))
+    assert term_reasons(one) == term_reasons(two) == ()
+
+
+def test_numbered_sections_without_tdcc_are_left_for_manual_entry(tmp_path: Path, root: Path) -> None:
+    # JPM 只寫「1.」「2.」：不依 We buy 行的順序猜（使用者：偏離常態的信接受人工回填）
+    first, second = "076199990001", "076199990002"
+    html = multi_order((first, second), ("1.", "2."))
+    product_folder(root, first, "order.msg")
+
+    receipt, _ = run(tmp_path, first, {"order.msg": Mail(f"(Order)--{first}、{second}", SENT, html)})
+
+    one, two = receipt.rows
+    assert one.status == two.status == PENDING
+    assert "條件表 1 對不到是哪一檔 TDCC" in one.reasons
+    assert "標的1" not in one.values and one.values["承作金額"] == Decimal("300000")  # We buy 行照樣讀
+    assert 0 in one.flagged  # 整列的問題標在 TDCC
+
+
+@pytest.mark.parametrize("price", ["98.60->98.50", "98.60 >> 98.50", "98.60=>98.50"])
+def test_other_revision_arrows(tmp_path: Path, root: Path, price: str) -> None:
+    product_folder(root, BARC, "order.msg")
+    values = (*PRICER_VALUES[:12], price, *PRICER_VALUES[13:])
+    mail = Mail(f"(Order)--{BARC}", SENT, standard_order(values=values))
+
+    receipt, _ = run(tmp_path, BARC, {"order.msg": mail})
+
+    (row,) = receipt.rows
+    assert row.values["價格(%)"] == Decimal("98.50")
+    assert f"價格(%) 有修改：{price}" in row.reasons
+
+
+def test_cells_without_letters_or_digits_are_blank(tmp_path: Path, root: Path) -> None:
+    # 寄件端把全形空白亂碼成「\ufffd@」；KI 本來就是空的
+    product_folder(root, BARC, "order.msg")
+    values = (*PRICER_VALUES[:15], "\ufffd@", *PRICER_VALUES[16:18], "\ufffd@", *PRICER_VALUES[19:])
+    mail = Mail(f"(Order)--{BARC}", SENT, standard_order(values=values))
+
+    receipt, _ = run(tmp_path, BARC, {"order.msg": mail})
+
+    (row,) = receipt.rows
+    assert (row.status, row.reasons) == (READ, ())
+    assert "KI(%)" not in row.values
+    assert all(name != "Funding Spread (bps)" for name, _ in row.others)
+
+
+def test_hsbc_multi_order_dates_are_left_for_manual_entry(tmp_path: Path, root: Path) -> None:
+    first, second = "325199990001", "325199990002"
+    header = ("TDCC code", "ExpectedCapital size", "Product", "Currency", "BBG Code 1", "Upfront / NotePrice (%)")
+    rows = ((first, "USD 450K", "FCN", "USD", "AAA UQ", "96.8"), (second, "USD 450K", "FCN", "USD", "BBB UQ", "96.8"))
+    dates = table(
+        ("Strike Date", "02/10/2026", "02/10/2026"),
+        ("Issue Date", "09/10/2026", "09/10/2026"),
+        ("Final Valuation", "09/02/2027", "09/02/2027"),
+        ("Maturity Date", "12/02/2027", "12/02/2027"),
+    )
+    html = order_html(
+        f"We buy {first} USD 450K @96.8、{second} USD 450K @96.8",
+        table(header, *rows),
+        quoted=f"<p>Please find attached indicative TS.</p>{dates}",
+    )
+    product_folder(root, first, "order.msg")
+
+    receipt, _ = run(tmp_path, first, {"order.msg": Mail(f"(Order)--{first}、{second}", SENT, html)})
+
+    one, two = receipt.rows
+    assert one.values["承作金額"] == Decimal("450000") and two.values["標的1"] == "BBB UQ"
+    assert not [r for r in one.reasons if "沒列過的欄" in r]
+    # 一檔一欄的日期表不猜欄位順序：日期留空、標紅，交給人工回填
+    assert not {"發行日", "最終比價日", "到期日"} & set(one.values)
+    assert one.status == PENDING and any(r.startswith("格式表缺") for r in one.reasons)
+
+
+def test_sg_at_maturity_is_eki() -> None:
+    row, problems = cells({**FULL_VALUES, "KI型態": "At Maturity", "KI(%)": Decimal("70")})
+
+    assert ((row["Barrier Type"], row["KI Barrier (%)"]), problems) == (("EKI", Decimal("70")), [])
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        (r"C:\a\b.msg", r"\\?\C:\a\b.msg"),
+        (r"\\server\share\b.msg", r"\\?\UNC\server\share\b.msg"),
+    ],
+)
+def test_long_path_prefix(path: str, expected: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(order_terms.sys, "platform", "win32")
+
+    assert order_terms._long_path(Path(path)) == expected

@@ -12,6 +12,9 @@ from __future__ import annotations
 
 import datetime as dt
 import re
+import shutil
+import sys
+import tempfile
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
@@ -57,9 +60,9 @@ BUY_SOURCE = "We buy 行"
 SUPPLEMENT_SOURCE = "補日期："  # 後面接信件檔名
 LINE_SOURCE = "開頭行"
 _EMPTY_VALUES = frozenset({"", "-", "n/a", "na"})
-_ORDER_MARK = "(order)"
+_ORDER_MARK = re.compile(r"(?i)[(\[]order[)\]]")  # (Order) 或 [Order]
 _REPLY_MARK = re.compile(r"(?i)\b(re|fw|fwd|done)\s*[:：]|回覆\s*[:：]|轉寄\s*[:：]")
-_STANDALONE_TDCC = re.compile(r"^\s*([0-9]{12})\s*$")
+_SECTION_TDCC = re.compile(r"(?i)^\s*(?:[0-9]{1,2}\s*[.)、]\s*)?(?:TDCC(?:\s*code)?\s*[=:：]\s*)?([0-9]{12})\s*$")
 _WE_BUY = re.compile(r"(?i)\bwe\s+buy\b")
 _TDCC_IN_LINE = re.compile(r"(?<![0-9])[0-9]{12}(?![0-9])")
 _BUY_PRICE = re.compile(r"@\s*([0-9]+(?:\.[0-9]+)?)")
@@ -70,7 +73,7 @@ _SETTLE = re.compile(r"(?i)please\s+settle\s+thru\s+(.+?)\.?\s*$")
 _KEY_VALUE = re.compile(r"^([A-Za-z][A-Za-z0-9 .()%/?+\-]*?)\s*[:：]\s*(.+)$")
 # 回覆信引用的上一封信從這裡開始，之後的內容不讀
 _QUOTE_START = re.compile(r"(?i)^\s*(from|寄件者|sent|寄件日期)\s*[:：]|^\s*-{3,}\s*original message")
-_ARROW = "→"
+_ARROW = re.compile(r"→|->|=>|>>")  # 改價寫法
 _MONTHS = {
     m: i for i, m in enumerate(("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"), 1)
 }
@@ -261,11 +264,11 @@ class _OrderLibrary:
 
 
 def is_order_subject(subject: str) -> bool:
-    """主旨有 `(Order)`（不分大小寫），且前面沒有 RE:／FW:／DONE: 等回覆、轉寄記號。"""
-    lowered = subject.lower()
-    if _ORDER_MARK not in lowered:
+    """主旨有 `(Order)` 或 `[Order]`（不分大小寫），且前面沒有 RE:／FW:／DONE: 等回覆、轉寄記號。"""
+    mark = _ORDER_MARK.search(subject)
+    if mark is None:
         return False
-    return _REPLY_MARK.search(subject[: lowered.index(_ORDER_MARK)]) is None
+    return _REPLY_MARK.search(subject[: mark.start()]) is None
 
 
 def _row_for(
@@ -447,8 +450,10 @@ def _clean(text: str) -> str:
 def parse_order(path: Path, mail: Mail) -> _ParsedMail:
     """拆出一封 Order 原信裡每檔 TDCC 的原始欄位（還沒對照統一欄位）。
 
-    開頭的「名稱: 值」行屬於所有 TDCC；信裡單獨一行 TDCC 之後的行與表格屬於那檔。
-    表格屬於哪檔：表上有 TDCC 欄 → 依欄；前面有單獨一行 TDCC → 那檔；整封信只有一檔 → 那檔。
+    開頭的「名稱: 值」行屬於所有 TDCC；分段標記之後的行與表格屬於那檔。分段標記是單獨一行的 TDCC
+    （可帶「1.」「TDCC =」「TDCC code:」）；只寫「1.」「2.」沒寫 TDCC 的不猜是哪一檔，交給人工回填
+    （使用者 2026-10-20：不過度客製，偏離常態的信接受人工回填）。
+    表格屬於哪檔：表上有 TDCC 欄 → 依欄；前面有分段標記 → 那檔；整封信只有一檔 → 那檔。
     """
     parser = _BodyParser()
     parser.feed(mail.html)
@@ -471,8 +476,8 @@ def parse_order(path: Path, mail: Mail) -> _ParsedMail:
             line = item.text
             if _QUOTE_START.search(line):
                 break
-            standalone = _STANDALONE_TDCC.match(line)
-            if standalone:
+            standalone = _SECTION_TDCC.match(line)
+            if standalone:  # 例：「156…」「1. 029…」「TDCC = 037…」
                 context = standalone.group(1)
                 records.setdefault(context, [])
                 continue
@@ -555,6 +560,7 @@ def supplement_entries(tdcc: str, path: Path, mail: Mail, day_first: bool) -> li
 
     - 橫式表：表頭有 TDCC 欄，取 TDCC 相同的那列（GS 的 Order Summary）。
     - 直式表：每列「名稱 | 值」，而且緊接在寫了這檔 TDCC 的那一行後面（HSBC 回覆的「TDCC code: …」）。
+      多檔一起下單的直式表（一檔一欄）不猜欄位順序，交給人工。
     """
     parser = _BodyParser()
     parser.feed(mail.html)
@@ -636,7 +642,7 @@ def map_entries(
         mapped.append((entry, name or ""))
         if name:
             candidates.setdefault(name, []).append((entry, value))
-        elif value:
+        elif not _is_empty(value):
             others.append((entry.header, value))
 
     for entry in entries:
@@ -722,14 +728,17 @@ def split_embedded(text: str, labels: Sequence[str]) -> tuple[str, list[tuple[st
 
 
 def _latest(raw: str) -> tuple[str, bool]:
-    """`96.20%→96.15%` 取最後的值；回傳 (值, 是否有修改)。"""
-    if _ARROW in raw:
-        return raw.rsplit(_ARROW, 1)[1].strip(), True
+    """`96.20%→96.15%`、`99.65->99.62`、`99.92 >> 99.89` 取最後的值；回傳 (值, 是否有修改)。"""
+    parts = _ARROW.split(raw)
+    if len(parts) > 1:
+        return parts[-1].strip(), True
     return raw.strip(), False
 
 
 def _is_empty(value: str) -> bool:
-    return value.strip().lower() in _EMPTY_VALUES
+    """空白、`-`、`N/A`，或完全沒有字母數字（例：寄件端亂碼成的 `�@`，原本是全形空白）。"""
+    text = value.strip()
+    return text.lower() in _EMPTY_VALUES or not any(ch.isalnum() for ch in text)
 
 
 def _compare_key(value: object) -> object:
@@ -799,19 +808,40 @@ def parse_amount(text: str) -> Decimal:
 # ---------- Outlook ----------
 
 
+def _long_path(path: Path) -> str:
+    r"""Windows 長路徑寫法（`\\?\` 前綴），超過 260 字也能讀檔。"""
+    text = str(path)
+    if sys.platform != "win32" or text.startswith("\\\\?\\"):
+        return text
+    return "\\\\?\\UNC\\" + text[2:] if text.startswith("\\\\") else "\\\\?\\" + text
+
+
 class OutlookMsgReader:
     """用傳統版 Outlook（COM）開 `.msg` 讀主旨、寄件時間與 HTML 內文；開完即關閉、不存任何變更。"""
 
     _UNSENT_YEAR = 4501  # Outlook 沒有寄件時間時給 4501-01-01
+    _LONG_PATH = 240  # Windows 傳統路徑上限 260，留一點餘裕
 
     def __call__(self, path: Path) -> Mail:
         import pythoncom
         import win32com.client
 
+        full = path.resolve()  # Outlook 依它自己的工作目錄解讀相對路徑
+        temp_dir = None
+        if len(str(full)) >= self._LONG_PATH:
+            # 公槽上檔名很長的信（例：GS Trade Executed）超過 Windows 路徑長度，Outlook 開不了；先複製成短檔名
+            temp_dir = tempfile.mkdtemp(prefix="spw-msg-")
+            short = Path(temp_dir) / "mail.msg"
+            try:
+                shutil.copyfile(_long_path(full), short)
+            except OSError as exc:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                raise MailReadError(f"路徑太長，複製到暫存區也失敗：{exc}") from exc
+            full = short
         pythoncom.CoInitialize()  # 視窗在背景執行緒呼叫，COM 要在這個執行緒初始化
         try:
             namespace = win32com.client.Dispatch("Outlook.Application").GetNamespace("MAPI")
-            item = namespace.OpenSharedItem(str(path.resolve()))  # Outlook 依它自己的工作目錄解讀相對路徑
+            item = namespace.OpenSharedItem(str(full))
             try:
                 subject, html, sent = str(item.Subject or ""), str(item.HTMLBody or ""), item.SentOn
             finally:
@@ -822,6 +852,8 @@ class OutlookMsgReader:
             raise MailReadError(f"Outlook 開不了這封信（可能 Outlook 還沒設定或跳出對話框），錯誤碼 {hresult}") from exc
         finally:
             pythoncom.CoUninitialize()
+            if temp_dir is not None:
+                shutil.rmtree(temp_dir, ignore_errors=True)
         sent_on = None
         if sent is not None and sent.year < self._UNSENT_YEAR:
             # pywin32 把本地時間標成 UTC，只取欄位值

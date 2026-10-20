@@ -122,15 +122,16 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 從商品資料夾裡我方寄出的 `(Order)` 原信，依各上手格式讀出全部條件，統一欄名後輸出 `Order條件清單_<日期時間>.xlsx`，給人確認（[#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)）。這一版只輸出清單，不寫資料庫、不回填其他 Excel；回填到哪一份另外討論。
 
 1. 視窗切到「Order 條件」，貼上 TDCC（分隔方式同準備批次），選根目錄與輸出位置，按「讀取 Order」。
-2. 程式在商品資料夾（不含子資料夾）用傳統版 Outlook 開每個 `.msg`，只讀主旨含 `(Order)`、而且前面沒有 `RE:`、`FW:`、`DONE:` 的原信；條件不讀上手回覆信。唯一例外是 Order 沒寫的日期：GS 到同資料夾主旨有「Indicative Docs for <TDCC>」的信的 Order Summary 表補，HSBC 到 Order 信下方引用的 HSBC 回覆（「TDCC code: <TDCC>」後面的表，日/月/年）補；只補交易日、發行日、最終比價日、到期日，和 Order 寫的不同時標待確認。信件只開來讀，不會修改或寄出。
+2. 程式在商品資料夾（不含子資料夾）用傳統版 Outlook 開每個 `.msg`，只讀主旨含 `(Order)` 或 `[Order]`、而且前面沒有 `RE:`、`FW:`、`DONE:` 的原信；條件不讀上手回覆信。唯一例外是 Order 沒寫的日期：GS 到同資料夾主旨有「Indicative Docs for <TDCC>」的信的 Order Summary 表補，HSBC 到 Order 信下方引用的 HSBC 回覆（「TDCC code: <TDCC>」後面的表，日/月/年）補；只補交易日、發行日、最終比價日、到期日，和 Order 寫的不同時標待確認。信件只開來讀，不會修改或寄出。
 3. 讀法：
    - 開頭的 `We buy <TDCC> <幣別> <金額> @<價格>`、`Please settle thru …`、`Risk level`、`Initial price`、`PG rate`、`Capital size` 各家共用。
    - 條件表依 TDCC 前三碼的上手對照欄名（`src/sp_workflow/order_formats.py`），例如 `BBG Code 1`、`Underlying 1`、`Stock 1` 都是「標的1」。UBS 寫在 Quote Id 裡的日期、GS 寫在 System Remark 裡的發行日會拆出來。
    - 信件下方引用的上一封信不讀。
 4. 統一格式：百分比存數字（`80.00`、`75%` 都是 80），金額換算成數字（`200K` → 200000），日期為 `YYYY-MM-DD`，TDCC 保留前導零。不屬於統一欄位的欄原樣放在「其他欄位」。
-5. 一封信下兩檔以上時拆成多列；只貼了其中一檔，同一封信的其他檔也會接在後面。
+5. 一封信下兩檔以上時拆成多列；只貼了其中一檔，同一封信的其他檔也會接在後面。每段屬於哪檔，看表上的 TDCC 欄，或段落前的「1. <TDCC>」「TDCC = <TDCC>」；只寫「1.」「2.」沒寫 TDCC 的不猜，標待確認由人工回填。
+原則：不過度客製，格式明顯偏離常態的信（例如一封信下多檔、又沒寫清楚哪段是哪檔）接受人工回填。
 6. 下面情況標「待確認」並寫原因，不猜值：
-   - 值有修改，例如 `96.20%→96.15%`：取最後的值，同時寫出原文。
+   - 值有修改，例如 `96.20%→96.15%`、`99.65->99.62`、`99.92 >> 99.89`：取最後的值，同時寫出原文。
    - 同一欄兩處寫法不同，例如 We buy 行的價格和條件表不同：這一欄留空。
    - 讀不到幣別、承作金額、價格、標的1，或格式不認得。
    - 條件表欄數和值數對不上、有好幾列值，或出現這家沒列過的欄名（上手格式可能改版）。
@@ -279,15 +280,16 @@ Non-FCN products skipped by the daily import are marked "不支援的商品類�
 Reads every term from our original `(Order)` email in each product folder using each issuer's format, normalizes the field names, and writes `Order條件清單_<timestamp>.xlsx` for review ([#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)). This version only writes the list; it does not touch the database or fill any other workbook. Where the terms are written back is decided separately.
 
 1. In the window, open "Order 條件", paste TDCCs (same separators as preparation), choose the root folder and output location, and click "讀取 Order".
-2. Each `.msg` directly inside the product folder is opened with classic Outlook. Only originals are read: the subject contains `(Order)` with no `RE:`, `FW:`, or `DONE:` before it. Terms never come from issuer replies, with one exception for dates the order omits: GS dates come from the Order Summary table in the same folder's "Indicative Docs for <TDCC>" email, and HSBC dates come from HSBC's reply quoted below the order (the table after "TDCC code: <TDCC>", day/month/year). Only trade, issue, final valuation, and maturity dates are filled this way, and a date differing from the order is 待確認. Messages are opened read-only, never changed or sent.
+2. Each `.msg` directly inside the product folder is opened with classic Outlook. Only originals are read: the subject contains `(Order)` or `[Order]` with no `RE:`, `FW:`, or `DONE:` before it. Terms never come from issuer replies, with one exception for dates the order omits: GS dates come from the Order Summary table in the same folder's "Indicative Docs for <TDCC>" email, and HSBC dates come from HSBC's reply quoted below the order (the table after "TDCC code: <TDCC>", day/month/year). Only trade, issue, final valuation, and maturity dates are filled this way, and a date differing from the order is 待確認. Messages are opened read-only, never changed or sent.
 3. Reading:
    - The opening `We buy <TDCC> <currency> <amount> @<price>`, `Please settle thru …`, `Risk level`, `Initial price`, `PG rate`, and `Capital size` lines are shared by all issuers.
    - The terms table is mapped by the issuer from the TDCC's first three digits (`src/sp_workflow/order_formats.py`); for example `BBG Code 1`, `Underlying 1`, and `Stock 1` all become 標的1. Dates inside the UBS Quote Id and the GS System Remark issue date are split out.
    - Quoted earlier messages below the order are ignored.
 4. Normalization: percentages become numbers (`80.00` and `75%` are both 80), amounts are expanded (`200K` → 200000), dates are `YYYY-MM-DD`, and TDCCs keep leading zeros. Columns outside the normalized fields are kept as-is in 其他欄位.
-5. A message ordering several TDCCs is split into rows; when only one of them is pasted, the others from the same message follow it.
+5. A message ordering several TDCCs is split into rows; when only one of them is pasted, the others from the same message follow it. Each section belongs to the TDCC in the table's TDCC column or in a preceding "1. <TDCC>" or "TDCC = <TDCC>" line; bare "1." and "2." without a TDCC are not guessed and are left 待確認 for manual entry.
+Principle: avoid over-customizing; emails that stray far from the normal format (for example several TDCCs without saying which section is which) are filled in manually.
 6. The following cases are marked 待確認 with reasons, without guessing:
-   - A revised value such as `96.20%→96.15%`: the last value is used and the original text is shown.
+   - A revised value such as `96.20%→96.15%`, `99.65->99.62`, or `99.92 >> 99.89`: the last value is used and the original text is shown.
    - A field that differs between two places, for example the We buy price and the table: that field is left blank.
    - Currency, amount, price, or 標的1 cannot be read, or a value's format is not recognized.
    - Header and value counts differ, a table has several value rows, or a column unknown for that issuer appears (the issuer format may have changed).
