@@ -299,6 +299,8 @@ def test_one_mail_with_two_tdccs_is_split_and_the_sibling_follows(tmp_path: Path
     assert one.values["價格(%)"] == Decimal("96.15") and one.values["承作金額"] == Decimal("950000")
     assert (one.values["標的1"], one.values["天期(月)"], one.values["上手報價編號"]) == ("AAA UW", 12, "R1")
     assert term_reasons(two) == ()
+    # 同一封信的另一檔沒有自己的資料夾，匯出問題信件時用信所在的資料夾
+    assert one.folders == two.folders == (root / "FCN" / first,)
     assert (two.values["標的1"], two.values["承作金額"], two.values["風險等級"]) == (
         "BBB UW",
         Decimal("1000000"),
