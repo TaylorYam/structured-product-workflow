@@ -12,7 +12,7 @@
 
 ### 專案導讀
 
-每次接手先讀 README.md、CONTEXT.md、docs/architecture.md 與 docs/open-questions.md；處理跨專案串接時另讀 docs/checker-integration.md；涉及資料保存、開發環境或部署時先讀 docs/adr/0001-postgresql-workflow-storage.md 與 docs/database-and-deployment.md。當前為設計階段，業務實作需另有使用者指示。區分已確認需求、建議與未定事項；核對規則保留在獨立核對專案。
+每次接手先讀 README.md、CONTEXT.md、docs/architecture.md 與 docs/open-questions.md；處理跨專案串接時另讀 docs/checker-integration.md；涉及資料保存、開發環境或部署時先讀 docs/adr/0001-postgresql-workflow-storage.md 與 docs/database-and-deployment.md。當前為設計階段，業務實作需另有使用者指示。區分已確認需求、建議與未定事項；核對專案已決定併入本專案（docs/adr/0005-merge-checker-into-workflow.md），合併完成前核對規則仍在獨立核對專案修改。
 
 ### 工作分流
 
@@ -77,7 +77,7 @@ This root-level file is the repository's shared AI development policy. It define
 
 ### Project orientation
 
-On handoff, read README.md, CONTEXT.md, docs/architecture.md, and docs/open-questions.md. For cross-project integration, also read docs/checker-integration.md. For persistence, development environments, or deployment, first read docs/adr/0001-postgresql-workflow-storage.md and docs/database-and-deployment.md. This is the design stage; business implementation requires a separate user instruction. Distinguish confirmed requirements, recommendations, and unresolved matters. Keep checking rules in the independent checker repository.
+On handoff, read README.md, CONTEXT.md, docs/architecture.md, and docs/open-questions.md. For cross-project integration, also read docs/checker-integration.md. For persistence, development environments, or deployment, first read docs/adr/0001-postgresql-workflow-storage.md and docs/database-and-deployment.md. This is the design stage; business implementation requires a separate user instruction. Distinguish confirmed requirements, recommendations, and unresolved matters. The checker will be merged into this repository (docs/adr/0005-merge-checker-into-workflow.md); until the merge is done, change checking rules in the independent checker repository.
 
 ### Work routing
 
