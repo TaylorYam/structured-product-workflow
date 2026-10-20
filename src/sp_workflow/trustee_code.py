@@ -6,6 +6,7 @@ MS 的說明書 Word 封面「商品代號：<TDCC>」有填，下一行「受�
 - 只改暫存複本的 `word/document.xml`，商品資料夾的原始 Word 不動；只處理 `.docx`（MS 只給 `.docx`）。
 - 只補「受託機構商品代號：」後面空白的段落；已有值不動（不一致交給核對工具判）。
 - 用字串處理 XML、不重新序列化：Word 的命名空間前綴（`mc:Ignorable` 會引用）必須原樣保留。
+- 標籤放在文字方塊、頁首或表格另一格時補不到，交給核對工具判不一致（MS 真實樣本是一般段落）。
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ _WHITESPACE = re.compile(r"\s+")
 
 
 def needs_fill(tdcc: str, word: Path) -> bool:
-    """這家上手的說明書 Word 要不要補受託機構商品代號。"""
+    """這個 Word 要不要試著補（MS 的 .docx 都試；只有說明書有這一格，其他 Word 找不到標籤就不動）。"""
     return tdcc[:3] in FILL_ISSUERS and word.suffix.lower() == ".docx"
 
 
@@ -34,7 +35,7 @@ def fill_trustee_code(path: Path, tdcc: str) -> bool:
             infos = zf.infolist()
             data = {info.filename: zf.read(info) for info in infos}
         xml = data[_DOCUMENT].decode("utf-8")
-    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError):
+    except (zipfile.BadZipFile, KeyError, UnicodeDecodeError, NotImplementedError):  # 最後一個：不支援的壓縮方式
         return False
     filled = _PARAGRAPH.sub(lambda m: _fill_paragraph(m.group(0), tdcc), xml)
     if filled == xml:
