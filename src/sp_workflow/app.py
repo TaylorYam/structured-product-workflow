@@ -30,9 +30,17 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from fcn_checker.panel import (
     ACCENT,
+    ACCENT_SOFT,
+    BACKGROUND,
     BORDER,
     CONTROL_BORDER,
     DANGER,
+    FONT,
+    HOVER,
+    NAVY,
+    NUMBER_FONT,
+    SURFACE,
+    TEXT_SECONDARY,
     CheckTab,
     HintBar,
     KpiRow,
@@ -41,6 +49,8 @@ from fcn_checker.panel import (
     apply_style,
     apply_window_icon,
     enable_windows_dpi_awareness,
+    flat,
+    flat_states,
     parse_args,
     session_from_args,
     set_windows_app_id,
@@ -85,10 +95,16 @@ _EXPECTED_ERRORS = (
 class _Tab:
     """一個分頁：上方輸入、按鈕、狀態列，下方結果表；動作在背景執行，結果回主執行緒顯示。"""
 
-    def __init__(self, notebook: ttk.Notebook, title: str, columns: Sequence[tuple[str, str, int]]) -> None:
+    def __init__(
+        self,
+        notebook: ttk.Notebook,
+        title: str,
+        columns: Sequence[tuple[str, str, int]],
+        padding: int | tuple[int, int] = 12,
+    ) -> None:
         self.master = notebook.winfo_toplevel()
         self.results: queue.Queue[object] = queue.Queue()
-        self.frame = ttk.Frame(notebook, padding=(28, 22))
+        self.frame = ttk.Frame(notebook, padding=padding)
         notebook.add(self.frame, text=title)
         self.frame.columnconfigure(1, weight=1)
         self.status_var = tk.StringVar()
@@ -203,13 +219,18 @@ class PrepareTab(_Tab):
         on_prepared: Callable[[PrepareReceipt], bool],
         on_next: Callable[[], None],
     ) -> None:
-        super().__init__(notebook, "準備", (("tdcc", "TDCC", 130), ("status", "狀態", 70), ("reason", "原因", 520)))
+        super().__init__(
+            notebook,
+            "準備",
+            (("tdcc", "TDCC", 130), ("status", "狀態", 70), ("reason", "原因", 520)),
+            padding=(28, 22),  # #83 範本頁；其他頁的版面確認範本後再改
+        )
         self.on_prepared = on_prepared
         self.memory = memory
         self.root_folder = root_folder
         self.batch_dir: Path | None = None
         self.out_var = tk.StringVar(value=memory.load().get("out", ""))
-        self.status_var.set("貼上 TDCC，選好輸出位置後按「開始準備」。")
+        self.status_var.set("貼上 TDCC，選好輸出位置後按「開始準備」（在最上方的根目錄底下找商品資料夾）。")
         self.header = PageHeader(
             self.frame,
             "把今天的商品整理成待核對批次",
@@ -238,10 +259,10 @@ class PrepareTab(_Tab):
         self.open_button = ttk.Button(self.buttons, text="打開批次資料夾", command=self.open_batch, state=tk.DISABLED)
         self.open_button.pack(side=tk.LEFT, padx=8)
         self.next_button = NextButton(self.buttons, "下一步：核對 →", on_next)
-        self.kpis = KpiRow(right, style="CardBody.TFrame")
+        self.kpis = KpiRow(right)
         self.kpis.grid(row=4, column=0, columnspan=2, sticky="w", pady=(16, 0))
         self.kpis.hide()
-        status = ttk.Label(right, textvariable=self.status_var, style="Card.TLabel", wraplength=600)
+        self.status_label = status = ttk.Label(right, textvariable=self.status_var, style="Card.TLabel", wraplength=600)
         status.grid(row=5, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         right.bind("<Configure>", lambda event: status.configure(wraplength=max(300, event.width - 20)))
         self.place_table(2, pady=(16, 0))
@@ -258,7 +279,7 @@ class PrepareTab(_Tab):
             box,
             height=12,
             width=16,
-            font=("Consolas", 12),
+            font=(NUMBER_FONT, 12),
             relief="flat",
             highlightthickness=1,
             highlightbackground=CONTROL_BORDER,
@@ -279,6 +300,8 @@ class PrepareTab(_Tab):
         _set_if_chosen(self.out_var, lambda: _ask_dir("選擇批次資料夾要開在哪裡", self.out_var))
 
     def _tdcc_changed(self, _event: object = None) -> None:
+        if not self.tdcc_text.edit_modified():  # 清掉旗標時也會通知一次，那次不用重算
+            return
         self.tdcc_text.edit_modified(False)  # 清掉旗標，下一次修改才會再通知
         self.count_var.set(f"已貼 {len(parse_tdccs(self.tdcc_text.get('1.0', tk.END)))} 筆")
 
@@ -293,6 +316,7 @@ class PrepareTab(_Tab):
         self.open_button.configure(state=tk.DISABLED)
         self.next_button.withdraw()
         self.kpis.hide()
+        self.status_label.configure(style="Card.TLabel")
         self.run_in_background(
             lambda: prepare_batch(text, root, out),
             "處理中…（在根目錄底下搜尋商品資料夾，公槽上可能要一點時間）",
@@ -315,12 +339,11 @@ class PrepareTab(_Tab):
                 ("Word 轉檔（份）", from_word, False),
             )
         )
-        status = (
-            f"完成：{prepared} 個商品已準備、{len(result.outcomes) - prepared} 個跳過。批次資料夾：{result.batch_dir}"
-        )
+        status = f"完成：{prepared} 個商品已準備、{skipped} 個跳過。批次資料夾：{result.batch_dir}"
         if result.unreadable_dirs:
             status += f"\n注意：搜尋時有 {len(result.unreadable_dirs)} 個資料夾讀不到（例如 {result.unreadable_dirs[0]}），裡面的商品資料夾找不到。"
         self.status_var.set(status)
+        self.status_label.configure(style="Done.TLabel")  # 做完了：狀態列變成綠色結果條（#83）
         self.batch_dir = result.batch_dir
         self.open_button.configure(state=tk.NORMAL)
         if self.on_prepared(result):  # 核對頁真的帶入了這批 PDF，才有下一步
@@ -697,6 +720,33 @@ class WindowSize:
         # 縮到工作列時關閉：保留上一次的紀錄
 
 
+def _style_shell(master: tk.Tk) -> None:
+    """視窗外殼的樣式（#83）：白色頂端列、左側步驟欄；配色沿用 fcn_checker.panel.apply_style 的那一套。"""
+    style = ttk.Style(master)
+    style.configure("Header.TFrame", background=SURFACE)
+    style.configure("Header.TLabel", background=SURFACE, foreground=TEXT_SECONDARY)
+    style.configure("HeaderTitle.TLabel", background=SURFACE, foreground=NAVY, font=(FONT, 13, "bold"))
+    style.configure("Sidebar.TFrame", background=SURFACE)
+    style.configure("SidebarTitle.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=(FONT, 10))
+    step = {"anchor": "w", "padding": (14, 9)}
+    style.configure(
+        "Step.TButton", foreground=TEXT_SECONDARY, bordercolor=SURFACE, focuscolor=SURFACE, **step, **flat(SURFACE)
+    )
+    style.map("Step.TButton", **flat_states([("active", HOVER)]))
+    style.configure(
+        "CurrentStep.TButton",
+        foreground=ACCENT,
+        font=(FONT, 11, "bold"),
+        bordercolor=ACCENT_SOFT,
+        focuscolor=ACCENT_SOFT,
+        **step,
+        **flat(ACCENT_SOFT),
+    )
+    style.map("CurrentStep.TButton", **flat_states([("active", ACCENT_SOFT)]))
+    style.layout("Workflow.TNotebook.Tab", [])  # 用左側步驟欄切頁，不顯示分頁標籤
+    style.configure("Workflow.TNotebook", background=BACKGROUND, borderwidth=0)
+
+
 class StepSidebar(ttk.Frame):
     """左側步驟欄（#83）：照每天的順序列出 1～6，按了切到那一步；目前所在的那一步用淺藍底標出。
 
@@ -743,6 +793,7 @@ class PanelWindow:
         self.size = WindowSize(memory.path.with_name(WINDOW_FILE))
         master.title(TITLE)
         self.pixels = apply_style(master)
+        _style_shell(master)
         top_bar = ttk.Frame(master, style="Header.TFrame", padding=(self.pixels(18), self.pixels(10)))
         top_bar.pack(fill=tk.X)
         ttk.Label(top_bar, text=TITLE, style="HeaderTitle.TLabel").pack(side=tk.LEFT, padx=(0, self.pixels(28)))

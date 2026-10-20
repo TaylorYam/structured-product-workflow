@@ -235,10 +235,14 @@ class PanelOutcome:
     def headline(self) -> str:
         if self.batch.errors:
             return "核對未完成：" + "；".join(e.message for e in self.batch.errors)
-        items = self.batch.items
-        parts = [f"{sum(i.category == c for i in items)} 份{c.value}" for c in Category]
+        parts = [f"{n} 份{c.value}" for c, n in self.category_counts.items()]
         tail = "按「儲存核對結果」後才會寫出核對結果檔（說明書與投資人須知都通過或人工放行的商品回填在「回填後」）。"
-        return f"共 {len(items)} 份：" + "、".join(parts) + "。" + tail
+        return f"共 {len(self.batch.items)} 份：" + "、".join(parts) + "。" + tail
+
+    @property
+    def category_counts(self) -> dict[Category, int]:
+        """每個類別各幾份（依 Category 的順序）；標題與重點數字共用。"""
+        return {c: sum(i.category == c for i in self.batch.items) for c in Category}
 
     @property
     def kpis(self) -> tuple[tuple[str, int, bool], ...]:
@@ -247,10 +251,9 @@ class PanelOutcome:
         通過、人工放行、不一致、需人工覆核一定列出；未支援上手、執行錯誤有才列。通過與人工放行以外的份數不是 0 就算有問題。
         """
         always = (Category.PASSED, Category.RELEASED, Category.MISMATCH, Category.REVIEW)
-        counts = {c: sum(i.category == c for i in self.batch.items) for c in Category}
         return tuple(
             (c.value, n, c not in (Category.PASSED, Category.RELEASED) and n > 0)
-            for c, n in counts.items()
+            for c, n in self.category_counts.items()
             if c in always or n
         )
 

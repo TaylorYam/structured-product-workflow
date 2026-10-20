@@ -425,6 +425,7 @@ def test_saved_check_result_is_handed_to_the_return_tab(master, tmp_path: Path) 
     assert window.returning.hint.text.get() == f"已帶入「4 核對」剛存的核對結果檔：\n{result}\n批次資料夾：{batch}"
     assert window.notebook.select() == str(window.check), "不自動切頁"
     assert window.check.next_button.winfo_manager() == "pack", "存過檔才出現下一步"
+    assert window.check.status_label.cget("style") == "Done.TLabel", "存過檔，狀態列變成綠色結果條"
 
     window.check.next_button.invoke()
 
@@ -518,3 +519,14 @@ def test_prepare_shows_key_figures_when_done(master, tmp_path: Path) -> None:
         ("跳過（檔）", 1, True),
         ("Word 轉檔（份）", 0, False),
     )
+    assert window.prepare.status_label.cget("style") == "Done.TLabel", "做完了，狀態列變成綠色結果條"
+
+
+def test_check_key_figures_hide_when_results_are_cleared(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    window.check.kpis.show((("通過", 2, False),))
+
+    window.check._clear_results()
+
+    assert window.check.kpis.values == ()
+    assert window.check.status_label.cget("style") == "TLabel", "沒有存過檔的結果，狀態列不是綠色"

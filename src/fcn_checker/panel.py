@@ -92,24 +92,40 @@ def _set_window_icons(hwnd: int) -> None:
 # 整個視窗的配色（#83）：淺灰底、白色卡片、深藍字；只用一個亮藍當強調色，紅色只給有問題的、綠色只給完成
 BACKGROUND = "#F5F5F7"
 SURFACE = "#FFFFFF"
+FIELD_READONLY = "#FAFAFC"
+HOVER = "#F2F2F7"
+PRESSED = "#E8E8ED"
 BORDER = "#E3E3E8"
 CONTROL_BORDER = "#D2D2D7"
 TEXT = "#1D1D1F"
 TEXT_SECONDARY = "#6E6E73"
+TEXT_DISABLED = "#A1A1A6"
 NAVY = "#0B1F3A"
 ACCENT = "#2251FF"
 ACCENT_ACTIVE = "#1A3FCC"
+ACCENT_DISABLED = "#B9C7F5"
 ACCENT_SOFT = "#EAF0FF"
 DANGER = "#C4262E"
 SUCCESS = "#1E7A4C"
-FONT = "Microsoft JhengHei UI"  # 公司 Windows 都有；重點數字另用 Segoe UI
+SUCCESS_SOFT = "#E8F5EE"
+FONT = "Microsoft JhengHei UI"  # 公司 Windows 都有；數字另用 Segoe UI
 NUMBER_FONT = "Segoe UI"
+
+
+def flat(color: str) -> dict[str, str]:
+    """clam 主題的元件有立體邊（lightcolor／darkcolor）；三個設成同一色就是平的。"""
+    return {"background": color, "lightcolor": color, "darkcolor": color}
+
+
+def flat_states(states: list[tuple[str, str]]) -> dict[str, list[tuple[str, str]]]:
+    """style.map 用：各狀態的底色與立體邊一起換，維持平的。"""
+    return {"background": states, "lightcolor": states, "darkcolor": states}
 
 
 def apply_style(root: tk.Tk) -> Callable[[float], int]:
     """整個視窗共用的配色、字型、按鈕與表格樣式（#74 起每個分頁都用這一套，#83 改成蘋果 × 麥肯錫風格）。
 
-    回傳 pixels：把 96 DPI 下的像素依目前螢幕縮放換算成實際像素。
+    回傳 pixels：把 96 DPI 下的像素依目前螢幕縮放換算成實際像素。視窗外殼（頂端列、步驟欄）的樣式在 sp_workflow.app。
     """
     scale = root.winfo_fpixels("1i") / 96
 
@@ -119,13 +135,12 @@ def apply_style(root: tk.Tk) -> Callable[[float], int]:
     root.configure(background=BACKGROUND)
     style = ttk.Style(root)
     style.theme_use("clam")
-    base = (FONT, 11)
-    flat = {"bordercolor": BORDER, "lightcolor": BORDER, "darkcolor": BORDER}
-    style.configure(".", background=BACKGROUND, foreground=TEXT, font=base, focuscolor=ACCENT_SOFT, **flat)
-    style.configure("TFrame", background=BACKGROUND)
+    style.configure(
+        ".", background=BACKGROUND, foreground=TEXT, font=(FONT, 11), focuscolor=ACCENT_SOFT, bordercolor=BORDER
+    )
+    style.configure(".", lightcolor=BORDER, darkcolor=BORDER)
     style.configure("Card.TFrame", background=SURFACE, relief="solid", borderwidth=1)
     style.configure("CardBody.TFrame", background=SURFACE)
-    style.configure("TLabel", background=BACKGROUND, foreground=TEXT)
     style.configure("Muted.TLabel", foreground=TEXT_SECONDARY)
     style.configure("Step.TLabel", foreground=TEXT_SECONDARY, font=(FONT, 10))
     style.configure("Title.TLabel", foreground=NAVY, font=(FONT, 18, "bold"))
@@ -134,65 +149,36 @@ def apply_style(root: tk.Tk) -> Callable[[float], int]:
     style.configure("KpiCaption.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=(FONT, 10))
     style.configure("KpiValue.TLabel", background=SURFACE, foreground=NAVY, font=(NUMBER_FONT, 18, "bold"))
     style.configure("KpiBad.TLabel", background=SURFACE, foreground=DANGER, font=(NUMBER_FONT, 18, "bold"))
-    button = {"background": SURFACE, "lightcolor": SURFACE, "darkcolor": SURFACE, "bordercolor": CONTROL_BORDER}
-    style.configure("TButton", padding=(14, 7), **button)
+    style.configure("TButton", padding=(14, 7), bordercolor=CONTROL_BORDER, **flat(SURFACE))
     style.map(
         "TButton",
-        background=[("disabled", BACKGROUND), ("pressed", "#E8E8ED"), ("active", "#F2F2F7")],
-        lightcolor=[("disabled", BACKGROUND), ("pressed", "#E8E8ED"), ("active", "#F2F2F7")],
-        darkcolor=[("disabled", BACKGROUND), ("pressed", "#E8E8ED"), ("active", "#F2F2F7")],
-        foreground=[("disabled", "#A1A1A6")],
+        foreground=[("disabled", TEXT_DISABLED)],
+        **flat_states([("disabled", BACKGROUND), ("pressed", PRESSED), ("active", HOVER)]),
     )
-    accent = {"background": ACCENT, "lightcolor": ACCENT, "darkcolor": ACCENT, "bordercolor": ACCENT}
-    style.configure("Primary.TButton", foreground=SURFACE, font=(FONT, 11, "bold"), **accent)
-    states = [("disabled", "#B9C7F5"), ("pressed", ACCENT_ACTIVE), ("active", ACCENT_ACTIVE)]
+    style.configure("Primary.TButton", foreground=SURFACE, font=(FONT, 11, "bold"), bordercolor=ACCENT, **flat(ACCENT))
+    accent_states = [("disabled", ACCENT_DISABLED), ("pressed", ACCENT_ACTIVE), ("active", ACCENT_ACTIVE)]
     style.map(
-        "Primary.TButton",
-        background=states,
-        lightcolor=states,
-        darkcolor=states,
-        bordercolor=states,
-        foreground=[("disabled", SURFACE)],
+        "Primary.TButton", foreground=[("disabled", SURFACE)], bordercolor=accent_states, **flat_states(accent_states)
     )
     style.configure("Next.TButton", foreground=ACCENT, font=(FONT, 11, "bold"))
-    field = {"fieldbackground": SURFACE, "bordercolor": CONTROL_BORDER, "lightcolor": SURFACE, "darkcolor": SURFACE}
-    style.configure("TEntry", padding=6, **field)
-    style.map("TEntry", fieldbackground=[("readonly", "#FAFAFC")], bordercolor=[("focus", ACCENT)])
+    style.configure("TEntry", padding=6, fieldbackground=SURFACE, bordercolor=CONTROL_BORDER, **flat(SURFACE))
+    style.map("TEntry", fieldbackground=[("readonly", FIELD_READONLY)], bordercolor=[("focus", ACCENT)])
     style.configure("Treeview", background=SURFACE, fieldbackground=SURFACE, rowheight=pixels(32))
     style.configure(
         "Treeview.Heading", background=BACKGROUND, foreground=TEXT_SECONDARY, font=(FONT, 10, "bold"), relief="flat"
     )
-    style.map("Treeview.Heading", background=[("active", "#ECECF0")])
+    style.map("Treeview.Heading", background=[("active", PRESSED)])
     style.map("Treeview", background=[("selected", ACCENT_SOFT)], foreground=[("selected", TEXT)])
-    style.configure("TNotebook", background=BACKGROUND, borderwidth=0)
-    style.configure("TNotebook.Tab", background=BACKGROUND, foreground=TEXT_SECONDARY, padding=(14, 6))
+    style.configure("TNotebook", borderwidth=0)
+    style.configure("TNotebook.Tab", foreground=TEXT_SECONDARY, padding=(14, 6))
     style.map("TNotebook.Tab", background=[("selected", SURFACE)], foreground=[("selected", TEXT)])
-    style.configure("TScrollbar", background=BACKGROUND, troughcolor=SURFACE, arrowcolor=TEXT_SECONDARY)
+    style.configure("TScrollbar", troughcolor=SURFACE, arrowcolor=TEXT_SECONDARY)
     style.configure("Hint.TFrame", background=ACCENT_SOFT)
     style.configure("Hint.TLabel", background=ACCENT_SOFT, foreground=NAVY)
-    # 視窗外殼：白色頂端列與左側步驟欄（sp_workflow.app 使用）
-    style.configure("Header.TFrame", background=SURFACE)
-    style.configure("Header.TLabel", background=SURFACE, foreground=TEXT_SECONDARY)
-    style.configure("HeaderTitle.TLabel", background=SURFACE, foreground=NAVY, font=(FONT, 13, "bold"))
-    style.configure("Sidebar.TFrame", background=SURFACE)
-    style.configure("SidebarTitle.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=(FONT, 10))
-    step = {"background": SURFACE, "lightcolor": SURFACE, "darkcolor": SURFACE, "bordercolor": SURFACE}
-    style.configure("Step.TButton", foreground=TEXT_SECONDARY, anchor="w", padding=(14, 9), focuscolor=SURFACE, **step)
-    style.map("Step.TButton", background=[("active", "#F2F2F7")], lightcolor=[("active", "#F2F2F7")])
-    current = {"background": ACCENT_SOFT, "lightcolor": ACCENT_SOFT, "darkcolor": ACCENT_SOFT}
+    # 這一步做完時，狀態列變成綠色結果條（#83）
     style.configure(
-        "CurrentStep.TButton",
-        foreground=ACCENT,
-        font=(FONT, 11, "bold"),
-        anchor="w",
-        padding=(14, 9),
-        bordercolor=ACCENT_SOFT,
-        focuscolor=ACCENT_SOFT,
-        **current,
+        "Done.TLabel", background=SUCCESS_SOFT, foreground=SUCCESS, font=(FONT, 11, "bold"), padding=(12, 7)
     )
-    style.map("CurrentStep.TButton", background=[("active", ACCENT_SOFT)], lightcolor=[("active", ACCENT_SOFT)])
-    style.layout("Workflow.TNotebook.Tab", [])  # 用左側步驟欄切頁，不顯示分頁標籤
-    style.configure("Workflow.TNotebook", background=BACKGROUND, borderwidth=0)
     return pixels
 
 
@@ -215,11 +201,11 @@ class PageHeader(ttk.Frame):
 class KpiRow(ttk.Frame):
     """完成後的重點數字（#83）：一格一個數字，有問題的用紅色；沒有結果時不顯示。
 
-    建立後由呼叫端 grid，再呼叫 hide()。values 是目前顯示的（標題, 數字, 是否有問題）。
+    放在白色卡片裡；建立後由呼叫端 grid，再呼叫 hide()。values 是目前顯示的（標題, 數字, 是否有問題）。
     """
 
-    def __init__(self, parent: tk.Misc, style: str = "TFrame"):
-        super().__init__(parent, style=style)  # 放在白色卡片裡時用 CardBody.TFrame
+    def __init__(self, parent: tk.Misc):
+        super().__init__(parent, style="CardBody.TFrame")
         self.values: tuple[tuple[str, int, bool], ...] = ()
 
     def show(self, values: Iterable[tuple[str, int, bool]]) -> None:
@@ -652,7 +638,7 @@ class CheckTab(ttk.Frame):
             self,
             "核對說明書與投資人須知",
             "選參考條件表與這批 PDF（同一檔商品的 _TS 與 _IIS 一起選），先載入預覽確認每份對到的列，再開始核對。"
-            "按「儲存核對結果」才會寫出核對結果檔，原參考條件表不動；錯誤清單上的說明書請交由人工核對。",
+            "上手由 PDF 檔名前三碼決定。按「儲存核對結果」才會寫出核對結果檔，原參考條件表不動；錯誤清單上的說明書請交由人工核對。",
         )
         self.header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         self.hint = HintBar(self, lambda: self.choose_files("pdf"))
@@ -689,7 +675,7 @@ class CheckTab(ttk.Frame):
         self.save_button = ttk.Button(self.actions, text="儲存核對結果…", command=self.save, state="disabled")
         self.save_button.pack(side="left", padx=(12, 0))
         self.controls += [self.reload]
-        self.kpis = KpiRow(bottom, style="CardBody.TFrame")
+        self.kpis = KpiRow(bottom)
         self.kpis.grid(row=0, column=2, sticky="e")
         self.kpis.hide()
         self.tabs = ttk.Notebook(self)
@@ -816,11 +802,13 @@ class CheckTab(ttk.Frame):
         self._refresh_next()
 
     def _refresh_next(self) -> None:
-        """目前的結果已經寫出核對結果檔時才顯示下一步；重新核對、改了放行或清除結果就收起來。"""
+        """目前的結果已經寫出核對結果檔時：狀態列變綠（#83）、顯示下一步；重新核對、改了放行或清除結果就恢復。"""
+        receipt = self.session.receipt
+        saved = receipt is not None and receipt.output is not None and not self._busy_any()
+        self.status_label.configure(style="Done.TLabel" if saved else "TLabel")
         if self.next_button is None:
             return
-        receipt = self.session.receipt
-        if receipt is not None and receipt.output is not None and not self._busy_any():
+        if saved:
             self.next_button.offer()
         else:
             self.next_button.withdraw()
