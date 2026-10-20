@@ -356,7 +356,7 @@ def test_prepared_pdfs_are_handed_to_the_check_tab_without_switching(master, tmp
     window.prepare._done(prepared_receipt(batch))
 
     assert window.check.pdf_paths == (batch / "147000000001_TS.pdf", batch / "147000000001_IIS.pdf"), "只帶已準備的"
-    assert window.check.hint.text.get() == f"已帶入「3 準備」的批次：{batch}（2 份 PDF）"
+    assert window.check.hint.text.get().startswith(f"已帶入「3 準備」的批次（2 份 PDF）：\n{batch}\n")
     assert window.notebook.select() == str(window.prepare.frame), "不自動切頁"
     assert window.session.preview is None and not window.check.working, "不自動載入預覽或核對"
     assert window.prepare.next_button.winfo_manager() == "pack"
@@ -404,7 +404,7 @@ def test_saved_check_result_is_handed_to_the_return_tab(master, tmp_path: Path) 
     window.check._busy(False)
 
     assert (window.returning.batch_var.get(), window.returning.result_var.get()) == (str(batch), str(result))
-    assert window.returning.hint.text.get() == f"已帶入「4 核對」剛存的核對結果檔：{result}；批次資料夾：{batch}"
+    assert window.returning.hint.text.get() == f"已帶入「4 核對」剛存的核對結果檔：\n{result}\n批次資料夾：{batch}"
     assert window.notebook.select() == str(window.check), "不自動切頁"
     assert window.check.next_button.winfo_manager() == "pack", "存過檔才出現下一步"
 
@@ -430,7 +430,7 @@ def test_pdfs_from_several_folders_leave_the_batch_folder_alone(master, tmp_path
     window.check.on_saved(result)
 
     assert window.returning.batch_var.get() == "D:/out/待核對_舊" and window.returning.result_var.get() == str(result)
-    assert window.returning.hint.text.get().endswith("批次資料夾請自己確認")
+    assert window.returning.hint.text.get().endswith("批次資料夾沒有帶入（PDF 不在同一個資料夾），請自己確認。")
 
 
 @pytest.mark.parametrize("change", ["改選", "batch"])

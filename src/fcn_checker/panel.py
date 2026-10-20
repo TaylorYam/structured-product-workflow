@@ -124,10 +124,10 @@ class HintBar(ttk.Frame):
     def __init__(self, parent: tk.Misc, change: Callable[[], None]):
         super().__init__(parent, style="Hint.TFrame", padding=(10, 6))
         self.text = tk.StringVar()
-        ttk.Label(self, textvariable=self.text, style="Hint.TLabel", wraplength=1400).pack(
-            side="left", fill="x", expand=True
-        )
+        label = ttk.Label(self, textvariable=self.text, style="Hint.TLabel", wraplength=900)
+        label.pack(side="left", fill="x", expand=True)
         ttk.Button(self, text="改選…", command=change).pack(side="left", padx=(10, 0))
+        self.bind("<Configure>", lambda event: label.configure(wraplength=max(300, event.width - 180)))
 
     @property
     def shown(self) -> bool:

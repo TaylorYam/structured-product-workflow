@@ -281,8 +281,10 @@ class ReturnTab(_Tab):
             self.batch_var.set(str(batch))
         self.result_var.set(str(result))
         self.handed_off = (self.batch_var.get(), self.result_var.get())
-        where = f"；批次資料夾：{batch}" if batch is not None else "；批次資料夾請自己確認"
-        self.hint.show(f"已帶入「4 核對」剛存的核對結果檔：{result}{where}")
+        where = (
+            f"批次資料夾：{batch}" if batch is not None else "批次資料夾沒有帶入（PDF 不在同一個資料夾），請自己確認。"
+        )
+        self.hint.show(f"已帶入「4 核對」剛存的核對結果檔：\n{result}\n{where}")
 
     def _hide_hint_if_changed(self) -> None:
         """自己改了帶入的批次資料夾或核對結果檔，提示條就收起來。"""
@@ -669,7 +671,11 @@ class PanelWindow:
         self.returning.batch_var.set(str(receipt.batch_dir))
         pdfs = receipt.prepared_pdfs
         if pdfs:
-            self.check.receive_pdfs(pdfs, f"已帶入「3 準備」的批次：{receipt.batch_dir}（{len(pdfs)} 份 PDF）")
+            self.check.receive_pdfs(
+                pdfs,
+                f"已帶入「3 準備」的批次（{len(pdfs)} 份 PDF）：\n{receipt.batch_dir}\n"
+                "選好參考條件表後按「載入／重新載入預覽」。",
+            )
 
     def _check_saved(self, result: Path) -> None:
         """核對存檔：放回頁帶入剛存的核對結果檔；PDF 都在同一個資料夾時，那就是這批的批次資料夾（#76）。"""
