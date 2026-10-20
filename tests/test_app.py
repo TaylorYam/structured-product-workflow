@@ -73,3 +73,4 @@ def test_order_terms_tab_reuses_the_root_and_remembers_its_output(master, tmp_pa
 
     assert (window.orders.root_var.get(), window.orders.out_var.get()) == ("R:/FCN", "D:/Order")
     assert str(window.orders.open_button.cget("state")) == "disabled"
+    assert str(window.orders.export_button.cget("state")) == "disabled"  # 讀取完、有問題才可按

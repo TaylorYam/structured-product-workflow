@@ -34,6 +34,7 @@ from sp_workflow.mail_drafts import (
     create_drafts,
     mail_template_from_env,
 )
+from sp_workflow.order_export import ExportError, ExportReceipt, can_export, export_problem_mails
 from sp_workflow.order_terms import READ as ORDER_READ
 from sp_workflow.order_terms import OrderReceipt, OrderTermsError, read_orders
 from sp_workflow.preparation import PREPARED, PreparationError, PrepareReceipt, prepare_batch
@@ -47,6 +48,7 @@ _EXPECTED_ERRORS = (
     DatabaseError,
     MailDraftError,
     OrderTermsError,
+    ExportError,
 )  # 訊息本身就是給作業人員看的
 
 
@@ -91,8 +93,11 @@ class _Tab:
 
         ttk.Button(self.frame, text="選擇…", command=on_click).grid(row=row, column=2, padx=(8, 0), pady=4)
 
-    def run_in_background(self, action: Callable[[], object], busy: str, on_done: Callable[[object], None]) -> None:
-        self.table.delete(*self.table.get_children())
+    def run_in_background(
+        self, action: Callable[[], object], busy: str, on_done: Callable[[object], None], *, clear: bool = True
+    ) -> None:
+        if clear:
+            self.table.delete(*self.table.get_children())
         self.status_var.set(busy)
 
         def work() -> None:
@@ -402,6 +407,7 @@ class OrderTermsTab(_Tab):
         self.memory = memory
         folders = memory.load()
         self.list_path: Path | None = None
+        self.receipt: OrderReceipt | None = None
         self.root_var = tk.StringVar(value=folders.get("root", ""))
         self.out_var = tk.StringVar(value=folders.get("order_out", ""))
         self.status_var.set(
@@ -417,6 +423,10 @@ class OrderTermsTab(_Tab):
         self.start_button.pack(side=tk.LEFT)
         self.open_button = ttk.Button(self.buttons, text="打開條件清單", command=self.open_list, state=tk.DISABLED)
         self.open_button.pack(side=tk.LEFT, padx=8)
+        self.export_button = ttk.Button(
+            self.buttons, text="匯出問題信件", command=self.export_problems, state=tk.DISABLED
+        )
+        self.export_button.pack(side=tk.LEFT)
         self.place_bottom(3)
 
     def start(self) -> None:
@@ -427,8 +437,10 @@ class OrderTermsTab(_Tab):
             return
         root, out = Path(root_text), Path(out_text)
         self.memory.remember(root=str(root), order_out=str(out))
+        self.receipt = None
         self.start_button.configure(state=tk.DISABLED)
         self.open_button.configure(state=tk.DISABLED)
+        self.export_button.configure(state=tk.DISABLED)
         self.run_in_background(
             lambda: read_orders(text, root, out),
             "讀取中…（在根目錄底下搜尋商品資料夾，再用 Outlook 開信件）",
@@ -447,11 +459,39 @@ class OrderTermsTab(_Tab):
             status += f"\n注意：搜尋時有 {len(result.unreadable_dirs)} 個資料夾讀不到（例如 {result.unreadable_dirs[0]}），裡面的商品資料夾找不到。"
         self.status_var.set(status)
         self.list_path = result.list_path
+        self.receipt = result
         self.open_button.configure(state=tk.NORMAL)
+        self.export_button.configure(state=tk.NORMAL if can_export(result) else tk.DISABLED)
 
     def open_list(self) -> None:
         if self.list_path is not None:
             _open_folder(self.list_path)
+
+    def export_problems(self) -> None:
+        """把有問題商品的 .msg 複製到輸出位置的新資料夾（#42），結果表保留不清空。"""
+        receipt = self.receipt
+        if receipt is None:
+            return
+        out = receipt.list_path.parent
+        self.export_button.configure(state=tk.DISABLED)
+        self.run_in_background(
+            lambda: export_problem_mails(receipt, out),
+            "匯出問題信件中…（從商品資料夾複製 .msg）",
+            self._exported,
+            clear=False,
+        )
+
+    def _exported(self, result: object) -> None:
+        if self.receipt is not None and can_export(self.receipt):
+            self.export_button.configure(state=tk.NORMAL)
+        if not isinstance(result, ExportReceipt):
+            return
+        status = f"已匯出 {len(result.products)} 檔有問題商品的信件，共 {result.copied} 封：{result.folder}"
+        if result.failures:
+            status += f"\n有 {len(result.failures)} 個檔案沒複製成功，例如 {result.failures[0]}"
+        status += "\n提醒：信件含真實交易與客戶資料，帶出公司請依公司的資料規定。"
+        self.status_var.set(status)
+        _open_folder(result.folder)
 
 
 class PanelWindow:

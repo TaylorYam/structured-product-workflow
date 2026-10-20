@@ -126,6 +126,7 @@ class OrderRow:
     sent_on: dt.datetime | None = None
     template: tuple[object, ...] = ()  # 格式表的一列（order_template.COLUMNS 順序）
     flagged: frozenset[int] = frozenset()  # 格式表裡要標淺紅底的欄（COLUMNS 的位置）
+    folders: tuple[Path, ...] = ()  # 這檔相關的商品資料夾（匯出問題信件用）
 
 
 @dataclass(frozen=True)
@@ -291,10 +292,12 @@ def _row_for(
             else:
                 reasons.insert(0, "商品資料夾裡沒有 (Order) 原信")
         # 有信讀不到時可能就是那封 Order，交給人確認
-        return OrderRow(tdcc, PENDING if notes else NO_ORDER, issuer, tuple(reasons))
+        return OrderRow(tdcc, PENDING if notes else NO_ORDER, issuer, tuple(reasons), folders=tuple(folders))
+    order_folders = tuple(dict.fromkeys([*folders, *(o.path.parent for o in orders)]))
     if len(orders) > 1:
         names = "、".join(str(o.path) for o in orders)
-        return OrderRow(tdcc, PENDING, issuer, (f"有 {len(orders)} 封 (Order) 原信，請確認用哪一封：{names}", *notes))
+        reason = f"有 {len(orders)} 封 (Order) 原信，請確認用哪一封：{names}"
+        return OrderRow(tdcc, PENDING, issuer, (reason, *notes), folders=order_folders)
     order = orders[0]
     fmt = ISSUERS.get(tdcc[:3])
     raw = tuple(order.records[tdcc])
@@ -308,6 +311,7 @@ def _row_for(
             raw=tuple((e, "") for e in raw),
             source=order.path,
             sent_on=order.mail.sent_on,
+            folders=order_folders,
         )
     supplement_notes: list[str] = []
     if fmt.supplement is not None:
@@ -336,6 +340,7 @@ def _row_for(
         order.mail.sent_on,
         template,
         flagged,
+        order_folders,
     )
 
 

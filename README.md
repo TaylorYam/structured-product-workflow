@@ -147,6 +147,12 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
    - 「原文對照」：每個欄位的原始欄名、原始值與對到的統一欄位。
    - 「資料來源」：根目錄與讀不到的資料夾。
 
+**匯出問題信件**（[#42](https://github.com/TaylorYam/structured-product-workflow/issues/42)）：讀取完成、有不是「已讀取」的商品時，按「匯出問題信件」，會在輸出位置新開 `Order問題信件_<日期時間>/` 資料夾：
+- 每個有問題商品的商品資料夾（不含子資料夾）裡全部 `.msg` 複製到同名子資料夾，同一個資料夾只複製一次。
+- 一併附上這次的條件清單，可以看待確認原因。
+- 只複製，不改、不刪商品資料夾；個別檔案複製失敗不中斷，完成訊息會列出來。找不到商品資料夾的商品沒有信件可複製。
+- **信件含真實交易與客戶資料，帶出公司請依公司的資料規定；不要放進 repo、Issue 或 PR。**
+
 新增上手或上手改版：在 `order_formats.py` 的 `ISSUERS` 加上或修改那家條件表的欄名，再用真實樣本試跑。
 
 測試：`pytest -q`（資料全部虛構；真的 Word 轉檔測試只在本機有 Word 時執行，CI 自動略過）。資料庫測試需要一個名稱以 `_test` 結尾、可以清空的 PostgreSQL 資料庫，把連線字串設在環境變數 `SPW_TEST_DSN`（例如 `host=localhost dbname=spw_test user=...`）；沒設定時略過，CI 用 PostgreSQL 服務執行。真的 Outlook 建草稿測試只在本機設定 `SPW_OUTLOOK_TEST=1` 時執行（會在草稿匣建一封測試信再刪掉）。真實樣本試跑只在本機執行：把環境變數 `SPW_REAL_SAMPLES_DIR` 設成放商品資料夾的目錄（Order 條件試跑會用傳統版 Outlook 開信），CI 自動略過；真實資料不進 repo，放在 repo 裡時用 `.gitignore` 已排除的 `FCN商品/`。
@@ -297,6 +303,12 @@ Reads every term from our original `(Order)` email in each product folder using 
    - "Order條件清單": one row per product, with reasons to check.
    - "原文對照": each field's original name, original value, and normalized field.
    - "資料來源": the root folder and any folders that could not be read.
+
+**Export problem mails** ([#42](https://github.com/TaylorYam/structured-product-workflow/issues/42)): after reading, when any product is not 已讀取, click "匯出問題信件" to create `Order問題信件_<timestamp>/` in the output location:
+- Every `.msg` directly inside each problem product's folder is copied into a same-named subfolder; a folder is copied only once.
+- This run's list is included so the reasons are at hand.
+- Files are copied only; product folders are never changed or deleted. A failed copy does not stop the rest and is listed in the completion message. Products without a product folder have no mail to copy.
+- **The mails contain real trade and customer data. Follow company data rules before taking them out, and never put them in the repository, Issues, or PRs.**
 
 New issuers or format changes: add or update that issuer's table headers in `ISSUERS` in `order_formats.py`, then run a real-sample trial.
 
