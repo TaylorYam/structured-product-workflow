@@ -37,9 +37,9 @@ REPO_CONFIG = PATHS.load()  # 不延長涵蓋範圍：合成說明書的 2030 �
 D = dt.date
 
 
-def with_holidays(*days: dt.date):
-    """核對設定：美國市場另加休市日（合成說明書的年份）。"""
-    return with_markets(CONFIG, lambda m: replace(m, holidays=m.holidays | set(days)) if m.code == "US" else m)
+def with_holidays(*days: dt.date, market: str = "US"):
+    """核對設定：`market` 市場另加休市日（合成說明書的年份）。"""
+    return with_markets(CONFIG, lambda m: replace(m, holidays=m.holidays | set(days)) if m.code == market else m)
 
 
 def report(tmp_path: Path, spec, *, edits=(), config=CONFIG, builder=build_pdf):
@@ -70,9 +70,33 @@ def test_us_holidays_are_skipped_and_uk_holidays_are_not():
     assert all(not REPO.next_trading_day(d, us).uncertain for d in (D(2027, 1, 15), D(2027, 5, 28)))
 
 
+def test_japanese_holidays_are_skipped_through_2027():
+    """東京證交所（JT）：日股標的的期始日因勤勞感謝日、天皇誕生日等日本假日順延（structured-product-workflow#67）。"""
+    jt = ["7203 JT", "6758 JT Equity"]
+    assert REPO.next_trading_day(D(2026, 11, 20), jt).day == D(2026, 11, 24), "11/23 勤勞感謝日（週一）"
+    assert REPO.next_trading_day(D(2027, 2, 22), jt).day == D(2027, 2, 24), "2/23 天皇誕生日"
+    assert REPO.next_trading_day(D(2026, 5, 1), jt).day == D(2026, 5, 7), "黃金週：5/4～5/6（5/6 憲法紀念日補假）"
+    assert REPO.next_trading_day(D(2026, 9, 18), jt).day == D(2026, 9, 24), "9/21～9/23（9/22 夾在兩個假日中間）"
+    assert REPO.next_trading_day(D(2026, 12, 30), jt).day == D(2027, 1, 4), "12/31、1/1 交易所休市"
+    assert REPO.next_trading_day(D(2027, 3, 19), jt).day == D(2027, 3, 23), "3/21 春分逢週日，3/22 補假"
+    assert all(not REPO.next_trading_day(d, jt).uncertain for d in (D(2026, 11, 20), D(2027, 2, 22)))
+    us = REPO.next_trading_day(D(2026, 11, 20), ["GOOGL UW"])
+    assert us.day == D(2026, 11, 23) and not us.uncertain, "美股不受日本假日影響"
+    mixed = REPO.next_trading_day(D(2026, 11, 20), ["GOOGL UW", "7203 JT"])
+    assert mixed.day == D(2026, 11, 24) and not mixed.uncertain, "美日一籃子：兩邊的休市日都跳過"
+    assert REPO.next_trading_day(D(2026, 11, 25), ["GOOGL UW", "7203 JT"]).day == D(2026, 11, 27), "11/26 感恩節"
+
+
+def test_japanese_dates_after_2027_are_uncertain():
+    """日本假日表只涵蓋 JPX 已公布的年份：之後的日期無法確定。"""
+    late = REPO.next_trading_day(D(2028, 1, 7), ["7203 JT"])
+    assert late.day == D(2028, 1, 10) and "涵蓋範圍" in late.uncertain and "2027-12-31" in late.uncertain
+
+
 def test_ticker_suffix_decides_the_market():
     assert REPO.market_of("ABC UN Equity").code == "US"
     assert REPO.market_of("abc us").code == "US"
+    assert REPO.market_of("7203 JT Equity").code == "JP"
     assert REPO.market_of("700 HK") is None
     assert REPO.market_of("GOOGL") is None
 
@@ -182,6 +206,22 @@ def test_barc_mixed_basket_skips_known_holidays_and_reviews_the_rest(tmp_path):
     later = Edit("2030 年3 月11 日", "2030 年3 月13 日", "ts.art13.ko.3.start")
     (unsure,) = starts(report(tmp_path / "l", mixed, edits=[later], config=config))
     assert unsure.status == S.REVIEW_REQUIRED and "ABC HK" in unsure.message
+
+
+JT = Spec(underlyings=(UL("虛構日本株式會社", "東京證券交易所", "ZZJ JT", Decimal("1234.0000")),))
+
+
+def test_barc_japanese_start_after_a_japanese_holiday_passes_and_without_shift_is_mismatch(tmp_path):
+    """日股標的：期始日落在日本休市日時順延到下一個交易日判通過；沒順延判不一致（structured-product-workflow#67）。"""
+    config = with_holidays(D(2030, 3, 11), market="JP")
+    shifted = report(tmp_path, JT, edits=[START], config=config)
+    assert [x.status for x in starts(shifted)] == [S.PASS]
+    (on_holiday,) = starts(report(tmp_path / "h", JT, config=config))
+    assert on_holiday.status == S.MISMATCH and "第 3 期期始日應為 2030-03-12" in on_holiday.message
+    (late,) = starts(report(tmp_path / "l", JT, edits=[START]))
+    assert late.status == S.MISMATCH, "日本市場在假日表上：沒有休市日卻晚一天是不一致，不再轉人工覆核"
+    us_holiday = with_holidays(D(2030, 3, 11))
+    assert [x.status for x in starts(report(tmp_path / "u", JT, config=us_holiday))] == [S.PASS], "美股休市日不影響日股"
 
 
 def test_barc_start_outside_the_table_requires_review(tmp_path):
