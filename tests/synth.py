@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import re
+import zipfile
 from pathlib import Path
 
 import pymupdf
@@ -101,8 +103,53 @@ def make_fake_word(path: Path, lines: list[str]) -> Path:
     return path
 
 
+_W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_DOCX_TYPES = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+    '<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+    '<Default Extension="xml" ContentType="application/xml"/>'
+    '<Override PartName="/word/document.xml" '
+    'ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>'
+    "</Types>"
+)
+_DOCX_RELS = (
+    '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+    '<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" '
+    'Target="word/document.xml"/></Relationships>'
+)
+
+
+def make_docx(path: Path, paragraphs: list[str | list[str]]) -> Path:
+    """最小的真 .docx：每個元素一段；元素是 list 時拆成好幾個 run（Word 常把一行字拆開存）。"""
+    body = "".join(
+        '<w:p><w:pPr><w:jc w:val="both"/></w:pPr>'
+        + "".join(f'<w:r><w:t xml:space="preserve">{run}</w:t></w:r>' for run in ([p] if isinstance(p, str) else p))
+        + "</w:p>"
+        for p in paragraphs
+    )
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<w:document xmlns:w="{_W}"><w:body>{body}</w:body></w:document>'
+    )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", _DOCX_TYPES)
+        zf.writestr("_rels/.rels", _DOCX_RELS)
+        zf.writestr("word/document.xml", document)
+    return path
+
+
+def docx_lines(path: Path) -> list[str]:
+    """.docx 每段的文字（給 FakeConverter 與測試讀回）。"""
+    with zipfile.ZipFile(path) as zf:
+        xml = zf.read("word/document.xml").decode("utf-8")
+    return ["".join(re.findall(r"<w:t[^>]*>([^<]*)</w:t>", p)) for p in re.findall(r"<w:p[ >].*?</w:p>", xml, re.S)]
+
+
 class FakeConverter:
-    """測試用轉檔器：把假 Word 的文字寫成 PDF；記下每次收到的工作。
+    """測試用轉檔器：把假 Word（純文字，或 `make_docx` 做的真 .docx）的文字寫成 PDF；記下每次收到的工作。
 
     error：整批失敗（模擬 Word 無法啟動或逾時）；fail：{Word 檔名: 原因}，個別失敗；produce=False：回報成功卻沒產生 PDF。
     """
@@ -124,5 +171,10 @@ class FakeConverter:
             if source.name in self.fail:
                 failures[source] = self.fail[source.name]
             elif self.produce:
-                make_pdf(target, source.read_text(encoding="utf-8").splitlines())
+                lines = (
+                    docx_lines(source)
+                    if zipfile.is_zipfile(source)
+                    else source.read_text(encoding="utf-8").splitlines()
+                )
+                make_pdf(target, lines)
         return failures

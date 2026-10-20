@@ -24,6 +24,7 @@
 
 - 轉檔只能在安裝 Microsoft Word 的 Windows 上執行；CI（Linux）只跑假轉檔器的測試，真的 Word 轉檔只在本機有 Word 時測。
 - 背景控制 Word 可能被巨集、保護檢視、損毀檔或授權視窗卡住，需要逾時與失敗處理。
+- 例外（#56）：MS 說明書封面空白的「受託機構商品代號」會先在暫存複本補上 TDCC 再轉檔，所以轉出的 PDF 不是上手 Word 的原樣；原始 Word 仍不動。
 - 與 [ADR 0001](0001-postgresql-workflow-storage.md) 提到的伺服器方向有張力：桌面 Word 自動化不能假設可原樣搬到背景伺服器。日後要在伺服器上轉檔，需新增 ADR 取代本決策，並重新驗證核對範本。
 
 ## English
@@ -46,4 +47,5 @@ When the [TS/IIS preparation tool (#5)](https://github.com/TaylorYam/structured-
 
 - Conversion runs only on Windows with Microsoft Word installed. CI (Linux) runs fake-converter tests only; real Word conversion is tested locally when Word is available.
 - Background Word automation can be blocked by macros, Protected View, corrupt files, or licensing prompts, so timeout and failure handling are required.
+- Exception (#56): the blank 受託機構商品代號 (trustee product code) on the MS term sheet cover is filled with the TDCC in the temporary copy before conversion, so that PDF is not a verbatim rendering of the issuer's Word; the original Word stays untouched.
 - This is in tension with the server direction noted in [ADR 0001](0001-postgresql-workflow-storage.md): desktop Word automation cannot be assumed to move unchanged to a background server. Server-side conversion would require a superseding ADR and checker-template revalidation.

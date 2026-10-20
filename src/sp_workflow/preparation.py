@@ -4,6 +4,7 @@
 同一種文件剛好一份候選才採用；說明書或投資人須知任一份找不到或有多份，整個商品跳過。
 有上手 PDF 候選就只看 PDF；某種文件沒有 PDF 候選時，才把資料夾裡的 Word 複製到暫存區轉成 PDF 再判斷（#8、ADR 0002）。
 Word 無法啟動或逾時，整個商品跳過；個別 Word 轉不了只影響它自己（需要它卻沒有其他候選時，原因寫出轉檔失敗）。
+MS 說明書封面空白的「受託機構商品代號」在暫存複本補上 TDCC 再轉檔（#56）。
 
 重新核對上手修正版（#21、#23）：放回過的 `_待確認` 檔不當候選，只標記「這個內容沒通過」；候選依內容指紋（全文）
 只算一份；上手寄來新版時排除和待確認檔內容相同的舊版，還沒新版時沿用上次沒通過的那一版，同一版可以重複核對；
@@ -29,6 +30,7 @@ from openpyxl.utils import get_column_letter
 
 from sp_workflow.conversion import ConversionError, Converter, default_converter
 from sp_workflow.documents import DocKind, content_key, read_pdf
+from sp_workflow.trustee_code import fill_trustee_code, needs_fill
 
 PREPARED = "已準備"
 PENDING_SUFFIX = "_待確認"  # 核對沒通過、放回時加在檔名最後（放回資料夾也用這個）
@@ -75,6 +77,7 @@ class _Candidate:
     pdf: Path
     source: Path
     from_word: bool = False
+    filled: bool = False  # 轉檔前補了受託機構商品代號（#56）
 
 
 @dataclass(frozen=True)
@@ -213,7 +216,7 @@ def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter
         failures: dict[Path, str] = {}
         if need_word and words:
             try:
-                converted, failures = _convert_words(words, Path(tmp), convert)
+                converted, failures = _convert_words(tdcc, words, Path(tmp), convert)
             except ConversionError as exc:
                 return _skipped(tdcc, [str(exc)], folder, selections)
             for candidate in converted:
@@ -239,7 +242,9 @@ def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter
             target = batch_dir / _output_name(tdcc, kind)
             shutil.copyfile(picked.pdf, target)
             docs.append(PreparedDocument(kind, picked.source, target.name, sha256(target), picked.from_word))
-    reason = "；".join(p for p in [_version_note(selections), *unusable] if p)
+    filled = [c for kind in DocKind for c in selections[kind].chosen if c.filled]
+    fill_note = f"已補受託機構商品代號（{_names(filled)}）" if filled else ""
+    reason = "；".join(p for p in [fill_note, _version_note(selections), *unusable] if p)
     return ProductOutcome(tdcc, PREPARED, reason, folder, tuple(docs))
 
 
@@ -320,7 +325,7 @@ class _Versions:
         key = self.key(candidate.pdf)
         for pending in self._pending:
             if self.key(pending) == key:
-                return _Candidate(pending, candidate.source, from_word=True)
+                return _Candidate(pending, candidate.source, from_word=True, filled=candidate.filled)
         return candidate
 
     def select(self, candidates: list[_Candidate]) -> _Selection:
@@ -349,17 +354,24 @@ class _Versions:
         return _Selection([representative[k] for k in remaining], failed, superseded)
 
 
-def _convert_words(words: list[Path], tmp: Path, convert: Converter) -> tuple[list[_Candidate], dict[Path, str]]:
+def _convert_words(
+    tdcc: str, words: list[Path], tmp: Path, convert: Converter
+) -> tuple[list[_Candidate], dict[Path, str]]:
     """把 Word 複製到暫存區再轉 PDF（原始 Word 不動、Word 鎖定檔也不會留在商品資料夾）。
+
+    MS 的暫存複本先補受託機構商品代號（只有說明書有這一格，其他 Word 不受影響）。
 
     回傳轉好的候選，以及轉不了的原始 Word 與原因。
     """
     jobs: dict[Path, tuple[Path, Path]] = {}
+    filled: set[Path] = set()
     for i, word in enumerate(words):
         work = tmp / str(i)
         work.mkdir()
         copy = work / word.name
         shutil.copyfile(word, copy)
+        if needs_fill(tdcc, word) and fill_trustee_code(copy, tdcc):
+            filled.add(word)
         jobs[word] = (copy, work / "converted.pdf")
     reported = convert(list(jobs.values()))
     converted, failures = [], {}
@@ -367,7 +379,7 @@ def _convert_words(words: list[Path], tmp: Path, convert: Converter) -> tuple[li
         if copy in reported or not pdf.is_file():
             failures[word] = reported.get(copy, "沒有產生 PDF")
         else:
-            converted.append(_Candidate(pdf, word, from_word=True))
+            converted.append(_Candidate(pdf, word, from_word=True, filled=word in filled))
     return converted, failures
 
 
