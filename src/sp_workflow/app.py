@@ -8,6 +8,8 @@
 6. 寄信草稿：貼核對通過的 TDCC，在 Outlook 建 TS／IIS 草稿給承作的 FC（#29）。
 
 商品資料夾所在的根目錄在視窗最上方設一次，1、3、6 三頁共用（#75）。
+做完一步，下一頁先帶入結果並用藍色提示條寫出來，按「下一步 →」才切頁，不自動執行（#76）：
+準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔。
 審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
 視窗只收輸入、在背景執行 `read_orders`／`import_daily`／`prepare_batch`／核對／`return_to_folders`／`create_drafts`
 並顯示結果，不含判斷邏輯。
@@ -28,6 +30,8 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from fcn_checker.panel import (
     CheckTab,
+    HintBar,
+    NextButton,
     apply_style,
     apply_window_icon,
     enable_windows_dpi_awareness,
@@ -50,7 +54,7 @@ from sp_workflow.mail_drafts import (
 from sp_workflow.order_export import ExportError, ExportReceipt, can_export, export_problem_mails
 from sp_workflow.order_terms import READ as ORDER_READ
 from sp_workflow.order_terms import OrderReceipt, OrderTermsError, read_orders
-from sp_workflow.preparation import PREPARED, PreparationError, PrepareReceipt, prepare_batch
+from sp_workflow.preparation import LIST_NAME, PREPARED, PreparationError, PrepareReceipt, prepare_batch
 from sp_workflow.returning import PENDING_SUFFIX, ReturnError, ReturnReceipt, return_to_folders
 
 TITLE = "FCN Workflow"
@@ -185,7 +189,8 @@ class PrepareTab(_Tab):
         notebook: ttk.Notebook,
         memory: FolderMemory,
         root_folder: RootFolder,
-        on_prepared: Callable[[Path], None],
+        on_prepared: Callable[[PrepareReceipt], bool],
+        on_next: Callable[[], None],
     ) -> None:
         super().__init__(notebook, "準備", (("tdcc", "TDCC", 130), ("status", "狀態", 70), ("reason", "原因", 520)))
         self.on_prepared = on_prepared
@@ -203,6 +208,7 @@ class PrepareTab(_Tab):
         self.start_button.pack(side=tk.LEFT)
         self.open_button = ttk.Button(self.buttons, text="打開批次資料夾", command=self.open_batch, state=tk.DISABLED)
         self.open_button.pack(side=tk.LEFT, padx=8)
+        self.next_button = NextButton(self.buttons, "下一步：核對 →", on_next)
         self.place_bottom(2)
 
     def start(self) -> None:
@@ -214,6 +220,7 @@ class PrepareTab(_Tab):
         self.memory.remember(out=str(out))
         self.start_button.configure(state=tk.DISABLED)
         self.open_button.configure(state=tk.DISABLED)
+        self.next_button.withdraw()
         self.run_in_background(
             lambda: prepare_batch(text, root, out),
             "處理中…（在根目錄底下搜尋商品資料夾，公槽上可能要一點時間）",
@@ -235,7 +242,8 @@ class PrepareTab(_Tab):
         self.status_var.set(status)
         self.batch_dir = result.batch_dir
         self.open_button.configure(state=tk.NORMAL)
-        self.on_prepared(result.batch_dir)
+        if self.on_prepared(result):  # 核對頁真的帶入了這批 PDF，才有下一步
+            self.next_button.offer()
 
     def open_batch(self) -> None:
         if self.batch_dir is not None:
@@ -252,13 +260,43 @@ class ReturnTab(_Tab):
         self.memory = memory
         self.batch_var = tk.StringVar(value=memory.load().get("batch", ""))
         self.result_var = tk.StringVar()
+        self.handed_off: tuple[str, str] | None = None  # 從核對帶入的（批次資料夾, 核對結果檔）
         self.status_var.set("選批次資料夾與「核對」分頁存下的核對結果檔，按「放回資料夾」。")
 
-        self.path_row(0, "批次資料夾", self.batch_var, lambda: _ask_dir("選擇批次資料夾", self.batch_var))
-        self.path_row(1, "核對結果檔", self.result_var, self._ask_result)
+        self.hint = HintBar(self.frame, self._change_result)
+        self.hint.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        self.hint.hide()
+        self.path_row(1, "批次資料夾", self.batch_var, lambda: _ask_dir("選擇批次資料夾", self.batch_var))
+        self.path_row(2, "核對結果檔", self.result_var, self._ask_result)
         self.start_button = ttk.Button(self.buttons, text="放回資料夾", command=self.start)
         self.start_button.pack(side=tk.LEFT)
-        self.place_bottom(2)
+        self.place_bottom(3)
+        for var in (self.batch_var, self.result_var):
+            var.trace_add("write", lambda *_: self._hide_hint_if_changed())
+
+    def receive(self, result: Path, batch: Path | None) -> None:
+        """核對存檔後帶入剛存的核對結果檔與這批的批次資料夾（#76）；不切頁、不自動放回。"""
+        if batch is not None:
+            self.batch_var.set(str(batch))
+        self.result_var.set(str(result))
+        self.handed_off = (self.batch_var.get(), self.result_var.get())
+        where = (
+            f"批次資料夾：{batch}"
+            if batch is not None
+            else "批次資料夾沒有帶入（核對的 PDF 不在同一個批次資料夾），請自己確認。"
+        )
+        self.hint.show(f"已帶入「4 核對」剛存的核對結果檔：\n{result}\n{where}")
+
+    def _hide_hint_if_changed(self) -> None:
+        """自己改了帶入的批次資料夾或核對結果檔，提示條就收起來。"""
+        if self.handed_off is not None and (self.batch_var.get(), self.result_var.get()) != self.handed_off:
+            self.handed_off = None
+            self.hint.hide()
+
+    def _change_result(self) -> None:
+        chosen = self._ask_result()
+        if chosen:
+            self.result_var.set(chosen)
 
     def _ask_result(self) -> str:
         return filedialog.askopenfilename(
@@ -615,9 +653,11 @@ class PanelWindow:
             self.notebook,
             memory,
             self.root_folder,
-            on_prepared=lambda batch: self.returning.batch_var.set(str(batch)),
+            on_prepared=self._prepared,
+            on_next=lambda: self.notebook.select(self.check),
         )
-        self.check = CheckTab(self.notebook, self.session, self.pixels)
+        self.check = CheckTab(self.notebook, self.session, self.pixels, on_saved=self._check_saved)
+        self.check.add_next_step("下一步：放回 →", lambda: self.notebook.select(self.returning.frame))
         self.notebook.add(self.check, text="核對")
         self.returning = ReturnTab(self.notebook, memory)
         self.mail = MailDraftTab(self.notebook, memory, db, self.root_folder)
@@ -626,6 +666,22 @@ class PanelWindow:
         self.notebook.select(self.check if start_on_check else 0)
         self.maintenance = self._maintenance_menu()
         master.protocol("WM_DELETE_WINDOW", self.close)
+
+    def _prepared(self, receipt: PrepareReceipt) -> bool:
+        """準備完成：放回頁帶入批次資料夾；核對頁帶入已準備的 PDF 並顯示提示條，回傳核對頁是否帶入。不切頁、不自動核對（#76）。"""
+        self.returning.batch_var.set(str(receipt.batch_dir))
+        pdfs = receipt.prepared_pdfs
+        return bool(pdfs) and self.check.receive_pdfs(
+            pdfs,
+            f"已帶入「3 準備」的批次（{len(pdfs)} 份 PDF）：\n{receipt.batch_dir}\n"
+            "選好參考條件表後按「載入／重新載入預覽」。",
+        )
+
+    def _check_saved(self, result: Path) -> None:
+        """核對存檔：放回頁帶入剛存的核對結果檔；PDF 都在同一個有準備清單的資料夾時，那就是這批的批次資料夾（#76）。"""
+        folders = {pdf.parent for pdf in self.check.pdf_paths}
+        batch = folders.pop() if len(folders) == 1 else None
+        self.returning.receive(result, batch if batch is not None and (batch / LIST_NAME).is_file() else None)
 
     def _maintenance_menu(self) -> tk.Menu:
         """視窗上方的「維護」選單：不是每天的步驟，不放在分頁畫面上（#73）。"""

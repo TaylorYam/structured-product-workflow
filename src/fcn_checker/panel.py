@@ -10,7 +10,7 @@ import ctypes
 import json
 import sys
 import tkinter as tk
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -109,7 +109,53 @@ def apply_style(root: tk.Tk) -> Callable[[float], int]:
     style.configure("Treeview", font=("Microsoft JhengHei UI", 11), rowheight=pixels(30))
     style.configure("Treeview.Heading", font=("Microsoft JhengHei UI", 11, "bold"))
     style.map("Treeview", background=[("selected", "#d9e9f2")], foreground=[("selected", "#172b3a")])
+    style.configure("Hint.TFrame", background="#dbeafe")
+    style.configure("Hint.TLabel", background="#dbeafe", foreground="#1e3a8a")
+    style.configure("Next.TButton", font=("Microsoft JhengHei UI", 11, "bold"))
     return pixels
+
+
+class HintBar(ttk.Frame):
+    """分頁上方的藍色提示條：寫出從上一步帶入了什麼，旁邊「改選…」可以換掉（#76）；沒有帶入時不顯示。
+
+    建立後由呼叫端 grid 到分頁最上方，再呼叫 hide()。
+    """
+
+    def __init__(self, parent: tk.Misc, change: Callable[[], None]):
+        super().__init__(parent, style="Hint.TFrame", padding=(10, 6))
+        self.text = tk.StringVar()
+        label = ttk.Label(self, textvariable=self.text, style="Hint.TLabel", wraplength=900)
+        label.pack(side="left", fill="x", expand=True)
+        ttk.Button(self, text="改選…", command=change).pack(side="left", padx=(10, 0))
+        self.bind("<Configure>", lambda event: label.configure(wraplength=max(300, event.width - 180)))
+
+    @property
+    def shown(self) -> bool:
+        return bool(self.text.get())
+
+    def show(self, text: str) -> None:
+        self.text.set(text)
+        self.grid()
+
+    def hide(self) -> None:
+        self.text.set("")
+        self.grid_remove()
+
+
+class NextButton(ttk.Button):
+    """完成訊息旁的「下一步：… →」：做完這一步才出現，按了才切到下一頁，不會自動執行（#76）。
+
+    放在用 pack 排列的按鈕列最後面。
+    """
+
+    def __init__(self, parent: tk.Misc, text: str, command: Callable[[], None]):
+        super().__init__(parent, text=text, command=command, style="Next.TButton")
+
+    def offer(self) -> None:
+        self.pack(side="left", padx=(12, 0))
+
+    def withdraw(self) -> None:
+        self.pack_forget()
 
 
 FOLDERS_RECORD = Path(".local") / "panel_folders.json"  # 兩個選檔按鈕各自記住的上次資料夾（根目錄下）
@@ -453,11 +499,21 @@ class CheckTab(ttk.Frame):
 
     視窗本身（標題、大小、關閉）由 `sp_workflow.app` 建立；審查通過日期、匯出回報包與使用的設定檔
     在視窗的「維護」選單，選單呼叫 edit_approval_dates、export_bundle、show_config_paths。
+    上一步帶入的 PDF 用 receive_pdfs；存檔成功時呼叫 on_saved(核對結果檔)，下一步按鈕由 add_next_step 加上（#76）。
     """
 
-    def __init__(self, parent: tk.Misc, session: PanelSession, pixels: Callable[[float], int]):
+    def __init__(
+        self,
+        parent: tk.Misc,
+        session: PanelSession,
+        pixels: Callable[[float], int],
+        *,
+        on_saved: Callable[[Path], None] | None = None,
+    ):
         super().__init__(parent, padding=pixels(20))
         self.root, self.session, self.pixels = self.winfo_toplevel(), session, pixels
+        self.on_saved = on_saved
+        self.next_button: NextButton | None = None
         self.executor = ThreadPoolExecutor(max_workers=1)
         self.pending: Future | None = None
         self.check_pending: Future[PanelOutcome] | None = None
@@ -473,18 +529,21 @@ class CheckTab(ttk.Frame):
         self.pdf_paths: tuple[Path, ...] = ()
         self.folders = LastFolders(session.install_root / FOLDERS_RECORD)
         self.columnconfigure(1, weight=1)
-        self.rowconfigure(5, weight=1)
+        self.rowconfigure(6, weight=1)
+        self.hint = HintBar(self, lambda: self.choose_files("pdf"))
+        self.hint.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+        self.hint.hide()
         ttk.Label(
             self,
             text="選取參考條件表與說明書、投資人須知 PDF（同一檔商品的 _TS 與 _IIS 一起選），先載入預覽確認每份對到的列，"
             "再按「開始核對」。上手由 PDF 檔名前三碼決定。",
-        ).grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 10))
+        ).grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 10))
         self.sheet_text = tk.StringVar()
         self.pdf_text = tk.StringVar()
         self.controls: list[ttk.Widget] = []
         for row, label, variable, kind in (
-            (1, "參考條件表", self.sheet_text, "sheet"),
-            (2, "說明書／投資人須知 PDF", self.pdf_text, "pdf"),
+            (2, "參考條件表", self.sheet_text, "sheet"),
+            (3, "說明書／投資人須知 PDF", self.pdf_text, "pdf"),
         ):
             ttk.Label(self, text=label).grid(row=row, column=0, sticky="w", padx=(0, 16), pady=5)
             ttk.Entry(self, textvariable=variable, state="readonly").grid(
@@ -493,18 +552,18 @@ class CheckTab(ttk.Frame):
             button = ttk.Button(self, text="選取檔案…", command=lambda k=kind: self.choose_files(k))
             button.grid(row=row, column=2, pady=5)
             self.controls.append(button)
-        actions = ttk.Frame(self)
-        actions.grid(row=3, column=0, columnspan=3, sticky="w", pady=(8, 6))
-        self.reload = ttk.Button(actions, text="載入／重新載入預覽", command=self.load)
+        self.actions = ttk.Frame(self)
+        self.actions.grid(row=4, column=0, columnspan=3, sticky="w", pady=(8, 6))
+        self.reload = ttk.Button(self.actions, text="載入／重新載入預覽", command=self.load)
         self.reload.pack(side="left", padx=(0, 12))
-        self.check_button = ttk.Button(actions, text="開始核對", command=self.start_check, state="disabled")
+        self.check_button = ttk.Button(self.actions, text="開始核對", command=self.start_check, state="disabled")
         self.check_button.pack(side="left")
-        self.save_button = ttk.Button(actions, text="儲存核對結果…", command=self.save, state="disabled")
+        self.save_button = ttk.Button(self.actions, text="儲存核對結果…", command=self.save, state="disabled")
         self.save_button.pack(side="left", padx=(12, 0))
         self.controls += [self.reload]
-        ttk.Label(self, text="預覽與核對結果", style="Section.TLabel").grid(row=4, column=0, columnspan=3, sticky="w")
+        ttk.Label(self, text="預覽與核對結果", style="Section.TLabel").grid(row=5, column=0, columnspan=3, sticky="w")
         self.tabs = ttk.Notebook(self)
-        self.tabs.grid(row=5, column=0, columnspan=3, sticky="nsew", pady=(6, 10))
+        self.tabs.grid(row=6, column=0, columnspan=3, sticky="nsew", pady=(6, 10))
         preview_frame = ttk.Frame(self.tabs, padding=8)
         preview_frame.columnconfigure(0, weight=1)
         preview_frame.rowconfigure(0, weight=1)
@@ -535,11 +594,11 @@ class CheckTab(ttk.Frame):
         self.pending_text.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
         self.status = tk.StringVar(value=session.message)
         self.status_label = ttk.Label(self, textvariable=self.status, wraplength=960)
-        self.status_label.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(8, 10))
+        self.status_label.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(8, 10))
         ttk.Label(
             self,
             text="按「儲存核對結果」才會寫出核對結果檔（原參考條件表不動）；錯誤清單上的說明書請交由人工核對。",
-        ).grid(row=7, column=0, columnspan=3, sticky="w")
+        ).grid(row=8, column=0, columnspan=3, sticky="w")
         self.bind("<Configure>", self._resize)
         self.root.after(1000, self._watch_sources)
 
@@ -560,6 +619,7 @@ class CheckTab(ttk.Frame):
     def _clear_results(self):
         self.has_result = False
         self.save_button.configure(state="disabled")
+        self._refresh_next()
         self.results.clear()
         self.tabs.tab(self.not_covered, text="待處理")
         _write(self.pending_text, "")
@@ -590,18 +650,60 @@ class CheckTab(ttk.Frame):
             initialdir=self.folders.initial(kind),
         )
         if selected:
-            self.pdf_paths = tuple(Path(p) for p in selected)
-            self.folders.remember(kind, self.pdf_paths[0])
-            names = "、".join(p.name for p in self.pdf_paths[:3])
-            more = f" 等 {len(self.pdf_paths)} 份" if len(self.pdf_paths) > 3 else ""
-            self.pdf_text.set(f"已選 {len(self.pdf_paths)} 份：{names}{more}")
-            self._selection_changed()
+            self.folders.remember(kind, Path(selected[0]))
+            self.hint.hide()  # 自己選的 PDF 取代上一步帶入的
+            self._select_pdfs(Path(p) for p in selected)
+
+    def _select_pdfs(self, paths: Iterable[Path]) -> None:
+        self.pdf_paths = tuple(paths)
+        names = "、".join(p.name for p in self.pdf_paths[:3])
+        more = f" 等 {len(self.pdf_paths)} 份" if len(self.pdf_paths) > 3 else ""
+        self.pdf_text.set(f"已選 {len(self.pdf_paths)} 份：{names}{more}")
+        self._selection_changed()
+
+    def receive_pdfs(self, paths: Iterable[Path], hint: str) -> bool:
+        """上一步帶入的 PDF（#76）：換掉目前選的 PDF、清除舊預覽並顯示提示條；參考條件表沿用目前選的。
+
+        不自動載入預覽或核對。核對頁正在處理時不帶入；有還沒存檔的核對結果時先問。回傳是否帶入。
+        """
+        if self.working:
+            messagebox.showinfo(
+                "核對", "核對頁正在處理，這批 PDF 沒有帶入；處理完後請在核對頁自己選。", parent=self.root
+            )
+            return False
+        if self.session.has_unsaved_result and not messagebox.askyesno(
+            "核對",
+            "核對頁還有沒存檔的核對結果，帶入新的 PDF 會清掉它。\n\n要帶入嗎？",
+            icon=messagebox.WARNING,
+            default=messagebox.NO,
+            parent=self.root,
+        ):
+            return False
+        self._select_pdfs(paths)
+        self.hint.show(hint)
+        return True
+
+    def add_next_step(self, text: str, command: Callable[[], None]) -> None:
+        """存檔成功後，在按鈕列最後出現「下一步」；按了才切頁（#76）。"""
+        self.next_button = NextButton(self.actions, text, command)
+        self._refresh_next()
+
+    def _refresh_next(self) -> None:
+        """目前的結果已經寫出核對結果檔時才顯示下一步；重新核對、改了放行或清除結果就收起來。"""
+        if self.next_button is None:
+            return
+        receipt = self.session.receipt
+        if receipt is not None and receipt.output is not None and not self._busy_any():
+            self.next_button.offer()
+        else:
+            self.next_button.withdraw()
 
     def _busy(self, busy):
         self.save_button.configure(state="disabled" if busy or not self.has_result else "normal")
         for control in self.controls:
             control.configure(state="disabled" if busy else "normal")
         self.check_button.configure(state="disabled" if busy or self.shown is None else "normal")
+        self._refresh_next()
 
     def _after(self, name: str, finish: Callable[[object], None], failure: str) -> None:
         """背景工作完成後在主執行緒呼叫 finish；IngestionError 顯示原因並清除結果。"""
@@ -725,6 +827,8 @@ class CheckTab(ttk.Frame):
         if self.session.outcome is None:
             self._clear()
         self.status.set(receipt.summary)
+        if receipt.output is not None and self.on_saved is not None:
+            self.on_saved(receipt.output)
 
     @property
     def working(self) -> bool:

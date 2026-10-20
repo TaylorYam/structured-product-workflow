@@ -106,6 +106,17 @@ class PrepareReceipt:
     outcomes: tuple[ProductOutcome, ...]
     unreadable_dirs: tuple[Path, ...] = ()  # 搜尋商品資料夾時讀不到的資料夾（例如沒有權限）
 
+    @property
+    def prepared_pdfs(self) -> tuple[Path, ...]:
+        """批次資料夾裡「已準備」商品的 `<TDCC>_TS.pdf`、`<TDCC>_IIS.pdf`（帶到核對頁用，#76）；跳過的不算。"""
+        return tuple(
+            self.batch_dir / d.output_name
+            for o in self.outcomes
+            if o.status == PREPARED
+            for d in o.documents
+            if d.output_name
+        )
+
 
 def prepare_batch(
     text: str,
