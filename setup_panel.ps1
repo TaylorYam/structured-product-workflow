@@ -17,22 +17,23 @@ try {
     # 核對紀錄記下程式版本用（.local\installed.json）
     & '.\.venv\Scripts\python.exe' -m fcn_checker.version --record-installation $PSScriptRoot
     if ($LASTEXITCODE -ne 0) { throw '安裝版本紀錄失敗。' }
-    # 兩個視窗各一個捷徑：（捷徑名稱, 啟動檔, 說明, 圖示）；核對沿用合併前的捷徑名稱與圖示
+    # 兩個視窗各一個捷徑；核對沿用合併前的捷徑名稱與圖示
     $panels = @(
-        @('TS IIS 準備與放回', 'launch_panel.pyw', 'TS／IIS 準備與放回', $null),
-        @('Term Sheet 核對', 'launch_checker_panel.pyw', 'FCN Term Sheet 核對', 'src\fcn_checker\assets\panel.ico')
+        [pscustomobject]@{ Name = 'TS IIS 準備與放回'; Script = 'launch_panel.pyw'; Description = 'TS／IIS 準備與放回'; Icon = $null },
+        [pscustomobject]@{ Name = 'Term Sheet 核對'; Script = 'launch_checker_panel.pyw'; Description = 'FCN Term Sheet 核對'; Icon = 'src\fcn_checker\assets\panel.ico' }
     )
     $openWith = 'launch_panel.cmd（準備與放回）或 launch_checker_panel.cmd（核對）'
     try {
         # 桌面與專案資料夾各放一個捷徑；捷徑記錄本機完整路徑，不進 Git
+        $shell = New-Object -ComObject WScript.Shell
         foreach ($folder in @([Environment]::GetFolderPath('Desktop'), $PSScriptRoot)) {
             foreach ($panel in $panels) {
-                $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut((Join-Path $folder ($panel[0] + '.lnk')))
+                $shortcut = $shell.CreateShortcut((Join-Path $folder ($panel.Name + '.lnk')))
                 $shortcut.TargetPath = Join-Path $PSScriptRoot '.venv\Scripts\pythonw.exe'
-                $shortcut.Arguments = '"' + (Join-Path $PSScriptRoot $panel[1]) + '"'
+                $shortcut.Arguments = '"' + (Join-Path $PSScriptRoot $panel.Script) + '"'
                 $shortcut.WorkingDirectory = $PSScriptRoot
-                $shortcut.Description = $panel[2]
-                if ($panel[3]) { $shortcut.IconLocation = (Join-Path $PSScriptRoot $panel[3]) + ',0' }
+                $shortcut.Description = $panel.Description
+                if ($panel.Icon) { $shortcut.IconLocation = (Join-Path $PSScriptRoot $panel.Icon) + ',0' }
                 $shortcut.Save()
             }
         }

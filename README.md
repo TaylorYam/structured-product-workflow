@@ -28,7 +28,7 @@
 python -m pip install -c constraints.txt -e ".[dev]"
 ```
 
-PostgreSQL 驅動已包含在套件裡。
+PostgreSQL 驅動已包含在套件裡。核對程式（`fcn_checker`）也在同一個套件裡；如果這個 Python 環境以前另外裝過舊的 `fcn-term-sheet-checker`（套件名稱 `fcn-checker`），請先 `python -m pip uninstall fcn-checker`，避免兩份 `fcn_checker` 同時在 Python 路徑上。
 
 開發時用指令開啟視窗：
 
@@ -188,7 +188,7 @@ Picks the Chinese term sheet and investor information sheet from TDCC-named prod
 python -m pip install -c constraints.txt -e ".[dev]"
 ```
 
-The PostgreSQL driver is included in the package.
+The PostgreSQL driver is included in the package. The checker (`fcn_checker`) ships in the same package; if this Python environment previously had the old `fcn-term-sheet-checker` installed (package name `fcn-checker`), run `python -m pip uninstall fcn-checker` first so two copies of `fcn_checker` are never on the Python path.
 
 Open the window from a terminal during development:
 
