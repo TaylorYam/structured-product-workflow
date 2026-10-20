@@ -2,7 +2,7 @@
 
 ## 繁體中文
 
-狀態：「TS／IIS 準備與放回」已完成，以真實樣本複本試跑過，等作業主機公槽實測（[#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)）。「每日匯入」最小 FCN 資料庫見 [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32)；「寄信草稿」見 [#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)。其他流程仍在設計階段。
+狀態：「TS／IIS 準備與放回」已完成，以真實樣本複本試跑過，等作業主機公槽實測（[#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)）。「每日匯入」最小 FCN 資料庫見 [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32)；「寄信草稿」見 [#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)；「Order 條件」讀取見 [#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)。其他流程仍在設計階段。
 
 本專案管理正式 Order、建檔、上手文件歸檔、核對串接及 FC 寄送。詢價端沿用既有系統。
 核對規則由獨立的 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) 負責。
@@ -117,11 +117,43 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 
 每日匯入略過的非 FCN 商品會標「不支援的商品類型」。同一檔重跑會再建一封草稿，重複的請自己刪除。某一檔出錯（例如 Outlook 沒回應、資料有問題）只標那一檔「建立失敗」，其他檔照常處理。商品資料夾只讀不改。更新程式後請執行一次 `spw-db-migrate`（新增了資料表版本）。
 
-測試：`pytest -q`（資料全部虛構；真的 Word 轉檔測試只在本機有 Word 時執行，CI 自動略過）。資料庫測試需要一個名稱以 `_test` 結尾、可以清空的 PostgreSQL 資料庫，把連線字串設在環境變數 `SPW_TEST_DSN`（例如 `host=localhost dbname=spw_test user=...`）；沒設定時略過，CI 用 PostgreSQL 服務執行。真的 Outlook 建草稿測試只在本機設定 `SPW_OUTLOOK_TEST=1` 時執行（會在草稿匣建一封測試信再刪掉）。真實樣本試跑只在本機執行：把環境變數 `SPW_REAL_SAMPLES_DIR` 設成放商品資料夾的目錄，CI 自動略過；真實資料不進 repo。
+### Order 條件
+
+從商品資料夾裡我方寄出的 `(Order)` 原信，依各上手格式讀出全部條件，統一欄名後輸出 `Order條件清單_<日期時間>.xlsx`，給人確認（[#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)）。這一版只輸出清單，不寫資料庫、不回填其他 Excel；回填到哪一份另外討論。
+
+1. 視窗切到「Order 條件」，貼上 TDCC（分隔方式同準備批次），選根目錄與輸出位置，按「讀取 Order」。
+2. 程式在商品資料夾（不含子資料夾）用傳統版 Outlook 開每個 `.msg`，只讀主旨含 `(Order)`、而且前面沒有 `RE:`、`FW:`、`DONE:` 的原信；條件不讀上手回覆信。唯一例外是 Order 沒寫的日期：GS 到同資料夾主旨有「Indicative Docs for <TDCC>」的信的 Order Summary 表補，HSBC 到 Order 信下方引用的 HSBC 回覆（「TDCC code: <TDCC>」後面的表，日/月/年）補；只補交易日、發行日、最終比價日、到期日，和 Order 寫的不同時標待確認。信件只開來讀，不會修改或寄出。
+3. 讀法：
+   - 開頭的 `We buy <TDCC> <幣別> <金額> @<價格>`、`Please settle thru …`、`Risk level`、`Initial price`、`PG rate`、`Capital size` 各家共用。
+   - 條件表依 TDCC 前三碼的上手對照欄名（`src/sp_workflow/order_formats.py`），例如 `BBG Code 1`、`Underlying 1`、`Stock 1` 都是「標的1」。UBS 寫在 Quote Id 裡的日期、GS 寫在 System Remark 裡的發行日會拆出來。
+   - 信件下方引用的上一封信不讀。
+4. 統一格式：百分比存數字（`80.00`、`75%` 都是 80），金額換算成數字（`200K` → 200000），日期為 `YYYY-MM-DD`，TDCC 保留前導零。不屬於統一欄位的欄原樣放在「其他欄位」。
+5. 一封信下兩檔以上時拆成多列；只貼了其中一檔，同一封信的其他檔也會接在後面。
+6. 下面情況標「待確認」並寫原因，不猜值：
+   - 值有修改，例如 `96.20%→96.15%`：取最後的值，同時寫出原文。
+   - 同一欄兩處寫法不同，例如 We buy 行的價格和條件表不同：這一欄留空。
+   - 讀不到幣別、承作金額、價格、標的1，或格式不認得。
+   - 條件表欄數和值數對不上、有好幾列值，或出現這家沒列過的欄名（上手格式可能改版）。
+   - 資料夾裡有兩封以上 Order 原信，或有信讀不到。
+7. 找不到商品資料夾或 Order 原信時標「找不到 Order」。14 家上手（含 Citi）都有讀法；TDCC 前三碼不認得時標「未支援上手」。Citi 的 We buy 行只有 `UF=x%`，價格 = 100 − UF；Citi 的 Non Callable Periods 算法不同，統一 +1（0 → 1）。
+8. 清單有四個工作表：
+   - 「example」：作業人員既有的「Outlook orders 轉成 Excel」格式（第 2 列表頭、從 B 欄開始），讀到 Order 的商品都放（含待確認），**有問題的格子照填能確定的值、標淺紅底**（例如價格寫成 `→` 的那格；整列的問題標在 TDCC 那格），原因看「Order條件清單」；可以直接複製貼上；起單FC 留空由人補。信裡沒直接寫的欄依固定規則換算（`src/sp_workflow/order_template.py`）：
+     - KO Type 統一成 Daily／Daily Memory／Period End／Period End Memory；MS 的 `OBSERVATION` 看 KO Memory，Citi 看 Daily KO 和 Memory Autocall 兩欄。
+     - Barrier Type 統一成 NONE／EKI／AKI（`European` = EKI）；沒有 KI 時 KI Barrier 留空。
+     - Product 條件表沒有或是上手自家名稱（Citi 的 FCA）時取主旨的 `FCN`；OTC 沒寫時填 `Note`；SG 的 Tenor = No. of Periods。
+     - Trade date 條件表沒有時用 Order 寄出日；Issue date 沒有時 = Trade date + 日曆天數偏移；Effective Date Offset = Issue date − Trade date 的日曆天數。
+     - 換算不了或格式表要的欄讀不到時，那一格空白、淺紅底，整檔標「待確認」。
+   - 「Order條件清單」：每檔一列，含待確認原因。
+   - 「原文對照」：每個欄位的原始欄名、原始值與對到的統一欄位。
+   - 「資料來源」：根目錄與讀不到的資料夾。
+
+新增上手或上手改版：在 `order_formats.py` 的 `ISSUERS` 加上或修改那家條件表的欄名，再用真實樣本試跑。
+
+測試：`pytest -q`（資料全部虛構；真的 Word 轉檔測試只在本機有 Word 時執行，CI 自動略過）。資料庫測試需要一個名稱以 `_test` 結尾、可以清空的 PostgreSQL 資料庫，把連線字串設在環境變數 `SPW_TEST_DSN`（例如 `host=localhost dbname=spw_test user=...`）；沒設定時略過，CI 用 PostgreSQL 服務執行。真的 Outlook 建草稿測試只在本機設定 `SPW_OUTLOOK_TEST=1` 時執行（會在草稿匣建一封測試信再刪掉）。真實樣本試跑只在本機執行：把環境變數 `SPW_REAL_SAMPLES_DIR` 設成放商品資料夾的目錄（Order 條件試跑會用傳統版 Outlook 開信），CI 自動略過；真實資料不進 repo，放在 repo 裡時用 `.gitignore` 已排除的 `FCN商品/`。
 
 ## English
 
-Status: TS/IIS preparation and return is complete and trial-run on copies of real samples; operational shared-drive testing is pending ([#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)). The minimal FCN database with daily import is [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32); mail drafts are [#29](https://github.com/TaylorYam/structured-product-workflow/issues/29). Other workflows remain in design.
+Status: TS/IIS preparation and return is complete and trial-run on copies of real samples; operational shared-drive testing is pending ([#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)). The minimal FCN database with daily import is [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32); mail drafts are [#29](https://github.com/TaylorYam/structured-product-workflow/issues/29); Order term reading is [#40](https://github.com/TaylorYam/structured-product-workflow/issues/40). Other workflows remain in design.
 
 This project coordinates formal Orders, booking, issuer document archiving, checker integration, and FC distribution. Inquiry remains in the existing system.
 Checking rules belong to the independent [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker).
@@ -236,4 +268,36 @@ Creates TS/IIS emails to the FCs handling each checked FCN in **your own classic
 
 Non-FCN products skipped by the daily import are marked "不支援的商品類型". Running a product again creates another draft; delete duplicates yourself. An error on one product (for example Outlook not responding or bad data) marks only that product "建立失敗"; the others continue. Product folders are read only. Run `spw-db-migrate` once after updating (a schema version was added).
 
-Tests: `pytest -q` (synthetic data only; real Word conversion tests run locally only when Word is available and are skipped in CI). Database tests need a disposable PostgreSQL database whose name ends in `_test`; put its connection string in `SPW_TEST_DSN` (for example `host=localhost dbname=spw_test user=...`). Without it they are skipped; CI runs them against a PostgreSQL service. The real Outlook draft test runs only when `SPW_OUTLOOK_TEST=1` is set locally (it creates and then deletes one test draft). Real-sample runs are local only: set `SPW_REAL_SAMPLES_DIR` to the folder containing product folders; CI skips it, and real data never enters the repository.
+### Order terms
+
+Reads every term from our original `(Order)` email in each product folder using each issuer's format, normalizes the field names, and writes `Order條件清單_<timestamp>.xlsx` for review ([#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)). This version only writes the list; it does not touch the database or fill any other workbook. Where the terms are written back is decided separately.
+
+1. In the window, open "Order 條件", paste TDCCs (same separators as preparation), choose the root folder and output location, and click "讀取 Order".
+2. Each `.msg` directly inside the product folder is opened with classic Outlook. Only originals are read: the subject contains `(Order)` with no `RE:`, `FW:`, or `DONE:` before it. Terms never come from issuer replies, with one exception for dates the order omits: GS dates come from the Order Summary table in the same folder's "Indicative Docs for <TDCC>" email, and HSBC dates come from HSBC's reply quoted below the order (the table after "TDCC code: <TDCC>", day/month/year). Only trade, issue, final valuation, and maturity dates are filled this way, and a date differing from the order is 待確認. Messages are opened read-only, never changed or sent.
+3. Reading:
+   - The opening `We buy <TDCC> <currency> <amount> @<price>`, `Please settle thru …`, `Risk level`, `Initial price`, `PG rate`, and `Capital size` lines are shared by all issuers.
+   - The terms table is mapped by the issuer from the TDCC's first three digits (`src/sp_workflow/order_formats.py`); for example `BBG Code 1`, `Underlying 1`, and `Stock 1` all become 標的1. Dates inside the UBS Quote Id and the GS System Remark issue date are split out.
+   - Quoted earlier messages below the order are ignored.
+4. Normalization: percentages become numbers (`80.00` and `75%` are both 80), amounts are expanded (`200K` → 200000), dates are `YYYY-MM-DD`, and TDCCs keep leading zeros. Columns outside the normalized fields are kept as-is in 其他欄位.
+5. A message ordering several TDCCs is split into rows; when only one of them is pasted, the others from the same message follow it.
+6. The following cases are marked 待確認 with reasons, without guessing:
+   - A revised value such as `96.20%→96.15%`: the last value is used and the original text is shown.
+   - A field that differs between two places, for example the We buy price and the table: that field is left blank.
+   - Currency, amount, price, or 標的1 cannot be read, or a value's format is not recognized.
+   - Header and value counts differ, a table has several value rows, or a column unknown for that issuer appears (the issuer format may have changed).
+   - A folder holds two or more original orders, or a message cannot be read.
+7. A missing product folder or original order is 找不到 Order. All 14 issuers (including Citi) have a reading; an unknown TDCC prefix is 未支援上手. Citi's We buy line only gives `UF=x%`, so the price is 100 − UF; Citi counts Non Callable Periods differently, so it is shifted by +1 (0 → 1).
+8. The workbook has four sheets:
+   - "example": the operators' existing "Outlook orders to Excel" layout (row-2 header starting in column B), holding every product whose order was read (including 待確認), **with problem cells filled with what is certain and shaded light red** (for example the price written with `→`; row-level problems mark the TDCC cell), reasons in "Order條件清單"; ready to copy and paste; 起單FC is left blank for a person to fill. Columns the email does not state directly follow fixed rules (`src/sp_workflow/order_template.py`):
+     - KO Type becomes Daily, Daily Memory, Period End, or Period End Memory; MS `OBSERVATION` uses KO Memory, and Citi uses its Daily KO and Memory Autocall columns.
+     - Barrier Type becomes NONE, EKI, or AKI (`European` = EKI); without KI, KI Barrier is blank.
+     - Product falls back to the subject's `FCN` when the table lacks it or uses the issuer's own name (Citi's FCA); OTC defaults to `Note`; SG Tenor = No. of Periods.
+     - Trade date falls back to the order's sent date; a missing Issue date = Trade date + calendar-day offset; Effective Date Offset = Issue date − Trade date in calendar days.
+     - When a value cannot be converted or a required column is missing, that cell is blank and light red, and the product is 待確認.
+   - "Order條件清單": one row per product, with reasons to check.
+   - "原文對照": each field's original name, original value, and normalized field.
+   - "資料來源": the root folder and any folders that could not be read.
+
+New issuers or format changes: add or update that issuer's table headers in `ISSUERS` in `order_formats.py`, then run a real-sample trial.
+
+Tests: `pytest -q` (synthetic data only; real Word conversion tests run locally only when Word is available and are skipped in CI). Database tests need a disposable PostgreSQL database whose name ends in `_test`; put its connection string in `SPW_TEST_DSN` (for example `host=localhost dbname=spw_test user=...`). Without it they are skipped; CI runs them against a PostgreSQL service. The real Outlook draft test runs only when `SPW_OUTLOOK_TEST=1` is set locally (it creates and then deletes one test draft). Real-sample runs are local only: set `SPW_REAL_SAMPLES_DIR` to the folder containing product folders (the Order terms trial opens messages with classic Outlook); CI skips it, and real data never enters the repository. Inside the repository, keep it in `FCN商品/`, which `.gitignore` excludes.

@@ -1,11 +1,13 @@
-"""本機視窗：四個分頁。
+"""本機視窗：五個分頁。
 
 - 準備批次：貼 TDCC、選根目錄與輸出位置，產生批次資料夾與準備清單。
 - 放回資料夾：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾。
 - 每日匯入：選每日更新，匯入最小 FCN 資料庫（#32）；信箱在資料庫直接維護（#35）。
 - 寄信草稿：貼核對通過的 TDCC，在 Outlook 建 TS／IIS 草稿給承作的 FC（#29）。
+- Order 條件：貼 TDCC，讀商品資料夾裡的 (Order) 原信，輸出 Order 條件清單（#40）。
 
-視窗只收輸入、在背景執行 `prepare_batch`／`return_to_folders`／`import_daily`／`create_drafts` 並顯示結果，不含判斷邏輯。
+視窗只收輸入、在背景執行 `prepare_batch`／`return_to_folders`／`import_daily`／`create_drafts`／`read_orders`
+並顯示結果，不含判斷邏輯。
 """
 
 from __future__ import annotations
@@ -32,6 +34,8 @@ from sp_workflow.mail_drafts import (
     create_drafts,
     mail_template_from_env,
 )
+from sp_workflow.order_terms import READ as ORDER_READ
+from sp_workflow.order_terms import OrderReceipt, OrderTermsError, read_orders
 from sp_workflow.preparation import PREPARED, PreparationError, PrepareReceipt, prepare_batch
 from sp_workflow.returning import PENDING_SUFFIX, ReturnError, ReturnReceipt, return_to_folders
 
@@ -42,6 +46,7 @@ _EXPECTED_ERRORS = (
     DailyImportError,
     DatabaseError,
     MailDraftError,
+    OrderTermsError,
 )  # 訊息本身就是給作業人員看的
 
 
@@ -387,6 +392,68 @@ class MailDraftTab(_Tab):
         self.status_var.set(status)
 
 
+class OrderTermsTab(_Tab):
+    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory) -> None:
+        super().__init__(
+            notebook,
+            "Order 條件",
+            (("tdcc", "TDCC", 130), ("status", "狀態", 90), ("issuer", "上手", 70), ("reason", "待確認原因", 440)),
+        )
+        self.memory = memory
+        folders = memory.load()
+        self.list_path: Path | None = None
+        self.root_var = tk.StringVar(value=folders.get("root", ""))
+        self.out_var = tk.StringVar(value=folders.get("order_out", ""))
+        self.status_var.set(
+            "貼上 TDCC，選根目錄與輸出位置，按「讀取 Order」。只讀商品資料夾裡的 (Order) 原信，不會修改信件。"
+        )
+
+        ttk.Label(self.frame, text="TDCC（可貼多筆）").grid(row=0, column=0, sticky="nw", pady=4)
+        self.tdcc_text = tk.Text(self.frame, height=6, width=40)
+        self.tdcc_text.grid(row=0, column=1, columnspan=2, sticky="nsew", pady=4)
+        self.path_row(1, "根目錄", self.root_var, lambda: _ask_dir("選擇商品資料夾所在的根目錄", self.root_var))
+        self.path_row(2, "輸出位置", self.out_var, lambda: _ask_dir("選擇 Order 條件清單要存在哪裡", self.out_var))
+        self.start_button = ttk.Button(self.buttons, text="讀取 Order", command=self.start)
+        self.start_button.pack(side=tk.LEFT)
+        self.open_button = ttk.Button(self.buttons, text="打開條件清單", command=self.open_list, state=tk.DISABLED)
+        self.open_button.pack(side=tk.LEFT, padx=8)
+        self.place_bottom(3)
+
+    def start(self) -> None:
+        text = self.tdcc_text.get("1.0", tk.END)
+        root_text, out_text = self.root_var.get().strip(), self.out_var.get().strip()
+        if not root_text or not out_text:
+            messagebox.showerror(TITLE, "請先選擇根目錄與輸出位置。")
+            return
+        root, out = Path(root_text), Path(out_text)
+        self.memory.remember(root=str(root), order_out=str(out))
+        self.start_button.configure(state=tk.DISABLED)
+        self.open_button.configure(state=tk.DISABLED)
+        self.run_in_background(
+            lambda: read_orders(text, root, out),
+            "讀取中…（在根目錄底下搜尋商品資料夾，再用 Outlook 開信件）",
+            self._done,
+        )
+
+    def _done(self, result: object) -> None:
+        self.start_button.configure(state=tk.NORMAL)
+        if not isinstance(result, OrderReceipt):
+            return
+        for row in result.rows:
+            self.add_row((row.tdcc, row.status, row.issuer, "；".join(row.reasons)), problem=row.status != ORDER_READ)
+        read = sum(row.status == ORDER_READ for row in result.rows)
+        status = f"完成：{read} 檔已讀取、{len(result.rows) - read} 檔要確認。條件清單：{result.list_path}"
+        if result.unreadable_dirs:
+            status += f"\n注意：搜尋時有 {len(result.unreadable_dirs)} 個資料夾讀不到（例如 {result.unreadable_dirs[0]}），裡面的商品資料夾找不到。"
+        self.status_var.set(status)
+        self.list_path = result.list_path
+        self.open_button.configure(state=tk.NORMAL)
+
+    def open_list(self) -> None:
+        if self.list_path is not None:
+            _open_folder(self.list_path)
+
+
 class PanelWindow:
     def __init__(self, master: tk.Tk, memory: FolderMemory, env_path: Path | None = None) -> None:
         master.title(TITLE)
@@ -399,6 +466,7 @@ class PanelWindow:
         db = _DatabaseLogin(master, env_path or default_env_path())
         self.daily = DailyImportTab(notebook, memory, db)
         self.mail = MailDraftTab(notebook, memory, db)
+        self.orders = OrderTermsTab(notebook, memory)
         notebook.select(0)
 
 
