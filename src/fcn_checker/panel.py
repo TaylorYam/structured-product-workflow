@@ -726,9 +726,14 @@ class CheckTab(ttk.Frame):
             self._clear()
         self.status.set(receipt.summary)
 
+    @property
+    def working(self) -> bool:
+        """正在背景讀檔、核對、放行、存檔或匯出；關閉視窗前提醒用。"""
+        return self._busy_any()
+
     def can_edit_approval_dates(self) -> bool:
         """「維護」選單：核對頁在背景處理時不能改審查通過日期（改了會清除預覽與結果）。"""
-        return not self._busy_any()
+        return not self.working
 
     def can_export_bundle(self) -> bool:
         """「維護」選單：有核對結果、其中有未通過的商品，而且核對頁沒在處理時才能匯出回報包。"""

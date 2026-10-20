@@ -3,7 +3,7 @@
 - 狀態／Status: Accepted
 - 日期／Date: 2026-10-20
 - 追蹤／Tracking: #73、#74
-- 取代／Supersedes: [核對 ADR 0006](../checker/adr/0006-panel-maintainer-only-no-self-update.md)「PANEL 只供維護者使用」那一點；移除自動更新照舊／the "PANEL is for the maintainer only" point of checker ADR 0006; removing self-update still stands
+- 部分取代／Partly supersedes: [核對 ADR 0006](../checker/adr/0006-panel-maintainer-only-no-self-update.md)「PANEL 只供維護者使用」那一點；移除自動更新照舊／the "PANEL is for the maintainer only" point of checker ADR 0006; removing self-update still stands
 
 ## 繁體中文
 

@@ -508,6 +508,7 @@ class OrderTermsTab(_Tab):
 
 
 WINDOW_FILE = "window.json"  # 視窗上次的大小，和上次選的資料夾放在同一個 .local/
+APPROVAL_DATES, EXPORT_BUNDLE = "審查通過日期…", "匯出回報包…"  # 「維護」選單依名稱更新能不能按
 
 
 class WindowSize:
@@ -584,8 +585,8 @@ class PanelWindow:
         """視窗上方的「維護」選單：不是每天的步驟，不放在分頁畫面上（#73）。"""
         bar = tk.Menu(self.master)
         menu = tk.Menu(bar, tearoff=False, postcommand=self._refresh_maintenance)
-        menu.add_command(label="審查通過日期…", command=self.check.edit_approval_dates)
-        menu.add_command(label="匯出回報包…", command=self._export_bundle)
+        menu.add_command(label=APPROVAL_DATES, command=self.check.edit_approval_dates)
+        menu.add_command(label=EXPORT_BUNDLE, command=self._export_bundle)
         menu.add_separator()
         menu.add_command(label="使用的設定檔…", command=self.check.show_config_paths)
         bar.add_cascade(label="維護", menu=menu)
@@ -594,8 +595,11 @@ class PanelWindow:
 
     def _refresh_maintenance(self) -> None:
         """每次打開「維護」選單時，依核對頁目前的狀態決定能不能按。"""
-        for index, allowed in ((0, self.check.can_edit_approval_dates()), (1, self.check.can_export_bundle())):
-            self.maintenance.entryconfigure(index, state=tk.NORMAL if allowed else tk.DISABLED)
+        for label, allowed in (
+            (APPROVAL_DATES, self.check.can_edit_approval_dates()),
+            (EXPORT_BUNDLE, self.check.can_export_bundle()),
+        ):
+            self.maintenance.entryconfigure(label, state=tk.NORMAL if allowed else tk.DISABLED)
 
     def _export_bundle(self) -> None:
         self.notebook.select(self.check)  # 匯出的進度與結果顯示在核對頁
@@ -605,11 +609,19 @@ class PanelWindow:
         """照上次的大小顯示；第一次開啟時在 Windows 最大化。"""
         self.size.restore(self.master, self.pixels)
 
+    def _close_warning(self) -> str | None:
+        if self.check.working:
+            return "核對頁還在處理（讀檔、核對或存檔），關閉後要重新來。"
+        if self.session.has_unsaved_result:
+            return "核對結果還沒儲存，關閉後要重新核對。"
+        return None
+
     def close(self) -> None:
-        """有還沒存檔的核對結果時先問一次；關閉前記住視窗大小。"""
-        if self.session.has_unsaved_result and not messagebox.askyesno(
+        """核對頁還在處理或有還沒存檔的核對結果時先問一次；關閉前記住視窗大小。"""
+        warning = self._close_warning()
+        if warning and not messagebox.askyesno(
             TITLE,
-            "核對結果還沒儲存，關閉後要重新核對。\n\n確定要關閉嗎？",
+            f"{warning}\n\n確定要關閉嗎？",
             icon=messagebox.WARNING,
             default=messagebox.NO,
             parent=self.master,
@@ -645,20 +657,22 @@ def _open_folder(folder: Path) -> None:
 
 def folder_memory(argv: list[str] | None = None) -> FolderMemory:
     """依啟動參數決定上次選的資料夾記在哪：有 --install-root 就記在它底下的 .local/。"""
-    root = parse_args(argv).install_root
-    return FolderMemory.under(root) if root else FolderMemory()
+    return _memory_under(parse_args(argv).install_root)
+
+
+def _memory_under(install_root: Path | None) -> FolderMemory:
+    return FolderMemory.under(install_root) if install_root else FolderMemory()
 
 
 def main(argv: list[str] | None = None, *, start_on_check: bool = False) -> None:
     """開 FCN Workflow 視窗；參數和核對 PANEL 相同（`fcn_checker.panel.parse_args`），舊的啟動方式照舊有效。"""
     args = parse_args(argv)
-    memory = folder_memory(argv)
     enable_windows_dpi_awareness()
     set_windows_app_id()
     master = tk.Tk()
     window = PanelWindow(
         master,
-        memory,
+        _memory_under(args.install_root),
         default_env_path(args.install_root),
         session=session_from_args(args),
         start_on_check=start_on_check,

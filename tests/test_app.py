@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import runpy
 import tkinter as tk
+from concurrent.futures import Future
 from pathlib import Path
 from tkinter import messagebox, ttk
 
@@ -94,6 +95,18 @@ def test_closing_with_an_unsaved_check_result_asks_first(master, tmp_path: Path,
     assert window.check.closed is answer
     if not answer:
         assert master.winfo_exists() and window.notebook.select() == str(window.check), "不關閉，切到核對頁去存檔"
+
+
+def test_closing_while_the_check_tab_is_working_asks_first(master, tmp_path: Path, monkeypatch) -> None:
+    window = app.PanelWindow(master, FolderMemory.under(tmp_path), session=PanelSession(install_root=tmp_path))
+    window.check.check_pending = Future()  # 核對還在背景跑，還沒有結果
+    asked = []
+    monkeypatch.setattr(app.messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or False)
+
+    window.close()
+
+    assert len(asked) == 1 and "核對頁還在處理" in asked[0]
+    assert not window.check.closed
 
 
 def test_closing_without_an_unsaved_result_does_not_ask(master, tmp_path: Path, monkeypatch) -> None:

@@ -122,7 +122,7 @@ fcn-batch data/orders/核對表格式..xlsx data/term-sheets/IS/029*.pdf --out r
 
 Windows 第一次使用：安裝官方 Python 3.11 以上（包含 Tcl/Tk），將專案放到自己有寫入權限的資料夾，雙擊 `setup_panel.cmd`。安裝會建立專案自己的 `.venv`，依 `constraints.txt` 安裝套件；需要可存取公司允許的 Python 套件來源。看到「安裝完成」後，雙擊桌面或專案資料夾裡的「FCN Workflow」捷徑開啟作業視窗，核對在「4 核對」分頁（安裝時自動建立；捷徑建立失敗時改雙擊 `launch_checker_panel.cmd`）。審查通過日期、匯出回報包與使用的設定檔在視窗上方的「維護」選單（本專案 [ADR 0007](../adr/0007-single-workflow-window.md)）。日常操作不需輸入命令，不需要伺服器。搬移資料夾或更新程式後請重新執行安裝；公司若禁止 PowerShell 腳本，請由 IT 依公司政策協助安裝。
 
-PANEL 使用 Python 內建 Tkinter，與 `fcn-batch` 共用同一套批量核對與回填流程。`launch_checker_panel.pyw` 與 `fcn-panel` 入口仍可使用，開同一個視窗並停在「4 核對」。關閉視窗時，有還沒存檔的核對結果會先提醒。
+PANEL 使用 Python 內建 Tkinter，與 `fcn-batch` 共用同一套批量核對與回填流程。`launch_checker_panel.pyw` 與 `fcn-panel` 入口仍可使用，開同一個視窗並停在「4 核對」。關閉視窗時，核對頁還在處理或有還沒存檔的核對結果會先提醒。
 
 1. 選取一份參考條件表（`FCN參考條件` Excel），再選取一或多份說明書與投資人須知 PDF（可多選，同一檔商品的 `_TS` 與 `_IIS` 一起選）。上手由 PDF 檔名前三碼決定，不需要另外選擇。兩個「選取檔案…」各自記得上次選檔的資料夾，下次直接從那裡開始。
 2. 按「載入／重新載入預覽」：每份 PDF 一列，顯示對應的上手（或「未支援上手」）、PDF 第一頁的商品代號（直接讀取文字層，保留前導零）、對到參考條件表的第幾列，或找不到／多列／發行機構不符／同一批多份說明書對到同一列等原因。參考條件表缺必要欄或欄名重複時不產生預覽，直接顯示缺了哪些欄。
