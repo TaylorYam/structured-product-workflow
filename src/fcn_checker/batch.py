@@ -65,7 +65,7 @@ _BY_STATUS = {
 }
 
 # 配對有問題時，狀態標籤直接寫原因，不必點進明細才知道要補參考條件表還是檢查檔案。
-# 「條件表」是參考條件表的簡稱（狀態欄寬有限，見 CONTEXT.md）；以配對問題為 key，所以不放 messages.py。
+# 「條件表」是參考條件表的簡稱（狀態欄寬有限，見 docs/checker/glossary.md）；以配對問題為 key，所以不放 messages.py。
 _PAIRING_LABELS = {
     PairingProblem.ROW_MISSING: "條件表找不到這筆",
     PairingProblem.ROW_DUPLICATE: "條件表有重複列",

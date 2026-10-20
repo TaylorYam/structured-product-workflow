@@ -1,8 +1,12 @@
 # FCN Term Sheet Checker
 
+> **2026-10-20 起已併入 structured-product-workflow**（[ADR 0005](../adr/0005-merge-checker-into-workflow.md)）。程式在 `src/fcn_checker/`，設定在根目錄 `config/`，測試在 `tests/checker/`；安裝、開發規則與總覽見根目錄 [README](../../README.md)、[AGENTS](../../AGENTS.md)。本資料夾的核對文件只有中文，沿用原專案內容。文件與程式註解裡的 Issue／PR 編號（例如 Issue #199）指的是原本的 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) repo，不是本 repo。
+>
+> **Merged into structured-product-workflow on 2026-10-20** ([ADR 0005](../adr/0005-merge-checker-into-workflow.md)). Code is in `src/fcn_checker/`, configuration in the root `config/`, tests in `tests/checker/`; see the root [README](../../README.md) and [AGENTS](../../AGENTS.md) for setup and development rules. The checker documents in this folder are Chinese-only, carried over from the original project. Issue/PR numbers in these documents and in code comments (for example Issue #199) refer to the original [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) repository, not this one.
+
 FCN Term Sheet 自動核對專案：將條款文件與已確認的下單資料轉成相同資料結構，以可追溯規則產生差異與人工覆核清單。
 
-**目前實作（2026-10-18）：14 家上手的中文產品說明書與投資人須知 × 共用參考條件表，提供本機 PANEL 與 CLI 批量核對。** 可輸出匯入格式 Excel，回填 ISIN、發行日、比價日，以及 VWAP 商品的標的價格。上手、範本連結與不支援樣態統一列在[支援範圍與文件索引](docs/support-matrix.md)；MS、UBS 只支援已定義的新版範本。正式核對使用固定規則，不使用 LLM；可用範圍與正式上線驗收分開判定。
+**目前實作（2026-10-18）：14 家上手的中文產品說明書與投資人須知 × 共用參考條件表，提供本機 PANEL 與 CLI 批量核對。** 可輸出匯入格式 Excel，回填 ISIN、發行日、比價日，以及 VWAP 商品的標的價格。上手、範本連結與不支援樣態統一列在[支援範圍與文件索引](support-matrix.md)；MS、UBS 只支援已定義的新版範本。正式核對使用固定規則，不使用 LLM；可用範圍與正式上線驗收分開判定。
 
 ## 運作說明
 
@@ -27,7 +31,7 @@ FCN Term Sheet 自動核對專案：將條款文件與已確認的下單資料�
 |---|---|
 | 跟參考條件表比 | 幣別（封面與每一處金額旁的幣別字；商品幣別不必等於標的幣別）、面額、標的與各標的進場價／執行價／下限價／KO 價（`期初定價` 為 `VWAP` 時不比，改以說明書回填；空白時照常比對，Citi 依說明書表頭判斷是否 VWAP）、執行 %、KO %、KI %、提前出場觀察方式、記憶式、KI 型態、年利率、天期、交易日／發行日／最終比價日／到期日、Non-Call |
 | 說明書自己前後一致 | 同一數字出現在多處要相同；價格 = 最初價格 × 百分比；配息表、提前出場表日期與情境試算算得通 |
-| 投資人須知（Issue #124） | 剛好 4 頁；產品條件和參考條件表一致，參考條件表沒有的（ISIN、名稱、最低申購金額、標的中文名稱、發行日）和說明書一致；風險等級、固定警語、受託機構、發行機構、禁用詞、費率、刊印日期。只核對該上手投資人須知範本有的項目（[核對規則](docs/rules/iis-check-rules.md)） |
+| 投資人須知（Issue #124） | 剛好 4 頁；產品條件和參考條件表一致，參考條件表沒有的（ISIN、名稱、最低申購金額、標的中文名稱、發行日）和說明書一致；風險等級、固定警語、受託機構、發行機構、禁用詞、費率、刊印日期。只核對該上手投資人須知範本有的項目（[核對規則](rules/iis-check-rules.md)） |
 | 公司規定（審查標準） | 受託機構名稱／電話／地址、負責人姓名字碼、固定警語全文與出現次數、風險等級、禁用詞、費率、商品名稱格式、面額。規定改變時只改設定檔，不改程式 |
 
 **判定原則**
@@ -40,10 +44,10 @@ FCN Term Sheet 自動核對專案：將條款文件與已確認的下單資料�
 
 **目前範圍與限制**
 
-- 14 家上手均有說明書與投資人須知範本，包括 SG；實際樣態限制見[支援範圍](docs/support-matrix.md)。KI 每期觀察不是一律未實作，也不是所有上手都能承作，必須同時通過樣態設定與範本判定。
+- 14 家上手均有說明書與投資人須知範本，包括 SG；實際樣態限制見[支援範圍](support-matrix.md)。KI 每期觀察不是一律未實作，也不是所有上手都能承作，必須同時通過樣態設定與範本判定。
 - 「待處理」列出未涵蓋項目，例如外部標的名稱／價格正確性、部分情境計算與待樣本驗證寫法；不把未涵蓋項目算成已核對。
 - 僅擷取文字層，沒有 OCR；圖像中的文字不會補讀。未知範本、必核資料缺漏或歧義不自動通過。
-- 新上手或改版先取得樣本，再依[新增上手實作規範](docs/issuer-onboarding.md)確認範圍與擴充讀法。
+- 新上手或改版先取得樣本，再依[新增上手實作規範](issuer-onboarding.md)確認範圍與擴充讀法。
 
 ## 現行流程
 
@@ -55,7 +59,7 @@ FCN Term Sheet 自動核對專案：將條款文件與已確認的下單資料�
                                   儲存核對結果 Excel＋核對紀錄 JSON
 ```
 
-每份 PDF 在預覽時只擷取、讀出一次，核對沿用讀出結果；來源或設定改變時須重新預覽。PANEL 要按儲存才寫核對結果，CLI 一次完成預覽、核對與儲存；回報包可另外匯出。詳細資料流與模組見[架構](docs/architecture.md)。
+每份 PDF 在預覽時只擷取、讀出一次，核對沿用讀出結果；來源或設定改變時須重新預覽。PANEL 要按儲存才寫核對結果，CLI 一次完成預覽、核對與儲存；回報包可另外匯出。詳細資料流與模組見[架構](architecture.md)。
 
 ## 安裝
 
@@ -64,6 +68,8 @@ FCN Term Sheet 自動核對專案：將條款文件與已確認的下單資料�
 ```bash
 python -m pip install -c constraints.txt -e ".[dev]"
 ```
+
+在根目錄執行；和流程程式（`sp_workflow`）是同一個套件，一次安裝就有 `fcn-batch`、`fcn-panel`。
 
 ## 使用方式
 
@@ -86,7 +92,7 @@ fcn-batch data/orders/核對表格式..xlsx data/term-sheets/IS/029*.pdf --out r
 
 | 參數 | 說明 |
 |---|---|
-| 第 1 個 | 參考條件表 Excel（讀第一張工作表），格式見[參考條件表格式](docs/order-formats/reference-sheet.md) |
+| 第 1 個 | 參考條件表 Excel（讀第一張工作表），格式見[參考條件表格式](order-formats/reference-sheet.md) |
 | 其後 | 一或多份說明書與投資人須知 PDF；檔名須為 `<商品代號>_TS.pdf`（說明書）或 `<商品代號>_IIS.pdf`（投資人須知），前三碼是上手編號（`config/issuer_prefixes.toml`），用來挑範本 |
 | `--review-standard` | 審查標準設定檔，預設 `config/review_standard.toml` |
 | `--reference-format` | 參考條件表格式設定檔，預設 `config/reference_sheet.toml` |
@@ -114,9 +120,9 @@ fcn-batch data/orders/核對表格式..xlsx data/term-sheets/IS/029*.pdf --out r
 
 ## 本機 PANEL：預覽、核對與保存
 
-Windows 第一次使用：安裝官方 Python 3.11 以上（包含 Tcl/Tk），將專案放到自己有寫入權限的資料夾，雙擊 `setup_panel.cmd`。安裝會建立專案自己的 `.venv`，依 `constraints.txt` 安裝套件；需要可存取公司允許的 Python 套件來源。看到「安裝完成」後，雙擊桌面或專案資料夾裡的「Term Sheet 核對」捷徑開啟程式（安裝時自動建立；捷徑建立失敗時改雙擊 `launch_panel.cmd`）。日常操作不需輸入命令，不需要伺服器。搬移資料夾或更新程式後請重新執行安裝；公司若禁止 PowerShell 腳本，請由 IT 依公司政策協助安裝。
+Windows 第一次使用：安裝官方 Python 3.11 以上（包含 Tcl/Tk），將專案放到自己有寫入權限的資料夾，雙擊 `setup_panel.cmd`。安裝會建立專案自己的 `.venv`，依 `constraints.txt` 安裝套件；需要可存取公司允許的 Python 套件來源。看到「安裝完成」後，雙擊桌面或專案資料夾裡的「FCN Workflow」捷徑開啟程式（安裝時自動建立；捷徑建立失敗時改雙擊 `launch_checker_panel.cmd`）。同一次安裝也會建立「TS IIS 準備與放回」捷徑。日常操作不需輸入命令，不需要伺服器。搬移資料夾或更新程式後請重新執行安裝；公司若禁止 PowerShell 腳本，請由 IT 依公司政策協助安裝。
 
-PANEL 使用 Python 內建 Tkinter，與 `fcn-batch` 共用同一套批量核對與回填流程。`launch_panel.pyw` 與 `fcn-panel` 入口仍可使用。
+PANEL 使用 Python 內建 Tkinter，與 `fcn-batch` 共用同一套批量核對與回填流程。`launch_checker_panel.pyw` 與 `fcn-panel` 入口仍可使用。
 
 1. 選取一份參考條件表（`FCN參考條件` Excel），再選取一或多份說明書與投資人須知 PDF（可多選，同一檔商品的 `_TS` 與 `_IIS` 一起選）。上手由 PDF 檔名前三碼決定，不需要另外選擇。兩個「選取檔案…」各自記得上次選檔的資料夾，下次直接從那裡開始。
 2. 按「載入／重新載入預覽」：每份 PDF 一列，顯示對應的上手（或「未支援上手」）、PDF 第一頁的商品代號（直接讀取文字層，保留前導零）、對到參考條件表的第幾列，或找不到／多列／發行機構不符／同一批多份說明書對到同一列等原因。參考條件表缺必要欄或欄名重複時不產生預覽，直接顯示缺了哪些欄。
@@ -144,31 +150,31 @@ PANEL 使用 Python 內建 Tkinter，與 `fcn-batch` 共用同一套批量核對
 
 PANEL 只有維護者本人使用。更新方式：在專案資料夾執行 `git pull`，再重新雙擊 `setup_panel.cmd`。安裝會把程式複製進 `.venv`，只 `git pull` 不會生效。根目錄的 PDF、Excel、核對紀錄（`runtime/`）及 `config` 不受影響；新版的內建設定若有變更，需自行比較後導入根目錄 `config`。
 
-舊版曾提供「更新 GitHub 最新版」按鈕（[ADR 0003](docs/adr/0003-public-github-panel-update.md)，已由 [ADR 0006](docs/adr/0006-panel-maintainer-only-no-self-update.md) 取代）。它留下的 `.local/releases/`、`.local/current.json`、`.local/update.lock` 已不再使用，可以手動刪除；`.local/installed.json` 是安裝時記錄的版本，請保留。
+舊版曾提供「更新 GitHub 最新版」按鈕（[ADR 0003](adr/0003-public-github-panel-update.md)，已由 [ADR 0006](adr/0006-panel-maintainer-only-no-self-update.md) 取代）。它留下的 `.local/releases/`、`.local/current.json`、`.local/update.lock` 已不再使用，可以手動刪除；`.local/installed.json` 是安裝時記錄的版本，請保留。
 
 ## 開發與測試
 
 ```bash
-pytest -q -n auto
+pytest -q -n auto tests/checker
 ```
 
-`-n auto` 由 pytest-xdist 依 CPU 核心數平行跑；要逐一除錯時拿掉即可。
+`-n auto` 由 pytest-xdist 依 CPU 核心數平行跑；要逐一除錯時拿掉即可。只跑核對測試要指定 `tests/checker`：流程的資料庫測試共用同一個測試資料庫，不能平行跑（整個 repo 的測試方法見根目錄 README）。
 
 ```bash
-ruff check src tests scripts panel_bootstrap.py launch_panel.pyw
-ruff format --check src tests scripts panel_bootstrap.py launch_panel.pyw
+ruff check src tests scripts/build_panel_icon.py panel_bootstrap.py launch_panel.pyw launch_checker_panel.pyw
+ruff format --check src tests scripts/build_panel_icon.py panel_bootstrap.py launch_panel.pyw launch_checker_panel.pyw
 ```
 
-行為測試主要透過公開切點驗證：批量入口 `fcn_checker.batch`（`preview_batch`／`check_batch`）與儲存 `fcn_checker.saving`（`save_batch`／`run_batch`，回傳儲存收據；設定由核對設定 `fcn_checker.check_config.CheckConfig` 傳入）、`fcn-batch` CLI 與 PANEL 工作階段 `fcn_checker.panel_workflow.PanelSession`。合成說明書 PDF 由各上手的合成器（`tests/synth.py` 為 BARC，其餘為 `tests/<上手>_synth.py`）產生，合成參考條件表與單份核對 harness（含載入一次的核對設定 fixture `CONFIG`）在 `tests/reference_synth.py`、`tests/harness.py`，數值皆虛構；共享表格、日期、情境工具及重要規則另有直接測試。`tests/test_real_*.py` 只在本機 `data/` 有真實樣本時執行，CI 自動略過；樣本的資料夾結構與檔名只定義在 `tests/real_data.py`（見[資料管理](#資料管理)），缺檔時略過原因會寫出缺的路徑。
+行為測試主要透過公開切點驗證：批量入口 `fcn_checker.batch`（`preview_batch`／`check_batch`）與儲存 `fcn_checker.saving`（`save_batch`／`run_batch`，回傳儲存收據；設定由核對設定 `fcn_checker.check_config.CheckConfig` 傳入）、`fcn-batch` CLI 與 PANEL 工作階段 `fcn_checker.panel_workflow.PanelSession`。合成說明書 PDF 由各上手的合成器（`tests/checker/barc_synth.py` 為 BARC，其餘為 `tests/checker/<上手>_synth.py`）產生，合成參考條件表與單份核對 harness（含載入一次的核對設定 fixture `CONFIG`）在 `tests/checker/reference_synth.py`、`tests/checker/harness.py`，數值皆虛構；共享表格、日期、情境工具及重要規則另有直接測試。`tests/checker/test_real_*.py` 只在本機 `data/` 有真實樣本時執行，CI 自動略過；樣本的資料夾結構與檔名只定義在 `tests/checker/real_data.py`（見[資料管理](#資料管理)），缺檔時略過原因會寫出缺的路徑。
 
 ## 文件與開發規則
 
-- [支援範圍與文件索引](docs/support-matrix.md)：14 家上手的說明書、投資人須知、欄位來源及專屬規則。
-- [架構與模組邊界](docs/architecture.md)、[現行資料契約](docs/data-contract.md)、[名詞表](CONTEXT.md)。
-- [參考條件表格式](docs/order-formats/reference-sheet.md)、[共用核對規則](docs/rules/shared-check-rules.md)、[投資人須知核對規則](docs/rules/iis-check-rules.md)、[審查標準](docs/rules/review-standard.md)。
-- [新增上手流程](docs/issuer-onboarding.md)、[公司上線驗收](docs/acceptance.md)、[現況與待辦](docs/TODO.md)。
-- [ADR 索引](docs/adr/README.md)：現行 0001、0002、0006、0007、0008、0009；0003、0004、0005 已被取代，保留歷史。
-- [AGENTS.md](AGENTS.md) 是共用開發規範，[CLAUDE.md](CLAUDE.md) 沿用此規範。
+- [支援範圍與文件索引](support-matrix.md)：14 家上手的說明書、投資人須知、欄位來源及專屬規則。
+- [架構與模組邊界](architecture.md)、[現行資料契約](data-contract.md)、[名詞表](glossary.md)。
+- [參考條件表格式](order-formats/reference-sheet.md)、[共用核對規則](rules/shared-check-rules.md)、[投資人須知核對規則](rules/iis-check-rules.md)、[審查標準](rules/review-standard.md)。
+- [新增上手流程](issuer-onboarding.md)、[公司上線驗收](acceptance.md)、[現況與待辦](TODO.md)。
+- [ADR 索引](adr/README.md)：現行 0001、0002、0006、0007、0008、0009；0003、0004、0005 已被取代，保留歷史。
+- [AGENTS.md](../../AGENTS.md) 是共用開發規範，[CLAUDE.md](../../CLAUDE.md) 沿用此規範。
 
 開發流程：Issue → branch/worktree → plan → implementation → validation → commit/push → PR → review/CI → merge。CI 檢查 patch 空白、ruff lint／format 與 pytest（Python 3.11、3.13）；沒有本機真實樣本時，相關測試自動略過，不代表真實交易已驗收。
 

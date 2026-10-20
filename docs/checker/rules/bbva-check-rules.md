@@ -197,7 +197,7 @@
 | 投資人須知 | `parsers/bbva_iis.py`、`IisTemplate`（頁底 `N/4` 的 `page_totals`；沒有刊印日期）；開始受理贖回日期 = 說明書（D36，比照 MS、Citi 的範本專屬規則）；P 型每期配息率與天數慣例 = 說明書；[投資人須知核對規則](iis-check-rules.md) BBVA 欄 |
 | 共用設定 | 審查標準 BBVA 分節（`fixed_warning_by_issuer.bbva`、`product_name.bbva`、`issuer_name.bbva`、`product_type.bbva`、`iis.fixed_warning_occurrences.bbva = 2`）；`config/reference_sheet.toml` 的 `[issuer_values] BBVA = "BBVA"` 與 `[underlyings] any_order_issuers` 加 `BBVA` |
 
-要有合成 PDF 測試（KO D 記憶式／非記憶式、KO P 記憶式、KI 無／AM、單一／多標的、JPY 計價美股標的、VWAP、標的順序和表上不同、第 1 頁有無受託機構明細、相容字章名、價格表欄序 KO → K → KI、分銷費用子列）、本機 5 份真實樣本測試（`tests/test_real_bbva.py`，結果與 §5 一致：BV3 到期日判不一致、該組不回填；其餘 4 組通過並回填），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura、GS、Natixis 樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變。
+要有合成 PDF 測試（KO D 記憶式／非記憶式、KO P 記憶式、KI 無／AM、單一／多標的、JPY 計價美股標的、VWAP、標的順序和表上不同、第 1 頁有無受託機構明細、相容字章名、價格表欄序 KO → K → KI、分銷費用子列）、本機 5 份真實樣本測試（`tests/checker/test_real_bbva.py`，結果與 §5 一致：BV3 到期日判不一致、該組不回填；其餘 4 組通過並回填），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura、GS、Natixis 樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變。
 
 ### 7.1 實作對照（Issue #269）
 

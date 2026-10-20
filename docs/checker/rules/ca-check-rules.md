@@ -234,7 +234,7 @@
 | 投資人須知 | `parsers/ca_iis.py`、`IisTemplate`（頁底 `第N頁，共M頁` 的 `page_totals`；CJK 相容字 NFKC 同 `gs_iis`）；[投資人須知核對規則](iis-check-rules.md) CA 欄 |
 | 共用設定 | 審查標準 CA 分節（`fixed_warning_by_issuer.ca`、`fixed_warning_variants.ca`、`level_formats.ca`、`product_name.ca`、`issuer_name.ca`、`product_type.ca`、`iis.fixed_warning_occurrences.ca = 1`）；`wording.allowed_phrases` 加 5 個片語；`config/reference_sheet.toml` 的 `[issuer_values] CA = "CA"` |
 
-要有合成 PDF 測試（KO P 記憶式、KO P Non-Call = 天期（觀察日表 1 列）、KO D 記憶式／非記憶式、KI 無／AM／D、單一／多標的、EUR 連美股、JPY、非整數 K %、VWAP、價格表幣別字拆行、欄序 K → KI → KO、投資人須知相容字「年」）、本機 5 份真實樣本測試（`tests/test_real_ca.py`，結果與 §5 一致：5 組都通過並回填），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura、GS、Natixis（及 BBVA）樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變（允許片語新增造成的改變要逐份列出，預期沒有）。
+要有合成 PDF 測試（KO P 記憶式、KO P Non-Call = 天期（觀察日表 1 列）、KO D 記憶式／非記憶式、KI 無／AM／D、單一／多標的、EUR 連美股、JPY、非整數 K %、VWAP、價格表幣別字拆行、欄序 K → KI → KO、投資人須知相容字「年」）、本機 5 份真實樣本測試（`tests/checker/test_real_ca.py`，結果與 §5 一致：5 組都通過並回填），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura、GS、Natixis（及 BBVA）樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變（允許片語新增造成的改變要逐份列出，預期沒有）。
 
 ### 7.1 規則對照（建議 rule_id）
 

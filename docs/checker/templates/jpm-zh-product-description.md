@@ -9,7 +9,7 @@
 - 商品家族：固定配息、（記憶式／非記憶式）可自動提前出場（每日或每期觀察）、連結單一標的或一籃子最差表現（worst-of）的股權連結結構型商品，有無觸碰價（KI），到期可能實物交割
 - 受託機構：玉山綜合證券（目前樣本皆同）
 - 依據：2026-10-15 對 5 份真實樣本（JP1–JP5）的探勘與開發者凍結清單（Issue #233；作業人員決定不畫螢光、逐項決定）
-- 狀態：已實作（Issue #233；`src/fcn_checker/parsers/jpm.py`、`rules/jpm.py`；合成測試 `tests/test_check_jpm.py`、本機真實樣本測試 `tests/test_real_jpm.py`）
+- 狀態：已實作（Issue #233；`src/fcn_checker/parsers/jpm.py`、`rules/jpm.py`；合成測試 `tests/checker/test_check_jpm.py`、本機真實樣本測試 `tests/checker/test_real_jpm.py`）
 
 > 真實樣本、擷取文字與比對輸出只放在被 Git 忽略的 `data/`。本文件只記錄版面、錨點與規則；所有數值範例都是虛構的。JP1–JP5 與真實商品代號的對照只存在本機（`data/tmp/jpm/sample_map.txt`）。
 

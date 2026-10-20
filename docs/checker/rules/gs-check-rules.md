@@ -214,7 +214,7 @@
 | 共用設定 | 審查標準 GS 分節（`fixed_warning_by_issuer.gs`、名稱樣板、`issuer_name.gs`、`product_type.gs`、`min_amount_multiples.gs`、`iis.fixed_warning_occurrences.gs`）；`config/reference_sheet.toml` 的 `[issuer_values] GS`、`[underlyings] any_order_issuers` 加 `GS` |
 | 禁用語特例 | 依 Issue #247（PR #250，已合併）的共用設定 `wording.exempt_until`，GS 不另寫 |
 
-要有合成 PDF 測試（D 型記憶式／單一標的非記憶式、KI 無／AM／D、Non-Call 1／3、JPY、CNH（CNY 寫法）、VWAP 與開盤價、收盤價間接寫法、非整數 K %、頁底 `第- N -頁`、價格數字拆行、投資人須知相容字「利」）、本機 5 份真實樣本測試（`tests/test_real_gs.py`，結果與 §5 一致：GS2 說明書與投資人須知因一檔價格疑似分割轉人工覆核，其餘 4 組通過並回填；投資人須知「受託投資」依 #247 特例通過），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura 樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變。
+要有合成 PDF 測試（D 型記憶式／單一標的非記憶式、KI 無／AM／D、Non-Call 1／3、JPY、CNH（CNY 寫法）、VWAP 與開盤價、收盤價間接寫法、非整數 K %、頁底 `第- N -頁`、價格數字拆行、投資人須知相容字「利」）、本機 5 份真實樣本測試（`tests/checker/test_real_gs.py`，結果與 §5 一致：GS2 說明書與投資人須知因一檔價格疑似分割轉人工覆核，其餘 4 組通過並回填；投資人須知「受託投資」依 #247 特例通過），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura 樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變。
 
 ### 7.1 實作對照（Issue #248）
 
@@ -235,7 +235,7 @@
 | 觀察時程表末列、結束日早於付息日；起始日 = 前一期結束日後的下一個一籃子預定交易日（Issue #289 前只查晚於前一期結束日；本機 42 份樣本都成立，2026-10-16 使用者決定改查；第 1 期不核對） | 共用 `schedule.period_count`／`payment_order`／`observation_order`／`last_observation`／`last_payment`／`period_start`（[共用核對規則](shared-check-rules.md) §6.1，Issue #289） |
 | 重複寫出的面額、到期買回 %、申購單位數與初始投資金額、天期（§3.10，Issue #317） | `doc.denomination_mentions`、`doc.redemption_pct`、`doc.scenario_units`、`doc.tenor_mentions` |
 
-第一章第 3 項寫發行機構全名：共用 `standard.issuer_name` 的 `issuer_name_ch1` 是「只寫中文的出處」，parser 交中文部分給共用規則，全名另由 `doc.issuer_name` 和第 1 頁比（實作時決定）。價格表依座標分欄讀（表頭與數字欄由左到右、每欄由上到下接起來；列以左欄列號切），費用表費率欄取「費率（百分比）」到「收取時點」之間、一列剛好一個 X%~Y%。投資人須知的 CJK 相容字在 `parsers/gs_iis.py` 讀之前轉換；合成文件畫不出相容字，這一點只由本機真實樣本測試（`tests/test_real_gs.py`）涵蓋。
+第一章第 3 項寫發行機構全名：共用 `standard.issuer_name` 的 `issuer_name_ch1` 是「只寫中文的出處」，parser 交中文部分給共用規則，全名另由 `doc.issuer_name` 和第 1 頁比（實作時決定）。價格表依座標分欄讀（表頭與數字欄由左到右、每欄由上到下接起來；列以左欄列號切），費用表費率欄取「費率（百分比）」到「收取時點」之間、一列剛好一個 X%~Y%。投資人須知的 CJK 相容字在 `parsers/gs_iis.py` 讀之前轉換；合成文件畫不出相容字，這一點只由本機真實樣本測試（`tests/checker/test_real_gs.py`）涵蓋。
 
 ## 8. 決策紀錄
 

@@ -1,4 +1,4 @@
-"""辨識：每份 PDF 從檔名到對到的參考條件表列算出的事實，凍結成辨識結果 `Identification`（見 CONTEXT.md）；
+"""辨識：每份 PDF 從檔名到對到的參考條件表列算出的事實，凍結成辨識結果 `Identification`（見 docs/checker/glossary.md）；
 預覽列、核對項目、核對紀錄與錯誤清單都直接讀它，不各自複製欄位（Issue #147）。
 
 辨識流程（每份 PDF）：
@@ -41,7 +41,7 @@ from .variants import Terms, Variant, investor_sheet_terms, row_terms, term_shee
 
 
 class PairingProblem(StrEnum):
-    """配對問題：辨識結果裡讓這份 PDF 不能正常核對或不能放行的那一個原因（每份最多一個，見 CONTEXT.md）。
+    """配對問題：辨識結果裡讓這份 PDF 不能正常核對或不能放行的那一個原因（每份最多一個，見 docs/checker/glossary.md）。
 
     值是對應結果的原因碼；原因碼由例外或範本辨識決定的（PDF 讀不到、範本、封面商品代號）取其中一個代表。
     """
@@ -88,7 +88,7 @@ def name_code(pdf: Path) -> str | None:
 
 @dataclass(frozen=True, eq=False)
 class Identification:
-    """辨識結果：預覽階段對每份 PDF 算出的事實（見 CONTEXT.md），由 `identify` 建立後不再改變；
+    """辨識結果：預覽階段對每份 PDF 算出的事實（見 docs/checker/glossary.md），由 `identify` 建立後不再改變；
     類別、狀態標籤、能否回填與放行都只看它與核對報告。
 
     前六欄是判定要看的事實；其餘只有 `identify` 會填（沒有檔案的手刻辨識結果留預設值）。

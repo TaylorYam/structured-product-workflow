@@ -3,7 +3,7 @@
 新增一家上手（發行機構）的說明書／投資人須知範本與參考條件表欄位對照時，依本文件的步驟、交付物與驗收門檻進行。流程整理自 BARC 的實際經驗（範本規格、核對規則、Issue #7、#9）。
 
 - 適用：新增上手，或同一上手的新範本版本（例如說明書或投資人須知改版）。
-- 通用開發流程（Issue → branch → 實作 → PR）見 [AGENTS.md](../AGENTS.md)；本文件補充新增上手特有的步驟。
+- 通用開發流程（Issue → branch → 實作 → PR）見 [AGENTS.md](../../AGENTS.md)；本文件補充新增上手特有的步驟。
 - 參考範例：BARC 的[範本規格](templates/barc-zh-product-description.md)、[參考條件表格式](order-formats/reference-sheet.md)、[核對規則](rules/barc-check-rules.md)（各上手共用的規則見[共用核對規則](rules/shared-check-rules.md)）、[審查標準](rules/review-standard.md)。
 
 ## 0. 總覽
@@ -32,7 +32,7 @@
 
 規則：
 
-- 真實檔案只放本機被 Git 忽略的 `data/`（說明書與投資人須知 `data/term-sheets/IS/`，樣本外驗證用的 `data/term-sheets/OOS/<上手>/`；參考條件表與詢價表 `data/orders/`，OOS 的在 `data/orders/OOS/`、探勘輸出 `data/tmp/`；本機真實樣本測試讀的結構見 `tests/real_data.py`）。
+- 真實檔案只放本機被 Git 忽略的 `data/`（說明書與投資人須知 `data/term-sheets/IS/`，樣本外驗證用的 `data/term-sheets/OOS/<上手>/`；參考條件表與詢價表 `data/orders/`，OOS 的在 `data/orders/OOS/`、探勘輸出 `data/tmp/`；本機真實樣本測試讀的結構見 `tests/checker/real_data.py`）。
 - 正式流程要求 `<12 位商品代號>_TS.pdf`／`_IIS.pdf`，以檔名前三碼選上手、前 12 碼配對，同時確認說明書封面商品代號。探勘可保留原始檔名，但試跑須備妥符合命名的複本，不把不規則檔名視為可核對。
 - 樣本不足的型態要在規格中註明「依規則推得、待樣本驗證」，不可當成已驗證。
 
@@ -119,8 +119,8 @@
 | 價格表 | `src/fcn_checker/parsers/price_table.py` | 共用；上手只用 `TableSpec` 宣告這張表長什麼樣子（錯訊裡的表名 `where`、期初價格與各價格欄的表頭關鍵字、表頭百分比寫法 `pct`／`pct_label`、列錨點 `number`（`1` 或 `k=1`）／`ticker`／`price`、代碼欄、其他文字欄 `texts`；某欄表頭可不寫 % 時 `Column.pct_optional`），範圍（表在文件的哪裡）由上手切好交進來；`read` 交出 `PriceTable`，`price_rows` 轉成標準欄位 `underlying_prices`。跨頁、彭博代碼換行、幣別字換行、擠成一行的格都在 module 裡處理，不在上手 parser 自己找列或分欄（Issue #287、#288）。代碼從哪裡來、百分比從表頭或定義句讀、沒有 KO 欄時 KO 價 = 期初價格、列名、期初定價、`PriceRow.currency` 留在上手 |
 | 參考條件表 adapter | `src/fcn_checker/orders/reference.py` | 所有上手共用，欄名對應走設定檔；新上手不需新增 adapter |
 | 規則 | `src/fcn_checker/rules/<上手>.py` | 只寫該上手專屬的說明書內部規則（不碰參考條件表）與未涵蓋清單；其他規則自動沿用（§6.2a） |
-| 合成測試資料 | `tests/<上手>_synth.py` | `Spec` 繼承 `reference_synth.ProductSpec`（補預設商品代號、該上手專屬的文件選項），依該上手版面把規格畫成虛構 PDF（版面文字由規格算出），只用 `tests/pdf_writer.py` 排版；`build_pdf`／`build_iis_pdf` 收 `edits`（`pdf_writer.Edit`，每個至少換到一處）製造錯誤，模組說明列出段落代號；參考條件表列一律 `reference_synth.reference_row(spec)`（不自己產），固定文字取 `harness.STANDARD`，單份核對用 `tests/harness.py`；不引用其他上手合成器 |
-| 測試 | `tests/test_check_<上手>*.py`、`tests/test_real_samples.py` | 合成測試進 CI；真實樣本測試只在本機 |
+| 合成測試資料 | `tests/checker/<上手>_synth.py` | `Spec` 繼承 `reference_synth.ProductSpec`（補預設商品代號、該上手專屬的文件選項），依該上手版面把規格畫成虛構 PDF（版面文字由規格算出），只用 `tests/checker/pdf_writer.py` 排版；`build_pdf`／`build_iis_pdf` 收 `edits`（`pdf_writer.Edit`，每個至少換到一處）製造錯誤，模組說明列出段落代號；參考條件表列一律 `reference_synth.reference_row(spec)`（不自己產），固定文字取 `harness.STANDARD`，單份核對用 `tests/checker/harness.py`；不引用其他上手合成器 |
+| 測試 | `tests/checker/test_check_<上手>*.py`、`tests/checker/test_real_samples.py` | 合成測試進 CI；真實樣本測試只在本機 |
 
 ### 6.2a 新上手要提供什麼、哪些自動沿用（[ADR 0009](adr/0009-shared-rules-defined-per-rule.md)）
 
@@ -175,7 +175,7 @@
 - **合成測試**（CI）：每種型態至少一個全部通過的案例；每條規則至少一個 PASS 與一個 MISMATCH／REVIEW 案例；另含範本辨識失敗、欄位缺漏、歧義、未知參考條件表欄名或欄位值、跨頁表格、損毀或加密 PDF。
 - **本機真實樣本測試**：只在 `data/` 存在時執行，CI 自動略過；斷言與探勘結論一致（例如「只有舊文件的審查日期不符」）。測試碼不得含真實代號或數值。
 - **負面測試**：其他上手的樣本不得被判定為本範本，既有上手的樣本也不得被新範本誤判。
-- **直接打規則**：規則各分支可不經 PDF 測，用 `tests/rule_fixtures.py` 以 dict 建讀出結果、參考條件表列與 `Context`／`IssuerContext`（例：`tests/test_rules_direct.py`）。
+- **直接打規則**：規則各分支可不經 PDF 測，用 `tests/checker/rule_fixtures.py` 以 dict 建讀出結果、參考條件表列與 `Context`／`IssuerContext`（例：`tests/checker/test_rules_direct.py`）。
 
 ### 6.4 驗收門檻（合併前）
 

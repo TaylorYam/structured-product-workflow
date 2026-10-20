@@ -188,7 +188,7 @@ Issue #315（比照 BBVA #305、UBS #303）起，情境 (i)～(iii) 重複寫出
 | 投資人須知 | `parsers/jpm_iis.py`、`IisTemplate`（頁碼 `N/4` 的 `page_totals`）、範本專屬規則 `rules/jpm_iis.py`（D 型自動提前出場配息金額的年利率 = 收益分配事項的年利率，`iis.coupon_pa_mentions`）；KO 型態與 k 由共用規則和參考條件表比（與說明書一致）；開始受理贖回日期不核對；[投資人須知核對規則](iis-check-rules.md) JPM 欄 |
 | 共用設定 | 審查標準 JPM 分節（固定警語、`risk.level_formats.jpm`、名稱樣板、發行機構、保證機構、總代理人、商品種類、`iis.fixed_warning_occurrences.jpm`）、允許片語「受託投資/受託買賣」；`config/reference_sheet.toml` 的 `[issuer_values] JPM`、`any_order_issuers` 加 `JPM` |
 
-要有合成 PDF 測試（D-4／D-3／P、記憶式／非記憶式／單一標的、KI 無／AM／D、JPY、AUD、VWAP、標的順序不同、Non-Call = 天期的 P 型、頁碼 `N/4`）、本機 5 份真實樣本測試（`tests/test_real_jpm.py`，結果與 §5 一致），以及 BARC、HSBC、MS、BNP、SG、Citi 樣本的負面測試；新增允許片語後，既有上手的合成與本機真實樣本測試結果不變。
+要有合成 PDF 測試（D-4／D-3／P、記憶式／非記憶式／單一標的、KI 無／AM／D、JPY、AUD、VWAP、標的順序不同、Non-Call = 天期的 P 型、頁碼 `N/4`）、本機 5 份真實樣本測試（`tests/checker/test_real_jpm.py`，結果與 §5 一致），以及 BARC、HSBC、MS、BNP、SG、Citi 樣本的負面測試；新增允許片語後，既有上手的合成與本機真實樣本測試結果不變。
 
 ## 8. 決策紀錄
 

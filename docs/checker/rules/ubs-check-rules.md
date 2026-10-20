@@ -215,7 +215,7 @@
 | 投資人須知 | `parsers/ubs_iis.py`、`IisTemplate`（頁底 `第N頁，共4頁` 的 `page_totals`；段名前綴 `一、`／`二、` 可有可無）；商品代號、ISIN 不交（範本沒有）；[投資人須知核對規則](iis-check-rules.md) UBS 欄 |
 | 共用設定 | 審查標準 UBS 分節（`fixed_warning_by_issuer.ubs`、`product_name.ubs`、`issuer_name.ubs`、`product_type.ubs`、`min_amount_multiples.ubs`、`iis.fixed_warning_occurrences.ubs = 1`）；名稱佔位符 `{ko_observation_*}`、`{ki_*}` 與括號等價寫法；`config/reference_sheet.toml` 的 `[issuer_values] UBS = "UBS"` |
 
-要有合成 PDF 測試（KO P 記憶式／非記憶式多標的、KO D 記憶式／非記憶式單一標的、Non-Call 1 與 > 1、KI 無／D／P／AM、AUD 連日股、JPY 連美股、價格表名稱拆行與 U+F020、欄序 K → KI → KO、名稱觀察方式錯、`瑞銀（定期觀察）` 等價寫法、舊版辨識失敗）、本機 6 份真實樣本測試（`tests/test_real_ubs.py`，結果與 §5 一致：UB1 辨識失敗、UB2 與 UB4 名稱不一致（UB4 另有表上幣別不一致）、UB3、UB5、UB6 說明書與投資人須知都通過並回填），以及其他上手樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變（新增名稱佔位符不影響既有樣板）。
+要有合成 PDF 測試（KO P 記憶式／非記憶式多標的、KO D 記憶式／非記憶式單一標的、Non-Call 1 與 > 1、KI 無／D／P／AM、AUD 連日股、JPY 連美股、價格表名稱拆行與 U+F020、欄序 K → KI → KO、名稱觀察方式錯、`瑞銀（定期觀察）` 等價寫法、舊版辨識失敗）、本機 6 份真實樣本測試（`tests/checker/test_real_ubs.py`，結果與 §5 一致：UB1 辨識失敗、UB2 與 UB4 名稱不一致（UB4 另有表上幣別不一致）、UB3、UB5、UB6 說明書與投資人須知都通過並回填），以及其他上手樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變（新增名稱佔位符不影響既有樣板）。
 
 ### 7.1 規則對照（建議 rule_id）
 

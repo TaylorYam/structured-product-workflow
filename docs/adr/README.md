@@ -10,6 +10,8 @@
 
 當某個選擇會長期影響系統結構、相依套件、資料、維運、資安或相容性時，使用架構決策紀錄（Architecture Decision Record，ADR）。日常的實作細節留在程式碼與 pull request 中即可。
 
+核對程式的 ADR 沿用原 fcn-term-sheet-checker 的編號，放在 [docs/checker/adr/](../checker/adr/README.md)，和這裡的編號互不相干；引用時寫明「核對 ADR 0006」或附路徑。新的決策（包含核對）一律加在這個資料夾。
+
 ### 建立紀錄
 
 1. 使用架構決策提案範本開 Issue，討論問題與選項。
@@ -45,6 +47,8 @@
 ## English
 
 Use an Architecture Decision Record (ADR) for a choice that has a lasting effect on system structure, dependencies, data, operations, security, or compatibility. Keep routine implementation details in the code and pull request.
+
+The checker's ADRs keep the original fcn-term-sheet-checker numbering in [docs/checker/adr/](../checker/adr/README.md), independent of the numbers here; cite them as "checker ADR 0006" or with the path. New decisions, including checker ones, go in this folder.
 
 ### Create a record
 

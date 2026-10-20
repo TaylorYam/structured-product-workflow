@@ -1,4 +1,4 @@
-"""說明書標準欄位：上手 adapter 與共用規則之間的 seam（CONTEXT.md「標準欄位」）。
+"""說明書標準欄位：上手 adapter 與共用規則之間的 seam（docs/checker/glossary.md「標準欄位」）。
 
 各上手 parser 以 `ts.f(name)` 交出下列欄位（`ParsedField`，含狀態與證據）；各上手共用的規則
 （參考條件表欄位、審查標準、Non-Call／ISIN／發行日／比價日與回填）只讀這些欄位與全文索引，不碰上手專屬的擷取結果。
@@ -108,7 +108,7 @@ class PeriodStart:
 
 @dataclass(frozen=True)
 class DateTable:
-    """說明書的日期表（CONTEXT.md「日期表」）：每期一列，加上表的位置與期始日的定義。"""
+    """說明書的日期表（docs/checker/glossary.md「日期表」）：每期一列，加上表的位置與期始日的定義。"""
 
     where: str  # 表在說明書的位置，用在項目名稱（例：第 13 條日期表）
     rows: tuple[DateRow, ...]

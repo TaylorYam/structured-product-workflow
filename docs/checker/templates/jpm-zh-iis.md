@@ -5,7 +5,7 @@
 - 範本代號：`jpm-zh-iis`
 - 對應說明書範本：[`jpm-zh-pd`](jpm-zh-product-description.md)；一檔商品一份說明書＋一份投資人須知（[ADR 0007](../adr/0007-iis-paired-with-term-sheet.md)）
 - 依據：2026-10-15 對 5 份真實樣本（JP1-IIS～JP5-IIS，與說明書 JP1–JP5 同商品）的探勘與核對範圍決定（Issue #233）
-- 狀態：已實作（Issue #233：`parsers/jpm_iis.py`、範本專屬規則 `rules/jpm_iis.py`（年利率各處 = 收益分配事項的年利率）；合成測試 `tests/test_iis_jpm.py`、本機真實樣本測試 `tests/test_real_jpm.py`）；作業人員 2026-10-15 決定不畫螢光，依開發者凍結清單逐項決定
+- 狀態：已實作（Issue #233：`parsers/jpm_iis.py`、範本專屬規則 `rules/jpm_iis.py`（年利率各處 = 收益分配事項的年利率）；合成測試 `tests/checker/test_iis_jpm.py`、本機真實樣本測試 `tests/checker/test_real_jpm.py`）；作業人員 2026-10-15 決定不畫螢光，依開發者凍結清單逐項決定
 
 > 真實樣本與擷取文字只放在被 Git 忽略的 `data/`。本文件的數值範例都是虛構的；樣本代號與真實商品代號的對照只存在本機（`data/tmp/jpm/sample_map.txt`）。產品條件以參考條件表（`data/orders/核對表格式..xlsx` 有 5 列 JPM）與同商品說明書為基準。
 

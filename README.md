@@ -5,7 +5,7 @@
 狀態：「TS／IIS 準備與放回」已完成，以真實樣本複本試跑過，等作業主機公槽實測（[#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)）。「每日匯入」最小 FCN 資料庫見 [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32)；「寄信草稿」見 [#29](https://github.com/TaylorYam/structured-product-workflow/issues/29)；「Order 條件」讀取見 [#40](https://github.com/TaylorYam/structured-product-workflow/issues/40)。其他流程仍在設計階段。
 
 本專案管理正式 Order、建檔、上手文件歸檔、核對串接及 FC 寄送。詢價端沿用既有系統。
-核對規則原本在獨立的 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker)，已併入本專案（[ADR 0005](docs/adr/0005-merge-checker-into-workflow.md)）：程式與歷史在 `src/fcn_checker/`，同一次安裝就有 `fcn-batch`、`fcn-panel`，原文件暫放 [docs/checker/](docs/checker/README.md)，文件整併見 #62；新商品資料改由 Order、交易明細與股價建立（[ADR 0006](docs/adr/0006-new-product-data-from-order.md)）。
+核對規則原本在獨立的 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker)，已併入本專案（[ADR 0005](docs/adr/0005-merge-checker-into-workflow.md)）：程式與歷史在 `src/fcn_checker/`，同一次安裝就有 `fcn-batch`、`fcn-panel`，核對文件在 [docs/checker/](docs/checker/README.md)；新商品資料改由 Order、交易明細與股價建立（[ADR 0006](docs/adr/0006-new-product-data-from-order.md)）。
 
 閱讀順序：[業務背景](CONTEXT.md) → [架構](docs/architecture.md) → [待定事項](docs/open-questions.md)。
 資料保存與部署先讀 [PostgreSQL 決策](docs/adr/0001-postgresql-workflow-storage.md) 與 [開發部署設計](docs/database-and-deployment.md)。第一階段的資料範圍見 [ADR 0003](docs/adr/0003-minimal-fcn-database.md)。
@@ -51,6 +51,16 @@ spw-panel
 2. 按「放回資料夾」。核對結果檔「回填後」上 `TS/IIS完成檢核` 為 `V` 的商品（說明書與投資人須知都通過或人工放行）用標準檔名放回；「錯誤清單」上沒通過的那份，檔名最後加「_待確認」放回（例：`<TDCC>_TS_待確認.pdf`），同商品通過的那份仍用標準檔名，原因欄附上錯訊；同時在商品資料夾寫一份 `<TDCC>_錯誤訊息_<日期時間>.xlsx`（一條錯訊一列，附 PDF 頁碼，頁碼對應放回的「_待確認」檔），打開資料夾就看得到問題在哪裡。重複放回、待確認檔已經在時不會再寫。核對結果檔裡沒出現的商品（還沒核對）不放回。
 3. 放回前重算批次裡 PDF 的指紋，和準備清單不符就不放。商品資料夾已有同名檔：內容相同（位元組相同，或全文相同，例如同一份 Word 重新轉出的 PDF）算「已在」（例如 UBS 本來就給標準檔名），內容不同不覆蓋、整個商品不放回，由作業人員決定留哪份。
 4. 只複製，批次資料夾保留；結果寫在批次資料夾的 `放回清單_<日期時間>.xlsx`；這批準備了但還沒核對的商品也會列出，標「不放回」。修好未通過的商品、重新核對後可以再放一次，已放回的會顯示「已在」；改用標準檔名放回時，舊的「_待確認」檔和舊錯訊檔不會自動刪除，清單會提醒你確認後手動刪除。
+
+### TS／IIS 核對
+
+核對程式（`src/fcn_checker/`，原 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker)）把中文產品說明書與中文投資人須知 PDF 跟參考條件表逐欄比對：14 家上手、固定規則、不使用 LLM。同一檔的兩份都通過或人工放行，才輸出到核對結果檔的「回填後」（`TS/IIS完成檢核` 打 `V`，回填 ISIN、發行日、比價日；VWAP 商品另回填各標的價格）；沒通過的每條錯訊列在「錯誤清單」。上面的「放回資料夾」讀的就是這份核對結果檔。
+
+1. 雙擊「FCN Workflow」捷徑開核對 PANEL：選參考條件表，再選批次資料夾裡的 `<TDCC>_TS.pdf`、`<TDCC>_IIS.pdf`，按「載入／重新載入預覽」→「開始核對」。看過錯訊認定沒問題的可以「人工放行」，最後按「儲存核對結果…」。
+2. 指令版：`fcn-batch <參考條件表.xlsx> <PDF…> --out <輸出資料夾>`，一次完成預覽、核對與儲存，不能人工放行。結束碼 0 全部通過、1 有不一致或需人工覆核、2 錯誤。
+3. 每次儲存另寫一份內部核對紀錄（程式版本、設定與每份 PDF 的指紋、逐項結果），PANEL 寫在安裝資料夾的 `runtime/核對紀錄/`，指令版寫在執行目錄的 `runtime/核對紀錄/`。
+
+規則、範本、支援範圍、參考條件表格式與核對的 ADR 見 [docs/checker/](docs/checker/README.md)（只有中文，裡面的 Issue 編號指原 repo）；新增上手或範本改版依[新增上手流程](docs/checker/issuer-onboarding.md)。
 
 ### 每日匯入（最小 FCN 資料庫）
 
@@ -165,7 +175,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 Status: TS/IIS preparation and return is complete and trial-run on copies of real samples; operational shared-drive testing is pending ([#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)). The minimal FCN database with daily import is [#32](https://github.com/TaylorYam/structured-product-workflow/issues/32); mail drafts are [#29](https://github.com/TaylorYam/structured-product-workflow/issues/29); Order term reading is [#40](https://github.com/TaylorYam/structured-product-workflow/issues/40). Other workflows remain in design.
 
 This project coordinates formal Orders, booking, issuer document archiving, checker integration, and FC distribution. Inquiry remains in the existing system.
-Checking rules used to live in the independent [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) and have been merged into this repository ([ADR 0005](docs/adr/0005-merge-checker-into-workflow.md)): their code and history live in `src/fcn_checker/`, one installation provides `fcn-batch` and `fcn-panel`, its original documents sit in [docs/checker/](docs/checker/README.md) for now, and document consolidation follows in #62; new product data will be built from Orders, trade rows, and prices ([ADR 0006](docs/adr/0006-new-product-data-from-order.md)).
+Checking rules used to live in the independent [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) and have been merged into this repository ([ADR 0005](docs/adr/0005-merge-checker-into-workflow.md)): their code and history live in `src/fcn_checker/`, one installation provides `fcn-batch` and `fcn-panel`, and its documents are in [docs/checker/](docs/checker/README.md); new product data will be built from Orders, trade rows, and prices ([ADR 0006](docs/adr/0006-new-product-data-from-order.md)).
 
 Read [business context](CONTEXT.md), [architecture](docs/architecture.md), then [open questions](docs/open-questions.md).
 For persistence/deployment, read the [PostgreSQL decision](docs/adr/0001-postgresql-workflow-storage.md) and [development/deployment design](docs/database-and-deployment.md). First-phase data scope is in [ADR 0003](docs/adr/0003-minimal-fcn-database.md).
@@ -211,6 +221,16 @@ After checking and saving the checker result workbook, switch to the 放回資�
 2. Press Return. Products whose `TS/IIS完成檢核` is `V` on the result workbook's 回填後 sheet (both documents passed or manually released) are returned under standard names. A document listed on the error-list sheet is returned with `_待確認` appended (for example `<TDCC>_TS_待確認.pdf`), while the product's passing document keeps its standard name and the reason column carries the error messages; a `<TDCC>_錯誤訊息_<timestamp>.xlsx` workbook (one error per row with the PDF page numbers, which refer to the returned `_待確認` file) is also written to the product folder so operators can see the problems there. It is not written again when the pending files are already in place. Products absent from the result workbook (not yet checked) are not returned.
 3. Batch PDFs are re-hashed and must match the preparation list. When a product folder already has a same-named file, identical content (same bytes, or the same full text such as a PDF re-converted from the same Word file) counts as already there (for example UBS issuing standard names); different content is never overwritten and the whole product is not returned, leaving the decision to the operator.
 4. Files are copied only and the batch folder is kept; results go to `放回清單_<timestamp>.xlsx` in the batch folder, which also lists prepared products not yet checked as not returned. After fixing and rechecking failed products, returning again marks already returned files as already there; when a standard name is returned, old `_待確認` files and error workbooks are never deleted automatically and the list reminds you to remove them after review.
+
+### TS/IIS checking
+
+The checker (`src/fcn_checker/`, formerly [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker)) compares the Chinese term sheet and investor information sheet PDFs field by field with the reference workbook: 14 issuers, fixed rules, no LLM. Only when both documents of a product pass or are manually released does the product go to the result workbook's 回填後 sheet (`TS/IIS完成檢核` = `V`, with ISIN, issue date, and observation dates backfilled, plus underlying prices for VWAP products); every error for a failed document is listed on 錯誤清單. Returning to folders (above) reads this result workbook.
+
+1. Double-click the "FCN Workflow" shortcut to open the checker PANEL: choose the reference workbook, then the batch folder's `<TDCC>_TS.pdf` and `<TDCC>_IIS.pdf`, and press 載入／重新載入預覽 then 開始核對. After reviewing the errors, a document can be released manually (人工放行); finally press 儲存核對結果….
+2. Command line: `fcn-batch <reference.xlsx> <PDFs…> --out <output folder>` previews, checks, and saves in one go, without manual release. Exit code 0 means all passed, 1 mismatch or review required, 2 error.
+3. Each save also writes an internal check record (program version, configuration and PDF hashes, per-item results): the PANEL writes to the install folder's `runtime/核對紀錄/`, the command line to `runtime/核對紀錄/` under the working directory.
+
+Rules, templates, support scope, the reference workbook format, and the checker's ADRs are in [docs/checker/](docs/checker/README.md) (Chinese only; issue numbers there refer to the original repository). For a new issuer or template version, follow the [issuer onboarding flow](docs/checker/issuer-onboarding.md).
 
 ### Daily import (minimal FCN database)
 

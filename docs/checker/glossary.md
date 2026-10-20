@@ -1,4 +1,4 @@
-# FCN Term Sheet 核對
+# 核對名詞表（原 fcn-term-sheet-checker CONTEXT）
 
 協助作業人員把上手的 FCN 產品說明書與參考條件表逐欄核對，並把說明書上的部分資料回填到參考條件表。
 

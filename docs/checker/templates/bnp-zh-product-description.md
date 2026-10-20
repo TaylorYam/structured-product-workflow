@@ -10,7 +10,7 @@
 - 商品家族：固定配息、自動提前贖回、連結單一或一籃子股票／交易所買賣基金的結構型商品（含記憶式與非記憶式、有無觸及生效事件（KI））
 - 受託機構：玉山綜合證券（目前樣本皆同）
 - 依據：2026-10-13 對 7 份真實樣本（BN1–BN7）的探勘與雙方螢光對照（Issue #189）
-- 狀態：已實作（Issue #191）：parser `src/fcn_checker/parsers/bnp.py`（表格 `bnp_tables.py`、情境 `bnp_scenario.py`）、規則 `src/fcn_checker/rules/bnp.py`、`bnp_scenario.py`；合成測試 `tests/bnp_synth.py`、`tests/test_check_bnp.py`，本機真實樣本測試 `tests/test_real_bnp.py`。投資人須知另開 Issue
+- 狀態：已實作（Issue #191）：parser `src/fcn_checker/parsers/bnp.py`（表格 `bnp_tables.py`、情境 `bnp_scenario.py`）、規則 `src/fcn_checker/rules/bnp.py`、`bnp_scenario.py`；合成測試 `tests/checker/bnp_synth.py`、`tests/checker/test_check_bnp.py`，本機真實樣本測試 `tests/checker/test_real_bnp.py`。投資人須知另開 Issue
 
 > 真實樣本、擷取文字與比對輸出只放在被 Git 忽略的 `data/`。本文件只記錄版面、錨點與規則；所有數值範例都是虛構的。BN1–BN7 與真實商品代號的對照只存在本機（`data/tmp/bnp/`）。
 
