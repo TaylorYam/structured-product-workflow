@@ -7,6 +7,7 @@
 - `parse_field`／`format_field`：畫面輸入的文字 ↔ 欄位的值。
 - `check_draft`：逐欄檢查，回傳 {欄位: 問題}；空的就可以匯入。
 - `import_drafts`：通過的寫進 `workflow.product`，每次與每檔都留紀錄；整次在同一個 transaction 裡。
+  `reload_stored` 在匯入後重讀資料庫的值與鎖住狀態（畫面上改到一半的值不動）。
 - `export_drafts`：輸出 Excel（Order原始資料＝確認後的值、Order條件清單／原文對照＝讀信結果、資料來源、人工修改）。
 規則式、不猜值：單位面額依幣別預設值（審查標準 `[denomination]`），發行機構寫法依參考條件表 `[issuer_values]`。
 已鎖住（`locked_at` 有值：TS 核對通過，或 migration 0006 之前就在資料庫）的商品不能匯入，要改走 #55 的更正；
@@ -288,6 +289,14 @@ def drafts_from(rows: Iterable[OrderRow], conn: psycopg.Connection | None = None
                     values[name] = value
         drafts.append(OrderDraft(row, mail, values, fields, locked))
     return drafts
+
+
+def reload_stored(drafts: Iterable[OrderDraft], conn: psycopg.Connection) -> None:
+    """重讀每檔資料庫的值與鎖住狀態（例如匯入後），`values` 不動。"""
+    for draft in drafts:
+        stored = _stored(conn, draft.tdcc)
+        draft.stored = None if stored is None else stored.fields
+        draft.locked = "" if stored is None else stored.locked
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,7 @@
 """FCN Workflow 視窗：六個分頁照每天的作業順序排（#73、#74、#90）。
 
 1. 每日匯入：選每日更新，匯入最小 FCN 資料庫（#32）；信箱在資料庫直接維護（#35）。
-2. Order 條件：貼 TDCC，讀商品資料夾裡的 (Order) 原信，輸出 Order 條件清單（#40）。
+2. Order 條件：貼 TDCC，讀商品資料夾裡的 (Order) 原信（#40），在右邊逐檔確認、修改後匯入資料庫並匯出 Order 條件清單（#86）。
 3. 準備：貼 TDCC、選輸出位置，產生批次資料夾與準備清單。
 4. 核對：參考條件表＋說明書／投資人須知 PDF 的預覽、核對與儲存（`fcn_checker.panel.CheckTab`）。
 5. 放回：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾。
@@ -12,7 +12,7 @@
 每日匯入完成 → Order 條件頁帶入交易明細的 FCN TDCC（#90）；
 準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔。
 審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
-視窗只收輸入、在背景執行 `read_orders`／`import_daily`／`prepare_batch`／核對／`return_to_folders`／`create_drafts`
+視窗只收輸入、在背景執行 `collect_orders`／`import_drafts`／`export_drafts`／`import_daily`／`prepare_batch`／核對／`return_to_folders`／`create_drafts`
 並顯示結果，不含判斷邏輯。
 """
 
@@ -26,9 +26,11 @@ import sys
 import threading
 import tkinter as tk
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
+from fcn_checker.check_config import ConfigPaths
 from fcn_checker.panel import (
     ACCENT,
     ACCENT_SOFT,
@@ -58,7 +60,14 @@ from fcn_checker.panel import (
 )
 from fcn_checker.panel_workflow import PanelSession
 from sp_workflow.daily_import import DailyImportError, ImportInfo, ImportReceipt, import_daily, latest_import
-from sp_workflow.database import ConnectionSettings, DatabaseError, connect, default_env_path, settings_from_env
+from sp_workflow.database import (
+    ConnectionSettings,
+    DatabaseError,
+    connect,
+    default_env_path,
+    require_current_schema,
+    settings_from_env,
+)
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.mail_drafts import (
     DRAFTED,
@@ -69,8 +78,30 @@ from sp_workflow.mail_drafts import (
     mail_template_from_env,
 )
 from sp_workflow.order_export import ExportError, ExportReceipt, can_export, export_problem_mails
-from sp_workflow.order_terms import READ as ORDER_READ
-from sp_workflow.order_terms import OrderReceipt, OrderTermsError, read_orders
+from sp_workflow.order_import import (
+    CHOICES,
+    EDIT_FIELDS,
+    LOCKED,
+    NEW,
+    OVERWRITTEN,
+    SAME,
+    SKIPPED,
+    TDCC_FIELD,
+    ImportConfig,
+    OrderDraft,
+    OrderImportError,
+    OrderImportReceipt,
+    check_draft,
+    describe,
+    drafts_from,
+    export_drafts,
+    format_field,
+    import_drafts,
+    load_import_config,
+    parse_field,
+    reload_stored,
+)
+from sp_workflow.order_terms import OrderReceipt, OrderRow, OrderTermsError, collect_orders
 from sp_workflow.preparation import (
     LIST_NAME,
     PREPARED,
@@ -89,6 +120,7 @@ _EXPECTED_ERRORS = (
     DatabaseError,
     MailDraftError,
     OrderTermsError,
+    OrderImportError,
     ExportError,
 )  # 訊息本身就是給作業人員看的
 
@@ -549,6 +581,14 @@ class _DatabaseLogin:
         self.env_path = env_path
         self.password: str | None = None
 
+    def optional_settings(self) -> ConnectionSettings | None:
+        """有連線設定檔才用（沒有或格式不對時回傳 None、不跳錯誤）；沒有密碼時一樣詢問，取消就是 None。"""
+        try:
+            settings_from_env(self.env_path)
+        except DatabaseError:
+            return None
+        return self.settings()
+
     def settings(self) -> ConnectionSettings | None:
         try:
             settings = settings_from_env(self.env_path)
@@ -670,33 +710,237 @@ class MailDraftTab(_Tab):
         self.finish((("已建草稿（檔）", drafted, False), ("沒有建立（檔）", not_drafted, any(problems))), status)
 
 
+_PROBLEM_BG = "#FFC7CE"  # 同 Excel 的淺紅色填滿：擋匯入，或讀信時有問題
+_DIFFERENT_BG = "#FFEB9C"  # 同 Excel 的淺黃色：和資料庫的值不同
+# 匯入前每檔的狀態（匯入後改成顯示匯入結果）
+BLOCKED, TO_CHECK, READY = "待確認", "請確認", "可匯入"
+
+
+@dataclass(frozen=True)
+class _ReadResult:
+    rows: tuple[OrderRow, ...]
+    unreadable: tuple[Path, ...]
+    drafts: list[OrderDraft]
+    config: ImportConfig
+    database_note: str = ""  # 沒有帶入資料庫的值時的說明
+    database_error: DatabaseError | None = None
+
+
+@dataclass(frozen=True)
+class _SaveResult:
+    receipt: OrderImportReceipt | None  # 只匯出 Excel 時是 None
+    list_path: Path | None
+    export_error: str = ""  # 匯入成功但 Excel 沒寫成
+
+
+class _FieldRow:
+    """編輯區的一欄：欄名、輸入框（選項用下拉）、和資料庫不同時的「用資料庫的值」；說明放在下一行，有才顯示。"""
+
+    def __init__(
+        self,
+        parent: tk.Frame,
+        row: int,
+        name: str,
+        on_commit: Callable[[str], None],
+        on_database: Callable[[str], None],
+    ) -> None:
+        self.var = tk.StringVar()
+        row *= 2  # 每欄兩行：輸入一行、說明一行
+        self.label = tk.Label(parent, text=name, anchor="w", background=SURFACE, font=(FONT, 10), padx=6)
+        self.label.grid(row=row, column=0, sticky="nsew", pady=(1, 0))
+        if name in CHOICES:
+            self.input: ttk.Entry = ttk.Combobox(parent, textvariable=self.var, values=CHOICES[name], width=18)
+            self.input.bind("<<ComboboxSelected>>", lambda _e: on_commit(name))
+        else:
+            self.input = ttk.Entry(parent, textvariable=self.var, width=20)
+        self.input.grid(row=row, column=1, sticky="ew", pady=(1, 0))
+        for event in ("<FocusOut>", "<Return>"):
+            self.input.bind(event, lambda _e: on_commit(name))
+        self.database = ttk.Button(parent, text="用資料庫的值", command=lambda: on_database(name))
+        self.database.grid(row=row, column=2, sticky="w", padx=(6, 0), pady=(1, 0))
+        self.database.grid_remove()
+        self.note = tk.Label(parent, anchor="w", justify=tk.LEFT, background=SURFACE, font=(FONT, 9), padx=6)
+        self.note.grid(row=row + 1, column=0, columnspan=3, sticky="ew", pady=(0, 2))
+        self.note.grid_remove()
+        parent.bind("<Configure>", lambda event: self.note.configure(wraplength=max(240, event.width - 20)), add="+")
+
+    def mark(self, background: str, note: str, *, offer_database: bool = False) -> None:
+        for widget in (self.label, self.note):
+            widget.configure(background=background)
+        self.note.configure(text=note, foreground=DANGER if background == _PROBLEM_BG else TEXT_SECONDARY)
+        if note:
+            self.note.grid()
+        else:
+            self.note.grid_remove()
+        if offer_database:
+            self.database.grid()
+        else:
+            self.database.grid_remove()
+
+
+class OrderEditor(ttk.Frame):
+    """Order 條件頁右邊的編輯區：一次一檔，欄位是格式表那些欄加承作金額（#86、ADR 0009）。
+
+    擋匯入的欄與讀信時有提醒的欄淺紅底並寫原因；和資料庫不同的欄淺黃底，寫出資料庫的值，可以一鍵改回。
+    離開欄位、按 Enter 或選了下拉時才解讀；寫錯的欄保留打的字並標紅，`errors` 記著還沒改好的欄。
+    """
+
+    PLACEHOLDER = "點左邊的商品來確認、修改"
+
+    def __init__(self, parent: tk.Misc, on_change: Callable[[OrderDraft], None]) -> None:
+        super().__init__(parent, style="Card.TFrame", padding=(14, 12))
+        self.on_change = on_change
+        self.draft: OrderDraft | None = None
+        self.config: ImportConfig | None = None
+        self.errors: dict[str, dict[str, tuple[str, str]]] = {}  # TDCC → {欄位: (打的字, 說明)}
+        self.title_var = tk.StringVar(value=self.PLACEHOLDER)
+        self.note_var = tk.StringVar()
+        ttk.Label(self, textvariable=self.title_var, style="Card.TLabel").pack(anchor="w")
+        self.note = ttk.Label(self, textvariable=self.note_var, style="CardMuted.TLabel", justify=tk.LEFT)
+        self.note.pack(anchor="w", fill=tk.X, pady=(4, 8))
+        self.bind("<Configure>", lambda event: self.note.configure(wraplength=max(240, event.width - 40)))
+        area = ttk.Frame(self, style="CardBody.TFrame")
+        area.pack(fill=tk.BOTH, expand=True)
+        canvas = tk.Canvas(area, highlightthickness=0, background=SURFACE)
+        scroll = ttk.Scrollbar(area, orient=tk.VERTICAL, command=canvas.yview)
+        self.fields = tk.Frame(canvas, background=SURFACE)
+        self.fields.columnconfigure(2, weight=1)  # 「用資料庫的值」右邊的空白吃掉多的寬度
+        self.fields.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        window = canvas.create_window((0, 0), window=self.fields, anchor="nw")
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window, width=event.width))
+        canvas.configure(yscrollcommand=scroll.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.pack(side=tk.LEFT, fill=tk.Y)
+        self.rows = {
+            name: _FieldRow(self.fields, i, name, self._commit, self._use_database)
+            for i, name in enumerate(EDIT_FIELDS)
+        }
+        self.show(None)
+
+    def show(self, draft: OrderDraft | None, row: OrderRow | None = None) -> None:
+        """顯示一檔；`draft` 是 None 時（沒有讀到 Order）只顯示 `row` 的原因，欄位不能改。"""
+        self.draft = draft
+        errors = self.errors.get(draft.tdcc, {}) if draft else {}
+        for name, field_row in self.rows.items():
+            if draft is None:
+                field_row.var.set("")
+            else:
+                field_row.var.set(errors[name][0] if name in errors else format_field(draft.values.get(name)))
+            field_row.input.configure(state=tk.NORMAL if draft is not None and not draft.locked else tk.DISABLED)
+        if draft is None:
+            self.title_var.set(self.PLACEHOLDER if row is None else f"{row.tdcc}　{row.issuer}　{row.status}")
+            self.note_var.set("" if row is None else "沒有讀到可以改的條件：" + "；".join(row.reasons))
+            for field_row in self.rows.values():
+                field_row.mark(SURFACE, "")
+            return
+        self.refresh()
+
+    def refresh(self) -> None:
+        """依目前的值重新標紅、標黃與寫說明。"""
+        draft = self.draft
+        if draft is None:
+            return
+        problems = check_draft(draft, self.config) if self.config else {}
+        reasons = draft.reasons_by_field()
+        differences = draft.differences()
+        errors = self.errors.get(draft.tdcc, {})
+        for name, field_row in self.rows.items():
+            if name in errors:
+                field_row.mark(_PROBLEM_BG, errors[name][1])
+            elif name in problems:
+                field_row.mark(_PROBLEM_BG, problems[name])
+            elif name in differences:
+                field_row.mark(_DIFFERENT_BG, f"資料庫是 {format_field(differences[name])}", offer_database=True)
+            elif name in draft.flagged or name in reasons:
+                field_row.mark(_PROBLEM_BG, "讀信時：" + "；".join(reasons.get(name, ["這格要確認"])))
+            else:
+                field_row.mark(SURFACE, "")
+        self.title_var.set(f"{draft.tdcc}　{draft.issuer}")
+        whole = [*([problems[TDCC_FIELD]] if TDCC_FIELD in problems else []), *reasons.get(TDCC_FIELD, [])]
+        self.note_var.set("；".join(whole))
+
+    def commit(self) -> None:
+        """把畫面上目前這檔還沒解讀的輸入都解讀一次（匯入、換檔前用）。"""
+        if self.draft is not None and not self.draft.locked:
+            for name in self.rows:
+                self._commit(name, notify=False)
+            self.refresh()
+            self.on_change(self.draft)
+
+    def _commit(self, name: str, *, notify: bool = True) -> None:
+        draft = self.draft
+        if draft is None or draft.locked:
+            return
+        text = self.rows[name].var.get()
+        errors = self.errors.setdefault(draft.tdcc, {})
+        try:
+            value = parse_field(name, text)
+        except ValueError as exc:
+            errors[name] = (text, str(exc))
+        else:
+            errors.pop(name, None)
+            draft.values[name] = value
+            self.rows[name].var.set(format_field(value))
+        if not errors:
+            self.errors.pop(draft.tdcc, None)
+        if notify:
+            self.refresh()
+            self.on_change(draft)
+
+    def _use_database(self, name: str) -> None:
+        draft = self.draft
+        if draft is None or draft.stored is None:
+            return
+        self.rows[name].var.set(format_field(draft.stored.get(name)))
+        self._commit(name)
+
+
 class OrderTermsTab(_Tab):
-    READY = (
+    READY_TEXT = (
         "貼上 TDCC，選輸出位置，按「讀取 Order」（在最上方的根目錄底下找商品資料夾）。"
         "只讀商品資料夾裡的 (Order) 原信，不會修改信件。"
     )
 
-    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, root_folder: RootFolder) -> None:
+    def __init__(
+        self,
+        notebook: ttk.Notebook,
+        memory: FolderMemory,
+        root_folder: RootFolder,
+        db: _DatabaseLogin,
+        config_paths: Callable[[], ConfigPaths],
+    ) -> None:
         super().__init__(
             notebook,
             "Order 條件",
-            (("tdcc", "TDCC", 130), ("status", "狀態", 90), ("issuer", "上手", 70), ("reason", "待確認原因", 440)),
+            (("tdcc", "TDCC", 130), ("status", "狀態", 110), ("issuer", "上手", 85), ("reason", "原因", 260)),
         )
         self.memory = memory
         self.root_folder = root_folder
+        self.db = db
+        self.config_paths = config_paths
         self.list_path: Path | None = None
         self.receipt: OrderReceipt | None = None
-        self.working = False  # 正在讀 Order 或匯出問題信件
+        self.read: _ReadResult | None = None
+        self.root: Path | None = None
+        self.items: dict[str, tuple[OrderRow, OrderDraft | None]] = {}  # 結果表的列 → (讀信結果, 確認資料)
+        self.unsaved = False  # 有改過、還沒匯入或匯出
+        self.working = False  # 正在讀 Order、匯入、匯出
         self.out_var = tk.StringVar(value=memory.load().get("order_out", ""))
-        self.status_var.set(self.READY)
+        self.status_var.set(self.READY_TEXT)
 
-        self.page_header("讀取 Order 條件", "讀商品資料夾裡的 (Order) 原信，輸出 Order 條件清單；只讀，不修改信件。")
+        self.page_header(
+            "確認 Order 條件",
+            "讀商品資料夾裡的 (Order) 原信，在右邊逐檔確認、修改後匯入資料庫，並匯出 Order 條件清單；不修改信件。",
+        )
+        self.header.grid_configure(columnspan=3)
         self.handed_off: list[str] | None = None  # 從每日匯入帶入的 TDCC
         self.hint = HintBar(self.frame, self._clear_handed_off)
-        self.hint.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        self.hint.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 12))
         self.hint.hide()
         card = self.card(2)
+        card.grid_configure(columnspan=3)
         self.tdcc_column(card)
+        self.tdcc_text.configure(height=6)  # 讓出高度給下方的確認區
         body = self.body(card, column=1)
         row = self.field(
             body,
@@ -709,6 +953,14 @@ class OrderTermsTab(_Tab):
         self.result_area(body, row)
         self.start_button = ttk.Button(self.buttons, text="讀取 Order", command=self.start, style="Primary.TButton")
         self.start_button.pack(side=tk.LEFT)
+        self.import_button = ttk.Button(
+            self.buttons, text="匯入資料庫並匯出 Excel", command=self.import_and_export, state=tk.DISABLED
+        )
+        self.import_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.export_list_button = ttk.Button(
+            self.buttons, text="只匯出 Excel", command=self.export_only, state=tk.DISABLED
+        )
+        self.export_list_button.pack(side=tk.LEFT, padx=(8, 0))
         self.open_button = ttk.Button(self.buttons, text="打開條件清單", command=self.open_list, state=tk.DISABLED)
         self.open_button.pack(side=tk.LEFT, padx=8)
         self.export_button = ttk.Button(
@@ -716,11 +968,15 @@ class OrderTermsTab(_Tab):
         )
         self.export_button.pack(side=tk.LEFT)
         self.place_table(3)
+        self.frame.columnconfigure(2, weight=1)
+        self.editor = OrderEditor(self.frame, self._edited)
+        self.editor.grid(row=3, column=2, sticky="nsew", padx=(16, 0), pady=(16, 0))
+        self.table.bind("<<TreeviewSelect>>", self._selected)
 
     def receive_tdccs(self, tdccs: Sequence[str]) -> bool:
         """每日匯入完成後帶入交易明細的 FCN TDCC（#90）；回傳是否帶入。不切頁、不自動讀 Order。
 
-        正在讀 Order 或匯出時不帶入；已經貼了不同的 TDCC（不看順序）時先問（#93）。
+        正在處理時不帶入；已經貼了不同的 TDCC（不看順序）時先問（#93）；有改過還沒匯入的內容也先問（#86）。
         """
         if self.working:
             messagebox.showinfo(
@@ -740,6 +996,8 @@ class OrderTermsTab(_Tab):
                 parent=self.master,
             )
         ):
+            return False
+        if not self._may_discard("帶入每日匯入的 TDCC"):
             return False
         self._clear_results()  # 換了一批要讀的，上一次的結果收起來
         self.handed_off = list(tdccs)
@@ -768,51 +1026,229 @@ class OrderTermsTab(_Tab):
         self.handed_off = None
         self.hint.hide()
 
+    def _may_discard(self, action: str) -> bool:
+        """有改過、還沒匯入或匯出的內容時先問。"""
+        return not self.unsaved or messagebox.askyesno(
+            TITLE,
+            f"Order 條件頁有改過、還沒匯入或匯出的內容，{action}後會不見。\n\n確定要繼續嗎？",
+            icon=messagebox.WARNING,
+            default=messagebox.NO,
+            parent=self.master,
+        )
+
     def _clear_results(self) -> None:
-        """回到還沒讀取的樣子：清掉結果表與重點數字，狀態列回到說明，條件清單與匯出不能按。"""
+        """回到還沒讀取的樣子：清掉結果表、編輯區與重點數字，狀態列回到說明，按鈕不能按。"""
         self.restart()
         self.table.delete(*self.table.get_children())
-        self.status_var.set(self.READY)
-        self.list_path = self.receipt = None
-        self.open_button.configure(state=tk.DISABLED)
-        self.export_button.configure(state=tk.DISABLED)
+        self.status_var.set(self.READY_TEXT)
+        self.list_path = self.receipt = self.read = None
+        self.items = {}
+        self.unsaved = False
+        self.editor.errors = {}
+        self.editor.show(None)
+        for button in (self.import_button, self.export_list_button, self.open_button, self.export_button):
+            button.configure(state=tk.DISABLED)
+
+    def _busy(self, busy: bool) -> None:
+        self.working = busy
+        state = tk.DISABLED if busy else tk.NORMAL
+        self.start_button.configure(state=state)
+        has_drafts = self.read is not None and bool(self.read.drafts)
+        for button in (self.import_button, self.export_list_button):
+            button.configure(state=state if has_drafts else tk.DISABLED)
+        self.open_button.configure(state=state if self.list_path is not None else tk.DISABLED)
+        can = self.receipt is not None and can_export(self.receipt)
+        self.export_button.configure(state=state if can else tk.DISABLED)
+
+    # ---------- 讀信 ----------
 
     def start(self) -> None:
         text = self.tdcc_text.get("1.0", tk.END)
         paths = self.root_folder.with_output(self.out_var, "輸出位置")
         if paths is None:
             return
+        if not self._may_discard("重新讀取"):
+            return
         root, out = paths
         self.memory.remember(order_out=str(out))
-        self.receipt = None
-        self.working = True
-        self.start_button.configure(state=tk.DISABLED)
-        self.open_button.configure(state=tk.DISABLED)
-        self.export_button.configure(state=tk.DISABLED)
-        self.restart()
-        self.run_in_background(
-            lambda: read_orders(text, root, out),
-            "讀取中…（在根目錄底下搜尋商品資料夾，再用 Outlook 開信件）",
-            self._done,
-        )
+        self._clear_results()
+        settings = self.db.optional_settings()  # 用來帶入資料庫的值；沒有連線設定或取消時照樣讀
+        config_paths = self.config_paths()
+        self._busy(True)
+
+        def run() -> _ReadResult:
+            config = load_import_config(config_paths)
+            rows, unreadable = collect_orders(text, root)
+            if settings is None:
+                return _ReadResult(rows, unreadable, drafts_from(rows), config, "沒有登入資料庫，沒有帶入資料庫的值")
+            try:
+                with connect(settings) as conn:
+                    require_current_schema(conn)
+                    return _ReadResult(rows, unreadable, drafts_from(rows, conn), config)
+            except DatabaseError as exc:
+                note = f"資料庫沒有連上，沒有帶入資料庫的值（{exc}）"
+                return _ReadResult(rows, unreadable, drafts_from(rows), config, note, exc)
+
+        self.root = root
+        self.run_in_background(run, "讀取中…（在根目錄底下搜尋商品資料夾，再用 Outlook 開信件）", self._done)
 
     def _done(self, result: object) -> None:
-        self.working = False
-        self.start_button.configure(state=tk.NORMAL)
-        if not isinstance(result, OrderReceipt):
+        if isinstance(result, _ReadResult):
+            self.db.after_run(result.database_error)
+            self.read = result
+            self.editor.config = result.config
+            self.receipt = OrderReceipt(None, result.rows, result.unreadable)
+            self._fill_table(result)
+        self._busy(False)
+        if not isinstance(result, _ReadResult):
             return
-        for row in result.rows:
-            self.add_row((row.tdcc, row.status, row.issuer, "；".join(row.reasons)), problem=row.status != ORDER_READ)
-        read = sum(row.status == ORDER_READ for row in result.rows)
-        unsure = len(result.rows) - read
-        status = f"完成：{read} 檔已讀取、{unsure} 檔要確認。條件清單：{result.list_path}"
-        if result.unreadable_dirs:
-            status += f"\n注意：搜尋時有 {len(result.unreadable_dirs)} 個資料夾讀不到（例如 {result.unreadable_dirs[0]}），裡面的商品資料夾找不到。"
-        self.finish((("已讀取（檔）", read, False), ("要確認（檔）", unsure, unsure > 0)), status)
-        self.list_path = result.list_path
-        self.receipt = result
-        self.open_button.configure(state=tk.NORMAL)
-        self.export_button.configure(state=tk.NORMAL if can_export(result) else tk.DISABLED)
+        statuses = [self._status(row, draft)[0] for row, draft in self.items.values()]
+        ready = sum(s in (READY, TO_CHECK) for s in statuses)
+        locked = statuses.count(LOCKED)
+        todo = len(statuses) - ready - locked
+        status = (
+            f"讀完了：{ready} 檔可以匯入、{todo} 檔要處理、{locked} 檔已鎖住。點商品就能在右邊確認、修改，"
+            "好了按「匯入資料庫並匯出 Excel」。"
+        )
+        if result.database_note:
+            status += f"\n注意：{result.database_note}。"
+        if result.unreadable:
+            status += f"\n注意：搜尋時有 {len(result.unreadable)} 個資料夾讀不到（例如 {result.unreadable[0]}），裡面的商品資料夾找不到。"
+        self.finish((("可匯入（檔）", ready, False), ("要處理（檔）", todo, todo > 0)), status)
+
+    def _fill_table(self, result: _ReadResult) -> None:
+        """有問題的排前面：待確認（含沒讀到 Order）、請確認、可匯入、已鎖住。"""
+        by_tdcc = {draft.tdcc: draft for draft in result.drafts}
+        order = {BLOCKED: 0, TO_CHECK: 1, READY: 2, LOCKED: 3}
+        pairs = [(row, by_tdcc.get(row.tdcc) if row.template else None) for row in result.rows]
+        pairs.sort(key=lambda pair: order.get(self._status(*pair)[0], 0))
+        for i, (row, draft) in enumerate(pairs):
+            iid = str(i)
+            self.items[iid] = (row, draft)
+            status, reason, problem = self._status(row, draft)
+            self.table.insert(
+                "", tk.END, iid=iid, values=(row.tdcc, status, row.issuer, reason), tags=("problem",) if problem else ()
+            )
+        if pairs:
+            self.table.selection_set("0")
+            self._selected()
+
+    def _status(self, row: OrderRow, draft: OrderDraft | None) -> tuple[str, str, bool]:
+        """(狀態, 原因, 是否標紅)。"""
+        if draft is None:
+            return row.status, "；".join(row.reasons), True
+        if draft.locked:
+            return LOCKED, draft.locked, False
+        typed = {name: message for name, (_text, message) in self.editor.errors.get(draft.tdcc, {}).items()}
+        problems = {**(check_draft(draft, self.read.config) if self.read else {}), **typed}
+        if problems:
+            return BLOCKED, describe(problems), True
+        if row.reasons:
+            return TO_CHECK, "；".join(row.reasons), False
+        return READY, "", False
+
+    def _selected(self, _event: object = None) -> None:
+        selection = self.table.selection()
+        if not selection or selection[0] not in self.items:
+            return
+        self.editor.commit()  # 換檔前把上一檔還沒解讀的輸入解讀掉
+        row, draft = self.items[selection[0]]
+        self.editor.show(draft, row)
+
+    def _edited(self, draft: OrderDraft) -> None:
+        """編輯區改了一檔：標成還沒存，更新結果表那一列。"""
+        if draft.edits():
+            self.unsaved = True
+        for iid, (row, item) in self.items.items():
+            if item is draft:
+                status, reason, problem = self._status(row, draft)
+                self.table.item(
+                    iid, values=(row.tdcc, status, row.issuer, reason), tags=("problem",) if problem else ()
+                )
+
+    # ---------- 匯入與匯出 ----------
+
+    def import_and_export(self) -> None:
+        self._save(import_to_database=True)
+
+    def export_only(self) -> None:
+        self._save(import_to_database=False)
+
+    def _save(self, *, import_to_database: bool) -> None:
+        read, root = self.read, self.root
+        if read is None or root is None or not read.drafts:
+            return
+        self.editor.commit()
+        wrong = [tdcc for tdcc, errors in self.editor.errors.items() if errors]
+        if wrong:
+            messagebox.showerror(TITLE, "有欄位寫錯，請先改好：" + "、".join(wrong), parent=self.master)
+            return
+        out_text = self.out_var.get().strip()
+        if not out_text:
+            messagebox.showerror(TITLE, "請先選擇輸出位置。", parent=self.master)
+            return
+        out = Path(out_text)
+        settings = None
+        if import_to_database:
+            settings = self.db.settings()
+            if settings is None:
+                return
+        self._busy(True)
+        self.mark_done(False)
+
+        def run() -> _SaveResult:
+            receipt = None
+            if settings is not None:
+                with connect(settings) as conn:
+                    receipt = import_drafts(read.drafts, conn, read.config)
+                    reload_stored(read.drafts, conn)
+            try:
+                path = export_drafts(out, read.rows, read.drafts, root, read.unreadable, read.config, receipt=receipt)
+            except OrderImportError as exc:
+                if receipt is None:
+                    raise
+                return _SaveResult(receipt, None, str(exc))
+            return _SaveResult(receipt, path)
+
+        busy = "匯入資料庫並匯出 Excel 中…" if import_to_database else "匯出 Excel 中…"
+        self.run_in_background(run, busy, self._saved, clear=False)
+
+    def _saved(self, result: object) -> None:
+        self.db.after_run(result)
+        if isinstance(result, _SaveResult):
+            self.unsaved = False
+            if result.list_path is not None:
+                self.list_path = result.list_path
+                if self.read is not None:
+                    self.receipt = OrderReceipt(result.list_path, self.read.rows, self.read.unreadable)
+        self._busy(False)
+        if not isinstance(result, _SaveResult):
+            return
+        receipt = result.receipt
+        if receipt is None:
+            self.status_var.set(f"已匯出 Excel（沒有寫資料庫）：{result.list_path}")
+            self.mark_done(True)
+            return
+        lines = {line.tdcc: line for line in receipt.lines}
+        for iid, (row, draft) in self.items.items():
+            line = lines.get(row.tdcc) if draft is not None else None
+            if line is not None:
+                problem = line.result == SKIPPED
+                self.table.item(
+                    iid, values=(row.tdcc, line.result, row.issuer, line.detail), tags=("problem",) if problem else ()
+                )
+        self.editor.refresh()  # 資料庫的值更新了，黃色的差異跟著重算
+        imported = sum(line.imported for line in receipt.lines)
+        not_imported = len(receipt.lines) - imported
+        counts = "、".join(f"{kind} {receipt.count(kind)}" for kind in (NEW, OVERWRITTEN, SAME, SKIPPED, LOCKED))
+        status = f"完成（第 {receipt.import_id} 次 Order 匯入）：{counts}。"
+        if result.list_path is not None:
+            status += f"\n條件清單：{result.list_path}"
+        else:
+            status += f"\n注意：已寫進資料庫，但 Excel 沒寫成（{result.export_error}），請按「只匯出 Excel」再試一次。"
+        self.finish(
+            (("已匯入（檔）", imported, False), ("沒匯入（檔）", not_imported, receipt.count(SKIPPED) > 0)), status
+        )
 
     def open_list(self) -> None:
         if self.list_path is not None:
@@ -823,9 +1259,12 @@ class OrderTermsTab(_Tab):
         receipt = self.receipt
         if receipt is None:
             return
-        out = receipt.list_path.parent
-        self.working = True
-        self.export_button.configure(state=tk.DISABLED)
+        out_text = self.out_var.get().strip()
+        if not out_text:
+            messagebox.showerror(TITLE, "請先選擇輸出位置。", parent=self.master)
+            return
+        out = Path(out_text)
+        self._busy(True)
         self.mark_done(False)
         self.run_in_background(
             lambda: export_problem_mails(receipt, out),
@@ -835,9 +1274,7 @@ class OrderTermsTab(_Tab):
         )
 
     def _exported(self, result: object) -> None:
-        self.working = False
-        if self.receipt is not None and can_export(self.receipt):
-            self.export_button.configure(state=tk.NORMAL)
+        self._busy(False)
         if not isinstance(result, ExportReceipt):
             return
         status = f"已匯出 {len(result.products)} 檔有問題商品的信件，共 {result.copied} 封：{result.folder}"
@@ -971,7 +1408,7 @@ class PanelWindow:
             on_imported=lambda tdccs: self.orders.receive_tdccs(tdccs),
             on_next=lambda: self.notebook.select(self.orders.frame),
         )
-        self.orders = OrderTermsTab(self.notebook, memory, self.root_folder)
+        self.orders = OrderTermsTab(self.notebook, memory, self.root_folder, db, lambda: self.session.paths)
         self.prepare = PrepareTab(
             self.notebook,
             memory,
@@ -1042,11 +1479,14 @@ class PanelWindow:
         """照上次的大小顯示；第一次開啟時在 Windows 最大化。"""
         self.size.restore(self.master, self.pixels)
 
-    def _close_warning(self) -> str | None:
+    def _close_warning(self) -> tuple[str, tk.Misc] | None:
+        """(提醒, 不關閉時切去哪一頁)。"""
         if self.check.working:
-            return "核對頁還在處理（讀檔、核對或存檔），關閉後要重新來。"
+            return "核對頁還在處理（讀檔、核對或存檔），關閉後要重新來。", self.check
         if self.session.has_unsaved_result:
-            return "核對結果還沒儲存，關閉後要重新核對。"
+            return "核對結果還沒儲存，關閉後要重新核對。", self.check
+        if self.orders.unsaved:
+            return "Order 條件頁有改過、還沒匯入或匯出的內容，關閉後會不見。", self.orders.frame
         return None
 
     def close(self) -> None:
@@ -1054,12 +1494,12 @@ class PanelWindow:
         warning = self._close_warning()
         if warning and not messagebox.askyesno(
             TITLE,
-            f"{warning}\n\n確定要關閉嗎？",
+            f"{warning[0]}\n\n確定要關閉嗎？",
             icon=messagebox.WARNING,
             default=messagebox.NO,
             parent=self.master,
         ):
-            self.notebook.select(self.check)
+            self.notebook.select(warning[1])
             return
         self.size.remember(self.master)
         self.check.close()

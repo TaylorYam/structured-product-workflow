@@ -2,7 +2,7 @@
 
 對外只有 `export_problem_mails` 與 `can_export`。有問題指狀態不是「已讀取」。
 只複製、不改不刪商品資料夾；同一個商品資料夾只複製一次；個別檔案失敗不中斷整批。
-另附這次的 Order 條件清單（含待確認原因）。信件含真實交易與客戶資料，帶出公司要依公司的資料規定。
+另附這次的 Order 條件清單（含待確認原因；還沒匯出過清單時不附）。信件含真實交易與客戶資料，帶出公司要依公司的資料規定。
 """
 
 from __future__ import annotations
@@ -74,10 +74,11 @@ def export_problem_mails(receipt: OrderReceipt, out_parent: Path, *, now: dt.dat
                     copied += 1
                 except OSError as exc:
                     failures.append(f"{mail}：{exc}")
-    try:
-        shutil.copy2(receipt.list_path, target / receipt.list_path.name)
-    except OSError as exc:
-        failures.append(f"{receipt.list_path}：{exc}")
+    if receipt.list_path is not None:
+        try:
+            shutil.copy2(receipt.list_path, target / receipt.list_path.name)
+        except OSError as exc:
+            failures.append(f"{receipt.list_path}：{exc}")
     return ExportReceipt(target, tuple(row.tdcc for row in rows), copied, tuple(failures))
 
 
