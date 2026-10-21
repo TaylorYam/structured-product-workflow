@@ -11,7 +11,7 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from db_synth import inventory, seed_mailbox, trade, write_daily
+from db_synth import inventory, seed_mailbox, seed_products, trade, write_daily
 from sp_workflow import mail_drafts
 from sp_workflow.daily_import import Person, import_daily
 from sp_workflow.mail_drafts import (
@@ -67,7 +67,9 @@ def out(tmp_path: Path) -> Path:
 
 
 def load(db, tmp_path: Path, trades: list[dict], inventories: list[dict]) -> None:
-    import_daily(write_daily(tmp_path / f"d{len(list(tmp_path.glob('d*.xlsx')))}.xlsx", trades, inventories), db)
+    """每日匯入交易明細，再直接建商品（#87 起商品條件不從每日更新來）。"""
+    import_daily(write_daily(tmp_path / f"d{len(list(tmp_path.glob('d*.xlsx')))}.xlsx", trades), db)
+    seed_products(db, inventories)
 
 
 def passed_folder(root: Path, tdcc: str, *, sub: str = "2026") -> Path:

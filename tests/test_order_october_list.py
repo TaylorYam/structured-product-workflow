@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 from openpyxl import load_workbook
 
-from sp_workflow.daily_import import BARRIER_TYPES, KO_TYPES  # ELN待建檔格式的代碼 → 格式表的寫法
+from db_synth import BARRIER_TYPES, KO_TYPES  # ELN待建檔格式的代碼 → 格式表的寫法
 from sp_workflow.order_template import COLUMNS as TEMPLATE_COLUMNS
 from sp_workflow.order_terms import PENDING, read_orders
 

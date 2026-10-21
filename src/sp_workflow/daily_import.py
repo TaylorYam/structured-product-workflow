@@ -1,14 +1,15 @@
-"""每日匯入：把 `每日更新.xlsx` 匯入最小 FCN 資料庫（#32、ADR 0003）。
+"""每日匯入：把每日更新（`交易明細`＋`BBG_Data`）匯入最小 FCN 資料庫（#32、#87、ADR 0003、0008）。
 
 對外只有 `import_daily`。規則：
-- `每日更新.xlsx` 的 `交易明細`、`清單更新` 第 1 列是欄名，必須和來源表（交易清單月份工作表、庫存總表）
-  的欄名與順序完全相同；不同就整份不匯入。程式依欄名讀需要的欄位。
-- 只收 Product 為 FCN 的列，其他略過並計數；略過的 TDCC 與 Product 記在 `workflow.other_product`。
-- 以 TDCC 為單位、第一次寫入為準：資料庫已有的商品或交易不重複寫入，內容不同只列出差異、不覆蓋。
-- 已存在商品的庫存狀態這一版不更新。
-- 過渡期（#86、ADR 0009，#87 上線前）：由「匯入 Order 條件」建立的商品，清單更新只補空白的欄
-  （分公司配置、ISIN、發行日），有值的不覆蓋、只列出差異；還沒有分公司配置時不逐筆對帳。
-- 分公司對帳到每個分公司（交易明細各分公司金額加總 vs 庫存總表承作金額，PB 也算），差異只提醒。
+- 需要 `交易明細`、`BBG_Data` 兩張工作表，少一張就整份不匯入；`清單更新` 已停用，檔案裡有也不讀（#87）。
+  商品條件改由「匯入 Order 條件」建立（#86），每日匯入不再寫商品條件、也不做分公司對帳。
+- `交易明細` 第 1 列是欄名，必須和交易清單月份工作表的欄名與順序完全相同；不同就整份不匯入。
+  只收 Product 為 FCN 的列，其他略過並計數；略過的 TDCC 與 Product 記在 `workflow.other_product`。
+  以 TDCC 為單位、第一次寫入為準：資料庫已有的交易不重複寫入，內容不同只列出差異、不覆蓋。
+- `BBG_Data`：C1 是取價日（要是日期），第 2 列 B～H 是欄名（要完全相同），第 4 列起每列一檔。
+  代碼只去頭尾空白；代碼空白的列略過；價格格子空白就存空白，不是數字也存空白並列出來。
+  同一個代碼出現多列：值都一樣算一筆，值不一樣記成衝突（價格留空），算價格時（#88）不能用。
+  同一個取價日重新匯入時，整份取代那一天的股價；每次匯入都留紀錄（`workflow.price_import`）。
 - 信箱由資料庫直接維護（#35、ADR 0004）：匯入不修改 `mailbox`，只用它比對 FC 名字。
 - 結果另外列出交易明細的 FCN TDCC（依第一次出現的順序、不重複，不是剛好 12 碼與整檔都取消的不列），
   給視窗帶到 Order 條件頁（#90）。
@@ -38,7 +39,7 @@ if TYPE_CHECKING:
     import psycopg
 
 TRADE_SHEET = "交易明細"
-INVENTORY_SHEET = "清單更新"
+PRICE_SHEET = "BBG_Data"
 TDCC_DIGITS = 12
 FCN = "FCN"
 PB = "PB"
@@ -47,60 +48,38 @@ TRADE_HEADERS = (
     "編號", "交易日期", "Product", "TDCC", "幣別", "金額", "FC/PB", "分公司", "前台主管/投專",
     "UF", "期初價格", "備註", "募集", "TS/IIS 核對", "核對TS/IIS人員", "起單人員",
 )  # fmt: skip
-_UNDERLYING_HEADERS = tuple(
-    f"UL_{i}{suffix}" for i in range(1, 6) for suffix in ("", "_進場價", "_執行價", "_下限價", "_KO價", "_Memo")
-)
-INVENTORY_HEADERS = (
-    "庫存狀態", "當日比價", "Product", "發行機構", "TDCC Code", "ISIN Code", "私銀註記", "單位面額", "承作幣別",
-    *(name for i in range(1, 8) for name in (f"分公司_{i}", f"分公司_{i}_承作金額")),
-    "交易日", "發行日", *(f"比價日_{i}" for i in range(1, 13)), "下一比價日", "最終比價日", "到期日", "評價日",
-    "期初定價", "KO(%)", "KO(Freq)", "KO(memo)", "K(%)", "KI紀錄", "是否於當日觸及KI", "KI(%)", "KI(Freq)",
-    "UF", "Coupon p.a. (%)", "天期(月)", "Non-Call(月)", "Lookback 期間",
-    *_UNDERLYING_HEADERS, *(f"U{i}_LAST" for i in range(1, 6)),
+# BBG_Data：C1 是取價日，第 2 列 B～H 是欄名，第 4 列起是資料（ADR 0008）
+PRICE_DATE_CELL = "C1"
+PRICE_HEADER_ROW, PRICE_FIRST_ROW = 2, 4
+PRICE_HEADERS = (
+    "代碼(值)", "公司名稱", "最新收盤價(值)", "最新開盤價(值)", "1日前收盤價(值)", "200日波動率(值)",
+    "市值(原幣/百萬)(值)",
 )  # fmt: skip
+_PRICE_VALUE_COLUMNS = ("last_close", "last_open", "previous_close", "volatility_200d", "market_cap_millions")
 
-KO_TYPES = {
-    ("D", "Y"): "Daily Memory",
-    ("D", "N"): "Daily",
-    ("P", "N"): "Period End",
-    ("P", "Y"): "Period End Memory",
-}
-BARRIER_TYPES = {"-": "NONE", "AM": "EKI", "D": "AKI", "P": "MKI"}
 STATUS_IN_STOCK = "在庫"
-# workflow.product.source：商品資料由哪裡建立（#86）
+# workflow.product.source：商品資料由哪裡建立（#86）；清單更新已停用（#87），只剩以前建立的商品
 INVENTORY_SOURCE = "清單更新"
 ORDER_SOURCE = "Order"  # 「匯入 Order 條件」
 
 # 結果的種類
-NEW_PRODUCT = "新增商品"
 NEW_TRADES = "新增交易"
 UNCHANGED = "已存在"
 DIFFERENT = "內容不同（未覆蓋）"
 BLOCKED = "擋下"
-RECONCILE = "分公司對帳差異"
-INVENTORY_MISSING = "庫存尚未更新"
-TRADES_MISSING = "交易尚未匯入"
-FILLED = "補上空白"
 NAME_UNMATCHED = "名字對不到信箱"
 MAILBOX_EMPTY = "信箱尚未建立"
 CANCELLED = "交易已取消"
+PRICE_CONFLICT = "股價衝突"
+PRICE_NOT_NUMBER = "股價不是數字"
 IMPORT_ERROR_BOOK_NAME = "每日匯入錯誤.xlsx"
-_SUCCESS_KINDS = frozenset((NEW_PRODUCT, NEW_TRADES, UNCHANGED, CANCELLED, FILLED))
+_SUCCESS_KINDS = frozenset((NEW_TRADES, UNCHANGED, CANCELLED))
+_OLD_SUCCESS_KINDS = frozenset(("新增商品", "補上空白"))  # 以前清單更新的結果，錯誤清單重建歷史時不列
 
 _PCT = Decimal("0.000001")
 _AMOUNT = Decimal("0.0001")
-_STATUS_KO = re.compile(r"已於\s*(\d{4})/(\d{1,2})/(\d{1,2})\s*KO")
-_STATUS_DELIVERED = re.compile(r"已於\s*(\d{4})/(\d{1,2})/(\d{1,2})\s*承接\s*(.+)")
-_STATUS_DELIVERED_OLD = re.compile(r"接\s*(.+?)\s*股票")
 _FULL_TDCC = re.compile(rf"[0-9]{{{TDCC_DIGITS}}}")
 
-_PRODUCT_COLUMNS = (
-    "product", "issuer", "isin", "currency", "trade_date", "issue_date", "final_valuation_date", "maturity_date",
-    "initial_pricing", "non_call_months", "underlying_1", "underlying_2", "underlying_3", "underlying_4",
-    "underlying_5", "strike_pct", "ko_freq", "ko_memory", "ko_type", "ko_pct", "coupon_pct", "upfront_pct",
-    "tenor_months", "ki_freq", "barrier_type", "ki_pct", "status_event", "status_date", "status_underlying",
-    "status_raw",
-)  # fmt: skip
 _TRADE_COLUMNS = (
     "number", "trade_date", "product", "currency", "amount", "fc_name", "branch", "supervisor", "uf",
     "initial_pricing", "note", "raised", "ts_iis_checked", "checker", "originator",
@@ -123,16 +102,26 @@ class ImportLine:
 
 
 @dataclass(frozen=True)
+class PriceSummary:
+    """這次匯入的股價（#87）。"""
+
+    price_date: dt.date  # 取價日
+    count: int  # 存了幾個代碼（含衝突的）
+    replaced: int  # 取代了這個取價日原本的幾筆（第一次匯入這一天是 0）
+    conflicts: tuple[str, ...]  # 值不一樣的重複代碼
+
+
+@dataclass(frozen=True)
 class ImportReceipt:
     run_id: int
     lines: tuple[ImportLine, ...]
     people: int
     skipped_trade_rows: int
-    skipped_inventory_rows: int
     cancelled_trade_rows: int
     error_book_path: Path
-    fcn_trade_rows: int = 0  # 交易明細裡 Product 為 FCN 的列數，含取消的
-    fcn_tdccs: tuple[str, ...] = ()  # 帶到 Order 條件頁的 TDCC（#90）
+    prices: PriceSummary
+    fcn_trade_rows: int  # 交易明細裡 Product 為 FCN 的列數，含取消的
+    fcn_tdccs: tuple[str, ...]  # 帶到 Order 條件頁的 TDCC（#90）
 
     def count(self, kind: str) -> int:
         return sum(line.kind == kind for line in self.lines)
@@ -165,16 +154,24 @@ class _SheetRow:
 
 
 @dataclass
+class _Prices:
+    """BBG_Data 讀出來的股價：代碼 → (公司名稱, 五個價格欄)；衝突的代碼另外記各列的值。"""
+
+    price_date: dt.date
+    rows: dict[str, tuple[Any, ...]] = field(default_factory=dict)
+    conflicts: dict[str, list[tuple[Any, ...]]] = field(default_factory=dict)
+    lines: list[ImportLine] = field(default_factory=list)  # 不是數字的格子
+
+
+@dataclass
 class _Parsed:
-    products: dict[str, dict[str, Any]] = field(default_factory=dict)
-    allocations: dict[str, list[tuple[str, Decimal]]] = field(default_factory=dict)
+    prices: _Prices
     trades: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     blocked: list[ImportLine] = field(default_factory=list)
     cancelled_lines: list[ImportLine] = field(default_factory=list)
     other_products: dict[str, str] = field(default_factory=dict)  # 略過的非 FCN：TDCC → Product
     fcn_tdccs: dict[str, bool] = field(default_factory=dict)  # 交易明細的 FCN TDCC（出現順序）→ 有沒有沒取消的列
     skipped_trade_rows: int = 0
-    skipped_inventory_rows: int = 0
     cancelled_trade_rows: int = 0
     fcn_trade_rows: int = 0
 
@@ -193,12 +190,14 @@ def import_daily(daily_book: Path, conn: psycopg.Connection) -> ImportReceipt:
             "INSERT INTO workflow.import_run (daily_file_name, daily_sha256, summary) VALUES (%s, %s, '{}') RETURNING run_id",
             (daily_book.name, _sha256(daily_book)),
         ).fetchone()[0]
-        lines = [*parsed.blocked, *parsed.cancelled_lines]
-        lines += _write_products(conn, parsed, run_id)
+        lines = [*parsed.blocked, *parsed.cancelled_lines, *parsed.prices.lines]
         lines += _write_trades(conn, parsed, run_id)
         _write_other_products(conn, parsed, run_id)
-        touched = sorted(set(parsed.products) | set(parsed.trades))
-        lines += _reconcile(conn, touched)
+        prices = _write_prices(conn, parsed.prices, run_id)
+        lines += [
+            ImportLine("", PRICE_CONFLICT, f"{code}：同一個代碼有 {len(rows)} 列、值不同，價格沒有存，算價格時不能用")
+            for code, rows in parsed.prices.conflicts.items()
+        ]
         lines += _unmatched_names(parsed, mailbox)
         error_book_path = daily_book.parent / IMPORT_ERROR_BOOK_NAME
         receipt = ImportReceipt(
@@ -206,9 +205,9 @@ def import_daily(daily_book: Path, conn: psycopg.Connection) -> ImportReceipt:
             lines=tuple(sorted(lines, key=lambda line: line.tdcc)),
             people=len(mailbox.people),
             skipped_trade_rows=parsed.skipped_trade_rows,
-            skipped_inventory_rows=parsed.skipped_inventory_rows,
             cancelled_trade_rows=parsed.cancelled_trade_rows,
             error_book_path=error_book_path,
+            prices=prices,
             fcn_trade_rows=parsed.fcn_trade_rows,
             fcn_tdccs=tuple(tdcc for tdcc, live in parsed.fcn_tdccs.items() if live),
         )
@@ -241,7 +240,7 @@ def latest_import(conn: psycopg.Connection) -> ImportInfo | None:
 
 
 def is_pb(name: str) -> bool:
-    """交易列的 FC/PB 是 PB（私銀），不寄信、但金額仍算進對帳。"""
+    """交易列的 FC/PB 是 PB（私銀）：不寄信，但交易列照存。"""
     return name.strip().upper() == PB
 
 
@@ -263,15 +262,14 @@ def load_mailbox(conn: psycopg.Connection) -> Mailbox:
 def _read_daily(path: Path) -> _Parsed:
     wb = _open(path)
     try:
-        for sheet in (TRADE_SHEET, INVENTORY_SHEET):
+        for sheet in (TRADE_SHEET, PRICE_SHEET):
             if sheet not in wb.sheetnames:
                 raise DailyImportError(f"每日更新缺少工作表「{sheet}」")
         trade_rows = _rows_with_header(wb[TRADE_SHEET], TRADE_HEADERS)
-        inventory_rows = _rows_with_header(wb[INVENTORY_SHEET], INVENTORY_HEADERS)
+        prices = _read_prices(wb[PRICE_SHEET])
     finally:
         wb.close()
-    parsed = _Parsed()
-    _parse_inventory(inventory_rows, parsed)
+    parsed = _Parsed(prices)
     _parse_trades(trade_rows, parsed)
     return parsed
 
@@ -300,111 +298,61 @@ def _rows_with_header(sheet: Any, expected: Sequence[str]) -> list[_SheetRow]:
     return result
 
 
-def _parse_inventory(rows: Iterable[_SheetRow], parsed: _Parsed) -> None:
-    seen: dict[str, tuple[dict[str, Any], list[tuple[str, Decimal]]]] = {}
-    conflicted: set[str] = set()
-    for sheet_row in rows:
-        number, row = sheet_row.number, sheet_row.values
-        if (_text(row["Product"]) or "").upper() != FCN:
-            parsed.skipped_inventory_rows += 1
-            _remember_other(parsed, row["TDCC Code"], row["Product"])
-            continue
-        where = f"清單更新第 {number} 列"
+def _read_prices(sheet: Any) -> _Prices:
+    """BBG_Data：C1 取價日、第 2 列 B～H 欄名、第 4 列起每列一檔（ADR 0008）。格式不對就整份不匯入。"""
+    rows = sheet.iter_rows(min_col=1, max_col=1 + len(PRICE_HEADERS), values_only=True)
+    first = (tuple(next(rows, ())) + (None,) * 3)[:3]
+    price_date = first[2]
+    if isinstance(price_date, dt.datetime):
+        price_date = price_date.date()
+    if not isinstance(price_date, dt.date):
+        shown = _text(price_date, dash_is_none=False) or "空白"
+        raise DailyImportError(
+            f"「{PRICE_SHEET}」的 {PRICE_DATE_CELL} 應為取價日（日期），實際是「{shown}」，整份不匯入"
+        )
+    prices = _Prices(price_date)
+    for number, row in enumerate(rows, 2):
+        values = (tuple(row) + (None,) * (1 + len(PRICE_HEADERS)))[1 : 1 + len(PRICE_HEADERS)]
+        if number == PRICE_HEADER_ROW:
+            _check_price_headers(values)
+        elif number >= PRICE_FIRST_ROW:
+            _add_price(prices, number, values)
+    return prices
+
+
+def _check_price_headers(values: Sequence[Any]) -> None:
+    for i, (got, want) in enumerate(zip(values, PRICE_HEADERS, strict=True)):
+        if _text(got) != want:
+            where = f"{get_column_letter(i + 2)}{PRICE_HEADER_ROW}"
+            raise DailyImportError(
+                f"「{PRICE_SHEET}」的欄名和範本不同，整份不匯入：{where} 應為「{want}」，實際是「{_text(got) or '空白'}」"
+            )
+
+
+def _add_price(prices: _Prices, number: int, values: Sequence[Any]) -> None:
+    """一列股價；代碼空白的列略過。同一個代碼再出現時，值一樣不重複算，值不一樣記成衝突。"""
+    code = _text(values[0], dash_is_none=False)
+    if code is None:
+        return
+    numbers = []
+    for header, value in zip(PRICE_HEADERS[2:], values[2:], strict=True):
         try:
-            tdcc = _tdcc(row["TDCC Code"])
-            product, allocations = _product(row)
-        except ValueError as exc:
-            parsed.blocked.append(ImportLine(_tdcc_or_raw(row["TDCC Code"]), BLOCKED, f"{where}：{exc}"))
-            continue
-        if tdcc not in seen:
-            seen[tdcc] = (product, allocations)
-            continue
-        stored_product, stored_allocations = seen[tdcc]
-        if stored_product != product:
-            conflicted.add(tdcc)
-            continue
-        amounts = dict(stored_allocations)
-        for branch, amount in allocations:
-            if branch in amounts and amounts[branch] != amount:
-                conflicted.add(tdcc)
-                break
-            amounts[branch] = amount
-        else:
-            seen[tdcc] = (stored_product, list(amounts.items()))
-    for tdcc, (product, allocations) in seen.items():
-        if tdcc in conflicted:
-            parsed.blocked.append(ImportLine(tdcc, BLOCKED, "清單更新同一檔出現多列且內容不同"))
-        else:
-            parsed.products[tdcc] = product
-            parsed.allocations[tdcc] = allocations
-
-
-def _product(row: Mapping[str, Any]) -> tuple[dict[str, Any], list[tuple[str, Decimal]]]:
-    ko_freq, ko_memory = _required_text(row, "KO(Freq)").upper(), _required_text(row, "KO(memo)").upper()
-    if (ko_freq, ko_memory) not in KO_TYPES:
-        raise ValueError(f"KO(Freq)／KO(memo) 的代碼「{ko_freq}／{ko_memory}」不在對照表")
-    ki_freq = (_text(row["KI(Freq)"], dash_is_none=False) or "").upper()
-    if ki_freq not in BARRIER_TYPES:
-        raise ValueError(f"KI(Freq) 的代碼「{ki_freq or '空白'}」不在對照表")
-    ki_pct = _pct(row["KI(%)"])
-    if ki_freq != "-" and ki_pct is None:
-        raise ValueError("KI(%) 沒有值")
-    event, status_date, underlying, raw = _status(row["庫存狀態"])
-    product = {
-        "product": FCN,
-        "issuer": _required_text(row, "發行機構"),
-        "isin": _required_text(row, "ISIN Code"),
-        "currency": _required_text(row, "承作幣別"),
-        "trade_date": _required_date(row, "交易日"),
-        "issue_date": _required_date(row, "發行日"),
-        "final_valuation_date": _required_date(row, "最終比價日"),
-        "maturity_date": _required_date(row, "到期日"),
-        "initial_pricing": _text(row["期初定價"]),
-        "non_call_months": _required_int(row, "Non-Call(月)"),
-        "underlying_1": _required_text(row, "UL_1"),
-        **{f"underlying_{i}": _text(row[f"UL_{i}"]) for i in range(2, 6)},
-        "strike_pct": _required_pct(row, "K(%)"),
-        "ko_freq": ko_freq,
-        "ko_memory": ko_memory,
-        "ko_type": KO_TYPES[(ko_freq, ko_memory)],
-        "ko_pct": _required_pct(row, "KO(%)"),
-        "coupon_pct": _required_pct(row, "Coupon p.a. (%)"),
-        "upfront_pct": _required_pct(row, "UF"),
-        "tenor_months": _required_int(row, "天期(月)"),
-        "ki_freq": ki_freq,
-        "barrier_type": BARRIER_TYPES[ki_freq],
-        "ki_pct": ki_pct,
-        "status_event": event,
-        "status_date": status_date,
-        "status_underlying": underlying,
-        "status_raw": raw,
-    }
-    allocations = []
-    for i in range(1, 8):
-        branch, amount = _text(row[f"分公司_{i}"]), _amount(row[f"分公司_{i}_承作金額"])
-        if (branch is None) != (amount is None):
-            raise ValueError(f"分公司_{i} 與承作金額只有一邊有值")
-        if branch is not None:
-            allocations.append((branch, amount))
-    return product, allocations
-
-
-def _status(value: Any) -> tuple[str, dt.date | None, str | None, str | None]:
-    """庫存狀態拆成（事件, 日期, 接股標的, 原始文字）；空白是在庫。不認得的寫法丟 ValueError。"""
-    raw = _text(value, dash_is_none=False)
-    if raw is None:
-        return STATUS_IN_STOCK, None, None, None
-    if m := _STATUS_KO.fullmatch(raw):
-        return "KO", _ymd(m), None, raw
-    if raw == "到期還本":
-        return "到期還本", None, None, raw
-    if m := _STATUS_DELIVERED.fullmatch(raw):
-        return "接股", _ymd(m), m.group(4).strip(), raw
-    if m := _STATUS_DELIVERED_OLD.fullmatch(raw):
-        return "接股", None, m.group(1).strip(), raw
-    if raw == "顧客贖回":
-        return "顧客贖回", None, None, raw
-    raise ValueError(f"庫存狀態的寫法不認得：「{raw}」")
+            numbers.append(_decimal(value))
+        except ValueError:
+            prices.lines.append(
+                ImportLine(
+                    "", PRICE_NOT_NUMBER, f"{PRICE_SHEET}第 {number} 列 {code}：{header}「{value}」不是數字，存成空白"
+                )
+            )
+            numbers.append(None)
+    found = (_text(values[1], dash_is_none=False), *numbers)
+    if code in prices.conflicts:
+        if found not in prices.conflicts[code]:
+            prices.conflicts[code].append(found)
+    elif code not in prices.rows:
+        prices.rows[code] = found
+    elif prices.rows[code] != found:
+        prices.conflicts[code] = [prices.rows.pop(code), found]
 
 
 def _parse_trades(rows: Iterable[_SheetRow], parsed: _Parsed) -> None:
@@ -483,78 +431,29 @@ def _trade(row: Mapping[str, Any]) -> dict[str, Any]:
 # ---------- 寫入資料庫 ----------
 
 
-def _write_products(conn: psycopg.Connection, parsed: _Parsed, run_id: int) -> list[ImportLine]:
-    lines = []
-    for tdcc, product in parsed.products.items():
-        allocations = parsed.allocations[tdcc]
-        stored = _stored_product(conn, tdcc)
-        if stored is None:
-            columns = ("tdcc", *_PRODUCT_COLUMNS, "first_run_id")
-            conn.execute(
-                f"INSERT INTO workflow.product ({', '.join(columns)}) VALUES ({', '.join(['%s'] * len(columns))})",
-                (tdcc, *(product[c] for c in _PRODUCT_COLUMNS), run_id),
-            )
-            with conn.cursor() as cur:
-                cur.executemany(
-                    "INSERT INTO workflow.branch_allocation (tdcc, seq, branch, amount) VALUES (%s, %s, %s, %s)",
-                    [(tdcc, seq, branch, amount) for seq, (branch, amount) in enumerate(allocations, 1)],
-                )
-            lines.append(ImportLine(tdcc, NEW_PRODUCT))
-            continue
-        stored_product, stored_allocations, source = stored
-        if source == ORDER_SOURCE:
-            filled = _fill_blanks(conn, tdcc, product, allocations, stored_product, stored_allocations)
-            if filled:
-                lines.append(ImportLine(tdcc, FILLED, "Order 匯入的商品，清單更新補上：" + "、".join(filled)))
-        # 已存在商品的庫存狀態這一版不更新，也不拿來比
-        diffs = [c for c in _PRODUCT_COLUMNS if not c.startswith("status_") and (stored_product[c] != product[c])]
-        if stored_allocations != allocations:
-            diffs.append("分公司配置")
-        if diffs:
-            lines.append(ImportLine(tdcc, DIFFERENT, "商品條件和資料庫不同：" + "、".join(diffs)))
-        else:
-            lines.append(ImportLine(tdcc, UNCHANGED, "商品條件"))
-    return lines
+def _write_prices(conn: psycopg.Connection, prices: _Prices, run_id: int) -> PriceSummary:
+    """股價依取價日存入：同一個取價日整天取代（#87）；衝突的代碼價格留空，各列的值記在 conflict_rows。"""
+    conn.execute(
+        "INSERT INTO workflow.price_import (run_id, price_date, price_count, conflict_count) VALUES (%s, %s, %s, %s)",
+        (run_id, prices.price_date, len(prices.rows) + len(prices.conflicts), len(prices.conflicts)),
+    )
+    replaced = conn.execute("DELETE FROM workflow.daily_price WHERE price_date = %s", (prices.price_date,)).rowcount
+    columns = ("price_date", "code", "company_name", *_PRICE_VALUE_COLUMNS, "conflict_rows", "run_id")
+    rows = [(prices.price_date, code, *values, None, run_id) for code, values in prices.rows.items()]
+    rows += [
+        (prices.price_date, code, None, *(None,) * len(_PRICE_VALUE_COLUMNS), json.dumps(_jsonable(found)), run_id)
+        for code, found in prices.conflicts.items()
+    ]
+    with conn.cursor() as cur:
+        cur.executemany(
+            f"INSERT INTO workflow.daily_price ({', '.join(columns)}) VALUES ({', '.join(['%s'] * len(columns))})", rows
+        )
+    return PriceSummary(prices.price_date, len(rows), replaced, tuple(prices.conflicts))
 
 
-def _stored_product(
-    conn: psycopg.Connection, tdcc: str
-) -> tuple[dict[str, Any], list[tuple[str, Decimal]], str] | None:
-    row = conn.execute(f"SELECT {', '.join(_PRODUCT_COLUMNS)}, source FROM workflow.product WHERE tdcc = %s", (tdcc,))
-    found = row.fetchone()
-    if found is None:
-        return None
-    allocations = conn.execute(
-        "SELECT branch, amount FROM workflow.branch_allocation WHERE tdcc = %s ORDER BY seq", (tdcc,)
-    ).fetchall()
-    product = dict(zip(_PRODUCT_COLUMNS, found[:-1], strict=True))
-    return product, [tuple(a) for a in allocations], found[-1]
-
-
-def _fill_blanks(
-    conn: psycopg.Connection,
-    tdcc: str,
-    product: Mapping[str, Any],
-    allocations: Sequence[tuple[str, Decimal]],
-    stored_product: dict[str, Any],
-    stored_allocations: list[tuple[str, Decimal]],
-) -> list[str]:
-    """過渡期：Order 匯入的商品只補資料庫空白的 ISIN、發行日與分公司配置；回傳補了哪些，並更新 stored 供比較。"""
-    filled = []
-    for column, label in (("isin", "ISIN"), ("issue_date", "發行日")):
-        if stored_product[column] is None and product[column] is not None:
-            conn.execute(f"UPDATE workflow.product SET {column} = %s WHERE tdcc = %s", (product[column], tdcc))
-            stored_product[column] = product[column]
-            filled.append(label)
-    if not stored_allocations and allocations:
-        with conn.cursor() as cur:
-            cur.executemany(
-                "INSERT INTO workflow.branch_allocation (tdcc, seq, branch, amount) VALUES (%s, %s, %s, %s)",
-                [(tdcc, seq, branch, amount) for seq, (branch, amount) in enumerate(allocations, 1)],
-            )
-        stored_allocations[:] = list(allocations)
-        filled.append("分公司配置")
-    return filled
+def _jsonable(found: Sequence[tuple[Any, ...]]) -> list[dict[str, Any]]:
+    names = ("company_name", *_PRICE_VALUE_COLUMNS)
+    return [{n: (str(v) if isinstance(v, Decimal) else v) for n, v in zip(names, row, strict=True)} for row in found]
 
 
 def _write_trades(conn: psycopg.Connection, parsed: _Parsed, run_id: int) -> list[ImportLine]:
@@ -600,46 +499,6 @@ def _write_other_products(conn: psycopg.Connection, parsed: _Parsed, run_id: int
         )
 
 
-def _reconcile(conn: psycopg.Connection, tdccs: Sequence[str]) -> list[ImportLine]:
-    """用資料庫裡的資料對帳：交易列各分公司金額加總 vs 庫存總表的分公司承作金額。"""
-    lines = []
-    for tdcc in tdccs:
-        found = conn.execute("SELECT source FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
-        has_product = found is not None
-        traded = dict(
-            conn.execute(
-                "SELECT branch, sum(amount) FROM workflow.trade_row WHERE tdcc = %s GROUP BY branch", (tdcc,)
-            ).fetchall()
-        )
-        if not has_product and traded:
-            lines.append(ImportLine(tdcc, INVENTORY_MISSING, "交易已匯入，清單更新還沒有這檔，等庫存更新後再匯入"))
-            continue
-        if has_product and not traded:
-            lines.append(ImportLine(tdcc, TRADES_MISSING, "商品條件已匯入，交易明細還沒有這檔"))
-            continue
-        if not has_product:
-            continue
-        allocated = dict(
-            conn.execute(
-                "SELECT branch, sum(amount) FROM workflow.branch_allocation WHERE tdcc = %s GROUP BY branch", (tdcc,)
-            ).fetchall()
-        )
-        if not allocated and found[0] == ORDER_SOURCE:
-            lines.append(ImportLine(tdcc, INVENTORY_MISSING, "Order 條件已匯入，等清單更新補上分公司配置後再對帳"))
-            continue
-        for branch in sorted(traded.keys() | allocated.keys()):
-            inv, trade = allocated.get(branch, Decimal(0)), traded.get(branch, Decimal(0))
-            if inv != trade:
-                lines.append(
-                    ImportLine(
-                        tdcc,
-                        RECONCILE,
-                        f"{branch}：庫存 {_money(inv)}、交易 {_money(trade)}、差額 {_money(trade - inv)}",
-                    )
-                )
-    return lines
-
-
 def _unmatched_names(parsed: _Parsed, mailbox: Mailbox) -> list[ImportLine]:
     if not mailbox.people:
         return [ImportLine("", MAILBOX_EMPTY, "mailbox.person 沒有任何人員，FC 名字無法比對")] if parsed.trades else []
@@ -661,7 +520,8 @@ def _summary(receipt: ImportReceipt) -> dict[str, Any]:
         "counts": dict(counts),
         "people": receipt.people,
         "skipped_trade_rows": receipt.skipped_trade_rows,
-        "skipped_inventory_rows": receipt.skipped_inventory_rows,
+        "price_date": receipt.prices.price_date.isoformat(),
+        "price_count": receipt.prices.count,
         "lines": [[line.tdcc, line.kind, line.detail] for line in receipt.lines],
     }
 
@@ -673,7 +533,7 @@ def _write_error_book(conn: psycopg.Connection, path: Path) -> None:
     ).fetchall()
     for run_id, imported_at, file_name, summary in runs:
         for tdcc, kind, detail in summary.get("lines", []):
-            if kind in _SUCCESS_KINDS:
+            if kind in _SUCCESS_KINDS or kind in _OLD_SUCCESS_KINDS:
                 continue
             rows.append(
                 (
@@ -818,23 +678,8 @@ def _required_date(row: Mapping[str, Any], name: str) -> dt.date:
     return _required(row, name, _date)
 
 
-def _required_pct(row: Mapping[str, Any], name: str) -> Decimal:
-    return _required(row, name, _pct)
-
-
 def _required_int(row: Mapping[str, Any], name: str) -> int:
     number = _required(row, name, _decimal)
     if number != number.to_integral_value():
         raise ValueError(f"{name}「{number}」不是整數")
     return int(number)
-
-
-def _ymd(match: re.Match[str]) -> dt.date:
-    try:
-        return dt.date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
-    except ValueError as exc:
-        raise ValueError(f"庫存狀態的日期不對：「{match.group(0)}」") from exc
-
-
-def _money(value: Decimal) -> str:
-    return f"{value.normalize():,f}"
