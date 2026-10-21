@@ -15,9 +15,15 @@ from fcn_checker.panel import parse_args
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.saving import SaveReceipt
 from sp_workflow import app
+from sp_workflow.daily_import import NEW_PRODUCT, ImportLine, ImportReceipt
 from sp_workflow.documents import DocKind
 from sp_workflow.local_settings import FolderMemory
+from sp_workflow.mail_drafts import DRAFTED, NOT_NEEDED, DraftOutcome, DraftReceipt
+from sp_workflow.order_terms import PENDING as ORDER_PENDING
+from sp_workflow.order_terms import READ as ORDER_READ
+from sp_workflow.order_terms import OrderReceipt, OrderRow
 from sp_workflow.preparation import PREPARED, SKIPPED, PreparedDocument, PrepareReceipt, ProductOutcome
+from sp_workflow.returning import NOT_RETURNED, RETURNED, ReturnOutcome, ReturnReceipt
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -356,7 +362,9 @@ def test_prepared_pdfs_are_handed_to_the_check_tab_without_switching(master, tmp
     window.prepare._done(prepared_receipt(batch))
 
     assert window.check.pdf_paths == (batch / "147000000001_TS.pdf", batch / "147000000001_IIS.pdf"), "只帶已準備的"
-    assert window.check.hint.text.get().startswith(f"已帶入「3 準備」的批次（2 份 PDF）：\n{batch}\n")
+    assert window.check.hint.text.get() == (
+        f"已帶入「3 準備」的批次（2 份 PDF），選好參考條件表後按「載入／重新載入預覽」：\n{batch}"
+    )
     assert window.notebook.select() == str(window.prepare.frame), "不自動切頁"
     assert window.session.preview is None and not window.check.working, "不自動載入預覽或核對"
     assert window.prepare.next_button.winfo_manager() == "pack"
@@ -423,6 +431,7 @@ def test_saved_check_result_is_handed_to_the_return_tab(master, tmp_path: Path) 
     assert window.returning.hint.text.get() == f"已帶入「4 核對」剛存的核對結果檔：\n{result}\n批次資料夾：{batch}"
     assert window.notebook.select() == str(window.check), "不自動切頁"
     assert window.check.next_button.winfo_manager() == "pack", "存過檔才出現下一步"
+    assert window.check.status_label.cget("style") == "Done.TLabel", "存過檔，狀態列變成綠色結果條"
 
     window.check.next_button.invoke()
 
@@ -467,3 +476,148 @@ def test_changing_what_was_handed_to_the_return_tab_hides_the_hint(master, tmp_p
         window.returning.batch_var.set(str(tmp_path / "待核對_2"))
 
     assert not window.returning.hint.shown
+
+
+# ---------------------------------------------------------------- 蘋果 × 麥肯錫風格範本（#83）
+
+
+def test_sidebar_switches_steps_and_follows_the_next_buttons(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    steps = window.sidebar.steps
+
+    assert [step.cget("text").split()[0] for step in steps.values()] == ["1", "2", "3", "4", "5", "6"]
+    steps[str(window.prepare.frame)].invoke()
+    master.update()
+    assert window.notebook.select() == str(window.prepare.frame)
+    assert steps[str(window.prepare.frame)].cget("style") == "CurrentStep.TButton"
+
+    window.prepare._done(prepared_receipt(tmp_path / "待核對_1"))
+    window.prepare.next_button.invoke()
+    master.update()
+
+    current = [tab for tab, step in steps.items() if step.cget("style") == "CurrentStep.TButton"]
+    assert current == [str(window.check)], "「下一步」切頁時步驟欄跟著換"
+
+
+def test_page_headers_show_their_step(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+
+    assert window.prepare.header.step.get() == "步驟 3／6"
+    assert window.check.header.step.get() == "步驟 4／6"
+
+
+def test_pasted_tdccs_are_counted_once_each(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+
+    window.prepare.tdcc_text.insert("1.0", "147000000001\n147000000002 147000000001、147000000003")
+    master.update()
+
+    assert window.prepare.count_var.get() == "已貼 3 筆", "重複的只算一次，分隔方式同準備"
+
+
+def test_prepare_shows_key_figures_when_done(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+
+    window.prepare._done(prepared_receipt(tmp_path / "待核對_1"))
+
+    assert window.prepare.kpis.values == (
+        ("已準備（檔）", 1, False),
+        ("跳過（檔）", 1, True),
+        ("Word 轉檔（份）", 0, False),
+    )
+    assert window.prepare.status_label.cget("style") == "Done.TLabel", "做完了，狀態列變成綠色結果條"
+
+
+def test_check_key_figures_hide_when_results_are_cleared(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    window.check.kpis.show((("通過", 2, False),))
+
+    window.check._clear_results()
+
+    assert window.check.kpis.values == ()
+    assert window.check.status_label.cget("style") == "TLabel", "沒有存過檔的結果，狀態列不是綠色"
+
+
+# ---------------------------------------------------------------- 範本套到其他四頁（#85）
+
+
+def test_every_page_header_shows_its_step(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    pages = (window.orders, window.daily, window.prepare, window.check, window.returning, window.mail)
+
+    assert [page.header.step.get() for page in pages] == [f"步驟 {n}／6" for n in range(1, 7)]
+
+
+@pytest.mark.parametrize("tab_name", ["orders", "mail"])
+def test_order_and_mail_pages_count_pasted_tdccs(master, tmp_path: Path, tab_name) -> None:
+    tab = getattr(new_window(master, tmp_path), tab_name)
+
+    tab.tdcc_text.insert("1.0", "147000000001\n147000000002\n147000000001")
+    master.update()
+
+    assert tab.count_var.get() == "已貼 2 筆"
+
+
+def test_return_page_shows_key_figures_when_done(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    outcomes = (
+        ReturnOutcome("147000000001", RETURNED, RETURNED),
+        ReturnOutcome("147000000002", NOT_RETURNED, NOT_RETURNED, "核對結果檔沒有這個商品"),
+    )
+
+    window.returning._done(ReturnReceipt(tmp_path / "放回清單.xlsx", outcomes))
+
+    assert window.returning.kpis.values == (
+        ("已放回或已在（檔）", 1, False),
+        ("含待確認（檔）", 0, False),
+        ("不放回（檔）", 1, True),
+    )
+    assert window.returning.status_label.cget("style") == "Done.TLabel"
+
+
+def test_daily_import_page_shows_key_figures_and_restarts_clean(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    receipt = ImportReceipt(
+        7, (ImportLine("147000000001", NEW_PRODUCT), ImportLine("", "格式錯誤")), 3, 0, 0, 0, tmp_path
+    )
+
+    window.daily._done(receipt)
+    assert window.daily.kpis.values == (("正常（項）", 1, False), ("要注意（項）", 1, True))
+
+    window.daily.restart()
+    assert window.daily.kpis.values == () and window.daily.status_label.cget("style") == "Card.TLabel"
+
+
+def test_order_and_mail_pages_show_key_figures_when_done(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    rows = (OrderRow("147000000001", ORDER_READ), OrderRow("147000000002", ORDER_PENDING))
+    outcomes = (DraftOutcome("147000000001", DRAFTED), DraftOutcome("147000000002", NOT_NEEDED))
+
+    window.orders._done(OrderReceipt(tmp_path / "Order條件清單.xlsx", rows))
+    window.mail._done(DraftReceipt(tmp_path / "寄信草稿清單.xlsx", outcomes, last_import=None))
+
+    assert window.orders.kpis.values == (("已讀取（檔）", 1, False), ("要確認（檔）", 1, True))
+    assert window.mail.kpis.values == (("已建草稿（檔）", 1, False), ("沒有建立（檔）", 1, False)), "不需寄送不算問題"
+    assert window.orders.status_label.cget("style") == window.mail.status_label.cget("style") == "Done.TLabel"
+
+
+def test_exporting_problem_mails_leaves_the_green_bar_until_it_succeeds(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    rows = (OrderRow("147000000002", ORDER_PENDING),)
+    window.orders._done(OrderReceipt(tmp_path / "Order條件清單.xlsx", rows))
+    monkeypatch.setattr(window.orders, "run_in_background", lambda *args, **kwargs: None)
+
+    window.orders.export_problems()
+
+    assert window.orders.status_label.cget("style") == "Card.TLabel", "匯出中、匯出失敗時不是綠色"
+
+
+def test_a_new_check_result_clears_the_last_return(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    window.returning._done(
+        ReturnReceipt(tmp_path / "放回清單.xlsx", (ReturnOutcome("147000000001", RETURNED, RETURNED),))
+    )
+
+    window.returning.receive(tmp_path / "核對結果.xlsx", None)
+
+    assert window.returning.kpis.values == () and window.returning.status_label.cget("style") == "Card.TLabel"
