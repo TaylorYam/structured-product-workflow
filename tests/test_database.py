@@ -73,7 +73,10 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
     assert [t for (t,) in tables] == [
         "mailbox.alias",
         "mailbox.person",
+        "workflow.autocall_date",
+        "workflow.backfill_log",
         "workflow.branch_allocation",
+        "workflow.check_result",
         "workflow.check_terms",
         "workflow.cross_check_release",
         "workflow.daily_price",

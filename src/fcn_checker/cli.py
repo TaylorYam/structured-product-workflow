@@ -1,5 +1,7 @@
 """`fcn-batch` 指令：批量入口（多份說明書＋參考條件表）的薄包裝。
 
+`--database`（#68）：不給參考條件表，改依 PDF 檔名的 TDCC 從流程資料庫產生（連線設定讀 `.env`），
+核對結果檔存好後寫回資料庫；寫回失敗只提示，核對結果檔照樣保留。
 結束碼：0 = 整體 PASS；1 = 有 MISMATCH 或 REVIEW_REQUIRED（含未支援上手）；2 = ERROR。
 """
 
@@ -28,8 +30,19 @@ def _parser() -> argparse.ArgumentParser:
             "原檔不動；另在執行目錄的 runtime/核對紀錄/ 寫一份內部核對紀錄（JSON）。"
         ),
     )
-    p.add_argument("reference_sheet", type=Path, help="參考條件表 Excel（.xlsx）")
-    p.add_argument("term_sheets", type=Path, nargs="+", help="說明書 PDF（可多份；檔名前三碼為上手編號）")
+    p.add_argument(
+        "paths",
+        type=Path,
+        nargs="+",
+        metavar="參考條件表 說明書",
+        help="參考條件表 Excel（.xlsx），後面接說明書 PDF（可多份；檔名前三碼為上手編號）；用 --database 時只給 PDF",
+    )
+    p.add_argument(
+        "--database",
+        action="store_true",
+        help="條件從流程資料庫讀（依 PDF 檔名的 TDCC，連線設定讀 .env），存檔後把回填值寫回資料庫",
+    )
+    p.add_argument("--env-file", type=Path, default=None, help="資料庫連線設定檔（預設同 FCN Workflow 視窗）")
     p.add_argument(
         "--review-standard",
         type=Path,
@@ -70,21 +83,55 @@ def _utf8_console() -> None:
 
 
 def _run(args: argparse.Namespace) -> tuple[BatchOutcome, SaveReceipt]:
+    reference = Path("資料庫") if args.database else args.reference_sheet
     try:
         config = ConfigPaths(
             args.review_standard, args.reference_format, args.issuer_prefixes, args.exchange_holidays
         ).load()
-    except IngestionError as e:  # 設定檔有問題：整批錯誤，不核對任何說明書
-        outcome = failed_batch(args.reference_sheet, e)
+        if args.database:
+            reference, absent = args.source.export(args.term_sheets, config.reference_format)
+            return run_batch(config, reference, args.term_sheets, args.out, root=Path.cwd(), absent=absent)
+    except IngestionError as e:  # 設定檔有問題或讀不到資料庫：整批錯誤，不核對任何說明書
+        outcome = failed_batch(reference, e)
         return outcome, SaveReceipt.nothing_to_save(outcome)
     return run_batch(config, args.reference_sheet, args.term_sheets, args.out, root=Path.cwd())
 
 
+def _database_source(args: argparse.Namespace):
+    """流程資料庫的來源（sp_workflow）；`.env` 沒有密碼時在這裡問。產生的參考條件表放在輸出資料夾。"""
+    from getpass import getpass
+
+    from sp_workflow.check_source import WorkflowDatabase
+    from sp_workflow.database import default_env_path, settings_from_env
+
+    settings = settings_from_env(args.env_file or default_env_path())
+    if settings.password is None:
+        settings = settings.with_password(getpass(f"{settings.user}@{settings.host} 的資料庫密碼（不顯示）："))
+    source = WorkflowDatabase(lambda: settings, args.out)
+    source.ready()
+    return source
+
+
 def main(argv: list[str] | None = None) -> int:
     _utf8_console()
-    args = _parser().parse_args(argv)
+    parser = _parser()
+    args = parser.parse_args(argv)
+    if args.database:
+        args.reference_sheet, args.term_sheets = None, args.paths
+    elif len(args.paths) < 2:
+        parser.error("請給參考條件表與至少一份說明書 PDF（或用 --database 從資料庫讀條件）")
+    else:
+        args.reference_sheet, args.term_sheets = args.paths[0], args.paths[1:]
+    write_back = ""
     try:
+        if args.database:
+            args.source = _database_source(args)
         outcome, receipt = _run(args)
+        if args.database and receipt.output is not None:
+            try:
+                write_back = args.source.write_back(outcome, receipt)
+            except Exception as e:  # 寫回失敗只提示：核對結果檔已存好（#68）
+                write_back = f"[警告] 寫回資料庫失敗：{e}；核對結果檔已存好，排除後請重新核對並儲存"
     except Exception as e:  # 非預期錯誤：回報後以 ERROR 結束
         print(f"執行錯誤：{type(e).__name__}: {e}", file=sys.stderr)
         return EXIT[CheckStatus.ERROR]
@@ -98,6 +145,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"核對結果檔：{receipt.output}")
     if receipt.record is not None:
         print(f"核對紀錄：{receipt.record}")
+    if write_back:
+        print(write_back, file=sys.stderr if write_back.startswith("[警告]") else sys.stdout)
     return EXIT[receipt.status]
 
 

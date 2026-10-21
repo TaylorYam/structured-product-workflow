@@ -1149,3 +1149,21 @@ def test_order_import_shows_the_check_terms_of_the_batch(master, tmp_path: Path,
     window.orders.releaser.button.invoke()
 
     assert window.orders.table.item(iid, "values")[3:] == (DONE, "核對條件：已放行的差異：UF（…）")
+
+
+# ---------------------------------------------------------------- 核對分頁的條件來源（#68）
+
+
+def test_check_tab_can_read_terms_from_the_database(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    check = window.check
+
+    assert window.session.database is not None
+    assert "Excel 參考條件表" in texts(check, ttk.Radiobutton) and check.source.get() == "excel"
+
+    check.source.set("database")
+    check._source_changed()
+
+    assert window.session.use_database
+    assert str(check.sheet_button.cget("state")) == "disabled"
+    assert check.sheet_text.get().startswith("由資料庫產生")

@@ -143,6 +143,10 @@ jobs:
         if: needs.changes.outputs.workflow == 'true'
         run: pytest -q --ignore=tests/checker
 
+      # 核對讀資料庫的測試（#68）放在 tests/checker（要用合成說明書），但需要資料庫、不能平行跑：在這裡依序跑
+      - name: Test checker database source
+        run: pytest -q -m db tests/checker
+
   checker:
     name: Test checker ${{ matrix.shard }}/4 (Python ${{ matrix.python-version }})
     needs: changes

@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -310,11 +310,20 @@ class BatchPreview:
     config: CheckConfig = field(compare=False, repr=False)
 
 
-def preview_batch(config: CheckConfig, reference_sheet: Path, term_sheets: Sequence[Path]) -> BatchPreview:
-    """唯讀預覽：讀取前先取來源快照，再辨識並讀出每份說明書（核對直接沿用）；參考條件表本身有問題時丟出 IngestionError。"""
+def preview_batch(
+    config: CheckConfig,
+    reference_sheet: Path,
+    term_sheets: Sequence[Path],
+    *,
+    absent: Mapping[str, str] | None = None,
+) -> BatchPreview:
+    """唯讀預覽：讀取前先取來源快照，再辨識並讀出每份說明書（核對直接沿用）；參考條件表本身有問題時丟出 IngestionError。
+
+    `absent` 是參考條件表沒有某個商品代號的原因（資料庫來源產生的表，#68），配對不到時寫進結果。"""
     reference_sheet, term_sheets = Path(reference_sheet), tuple(map(Path, term_sheets))
     snapshot = SourceSnapshot.take((reference_sheet, *term_sheets), taken=config.files)
     sheet = load_reference_sheet(reference_sheet, config.reference_format)
+    sheet.absent = dict(absent or {})
     rows = tuple(PreviewRow(ident) for ident in identify(term_sheets, sheet, config))
     return BatchPreview(rows, reference_sheet, snapshot, config)
 
