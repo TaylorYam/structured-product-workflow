@@ -65,8 +65,8 @@ def test_tabs_follow_the_daily_order(master, tmp_path: Path) -> None:
     window = app.PanelWindow(master, FolderMemory.under(tmp_path), session=PanelSession(install_root=tmp_path))
 
     assert master.title() == "FCN Workflow"
-    assert tab_titles(window) == ["1 Order 條件", "2 每日匯入", "3 準備", "4 核對", "5 放回", "6 寄信草稿"]
-    assert window.notebook.select() == str(window.orders.frame)
+    assert tab_titles(window) == ["1 每日匯入", "2 Order 條件", "3 準備", "4 核對", "5 放回", "6 寄信草稿"]
+    assert window.notebook.select() == str(window.daily.frame)
 
 
 def test_checker_entry_starts_on_the_check_tab(master, tmp_path: Path) -> None:
@@ -543,7 +543,7 @@ def test_check_key_figures_hide_when_results_are_cleared(master, tmp_path: Path)
 
 def test_every_page_header_shows_its_step(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
-    pages = (window.orders, window.daily, window.prepare, window.check, window.returning, window.mail)
+    pages = (window.daily, window.orders, window.prepare, window.check, window.returning, window.mail)
 
     assert [page.header.step.get() for page in pages] == [f"步驟 {n}／6" for n in range(1, 7)]
 
@@ -621,3 +621,111 @@ def test_a_new_check_result_clears_the_last_return(master, tmp_path: Path) -> No
     window.returning.receive(tmp_path / "核對結果.xlsx", None)
 
     assert window.returning.kpis.values == () and window.returning.status_label.cget("style") == "Card.TLabel"
+
+
+# ---------------------------------------------------------------- 每日匯入在第 1 頁，帶入 Order 條件（#90）
+
+
+def daily_receipt(tmp_path: Path, tdccs: tuple[str, ...] = (), fcn_rows: int | None = None) -> ImportReceipt:
+    rows = len(tdccs) if fcn_rows is None else fcn_rows
+    return ImportReceipt(7, (), 3, 0, 0, 0, tmp_path / "每日匯入錯誤.xlsx", fcn_trade_rows=rows, fcn_tdccs=tdccs)
+
+
+def pasted(tab) -> str:
+    return tab.tdcc_text.get("1.0", tk.END).strip()
+
+
+def test_daily_import_hands_fcn_tdccs_to_the_order_tab_without_switching(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: pytest.fail("不該自動讀 Order"))
+
+    window.daily._done(daily_receipt(tmp_path, ("147000000002", "147000000001")))
+
+    assert pasted(window.orders) == "147000000002\n147000000001" and window.orders.count_var.get() == "已貼 2 筆"
+    assert window.orders.hint.text.get() == "已帶入每日匯入的 FCN TDCC 2 筆，確認後按「讀取 Order」。"
+    assert window.daily.status_var.get().endswith("已把 FCN TDCC 2 筆帶到「2 Order 條件」。")
+    assert window.notebook.select() == str(window.daily.frame), "不自動切頁"
+    assert window.daily.next_button.winfo_manager() == "pack"
+
+    window.daily.next_button.invoke()
+
+    assert window.notebook.select() == str(window.orders.frame)
+
+
+@pytest.mark.parametrize(
+    ("receipt_args", "message"),
+    [
+        ((), "這份交易明細沒有 FCN，Order 條件頁沒有帶入。"),
+        (((), 2), "這份交易明細的 FCN 都已取消或 TDCC 不完整，Order 條件頁沒有帶入。"),
+    ],
+)
+def test_nothing_is_handed_over_without_fcn_tdccs(master, tmp_path: Path, receipt_args, message) -> None:
+    window = new_window(master, tmp_path)
+    window.orders.tdcc_text.insert("1.0", "147000000009")
+
+    window.daily._done(daily_receipt(tmp_path, *receipt_args))
+
+    assert window.daily.status_var.get().endswith(message)
+    assert pasted(window.orders) == "147000000009" and not window.orders.hint.shown
+    assert window.daily.next_button.winfo_manager() == ""
+
+
+def test_a_rejected_daily_file_hands_nothing_over(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    monkeypatch.setattr(app.messagebox, "showerror", lambda *a, **k: None)
+
+    window.daily._done(app.DailyImportError("「交易明細」的欄名和來源表不同，整份不匯入"))
+
+    assert pasted(window.orders) == "" and not window.orders.hint.shown
+    assert window.daily.next_button.winfo_manager() == ""
+
+
+@pytest.mark.parametrize("answer", [False, True])
+def test_different_tdccs_on_the_order_tab_are_replaced_only_if_the_operator_agrees(
+    master, tmp_path: Path, monkeypatch, answer
+) -> None:
+    window = new_window(master, tmp_path)
+    window.orders.tdcc_text.insert("1.0", "147000000009")
+    asked = []
+    monkeypatch.setattr(app.messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or answer)
+
+    window.daily._done(daily_receipt(tmp_path, ("147000000001",)))
+
+    assert len(asked) == 1 and "已經有 1 筆 TDCC" in asked[0]
+    assert pasted(window.orders) == ("147000000001" if answer else "147000000009")
+    assert window.orders.hint.shown is answer
+    assert window.daily.next_button.winfo_manager() == ("pack" if answer else ""), "沒帶入就沒有下一步"
+    if not answer:
+        assert window.daily.status_var.get().endswith("Order 條件頁保留原本的 TDCC，沒有帶入。")
+
+
+def test_the_same_tdccs_are_handed_over_again_without_asking(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    window.daily._done(daily_receipt(tmp_path, ("147000000001",)))
+    monkeypatch.setattr(app.messagebox, "askyesno", lambda *a, **k: pytest.fail("一樣的 TDCC 不用問"))
+
+    window.daily._done(daily_receipt(tmp_path, ("147000000001",)))
+
+    assert window.orders.hint.shown
+
+
+def test_change_on_the_order_hint_clears_the_handed_over_tdccs(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    window.daily._done(daily_receipt(tmp_path, ("147000000001", "147000000002")))
+
+    hint_change_button(window.orders.hint).invoke()
+
+    assert pasted(window.orders) == "" and window.orders.count_var.get() == "已貼 0 筆"
+    assert not window.orders.hint.shown
+
+
+def test_editing_the_handed_over_tdccs_hides_the_hint(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    window.daily._done(daily_receipt(tmp_path, ("147000000001",)))
+    master.update()
+    assert window.orders.hint.shown, "帶入本身不算自己改"
+
+    window.orders.tdcc_text.insert(tk.END, "\n147000000003")
+    master.update()
+
+    assert not window.orders.hint.shown and window.orders.count_var.get() == "已貼 2 筆"

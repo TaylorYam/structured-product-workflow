@@ -1,14 +1,15 @@
-"""FCN Workflow 視窗：六個分頁照每天的作業順序排（#73、#74）。
+"""FCN Workflow 視窗：六個分頁照每天的作業順序排（#73、#74、#90）。
 
-1. Order 條件：貼 TDCC，讀商品資料夾裡的 (Order) 原信，輸出 Order 條件清單（#40）。
-2. 每日匯入：選每日更新，匯入最小 FCN 資料庫（#32）；信箱在資料庫直接維護（#35）。
+1. 每日匯入：選每日更新，匯入最小 FCN 資料庫（#32）；信箱在資料庫直接維護（#35）。
+2. Order 條件：貼 TDCC，讀商品資料夾裡的 (Order) 原信，輸出 Order 條件清單（#40）。
 3. 準備：貼 TDCC、選輸出位置，產生批次資料夾與準備清單。
 4. 核對：參考條件表＋說明書／投資人須知 PDF 的預覽、核對與儲存（`fcn_checker.panel.CheckTab`）。
 5. 放回：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾。
 6. 寄信草稿：貼核對通過的 TDCC，在 Outlook 建 TS／IIS 草稿給承作的 FC（#29）。
 
-商品資料夾所在的根目錄在視窗最上方設一次，1、3、6 三頁共用（#75）。
+商品資料夾所在的根目錄在視窗最上方設一次，2、3、6 三頁共用（#75）。
 做完一步，下一頁先帶入結果並用藍色提示條寫出來，按「下一步 →」才切頁，不自動執行（#76）：
+每日匯入完成 → Order 條件頁帶入交易明細的 FCN TDCC（#90）；
 準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔。
 審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
 視窗只收輸入、在背景執行 `read_orders`／`import_daily`／`prepare_batch`／核對／`return_to_folders`／`create_drafts`
@@ -466,10 +467,18 @@ class ReturnTab(_Tab):
 
 
 class DailyImportTab(_Tab):
-    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, db: _DatabaseLogin) -> None:
+    def __init__(
+        self,
+        notebook: ttk.Notebook,
+        memory: FolderMemory,
+        db: _DatabaseLogin,
+        on_imported: Callable[[Sequence[str]], bool],
+        on_next: Callable[[], None],
+    ) -> None:
         super().__init__(notebook, "每日匯入", (("tdcc", "TDCC", 130), ("kind", "結果", 150), ("detail", "說明", 440)))
         self.memory = memory
         self.db = db
+        self.on_imported = on_imported
         folders = memory.load()
         self.daily_var = tk.StringVar(value=folders.get("daily", ""))
         self.status_var.set(f"選每日更新，按「匯入」。資料庫連線設定：{db.env_path}")
@@ -480,6 +489,7 @@ class DailyImportTab(_Tab):
         self.result_area(body, row)
         self.start_button = ttk.Button(self.buttons, text="匯入", command=self.start, style="Primary.TButton")
         self.start_button.pack(side=tk.LEFT)
+        self.next_button = NextButton(self.buttons, "下一步：Order 條件 →", on_next)
         self.place_table(2)
 
     def start(self) -> None:
@@ -493,6 +503,7 @@ class DailyImportTab(_Tab):
         daily = Path(daily_text)
         self.memory.remember(daily=str(daily))
         self.start_button.configure(state=tk.DISABLED)
+        self.next_button.withdraw()
         self.restart()
 
         def run() -> ImportReceipt:
@@ -515,8 +526,19 @@ class DailyImportTab(_Tab):
             f"完成（第 {result.run_id} 次匯入）：{normal} 項正常、{problems} 項要注意；"
             f"略過非 FCN 交易 {result.skipped_trade_rows} 列、清單 {result.skipped_inventory_rows} 列；"
             f"取消交易 {result.cancelled_trade_rows} 列；信箱 {result.people} 人。"
-            f"\n錯誤清單：{result.error_book_path}",
+            f"\n錯誤清單：{result.error_book_path}\n{self._hand_off(result)}",
         )
+
+    def _hand_off(self, result: ImportReceipt) -> str:
+        """把交易明細的 FCN TDCC 帶到 Order 條件頁（#90）；真的帶入了才有下一步。回傳寫在完成訊息的一句。"""
+        if not result.fcn_trade_rows:
+            return "這份交易明細沒有 FCN，Order 條件頁沒有帶入。"
+        if not result.fcn_tdccs:
+            return "這份交易明細的 FCN 都已取消或 TDCC 不完整，Order 條件頁沒有帶入。"
+        if not self.on_imported(result.fcn_tdccs):
+            return "Order 條件頁保留原本的 TDCC，沒有帶入。"
+        self.next_button.offer()
+        return f"已把 FCN TDCC {len(result.fcn_tdccs)} 筆帶到「2 Order 條件」。"
 
 
 class _DatabaseLogin:
@@ -666,7 +688,11 @@ class OrderTermsTab(_Tab):
         )
 
         self.page_header("讀取 Order 條件", "讀商品資料夾裡的 (Order) 原信，輸出 Order 條件清單；只讀，不修改信件。")
-        card = self.card(1)
+        self.handed_off: list[str] | None = None  # 從每日匯入帶入的 TDCC
+        self.hint = HintBar(self.frame, self._clear_handed_off)
+        self.hint.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
+        self.hint.hide()
+        card = self.card(2)
         self.tdcc_column(card)
         body = self.body(card, column=1)
         row = self.field(
@@ -686,7 +712,48 @@ class OrderTermsTab(_Tab):
             self.buttons, text="匯出問題信件", command=self.export_problems, state=tk.DISABLED
         )
         self.export_button.pack(side=tk.LEFT)
-        self.place_table(2)
+        self.place_table(3)
+
+    def receive_tdccs(self, tdccs: Sequence[str]) -> bool:
+        """每日匯入完成後帶入交易明細的 FCN TDCC（#90）；已經貼了不同的 TDCC 時先問。不切頁、不自動讀 Order。"""
+        current = parse_tdccs(self.tdcc_text.get("1.0", tk.END))
+        if (
+            current
+            and current != list(tdccs)
+            and not messagebox.askyesno(
+                TITLE,
+                f"「2 Order 條件」已經有 {len(current)} 筆 TDCC，和這次每日匯入的 FCN TDCC（{len(tdccs)} 筆）不同。"
+                "\n\n要換成每日匯入的嗎？",
+                parent=self.master,
+            )
+        ):
+            return False
+        self.restart()  # 換了一批要讀的，上一次的結果收起來
+        self.handed_off = list(tdccs)
+        self._set_tdccs("\n".join(tdccs))
+        self.hint.show(f"已帶入每日匯入的 FCN TDCC {len(tdccs)} 筆，確認後按「讀取 Order」。")
+        return True
+
+    def _set_tdccs(self, text: str) -> None:
+        self.tdcc_text.delete("1.0", tk.END)
+        self.tdcc_text.insert("1.0", text)
+        self.count_var.set(f"已貼 {len(parse_tdccs(text))} 筆")
+
+    def _tdcc_changed(self, _event: object = None) -> None:
+        """自己改了帶入的 TDCC，提示條就收起來。"""
+        super()._tdcc_changed(_event)
+        if self.handed_off is not None and parse_tdccs(self.tdcc_text.get("1.0", tk.END)) != self.handed_off:
+            self._forget_handed_off()
+
+    def _clear_handed_off(self) -> None:
+        """提示條的「改選…」：清掉帶入的 TDCC，讓作業人員自己貼。"""
+        self._forget_handed_off()
+        self._set_tdccs("")
+        self.tdcc_text.focus_set()
+
+    def _forget_handed_off(self) -> None:
+        self.handed_off = None
+        self.hint.hide()
 
     def start(self) -> None:
         text = self.tdcc_text.get("1.0", tk.END)
@@ -871,8 +938,14 @@ class PanelWindow:
         self.notebook = ttk.Notebook(body, style="Workflow.TNotebook")
         db = _DatabaseLogin(master, env_path or default_env_path())
         # 分頁照每天的作業順序建立，前面自動加上 1～6 的編號
+        self.daily = DailyImportTab(
+            self.notebook,
+            memory,
+            db,
+            on_imported=lambda tdccs: self.orders.receive_tdccs(tdccs),
+            on_next=lambda: self.notebook.select(self.orders.frame),
+        )
         self.orders = OrderTermsTab(self.notebook, memory, self.root_folder)
-        self.daily = DailyImportTab(self.notebook, memory, db)
         self.prepare = PrepareTab(
             self.notebook,
             memory,
@@ -888,7 +961,7 @@ class PanelWindow:
         tabs = self.notebook.tabs()
         for number, tab in enumerate(tabs, 1):
             self.notebook.tab(tab, text=f"{number} {self.notebook.tab(tab, 'text')}")
-        pages = (self.orders, self.daily, self.prepare, self.returning, self.mail)
+        pages = (self.daily, self.orders, self.prepare, self.returning, self.mail)
         for page, page_header in [(p.frame, p.header) for p in pages] + [(self.check, self.check.header)]:
             page_header.step.set(f"步驟 {self.notebook.index(page) + 1}／{len(tabs)}")
         self.sidebar = StepSidebar(body, self.notebook, self.pixels)
