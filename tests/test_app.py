@@ -952,6 +952,16 @@ def test_conflicting_duplicate_fields_are_red_until_filled(master, tmp_path: Pat
     assert table_rows(window.orders) == [("029199990001", app.TO_CHECK)]
 
 
+def test_editing_the_trade_date_moves_an_equal_strike_date(master, tmp_path: Path) -> None:
+    window = order_window(master, tmp_path, order_row("029199990001"))
+    editor = window.orders.editor
+
+    type_into(editor, "Trade date", "2026-10-16")
+
+    assert editor.rows["Strike date"].var.get() == "2026-10-16"
+    assert editor.draft.values["Strike date"].isoformat() == "2026-10-16"
+
+
 def test_choices_use_drop_downs(master, tmp_path: Path) -> None:
     window = order_window(master, tmp_path, order_row("029199990001"))
 

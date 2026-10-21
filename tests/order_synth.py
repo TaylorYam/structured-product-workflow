@@ -9,6 +9,7 @@ from pathlib import Path
 
 import openpyxl
 
+from fcn_checker.config import load_exchange_holidays
 from sp_workflow.order_import import ImportConfig
 from sp_workflow.order_terms import NOT_FOUND, PENDING, READ, TDCC_FIELD, OrderRow
 
@@ -20,6 +21,7 @@ CONFIG = ImportConfig(
     {"USD": Decimal(10000), "JPY": Decimal(1000000)},
     {"BARC": "Barclays", "SG": "SG"},
     PREFIXES,
+    load_exchange_holidays(Path(__file__).resolve().parents[1] / "config" / "exchange_holidays.toml"),
 )
 
 # 起單建檔的一列（畫面的欄名 → 值）
@@ -41,6 +43,7 @@ VALUES: dict[str, object] = {
     "Barrier Type": "EKI",
     "KI Barrier (%)": Decimal(65),
     "Trade date": dt.date(2026, 10, 15),
+    "Strike date": dt.date(2026, 10, 15),
     "Issue date": dt.date(2026, 10, 22),
     "Final valuation date": dt.date(2027, 4, 15),
     "Maturity date": dt.date(2027, 4, 22),

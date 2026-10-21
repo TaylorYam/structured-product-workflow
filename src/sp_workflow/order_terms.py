@@ -14,6 +14,9 @@
   寫進資料庫時才換成 UF = 100 − 價格（`order_import`）。
 - 同一檔 TDCC 有好幾列：內容一樣就用；不一樣的欄留空並寫出各列的值（`OrderRow.conflicts`），由作業人員填好才能匯入。
 - 上手依 TDCC 前三碼（上手編號對照 `config/issuer_prefixes.toml`）。
+- Strike date（期初定價日，#101）起單建檔沒有這欄，由期初價格推：期初價格寫「明日開盤價」時，期初價格記成開盤價、
+  Strike date = 交易日之後標的市場的下一個營業日（交易所假日表）；其他情況 Strike date = Trade date。
+  假日表確定不了（標的交易所不在表上、日期超出範圍）時留空，由作業人員填。
 """
 
 from __future__ import annotations
@@ -25,10 +28,14 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from enum import Enum
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import openpyxl
 
 from sp_workflow.preparation import is_tdcc, parse_tdccs
+
+if TYPE_CHECKING:
+    from fcn_checker.trading_calendar import TradingCalendar
 
 READ = "已讀取"
 PENDING = "待確認"
@@ -36,6 +43,10 @@ NOT_FOUND = "找不到"
 
 TDCC_FIELD = "TDCC"
 UPFRONT_FIELD = "Upfront / NotePrice (%)"
+TRADE_FIELD = "Trade date"
+STRIKE_FIELD = "Strike date"
+PRICING_FIELD = "期初價格"
+NEXT_OPEN = "明日開盤價"  # 交易日隔一個營業日的開盤價（#101）
 
 
 class FieldKind(Enum):
@@ -48,18 +59,20 @@ class FieldKind(Enum):
 
 KO_TYPES = ("Daily", "Daily Memory", "Period End", "Period End Memory")
 BARRIER_TYPES = ("NONE", "EKI", "AKI")
-INITIAL_PRICINGS = ("開盤價", "收盤價", "VWAP")
+OPEN = "開盤價"
+INITIAL_PRICINGS = (OPEN, "收盤價", "VWAP")
+UNDERLYINGS = tuple(f"BBG Code {n}" for n in range(1, 6))
 CHOICES: dict[str, tuple[str, ...]] = {
     "KO Type": KO_TYPES,
     "Barrier Type": BARRIER_TYPES,
-    "期初價格": INITIAL_PRICINGS,
+    PRICING_FIELD: INITIAL_PRICINGS,
 }
 # 畫面上可以改的欄（依起單建檔的順序）→ 型別
 KINDS: dict[str, FieldKind] = {
     "Product": FieldKind.TEXT,
     "Currency": FieldKind.TEXT,
     "Guaranteed Periods (m)": FieldKind.INT,
-    **{f"BBG Code {n}": FieldKind.TEXT for n in range(1, 6)},
+    **dict.fromkeys(UNDERLYINGS, FieldKind.TEXT),
     "Strike (%)": FieldKind.PERCENT,
     "KO Type": FieldKind.CHOICE,
     "KO Barrier (%)": FieldKind.PERCENT,
@@ -68,15 +81,17 @@ KINDS: dict[str, FieldKind] = {
     "Tenor (m)": FieldKind.INT,
     "Barrier Type": FieldKind.CHOICE,
     "KI Barrier (%)": FieldKind.PERCENT,
-    "Trade date": FieldKind.DATE,
+    TRADE_FIELD: FieldKind.DATE,
+    STRIKE_FIELD: FieldKind.DATE,
     "Issue date": FieldKind.DATE,
     "Final valuation date": FieldKind.DATE,
     "Maturity date": FieldKind.DATE,
-    "期初價格": FieldKind.CHOICE,
+    PRICING_FIELD: FieldKind.CHOICE,
 }
 FIELDS = tuple(KINDS)
+SHEET_FIELDS = tuple(name for name in FIELDS if name != STRIKE_FIELD)  # 起單建檔上有的欄
 # 起單建檔的表頭（不分大小寫）→ 欄位；UF (%) 是 2026 年起的表頭
-_HEADERS = {name.casefold(): name for name in (TDCC_FIELD, *FIELDS)} | {"uf (%)": UPFRONT_FIELD}
+_HEADERS = {name.casefold(): name for name in (TDCC_FIELD, *SHEET_FIELDS)} | {"uf (%)": UPFRONT_FIELD}
 _HEADER_ROWS = 5  # 表頭在前幾列找
 _EMPTY = frozenset({"", "-"})
 _MONTHS = {
@@ -100,22 +115,30 @@ class OrderRow:
     conflicts: frozenset[str] = frozenset()  # 好幾列不同、留空要由作業人員填的欄
     source: Path | None = None
     lines: tuple[int, ...] = ()
+    unresolved: frozenset[str] = frozenset()  # 起單建檔算不出來、留空要由作業人員填的欄（例：Strike date）
 
     @property
     def found(self) -> bool:
         return bool(self.lines)
 
+    @property
+    def must_fill(self) -> frozenset[str]:
+        """一定要作業人員填、不用資料庫的值補的欄。"""
+        return self.conflicts | self.unresolved
 
-def collect_orders(text: str, path: Path, issuer_prefixes: Mapping[str, str]) -> tuple[OrderRow, ...]:
+
+def collect_orders(
+    text: str, path: Path, issuer_prefixes: Mapping[str, str], calendar: TradingCalendar
+) -> tuple[OrderRow, ...]:
     """讀起單建檔，依貼上的順序回傳每檔的結果（重複的 TDCC 只算一次）。
 
-    issuer_prefixes 是上手編號對照（三碼 → 上手代號）。
+    issuer_prefixes 是上手編號對照（三碼 → 上手代號）；calendar 是交易所假日表（算明日開盤價的 Strike date）。
     """
     tokens = parse_tdccs(text)
     if not tokens:
         raise OrderTermsError("沒有輸入 TDCC")
     found = read_sheet(path)
-    return tuple(_row_for(token, found.get(token, []), path, issuer_prefixes) for token in tokens)
+    return tuple(_row_for(token, found.get(token, []), path, issuer_prefixes, calendar) for token in tokens)
 
 
 def read_sheet(path: Path) -> dict[str, list[tuple[int, dict[str, object]]]]:
@@ -159,7 +182,7 @@ def _find_header(rows: Sequence[tuple[object, ...]], path: Path) -> tuple[int, d
             if name in columns:
                 raise OrderTermsError(f"{path.name} 的表頭有兩欄都是「{name}」")
             columns[name] = i
-        missing = [name for name in (TDCC_FIELD, *FIELDS) if name not in columns]
+        missing = [name for name in (TDCC_FIELD, *SHEET_FIELDS) if name not in columns]
         if missing:
             raise OrderTermsError(f"{path.name} 的表頭少了：{'、'.join(missing)}")
         return at, columns
@@ -167,7 +190,11 @@ def _find_header(rows: Sequence[tuple[object, ...]], path: Path) -> tuple[int, d
 
 
 def _row_for(
-    tdcc: str, lines: list[tuple[int, dict[str, object]]], path: Path, issuer_prefixes: Mapping[str, str]
+    tdcc: str,
+    lines: list[tuple[int, dict[str, object]]],
+    path: Path,
+    issuer_prefixes: Mapping[str, str],
+    calendar: TradingCalendar,
 ) -> OrderRow:
     if not is_tdcc(tdcc):
         return OrderRow(tdcc, PENDING, notes={TDCC_FIELD: "TDCC 要剛好 12 碼數字"})
@@ -179,12 +206,8 @@ def _row_for(
     values: dict[str, object] = {}
     notes: dict[str, str] = {}
     conflicts: set[str] = set()
-    for name in FIELDS:
-        # 比解讀後的值（`DAILY MEMORY` 和 `Daily Memory` 一樣）；讀不到的比原本的字
-        keys = {
-            line[name][0] if not line[name][1] else ("", _shown(cells.get(name)))
-            for line, (_, cells) in zip(parsed, lines, strict=True)
-        }
+    for name in SHEET_FIELDS:
+        keys = {_compare_key(name, line[name], cells.get(name)) for line, (_, cells) in zip(parsed, lines, strict=True)}
         if len(keys) > 1:
             conflicts.add(name)
             values[name] = None
@@ -195,10 +218,25 @@ def _row_for(
         values[name], note = parsed[0][name]
         if note:
             notes[name] = note
+    unresolved: set[str] = set()
+    next_open = _next_open(lines[0][1].get(PRICING_FIELD))
+    if conflicts & {TRADE_FIELD, PRICING_FIELD}:
+        conflicts.add(STRIKE_FIELD)
+        values[STRIKE_FIELD] = None
+        notes[STRIKE_FIELD] = "Trade date 或期初價格好幾列不同，算不出來；請填正確的值"
+    elif next_open and conflicts & set(UNDERLYINGS):
+        unresolved.add(STRIKE_FIELD)
+        values[STRIKE_FIELD] = None
+        notes[STRIKE_FIELD] = f"期初價格是{NEXT_OPEN}，BBG Code 好幾列不同，算不出來；請填下一個營業日"
+    else:
+        values[STRIKE_FIELD], note = _strike_date(values, next_open, calendar)
+        if note:
+            unresolved.add(STRIKE_FIELD)
+            notes[STRIKE_FIELD] = note
     if not issuer:
         notes[TDCC_FIELD] = unknown_issuer(tdcc)
     status = PENDING if notes else READ
-    return OrderRow(tdcc, status, issuer, values, notes, frozenset(conflicts), path, numbers)
+    return OrderRow(tdcc, status, issuer, values, notes, frozenset(conflicts), path, numbers, frozenset(unresolved))
 
 
 def unknown_issuer(tdcc: str) -> str:
@@ -206,11 +244,43 @@ def unknown_issuer(tdcc: str) -> str:
     return f"TDCC 前三碼 {tdcc[:3]} 不在上手編號對照"
 
 
+def _compare_key(name: str, parsed: tuple[object, str], raw: object) -> object:
+    """重複列比較用：比解讀後的值（`DAILY MEMORY` 和 `Daily Memory` 一樣）；讀不到的比原本的字；
+    期初價格的明日開盤價和開盤價不同。"""
+    value, note = parsed
+    if note:
+        return ("", _shown(raw))
+    if name == PRICING_FIELD:
+        return (value, _next_open(raw))
+    return value
+
+
+def _strike_date(values: Mapping[str, object], next_open: bool, calendar: TradingCalendar) -> tuple[object, str]:
+    """(Strike date, 算不出來時的說明)：明日開盤價是交易日之後標的市場的下一個營業日，其他等於 Trade date。"""
+    trade = values.get(TRADE_FIELD)
+    if not next_open:
+        return trade, ""
+    if not isinstance(trade, dt.date):
+        return None, f"期初價格是{NEXT_OPEN}，Trade date 空白，算不出來"
+    tickers = [str(v) for name in UNDERLYINGS if (v := values.get(name))]
+    found = calendar.next_trading_day(trade, tickers)
+    if found.uncertain:
+        return None, f"期初價格是{NEXT_OPEN}，{found.uncertain}；請填下一個營業日"
+    return found.day, ""
+
+
+def _next_open(raw: object) -> bool:
+    return isinstance(raw, str) and raw.strip() == NEXT_OPEN
+
+
 def _parse_line(cells: Mapping[str, object]) -> dict[str, tuple[object, str]]:
-    """一列的每一欄 → (值, 讀不到時的說明)。"""
+    """一列起單建檔上每一欄 → (值, 讀不到時的說明)；明日開盤價的期初價格是開盤價。"""
     parsed: dict[str, tuple[object, str]] = {}
-    for name in FIELDS:
+    for name in SHEET_FIELDS:
         raw = cells.get(name)
+        if name == PRICING_FIELD and _next_open(raw):
+            parsed[name] = (OPEN, "")
+            continue
         try:
             parsed[name] = (parse_field(name, raw), "")
         except ValueError as exc:

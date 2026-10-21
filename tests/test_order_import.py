@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 from decimal import Decimal
 from pathlib import Path
@@ -107,6 +108,8 @@ def test_sheet_notes_are_shown_but_do_not_block_on_their_own() -> None:
         ({"BBG Code 2": None, "BBG Code 3": "CCC UQ"}, {"BBG Code 2": "標的要從 BBG Code 1 依序填，中間不能空"}),
         ({"KO Type": "Weekly"}, {"KO Type": "要選 Daily／Daily Memory／Period End／Period End Memory"}),
         ({"Tenor (m)": "6"}, {"Tenor (m)": "要填整數"}),
+        ({"Strike date": dt.date(2026, 10, 14)}, {"Strike date": "不能早於 Trade date"}),
+        ({"Strike date": None}, {"Strike date": "必填"}),
     ],
 )
 def test_field_checks(changes, problems) -> None:
@@ -123,6 +126,32 @@ def test_conflicting_duplicate_fields_must_be_filled() -> None:
     assert check_draft(draft, CONFIG) == {"BBG Code 3": CONFLICT, "Coupon p.a. (%)": CONFLICT}
     draft.values.update({"Coupon p.a. (%)": Decimal(13), "BBG Code 3": "CCC UQ"})
     assert check_draft(draft, CONFIG) == {}
+
+
+def test_unresolved_strike_date_must_be_filled() -> None:
+    row = order_row(changes={"Strike date": None}, notes={"Strike date": "算不出來"})
+    row = dataclasses.replace(row, unresolved=frozenset({"Strike date"}))
+    draft = draft_of(row)
+
+    assert check_draft(draft, CONFIG) == {"Strike date": "起單建檔算不出來，要填"}
+
+
+def test_strike_date_follows_an_edited_trade_date_when_they_were_equal() -> None:
+    draft = draft_of(order_row())
+
+    assert draft.set_value("Trade date", dt.date(2026, 10, 16)) == ["Strike date"]
+    assert draft.values["Strike date"] == dt.date(2026, 10, 16)
+    assert draft.set_value("Trade date", dt.date(2026, 10, 19), follow=False) == []
+    assert draft.values["Strike date"] == dt.date(2026, 10, 16)
+
+
+def test_a_next_day_strike_date_stays_when_the_trade_date_changes() -> None:
+    draft = draft_of(order_row(changes={"Strike date": dt.date(2026, 10, 16)}))
+
+    assert draft.set_value("Trade date", dt.date(2026, 10, 14)) == []
+    assert draft.values["Strike date"] == dt.date(2026, 10, 16)
+    draft.set_value("Trade date", dt.date(2026, 10, 19))
+    assert check_draft(draft, CONFIG) == {"Strike date": "不能早於 Trade date"}
 
 
 def test_mistyped_fields_block_only_that_product() -> None:
@@ -181,6 +210,7 @@ def test_import_writes_a_new_product_from_the_confirmed_values(pg) -> None:
     assert p["upfront_pct"] == Decimal("1.5")
     assert p["denomination"] == Decimal(10000) and p["order_amount"] is None  # 金額以交易明細為準（#97）
     assert p["maturity_date"] == dt.date(2027, 4, 22) and p["status_event"] == "在庫"
+    assert p["strike_date"] == dt.date(2026, 10, 15)
     assert (p["underlying_1"], p["underlying_2"], p["underlying_3"]) == ("AAA UW", "BBB UN", None)
     imported_by, counts = pg.execute(
         "SELECT imported_by, summary -> 'counts' FROM workflow.order_import WHERE import_id = %s",
@@ -203,7 +233,7 @@ def test_a_sheet_read_from_disk_imports_end_to_end(pg, tmp_path: Path) -> None:
         sheet_line(B, {"Barrier Type": "None", "KI Barrier (%)": None}),
     ]
     path = write_sheet(tmp_path / "起單建檔_20261015.xlsx", lines)
-    rows = collect_orders(f"{A}\n{B}", path, PREFIXES)
+    rows = collect_orders(f"{A}\n{B}", path, PREFIXES, CONFIG.calendar)
 
     receipt = import_drafts(drafts_from(rows, pg), pg, CONFIG, user="tester")
 
@@ -291,6 +321,7 @@ def test_products_already_in_the_database_are_locked_by_the_migration(pg) -> Non
     _insert_old_product(pg, A)
 
     assert database.apply_migrations(pg)[0] == "0006_order_term_import.sql"
+    assert product(pg, A)["strike_date"] == dt.date(2026, 1, 15), "migration 0008 補成交易日"
     draft = draft_of(order_row(), pg)
     receipt = import_drafts([draft], pg, CONFIG, user="tester")
 
@@ -340,6 +371,18 @@ def test_conflicting_fields_are_not_filled_from_the_database(pg) -> None:
 
     assert draft.values["Coupon p.a. (%)"] is None
     assert check_draft(draft, CONFIG) == {"Coupon p.a. (%)": CONFLICT}
+
+
+@pytest.mark.db
+def test_an_unresolved_strike_date_is_not_filled_from_the_database(pg) -> None:
+    import_drafts([draft_of(order_row(), pg)], pg, CONFIG, user="tester")
+    row = dataclasses.replace(order_row(changes={"Strike date": None}), unresolved=frozenset({"Strike date"}))
+
+    draft = draft_of(row, pg)
+    receipt = import_drafts([draft], pg, CONFIG, user="tester")
+
+    assert draft.values["Strike date"] is None
+    assert (receipt.lines[0].result, receipt.lines[0].detail) == (SKIPPED, "Strike date：起單建檔算不出來，要填")
 
 
 @pytest.mark.db
