@@ -30,7 +30,9 @@ from sp_workflow.order_terms import (
     FIELDS,
     KINDS,
     KO_TYPES,
+    STRIKE_FIELD,
     TDCC_FIELD,
+    TRADE_FIELD,
     UPFRONT_FIELD,
     FieldKind,
     OrderRow,
@@ -42,6 +44,7 @@ if TYPE_CHECKING:
     import psycopg
 
     from fcn_checker.check_config import ConfigPaths
+    from fcn_checker.trading_calendar import TradingCalendar
 
 STATUS_IN_STOCK = "在庫"
 # workflow.product.source：商品資料由哪裡建立（#86）；清單更新已停用（#87），只剩以前建立的商品
@@ -79,7 +82,8 @@ _REQUIRED = (
     "Upfront / NotePrice (%)",
     "Tenor (m)",
     "Barrier Type",
-    "Trade date",
+    TRADE_FIELD,
+    STRIKE_FIELD,
     "Final valuation date",
     "Maturity date",
     "期初價格",
@@ -99,7 +103,7 @@ _PRODUCT_COLUMNS = (
     "product", "issuer", "currency", "trade_date", "issue_date", "final_valuation_date", "maturity_date",
     "initial_pricing", "non_call_months", "underlying_1", "underlying_2", "underlying_3", "underlying_4",
     "underlying_5", "strike_pct", "ko_freq", "ko_memory", "ko_type", "ko_pct", "coupon_pct", "upfront_pct",
-    "tenor_months", "ki_freq", "barrier_type", "ki_pct", "denomination",
+    "tenor_months", "ki_freq", "barrier_type", "ki_pct", "denomination", "strike_date",
 )  # fmt: skip
 _COLUMN_FIELDS = {
     "product": "Product",
@@ -114,7 +118,8 @@ _COLUMN_FIELDS = {
     "tenor_months": "Tenor (m)",
     "barrier_type": "Barrier Type",
     "ki_pct": "KI Barrier (%)",
-    "trade_date": "Trade date",
+    "trade_date": TRADE_FIELD,
+    "strike_date": STRIKE_FIELD,
     "issue_date": "Issue date",
     "final_valuation_date": "Final valuation date",
     "maturity_date": "Maturity date",
@@ -139,23 +144,31 @@ class ImportConfig:
     denominations: Mapping[str, Decimal]  # 幣別 → 單位面額預設值
     issuer_names: Mapping[str, str]  # 上手代號 → 發行機構的寫法（同清單更新）
     issuer_prefixes: Mapping[str, str]  # TDCC 前三碼 → 上手代號（上手編號對照）
+    calendar: TradingCalendar  # 交易所假日表（明日開盤價的 Strike date，#101）
 
 
 def load_import_config(paths: ConfigPaths) -> ImportConfig:
-    """從審查標準、參考條件表格式與上手編號對照設定檔讀面額預設值、發行機構寫法與上手編號。"""
-    from fcn_checker.config import load_issuer_prefixes, load_reference_format, load_review_standard
+    """從審查標準、參考條件表格式、上手編號對照與交易所假日表設定檔讀面額預設值、發行機構寫法、上手編號與假日。"""
+    from fcn_checker.config import (
+        load_exchange_holidays,
+        load_issuer_prefixes,
+        load_reference_format,
+        load_review_standard,
+    )
     from fcn_checker.ingestion import IngestionError
 
     try:
         review = load_review_standard(paths.review_standard)
         reference = load_reference_format(paths.reference_format)
         prefixes = load_issuer_prefixes(paths.issuer_prefixes)
+        calendar = load_exchange_holidays(paths.exchange_holidays)
     except IngestionError as exc:
         raise OrderImportError(str(exc)) from exc
     return ImportConfig(
         {currency: Decimal(amount) for currency, amount in review.denomination.items()},
         dict(reference.issuer_values),
         prefixes,
+        calendar,
     )
 
 
@@ -321,6 +334,9 @@ def _value_problems(values: Mapping[str, object], draft: OrderDraft, config: Imp
     for name in ("Guaranteed Periods (m)", "Tenor (m)"):
         if name not in problems and values[name] < 1:
             problems[name] = "至少 1"
+    trade, strike = values.get(TRADE_FIELD), values.get(STRIKE_FIELD)
+    if TRADE_FIELD not in problems and STRIKE_FIELD not in problems and strike < trade:
+        problems[STRIKE_FIELD] = "不能早於 Trade date"
     filled = [values.get(name) is not None for name in _UNDERLYINGS]
     if any(later and not earlier for earlier, later in zip(filled, filled[1:], strict=False)):
         gap = _UNDERLYINGS[filled.index(False)]
@@ -489,7 +505,8 @@ def _product_columns(values: Mapping[str, Any], issuer: str, config: ImportConfi
         "product": FCN,
         "issuer": config.issuer_names[issuer],
         "currency": values["Currency"],
-        "trade_date": values["Trade date"],
+        "trade_date": values[TRADE_FIELD],
+        "strike_date": values[STRIKE_FIELD],
         "issue_date": values.get("Issue date"),
         "final_valuation_date": values["Final valuation date"],
         "maturity_date": values["Maturity date"],

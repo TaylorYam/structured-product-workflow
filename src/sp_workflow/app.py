@@ -1114,7 +1114,7 @@ class OrderTermsTab(_Tab):
 
         def run() -> _ReadResult:
             config = load_import_config(config_paths)
-            rows = collect_orders(text, sheet, config.issuer_prefixes)
+            rows = collect_orders(text, sheet, config.issuer_prefixes, config.calendar)
             if settings is None:
                 return _ReadResult(rows, drafts_from(rows), config, "沒有登入資料庫，沒有帶入資料庫的值")
             try:

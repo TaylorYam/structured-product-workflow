@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from order_synth import HEADERS, PREFIXES, VALUES, A, B, sheet_line, write_sheet
+from order_synth import CONFIG, HEADERS, PREFIXES, VALUES, A, B, sheet_line, write_sheet
 from sp_workflow.order_terms import (
     FIELDS,
     NOT_FOUND,
@@ -24,7 +24,7 @@ from sp_workflow.order_terms import (
 
 
 def read(path: Path, text: str):
-    return collect_orders(text, path, PREFIXES)
+    return collect_orders(text, path, PREFIXES, CONFIG.calendar)
 
 
 def test_reads_the_pasted_tdccs_in_order_with_typed_values(tmp_path: Path) -> None:
@@ -50,6 +50,60 @@ def test_the_old_upfront_header_and_any_column_order_are_accepted(tmp_path: Path
     (row,) = read(path, A)
 
     assert row.status == READ and row.values["Upfront / NotePrice (%)"] == Decimal("98.5")
+
+
+JAPAN = {"BBG Code 1": "1111 JT", "BBG Code 2": "2222 JT", "Currency": "JPY"}
+
+
+@pytest.mark.parametrize(
+    ("trade", "strike"),
+    [
+        (dt.date(2026, 10, 13), dt.date(2026, 10, 14)),  # 週二 → 週三
+        (dt.date(2026, 10, 16), dt.date(2026, 10, 19)),  # 週五 → 週一
+        (dt.date(2026, 11, 2), dt.date(2026, 11, 4)),  # 11/3 文化の日休市
+    ],
+)
+def test_next_day_open_becomes_open_with_the_next_business_day(tmp_path: Path, trade, strike) -> None:
+    line = sheet_line(A, {**JAPAN, "Trade date": trade, "期初價格": "明日開盤價"})
+    path = write_sheet(tmp_path / "s.xlsx", [line])
+
+    (row,) = read(path, A)
+
+    assert (row.status, row.notes) == (READ, {})
+    assert (row.values["期初價格"], row.values["Trade date"], row.values["Strike date"]) == ("開盤價", trade, strike)
+
+
+def test_strike_date_equals_trade_date_otherwise(tmp_path: Path) -> None:
+    path = write_sheet(tmp_path / "s.xlsx", [sheet_line(A, {**JAPAN, "期初價格": "開盤價"})])
+
+    (row,) = read(path, A)
+
+    assert row.values["Strike date"] == row.values["Trade date"] == dt.date(2026, 10, 15)
+
+
+def test_next_day_open_without_a_known_market_leaves_the_strike_date_blank(tmp_path: Path) -> None:
+    lines = [
+        sheet_line(A, {"BBG Code 1": "700 HK", "BBG Code 2": None, "期初價格": "明日開盤價"}),
+        sheet_line(B, {**JAPAN, "Trade date": None, "期初價格": "明日開盤價"}),
+    ]
+    path = write_sheet(tmp_path / "s.xlsx", lines)
+
+    hk, blank = read(path, f"{A} {B}")
+
+    assert hk.values["Strike date"] is None and hk.status == PENDING
+    assert hk.notes["Strike date"] == "期初價格是明日開盤價，標的 700 HK 的交易所不在交易所假日表；請填下一個營業日"
+    assert blank.notes["Strike date"] == "期初價格是明日開盤價，Trade date 空白，算不出來"
+
+
+def test_next_day_open_and_open_on_duplicate_lines_differ(tmp_path: Path) -> None:
+    lines = [sheet_line(A, {**JAPAN, "期初價格": "明日開盤價"}), sheet_line(A, {**JAPAN, "期初價格": "開盤價"})]
+    path = write_sheet(tmp_path / "s.xlsx", lines)
+
+    (row,) = read(path, A)
+
+    assert row.conflicts == {"期初價格", "Strike date"}
+    assert row.values["Strike date"] is None
+    assert row.notes["Strike date"] == "Trade date 或期初價格好幾列不同，算不出來；請填正確的值"
 
 
 def test_choices_ignore_case_and_unknown_values_are_left_blank(tmp_path: Path) -> None:
