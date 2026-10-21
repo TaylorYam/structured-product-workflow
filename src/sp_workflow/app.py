@@ -62,6 +62,7 @@ from fcn_checker.panel import (
 )
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.trading_calendar import TradingCalendar
+from sp_workflow.check_source import EXPORT_FOLDER, WorkflowDatabase
 from sp_workflow.check_terms import (
     DONE,
     STATUSES,
@@ -668,7 +669,11 @@ class _DatabaseLogin:
 
     def after_run(self, result: object) -> None:
         if isinstance(result, DatabaseError):
-            self.password = None  # 可能是密碼錯，下次重新詢問
+            self.forget_password()
+
+    def forget_password(self) -> None:
+        """連不上資料庫：可能是密碼錯，下次重新詢問。"""
+        self.password = None
 
 
 class MailDraftTab(_Tab):
@@ -1555,6 +1560,12 @@ class PanelWindow:
         body.pack(fill=tk.BOTH, expand=True)
         self.notebook = ttk.Notebook(body, style="Workflow.TNotebook")
         db = _DatabaseLogin(master, env_path or default_env_path())
+        if self.session.database is None:  # 核對分頁可以改從資料庫讀條件（#68）
+            self.session.database = WorkflowDatabase(
+                db.settings,
+                self.session.install_root / "runtime" / EXPORT_FOLDER,
+                on_failure=db.forget_password,
+            )
         # 分頁照每天的作業順序建立，前面自動加上 1～6 的編號
         self.daily = DailyImportTab(
             self.notebook,

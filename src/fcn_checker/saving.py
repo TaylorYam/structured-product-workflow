@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeVar
@@ -148,10 +148,13 @@ def run_batch(
     *,
     root: Path,
     now: dt.datetime | None = None,
+    absent: Mapping[str, str] | None = None,
 ) -> tuple[BatchOutcome, SaveReceipt]:
-    """預覽、核對後立即儲存（CLI 使用）。參考條件表本身有問題、或讀取期間來源被改過時回傳整批錯誤、不核對任何說明書。"""
+    """預覽、核對後立即儲存（CLI 使用）。參考條件表本身有問題、或讀取期間來源被改過時回傳整批錯誤、不核對任何說明書。
+
+    `absent` 同 `preview_batch`（資料庫來源，#68）。"""
     try:
-        outcome = check_batch(preview_batch(config, reference_sheet, term_sheets))
+        outcome = check_batch(preview_batch(config, reference_sheet, term_sheets, absent=absent))
     except IngestionError as e:
         if e.reason_code == "source_changed":  # CLI 沒有預覽可重新載入
             e = IngestionError(e.reason_code, "參考條件表、說明書或設定檔在核對期間已變更或無法讀取，請重新核對")

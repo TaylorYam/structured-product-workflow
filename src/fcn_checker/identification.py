@@ -264,7 +264,7 @@ def _draft(pdf: Path, sheet: ReferenceSheet, config: CheckConfig) -> _Draft:
     rows = sheet.find(pc.value)
     if not rows:
         problem = PairingProblem.ROW_MISSING
-        msg = f"參考條件表找不到 TDCC Code {pc.value} 的列"
+        msg = sheet.absent.get(pc.value) or f"參考條件表找不到 TDCC Code {pc.value} 的列"
         return out.stop(problem, _review("batch.pairing", "product_code", _PRODUCT_CODE_ITEM, problem, msg))
     if len(rows) > 1:
         problem = PairingProblem.ROW_DUPLICATE

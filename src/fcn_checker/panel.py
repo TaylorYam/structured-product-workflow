@@ -145,6 +145,7 @@ def apply_style(root: tk.Tk) -> Callable[[float], int]:
     style.configure("Step.TLabel", foreground=TEXT_SECONDARY, font=(FONT, 10))
     style.configure("Title.TLabel", foreground=NAVY, font=(FONT, 18, "bold"))
     style.configure("Card.TLabel", background=SURFACE)
+    style.configure("Card.TRadiobutton", background=SURFACE)
     style.configure("CardMuted.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=(FONT, 10))
     style.configure("KpiCaption.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=(FONT, 10))
     style.configure("KpiValue.TLabel", background=SURFACE, foreground=NAVY, font=(NUMBER_FONT, 18, "bold"))
@@ -598,12 +599,17 @@ class ApprovalDatesDialog(tk.Toplevel):
         self._run(self.session.remove_latest_approval_date, f"確定刪除最新一筆審查通過日期 {self.dates[-1]}？")
 
 
+EXCEL_SOURCE, DATABASE_SOURCE = "excel", "database"  # 核對分頁的條件來源（#68）
+
+
 class CheckTab(ttk.Frame):
     """「核對」分頁：選參考條件表與 PDF、預覽、核對、人工放行與儲存（#74 前是獨立的核對視窗）。
 
     視窗本身（標題、大小、關閉）由 `sp_workflow.app` 建立；審查通過日期、匯出回報包與使用的設定檔
     在視窗的「維護」選單，選單呼叫 edit_approval_dates、export_bundle、show_config_paths。
     上一步帶入的 PDF 用 receive_pdfs；存檔成功時呼叫 on_saved(核對結果檔)，下一步按鈕由 add_next_step 加上（#76）。
+    工作階段有資料庫來源時（#68），卡片最上面多一列「條件來源」：Excel 參考條件表或資料庫；資料庫來源存檔後寫回資料庫，
+    寫回失敗時出現「重新寫回資料庫」。
     """
 
     def __init__(
@@ -624,6 +630,7 @@ class CheckTab(ttk.Frame):
         self.save_pending: Future[SaveReceipt] | None = None
         self.export_pending: Future[str] | None = None
         self.release_pending: Future[IngestionError | None] | None = None
+        self.write_back_pending: Future[str] | None = None
         self.has_result = False
         self.validation: Future[bool] | None = None  # 背景只計算來源快照是否仍一致，不改工作階段
         self.checking_for: SourceSnapshot | None = None
@@ -650,9 +657,29 @@ class CheckTab(ttk.Frame):
         self.sheet_text = tk.StringVar()
         self.pdf_text = tk.StringVar()
         self.controls: list[ttk.Widget] = []
+        self.source = tk.StringVar(value=EXCEL_SOURCE)
+        first = 0
+        if session.database is not None:  # 條件來源（#68）：預設 Excel，行為和以前一樣
+            first = 1
+            ttk.Label(card, text="條件來源", style="Card.TLabel").grid(
+                row=0, column=0, sticky="w", padx=(0, 16), pady=5
+            )
+            choices = ttk.Frame(card, style="CardBody.TFrame")
+            choices.grid(row=0, column=1, columnspan=2, sticky="w", pady=5)
+            for text, value in (("Excel 參考條件表", EXCEL_SOURCE), ("資料庫（依 PDF 的 TDCC）", DATABASE_SOURCE)):
+                radio = ttk.Radiobutton(
+                    choices,
+                    text=text,
+                    value=value,
+                    variable=self.source,
+                    command=self._source_changed,
+                    style="Card.TRadiobutton",
+                )
+                radio.pack(side="left", padx=(0, 18))
+                self.controls.append(radio)
         for row, label, variable, kind in (
-            (0, "參考條件表", self.sheet_text, "sheet"),
-            (1, "說明書／投資人須知 PDF", self.pdf_text, "pdf"),
+            (first, "參考條件表", self.sheet_text, "sheet"),
+            (first + 1, "說明書／投資人須知 PDF", self.pdf_text, "pdf"),
         ):
             ttk.Label(card, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 16), pady=5)
             ttk.Entry(card, textvariable=variable, state="readonly").grid(
@@ -661,8 +688,10 @@ class CheckTab(ttk.Frame):
             button = ttk.Button(card, text="選取檔案…", command=lambda k=kind: self.choose_files(k))
             button.grid(row=row, column=2, pady=5)
             self.controls.append(button)
+            if kind == "sheet":
+                self.sheet_button = button
         bottom = ttk.Frame(card, style="CardBody.TFrame")  # 左邊按鈕、右邊核對完的重點數字
-        bottom.grid(row=2, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        bottom.grid(row=first + 2, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         bottom.columnconfigure(1, weight=1)
         self.actions = ttk.Frame(bottom, style="CardBody.TFrame")
         self.actions.grid(row=0, column=0, sticky="sw")
@@ -674,6 +703,7 @@ class CheckTab(ttk.Frame):
         self.check_button.pack(side="left")
         self.save_button = ttk.Button(self.actions, text="儲存核對結果…", command=self.save, state="disabled")
         self.save_button.pack(side="left", padx=(12, 0))
+        self.write_back_button = ttk.Button(self.actions, text="重新寫回資料庫", command=self.retry_write_back)
         self.controls += [self.reload]
         self.kpis = KpiRow(bottom)
         self.kpis.grid(row=0, column=2, sticky="e")
@@ -719,7 +749,14 @@ class CheckTab(ttk.Frame):
             self.status_label.configure(wraplength=max(300, event.width - 60))
 
     def _busy_any(self) -> bool:
-        pending = (self.pending, self.check_pending, self.save_pending, self.release_pending, self.export_pending)
+        pending = (
+            self.pending,
+            self.check_pending,
+            self.save_pending,
+            self.release_pending,
+            self.export_pending,
+            self.write_back_pending,
+        )
         return any(f is not None for f in pending)
 
     def _clear(self):
@@ -740,6 +777,21 @@ class CheckTab(ttk.Frame):
     def _selection_changed(self):
         self.session.select(self.sheet_path, self.pdf_paths)
         self._clear()
+        self.status.set(self.session.message)
+
+    @property
+    def uses_database(self) -> bool:
+        return self.source.get() == DATABASE_SOURCE
+
+    def _source_changed(self):
+        """條件來源換了：資料庫來源不用選參考條件表（由資料庫產生）；清除預覽與結果。"""
+        self.session.select_source(self.uses_database)
+        self._clear()
+        if self.uses_database:
+            self.sheet_text.set("由資料庫產生（載入預覽時依 PDF 檔名的 TDCC 讀取）")
+        else:
+            self.sheet_text.set(str(self.sheet_path) if self.sheet_path is not None else "")
+        self._busy(False)
         self.status.set(self.session.message)
 
     def choose_files(self, kind):
@@ -817,7 +869,14 @@ class CheckTab(ttk.Frame):
         self.save_button.configure(state="disabled" if busy or not self.has_result else "normal")
         for control in self.controls:
             control.configure(state="disabled" if busy else "normal")
+        if self.uses_database:
+            self.sheet_button.configure(state="disabled")  # 資料庫來源不選參考條件表
         self.check_button.configure(state="disabled" if busy or self.shown is None else "normal")
+        if self.session.write_back_error:
+            self.write_back_button.pack(side="left", padx=(12, 0))
+            self.write_back_button.configure(state="disabled" if busy else "normal")
+        else:
+            self.write_back_button.pack_forget()
         self._refresh_next()
 
     def _after(self, name: str, finish: Callable[[object], None], failure: str) -> None:
@@ -838,8 +897,15 @@ class CheckTab(ttk.Frame):
             self.status.set(f"{failure}：{e}")
         self._busy(False)
 
+    def _database_ready(self) -> bool:
+        """資料庫來源：在主執行緒先登入（需要時問密碼）；取消時不開始。"""
+        if not self.uses_database or self.session.database is None or self.session.database.ready():
+            return True
+        self.status.set("沒有登入資料庫，沒有開始。")
+        return False
+
     def load(self):
-        if self._busy_any():
+        if self._busy_any() or not self._database_ready():
             return
         self._clear()
         self._busy(True)
@@ -928,7 +994,7 @@ class CheckTab(ttk.Frame):
         self.status.set(self.session.message)
 
     def save(self):
-        if not self.has_result or self._busy_any():
+        if not self.has_result or self._busy_any() or not self._database_ready():
             return
         self._busy(True)
         destination = filedialog.askdirectory(parent=self.root, title="選取核對結果檔的保存資料夾")
@@ -943,9 +1009,26 @@ class CheckTab(ttk.Frame):
     def _show_receipt(self, receipt: SaveReceipt):
         if self.session.outcome is None:
             self._clear()
-        self.status.set(receipt.summary)
+        written = self.session.use_database and receipt.output is not None  # 資料庫來源：另寫寫回的結果
+        self.status.set(receipt.summary + (f"\n{self.session.message}" if written else ""))
         if receipt.output is not None and self.on_saved is not None:
             self.on_saved(receipt.output)
+
+    def retry_write_back(self):
+        """寫回資料庫失敗、排除後再寫一次（核對結果檔不重寫）。"""
+        if self._busy_any() or not self.session.write_back_error or not self._database_ready():
+            return
+        self._busy(True)
+        self.status.set("寫回資料庫中…")
+
+        def run() -> str:
+            try:
+                return self.session.retry_write_back()
+            except IngestionError as e:
+                return str(e)
+
+        self.write_back_pending = self.executor.submit(run)
+        self.root.after(80, lambda: self._after("write_back_pending", self.status.set, "寫回資料庫失敗"))
 
     @property
     def working(self) -> bool:

@@ -1,5 +1,8 @@
 """PANEL 公開工作流程：參考條件表＋多份說明書與投資人須知的唯讀預覽、核對、失效檢查、手動儲存與匯出回報包。
 
+條件來源可以是 Excel 參考條件表，或資料庫（#68）：資料庫來源由 `DatabaseSource`（sp_workflow 提供）依 PDF 檔名的
+TDCC 產生一份同格式的參考條件表，之後的配對、核對、放行與儲存完全相同；儲存後再由它把回填值寫回資料庫。
+
 核對、儲存與匯出回報包都呼叫批量入口與其輸出模組，PANEL 不另做規則；按「儲存」或「匯出回報包」之前不寫任何檔案。
 PANEL 操作員讀到的預覽列、結果清單列、結果明細、回填決策與放行說明文字都由 PanelOutcome 組好，Tk 視窗只負責顯示。
 每次載入預覽時載入一次核對設定；核對沿用預覽的辨識與讀出，同一份說明書只讀一次。
@@ -8,10 +11,10 @@ PANEL 操作員讀到的預覽列、結果清單列、結果明細、回填決�
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Protocol
 
 from . import approval_dates as approvals
 from . import report_bundle
@@ -26,7 +29,7 @@ from .batch import (
     preview_batch,
 )
 from .check_config import CONFIG_DIR, DEFAULTS, ConfigPaths
-from .config import load_review_standard
+from .config import ReferenceFormat, load_review_standard
 from .ingestion import IngestionError, SourceSnapshot
 from .issuers import REGISTRY, Issuer
 from .messages import STATUS_ZH, problem_message
@@ -278,6 +281,22 @@ class ReleasePlan(NamedTuple):
     skipped: tuple[tuple[BatchItem, str], ...]
 
 
+class DatabaseSource(Protocol):
+    """核對的資料庫來源（#68）；實作在 sp_workflow（核對程式不直接連資料庫）。"""
+
+    def ready(self) -> bool:
+        """在主執行緒呼叫：需要時詢問資料庫密碼；取消或沒有連線設定時 False。"""
+        ...
+
+    def export(self, term_sheets: Sequence[Path], fmt: ReferenceFormat) -> tuple[Path, Mapping[str, str]]:
+        """依 PDF 檔名的 TDCC 從資料庫產生參考條件表，回傳 (檔案, {沒有列的 TDCC: 原因})。"""
+        ...
+
+    def write_back(self, batch: BatchOutcome, receipt: SaveReceipt) -> str:
+        """核對結果檔存好之後，把回填值與核對結果寫回資料庫；回傳給作業人員看的一句，失敗時丟出例外。"""
+        ...
+
+
 class PanelSession:
     """UI 與測試共用的工作階段；任何來源或設定檔變更都使預覽與結果失效。
 
@@ -293,10 +312,12 @@ class PanelSession:
         builtin_config_dir: Path | None = None,
         registry: Sequence[Issuer] = REGISTRY,
         install_root: Path | None = None,
+        database: DatabaseSource | None = None,
     ):
         """config_dir 有參考條件表格式與上手編號對照就用它的；沒有就用 builtin_config_dir（雙擊入口傳入專案的 config；未指定時為開發環境的 repo config）。
 
         install_root 是根目錄（雙擊入口給的安裝根目錄；沒有時為執行目錄），核對紀錄寫到它的 runtime/核對紀錄。
+        database 是資料庫來源（FCN Workflow 視窗給）；沒有時只能用 Excel 參考條件表。
         """
         self.install_root = Path(install_root or ".").resolve()
         self.paths = ConfigPaths.with_fallback(review_standard, config_dir, builtin_config_dir)
@@ -307,6 +328,9 @@ class PanelSession:
         self._preview: BatchPreview | None = None  # 帶著核對設定、讀出結果與來源快照
         self._outcome: PanelOutcome | None = None
         self._receipt: SaveReceipt | None = None  # 目前結果最近一次儲存的收據；放行改變後即不再是目前的結果
+        self.database = database
+        self.use_database = False  # 條件來源：資料庫（True）或 Excel 參考條件表
+        self.write_back_error = ""  # 目前的核對結果檔已存好、但寫回資料庫失敗的原因（可以重新寫回）
 
     @property
     def review_standard(self) -> Path:
@@ -356,8 +380,19 @@ class PanelSession:
         self._clear()
         self.message = "來源已更新，請重新載入預覽。"
 
+    def select_source(self, use_database: bool) -> None:
+        """條件來源改成資料庫或 Excel；清除預覽與結果。"""
+        if use_database and self.database is None:
+            raise IngestionError("database_unavailable", "這個視窗沒有資料庫連線，只能用 Excel 參考條件表。")
+        self.use_database = use_database
+        self._clear()
+        self.message = (
+            "條件來源已改為資料庫，請重新載入預覽。" if use_database else "條件來源已改為 Excel，請重新載入預覽。"
+        )
+
     def _clear(self) -> None:
         self._preview, self._outcome, self._receipt = None, None, None
+        self.write_back_error = ""
 
     @property
     def preview(self) -> BatchPreview | None:
@@ -407,10 +442,18 @@ class PanelSession:
     def load_preview(self) -> BatchPreview:
         self._clear()
         try:
-            if self.reference_sheet is None or not self.term_sheets:
+            if self.use_database:
+                if not self.term_sheets:
+                    raise IngestionError("selection_missing", "請先選取至少一份說明書 PDF。")
+            elif self.reference_sheet is None or not self.term_sheets:
                 raise IngestionError("selection_missing", "請先選取參考條件表與至少一份說明書 PDF。")
             config = self.paths.load(self.registry)  # 設定檔有問題時在這裡回報
-            preview = preview_batch(config, self.reference_sheet, self.term_sheets)
+            if self.use_database:
+                assert self.database is not None
+                reference, absent = self.database.export(self.term_sheets, config.reference_format)
+                preview = preview_batch(config, reference, self.term_sheets, absent=absent)
+            else:
+                preview = preview_batch(config, self.reference_sheet, self.term_sheets)
             if not preview.snapshot.still_valid():
                 raise IngestionError("source_changed", "讀取期間來源已變更，請重新載入預覽。")
         except OSError as e:
@@ -490,6 +533,7 @@ class PanelSession:
     def _after_release_change(self, outcome: PanelOutcome) -> None:
         was_saved = self._receipt is not None and self._receipt.output is not None
         self._receipt = None  # 上一次儲存的核對結果檔不再是目前的結果
+        self.write_back_error = ""  # 再儲存一次時會重新寫回
         stale = "上一次儲存的核對結果檔已不是目前的結果，請再儲存一次。" if was_saved else ""
         self.message = stale + outcome.headline
 
@@ -505,7 +549,27 @@ class PanelSession:
             self.invalidate(outcome.batch.snapshot)
             raise IngestionError("source_changed", _SOURCES_CHANGED)
         self._receipt = receipt
+        if self.use_database and receipt.output is not None:
+            self._write_back(outcome, receipt)
         return receipt
+
+    def retry_write_back(self) -> str:
+        """寫回資料庫失敗、排除後再寫一次（核對結果檔不重寫）；回傳要顯示的訊息。"""
+        outcome, receipt = self.outcome, self.receipt
+        if not self.write_back_error or outcome is None or receipt is None or receipt.output is None:
+            raise IngestionError("write_back_not_needed", "目前沒有要重新寫回資料庫的核對結果。")
+        self._write_back(outcome, receipt)
+        return self.message
+
+    def _write_back(self, outcome: PanelOutcome, receipt: SaveReceipt) -> None:
+        """寫回資料庫（#68）：失敗時核對結果檔照樣保留，記下原因、可以重新寫回。"""
+        assert self.database is not None
+        try:
+            self.message = self.database.write_back(outcome.batch, receipt)
+            self.write_back_error = ""
+        except Exception as e:  # 連線中斷等：不影響已經寫好的核對結果檔
+            self.write_back_error = str(e).splitlines()[0] if str(e) else type(e).__name__
+            self.message = f"寫回資料庫失敗：{self.write_back_error}。核對結果檔已存好；排除後按「重新寫回資料庫」。"
 
     @property
     def can_export_bundle(self) -> bool:

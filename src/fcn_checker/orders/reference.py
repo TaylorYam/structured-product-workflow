@@ -161,6 +161,8 @@ class OrderRecord:
 class ReferenceSheet:
     sheet: str  # 讀的工作表名稱（第一張工作表）
     rows: list[OrderRecord]
+    # 表上沒有這個商品代號的原因（資料庫來源：資料庫沒有這檔、核對條件還沒完成，#68）；沒有原因時照一般的「找不到」
+    absent: Mapping[str, str] = field(default_factory=dict)
 
     def find(self, product_code: str) -> list[OrderRecord]:
         return [r for r in self.rows if r.product_code.value == product_code]
