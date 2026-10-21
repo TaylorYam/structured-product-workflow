@@ -15,9 +15,11 @@ from fcn_checker.panel import parse_args
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.saving import SaveReceipt
 from sp_workflow import app
+from sp_workflow.daily_import import NEW_PRODUCT, ImportLine, ImportReceipt
 from sp_workflow.documents import DocKind
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.preparation import PREPARED, SKIPPED, PreparedDocument, PrepareReceipt, ProductOutcome
+from sp_workflow.returning import NOT_RETURNED, RETURNED, ReturnOutcome, ReturnReceipt
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -530,3 +532,53 @@ def test_check_key_figures_hide_when_results_are_cleared(master, tmp_path: Path)
 
     assert window.check.kpis.values == ()
     assert window.check.status_label.cget("style") == "TLabel", "沒有存過檔的結果，狀態列不是綠色"
+
+
+# ---------------------------------------------------------------- 範本套到其他四頁（#85）
+
+
+def test_every_page_header_shows_its_step(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    pages = (window.orders, window.daily, window.prepare, window.check, window.returning, window.mail)
+
+    assert [page.header.step.get() for page in pages] == [f"步驟 {n}／6" for n in range(1, 7)]
+
+
+@pytest.mark.parametrize("tab_name", ["orders", "mail"])
+def test_order_and_mail_pages_count_pasted_tdccs(master, tmp_path: Path, tab_name) -> None:
+    tab = getattr(new_window(master, tmp_path), tab_name)
+
+    tab.tdcc_text.insert("1.0", "147000000001\n147000000002\n147000000001")
+    master.update()
+
+    assert tab.count_var.get() == "已貼 2 筆"
+
+
+def test_return_page_shows_key_figures_when_done(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    outcomes = (
+        ReturnOutcome("147000000001", RETURNED, RETURNED),
+        ReturnOutcome("147000000002", NOT_RETURNED, NOT_RETURNED, "核對結果檔沒有這個商品"),
+    )
+
+    window.returning._done(ReturnReceipt(tmp_path / "放回清單.xlsx", outcomes))
+
+    assert window.returning.kpis.values == (
+        ("已放回或已在（檔）", 1, False),
+        ("含待確認（檔）", 0, False),
+        ("不放回（檔）", 1, True),
+    )
+    assert window.returning.status_label.cget("style") == "Done.TLabel"
+
+
+def test_daily_import_page_shows_key_figures_and_restarts_clean(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    receipt = ImportReceipt(
+        7, (ImportLine("147000000001", NEW_PRODUCT), ImportLine("", "格式錯誤")), 3, 0, 0, 0, tmp_path
+    )
+
+    window.daily._done(receipt)
+    assert window.daily.kpis.values == (("正常（項）", 1, False), ("要注意（項）", 1, True))
+
+    window.daily.restart()
+    assert window.daily.kpis.values == () and window.daily.status_label.cget("style") == "Card.TLabel"
