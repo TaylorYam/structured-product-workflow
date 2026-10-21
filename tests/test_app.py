@@ -15,7 +15,7 @@ import fcn_checker.panel
 from fcn_checker.panel import parse_args
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.saving import SaveReceipt
-from order_synth import CONFIG, order_row
+from order_synth import CONFIG, missing_row, order_row
 from sp_workflow import app
 from sp_workflow.daily_import import NEW_TRADES, PRICE_CONFLICT, ImportLine, ImportReceipt, PriceSummary
 from sp_workflow.documents import DocKind
@@ -24,7 +24,6 @@ from sp_workflow.mail_drafts import DRAFTED, NOT_NEEDED, DraftOutcome, DraftRece
 from sp_workflow.order_import import NEW as ORDER_NEW
 from sp_workflow.order_import import SKIPPED as ORDER_SKIPPED
 from sp_workflow.order_import import OrderImportLine, OrderImportReceipt, drafts_from
-from sp_workflow.order_terms import NO_ORDER as ORDER_NOT_FOUND
 from sp_workflow.order_terms import PENDING as ORDER_PENDING
 from sp_workflow.order_terms import OrderRow
 from sp_workflow.preparation import PREPARED, SKIPPED, PreparedDocument, PrepareReceipt, ProductOutcome
@@ -70,7 +69,7 @@ def test_tabs_follow_the_daily_order(master, tmp_path: Path) -> None:
     window = app.PanelWindow(master, FolderMemory.under(tmp_path), session=PanelSession(install_root=tmp_path))
 
     assert master.title() == "FCN Workflow"
-    assert tab_titles(window) == ["1 每日匯入", "2 Order 條件", "3 準備", "4 核對", "5 放回", "6 寄信草稿"]
+    assert tab_titles(window) == ["1 每日匯入", "2 起單資料", "3 準備", "4 核對", "5 放回", "6 寄信草稿"]
     assert window.notebook.select() == str(window.daily.frame)
 
 
@@ -261,26 +260,60 @@ def test_mail_draft_tab_reuses_the_root_and_remembers_its_output(master, tmp_pat
     assert window.mail.root_folder is window.root_folder and window.mail.out_var.get() == "D:/寄信"
 
 
-def test_order_terms_tab_reuses_the_root_and_remembers_its_output(master, tmp_path: Path) -> None:
+def test_order_terms_tab_remembers_its_sheet(master, tmp_path: Path) -> None:
     memory = FolderMemory.under(tmp_path)
-    memory.remember(root="R:/FCN", order_out="D:/Order")
+    memory.remember(root="R:/FCN", order_sheet="D:/ELN/起單建檔_20261015.xlsm")
 
     window = app.PanelWindow(master, memory, tmp_path / ".env")
 
-    assert window.orders.root_folder is window.root_folder and window.orders.out_var.get() == "D:/Order"
-    assert str(window.orders.open_button.cget("state")) == "disabled"
-    assert str(window.orders.export_button.cget("state")) == "disabled"  # 讀取完、有問題才可按
+    assert window.orders.sheet_var.get() == "D:/ELN/起單建檔_20261015.xlsm"
+    assert not hasattr(window.orders, "root_folder"), "起單資料頁不用根目錄（#97）"
+    assert texts(window.orders.buttons, ttk.Button) == ["讀取", "匯入資料庫"]
+    assert str(window.orders.import_button.cget("state")) == "disabled"
+
+
+def test_choosing_a_sheet_opens_the_last_folder_or_the_daily_sheet_folder(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    opened = []
+    monkeypatch.setattr(app.filedialog, "askopenfilename", lambda **kwargs: opened.append(kwargs["initialdir"]) or "")
+    monkeypatch.setattr(app, "ORDER_SHEET_DIR", tmp_path)
+
+    window.orders._ask_sheet()
+    (tmp_path / "202609").mkdir()
+    window.orders.sheet_var.set(str(tmp_path / "202609" / "起單建檔_20260930.xlsm"))
+    window.orders._ask_sheet()
+
+    assert opened == [str(tmp_path), str(tmp_path / "202609")]
+    assert "order_sheet" not in window.orders.memory.load(), "按取消不記"
+
+    chosen = str(tmp_path / "202609" / "起單建檔_20260929.xlsm")
+    monkeypatch.setattr(app.filedialog, "askopenfilename", lambda **kwargs: chosen)
+    window.orders._ask_sheet()
+
+    assert window.orders.memory.load()["order_sheet"] == chosen, "選了就記，不用等按讀取"
+
+
+def test_reading_without_a_sheet_asks_to_choose_it_first(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    window.orders.tdcc_text.insert("1.0", "029199990001")
+    errors = []
+    monkeypatch.setattr(app.messagebox, "showerror", lambda title, message, **kwargs: errors.append(message))
+    monkeypatch.setattr(window.orders, "run_in_background", lambda *args, **kwargs: pytest.fail("不該開始執行"))
+
+    window.orders.start()
+
+    assert errors == ["請先選擇起單建檔。"]
 
 
 # ---------------------------------------------------------------- 共用根目錄（#75）
 
 
-def test_root_is_set_once_at_the_top_for_three_tabs(master, tmp_path: Path, monkeypatch) -> None:
+def test_root_is_set_once_at_the_top_for_two_tabs(master, tmp_path: Path, monkeypatch) -> None:
     memory = FolderMemory.under(tmp_path)
     window = app.PanelWindow(master, memory, session=PanelSession(install_root=tmp_path))
-    tabs = (window.orders, window.prepare, window.mail)
+    tabs = (window.prepare, window.mail)
     assert all(tab.root_folder is window.root_folder for tab in tabs)
-    assert not any("根目錄" in texts(tab.frame, ttk.Label) for tab in tabs), "三頁不再各有根目錄欄位"
+    assert not any("根目錄" in texts(tab.frame, ttk.Label) for tab in tabs), "兩頁不再各有根目錄欄位"
     monkeypatch.setattr(app.filedialog, "askdirectory", lambda **kwargs: "R:/FCN")
 
     window.root_folder.change()
@@ -300,7 +333,7 @@ def test_root_remembered_before_the_upgrade_is_kept(master, tmp_path: Path) -> N
     assert window.root_folder.var.get() == "R:/FCN"
 
 
-@pytest.mark.parametrize("tab_name", ["orders", "prepare", "mail"])
+@pytest.mark.parametrize("tab_name", ["prepare", "mail"])
 def test_starting_without_a_root_asks_to_set_it_first(master, tmp_path: Path, monkeypatch, tab_name) -> None:
     window = app.PanelWindow(master, FolderMemory.under(tmp_path), session=PanelSession(install_root=tmp_path))
     tab = getattr(window, tab_name)
@@ -320,17 +353,20 @@ def test_each_tab_still_remembers_its_own_output(master, tmp_path: Path, monkeyp
     window = app.PanelWindow(master, memory, session=PanelSession(install_root=tmp_path))
     monkeypatch.setattr(window.mail.db, "settings", lambda **kwargs: object())  # 寄信草稿先登入資料庫，這裡不連線
     monkeypatch.setattr(app, "mail_template_from_env", lambda env_path: None)
-    for tab, out in ((window.orders, "D:/Order"), (window.prepare, "D:/out"), (window.mail, "D:/寄信")):
+    for tab, out in ((window.prepare, "D:/out"), (window.mail, "D:/寄信")):
         monkeypatch.setattr(tab, "run_in_background", lambda *args, **kwargs: None)
         tab.out_var.set(out)
         tab.start()
+    monkeypatch.setattr(window.orders, "run_in_background", lambda *args, **kwargs: None)
+    window.orders.sheet_var.set("D:/ELN/起單建檔_20261015.xlsm")
+    window.orders.start()
 
     assert memory.load() == {
         "root": "R:/FCN",
-        "order_out": str(Path("D:/Order")),
+        "order_sheet": str(Path("D:/ELN/起單建檔_20261015.xlsm")),
         "out": str(Path("D:/out")),
         "mail_out": str(Path("D:/寄信")),
-    }, "按開始只記各頁的輸出位置，根目錄不變"
+    }, "按開始只記各頁的輸出位置與起單建檔，根目錄不變"
 
 
 # ---------------------------------------------------------------- 步驟銜接（#76）
@@ -598,7 +634,7 @@ def test_daily_import_page_shows_key_figures_and_restarts_clean(master, tmp_path
 
 def test_order_and_mail_pages_show_key_figures_when_done(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
-    rows = (order_row("029199990001"), OrderRow("147000000002", ORDER_NOT_FOUND, "MS", ("找不到商品資料夾",)))
+    rows = (order_row("029199990001"), missing_row("147000000002"))
     outcomes = (DraftOutcome("147000000001", DRAFTED), DraftOutcome("147000000002", NOT_NEEDED))
 
     window.orders._done(read_result(*rows))
@@ -607,17 +643,6 @@ def test_order_and_mail_pages_show_key_figures_when_done(master, tmp_path: Path)
     assert window.orders.kpis.values == (("可匯入（檔）", 1, False), ("要處理（檔）", 1, True))
     assert window.mail.kpis.values == (("已建草稿（檔）", 1, False), ("沒有建立（檔）", 1, False)), "不需寄送不算問題"
     assert window.orders.status_label.cget("style") == window.mail.status_label.cget("style") == "Done.TLabel"
-
-
-def test_exporting_problem_mails_leaves_the_green_bar_until_it_succeeds(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
-    window.orders._done(read_result(OrderRow("147000000002", ORDER_PENDING)))
-    window.orders.out_var.set(str(tmp_path))
-    monkeypatch.setattr(window.orders, "run_in_background", lambda *args, **kwargs: None)
-
-    window.orders.export_problems()
-
-    assert window.orders.status_label.cget("style") == "Card.TLabel", "匯出中、匯出失敗時不是綠色"
 
 
 def test_a_new_check_result_clears_the_last_return(master, tmp_path: Path) -> None:
@@ -631,7 +656,7 @@ def test_a_new_check_result_clears_the_last_return(master, tmp_path: Path) -> No
     assert window.returning.kpis.values == () and window.returning.status_label.cget("style") == "Card.TLabel"
 
 
-# ---------------------------------------------------------------- 每日匯入在第 1 頁，帶入 Order 條件（#90）
+# ---------------------------------------------------------------- 每日匯入在第 1 頁，帶入 起單資料（#90）
 
 
 def daily_receipt(
@@ -659,8 +684,8 @@ def test_reimporting_a_price_date_says_how_many_prices_were_replaced(master, tmp
 
 
 def read_result(*rows: OrderRow) -> app._ReadResult:
-    """讀完信的結果（沒有連資料庫）。"""
-    return app._ReadResult(rows, (), Path("R:/FCN"), drafts_from(rows), CONFIG)
+    """讀完起單建檔的結果（沒有連資料庫）。"""
+    return app._ReadResult(rows, drafts_from(rows), CONFIG)
 
 
 def pasted(tab) -> str:
@@ -669,14 +694,14 @@ def pasted(tab) -> str:
 
 def test_daily_import_hands_fcn_tdccs_to_the_order_tab_without_switching(master, tmp_path: Path, monkeypatch) -> None:
     window = new_window(master, tmp_path)
-    monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: pytest.fail("不該自動讀 Order"))
+    monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: pytest.fail("不該自動讀取"))
 
     window.daily._done(daily_receipt(tmp_path, ("147000000002", "147000000001")))
     master.update()  # 帶入時改了 TDCC 欄位，處理完那次 <<Modified>> 提示條仍在
 
     assert pasted(window.orders) == "147000000002\n147000000001" and window.orders.count_var.get() == "已貼 2 筆"
-    assert window.orders.hint.text.get() == "已帶入每日匯入的 FCN TDCC 2 筆，確認後按「讀取 Order」。"
-    assert window.daily.status_var.get().endswith("已把 FCN TDCC 2 筆帶到「2 Order 條件」。")
+    assert window.orders.hint.text.get() == "已帶入每日匯入的 FCN TDCC 2 筆，選好起單建檔後按「讀取」。"
+    assert window.daily.status_var.get().endswith("已把 FCN TDCC 2 筆帶到「2 起單資料」。")
     assert window.notebook.select() == str(window.daily.frame), "不自動切頁"
     assert window.daily.next_button.winfo_manager() == "pack"
 
@@ -688,8 +713,8 @@ def test_daily_import_hands_fcn_tdccs_to_the_order_tab_without_switching(master,
 @pytest.mark.parametrize(
     ("receipt_args", "message"),
     [
-        ((), "這份交易明細沒有 FCN，Order 條件頁沒有帶入。"),
-        (((), 2), "這份交易明細的 FCN 都已取消或 TDCC 不是 12 碼，Order 條件頁沒有帶入。"),
+        ((), "這份交易明細沒有 FCN，起單資料頁沒有帶入。"),
+        (((), 2), "這份交易明細的 FCN 都已取消或 TDCC 不是 12 碼，起單資料頁沒有帶入。"),
     ],
 )
 def test_nothing_is_handed_over_without_fcn_tdccs(master, tmp_path: Path, receipt_args, message) -> None:
@@ -729,7 +754,7 @@ def test_different_tdccs_on_the_order_tab_are_replaced_only_if_the_operator_agre
     assert window.orders.hint.shown is answer
     assert window.daily.next_button.winfo_manager() == ("pack" if answer else ""), "沒帶入就沒有下一步"
     if not answer:
-        assert window.daily.status_var.get().endswith("Order 條件頁沒有帶入（正在處理，或保留原本的 TDCC）。")
+        assert window.daily.status_var.get().endswith("起單資料頁沒有帶入（正在處理，或保留原本的 TDCC）。")
 
 
 def test_the_same_tdccs_are_handed_over_again_without_asking(master, tmp_path: Path, monkeypatch) -> None:
@@ -764,19 +789,19 @@ def test_editing_the_handed_over_tdccs_hides_the_hint(master, tmp_path: Path) ->
     assert not window.orders.hint.shown and window.orders.count_var.get() == "已貼 2 筆"
 
 
-@pytest.mark.parametrize("busy", ["reading", "exporting"])
+@pytest.mark.parametrize("busy", ["reading", "importing"])
 def test_a_busy_order_tab_does_not_take_the_tdccs(master, tmp_path: Path, monkeypatch, busy) -> None:
-    """#93：正在讀 Order 或匯出時不帶入，免得舊的結果蓋在新的 TDCC 底下。"""
+    """#93：正在讀取或匯入時不帶入，免得舊的結果蓋在新的 TDCC 底下。"""
     window = new_window(master, tmp_path)
     monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: None)
-    window.orders.out_var.set(str(tmp_path))
-    window.root_folder.var.set(str(tmp_path))
+    window.orders.sheet_var.set(str(tmp_path / "起單建檔_20261015.xlsm"))
     window.orders.tdcc_text.insert("1.0", "147000000009")
     if busy == "reading":
         window.orders.start()
     else:
-        window.orders._done(read_result(OrderRow("147000000009", ORDER_PENDING)))
-        window.orders.export_problems()
+        window.orders._done(read_result(order_row("147000000009")))
+        monkeypatch.setattr(window.orders.db, "settings", lambda **k: object())
+        window.orders.import_now()
     told = []
     monkeypatch.setattr(app.messagebox, "showinfo", lambda *a, **k: told.append(a[1]))
 
@@ -797,7 +822,7 @@ def test_handing_over_clears_the_last_order_results(master, tmp_path: Path) -> N
     orders = window.orders
     assert orders.table.get_children() == () and orders.kpis.values == ()
     assert orders.status_var.get() == orders.READY_TEXT and orders.status_label.cget("style") == "Card.TLabel"
-    assert str(orders.open_button.cget("state")) == str(orders.export_button.cget("state")) == "disabled"
+    assert str(orders.import_button.cget("state")) == "disabled"
 
 
 def test_the_same_tdccs_in_another_order_are_handed_over_without_asking(master, tmp_path: Path, monkeypatch) -> None:
@@ -826,12 +851,11 @@ def test_starting_another_daily_import_withdraws_the_next_step(master, tmp_path:
     assert window.daily.next_button.winfo_manager() == ""
 
 
-# ---------------------------------------------------------------- Order 條件在視窗裡確認（#86、ADR 0009）
+# ---------------------------------------------------------------- 起單資料在視窗裡確認（#86、#97、ADR 0009、0010）
 
 
 def order_window(master, tmp_path: Path, *rows: OrderRow) -> app.PanelWindow:
     window = new_window(master, tmp_path)
-    window.orders.out_var.set(str(tmp_path))
     window.orders._done(read_result(*rows))
     return window
 
@@ -846,7 +870,7 @@ def type_into(editor, name: str, text: str) -> None:
 
 
 def test_products_needing_work_come_first_and_the_first_one_opens(master, tmp_path: Path) -> None:
-    ready, missing = order_row("029199990001"), order_row("029199990002", 到期日=None)
+    ready, missing = order_row("029199990001"), order_row("029199990002", {"Maturity date": None})
     window = order_window(master, tmp_path, ready, missing)
 
     assert table_rows(window.orders) == [("029199990002", app.BLOCKED), ("029199990001", app.READY)]
@@ -855,15 +879,14 @@ def test_products_needing_work_come_first_and_the_first_one_opens(master, tmp_pa
     assert editor.rows["Maturity date"].note.cget("text").startswith("必填")
     assert editor.rows["Maturity date"].label.cget("background") == app._PROBLEM_BG
     assert str(window.orders.import_button.cget("state")) == "normal"
-    assert str(window.orders.export_list_button.cget("state")) == "normal"
 
 
 def test_filling_a_red_field_makes_the_product_importable(master, tmp_path: Path) -> None:
-    window = order_window(master, tmp_path, order_row("029199990002", 到期日=None))
+    window = order_window(master, tmp_path, order_row("029199990002", {"Maturity date": None}))
 
     type_into(window.orders.editor, "Maturity date", "2027-04-22")
 
-    assert table_rows(window.orders) == [("029199990002", app.TO_CHECK)], "讀信時有提醒：可以匯入，但請確認"
+    assert table_rows(window.orders) == [("029199990002", app.READY)]
     assert window.orders.editor.draft.values["Maturity date"].isoformat() == "2027-04-22"
     assert window.orders.unsaved
 
@@ -875,7 +898,7 @@ def test_a_mistyped_field_stays_red_and_keeps_only_that_product_out(master, tmp_
     monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: started.append(a[1]))
 
     type_into(window.orders.editor, "Trade date", "10/15")
-    window.orders.import_and_export()
+    window.orders.import_now()
 
     draft = window.orders.editor.draft
     assert window.orders.editor.rows["Trade date"].note.cget("text") == "日期要寫成 2026-10-21"
@@ -883,7 +906,7 @@ def test_a_mistyped_field_stays_red_and_keeps_only_that_product_out(master, tmp_
     assert draft.input_errors == {"Trade date": "日期要寫成 2026-10-21"}, "匯入時這一檔會判不匯入"
     assert dict(table_rows(window.orders))["029199990001"] == app.BLOCKED
     assert dict(table_rows(window.orders))["029199990002"] == app.READY
-    assert started == ["匯入資料庫並匯出 Excel 中…"], "其他檔照常匯入"
+    assert started == ["匯入資料庫中…"], "其他檔照常匯入"
     assert str(window.orders.editor.rows["Coupon p.a. (%)"].input.cget("state")) == "disabled", "存檔中不能改"
 
 
@@ -897,18 +920,9 @@ def test_just_browsing_does_not_count_as_unsaved(master, tmp_path: Path) -> None
     assert not window.orders.has_unsaved()
 
 
-def test_exporting_excel_only_still_counts_as_unsaved(master, tmp_path: Path) -> None:
-    window = order_window(master, tmp_path, order_row("029199990002", 到期日=None))
-    type_into(window.orders.editor, "Maturity date", "2027-04-22")
-
-    window.orders._saved(app._SaveResult(None, tmp_path / "Order條件清單_20261021-090000.xlsx"))
-
-    assert window.orders.has_unsaved(), "Excel 改了也不會回到資料庫"
-    assert window.orders.status_var.get().startswith("已匯出 Excel（沒有寫資料庫）")
-
-
 def test_a_field_with_a_reading_problem_stays_red_even_when_it_differs_from_the_database(master, tmp_path) -> None:
-    window = order_window(master, tmp_path, order_row("029199990001", flagged_fields=("年利率(%)",)))
+    notes = {"Coupon p.a. (%)": "讀到「abc」，不是數字"}
+    window = order_window(master, tmp_path, order_row("029199990001", notes=notes))
     draft = window.orders.editor.draft
     draft.stored = {**draft.values, "Coupon p.a. (%)": 12}
 
@@ -916,7 +930,26 @@ def test_a_field_with_a_reading_problem_stays_red_even_when_it_differs_from_the_
 
     row = window.orders.editor.rows["Coupon p.a. (%)"]
     assert row.label.cget("background") == app._PROBLEM_BG
-    assert row.note.cget("text").endswith("資料庫是 12") and row.database.winfo_manager() == "grid"
+    assert row.note.cget("text") == "起單建檔：讀到「abc」，不是數字；資料庫是 12"
+    assert row.database.winfo_manager() == "grid"
+
+
+def test_conflicting_duplicate_fields_are_red_until_filled(master, tmp_path: Path) -> None:
+    row = order_row(
+        "029199990001",
+        {"Coupon p.a. (%)": None},
+        notes={"Coupon p.a. (%)": "這檔有 2 列，這欄不同：第 3 列「12.5」、第 4 列「13」；請填正確的值"},
+        conflicts=("Coupon p.a. (%)",),
+    )
+    window = order_window(master, tmp_path, row)
+    field = window.orders.editor.rows["Coupon p.a. (%)"]
+
+    assert table_rows(window.orders) == [("029199990001", app.BLOCKED)]
+    assert field.label.cget("background") == app._PROBLEM_BG and "好幾列" in field.note.cget("text")
+
+    type_into(window.orders.editor, "Coupon p.a. (%)", "13")
+
+    assert table_rows(window.orders) == [("029199990001", app.TO_CHECK)]
 
 
 def test_choices_use_drop_downs(master, tmp_path: Path) -> None:
@@ -928,31 +961,32 @@ def test_choices_use_drop_downs(master, tmp_path: Path) -> None:
     assert not isinstance(editor.rows["Coupon p.a. (%)"].input, ttk.Combobox)
 
 
-def test_products_without_an_order_show_their_reason_only(master, tmp_path: Path) -> None:
-    window = order_window(master, tmp_path, OrderRow("147000000002", ORDER_NOT_FOUND, "MS", ("找不到商品資料夾",)))
+def test_products_not_in_the_sheet_show_their_reason_only(master, tmp_path: Path) -> None:
+    window = order_window(master, tmp_path, missing_row("147000000002"))
 
     editor = window.orders.editor
-    assert editor.draft is None and editor.note_var.get() == "沒有讀到可以改的條件：找不到商品資料夾"
+    assert editor.draft is None
+    assert editor.note_var.get() == "沒有可以改的條件：TDCC：起單建檔_20261015.xlsm 裡沒有這檔"
     assert str(editor.rows["Trade date"].input.cget("state")) == "disabled"
     assert str(window.orders.import_button.cget("state")) == "disabled"
 
 
 def test_import_results_replace_the_status_column(master, tmp_path: Path) -> None:
-    window = order_window(master, tmp_path, order_row("029199990001"), order_row("029199990002", 到期日=None))
+    window = order_window(
+        master, tmp_path, order_row("029199990001"), order_row("029199990002", {"Maturity date": None})
+    )
     type_into(window.orders.editor, "Maturity date", "2027-04-22")
     lines = (
         OrderImportLine("029199990002", ORDER_NEW),
         OrderImportLine("029199990001", ORDER_SKIPPED, "Currency：問題"),
     )
-    path = tmp_path / "Order條件清單_20261021-090000.xlsx"
 
-    window.orders._saved(app._SaveResult(OrderImportReceipt(7, lines), path))
+    window.orders._saved(app._SaveResult(OrderImportReceipt(7, lines)))
 
     assert table_rows(window.orders) == [("029199990002", ORDER_NEW), ("029199990001", ORDER_SKIPPED)]
     assert window.orders.kpis.values == (("已匯入（檔）", 1, False), ("沒匯入（檔）", 1, True))
-    assert window.orders.status_var.get().startswith("完成（第 7 次 Order 匯入）：新增 1、覆蓋 0、沒有變 0、不匯入 1")
-    assert not window.orders.unsaved and window.orders.list_path == path
-    assert str(window.orders.open_button.cget("state")) == "normal"
+    assert window.orders.status_var.get().startswith("完成（第 7 次起單資料匯入）：新增 1、覆蓋 0、沒有變 0、不匯入 1")
+    assert not window.orders.unsaved
     for iid in ("1", "0"):  # 匯入後點來點去，結果不會被洗掉
         window.orders.table.selection_set(iid)
         window.orders._selected()
@@ -960,17 +994,17 @@ def test_import_results_replace_the_status_column(master, tmp_path: Path) -> Non
     assert not window.orders.has_unsaved()
 
 
-def test_excel_failure_after_import_says_the_database_was_written(master, tmp_path: Path) -> None:
+def test_reload_failure_after_import_says_the_database_was_written(master, tmp_path: Path) -> None:
     window = order_window(master, tmp_path, order_row("029199990001"))
     receipt = OrderImportReceipt(8, (OrderImportLine("029199990001", ORDER_NEW),))
 
-    window.orders._saved(app._SaveResult(receipt, None, "清單已存在：x.xlsx"))
+    window.orders._saved(app._SaveResult(receipt, "connection lost"))
 
-    assert "已寫進資料庫，但 Excel 沒寫成（清單已存在：x.xlsx）" in window.orders.status_var.get()
+    assert "已寫進資料庫，但重新讀取資料庫的值失敗（connection lost）" in window.orders.status_var.get()
 
 
 def test_closing_with_unsaved_order_edits_asks_and_stays_on_the_order_tab(master, tmp_path: Path, monkeypatch) -> None:
-    window = order_window(master, tmp_path, order_row("029199990002", 到期日=None))
+    window = order_window(master, tmp_path, order_row("029199990002", {"Maturity date": None}))
     type_into(window.orders.editor, "Maturity date", "2027-04-22")
     asked = []
     monkeypatch.setattr(app.messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or False)
@@ -982,8 +1016,8 @@ def test_closing_with_unsaved_order_edits_asks_and_stays_on_the_order_tab(master
 
 
 def test_reading_again_asks_before_dropping_unsaved_edits(master, tmp_path: Path, monkeypatch) -> None:
-    window = order_window(master, tmp_path, order_row("029199990002", 到期日=None))
-    window.root_folder.var.set(str(tmp_path))
+    window = order_window(master, tmp_path, order_row("029199990002", {"Maturity date": None}))
+    window.orders.sheet_var.set(str(tmp_path / "起單建檔_20261015.xlsm"))
     type_into(window.orders.editor, "Maturity date", "2027-04-22")
     asked = []
     monkeypatch.setattr(app.messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or False)
@@ -997,8 +1031,7 @@ def test_reading_again_asks_before_dropping_unsaved_edits(master, tmp_path: Path
 
 def test_reading_without_a_database_setup_does_not_ask_for_a_password(master, tmp_path: Path, monkeypatch) -> None:
     window = new_window(master, tmp_path)
-    window.root_folder.var.set(str(tmp_path))
-    window.orders.out_var.set(str(tmp_path))
+    window.orders.sheet_var.set(str(tmp_path / "起單建檔_20261015.xlsm"))
     window.orders.tdcc_text.insert("1.0", "029199990001")
     monkeypatch.setattr(app.simpledialog, "askstring", lambda *a, **k: pytest.fail("沒有連線設定就不問密碼"))
     monkeypatch.setattr(app.messagebox, "showerror", lambda *a, **k: pytest.fail("不該跳錯誤"))

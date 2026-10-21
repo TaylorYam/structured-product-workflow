@@ -1,6 +1,6 @@
 # 0009: Order 條件在視窗裡確認後匯入／Confirm Order Terms in the Window Before Import
 
-- 狀態／Status: Accepted；「過渡期清單更新只補空白」已隨 #87 停用清單更新結束／Accepted; the transition rule of 清單更新 filling blanks ended when #87 retired 清單更新
+- 狀態／Status: Accepted；「過渡期清單更新只補空白」已隨 #87 停用清單更新結束；讀信與「匯出 Excel」由 [ADR 0010](0010-order-terms-from-daily-order-sheet.md) 取代（改從起單建檔讀、只匯入資料庫）／Accepted; the transition rule of 清單更新 filling blanks ended when #87 retired 清單更新; reading emails and the Excel export are superseded by ADR 0010 (read the daily order sheet, import only)
 - 日期／Date: 2026-10-21
 - 追蹤／Tracking: #86
 - 部分取代／Partly supersedes: [ADR 0006](0006-new-product-data-from-order.md) 的「作業人員確認 Order 條件清單、補好淺紅格子後按匯入」；[ADR 0008](0008-daily-prices-denomination-and-order-dates.md) 的「匯入只讀『Order條件清單』工作表」／ADR 0006's "operators review the Order term list workbook, fill light-red cells, then import"; ADR 0008's "the import reads only the `Order條件清單` sheet"

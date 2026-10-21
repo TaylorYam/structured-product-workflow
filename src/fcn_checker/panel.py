@@ -1037,7 +1037,7 @@ class CheckTab(ttk.Frame):
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="FCN Workflow 視窗：Order 條件、每日匯入、準備、核對、放回與寄信草稿；"
+        description="FCN Workflow 視窗：每日匯入、起單資料、準備、核對、放回與寄信草稿；"
         "核對時以參考條件表預覽並核對多份說明書 PDF，按儲存才寫出核對結果檔。"
     )
     parser.add_argument(

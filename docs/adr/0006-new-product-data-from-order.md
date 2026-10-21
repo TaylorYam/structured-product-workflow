@@ -1,6 +1,6 @@
 # 0006: 新商品資料改由 Order、交易明細與股價建立／Build New Product Data from Orders, Trade Rows, and Prices
 
-- 狀態／Status: Accepted；待定事項由 [ADR 0008](0008-daily-prices-denomination-and-order-dates.md) 補上，過渡期「清單更新照樣匯入、只比對」由 ADR 0008 取代；「確認 Order 條件清單後匯入」改為在視窗裡確認，由 [ADR 0009](0009-confirm-order-terms-in-window.md) 取代／Accepted; open items completed by ADR 0008, and the transition rule of importing 清單更新 for comparison superseded by ADR 0008; reviewing the Order term list before import is replaced by in-window confirmation per ADR 0009
+- 狀態／Status: Accepted；待定事項由 [ADR 0008](0008-daily-prices-denomination-and-order-dates.md) 補上，過渡期「清單更新照樣匯入、只比對」由 ADR 0008 取代；「確認 Order 條件清單後匯入」改為在視窗裡確認，由 [ADR 0009](0009-confirm-order-terms-in-window.md) 取代；條件改從起單建檔讀、不再讀 `(Order)` 原信，承作金額不再比對，由 [ADR 0010](0010-order-terms-from-daily-order-sheet.md) 取代／Accepted; open items completed by ADR 0008, and the transition rule of importing 清單更新 for comparison superseded by ADR 0008; reviewing the Order term list before import is replaced by in-window confirmation per ADR 0009; terms now come from the daily order sheet instead of `(Order)` emails, and the order amount is no longer compared, per ADR 0010
 - 日期／Date: 2026-10-20
 - 追蹤／Tracking: #54（範圍改寫）
 - 部分取代／Partly supersedes: [ADR 0003](0003-minimal-fcn-database.md) 中「商品條件以清單更新（庫存總表）為來源」／ADR 0003's use of 清單更新 (the inventory master) as the source of product terms
