@@ -119,6 +119,7 @@ class _Tab:
         self.header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
 
     def card(self, row: int) -> ttk.Frame:
+        """第 row 列的白色輸入卡片。"""
         card = ttk.Frame(self.frame, style="Card.TFrame", padding=(18, 14))
         card.grid(row=row, column=0, columnspan=2, sticky="ew")
         return card
@@ -136,7 +137,9 @@ class _Tab:
         column = ttk.Frame(card, style="CardBody.TFrame")
         column.grid(row=0, column=0, sticky="ns")
         ttk.Label(column, text="TDCC", style="Card.TLabel").pack(anchor="w")
-        ttk.Label(column, text="一行一筆，可以一次貼很多筆", style="CardMuted.TLabel").pack(anchor="w", pady=(0, 6))
+        ttk.Label(column, text="可以一次貼很多筆，換行、空白或逗號分隔", style="CardMuted.TLabel").pack(
+            anchor="w", pady=(0, 6)
+        )
         box = ttk.Frame(column, style="CardBody.TFrame")
         box.pack(anchor="w")
         self.tdcc_text = tk.Text(
@@ -200,16 +203,20 @@ class _Tab:
         scroll.grid(row=row, column=1, sticky="ns", pady=(16, 0))
         self.table.configure(yscrollcommand=scroll.set)
 
+    def mark_done(self, done: bool) -> None:
+        """狀態列：做完時是綠色結果條（#83），處理中或出錯時是一般顏色。"""
+        self.status_label.configure(style="Done.TLabel" if done else "Card.TLabel")
+
     def restart(self) -> None:
         """重新開始：收起上一次的重點數字，狀態列恢復一般顏色。"""
         self.kpis.hide()
-        self.status_label.configure(style="Card.TLabel")
+        self.mark_done(False)
 
     def finish(self, kpis: Sequence[tuple[str, int, bool]], status: str) -> None:
-        """做完了：顯示重點數字，狀態列變成綠色結果條（#83）。"""
+        """做完了：顯示重點數字，狀態列變成綠色結果條。"""
         self.kpis.show(kpis)
         self.status_var.set(status)
-        self.status_label.configure(style="Done.TLabel")
+        self.mark_done(True)
 
     def run_in_background(
         self, action: Callable[[], object], busy: str, on_done: Callable[[object], None], *, clear: bool = True
@@ -381,7 +388,7 @@ class ReturnTab(_Tab):
 
         self.page_header(
             "放回商品資料夾",
-            "核對結果檔「回填後」的商品用標準檔名複製回商品資料夾；沒通過的那份檔名加「_待確認」，並寫一份錯誤訊息檔。",
+            f"把核對通過的 TS／IIS 用標準檔名複製回商品資料夾；沒通過的那份檔名加「{PENDING_SUFFIX}」。",
         )
         self.hint = HintBar(self.frame, self._change_result)
         self.hint.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
@@ -398,6 +405,7 @@ class ReturnTab(_Tab):
 
     def receive(self, result: Path, batch: Path | None) -> None:
         """核對存檔後帶入剛存的核對結果檔與這批的批次資料夾（#76）；不切頁、不自動放回。"""
+        self.restart()  # 換了一批要放回的，上一次的結果收起來
         if batch is not None:
             self.batch_var.set(str(batch))
         self.result_var.set(str(result))
@@ -625,11 +633,11 @@ class MailDraftTab(_Tab):
         self.db.after_run(result)
         if not isinstance(result, DraftReceipt):
             return
-        for o in result.outcomes:
-            self.add_row((o.tdcc, o.status, "、".join(o.to), o.reason), problem=o.status not in (DRAFTED, NOT_NEEDED))
+        problems = [o.status not in (DRAFTED, NOT_NEEDED) for o in result.outcomes]  # 不需寄送的不算問題
+        for o, problem in zip(result.outcomes, problems, strict=True):
+            self.add_row((o.tdcc, o.status, "、".join(o.to), o.reason), problem=problem)
         drafted = sum(o.status == DRAFTED for o in result.outcomes)
         not_drafted = len(result.outcomes) - drafted
-        problems = any(o.status not in (DRAFTED, NOT_NEEDED) for o in result.outcomes)  # 不用寄的不算問題
         last = _import_text(result.last_import) if result.last_import else "沒有匯入紀錄"
         status = (
             f"完成：{drafted} 封草稿已建立（在 Outlook 草稿匣，請確認後再寄出）、"
@@ -637,7 +645,7 @@ class MailDraftTab(_Tab):
         )
         if result.unreadable_dirs:
             status += f"\n注意：搜尋時有 {len(result.unreadable_dirs)} 個資料夾讀不到（例如 {result.unreadable_dirs[0]}），裡面的商品資料夾找不到。"
-        self.finish((("已建草稿（檔）", drafted, False), ("沒有建立（檔）", not_drafted, problems)), status)
+        self.finish((("已建草稿（檔）", drafted, False), ("沒有建立（檔）", not_drafted, any(problems))), status)
 
 
 class OrderTermsTab(_Tab):
@@ -726,6 +734,7 @@ class OrderTermsTab(_Tab):
             return
         out = receipt.list_path.parent
         self.export_button.configure(state=tk.DISABLED)
+        self.mark_done(False)
         self.run_in_background(
             lambda: export_problem_mails(receipt, out),
             "匯出問題信件中…（從商品資料夾複製 .msg）",
@@ -743,6 +752,7 @@ class OrderTermsTab(_Tab):
             status += f"\n有 {len(result.failures)} 個檔案沒複製成功，例如 {result.failures[0]}"
         status += "\n提醒：信件含真實交易與客戶資料，帶出公司請依公司的資料規定。"
         self.status_var.set(status)
+        self.mark_done(True)
         _open_folder(result.folder)
 
 

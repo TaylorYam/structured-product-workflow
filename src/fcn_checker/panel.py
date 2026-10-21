@@ -183,7 +183,7 @@ def apply_style(root: tk.Tk) -> Callable[[float], int]:
 
 
 class PageHeader(ttk.Frame):
-    """分頁最上方：「步驟 N／6」、一句話標題（這一步要達成什麼）與一行說明（#83）。
+    """分頁最上方：「步驟 N／6」、標題（只寫功能，#85）與一行說明（#83）。
 
     步驟編號由視窗依分頁順序填入 step。
     """

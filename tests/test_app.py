@@ -18,6 +18,10 @@ from sp_workflow import app
 from sp_workflow.daily_import import NEW_PRODUCT, ImportLine, ImportReceipt
 from sp_workflow.documents import DocKind
 from sp_workflow.local_settings import FolderMemory
+from sp_workflow.mail_drafts import DRAFTED, NOT_NEEDED, DraftOutcome, DraftReceipt
+from sp_workflow.order_terms import PENDING as ORDER_PENDING
+from sp_workflow.order_terms import READ as ORDER_READ
+from sp_workflow.order_terms import OrderReceipt, OrderRow
 from sp_workflow.preparation import PREPARED, SKIPPED, PreparedDocument, PrepareReceipt, ProductOutcome
 from sp_workflow.returning import NOT_RETURNED, RETURNED, ReturnOutcome, ReturnReceipt
 
@@ -582,3 +586,38 @@ def test_daily_import_page_shows_key_figures_and_restarts_clean(master, tmp_path
 
     window.daily.restart()
     assert window.daily.kpis.values == () and window.daily.status_label.cget("style") == "Card.TLabel"
+
+
+def test_order_and_mail_pages_show_key_figures_when_done(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    rows = (OrderRow("147000000001", ORDER_READ), OrderRow("147000000002", ORDER_PENDING))
+    outcomes = (DraftOutcome("147000000001", DRAFTED), DraftOutcome("147000000002", NOT_NEEDED))
+
+    window.orders._done(OrderReceipt(tmp_path / "Order條件清單.xlsx", rows))
+    window.mail._done(DraftReceipt(tmp_path / "寄信草稿清單.xlsx", outcomes, last_import=None))
+
+    assert window.orders.kpis.values == (("已讀取（檔）", 1, False), ("要確認（檔）", 1, True))
+    assert window.mail.kpis.values == (("已建草稿（檔）", 1, False), ("沒有建立（檔）", 1, False)), "不需寄送不算問題"
+    assert window.orders.status_label.cget("style") == window.mail.status_label.cget("style") == "Done.TLabel"
+
+
+def test_exporting_problem_mails_leaves_the_green_bar_until_it_succeeds(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    rows = (OrderRow("147000000002", ORDER_PENDING),)
+    window.orders._done(OrderReceipt(tmp_path / "Order條件清單.xlsx", rows))
+    monkeypatch.setattr(window.orders, "run_in_background", lambda *args, **kwargs: None)
+
+    window.orders.export_problems()
+
+    assert window.orders.status_label.cget("style") == "Card.TLabel", "匯出中、匯出失敗時不是綠色"
+
+
+def test_a_new_check_result_clears_the_last_return(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    window.returning._done(
+        ReturnReceipt(tmp_path / "放回清單.xlsx", (ReturnOutcome("147000000001", RETURNED, RETURNED),))
+    )
+
+    window.returning.receive(tmp_path / "核對結果.xlsx", None)
+
+    assert window.returning.kpis.values == () and window.returning.status_label.cget("style") == "Card.TLabel"
