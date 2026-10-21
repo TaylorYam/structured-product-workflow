@@ -1,6 +1,6 @@
 """「Outlook orders 轉成 Excel」格式表（#40 追加）：把讀好的 Order 條件排成作業人員既有的格式。
 
-版面照作業人員提供的範例檔 `example` 工作表：第 2 列表頭、從 B 欄開始，一檔一列。
+版面照作業人員提供的範例檔 `example` 工作表（輸出時工作表名稱是「Order原始資料」，#86）：第 2 列表頭、從 B 欄開始，一檔一列。
 讀到 Order 的商品都放（含待確認）；讀不到、換算不了、有修改或不一致的格子照樣填能確定的值，
 並標淺紅底，該檔在條件清單標「待確認」並寫原因，不猜值。整列的問題（例如條件表有沒列過的欄）標在 TDCC 那格。
 
@@ -28,7 +28,7 @@ from decimal import Decimal
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.worksheet.worksheet import Worksheet
 
-SHEET_TITLE = "example"  # 與範例檔相同，方便直接複製貼上
+SHEET_TITLE = "Order原始資料"  # 範例檔原本叫 example，使用者 2026-10-21 改名（#86）
 HEADER_ROW = 2
 FIRST_COLUMN = 2  # B 欄
 

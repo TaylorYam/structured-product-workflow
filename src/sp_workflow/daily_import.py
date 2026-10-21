@@ -6,6 +6,8 @@
 - 只收 Product 為 FCN 的列，其他略過並計數；略過的 TDCC 與 Product 記在 `workflow.other_product`。
 - 以 TDCC 為單位、第一次寫入為準：資料庫已有的商品或交易不重複寫入，內容不同只列出差異、不覆蓋。
 - 已存在商品的庫存狀態這一版不更新。
+- 過渡期（#86、ADR 0009，#87 上線前）：由「匯入 Order 條件」建立的商品，清單更新只補空白的欄
+  （分公司配置、ISIN、發行日），有值的不覆蓋、只列出差異；還沒有分公司配置時不逐筆對帳。
 - 分公司對帳到每個分公司（交易明細各分公司金額加總 vs 庫存總表承作金額，PB 也算），差異只提醒。
 - 信箱由資料庫直接維護（#35、ADR 0004）：匯入不修改 `mailbox`，只用它比對 FC 名字。
 - 結果另外列出交易明細的 FCN TDCC（依第一次出現的順序、不重複，不是剛好 12 碼與整檔都取消的不列），
@@ -65,6 +67,9 @@ KO_TYPES = {
 }
 BARRIER_TYPES = {"-": "NONE", "AM": "EKI", "D": "AKI", "P": "MKI"}
 STATUS_IN_STOCK = "在庫"
+# workflow.product.source：商品資料由哪裡建立（#86）
+INVENTORY_SOURCE = "清單更新"
+ORDER_SOURCE = "Order"  # 「匯入 Order 條件」
 
 # 結果的種類
 NEW_PRODUCT = "新增商品"
@@ -75,11 +80,12 @@ BLOCKED = "擋下"
 RECONCILE = "分公司對帳差異"
 INVENTORY_MISSING = "庫存尚未更新"
 TRADES_MISSING = "交易尚未匯入"
+FILLED = "補上空白"
 NAME_UNMATCHED = "名字對不到信箱"
 MAILBOX_EMPTY = "信箱尚未建立"
 CANCELLED = "交易已取消"
 IMPORT_ERROR_BOOK_NAME = "每日匯入錯誤.xlsx"
-_SUCCESS_KINDS = frozenset((NEW_PRODUCT, NEW_TRADES, UNCHANGED, CANCELLED))
+_SUCCESS_KINDS = frozenset((NEW_PRODUCT, NEW_TRADES, UNCHANGED, CANCELLED, FILLED))
 
 _PCT = Decimal("0.000001")
 _AMOUNT = Decimal("0.0001")
@@ -113,7 +119,7 @@ class ImportLine:
 
     @property
     def problem(self) -> bool:
-        return self.kind not in (NEW_PRODUCT, NEW_TRADES, UNCHANGED, CANCELLED)
+        return self.kind not in _SUCCESS_KINDS
 
 
 @dataclass(frozen=True)
@@ -495,7 +501,11 @@ def _write_products(conn: psycopg.Connection, parsed: _Parsed, run_id: int) -> l
                 )
             lines.append(ImportLine(tdcc, NEW_PRODUCT))
             continue
-        stored_product, stored_allocations = stored
+        stored_product, stored_allocations, source = stored
+        if source == ORDER_SOURCE:
+            filled = _fill_blanks(conn, tdcc, product, allocations, stored_product, stored_allocations)
+            if filled:
+                lines.append(ImportLine(tdcc, FILLED, "Order 匯入的商品，清單更新補上：" + "、".join(filled)))
         # 已存在商品的庫存狀態這一版不更新，也不拿來比
         diffs = [c for c in _PRODUCT_COLUMNS if not c.startswith("status_") and (stored_product[c] != product[c])]
         if stored_allocations != allocations:
@@ -507,15 +517,44 @@ def _write_products(conn: psycopg.Connection, parsed: _Parsed, run_id: int) -> l
     return lines
 
 
-def _stored_product(conn: psycopg.Connection, tdcc: str) -> tuple[dict[str, Any], list[tuple[str, Decimal]]] | None:
-    row = conn.execute(f"SELECT {', '.join(_PRODUCT_COLUMNS)} FROM workflow.product WHERE tdcc = %s", (tdcc,))
+def _stored_product(
+    conn: psycopg.Connection, tdcc: str
+) -> tuple[dict[str, Any], list[tuple[str, Decimal]], str] | None:
+    row = conn.execute(f"SELECT {', '.join(_PRODUCT_COLUMNS)}, source FROM workflow.product WHERE tdcc = %s", (tdcc,))
     found = row.fetchone()
     if found is None:
         return None
     allocations = conn.execute(
         "SELECT branch, amount FROM workflow.branch_allocation WHERE tdcc = %s ORDER BY seq", (tdcc,)
     ).fetchall()
-    return dict(zip(_PRODUCT_COLUMNS, found, strict=True)), [tuple(a) for a in allocations]
+    product = dict(zip(_PRODUCT_COLUMNS, found[:-1], strict=True))
+    return product, [tuple(a) for a in allocations], found[-1]
+
+
+def _fill_blanks(
+    conn: psycopg.Connection,
+    tdcc: str,
+    product: Mapping[str, Any],
+    allocations: Sequence[tuple[str, Decimal]],
+    stored_product: dict[str, Any],
+    stored_allocations: list[tuple[str, Decimal]],
+) -> list[str]:
+    """過渡期：Order 匯入的商品只補資料庫空白的 ISIN、發行日與分公司配置；回傳補了哪些，並更新 stored 供比較。"""
+    filled = []
+    for column, label in (("isin", "ISIN"), ("issue_date", "發行日")):
+        if stored_product[column] is None and product[column] is not None:
+            conn.execute(f"UPDATE workflow.product SET {column} = %s WHERE tdcc = %s", (product[column], tdcc))
+            stored_product[column] = product[column]
+            filled.append(label)
+    if not stored_allocations and allocations:
+        with conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO workflow.branch_allocation (tdcc, seq, branch, amount) VALUES (%s, %s, %s, %s)",
+                [(tdcc, seq, branch, amount) for seq, (branch, amount) in enumerate(allocations, 1)],
+            )
+        stored_allocations[:] = list(allocations)
+        filled.append("分公司配置")
+    return filled
 
 
 def _write_trades(conn: psycopg.Connection, parsed: _Parsed, run_id: int) -> list[ImportLine]:
@@ -565,7 +604,8 @@ def _reconcile(conn: psycopg.Connection, tdccs: Sequence[str]) -> list[ImportLin
     """用資料庫裡的資料對帳：交易列各分公司金額加總 vs 庫存總表的分公司承作金額。"""
     lines = []
     for tdcc in tdccs:
-        has_product = conn.execute("SELECT 1 FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone() is not None
+        found = conn.execute("SELECT source FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
+        has_product = found is not None
         traded = dict(
             conn.execute(
                 "SELECT branch, sum(amount) FROM workflow.trade_row WHERE tdcc = %s GROUP BY branch", (tdcc,)
@@ -584,6 +624,9 @@ def _reconcile(conn: psycopg.Connection, tdccs: Sequence[str]) -> list[ImportLin
                 "SELECT branch, sum(amount) FROM workflow.branch_allocation WHERE tdcc = %s GROUP BY branch", (tdcc,)
             ).fetchall()
         )
+        if not allocated and found[0] == ORDER_SOURCE:
+            lines.append(ImportLine(tdcc, INVENTORY_MISSING, "Order 條件已匯入，等清單更新補上分公司配置後再對帳"))
+            continue
         for branch in sorted(traded.keys() | allocated.keys()):
             inv, trade = allocated.get(branch, Decimal(0)), traded.get(branch, Decimal(0))
             if inv != trade:

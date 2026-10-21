@@ -1,6 +1,6 @@
 """Order 條件讀取：從商品資料夾裡我方寄出的 `(Order)` 原信讀出全部條件，統一欄名後輸出條件清單（#40）。
 
-對外只有 `read_orders`。商品資料夾只讀不寫；條件以 Order 原信為準，上手回覆信（RE:／FW:／DONE: 等）不讀，
+對外是 `read_orders`（讀信並輸出清單）；`collect_orders`（只讀信）、`new_list_path`（清單路徑）與 `write_list`（寫清單）給視窗裡確認後匯入用（#86）。商品資料夾只讀不寫；條件以 Order 原信為準，上手回覆信（RE:／FW:／DONE: 等）不讀，
 唯一例外是 Order 沒寫的日期：依 `order_formats` 的 `supplement` 設定到指定的上手信補（GS、HSBC）。
 信件內文的固定開頭（`We buy <TDCC> <幣別> <金額> @<價格>`、`Risk level:` 等）各上手共用一套讀法；
 條件表（表頭一列、值一列的 HTML 表格）依 TDCC 前三碼的上手套用 `order_formats` 的欄名對照。
@@ -55,6 +55,8 @@ OTHER_COLUMN = "其他欄位"
 HEAD_COLUMNS = (("TDCC", 15), ("狀態", 10), ("上手", 9), ("待確認原因", 50))
 TAIL_COLUMNS = ((OTHER_COLUMN, 50), ("來源信件", 50), ("寄件時間", 18))
 RAW_COLUMNS = (("TDCC", 15), ("來源信件", 40), ("位置", 12), ("原始欄名", 30), ("原始值", 40), ("統一欄位", 14))
+EDITS_SHEET = "人工修改"
+EDITS_COLUMNS = (("TDCC", 15), ("欄位", 26), ("信裡的值", 20), ("改成", 20))
 
 BUY_SOURCE = "We buy 行"
 SUPPLEMENT_SOURCE = "補日期："  # 後面接信件檔名
@@ -155,17 +157,42 @@ def read_orders(
 
     reader 預設用傳統版 Outlook 開 `.msg`（只讀，不會寄出或修改信件）。
     """
+    tokens = _check_inputs(text, root)
+    list_path = new_list_path(out_parent, now)
+    rows, unreadable = _collect(tokens, root, reader)
+    write_list(list_path, rows, root, unreadable)
+    return OrderReceipt(list_path, rows, unreadable)
+
+
+def _check_inputs(text: str, root: Path) -> list[str]:
     tokens = parse_tdccs(text)
     if not tokens:
         raise OrderTermsError("沒有輸入 TDCC")
     if not root.is_dir():
         raise OrderTermsError(f"根目錄不存在：{root}")
+    return tokens
+
+
+def new_list_path(out_parent: Path, now: dt.datetime | None = None) -> Path:
+    """這次要輸出的清單路徑 `Order條件清單_<時間>.xlsx`；輸出位置不存在或同名檔已存在時丟 `OrderTermsError`。"""
     if not out_parent.is_dir():
         raise OrderTermsError(f"輸出位置不存在：{out_parent}")
     list_path = out_parent / f"Order條件清單_{(now or dt.datetime.now()):%Y%m%d-%H%M%S}.xlsx"
     if list_path.exists():
         raise OrderTermsError(f"清單已存在：{list_path}")
+    return list_path
 
+
+def collect_orders(
+    text: str, root: Path, *, reader: MailReader | None = None
+) -> tuple[tuple[OrderRow, ...], tuple[Path, ...]]:
+    """只讀信、不寫檔：依輸入順序回傳每檔的結果（同一封信裡的其他 TDCC 接在後面）與讀不到的資料夾。"""
+    return _collect(_check_inputs(text, root), root, reader)
+
+
+def _collect(
+    tokens: Sequence[str], root: Path, reader: MailReader | None
+) -> tuple[tuple[OrderRow, ...], tuple[Path, ...]]:
     read_mail = reader or OutlookMsgReader()
     valid = [t for t in tokens if is_tdcc(t)]
     folders, unreadable = find_product_folders(root, set(valid))
@@ -189,8 +216,7 @@ def read_orders(
             if sibling not in done and sibling not in tokens:
                 done.add(sibling)
                 rows.append(_row_for(sibling, folders.get(sibling, []), [], unreadable, library))
-    _write_list(list_path, rows, root, unreadable)
-    return OrderReceipt(list_path, tuple(rows), tuple(unreadable))
+    return tuple(rows), tuple(unreadable)
 
 
 @dataclass(frozen=True)
@@ -918,7 +944,15 @@ class OutlookMsgReader:
 # ---------- 清單 ----------
 
 
-def _write_list(path: Path, rows: Sequence[OrderRow], root: Path, unreadable: Sequence[Path]) -> None:
+def write_list(
+    path: Path,
+    rows: Sequence[OrderRow],
+    root: Path,
+    unreadable: Sequence[Path],
+    *,
+    edits: Sequence[tuple[str, str, object, object]] | None = None,
+) -> None:
+    """寫 Order 條件清單。`edits` 有給時另加「人工修改」工作表（TDCC、欄位、信裡的值、改成；#86）。"""
     wb = openpyxl.Workbook()
     # 第一張是作業人員既有的「Outlook orders 轉成 Excel」格式
     # 使用者 2026-10-20 改為：待確認的也照樣放，有問題的格子淺紅底；沒有讀到 Order 的（沒有格式表列）不放
@@ -981,7 +1015,29 @@ def _write_list(path: Path, rows: Sequence[OrderRow], root: Path, unreadable: Se
         info.append([None, str(folder)])
     info.column_dimensions["A"].width = 18
     info.column_dimensions["B"].width = 70
+
+    if edits is not None:
+        changed = wb.create_sheet(EDITS_SHEET)
+        changed.append([name for name, _ in EDITS_COLUMNS])
+        for cell in changed[1]:
+            cell.font = Font(bold=True)
+        for tdcc, name, before, after in edits:
+            changed.append([tdcc, name, _edit_cell(before), _edit_cell(after)])
+            changed.cell(changed.max_row, 1).number_format = "@"
+            for col in (3, 4):
+                if isinstance(changed.cell(changed.max_row, col).value, dt.date):
+                    changed.cell(changed.max_row, col).number_format = "yyyy-mm-dd"
+        for i, (_, width) in enumerate(EDITS_COLUMNS, start=1):
+            changed.column_dimensions[get_column_letter(i)].width = width
+        changed.freeze_panes = "A2"
     wb.save(path)
+
+
+def _edit_cell(value: object) -> object:
+    """人工修改的值：空白寫「（空白）」，數字照數字寫。"""
+    if value is None:
+        return "（空白）"
+    return float(value) if isinstance(value, Decimal) else value
 
 
 def _number_format(kind: Kind) -> str:
