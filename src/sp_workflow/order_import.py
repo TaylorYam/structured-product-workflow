@@ -28,7 +28,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from sp_workflow.daily_import import FCN, INVENTORY_SOURCE, ORDER_SOURCE, STATUS_IN_STOCK
+from sp_workflow.daily_import import FCN
 from sp_workflow.database import DatabaseError, require_current_schema
 from sp_workflow.order_template import COLUMNS, FIELD_COLUMNS
 from sp_workflow.order_terms import OrderRow, OrderTermsError, new_list_path, parse_date, write_list
@@ -37,6 +37,11 @@ if TYPE_CHECKING:
     import psycopg
 
     from fcn_checker.check_config import ConfigPaths
+
+STATUS_IN_STOCK = "在庫"
+# workflow.product.source：商品資料由哪裡建立（#86）；清單更新已停用（#87），只剩以前建立的商品
+INVENTORY_SOURCE = "清單更新"
+ORDER_SOURCE = "Order"  # 「匯入 Order 條件」
 
 TDCC_FIELD = "TDCC"
 AMOUNT_FIELD = "承作金額"

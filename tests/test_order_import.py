@@ -470,7 +470,7 @@ def test_export_after_import_clears_the_fill_of_imported_products(pg, tmp_path: 
 def test_mail_draft_waits_for_the_issue_date(pg, tmp_path: Path) -> None:
     seed_mailbox(pg)
     import_drafts([draft_of(order_row(發行日=None), pg)], pg, CONFIG, user="tester")
-    import_daily(write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], []), pg)
+    import_daily(write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)]), pg)
     root, out = tmp_path / "FCN", tmp_path / "out"
     folder = root / A
     folder.mkdir(parents=True)

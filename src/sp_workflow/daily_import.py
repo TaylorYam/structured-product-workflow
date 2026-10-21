@@ -22,12 +22,12 @@ import datetime as dt
 import hashlib
 import json
 import re
-from collections import defaultdict
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import openpyxl
 from openpyxl.styles import Font
@@ -48,19 +48,26 @@ TRADE_HEADERS = (
     "編號", "交易日期", "Product", "TDCC", "幣別", "金額", "FC/PB", "分公司", "前台主管/投專",
     "UF", "期初價格", "備註", "募集", "TS/IIS 核對", "核對TS/IIS人員", "起單人員",
 )  # fmt: skip
-# BBG_Data：C1 是取價日，第 2 列 B～H 是欄名，第 4 列起是資料（ADR 0008）
-PRICE_DATE_CELL = "C1"
+# BBG_Data（ADR 0008）：C1 是取價日；第 2 列從 B 欄起是欄名；第 4 列起每列一檔
+PRICE_DATE_ROW, PRICE_DATE_COLUMN = 1, 3
 PRICE_HEADER_ROW, PRICE_FIRST_ROW = 2, 4
+PRICE_FIRST_COLUMN = 2  # B 欄是代碼
 PRICE_HEADERS = (
     "代碼(值)", "公司名稱", "最新收盤價(值)", "最新開盤價(值)", "1日前收盤價(值)", "200日波動率(值)",
     "市值(原幣/百萬)(值)",
 )  # fmt: skip
-_PRICE_VALUE_COLUMNS = ("last_close", "last_open", "previous_close", "volatility_200d", "market_cap_millions")
 
-STATUS_IN_STOCK = "在庫"
-# workflow.product.source：商品資料由哪裡建立（#86）；清單更新已停用（#87），只剩以前建立的商品
-INVENTORY_SOURCE = "清單更新"
-ORDER_SOURCE = "Order"  # 「匯入 Order 條件」
+
+class Price(NamedTuple):
+    """BBG_Data 一個代碼的值，依 `PRICE_HEADERS` 代碼之後的順序；欄名同 `workflow.daily_price`。"""
+
+    company_name: str | None
+    last_close: Decimal | None
+    last_open: Decimal | None
+    previous_close: Decimal | None
+    volatility_200d: Decimal | None
+    market_cap_millions: Decimal | None
+
 
 # 結果的種類
 NEW_TRADES = "新增交易"
@@ -74,7 +81,8 @@ PRICE_CONFLICT = "股價衝突"
 PRICE_NOT_NUMBER = "股價不是數字"
 IMPORT_ERROR_BOOK_NAME = "每日匯入錯誤.xlsx"
 _SUCCESS_KINDS = frozenset((NEW_TRADES, UNCHANGED, CANCELLED))
-_OLD_SUCCESS_KINDS = frozenset(("新增商品", "補上空白"))  # 以前清單更新的結果，錯誤清單重建歷史時不列
+# 清單更新停用前（#87）的成功結果「新增商品」「補上空白」：錯誤清單重建歷史時照樣不列
+_RETIRED_SUCCESS_KINDS = frozenset(("新增商品", "補上空白"))
 
 _PCT = Decimal("0.000001")
 _AMOUNT = Decimal("0.0001")
@@ -155,12 +163,13 @@ class _SheetRow:
 
 @dataclass
 class _Prices:
-    """BBG_Data 讀出來的股價：代碼 → (公司名稱, 五個價格欄)；衝突的代碼另外記各列的值。"""
+    """BBG_Data 讀出來的股價：值一樣的重複列只留一筆；值不一樣的代碼記成衝突（各組不同的值）。"""
 
     price_date: dt.date
-    rows: dict[str, tuple[Any, ...]] = field(default_factory=dict)
-    conflicts: dict[str, list[tuple[Any, ...]]] = field(default_factory=dict)
-    lines: list[ImportLine] = field(default_factory=list)  # 不是數字的格子
+    rows: dict[str, Price] = field(default_factory=dict)
+    conflicts: dict[str, list[Price]] = field(default_factory=dict)
+    row_counts: Counter[str] = field(default_factory=Counter)  # 每個代碼在檔案裡有幾列
+    problems: list[ImportLine] = field(default_factory=list)  # 股價不是數字、股價衝突
 
 
 @dataclass
@@ -190,14 +199,10 @@ def import_daily(daily_book: Path, conn: psycopg.Connection) -> ImportReceipt:
             "INSERT INTO workflow.import_run (daily_file_name, daily_sha256, summary) VALUES (%s, %s, '{}') RETURNING run_id",
             (daily_book.name, _sha256(daily_book)),
         ).fetchone()[0]
-        lines = [*parsed.blocked, *parsed.cancelled_lines, *parsed.prices.lines]
+        lines = [*parsed.blocked, *parsed.cancelled_lines, *parsed.prices.problems]
         lines += _write_trades(conn, parsed, run_id)
         _write_other_products(conn, parsed, run_id)
         prices = _write_prices(conn, parsed.prices, run_id)
-        lines += [
-            ImportLine("", PRICE_CONFLICT, f"{code}：同一個代碼有 {len(rows)} 列、值不同，價格沒有存，算價格時不能用")
-            for code, rows in parsed.prices.conflicts.items()
-        ]
         lines += _unmatched_names(parsed, mailbox)
         error_book_path = daily_book.parent / IMPORT_ERROR_BOOK_NAME
         receipt = ImportReceipt(
@@ -299,53 +304,66 @@ def _rows_with_header(sheet: Any, expected: Sequence[str]) -> list[_SheetRow]:
 
 
 def _read_prices(sheet: Any) -> _Prices:
-    """BBG_Data：C1 取價日、第 2 列 B～H 欄名、第 4 列起每列一檔（ADR 0008）。格式不對就整份不匯入。"""
-    rows = sheet.iter_rows(min_col=1, max_col=1 + len(PRICE_HEADERS), values_only=True)
-    first = (tuple(next(rows, ())) + (None,) * 3)[:3]
-    price_date = first[2]
-    if isinstance(price_date, dt.datetime):
-        price_date = price_date.date()
-    if not isinstance(price_date, dt.date):
-        shown = _text(price_date, dash_is_none=False) or "空白"
+    """BBG_Data：取價日、欄名不對，或沒有任何股價，就整份不匯入（ADR 0008、#87）。"""
+    width = PRICE_FIRST_COLUMN - 1 + len(PRICE_HEADERS)
+    rows = [(tuple(row) + (None,) * width)[:width] for row in sheet.iter_rows(max_col=width, values_only=True)]
+    blank = (None,) * width
+    prices = _Prices(_price_date(rows[PRICE_DATE_ROW - 1] if len(rows) >= PRICE_DATE_ROW else blank))
+    _check_price_headers(rows[PRICE_HEADER_ROW - 1] if len(rows) >= PRICE_HEADER_ROW else blank)
+    for number, row in enumerate(rows[PRICE_FIRST_ROW - 1 :], PRICE_FIRST_ROW):
+        _add_price(prices, number, row[PRICE_FIRST_COLUMN - 1 :])
+    if not prices.rows and not prices.conflicts:
         raise DailyImportError(
-            f"「{PRICE_SHEET}」的 {PRICE_DATE_CELL} 應為取價日（日期），實際是「{shown}」，整份不匯入"
+            f"「{PRICE_SHEET}」沒有任何股價（第 {PRICE_FIRST_ROW} 列起都沒有代碼），整份不匯入；請確認取價是否完成"
         )
-    prices = _Prices(price_date)
-    for number, row in enumerate(rows, 2):
-        values = (tuple(row) + (None,) * (1 + len(PRICE_HEADERS)))[1 : 1 + len(PRICE_HEADERS)]
-        if number == PRICE_HEADER_ROW:
-            _check_price_headers(values)
-        elif number >= PRICE_FIRST_ROW:
-            _add_price(prices, number, values)
+    prices.problems += [
+        ImportLine(
+            "", PRICE_CONFLICT, f"{code}：同一個代碼有 {prices.row_counts[code]} 列、值不同，價格沒有存，算價格時不能用"
+        )
+        for code in prices.conflicts
+    ]
     return prices
 
 
-def _check_price_headers(values: Sequence[Any]) -> None:
-    for i, (got, want) in enumerate(zip(values, PRICE_HEADERS, strict=True)):
-        if _text(got) != want:
-            where = f"{get_column_letter(i + 2)}{PRICE_HEADER_ROW}"
+def _price_date(row: Sequence[Any]) -> dt.date:
+    value = row[PRICE_DATE_COLUMN - 1]
+    if isinstance(value, dt.datetime):
+        return value.date()
+    if isinstance(value, dt.date):
+        return value
+    where = f"{get_column_letter(PRICE_DATE_COLUMN)}{PRICE_DATE_ROW}"
+    shown = _text(value, dash_is_none=False) or "空白"
+    raise DailyImportError(f"「{PRICE_SHEET}」的 {where} 應為取價日（日期），實際是「{shown}」，整份不匯入")
+
+
+def _check_price_headers(row: Sequence[Any]) -> None:
+    for i, want in enumerate(PRICE_HEADERS):
+        got = _text(row[PRICE_FIRST_COLUMN - 1 + i])
+        if got != want:
+            where = f"{get_column_letter(PRICE_FIRST_COLUMN + i)}{PRICE_HEADER_ROW}"
             raise DailyImportError(
-                f"「{PRICE_SHEET}」的欄名和範本不同，整份不匯入：{where} 應為「{want}」，實際是「{_text(got) or '空白'}」"
+                f"「{PRICE_SHEET}」的欄名和範本不同，整份不匯入：{where} 應為「{want}」，實際是「{got or '空白'}」"
             )
 
 
 def _add_price(prices: _Prices, number: int, values: Sequence[Any]) -> None:
-    """一列股價；代碼空白的列略過。同一個代碼再出現時，值一樣不重複算，值不一樣記成衝突。"""
+    """一列股價（從代碼那一欄起）；代碼空白的列略過。同一個代碼再出現時，值一樣不重複算，值不一樣記成衝突。"""
     code = _text(values[0], dash_is_none=False)
     if code is None:
         return
+    prices.row_counts[code] += 1
     numbers = []
     for header, value in zip(PRICE_HEADERS[2:], values[2:], strict=True):
         try:
             numbers.append(_decimal(value))
         except ValueError:
-            prices.lines.append(
+            prices.problems.append(
                 ImportLine(
                     "", PRICE_NOT_NUMBER, f"{PRICE_SHEET}第 {number} 列 {code}：{header}「{value}」不是數字，存成空白"
                 )
             )
             numbers.append(None)
-    found = (_text(values[1], dash_is_none=False), *numbers)
+    found = Price(_text(values[1], dash_is_none=False), *numbers)
     if code in prices.conflicts:
         if found not in prices.conflicts[code]:
             prices.conflicts[code].append(found)
@@ -432,28 +450,29 @@ def _trade(row: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _write_prices(conn: psycopg.Connection, prices: _Prices, run_id: int) -> PriceSummary:
-    """股價依取價日存入：同一個取價日整天取代（#87）；衝突的代碼價格留空，各列的值記在 conflict_rows。"""
+    """股價依取價日存入：同一個取價日整天取代（#87）；衝突的代碼價格留空，各組不同的值記在 conflict_rows。"""
+    count = len(prices.rows) + len(prices.conflicts)
     conn.execute(
         "INSERT INTO workflow.price_import (run_id, price_date, price_count, conflict_count) VALUES (%s, %s, %s, %s)",
-        (run_id, prices.price_date, len(prices.rows) + len(prices.conflicts), len(prices.conflicts)),
+        (run_id, prices.price_date, count, len(prices.conflicts)),
     )
     replaced = conn.execute("DELETE FROM workflow.daily_price WHERE price_date = %s", (prices.price_date,)).rowcount
-    columns = ("price_date", "code", "company_name", *_PRICE_VALUE_COLUMNS, "conflict_rows", "run_id")
-    rows = [(prices.price_date, code, *values, None, run_id) for code, values in prices.rows.items()]
+    columns = ("price_date", "code", *Price._fields, "conflict_rows", "run_id")
+    blank = (None,) * len(Price._fields)
+    rows = [(prices.price_date, code, *price, None, run_id) for code, price in prices.rows.items()]
     rows += [
-        (prices.price_date, code, None, *(None,) * len(_PRICE_VALUE_COLUMNS), json.dumps(_jsonable(found)), run_id)
+        (prices.price_date, code, *blank, json.dumps([_jsonable(p) for p in found], ensure_ascii=False), run_id)
         for code, found in prices.conflicts.items()
     ]
     with conn.cursor() as cur:
         cur.executemany(
             f"INSERT INTO workflow.daily_price ({', '.join(columns)}) VALUES ({', '.join(['%s'] * len(columns))})", rows
         )
-    return PriceSummary(prices.price_date, len(rows), replaced, tuple(prices.conflicts))
+    return PriceSummary(prices.price_date, count, replaced, tuple(prices.conflicts))
 
 
-def _jsonable(found: Sequence[tuple[Any, ...]]) -> list[dict[str, Any]]:
-    names = ("company_name", *_PRICE_VALUE_COLUMNS)
-    return [{n: (str(v) if isinstance(v, Decimal) else v) for n, v in zip(names, row, strict=True)} for row in found]
+def _jsonable(price: Price) -> dict[str, Any]:
+    return {name: str(v) if isinstance(v, Decimal) else v for name, v in price._asdict().items()}
 
 
 def _write_trades(conn: psycopg.Connection, parsed: _Parsed, run_id: int) -> list[ImportLine]:
@@ -533,7 +552,7 @@ def _write_error_book(conn: psycopg.Connection, path: Path) -> None:
     ).fetchall()
     for run_id, imported_at, file_name, summary in runs:
         for tdcc, kind, detail in summary.get("lines", []):
-            if kind in _SUCCESS_KINDS or kind in _OLD_SUCCESS_KINDS:
+            if kind in _SUCCESS_KINDS or kind in _RETIRED_SUCCESS_KINDS:
                 continue
             rows.append(
                 (

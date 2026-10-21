@@ -416,6 +416,19 @@ def test_duplicate_codes_with_different_values_are_conflicts(pg, tmp_path: Path,
     assert pg.execute("SELECT conflict_count FROM workflow.price_import").fetchone() == (1,)
 
 
+def test_a_conflict_counts_every_row_of_the_code(pg, tmp_path: Path, mailbox) -> None:
+    """三列以上：訊息寫實際的列數，conflict_rows 只記不同的值。"""
+    rows = [price("AAA UW", 100), price("AAA UW", 101), price("AAA UW", 100), price("AAA UW", 102)]
+
+    receipt = import_daily(write_daily(tmp_path / "d.xlsx", [], rows), pg)
+
+    assert [line.detail for line in receipt.lines if line.kind == PRICE_CONFLICT] == [
+        "AAA UW：同一個代碼有 4 列、值不同，價格沒有存，算價格時不能用"
+    ]
+    stored = pg.execute("SELECT conflict_rows FROM workflow.daily_price").fetchone()[0]
+    assert [row["last_close"] for row in stored] == ["100", "101", "102"]
+
+
 def test_a_price_that_is_not_a_number_is_stored_blank_and_listed(pg, tmp_path: Path, mailbox) -> None:
     receipt = import_daily(write_daily(tmp_path / "d.xlsx", [], [price("AAA UW", "#N/A N/A")]), pg)
 
@@ -463,3 +476,27 @@ def test_wrong_price_headers_reject_the_whole_file(pg, tmp_path: Path, mailbox) 
         import_daily(daily, pg)
 
     assert count(pg, "workflow.import_run") == 0
+
+
+def test_a_price_sheet_without_headers_rejects_the_whole_file(pg, tmp_path: Path, mailbox) -> None:
+    """只有 C1 的 BBG_Data：不能當成「沒有股價」把那一天清空。"""
+    import_daily(write_daily(tmp_path / "1.xlsx", [], [price("AAA UW")]), pg)
+    daily = write_daily(tmp_path / "2.xlsx", [trade(A, "Amy", "北區", 1)], [price("AAA UW")])
+    wb = openpyxl.load_workbook(daily)
+    wb[daily_import.PRICE_SHEET].delete_rows(2, 10)
+    wb.save(daily)
+
+    with pytest.raises(DailyImportError, match="B2 應為「代碼\\(值\\)」，實際是「空白」"):
+        import_daily(daily, pg)
+
+    assert count(pg, "workflow.daily_price") == 1 and count(pg, "workflow.trade_row") == 0
+
+
+def test_a_price_sheet_without_prices_rejects_the_whole_file(pg, tmp_path: Path, mailbox) -> None:
+    """有欄名但沒有任何代碼：多半是取價沒有完成，不清空那一天已存的股價。"""
+    import_daily(write_daily(tmp_path / "1.xlsx", [], [price("AAA UW")]), pg)
+
+    with pytest.raises(DailyImportError, match="沒有任何股價"):
+        import_daily(write_daily(tmp_path / "2.xlsx", [trade(A, "Amy", "北區", 1)], [("", "代碼空白")]), pg)
+
+    assert count(pg, "workflow.daily_price") == 1 and count(pg, "workflow.import_run") == 1

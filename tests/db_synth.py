@@ -48,13 +48,17 @@ def price(code: str, close: float | None = 100.5, *, name: str = "虛構公司",
 def write_daily(
     path: Path,
     trades: list[dict],
-    prices: Sequence[tuple] = (),
+    prices: Sequence[tuple] | None = None,
     *,
     trade_headers=TRADE_HEADERS,
     price_date=PRICE_DATE,
     price_headers=PRICE_HEADERS,
 ) -> Path:
-    """新版每日更新（#87）：交易明細＋BBG_Data。BBG_Data 的 B1 是 =TODAY()、C1 是取價日、第 3 列空白。"""
+    """新版每日更新（#87）：交易明細＋BBG_Data。BBG_Data 的 B1 是 =TODAY()、C1 是取價日、第 3 列空白。
+
+    沒給股價時放一檔虛構的（BBG_Data 沒有任何股價會整份不匯入）；要測空的就明確給 []。
+    """
+    prices = [price("AAA UW")] if prices is None else prices
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = daily_import.TRADE_SHEET
