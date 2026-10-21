@@ -1,7 +1,7 @@
 """FCN Workflow 視窗：六個分頁照每天的作業順序排（#73、#74、#90）。
 
 1. 每日匯入：選每日更新，把交易明細與每日股價匯入最小 FCN 資料庫（#32、#87）；信箱在資料庫直接維護（#35）。
-2. Order 條件：貼 TDCC、選一份起單建檔（#97），在右邊逐檔確認、修改後匯入資料庫（#86）。
+2. 起單資料：貼 TDCC、選一份起單建檔（#97），在右邊逐檔確認、修改後匯入資料庫（#86）。
 3. 準備：貼 TDCC、選輸出位置，產生批次資料夾與準備清單。
 4. 核對：參考條件表＋說明書／投資人須知 PDF 的預覽、核對與儲存（`fcn_checker.panel.CheckTab`）。
 5. 放回：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾。
@@ -9,7 +9,7 @@
 
 商品資料夾所在的根目錄在視窗最上方設一次，3、6 兩頁共用（#75）。
 做完一步，下一頁先帶入結果並用藍色提示條寫出來，按「下一步 →」才切頁，不自動執行（#76）：
-每日匯入完成 → Order 條件頁帶入交易明細的 FCN TDCC（#90）；
+每日匯入完成 → 起單資料頁帶入交易明細的 FCN TDCC（#90）；
 準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔。
 審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
 視窗只收輸入、在背景執行 `collect_orders`／`import_drafts`／`import_daily`／`prepare_batch`／核對／`return_to_folders`／`create_drafts`
@@ -85,8 +85,6 @@ from sp_workflow.mail_drafts import (
 )
 from sp_workflow.order_import import (
     BLOCKED,
-    CHOICES,
-    EDIT_FIELDS,
     IMPORTABLE,
     LOCKED,
     NEW,
@@ -108,7 +106,15 @@ from sp_workflow.order_import import (
     reload_stored,
     review_status,
 )
-from sp_workflow.order_terms import OrderRow, OrderTermsError, collect_orders, format_field, parse_field
+from sp_workflow.order_terms import (
+    CHOICES,
+    FIELDS,
+    OrderRow,
+    OrderTermsError,
+    collect_orders,
+    format_field,
+    parse_field,
+)
 from sp_workflow.preparation import (
     LIST_NAME,
     PREPARED,
@@ -527,7 +533,7 @@ class DailyImportTab(_Tab):
         self.result_area(body, row)
         self.start_button = ttk.Button(self.buttons, text="匯入", command=self.start, style="Primary.TButton")
         self.start_button.pack(side=tk.LEFT)
-        self.next_button = NextButton(self.buttons, "下一步：Order 條件 →", on_next)
+        self.next_button = NextButton(self.buttons, "下一步：起單資料 →", on_next)
         self.place_table(2)
 
     def start(self) -> None:
@@ -573,15 +579,15 @@ class DailyImportTab(_Tab):
         )
 
     def _hand_off(self, result: ImportReceipt) -> str:
-        """把交易明細的 FCN TDCC 帶到 Order 條件頁（#90）；真的帶入了才有下一步。回傳寫在完成訊息的一句。"""
+        """把交易明細的 FCN TDCC 帶到起單資料頁（#90）；真的帶入了才有下一步。回傳寫在完成訊息的一句。"""
         if not result.fcn_trade_rows:
-            return "這份交易明細沒有 FCN，Order 條件頁沒有帶入。"
+            return "這份交易明細沒有 FCN，起單資料頁沒有帶入。"
         if not result.fcn_tdccs:
-            return "這份交易明細的 FCN 都已取消或 TDCC 不是 12 碼，Order 條件頁沒有帶入。"
+            return "這份交易明細的 FCN 都已取消或 TDCC 不是 12 碼，起單資料頁沒有帶入。"
         if not self.on_imported(result.fcn_tdccs):
-            return "Order 條件頁沒有帶入（正在處理，或保留原本的 TDCC）。"
+            return "起單資料頁沒有帶入（正在處理，或保留原本的 TDCC）。"
         self.next_button.offer()
-        return f"已把 FCN TDCC {len(result.fcn_tdccs)} 筆帶到「2 Order 條件」。"
+        return f"已把 FCN TDCC {len(result.fcn_tdccs)} 筆帶到「2 起單資料」。"
 
 
 class _DatabaseLogin:
@@ -788,7 +794,7 @@ class _FieldRow:
 
 
 class OrderEditor(ttk.Frame):
-    """Order 條件頁右邊的編輯區：一次一檔，欄位是 `EDIT_FIELDS`（#86、#97、ADR 0009、0010）。
+    """起單資料頁右邊的編輯區：一次一檔，欄位是 `order_terms.FIELDS`（#86、#97、ADR 0009、0010）。
 
     擋匯入的欄與讀起單建檔時有提醒的欄淺紅底並寫原因；和資料庫不同的欄淺黃底，寫出資料庫的值，可以一鍵改回。
     離開欄位、按 Enter 或選了下拉時才解讀；寫錯的欄保留打的字並標紅（說明記在 `OrderDraft.input_errors`，
@@ -825,8 +831,7 @@ class OrderEditor(ttk.Frame):
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.LEFT, fill=tk.Y)
         self.rows = {
-            name: _FieldRow(self.fields, i, name, self._commit, self._use_database)
-            for i, name in enumerate(EDIT_FIELDS)
+            name: _FieldRow(self.fields, i, name, self._commit, self._use_database) for i, name in enumerate(FIELDS)
         }
         self.show(None)
 
@@ -941,7 +946,7 @@ class OrderTermsTab(_Tab):
     ) -> None:
         super().__init__(
             notebook,
-            "Order 條件",
+            "起單資料",
             (("tdcc", "TDCC", 130), ("status", "狀態", 110), ("issuer", "上手", 85), ("reason", "原因", 260)),
         )
         self.memory = memory
@@ -955,7 +960,7 @@ class OrderTermsTab(_Tab):
         self.status_var.set(self.READY_TEXT)
 
         self.page_header(
-            "確認 Order 條件",
+            "確認起單資料",
             "讀作業人員的起單建檔，在右邊逐檔確認、修改後匯入資料庫；不修改起單建檔。",
         )
         self.header.grid_configure(columnspan=3)
@@ -981,13 +986,17 @@ class OrderTermsTab(_Tab):
         self.table.bind("<<TreeviewSelect>>", self._selected)
 
     def _ask_sheet(self) -> str:
+        """選起單建檔；有選就記住（沒按讀取就關視窗，下次也打開這個資料夾）。"""
         current = self.sheet_var.get().strip()
         folder = Path(current).parent if current else ORDER_SHEET_DIR
-        return filedialog.askopenfilename(
+        chosen = filedialog.askopenfilename(
             title="選擇起單建檔",
             initialdir=str(folder) if folder.is_dir() else None,
             filetypes=[("Excel", "*.xlsm *.xlsx"), ("全部檔案", "*.*")],
         )
+        if chosen:
+            self.memory.remember(order_sheet=str(Path(chosen)))
+        return chosen
 
     def receive_tdccs(self, tdccs: Sequence[str]) -> bool:
         """每日匯入完成後帶入交易明細的 FCN TDCC（#90）；回傳是否帶入。不切頁、不自動讀取。
@@ -997,7 +1006,7 @@ class OrderTermsTab(_Tab):
         if self.working:
             messagebox.showinfo(
                 TITLE,
-                "「2 Order 條件」正在處理，這次每日匯入的 FCN TDCC 沒有帶入；處理完後請自己貼。",
+                "「2 起單資料」正在處理，這次每日匯入的 FCN TDCC 沒有帶入；處理完後請自己貼。",
                 parent=self.master,
             )
             return False
@@ -1007,7 +1016,7 @@ class OrderTermsTab(_Tab):
             and set(current) != set(tdccs)
             and not messagebox.askyesno(
                 TITLE,
-                f"「2 Order 條件」已經有 {len(current)} 筆 TDCC，和這次每日匯入的 FCN TDCC（{len(tdccs)} 筆）不同。"
+                f"「2 起單資料」已經有 {len(current)} 筆 TDCC，和這次每日匯入的 FCN TDCC（{len(tdccs)} 筆）不同。"
                 "\n\n要換成每日匯入的嗎？",
                 parent=self.master,
             )
@@ -1051,7 +1060,7 @@ class OrderTermsTab(_Tab):
         """有改過、還沒匯入資料庫的內容時先問。"""
         return not self.has_unsaved() or messagebox.askyesno(
             TITLE,
-            f"Order 條件頁有改過、還沒匯入資料庫的內容，{action}後會不見。\n\n確定要繼續嗎？",
+            f"起單資料頁有改過、還沒匯入資料庫的內容，{action}後會不見。\n\n確定要繼續嗎？",
             icon=messagebox.WARNING,
             default=messagebox.NO,
             parent=self.master,
@@ -1215,7 +1224,7 @@ class OrderTermsTab(_Tab):
         imported = sum(line.imported for line in receipt.lines)
         not_imported = len(receipt.lines) - imported
         counts = "、".join(f"{kind} {receipt.count(kind)}" for kind in (NEW, OVERWRITTEN, SAME, SKIPPED, LOCKED))
-        status = f"完成（第 {receipt.import_id} 次 Order 匯入）：{counts}。"
+        status = f"完成（第 {receipt.import_id} 次起單資料匯入）：{counts}。"
         if result.reload_error:
             status += f"\n注意：已寫進資料庫，但重新讀取資料庫的值失敗（{result.reload_error}）；再匯入前請重新讀取。"
         self.finish(
@@ -1422,9 +1431,9 @@ class PanelWindow:
         if self.session.has_unsaved_result:
             return _CloseWarning("核對結果還沒儲存，關閉後要重新核對。", self.check)
         if self.orders.working:
-            return _CloseWarning("Order 條件頁還在處理（讀取或匯入），關閉後要重新來。", self.orders.frame)
+            return _CloseWarning("起單資料頁還在處理（讀取或匯入），關閉後要重新來。", self.orders.frame)
         if self.orders.has_unsaved():
-            return _CloseWarning("Order 條件頁有改過、還沒匯入資料庫的內容，關閉後會不見。", self.orders.frame)
+            return _CloseWarning("起單資料頁有改過、還沒匯入資料庫的內容，關閉後會不見。", self.orders.frame)
         return None
 
     def close(self) -> None:

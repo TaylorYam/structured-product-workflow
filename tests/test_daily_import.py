@@ -68,7 +68,7 @@ def test_new_trades_and_people_are_written(pg, tmp_path: Path, mailbox) -> None:
 
     assert kinds(receipt, A) == [NEW_TRADES] and kinds(receipt, B) == [NEW_TRADES]
     assert not [line for line in receipt.lines if line.problem]
-    assert count(pg, "workflow.product") == 0, "#87 起商品條件只由匯入 Order 條件建立"
+    assert count(pg, "workflow.product") == 0, "#87 起商品條件只由匯入起單資料建立"
     assert pg.execute(
         "SELECT row_seq, number, fc_name, amount FROM workflow.trade_row WHERE tdcc = %s ORDER BY row_seq", (A,)
     ).fetchall() == [(1, 1, "Amy", Decimal("300000")), (2, None, "Ben", Decimal("100000"))]

@@ -69,7 +69,7 @@ def test_tabs_follow_the_daily_order(master, tmp_path: Path) -> None:
     window = app.PanelWindow(master, FolderMemory.under(tmp_path), session=PanelSession(install_root=tmp_path))
 
     assert master.title() == "FCN Workflow"
-    assert tab_titles(window) == ["1 每日匯入", "2 Order 條件", "3 準備", "4 核對", "5 放回", "6 寄信草稿"]
+    assert tab_titles(window) == ["1 每日匯入", "2 起單資料", "3 準備", "4 核對", "5 放回", "6 寄信草稿"]
     assert window.notebook.select() == str(window.daily.frame)
 
 
@@ -267,7 +267,7 @@ def test_order_terms_tab_remembers_its_sheet(master, tmp_path: Path) -> None:
     window = app.PanelWindow(master, memory, tmp_path / ".env")
 
     assert window.orders.sheet_var.get() == "D:/ELN/起單建檔_20261015.xlsm"
-    assert not hasattr(window.orders, "root_folder"), "Order 條件頁不用根目錄（#97）"
+    assert not hasattr(window.orders, "root_folder"), "起單資料頁不用根目錄（#97）"
     assert texts(window.orders.buttons, ttk.Button) == ["讀取", "匯入資料庫"]
     assert str(window.orders.import_button.cget("state")) == "disabled"
 
@@ -284,6 +284,13 @@ def test_choosing_a_sheet_opens_the_last_folder_or_the_daily_sheet_folder(master
     window.orders._ask_sheet()
 
     assert opened == [str(tmp_path), str(tmp_path / "202609")]
+    assert "order_sheet" not in window.orders.memory.load(), "按取消不記"
+
+    chosen = str(tmp_path / "202609" / "起單建檔_20260929.xlsm")
+    monkeypatch.setattr(app.filedialog, "askopenfilename", lambda **kwargs: chosen)
+    window.orders._ask_sheet()
+
+    assert window.orders.memory.load()["order_sheet"] == chosen, "選了就記，不用等按讀取"
 
 
 def test_reading_without_a_sheet_asks_to_choose_it_first(master, tmp_path: Path, monkeypatch) -> None:
@@ -649,7 +656,7 @@ def test_a_new_check_result_clears_the_last_return(master, tmp_path: Path) -> No
     assert window.returning.kpis.values == () and window.returning.status_label.cget("style") == "Card.TLabel"
 
 
-# ---------------------------------------------------------------- 每日匯入在第 1 頁，帶入 Order 條件（#90）
+# ---------------------------------------------------------------- 每日匯入在第 1 頁，帶入 起單資料（#90）
 
 
 def daily_receipt(
@@ -694,7 +701,7 @@ def test_daily_import_hands_fcn_tdccs_to_the_order_tab_without_switching(master,
 
     assert pasted(window.orders) == "147000000002\n147000000001" and window.orders.count_var.get() == "已貼 2 筆"
     assert window.orders.hint.text.get() == "已帶入每日匯入的 FCN TDCC 2 筆，選好起單建檔後按「讀取」。"
-    assert window.daily.status_var.get().endswith("已把 FCN TDCC 2 筆帶到「2 Order 條件」。")
+    assert window.daily.status_var.get().endswith("已把 FCN TDCC 2 筆帶到「2 起單資料」。")
     assert window.notebook.select() == str(window.daily.frame), "不自動切頁"
     assert window.daily.next_button.winfo_manager() == "pack"
 
@@ -706,8 +713,8 @@ def test_daily_import_hands_fcn_tdccs_to_the_order_tab_without_switching(master,
 @pytest.mark.parametrize(
     ("receipt_args", "message"),
     [
-        ((), "這份交易明細沒有 FCN，Order 條件頁沒有帶入。"),
-        (((), 2), "這份交易明細的 FCN 都已取消或 TDCC 不是 12 碼，Order 條件頁沒有帶入。"),
+        ((), "這份交易明細沒有 FCN，起單資料頁沒有帶入。"),
+        (((), 2), "這份交易明細的 FCN 都已取消或 TDCC 不是 12 碼，起單資料頁沒有帶入。"),
     ],
 )
 def test_nothing_is_handed_over_without_fcn_tdccs(master, tmp_path: Path, receipt_args, message) -> None:
@@ -747,7 +754,7 @@ def test_different_tdccs_on_the_order_tab_are_replaced_only_if_the_operator_agre
     assert window.orders.hint.shown is answer
     assert window.daily.next_button.winfo_manager() == ("pack" if answer else ""), "沒帶入就沒有下一步"
     if not answer:
-        assert window.daily.status_var.get().endswith("Order 條件頁沒有帶入（正在處理，或保留原本的 TDCC）。")
+        assert window.daily.status_var.get().endswith("起單資料頁沒有帶入（正在處理，或保留原本的 TDCC）。")
 
 
 def test_the_same_tdccs_are_handed_over_again_without_asking(master, tmp_path: Path, monkeypatch) -> None:
@@ -844,7 +851,7 @@ def test_starting_another_daily_import_withdraws_the_next_step(master, tmp_path:
     assert window.daily.next_button.winfo_manager() == ""
 
 
-# ---------------------------------------------------------------- Order 條件在視窗裡確認（#86、#97、ADR 0009、0010）
+# ---------------------------------------------------------------- 起單資料在視窗裡確認（#86、#97、ADR 0009、0010）
 
 
 def order_window(master, tmp_path: Path, *rows: OrderRow) -> app.PanelWindow:
@@ -978,7 +985,7 @@ def test_import_results_replace_the_status_column(master, tmp_path: Path) -> Non
 
     assert table_rows(window.orders) == [("029199990002", ORDER_NEW), ("029199990001", ORDER_SKIPPED)]
     assert window.orders.kpis.values == (("已匯入（檔）", 1, False), ("沒匯入（檔）", 1, True))
-    assert window.orders.status_var.get().startswith("完成（第 7 次 Order 匯入）：新增 1、覆蓋 0、沒有變 0、不匯入 1")
+    assert window.orders.status_var.get().startswith("完成（第 7 次起單資料匯入）：新增 1、覆蓋 0、沒有變 0、不匯入 1")
     assert not window.orders.unsaved
     for iid in ("1", "0"):  # 匯入後點來點去，結果不會被洗掉
         window.orders.table.selection_set(iid)

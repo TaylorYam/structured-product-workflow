@@ -1,4 +1,4 @@
-"""Order 條件確認與匯入（#86、#97、ADR 0006、0008、0009、0010）。
+"""起單資料確認與匯入（#86、#97、ADR 0006、0008、0009、0010）。
 
 讀起單建檔（`order_terms.collect_orders`）之後，作業人員在視窗裡逐檔確認、修改，再把通過檢查的商品寫進資料庫。對外：
 - `drafts_from`：讀取結果 → 可以編輯的 `OrderDraft`（欄位是 `order_terms.FIELDS`）。
@@ -35,6 +35,7 @@ from sp_workflow.order_terms import (
     FieldKind,
     OrderRow,
     plain,
+    unknown_issuer,
 )
 
 if TYPE_CHECKING:
@@ -45,9 +46,7 @@ if TYPE_CHECKING:
 STATUS_IN_STOCK = "在庫"
 # workflow.product.source：商品資料由哪裡建立（#86）；清單更新已停用（#87），只剩以前建立的商品
 INVENTORY_SOURCE = "清單更新"
-ORDER_SOURCE = "Order"  # 「匯入 Order 條件」（#97 起從起單建檔讀）
-
-EDIT_FIELDS = FIELDS  # 畫面上可以改的欄；TDCC 不能改
+ORDER_SOURCE = "Order"  # 「匯入起單資料」（#97 起從起單建檔讀）
 
 # 匯入結果
 NEW = "新增"
@@ -65,14 +64,8 @@ _AMOUNT = Decimal("0.0001")
 _HUNDRED = Decimal(100)
 
 # KO Type → 資料庫的 (ko_freq, ko_memory)；Barrier Type → ki_freq（同清單更新的代碼）
-KO_CODES = {
-    "Daily": ("D", "N"),
-    "Daily Memory": ("D", "Y"),
-    "Period End": ("P", "N"),
-    "Period End Memory": ("P", "Y"),
-}
-KI_CODES = {"NONE": "-", "EKI": "AM", "AKI": "D"}  # 每期觀察 MKI 目前不支援，讀到時標紅
-assert tuple(KO_CODES) == KO_TYPES and tuple(KI_CODES) == BARRIER_TYPES
+KO_CODES = dict(zip(KO_TYPES, (("D", "N"), ("D", "Y"), ("P", "N"), ("P", "Y")), strict=True))
+KI_CODES = dict(zip(BARRIER_TYPES, ("-", "AM", "D"), strict=True))  # 每期觀察 MKI 目前不支援，讀到時標紅
 _UNDERLYINGS = tuple(f"BBG Code {n}" for n in range(1, 6))
 _REQUIRED = (
     "Product",
@@ -219,7 +212,7 @@ def drafts_from(rows: Iterable[OrderRow], conn: psycopg.Connection | None = None
     for row in rows:
         if not row.found:
             continue
-        original = {name: row.values.get(name) for name in EDIT_FIELDS}
+        original = {name: row.values.get(name) for name in FIELDS}
         stored = None if conn is None else _stored(conn, row.tdcc)
         fields = None if stored is None else stored.fields
         locked = "" if stored is None else stored.locked
@@ -306,10 +299,10 @@ def review_status(row: OrderRow, draft: OrderDraft | None, config: ImportConfig)
 def _value_problems(values: Mapping[str, object], draft: OrderDraft, config: ImportConfig) -> dict[str, str]:
     problems: dict[str, str] = {}
     if not draft.issuer:
-        problems[TDCC_FIELD] = f"TDCC 前三碼 {draft.tdcc[:3]} 不在上手編號對照"
+        problems[TDCC_FIELD] = unknown_issuer(draft.tdcc)
     elif draft.issuer not in config.issuer_names:
         problems[TDCC_FIELD] = f"上手 {draft.issuer} 在參考條件表設定沒有發行機構寫法"
-    for name in EDIT_FIELDS:
+    for name in FIELDS:
         value = values.get(name)
         if value is None:
             if name in draft.row.conflicts:
@@ -465,18 +458,26 @@ def _import_one(conn: psycopg.Connection, draft: OrderDraft, config: ImportConfi
     names = list(dict.fromkeys(_COLUMN_FIELDS.get(c) or _DERIVED_COLUMNS[c] for c in changed))
     detail = "改了：" + "、".join(names) if names else ""
     if stored.source != ORDER_SOURCE:
-        detail = "；".join(filter(None, ("清單更新建立的商品改由 Order 匯入接手", detail)))
+        detail = "；".join(filter(None, ("清單更新建立的商品改由起單資料匯入接手", detail)))
     return _Outcome(OrderImportLine(draft.tdcc, OVERWRITTEN, detail), values, stored.columns, edits)
 
 
 def _keep_database_values(draft: OrderDraft, stored: _Stored | None) -> dict[str, object]:
-    """空白的欄不蓋掉資料庫的值，除非作業人員在畫面上看過那個值、刻意清空（打開時資料庫就有）。"""
+    """空白的欄不蓋掉資料庫的值，除非作業人員在畫面上看過那個值、刻意清空（打開時資料庫就有）。
+
+    好幾列不同的欄（`OrderRow.conflicts`）一定要作業人員填，不用資料庫的值補。
+    """
     values = dict(draft.values)
     if stored is None:
         return values
     seen = draft.stored or {}
     for name, value in stored.fields.items():
-        if values.get(name) is None and value is not None and seen.get(name) is None:
+        if (
+            values.get(name) is None
+            and value is not None
+            and seen.get(name) is None
+            and name not in draft.row.conflicts
+        ):
             values[name] = value
     return values
 
@@ -522,7 +523,7 @@ def _source_of(row: OrderRow) -> str | None:
 def _edits(original: Mapping[str, object], values: Mapping[str, object]) -> list[tuple[str, object, object]]:
     return [
         (name, original.get(name), values.get(name))
-        for name in EDIT_FIELDS
+        for name in FIELDS
         if not _same(original.get(name), values.get(name))
     ]
 

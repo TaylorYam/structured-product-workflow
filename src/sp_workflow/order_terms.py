@@ -1,4 +1,4 @@
-"""Order 條件讀取：從作業人員每天填的「起單建檔」讀出條件（#97，取代 #40 讀 Order 原信）。
+"""起單資料讀取：從作業人員每天填的「起單建檔」讀出條件（#97，取代 #40 讀 Order 原信）。
 
 對外是 `collect_orders`（讀選的那份起單建檔，依貼上的 TDCC 回傳逐檔結果）；`parse_field`／`format_field`
 給畫面輸入與顯示用，和讀起單建檔是同一套解讀。起單建檔只讀、不修改。
@@ -180,10 +180,15 @@ def _row_for(
     notes: dict[str, str] = {}
     conflicts: set[str] = set()
     for name in FIELDS:
-        shown = [_shown(cells.get(name)) for _, cells in lines]
-        if len(set(shown)) > 1:
+        # 比解讀後的值（`DAILY MEMORY` 和 `Daily Memory` 一樣）；讀不到的比原本的字
+        keys = {
+            line[name][0] if not line[name][1] else ("", _shown(cells.get(name)))
+            for line, (_, cells) in zip(parsed, lines, strict=True)
+        }
+        if len(keys) > 1:
             conflicts.add(name)
             values[name] = None
+            shown = [_shown(cells.get(name)) for _, cells in lines]
             listed = "、".join(f"第 {n} 列「{s or '空白'}」" for n, s in zip(numbers, shown, strict=True))
             notes[name] = f"這檔有 {len(lines)} 列，這欄不同：{listed}；請填正確的值"
             continue
@@ -191,12 +196,14 @@ def _row_for(
         if note:
             notes[name] = note
     if not issuer:
-        notes[TDCC_FIELD] = f"TDCC 前三碼 {tdcc[:3]} 不在上手編號對照"
-    elif len(lines) > 1 and not conflicts:
-        notes[TDCC_FIELD] = f"這檔有 {len(lines)} 列（第 {'、'.join(map(str, numbers))} 列），內容一樣"
-    # 只有「好幾列、內容一樣」這種提醒時仍算已讀取
-    status = PENDING if not issuer or set(notes) - {TDCC_FIELD} else READ
+        notes[TDCC_FIELD] = unknown_issuer(tdcc)
+    status = PENDING if notes else READ
     return OrderRow(tdcc, status, issuer, values, notes, frozenset(conflicts), path, numbers)
+
+
+def unknown_issuer(tdcc: str) -> str:
+    """TDCC 前三碼不在上手編號對照時的說明（讀取與匯入檢查共用）。"""
+    return f"TDCC 前三碼 {tdcc[:3]} 不在上手編號對照"
 
 
 def _parse_line(cells: Mapping[str, object]) -> dict[str, tuple[object, str]]:

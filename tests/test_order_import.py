@@ -1,4 +1,4 @@
-"""Order 條件確認與匯入（#86、#97、ADR 0009、0010）：讀取結果用 `order_row` 組出，資料庫測試對真的 PostgreSQL。資料全部虛構。"""
+"""起單資料確認與匯入（#86、#97、ADR 0009、0010）：讀取結果用 `order_row` 組出，資料庫測試對真的 PostgreSQL。資料全部虛構。"""
 
 from __future__ import annotations
 
@@ -17,7 +17,6 @@ from sp_workflow.mail_drafts import PENDING as MAIL_PENDING
 from sp_workflow.mail_drafts import create_drafts
 from sp_workflow.order_import import (
     BLOCKED,
-    EDIT_FIELDS,
     LOCKED,
     NEW,
     OVERWRITTEN,
@@ -32,7 +31,7 @@ from sp_workflow.order_import import (
     reload_stored,
     review_status,
 )
-from sp_workflow.order_terms import TDCC_FIELD, OrderRow, collect_orders
+from sp_workflow.order_terms import FIELDS, TDCC_FIELD, OrderRow, collect_orders
 
 BUILTIN = ConfigPaths.with_fallback(Path(__file__).resolve().parents[1] / "config" / "review_standard.toml")
 CONFLICT = "起單建檔裡這檔有好幾列、這欄不同，要填正確的值（正確是空白的話請改起單建檔後重新讀取）"
@@ -52,7 +51,7 @@ def test_draft_holds_the_sheet_fields() -> None:
     assert draft.values["KO Type"] == "Daily Memory"
     assert draft.values["Upfront / NotePrice (%)"] == Decimal("98.5")
     assert draft.values["Barrier Type"] == "EKI"
-    assert set(draft.values) == set(EDIT_FIELDS)
+    assert set(draft.values) == set(FIELDS)
     assert check_draft(draft, CONFIG) == {}
     assert draft.edits() == []
     assert review_status(draft.row, draft, CONFIG) == (READY, "", False)
@@ -311,7 +310,7 @@ def test_order_import_takes_over_a_product_the_inventory_created_later(pg) -> No
 
     assert draft.locked == ""
     line = receipt.lines[0]
-    assert line.result == OVERWRITTEN and line.detail.startswith("清單更新建立的商品改由 Order 匯入接手；改了：")
+    assert line.result == OVERWRITTEN and line.detail.startswith("清單更新建立的商品改由起單資料匯入接手；改了：")
     p = product(pg, A)
     assert (p["source"], p["order_import_id"], p["issuer"]) == ("Order", receipt.import_id, "Barclays")
     assert p["coupon_pct"] == Decimal("12.5") and p["denomination"] == Decimal(10000)
@@ -341,6 +340,16 @@ def test_conflicting_fields_are_not_filled_from_the_database(pg) -> None:
 
     assert draft.values["Coupon p.a. (%)"] is None
     assert check_draft(draft, CONFIG) == {"Coupon p.a. (%)": CONFLICT}
+
+
+@pytest.mark.db
+def test_conflicting_fields_stay_blocked_when_the_product_appears_after_reading(pg) -> None:
+    draft = draft_of(order_row(changes={"Coupon p.a. (%)": None}, conflicts=("Coupon p.a. (%)",)), pg)
+    import_drafts([draft_of(order_row(), pg)], pg, CONFIG, user="tester")  # 讀取之後才有人匯入同一檔
+
+    receipt = import_drafts([draft], pg, CONFIG, user="tester")
+
+    assert (receipt.lines[0].result, receipt.lines[0].detail) == (SKIPPED, f"Coupon p.a. (%)：{CONFLICT}")
 
 
 @pytest.mark.db

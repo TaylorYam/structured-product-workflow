@@ -2,7 +2,7 @@
 
 對外只有 `import_daily`。規則：
 - 需要 `交易明細`、`BBG_Data` 兩張工作表，少一張就整份不匯入；`清單更新` 已停用，檔案裡有也不讀（#87）。
-  商品條件改由「匯入 Order 條件」建立（#86），每日匯入不再寫商品條件、也不做分公司對帳。
+  商品條件改由「匯入起單資料」建立（#86），每日匯入不再寫商品條件、也不做分公司對帳。
 - `交易明細` 第 1 列是欄名，必須和交易清單月份工作表的欄名與順序完全相同；不同就整份不匯入。
   只收 Product 為 FCN 的列，其他略過並計數；略過的 TDCC 與 Product 記在 `workflow.other_product`。
   以 TDCC 為單位、第一次寫入為準：資料庫已有的交易不重複寫入，內容不同只列出差異、不覆蓋。
@@ -12,7 +12,7 @@
   同一個取價日重新匯入時，整份取代那一天的股價；每次匯入都留紀錄（`workflow.price_import`）。
 - 信箱由資料庫直接維護（#35、ADR 0004）：匯入不修改 `mailbox`，只用它比對 FC 名字。
 - 結果另外列出交易明細的 FCN TDCC（依第一次出現的順序、不重複，不是剛好 12 碼與整檔都取消的不列），
-  給視窗帶到 Order 條件頁（#90）。
+  給視窗帶到起單資料頁（#90）。
 - 整次匯入在一個 transaction 內完成，任何錯誤都不留下部分寫入。
 """
 
@@ -129,7 +129,7 @@ class ImportReceipt:
     error_book_path: Path
     prices: PriceSummary
     fcn_trade_rows: int  # 交易明細裡 Product 為 FCN 的列數，含取消的
-    fcn_tdccs: tuple[str, ...]  # 帶到 Order 條件頁的 TDCC（#90）
+    fcn_tdccs: tuple[str, ...]  # 帶到起單資料頁的 TDCC（#90）
 
     def count(self, kind: str) -> int:
         return sum(line.kind == kind for line in self.lines)

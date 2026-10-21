@@ -98,8 +98,17 @@ def test_identical_duplicate_lines_are_used(tmp_path: Path) -> None:
 
     (row,) = read(path, A)
 
-    assert (row.status, row.lines, row.values) == (READ, (3, 5), VALUES)
-    assert row.notes == {TDCC_FIELD: "這檔有 2 列（第 3、5 列），內容一樣"}
+    assert (row.status, row.lines, row.values, row.notes) == (READ, (3, 5), VALUES, {})
+
+
+def test_duplicate_lines_are_compared_by_their_read_values(tmp_path: Path) -> None:
+    """寫法不同但解讀後一樣（大小寫、數字與文字）不算不同。"""
+    same = sheet_line(A, {"KO Type": "DAILY MEMORY", "Barrier Type": "eki", "Tenor (m)": "6"})
+    path = write_sheet(tmp_path / "s.xlsx", [sheet_line(A), same])
+
+    (row,) = read(path, A)
+
+    assert (row.status, row.conflicts, row.values) == (READ, frozenset(), VALUES)
 
 
 def test_different_duplicate_lines_leave_those_fields_for_the_operator(tmp_path: Path) -> None:
