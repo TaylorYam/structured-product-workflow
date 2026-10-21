@@ -213,7 +213,7 @@ def _draft_one(
         return DraftOutcome(tdcc, PENDING, reason=f"不支援的商品類型：{other[0]}（目前只做 FCN）")
     problems = []
     if product is None:
-        problems.append("資料庫沒有這檔的商品條件（還沒匯入 Order 條件，或每日匯入的清單更新還沒有這檔）")
+        problems.append("資料庫沒有這檔的商品條件（還沒匯入 Order 條件）")
     elif product["issue_date"] is None:
         problems.append("商品資料還沒有發行日（等核對回填）")
     if not fc_names:

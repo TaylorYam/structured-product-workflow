@@ -70,7 +70,7 @@ spw-panel
 
 ### 每日匯入（最小 FCN 資料庫）
 
-把每天的 FCN 交易與商品條件匯入 PostgreSQL；信箱在資料庫直接維護（[ADR 0004](docs/adr/0004-mailbox-maintained-in-database.md)、[#35](https://github.com/TaylorYam/structured-product-workflow/issues/35)）（[#32](https://github.com/TaylorYam/structured-product-workflow/issues/32)、[ADR 0003](docs/adr/0003-minimal-fcn-database.md)）。寄信草稿之後只讀這個資料庫。
+把每天的 FCN 交易明細與每日股價匯入 PostgreSQL（[#87](https://github.com/TaylorYam/structured-product-workflow/issues/87)、[ADR 0008](docs/adr/0008-daily-prices-denomination-and-order-dates.md)）；商品條件改由「2 Order 條件」確認後匯入；信箱在資料庫直接維護（[ADR 0004](docs/adr/0004-mailbox-maintained-in-database.md)、[#35](https://github.com/TaylorYam/structured-product-workflow/issues/35)）（[#32](https://github.com/TaylorYam/structured-product-workflow/issues/32)、[ADR 0003](docs/adr/0003-minimal-fcn-database.md)）。寄信草稿之後只讀這個資料庫。
 
 **第一次設定（每台電腦一次）**：
 1. 安裝 PostgreSQL，建立資料庫與日常使用的帳號（可用 `scripts/provision_postgres_dev.py`）。
@@ -84,21 +84,21 @@ spw-db-migrate --admin-user postgres
 之後程式更新、有新的資料表版本時，再執行一次同樣的指令。換電腦（例如從筆電到公司電腦）時不複製資料庫，照上面三步重建，再把每日更新重新匯入。
 
 **每天**：
-1. 打開 `每日更新.xlsx`：把前一天的交易整列貼到 `交易明細`（欄位同交易清單月份工作表），這些商品在庫存總表的列整列貼到 `清單更新`（欄位同 `FCN清單.xlsx`）。第 1 列欄名不要動。
-2. 視窗切到「1 每日匯入」，選 `每日更新.xlsx`，按「匯入」。
+1. 打開每日更新（範本 `PostgreSQL每日更新.xlsx`，只放在私人樣本倉庫）：把前一天的交易整列貼到 `交易明細`（欄位同交易清單月份工作表，第 1 列欄名不要動）；`BBG_Data` 依範本取價（C1 是取價日，內容是前一個交易日的價格）。以前的 `清單更新` 工作表已停用，檔案裡有也不讀。
+2. 視窗切到「1 每日匯入」，選每日更新，按「匯入」。
 3. 看結果：
-   - 「新增商品」「新增交易」：寫入成功。「已存在」：之前匯過，這次沒有寫入。
-   - 「內容不同（未覆蓋）」：和資料庫裡的不一樣，資料庫保留第一次的內容。
-   - 「擋下」：這一列缺值或寫法不認得（例如庫存狀態、KO／KI 代碼），修正 Excel 後重新匯入。
-   - 「分公司對帳差異」：交易明細各分公司金額加總和庫存總表的承作金額不同（PB 也算），只提醒。
-   - 「庫存尚未更新」：交易已匯入、清單更新還沒有這檔；之後貼進來再匯入一次即可。由「匯入 Order 條件」建立的商品還沒有分公司配置時也是這個結果，等清單更新補上後才對帳。
-   - 「補上空白」：過渡期（#87 上線前），由「匯入 Order 條件」建立的商品，清單更新只補資料庫空白的 ISIN、發行日與分公司配置；有值的不覆蓋，不同的照樣列在「內容不同（未覆蓋）」（#86、ADR 0009）。
+   - 「新增交易」：寫入成功。「已存在」：之前匯過，這次沒有寫入。
+   - 「內容不同（未覆蓋）」：交易列和資料庫裡的不一樣，資料庫保留第一次的內容。
+   - 「擋下」：這一列缺值或寫法不認得，修正 Excel 後重新匯入。
+   - 「股價衝突」：`BBG_Data` 同一個代碼出現多列、值不一樣；這個代碼的價格不存，算價格時不能用。值都一樣的重複列只算一筆。
+   - 「股價不是數字」：價格格子不是數字（例如 `#N/A`），存成空白。
    - 「交易已取消」：交易明細的「備註」去頭尾空白、不分大小寫等於 `Cancel`，或備註包含「取消」；該列不會匯入資料庫。
    - 「名字對不到信箱」：交易明細的 FC 名字在 `mailbox.person` 找不到（大小寫不同視為同一人）；拼法不同請在 `mailbox.alias` 加一筆別名。
    - 「信箱尚未建立」：`mailbox.person` 還是空的，名字無法比對。
+   - 完成訊息另外寫出股價的取價日與筆數；同一個取價日重新匯入時，整份取代那一天的股價（每次匯入都留紀錄）。
 4. 匯入完成後，這份交易明細的 FCN TDCC 已經帶到「2 Order 條件」（完成訊息寫出帶了幾筆）；按「下一步：Order 條件 →」接著讀 Order（[#90](https://github.com/TaylorYam/structured-product-workflow/issues/90)）。已存在的商品照樣帶；交易明細沒有 FCN 或整份不匯入時不帶。
 
-只收 FCN，其他商品略過並計數；備註為 `Cancel` 或包含「取消」的交易列不會匯入資料庫；同一 TDCC、商品條件相同且分公司不重複的多列庫存資料會合併；同一份重複匯入不會重複寫入；任何錯誤都不會留下一半的資料。所有匯入問題會集中重建到來源檔同資料夾的 `每日匯入錯誤.xlsx`，包含既有匯入歷史；因此 9 月、10 月會在同一份檔案。交易列是否取消以備註欄為準，不讀取 Excel 底色。已存在商品的庫存狀態這一版不更新。每日匯入不會修改信箱。
+只收 FCN，其他商品略過並計數；備註為 `Cancel` 或包含「取消」的交易列不會匯入資料庫；同一份重複匯入不會重複寫入交易；任何錯誤都不會留下一半的資料。所有匯入問題會集中重建到來源檔同資料夾的 `每日匯入錯誤.xlsx`，包含既有匯入歷史；因此 9 月、10 月會在同一份檔案。交易列是否取消以備註欄為準，不讀取 Excel 底色。股價以「取價日＋代碼」為一筆，代碼只去頭尾空白，不改大小寫、不換交易所碼；`BBG_Data` 的 C1 不是日期或第 2 列欄名不同時整份不匯入。每日匯入不寫商品條件、不做分公司對帳（分公司配置之後由交易明細算，#88），也不會修改信箱。#87 之前清單更新寫入的商品與分公司配置照舊保留。
 
 **信箱維護**：直接在資料庫的 `mailbox.person`（人員）、`mailbox.alias`（別名）新增或修改，例如用 pgAdmin 以有寫入權限的帳號執行 SQL。比對用的小寫鍵由資料庫自動產生；名字不分大小寫不能重複，信箱格式不對、別名指到不存在的人都會被拒絕。改名時別名會跟著改。
 
@@ -254,7 +254,7 @@ Rules, templates, support scope, the reference workbook format, and the checker'
 
 ### Daily import (minimal FCN database)
 
-Imports each day's FCN trades and product terms into PostgreSQL; the mailbox is maintained directly in the database ([ADR 0004](docs/adr/0004-mailbox-maintained-in-database.md), [#35](https://github.com/TaylorYam/structured-product-workflow/issues/35)) ([#32](https://github.com/TaylorYam/structured-product-workflow/issues/32), [ADR 0003](docs/adr/0003-minimal-fcn-database.md)). Mail drafts will read only this database.
+Imports each day's FCN trade rows and daily prices into PostgreSQL ([#87](https://github.com/TaylorYam/structured-product-workflow/issues/87), [ADR 0008](docs/adr/0008-daily-prices-denomination-and-order-dates.md)); product terms are imported after confirmation on 2 Order 條件; the mailbox is maintained directly in the database ([ADR 0004](docs/adr/0004-mailbox-maintained-in-database.md), [#35](https://github.com/TaylorYam/structured-product-workflow/issues/35)) ([#32](https://github.com/TaylorYam/structured-product-workflow/issues/32), [ADR 0003](docs/adr/0003-minimal-fcn-database.md)). Mail drafts will read only this database.
 
 **First-time setup (once per computer)**:
 1. Install PostgreSQL and create the database and the daily account (`scripts/provision_postgres_dev.py` can help).
@@ -268,21 +268,21 @@ spw-db-migrate --admin-user postgres
 Run the same command again after updates that add schema versions. When moving to another computer (for example from the laptop to the company computer), do not copy the database: repeat the three steps and re-import the daily updates.
 
 **Daily**:
-1. Open `每日更新.xlsx`: paste yesterday's trade rows whole into `交易明細` (same columns as the trade-list monthly sheets) and those products' inventory rows whole into `清單更新` (same columns as `FCN清單.xlsx`). Do not change the header row.
-2. In the window, open "1 每日匯入", choose `每日更新.xlsx`, and click "匯入".
+1. Open the daily update (template `PostgreSQL每日更新.xlsx`, kept only in the private samples repository): paste yesterday's trade rows whole into `交易明細` (same columns as the trade-list monthly sheets; do not change the header row); `BBG_Data` pulls prices per the template (C1 is the price date, and the values are the previous trading day's). The old `清單更新` sheet is retired and is ignored if present.
+2. In the window, open "1 每日匯入", choose the daily update, and click "匯入".
 3. Review the results:
-   - "新增商品"/"新增交易": written. "已存在": imported before; nothing written this time.
-   - "內容不同（未覆蓋）": differs from the database, which keeps the first version.
-   - "擋下": a row is missing values or uses an unrecognized form (for example inventory status or KO/KI codes); fix the workbook and re-import.
-   - "分公司對帳差異": per-branch trade totals differ from the inventory allocation (PB included); warning only.
-   - "庫存尚未更新": trades are imported but `清單更新` lacks the product; paste it later and import again. A product created by "Import Order terms" without branch allocations also gets this result; reconciliation waits until 清單更新 fills them.
-   - "補上空白": during the transition (until #87 ships), 清單更新 only fills blank ISIN, issue date, and branch allocations of products created by "Import Order terms"; existing values are not overwritten and differences are still listed under "內容不同（未覆蓋）" (#86, ADR 0009).
+   - "新增交易": written. "已存在": imported before; nothing written this time.
+   - "內容不同（未覆蓋）": the trade rows differ from the database, which keeps the first version.
+   - "擋下": a row is missing values or uses an unrecognized form; fix the workbook and re-import.
+   - "股價衝突": a code appears on several `BBG_Data` rows with different values; its prices are not stored and cannot be used for pricing. Duplicate rows with identical values count once.
+   - "股價不是數字": a price cell is not a number (for example `#N/A`) and is stored blank.
    - "交易已取消": the trade-row 備註, after trimming and case-folding, is `Cancel`, or it contains `取消`; the row is not imported into the database.
    - "名字對不到信箱": an FC name is missing from `mailbox.person` (case is ignored); for spelling variants add an alias to `mailbox.alias`.
    - "信箱尚未建立": `mailbox.person` is empty, so names cannot be matched.
+   - The completion message also gives the price date and count; re-importing the same price date replaces that whole day (every import is recorded).
 4. After the import, the trade sheet's FCN TDCCs are already filled into "2 Order 條件" (the completion message says how many); click "下一步：Order 條件 →" to go on and read the Orders ([#90](https://github.com/TaylorYam/structured-product-workflow/issues/90)). Products already in the database are included; nothing is filled in when the trade sheet has no FCN or the whole file is rejected.
 
-Only FCN is imported; other products are skipped and counted. Trade rows whose 備註 is `Cancel` or contains `取消` are not imported. Inventory rows for the same TDCC with identical product terms and disjoint branches are merged. Re-importing the same file writes nothing new, and any error leaves no partial data. All import problems are rebuilt into one `每日匯入錯誤.xlsx` beside the source workbook, including prior import history, so September and October appear in the same workbook. The note field is authoritative for cancellation; Excel fill colors are not inspected. Inventory status of existing products is not refreshed in this version. The daily import never changes the mailbox.
+Only FCN is imported; other products are skipped and counted. Trade rows whose 備註 is `Cancel` or contains `取消` are not imported. Re-importing the same file writes no new trades, and any error leaves no partial data. All import problems are rebuilt into one `每日匯入錯誤.xlsx` beside the source workbook, including prior import history, so September and October appear in the same workbook. The note field is authoritative for cancellation; Excel fill colors are not inspected. Prices are keyed by price date and code; codes are only trimmed, never re-cased or mapped to another exchange; the whole file is rejected when `BBG_Data` C1 is not a date or the row-2 headers differ. The daily import writes no product terms and does no branch reconciliation (branch allocations will be derived from the trade rows, #88), and it never changes the mailbox. Products and branch allocations written by 清單更新 before #87 are kept.
 
 **Mailbox maintenance**: add or edit rows directly in `mailbox.person` (people) and `mailbox.alias` (aliases), for example with SQL in pgAdmin using an account with write access. The lowercase matching keys are generated by the database; names must be unique ignoring case, and invalid email formats or aliases pointing to unknown people are rejected. Renaming a person updates their aliases.
 
