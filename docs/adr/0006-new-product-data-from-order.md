@@ -1,6 +1,6 @@
 # 0006: 新商品資料改由 Order、交易明細與股價建立／Build New Product Data from Orders, Trade Rows, and Prices
 
-- 狀態／Status: Accepted（部分待定，見後果）／Accepted (some items open; see Consequences)
+- 狀態／Status: Accepted；待定事項由 [ADR 0008](0008-daily-prices-denomination-and-order-dates.md) 補上，過渡期「清單更新照樣匯入、只比對」由 ADR 0008 取代／Accepted; open items completed by ADR 0008, and the transition rule of importing 清單更新 for comparison superseded by ADR 0008
 - 日期／Date: 2026-10-20
 - 追蹤／Tracking: #54（範圍改寫）
 - 部分取代／Partly supersedes: [ADR 0003](0003-minimal-fcn-database.md) 中「商品條件以清單更新（庫存總表）為來源」／ADR 0003's use of 清單更新 (the inventory master) as the source of product terms
