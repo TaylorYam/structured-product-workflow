@@ -17,6 +17,7 @@ from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.saving import SaveReceipt
 from order_synth import CONFIG, missing_row, order_row
 from sp_workflow import app
+from sp_workflow.check_terms import DONE, TO_CONFIRM, WAIT_PRICES, CalcLine, CalcReceipt, Difference
 from sp_workflow.daily_import import NEW_TRADES, PRICE_CONFLICT, ImportLine, ImportReceipt, PriceSummary
 from sp_workflow.documents import DocKind
 from sp_workflow.local_settings import FolderMemory
@@ -268,7 +269,7 @@ def test_order_terms_tab_remembers_its_sheet(master, tmp_path: Path) -> None:
 
     assert window.orders.sheet_var.get() == "D:/ELN/起單建檔_20261015.xlsm"
     assert not hasattr(window.orders, "root_folder"), "起單資料頁不用根目錄（#97）"
-    assert texts(window.orders.buttons, ttk.Button) == ["讀取", "匯入資料庫"]
+    assert texts(window.orders.buttons, ttk.Button) == ["讀取", "匯入資料庫", "放行差異…"]
     assert str(window.orders.import_button.cget("state")) == "disabled"
 
 
@@ -622,7 +623,12 @@ def test_daily_import_page_shows_key_figures_and_restarts_clean(master, tmp_path
     receipt = daily_receipt(tmp_path, lines=lines, prices=PriceSummary(dt.date(2026, 10, 16), 510, 0, ("AAA UW",)))
 
     window.daily._done(receipt)
-    assert window.daily.kpis.values == (("正常（項）", 1, False), ("要注意（項）", 1, True), ("股價（筆）", 510, False))
+    assert window.daily.kpis.values == (
+        ("正常（項）", 1, False),
+        ("要注意（項）", 1, True),
+        ("股價（筆）", 510, False),
+        ("核對條件待確認（檔）", 0, False),
+    )
     assert (
         "股價：取價日 2026-10-16，510 筆；值不一樣的重複代碼 1 個，價格沒有存：AAA UW。"
         in window.daily.status_var.get()
@@ -660,9 +666,10 @@ def test_a_new_check_result_clears_the_last_return(master, tmp_path: Path) -> No
 
 
 def daily_receipt(
-    tmp_path: Path, tdccs: tuple[str, ...] = (), fcn_rows: int | None = None, *, lines=(), prices=None
-) -> ImportReceipt:
-    return ImportReceipt(
+    tmp_path: Path, tdccs: tuple[str, ...] = (), fcn_rows: int | None = None, *, lines=(), prices=None, calcs=None
+) -> app._DailyResult:
+    """每日匯入的結果；`calcs` 是重算核對條件的結果（CalcLine），沒給時是空的重算。"""
+    receipt = ImportReceipt(
         run_id=7,
         lines=lines,
         people=3,
@@ -673,6 +680,7 @@ def daily_receipt(
         fcn_trade_rows=len(tdccs) if fcn_rows is None else fcn_rows,
         fcn_tdccs=tdccs,
     )
+    return app._DailyResult(receipt, app._Recalc(CalcReceipt(tuple(calcs or ())), CONFIG.calendar))
 
 
 def test_reimporting_a_price_date_says_how_many_prices_were_replaced(master, tmp_path: Path) -> None:
@@ -1051,3 +1059,93 @@ def test_reading_without_a_database_setup_does_not_ask_for_a_password(master, tm
     window.orders.start()
 
     assert started and started[0].startswith("讀取中")
+
+
+# ---------------------------------------------------------------- 匯入後重算核對條件、放行差異（#88）
+
+UF_DIFF = Difference("UF", "1.99", "0.0215")
+NEEDS_RELEASE = CalcLine(
+    "029199990001", TO_CONFIRM, "UF不一致：起單資料 1.99、交易明細 0.0215（換算 2.15）", True, (UF_DIFF,)
+)
+
+
+def release_without_database(tab, monkeypatch, result) -> list[str]:
+    """放行時不連資料庫：問的話回答「是」，背景工作直接回 result。回傳問過的內容。"""
+    asked = []
+    monkeypatch.setattr(app.messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or True)
+    monkeypatch.setattr(tab.db, "settings", lambda **kwargs: object())
+    monkeypatch.setattr(tab, "run_in_background", lambda action, busy, on_done, **k: on_done(result))
+    return asked
+
+
+def test_daily_import_lists_check_terms_and_releases_a_difference(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    calcs = (
+        NEEDS_RELEASE,
+        CalcLine("029199990002", WAIT_PRICES, "還沒有取價日比 Strike date 2026-10-16 晚的股價檔", False),
+        CalcLine("029199990003", DONE, "", False),  # 沒變、已完成的不列
+    )
+
+    window.daily._done(daily_receipt(tmp_path, calcs=calcs))
+
+    rows = [tuple(window.daily.table.item(iid, "values")) for iid in window.daily.table.get_children()]
+    assert rows == [
+        ("029199990001", "核對條件：待確認", NEEDS_RELEASE.reason),
+        ("029199990002", "核對條件：等股價", "還沒有取價日比 Strike date 2026-10-16 晚的股價檔"),
+    ]
+    assert window.daily.kpis.values[-1] == ("核對條件待確認（檔）", 1, True)
+    assert "核對條件（還沒鎖住的 3 檔，這次有變 1 檔）：完成 1、等股價 1、等交易明細 0、待確認 1。" in (
+        window.daily.status_var.get()
+    )
+    button = window.daily.releaser.button
+    window.daily.table.selection_set("calc-029199990002")
+    master.update()
+    assert str(button.cget("state")) == "disabled", "沒有差異的不能放行"
+    window.daily.table.selection_set("calc-029199990001")
+    master.update()
+    assert str(button.cget("state")) == "normal"
+
+    released = CalcLine("029199990001", DONE, "已放行的差異：UF（…）", True, (Difference(*UF_DIFF.key, released=True),))
+    asked = release_without_database(window.daily, monkeypatch, released)
+    button.invoke()
+
+    assert len(asked) == 1 and "UF不一致：起單資料 1.99、交易明細 0.0215（換算 2.15）" in asked[0]
+    assert window.daily.table.item("calc-029199990001", "values")[1] == "核對條件：完成"
+    assert window.daily.status_var.get().startswith("已放行 029199990001 的差異，重算後：完成")
+    assert str(button.cget("state")) == "disabled"
+
+
+def test_daily_import_says_when_check_terms_were_not_recalculated(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    result = daily_receipt(tmp_path)
+
+    window.daily._done(app._DailyResult(result.receipt, app._Recalc(error="找不到交易所假日表設定檔")))
+
+    assert "核對條件沒有重算（找不到交易所假日表設定檔）" in window.daily.status_var.get()
+    assert [caption for caption, _, _ in window.daily.kpis.values] == ["正常（項）", "要注意（項）", "股價（筆）"]
+
+
+def test_order_import_shows_the_check_terms_of_the_batch(master, tmp_path: Path, monkeypatch) -> None:
+    window = order_window(master, tmp_path, order_row("029199990001"), order_row("029199990002"))
+    lines = (OrderImportLine("029199990001", ORDER_NEW), OrderImportLine("029199990002", ORDER_NEW))
+    calcs = (NEEDS_RELEASE, CalcLine("029199990002", DONE, "", True), CalcLine("029199990009", WAIT_PRICES, "", True))
+    recalc = app._Recalc(CalcReceipt(calcs), CONFIG.calendar)
+
+    window.orders._saved(app._SaveResult(OrderImportReceipt(7, lines), recalc=recalc))
+
+    values = {
+        window.orders.table.set(iid, "tdcc"): window.orders.table.item(iid, "values") for iid in window.orders.items
+    }
+    assert values["029199990001"][1:] == (ORDER_NEW, "BARC", TO_CONFIRM, "核對條件：" + NEEDS_RELEASE.reason)
+    assert values["029199990002"][1:] == (ORDER_NEW, "BARC", DONE, "")
+    assert window.orders.kpis.values[-1] == ("核對條件待確認（檔）", 1, True)
+    assert "核對條件（這批匯入的 2 檔）：完成 1、等股價 0、等交易明細 0、待確認 1。" in window.orders.status_var.get()
+
+    iid = next(i for i, (row, _) in window.orders.items.items() if row.tdcc == "029199990001")
+    window.orders.table.selection_set(iid)
+    master.update()
+    released = CalcLine("029199990001", DONE, "已放行的差異：UF（…）", True, (Difference(*UF_DIFF.key, released=True),))
+    release_without_database(window.orders, monkeypatch, released)
+    window.orders.releaser.button.invoke()
+
+    assert window.orders.table.item(iid, "values")[3:] == (DONE, "核對條件：已放行的差異：UF（…）")
