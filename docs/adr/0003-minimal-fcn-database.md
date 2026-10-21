@@ -1,6 +1,6 @@
 # 0003: 最小 FCN 資料庫與每日更新範本／Minimal FCN Database and Daily Update Template
 
-- 狀態／Status: Accepted（#34 實作；信箱維護方式由 [ADR 0004](0004-mailbox-maintained-in-database.md) 取代／implemented in #34; mailbox maintenance superseded by ADR 0004）
+- 狀態／Status: Accepted（#34 實作；信箱維護方式由 [ADR 0004](0004-mailbox-maintained-in-database.md) 取代；商品條件來源由 [ADR 0006](0006-new-product-data-from-order.md) 取代；每日更新範本的 `清單更新` 工作表由 [ADR 0008](0008-daily-prices-denomination-and-order-dates.md) 取代／implemented in #34; mailbox maintenance superseded by ADR 0004; product-term source superseded by ADR 0006; the daily template's `清單更新` sheet superseded by ADR 0008）
 - 日期／Date: 2026-10-19
 - 追蹤／Tracking: #32、#29
 
