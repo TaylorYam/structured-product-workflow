@@ -110,13 +110,19 @@ def verdicts(outcome) -> list[tuple[str, Category, tuple[str, ...]]]:
 # ---------- 讀到的條件與 Excel 相同 ----------
 
 
+# VWAP 還沒回填：價格空白（沒有 KI 的下限價照樣是空值寫法 -）
+VWAP_BLANK = {f"UL_{i}_{p}": None for i in range(1, 4) for p in ("進場價", "執行價", "KO價")}
+
+
 @pytest.mark.db
-def test_database_rows_read_the_same_as_the_excel_reference_sheet(pg, tmp_path) -> None:
+@pytest.mark.parametrize("pricing", ["收盤價", "VWAP"])
+def test_database_rows_read_the_same_as_the_excel_reference_sheet(pg, tmp_path, pricing) -> None:
     spec = Spec()
-    seed(pg, spec)
+    seed(pg, spec, pricing=pricing)
     pdfs = pdfs_of(tmp_path, spec)
     db_sheet, absent = export(pg, tmp_path, pdfs)
-    excel_sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [reference_row(spec)])
+    overrides = {"期初定價": pricing, **(VWAP_BLANK if pricing == "VWAP" else {})}
+    excel_sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [reference_row(spec, **overrides)])
 
     (db_row,) = load_reference_sheet(db_sheet, FMT).rows
     (xl_row,) = load_reference_sheet(excel_sheet, FMT).rows
@@ -176,7 +182,7 @@ def test_passing_products_are_backfilled_and_locked(pg, tmp_path) -> None:
     dates = dict(pg.execute("SELECT slot, value FROM workflow.autocall_date WHERE tdcc = %s", (spec.product_code,)))
     assert len(dates) == 12 and max(d for d in dates.values() if d) == spec.final_date
     kinds = pg.execute("SELECT kind, category, filled, checked_by FROM workflow.check_result ORDER BY kind").fetchall()
-    assert kinds == [("投資人須知", "通過", False, "operator1"), ("說明書", "通過", True, "operator1")]
+    assert kinds == [("投資人須知", "通過", True, "operator1"), ("說明書", "通過", True, "operator1")]
     logged = {item for (item,) in pg.execute("SELECT item FROM workflow.backfill_log")}
     assert {"ISIN Code", "發行日"} <= logged
 
@@ -187,6 +193,24 @@ def test_passing_products_are_backfilled_and_locked(pg, tmp_path) -> None:
     assert not [d for d in ts.report.backfill if d.action.value in ("fill", "overwrite")]
     second = write_back(pg, again, again_receipt, FMT, user="operator1")
     assert (second.locked, second.already_locked) == ((), (spec.product_code,))
+
+
+@pytest.mark.db
+def test_terms_changed_after_checking_are_not_backfilled_or_locked(pg, tmp_path) -> None:
+    """預覽之後重新匯入起單資料（例：改了年利率）：核對的不是現在的條件，不回填、不鎖住。"""
+    spec = Spec()
+    seed(pg, spec)
+    outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
+    pg.execute("UPDATE workflow.product SET coupon_pct = coupon_pct + 1 WHERE tdcc = %s", (spec.product_code,))
+
+    result = write_back(pg, outcome, receipt, FMT, user="operator1")
+
+    assert (result.locked, result.stale, result.results) == ((), (spec.product_code,), 2)
+    assert "條件在核對後改了" in result.summary
+    isin, locked_at = pg.execute(
+        "SELECT isin, locked_at FROM workflow.product WHERE tdcc = %s", (spec.product_code,)
+    ).fetchone()
+    assert isin is None and locked_at is None
 
 
 @pytest.mark.db

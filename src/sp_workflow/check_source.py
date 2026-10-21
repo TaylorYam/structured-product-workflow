@@ -84,18 +84,19 @@ def export_reference(
         require_current_schema(conn)
     except DatabaseError as exc:
         raise CheckSourceError(str(exc)) from exc
+    codes = list(dict.fromkeys(tdccs))
     with conn.transaction():
-        stored = _load(conn, list(dict.fromkeys(tdccs)))
-    rows, absent = [], {}
-    for tdcc in dict.fromkeys(tdccs):
+        stored = _load(conn, codes)
+    headers, rows, absent = _headers(fmt), [], {}
+    for tdcc in codes:
         found = stored.get(tdcc)
         reason = _absent_reason(found)
         if reason:
             absent[tdcc] = reason
         else:
             assert found is not None
-            rows.append(_row(found, fmt))
-    _write_sheet(path, _headers(fmt), rows)
+            rows.append(_row(found, fmt, headers))
+    _write_sheet(path, headers, rows)
     return absent
 
 
@@ -149,11 +150,12 @@ def _load(conn: psycopg.Connection, tdccs: list[str]) -> dict[str, _Stored]:
         autocall.setdefault(tdcc, {})[slot] = value
     return {
         tdcc: _Stored(
-            product,
-            *terms.get(tdcc, (None, "")),
-            prices.get(tdcc, {}),
-            branches.get(tdcc, []),
-            autocall.get(tdcc),
+            product=product,
+            status=terms[tdcc][0] if tdcc in terms else None,
+            reason=terms[tdcc][1] if tdcc in terms else "",
+            prices=prices.get(tdcc, {}),
+            branches=branches.get(tdcc, []),
+            autocall=autocall.get(tdcc),
         )
         for tdcc, product in products.items()
     }
@@ -170,7 +172,7 @@ def _headers(fmt: ReferenceFormat) -> list[str]:
     ]
 
 
-def _row(found: _Stored, fmt: ReferenceFormat) -> dict[str, Any]:
+def _row(found: _Stored, fmt: ReferenceFormat, headers: Sequence[str]) -> dict[str, Any]:
     """一檔商品 → {欄名: 值}。標準欄位依格式設定對到欄名；空值寫法用在 KI NONE、沒有的標的與不需要填的比價日。"""
     p, empty = found.product, fmt.empty_value
     no_ki = p["barrier_type"] == "NONE"
@@ -214,7 +216,7 @@ def _row(found: _Stored, fmt: ReferenceFormat) -> dict[str, Any]:
     for n, (branch, amount) in enumerate(found.branches[:BRANCHES], 1):
         extra[f"分公司_{n}"], extra[f"分公司_{n}_承作金額"] = branch, amount
     row = {}
-    for header in _headers(fmt):
+    for header in headers:
         std = fmt.columns.get(header)
         row[header] = values.get(std) if std is not None else extra.get(header)
     return row
@@ -253,6 +255,7 @@ class WriteBackReceipt:
     already_locked: tuple[str, ...]  # 已鎖住、沒有再回填的 TDCC
     results: int  # 保存了幾份核對結果
     changes: int  # 商品資料改了幾個值
+    stale: tuple[str, ...] = ()  # 核對後資料庫的條件改了（或核對條件不再是完成）、沒有回填也沒有鎖住的 TDCC
 
     @property
     def summary(self) -> str:
@@ -261,6 +264,8 @@ class WriteBackReceipt:
         )
         if self.already_locked:
             text += f"；{'、'.join(self.already_locked)} 已鎖住，沒有再回填"
+        if self.stale:
+            text += f"；{'、'.join(self.stale)} 的條件在核對後改了，沒有回填也沒有鎖住，請重新載入預覽再核對"
         return text + "。"
 
 
@@ -272,8 +277,16 @@ def write_back(
     *,
     user: str | None = None,
 ) -> WriteBackReceipt:
-    """核對結果檔存好之後寫回資料庫；整次在同一個 transaction 裡，失敗時什麼都不寫。"""
+    """核對結果檔存好之後寫回資料庫；整次在同一個 transaction 裡，失敗時什麼都不寫。
+
+    回填前確認資料庫現在的條件和核對時用的參考條件表（`batch.reference_sheet`）相同、核對條件仍是完成：
+    預覽之後重新匯入起單資料或重算過的商品不回填、不鎖住（鎖住的一定是核對過的條件）。
+    """
+    from fcn_checker.orders.reference import load_reference_sheet
+
     require_current_schema(conn)
+    checked_rows = {r.product_code.value: r for r in load_reference_sheet(batch.reference_sheet, fmt).rows}
+    headers = _headers(fmt)
     user = user or getpass.getuser()
     result_file = str(receipt.output)
     codes = list(dict.fromkeys(i.product_code for i in batch.items if i.product_code))
@@ -282,9 +295,10 @@ def write_back(
         saved = 0
         for item in batch.items:
             if item.product_code in known and item.kind is not None:
-                _save_result(conn, item, receipt.filled(item), result_file, user)
+                filled = any(receipt.filled(i) for i in (item, item.partner) if i is not None)  # 這檔商品有回填
+                _save_result(conn, item, filled, result_file, user)
                 saved += 1
-        locked, already, changes = [], [], 0
+        locked, already, stale, changes = [], [], [], 0
         for item in receipt.filled_items:
             tdcc = item.product_code
             if tdcc not in known:
@@ -295,11 +309,30 @@ def write_back(
             if locked_at is not None:
                 already.append(tdcc)
                 continue
+            current = _load(conn, [tdcc]).get(tdcc)
+            if _absent_reason(current) or _changed(_row(current, fmt, headers), checked_rows.get(tdcc), fmt):
+                stale.append(tdcc)
+                continue
             for column, new in [*_backfill_values(item, fmt), *_released_denomination(item)]:
                 changes += _write_value(conn, tdcc, column, new, fmt, result_file, user)
             conn.execute("UPDATE workflow.product SET locked_at = now() WHERE tdcc = %s", (tdcc,))
             locked.append(tdcc)
-    return WriteBackReceipt(tuple(locked), tuple(already), saved, changes)
+    return WriteBackReceipt(tuple(locked), tuple(already), saved, changes, tuple(stale))
+
+
+def _changed(current: Mapping[str, Any], checked: Any, fmt: ReferenceFormat) -> bool:
+    """資料庫現在的值和核對時那一列（`OrderRecord`）不同；回填欄位（ISIN、發行日、比價日、TS、IIS）不算。"""
+    if checked is None:
+        return True
+    skip = {"isin", "issue_date", *CHECKED_FIELDS}
+    for header, value in current.items():
+        std = fmt.columns.get(header)
+        if std is None or std in skip or std.startswith("autocall_date_"):
+            continue
+        found = checked.get(std)
+        if not _same(None if value == "" else value, None if found is None else found.value):
+            return True
+    return False
 
 
 def _save_result(conn: psycopg.Connection, item: BatchItem, filled: bool, result_file: str, user: str) -> None:
@@ -338,12 +371,14 @@ def _backfill_values(item: BatchItem, fmt: ReferenceFormat) -> list[tuple[str, A
 
 def _released_denomination(item: BatchItem) -> list[tuple[str, Any]]:
     """人工放行的說明書，單位面額和資料庫不同時寫入 TS 的值（ADR 0008）。"""
+    from fcn_checker.schema import CheckStatus
+
     if not item.released:
         return []
     found = {
         r.actual
         for r in item.report.results
-        if r.rule_id == DENOMINATION_RULE and r.status != "PASS" and r.actual is not None
+        if r.rule_id == DENOMINATION_RULE and r.status != CheckStatus.PASS and r.actual is not None
     }
     if len(found) != 1:
         return []
@@ -381,6 +416,8 @@ def _write_value(
     elif std.startswith("underlying_") and std.endswith("_price"):
         _, i, *rest = std.split("_")
         price = "_".join(rest)
+        if price not in PRICE_COLUMNS.values():  # 欄名放進 SQL 前只接受這四個
+            return 0
         found = conn.execute(
             f"SELECT {price} FROM workflow.underlying_price WHERE tdcc = %s AND seq = %s", (tdcc, int(i))
         ).fetchone()
@@ -445,25 +482,30 @@ class WorkflowDatabase:
         return self._settings is not None
 
     def export(self, term_sheets: Sequence[Path], fmt: ReferenceFormat) -> tuple[Path, dict[str, str]]:
+        import psycopg
+
         from fcn_checker.identification import file_code
         from fcn_checker.ingestion import IngestionError
 
         tdccs = [code for code in (file_code(Path(p)) for p in term_sheets) if code]
         path = self._new_path()
         try:
-            with connect(self._require()) as conn:
+            with self._connect() as conn:
                 absent = export_reference(conn, tdccs, fmt, path)
-        except (DatabaseError, CheckSourceError) as exc:
-            if isinstance(exc, DatabaseError):
-                self.on_failure()
-            raise IngestionError("database_unavailable", f"從資料庫讀核對條件失敗：{exc}") from exc
+        except (CheckSourceError, DatabaseError, psycopg.Error) as exc:
+            first = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+            raise IngestionError("database_unavailable", f"從資料庫讀核對條件失敗：{first}") from exc
         return path, absent
 
     def write_back(self, batch: BatchOutcome, receipt: SaveReceipt) -> str:
         assert batch.reference_format is not None
+        with self._connect() as conn:
+            return write_back(conn, batch, receipt, batch.reference_format, user=self.user).summary
+
+    def _connect(self) -> psycopg.Connection:
+        """連上資料庫；連不上時呼叫 `on_failure`（可能是密碼錯）。資料表版本等其他錯誤不算登入問題。"""
         try:
-            with connect(self._require()) as conn:
-                return write_back(conn, batch, receipt, batch.reference_format, user=self.user).summary
+            return connect(self._require())
         except DatabaseError:
             self.on_failure()
             raise

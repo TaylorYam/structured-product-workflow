@@ -17,7 +17,7 @@ CREATE TABLE workflow.check_result (
     category text NOT NULL,                   -- 通過、人工放行、不一致、需人工覆核、未支援上手、執行錯誤
     status text NOT NULL,                     -- 原判定（PASS／MISMATCH／REVIEW_REQUIRED／ERROR）
     released boolean NOT NULL,
-    filled boolean NOT NULL,                  -- 這次有回填（說明書與投資人須知都通過或人工放行）
+    filled boolean NOT NULL,                  -- 這檔商品這次有回填（說明書與投資人須知都通過或人工放行），兩份都記
     problems jsonb,                           -- 錯訊（同錯誤清單）
     result_file text NOT NULL,                -- 核對結果檔
     checked_by text NOT NULL,                 -- Windows 使用者名稱

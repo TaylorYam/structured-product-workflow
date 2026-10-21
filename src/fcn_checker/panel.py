@@ -781,11 +781,11 @@ class CheckTab(ttk.Frame):
 
     @property
     def uses_database(self) -> bool:
-        return self.source.get() == DATABASE_SOURCE
+        return self.session.use_database
 
     def _source_changed(self):
         """條件來源換了：資料庫來源不用選參考條件表（由資料庫產生）；清除預覽與結果。"""
-        self.session.select_source(self.uses_database)
+        self.session.select_source(self.source.get() == DATABASE_SOURCE)
         self._clear()
         if self.uses_database:
             self.sheet_text.set("由資料庫產生（載入預覽時依 PDF 檔名的 TDCC 讀取）")
