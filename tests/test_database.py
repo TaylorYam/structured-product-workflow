@@ -74,6 +74,8 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
         "mailbox.alias",
         "mailbox.person",
         "workflow.branch_allocation",
+        "workflow.check_terms",
+        "workflow.cross_check_release",
         "workflow.daily_price",
         "workflow.import_run",
         "workflow.order_import",
@@ -82,6 +84,7 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
         "workflow.price_import",
         "workflow.product",
         "workflow.trade_row",
+        "workflow.underlying_price",
     ]
 
 

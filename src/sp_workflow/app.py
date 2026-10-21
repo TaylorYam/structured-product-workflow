@@ -2,6 +2,7 @@
 
 1. 每日匯入：選每日更新，把交易明細與每日股價匯入最小 FCN 資料庫（#32、#87）；信箱在資料庫直接維護（#35）。
 2. 起單資料：貼 TDCC、選一份起單建檔（#97），在右邊逐檔確認、修改後匯入資料庫（#86）。
+   1、2 匯入完成後重算還沒鎖住的商品的核對條件（#88），逐檔顯示狀態；交叉比對的差異可以在這兩頁放行。
 3. 準備：貼 TDCC、選輸出位置，產生批次資料夾與準備清單。
 4. 核對：參考條件表＋說明書／投資人須知 PDF 的預覽、核對與儲存（`fcn_checker.panel.CheckTab`）。
 5. 放回：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾。
@@ -12,8 +13,8 @@
 每日匯入完成 → 起單資料頁帶入交易明細的 FCN TDCC（#90）；
 準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔。
 審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
-視窗只收輸入、在背景執行 `collect_orders`／`import_drafts`／`import_daily`／`prepare_batch`／核對／`return_to_folders`／`create_drafts`
-並顯示結果，不含判斷邏輯。
+視窗只收輸入、在背景執行 `collect_orders`／`import_drafts`／`import_daily`／`recalculate`／`release_differences`／
+`prepare_batch`／核對／`return_to_folders`／`create_drafts` 並顯示結果，不含判斷邏輯。
 """
 
 from __future__ import annotations
@@ -25,10 +26,11 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
+from typing import TYPE_CHECKING
 
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.panel import (
@@ -59,6 +61,18 @@ from fcn_checker.panel import (
     set_windows_app_id,
 )
 from fcn_checker.panel_workflow import PanelSession
+from fcn_checker.trading_calendar import TradingCalendar
+from sp_workflow.check_terms import (
+    DONE,
+    STATUSES,
+    TO_CONFIRM,
+    CalcLine,
+    CalcReceipt,
+    CheckTermsError,
+    load_calendar,
+    recalculate,
+    release_differences,
+)
 from sp_workflow.daily_import import (
     DailyImportError,
     ImportInfo,
@@ -97,6 +111,7 @@ from sp_workflow.order_import import (
     ImportConfig,
     OrderDraft,
     OrderImportError,
+    OrderImportLine,
     OrderImportReceipt,
     check_draft,
     describe,
@@ -126,6 +141,9 @@ from sp_workflow.preparation import (
 )
 from sp_workflow.returning import PENDING_SUFFIX, ReturnError, ReturnReceipt, return_to_folders
 
+if TYPE_CHECKING:
+    import psycopg
+
 TITLE = "FCN Workflow"
 _EXPECTED_ERRORS = (
     PreparationError,
@@ -135,6 +153,7 @@ _EXPECTED_ERRORS = (
     MailDraftError,
     OrderTermsError,
     OrderImportError,
+    CheckTermsError,
 )  # 訊息本身就是給作業人員看的
 
 
@@ -517,25 +536,46 @@ class DailyImportTab(_Tab):
         notebook: ttk.Notebook,
         memory: FolderMemory,
         db: _DatabaseLogin,
+        config_paths: Callable[[], ConfigPaths],
         on_imported: Callable[[Sequence[str]], bool],
         on_next: Callable[[], None],
     ) -> None:
         super().__init__(notebook, "每日匯入", (("tdcc", "TDCC", 130), ("kind", "結果", 150), ("detail", "說明", 440)))
         self.memory = memory
         self.db = db
+        self.config_paths = config_paths
         self.on_imported = on_imported
         folders = memory.load()
         self.daily_var = tk.StringVar(value=folders.get("daily", ""))
         self.status_var.set(f"選每日更新，按「匯入」。資料庫連線設定：{db.env_path}")
 
-        self.page_header("匯入每日更新", "把每日更新的 FCN 交易明細與每日股價匯入資料庫；信箱在資料庫直接維護。")
+        self.page_header(
+            "匯入每日更新",
+            "把每日更新的 FCN 交易明細與每日股價匯入資料庫，再重算還沒鎖住的商品的核對條件；信箱在資料庫直接維護。",
+        )
         body = self.body(self.card(1))
         row = self.field(body, 0, "每日更新", self.daily_var, lambda: _ask_excel("選擇每日更新", self.daily_var))
         self.result_area(body, row)
         self.start_button = ttk.Button(self.buttons, text="匯入", command=self.start, style="Primary.TButton")
         self.start_button.pack(side=tk.LEFT)
+        self.releaser = _Releaser(
+            self,
+            db,
+            self._selected_tdcc,
+            self._released,
+            busy=lambda busy: self.start_button.configure(state=tk.DISABLED if busy else tk.NORMAL),
+        )
         self.next_button = NextButton(self.buttons, "下一步：起單資料 →", on_next)
         self.place_table(2)
+
+    def _selected_tdcc(self) -> str | None:
+        selection = self.table.selection()
+        return self.table.set(selection[0], "tdcc") if selection else None
+
+    def _released(self, line: CalcLine) -> None:
+        iid = f"calc-{line.tdcc}"
+        if self.table.exists(iid):
+            self.table.item(iid, values=_calc_row(line), tags=("problem",) if line.problem else ())
 
     def start(self) -> None:
         daily_text = self.daily_var.get().strip()
@@ -549,35 +589,47 @@ class DailyImportTab(_Tab):
         self.memory.remember(daily=str(daily))
         self.start_button.configure(state=tk.DISABLED)
         self.next_button.withdraw()
+        self.releaser.show(_Recalc())
         self.restart()
+        paths = self.config_paths()
 
-        def run() -> ImportReceipt:
+        def run() -> _DailyResult:
             with connect(settings) as conn:
-                return import_daily(daily, conn)
+                receipt = import_daily(daily, conn)
+                return _DailyResult(receipt, _recalculate(conn, lambda: load_calendar(paths.exchange_holidays)))
 
         self.run_in_background(run, "匯入中…", self._done)
 
     def _done(self, result: object) -> None:
         self.start_button.configure(state=tk.NORMAL)
         self.db.after_run(result)
-        if not isinstance(result, ImportReceipt):
+        if not isinstance(result, _DailyResult):
             return
-        for line in result.lines:
+        receipt, recalc = result.receipt, result.recalc
+        for line in receipt.lines:
             self.add_row((line.tdcc, line.kind, line.detail), problem=line.problem)
-        problems = sum(line.problem for line in result.lines)
-        normal = len(result.lines) - problems
-        prices = result.prices
+        for calc in () if recalc.receipt is None else recalc.receipt.to_show():
+            tags = ("problem",) if calc.problem else ()
+            self.table.insert("", tk.END, iid=f"calc-{calc.tdcc}", values=_calc_row(calc), tags=tags)
+        problems = sum(line.problem for line in receipt.lines)
+        normal = len(receipt.lines) - problems
+        prices = receipt.prices
+        kpis = [
+            ("正常（項）", normal, False),
+            ("要注意（項）", problems, problems > 0),
+            ("股價（筆）", prices.count, False),
+        ]
+        if recalc.receipt is not None:
+            to_confirm = recalc.receipt.count(TO_CONFIRM)
+            kpis.append(("核對條件待確認（檔）", to_confirm, to_confirm > 0))
         self.finish(
-            (
-                ("正常（項）", normal, False),
-                ("要注意（項）", problems, problems > 0),
-                ("股價（筆）", prices.count, False),
-            ),
-            f"完成（第 {result.run_id} 次匯入）：{normal} 項正常、{problems} 項要注意；"
-            f"略過非 FCN 交易 {result.skipped_trade_rows} 列；取消交易 {result.cancelled_trade_rows} 列；"
-            f"信箱 {result.people} 人。\n{_price_text(prices)}"
-            f"\n錯誤清單：{result.error_book_path}\n{self._hand_off(result)}",
+            kpis,
+            f"完成（第 {receipt.run_id} 次匯入）：{normal} 項正常、{problems} 項要注意；"
+            f"略過非 FCN 交易 {receipt.skipped_trade_rows} 列；取消交易 {receipt.cancelled_trade_rows} 列；"
+            f"信箱 {receipt.people} 人。\n{_price_text(prices)}\n{_recalc_text(recalc)}"
+            f"\n錯誤清單：{receipt.error_book_path}\n{self._hand_off(receipt)}",
         )
+        self.releaser.show(recalc)
 
     def _hand_off(self, result: ImportReceipt) -> str:
         """把交易明細的 FCN TDCC 帶到起單資料頁（#90）；真的帶入了才有下一步。回傳寫在完成訊息的一句。"""
@@ -738,9 +790,119 @@ class _ReadResult:
 
 
 @dataclass(frozen=True)
+class _Recalc:
+    """匯入後重算核對條件（#88）的結果；重算失敗時只有 error（匯入已經寫進資料庫）。"""
+
+    receipt: CalcReceipt | None = None
+    calendar: TradingCalendar | None = None  # 放行後重算要用
+    error: str = ""
+
+
+def _recalculate(conn: psycopg.Connection, calendar: Callable[[], TradingCalendar]) -> _Recalc:
+    """匯入之後重算；失敗時不丟錯誤（匯入已經完成），說明放在結果裡。"""
+    import psycopg
+
+    try:
+        found = calendar()
+        return _Recalc(recalculate(conn, found), found)
+    except (CheckTermsError, DatabaseError, psycopg.Error) as exc:
+        return _Recalc(error=_first_line(exc))
+
+
+@dataclass(frozen=True)
+class _DailyResult:
+    receipt: ImportReceipt
+    recalc: _Recalc = _Recalc()
+
+
+@dataclass(frozen=True)
 class _SaveResult:
     receipt: OrderImportReceipt
     reload_error: str = ""  # 匯入成功但重讀資料庫狀態失敗
+    recalc: _Recalc = _Recalc()
+
+
+class _Releaser:
+    """「放行差異…」（#88）：選到的商品有還沒放行的交叉比對差異時可以按；確認後記下放行人與時間，再重算那一檔。
+
+    `idle` 是分頁現在能不能做別的事；`busy` 在放行前後通知分頁停用、恢復自己的按鈕（同一分頁一次只跑一件背景工作）。
+    """
+
+    def __init__(
+        self,
+        tab: _Tab,
+        db: _DatabaseLogin,
+        selected: Callable[[], str | None],
+        on_released: Callable[[CalcLine], None],
+        *,
+        idle: Callable[[], bool] = lambda: True,
+        busy: Callable[[bool], None] = lambda _busy: None,
+    ) -> None:
+        self.tab = tab
+        self.db = db
+        self.selected = selected
+        self.on_released = on_released
+        self.idle = idle
+        self.busy = busy
+        self.lines: dict[str, CalcLine] = {}
+        self.calendar: TradingCalendar | None = None
+        self.running = False
+        self.button = ttk.Button(tab.buttons, text="放行差異…", command=self.release, state=tk.DISABLED)
+        self.button.pack(side=tk.LEFT, padx=(8, 0))
+        tab.table.bind("<<TreeviewSelect>>", lambda _event: self.refresh(), add="+")
+
+    def show(self, recalc: _Recalc) -> None:
+        """換成這次重算的結果（空的 `_Recalc` 是清掉）。"""
+        self.lines = {} if recalc.receipt is None else {line.tdcc: line for line in recalc.receipt.lines}
+        self.calendar = recalc.calendar
+        self.refresh()
+
+    def line(self) -> CalcLine | None:
+        tdcc = self.selected()
+        return None if tdcc is None else self.lines.get(tdcc)
+
+    def refresh(self) -> None:
+        line = self.line()
+        ready = line is not None and bool(line.unreleased) and self.calendar is not None
+        self.button.configure(state=tk.NORMAL if ready and not self.running and self.idle() else tk.DISABLED)
+
+    def release(self) -> None:
+        line, calendar = self.line(), self.calendar
+        if line is None or not line.unreleased or calendar is None:
+            return
+        listing = "\n".join(f"・{difference.describe()}" for difference in line.unreleased)
+        if not messagebox.askyesno(
+            TITLE,
+            f"{line.tdcc} 的交易明細和起單資料不一致：\n\n{listing}\n\n確認看過、要放行嗎？\n"
+            "放行會記下你的 Windows 使用者名稱與時間；之後資料改變、差異跟著變時要重新放行。",
+            icon=messagebox.WARNING,
+            default=messagebox.NO,
+            parent=self.tab.master,
+        ):
+            return
+        settings = self.db.settings()
+        if settings is None:
+            return
+        tdcc, differences = line.tdcc, line.unreleased
+        self.running = True
+        self.busy(True)
+        self.refresh()
+
+        def run() -> CalcLine:
+            with connect(settings) as conn:
+                return release_differences(conn, tdcc, differences, calendar)
+
+        self.tab.run_in_background(run, f"放行中…（{tdcc}）", self._done, clear=False)
+
+    def _done(self, result: object) -> None:
+        self.running = False
+        self.busy(False)
+        self.db.after_run(result)
+        if isinstance(result, CalcLine):
+            self.lines[result.tdcc] = result
+            self.on_released(result)
+            self.tab.status_var.set(f"已放行 {result.tdcc} 的差異，重算後：{_calc_status(result)}。")
+        self.refresh()
 
 
 @dataclass(frozen=True)
@@ -951,7 +1113,13 @@ class OrderTermsTab(_Tab):
         super().__init__(
             notebook,
             "起單資料",
-            (("tdcc", "TDCC", 130), ("status", "狀態", 110), ("issuer", "上手", 85), ("reason", "原因", 260)),
+            (
+                ("tdcc", "TDCC", 130),
+                ("status", "狀態", 110),
+                ("issuer", "上手", 85),
+                ("calc", "核對條件", 90),
+                ("reason", "原因", 260),
+            ),
         )
         self.memory = memory
         self.db = db
@@ -988,6 +1156,28 @@ class OrderTermsTab(_Tab):
         self.editor = OrderEditor(self.frame, lambda: self.read.config if self.read else None, self._edited)
         self.editor.grid(row=3, column=2, sticky="nsew", padx=(16, 0), pady=(16, 0))
         self.table.bind("<<TreeviewSelect>>", self._selected)
+        self.imported: dict[str, OrderImportLine] = {}  # 最近一次匯入每檔的結果（放行後重寫那一列）
+        self.releaser = _Releaser(
+            self, db, self._selected_tdcc, self._released, idle=lambda: not self.working, busy=self._busy
+        )
+
+    def _selected_tdcc(self) -> str | None:
+        selection = self.table.selection()
+        found = self.items.get(selection[0]) if selection else None
+        return None if found is None else found[0].tdcc
+
+    def _released(self, calc: CalcLine) -> None:
+        for iid, (row, draft) in self.items.items():
+            line = self.imported.get(row.tdcc)
+            if draft is not None and line is not None and row.tdcc == calc.tdcc:
+                self._show_imported(iid, row, line, calc)
+
+    def _show_imported(self, iid: str, row: OrderRow, line: OrderImportLine, calc: CalcLine | None) -> None:
+        """匯入後的一列：狀態是匯入結果，核對條件是重算後的狀態，原因寫兩邊的說明。"""
+        calc_reason = f"核對條件：{calc.reason}" if calc is not None and calc.reason else ""
+        problem = line.result == SKIPPED or (calc is not None and calc.problem)
+        reason = "；".join(filter(None, (line.detail, calc_reason)))
+        self._show_row(iid, row, line.result, reason, problem, calc.status if calc is not None else "")
 
     def _ask_sheet(self) -> str:
         """選起單建檔；有選就記住（沒按讀取就關視窗，下次也打開這個資料夾）。"""
@@ -1077,6 +1267,8 @@ class OrderTermsTab(_Tab):
         self.status_var.set(self.READY_TEXT)
         self.read = None
         self.items = {}
+        self.imported = {}
+        self.releaser.show(_Recalc())
         self.unsaved = False
         self.editor.typed = {}
         self.editor.show(None)
@@ -1090,9 +1282,10 @@ class OrderTermsTab(_Tab):
         self.start_button.configure(state=state)
         has_drafts = self.read is not None and bool(self.read.drafts)
         self.import_button.configure(state=state if has_drafts else tk.DISABLED)
+        self.releaser.refresh()
 
-    def _show_row(self, iid: str, row: OrderRow, status: str, reason: str, problem: bool) -> None:
-        values = (row.tdcc, status, row.issuer, reason)
+    def _show_row(self, iid: str, row: OrderRow, status: str, reason: str, problem: bool, calc: str = "") -> None:
+        values = (row.tdcc, status, row.issuer, calc, reason)
         tags = ("problem",) if problem else ()
         if self.table.exists(iid):
             self.table.item(iid, values=values, tags=tags)
@@ -1202,11 +1395,12 @@ class OrderTermsTab(_Tab):
 
             with connect(settings) as conn:
                 receipt = import_drafts(read.drafts, conn, read.config)
+                recalc = _recalculate(conn, lambda: read.config.calendar)
                 try:
                     reload_stored(read.drafts, conn)
                 except (DatabaseError, psycopg.Error) as exc:
-                    return _SaveResult(receipt, str(exc).splitlines()[0] if str(exc) else type(exc).__name__)
-            return _SaveResult(receipt)
+                    return _SaveResult(receipt, _first_line(exc), recalc)
+            return _SaveResult(receipt, recalc=recalc)
 
         self.run_in_background(run, "匯入資料庫中…", self._saved, clear=False)
 
@@ -1217,23 +1411,34 @@ class OrderTermsTab(_Tab):
         self._busy(False)
         if not isinstance(result, _SaveResult):
             return
-        receipt = result.receipt
-        lines = {line.tdcc: line for line in receipt.lines}
+        receipt, calcs = result.receipt, result.recalc.receipt
+        self.imported = {line.tdcc: line for line in receipt.lines}
+        batch: dict[str, CalcLine] = {}
         for iid, (row, draft) in self.items.items():
-            line = lines.get(row.tdcc) if draft is not None else None
+            line = self.imported.get(row.tdcc) if draft is not None else None
             if line is not None:
-                self._show_row(iid, row, line.result, line.detail, line.result == SKIPPED)
+                calc = None if calcs is None or not line.imported else calcs.line_of(row.tdcc)
+                if calc is not None:
+                    batch[row.tdcc] = calc
+                self._show_imported(iid, row, line, calc)
         if self.editor.draft is not None:
             self.editor.show(self.editor.draft)  # 資料庫的值更新了，黃色的差異與帶入的值跟著重算
         imported = sum(line.imported for line in receipt.lines)
         not_imported = len(receipt.lines) - imported
         counts = "、".join(f"{kind} {receipt.count(kind)}" for kind in (NEW, OVERWRITTEN, SAME, SKIPPED, LOCKED))
         status = f"完成（第 {receipt.import_id} 次起單資料匯入）：{counts}。"
+        if calcs is not None:
+            status += f"\n核對條件（這批匯入的 {len(batch)} 檔）：{_status_counts(batch.values())}。"
+        elif result.recalc.error:
+            status += f"\n{_recalc_text(result.recalc)}"
         if result.reload_error:
             status += f"\n注意：已寫進資料庫，但重新讀取資料庫的值失敗（{result.reload_error}）；再匯入前請重新讀取。"
-        self.finish(
-            (("已匯入（檔）", imported, False), ("沒匯入（檔）", not_imported, receipt.count(SKIPPED) > 0)), status
-        )
+        kpis = [("已匯入（檔）", imported, False), ("沒匯入（檔）", not_imported, receipt.count(SKIPPED) > 0)]
+        if calcs is not None:
+            to_confirm = sum(calc.problem for calc in batch.values())
+            kpis.append(("核對條件待確認（檔）", to_confirm, to_confirm > 0))
+        self.finish(kpis, status)
+        self.releaser.show(result.recalc)
 
 
 WINDOW_FILE = "window.json"  # 視窗上次的大小，和上次選的資料夾放在同一個 .local/
@@ -1355,6 +1560,7 @@ class PanelWindow:
             self.notebook,
             memory,
             db,
+            lambda: self.session.paths,
             on_imported=lambda tdccs: self.orders.receive_tdccs(tdccs),
             on_next=lambda: self.notebook.select(self.orders.frame),
         )
@@ -1476,6 +1682,35 @@ def _price_text(prices: PriceSummary) -> str:
     if prices.conflicts:
         text += f"；值不一樣的重複代碼 {len(prices.conflicts)} 個，價格沒有存：{'、'.join(prices.conflicts)}"
     return text + "。"
+
+
+def _calc_status(line: CalcLine) -> str:
+    return line.status if line.status == DONE or not line.reason else f"{line.status}（{line.reason}）"
+
+
+def _calc_row(line: CalcLine) -> tuple[str, str, str]:
+    """每日匯入結果表的一列：核對條件重算後的狀態。"""
+    return line.tdcc, f"核對條件：{line.status}", line.reason
+
+
+def _status_counts(lines: Iterable[CalcLine]) -> str:
+    statuses = [line.status for line in lines]
+    return "、".join(f"{status} {statuses.count(status)}" for status in STATUSES)
+
+
+def _recalc_text(recalc: _Recalc) -> str:
+    """完成訊息裡的核對條件一句（#88）。"""
+    if recalc.receipt is None:
+        return f"注意：匯入已寫進資料庫，但核對條件沒有重算（{recalc.error}）；排除後重新匯入一次就會重算。"
+    receipt = recalc.receipt
+    return (
+        f"核對條件（還沒鎖住的 {len(receipt.lines)} 檔，這次有變 {receipt.changed} 檔）："
+        f"{_status_counts(receipt.lines)}。"
+    )
+
+
+def _first_line(exc: Exception) -> str:
+    return str(exc).splitlines()[0] if str(exc) else type(exc).__name__
 
 
 def _import_text(info: ImportInfo) -> str:
