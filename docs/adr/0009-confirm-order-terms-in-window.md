@@ -16,7 +16,7 @@ ADR 0006、0008 原本的做法是：讀信先輸出 `Order條件清單_<時間>
 
 ### 決策（2026-10-21 使用者確認）
 
-- **確認改在視窗裡做**：「1 Order 條件」頁讀完信，在畫面上列出這批商品。點一檔就編輯格式表那些欄，再加上承作金額：讀信有問題的欄標紅並寫原因；KO Type、Barrier Type、期初價格用下拉選單；日期打錯當場提示。讀信時不再自動輸出 Excel。
+- **確認改在視窗裡做**：「Order 條件」頁讀完信，在畫面上列出這批商品。點一檔就編輯格式表那些欄，再加上承作金額：讀信有問題的欄標紅並寫原因；KO Type、Barrier Type、期初價格用下拉選單；日期打錯當場提示。讀信時不再自動輸出 Excel。
 - **匯入與匯出一起做**：「匯入資料庫並匯出 Excel」把通過檢查的商品寫進資料庫，同時輸出跟現在同格式的 Excel，貼到現行的表；另有「只匯出 Excel」。沒通過的留在畫面上並寫原因。
 - **匯出的 Excel**：
   - 原本的四張照舊，格式表工作表從 `example` 改名為 `Order原始資料`，另外加一張「人工修改」（TDCC、欄位、信裡的值、改成）。
@@ -32,7 +32,7 @@ ADR 0006、0008 原本的做法是：讀信先輸出 `Order條件清單_<時間>
 
 ### 後果
 
-- #86 多了畫面工作：1 號頁要有逐檔編輯，並標出紅、黃欄位。
+- #86 多了畫面工作：Order 條件頁要有逐檔編輯，並標出紅、黃欄位。
 - 還沒匯入就關掉視窗，改過的內容會不見，要重新讀信。
 - 匯入紀錄要記下人工修改，可以追查信裡的值跟確認後的值差在哪裡。
 
@@ -47,7 +47,7 @@ ADR 0006 and 0008 had reading output `Order條件清單_<timestamp>.xlsx` first;
 
 ### Decision (confirmed by the user 2026-10-21)
 
-- **Confirm in the window**: after reading, the "1 Order 條件" page lists the batch. Selecting a product edits the template sheet's fields plus the amount: fields with reading problems are red with a reason; KO Type, Barrier Type, and initial pricing use drop-downs; bad dates are flagged immediately. Reading no longer writes Excel automatically.
+- **Confirm in the window**: after reading, the "Order 條件" page lists the batch. Selecting a product edits the template sheet's fields plus the amount: fields with reading problems are red with a reason; KO Type, Barrier Type, and initial pricing use drop-downs; bad dates are flagged immediately. Reading no longer writes Excel automatically.
 - **Import and export together**: "Import to database and export Excel" writes products that pass the checks and outputs the same-format workbook for pasting into existing sheets; "Export Excel only" is also available. Failing products stay on screen with reasons.
 - **Exported workbook**:
   - The four sheets stay; the template sheet is renamed from `example` to `Order原始資料`, and a `人工修改` sheet (TDCC, field, email value, new value) is added.
@@ -63,6 +63,6 @@ ADR 0006 and 0008 had reading output `Order條件清單_<timestamp>.xlsx` first;
 
 ### Consequences
 
-- #86 gains UI work: per-product editing on page 1 with red and yellow fields.
+- #86 gains UI work: per-product editing on the Order 條件 page with red and yellow fields.
 - Closing the window before importing loses edits; read the emails again.
 - Import records keep the manual edits, so differences between the email and the confirmed values are traceable.
