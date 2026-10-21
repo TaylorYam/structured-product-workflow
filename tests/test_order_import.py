@@ -33,6 +33,7 @@ from sp_workflow.order_import import (
     import_drafts,
     load_import_config,
     parse_field,
+    reload_stored,
 )
 from sp_workflow.order_template import COLUMNS, FLAG_FILL, HEADER_ROW
 from sp_workflow.order_terms import NO_ORDER, PENDING, OrderRow
@@ -159,6 +160,13 @@ def test_reasons_are_split_by_field() -> None:
         "Maturity date": ["格式表缺：Maturity date"],
         "TDCC": ["條件表有沒列過的欄「Foo」（上手格式可能改版）"],
     }
+
+
+def test_mistyped_fields_block_only_that_product() -> None:
+    draft = draft_of(order_row())
+    draft.input_errors["Trade date"] = "日期要寫成 2026-10-21"
+
+    assert check_draft(draft, CONFIG) == {"Trade date": "日期要寫成 2026-10-21"}
 
 
 def test_issuer_without_a_configured_name_cannot_be_imported() -> None:
@@ -398,6 +406,34 @@ def test_blank_fields_do_not_wipe_values_the_operator_never_saw(pg, tmp_path: Pa
 
     assert (cleared.lines[0].result, cleared.lines[0].detail) == (OVERWRITTEN, "改了：Issue date")
     assert product(pg, A)["issue_date"] is None
+
+
+@pytest.mark.db
+def test_a_draft_read_without_the_database_cannot_overwrite_it(pg) -> None:
+    import_drafts([draft_of(order_row(), pg)], pg, CONFIG, user="tester")
+    offline = draft_of(order_row(fields={"年利率(%)": Decimal(10)}))  # 讀信時沒連上資料庫
+
+    receipt = import_drafts([offline], pg, CONFIG, user="tester")
+
+    assert receipt.lines[0].result == SKIPPED
+    assert receipt.lines[0].detail.startswith("讀信時沒有連上資料庫")
+    assert product(pg, A)["coupon_pct"] == Decimal("12.5")
+
+
+@pytest.mark.db
+def test_kept_database_values_survive_a_second_import(pg, tmp_path: Path) -> None:
+    seed_mailbox(pg)
+    import_drafts([draft_of(order_row(發行日=None), pg)], pg, CONFIG, user="tester")
+    stale = draft_of(order_row(發行日=None), pg)
+    import_daily(write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])]), pg)
+
+    import_drafts([stale], pg, CONFIG, user="tester")  # 保留清單更新補上的發行日
+    reload_stored([stale], pg)
+    again = import_drafts([stale], pg, CONFIG, user="tester")  # 同一批再按一次匯入
+
+    assert stale.values["Issue date"] == dt.date(2026, 10, 22), "畫面與 Excel 也跟著資料庫"
+    assert again.lines[0].result == SAME
+    assert product(pg, A)["issue_date"] == dt.date(2026, 10, 22)
 
 
 @pytest.mark.db

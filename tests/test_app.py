@@ -317,7 +317,7 @@ def test_each_tab_still_remembers_its_own_output(master, tmp_path: Path, monkeyp
     memory = FolderMemory.under(tmp_path)
     memory.remember(root="R:/FCN")
     window = app.PanelWindow(master, memory, session=PanelSession(install_root=tmp_path))
-    monkeypatch.setattr(window.mail.db, "settings", lambda: object())  # 寄信草稿先登入資料庫，這裡不連線
+    monkeypatch.setattr(window.mail.db, "settings", lambda **kwargs: object())  # 寄信草稿先登入資料庫，這裡不連線
     monkeypatch.setattr(app, "mail_template_from_env", lambda env_path: None)
     for tab, out in ((window.orders, "D:/Order"), (window.prepare, "D:/out"), (window.mail, "D:/寄信")):
         monkeypatch.setattr(tab, "run_in_background", lambda *args, **kwargs: None)
@@ -637,7 +637,7 @@ def daily_receipt(tmp_path: Path, tdccs: tuple[str, ...] = (), fcn_rows: int | N
 
 def read_result(*rows: OrderRow) -> app._ReadResult:
     """讀完信的結果（沒有連資料庫）。"""
-    return app._ReadResult(rows, (), drafts_from(rows), CONFIG)
+    return app._ReadResult(rows, (), Path("R:/FCN"), drafts_from(rows), CONFIG)
 
 
 def pasted(tab) -> str:
@@ -808,7 +808,6 @@ def test_starting_another_daily_import_withdraws_the_next_step(master, tmp_path:
 
 def order_window(master, tmp_path: Path, *rows: OrderRow) -> app.PanelWindow:
     window = new_window(master, tmp_path)
-    window.orders.root = tmp_path
     window.orders.out_var.set(str(tmp_path))
     window.orders._done(read_result(*rows))
     return window
@@ -846,19 +845,55 @@ def test_filling_a_red_field_makes_the_product_importable(master, tmp_path: Path
     assert window.orders.unsaved
 
 
-def test_a_mistyped_field_stays_red_and_blocks_saving(master, tmp_path: Path, monkeypatch) -> None:
-    window = order_window(master, tmp_path, order_row("029199990001"))
-    errors = []
-    monkeypatch.setattr(app.messagebox, "showerror", lambda title, message, **k: errors.append(message))
-    monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: pytest.fail("寫錯時不該匯入"))
+def test_a_mistyped_field_stays_red_and_keeps_only_that_product_out(master, tmp_path: Path, monkeypatch) -> None:
+    window = order_window(master, tmp_path, order_row("029199990001"), order_row("029199990002"))
+    started = []
+    monkeypatch.setattr(window.orders.db, "settings", lambda **k: object())
+    monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: started.append(a[1]))
 
     type_into(window.orders.editor, "Trade date", "10/15")
     window.orders.import_and_export()
 
+    draft = window.orders.editor.draft
     assert window.orders.editor.rows["Trade date"].note.cget("text") == "日期要寫成 2026-10-21"
     assert window.orders.editor.rows["Trade date"].var.get() == "10/15", "保留打的字"
-    assert table_rows(window.orders) == [("029199990001", app.BLOCKED)]
-    assert errors == ["有欄位寫錯，請先改好：029199990001"]
+    assert draft.input_errors == {"Trade date": "日期要寫成 2026-10-21"}, "匯入時這一檔會判不匯入"
+    assert dict(table_rows(window.orders))["029199990001"] == app.BLOCKED
+    assert dict(table_rows(window.orders))["029199990002"] == app.READY
+    assert started == ["匯入資料庫並匯出 Excel 中…"], "其他檔照常匯入"
+    assert str(window.orders.editor.rows["Coupon p.a. (%)"].input.cget("state")) == "disabled", "存檔中不能改"
+
+
+def test_just_browsing_does_not_count_as_unsaved(master, tmp_path: Path) -> None:
+    window = order_window(master, tmp_path, order_row("029199990001"), order_row("029199990002"))
+
+    for iid in ("1", "0", "1"):
+        window.orders.table.selection_set(iid)
+        window.orders._selected()
+
+    assert not window.orders.has_unsaved()
+
+
+def test_exporting_excel_only_still_counts_as_unsaved(master, tmp_path: Path) -> None:
+    window = order_window(master, tmp_path, order_row("029199990002", 到期日=None))
+    type_into(window.orders.editor, "Maturity date", "2027-04-22")
+
+    window.orders._saved(app._SaveResult(None, tmp_path / "Order條件清單_20261021-090000.xlsx"))
+
+    assert window.orders.has_unsaved(), "Excel 改了也不會回到資料庫"
+    assert window.orders.status_var.get().startswith("已匯出 Excel（沒有寫資料庫）")
+
+
+def test_a_field_with_a_reading_problem_stays_red_even_when_it_differs_from_the_database(master, tmp_path) -> None:
+    window = order_window(master, tmp_path, order_row("029199990001", flagged_fields=("年利率(%)",)))
+    draft = window.orders.editor.draft
+    draft.stored = {**draft.values, "Coupon p.a. (%)": 12}
+
+    window.orders.editor.refresh()
+
+    row = window.orders.editor.rows["Coupon p.a. (%)"]
+    assert row.label.cget("background") == app._PROBLEM_BG
+    assert row.note.cget("text").endswith("資料庫是 12") and row.database.winfo_manager() == "grid"
 
 
 def test_choices_use_drop_downs(master, tmp_path: Path) -> None:
@@ -895,6 +930,11 @@ def test_import_results_replace_the_status_column(master, tmp_path: Path) -> Non
     assert window.orders.status_var.get().startswith("完成（第 7 次 Order 匯入）：新增 1、覆蓋 0、沒有變 0、不匯入 1")
     assert not window.orders.unsaved and window.orders.list_path == path
     assert str(window.orders.open_button.cget("state")) == "normal"
+    for iid in ("1", "0"):  # 匯入後點來點去，結果不會被洗掉
+        window.orders.table.selection_set(iid)
+        window.orders._selected()
+    assert table_rows(window.orders) == [("029199990002", ORDER_NEW), ("029199990001", ORDER_SKIPPED)]
+    assert not window.orders.has_unsaved()
 
 
 def test_excel_failure_after_import_says_the_database_was_written(master, tmp_path: Path) -> None:
@@ -914,7 +954,7 @@ def test_closing_with_unsaved_order_edits_asks_and_stays_on_the_order_tab(master
 
     window.close()
 
-    assert len(asked) == 1 and "Order 條件頁有改過" in asked[0]
+    assert len(asked) == 1 and "還沒匯入資料庫" in asked[0]
     assert master.winfo_exists() and window.notebook.select() == str(window.orders.frame)
 
 
