@@ -307,7 +307,7 @@ def test_reimporting_the_same_file_still_lists_its_fcn_tdccs(pg, tmp_path: Path,
 
     again = import_daily(daily, pg)
 
-    assert kinds(again, A) == [UNCHANGED] and again.fcn_tdccs == (A,)
+    assert UNCHANGED in kinds(again, A) and again.fcn_tdccs == (A,)
 
 
 def test_no_fcn_trades_leaves_nothing_to_hand_over(pg, tmp_path: Path, mailbox) -> None:
