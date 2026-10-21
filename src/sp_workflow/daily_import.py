@@ -10,6 +10,8 @@
   （分公司配置、ISIN、發行日），有值的不覆蓋、只列出差異；還沒有分公司配置時不逐筆對帳。
 - 分公司對帳到每個分公司（交易明細各分公司金額加總 vs 庫存總表承作金額，PB 也算），差異只提醒。
 - 信箱由資料庫直接維護（#35、ADR 0004）：匯入不修改 `mailbox`，只用它比對 FC 名字。
+- 結果另外列出交易明細的 FCN TDCC（依第一次出現的順序、不重複，TDCC 不完整與整檔都取消的不列），
+  給視窗帶到 Order 條件頁（#90）。
 - 整次匯入在一個 transaction 內完成，任何錯誤都不留下部分寫入。
 """
 
@@ -126,6 +128,8 @@ class ImportReceipt:
     skipped_inventory_rows: int
     cancelled_trade_rows: int
     error_book_path: Path
+    fcn_trade_rows: int = 0  # 交易明細裡 Product 為 FCN 的列數，含取消的
+    fcn_tdccs: tuple[str, ...] = ()  # 帶到 Order 條件頁的 TDCC（#90）
 
     def count(self, kind: str) -> int:
         return sum(line.kind == kind for line in self.lines)
@@ -165,9 +169,11 @@ class _Parsed:
     blocked: list[ImportLine] = field(default_factory=list)
     cancelled_lines: list[ImportLine] = field(default_factory=list)
     other_products: dict[str, str] = field(default_factory=dict)  # 略過的非 FCN：TDCC → Product
+    fcn_tdccs: dict[str, bool] = field(default_factory=dict)  # 交易明細的 FCN TDCC（出現順序）→ 有沒有沒取消的列
     skipped_trade_rows: int = 0
     skipped_inventory_rows: int = 0
     cancelled_trade_rows: int = 0
+    fcn_trade_rows: int = 0
 
 
 def import_daily(daily_book: Path, conn: psycopg.Connection) -> ImportReceipt:
@@ -200,6 +206,8 @@ def import_daily(daily_book: Path, conn: psycopg.Connection) -> ImportReceipt:
             skipped_inventory_rows=parsed.skipped_inventory_rows,
             cancelled_trade_rows=parsed.cancelled_trade_rows,
             error_book_path=error_book_path,
+            fcn_trade_rows=parsed.fcn_trade_rows,
+            fcn_tdccs=tuple(tdcc for tdcc, live in parsed.fcn_tdccs.items() if live),
         )
         conn.execute(
             "UPDATE workflow.import_run SET summary = %s::jsonb WHERE run_id = %s",
@@ -405,6 +413,8 @@ def _parse_trades(rows: Iterable[_SheetRow], parsed: _Parsed) -> None:
             parsed.skipped_trade_rows += 1
             _remember_other(parsed, row["TDCC"], row["Product"])
             continue
+        parsed.fcn_trade_rows += 1
+        _remember_fcn(parsed, row)
         where = f"交易明細第 {number} 列"
         if _is_cancel_note(row["備註"]):
             parsed.cancelled_trade_rows += 1
@@ -433,6 +443,15 @@ def _parse_trades(rows: Iterable[_SheetRow], parsed: _Parsed) -> None:
             parsed.trades[tdcc] = trades
     for tdcc in errors.keys() - groups.keys():
         parsed.blocked.append(ImportLine(tdcc, BLOCKED, "；".join(errors[tdcc])))
+
+
+def _remember_fcn(parsed: _Parsed, row: Mapping[str, Any]) -> None:
+    """記下這列的 FCN TDCC（#90）；同一檔只要有一列沒取消就帶。TDCC 不完整的不帶。"""
+    try:
+        tdcc = _tdcc(row["TDCC"])
+    except ValueError:
+        return
+    parsed.fcn_tdccs[tdcc] = parsed.fcn_tdccs.get(tdcc, False) or not _is_cancel_note(row["備註"])
 
 
 def _trade(row: Mapping[str, Any]) -> dict[str, Any]:

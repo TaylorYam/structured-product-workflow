@@ -271,6 +271,40 @@ def test_cancel_note_is_skipped_and_excluded_from_reconciliation(pg, tmp_path: P
     ).fetchall() == [(1, "Amy", Decimal("300000"))]
 
 
+def test_fcn_tdccs_are_listed_for_the_order_tab_in_first_seen_order(pg, tmp_path: Path, mailbox) -> None:
+    """#90：依第一次出現的順序、不重複；非 FCN、TDCC 不完整、整檔都取消的不列；有一列沒取消就列。"""
+    cancelled_b = trade(B, "Amy", "北區", 1)
+    cancelled_b["備註"] = "Cancel"
+    cancelled_c = trade(C, "Amy", "北區", 1, number=None)
+    cancelled_c["備註"] = "此筆取消"
+    daily = write_daily(
+        tmp_path / "d.xlsx",
+        [
+            trade(C, "Amy", "北區", 1),
+            trade(D, "Amy", "北區", 1, product="BEN"),
+            trade(A, "Amy", "北區", 1),
+            cancelled_b,
+            cancelled_c,
+            trade("14700000000X", "Amy", "北區", 1),
+            trade(A, "Ben", "南區", 1, number=None),
+        ],
+        [],
+    )
+
+    receipt = import_daily(daily, pg)
+
+    assert receipt.fcn_tdccs == (C, A)
+    assert receipt.fcn_trade_rows == 6, "非 FCN 不算，取消與 TDCC 不完整的列都算"
+
+
+def test_no_fcn_trades_leaves_nothing_to_hand_over(pg, tmp_path: Path, mailbox) -> None:
+    daily = write_daily(tmp_path / "d.xlsx", [trade(D, "Amy", "北區", 1, product="BEN")], [])
+
+    receipt = import_daily(daily, pg)
+
+    assert (receipt.fcn_trade_rows, receipt.fcn_tdccs) == (0, ())
+
+
 def test_same_product_inventory_rows_merge_disjoint_branches(pg, tmp_path: Path, mailbox) -> None:
     daily = write_daily(
         tmp_path / "d.xlsx",
