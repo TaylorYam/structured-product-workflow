@@ -90,9 +90,22 @@ def test_next_day_open_without_a_known_market_leaves_the_strike_date_blank(tmp_p
 
     hk, blank = read(path, f"{A} {B}")
 
-    assert hk.values["Strike date"] is None and hk.status == PENDING
+    assert hk.values["Strike date"] is None and hk.status == PENDING and hk.unresolved == {"Strike date"}
     assert hk.notes["Strike date"] == "期初價格是明日開盤價，標的 700 HK 的交易所不在交易所假日表；請填下一個營業日"
     assert blank.notes["Strike date"] == "期初價格是明日開盤價，Trade date 空白，算不出來"
+
+
+def test_next_day_open_with_differing_underlyings_leaves_the_strike_date_blank(tmp_path: Path) -> None:
+    lines = [
+        sheet_line(A, {**JAPAN, "期初價格": "明日開盤價"}),
+        sheet_line(A, {**JAPAN, "BBG Code 2": "BBB UN", "期初價格": "明日開盤價"}),
+    ]
+    path = write_sheet(tmp_path / "s.xlsx", lines)
+
+    (row,) = read(path, A)
+
+    assert row.values["Strike date"] is None and row.unresolved == {"Strike date"}
+    assert row.notes["Strike date"] == "期初價格是明日開盤價，BBG Code 好幾列不同，算不出來；請填下一個營業日"
 
 
 def test_next_day_open_and_open_on_duplicate_lines_differ(tmp_path: Path) -> None:

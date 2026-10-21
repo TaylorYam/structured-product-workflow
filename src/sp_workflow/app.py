@@ -109,6 +109,7 @@ from sp_workflow.order_import import (
 from sp_workflow.order_terms import (
     CHOICES,
     FIELDS,
+    STRIKE_FIELD,
     OrderRow,
     OrderTermsError,
     collect_orders,
@@ -917,7 +918,10 @@ class OrderEditor(ttk.Frame):
             changed = name in typed or format_field(draft.values.get(name)) != format_field(value)
             typed.pop(name, None)
             draft.input_errors.pop(name, None)
-            draft.values[name] = value
+            strike = self.rows[STRIKE_FIELD]
+            follow = strike.var.get() == format_field(draft.values.get(STRIKE_FIELD))
+            for other in draft.set_value(name, value, follow=follow):  # 例：Strike date 跟著 Trade date
+                self.rows[other].var.set(format_field(draft.values.get(other)))
             self.rows[name].var.set(format_field(value))
         if not typed:
             self.typed.pop(draft.tdcc, None)

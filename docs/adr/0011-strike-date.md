@@ -3,6 +3,7 @@
 - 狀態／Status: Accepted
 - 日期／Date: 2026-10-21
 - 追蹤／Tracking: #101
+- 部分取代／Partly supersedes: [ADR 0010](0010-order-terms-from-daily-order-sheet.md) 的「明日開盤價標紅擋匯入、不自動換」／ADR 0010's "明日開盤價 is highlighted red and blocks import, never converted"
 
 ## 繁體中文
 
@@ -26,7 +27,8 @@
 ### 後果
 
 - 「2 起單資料」多一欄 Strike date（必填），一般情況自動帶 Trade date。
-- 作業人員改了 Trade date 時，Strike date 不會跟著改，要一起確認。
+- 作業人員在畫面上改 Trade date 時，原本等於 Trade date 的 Strike date 跟著改；明日開盤價算出的不動，早於 Trade date 時擋匯入。
+- 算不出來的 Strike date 不從資料庫補值，一定要作業人員填。
 - 更新程式後要跑 `spw-db-migrate`（資料表版本 0008）。
 
 ## English
@@ -51,5 +53,6 @@ The order sheet's 期初價格 sometimes says 明日開盤價: the open on the d
 ### Consequences
 
 - "2 起單資料" gains a required Strike date field, normally filled with Trade date.
-- Editing Trade date does not move Strike date; the operator checks both.
+- Editing Trade date on screen moves a Strike date that equalled it; a 明日開盤價 Strike date stays, and one earlier than Trade date blocks import.
+- A Strike date that could not be worked out is never filled from the database; the operator must enter it.
 - Run `spw-db-migrate` after updating (schema version 0008).

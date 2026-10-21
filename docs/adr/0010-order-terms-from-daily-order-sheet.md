@@ -1,6 +1,6 @@
 # 0010: Order 條件改從起單建檔讀取／Read Order Terms from the Daily Order Sheet
 
-- 狀態／Status: Accepted
+- 狀態／Status: Accepted；「明日開盤價」的處理由 [ADR 0011](0011-strike-date.md) 取代（記成開盤價＋Strike date）／Accepted; handling of 明日開盤價 superseded by ADR 0011 (stored as 開盤價 plus Strike date)
 - 日期／Date: 2026-10-21
 - 追蹤／Tracking: #97
 - 部分取代／Partly supersedes: [ADR 0006](0006-new-product-data-from-order.md) 與 #40 的「條件以我方寄出的 `(Order)` 原信為準、從商品資料夾的 `.msg` 讀」；[ADR 0009](0009-confirm-order-terms-in-window.md) 的「匯入資料庫並匯出 Excel」與匯出的 `Order條件清單`／ADR 0006 and #40's "terms come from our original `(Order)` email, read from `.msg` files in product folders"; ADR 0009's "import to the database and export Excel" and the exported `Order條件清單`

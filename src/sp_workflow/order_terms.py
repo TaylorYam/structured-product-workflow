@@ -59,7 +59,9 @@ class FieldKind(Enum):
 
 KO_TYPES = ("Daily", "Daily Memory", "Period End", "Period End Memory")
 BARRIER_TYPES = ("NONE", "EKI", "AKI")
-INITIAL_PRICINGS = ("開盤價", "收盤價", "VWAP")
+OPEN = "開盤價"
+INITIAL_PRICINGS = (OPEN, "收盤價", "VWAP")
+UNDERLYINGS = tuple(f"BBG Code {n}" for n in range(1, 6))
 CHOICES: dict[str, tuple[str, ...]] = {
     "KO Type": KO_TYPES,
     "Barrier Type": BARRIER_TYPES,
@@ -70,7 +72,7 @@ KINDS: dict[str, FieldKind] = {
     "Product": FieldKind.TEXT,
     "Currency": FieldKind.TEXT,
     "Guaranteed Periods (m)": FieldKind.INT,
-    **{f"BBG Code {n}": FieldKind.TEXT for n in range(1, 6)},
+    **dict.fromkeys(UNDERLYINGS, FieldKind.TEXT),
     "Strike (%)": FieldKind.PERCENT,
     "KO Type": FieldKind.CHOICE,
     "KO Barrier (%)": FieldKind.PERCENT,
@@ -113,10 +115,16 @@ class OrderRow:
     conflicts: frozenset[str] = frozenset()  # 好幾列不同、留空要由作業人員填的欄
     source: Path | None = None
     lines: tuple[int, ...] = ()
+    unresolved: frozenset[str] = frozenset()  # 起單建檔算不出來、留空要由作業人員填的欄（例：Strike date）
 
     @property
     def found(self) -> bool:
         return bool(self.lines)
+
+    @property
+    def must_fill(self) -> frozenset[str]:
+        """一定要作業人員填、不用資料庫的值補的欄。"""
+        return self.conflicts | self.unresolved
 
 
 def collect_orders(
@@ -199,13 +207,7 @@ def _row_for(
     notes: dict[str, str] = {}
     conflicts: set[str] = set()
     for name in SHEET_FIELDS:
-        # 比解讀後的值（`DAILY MEMORY` 和 `Daily Memory` 一樣）；讀不到的比原本的字；明日開盤價和開盤價不同
-        keys = {
-            (line[name][0], name == PRICING_FIELD and _next_open(cells.get(name)))
-            if not line[name][1]
-            else ("", _shown(cells.get(name)))
-            for line, (_, cells) in zip(parsed, lines, strict=True)
-        }
+        keys = {_compare_key(name, line[name], cells.get(name)) for line, (_, cells) in zip(parsed, lines, strict=True)}
         if len(keys) > 1:
             conflicts.add(name)
             values[name] = None
@@ -216,23 +218,41 @@ def _row_for(
         values[name], note = parsed[0][name]
         if note:
             notes[name] = note
+    unresolved: set[str] = set()
+    next_open = _next_open(lines[0][1].get(PRICING_FIELD))
     if conflicts & {TRADE_FIELD, PRICING_FIELD}:
         conflicts.add(STRIKE_FIELD)
         values[STRIKE_FIELD] = None
         notes[STRIKE_FIELD] = "Trade date 或期初價格好幾列不同，算不出來；請填正確的值"
+    elif next_open and conflicts & set(UNDERLYINGS):
+        unresolved.add(STRIKE_FIELD)
+        values[STRIKE_FIELD] = None
+        notes[STRIKE_FIELD] = f"期初價格是{NEXT_OPEN}，BBG Code 好幾列不同，算不出來；請填下一個營業日"
     else:
-        values[STRIKE_FIELD], note = _strike_date(values, _next_open(lines[0][1].get(PRICING_FIELD)), calendar)
+        values[STRIKE_FIELD], note = _strike_date(values, next_open, calendar)
         if note:
+            unresolved.add(STRIKE_FIELD)
             notes[STRIKE_FIELD] = note
     if not issuer:
         notes[TDCC_FIELD] = unknown_issuer(tdcc)
     status = PENDING if notes else READ
-    return OrderRow(tdcc, status, issuer, values, notes, frozenset(conflicts), path, numbers)
+    return OrderRow(tdcc, status, issuer, values, notes, frozenset(conflicts), path, numbers, frozenset(unresolved))
 
 
 def unknown_issuer(tdcc: str) -> str:
     """TDCC 前三碼不在上手編號對照時的說明（讀取與匯入檢查共用）。"""
     return f"TDCC 前三碼 {tdcc[:3]} 不在上手編號對照"
+
+
+def _compare_key(name: str, parsed: tuple[object, str], raw: object) -> object:
+    """重複列比較用：比解讀後的值（`DAILY MEMORY` 和 `Daily Memory` 一樣）；讀不到的比原本的字；
+    期初價格的明日開盤價和開盤價不同。"""
+    value, note = parsed
+    if note:
+        return ("", _shown(raw))
+    if name == PRICING_FIELD:
+        return (value, _next_open(raw))
+    return value
 
 
 def _strike_date(values: Mapping[str, object], next_open: bool, calendar: TradingCalendar) -> tuple[object, str]:
@@ -242,7 +262,7 @@ def _strike_date(values: Mapping[str, object], next_open: bool, calendar: Tradin
         return trade, ""
     if not isinstance(trade, dt.date):
         return None, f"期初價格是{NEXT_OPEN}，Trade date 空白，算不出來"
-    tickers = [str(v) for n in range(1, 6) if (v := values.get(f"BBG Code {n}"))]
+    tickers = [str(v) for name in UNDERLYINGS if (v := values.get(name))]
     found = calendar.next_trading_day(trade, tickers)
     if found.uncertain:
         return None, f"期初價格是{NEXT_OPEN}，{found.uncertain}；請填下一個營業日"
@@ -259,7 +279,7 @@ def _parse_line(cells: Mapping[str, object]) -> dict[str, tuple[object, str]]:
     for name in SHEET_FIELDS:
         raw = cells.get(name)
         if name == PRICING_FIELD and _next_open(raw):
-            parsed[name] = ("開盤價", "")
+            parsed[name] = (OPEN, "")
             continue
         try:
             parsed[name] = (parse_field(name, raw), "")
