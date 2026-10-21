@@ -10,10 +10,10 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from db_synth import inventory, seed_mailbox, trade, write_daily
+from db_synth import inventory, seed_mailbox, seed_products, trade, write_daily
 from fcn_checker.check_config import ConfigPaths
 from sp_workflow import database
-from sp_workflow.daily_import import DIFFERENT, FILLED, INVENTORY_MISSING, import_daily
+from sp_workflow.daily_import import import_daily
 from sp_workflow.mail_drafts import PENDING as MAIL_PENDING
 from sp_workflow.mail_drafts import create_drafts
 from sp_workflow.order_import import (
@@ -386,7 +386,7 @@ def test_products_already_in_the_database_are_locked_by_the_migration(pg) -> Non
         pg.execute(f"INSERT INTO public.{database.VERSION_TABLE} (version, name) VALUES (%s, %s)", (version, name))
     _insert_old_product(pg, A)
 
-    assert database.apply_migrations(pg) == ["0006_order_term_import.sql"]
+    assert database.apply_migrations(pg)[0] == "0006_order_term_import.sql"
     draft = draft_of(order_row(), pg)
     receipt = import_drafts([draft], pg, CONFIG, user="tester")
 
@@ -398,10 +398,8 @@ def test_products_already_in_the_database_are_locked_by_the_migration(pg) -> Non
 
 @pytest.mark.db
 def test_order_import_takes_over_a_product_the_inventory_created_later(pg, tmp_path: Path) -> None:
-    seed_mailbox(pg)
-    import_daily(
-        write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 300000)], [inventory(A, [("北區", 300000)])]), pg
-    )
+    """migration 0006 之後、清單更新停用（#87）之前由清單更新建立的商品。"""
+    seed_products(pg, [inventory(A, [("北區", 300000)])])
 
     draft = draft_of(order_row(), pg)
     receipt = import_drafts([draft], pg, CONFIG, user="tester")
@@ -435,12 +433,14 @@ def test_blank_fields_do_not_wipe_values_the_operator_never_saw(pg, tmp_path: Pa
     seed_mailbox(pg)
     import_drafts([draft_of(order_row(發行日=None), pg)], pg, CONFIG, user="tester")
     stale = draft_of(order_row(發行日=None), pg)  # 畫面打開時資料庫還沒有發行日
-    import_daily(write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])]), pg)
+    pg.execute(
+        "UPDATE workflow.product SET issue_date = '2026-10-22' WHERE tdcc = %s", (A,)
+    )  # 之後才補上（例如核對回填）
 
     receipt = import_drafts([stale], pg, CONFIG, user="tester")
 
     assert receipt.lines[0].result == SAME
-    assert product(pg, A)["issue_date"] == dt.date(2026, 10, 22)  # 清單更新補的發行日沒被清掉
+    assert product(pg, A)["issue_date"] == dt.date(2026, 10, 22)  # 之後補上的發行日沒被清掉
 
     seen = draft_of(order_row(發行日=None), pg)  # 這次畫面上看得到發行日，作業人員刻意清空
     seen.values["Issue date"] = None
@@ -466,55 +466,11 @@ def test_export_after_import_clears_the_fill_of_imported_products(pg, tmp_path: 
     assert ws.cell(HEADER_ROW + 2, final).fill.fgColor.rgb == FLAG_FILL  # 沒匯入（缺最終比價日）
 
 
-# ---------- 過渡期：清單更新只補空白（#87 上線前） ----------
-
-
-@pytest.mark.db
-def test_inventory_only_fills_blank_fields_of_order_products(pg, tmp_path: Path) -> None:
-    seed_mailbox(pg)
-    draft = draft_of(order_row(發行日=None), pg)
-    import_drafts([draft], pg, CONFIG, user="tester")
-
-    receipt = import_daily(
-        write_daily(
-            tmp_path / "d.xlsx",
-            [trade(A, "Amy", "北區", 300000), trade(A, "Ben", "南區", 200000, number=None)],
-            [inventory(A, [("北區", 300000), ("南區", 200000)], **{"Coupon p.a. (%)": 11})],
-        ),
-        pg,
-    )
-
-    lines = {(line.kind, line.detail) for line in receipt.lines if line.tdcc == A}
-    assert (FILLED, "Order 匯入的商品，清單更新補上：ISIN、發行日、分公司配置") in lines
-    assert any(kind == DIFFERENT and "coupon_pct" in detail for kind, detail in lines)
-    p = product(pg, A)
-    assert p["isin"] == "XS0000000001" and p["issue_date"] == dt.date(2026, 10, 22)
-    assert p["coupon_pct"] == Decimal("12.5")  # 有值的不覆蓋
-    assert pg.execute(
-        "SELECT branch, amount FROM workflow.branch_allocation WHERE tdcc = %s ORDER BY seq", (A,)
-    ).fetchall() == [
-        ("北區", Decimal(300000)),
-        ("南區", Decimal(200000)),
-    ]
-
-
-@pytest.mark.db
-def test_order_product_without_branches_waits_for_the_inventory(pg, tmp_path: Path) -> None:
-    seed_mailbox(pg)
-    import_drafts([draft_of(order_row(), pg)], pg, CONFIG, user="tester")
-
-    receipt = import_daily(write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], []), pg)
-
-    assert [(line.kind, line.detail) for line in receipt.lines if line.tdcc == A and line.problem] == [
-        (INVENTORY_MISSING, "Order 條件已匯入，等清單更新補上分公司配置後再對帳")
-    ]
-
-
 @pytest.mark.db
 def test_mail_draft_waits_for_the_issue_date(pg, tmp_path: Path) -> None:
     seed_mailbox(pg)
     import_drafts([draft_of(order_row(發行日=None), pg)], pg, CONFIG, user="tester")
-    import_daily(write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], []), pg)
+    import_daily(write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)]), pg)
     root, out = tmp_path / "FCN", tmp_path / "out"
     folder = root / A
     folder.mkdir(parents=True)

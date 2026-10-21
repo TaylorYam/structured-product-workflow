@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import runpy
 import tkinter as tk
 from concurrent.futures import Future
@@ -15,7 +16,7 @@ from fcn_checker.panel import parse_args
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.saving import SaveReceipt
 from sp_workflow import app
-from sp_workflow.daily_import import NEW_PRODUCT, ImportLine, ImportReceipt
+from sp_workflow.daily_import import NEW_TRADES, PRICE_CONFLICT, ImportLine, ImportReceipt, PriceSummary
 from sp_workflow.documents import DocKind
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.mail_drafts import DRAFTED, NOT_NEEDED, DraftOutcome, DraftReceipt
@@ -577,12 +578,15 @@ def test_return_page_shows_key_figures_when_done(master, tmp_path: Path) -> None
 
 def test_daily_import_page_shows_key_figures_and_restarts_clean(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
-    receipt = ImportReceipt(
-        7, (ImportLine("147000000001", NEW_PRODUCT), ImportLine("", "格式錯誤")), 3, 0, 0, 0, tmp_path
-    )
+    lines = (ImportLine("147000000001", NEW_TRADES), ImportLine("", PRICE_CONFLICT, "AAA UW：值不同"))
+    receipt = daily_receipt(tmp_path, lines=lines, prices=PriceSummary(dt.date(2026, 10, 16), 510, 0, ("AAA UW",)))
 
     window.daily._done(receipt)
-    assert window.daily.kpis.values == (("正常（項）", 1, False), ("要注意（項）", 1, True))
+    assert window.daily.kpis.values == (("正常（項）", 1, False), ("要注意（項）", 1, True), ("股價（筆）", 510, False))
+    assert (
+        "股價：取價日 2026-10-16，510 筆；值不一樣的重複代碼 1 個，價格沒有存：AAA UW。"
+        in window.daily.status_var.get()
+    )
 
     window.daily.restart()
     assert window.daily.kpis.values == () and window.daily.status_label.cget("style") == "Card.TLabel"
@@ -626,9 +630,28 @@ def test_a_new_check_result_clears_the_last_return(master, tmp_path: Path) -> No
 # ---------------------------------------------------------------- 每日匯入在第 1 頁，帶入 Order 條件（#90）
 
 
-def daily_receipt(tmp_path: Path, tdccs: tuple[str, ...] = (), fcn_rows: int | None = None) -> ImportReceipt:
-    rows = len(tdccs) if fcn_rows is None else fcn_rows
-    return ImportReceipt(7, (), 3, 0, 0, 0, tmp_path / "每日匯入錯誤.xlsx", fcn_trade_rows=rows, fcn_tdccs=tdccs)
+def daily_receipt(
+    tmp_path: Path, tdccs: tuple[str, ...] = (), fcn_rows: int | None = None, *, lines=(), prices=None
+) -> ImportReceipt:
+    return ImportReceipt(
+        run_id=7,
+        lines=lines,
+        people=3,
+        skipped_trade_rows=0,
+        cancelled_trade_rows=0,
+        error_book_path=tmp_path / "每日匯入錯誤.xlsx",
+        prices=prices or PriceSummary(dt.date(2026, 10, 16), 1, 0, ()),
+        fcn_trade_rows=len(tdccs) if fcn_rows is None else fcn_rows,
+        fcn_tdccs=tdccs,
+    )
+
+
+def test_reimporting_a_price_date_says_how_many_prices_were_replaced(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+
+    window.daily._done(daily_receipt(tmp_path, prices=PriceSummary(dt.date(2026, 10, 16), 3, 2, ())))
+
+    assert "股價：取價日 2026-10-16，3 筆（取代了這一天原本的 2 筆）。" in window.daily.status_var.get()
 
 
 def pasted(tab) -> str:

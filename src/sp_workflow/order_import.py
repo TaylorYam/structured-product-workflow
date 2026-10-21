@@ -10,7 +10,8 @@
 - `export_drafts`：輸出 Excel（Order原始資料＝確認後的值、Order條件清單／原文對照＝讀信結果、資料來源、人工修改）。
 規則式、不猜值：單位面額依幣別預設值（審查標準 `[denomination]`），發行機構寫法依參考條件表 `[issuer_values]`。
 已鎖住（`locked_at` 有值：TS 核對通過，或 migration 0006 之前就在資料庫）的商品不能匯入，要改走 #55 的更正；
-之後才由清單更新建立的商品沒有鎖，Order 匯入可以接手（條件以 Order 為準，ISIN 與分公司配置保留）。
+migration 0006 之後、清單更新停用（#87）之前由清單更新建立的商品沒有鎖，Order 匯入可以接手
+（條件以 Order 為準，ISIN 與分公司配置保留）。
 """
 
 from __future__ import annotations
@@ -27,7 +28,7 @@ from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from sp_workflow.daily_import import FCN, INVENTORY_SOURCE, ORDER_SOURCE, STATUS_IN_STOCK
+from sp_workflow.daily_import import FCN
 from sp_workflow.database import DatabaseError, require_current_schema
 from sp_workflow.order_template import COLUMNS, FIELD_COLUMNS
 from sp_workflow.order_terms import OrderRow, OrderTermsError, new_list_path, parse_date, write_list
@@ -36,6 +37,11 @@ if TYPE_CHECKING:
     import psycopg
 
     from fcn_checker.check_config import ConfigPaths
+
+STATUS_IN_STOCK = "在庫"
+# workflow.product.source：商品資料由哪裡建立（#86）；清單更新已停用（#87），只剩以前建立的商品
+INVENTORY_SOURCE = "清單更新"
+ORDER_SOURCE = "Order"  # 「匯入 Order 條件」
 
 TDCC_FIELD = "TDCC"
 AMOUNT_FIELD = "承作金額"

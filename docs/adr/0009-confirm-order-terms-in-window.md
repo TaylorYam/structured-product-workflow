@@ -1,6 +1,6 @@
 # 0009: Order 條件在視窗裡確認後匯入／Confirm Order Terms in the Window Before Import
 
-- 狀態／Status: Accepted
+- 狀態／Status: Accepted；「過渡期清單更新只補空白」已隨 #87 停用清單更新結束／Accepted; the transition rule of 清單更新 filling blanks ended when #87 retired 清單更新
 - 日期／Date: 2026-10-21
 - 追蹤／Tracking: #86
 - 部分取代／Partly supersedes: [ADR 0006](0006-new-product-data-from-order.md) 的「作業人員確認 Order 條件清單、補好淺紅格子後按匯入」；[ADR 0008](0008-daily-prices-denomination-and-order-dates.md) 的「匯入只讀『Order條件清單』工作表」／ADR 0006's "operators review the Order term list workbook, fill light-red cells, then import"; ADR 0008's "the import reads only the `Order條件清單` sheet"
@@ -23,7 +23,7 @@ ADR 0006、0008 原本的做法是：讀信先輸出 `Order條件清單_<時間>
   - 「Order原始資料」放確認後的值：已匯入的不標底色，沒匯入的保留淺紅底，不另外標改過哪裡。「Order條件清單」維持讀信讀到的結果。
   - 匯出後再改 Excel 不影響資料庫。
 - **重新讀信**：資料庫已有、還沒鎖住的商品，信裡空白但資料庫有值的欄帶入資料庫的值；兩邊都有值但不同的欄標黃並寫出資料庫的值，預設用信裡的值（以 Order 為準）。已鎖住的商品不能改、不能匯入。
-- **過渡期**：#87 上線前，每日匯入的清單更新遇到由 Order 匯入的商品，只補空白的欄（分公司配置、ISIN、發行日），有值的不覆蓋。
+- **過渡期**：#87 上線前，每日匯入的清單更新遇到由 Order 匯入的商品，只補空白的欄（分公司配置、ISIN、發行日），有值的不覆蓋。（2026-10-21 #87 停用清單更新，這條規則結束；之前補上的值保留。）
 - **鎖住的範圍**（取代 ADR 0008「以前清單更新進來的商品視同鎖住」的範圍）：只有套用 migration 0006 時已在資料庫的商品標成鎖住；之後由清單更新建立的新商品不鎖，Order 匯入可以接手（條件以 Order 覆蓋，ISIN、發行日、分公司配置保留，之後當成 Order 匯入的商品）。原因：分頁改成先每日匯入、再 Order 條件（#90），新商品通常先由清單更新建立，全部鎖住的話 Order 匯入永遠進不去。鎖住只看「鎖住時間」，之後由 #68 在核對通過時標上。
 - **空白不蓋掉資料庫的值**：匯入時某欄空白、資料庫有值，而作業人員在畫面上沒看過那個值（例如之後才由清單更新補上），就保留資料庫的值；看過並刻意清空的才寫成空白。
 
@@ -56,7 +56,7 @@ ADR 0006 and 0008 had reading output `Order條件清單_<timestamp>.xlsx` first;
   - `Order原始資料` holds the confirmed values: imported products have no fill, products not imported keep light red, and edits are not marked. `Order條件清單` keeps the values read from the email.
   - Editing the workbook afterward does not affect the database.
 - **Re-reading**: for products already in the database and not locked, fields blank in the email take the database value; fields with differing values are yellow and show the database value, defaulting to the email (the Order is authoritative). Locked products cannot be edited or imported.
-- **Transition**: until #87 ships, the daily import's 清單更新 only fills blank fields (branch allocations, ISIN, issue date) of products created by an Order import and never overwrites values.
+- **Transition**: until #87 ships, the daily import's 清單更新 only fills blank fields (branch allocations, ISIN, issue date) of products created by an Order import and never overwrites values. (This rule ended on 2026-10-21 when #87 retired 清單更新; values filled before then are kept.)
 - **Lock scope** (replacing the scope of ADR 0008's "products from the old 清單更新 are treated as locked"): only products already in the database when migration 0006 is applied are locked; new products 清單更新 creates afterward stay unlocked so an Order import can take them over (terms overwritten from the Order; ISIN, issue date, and branch allocations kept; afterward treated as Order-imported). Reason: the tabs now run the daily import before Order terms (#90), so new products are usually created by 清單更新 first, and locking them all would keep Order imports out forever. Locking depends only on the lock timestamp, which #68 sets when a check passes.
 - **Blanks do not wipe database values**: when a field is blank at import and the database has a value the operator never saw on screen (for example one 清單更新 filled later), the database value is kept; only a value the operator saw and deliberately cleared is written as blank.
 

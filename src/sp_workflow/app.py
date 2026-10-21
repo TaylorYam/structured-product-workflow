@@ -1,6 +1,6 @@
 """FCN Workflow 視窗：六個分頁照每天的作業順序排（#73、#74、#90）。
 
-1. 每日匯入：選每日更新，匯入最小 FCN 資料庫（#32）；信箱在資料庫直接維護（#35）。
+1. 每日匯入：選每日更新，把交易明細與每日股價匯入最小 FCN 資料庫（#32、#87）；信箱在資料庫直接維護（#35）。
 2. Order 條件：貼 TDCC，讀商品資料夾裡的 (Order) 原信，輸出 Order 條件清單（#40）。
 3. 準備：貼 TDCC、選輸出位置，產生批次資料夾與準備清單。
 4. 核對：參考條件表＋說明書／投資人須知 PDF 的預覽、核對與儲存（`fcn_checker.panel.CheckTab`）。
@@ -57,7 +57,14 @@ from fcn_checker.panel import (
     set_windows_app_id,
 )
 from fcn_checker.panel_workflow import PanelSession
-from sp_workflow.daily_import import DailyImportError, ImportInfo, ImportReceipt, import_daily, latest_import
+from sp_workflow.daily_import import (
+    DailyImportError,
+    ImportInfo,
+    ImportReceipt,
+    PriceSummary,
+    import_daily,
+    latest_import,
+)
 from sp_workflow.database import ConnectionSettings, DatabaseError, connect, default_env_path, settings_from_env
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.mail_drafts import (
@@ -483,7 +490,7 @@ class DailyImportTab(_Tab):
         self.daily_var = tk.StringVar(value=folders.get("daily", ""))
         self.status_var.set(f"選每日更新，按「匯入」。資料庫連線設定：{db.env_path}")
 
-        self.page_header("匯入每日更新", "把每日更新的 FCN 交易與商品條件匯入資料庫；信箱在資料庫直接維護。")
+        self.page_header("匯入每日更新", "把每日更新的 FCN 交易明細與每日股價匯入資料庫；信箱在資料庫直接維護。")
         body = self.body(self.card(1))
         row = self.field(body, 0, "每日更新", self.daily_var, lambda: _ask_excel("選擇每日更新", self.daily_var))
         self.result_area(body, row)
@@ -521,11 +528,16 @@ class DailyImportTab(_Tab):
             self.add_row((line.tdcc, line.kind, line.detail), problem=line.problem)
         problems = sum(line.problem for line in result.lines)
         normal = len(result.lines) - problems
+        prices = result.prices
         self.finish(
-            (("正常（項）", normal, False), ("要注意（項）", problems, problems > 0)),
+            (
+                ("正常（項）", normal, False),
+                ("要注意（項）", problems, problems > 0),
+                ("股價（筆）", prices.count, False),
+            ),
             f"完成（第 {result.run_id} 次匯入）：{normal} 項正常、{problems} 項要注意；"
-            f"略過非 FCN 交易 {result.skipped_trade_rows} 列、清單 {result.skipped_inventory_rows} 列；"
-            f"取消交易 {result.cancelled_trade_rows} 列；信箱 {result.people} 人。"
+            f"略過非 FCN 交易 {result.skipped_trade_rows} 列；取消交易 {result.cancelled_trade_rows} 列；"
+            f"信箱 {result.people} 人。\n{_price_text(prices)}"
             f"\n錯誤清單：{result.error_book_path}\n{self._hand_off(result)}",
         )
 
@@ -1075,6 +1087,16 @@ def _set_if_chosen(var: tk.StringVar, choose: Callable[[], str]) -> None:
     chosen = choose()
     if chosen:
         var.set(chosen)
+
+
+def _price_text(prices: PriceSummary) -> str:
+    """完成訊息裡的股價一句（#87）：取價日、筆數、取代了幾筆、衝突的代碼。"""
+    text = f"股價：取價日 {prices.price_date:%Y-%m-%d}，{prices.count} 筆"
+    if prices.replaced:
+        text += f"（取代了這一天原本的 {prices.replaced} 筆）"
+    if prices.conflicts:
+        text += f"；值不一樣的重複代碼 {len(prices.conflicts)} 個，價格沒有存：{'、'.join(prices.conflicts)}"
+    return text + "。"
 
 
 def _import_text(info: ImportInfo) -> str:
