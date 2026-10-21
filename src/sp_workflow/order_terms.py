@@ -137,7 +137,7 @@ class OrderRow:
 
 @dataclass(frozen=True)
 class OrderReceipt:
-    list_path: Path
+    list_path: Path | None  # 還沒輸出清單時是 None（視窗裡確認，按匯入或匯出時才寫，#86）
     rows: tuple[OrderRow, ...]
     unreadable_dirs: tuple[Path, ...] = ()
 

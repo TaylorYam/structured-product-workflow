@@ -7,6 +7,7 @@
 - `parse_field`／`format_field`：畫面輸入的文字 ↔ 欄位的值。
 - `check_draft`：逐欄檢查，回傳 {欄位: 問題}；空的就可以匯入。
 - `import_drafts`：通過的寫進 `workflow.product`，每次與每檔都留紀錄；整次在同一個 transaction 裡。
+  `reload_stored` 在匯入後重讀資料庫的值與鎖住狀態（畫面上改到一半的值不動）。
 - `export_drafts`：輸出 Excel（Order原始資料＝確認後的值、Order條件清單／原文對照＝讀信結果、資料來源、人工修改）。
 規則式、不猜值：單位面額依幣別預設值（審查標準 `[denomination]`），發行機構寫法依參考條件表 `[issuer_values]`。
 已鎖住（`locked_at` 有值：TS 核對通過，或 migration 0006 之前就在資料庫）的商品不能匯入，要改走 #55 的更正；
@@ -22,7 +23,7 @@ import getpass
 import json
 import re
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
@@ -63,6 +64,9 @@ SAME = "沒有變"
 SKIPPED = "不匯入"
 LOCKED = "已鎖住"
 IMPORTED = frozenset((NEW, OVERWRITTEN, SAME))
+# 匯入前每檔的狀態（`review_status`）：擋匯入、讀信時有提醒但可以匯入、可以匯入；另有已鎖住（LOCKED）
+BLOCKED, TO_CHECK, READY = "待確認", "請確認", "可匯入"
+IMPORTABLE = frozenset((TO_CHECK, READY))
 
 _PCT = Decimal("0.000001")
 _AMOUNT = Decimal("0.0001")
@@ -208,6 +212,8 @@ class OrderDraft:
     values: dict[str, object]
     stored: Mapping[str, object] | None = None  # 打開時資料庫的值（同一套欄名）；資料庫沒有這檔時 None
     locked: str = ""  # 已鎖住的原因；空字串＝可以改
+    database_checked: bool = False  # 打開時有沒有連資料庫看過（沒看過就不能覆蓋資料庫裡的這檔）
+    input_errors: dict[str, str] = field(default_factory=dict)  # 畫面上寫錯、還沒解讀成值的欄 → 說明
 
     @property
     def tdcc(self) -> str:
@@ -277,7 +283,10 @@ def drafts_from(rows: Iterable[OrderRow], conn: psycopg.Connection | None = None
     """讀到 Order 的每一檔（有格式表列的）轉成確認資料；有資料庫時帶入資料庫的值與鎖住狀態。
 
     讀不到 Order 的列（找不到 Order、未支援上手、好幾封 Order）沒有確認資料，畫面直接顯示 `OrderRow` 的原因。
+    資料表不是最新版本時丟 `DatabaseError`。
     """
+    if conn is not None:
+        require_current_schema(conn)
     drafts = []
     for row in rows:
         if not row.template:
@@ -292,8 +301,17 @@ def drafts_from(rows: Iterable[OrderRow], conn: psycopg.Connection | None = None
             for name, value in fields.items():
                 if values.get(name) is None and value is not None:
                     values[name] = value
-        drafts.append(OrderDraft(row, mail, values, fields, locked))
+        drafts.append(OrderDraft(row, mail, values, fields, locked, database_checked=conn is not None))
     return drafts
+
+
+def reload_stored(drafts: Iterable[OrderDraft], conn: psycopg.Connection) -> None:
+    """重讀每檔資料庫的值與鎖住狀態（例如匯入後），`values` 不動。"""
+    for draft in drafts:
+        stored = _stored(conn, draft.tdcc)
+        draft.stored = None if stored is None else stored.fields
+        draft.locked = "" if stored is None else stored.locked
+        draft.database_checked = True
 
 
 @dataclass(frozen=True)
@@ -377,10 +395,24 @@ def format_field(value: object) -> str:
 
 
 def check_draft(draft: OrderDraft, config: ImportConfig) -> dict[str, str]:
-    """逐欄檢查確認後的值，回傳 {欄位: 問題}（整檔的問題放在 TDCC）；空的就可以匯入。"""
+    """逐欄檢查確認後的值，回傳 {欄位: 問題}（整檔的問題放在 TDCC）；空的就可以匯入。畫面上寫錯的欄也算。"""
     if draft.locked:
         return {TDCC_FIELD: draft.locked}
-    return _value_problems(draft.values, draft, config)
+    return {**_value_problems(draft.values, draft, config), **draft.input_errors}
+
+
+def review_status(row: OrderRow, draft: OrderDraft | None, config: ImportConfig) -> tuple[str, str, bool]:
+    """匯入前這檔的 (狀態, 原因, 是否要處理)：待確認、請確認、可匯入、已鎖住；沒讀到 Order 的照讀信狀態。"""
+    if draft is None:
+        return row.status, "；".join(row.reasons), True
+    if draft.locked:
+        return LOCKED, draft.locked, False
+    problems = check_draft(draft, config)
+    if problems:
+        return BLOCKED, describe(problems), True
+    if row.reasons:
+        return TO_CHECK, "；".join(row.reasons), False
+    return READY, "", False
 
 
 def _value_problems(values: Mapping[str, object], draft: OrderDraft, config: ImportConfig) -> dict[str, str]:
@@ -464,7 +496,10 @@ class _Outcome:
 def import_drafts(
     drafts: Sequence[OrderDraft], conn: psycopg.Connection, config: ImportConfig, *, user: str | None = None
 ) -> OrderImportReceipt:
-    """把通過檢查的商品寫進資料庫；沒通過的不匯入並寫原因。整次在同一個 transaction 裡，出錯就全部不寫。"""
+    """把通過檢查的商品寫進資料庫；沒通過的不匯入並寫原因。整次在同一個 transaction 裡，出錯就全部不寫。
+
+    匯入成功的檔，`values` 會補上匯入時保留的資料庫值（畫面與 Excel 跟資料庫一致）。
+    """
     try:
         require_current_schema(conn)
     except DatabaseError as exc:
@@ -481,6 +516,8 @@ def import_drafts(
                 outcome = _Outcome(OrderImportLine(draft.tdcc, SKIPPED, "同一批出現兩次"))
             else:
                 outcome = _import_one(conn, draft, config, import_id)
+            if outcome.line.imported and outcome.confirmed is not None:
+                draft.values.update(outcome.confirmed)
             seen.add(draft.tdcc)
             lines.append(outcome.line)
             conn.execute(
@@ -512,9 +549,12 @@ def _import_one(conn: psycopg.Connection, draft: OrderDraft, config: ImportConfi
     stored = _stored(conn, draft.tdcc)  # 匯入當下重新看一次，不用畫面打開時的狀態
     if stored is not None and stored.locked:
         return _Outcome(OrderImportLine(draft.tdcc, LOCKED, stored.locked), previous=stored.columns)
+    if stored is not None and not draft.database_checked:
+        reason = "讀信時沒有連上資料庫，看不到資料庫裡這檔的值；請重新讀取後再確認"
+        return _Outcome(OrderImportLine(draft.tdcc, SKIPPED, reason), previous=stored.columns)
     values = _keep_database_values(draft, stored)
     edits = _edits(draft.mail, values)
-    problems = _value_problems(values, draft, config)
+    problems = {**_value_problems(values, draft, config), **draft.input_errors}
     if problems:
         line = OrderImportLine(draft.tdcc, SKIPPED, describe(problems))
         return _Outcome(line, values, None if stored is None else stored.columns, edits)
