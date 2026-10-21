@@ -272,7 +272,8 @@ def test_cancel_note_is_skipped_and_excluded_from_reconciliation(pg, tmp_path: P
 
 
 def test_fcn_tdccs_are_listed_for_the_order_tab_in_first_seen_order(pg, tmp_path: Path, mailbox) -> None:
-    """#90：依第一次出現的順序、不重複；非 FCN、TDCC 不完整、整檔都取消的不列；有一列沒取消就列。"""
+    """#90：依第一次出現的順序、不重複；非 FCN、整檔都取消的不列；有一列沒取消就列。
+    #93：只列剛好 12 碼的 TDCC；存成數字、前面的 0 掉了的照樣匯入資料庫，但不列。"""
     cancelled_b = trade(B, "Amy", "北區", 1)
     cancelled_b["備註"] = "Cancel"
     cancelled_c = trade(C, "Amy", "北區", 1, number=None)
@@ -287,6 +288,7 @@ def test_fcn_tdccs_are_listed_for_the_order_tab_in_first_seen_order(pg, tmp_path
             cancelled_c,
             trade("14700000000X", "Amy", "北區", 1),
             trade(A, "Ben", "南區", 1, number=None),
+            trade(int(B), "Ben", "南區", 1),
         ],
         [],
     )
@@ -294,7 +296,18 @@ def test_fcn_tdccs_are_listed_for_the_order_tab_in_first_seen_order(pg, tmp_path
     receipt = import_daily(daily, pg)
 
     assert receipt.fcn_tdccs == (C, A)
-    assert receipt.fcn_trade_rows == 6, "非 FCN 不算，取消與 TDCC 不完整的列都算"
+    assert receipt.fcn_trade_rows == 7, "非 FCN 不算，取消與 TDCC 不完整的列都算"
+    assert NEW_TRADES in kinds(receipt, B), "前面的 0 掉了的 TDCC 匯入資料庫照舊"
+
+
+def test_reimporting_the_same_file_still_lists_its_fcn_tdccs(pg, tmp_path: Path, mailbox) -> None:
+    """#90：資料庫已有的（「已存在」）照樣列，因為讀 Order 不靠資料庫。"""
+    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [])
+    import_daily(daily, pg)
+
+    again = import_daily(daily, pg)
+
+    assert UNCHANGED in kinds(again, A) and again.fcn_tdccs == (A,)
 
 
 def test_no_fcn_trades_leaves_nothing_to_hand_over(pg, tmp_path: Path, mailbox) -> None:
