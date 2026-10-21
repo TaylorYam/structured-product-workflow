@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 from decimal import Decimal
 from pathlib import Path
@@ -11,17 +12,18 @@ import pytest
 
 from db_synth import inventory, seed_mailbox, trade, write_daily
 from fcn_checker.check_config import ConfigPaths
+from sp_workflow import database
 from sp_workflow.daily_import import DIFFERENT, FILLED, INVENTORY_MISSING, import_daily
 from sp_workflow.mail_drafts import PENDING as MAIL_PENDING
 from sp_workflow.mail_drafts import create_drafts
 from sp_workflow.order_import import (
     AMOUNT_FIELD,
-    FIELDS,
+    EDIT_FIELDS,
     LOCKED,
     NEW,
     OVERWRITTEN,
+    SAME,
     SKIPPED,
-    UNCHANGED,
     ImportConfig,
     OrderImportError,
     check_draft,
@@ -103,7 +105,7 @@ def test_draft_holds_the_template_fields_plus_the_amount() -> None:
     assert draft.values["Upfront / NotePrice (%)"] == Decimal("98.5")
     assert draft.values[AMOUNT_FIELD] == Decimal(500000)
     assert draft.values["Barrier Type"] == "EKI"
-    assert set(draft.values) == set(FIELDS)
+    assert set(draft.values) == set(EDIT_FIELDS)
     assert check_draft(draft, CONFIG) == {}
     assert draft.edits() == []
 
@@ -185,6 +187,34 @@ def test_builtin_config_has_denominations_and_issuer_names() -> None:
     assert config.denominations["JPY"] == Decimal(1000000)
     assert len(config.denominations) == 8
     assert config.issuer_names["BARC"] == "Barclays"
+
+
+def test_reasons_are_split_by_field() -> None:
+    row = order_row(到期日=None)
+    row = dataclasses.replace(
+        row,
+        reasons=(
+            "年利率(%) 有修改：12%→12.5%",
+            "讀不到承作金額",
+            "KO Type 不認得：WEEKLY",
+            "格式表缺：Maturity date",
+            "條件表有沒列過的欄「Foo」（上手格式可能改版）",
+        ),
+    )
+
+    assert draft_of(row).reasons_by_field() == {
+        "Coupon p.a. (%)": ["年利率(%) 有修改：12%→12.5%"],
+        AMOUNT_FIELD: ["讀不到承作金額"],
+        "KO Type": ["KO Type 不認得：WEEKLY"],
+        "Maturity date": ["格式表缺：Maturity date"],
+        "TDCC": ["條件表有沒列過的欄「Foo」（上手格式可能改版）"],
+    }
+
+
+def test_issuer_without_a_configured_name_cannot_be_imported() -> None:
+    draft = draft_of(order_row("092199990001", issuer="UBS"))
+
+    assert check_draft(draft, CONFIG) == {"TDCC": "上手 UBS 在參考條件表設定沒有發行機構寫法"}
 
 
 # ---------- 匯出 Excel ----------
@@ -313,14 +343,14 @@ def test_reimport_overwrites_until_locked_and_keeps_the_previous_values(pg) -> N
     changed.values["Coupon p.a. (%)"] = Decimal("11.25")
     overwritten = import_drafts([changed], pg, CONFIG, user="tester")
 
-    assert same.lines[0].result == UNCHANGED
+    assert same.lines[0].result == SAME
     assert (overwritten.lines[0].result, overwritten.lines[0].detail) == (OVERWRITTEN, "改了：Coupon p.a. (%)")
     assert product(pg, A)["coupon_pct"] == Decimal("11.25")
     assert product(pg, A)["order_import_id"] == overwritten.import_id
     previous = pg.execute(
         "SELECT previous FROM workflow.order_import_line WHERE import_id = %s", (overwritten.import_id,)
     ).fetchone()[0]
-    assert previous["Coupon p.a. (%)"] == "12.5"
+    assert previous["coupon_pct"] == "12.5" and previous["issuer"] == "Barclays" and previous["denomination"] == "10000"
 
     pg.execute("UPDATE workflow.product SET locked_at = now() WHERE tdcc = %s", (A,))
     locked = draft_of(order_row(fields={"年利率(%)": Decimal(10)}), pg)
@@ -331,18 +361,59 @@ def test_reimport_overwrites_until_locked_and_keeps_the_previous_values(pg) -> N
     assert product(pg, A)["coupon_pct"] == Decimal("11.25")
 
 
-@pytest.mark.db
-def test_products_from_the_old_inventory_import_are_locked(pg, tmp_path: Path) -> None:
-    seed_mailbox(pg)
-    import_daily(write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])]), pg)
+def _insert_old_product(pg, tdcc: str) -> None:
+    """0005 版時以清單更新匯入的商品（必填欄位都填）。"""
+    run_id = pg.execute(
+        "INSERT INTO workflow.import_run (daily_file_name, daily_sha256, summary) VALUES ('d.xlsx', 'x', '{}')"
+        " RETURNING run_id"
+    ).fetchone()[0]
+    pg.execute(
+        "INSERT INTO workflow.product (tdcc, product, issuer, isin, currency, trade_date, issue_date,"
+        " final_valuation_date, maturity_date, non_call_months, underlying_1, strike_pct, ko_freq, ko_memory,"
+        " ko_type, ko_pct, coupon_pct, upfront_pct, tenor_months, ki_freq, barrier_type, status_event, first_run_id)"
+        " VALUES (%s, 'FCN', 'Barclays', 'XS0000000001', 'USD', '2026-01-15', '2026-01-22', '2026-07-15',"
+        " '2026-07-22', 1, 'AAA UW', 80, 'D', 'Y', 'Daily Memory', 100, 12.5, 1.5, 6, 'AM', 'EKI', '在庫', %s)",
+        (tdcc, run_id),
+    )
 
+
+@pytest.mark.db
+def test_products_already_in_the_database_are_locked_by_the_migration(pg) -> None:
+    pg.execute("DROP SCHEMA mailbox, workflow CASCADE")
+    pg.execute(f"DELETE FROM public.{database.VERSION_TABLE}")
+    for version, name, text in database.migration_files()[:5]:
+        pg.execute(text)
+        pg.execute(f"INSERT INTO public.{database.VERSION_TABLE} (version, name) VALUES (%s, %s)", (version, name))
+    _insert_old_product(pg, A)
+
+    assert database.apply_migrations(pg) == ["0006_order_term_import.sql"]
     draft = draft_of(order_row(), pg)
     receipt = import_drafts([draft], pg, CONFIG, user="tester")
 
     assert draft.locked.startswith("以前清單更新匯入的商品")
     assert check_draft(draft, CONFIG) == {"TDCC": draft.locked}
     assert receipt.lines[0].result == LOCKED
-    assert product(pg, A)["source"] == "清單更新"
+    assert product(pg, A)["source"] == "清單更新" and product(pg, A)["locked_at"] is not None
+
+
+@pytest.mark.db
+def test_order_import_takes_over_a_product_the_inventory_created_later(pg, tmp_path: Path) -> None:
+    seed_mailbox(pg)
+    import_daily(
+        write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 300000)], [inventory(A, [("北區", 300000)])]), pg
+    )
+
+    draft = draft_of(order_row(), pg)
+    receipt = import_drafts([draft], pg, CONFIG, user="tester")
+
+    assert draft.locked == ""
+    line = receipt.lines[0]
+    assert line.result == OVERWRITTEN and line.detail.startswith("清單更新建立的商品改由 Order 匯入接手；改了：")
+    p = product(pg, A)
+    assert (p["source"], p["order_import_id"], p["issuer"]) == ("Order", receipt.import_id, "Barclays")
+    assert p["coupon_pct"] == Decimal("12.5") and p["denomination"] == Decimal(10000)
+    assert p["isin"] == "XS0000000001"  # ISIN 與分公司配置保留
+    assert pg.execute("SELECT count(*) FROM workflow.branch_allocation WHERE tdcc = %s", (A,)).fetchone()[0] == 1
 
 
 @pytest.mark.db
@@ -357,6 +428,26 @@ def test_rereading_keeps_manual_fills_and_shows_database_differences(pg) -> None
     assert again.values["Coupon p.a. (%)"] == Decimal(13)  # 兩邊不同 → 預設用信裡的值
     assert again.differences() == {"Coupon p.a. (%)": Decimal("12.5")}
     assert again.edits() == [("Maturity date", None, dt.date(2027, 4, 22))]
+
+
+@pytest.mark.db
+def test_blank_fields_do_not_wipe_values_the_operator_never_saw(pg, tmp_path: Path) -> None:
+    seed_mailbox(pg)
+    import_drafts([draft_of(order_row(發行日=None), pg)], pg, CONFIG, user="tester")
+    stale = draft_of(order_row(發行日=None), pg)  # 畫面打開時資料庫還沒有發行日
+    import_daily(write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])]), pg)
+
+    receipt = import_drafts([stale], pg, CONFIG, user="tester")
+
+    assert receipt.lines[0].result == SAME
+    assert product(pg, A)["issue_date"] == dt.date(2026, 10, 22)  # 清單更新補的發行日沒被清掉
+
+    seen = draft_of(order_row(發行日=None), pg)  # 這次畫面上看得到發行日，作業人員刻意清空
+    seen.values["Issue date"] = None
+    cleared = import_drafts([seen], pg, CONFIG, user="tester")
+
+    assert (cleared.lines[0].result, cleared.lines[0].detail) == (OVERWRITTEN, "改了：Issue date")
+    assert product(pg, A)["issue_date"] is None
 
 
 @pytest.mark.db

@@ -67,7 +67,9 @@ KO_TYPES = {
 }
 BARRIER_TYPES = {"-": "NONE", "AM": "EKI", "D": "AKI", "P": "MKI"}
 STATUS_IN_STOCK = "在庫"
-ORDER_SOURCE = "Order"  # workflow.product.source：由「匯入 Order 條件」建立（#86）
+# workflow.product.source：商品資料由哪裡建立（#86）
+INVENTORY_SOURCE = "清單更新"
+ORDER_SOURCE = "Order"  # 「匯入 Order 條件」
 
 # 結果的種類
 NEW_PRODUCT = "新增商品"
@@ -599,7 +601,8 @@ def _reconcile(conn: psycopg.Connection, tdccs: Sequence[str]) -> list[ImportLin
     """用資料庫裡的資料對帳：交易列各分公司金額加總 vs 庫存總表的分公司承作金額。"""
     lines = []
     for tdcc in tdccs:
-        has_product = conn.execute("SELECT 1 FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone() is not None
+        found = conn.execute("SELECT source FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
+        has_product = found is not None
         traded = dict(
             conn.execute(
                 "SELECT branch, sum(amount) FROM workflow.trade_row WHERE tdcc = %s GROUP BY branch", (tdcc,)
@@ -618,7 +621,7 @@ def _reconcile(conn: psycopg.Connection, tdccs: Sequence[str]) -> list[ImportLin
                 "SELECT branch, sum(amount) FROM workflow.branch_allocation WHERE tdcc = %s GROUP BY branch", (tdcc,)
             ).fetchall()
         )
-        if not allocated and _source(conn, tdcc) == ORDER_SOURCE:
+        if not allocated and found[0] == ORDER_SOURCE:
             lines.append(ImportLine(tdcc, INVENTORY_MISSING, "Order 條件已匯入，等清單更新補上分公司配置後再對帳"))
             continue
         for branch in sorted(traded.keys() | allocated.keys()):
@@ -632,11 +635,6 @@ def _reconcile(conn: psycopg.Connection, tdccs: Sequence[str]) -> list[ImportLin
                     )
                 )
     return lines
-
-
-def _source(conn: psycopg.Connection, tdcc: str) -> str | None:
-    found = conn.execute("SELECT source FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
-    return None if found is None else found[0]
 
 
 def _unmatched_names(parsed: _Parsed, mailbox: Mailbox) -> list[ImportLine]:

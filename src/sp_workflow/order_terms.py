@@ -1,6 +1,6 @@
 """Order 條件讀取：從商品資料夾裡我方寄出的 `(Order)` 原信讀出全部條件，統一欄名後輸出條件清單（#40）。
 
-對外是 `read_orders`（讀信並輸出清單）；`collect_orders`（只讀信）與 `write_list`（寫清單）給視窗裡確認後匯入用（#86）。商品資料夾只讀不寫；條件以 Order 原信為準，上手回覆信（RE:／FW:／DONE: 等）不讀，
+對外是 `read_orders`（讀信並輸出清單）；`collect_orders`（只讀信）、`new_list_path`（清單路徑）與 `write_list`（寫清單）給視窗裡確認後匯入用（#86）。商品資料夾只讀不寫；條件以 Order 原信為準，上手回覆信（RE:／FW:／DONE: 等）不讀，
 唯一例外是 Order 沒寫的日期：依 `order_formats` 的 `supplement` 設定到指定的上手信補（GS、HSBC）。
 信件內文的固定開頭（`We buy <TDCC> <幣別> <金額> @<價格>`、`Risk level:` 等）各上手共用一套讀法；
 條件表（表頭一列、值一列的 HTML 表格）依 TDCC 前三碼的上手套用 `order_formats` 的欄名對照。
@@ -157,9 +157,9 @@ def read_orders(
 
     reader 預設用傳統版 Outlook 開 `.msg`（只讀，不會寄出或修改信件）。
     """
-    _check_inputs(text, root)
+    tokens = _check_inputs(text, root)
     list_path = new_list_path(out_parent, now)
-    rows, unreadable = collect_orders(text, root, reader=reader)
+    rows, unreadable = _collect(tokens, root, reader)
     write_list(list_path, rows, root, unreadable)
     return OrderReceipt(list_path, rows, unreadable)
 
@@ -187,8 +187,12 @@ def collect_orders(
     text: str, root: Path, *, reader: MailReader | None = None
 ) -> tuple[tuple[OrderRow, ...], tuple[Path, ...]]:
     """只讀信、不寫檔：依輸入順序回傳每檔的結果（同一封信裡的其他 TDCC 接在後面）與讀不到的資料夾。"""
-    tokens = _check_inputs(text, root)
+    return _collect(_check_inputs(text, root), root, reader)
 
+
+def _collect(
+    tokens: Sequence[str], root: Path, reader: MailReader | None
+) -> tuple[tuple[OrderRow, ...], tuple[Path, ...]]:
     read_mail = reader or OutlookMsgReader()
     valid = [t for t in tokens if is_tdcc(t)]
     folders, unreadable = find_product_folders(root, set(valid))
