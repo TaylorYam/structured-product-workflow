@@ -738,7 +738,7 @@ def test_pending_products_stay_in_the_template_with_red_cells(tmp_path: Path, ro
     assert (first.status, first.reasons) == (PENDING, ("格式表缺：Final valuation date、Maturity date",))
     assert second.status == READ
     ws = openpyxl.load_workbook(receipt.list_path).worksheets[0]
-    assert ws.title == "example"
+    assert ws.title == "Order原始資料"
     assert [c.value for c in ws[2]][1:5] == ["TDCC", "Product", "Currency", "Guaranteed Periods (m) "]
     assert ws.max_row == 4  # 待確認的也放進格式表
     # 待確認那列：能確定的照填，讀不到的兩格空白、淺紅底，其他格不標

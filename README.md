@@ -91,7 +91,8 @@ spw-db-migrate --admin-user postgres
    - 「內容不同（未覆蓋）」：和資料庫裡的不一樣，資料庫保留第一次的內容。
    - 「擋下」：這一列缺值或寫法不認得（例如庫存狀態、KO／KI 代碼），修正 Excel 後重新匯入。
    - 「分公司對帳差異」：交易明細各分公司金額加總和庫存總表的承作金額不同（PB 也算），只提醒。
-   - 「庫存尚未更新」：交易已匯入、清單更新還沒有這檔；之後貼進來再匯入一次即可。
+   - 「庫存尚未更新」：交易已匯入、清單更新還沒有這檔；之後貼進來再匯入一次即可。由「匯入 Order 條件」建立的商品還沒有分公司配置時也是這個結果，等清單更新補上後才對帳。
+   - 「補上空白」：過渡期（#87 上線前），由「匯入 Order 條件」建立的商品，清單更新只補資料庫空白的 ISIN、發行日與分公司配置；有值的不覆蓋，不同的照樣列在「內容不同（未覆蓋）」（#86、ADR 0009）。
    - 「交易已取消」：交易明細的「備註」去頭尾空白、不分大小寫等於 `Cancel`，或備註包含「取消」；該列不會匯入資料庫。
    - 「名字對不到信箱」：交易明細的 FC 名字在 `mailbox.person` 找不到（大小寫不同視為同一人）；拼法不同請在 `mailbox.alias` 加一筆別名。
    - 「信箱尚未建立」：`mailbox.person` 還是空的，名字無法比對。
@@ -156,7 +157,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
    - 資料夾裡有兩封以上 Order 原信，或有信讀不到。
 7. 找不到商品資料夾或 Order 原信時標「找不到 Order」。14 家上手（含 Citi）都有讀法；TDCC 前三碼不認得時標「未支援上手」。Citi 的 We buy 行只有 `UF=x%`，價格 = 100 − UF；Citi 的 Non Callable Periods 算法不同，統一 +1（0 → 1）。
 8. 清單有四個工作表：
-   - 「example」：作業人員既有的「Outlook orders 轉成 Excel」格式（第 2 列表頭、從 B 欄開始），讀到 Order 的商品都放（含待確認），**有問題的格子照填能確定的值、標淺紅底**（例如價格寫成 `→` 的那格；整列的問題標在 TDCC 那格），原因看「Order條件清單」；可以直接複製貼上；起單FC 留空由人補。信裡沒直接寫的欄依固定規則換算（`src/sp_workflow/order_template.py`）：
+   - 「Order原始資料」（原本叫 example，2026-10-21 改名）：作業人員既有的「Outlook orders 轉成 Excel」格式（第 2 列表頭、從 B 欄開始），讀到 Order 的商品都放（含待確認），**有問題的格子照填能確定的值、標淺紅底**（例如價格寫成 `→` 的那格；整列的問題標在 TDCC 那格），原因看「Order條件清單」；可以直接複製貼上；起單FC 留空由人補。信裡沒直接寫的欄依固定規則換算（`src/sp_workflow/order_template.py`）：
      - KO Type 統一成 Daily／Daily Memory／Period End／Period End Memory；MS 看 KO Memory 欄決定是否記憶式（`OBSERVATION` 是每期），Citi 看 Daily KO 和 Memory Autocall 兩欄。
      - Barrier Type 統一成 NONE／EKI／AKI（`European` = EKI）；沒有 KI 時 KI Barrier 留空。
      - Product 條件表沒有或是上手自家名稱（Citi 的 FCA）時取主旨的 `FCN`；OTC 沒寫時填 `Note`；SG 的 Tenor = No. of Periods。
@@ -267,7 +268,8 @@ Run the same command again after updates that add schema versions. When moving t
    - "內容不同（未覆蓋）": differs from the database, which keeps the first version.
    - "擋下": a row is missing values or uses an unrecognized form (for example inventory status or KO/KI codes); fix the workbook and re-import.
    - "分公司對帳差異": per-branch trade totals differ from the inventory allocation (PB included); warning only.
-   - "庫存尚未更新": trades are imported but `清單更新` lacks the product; paste it later and import again.
+   - "庫存尚未更新": trades are imported but `清單更新` lacks the product; paste it later and import again. A product created by "Import Order terms" without branch allocations also gets this result; reconciliation waits until 清單更新 fills them.
+   - "補上空白": during the transition (until #87 ships), 清單更新 only fills blank ISIN, issue date, and branch allocations of products created by "Import Order terms"; existing values are not overwritten and differences are still listed under "內容不同（未覆蓋）" (#86, ADR 0009).
    - "交易已取消": the trade-row 備註, after trimming and case-folding, is `Cancel`, or it contains `取消`; the row is not imported into the database.
    - "名字對不到信箱": an FC name is missing from `mailbox.person` (case is ignored); for spelling variants add an alias to `mailbox.alias`.
    - "信箱尚未建立": `mailbox.person` is empty, so names cannot be matched.
@@ -332,7 +334,7 @@ Principle: avoid over-customizing; emails that stray far from the normal format 
    - A folder holds two or more original orders, or a message cannot be read.
 7. A missing product folder or original order is 找不到 Order. All 14 issuers (including Citi) have a reading; an unknown TDCC prefix is 未支援上手. Citi's We buy line only gives `UF=x%`, so the price is 100 − UF; Citi counts Non Callable Periods differently, so it is shifted by +1 (0 → 1).
 8. The workbook has four sheets:
-   - "example": the operators' existing "Outlook orders to Excel" layout (row-2 header starting in column B), holding every product whose order was read (including 待確認), **with problem cells filled with what is certain and shaded light red** (for example the price written with `→`; row-level problems mark the TDCC cell), reasons in "Order條件清單"; ready to copy and paste; 起單FC is left blank for a person to fill. Columns the email does not state directly follow fixed rules (`src/sp_workflow/order_template.py`):
+   - "Order原始資料" (formerly example, renamed 2026-10-21): the operators' existing "Outlook orders to Excel" layout (row-2 header starting in column B), holding every product whose order was read (including 待確認), **with problem cells filled with what is certain and shaded light red** (for example the price written with `→`; row-level problems mark the TDCC cell), reasons in "Order條件清單"; ready to copy and paste; 起單FC is left blank for a person to fill. Columns the email does not state directly follow fixed rules (`src/sp_workflow/order_template.py`):
      - KO Type becomes Daily, Daily Memory, Period End, or Period End Memory; MS uses its KO Memory column for memory (`OBSERVATION` means per period), and Citi uses its Daily KO and Memory Autocall columns.
      - Barrier Type becomes NONE, EKI, or AKI (`European` = EKI); without KI, KI Barrier is blank.
      - Product falls back to the subject's `FCN` when the table lacks it or uses the issuer's own name (Citi's FCA); OTC defaults to `Note`; SG Tenor = No. of Periods.

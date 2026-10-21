@@ -1,6 +1,6 @@
 # 0008: 每日股價範本、單位面額與 Order 日期／Daily Price Template, Denomination, and Order Dates
 
-- 狀態／Status: Accepted
+- 狀態／Status: Accepted；「匯入只讀『Order條件清單』工作表」由 [ADR 0009](0009-confirm-order-terms-in-window.md) 取代（改在視窗裡確認）／Accepted; "the import reads only the `Order條件清單` sheet" superseded by ADR 0009 (confirmation in the window)
 - 日期／Date: 2026-10-21
 - 追蹤／Tracking: #86、#87、#88、#68
 - 補充／Completes: [ADR 0006](0006-new-product-data-from-order.md) 的待定事項／the open items of ADR 0006
