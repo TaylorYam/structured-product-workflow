@@ -640,6 +640,7 @@ def test_daily_import_hands_fcn_tdccs_to_the_order_tab_without_switching(master,
     monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: pytest.fail("不該自動讀 Order"))
 
     window.daily._done(daily_receipt(tmp_path, ("147000000002", "147000000001")))
+    master.update()  # 帶入時改了 TDCC 欄位，處理完那次 <<Modified>> 提示條仍在
 
     assert pasted(window.orders) == "147000000002\n147000000001" and window.orders.count_var.get() == "已貼 2 筆"
     assert window.orders.hint.text.get() == "已帶入每日匯入的 FCN TDCC 2 筆，確認後按「讀取 Order」。"
@@ -656,7 +657,7 @@ def test_daily_import_hands_fcn_tdccs_to_the_order_tab_without_switching(master,
     ("receipt_args", "message"),
     [
         ((), "這份交易明細沒有 FCN，Order 條件頁沒有帶入。"),
-        (((), 2), "這份交易明細的 FCN 都已取消或 TDCC 不完整，Order 條件頁沒有帶入。"),
+        (((), 2), "這份交易明細的 FCN 都已取消或 TDCC 不是 12 碼，Order 條件頁沒有帶入。"),
     ],
 )
 def test_nothing_is_handed_over_without_fcn_tdccs(master, tmp_path: Path, receipt_args, message) -> None:
@@ -696,7 +697,7 @@ def test_different_tdccs_on_the_order_tab_are_replaced_only_if_the_operator_agre
     assert window.orders.hint.shown is answer
     assert window.daily.next_button.winfo_manager() == ("pack" if answer else ""), "沒帶入就沒有下一步"
     if not answer:
-        assert window.daily.status_var.get().endswith("Order 條件頁保留原本的 TDCC，沒有帶入。")
+        assert window.daily.status_var.get().endswith("Order 條件頁沒有帶入（正在處理，或保留原本的 TDCC）。")
 
 
 def test_the_same_tdccs_are_handed_over_again_without_asking(master, tmp_path: Path, monkeypatch) -> None:
@@ -729,3 +730,66 @@ def test_editing_the_handed_over_tdccs_hides_the_hint(master, tmp_path: Path) ->
     master.update()
 
     assert not window.orders.hint.shown and window.orders.count_var.get() == "已貼 2 筆"
+
+
+@pytest.mark.parametrize("busy", ["reading", "exporting"])
+def test_a_busy_order_tab_does_not_take_the_tdccs(master, tmp_path: Path, monkeypatch, busy) -> None:
+    """#93：正在讀 Order 或匯出時不帶入，免得舊的結果蓋在新的 TDCC 底下。"""
+    window = new_window(master, tmp_path)
+    monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: None)
+    window.orders.out_var.set(str(tmp_path))
+    window.root_folder.var.set(str(tmp_path))
+    window.orders.tdcc_text.insert("1.0", "147000000009")
+    if busy == "reading":
+        window.orders.start()
+    else:
+        window.orders._done(OrderReceipt(tmp_path / "Order條件清單.xlsx", (OrderRow("147000000009", ORDER_PENDING),)))
+        window.orders.export_problems()
+    told = []
+    monkeypatch.setattr(app.messagebox, "showinfo", lambda *a, **k: told.append(a[1]))
+
+    window.daily._done(daily_receipt(tmp_path, ("147000000001",)))
+
+    assert len(told) == 1 and "正在處理" in told[0]
+    assert pasted(window.orders) == "147000000009" and not window.orders.hint.shown
+    assert window.daily.next_button.winfo_manager() == ""
+
+
+def test_handing_over_clears_the_last_order_results(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    rows = (OrderRow("147000000009", ORDER_PENDING),)
+    window.orders._done(OrderReceipt(tmp_path / "Order條件清單.xlsx", rows))
+    window.orders.tdcc_text.delete("1.0", tk.END)
+
+    window.daily._done(daily_receipt(tmp_path, ("147000000001",)))
+
+    orders = window.orders
+    assert orders.table.get_children() == () and orders.kpis.values == ()
+    assert orders.status_var.get() == orders.READY and orders.status_label.cget("style") == "Card.TLabel"
+    assert str(orders.open_button.cget("state")) == str(orders.export_button.cget("state")) == "disabled"
+
+
+def test_the_same_tdccs_in_another_order_are_handed_over_without_asking(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    window.orders.tdcc_text.insert("1.0", "147000000002\n147000000001")
+    monkeypatch.setattr(app.messagebox, "askyesno", lambda *a, **k: pytest.fail("只是順序不同，不用問"))
+
+    window.daily._done(daily_receipt(tmp_path, ("147000000001", "147000000002")))
+
+    assert pasted(window.orders) == "147000000001\n147000000002" and window.orders.hint.shown
+
+
+def test_starting_another_daily_import_withdraws_the_next_step(master, tmp_path: Path, monkeypatch) -> None:
+    """上一次成功、這次重新匯入：開始時先收起「下一步」，這次失敗就不會留著上一次的。"""
+    window = new_window(master, tmp_path)
+    window.daily._done(daily_receipt(tmp_path, ("147000000001",)))
+    assert window.daily.next_button.winfo_manager() == "pack"
+    monkeypatch.setattr(window.daily.db, "settings", lambda: object())
+    monkeypatch.setattr(window.daily, "run_in_background", lambda *a, **k: None)
+    monkeypatch.setattr(app.messagebox, "showerror", lambda *a, **k: None)
+    window.daily.daily_var.set(str(tmp_path / "每日更新.xlsx"))
+
+    window.daily.start()
+    window.daily._done(app.DailyImportError("每日更新缺少工作表「交易明細」"))
+
+    assert window.daily.next_button.winfo_manager() == ""

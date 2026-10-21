@@ -8,7 +8,7 @@
 - 已存在商品的庫存狀態這一版不更新。
 - 分公司對帳到每個分公司（交易明細各分公司金額加總 vs 庫存總表承作金額，PB 也算），差異只提醒。
 - 信箱由資料庫直接維護（#35、ADR 0004）：匯入不修改 `mailbox`，只用它比對 FC 名字。
-- 結果另外列出交易明細的 FCN TDCC（依第一次出現的順序、不重複，TDCC 不完整與整檔都取消的不列），
+- 結果另外列出交易明細的 FCN TDCC（依第一次出現的順序、不重複，不是剛好 12 碼與整檔都取消的不列），
   給視窗帶到 Order 條件頁（#90）。
 - 整次匯入在一個 transaction 內完成，任何錯誤都不留下部分寫入。
 """
@@ -86,6 +86,7 @@ _AMOUNT = Decimal("0.0001")
 _STATUS_KO = re.compile(r"已於\s*(\d{4})/(\d{1,2})/(\d{1,2})\s*KO")
 _STATUS_DELIVERED = re.compile(r"已於\s*(\d{4})/(\d{1,2})/(\d{1,2})\s*承接\s*(.+)")
 _STATUS_DELIVERED_OLD = re.compile(r"接\s*(.+?)\s*股票")
+_FULL_TDCC = re.compile(rf"[0-9]{{{TDCC_DIGITS}}}")
 
 _PRODUCT_COLUMNS = (
     "product", "issuer", "isin", "currency", "trade_date", "issue_date", "final_valuation_date", "maturity_date",
@@ -442,10 +443,12 @@ def _parse_trades(rows: Iterable[_SheetRow], parsed: _Parsed) -> None:
 
 
 def _remember_fcn(parsed: _Parsed, row: Mapping[str, Any]) -> None:
-    """記下這列的 FCN TDCC（#90）；同一檔只要有一列沒取消就帶。TDCC 不完整的不帶。"""
-    try:
-        tdcc = _tdcc(row["TDCC"])
-    except ValueError:
+    """記下這列的 FCN TDCC（#90）；同一檔只要有一列沒取消就帶。
+
+    只收剛好 12 個半形數字（#93，同「3 準備」）：Excel 存成數字、前面的 0 掉了的不補 0，不帶。
+    """
+    tdcc = _text(row["TDCC"])
+    if tdcc is None or not _FULL_TDCC.fullmatch(tdcc):
         return
     parsed.fcn_tdccs[tdcc] = parsed.fcn_tdccs.get(tdcc, False) or not _is_cancel_note(row["備註"])
 

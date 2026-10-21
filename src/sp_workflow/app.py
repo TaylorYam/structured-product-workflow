@@ -534,9 +534,9 @@ class DailyImportTab(_Tab):
         if not result.fcn_trade_rows:
             return "這份交易明細沒有 FCN，Order 條件頁沒有帶入。"
         if not result.fcn_tdccs:
-            return "這份交易明細的 FCN 都已取消或 TDCC 不完整，Order 條件頁沒有帶入。"
+            return "這份交易明細的 FCN 都已取消或 TDCC 不是 12 碼，Order 條件頁沒有帶入。"
         if not self.on_imported(result.fcn_tdccs):
-            return "Order 條件頁保留原本的 TDCC，沒有帶入。"
+            return "Order 條件頁沒有帶入（正在處理，或保留原本的 TDCC）。"
         self.next_button.offer()
         return f"已把 FCN TDCC {len(result.fcn_tdccs)} 筆帶到「2 Order 條件」。"
 
@@ -671,6 +671,11 @@ class MailDraftTab(_Tab):
 
 
 class OrderTermsTab(_Tab):
+    READY = (
+        "貼上 TDCC，選輸出位置，按「讀取 Order」（在最上方的根目錄底下找商品資料夾）。"
+        "只讀商品資料夾裡的 (Order) 原信，不會修改信件。"
+    )
+
     def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, root_folder: RootFolder) -> None:
         super().__init__(
             notebook,
@@ -681,11 +686,9 @@ class OrderTermsTab(_Tab):
         self.root_folder = root_folder
         self.list_path: Path | None = None
         self.receipt: OrderReceipt | None = None
+        self.working = False  # 正在讀 Order 或匯出問題信件
         self.out_var = tk.StringVar(value=memory.load().get("order_out", ""))
-        self.status_var.set(
-            "貼上 TDCC，選輸出位置，按「讀取 Order」（在最上方的根目錄底下找商品資料夾）。"
-            "只讀商品資料夾裡的 (Order) 原信，不會修改信件。"
-        )
+        self.status_var.set(self.READY)
 
         self.page_header("讀取 Order 條件", "讀商品資料夾裡的 (Order) 原信，輸出 Order 條件清單；只讀，不修改信件。")
         self.handed_off: list[str] | None = None  # 從每日匯入帶入的 TDCC
@@ -715,11 +718,21 @@ class OrderTermsTab(_Tab):
         self.place_table(3)
 
     def receive_tdccs(self, tdccs: Sequence[str]) -> bool:
-        """每日匯入完成後帶入交易明細的 FCN TDCC（#90）；已經貼了不同的 TDCC 時先問。不切頁、不自動讀 Order。"""
+        """每日匯入完成後帶入交易明細的 FCN TDCC（#90）；回傳是否帶入。不切頁、不自動讀 Order。
+
+        正在讀 Order 或匯出時不帶入；已經貼了不同的 TDCC（不看順序）時先問（#93）。
+        """
+        if self.working:
+            messagebox.showinfo(
+                TITLE,
+                "「2 Order 條件」正在處理，這次每日匯入的 FCN TDCC 沒有帶入；處理完後請自己貼。",
+                parent=self.master,
+            )
+            return False
         current = parse_tdccs(self.tdcc_text.get("1.0", tk.END))
         if (
             current
-            and current != list(tdccs)
+            and set(current) != set(tdccs)
             and not messagebox.askyesno(
                 TITLE,
                 f"「2 Order 條件」已經有 {len(current)} 筆 TDCC，和這次每日匯入的 FCN TDCC（{len(tdccs)} 筆）不同。"
@@ -728,7 +741,7 @@ class OrderTermsTab(_Tab):
             )
         ):
             return False
-        self.restart()  # 換了一批要讀的，上一次的結果收起來
+        self._clear_results()  # 換了一批要讀的，上一次的結果收起來
         self.handed_off = list(tdccs)
         self._set_tdccs("\n".join(tdccs))
         self.hint.show(f"已帶入每日匯入的 FCN TDCC {len(tdccs)} 筆，確認後按「讀取 Order」。")
@@ -755,6 +768,15 @@ class OrderTermsTab(_Tab):
         self.handed_off = None
         self.hint.hide()
 
+    def _clear_results(self) -> None:
+        """回到還沒讀取的樣子：清掉結果表與重點數字，狀態列回到說明，條件清單與匯出不能按。"""
+        self.restart()
+        self.table.delete(*self.table.get_children())
+        self.status_var.set(self.READY)
+        self.list_path = self.receipt = None
+        self.open_button.configure(state=tk.DISABLED)
+        self.export_button.configure(state=tk.DISABLED)
+
     def start(self) -> None:
         text = self.tdcc_text.get("1.0", tk.END)
         paths = self.root_folder.with_output(self.out_var, "輸出位置")
@@ -763,6 +785,7 @@ class OrderTermsTab(_Tab):
         root, out = paths
         self.memory.remember(order_out=str(out))
         self.receipt = None
+        self.working = True
         self.start_button.configure(state=tk.DISABLED)
         self.open_button.configure(state=tk.DISABLED)
         self.export_button.configure(state=tk.DISABLED)
@@ -774,6 +797,7 @@ class OrderTermsTab(_Tab):
         )
 
     def _done(self, result: object) -> None:
+        self.working = False
         self.start_button.configure(state=tk.NORMAL)
         if not isinstance(result, OrderReceipt):
             return
@@ -800,6 +824,7 @@ class OrderTermsTab(_Tab):
         if receipt is None:
             return
         out = receipt.list_path.parent
+        self.working = True
         self.export_button.configure(state=tk.DISABLED)
         self.mark_done(False)
         self.run_in_background(
@@ -810,6 +835,7 @@ class OrderTermsTab(_Tab):
         )
 
     def _exported(self, result: object) -> None:
+        self.working = False
         if self.receipt is not None and can_export(self.receipt):
             self.export_button.configure(state=tk.NORMAL)
         if not isinstance(result, ExportReceipt):

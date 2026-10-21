@@ -34,7 +34,7 @@
 
 ### 補充：分頁順序改成 1 每日匯入 → 2 Order 條件（2026-10-21，#90）
 
-實際作業是早上先拿到每日更新（交易明細，之後加上股價，ADR 0008），明細裡就有前一天成交的 FCN TDCC。所以前兩頁對調：**1 每日匯入 → 2 Order 條件** → 3 準備 → 4 核對 → 5 放回 → 6 寄信草稿，開視窗停在 1 每日匯入。每日匯入完成後，把這份交易明細的 FCN TDCC（依出現順序、不重複；TDCC 不完整、整檔已取消的不帶）帶到 Order 條件頁，沿用 #76 的帶入方式：先帶入、藍色提示條寫出筆數，按「下一步 →」才切頁，不自動讀 Order；Order 條件頁已有不同的 TDCC 時先問。交易列不參照商品資料，先匯入交易明細、之後才匯入 Order 條件（#86）不會出錯；ADR 0008 的「#86 → #87」是開發順序，不是每天的作業順序。其他決策不變。
+實際作業是早上先拿到每日更新（交易明細，之後加上股價，ADR 0008），明細裡就有前一天成交的 FCN TDCC。所以前兩頁對調：**1 每日匯入 → 2 Order 條件** → 3 準備 → 4 核對 → 5 放回 → 6 寄信草稿，開視窗停在 1 每日匯入。每日匯入完成後，把這份交易明細的 FCN TDCC（依出現順序、不重複；TDCC 不是剛好 12 碼、整檔已取消的不帶，#93）帶到 Order 條件頁，沿用 #76 的帶入方式：先帶入、藍色提示條寫出筆數，按「下一步 →」才切頁，不自動讀 Order；Order 條件頁已有不同的 TDCC 時先問。交易列不參照商品資料，先匯入交易明細、之後才匯入 Order 條件（#86）不會出錯；ADR 0008 的「#86 → #87」是開發順序，不是每天的作業順序。其他決策不變。
 
 ## English
 
@@ -65,4 +65,4 @@ After the checker merge ([ADR 0005](0005-merge-checker-into-workflow.md)) there 
 
 ### Addendum: tab order changed to 1 每日匯入 → 2 Order 條件 (2026-10-21, #90)
 
-In practice the day starts with the daily update (the trade sheet, later with prices, ADR 0008), which already lists the FCN TDCCs traded the previous day. The first two tabs therefore swap: **1 每日匯入 → 2 Order 條件** → 3 準備 → 4 核對 → 5 放回 → 6 寄信草稿, and the window opens on 1 每日匯入. After a daily import, the trade sheet's FCN TDCCs (in order of appearance, without duplicates; incomplete TDCCs and products whose trades are all cancelled are left out) are handed to the Order terms tab the #76 way: filled in first, a blue hint bar giving the count, and the tab switches only on 下一步 →, without reading Orders automatically; if the Order terms tab already holds different TDCCs, the operator is asked first. Trade rows do not reference product data, so importing trades before the Order terms import (#86) is safe; the "#86 → #87" order in ADR 0008 is the development order, not the daily working order. The other decisions stand.
+In practice the day starts with the daily update (the trade sheet, later with prices, ADR 0008), which already lists the FCN TDCCs traded the previous day. The first two tabs therefore swap: **1 每日匯入 → 2 Order 條件** → 3 準備 → 4 核對 → 5 放回 → 6 寄信草稿, and the window opens on 1 每日匯入. After a daily import, the trade sheet's FCN TDCCs (in order of appearance, without duplicates; TDCCs that are not exactly 12 digits and products whose trades are all cancelled are left out, #93) are handed to the Order terms tab the #76 way: filled in first, a blue hint bar giving the count, and the tab switches only on 下一步 →, without reading Orders automatically; if the Order terms tab already holds different TDCCs, the operator is asked first. Trade rows do not reference product data, so importing trades before the Order terms import (#86) is safe; the "#86 → #87" order in ADR 0008 is the development order, not the daily working order. The other decisions stand.
