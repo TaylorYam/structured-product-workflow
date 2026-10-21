@@ -4,6 +4,7 @@
 和上一次算的不同才寫入；已鎖住（`locked_at` 有值）的商品不重算。對外：
 - `recalculate`：重算還沒鎖住的商品，回傳每檔的狀態（完成／等股價／等交易明細／待確認）。
 - `release_differences`：作業人員放行交叉比對的差異（記 Windows 使用者名稱與時間），再重算那一檔。
+- `recalculate_corrected`：更正商品條件（#55、ADR 0014）後重算那一檔，已鎖住也算；VWAP 保留 TS 回填的價格。
 - `calculate`：一檔商品的計算本身（不碰資料庫）。
 
 規則：
@@ -401,34 +402,122 @@ def recalculate(
     require_current_schema(conn)
     with conn.transaction():
         where = "locked_at IS NULL" + ("" if tdccs is None else " AND tdcc = ANY(%s)")
-        products = [
-            _product(row)
-            for row in conn.execute(
-                f"SELECT {', '.join(_PRODUCT_COLUMNS)} FROM workflow.product WHERE {where} ORDER BY tdcc FOR UPDATE",
-                () if tdccs is None else (list(tdccs),),
-            )
-        ]
-        keys = [p.tdcc for p in products]
-        trades = _trades(conn, keys)
-        price_dates = [d for (d,) in conn.execute("SELECT DISTINCT price_date FROM workflow.price_import ORDER BY 1")]
-        quotes = _quotes(conn, products, price_dates)
-        released = _released(conn, keys)
-        stored = _stored(conn, keys)
-        lines = []
-        for product in products:
-            calc = calculate(
-                product,
-                trades.get(product.tdcc, []),
-                price_dates,
-                quotes,
-                released.get(product.tdcc, set()),
-                calendar,
-            )
-            changed = not _same(calc, stored.get(product.tdcc))
-            if changed:
-                _write(conn, product.tdcc, calc)
-            lines.append(CalcLine(product.tdcc, calc.status, calc.reason, changed, calc.differences))
+        products = _products(conn, where, () if tdccs is None else (list(tdccs),))
+        lines = [line for line, _, _ in _recalculate(conn, products, calendar)]
     return CalcReceipt(tuple(lines))
+
+
+_PRICE_NAMES = (("進場價", "initial"), ("執行價", "strike"), ("下限價", "ki"), ("KO價", "ko"))  # 更正紀錄的項目名
+
+
+def recalculate_corrected(
+    conn: psycopg.Connection, calendar: TradingCalendar, tdcc: str, previous: Mapping[str, Any]
+) -> tuple[CalcLine, tuple[tuple[str, Any, Any], ...]] | None:
+    """更正商品條件（#55）之後重算這一檔（已鎖住也算），回傳 (結果, 改變的價格 [(UL_n_進場價…, 前, 後)])。
+
+    `previous` 是更正前的商品欄位。沒有算過核對條件的商品（以前清單更新匯入的），或改的欄都不影響核對條件
+    （例：Coupon），不重算、回傳 None（股價檔或假日表之後變了也不會把原本的價格算掉）。
+    VWAP 的價格是 TS 回填的：更正前也是 VWAP、同一位置同一標的的保留，執行價(%)、KI(%)、KO(%) 或 Barrier Type
+    改了的價格由保留的進場價重算；其他位置的價格空白。在呼叫端的 transaction 裡執行。
+    """
+    if conn.execute("SELECT 1 FROM workflow.check_terms WHERE tdcc = %s", (tdcc,)).fetchone() is None:
+        return None
+    before = _product(tuple({**previous, "tdcc": tdcc}[c] for c in _PRODUCT_COLUMNS))
+    products = _products(conn, "tdcc = %s", (tdcc,))
+    if products == [before]:
+        return None
+    ((line, stored, calc),) = _recalculate(conn, products, calendar, vwap_from=before)
+    old = {p.seq: p for p in stored.prices} if stored is not None else {}
+    new = {p.seq: p for p in calc.prices}
+    changes = []
+    for seq in sorted(old.keys() | new.keys()):
+        was, now = old.get(seq, UnderlyingPrice(seq, "")), new.get(seq, UnderlyingPrice(seq, ""))
+        for name, attr in _PRICE_NAMES:
+            if getattr(was, attr) != getattr(now, attr):
+                changes.append((f"UL_{seq}_{name}", getattr(was, attr), getattr(now, attr)))
+    return line, tuple(changes)
+
+
+def _products(conn: psycopg.Connection, where: str, params: Sequence[Any]) -> list[ProductTerms]:
+    return [
+        _product(row)
+        for row in conn.execute(
+            f"SELECT {', '.join(_PRODUCT_COLUMNS)} FROM workflow.product WHERE {where} ORDER BY tdcc FOR UPDATE",
+            params,
+        )
+    ]
+
+
+def _recalculate(
+    conn: psycopg.Connection,
+    products: Sequence[ProductTerms],
+    calendar: TradingCalendar,
+    *,
+    vwap_from: ProductTerms | None = None,
+) -> list[tuple[CalcLine, Calculation | None, Calculation]]:
+    """算這幾檔，和上一次不同的寫入；回傳 (結果, 上一次算的, 這次算的)。`vwap_from` 見 `recalculate_corrected`。"""
+    keys = [p.tdcc for p in products]
+    trades = _trades(conn, keys)
+    price_dates = [d for (d,) in conn.execute("SELECT DISTINCT price_date FROM workflow.price_import ORDER BY 1")]
+    quotes = _quotes(conn, products, price_dates)
+    released = _released(conn, keys)
+    stored = _stored(conn, keys)
+    lines = []
+    for product in products:
+        calc = calculate(
+            product,
+            trades.get(product.tdcc, []),
+            price_dates,
+            quotes,
+            released.get(product.tdcc, set()),
+            calendar,
+        )
+        old = stored.get(product.tdcc)
+        if vwap_from is not None and _pricing(product.initial_pricing) == VWAP:
+            calc = _keep_vwap(calc, product, vwap_from, () if old is None else old.prices)
+        changed = not _same(calc, old)
+        if changed:
+            _write(conn, product.tdcc, calc)
+        lines.append((CalcLine(product.tdcc, calc.status, calc.reason, changed, calc.differences), old, calc))
+    return lines
+
+
+def _keep_vwap(
+    calc: Calculation, product: ProductTerms, before: ProductTerms, old: Sequence[UnderlyingPrice]
+) -> Calculation:
+    """更正後的 VWAP 商品：保留 TS 回填的價格，只重算比例改了的；保留不了的位置寫在說明裡。"""
+    kept = {p.seq: p for p in old} if _pricing(before.initial_pricing) == VWAP else {}
+    no_ki = product.barrier_type == NO_BARRIER or product.ki_pct is None
+    ki_same = (product.barrier_type, product.ki_pct) == (before.barrier_type, before.ki_pct)
+    prices, blank = [], []
+    for price in calc.prices:
+        was = kept.get(price.seq)
+        if was is None or was.code != price.code or was.initial is None:
+            prices.append(price)
+            blank.append(f"UL_{price.seq} {price.code}")
+            continue
+        prices.append(
+            UnderlyingPrice(
+                price.seq,
+                price.code,
+                initial=was.initial,
+                strike=_kept_or_derived(was.initial, was.strike, product.strike_pct, before.strike_pct),
+                ki=None if no_ki else _kept_or_derived(was.initial, was.ki, product.ki_pct, before.ki_pct, ki_same),
+                ko=_kept_or_derived(was.initial, was.ko, product.ko_pct, before.ko_pct),
+            )
+        )
+    if not blank:
+        return replace(calc, prices=tuple(prices))
+    problem = f"更正後 {'、'.join(blank)} 沒有 TS 回填的價格"  # 價格空白，不能算完成
+    reason = "；".join(filter(None, (problem, calc.reason)))
+    return replace(calc, status=TO_CONFIRM, prices=tuple(prices), reason=reason)
+
+
+def _kept_or_derived(
+    initial: Decimal, kept: Decimal | None, pct: Decimal, pct_before: Decimal | None, same: bool = True
+) -> Decimal | None:
+    """比例沒改時保留 TS 回填的價格，改了由進場價重算。"""
+    return kept if same and pct == pct_before else _round(initial * pct / _HUNDRED)
 
 
 def release_differences(

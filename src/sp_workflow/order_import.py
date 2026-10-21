@@ -6,8 +6,10 @@
 - `check_draft`：逐欄檢查，回傳 {欄位: 問題}；空的就可以匯入。
 - `import_drafts`：通過的寫進 `workflow.product`，每次與每檔都留紀錄；整次在同一個 transaction 裡。
   `reload_stored` 在匯入後重讀資料庫的值與鎖住狀態（畫面上改到一半的值不動）。
+- `load_correction`／`apply_correction`：已鎖住的商品更正條件（#55、ADR 0014）：維持鎖住、核對結果不動，
+  有核對條件的重算價格，每次在 `workflow.term_correction` 留紀錄。
 規則式、不猜值：單位面額依幣別預設值（審查標準 `[denomination]`），發行機構寫法依參考條件表 `[issuer_values]`。
-已鎖住（`locked_at` 有值：TS 核對通過，或 migration 0006 之前就在資料庫）的商品不能匯入，要改走 #55 的更正；
+已鎖住（`locked_at` 有值：TS 核對通過，或 migration 0006 之前就在資料庫）的商品不能匯入，要改走更正（`apply_correction`）；
 migration 0006 之後、清單更新停用（#87）之前由清單更新建立的商品沒有鎖，Order 匯入可以接手
 （條件以 Order 為準，ISIN 與分公司配置保留）。承作金額以交易明細為準，Order 匯入不寫 `order_amount`（#97）。
 """
@@ -22,6 +24,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
+from sp_workflow.check_terms import CalcLine, recalculate_corrected
 from sp_workflow.daily_import import FCN
 from sp_workflow.database import DatabaseError, require_current_schema
 from sp_workflow.order_terms import (
@@ -183,6 +186,7 @@ class OrderDraft:
     stored: Mapping[str, object] | None = None  # 打開時資料庫的值（同一套欄名）；資料庫沒有這檔時 None
     locked: str = ""  # 已鎖住的原因；空字串＝可以改
     database_checked: bool = False  # 打開時有沒有連資料庫看過（沒看過就不能覆蓋資料庫裡的這檔）
+    correcting: bool = False  # 更正（#55）：空白會寫進資料庫，所以清空、補上的欄也算不同
     input_errors: dict[str, str] = field(default_factory=dict)  # 畫面上寫錯、還沒解讀成值的欄 → 說明
 
     @property
@@ -199,13 +203,14 @@ class OrderDraft:
         return self.row.notes
 
     def differences(self) -> dict[str, object]:
-        """兩邊都有值但不同的欄 → 資料庫的值（畫面標黃）。"""
+        """兩邊都有值但不同的欄 → 資料庫的值（畫面標黃）；更正時清空、補上的欄也算。"""
         if self.stored is None or self.locked:
             return {}
         return {
             name: stored
             for name, stored in self.stored.items()
-            if stored is not None and self.values.get(name) is not None and not _same(self.values[name], stored)
+            if (self.correcting or (stored is not None and self.values.get(name) is not None))
+            and not _same(self.values.get(name), stored)
         }
 
     def set_value(self, name: str, value: object, *, follow: bool = True) -> list[str]:
@@ -287,9 +292,9 @@ def _stored(conn: psycopg.Connection, tdcc: str) -> _Stored | None:
     if locked_at is None:
         locked = ""
     elif source == INVENTORY_SOURCE:
-        locked = "以前清單更新匯入的商品，條件已鎖住，要改請走更正商品條件（#55）"
+        locked = "以前清單更新匯入的商品，條件已鎖住，要改請按「更正商品條件…」"
     else:
-        locked = "已核對通過，條件已鎖住，要改請走更正商品條件（#55）"
+        locked = "已核對通過，條件已鎖住，要改請按「更正商品條件…」"
     return _Stored(columns, _fields_of(columns), source, locked)
 
 
@@ -523,7 +528,7 @@ def _product_columns(values: Mapping[str, Any], issuer: str, config: ImportConfi
     barrier = values["Barrier Type"]
     return {
         "product": FCN,
-        "issuer": config.issuer_names[issuer],
+        "issuer": config.issuer_names.get(issuer),  # 更正時不用（上手不改）
         "currency": values["Currency"],
         "trade_date": values[TRADE_FIELD],
         "strike_date": values[STRIKE_FIELD],
@@ -552,6 +557,126 @@ def _source_of(row: OrderRow) -> str | None:
     if row.source is None:
         return None
     return f"{row.source.name} 第 {'、'.join(map(str, row.lines))} 列"
+
+
+# ---------- 更正（#55） ----------
+
+FIXED_IN_CORRECTION = ("Issue date",)  # TS 回填的欄，不在更正範圍
+
+
+class CorrectionError(Exception):
+    """這檔不能更正（不在資料庫、還沒鎖住、檢查沒過、打開後被改過）；訊息是給作業人員看的中文。"""
+
+
+@dataclass(frozen=True)
+class CorrectionReceipt:
+    tdcc: str
+    correction_id: int | None  # 沒有改任何欄時 None（沒有寫入）
+    changes: tuple[tuple[str, object, object], ...] = ()  # (欄位或 UL_n_價格, 更正前, 更正後)
+    calc: CalcLine | None = None  # 重算後的核對條件；沒有算過核對條件的商品（以前清單更新匯入的）是 None
+
+
+def load_correction(conn: psycopg.Connection, tdcc: str, config: ImportConfig) -> OrderDraft:
+    """已鎖住的商品 → 可以編輯的確認資料（值、打開時的值都是資料庫目前的條件）；不能更正時丟 `CorrectionError`。"""
+    _require_schema(conn)
+    stored = _stored(conn, tdcc)
+    _require_locked(tdcc, stored)
+    assert stored is not None
+    fields = stored.fields
+    row = OrderRow(tdcc, LOCKED, _issuer_code(tdcc, stored.columns["issuer"], config), dict(fields))
+    return OrderDraft(row, dict(fields), dict(fields), dict(fields), database_checked=True, correcting=True)
+
+
+def _issuer_code(tdcc: str, issuer: str, config: ImportConfig) -> str:
+    """上手代號：TDCC 前三碼；對照沒有時用資料庫的發行機構寫法反查（上手不改，只用來檢查與顯示）。"""
+    code = config.issuer_prefixes.get(tdcc[:3], "")
+    if code in config.issuer_names:
+        return code
+    return next((c for c, name in config.issuer_names.items() if name == issuer), code)
+
+
+def apply_correction(
+    conn: psycopg.Connection, draft: OrderDraft, config: ImportConfig, *, reason: str = "", user: str | None = None
+) -> CorrectionReceipt:
+    """把更正後的條件寫進資料庫：商品維持鎖住、核對結果不動，有核對條件的重算價格，每次留一筆紀錄。
+
+    照起單資料匯入的規則檢查；上手、發行日不改，單位面額只有幣別改了時換成新幣別的預設值。
+    打開之後資料庫的條件被改過、或已經不是鎖住的，不寫入。整次在同一個 transaction 裡；寫入後 `draft` 的
+    打開時的值改成寫入的值。
+    """
+    _require_schema(conn)
+    tdcc = draft.tdcc
+    with conn.transaction():
+        conn.execute("SELECT 1 FROM workflow.product WHERE tdcc = %s FOR UPDATE", (tdcc,))
+        stored = _stored(conn, tdcc)
+        _require_locked(tdcc, stored)
+        assert stored is not None
+        seen = draft.stored or {}
+        if any(not _same(stored.fields[name], seen.get(name)) for name in stored.fields):
+            raise CorrectionError(f"{tdcc}：資料庫裡這檔的條件在打開之後改過了，請重新載入再更正")
+        values = draft.values
+        problems = {**_value_problems(values, draft, config), **draft.input_errors}
+        problems.pop(TDCC_FIELD, None)  # 只有上手的問題放在 TDCC；上手不改，不擋更正
+        for name in FIXED_IN_CORRECTION:
+            if not _same(values.get(name), stored.fields.get(name)):
+                problems[name] = "TS 回填的欄位，不能更正"
+        if problems:
+            raise CorrectionError(f"{tdcc} 沒有更正：{describe(problems)}")
+        product = _product_columns(values, draft.issuer, config)
+        product["issuer"], product["issue_date"] = stored.columns["issuer"], stored.columns["issue_date"]
+        if values["Currency"] == stored.fields["Currency"]:
+            product["denomination"] = stored.columns["denomination"]
+        changed = [c for c in _PRODUCT_COLUMNS if not _same(stored.columns[c], product[c])]
+        if not changed:
+            return CorrectionReceipt(tdcc, None)
+        changes = [
+            (name, stored.fields.get(name), values.get(name))
+            for name in FIELDS
+            if not _same(stored.fields.get(name), values.get(name))
+        ]
+        edited = {name for name, _, _ in changes}
+        for column in changed:  # 換算的代碼欄、單位面額：畫面上對應的欄沒改時另外記（例：舊資料的代碼和現在的換算不同）
+            source = _DERIVED_COLUMNS.get(column)
+            if source is not None and source not in edited:
+                item = source if source not in FIELDS else column
+                changes.append((item, stored.columns[column], product[column]))
+        assignments = ", ".join(f"{c} = %s" for c in changed)
+        conn.execute(
+            f"UPDATE workflow.product SET {assignments} WHERE tdcc = %s", (*(product[c] for c in changed), tdcc)
+        )
+        recalc = recalculate_corrected(conn, config.calendar, tdcc, stored.columns)
+        calc = None
+        if recalc is not None:
+            calc, price_changes = recalc
+            changes += price_changes
+        correction_id = conn.execute(
+            "INSERT INTO workflow.term_correction (tdcc, corrected_by, reason, changes, previous)"
+            " VALUES (%s, %s, %s, %s::jsonb, %s::jsonb) RETURNING correction_id",
+            (
+                tdcc,
+                user or getpass.getuser(),
+                reason.strip() or None,
+                _json([list(change) for change in changes]),
+                _json(stored.columns),
+            ),
+        ).fetchone()[0]
+    draft.original = dict(values)
+    draft.stored = dict(values)
+    return CorrectionReceipt(tdcc, correction_id, tuple(changes), calc)
+
+
+def _require_schema(conn: psycopg.Connection) -> None:
+    try:
+        require_current_schema(conn)
+    except DatabaseError as exc:
+        raise CorrectionError(str(exc)) from exc
+
+
+def _require_locked(tdcc: str, stored: _Stored | None) -> None:
+    if stored is None:
+        raise CorrectionError(f"{tdcc}：資料庫沒有這檔商品")
+    if not stored.locked:
+        raise CorrectionError(f"{tdcc}：還沒鎖住（還沒核對通過），請用起單資料的「匯入資料庫」修改")
 
 
 # ---------- 值的轉換 ----------

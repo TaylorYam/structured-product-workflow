@@ -2,6 +2,7 @@
 
 1. 每日匯入：選每日更新，把交易明細與每日股價匯入最小 FCN 資料庫（#32、#87）；信箱在資料庫直接維護（#35）。
 2. 起單資料：貼 TDCC、選一份起單建檔（#97），在右邊逐檔確認、修改後匯入資料庫（#86）。
+   核對通過、條件已鎖住的商品要改時，按「更正商品條件…」輸入 TDCC，在另一個視窗更正（#55）。
    1、2 匯入完成後重算還沒鎖住的商品的核對條件（#88），逐檔顯示狀態；交叉比對的差異可以在這兩頁放行。
 3. 準備：貼 TDCC、選輸出位置，產生批次資料夾與準備清單。
 4. 核對：參考條件表＋說明書／投資人須知 PDF 的預覽、核對與儲存（`fcn_checker.panel.CheckTab`）。
@@ -13,8 +14,8 @@
 每日匯入完成 → 起單資料頁帶入交易明細的 FCN TDCC（#90）；
 準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔。
 審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
-視窗只收輸入、在背景執行 `collect_orders`／`import_drafts`／`import_daily`／`recalculate`／`release_differences`／
-`prepare_batch`／核對／`return_to_folders`／`create_drafts` 並顯示結果，不含判斷邏輯。
+視窗只收輸入、在背景執行 `collect_orders`／`import_drafts`／`load_correction`／`apply_correction`／`import_daily`／`recalculate`／
+`release_differences`／`prepare_batch`／核對／`return_to_folders`／`create_drafts` 並顯示結果，不含判斷邏輯。
 """
 
 from __future__ import annotations
@@ -26,7 +27,7 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -100,6 +101,7 @@ from sp_workflow.mail_drafts import (
 )
 from sp_workflow.order_import import (
     BLOCKED,
+    FIXED_IN_CORRECTION,
     IMPORTABLE,
     LOCKED,
     NEW,
@@ -109,15 +111,19 @@ from sp_workflow.order_import import (
     SKIPPED,
     TDCC_FIELD,
     TO_CHECK,
+    CorrectionError,
+    CorrectionReceipt,
     ImportConfig,
     OrderDraft,
     OrderImportError,
     OrderImportLine,
     OrderImportReceipt,
+    apply_correction,
     check_draft,
     describe,
     drafts_from,
     import_drafts,
+    load_correction,
     load_import_config,
     reload_stored,
     review_status,
@@ -155,6 +161,7 @@ _EXPECTED_ERRORS = (
     OrderTermsError,
     OrderImportError,
     CheckTermsError,
+    CorrectionError,
 )  # 訊息本身就是給作業人員看的
 
 
@@ -821,6 +828,12 @@ class _DailyResult:
 
 
 @dataclass(frozen=True)
+class _LoadedCorrection:
+    draft: OrderDraft
+    config: ImportConfig
+
+
+@dataclass(frozen=True)
 class _SaveResult:
     receipt: OrderImportReceipt
     reload_error: str = ""  # 匯入成功但重讀資料庫狀態失敗
@@ -966,17 +979,24 @@ class OrderEditor(ttk.Frame):
 
     擋匯入的欄與讀起單建檔時有提醒的欄淺紅底並寫原因；和資料庫不同的欄淺黃底，寫出資料庫的值，可以一鍵改回。
     離開欄位、按 Enter 或選了下拉時才解讀；寫錯的欄保留打的字並標紅（說明記在 `OrderDraft.input_errors`，
-    匯入時那一檔不匯入）。值真的變了才通知 `on_change`。
+    匯入時那一檔不匯入）。值真的變了才通知 `on_change`。`fixed` 的欄只顯示、不能改（更正時的 Issue date，#55）。
     """
 
     PLACEHOLDER = "點左邊的商品來確認、修改"
+    FIXED_NOTE = "TS 回填的欄位，不能更正"
 
     def __init__(
-        self, parent: tk.Misc, config: Callable[[], ImportConfig | None], on_change: Callable[[OrderDraft], None]
+        self,
+        parent: tk.Misc,
+        config: Callable[[], ImportConfig | None],
+        on_change: Callable[[OrderDraft], None],
+        *,
+        fixed: Collection[str] = (),
     ) -> None:
         super().__init__(parent, style="Card.TFrame", padding=(14, 12))
         self.config = config
         self.on_change = on_change
+        self.fixed = frozenset(fixed)
         self.draft: OrderDraft | None = None
         self.typed: dict[str, dict[str, str]] = {}  # TDCC → {欄位: 寫錯時打的字}
         self.frozen = False  # 存檔中整個編輯區不能改
@@ -1029,8 +1049,8 @@ class OrderEditor(ttk.Frame):
 
     def _apply_state(self) -> None:
         state = tk.NORMAL if self.editable else tk.DISABLED
-        for field_row in self.rows.values():
-            field_row.input.configure(state=state)
+        for name, field_row in self.rows.items():
+            field_row.input.configure(state=tk.DISABLED if name in self.fixed else state)
 
     def refresh(self) -> None:
         """依目前的值重新標紅、標黃與寫說明。讀起單建檔時有問題的欄就算和資料庫不同也維持紅色，兩個說明都寫。"""
@@ -1046,7 +1066,7 @@ class OrderEditor(ttk.Frame):
             if name in problems:
                 field_row.mark(_PROBLEM_BG, problems[name])
             elif name in differences:
-                database = f"資料庫是 {format_field(differences[name])}"
+                database = f"資料庫是 {format_field(differences[name]) or '空白'}"
                 if name in notes:
                     field_row.mark(_PROBLEM_BG, f"{reading}；{database}", offer_database=True)
                 else:
@@ -1054,7 +1074,7 @@ class OrderEditor(ttk.Frame):
             elif name in notes:
                 field_row.mark(_PROBLEM_BG, reading)
             else:
-                field_row.mark(SURFACE, "")
+                field_row.mark(SURFACE, self.FIXED_NOTE if name in self.fixed else "")
         self.title_var.set(f"{draft.tdcc}　{draft.issuer}")
         row_notes = [problems.get(TDCC_FIELD, ""), notes.get(TDCC_FIELD, "")]
         self.note_var.set("；".join(filter(None, dict.fromkeys(row_notes))))
@@ -1071,7 +1091,7 @@ class OrderEditor(ttk.Frame):
 
     def _commit(self, name: str, *, notify: bool = True) -> bool:
         draft = self.draft
-        if draft is None or not self.editable:
+        if draft is None or not self.editable or name in self.fixed:
             return False
         text = self.rows[name].var.get()
         typed = self.typed.setdefault(draft.tdcc, {})
@@ -1156,6 +1176,8 @@ class OrderTermsTab(_Tab):
         self.start_button.pack(side=tk.LEFT)
         self.import_button = ttk.Button(self.buttons, text="匯入資料庫", command=self.import_now, state=tk.DISABLED)
         self.import_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.correct_button = ttk.Button(self.buttons, text="更正商品條件…", command=self.correct)
+        self.correct_button.pack(side=tk.LEFT, padx=(8, 0))
         self.place_table(3)
         self.frame.columnconfigure(2, weight=1)
         self.editor = OrderEditor(self.frame, lambda: self.read.config if self.read else None, self._edited)
@@ -1285,6 +1307,7 @@ class OrderTermsTab(_Tab):
         self.editor.set_frozen(busy)
         state = tk.DISABLED if busy else tk.NORMAL
         self.start_button.configure(state=state)
+        self.correct_button.configure(state=state)
         has_drafts = self.read is not None and bool(self.read.drafts)
         self.import_button.configure(state=state if has_drafts else tk.DISABLED)
         self.releaser.refresh()
@@ -1444,6 +1467,147 @@ class OrderTermsTab(_Tab):
             kpis.append(("核對條件待確認（檔）", to_confirm, to_confirm > 0))
         self.finish(kpis, status)
         self.releaser.show(result.recalc)
+
+    # ---------- 更正（#55） ----------
+
+    def correct(self) -> None:
+        """已鎖住的商品要改條件：問 TDCC（選中的那檔已鎖住時先帶入），讀資料庫目前的條件後打開更正視窗。"""
+        if self.working:
+            return
+        selection = self.table.selection()
+        _, draft = self.items.get(selection[0], (None, None)) if selection else (None, None)
+        initial = draft.tdcc if draft is not None and draft.locked else ""
+        text = simpledialog.askstring(
+            TITLE, "要更正的 TDCC（已核對通過、條件鎖住的商品）：", initialvalue=initial, parent=self.master
+        )
+        if text is None:
+            return
+        tdccs = parse_tdccs(text)
+        if len(tdccs) != 1:
+            messagebox.showerror(TITLE, "請輸入一筆 TDCC。", parent=self.master)
+            return
+        settings = self.db.settings()
+        if settings is None:
+            return
+        config_paths = self.config_paths()
+        self._busy(True)
+
+        def run() -> _LoadedCorrection:
+            config = load_import_config(config_paths)
+            with connect(settings) as conn:
+                return _LoadedCorrection(load_correction(conn, tdccs[0], config), config)
+
+        self.run_in_background(run, f"讀取 {tdccs[0]} 的條件中…", self._correction_loaded, clear=False)
+
+    def _correction_loaded(self, result: object) -> None:
+        self.db.after_run(result)
+        self._busy(False)
+        if isinstance(result, _LoadedCorrection):
+            self.status_var.set(f"已打開 {result.draft.tdcc} 的更正視窗。")
+            CorrectionDialog(self, result.draft, result.config)
+
+
+class CorrectionDialog:
+    """「更正商品條件」視窗（#55）：一次一檔，欄位同起單資料的編輯區；改過的欄標黃並寫出資料庫的值，可以改回。
+
+    儲存後商品維持鎖住、核對結果不動，有核對條件的商品重算價格；Issue date 由 TS 回填，不能改。
+    儲存期間整個視窗不能改；這個視窗開著時主視窗不能操作。
+    """
+
+    INTRO = (
+        "這檔已核對通過、條件已鎖住。改好後按「儲存更正」：商品維持鎖住、核對結果不動，"
+        "算過核對條件的商品會重算價格。Issue date 由 TS 回填，不能改。"
+    )
+
+    def __init__(self, tab: OrderTermsTab, draft: OrderDraft, config: ImportConfig) -> None:
+        self.tab = tab
+        self.draft = draft
+        self.config = config
+        self.window = tk.Toplevel(tab.master)
+        self.window.title(f"更正商品條件　{draft.tdcc}")
+        self.window.transient(tab.master)
+        self.window.configure(background=BACKGROUND)
+        self.window.geometry("640x780")
+        frame = ttk.Frame(self.window, padding=16)
+        frame.pack(fill=tk.BOTH, expand=True)
+        intro = ttk.Label(frame, text=self.INTRO, justify=tk.LEFT)
+        intro.pack(anchor="w", fill=tk.X)
+        self.editor = OrderEditor(frame, lambda: config, self._edited, fixed=FIXED_IN_CORRECTION)
+        self.editor.pack(fill=tk.BOTH, expand=True, pady=(8, 8))
+        reason = ttk.Frame(frame)
+        reason.pack(fill=tk.X)
+        ttk.Label(reason, text="原因（選填）").pack(side=tk.LEFT)
+        self.reason_var = tk.StringVar()
+        self.reason_entry = ttk.Entry(reason, textvariable=self.reason_var)
+        self.reason_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
+        self.status_var = tk.StringVar()
+        status = ttk.Label(frame, textvariable=self.status_var, justify=tk.LEFT)
+        status.pack(anchor="w", fill=tk.X, pady=(8, 0))
+        for label in (intro, status):  # 依視窗寬度換行
+            frame.bind(
+                "<Configure>", lambda event, w=label: w.configure(wraplength=max(240, event.width - 20)), add="+"
+            )
+        buttons = ttk.Frame(frame)
+        buttons.pack(anchor="e", pady=(8, 0))
+        self.save_button = ttk.Button(buttons, text="儲存更正", command=self.save, style="Primary.TButton")
+        self.save_button.pack(side=tk.LEFT)
+        self.close_button = ttk.Button(buttons, text="關閉", command=self.close)
+        self.close_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.window.protocol("WM_DELETE_WINDOW", self.close)
+        self.editor.show(draft)
+        self.window.grab_set()
+
+    def _edited(self, _draft: OrderDraft) -> None:
+        self.status_var.set("有改過、還沒儲存。")
+
+    def _set_busy(self, busy: bool) -> None:
+        self.tab._busy(busy)  # 背景工作用分頁的結果佇列，分頁也一起停用
+        self.editor.set_frozen(busy)
+        state = tk.DISABLED if busy else tk.NORMAL
+        for widget in (self.save_button, self.close_button, self.reason_entry):
+            widget.configure(state=state)
+
+    def save(self) -> None:
+        self.editor.commit()
+        settings = self.tab.db.settings()
+        if settings is None:
+            return
+        draft, config, reason = self.draft, self.config, self.reason_var.get()
+        self._set_busy(True)
+
+        def run() -> CorrectionReceipt:
+            with connect(settings) as conn:
+                return apply_correction(conn, draft, config, reason=reason)
+
+        self.tab.run_in_background(run, f"更正 {draft.tdcc} 中…", self._saved, clear=False)
+
+    def _saved(self, result: object) -> None:
+        self.tab.db.after_run(result)
+        self._set_busy(False)
+        if isinstance(result, CorrectionError):
+            self.status_var.set(str(result))
+        if not isinstance(result, CorrectionReceipt):
+            return
+        text = _correction_text(result)
+        self.tab.status_var.set(text)
+        if result.correction_id is None:
+            self.status_var.set(text)
+            return
+        self.window.destroy()
+        messagebox.showinfo(TITLE, text, parent=self.tab.master)
+
+    def close(self) -> None:
+        """有改過、還沒儲存的更正先問。"""
+        self.editor.commit()
+        if (self.draft.edits() or self.draft.input_errors) and not messagebox.askyesno(
+            TITLE,
+            "有改過、還沒儲存的更正，關閉後會不見。\n\n確定要關閉嗎？",
+            icon=messagebox.WARNING,
+            default=messagebox.NO,
+            parent=self.window,
+        ):
+            return
+        self.window.destroy()
 
 
 WINDOW_FILE = "window.json"  # 視窗上次的大小，和上次選的資料夾放在同一個 .local/
@@ -1702,6 +1866,20 @@ def _calc_status(line: CalcLine) -> str:
 def _calc_row(line: CalcLine) -> tuple[str, str, str]:
     """每日匯入結果表的一列：核對條件重算後的狀態。"""
     return line.tdcc, f"核對條件：{line.status}", line.reason
+
+
+def _correction_text(receipt: CorrectionReceipt) -> str:
+    """更正的結果：改了什麼（前 → 後）、重算後的核對條件。"""
+    if receipt.correction_id is None:
+        return f"{receipt.tdcc} 沒有改任何欄位，沒有寫入。"
+    changes = "、".join(
+        f"{name} {format_field(before) or '空白'} → {format_field(after) or '空白'}"
+        for name, before, after in receipt.changes
+    )
+    text = f"已更正 {receipt.tdcc}（第 {receipt.correction_id} 次更正）：{changes}。商品維持鎖住，核對結果沒有變。"
+    if receipt.calc is not None:
+        text += f"\n核對條件重算後：{_calc_status(receipt.calc)}。"
+    return text
 
 
 def _status_counts(lines: Iterable[CalcLine]) -> str:

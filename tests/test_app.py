@@ -6,6 +6,7 @@ import datetime as dt
 import runpy
 import tkinter as tk
 from concurrent.futures import Future
+from decimal import Decimal
 from pathlib import Path
 from tkinter import messagebox, ttk
 
@@ -269,7 +270,7 @@ def test_order_terms_tab_remembers_its_sheet(master, tmp_path: Path) -> None:
 
     assert window.orders.sheet_var.get() == "D:/ELN/起單建檔_20261015.xlsm"
     assert not hasattr(window.orders, "root_folder"), "起單資料頁不用根目錄（#97）"
-    assert texts(window.orders.buttons, ttk.Button) == ["讀取", "匯入資料庫", "放行差異…"]
+    assert texts(window.orders.buttons, ttk.Button) == ["讀取", "匯入資料庫", "更正商品條件…", "放行差異…"]
     assert str(window.orders.import_button.cget("state")) == "disabled"
 
 
@@ -1167,3 +1168,115 @@ def test_check_tab_can_read_terms_from_the_database(master, tmp_path: Path) -> N
     assert window.session.use_database
     assert str(check.sheet_button.cget("state")) == "disabled"
     assert check.sheet_text.get().startswith("由資料庫產生")
+
+
+# ---------------------------------------------------------------- 更正商品條件（#55）
+
+
+def correction_draft(tdcc: str = "029199990001"):
+    """資料庫帶出的已鎖住商品（`load_correction` 的結果，不連資料庫）。"""
+    (draft,) = drafts_from([order_row(tdcc)])
+    draft.stored = dict(draft.values)
+    draft.correcting = True
+    return draft
+
+
+def test_correct_asks_for_a_tdcc_starting_from_the_selected_locked_product(master, tmp_path, monkeypatch) -> None:
+    window = order_window(master, tmp_path, order_row("029199990001"), order_row("029199990002"))
+    window.orders.read.drafts[1].locked = "已核對通過，條件已鎖住"
+    window.orders.table.selection_set("1")
+    asked, started = [], []
+    monkeypatch.setattr(app.simpledialog, "askstring", lambda *a, **k: asked.append(k["initialvalue"]) or "0291 x")
+    monkeypatch.setattr(app.messagebox, "showerror", lambda *a, **k: started.append("錯誤"))
+    monkeypatch.setattr(window.orders.db, "settings", lambda **k: object())
+    monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: started.append(a[1]))
+
+    window.orders.correct()
+    monkeypatch.setattr(app.simpledialog, "askstring", lambda *a, **k: " 029199990002 ")
+    window.orders.correct()
+
+    assert asked == ["029199990002"]
+    assert started == ["錯誤", "讀取 029199990002 的條件中…"]
+    assert str(window.orders.correct_button.cget("state")) == "disabled", "讀取中不能再按"
+
+
+def test_the_correction_window_shows_changes_and_keeps_the_issue_date_fixed(master, tmp_path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    monkeypatch.setattr(app.tk.Toplevel, "grab_set", lambda self: None)
+    window.orders._correction_loaded(app._LoadedCorrection(correction_draft(), CONFIG))
+    (dialog,) = [w for w in master.winfo_children() if isinstance(w, tk.Toplevel)]
+    editor = next(w for w in dialog.winfo_children()[0].winfo_children() if isinstance(w, app.OrderEditor))
+
+    type_into(editor, "Coupon p.a. (%)", "11")
+    editor.rows["Issue date"].var.set("2026-10-23")
+    editor._commit("Issue date")
+
+    assert dialog.title() == "更正商品條件　029199990001"
+    coupon = editor.rows["Coupon p.a. (%)"]
+    assert coupon.label.cget("background") == app._DIFFERENT_BG and coupon.note.cget("text") == "資料庫是 12.5"
+    assert str(editor.rows["Issue date"].input.cget("state")) == "disabled"
+    assert editor.rows["Issue date"].note.cget("text") == "TS 回填的欄位，不能更正"
+    assert editor.draft.values["Issue date"] == dt.date(2026, 10, 22), "不能改"
+
+    type_into(editor, "BBG Code 3", "CCC UN")
+    assert editor.rows["BBG Code 3"].note.cget("text") == "資料庫是 空白", "補上也標黃"
+    assert editor.rows["BBG Code 3"].database.winfo_manager() == "grid"
+
+    type_into(editor, "BBG Code 3", "")
+    type_into(editor, "BBG Code 2", "")
+    assert editor.rows["BBG Code 2"].note.cget("text") == "資料庫是 BBB UN", "清空也標黃，可以改回"
+
+
+def test_saving_a_correction_closes_the_window_and_reports_the_changes(master, tmp_path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    monkeypatch.setattr(app.tk.Toplevel, "grab_set", lambda self: None)
+    started, shown = [], []
+    monkeypatch.setattr(window.orders.db, "settings", lambda **k: object())
+    monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: started.append(a[1]))
+    monkeypatch.setattr(app.messagebox, "showinfo", lambda *a, **k: shown.append(a[1]))
+    dialog = app.CorrectionDialog(window.orders, correction_draft(), CONFIG)
+    type_into(dialog.editor, "Coupon p.a. (%)", "11")
+
+    dialog.save()
+    assert started == ["更正 029199990001 中…"]
+    assert str(dialog.save_button.cget("state")) == "disabled", "儲存中不能改"
+    receipt = app.CorrectionReceipt(
+        "029199990001",
+        3,
+        (("Coupon p.a. (%)", Decimal("12.5"), Decimal(11)), ("UL_2_下限價", Decimal("32.5"), None)),
+        CalcLine("029199990001", TO_CONFIRM, "UF：起單資料 2、交易明細 0.0215", True),
+    )
+    dialog._saved(receipt)
+
+    assert not dialog.window.winfo_exists()
+    assert shown == [
+        "已更正 029199990001（第 3 次更正）：Coupon p.a. (%) 12.5 → 11、UL_2_下限價 32.5 → 空白。"
+        "商品維持鎖住，核對結果沒有變。\n核對條件重算後：待確認（UF：起單資料 2、交易明細 0.0215）。"
+    ]
+    assert window.orders.status_var.get() == shown[0]
+
+
+def test_a_rejected_correction_keeps_the_window_open(master, tmp_path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    monkeypatch.setattr(app.tk.Toplevel, "grab_set", lambda self: None)
+    dialog = app.CorrectionDialog(window.orders, correction_draft(), CONFIG)
+
+    dialog._saved(app.CorrectionError("029199990001：資料庫裡這檔的條件在打開之後改過了，請重新載入再更正"))
+    assert dialog.window.winfo_exists() and dialog.status_var.get().endswith("請重新載入再更正")
+
+    dialog._saved(app.CorrectionReceipt("029199990001", None))
+    assert dialog.window.winfo_exists() and dialog.status_var.get() == "029199990001 沒有改任何欄位，沒有寫入。"
+
+
+def test_closing_with_unsaved_corrections_asks_first(master, tmp_path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    monkeypatch.setattr(app.tk.Toplevel, "grab_set", lambda self: None)
+    answers = [False, True]
+    monkeypatch.setattr(app.messagebox, "askyesno", lambda *a, **k: answers.pop(0))
+    dialog = app.CorrectionDialog(window.orders, correction_draft(), CONFIG)
+    type_into(dialog.editor, "Tenor (m)", "12")
+
+    dialog.close()
+    assert dialog.window.winfo_exists()
+    dialog.close()
+    assert not dialog.window.winfo_exists()
