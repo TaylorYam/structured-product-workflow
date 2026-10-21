@@ -99,7 +99,7 @@ def test_ready_product_gets_one_draft_to_its_fcs_with_fixed_cc(db, tmp_path: Pat
     assert [(o.tdcc, o.status, o.to, o.cc) for o in receipt.outcomes] == [(A, DRAFTED, ("Amy", "Ben"), ("Pat",))]
     (draft,) = drafter.drafts
     assert draft.to == ("amy@example.com", "ben@example.com") and draft.cc == ("pat@example.com",)
-    assert draft.subject == f"FCN {A} 中文TS/IIS"
+    assert draft.subject == f"[中文TS/IIS] [FCN] - {A}"
     assert draft.attachments == (folder / f"{A}_TS.pdf", folder / f"{A}_IIS.pdf")
     assert draft.html_body.count("<table") == 3 and "<p>FYI</p>" in draft.html_body
 
@@ -477,7 +477,7 @@ def sample_draft(tmp_path: Path) -> Draft:
         A,
         ("amy@example.com", "ben@example.com"),
         ("pat@example.com",),
-        f"FCN {A} 中文TS/IIS",
+        f"[中文TS/IIS] [FCN] - {A}",
         "<p>FYI</p>",
         (tmp_path / "a.pdf", tmp_path / "b.pdf"),
     )
@@ -490,7 +490,7 @@ def test_outlook_drafter_fills_the_mail_and_only_saves_it(fake_com, tmp_path: Pa
     assert (mail.To, mail.CC, mail.Subject, mail.HTMLBody) == (
         "amy@example.com; ben@example.com",
         "pat@example.com",
-        f"FCN {A} 中文TS/IIS",
+        f"[中文TS/IIS] [FCN] - {A}",
         "<p>FYI</p>",
     )
     assert mail.attached == [str(tmp_path / "a.pdf"), str(tmp_path / "b.pdf")]

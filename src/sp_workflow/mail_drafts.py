@@ -41,7 +41,7 @@ PENDING = "待處理"
 NOT_NEEDED = "不需寄送"
 FAILED = "建立失敗"
 
-SUBJECT_FORMAT = "{product} {tdcc} 中文TS/IIS"  # 例：FCN 029199990001 中文TS/IIS
+SUBJECT_FORMAT = "[中文TS/IIS] [{product}] - {tdcc}"  # 例：[中文TS/IIS] [FCN] - 029199990001
 BODY_INTRO = "FYI"
 RISK_LEVEL = "RR4"  # 使用者確認：風險等級固定 RR4
 NAVY = "#002060"
