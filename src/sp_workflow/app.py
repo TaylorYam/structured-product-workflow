@@ -1695,7 +1695,7 @@ def _calc_row(line: CalcLine) -> tuple[str, str, str]:
 
 def _status_counts(lines: Iterable[CalcLine]) -> str:
     statuses = [line.status for line in lines]
-    return "、".join(f"{status} {statuses.count(status)}" for status in reversed(STATUSES))
+    return "、".join(f"{status} {statuses.count(status)}" for status in STATUSES)
 
 
 def _recalc_text(recalc: _Recalc) -> str:

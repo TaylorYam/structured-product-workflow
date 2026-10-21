@@ -44,7 +44,7 @@ DONE = "完成"
 WAIT_PRICES = "等股價"
 WAIT_TRADES = "等交易明細"
 TO_CONFIRM = "待確認"
-STATUSES = (TO_CONFIRM, WAIT_TRADES, WAIT_PRICES, DONE)
+STATUSES = (DONE, WAIT_PRICES, WAIT_TRADES, TO_CONFIRM)  # 畫面列出各狀態檔數的順序
 
 # 交叉比對的項目
 CURRENCY, TRADE_DATE, UF = "幣別", "交易日", "UF"
@@ -170,20 +170,17 @@ def calculate(
     underlyings = [(n, code) for n, code in enumerate(product.underlyings, 1) if code]
     price_date = None
     waiting_prices = False
+    prices = tuple(UnderlyingPrice(n, code) for n, code in underlyings)  # 算不出來時四個價格都空白
     pricing = _pricing(product.initial_pricing)
     if pricing == VWAP:
-        prices = tuple(UnderlyingPrice(n, code) for n, code in underlyings)
         notes.append("期初定價是 VWAP，價格由 TS 回填")
     elif pricing is None:
-        prices = tuple(UnderlyingPrice(n, code) for n, code in underlyings)
         problems.append(f"期初定價「{product.initial_pricing or _BLANK}」不是收盤價／開盤價／VWAP，算不出進場價")
     elif product.strike_date is None:
-        prices = tuple(UnderlyingPrice(n, code) for n, code in underlyings)
         problems.append("沒有 Strike date，找不到股價檔")
     else:
         price_date = price_file_after(product.strike_date, price_dates)
         if price_date is None:
-            prices = tuple(UnderlyingPrice(n, code) for n, code in underlyings)
             waiting_prices = True
             notes.append(f"還沒有取價日比 Strike date {product.strike_date} 晚的股價檔")
         else:
