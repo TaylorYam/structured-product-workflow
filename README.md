@@ -206,10 +206,14 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 「8 進度」列出每檔商品走到哪一個作業進度（[#156](https://github.com/TaylorYam/structured-product-workflow/issues/156)、[ADR 0019](docs/adr/0019-progress-step-records-and-lifecycle-events.md)）。按「重新整理」讀資料庫；篩選與排序只在畫面上做，不再讀資料庫。
 - 範圍：有交易明細或有商品條件的 TDCC，一檔一列。
 - 作業進度由資料庫的事實依序推出，每檔只有一個：有「已寄出」就是完成；否則依序是等商品條件（沒有商品條件或缺必填欄）→ 等核對條件（核對條件不是完成）→ 待準備（沒有「已準備」）→ 待核對（沒有核對結果）→ 核對未通過（有核對結果、還沒鎖住）→ 待放回 → 待寄信 → 待寄出。以前只用 Excel 跑過的步驟沒有紀錄，會停在較早的進度。
-- 欄位：TDCC、上手、交易日、距今天數、作業進度、存續狀態、各步日期（交易明細匯入、商品條件匯入、核對條件完成、已準備、核對、鎖住、已放回、草稿已建立、已寄出；同一步多筆取最新）、卡住的原因（例如缺的必填欄、核對條件待確認的原因、核對結果）。
+- 欄位：TDCC、上手、交易日、距今天數、作業進度、存續狀態、異議（還沒解除的異議）、各步日期（交易明細匯入、商品條件匯入、核對條件完成、已準備、核對、鎖住、已放回、草稿已建立、已寄出；同一步多筆取最新）、卡住的原因（例如缺的必填欄、核對條件待確認的原因、核對結果）。
 - 篩選：交易日區間（YYYY-MM-DD，空白是不限；有區間時沒有交易日的不列）、作業進度與存續狀態（多選，都不勾是全部）、上手。預設依距今天數由大到小，落後的在上面；點欄名排序，再點一次反過來，空白一律放最後。
 - 「匯出 Excel…」：把目前篩選、排序後的整張表寫成 Excel（預設 `作業進度_<日期時間>.xlsx`，從上次匯出的資料夾開始），欄位同畫面。先寫暫存檔再換名；同名檔開在 Excel 等寫不進去時顯示原因，原本的檔案不動。
-- 登記已寄出、顧客贖回與提出異議的按鈕另外加（[#157](https://github.com/TaylorYam/structured-product-workflow/issues/157)）。
+- 人工能做的三件事只在這一頁登記（[#157](https://github.com/TaylorYam/structured-product-workflow/issues/157)），先在表上選商品（可以按住 Ctrl 或 Shift 多選）；都在背景寫資料庫、留誰與何時，一檔寫不進去只影響那一檔並寫出原因，寫完自動重新整理：
+  - 「登記已寄出」：選中的每檔寫一筆「已寄出」步驟紀錄，進度變完成。已經登記過的先問：是＝也再寫一筆、否＝只寫還沒登記過的、取消＝都不寫。
+  - 「登記顧客贖回…」：填事件日（必填，YYYY-MM-DD）與備註，選中的每檔寫一筆來源「人工」的顧客贖回事件；已有存續事件的那一檔不能登記並寫出原因。登記後比價不再比這檔。
+  - 「提出異議…」：選一檔，從它比價產生的自動事件裡選一筆、寫備註（必填，例如上手通知的內容）。異議不改事件；「異議」欄顯示「待確認：事件：備註」，直到解除。
+  - 「解除異議…」：選一檔，選一筆還沒解除的異議解除（修好資料或程式、確認之後），記下解除的人與時間。
 
 ### 核對條件
 
@@ -438,10 +442,14 @@ Find products that still lack data, and fill in or change product terms ([#115](
 "8 進度" lists which workflow progress step each product has reached ([#156](https://github.com/TaylorYam/structured-product-workflow/issues/156), [ADR 0019](docs/adr/0019-progress-step-records-and-lifecycle-events.md)). Click "重新整理" (refresh) to read the database; filtering and sorting happen on screen only and do not read the database again.
 - Scope: every TDCC with trade rows or product terms, one row each.
 - The progress is derived from database facts in order, one per product: anything with 已寄出 (sent) is 完成 (done); otherwise it is 等商品條件 (no product terms or a required field missing) → 等核對條件 (check terms not 完成) → 待準備 (no 已準備 record) → 待核對 (no check result) → 核對未通過 (check results but not locked) → 待放回 → 待寄信 → 待寄出. Steps run only in Excel before have no records, so those products show an earlier step.
-- Columns: TDCC, issuer, trade date, days since the trade date, progress, lifecycle status, the date of each step (trade rows imported, product terms imported, check terms done, 已準備, checked, locked, 已放回, 草稿已建立, 已寄出; the latest when a step has several), and why it is stuck (for example the missing required fields, the reason check terms are 待確認, the check results).
+- Columns: TDCC, issuer, trade date, days since the trade date, progress, lifecycle status, objection (open objections), the date of each step (trade rows imported, product terms imported, check terms done, 已準備, checked, locked, 已放回, 草稿已建立, 已寄出; the latest when a step has several), and why it is stuck (for example the missing required fields, the reason check terms are 待確認, the check results).
 - Filters: trade-date range (YYYY-MM-DD, blank means open; with a range, products without a trade date are left out), progress and lifecycle status (multiple choice, none ticked means all), and issuer. The default order is days since the trade date, largest first, so the products furthest behind are on top; click a heading to sort, click again to reverse, and blanks always go last.
 - "匯出 Excel…" (export): writes the whole table as currently filtered and sorted to Excel (default `作業進度_<date time>.xlsx`, starting in the last export folder) with the same columns as the screen. It writes a temporary file and then renames it; when the file cannot be written (for example the same file is open in Excel) the reason is shown and the existing file is left untouched.
-- Buttons to record 已寄出, customer redemption, and objections come separately ([#157](https://github.com/TaylorYam/structured-product-workflow/issues/157)).
+- The three things people may record are entered only on this tab ([#157](https://github.com/TaylorYam/structured-product-workflow/issues/157)); select products in the table first (Ctrl or Shift for several). Each writes the database in the background with who and when; a product that cannot be written affects only itself and the reason is shown; the tab refreshes afterwards:
+  - "登記已寄出" (record sent): one 已寄出 step record per selected product, which makes it 完成. Products already recorded are asked about first: Yes = record them again too, No = only those not recorded yet, Cancel = nothing.
+  - "登記顧客贖回…" (record customer redemption): enter the event date (required, YYYY-MM-DD) and a note; each selected product gets one 顧客贖回 event with source 人工; a product that already has a lifecycle event is refused with the reason. Observation stops for it afterwards.
+  - "提出異議…" (raise objection): pick one product, choose one of its automatic events from observation, and write a note (required, for example what the issuer's notice says). The objection does not change the event; the "異議" column shows "待確認：event：note" until it is resolved.
+  - "解除異議…" (resolve objection): pick one product and one open objection to resolve (after the data or the program is fixed and checked); who resolved it and when is recorded.
 
 ### Check terms
 

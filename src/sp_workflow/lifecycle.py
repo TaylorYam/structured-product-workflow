@@ -65,6 +65,20 @@ class StoredEvent:
 
 
 @dataclass(frozen=True)
+class Objection:
+    """一筆還沒解除的異議與它針對的事件。"""
+
+    objection_id: int
+    event_id: int
+    tdcc: str
+    event: str
+    event_date: dt.date | None
+    note: str
+    raised_by: str
+    raised_at: dt.datetime
+
+
+@dataclass(frozen=True)
 class Lifecycle:
     """一檔的存續狀態與決定它的那一筆事件（在庫時沒有）。"""
 
@@ -93,6 +107,19 @@ def current_events(conn: psycopg.Connection, tdcc: str) -> list[StoredEvent]:
         (tdcc,),
     ).fetchall()
     return [StoredEvent(*row) for row in rows]
+
+
+def open_objections(conn: psycopg.Connection, tdccs: Iterable[str]) -> dict[str, list[Objection]]:
+    """每個 TDCC 還沒解除的異議（含針對已被重新比價取代的事件），依提出先後；沒有的不放。"""
+    found: dict[str, list[Objection]] = {}
+    for row in conn.execute(
+        "SELECT o.objection_id, o.event_id, e.tdcc, e.event, e.event_date, o.note, o.raised_by, o.raised_at"
+        " FROM workflow.event_objection o JOIN workflow.product_event e ON e.event_id = o.event_id"
+        " WHERE e.tdcc = ANY(%s) AND o.resolved_at IS NULL ORDER BY o.raised_at, o.objection_id",
+        (list(dict.fromkeys(tdccs)),),
+    ):
+        found.setdefault(row[2], []).append(Objection(*row))
+    return found
 
 
 def replace_auto_events(

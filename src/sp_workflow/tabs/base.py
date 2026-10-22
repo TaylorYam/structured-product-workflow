@@ -29,6 +29,7 @@ from sp_workflow.check_terms import CheckTermsError
 from sp_workflow.close_prices import ClosePriceError
 from sp_workflow.daily_import import DailyImportError
 from sp_workflow.database import ConnectionSettings, DatabaseError, settings_from_env
+from sp_workflow.lifecycle import LifecycleError
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.mail_drafts import MailDraftError
 from sp_workflow.order_import import OrderImportError
@@ -52,6 +53,7 @@ _EXPECTED_ERRORS = (
     CheckTermsError,
     CorrectionError,
     ProductExportError,
+    LifecycleError,
 )  # 訊息本身就是給作業人員看的
 COPY_HINT = "按右鍵可以只複製一格或一列；Ctrl+A 全選、Ctrl+C 複製選取的列"  # 結果表上方（#121）
 CELL_COPY_HINT = "按右鍵可以只複製一格或一列"  # 人工維護的檢查結果表（Canvas，不能用 Ctrl+A／Ctrl+C）
