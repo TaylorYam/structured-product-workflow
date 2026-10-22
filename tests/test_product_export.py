@@ -39,6 +39,7 @@ def test_default_name_has_the_date_and_time() -> None:
     assert export_name(dt.datetime(2026, 10, 22, 15, 4, 5)) == "workflow_product_20261022_150405.xlsx"
 
 
+@pytest.mark.db
 def test_every_product_and_column_is_exported(pg, tmp_path: Path) -> None:
     import_order(pg, B)
     import_order(pg, A)
@@ -61,6 +62,7 @@ def test_every_product_and_column_is_exported(pg, tmp_path: Path) -> None:
     assert list(tmp_path.iterdir()) == [path], "不留暫存檔"
 
 
+@pytest.mark.db
 def test_an_empty_table_still_writes_the_header(pg, tmp_path: Path) -> None:
     receipt = export_products(pg, tmp_path / "x.xlsx")
 
