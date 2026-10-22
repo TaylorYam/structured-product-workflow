@@ -167,6 +167,7 @@ class PriceCsvReceipt:
     error_book_path: Path
     closes: CloseSummary | None = None  # 收盤價（#153）；讀不到假日表時沒有存
     closed: tuple[str, ...] = ()  # 那一天休市、收盤價沒有存的代碼
+    close_uncovered: tuple[str, ...] = ()  # 那一天超出假日表涵蓋範圍、收盤價沒有存的代碼
     close_conflicts: tuple[str, ...] = ()  # 去掉類別字後才重複、值不同、收盤價沒有存的代碼
 
 
@@ -272,13 +273,13 @@ def import_price_csv(path: Path, conn: psycopg.Connection, calendar: TradingCale
             (path.name, sha256),
         ).fetchone()[0]
         summary = _write_prices(conn, prices, run_id)
-        closes, closed, close_conflicts = None, (), ()
+        closes, closed, uncovered, close_conflicts = None, (), (), ()
         if calendar is not None:
             found = closes_from_csv(
                 close_date, {code: price.last_close for code, price in prices.rows.items()}, calendar, prices.conflicts
             )
-            closed, close_conflicts = found.closed, found.conflicts
-            details = {"closed": list(closed), "conflicts": list(close_conflicts)}
+            closed, uncovered, close_conflicts = found.closed, found.uncovered, found.conflicts
+            details = {"closed": list(closed), "uncovered": list(uncovered), "conflicts": list(close_conflicts)}
             closes = write_closes(
                 conn,
                 found.closes,
@@ -290,7 +291,15 @@ def import_price_csv(path: Path, conn: psycopg.Connection, calendar: TradingCale
             )
         error_book_path = path.parent / IMPORT_ERROR_BOOK_NAME
         receipt = PriceCsvReceipt(
-            run_id, close_date, summary, tuple(prices.problems), error_book_path, closes, closed, close_conflicts
+            run_id,
+            close_date,
+            summary,
+            tuple(prices.problems),
+            error_book_path,
+            closes,
+            closed,
+            uncovered,
+            close_conflicts,
         )
         record = {
             "counts": dict(Counter(line.kind for line in receipt.lines)),

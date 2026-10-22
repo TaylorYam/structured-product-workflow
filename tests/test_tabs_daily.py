@@ -187,6 +187,7 @@ def test_close_history_runs_on_this_page_and_lists_problems(master, tmp_path: Pa
         codes=507,
         missing=12,
         closed=3,
+        uncovered=0,
         problems=(HistoryProblem("AAA UW", "抓價未完成（#N/A Requesting Data...），請重抓再匯", day, day, 1),),
         error_book_path=tmp_path / "歷史收盤價錯誤.xlsx",
     )

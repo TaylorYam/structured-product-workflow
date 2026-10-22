@@ -190,7 +190,12 @@ class DailyImportTab(Tab):
         if not isinstance(result, HistoryReceipt):
             return
         for p in result.problems:
-            when = f"{p.first:%Y-%m-%d}" if p.first == p.last else f"{p.first:%Y-%m-%d}～{p.last:%Y-%m-%d}"
+            if p.first is None or p.last is None:
+                when = "整列"
+            elif p.first == p.last:
+                when = f"{p.first:%Y-%m-%d}"
+            else:
+                when = f"{p.first:%Y-%m-%d}～{p.last:%Y-%m-%d}"
             self.add_row((p.code, p.reason, f"{when}，{p.cells} 格"), problem=True)
         listed = sum(p.cells for p in result.problems)
         kpis = [
@@ -204,6 +209,7 @@ class DailyImportTab(Tab):
             f"完成（歷史收盤價）：{result.first_date:%Y-%m-%d}～{result.last_date:%Y-%m-%d}，"
             f"代碼 {result.codes} 個，沒有價格 {result.missing} 格（休市日不算）。\n"
             f"{_summary_text(result.summary)}休市日有值、沒有存 {result.closed} 格；"
+            f"超出交易所假日表涵蓋範圍、沒有存 {result.uncovered} 格；"
             f"錯誤清單列了 {len(result.problems)} 項、{listed} 格。\n{book}",
         )
 
@@ -280,6 +286,11 @@ def _close_text(receipt: PriceCsvReceipt) -> str:
     text = _summary_text(receipt.closes)
     if receipt.closed:
         text += f"那一天休市、沒有存 {len(receipt.closed)} 個代碼；"
+    if receipt.close_uncovered:
+        text += (
+            f"那一天超出交易所假日表的涵蓋範圍、沒有存 {len(receipt.close_uncovered)} 個代碼"
+            "（補了假日表後再匯一次這個 CSV）；"
+        )
     if receipt.close_conflicts:
         text += f"去掉 Equity 這類字尾後重複、值不同、沒有存：{'、'.join(receipt.close_conflicts)}；"
     return text.rstrip("；") + "。"

@@ -114,7 +114,7 @@ spw-db-migrate --env-file .env --admin-user postgres
 
 **收盤價**（給比價用，[#153](https://github.com/TaylorYam/structured-product-workflow/issues/153)、[ADR 0020](docs/adr/0020-close-prices-and-observation-rules.md)）：以「實際收盤日＋代碼」存一筆，和上面以取價日為鍵的股價分開；BBG_Data 不寫收盤價（它的日期不明確）。
 - 代碼去掉彭博最後的類別字（`AAA UW Equity` → `AAA UW`、`USDJPY Curncy` → `USDJPY`），其餘一字不差，和商品條件的標的寫法一致。
-- 只存該代碼市場的交易日：週末、或交易所假日表（`config/exchange_holidays.toml`，有美國、日本、港股）上的休市日不存，CSV 在休市那天帶的前一天價格會略過。交易所不在假日表、或日期超出假日表涵蓋範圍的照存，之後由比價標待確認。
+- 只存該代碼市場的交易日：週末、或交易所假日表（`config/exchange_holidays.toml`，有美國、日本、港股）上的休市日不存，CSV 在休市那天帶的前一天價格會略過。交易所不在假日表的代碼照存，之後由比價標待確認；交易所在假日表、但日期超出涵蓋範圍的（例如假日表從 2026 年起，歷史收盤價更早的日子）不能確認是不是交易日，不存、列出來，補了那幾年的假日表再匯一次。
 - 讀不到交易所假日表時，回補股價照樣匯股價，但收盤價這次不存（完成訊息會寫），修好假日表後再匯一次同一個 CSV。
 - 同一（收盤日、代碼）再匯入整筆取代；值改了的，舊值留在 `workflow.close_price_change`。
 - 去掉類別字後同一個代碼有不同的值（例如 `AAA UW` 與 `AAA UW Equity`），或股價衝突的代碼，收盤價不存。
@@ -336,7 +336,7 @@ After an operator code update, rerun `setup_panel.cmd` to apply pending versions
 
 **Close prices** (for observation, [#153](https://github.com/TaylorYam/structured-product-workflow/issues/153), [ADR 0020](docs/adr/0020-close-prices-and-observation-rules.md)): one row per actual closing day and code, separate from the price-date prices above; BBG_Data never writes closes (its date is ambiguous).
 - Codes drop the trailing Bloomberg class word (`AAA UW Equity` → `AAA UW`, `USDJPY Curncy` → `USDJPY`) and otherwise stay character for character, matching the underlying codes in the product terms.
-- Only trading days of the code's market are stored: weekends and closed days in the exchange holiday calendar (`config/exchange_holidays.toml`, covering the US, Japan, and Hong Kong) are skipped, so the previous day's price a CSV carries on a closed day is ignored. Codes whose exchange is not in the calendar, or dates outside its coverage, are stored, and observation flags them for confirmation later.
+- Only trading days of the code's market are stored: weekends and closed days in the exchange holiday calendar (`config/exchange_holidays.toml`, covering the US, Japan, and Hong Kong) are skipped, so the previous day's price a CSV carries on a closed day is ignored. Codes whose exchange is not in the calendar are stored, and observation flags them for confirmation later; when the exchange is in the calendar but the date is outside its coverage (for example historical closes before the calendar's 2026 start), the day cannot be confirmed as a trading day, so the close is not stored but listed; add those years to the calendar and import again.
 - When the holiday calendar cannot be read, the backfill still imports the prices but stores no closes this time (the completion message says so); fix the calendar and import the same CSV again.
 - Re-importing the same (closing day, code) replaces the row; when the value changed, the old value is kept in `workflow.close_price_change`.
 - When one code has different values after dropping the class word (for example `AAA UW` and `AAA UW Equity`), or a code has a price conflict, its close is not stored.

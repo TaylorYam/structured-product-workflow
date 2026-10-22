@@ -1,6 +1,6 @@
 """收盤價（`sp_workflow.close_prices`，#153、ADR 0020）：代碼正規化、休市日、MarketData CSV 與歷史收盤價匯入。
 
-價格、代碼、假日都是虛構的；假日表用測試自己組的 `TradingCalendar`。
+價格與假日都是虛構的（代碼只借用常見的寫法）；假日表用測試自己組的 `TradingCalendar`。
 """
 
 from __future__ import annotations
@@ -14,12 +14,15 @@ import pytest
 
 from db_synth import csv_price, price, write_daily, write_price_csv
 from fcn_checker.trading_calendar import Market, TradingCalendar
+from sp_workflow import close_prices
 from sp_workflow.close_prices import (
     HISTORY_ERROR_BOOK,
     ClosePriceError,
+    HistoryProblem,
     closes_from_csv,
     import_history,
     is_closed,
+    is_uncovered,
     normalize_code,
 )
 from sp_workflow.daily_import import import_daily, import_price_csv
@@ -74,11 +77,32 @@ def test_codes_drop_only_the_trailing_class_word(raw: str, code: str) -> None:
         ("7203 JT", US_HOLIDAY, False),
         ("AAA UW", JP_HOLIDAY, False),
         ("BMW GY", dt.date(2026, 10, 12), False),  # 交易所不在假日表：照存，比價時標待確認
-        ("AAA UW", dt.date(2027, 10, 14), False),  # 超出涵蓋範圍：照存
+        ("AAA UW", dt.date(2027, 10, 14), False),  # 超出涵蓋範圍：不能確認，另外處理（is_uncovered）
     ],
 )
 def test_only_confirmed_closed_days_are_closed(code: str, day: dt.date, closed: bool) -> None:
     assert is_closed(CALENDAR, code, day) is closed
+
+
+@pytest.mark.parametrize(
+    ("code", "day", "uncovered"),
+    [
+        ("AAA UW", dt.date(2027, 10, 14), True),
+        ("AAA UW", dt.date(2027, 10, 16), False),  # 週六：本來就休市
+        ("AAA UW", dt.date(2026, 10, 15), False),
+        ("BMW GY", dt.date(2027, 10, 14), False),  # 交易所不在假日表：照存
+    ],
+)
+def test_dates_outside_the_calendar_cannot_be_confirmed(code: str, day: dt.date, uncovered: bool) -> None:
+    assert is_uncovered(CALENDAR, code, day) is uncovered
+
+
+def test_csv_closes_outside_the_calendar_are_not_stored() -> None:
+    day = dt.date(2027, 1, 4)
+
+    found = closes_from_csv(day, {"AAA UW": Decimal("1"), "BMW GY": Decimal("2")}, CALENDAR)
+
+    assert found.closes == {(day, "BMW GY"): Decimal("2")} and found.uncovered == ("AAA UW",)
 
 
 def test_csv_closes_skip_closed_markets_and_conflicts() -> None:
@@ -199,7 +223,7 @@ HISTORY = [
     ["AAA", "AAA UW", "重複", 10, 99, None, None, None],
     [None, None, None, None, None, None, None, None],
     ["USDJPY", "USDJPY Curncy", "虛構", 150.1, 150.2, 150.3, 150.4, 150.5],
-    ["XYZ", "XYZ UN Equity", "失效公式", "=NA()", None, None, None, None],
+    ["XYZ", "XYZ UN Equity", "失效公式", "=NA()", "#REF!", None, None, None],
 ]
 
 
@@ -227,17 +251,65 @@ def test_history_is_checked_as_a_whole_and_problems_are_listed(pg, tmp_path: Pat
         ("AAA UW", "抓價未完成（#N/A Requesting Data...），請重抓再匯", d16, d16, 1),
         ("BMW GY", "亂碼或不是數字", d15, d15, 1),
         ("BMW GY", "代碼無效（#N/A Invalid Security）", d16, d16, 1),
-        ("XYZ UN", "沒有價格（空白）", d12, d16, 4),
+        ("XYZ UN", "沒有價格（空白）", d12, d16, 3),
+        ("XYZ UN", "錯誤值或失效公式（#REF!）", d13, d13, 1),
     }, "美國休市日的 #N/A N/A、交易所不在假日表的 #N/A N/A 不列"
     assert receipt.error_book_path == tmp_path / HISTORY_ERROR_BOOK.format(stamp="20261022-093000")
     sheet = openpyxl.load_workbook(receipt.error_book_path).active
     rows = list(sheet.iter_rows(values_only=True))
-    assert rows[0] == ("代碼", "原因", "第一天", "最後一天", "格數") and len(rows) == 8
+    assert rows[0] == ("代碼", "原因", "第一天", "最後一天", "格數") and len(rows) == 9
     (summary,) = pg.execute(
         "SELECT source, file_name, imported_by, summary FROM workflow.close_price_import"
     ).fetchall()
     assert summary[:3] == ("歷史收盤價", "HP.xlsx", "tester")
-    assert (summary[3]["missing"], summary[3]["closed"], summary[3]["problems"]) == (11, 1, 7)
+    assert (summary[3]["missing"], summary[3]["closed"], summary[3]["problems"]) == (11, 1, 8)
+
+
+def test_a_row_without_a_code_is_listed_as_a_whole_row(pg, tmp_path: Path) -> None:
+    rows = [HISTORY[5], ["QQQ", None, "沒有代碼", 1, 2, None, None, None]]
+
+    receipt = import_history(write_history(tmp_path / "HP.xlsx", rows), pg, CALENDAR, now=NOW)
+
+    assert receipt.problems == (HistoryProblem("第 5 列", "C 欄沒有彭博代碼，這列不匯入（B 欄：QQQ）", None, None, 2),)
+    assert receipt.codes == 1 and receipt.summary.stored == 5
+
+
+def test_a_dash_is_not_a_code(pg, tmp_path: Path) -> None:
+    rows = [HISTORY[5], ["-", "-", "-", "-", "-", "-", "-", "-"]]
+
+    receipt = import_history(write_history(tmp_path / "HP.xlsx", rows), pg, CALENDAR, now=NOW)
+
+    assert receipt.codes == 1 and receipt.missing == 0
+    assert [p.code for p in receipt.problems] == ["第 5 列"]
+
+
+def test_history_outside_the_calendar_is_listed_not_stored(pg, tmp_path: Path) -> None:
+    days = [dt.date(2025, 12, 24), dt.date(2025, 12, 25), dt.date(2026, 1, 2)]
+    rows = [["AAA", "AAA UW Equity", "虛構", 10, 10, 11], ["BMW", "BMW GY Equity", "虛構", 5, 5, 6]]
+
+    receipt = import_history(write_history(tmp_path / "HP.xlsx", rows, days), pg, CALENDAR, now=NOW)
+
+    assert closes_in(pg) == [
+        (dt.date(2026, 1, 2), "AAA UW", Decimal("11")),
+        *((d, "BMW GY", Decimal(v)) for d, v in zip(days, ("5", "5", "6"), strict=True)),
+    ], "2025 年不在虛構假日表的涵蓋範圍：美股不能確認是交易日；交易所不在假日表的照存"
+    assert receipt.uncovered == 2
+    assert [(p.code, p.first, p.last, p.cells) for p in receipt.problems] == [
+        ("AAA UW", dt.date(2025, 12, 24), dt.date(2025, 12, 25), 2)
+    ]
+
+
+def test_a_failed_write_leaves_no_error_list(pg, tmp_path: Path, monkeypatch) -> None:
+    def broken(*args, **kwargs):
+        raise RuntimeError("資料庫寫入失敗")
+
+    monkeypatch.setattr(close_prices, "write_closes", broken)
+    source = write_history(tmp_path / "HP.xlsx", HISTORY)
+
+    with pytest.raises(RuntimeError):
+        import_history(source, pg, CALENDAR, now=NOW)
+
+    assert list(tmp_path.iterdir()) == [source]
 
 
 def test_a_clean_history_writes_no_error_list(pg, tmp_path: Path) -> None:

@@ -6,8 +6,9 @@
 - 歷史收盤價（HP 格式）：「維護」選單一次匯入（`import_history`）。橫向日期、每列一檔、代碼帶類別字；
   整份讀完、檢查完才寫，有問題的格子不存，依代碼與原因整理成錯誤清單放在來源檔同一個資料夾。
 代碼去掉彭博最後的類別字（`normalize_code`），其餘一字不差，和 `workflow.product.underlying_n` 一致。
-只存該代碼市場的交易日（`is_closed`：週末、或假日表涵蓋範圍內的休市日不存）；交易所不在假日表、
-日期超出涵蓋範圍的照存，由比價標待確認。同一（收盤日、代碼）再匯入整筆取代，值改了的舊值留在
+只存該代碼市場的交易日：週末、假日表上的休市日不存（`is_closed`）；交易所在假日表、但日期超出涵蓋範圍的
+不能確認是不是交易日（休市日常帶著前一天的價格），也不存、列出來，補了假日表再匯（`is_uncovered`）。
+交易所不在假日表的代碼照存，由比價標待確認。同一（收盤日、代碼）再匯入整筆取代，值改了的舊值留在
 `workflow.close_price_change`，每次匯入一筆 `workflow.close_price_import`。
 """
 
@@ -19,7 +20,7 @@ import hashlib
 import json
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -40,13 +41,14 @@ CLASS_WORDS = frozenset(("EQUITY", "CURNCY", "INDEX", "COMDTY"))  # 彭博代碼
 # 歷史收盤價（HP 格式）：第 3 列從 E 欄起是收盤日，第 4 列起每列一檔，C 欄是帶類別字的彭博代碼（B 欄是簡碼）
 HISTORY_DATE_ROW = 3
 HISTORY_FIRST_ROW = 4
-HISTORY_NAME_COLUMN = 2
+HISTORY_SHORT_CODE_COLUMN = 2
 HISTORY_CODE_COLUMN = 3
 HISTORY_FIRST_DATE_COLUMN = 5
 HISTORY_ERROR_BOOK = "歷史收盤價錯誤_{stamp}.xlsx"
 ERROR_BOOK_COLUMNS = (("代碼", 22), ("原因", 50), ("第一天", 12), ("最後一天", 12), ("格數", 8))
 
 HOLIDAY_MARK = "#N/A N/A"  # 彭博在休市日填的值
+UNCOVERED_REASON = "日期超出交易所假日表的涵蓋範圍，不能確認是交易日，沒有存；補了假日表再匯"
 
 
 class ClosePriceError(Exception):
@@ -72,17 +74,18 @@ class CsvCloses:
 
     closes: dict[tuple[dt.date, str], Decimal]
     closed: tuple[str, ...]  # 那一天休市、沒存的代碼
+    uncovered: tuple[str, ...]  # 那一天超出假日表涵蓋範圍、沒存的代碼
     conflicts: tuple[str, ...]  # 去掉類別字後才重複、值不同、沒存的代碼（原本就股價衝突的已另外列出）
 
 
 @dataclass(frozen=True)
 class HistoryProblem:
-    """錯誤清單的一列：一個代碼、一種原因，從哪天到哪天共幾格。"""
+    """錯誤清單的一列：一個代碼、一種原因，從哪天到哪天共幾格；整列不匯入的（C 欄沒有代碼）沒有日期。"""
 
-    code: str
+    code: str  # 代碼；整列不匯入時是「第 N 列」
     reason: str
-    first: dt.date
-    last: dt.date
+    first: dt.date | None
+    last: dt.date | None
     cells: int
 
 
@@ -94,6 +97,7 @@ class HistoryReceipt:
     codes: int  # 檔案裡的代碼數
     missing: int  # 沒有價格的格數（休市日、週末不算）
     closed: int  # 休市日有值、沒有存的格數
+    uncovered: int  # 超出假日表涵蓋範圍、有值但沒有存的格數
     problems: tuple[HistoryProblem, ...]
     error_book_path: Path | None  # 沒有問題時不寫
 
@@ -113,6 +117,12 @@ def is_closed(calendar: TradingCalendar, code: str, day: dt.date) -> bool:
     return market is not None and market.covers(day, day) and day in market.holidays
 
 
+def is_uncovered(calendar: TradingCalendar, code: str, day: dt.date) -> bool:
+    """平日、交易所在假日表，但日期超出涵蓋範圍：不能確認是不是交易日。"""
+    market = calendar.market_of(code)
+    return day.weekday() < 5 and market is not None and not market.covers(day, day)
+
+
 def is_confirmed_trading_day(calendar: TradingCalendar, code: str, day: dt.date) -> bool:
     """確定是交易日：平日、交易所在假日表、日期在涵蓋範圍內且不是休市日。"""
     market = calendar.market_of(code)
@@ -130,22 +140,24 @@ def closes_from_csv(
 ) -> CsvCloses:
     """CSV 那一天要存的收盤價：`closes` 是原始代碼 → 收盤價，`conflicted` 是股價衝突的原始代碼。
 
-    去掉類別字後同一個代碼有不同的值、或原本就股價衝突的不存；休市的不存。"""
+    去掉類別字後同一個代碼有不同的值、或原本就股價衝突的不存；休市、超出假日表涵蓋範圍的不存。"""
     found: dict[str, set[Decimal]] = defaultdict(set)
     for raw, close in closes.items():
         if close is not None and close > 0:
             found[normalize_code(raw)].add(close)
     bad = {normalize_code(raw) for raw in conflicted}
     conflicts = tuple(sorted(code for code, values in found.items() if len(values) > 1 and code not in bad))
-    kept, closed = {}, []
+    kept, closed, uncovered = {}, [], []
     for code, values in sorted(found.items()):
         if len(values) > 1 or code in bad:
             continue
         if is_closed(calendar, code, close_date):
             closed.append(code)
+        elif is_uncovered(calendar, code, close_date):
+            uncovered.append(code)
         else:
             kept[(close_date, code)] = next(iter(values))
-    return CsvCloses(kept, tuple(closed), conflicts)
+    return CsvCloses(kept, tuple(closed), tuple(uncovered), conflicts)
 
 
 # ---------- 寫入 ----------
@@ -221,7 +233,11 @@ class _History:
     codes: set[str]
     missing: int = 0
     closed: int = 0
-    cells: dict[tuple[str, str], list[dt.date]] | None = None  # (代碼, 原因) → 哪幾天
+    uncovered: int = 0
+    cells: dict[tuple[str, str], list[dt.date]] = field(
+        default_factory=lambda: defaultdict(list)
+    )  # (代碼, 原因) → 哪幾天
+    rows: list[HistoryProblem] = field(default_factory=list)  # 整列不匯入的列
 
 
 def import_history(
@@ -232,11 +248,16 @@ def import_history(
     user: str | None = None,
     now: dt.datetime | None = None,
 ) -> HistoryReceipt:
-    """匯入一份歷史收盤價：整份讀完、檢查完，先寫錯誤清單，再在一個 transaction 裡寫入。"""
+    """匯入一份歷史收盤價：整份讀完、檢查完，先寫錯誤清單，再在一個 transaction 裡寫入。
+
+    錯誤清單寫不出來就整份不匯入；寫入資料庫失敗時刪掉這次的錯誤清單，不留下沒有匯入的清單。"""
     history = _read_history(path, calendar)
-    problems = tuple(
-        HistoryProblem(code, reason, min(days), max(days), len(days))
-        for (code, reason), days in sorted((history.cells or {}).items())
+    problems = (
+        *history.rows,
+        *(
+            HistoryProblem(code, reason, min(days), max(days), len(days))
+            for (code, reason), days in sorted(history.cells.items())
+        ),
     )
     error_book = None
     if problems:
@@ -248,18 +269,24 @@ def import_history(
         "file_codes": len(history.codes),
         "missing": history.missing,
         "closed": history.closed,
+        "uncovered": history.uncovered,
         "problems": len(problems),
     }
-    with conn.transaction():
-        summary = write_closes(
-            conn,
-            history.closes,
-            source=HISTORY_SOURCE,
-            file_name=path.name,
-            sha256=_sha256(path),
-            details=details,
-            user=user,
-        )
+    try:
+        with conn.transaction():
+            summary = write_closes(
+                conn,
+                history.closes,
+                source=HISTORY_SOURCE,
+                file_name=path.name,
+                sha256=_sha256(path),
+                details=details,
+                user=user,
+            )
+    except BaseException:
+        if error_book is not None:
+            error_book.unlink(missing_ok=True)
+        raise
     return HistoryReceipt(
         summary,
         history.dates[0],
@@ -267,6 +294,7 @@ def import_history(
         len(history.codes),
         history.missing,
         history.closed,
+        history.uncovered,
         problems,
         error_book,
     )
@@ -282,16 +310,18 @@ def _read_history(path: Path, calendar: TradingCalendar) -> _History:
     finally:
         book.close()
     columns = _date_columns(rows[HISTORY_DATE_ROW - 1] if len(rows) >= HISTORY_DATE_ROW else ())
-    history = _History(sorted(columns.values()), {}, set(), cells=defaultdict(list))
+    history = _History(sorted(columns.values()), {}, set())
     values: dict[tuple[dt.date, str], set[Decimal]] = defaultdict(set)
     no_price: dict[tuple[dt.date, str], str] = {}
     for number, row in enumerate(rows[HISTORY_FIRST_ROW - 1 :], HISTORY_FIRST_ROW):
         raw = _cell(row, HISTORY_CODE_COLUMN)
         code = normalize_code(raw) if isinstance(raw, str) else ""
-        if not code:
-            name = _cell(row, HISTORY_NAME_COLUMN)
-            if name not in (None, "") or any(_cell(row, c) not in (None, "") for c in columns):
-                history.cells[(str(name or f"第 {number} 列"), "C 欄沒有彭博代碼，這列不匯入")].append(history.dates[0])
+        if not any(ch.isalnum() for ch in code):  # 空白、「-」這類不是代碼
+            short = _cell(row, HISTORY_SHORT_CODE_COLUMN)
+            filled = sum(_cell(row, c) not in (None, "") for c in columns)
+            if short not in (None, "") or filled:
+                reason = f"C 欄沒有彭博代碼，這列不匯入（B 欄：{short if short not in (None, '') else '空白'}）"
+                history.rows.append(HistoryProblem(f"第 {number} 列", reason, None, None, filled))
             continue
         history.codes.add(code)
         for column, day in columns.items():
@@ -303,6 +333,9 @@ def _read_history(path: Path, calendar: TradingCalendar) -> _History:
     for (day, code), found in values.items():
         if is_closed(calendar, code, day):
             history.closed += 1
+        elif is_uncovered(calendar, code, day):
+            history.uncovered += 1
+            history.cells[(code, UNCOVERED_REASON)].append(day)
         elif len(found) > 1:
             history.missing += 1
             history.cells[(code, "代碼重複、同一天的值不同，沒有存")].append(day)
