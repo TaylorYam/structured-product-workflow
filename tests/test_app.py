@@ -13,6 +13,7 @@ from tkinter import messagebox, ttk
 import pytest
 
 import fcn_checker.panel
+from fcn_checker.ingestion import IngestionError
 from fcn_checker.panel import parse_args
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.saving import SaveReceipt
@@ -406,8 +407,8 @@ def test_prepared_pdfs_are_handed_to_the_check_tab_without_switching(master, tmp
 
     assert window.check.pdf_paths == (batch / "147000000001_TS.pdf", batch / "147000000001_IIS.pdf"), "只帶已準備的"
     assert window.check.hint.text.get() == (
-        f"已帶入「3 準備」的批次（2 份 PDF），選好參考條件表後按「載入／重新載入預覽」：\n{batch}"
-    )
+        f"已帶入「3 準備」的批次（2 份 PDF），按「載入／重新載入預覽」：\n{batch}"
+    ), "預設資料庫來源，不用選參考條件表（#108）"
     assert window.notebook.select() == str(window.prepare.frame), "不自動切頁"
     assert window.session.preview is None and not window.check.working, "不自動載入預覽或核對"
     assert window.prepare.next_button.winfo_manager() == "pack"
@@ -1155,19 +1156,127 @@ def test_order_import_shows_the_check_terms_of_the_batch(master, tmp_path: Path,
 # ---------------------------------------------------------------- 核對分頁的條件來源（#68）
 
 
-def test_check_tab_can_read_terms_from_the_database(master, tmp_path: Path) -> None:
+def shown(widget: tk.Misc) -> bool:
+    return widget.winfo_manager() != ""
+
+
+def test_check_tab_reads_terms_from_the_database_by_default(master, tmp_path: Path) -> None:
+    """預設資料庫（#108）：不用選參考條件表，那一列收起來；改選 Excel 才出現。"""
     window = new_window(master, tmp_path)
     check = window.check
 
     assert window.session.database is not None
-    assert "Excel 參考條件表" in texts(check, ttk.Radiobutton) and check.source.get() == "excel"
+    assert texts(check, ttk.Radiobutton)[:2] == ["資料庫（依 PDF 的 TDCC）", "Excel 參考條件表"]
+    assert check.source.get() == "database" and window.session.use_database
+    assert not shown(check.sheet_button) and str(check.sheet_button.cget("state")) == "disabled"
+    assert check.sheet_text.get().startswith("由資料庫產生")
+    assert check.status.get() == "請選取說明書 PDF。"
+
+    check.source.set("excel")
+    check._source_changed()
+
+    assert not window.session.use_database
+    assert shown(check.sheet_button) and str(check.sheet_button.cget("state")) == "normal"
+    assert check.status.get() == "請選取參考條件表與說明書 PDF。"
 
     check.source.set("database")
     check._source_changed()
 
-    assert window.session.use_database
-    assert str(check.sheet_button.cget("state")) == "disabled"
-    assert check.sheet_text.get().startswith("由資料庫產生")
+    assert window.session.use_database and not shown(check.sheet_button)
+
+
+class Preview:
+    rows = ()
+
+
+def test_check_setup_folds_into_one_line_after_the_preview(master, tmp_path: Path) -> None:
+    """載入預覽後頁首說明與選檔的幾列收成一行摘要，「變更…」展開，換 PDF 時也展開（#108）。"""
+    window = new_window(master, tmp_path)
+    check = window.check
+    check.receive_pdfs((tmp_path / "147000000001_TS.pdf", tmp_path / "147000000001_IIS.pdf"), "帶入")
+    pdf_button = check.pdf_button
+    assert not check.folded and not shown(check.summary)
+    assert shown(check.header.description) and shown(pdf_button)
+
+    check._show_preview(Preview())
+
+    assert check.folded and shown(check.summary)
+    assert not shown(check.header.description) and not shown(pdf_button) and not shown(check.sheet_button)
+    assert not shown(check.hint) and check.hint.shown, "提示條收起，但保留內容"
+    assert check.summary_source.get() == "資料庫"
+    assert check.pdf_text.get().startswith("已選 2 份")
+
+    check.expand_button.invoke()
+
+    assert not check.folded and not shown(check.summary) and shown(pdf_button) and not shown(check.sheet_button)
+    assert shown(check.hint)
+
+    check._show_preview(Preview())
+    check.receive_pdfs((tmp_path / "147000000002_TS.pdf",), "帶入")
+
+    assert not check.folded and shown(pdf_button), "換了 PDF，展開讓作業人員看清楚選了什麼"
+
+
+def fold(check) -> None:
+    check.receive_pdfs((Path("D:/out/147000000001_TS.pdf"),), "帶入")
+    check._show_preview(Preview())
+    assert check.folded
+
+
+def failed_load(error: Exception):
+    def run(check) -> None:
+        check._clear()  # 和 load() 一樣先清掉預覽，背景讀取再失敗
+        check.pending = Future()
+        check.pending.set_exception(error)
+        check._after("pending", check._show_preview, "預覽讀取失敗")
+
+    return run
+
+
+@pytest.mark.parametrize(
+    "clear",
+    [
+        pytest.param(lambda check: check._approval_dates_changed(), id="審查通過日期改了"),
+        pytest.param(failed_load(IngestionError("unreadable", "讀不到")), id="來源讀不到"),
+        pytest.param(failed_load(OSError("磁碟錯誤")), id="預覽讀取失敗"),
+    ],
+)
+def test_clearing_the_preview_expands_the_setup(master, tmp_path: Path, clear) -> None:
+    """清掉預覽時一律展開設定區，不會停在只剩摘要、預覽卻是空的畫面（#108）。"""
+    check = new_window(master, tmp_path).check
+    fold(check)
+
+    clear(check)
+
+    assert check.shown is None and not check.folded and shown(check.pdf_button) and not shown(check.summary)
+
+
+def test_a_failed_check_keeps_the_setup_folded(master, tmp_path: Path) -> None:
+    """核對失敗時預覽還在，設定區維持收起。"""
+    check = new_window(master, tmp_path).check
+    fold(check)
+    check.check_pending = Future()
+    check.check_pending.set_exception(OSError("核對失敗"))
+
+    check._after("check_pending", check._show_outcome, "核對失敗")
+
+    assert check.shown is not None and check.folded
+
+
+def test_folded_excel_setup_names_the_reference_workbook(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    check = window.check
+    check.source.set("excel")
+    check._source_changed()
+    check.sheet_path = tmp_path / "參考條件表.xlsx"
+
+    check._show_preview(Preview())
+
+    assert check.summary_source.get() == "Excel：參考條件表.xlsx"
+
+    check.expand_button.invoke()
+
+    assert shown(check.sheet_button), "Excel 來源展開時有參考條件表那一列"
 
 
 # ---------------------------------------------------------------- 更正商品條件（#55）

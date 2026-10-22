@@ -1770,9 +1770,10 @@ class PanelWindow:
         """準備完成：放回頁帶入批次資料夾；核對頁帶入已準備的 PDF 並顯示提示條，回傳核對頁是否帶入。不切頁、不自動核對（#76）。"""
         self.returning.batch_var.set(str(receipt.batch_dir))
         pdfs = receipt.prepared_pdfs
+        then = "" if self.check.uses_database else "選好參考條件表後"
         return bool(pdfs) and self.check.receive_pdfs(
             pdfs,
-            f"已帶入「3 準備」的批次（{len(pdfs)} 份 PDF），選好參考條件表後按「載入／重新載入預覽」：\n{receipt.batch_dir}",
+            f"已帶入「3 準備」的批次（{len(pdfs)} 份 PDF），{then}按「載入／重新載入預覽」：\n{receipt.batch_dir}",
         )
 
     def _check_saved(self, result: Path) -> None:

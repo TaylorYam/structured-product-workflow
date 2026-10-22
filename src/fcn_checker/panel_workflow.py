@@ -386,9 +386,12 @@ class PanelSession:
             raise IngestionError("database_unavailable", "這個視窗沒有資料庫連線，只能用 Excel 參考條件表。")
         self.use_database = use_database
         self._clear()
-        self.message = (
-            "條件來源已改為資料庫，請重新載入預覽。" if use_database else "條件來源已改為 Excel，請重新載入預覽。"
-        )
+        if not self.term_sheets:  # 還沒選 PDF（例如視窗剛開、預設資料庫，#108）：提示要選什麼
+            self.message = "請選取說明書 PDF。" if use_database else "請選取參考條件表與說明書 PDF。"
+        else:
+            self.message = (
+                "條件來源已改為資料庫，請重新載入預覽。" if use_database else "條件來源已改為 Excel，請重新載入預覽。"
+            )
 
     def _clear(self) -> None:
         self._preview, self._outcome, self._receipt = None, None, None
