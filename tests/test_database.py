@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,7 @@ from sp_workflow.database import DatabaseError, apply_migrations, load_env_file,
 from sp_workflow.product_record import REQUIRED_COLUMNS
 
 A = "029199990001"
-IDENTITY_COLUMNS = ("tdcc", "product", "issuer", "status_event", "source")  # TDCC、商品種類、上手、狀態、來源
+IDENTITY_COLUMNS = ("tdcc", "product", "issuer", "source")  # TDCC、商品種類、上手、來源（狀態自 0016 起可以空白，#152）
 
 
 def test_env_file_is_read_without_exposing_values(tmp_path: Path) -> None:
@@ -85,12 +86,15 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
         "workflow.check_terms",
         "workflow.cross_check_release",
         "workflow.daily_price",
+        "workflow.event_objection",
         "workflow.import_run",
         "workflow.order_import",
         "workflow.order_import_line",
         "workflow.other_product",
         "workflow.price_import",
         "workflow.product",
+        "workflow.product_event",
+        "workflow.product_event_change",
         "workflow.step_record",
         "workflow.term_correction",
         "workflow.trade_row",
@@ -217,3 +221,31 @@ def test_step_records_migration_keeps_products(pg) -> None:
         ("147000000001", "SG", "人工維護")
     ]
     assert pg.execute("SELECT count(*) FROM workflow.step_record").fetchone()[0] == 0
+
+
+@pytest.mark.db
+def test_old_statuses_become_old_list_events(pg) -> None:
+    """資料表版本 0016（#152）：不是在庫的舊狀態轉成來源「舊清單」的事件，原欄位保留、之後新商品不再寫。"""
+    _database_before(pg, 16)
+    insert = (
+        "INSERT INTO workflow.product (tdcc, product, issuer, source, status_event, status_date, status_underlying,"
+        " status_raw) VALUES (%s, 'FCN', 'SG', '人工維護', %s, %s, %s, %s)"
+    )
+    pg.execute(insert, ("147000000001", "KO", dt.date(2026, 9, 1), None, "已於 2026/9/1 KO"))
+    pg.execute(insert, ("147000000002", "接股", dt.date(2026, 8, 3), "AAA UW", "接股 AAA"))
+    pg.execute(insert, ("147000000003", "在庫", None, None, None))
+    pg.execute(insert, ("147000000004", "到期還本", None, None, "到期還本"))
+
+    apply_migrations(pg)
+
+    events = pg.execute(
+        "SELECT tdcc, event, event_date, underlying, source, note, superseded_at FROM workflow.product_event"
+        " ORDER BY tdcc"
+    ).fetchall()
+    assert events == [
+        ("147000000001", "KO", dt.date(2026, 9, 1), None, "舊清單", "已於 2026/9/1 KO", None),
+        ("147000000002", "接股", dt.date(2026, 8, 3), "AAA UW", "舊清單", "接股 AAA", None),
+        ("147000000004", "到期還本", None, None, "舊清單", "到期還本", None),
+    ], "在庫的不轉；沒有日期的照樣轉、事件日空白"
+    assert pg.execute("SELECT count(*) FROM workflow.product WHERE status_event IS NOT NULL").fetchone()[0] == 4
+    assert _nullable(pg)["status_event"], "新商品不再寫 status_event"

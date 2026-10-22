@@ -11,6 +11,7 @@ import pytest
 
 from order_synth import CONFIG, A, B, order_row
 from sp_workflow import product_export
+from sp_workflow.lifecycle import KO, AutoEvent, replace_auto_events
 from sp_workflow.order_import import drafts_from, import_drafts
 from sp_workflow.product_export import ProductExportError, export_name, export_products
 
@@ -49,7 +50,7 @@ def test_every_product_and_column_is_exported(pg, tmp_path: Path) -> None:
     receipt = export_products(pg, path)
 
     rows = read_back(path)
-    columns = product_columns(pg)
+    columns = [*product_columns(pg), "存續狀態"]
     assert rows[0] == columns
     assert receipt.count == 2 and len(rows) == 3
     first = dict(zip(columns, rows[1], strict=True))
@@ -66,7 +67,20 @@ def test_every_product_and_column_is_exported(pg, tmp_path: Path) -> None:
 def test_an_empty_table_still_writes_the_header(pg, tmp_path: Path) -> None:
     receipt = export_products(pg, tmp_path / "x.xlsx")
 
-    assert receipt.count == 0 and read_back(tmp_path / "x.xlsx") == [product_columns(pg)]
+    assert receipt.count == 0 and read_back(tmp_path / "x.xlsx") == [[*product_columns(pg), "存續狀態"]]
+
+
+@pytest.mark.db
+def test_lifecycle_status_is_exported(pg, tmp_path: Path) -> None:
+    import_order(pg, A)
+    import_order(pg, B)
+    replace_auto_events(pg, A, [AutoEvent(KO, dt.date(2026, 11, 2))], user="tester")
+    path = tmp_path / "商品條件.xlsx"
+
+    export_products(pg, path)
+
+    rows = read_back(path)
+    assert [(row[0], row[-1]) for row in rows[1:]] == [(A, "KO"), (B, "在庫")]
 
 
 def test_text_that_looks_like_a_formula_stays_text(tmp_path: Path) -> None:
