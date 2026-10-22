@@ -33,7 +33,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
 
 from sp_workflow.database import DatabaseError, require_current_schema
-from sp_workflow.order_terms import missing_fields, plain, with_required
+from sp_workflow.product_record import PRODUCT_COLUMNS, missing_fields, plain
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -96,7 +96,7 @@ class ProductTerms:
     barrier_type: str | None
     ki_pct: Decimal | None
     upfront_pct: Decimal | None  # 百分點（起單建檔的價格 98.01 → 1.99）
-    missing: tuple[str, ...] = ()  # 空白的必填欄（畫面的欄名，依 `order_terms.REQUIRED` 的順序）
+    missing: tuple[str, ...] = ()  # 空白的必填欄（畫面的欄名，依 `product_record.REQUIRED` 的順序）
 
 
 @dataclass(frozen=True)
@@ -400,12 +400,8 @@ class CalcReceipt:
         return tuple(line for line in self.lines if line.changed or line.status != DONE)
 
 
-_PRODUCT_COLUMNS = (
-    "tdcc", "currency", "trade_date", "strike_date", "initial_pricing", "underlying_1", "underlying_2",
-    "underlying_3", "underlying_4", "underlying_5", "strike_pct", "ko_pct", "barrier_type", "ki_pct", "upfront_pct",
-)  # fmt: skip
-# 另外讀的必填欄只用來看缺哪幾欄（#114），值不放進 `ProductTerms`：更正只改 Coupon、到期日時照舊不重算
-_SELECTED_COLUMNS = with_required(_PRODUCT_COLUMNS)
+# 計算用不到的欄只用來看缺哪幾欄（#114），值不放進 `ProductTerms`：更正只改 Coupon、到期日時照舊不重算
+_SELECTED_COLUMNS = ("tdcc", *PRODUCT_COLUMNS)
 # 計算要用的交易明細欄（`TradeRow`）：人工維護改了這幾欄才算影響核對條件（#116）
 CHECK_TRADE_COLUMNS = ("trade_date", "currency", "amount", "branch", "uf")
 

@@ -10,6 +10,7 @@ INSERT 或 UPDATE 改了的欄、重算核對條件、留紀錄、畫面換成�
 - `lock_terms`／`read_stored`：讀這檔資料庫的條件與鎖住狀態；核對寫回也用 `lock_terms` 鎖列。
 - `blocking_problems`：擋寫入的問題；畫面標紅（`order_import.check_draft`／`maintenance_problems`）也用同一套。
 規則式、不猜值：單位面額依幣別預設值（審查標準 `[denomination]`），發行機構寫法依參考條件表 `[issuer_values]`。
+畫面的欄 ↔ 資料庫的欄的轉換（KO／KI 代碼、UF 反轉、面額預設）在 `product_record`（#126）。
 """
 
 from __future__ import annotations
@@ -19,31 +20,30 @@ import getpass
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from sp_workflow.check_terms import CalcLine, recalculate, recalculate_corrected
 from sp_workflow.daily_import import FCN
 from sp_workflow.database import DatabaseError, require_current_schema
-from sp_workflow.order_terms import (
-    BARRIER_TYPES,
+from sp_workflow.order_terms import TDCC_FIELD, unknown_issuer
+from sp_workflow.product_record import (
     CHOICES,
     COLUMN_FIELDS,
+    DERIVED_COLUMNS,
     FIELDS,
     KINDS,
-    KO_TYPES,
-    PRICING_FIELD,
+    PRODUCT_COLUMNS,
     REQUIRED,
     STRIKE_FIELD,
-    TDCC_FIELD,
     TRADE_FIELD,
     UNDERLYINGS,
-    UPFRONT_FIELD,
     FieldKind,
+    columns_of,
+    fields_of,
     missing_fields,
     plain,
-    unknown_issuer,
 )
 from sp_workflow.trade_rows import (
     CHECK_TERM_FIELDS,
@@ -81,13 +81,6 @@ MAINTAIN_NEW = "只有交易明細"
 
 FIXED_IN_CORRECTION = ("Issue date",)  # TS 回填的欄，不在更正範圍
 
-_PCT = Decimal("0.000001")
-_AMOUNT = Decimal("0.0001")
-_HUNDRED = Decimal(100)
-
-# KO Type → 資料庫的 (ko_freq, ko_memory)；Barrier Type → ki_freq（同清單更新的代碼）
-KO_CODES = dict(zip(KO_TYPES, (("D", "N"), ("D", "Y"), ("P", "N"), ("P", "Y")), strict=True))
-KI_CODES = dict(zip(BARRIER_TYPES, ("-", "AM", "D"), strict=True))  # 每期觀察 MKI 目前不支援，讀到時標紅
 _TYPES: dict[FieldKind, tuple[type, ...]] = {
     FieldKind.TEXT: (str,),
     FieldKind.CHOICE: (str,),
@@ -100,22 +93,6 @@ _CONFLICT = "起單建檔裡這檔有好幾列、這欄不同，要填正確的�
 # 人工維護可以空白的必填欄（#115）：資料庫的商品種類不可空白（ADR 0016）
 _BLANK_ALLOWED = frozenset(REQUIRED) - {"Product"}
 _ALREADY_CREATED = "打開之後資料庫已經有這檔的商品條件，請重新載入"
-
-# 資料庫商品欄位（和畫面的欄的對照是 `order_terms.COLUMN_FIELDS`）
-PRODUCT_COLUMNS = (
-    "product", "issuer", "currency", "trade_date", "issue_date", "final_valuation_date", "maturity_date",
-    "initial_pricing", "non_call_months", "underlying_1", "underlying_2", "underlying_3", "underlying_4",
-    "underlying_5", "strike_pct", "ko_freq", "ko_memory", "ko_type", "ko_pct", "coupon_pct", "upfront_pct",
-    "tenor_months", "ki_freq", "barrier_type", "ki_pct", "denomination", "strike_date",
-)  # fmt: skip
-# 由 KO Type／Barrier Type 換算的代碼欄、發行機構與面額：覆蓋時用哪個名稱說明
-_DERIVED_COLUMNS = {
-    "ko_freq": "KO Type",
-    "ko_memory": "KO Type",
-    "ki_freq": "Barrier Type",
-    "issuer": "上手",
-    "denomination": "單位面額",
-}
 
 
 class Mode(Enum):
@@ -227,17 +204,6 @@ def _select(conn: psycopg.Connection, tdcc: str, *, lock: bool) -> StoredTerms |
     else:
         locked = "已核對通過，條件已鎖住，要改請到「7 人工維護」"
     return StoredTerms(columns, fields_of(columns), source, locked)
-
-
-def fields_of(columns: Mapping[str, Any]) -> dict[str, object]:
-    """資料庫商品欄位 → 畫面的欄（Upfront / NotePrice = 100 − UF）。"""
-    fields: dict[str, object] = {}
-    for column, name in COLUMN_FIELDS.items():
-        value = columns[column]
-        if column == "upfront_pct" and value is not None:
-            value = _HUNDRED - value
-        fields[name] = plain(value) if isinstance(value, Decimal) else value
-    return fields
 
 
 def has_trade_rows(conn: psycopg.Connection, tdcc: str) -> bool:
@@ -405,7 +371,7 @@ def import_terms(conn: psycopg.Connection, draft: OrderDraft, config: ImportConf
     elif stored is None:
         line = OrderImportLine(tdcc, NEW)
     else:
-        names = list(dict.fromkeys(COLUMN_FIELDS.get(c) or _DERIVED_COLUMNS[c] for c in changed))
+        names = list(dict.fromkeys(COLUMN_FIELDS.get(c) or DERIVED_COLUMNS[c] for c in changed))
         detail = "改了：" + "、".join(names) if names else ""
         if stored.source != ORDER_SOURCE:
             detail = "；".join(filter(None, (f"{stored.source}建立的商品改由起單資料匯入接手", detail)))
@@ -524,7 +490,7 @@ def _product_for(
 ) -> dict[str, object]:
     """畫面的值 → 要寫的資料庫商品欄位。資料庫已有的商品，更正與人工維護時上手不改、幣別沒改時面額不動
     （可能是放行的 TS 值）；更正時發行日不改。起單資料匯入以起單資料為準，上手與面額都照設定換算。"""
-    product = _product_columns(values, draft.issuer, config)
+    product = columns_of(values, config.issuer_names.get(draft.issuer), config.denominations)
     if stored is None or mode is Mode.IMPORT:
         return product
     product["issuer"] = stored.columns["issuer"]
@@ -533,37 +499,6 @@ def _product_for(
     if mode is Mode.CORRECT:
         product["issue_date"] = stored.columns["issue_date"]
     return product
-
-
-def _product_columns(values: Mapping[str, Any], issuer: str, config: ImportConfig) -> dict[str, object]:
-    """畫面的值 → 資料庫商品欄位；空白的欄（人工維護，#115）寫空白，換算的代碼與單位面額也是空白。"""
-    ko_freq, ko_memory = KO_CODES.get(values.get("KO Type"), (None, None))
-    barrier, currency, upfront = values.get("Barrier Type"), values.get("Currency"), values.get(UPFRONT_FIELD)
-    return {
-        "product": FCN,
-        "issuer": config.issuer_names.get(issuer),
-        "currency": currency,
-        "trade_date": values.get(TRADE_FIELD),
-        "strike_date": values.get(STRIKE_FIELD),
-        "issue_date": values.get("Issue date"),
-        "final_valuation_date": values.get("Final valuation date"),
-        "maturity_date": values.get("Maturity date"),
-        "initial_pricing": values.get(PRICING_FIELD),
-        "non_call_months": values.get("Guaranteed Periods (m)"),
-        **{f"underlying_{n}": values.get(name) for n, name in enumerate(UNDERLYINGS, 1)},
-        "strike_pct": _pct(values.get("Strike (%)")),
-        "ko_freq": ko_freq,
-        "ko_memory": ko_memory,
-        "ko_type": values.get("KO Type"),
-        "ko_pct": _pct(values.get("KO Barrier (%)")),
-        "coupon_pct": _pct(values.get("Coupon p.a. (%)")),
-        "upfront_pct": None if upfront is None else _pct(_HUNDRED - Decimal(upfront)),
-        "tenor_months": values.get("Tenor (m)"),
-        "ki_freq": KI_CODES.get(barrier),
-        "barrier_type": barrier,
-        "ki_pct": _pct(values.get("KI Barrier (%)")),
-        "denomination": None if currency is None else Decimal(config.denominations[currency]).quantize(_AMOUNT),
-    }
 
 
 def _changed(
@@ -624,7 +559,7 @@ def _changes(
     changes = field_edits(before_fields, values)
     edited = {name for name, _, _ in changes}
     for column in changed:
-        source = _DERIVED_COLUMNS.get(column)
+        source = DERIVED_COLUMNS.get(column)
         if source is not None and source not in edited:
             item = source if source not in FIELDS else column
             changes.append((item, before_columns.get(column), product[column]))
@@ -704,15 +639,6 @@ def same_value(a: object, b: object) -> bool:
     if isinstance(a, int | Decimal) and isinstance(b, int | Decimal) and not isinstance(a, bool):
         return Decimal(a) == Decimal(b)
     return a == b
-
-
-def _pct(value: object) -> Decimal | None:
-    if value is None:
-        return None
-    try:
-        return Decimal(value).quantize(_PCT)  # type: ignore[arg-type]
-    except InvalidOperation as exc:
-        raise ValueError(f"「{value}」不是數字") from exc
 
 
 def to_json(value: Mapping[str, object] | list[Any] | None) -> str | None:

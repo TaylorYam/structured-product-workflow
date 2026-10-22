@@ -11,18 +11,16 @@ import pytest
 
 from order_synth import CONFIG, HEADERS, PREFIXES, VALUES, A, B, sheet_line, write_sheet
 from sp_workflow.order_terms import (
-    FIELDS,
     NOT_FOUND,
     PENDING,
     READ,
-    REQUIRED_COLUMNS,
     TDCC_FIELD,
     OrderTermsError,
     collect_orders,
     format_field,
-    missing_fields,
     parse_field,
 )
+from sp_workflow.product_record import FIELDS
 
 
 def read(path: Path, text: str):
@@ -245,13 +243,3 @@ def test_parse_and_format_fields() -> None:
     assert format_field(Decimal("2.150000")) == "2.15"
     assert format_field(dt.date(2026, 10, 15)) == "2026-10-15"
     assert format_field(None) == ""
-
-
-def test_missing_fields_name_blank_required_fields_and_their_derived_codes() -> None:
-    """#114：資料庫商品條件缺哪幾個必填欄；由 KO Type／Barrier Type 換算的代碼欄空白也算那一欄沒有存齊。"""
-    complete = dict.fromkeys(REQUIRED_COLUMNS, "x")
-
-    assert missing_fields(complete) == []
-    assert missing_fields({**complete, "maturity_date": None, "strike_pct": None}) == ["Strike (%)", "Maturity date"]
-    assert missing_fields({**complete, "ko_memory": None, "ki_freq": None}) == ["KO Type", "Barrier Type"]
-    assert missing_fields({**complete, "currency": None, "strike_date": None}, ("Currency",)) == ["Currency"]

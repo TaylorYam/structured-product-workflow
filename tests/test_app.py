@@ -41,9 +41,10 @@ from sp_workflow.order_import import (
     OrderImportResult,
     drafts_from,
 )
-from sp_workflow.order_terms import FIELDS, REQUIRED, OrderRow
 from sp_workflow.order_terms import PENDING as ORDER_PENDING
+from sp_workflow.order_terms import OrderRow
 from sp_workflow.preparation import PREPARED, SKIPPED, PreparedDocument, PrepareReceipt, ProductOutcome
+from sp_workflow.product_record import FIELDS, REQUIRED
 from sp_workflow.product_write import (
     LOCKED,
     MAINTAIN_NEW,

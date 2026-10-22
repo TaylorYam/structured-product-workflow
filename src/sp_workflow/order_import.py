@@ -1,7 +1,7 @@
 """起單資料確認與匯入（#86、#97、ADR 0006、0008、0009、0010）。
 
 讀起單建檔（`order_terms.collect_orders`）之後，作業人員在視窗裡逐檔確認、修改，再把通過檢查的商品寫進資料庫。對外：
-- `drafts_from`：讀取結果 → 可以編輯的 `OrderDraft`（欄位是 `order_terms.FIELDS`）。
+- `drafts_from`：讀取結果 → 可以編輯的 `OrderDraft`（欄位是 `product_record.FIELDS`）。
   資料庫已有、還沒鎖住的商品，起單建檔空白的欄帶入資料庫的值；兩邊不同的欄由 `OrderDraft.differences` 列出。
 - `check_draft`：逐欄檢查，回傳 {欄位: 問題}；空的就可以匯入。
 - `import_orders`：匯入（`import_drafts`）、重算核對條件、重讀資料庫的值，作業人員按一次「匯入資料庫」做的事。
@@ -30,13 +30,14 @@ from typing import TYPE_CHECKING
 from sp_workflow.check_terms import CalcReceipt, CheckTermsError, recalculate
 from sp_workflow.daily_import import FCN
 from sp_workflow.database import DatabaseError, require_current_schema
-from sp_workflow.order_terms import (
+from sp_workflow.order_terms import TDCC_FIELD, OrderRow
+from sp_workflow.product_record import (
     FIELDS,
+    PRODUCT_COLUMNS,
     REQUIRED,
     STRIKE_FIELD,
-    TDCC_FIELD,
     TRADE_FIELD,
-    OrderRow,
+    fields_of,
     missing_fields,
 )
 from sp_workflow.product_write import (
@@ -46,7 +47,6 @@ from sp_workflow.product_write import (
     MAINTAIN_OPEN,
     NEW,
     OVERWRITTEN,
-    PRODUCT_COLUMNS,
     SAME,
     SKIPPED,
     CorrectionError,
@@ -57,7 +57,6 @@ from sp_workflow.product_write import (
     blocking_problems,
     describe,
     field_edits,
-    fields_of,
     has_trade_rows,
     import_terms,
     maintenance_mode,
@@ -415,7 +414,7 @@ class MissingProduct:
 def missing_products(conn: psycopg.Connection, config: ImportConfig) -> tuple[MissingProduct, ...]:
     """還沒鎖住、缺必填欄的商品，和只有交易明細（還沒有商品條件）的 TDCC，依 TDCC 排。
 
-    缺資料以起單資料的必填欄（`order_terms.REQUIRED`）為準，ISIN、發行日這類由 TS 回填的不算；
+    缺資料以起單資料的必填欄（`product_record.REQUIRED`）為準，ISIN、發行日這類由 TS 回填的不算；
     只有交易明細的，必填欄全部算缺。
     """
     _require_schema(conn)

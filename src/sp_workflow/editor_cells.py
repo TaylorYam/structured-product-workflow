@@ -18,7 +18,8 @@ from typing import Protocol, TypeVar
 
 from sp_workflow.daily_import import trade_value
 from sp_workflow.order_import import OrderDraft
-from sp_workflow.order_terms import FIELDS, STRIKE_FIELD, format_field, parse_field
+from sp_workflow.order_terms import format_field, parse_field
+from sp_workflow.product_record import FIELDS, STRIKE_FIELD
 from sp_workflow.trade_rows import FIELDS as TRADE_FIELDS
 from sp_workflow.trade_rows import TradeRowsDraft, trade_notes, trade_problems
 
