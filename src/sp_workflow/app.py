@@ -81,6 +81,7 @@ WINDOW_FILE = "window.json"  # 視窗上次的大小，和上次選的資料夾�
 APPROVAL_DATES, EXPORT_BUNDLE = "審查通過日期…", "匯出回報包…"  # 「維護」選單依名稱更新能不能按
 CLOSE_HISTORY = "匯入歷史收盤價…"
 REOBSERVE = "重新比價全部"
+LEGACY_BACKFILL = "匯入舊商品的價格與比價日…"
 
 
 class WindowSize:
@@ -256,6 +257,7 @@ class PanelWindow:
         menu.add_command(label=EXPORT_BUNDLE, command=self._export_bundle)
         menu.add_command(label=CLOSE_HISTORY, command=self._import_close_history)
         menu.add_command(label=REOBSERVE, command=self._reobserve)
+        menu.add_command(label=LEGACY_BACKFILL, command=self._import_legacy)
         menu.add_separator()
         menu.add_command(label="使用的設定檔…", command=self.check.show_config_paths)
         bar.add_cascade(label="維護", menu=menu)
@@ -269,6 +271,7 @@ class PanelWindow:
             (EXPORT_BUNDLE, self.check.can_export_bundle()),
             (CLOSE_HISTORY, self.daily.can_import_history()),
             (REOBSERVE, self.daily.can_import_history()),
+            (LEGACY_BACKFILL, self.daily.can_import_history()),
         ):
             self.maintenance.entryconfigure(label, state=tk.NORMAL if allowed else tk.DISABLED)
 
@@ -279,6 +282,10 @@ class PanelWindow:
     def _import_close_history(self) -> None:
         self.notebook.select(self.daily.frame)  # 匯入的進度與結果顯示在每日匯入頁
         self.daily.import_history()
+
+    def _import_legacy(self) -> None:
+        self.notebook.select(self.daily.frame)  # 匯入的進度與結果顯示在每日匯入頁
+        self.daily.import_legacy()
 
     def _reobserve(self) -> None:
         self.notebook.select(self.daily.frame)  # 比價的進度與結果顯示在每日匯入頁
