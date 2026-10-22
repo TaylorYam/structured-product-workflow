@@ -30,10 +30,12 @@ from sp_workflow.database import DatabaseError, require_current_schema
 from sp_workflow.order_terms import (
     BARRIER_TYPES,
     CHOICES,
+    COLUMN_FIELDS,
     FIELDS,
     KINDS,
     KO_TYPES,
     PRICING_FIELD,
+    REQUIRED,
     STRIKE_FIELD,
     TDCC_FIELD,
     TRADE_FIELD,
@@ -74,24 +76,6 @@ _HUNDRED = Decimal(100)
 # KO Type → 資料庫的 (ko_freq, ko_memory)；Barrier Type → ki_freq（同清單更新的代碼）
 KO_CODES = dict(zip(KO_TYPES, (("D", "N"), ("D", "Y"), ("P", "N"), ("P", "Y")), strict=True))
 KI_CODES = dict(zip(BARRIER_TYPES, ("-", "AM", "D"), strict=True))  # 每期觀察 MKI 目前不支援，讀到時標紅
-_REQUIRED = (
-    "Product",
-    "Currency",
-    "Guaranteed Periods (m)",
-    "BBG Code 1",
-    "Strike (%)",
-    "KO Type",
-    "KO Barrier (%)",
-    "Coupon p.a. (%)",
-    "Upfront / NotePrice (%)",
-    "Tenor (m)",
-    "Barrier Type",
-    TRADE_FIELD,
-    STRIKE_FIELD,
-    "Final valuation date",
-    "Maturity date",
-    PRICING_FIELD,
-)
 _TYPES: dict[FieldKind, tuple[type, ...]] = {
     FieldKind.TEXT: (str,),
     FieldKind.CHOICE: (str,),
@@ -102,33 +86,13 @@ _TYPES: dict[FieldKind, tuple[type, ...]] = {
 
 _CONFLICT = "起單建檔裡這檔有好幾列、這欄不同，要填正確的值（正確是空白的話請改起單建檔後重新讀取）"
 
-# 資料庫商品欄位 ↔ 確認畫面的欄（畫面上的 Upfront / NotePrice = 100 − UF）
+# 資料庫商品欄位（和畫面的欄的對照是 `order_terms.COLUMN_FIELDS`）
 _PRODUCT_COLUMNS = (
     "product", "issuer", "currency", "trade_date", "issue_date", "final_valuation_date", "maturity_date",
     "initial_pricing", "non_call_months", "underlying_1", "underlying_2", "underlying_3", "underlying_4",
     "underlying_5", "strike_pct", "ko_freq", "ko_memory", "ko_type", "ko_pct", "coupon_pct", "upfront_pct",
     "tenor_months", "ki_freq", "barrier_type", "ki_pct", "denomination", "strike_date",
 )  # fmt: skip
-_COLUMN_FIELDS = {
-    "product": "Product",
-    "currency": "Currency",
-    "non_call_months": "Guaranteed Periods (m)",
-    **{f"underlying_{n}": name for n, name in enumerate(UNDERLYINGS, 1)},
-    "strike_pct": "Strike (%)",
-    "ko_type": "KO Type",
-    "ko_pct": "KO Barrier (%)",
-    "coupon_pct": "Coupon p.a. (%)",
-    "upfront_pct": UPFRONT_FIELD,
-    "tenor_months": "Tenor (m)",
-    "barrier_type": "Barrier Type",
-    "ki_pct": "KI Barrier (%)",
-    "trade_date": TRADE_FIELD,
-    "strike_date": STRIKE_FIELD,
-    "issue_date": "Issue date",
-    "final_valuation_date": "Final valuation date",
-    "maturity_date": "Maturity date",
-    "initial_pricing": PRICING_FIELD,
-}
 # 由 KO Type／Barrier Type 換算的代碼欄、發行機構與面額：覆蓋時用哪個名稱說明
 _DERIVED_COLUMNS = {
     "ko_freq": "KO Type",
@@ -300,7 +264,7 @@ def _stored(conn: psycopg.Connection, tdcc: str) -> _Stored | None:
 
 def _fields_of(columns: Mapping[str, Any]) -> dict[str, object]:
     fields: dict[str, object] = {}
-    for column, name in _COLUMN_FIELDS.items():
+    for column, name in COLUMN_FIELDS.items():
         value = columns[column]
         if column == "upfront_pct" and value is not None:
             value = _HUNDRED - value
@@ -345,7 +309,7 @@ def _value_problems(values: Mapping[str, object], draft: OrderDraft, config: Imp
                 problems[name] = _CONFLICT
             elif name in draft.row.unresolved:
                 problems[name] = "起單建檔算不出來，要填"
-            elif name in _REQUIRED:
+            elif name in REQUIRED:
                 problems[name] = "必填"
             continue
         if not isinstance(value, _TYPES[KINDS[name]]) or isinstance(value, bool):
@@ -496,7 +460,7 @@ def _import_one(conn: psycopg.Connection, draft: OrderDraft, config: ImportConfi
         f"UPDATE workflow.product SET {assignments}, source = %s, order_import_id = %s WHERE tdcc = %s",
         (*(product[c] for c in _PRODUCT_COLUMNS), ORDER_SOURCE, import_id, draft.tdcc),
     )
-    names = list(dict.fromkeys(_COLUMN_FIELDS.get(c) or _DERIVED_COLUMNS[c] for c in changed))
+    names = list(dict.fromkeys(COLUMN_FIELDS.get(c) or _DERIVED_COLUMNS[c] for c in changed))
     detail = "改了：" + "、".join(names) if names else ""
     if stored.source != ORDER_SOURCE:
         detail = "；".join(filter(None, ("清單更新建立的商品改由起單資料匯入接手", detail)))

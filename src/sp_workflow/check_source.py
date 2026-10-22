@@ -9,6 +9,7 @@
 規則：
 - 還沒鎖住的商品，核對條件（#88）要是「完成」才產生列；否則那一份不核對、需人工覆核、不能放行。
   已鎖住的商品照資料庫的值產生（TS、IIS 打勾，回填過的欄位有值），可以再核對，但不再回填。
+  商品條件缺起單資料的必填欄（#114）時不看核對條件，一律不產生列（核對條件可能還沒重算）。
 - 回填：ISIN、發行日、比價日_1～12（空值寫法存成空白）、期初定價 VWAP 時各標的四個價格；人工放行的說明書
   若單位面額和資料庫不同，改成 TS 的值。每個改變的原值記在 `workflow.backfill_log`。
 - 寫回在同一個 transaction 裡，失敗時什麼都不寫；核對結果檔已經存好，可以重新寫回（使用者 2026-10-21 確認）。
@@ -30,6 +31,7 @@ from openpyxl.styles import Font
 
 from sp_workflow.check_terms import DONE
 from sp_workflow.database import ConnectionSettings, DatabaseError, connect, require_current_schema
+from sp_workflow.order_terms import missing_fields
 
 if TYPE_CHECKING:
     import psycopg
@@ -54,6 +56,7 @@ _PRODUCT_COLUMNS = (
     "maturity_date", "initial_pricing", "non_call_months", "underlying_1", "underlying_2", "underlying_3",
     "underlying_4", "underlying_5", "strike_pct", "ko_freq", "ko_memory", "ko_pct", "coupon_pct", "upfront_pct",
     "tenor_months", "ki_freq", "barrier_type", "ki_pct", "denomination", "locked_at",
+    "ko_type", "strike_date",  # 參考條件表沒有這兩欄，只用來看有沒有缺必填欄
 )  # fmt: skip
 
 
@@ -107,6 +110,9 @@ def _absent_reason(found: _Stored | None) -> str:
     locked = found.product["locked_at"] is not None
     if locked and found.status is None:
         return "以前清單更新匯入、已鎖住的商品，資料庫沒有核對條件；請用 Excel 參考條件表核對"
+    missing = missing_fields(found.product)
+    if missing:
+        return f"商品條件缺 {'、'.join(missing)}；補齊後再核對"
     if locked:
         return ""
     if found.status is None:

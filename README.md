@@ -66,7 +66,7 @@ spw-panel
 2. 指令版：`fcn-batch <參考條件表.xlsx> <PDF…> --out <輸出資料夾>`，一次完成預覽、核對與儲存，不能人工放行。結束碼 0 是已涵蓋的規則全部通過（沒涵蓋的項目仍要人工看）、1 有不一致或需人工覆核（含未支援上手）、2 錯誤。
 3. 每次儲存另寫一份內部核對紀錄（程式版本、設定與每份 PDF 的指紋、逐項結果），PANEL 寫在安裝資料夾的 `runtime/核對紀錄/`，指令版寫在執行目錄的 `runtime/核對紀錄/`。
 4. **從資料庫讀條件**（[#68](https://github.com/TaylorYam/structured-product-workflow/issues/68)、[ADR 0013](docs/adr/0013-check-from-database.md)）：「條件來源」選「資料庫」就不用選參考條件表。載入預覽時依 PDF 檔名的 TDCC 從資料庫產生一份同格式的參考條件表（留在安裝資料夾的 `runtime/資料庫參考條件表/`），之後的核對、人工放行、核對結果檔與回報包都和 Excel 一樣。原本預設 Excel，[#108](https://github.com/TaylorYam/structured-product-workflow/issues/108) 起預設資料庫；選資料庫時「參考條件表」那一列收起來。
-   - 資料庫沒有這檔、核對條件還不是「完成」（等股價、等交易明細、待確認，見下面「核對條件」），或以前清單更新匯入、已鎖住的商品：那一份不核對、需人工覆核並寫原因，不能人工放行，同批其他照常。
+   - 資料庫沒有這檔、商品條件缺必填欄（[#114](https://github.com/TaylorYam/structured-product-workflow/issues/114)）、核對條件還不是「完成」（等股價、等交易明細、待確認，見下面「核對條件」），或以前清單更新匯入、已鎖住的商品：那一份不核對、需人工覆核並寫原因，不能人工放行，同批其他照常。
    - 按「儲存核對結果…」存好核對結果檔後寫回資料庫：說明書與投資人須知都通過或人工放行的商品，回填 ISIN、發行日、比價日（VWAP 商品另含各標的價格），人工放行時單位面額改成 TS 的值，然後**鎖住**（之後起單資料不能再覆蓋）。核對之後條件又被改過（例如重新匯入起單資料）的商品不回填、不鎖住，請重新載入預覽再核對。每份文件最新的核對結果與每個改變的原值都留在資料庫。已鎖住的商品可以再核對，但不再回填。
    - 寫回失敗（例如連線中斷）時核對結果檔照樣保留，畫面寫出原因，排除後按「重新寫回資料庫」。
    - 指令版：`fcn-batch --database <PDF…> --out <輸出資料夾>`（連線設定讀 `.env`，沒寫密碼時會問；產生的參考條件表放在輸出資料夾）。
@@ -135,7 +135,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 1. 視窗切到「6 寄信草稿」，貼上核對通過的 TDCC（分隔方式同「3 準備」）。
 2. 選結果清單位置（根目錄用視窗最上方的，同「3 準備」），按「建立草稿」。視窗會先顯示最近一次每日匯入（時間、第幾次、檔名），確認後才開始建立。
 3. 每檔要符合才會建草稿，否則標「待處理」並寫出原因：
-   - 資料庫有這檔的商品條件與交易列；
+   - 資料庫有這檔的商品條件（信裡要用的必填欄沒有空白，[#114](https://github.com/TaylorYam/structured-product-workflow/issues/114)；期初價格空白時信裡空白）與交易列；
    - 商品資料夾裡有 `<TDCC>_TS.pdf` 與 `<TDCC>_IIS.pdf`（放回資料夾只會以標準檔名放回核對通過的文件；`_待確認` 檔不算）；
    - 交易列上的 FC 都對得到信箱。
 4. 信件：一檔一封；收件人是承作的 FC（略過 PB，只有 PB 時標「不需寄送」），副本是信箱裡 `fixed_cc` 的人；主旨 `[中文TS/IIS] [FCN] - <TDCC>`；內文使用 `.env` 的 `SPW_MAIL_TEMPLATE` Excel 範本，填入資料後以可編輯表格貼進 Outlook；附上兩份 PDF。
@@ -178,6 +178,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 - **分公司配置**：這檔的交易列（取消的列不在資料庫，PB 也算）同一分公司的金額加總，依出現先後，取代原本的配置；寄信草稿照舊讀它。
 - **交叉比對**：交易明細和起單資料的幣別、交易日、UF（交易明細寫比例 0.0199，起單資料是百分點 1.99），交易列之間不一樣也算不一致。承作金額不比。
 - **狀態**：完成／等股價（還沒有取價日比 Strike date 晚的股價檔）／等交易明細（交易明細還沒有這檔）／待確認（原因，例如「UL_2 AAA UW：股價檔（取價日 2026-10-16）沒有這個代碼」「UF不一致：起單資料 1.99、交易明細 0.0215（換算 2.15）」）。代碼找不到、沒有價格、股價衝突時只有那個標的的價格留空。股價或交易明細之後才到時，下一次匯入會自己補算。
+- **缺資料**（[#114](https://github.com/TaylorYam/structured-product-workflow/issues/114)、[ADR 0016](docs/adr/0016-partial-product-terms.md)）：資料庫的商品條件可以先存一部分（之後由人工維護補），缺起單資料的必填欄時不算價格、不交叉比對，狀態是待確認，原因寫出缺哪幾欄（例如「缺 Strike (%)、Maturity date」）；分公司配置照樣由交易明細算。補齊後下一次重算照常。缺欄的商品不能核對、放行，也不會回填或鎖住；寄信草稿標待處理並寫出缺的欄。更新程式後請執行一次 `spw-db-migrate`（資料表版本 0012，已有的資料不變）。
 - **放行差異**：交叉比對不一致、看過確定沒問題時，在「1 每日匯入」或「2 起單資料」的結果表點那一檔，按「放行差異…」。會記下 Windows 使用者名稱、時間與放行了哪些差異，然後重算那一檔；之後同樣的差異不再擋，資料改了、差異跟著變時要重新放行。股價、假日表的問題不能放行，要修正資料（例如補匯股價檔）。
 - 結果存在 `workflow.check_terms`（狀態、原因、用的股價檔）、`workflow.underlying_price`（各標的的四個價格）與 `workflow.branch_allocation`；放行紀錄在 `workflow.cross_check_release`。#68 核對時讀這些表。重算失敗（例如假日表設定檔有問題）時匯入照樣保留，完成訊息寫出原因，排除後再匯入一次就會重算。
 
@@ -249,7 +250,7 @@ The checker (`src/fcn_checker/`, formerly [fcn-term-sheet-checker](https://githu
 2. Command line: `fcn-batch <reference.xlsx> <PDFs…> --out <output folder>` previews, checks, and saves in one go, without manual release. Exit code 0 means every covered rule passed (uncovered items still need a person), 1 mismatch or review required (including unsupported issuers), 2 error.
 3. Each save also writes an internal check record (program version, configuration and PDF hashes, per-item results): the PANEL writes to the install folder's `runtime/核對紀錄/`, the command line to `runtime/核對紀錄/` under the working directory.
 4. **Terms from the database** ([#68](https://github.com/TaylorYam/structured-product-workflow/issues/68), [ADR 0013](docs/adr/0013-check-from-database.md)): choose 資料庫 as 條件來源 and no reference workbook is needed. Loading the preview generates a same-format reference workbook from the database for the TDCCs in the PDF file names (kept in the install folder's `runtime/資料庫參考條件表/`); checking, manual release, the result workbook, and the report bundle then work exactly as with Excel. Excel was the default until [#108](https://github.com/TaylorYam/structured-product-workflow/issues/108); the database is now the default, and the 參考條件表 row is hidden while it is chosen.
-   - A product missing from the database, whose check terms are not 完成 (等股價, 等交易明細, 待確認; see "Check terms" below), or an old locked 清單更新 product: that document is not checked, needs review with the reason, and cannot be released; the rest of the batch proceeds.
+   - A product missing from the database, with blank required terms ([#114](https://github.com/TaylorYam/structured-product-workflow/issues/114)), whose check terms are not 完成 (等股價, 等交易明細, 待確認; see "Check terms" below), or an old locked 清單更新 product: that document is not checked, needs review with the reason, and cannot be released; the rest of the batch proceeds.
    - After "儲存核對結果…" writes the result workbook, the database is updated: products whose term sheet and investor sheet both passed or were released get their ISIN, issue date, and observation dates (plus each underlying's prices for VWAP) backfilled, a released term sheet's denomination becomes the TS value, and the product is **locked** (order-sheet imports can no longer overwrite it). A product whose terms changed after checking (for example a re-imported order sheet) is neither backfilled nor locked; reload the preview and check again. Each document's latest result and every changed value's old value stay in the database. Locked products can be checked again but are not backfilled again.
    - If the write-back fails (for example a dropped connection) the result workbook is kept, the window gives the reason, and "重新寫回資料庫" retries after the fix.
    - Command line: `fcn-batch --database <PDFs…> --out <output folder>` (connection settings from `.env`, asking for a missing password; the generated reference workbook goes to the output folder).
@@ -318,7 +319,7 @@ Creates TS/IIS emails to the FCs handling each checked FCN in **your own classic
 1. In the window, open "6 寄信草稿" and paste the checked TDCCs (same separators as preparation).
 2. Choose the result-list location (the root folder is the one at the top of the window, as in preparation), then click "建立草稿". The window first shows the latest daily import (time, run number, file name) and creates drafts only after you confirm.
 3. A draft is created only when all of these hold; otherwise the product is marked "待處理" with reasons:
-   - the database has the product's terms and trade rows;
+   - the database has the product's terms (no blank required field used in the mail, [#114](https://github.com/TaylorYam/structured-product-workflow/issues/114); a blank initial pricing stays blank in the mail) and trade rows;
    - the product folder holds `<TDCC>_TS.pdf` and `<TDCC>_IIS.pdf` (return-to-folders only writes standard names for checked documents; `_待確認` files do not count);
    - every FC on the trade rows matches the mailbox.
 4. Mail: one per product; recipients are the FCs (PB skipped; PB-only products are "不需寄送"), CC is everyone with `fixed_cc` in the mailbox; subject `[中文TS/IIS] [FCN] - <TDCC>`; the body uses the Excel template configured by `.env` `SPW_MAIL_TEMPLATE`, fills it, and pastes editable tables into Outlook; both PDFs are attached.
@@ -361,6 +362,7 @@ After an import on "1 每日匯入" or "2 起單資料", every **unlocked** prod
 - **Branch allocation**: the product's trade rows (cancelled rows are not in the database; PB counts) summed per branch in order of appearance replace the previous allocation; mail drafts read it as before.
 - **Cross-check**: currency, trade date, and UF between the trade rows and the order terms (trade rows hold a ratio such as 0.0199, the order terms percentage points such as 1.99); differences between trade rows also count. The order amount is not compared.
 - **Status**: 完成 (done) / 等股價 (no price file after the Strike date yet) / 等交易明細 (no trade rows yet) / 待確認 with a reason, for example "UL_2 AAA UW：股價檔（取價日 2026-10-16）沒有這個代碼" or "UF不一致：起單資料 1.99、交易明細 0.0215（換算 2.15）". A missing code, missing price, or price conflict blanks only that underlying's prices. Prices or trade rows arriving later are picked up by the next import.
+- **Missing data** ([#114](https://github.com/TaylorYam/structured-product-workflow/issues/114), [ADR 0016](docs/adr/0016-partial-product-terms.md)): the database may hold partial product terms (to be completed later in manual maintenance). With blank order-sheet required fields, prices and the cross-check are skipped and the status is 待確認 with the blank fields named (for example "缺 Strike (%)、Maturity date"); branch allocation is still derived from the trade rows. Once filled, the next recalculation proceeds as usual. Such products cannot be checked or released and are never backfilled or locked; mail drafts mark them 待處理 with the blank fields named. Run `spw-db-migrate` once after updating (schema version 0012; existing data is unchanged).
 - **Releasing differences**: when a cross-check difference has been reviewed and is acceptable, select the product in the result table of "1 每日匯入" or "2 起單資料" and click "放行差異…". The Windows user name, time, and released differences are recorded and the product is recalculated; the same differences no longer block, while changed data with changed differences needs a new release. Price and calendar problems cannot be released; fix the data (for example import the missing price file).
 - Results live in `workflow.check_terms` (status, reason, price file used), `workflow.underlying_price` (the four prices per underlying), and `workflow.branch_allocation`; releases are in `workflow.cross_check_release`. #68 reads these tables when checking. If recalculation fails (for example a broken holiday calendar file) the import is kept and the completion message says why; importing again after the fix recalculates.
 

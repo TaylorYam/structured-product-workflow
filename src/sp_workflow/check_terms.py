@@ -17,6 +17,8 @@
   取代 `workflow.branch_allocation`；交易明細還沒有這檔時保留原本的配置。
 - 交叉比對：幣別、交易日、UF（交易明細是比例，起單資料是百分點）；承作金額不比（#97）。
   交易列之間不一樣也算不一致。放行過、兩邊的值都一樣的差異不再擋。
+- 商品條件缺起單資料的必填欄（#114、ADR 0016）：不算價格、不交叉比對，待確認並寫出缺哪幾欄；
+  分公司配置照樣由交易明細算。
 """
 
 from __future__ import annotations
@@ -31,7 +33,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
 
 from sp_workflow.database import DatabaseError, require_current_schema
-from sp_workflow.order_terms import plain
+from sp_workflow.order_terms import REQUIRED_COLUMNS, missing_fields, plain
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -77,7 +79,7 @@ def load_calendar(path: Path) -> TradingCalendar:
 
 @dataclass(frozen=True)
 class ProductTerms:
-    """`workflow.product` 裡計算要用的欄位。"""
+    """`workflow.product` 裡計算要用的欄位。`missing` 有值時（缺必填欄，#114）缺的欄位是 None，不算價格。"""
 
     tdcc: str
     currency: str
@@ -90,6 +92,7 @@ class ProductTerms:
     barrier_type: str
     ki_pct: Decimal | None
     upfront_pct: Decimal  # 百分點（起單建檔的價格 98.01 → 1.99）
+    missing: tuple[str, ...] = ()  # 空白的必填欄（畫面的欄名，依 `order_terms.REQUIRED` 的順序）
 
 
 @dataclass(frozen=True)
@@ -172,6 +175,10 @@ def calculate(
     price_date = None
     waiting_prices = False
     prices = tuple(UnderlyingPrice(n, code) for n, code in underlyings)  # 算不出來時四個價格都空白
+    if product.missing:
+        reason = "；".join(filter(None, (f"缺 {'、'.join(product.missing)}", "" if trades else "交易明細還沒有這檔")))
+        allocation = branch_allocation(trades) if trades else None
+        return Calculation(TO_CONFIRM, reason, None, prices, allocation, ())
     pricing = _pricing(product.initial_pricing)
     if pricing == VWAP:
         notes.append("期初定價是 VWAP，價格由 TS 回填")
@@ -393,6 +400,8 @@ _PRODUCT_COLUMNS = (
     "tdcc", "currency", "trade_date", "strike_date", "initial_pricing", "underlying_1", "underlying_2",
     "underlying_3", "underlying_4", "underlying_5", "strike_pct", "ko_pct", "barrier_type", "ki_pct", "upfront_pct",
 )  # fmt: skip
+# 另外讀的必填欄只用來看缺哪幾欄（#114），值不放進 `ProductTerms`：更正只改 Coupon、到期日時照舊不重算
+_COLUMNS = (*_PRODUCT_COLUMNS, *(c for c in REQUIRED_COLUMNS if c not in _PRODUCT_COLUMNS))
 
 
 def recalculate(
@@ -422,7 +431,7 @@ def recalculate_corrected(
     """
     if conn.execute("SELECT 1 FROM workflow.check_terms WHERE tdcc = %s", (tdcc,)).fetchone() is None:
         return None
-    before = _product(tuple({**previous, "tdcc": tdcc}[c] for c in _PRODUCT_COLUMNS))
+    before = _product(tuple({**previous, "tdcc": tdcc}[c] for c in _COLUMNS))
     products = _products(conn, "tdcc = %s", (tdcc,))
     if products == [before]:
         return None
@@ -442,7 +451,7 @@ def _products(conn: psycopg.Connection, where: str, params: Sequence[Any]) -> li
     return [
         _product(row)
         for row in conn.execute(
-            f"SELECT {', '.join(_PRODUCT_COLUMNS)} FROM workflow.product WHERE {where} ORDER BY tdcc FOR UPDATE",
+            f"SELECT {', '.join(_COLUMNS)} FROM workflow.product WHERE {where} ORDER BY tdcc FOR UPDATE",
             params,
         )
     ]
@@ -553,7 +562,7 @@ def release_differences(
 
 
 def _product(row: Sequence[Any]) -> ProductTerms:
-    values = dict(zip(_PRODUCT_COLUMNS, row, strict=True))
+    values = dict(zip(_COLUMNS, row, strict=True))
     return ProductTerms(
         tdcc=values["tdcc"],
         currency=values["currency"],
@@ -566,6 +575,7 @@ def _product(row: Sequence[Any]) -> ProductTerms:
         barrier_type=values["barrier_type"],
         ki_pct=values["ki_pct"],
         upfront_pct=values["upfront_pct"],
+        missing=tuple(missing_fields(values)),
     )
 
 

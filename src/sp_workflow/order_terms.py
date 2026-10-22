@@ -90,6 +90,49 @@ KINDS: dict[str, FieldKind] = {
 }
 FIELDS = tuple(KINDS)
 SHEET_FIELDS = tuple(name for name in FIELDS if name != STRIKE_FIELD)  # 起單建檔上有的欄
+# 必填欄：起單資料匯入時空白就擋下（#86）。資料庫的商品條件可以先存一部分（#114、ADR 0016），
+# 缺這幾欄的商品核對條件停在待確認，不能核對、寄信（`missing_fields`）
+REQUIRED = (
+    "Product",
+    "Currency",
+    "Guaranteed Periods (m)",
+    "BBG Code 1",
+    "Strike (%)",
+    "KO Type",
+    "KO Barrier (%)",
+    "Coupon p.a. (%)",
+    UPFRONT_FIELD,
+    "Tenor (m)",
+    "Barrier Type",
+    TRADE_FIELD,
+    STRIKE_FIELD,
+    "Final valuation date",
+    "Maturity date",
+    PRICING_FIELD,
+)
+# 資料庫 workflow.product 的欄 ↔ 畫面的欄（畫面上的 Upfront / NotePrice = 100 − UF）
+COLUMN_FIELDS = {
+    "product": "Product",
+    "currency": "Currency",
+    "non_call_months": "Guaranteed Periods (m)",
+    **{f"underlying_{n}": name for n, name in enumerate(UNDERLYINGS, 1)},
+    "strike_pct": "Strike (%)",
+    "ko_type": "KO Type",
+    "ko_pct": "KO Barrier (%)",
+    "coupon_pct": "Coupon p.a. (%)",
+    "upfront_pct": UPFRONT_FIELD,
+    "tenor_months": "Tenor (m)",
+    "barrier_type": "Barrier Type",
+    "ki_pct": "KI Barrier (%)",
+    "trade_date": TRADE_FIELD,
+    "strike_date": STRIKE_FIELD,
+    "issue_date": "Issue date",
+    "final_valuation_date": "Final valuation date",
+    "maturity_date": "Maturity date",
+    "initial_pricing": PRICING_FIELD,
+}
+_FIELD_COLUMNS = {name: column for column, name in COLUMN_FIELDS.items()}
+REQUIRED_COLUMNS = tuple(_FIELD_COLUMNS[name] for name in REQUIRED)
 # 起單建檔的表頭（不分大小寫）→ 欄位；UF (%) 是 2026 年起的表頭
 _HEADERS = {name.casefold(): name for name in (TDCC_FIELD, *SHEET_FIELDS)} | {"uf (%)": UPFRONT_FIELD}
 _HEADER_ROWS = 5  # 表頭在前幾列找
@@ -242,6 +285,11 @@ def _row_for(
 def unknown_issuer(tdcc: str) -> str:
     """TDCC 前三碼不在上手編號對照時的說明（讀取與匯入檢查共用）。"""
     return f"TDCC 前三碼 {tdcc[:3]} 不在上手編號對照"
+
+
+def missing_fields(product: Mapping[str, object], names: Sequence[str] = REQUIRED) -> list[str]:
+    """資料庫商品條件的一列（`workflow.product` 的欄 → 值）裡空白的必填欄，依 `names` 的順序回傳畫面的欄名。"""
+    return [name for name in names if product[_FIELD_COLUMNS[name]] is None]
 
 
 def _compare_key(name: str, parsed: tuple[object, str], raw: object) -> object:
