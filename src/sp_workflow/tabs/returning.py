@@ -1,4 +1,4 @@
-"""「5 放回」分頁：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾。"""
+"""「5 放回」分頁：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾；登入了資料庫時同時留步驟紀錄（#151）。"""
 
 from __future__ import annotations
 
@@ -8,18 +8,20 @@ from tkinter import filedialog, messagebox, ttk
 
 from fcn_checker.ui import HintBar
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.returning import PENDING_SUFFIX, ReturnReceipt, return_to_folders
-from sp_workflow.tabs.base import TITLE, Tab, ask_dir, set_if_chosen
+from sp_workflow.returning import PENDING_SUFFIX
+from sp_workflow.tabs.base import TITLE, DatabaseLogin, Tab, ask_dir, record_note, set_if_chosen
+from sp_workflow.window_actions import ReturnResult, run_return
 
 
 class ReturnTab(Tab):
-    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory) -> None:
+    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, db: DatabaseLogin) -> None:
         super().__init__(
             notebook,
             "放回",
             (("tdcc", "TDCC", 130), ("ts", "TS", 70), ("iis", "IIS", 70), ("reason", "原因", 450)),
         )
         self.memory = memory
+        self.db = db
         self.batch_var = tk.StringVar(value=memory.load().get("batch", ""))
         self.result_var = tk.StringVar()
         self.handed_off: tuple[str, str] | None = None  # 從核對帶入的（批次資料夾, 核對結果檔）
@@ -78,20 +80,23 @@ class ReturnTab(Tab):
             messagebox.showerror(TITLE, "請先選擇批次資料夾與核對結果檔。")
             return
         batch, result = Path(batch_text), Path(result_text)
+        settings = self.db.settings(quiet=True)  # 沒有連線設定或取消登入：照樣放回，不留步驟紀錄
         self.memory.remember(batch=str(batch))
         self.start_button.configure(state=tk.DISABLED)
         self.restart()
-        self.run_in_background(lambda: return_to_folders(batch, result), "放回中…", self._done)
+        self.run_in_background(lambda: run_return(settings, batch, result), "放回中…", self._done)
 
     def _done(self, result: object) -> None:
         self.start_button.configure(state=tk.NORMAL)
-        if not isinstance(result, ReturnReceipt):
+        if not isinstance(result, ReturnResult):
             return
-        for o in result.outcomes:
+        self.db.after_run(result.recorded.database_error)
+        recorded, receipt = result.recorded, result.receipt
+        for o in receipt.outcomes:
             self.add_row((o.tdcc, o.ts, o.iis, o.reason), problem=o.blocked or o.pending or bool(o.reason))
-        blocked = sum(o.blocked for o in result.outcomes)
-        pending = sum(o.pending and not o.blocked for o in result.outcomes)
-        returned = len(result.outcomes) - blocked - pending
+        blocked = sum(o.blocked for o in receipt.outcomes)
+        pending = sum(o.pending and not o.blocked for o in receipt.outcomes)
+        returned = len(receipt.outcomes) - blocked - pending
         kpis = (
             ("已放回或已在（檔）", returned, False),
             ("含待確認（檔）", pending, pending > 0),
@@ -100,5 +105,5 @@ class ReturnTab(Tab):
         self.finish(
             kpis,
             f"完成：{returned} 個商品已放回或已在、{pending} 個含「{PENDING_SUFFIX}」檔、"
-            f"{blocked} 個不放回。放回清單：{result.list_path}",
+            f"{blocked} 個不放回。放回清單：{receipt.list_path}" + record_note(recorded),
         )

@@ -3,6 +3,7 @@
 連資料庫、transaction 的邊界與容錯都在這裡；視窗（`app.py`）只收輸入、在背景呼叫一個動作、顯示結果。
 匯入成功、之後的重算失敗時匯入保留（ADR 0012）：重算的錯誤不丟出，原因放在結果裡。
 寄信草稿分兩個動作（讀最近一次匯入 → 建草稿），中間的確認對話框留在視窗。
+準備、放回、建草稿的步驟紀錄（#151）在清單產出之後另寫；寫入失敗不丟出（清單已經產出），原因放在結果裡。
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from sp_workflow.daily_import import (
     import_price_csv,
     latest_import,
 )
-from sp_workflow.database import ConnectionSettings, DatabaseError, connect
+from sp_workflow.database import ConnectionSettings, DatabaseError, connect, require_current_schema
 from sp_workflow.mail_drafts import DraftReceipt, create_drafts
 from sp_workflow.order_import import (
     ImportConfig,
@@ -46,8 +47,18 @@ from sp_workflow.order_import import (
     save_maintenance,
 )
 from sp_workflow.order_terms import OrderRow, collect_orders
+from sp_workflow.preparation import PrepareReceipt, prepare_batch
 from sp_workflow.product_export import ExportReceipt, export_products
 from sp_workflow.product_write import CorrectionReceipt
+from sp_workflow.returning import ReturnReceipt, return_to_folders
+from sp_workflow.step_records import (
+    Recorded,
+    StepRecord,
+    drafted_records,
+    prepared_records,
+    returned_records,
+    write_records,
+)
 from sp_workflow.trade_rows import TradeRowsDraft, load_trade_rows
 
 if TYPE_CHECKING:
@@ -73,6 +84,24 @@ class DailyResult:
 class PriceCsvResult:
     receipt: PriceCsvReceipt
     recalc: Recalc = Recalc()
+
+
+@dataclass(frozen=True)
+class PrepareResult:
+    receipt: PrepareReceipt
+    recorded: Recorded = Recorded()
+
+
+@dataclass(frozen=True)
+class ReturnResult:
+    receipt: ReturnReceipt
+    recorded: Recorded = Recorded()
+
+
+@dataclass(frozen=True)
+class DraftResult:
+    receipt: DraftReceipt
+    recorded: Recorded = Recorded()
 
 
 @dataclass(frozen=True)
@@ -137,6 +166,33 @@ def release_line(
         return release_differences(conn, tdcc, differences, calendar)
 
 
+def _record_steps(settings: ConnectionSettings | None, records: Sequence[StepRecord]) -> Recorded:
+    """清單產出之後寫步驟紀錄；沒有連線設定（只用 Excel 跑）時不寫，連不上或寫入失敗時原因放在結果裡。
+
+    沒有要寫的（例如整批跳過）不連資料庫。
+    """
+    if settings is None:
+        return Recorded(skipped=True)
+    if not records:
+        return Recorded()
+    try:
+        conn = connect(settings)
+    except DatabaseError as exc:
+        return Recorded(error=_first_line(exc), database_error=exc)
+    with conn:
+        return _record_with(conn, records)
+
+
+def _record_with(conn: psycopg.Connection, records: Sequence[StepRecord]) -> Recorded:
+    import psycopg
+
+    try:
+        require_current_schema(conn)
+        return Recorded(write_records(conn, records))
+    except (DatabaseError, psycopg.Error) as exc:
+        return Recorded(error=_first_line(exc))
+
+
 # ---------- 2 起單資料 ----------
 
 
@@ -162,6 +218,21 @@ def import_order_sheet(
         return import_orders(drafts, conn, config)
 
 
+# ---------- 3 準備、5 放回 ----------
+
+
+def run_prepare(settings: ConnectionSettings | None, text: str, root: Path, out: Path) -> PrepareResult:
+    """準備批次（產生批次資料夾與準備清單），再為已準備的每檔留步驟紀錄。"""
+    receipt = prepare_batch(text, root, out)
+    return PrepareResult(receipt, _record_steps(settings, prepared_records(receipt)))
+
+
+def run_return(settings: ConnectionSettings | None, batch: Path, result: Path) -> ReturnResult:
+    """放回商品資料夾（產生放回清單），再為放回的每檔留步驟紀錄。"""
+    receipt = return_to_folders(batch, result)
+    return ReturnResult(receipt, _record_steps(settings, returned_records(receipt)))
+
+
 # ---------- 6 寄信草稿 ----------
 
 
@@ -173,10 +244,11 @@ def read_latest_import(settings: ConnectionSettings) -> ImportInfo | None:
 
 def make_mail_drafts(
     settings: ConnectionSettings, text: str, root: Path, out: Path, *, template_path: Path | None
-) -> DraftReceipt:
-    """在 Outlook 建 TS／IIS 草稿（#29），結果清單存在 `out` 底下。"""
+) -> DraftResult:
+    """在 Outlook 建 TS／IIS 草稿（#29），結果清單存在 `out` 底下；再為建了草稿的每檔留步驟紀錄。"""
     with connect(settings) as conn:
-        return create_drafts(text, root, out, conn, template_path=template_path)
+        receipt = create_drafts(text, root, out, conn, template_path=template_path)
+        return DraftResult(receipt, _record_with(conn, drafted_records(receipt)))
 
 
 # ---------- 7 人工維護 ----------

@@ -91,6 +91,7 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
         "workflow.other_product",
         "workflow.price_import",
         "workflow.product",
+        "workflow.step_record",
         "workflow.term_correction",
         "workflow.trade_row",
         "workflow.trade_row_correction",
@@ -199,3 +200,20 @@ def test_a_product_can_be_stored_with_only_some_required_terms(pg) -> None:
     ]
     with pytest.raises(psycopg.errors.NotNullViolation):
         pg.execute(insert, ("029199990002", None, import_id))  # 上手照舊不可空白
+
+
+@pytest.mark.db
+def test_step_records_migration_keeps_products(pg) -> None:
+    """資料表版本 0015 只新增步驟紀錄表（#151），既有的商品條件不動。"""
+    _database_before(pg, 15)
+    pg.execute(
+        "INSERT INTO workflow.product (tdcc, product, issuer, status_event, source) VALUES (%s, 'FCN', 'SG', '在庫', '人工維護')",
+        ("147000000001",),
+    )
+
+    apply_migrations(pg)
+
+    assert pg.execute("SELECT tdcc, issuer, source FROM workflow.product").fetchall() == [
+        ("147000000001", "SG", "人工維護")
+    ]
+    assert pg.execute("SELECT count(*) FROM workflow.step_record").fetchone()[0] == 0

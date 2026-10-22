@@ -17,7 +17,7 @@ from sp_workflow.order_import import drafts_from
 from sp_workflow.order_terms import OrderRow
 from sp_workflow.preparation import PREPARED, SKIPPED, PreparedDocument, PrepareReceipt, ProductOutcome
 from sp_workflow.tabs.base import DatabaseLogin
-from sp_workflow.window_actions import ReadResult
+from sp_workflow.window_actions import PrepareResult, ReadResult
 
 
 def texts(widget: tk.Misc, kind: type[tk.Misc]) -> list[str]:
@@ -56,6 +56,11 @@ def prepared_receipt(batch: Path) -> PrepareReceipt:
     )
     skipped = ProductOutcome("147000000002", SKIPPED, "找不到說明書")
     return PrepareReceipt(batch, batch / "準備清單.xlsx", (ready, skipped))
+
+
+def prepared_result(batch: Path) -> PrepareResult:
+    """`prepared_receipt`，步驟紀錄已寫進資料庫。"""
+    return PrepareResult(prepared_receipt(batch))
 
 
 def read_result(*rows: OrderRow) -> ReadResult:

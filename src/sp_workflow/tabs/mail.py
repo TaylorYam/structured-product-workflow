@@ -1,4 +1,4 @@
-"""「6 寄信草稿」分頁：貼核對通過的 TDCC，在 Outlook 建 TS／IIS 草稿給承作的 FC（#29）。"""
+"""「6 寄信草稿」分頁：貼核對通過的 TDCC，在 Outlook 建 TS／IIS 草稿給承作的 FC（#29），同時留步驟紀錄（#151）。"""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from tkinter import messagebox, ttk
 
 from sp_workflow.daily_import import ImportInfo
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.mail_drafts import DRAFTED, NOT_NEEDED, DraftReceipt, MailDraftError, mail_template_from_env
-from sp_workflow.tabs.base import TITLE, DatabaseLogin, RootFolder, Tab, ask_dir
-from sp_workflow.window_actions import make_mail_drafts, read_latest_import
+from sp_workflow.mail_drafts import DRAFTED, NOT_NEEDED, MailDraftError, mail_template_from_env
+from sp_workflow.tabs.base import TITLE, DatabaseLogin, RootFolder, Tab, ask_dir, record_note
+from sp_workflow.window_actions import DraftResult, make_mail_drafts, read_latest_import
 
 
 class MailDraftTab(Tab):
@@ -86,7 +86,7 @@ class MailDraftTab(Tab):
                 self.status_var.set("已取消，沒有建立任何草稿。")
                 return
 
-            def run() -> DraftReceipt:
+            def run() -> DraftResult:
                 return make_mail_drafts(settings, text, root, out, template_path=template_path)
 
             self.run_in_background(run, "建立草稿中…（在根目錄底下搜尋商品資料夾）", self._done)
@@ -96,20 +96,22 @@ class MailDraftTab(Tab):
     def _done(self, result: object) -> None:
         self.start_button.configure(state=tk.NORMAL)
         self.db.after_run(result)
-        if not isinstance(result, DraftReceipt):
+        if not isinstance(result, DraftResult):
             return
-        problems = [o.status not in (DRAFTED, NOT_NEEDED) for o in result.outcomes]  # 不需寄送的不算問題
-        for o, problem in zip(result.outcomes, problems, strict=True):
+        recorded, receipt = result.recorded, result.receipt
+        problems = [o.status not in (DRAFTED, NOT_NEEDED) for o in receipt.outcomes]  # 不需寄送的不算問題
+        for o, problem in zip(receipt.outcomes, problems, strict=True):
             self.add_row((o.tdcc, o.status, "、".join(o.to), o.reason), problem=problem)
-        drafted = sum(o.status == DRAFTED for o in result.outcomes)
-        not_drafted = len(result.outcomes) - drafted
-        last = _import_text(result.last_import) if result.last_import else "沒有匯入紀錄"
+        drafted = sum(o.status == DRAFTED for o in receipt.outcomes)
+        not_drafted = len(receipt.outcomes) - drafted
+        last = _import_text(receipt.last_import) if receipt.last_import else "沒有匯入紀錄"
         status = (
             f"完成：{drafted} 封草稿已建立（在 Outlook 草稿匣，請確認後再寄出）、"
-            f"{not_drafted} 檔沒有建立。最近一次每日匯入：{last}。結果清單：{result.list_path}"
+            f"{not_drafted} 檔沒有建立。最近一次每日匯入：{last}。結果清單：{receipt.list_path}"
         )
-        if result.unreadable_dirs:
-            status += f"\n注意：搜尋時有 {len(result.unreadable_dirs)} 個資料夾讀不到（例如 {result.unreadable_dirs[0]}），裡面的商品資料夾找不到。"
+        if receipt.unreadable_dirs:
+            status += f"\n注意：搜尋時有 {len(receipt.unreadable_dirs)} 個資料夾讀不到（例如 {receipt.unreadable_dirs[0]}），裡面的商品資料夾找不到。"
+        status += record_note(recorded)
         self.finish((("已建草稿（檔）", drafted, False), ("沒有建立（檔）", not_drafted, any(problems))), status)
 
 
