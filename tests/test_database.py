@@ -124,27 +124,58 @@ def _nullable(pg) -> dict[str, bool]:
     )
 
 
+def _database_before(pg, version: int) -> None:
+    """把測試資料庫重建成只套用到 `version` 之前的資料表版本（模擬還沒升級的資料庫）。"""
+    pg.execute("DROP SCHEMA mailbox, workflow CASCADE")
+    pg.execute(f"DELETE FROM public.{database.VERSION_TABLE}")
+    for applied, name, text in database.migration_files():
+        if applied >= version:
+            break
+        pg.execute(text)
+        pg.execute(f"INSERT INTO public.{database.VERSION_TABLE} (version, name) VALUES (%s, %s)", (applied, name))
+
+
 @pytest.mark.db
 def test_upgrading_to_0012_lets_required_terms_be_blank_and_keeps_existing_products(pg) -> None:
     """#114：起單資料必填欄對應的欄可以空白，識別欄照舊不可空白；migration 前已有的商品不變。"""
-    pg.execute("DROP SCHEMA mailbox, workflow CASCADE")
-    pg.execute(f"DELETE FROM public.{database.VERSION_TABLE}")
-    for version, name, text in database.migration_files():
-        if version >= 12:
-            break
-        pg.execute(text)
-        pg.execute(f"INSERT INTO public.{database.VERSION_TABLE} (version, name) VALUES (%s, %s)", (version, name))
+    _database_before(pg, 12)
     seed_products(pg, [inventory(A, [("台北", 100000)])])
     before = pg.execute("SELECT * FROM workflow.product").fetchall()
 
     applied = apply_migrations(pg)
 
-    assert applied == ["0012_partial_product_terms.sql"]
+    assert applied[0] == "0012_partial_product_terms.sql"
     assert pg.execute("SELECT * FROM workflow.product").fetchall() == before
     nullable = _nullable(pg)
     blank = [c for c in REQUIRED_COLUMNS if c not in IDENTITY_COLUMNS]  # 含 KO Type／Barrier Type 換算的代碼欄
     assert [c for c in blank if not nullable[c]] == []
     assert [c for c in IDENTITY_COLUMNS if nullable[c]] == []
+
+
+@pytest.mark.db
+def test_upgrading_to_0013_keeps_corrections_and_allows_manual_products(pg) -> None:
+    """#115：以前的更正紀錄都是已鎖住的商品；人工維護建立的商品沒有匯入批次，其他來源照舊要有。"""
+    import psycopg
+
+    _database_before(pg, 13)
+    seed_products(pg, [inventory(A, [("台北", 100000)])])
+    pg.execute(
+        "INSERT INTO workflow.term_correction (tdcc, corrected_by, changes, previous) VALUES (%s, 'op', '[]', '{}')",
+        (A,),
+    )
+
+    applied = apply_migrations(pg)
+
+    assert applied == ["0013_manual_maintenance.sql"]
+    assert pg.execute("SELECT locked, previous FROM workflow.term_correction").fetchall() == [(True, {})]
+    insert = "INSERT INTO workflow.product (tdcc, product, issuer, status_event, source) VALUES (%s, 'FCN', 'SG', '在庫', %s)"
+    pg.execute(insert, ("037199990002", "人工維護"))
+    pg.execute(
+        "INSERT INTO workflow.term_correction (tdcc, corrected_by, changes, locked) VALUES (%s, 'op', '[]', false)",
+        ("037199990002",),
+    )
+    with pytest.raises(psycopg.errors.CheckViolation):
+        pg.execute(insert, ("037199990003", "Order"))  # 起單資料匯入的商品照舊要有匯入批次
 
 
 @pytest.mark.db

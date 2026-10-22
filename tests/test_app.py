@@ -19,7 +19,7 @@ from fcn_checker.ingestion import IngestionError
 from fcn_checker.panel import parse_args
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.saving import SaveReceipt
-from order_synth import CONFIG, missing_row, order_row
+from order_synth import CONFIG, VALUES, maintenance_draft, missing_row, order_row
 from sp_workflow import app
 from sp_workflow.check_terms import DONE, TO_CONFIRM, WAIT_PRICES, CalcLine, CalcReceipt, Difference
 from sp_workflow.daily_import import (
@@ -33,11 +33,21 @@ from sp_workflow.daily_import import (
 from sp_workflow.documents import DocKind
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.mail_drafts import DRAFTED, NOT_NEEDED, DraftOutcome, DraftReceipt
+from sp_workflow.order_import import (
+    LOCKED,
+    MAINTAIN_NEW,
+    MAINTAIN_OPEN,
+    MISSING_NOTE,
+    MissingProduct,
+    OrderDraft,
+    OrderImportLine,
+    OrderImportReceipt,
+    drafts_from,
+)
 from sp_workflow.order_import import NEW as ORDER_NEW
 from sp_workflow.order_import import SKIPPED as ORDER_SKIPPED
-from sp_workflow.order_import import OrderImportLine, OrderImportReceipt, drafts_from
+from sp_workflow.order_terms import FIELDS, REQUIRED, OrderRow
 from sp_workflow.order_terms import PENDING as ORDER_PENDING
-from sp_workflow.order_terms import OrderRow
 from sp_workflow.preparation import PREPARED, SKIPPED, PreparedDocument, PrepareReceipt, ProductOutcome
 from sp_workflow.returning import NOT_RETURNED, RETURNED, ReturnOutcome, ReturnReceipt
 
@@ -81,7 +91,7 @@ def test_tabs_follow_the_daily_order(master, tmp_path: Path) -> None:
     window = app.PanelWindow(master, FolderMemory.under(tmp_path), session=PanelSession(install_root=tmp_path))
 
     assert master.title() == "FCN Workflow"
-    assert tab_titles(window) == ["1 每日匯入", "2 起單資料", "3 準備", "4 核對", "5 放回", "6 寄信草稿"]
+    assert tab_titles(window) == ["1 每日匯入", "2 起單資料", "3 準備", "4 核對", "5 放回", "6 寄信草稿", "7 人工維護"]
     assert window.notebook.select() == str(window.daily.frame)
 
 
@@ -280,7 +290,7 @@ def test_order_terms_tab_remembers_its_sheet(master, tmp_path: Path) -> None:
 
     assert window.orders.sheet_var.get() == "D:/ELN/起單建檔_20261015.xlsm"
     assert not hasattr(window.orders, "root_folder"), "起單資料頁不用根目錄（#97）"
-    assert texts(window.orders.buttons, ttk.Button) == ["讀取", "匯入資料庫", "更正商品條件…", "放行差異…"]
+    assert texts(window.orders.buttons, ttk.Button) == ["讀取", "匯入資料庫", "放行差異…"], "更正搬到人工維護（#115）"
     assert str(window.orders.import_button.cget("state")) == "disabled"
 
 
@@ -538,7 +548,7 @@ def test_sidebar_switches_steps_and_follows_the_next_buttons(master, tmp_path: P
     window = new_window(master, tmp_path)
     steps = window.sidebar.steps
 
-    assert [step.cget("text").split()[0] for step in steps.values()] == ["1", "2", "3", "4", "5", "6"]
+    assert [step.cget("text").split()[0] for step in steps.values()] == ["1", "2", "3", "4", "5", "6", "7"]
     steps[str(window.prepare.frame)].invoke()
     master.update()
     assert window.notebook.select() == str(window.prepare.frame)
@@ -555,8 +565,8 @@ def test_sidebar_switches_steps_and_follows_the_next_buttons(master, tmp_path: P
 def test_page_headers_show_their_step(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
 
-    assert window.prepare.header.step.get() == "步驟 3／6"
-    assert window.check.header.step.get() == "步驟 4／6"
+    assert window.prepare.header.step.get() == "步驟 3／7"
+    assert window.check.header.step.get() == "步驟 4／7"
 
 
 def test_pasted_tdccs_are_counted_once_each(master, tmp_path: Path) -> None:
@@ -596,9 +606,9 @@ def test_check_key_figures_hide_when_results_are_cleared(master, tmp_path: Path)
 
 def test_every_page_header_shows_its_step(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
-    pages = (window.daily, window.orders, window.prepare, window.check, window.returning, window.mail)
+    pages = (window.daily, window.orders, window.prepare, window.check, window.returning, window.mail, window.manual)
 
-    assert [page.header.step.get() for page in pages] == [f"步驟 {n}／6" for n in range(1, 7)]
+    assert [page.header.step.get() for page in pages] == [f"步驟 {n}／7" for n in range(1, 8)]
 
 
 @pytest.mark.parametrize("tab_name", ["orders", "mail"])
@@ -1371,113 +1381,261 @@ def test_folded_excel_setup_names_the_reference_workbook(master, tmp_path: Path)
     assert shown(check.sheet_button), "Excel 來源展開時有參考條件表那一列"
 
 
-# ---------------------------------------------------------------- 更正商品條件（#55）
+# ---------------------------------------------------------------- 人工維護（#115、ADR 0017）
+
+A_TDCC, B_TDCC, NEW_TDCC = "029199990001", "029199990002", "029199990003"
 
 
-def correction_draft(tdcc: str = "029199990001"):
-    """資料庫帶出的已鎖住商品（`load_correction` 的結果，不連資料庫）。"""
-    (draft,) = drafts_from([order_row(tdcc)])
-    draft.stored = dict(draft.values)
-    draft.correcting = True
-    return draft
+def new_product_draft(tdcc: str = NEW_TDCC) -> OrderDraft:
+    """只有交易明細的 TDCC：從空白開始，商品種類 FCN。"""
+    values = {**dict.fromkeys(FIELDS), "Product": "FCN"}
+    row = OrderRow(tdcc, MAINTAIN_NEW, "BARC", dict(values))
+    return OrderDraft(row, dict(values), dict(values), dict(values), database_checked=True, correcting=True)
 
 
-def test_correct_asks_for_a_tdcc_starting_from_the_selected_locked_product(master, tmp_path, monkeypatch) -> None:
-    window = order_window(master, tmp_path, order_row("029199990001"), order_row("029199990002"))
-    window.orders.read.drafts[1].locked = "已核對通過，條件已鎖住"
-    window.orders.table.selection_set("1")
-    asked, started = [], []
-    monkeypatch.setattr(app.simpledialog, "askstring", lambda *a, **k: asked.append(k["initialvalue"]) or "0291 x")
-    monkeypatch.setattr(app.messagebox, "showerror", lambda *a, **k: started.append("錯誤"))
-    monkeypatch.setattr(window.orders.db, "settings", lambda **k: object())
-    monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: started.append(a[1]))
-
-    window.orders.correct()
-    monkeypatch.setattr(app.simpledialog, "askstring", lambda *a, **k: " 029199990002 ")
-    window.orders.correct()
-
-    assert asked == ["029199990002"]
-    assert started == ["錯誤", "讀取 029199990002 的條件中…"]
-    assert str(window.orders.correct_button.cget("state")) == "disabled", "讀取中不能再按"
+def missing(tdcc: str, status: str = MAINTAIN_OPEN, **changes) -> MissingProduct:
+    """「檢查」列出的一檔：只有交易明細的全部空白。"""
+    values = {**VALUES, **changes} if status == MAINTAIN_OPEN else dict.fromkeys(FIELDS)
+    return MissingProduct(tdcc, "BARC", status, values, tuple(n for n in REQUIRED if values.get(n) is None))
 
 
-def test_the_correction_window_shows_changes_and_keeps_the_issue_date_fixed(master, tmp_path, monkeypatch) -> None:
+def checked_window(master, tmp_path: Path, *products: MissingProduct) -> app.PanelWindow:
     window = new_window(master, tmp_path)
-    monkeypatch.setattr(app.tk.Toplevel, "grab_set", lambda self: None)
-    window.orders._correction_loaded(app._LoadedCorrection(correction_draft(), CONFIG))
-    (dialog,) = [w for w in master.winfo_children() if isinstance(w, tk.Toplevel)]
-    editor = next(w for w in dialog.winfo_children()[0].winfo_children() if isinstance(w, app.OrderEditor))
+    window.manual._checked(app._Checked(products, CONFIG))
+    return window
 
+
+def opened(window: app.PanelWindow, draft: OrderDraft):
+    window.manual._opened(app._Opened(draft, CONFIG))
+    return window.manual.editor
+
+
+def without_database(tab, monkeypatch) -> list[str]:
+    """不連資料庫：記下背景工作的說明。"""
+    started: list[str] = []
+    monkeypatch.setattr(tab.db, "settings", lambda **k: object())
+    monkeypatch.setattr(tab, "run_in_background", lambda *a, **k: started.append(a[1]))
+    return started
+
+
+def test_check_lists_products_with_red_cells_where_data_is_missing(master, tmp_path: Path) -> None:
+    window = checked_window(
+        master,
+        tmp_path,
+        missing(B_TDCC, **{"Strike (%)": None, "Maturity date": None}),
+        missing(NEW_TDCC, MAINTAIN_NEW),
+    )
+    cells = window.manual.cells
+
+    assert cells.keys == [B_TDCC, NEW_TDCC]
+    assert cells.background(B_TDCC, "Maturity date") == app._PROBLEM_BG
+    assert cells.background(B_TDCC, "Coupon p.a. (%)") == app.SURFACE
+    assert (cells.text(B_TDCC, "Coupon p.a. (%)"), cells.text(B_TDCC, "Maturity date")) == ("12.5", "")
+    assert cells.text(NEW_TDCC, "status") == MAINTAIN_NEW and cells.text(NEW_TDCC, "tdcc") == NEW_TDCC
+    assert all(cells.background(NEW_TDCC, name) == app._PROBLEM_BG for name in REQUIRED)
+    assert window.manual.kpis.values == (("缺資料（檔）", 2, True), ("只有交易明細（檔）", 1, False))
+    assert window.manual.editor.draft is None, "檢查完不自動打開"
+
+
+def test_nothing_missing_says_so(master, tmp_path: Path) -> None:
+    window = checked_window(master, tmp_path)
+
+    assert window.manual.cells.keys == []
+    assert window.manual.status_var.get() == "檢查完了：沒有還沒鎖住、缺資料的商品。"
+
+
+def test_the_tdcc_column_stays_left_while_the_fields_scroll(master, tmp_path: Path) -> None:
+    cells = checked_window(master, tmp_path, *(missing(f"0291999900{n:02}") for n in range(1, 40))).manual.cells
+
+    cells._xview("moveto", 0.5)
+    cells._yview("moveto", 0.5)
+
+    assert cells.body.xview()[0] > 0 and cells.header.xview() == cells.body.xview(), "表頭跟著左右捲"
+    assert cells.side.xview()[0] == 0 and cells.corner.xview()[0] == 0, "TDCC 那一欄不動"
+    assert cells.body.yview()[0] > 0 and cells.side.yview() == cells.body.yview(), "上下捲時兩邊一起動"
+    assert cells.header.yview()[0] == 0
+
+
+def test_clicking_a_row_opens_that_product(master, tmp_path: Path, monkeypatch) -> None:
+    window = checked_window(
+        master, tmp_path, missing(B_TDCC, **{"Maturity date": None}), missing(NEW_TDCC, MAINTAIN_NEW)
+    )
+    started = without_database(window.manual, monkeypatch)
+
+    window.manual.cells._choose(NEW_TDCC)
+
+    assert started == [f"讀取 {NEW_TDCC} 的條件中…"]
+    assert window.manual.cells.selected == NEW_TDCC
+    assert str(window.manual.check_button.cget("state")) == "disabled", "讀取中不能再按"
+
+
+def test_any_tdcc_can_be_typed_in_to_open(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    started = without_database(window.manual, monkeypatch)
+    errors: list[str] = []
+    monkeypatch.setattr(app.messagebox, "showerror", lambda *a, **k: errors.append(a[1]))
+
+    window.manual.tdcc_var.set("0291 x")
+    window.manual.open_typed()
+    window.manual.tdcc_var.set(f" {A_TDCC} ")
+    window.manual.open_typed()
+
+    assert errors == ["請輸入一筆 TDCC。"]
+    assert started == [f"讀取 {A_TDCC} 的條件中…"]
+
+
+def test_an_unlocked_product_marks_blank_fields_red_but_can_be_saved(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+
+    editor = opened(window, maintenance_draft(**{"Maturity date": None}))
+
+    maturity = editor.rows["Maturity date"]
+    assert maturity.label.cget("background") == app._PROBLEM_BG and maturity.note.cget("text") == MISSING_NOTE
+    assert window.manual.intro_var.get().startswith("還沒鎖住")
+    assert str(window.manual.save_button.cget("state")) == "normal"
+    assert str(editor.rows["Issue date"].input.cget("state")) == "normal", "還沒鎖住的 Issue date 同起單資料可以改"
     type_into(editor, "Coupon p.a. (%)", "11")
-    editor.rows["Issue date"].var.set("2026-10-23")
-    editor._commit("Issue date")
-
-    assert dialog.title() == "更正商品條件　029199990001"
     coupon = editor.rows["Coupon p.a. (%)"]
     assert coupon.label.cget("background") == app._DIFFERENT_BG and coupon.note.cget("text") == "資料庫是 12.5"
+
+
+def test_a_locked_product_follows_the_correction_rules(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+
+    editor = opened(window, maintenance_draft(LOCKED))
+    type_into(editor, "BBG Code 3", "CCC UN")
+    type_into(editor, "Maturity date", "")
+
+    assert window.manual.intro_var.get().startswith("已核對通過、條件已鎖住")
     assert str(editor.rows["Issue date"].input.cget("state")) == "disabled"
     assert editor.rows["Issue date"].note.cget("text") == "TS 回填的欄位，不能更正"
-    assert editor.draft.values["Issue date"] == dt.date(2026, 10, 22), "不能改"
-
-    type_into(editor, "BBG Code 3", "CCC UN")
     assert editor.rows["BBG Code 3"].note.cget("text") == "資料庫是 空白", "補上也標黃"
-    assert editor.rows["BBG Code 3"].database.winfo_manager() == "grid"
-
-    type_into(editor, "BBG Code 3", "")
-    type_into(editor, "BBG Code 2", "")
-    assert editor.rows["BBG Code 2"].note.cget("text") == "資料庫是 BBB UN", "清空也標黃，可以改回"
+    assert editor.rows["Maturity date"].note.cget("text") == "必填", "已鎖住的不能留空白"
 
 
-def test_saving_a_correction_closes_the_window_and_reports_the_changes(master, tmp_path, monkeypatch) -> None:
+def test_a_trade_only_product_starts_blank(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
-    monkeypatch.setattr(app.tk.Toplevel, "grab_set", lambda self: None)
-    started, shown = [], []
-    monkeypatch.setattr(window.orders.db, "settings", lambda **k: object())
-    monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: started.append(a[1]))
-    monkeypatch.setattr(app.messagebox, "showinfo", lambda *a, **k: shown.append(a[1]))
-    dialog = app.CorrectionDialog(window.orders, correction_draft(), CONFIG)
-    type_into(dialog.editor, "Coupon p.a. (%)", "11")
 
-    dialog.save()
-    assert started == ["更正 029199990001 中…"]
-    assert str(dialog.save_button.cget("state")) == "disabled", "儲存中不能改"
-    receipt = app.CorrectionReceipt(
-        "029199990001",
+    editor = opened(window, new_product_draft())
+
+    assert window.manual.intro_var.get().startswith("資料庫還沒有這檔的商品條件")
+    assert editor.rows["Currency"].note.cget("text") == MISSING_NOTE
+    assert editor.rows["Product"].var.get() == "FCN"
+    assert editor.title_var.get() == f"{NEW_TDCC}　BARC"
+
+
+def test_saving_reports_the_changes_and_updates_the_check_table(master, tmp_path: Path, monkeypatch) -> None:
+    window = checked_window(
+        master,
+        tmp_path,
+        missing(A_TDCC, **{"Maturity date": None}),
+        missing(B_TDCC, **{"Maturity date": None, "Coupon p.a. (%)": None}),
+    )
+    tab = window.manual
+    started = without_database(tab, monkeypatch)
+    editor = opened(window, maintenance_draft(**{"Maturity date": None}))
+    type_into(editor, "Maturity date", "2027-04-22")
+    tab.reason_var.set("起單建檔漏了")
+
+    tab.save()
+    assert started == [f"存檔中…（{A_TDCC}）"]
+    assert str(tab.save_button.cget("state")) == "disabled", "存檔中不能改"
+    calc = CalcLine(A_TDCC, DONE, "", True)
+    tab._saved(app.CorrectionReceipt(A_TDCC, 7, (("Maturity date", None, dt.date(2027, 4, 22)),), calc, locked=False))
+
+    assert tab.status_var.get() == (
+        f"已存檔 {A_TDCC} 的商品條件（第 7 筆紀錄）：Maturity date 空白 → 2027-04-22。\n核對條件重算後：完成。"
+    )
+    assert tab.cells.keys == [B_TDCC], "補齊的不再列出"
+    assert tab.reason_var.get() == "" and str(tab.save_button.cget("state")) == "normal"
+
+    editor = opened(window, maintenance_draft(tdcc=B_TDCC, **{"Maturity date": None, "Coupon p.a. (%)": None}))
+    type_into(editor, "Maturity date", "2027-04-22")
+    tab._saved(app.CorrectionReceipt(B_TDCC, 8, (), calc, locked=False, missing=("Coupon p.a. (%)",)))
+
+    assert tab.cells.keys == [B_TDCC], "還缺的照樣列出"
+    assert tab.cells.background(B_TDCC, "Maturity date") != app._PROBLEM_BG
+    assert tab.cells.background(B_TDCC, "Coupon p.a. (%)") == app._PROBLEM_BG
+
+
+def test_save_messages_for_new_and_locked_products() -> None:
+    created = app.CorrectionReceipt(
+        NEW_TDCC,
+        8,
+        (("Coupon p.a. (%)", None, Decimal(11)),),
+        CalcLine(NEW_TDCC, TO_CONFIRM, "缺 Currency", True),
+        locked=False,
+        created=True,
+        missing=("Currency",),
+    )
+    corrected = app.CorrectionReceipt(
+        A_TDCC,
         3,
         (("Coupon p.a. (%)", Decimal("12.5"), Decimal(11)), ("UL_2_下限價", Decimal("32.5"), None)),
-        CalcLine("029199990001", TO_CONFIRM, "UF：起單資料 2、交易明細 0.0215", True),
+        CalcLine(A_TDCC, TO_CONFIRM, "UF：起單資料 2、交易明細 0.0215", True),
     )
-    dialog._saved(receipt)
 
-    assert not dialog.window.winfo_exists()
-    assert shown == [
-        "已更正 029199990001（第 3 次更正）：Coupon p.a. (%) 12.5 → 11、UL_2_下限價 32.5 → 空白。"
+    assert app._correction_text(created) == (
+        f"已新增 {NEW_TDCC} 的商品條件（第 8 筆紀錄）：Coupon p.a. (%) 空白 → 11。\n核對條件重算後：待確認（缺 Currency）。"
+    )
+    assert app._correction_text(corrected) == (
+        f"已更正 {A_TDCC}（第 3 次更正）：Coupon p.a. (%) 12.5 → 11、UL_2_下限價 32.5 → 空白。"
         "商品維持鎖住，核對結果沒有變。\n核對條件重算後：待確認（UF：起單資料 2、交易明細 0.0215）。"
-    ]
-    assert window.orders.status_var.get() == shown[0]
+    )
+    assert app._correction_text(app.CorrectionReceipt(A_TDCC, None, locked=False)) == (
+        f"{A_TDCC} 沒有改任何欄位，沒有寫入。"
+    )
 
 
-def test_a_rejected_correction_keeps_the_window_open(master, tmp_path, monkeypatch) -> None:
+def test_a_rejected_save_keeps_the_edits(master, tmp_path: Path, monkeypatch) -> None:
     window = new_window(master, tmp_path)
-    monkeypatch.setattr(app.tk.Toplevel, "grab_set", lambda self: None)
-    dialog = app.CorrectionDialog(window.orders, correction_draft(), CONFIG)
+    tab = window.manual
+    without_database(tab, monkeypatch)
+    editor = opened(window, maintenance_draft())
+    type_into(editor, "Coupon p.a. (%)", "11")
+    tab.save()
 
-    dialog._saved(app.CorrectionError("029199990001：資料庫裡這檔的條件在打開之後改過了，請重新載入再更正"))
-    assert dialog.window.winfo_exists() and dialog.status_var.get().endswith("請重新載入再更正")
+    tab._saved(app.CorrectionError(f"{A_TDCC}：資料庫裡這檔的條件在打開之後改過了，請重新載入"))
 
-    dialog._saved(app.CorrectionReceipt("029199990001", None))
-    assert dialog.window.winfo_exists() and dialog.status_var.get() == "029199990001 沒有改任何欄位，沒有寫入。"
+    assert editor.draft.values["Coupon p.a. (%)"] == Decimal(11) and tab.has_unsaved()
+    assert str(tab.save_button.cget("state")) == "normal" and str(tab.reload_button.cget("state")) == "normal"
 
 
-def test_closing_with_unsaved_corrections_asks_first(master, tmp_path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
-    monkeypatch.setattr(app.tk.Toplevel, "grab_set", lambda self: None)
+def test_switching_products_with_unsaved_edits_asks_first(master, tmp_path: Path, monkeypatch) -> None:
+    window = checked_window(
+        master, tmp_path, missing(A_TDCC, **{"Maturity date": None}), missing(B_TDCC, **{"Maturity date": None})
+    )
+    tab = window.manual
+    started = without_database(tab, monkeypatch)
+    editor = opened(window, maintenance_draft(**{"Maturity date": None}))
+    type_into(editor, "Coupon p.a. (%)", "11")
     answers = [False, True]
     monkeypatch.setattr(app.messagebox, "askyesno", lambda *a, **k: answers.pop(0))
-    dialog = app.CorrectionDialog(window.orders, correction_draft(), CONFIG)
-    type_into(dialog.editor, "Tenor (m)", "12")
 
-    dialog.close()
-    assert dialog.window.winfo_exists()
-    dialog.close()
-    assert not dialog.window.winfo_exists()
+    tab.cells._choose(B_TDCC)
+    assert started == [] and tab.cells.selected == A_TDCC, "不換檔，選取回到原本那一檔"
+
+    tab.cells._choose(B_TDCC)
+    assert started == [f"讀取 {B_TDCC} 的條件中…"]
+
+
+def test_reload_reopens_the_current_product(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    started = without_database(window.manual, monkeypatch)
+    opened(window, maintenance_draft())
+
+    window.manual.reload()
+
+    assert started == [f"讀取 {A_TDCC} 的條件中…"]
+
+
+def test_closing_with_unsaved_maintenance_asks_and_stays_on_the_tab(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    type_into(opened(window, maintenance_draft()), "Tenor (m)", "12")
+    asked = []
+    monkeypatch.setattr(app.messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or False)
+
+    window.close()
+
+    assert len(asked) == 1 and "人工維護頁有改過、還沒存檔" in asked[0]
+    assert master.winfo_exists() and window.notebook.select() == str(window.manual.frame)
