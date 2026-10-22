@@ -261,6 +261,13 @@ def _guard(
     return stored, reason
 
 
+def not_correctable(stored: StoredTerms | None) -> str:
+    """這檔不能更正的原因（打開與存檔時都看）；空字串＝已鎖住、可以更正。"""
+    if stored is None:
+        return "資料庫沒有這檔商品"
+    return "" if stored.locked else "還沒鎖住（還沒核對通過），不用更正；請重新載入"
+
+
 def _stale(conn: psycopg.Connection, draft: OrderDraft, stored: StoredTerms | None, mode: Mode) -> str:
     if mode is Mode.IMPORT:
         if stored is not None and stored.locked:
@@ -272,10 +279,11 @@ def _stale(conn: psycopg.Connection, draft: OrderDraft, stored: StoredTerms | No
         if stored is not None:
             return _ALREADY_CREATED
         return "" if has_trade_rows(conn, draft.tdcc) else "交易明細已經沒有這檔，不能新增商品條件"
-    if stored is None:
-        return "資料庫沒有這檔商品" if mode is Mode.CORRECT else "資料庫已經沒有這檔商品，請重新載入"
-    if mode is Mode.CORRECT and not stored.locked:
-        return "還沒鎖住（還沒核對通過），不用更正；請重新載入"
+    if stored is None and mode is Mode.MAINTAIN:
+        return "資料庫已經沒有這檔商品，請重新載入"
+    if mode is Mode.CORRECT and (refused := not_correctable(stored)):
+        return refused
+    assert stored is not None
     if mode is Mode.MAINTAIN and stored.locked:
         return "打開之後已經鎖住了（核對通過），請重新載入"
     seen = draft.stored or {}

@@ -61,6 +61,7 @@ from sp_workflow.product_write import (
     has_trade_rows,
     import_terms,
     maintenance_mode,
+    not_correctable,
     read_stored,
     same_value,
     save_terms,
@@ -353,10 +354,9 @@ def load_correction(conn: psycopg.Connection, tdcc: str, config: ImportConfig) -
     """已鎖住的商品 → 可以編輯的確認資料（值、打開時的值都是資料庫目前的條件）；不能更正時丟 `CorrectionError`。"""
     _require_schema(conn)
     stored = read_stored(conn, tdcc)
-    if stored is None:
-        raise CorrectionError(f"{tdcc}：資料庫沒有這檔商品")
-    if not stored.locked:
-        raise CorrectionError(f"{tdcc}：還沒鎖住（還沒核對通過），不用更正；請重新載入")
+    if refused := not_correctable(stored):
+        raise CorrectionError(f"{tdcc}：{refused}")
+    assert stored is not None
     fields = stored.fields
     row = OrderRow(tdcc, LOCKED, _issuer_code(tdcc, stored.columns["issuer"], config), dict(fields))
     return OrderDraft(row, dict(fields), dict(fields), dict(fields), database_checked=True, correcting=True)

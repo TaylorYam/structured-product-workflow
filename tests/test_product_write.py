@@ -19,7 +19,7 @@ from sp_workflow.check_terms import CheckTermsError
 from sp_workflow.daily_import import import_daily
 from sp_workflow.database import DatabaseError
 from sp_workflow.order_import import OrderDraft, drafts_from, import_drafts, import_orders, open_maintenance
-from sp_workflow.product_write import LOCKED, NEW, OVERWRITTEN, SAME, Mode, save_terms
+from sp_workflow.product_write import LOCKED, NEW, OVERWRITTEN, SAME, SKIPPED, Mode, save_terms
 
 EDITING = (Mode.CORRECT, Mode.MAINTAIN)  # 資料庫已有這檔、打開來改
 
@@ -227,3 +227,19 @@ def test_a_failed_reload_keeps_the_import(pg, monkeypatch) -> None:
 
     assert result.receipt.lines[0].result == NEW and column(pg, "coupon_pct") == Decimal("12.5")
     assert result.recalc is not None and result.reload_error == "connection lost"
+
+
+@pytest.mark.db
+def test_a_product_created_while_importing_is_skipped_not_a_database_error(pg, monkeypatch) -> None:
+    """還不存在的列 FOR UPDATE 鎖不到：讀取之後別人新增了同一檔，這檔不匯入、其他照常，不是整批出錯。"""
+    (draft,) = drafts_from([order_row(changes={"Coupon p.a. (%)": Decimal(10)})], pg)
+    import_drafts(drafts_from([order_row()], pg), pg, CONFIG, user="other")
+    monkeypatch.setattr("sp_workflow.product_write.lock_terms", lambda conn, tdcc: None)  # 匯入時還看不到
+
+    receipt = import_drafts([draft], pg, CONFIG, user="tester")
+
+    assert (receipt.lines[0].result, receipt.lines[0].detail) == (
+        SKIPPED,
+        "讀取之後資料庫已經有這檔的商品條件，請重新讀取後再確認",
+    )
+    assert column(pg, "coupon_pct") == Decimal("12.5")
