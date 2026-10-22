@@ -77,7 +77,7 @@ class ProgressRow:
     lifecycle: str  # 存續狀態
     dates: tuple[dt.datetime | None, ...]  # 依 `DATE_COLUMNS`
     reason: str  # 卡住的原因
-    objection: str = ""  # 還沒解除的異議：「待確認：備註」（#157）；沒有時空白
+    objection: str = ""  # 還沒解除的異議：「待確認：事件 事件日：備註」（#157）；沒有時空白
 
 
 @dataclass(frozen=True)
@@ -233,7 +233,7 @@ def export_values(row: ProgressRow) -> tuple[object, ...]:
 
 
 def objection_text(objections: Iterable[Objection]) -> str:
-    """進度頁的異議欄：有還沒解除的異議時是「待確認：備註」（多筆用「；」接）。"""
+    """進度頁的異議欄：有還沒解除的異議時是「待確認：事件 事件日：備註」（多筆用「；」接）。"""
     notes = [f"{o.event} {o.event_date or ''}".strip() + f"：{o.note}" for o in objections]
     return f"待確認：{'；'.join(notes)}" if notes else ""
 

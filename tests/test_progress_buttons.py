@@ -18,13 +18,14 @@ from sp_workflow.lifecycle import (
     KO,
     REDEMPTION,
     AutoEvent,
+    LifecycleError,
     StoredEvent,
     current_events,
     open_objections,
     replace_auto_events,
 )
 from sp_workflow.progress import DATE_COLUMNS, FINISHED, SENT_STEP, TO_PREPARE, ProgressRow, load_progress
-from sp_workflow.tabs.progress_dialogs import FormDialog, parse_redemption
+from sp_workflow.tabs.progress_dialogs import FormDialog, parse_redemption, tdcc_list
 from sp_workflow.window_actions import (
     EventChoices,
     Registered,
@@ -33,6 +34,7 @@ from sp_workflow.window_actions import (
     object_to_event,
     register_redemptions,
     resolve_event_objection,
+    sent_before,
 )
 from window_synth import new_window
 
@@ -57,11 +59,14 @@ def test_marking_sent_finishes_the_product_and_a_bad_tdcc_only_fails_itself(pg, 
     result = mark_sent(pg_settings, [A, "12345"])
 
     assert result.done == (A,) and [t for t, _ in result.failed] == ["12345"]
+    assert result.failed[0][1].startswith("資料庫錯誤："), "資料庫拒絕的原因用中文開頭"
     assert step_count(pg, A) == 1
     (by,) = pg.execute("SELECT recorded_by FROM workflow.step_record WHERE tdcc = %s", (A,)).fetchone()
     assert by, "留誰寫的"
     (row,) = load_progress(pg, CONFIG, dt.date(2026, 10, 22))
     assert row.progress == FINISHED
+    assert sent_before(pg_settings, [B, A, A]) == (A,), "登記前從資料庫查已寄出過的"
+
 
 
 @pytest.mark.db
@@ -126,8 +131,14 @@ def test_the_form_keeps_open_until_the_input_is_valid(master) -> None:
     assert dialog.result is None and "備註" in dialog.error_var.get()
 
     dialog.note_var.set("上手通知不同")
+    assert dialog.bind("<Return>"), "Enter 等於按確定"
     dialog.confirm()
     assert dialog.result == (0, None, "上手通知不同")
+
+
+def test_long_tdcc_lists_are_shortened() -> None:
+    assert tdcc_list(["1", "2"]) == "1、2"
+    assert tdcc_list([str(i) for i in range(12)], limit=3) == "0、1、2 等 12 檔"
 
 
 # ---------------------------------------------------------------- 視窗
@@ -169,32 +180,87 @@ def test_nothing_is_written_without_a_selection(master, tmp_path: Path, monkeypa
     shown = []
     monkeypatch.setattr(messagebox, "showinfo", lambda *a, **k: shown.append(a[1]))
 
-    tab.mark_sent()
+    tab.record_sent()
     tab.raise_objection()
 
     assert actions == [] and len(shown) == 2 and "請先在表上選商品" in shown[0]
 
 
-@pytest.mark.parametrize(("answer", "written"), [(True, [A, B]), (False, [A]), (None, None)])
-def test_already_sent_products_are_asked_about_first(master, tmp_path: Path, monkeypatch, answer, written) -> None:
-    tab, actions = loaded(master, tmp_path, monkeypatch)
+def recording(tab, monkeypatch, before: tuple[str, ...]) -> list:
     calls = []
-    asked = []
-    monkeypatch.setattr(messagebox, "askyesnocancel", lambda *a, **k: asked.append(a[1]) or answer)
+    monkeypatch.setattr(sp_workflow.tabs.progress, "sent_before", lambda settings, tdccs: before)
     monkeypatch.setattr(
         sp_workflow.tabs.progress,
         "mark_sent",
         lambda settings, tdccs: calls.append(list(tdccs)) or Registered(tuple(tdccs)),
     )
+    return calls
+
+
+@pytest.mark.parametrize(("answer", "written"), [(True, [A, B]), (False, [A]), (None, None)])
+def test_already_sent_products_are_asked_about_first(master, tmp_path: Path, monkeypatch, answer, written) -> None:
+    tab, actions = loaded(master, tmp_path, monkeypatch, rows=(row(A), row(B)))
+    asked = []
+    monkeypatch.setattr(messagebox, "askyesnocancel", lambda *a, **k: asked.append(a[1]) or answer)
+    calls = recording(tab, monkeypatch, before=(B,))  # 畫面上還沒寄出，資料庫裡別人剛登記過
     select(tab, A, B)
 
-    tab.mark_sent()
+    tab.record_sent()
     run_all(actions)
 
-    assert B in asked[0] and A not in asked[0]
+    assert B in asked[0] and f"{A} " not in asked[0] and "還沒登記過的 1 檔" in asked[0]
     assert calls == ([] if written is None else [written])
     if written:
         assert f"登記已寄出：寫了 {len(written)} 檔。" in tab.status_var.get(), "寫完重新整理，狀態列先寫登記結果"
+        tab.refilter()
+        assert "登記已寄出" not in tab.status_var.get(), "登記結果只顯示一次"
+    else:
+        assert tab.status_var.get().startswith("共 2 檔"), "取消時狀態列回到原本的樣子"
+
+
+@pytest.mark.parametrize(("answer", "written"), [(True, [[A]]), (False, [])])
+def test_products_not_sent_yet_are_confirmed_too(master, tmp_path: Path, monkeypatch, answer, written) -> None:
+    tab, actions = loaded(master, tmp_path, monkeypatch)
+    asked = []
+    monkeypatch.setattr(messagebox, "askokcancel", lambda *a, **k: asked.append(a[1]) or answer)
+    calls = recording(tab, monkeypatch, before=())
+    select(tab, A)
+
+    tab.record_sent()
+    run_all(actions)
+
+    assert asked == [f"登記 1 檔已寄出：{A}？"] and calls == written
+
+
+def test_no_leaves_nothing_to_write(master, tmp_path: Path, monkeypatch) -> None:
+    tab, actions = loaded(master, tmp_path, monkeypatch)
+    shown = []
+    monkeypatch.setattr(messagebox, "askyesnocancel", lambda *a, **k: False)
+    monkeypatch.setattr(messagebox, "showinfo", lambda *a, **k: shown.append(a[1]))
+    calls = recording(tab, monkeypatch, before=(B,))
+    select(tab, B)
+
+    tab.record_sent()
+    run_all(actions)
+
+    assert calls == [] and shown == ["選中的都已經登記過已寄出，這次沒有寫。"]
+
+
+def test_a_partial_failure_of_sent_is_reported(master, tmp_path: Path, monkeypatch) -> None:
+    tab, actions = loaded(master, tmp_path, monkeypatch)
+    warnings = []
+    monkeypatch.setattr(messagebox, "askokcancel", lambda *a, **k: True)
+    monkeypatch.setattr(messagebox, "showwarning", lambda *a, **k: warnings.append(a[1]))
+    monkeypatch.setattr(sp_workflow.tabs.progress, "sent_before", lambda settings, tdccs: ())
+    monkeypatch.setattr(
+        sp_workflow.tabs.progress, "mark_sent", lambda settings, tdccs: Registered((A,), ((B, "資料庫錯誤：壞了"),))
+    )
+    select(tab, A, B)
+
+    tab.record_sent()
+    run_all(actions)
+
+    assert warnings == [f"登記已寄出：寫了 1 檔；寫不進去 1 檔：{B} 資料庫錯誤：壞了"]
 
 
 def test_a_failed_product_is_reported(master, tmp_path: Path, monkeypatch) -> None:
@@ -246,6 +312,40 @@ def test_raising_an_objection_picks_one_automatic_event(master, tmp_path: Path, 
 
     assert raised == [(7, "不同")]
     assert f"{A} 已提出異議（待確認）。" in tab.status_var.get()
+
+
+def test_cancelling_the_objection_form_restores_the_status(master, tmp_path: Path, monkeypatch) -> None:
+    tab, actions = loaded(master, tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        sp_workflow.tabs.progress, "event_choices", lambda settings, tdcc: EventChoices(tdcc, (EVENT,), ())
+    )
+    monkeypatch.setattr(sp_workflow.tabs.progress, "ask_objection", lambda parent, tdcc, events: None)
+    select(tab, A)
+
+    tab.raise_objection()
+    run_all(actions)
+
+    assert tab.status_var.get().startswith("共 2 檔") and str(tab.object_button.cget("state")) == "normal"
+    assert [tab.table.set(i, "tdcc") for i in tab.table.selection()] == [A], "選取照樣留著"
+
+
+def test_a_refused_objection_writes_nothing_and_unlocks_the_buttons(master, tmp_path: Path, monkeypatch) -> None:
+    tab, actions = loaded(master, tmp_path, monkeypatch)
+    refreshed = []
+    monkeypatch.setattr(
+        sp_workflow.tabs.progress, "event_choices", lambda settings, tdcc: EventChoices(tdcc, (EVENT,), ())
+    )
+    monkeypatch.setattr(sp_workflow.tabs.progress, "ask_objection", lambda parent, tdcc, events: (7, "不同"))
+    select(tab, A)
+    tab.raise_objection()
+    action, done = actions.pop(0)
+    done(action())
+    monkeypatch.setattr(tab, "refresh", lambda notice="": refreshed.append(notice))
+
+    action, done = actions.pop(0)
+    done(LifecycleError("這筆事件已被重新比價取代"))  # 背景的錯誤由 `_show_result` 先顯示，再交給 on_done
+
+    assert refreshed == [] and str(tab.object_button.cget("state")) == "normal"
 
 
 def test_objections_need_one_product_with_automatic_events(master, tmp_path: Path, monkeypatch) -> None:

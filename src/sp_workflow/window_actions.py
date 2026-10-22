@@ -345,6 +345,20 @@ def load_progress_rows(
         return load_progress(conn, config, today or dt.date.today())
 
 
+def sent_before(settings: ConnectionSettings, tdccs: Sequence[str]) -> tuple[str, ...]:
+    """登記已寄出前查（#157）：這些 TDCC 裡已經有「已寄出」步驟紀錄的，依傳入的順序。"""
+    with connect(settings) as conn:
+        require_current_schema(conn)
+        found = {
+            row[0]
+            for row in conn.execute(
+                "SELECT DISTINCT tdcc FROM workflow.step_record WHERE step = %s AND tdcc = ANY(%s)",
+                (SENT_STEP, list(tdccs)),
+            )
+        }
+    return tuple(t for t in dict.fromkeys(tdccs) if t in found)
+
+
 def mark_sent(settings: ConnectionSettings, tdccs: Sequence[str]) -> Registered:
     """登記已寄出（#157）：每檔寫一筆「已寄出」步驟紀錄（誰、何時）；寫不進去只影響那一檔。"""
     with connect(settings) as conn:
@@ -391,8 +405,10 @@ def _each(tdccs: Sequence[str], write: Callable[[str], object]) -> Registered:
     for tdcc in tdccs:
         try:
             write(tdcc)
-        except (LifecycleError, psycopg.Error) as exc:
+        except LifecycleError as exc:
             failed.append((tdcc, _first_line(exc)))
+        except psycopg.Error as exc:
+            failed.append((tdcc, f"資料庫錯誤：{_first_line(exc)}"))
         else:
             done.append(tdcc)
     return Registered(tuple(done), tuple(failed))

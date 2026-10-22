@@ -22,7 +22,6 @@ from sp_workflow.progress import (
     DATE_COLUMNS,
     FINISHED,
     PROGRESS,
-    SENT_STEP,
     ProgressExport,
     ProgressRow,
     by_days,
@@ -31,7 +30,7 @@ from sp_workflow.progress import (
     filter_rows,
 )
 from sp_workflow.tabs.base import TITLE, DatabaseLogin, Tab
-from sp_workflow.tabs.progress_dialogs import ask_objection, ask_redemption, ask_resolution
+from sp_workflow.tabs.progress_dialogs import ask_objection, ask_redemption, ask_resolution, tdcc_list
 from sp_workflow.window_actions import (
     EventChoices,
     Registered,
@@ -41,6 +40,7 @@ from sp_workflow.window_actions import (
     object_to_event,
     register_redemptions,
     resolve_event_objection,
+    sent_before,
 )
 
 LIFECYCLES = (IN_STOCK, KO, DELIVERY, MATURITY, REDEMPTION)
@@ -107,7 +107,7 @@ class ProgressTab(Tab):
         self.refresh_button.pack(side=tk.LEFT)
         self.export_button = ttk.Button(self.buttons, text="匯出 Excel…", command=self.export)
         self.export_button.pack(side=tk.LEFT, padx=(8, 0))
-        self.sent_button = ttk.Button(self.buttons, text="登記已寄出", command=self.mark_sent)
+        self.sent_button = ttk.Button(self.buttons, text="登記已寄出", command=self.record_sent)
         self.redeem_button = ttk.Button(self.buttons, text="登記顧客贖回…", command=self.register_redemption)
         self.object_button = ttk.Button(self.buttons, text="提出異議…", command=self.raise_objection)
         self.resolve_button = ttk.Button(self.buttons, text="解除異議…", command=self.resolve_objection)
@@ -197,16 +197,22 @@ class ProgressTab(Tab):
             issuer="" if issuer == ALL_ISSUERS else issuer,
         )
         self.shown = self._sorted(rows)
+        selected = {self.table.set(item, "tdcc") for item in self.table.selection()}  # 重畫後還在表上的照樣選著
         self.table.delete(*self.table.get_children())
+        keep = []
         for row in self.shown:
             problem = row.progress != FINISHED and bool(row.reason)
-            self.table.insert("", tk.END, values=_cells(row), tags=("problem",) if problem else ())
+            item = self.table.insert("", tk.END, values=_cells(row), tags=("problem",) if problem else ())
+            if row.tdcc in selected:
+                keep.append(item)
+        self.table.selection_set(keep)
         unfinished = sum(row.progress != FINISHED for row in self.shown)
         notes = " ".join(error for error in (first_error, last_error) if error)
         self.finish(
             (("顯示（檔）", len(self.shown), False), ("還沒完成（檔）", unfinished, False)),
             f"{self.notice}共 {len(self.rows)} 檔，篩選後 {len(self.shown)} 檔；依{self._sort_text()}排序。{notes}".rstrip(),
         )
+        self.notice = ""  # 登記結果只在寫完後那一次顯示
         self._busy(self.working)
 
     def sort_by(self, key: str) -> None:
@@ -254,28 +260,45 @@ class ProgressTab(Tab):
         self.mark_done(False)
         self.run_in_background(lambda: action(settings), busy, on_done, clear=False)
 
-    def mark_sent(self) -> None:
-        """登記已寄出：選中的每檔寫一筆「已寄出」；已經登記過的先問要不要再寫一筆。"""
+    def record_sent(self) -> None:
+        """登記已寄出：先在背景查選中的哪幾檔已經登記過，問過才寫；每檔寫一筆「已寄出」。"""
         if self.working:
             return
         tdccs = self._selected()
         if not tdccs:
             return
-        sent = DATE_COLUMNS.index(SENT_STEP)
-        rows = {row.tdcc: row for row in self.shown}
-        again = [t for t in tdccs if rows[t].dates[sent] is not None]
+        self._start(
+            lambda settings: sent_before(settings, tdccs),
+            "檢查是否登記過已寄出中…",
+            lambda result: self._sent_checked(tdccs, result),
+        )
+
+    def _sent_checked(self, tdccs: list[str], result: object) -> None:
+        self.db.after_run(result)
+        self._busy(False)
+        if not isinstance(result, tuple):
+            return
+        again = [t for t in tdccs if t in result]
         if again:
+            fresh = len(tdccs) - len(again)
             answer = messagebox.askyesnocancel(
                 TITLE,
-                f"{'、'.join(again)} 已經登記過已寄出。\n是：這幾檔也再寫一筆；否：只寫還沒登記過的；取消：都不寫。",
+                f"{tdcc_list(again)} 已經登記過已寄出。\n"
+                f"是：這幾檔也再寫一筆；否：只寫還沒登記過的 {fresh} 檔；取消：都不寫。",
                 parent=self.master,
             )
             if answer is None:
+                self.refilter()
                 return
             if not answer:
                 tdccs = [t for t in tdccs if t not in again]
                 if not tdccs:
+                    messagebox.showinfo(TITLE, "選中的都已經登記過已寄出，這次沒有寫。", parent=self.master)
+                    self.refilter()
                     return
+        elif not messagebox.askokcancel(TITLE, f"登記 {len(tdccs)} 檔已寄出：{tdcc_list(tdccs)}？", parent=self.master):
+            self.refilter()
+            return
         self._start(lambda settings: mark_sent(settings, tdccs), "登記已寄出中…", self._registered("已寄出"))
 
     def register_redemption(self) -> None:
@@ -303,7 +326,10 @@ class ProgressTab(Tab):
                 return
             text = f"登記{what}：寫了 {len(result.done)} 檔"
             if result.failed:
-                text += f"；寫不進去 {len(result.failed)} 檔：" + "；".join(f"{t} {why}" for t, why in result.failed)
+                failed = result.failed[:10]
+                text += f"；寫不進去 {len(result.failed)} 檔：" + "；".join(f"{t} {why}" for t, why in failed)
+                if len(result.failed) > len(failed):
+                    text += f"；…另外 {len(result.failed) - len(failed)} 檔"
                 messagebox.showwarning(TITLE, text, parent=self.master)
             self.refresh(text + "。\n")
 
@@ -336,9 +362,11 @@ class ProgressTab(Tab):
     def _objection_chosen(self, choices: EventChoices) -> None:
         if not choices.events:
             messagebox.showinfo(TITLE, f"{choices.tdcc} 沒有比價產生的自動事件，不能提出異議。", parent=self.master)
+            self.refilter()
             return
         found = ask_objection(self.master, choices.tdcc, choices.events)
         if found is None:
+            self.refilter()
             return
         event_id, note = found
         self._start(
@@ -350,9 +378,11 @@ class ProgressTab(Tab):
     def _resolution_chosen(self, choices: EventChoices) -> None:
         if not choices.objections:
             messagebox.showinfo(TITLE, f"{choices.tdcc} 沒有還沒解除的異議。", parent=self.master)
+            self.refilter()
             return
         objection_id = ask_resolution(self.master, choices.tdcc, choices.objections)
         if objection_id is None:
+            self.refilter()
             return
         self._start(
             lambda settings: resolve_event_objection(settings, objection_id),

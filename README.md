@@ -210,7 +210,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 - 篩選：交易日區間（YYYY-MM-DD，空白是不限；有區間時沒有交易日的不列）、作業進度與存續狀態（多選，都不勾是全部）、上手。預設依距今天數由大到小，落後的在上面；點欄名排序，再點一次反過來，空白一律放最後。
 - 「匯出 Excel…」：把目前篩選、排序後的整張表寫成 Excel（預設 `作業進度_<日期時間>.xlsx`，從上次匯出的資料夾開始），欄位同畫面。先寫暫存檔再換名；同名檔開在 Excel 等寫不進去時顯示原因，原本的檔案不動。
 - 人工能做的三件事只在這一頁登記（[#157](https://github.com/TaylorYam/structured-product-workflow/issues/157)），先在表上選商品（可以按住 Ctrl 或 Shift 多選）；都在背景寫資料庫、留誰與何時，一檔寫不進去只影響那一檔並寫出原因，寫完自動重新整理：
-  - 「登記已寄出」：選中的每檔寫一筆「已寄出」步驟紀錄，進度變完成。已經登記過的先問：是＝也再寫一筆、否＝只寫還沒登記過的、取消＝都不寫。
+  - 「登記已寄出」：選中的每檔寫一筆「已寄出」步驟紀錄，進度變完成。寫之前先到資料庫查哪幾檔登記過：都沒登記過時問一次確認；有登記過的另外問：是＝也再寫一筆、否＝只寫還沒登記過的、取消＝都不寫。
   - 「登記顧客贖回…」：填事件日（必填，YYYY-MM-DD）與備註，選中的每檔寫一筆來源「人工」的顧客贖回事件；已有存續事件的那一檔不能登記並寫出原因。登記後比價不再比這檔。
   - 「提出異議…」：選一檔，從它比價產生的自動事件裡選一筆、寫備註（必填，例如上手通知的內容）。異議不改事件；「異議」欄顯示「待確認：事件：備註」，直到解除。
   - 「解除異議…」：選一檔，選一筆還沒解除的異議解除（修好資料或程式、確認之後），記下解除的人與時間。
@@ -446,7 +446,7 @@ Find products that still lack data, and fill in or change product terms ([#115](
 - Filters: trade-date range (YYYY-MM-DD, blank means open; with a range, products without a trade date are left out), progress and lifecycle status (multiple choice, none ticked means all), and issuer. The default order is days since the trade date, largest first, so the products furthest behind are on top; click a heading to sort, click again to reverse, and blanks always go last.
 - "匯出 Excel…" (export): writes the whole table as currently filtered and sorted to Excel (default `作業進度_<date time>.xlsx`, starting in the last export folder) with the same columns as the screen. It writes a temporary file and then renames it; when the file cannot be written (for example the same file is open in Excel) the reason is shown and the existing file is left untouched.
 - The three things people may record are entered only on this tab ([#157](https://github.com/TaylorYam/structured-product-workflow/issues/157)); select products in the table first (Ctrl or Shift for several). Each writes the database in the background with who and when; a product that cannot be written affects only itself and the reason is shown; the tab refreshes afterwards:
-  - "登記已寄出" (record sent): one 已寄出 step record per selected product, which makes it 完成. Products already recorded are asked about first: Yes = record them again too, No = only those not recorded yet, Cancel = nothing.
+  - "登記已寄出" (record sent): one 已寄出 step record per selected product, which makes it 完成. Before writing, the database is checked for products already recorded: if none are, one confirmation is asked; if some are, the question is Yes = record them again too, No = only those not recorded yet, Cancel = nothing.
   - "登記顧客贖回…" (record customer redemption): enter the event date (required, YYYY-MM-DD) and a note; each selected product gets one 顧客贖回 event with source 人工; a product that already has a lifecycle event is refused with the reason. Observation stops for it afterwards.
   - "提出異議…" (raise objection): pick one product, choose one of its automatic events from observation, and write a note (required, for example what the issuer's notice says). The objection does not change the event; the "異議" column shows "待確認：event：note" until it is resolved.
   - "解除異議…" (resolve objection): pick one product and one open objection to resolve (after the data or the program is fixed and checked); who resolved it and when is recorded.
