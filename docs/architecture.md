@@ -2,7 +2,7 @@
 
 ## 繁體中文
 
-狀態：以下為規劃，並非已實作系統；已實作的只有「TS／IIS 準備」中的準備批次與放回資料夾（[#5](https://github.com/TaylorYam/structured-product-workflow/issues/5)，用法見 [README](../README.md)）。已確認需求見 [CONTEXT](../CONTEXT.md)。
+狀態：圖中「本專案：作業流程」已實作成一個 FCN Workflow 視窗（每日匯入、起單資料、準備、核對、放回、寄信草稿、人工維護；用法見 [README](../README.md)）。圖裡的「獨立核對專案」已併入本 repo（`fcn_checker`，[ADR 0005](adr/0005-merge-checker-into-workflow.md)）；「庫存總表」與「FC 對照資料」改由資料庫裡的交易明細、商品條件與信箱表取代（[ADR 0004](adr/0004-mailbox-maintained-in-database.md)、[ADR 0006](adr/0006-new-product-data-from-order.md)）；「Outlook 草稿或寄送」目前只建草稿。已確認需求見 [CONTEXT](../CONTEXT.md)，尚未決定的見[待定事項](open-questions.md)。
 
 ```mermaid
 flowchart TD
@@ -52,9 +52,9 @@ Vanilla FCN 是目前優先範圍；EXPRESS FCN、BEN 是未來需求，尚未�
 
 ## English
 
-Status: proposed architecture, not implemented, except batch preparation and return to folders within TS/IIS preparation ([#5](https://github.com/TaylorYam/structured-product-workflow/issues/5); usage in the [README](../README.md)). Confirmed requirements are in [CONTEXT](../CONTEXT.md).
+Status: the "this repository: workflow" part of the diagram is implemented as one FCN Workflow window (daily import, order sheet, preparation, checking, return, mail drafts, manual maintenance; usage in the [README](../README.md)). The diagram's "independent checker project" has been merged into this repository (`fcn_checker`, [ADR 0005](adr/0005-merge-checker-into-workflow.md)); the "inventory master" and "FC mapping data" are replaced by the trade rows, product terms, and mailbox table in the database ([ADR 0004](adr/0004-mailbox-maintained-in-database.md), [ADR 0006](adr/0006-new-product-data-from-order.md)); "Outlook draft or send" currently only creates drafts. Confirmed requirements are in [CONTEXT](../CONTEXT.md); undecided items are in [open questions](open-questions.md).
 
-The diagram above connects formal Orders, normalization/booking, incoming archiving, TS/IIS preparation, checking routes, approved archiving, inventory lookup, and Outlook distribution. Inquiry stays external. Automatic checking is an independent project; customized or unsupported cases route to manual review. Failed automatic checks return for remediation or explicit review rather than proceeding directly to distribution.
+The diagram above connects formal Orders, normalization/booking, incoming archiving, TS/IIS preparation, checking routes, approved archiving, inventory lookup, and Outlook distribution. Inquiry stays external. Automatic checking lives in `fcn_checker` inside this repository; customized or unsupported cases route to manual review. Failed automatic checks return for remediation or explicit review rather than proceeding directly to distribution.
 
 ### Module and data ownership (recommended)
 
