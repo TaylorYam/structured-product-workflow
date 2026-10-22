@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import ctypes
 import json
+import re
 import sys
 import tkinter as tk
 from collections.abc import Callable, Iterable
@@ -275,6 +276,124 @@ class NextButton(ttk.Button):
         self.pack_forget()
 
 
+def tab_separated(rows: Iterable[Iterable[object]]) -> str:
+    """表格 → 放進剪貼簿的文字（#121）：Tab 分欄、換行分列，貼到 Excel 會照格子分開；格子裡的 Tab、換行換成空白。"""
+    return "\n".join("\t".join(re.sub(r"\s*[\t\r\n]+\s*", " ", str(cell)) for cell in row) for row in rows)
+
+
+def to_clipboard(widget: tk.Misc, text: str) -> None:
+    widget.clipboard_clear()
+    widget.clipboard_append(text)
+
+
+def shorten(text: str, limit: int = 30) -> str:
+    """右鍵選單上顯示的格子內容：太長的截掉。"""
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+class TableCopy:
+    """結果表可以複製（#121）：右鍵選單複製那一格、選取的列或整張表（含表頭）；Ctrl+A 全選、Ctrl+C 複製選取的列。
+
+    值直接讀 Tk 裡的字串：`item(..., "values")` 在部分 Python 版本會把 0 開頭的 TDCC 轉成整數、掉了前導零。
+    一次只能選一列（`browse`）的表不全選。
+    """
+
+    def __init__(self, table: ttk.Treeview):
+        self.table = table
+        self.menu = tk.Menu(table, tearoff=False)
+        table.bind("<Button-3>", self._popup, add="+")
+        for key in ("<Control-a>", "<Control-A>"):
+            table.bind(key, lambda _event: self._break(self.select_all))
+        for key in ("<Control-c>", "<Control-C>"):
+            table.bind(key, lambda _event: self._break(self.copy_selected))
+
+    def rows(self, items: Iterable[str] | None = None, *, header: bool = False) -> list[list[str]]:
+        """表上的列（照畫面的順序）；`header` 時第一列是表頭。"""
+        columns = [str(column) for column in self.table["columns"]]
+        rows = [[self._tk("heading", column, "-text") for column in columns]] if header else []
+        for item in self.table.get_children() if items is None else items:
+            rows.append([self._tk("set", item, column) for column in columns])
+        return rows
+
+    def copy_all(self) -> int:
+        """整張表（含表頭）放進剪貼簿；回傳幾列（不算表頭），表上沒有列時不動剪貼簿。"""
+        rows = self.rows(header=True)
+        if len(rows) > 1:
+            to_clipboard(self.table, tab_separated(rows))
+        return len(rows) - 1
+
+    def copy_selected(self) -> int:
+        """選取的列（照畫面的順序，不含表頭）放進剪貼簿；回傳幾列。"""
+        selected = set(self.table.selection())
+        items = [item for item in self.table.get_children() if item in selected]
+        if items:
+            to_clipboard(self.table, tab_separated(self.rows(items)))
+        return len(items)
+
+    def select_all(self) -> None:
+        if str(self.table.cget("selectmode")) == "extended":
+            self.table.selection_set(self.table.get_children())
+
+    def fill_menu(self, item: str, column: str) -> None:
+        """右鍵點到的格子（`item` 是列、`column` 是 `#N`；點到空白處是空字串）→ 選單的項目。"""
+        self.menu.delete(0, tk.END)
+        cell = self._tk("set", item, self._tk("column", column, "-id")) if item and column else ""
+        if cell:
+            self.menu.add_command(label=f"複製「{shorten(cell)}」", command=lambda: to_clipboard(self.table, cell))
+        if item:
+            line = tab_separated(self.rows([item]))
+            self.menu.add_command(label="複製這一列", command=lambda: to_clipboard(self.table, line))
+        count = len(self.table.selection())
+        self.menu.add_command(
+            label=f"複製選取的列（{count} 列）", command=self.copy_selected, state="normal" if count else "disabled"
+        )
+        self.menu.add_command(label="全部複製（含表頭）", command=self.copy_all)
+
+    def _popup(self, event: tk.Event) -> None:
+        self.fill_menu(self.table.identify_row(event.y), self.table.identify_column(event.x))
+        self.menu.tk_popup(event.x_root, event.y_root)
+
+    def _tk(self, *args: str) -> str:
+        return str(self.table.tk.call(str(self.table), *args))
+
+    @staticmethod
+    def _break(action: Callable[[], object]) -> str:
+        action()
+        return "break"
+
+
+class CopyButton(ttk.Button):
+    """結果表右上方的「全部複製」（#121）：一鍵把整張表（含表頭）放進剪貼簿，按完短暫顯示複製了幾列。"""
+
+    TEXT = "全部複製"
+
+    def __init__(self, parent: tk.Misc, copy_all: Callable[[], int]):
+        super().__init__(parent, text=self.TEXT, command=self.copy, width=12)
+        self.copy_all = copy_all
+        self._restore: str | None = None
+
+    def copy(self) -> None:
+        count = self.copy_all()
+        self.configure(text=f"已複製 {count} 列" if count else "表上沒有資料")
+        if self._restore is not None:
+            self.after_cancel(self._restore)
+        self._restore = self.after(1500, self._reset)
+
+    def _reset(self) -> None:
+        self._restore = None
+        self.configure(text=self.TEXT)
+
+
+class CopyBar(ttk.Frame):
+    """結果表上方的一列（#121）：左邊寫怎麼複製，右邊「全部複製」。"""
+
+    def __init__(self, parent: tk.Misc, copy_all: Callable[[], int], hint: str):
+        super().__init__(parent)
+        ttk.Label(self, text=hint, style="Muted.TLabel").pack(side="left")
+        self.button = CopyButton(self, copy_all)
+        self.button.pack(side="right")
+
+
 FOLDERS_RECORD = Path(".local") / "panel_folders.json"  # 兩個選檔按鈕各自記住的上次資料夾（根目錄下）
 
 
@@ -326,6 +445,7 @@ def _table(
     horizontal.grid(row=1, column=0, sticky="ew")
     table.configure(yscrollcommand=scroll.set, xscrollcommand=horizontal.set)
     table.frame = frame
+    table.copier = TableCopy(table)  # 右鍵、Ctrl+A／Ctrl+C 複製（#121）
     return table
 
 

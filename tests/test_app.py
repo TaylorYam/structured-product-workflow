@@ -1802,3 +1802,185 @@ def test_save_messages_for_trade_rows() -> None:
         f"已改 {A_TDCC} 的交易明細（第 7 筆紀錄）：第 1 列 UF 0.0215 → 空白。重算後改變的價格：UL_1_進場價 100.5 → 100.6。"
         "商品維持鎖住，核對結果沒有變。\n核對條件重算後：完成。"
     )
+
+
+# ---------------------------------------------------------------- 結果表複製（#121）
+
+TABLE_TABS = ["daily", "orders", "prepare", "returning", "mail"]
+
+
+def headings(tab) -> list[str]:
+    return [label for _, label, _ in tab.columns]
+
+
+@pytest.mark.parametrize("tab_name", TABLE_TABS)
+def test_copy_all_puts_the_whole_table_on_the_clipboard(master, tmp_path: Path, tab_name) -> None:
+    tab = getattr(new_window(master, tmp_path), tab_name)
+    width = len(tab.columns)
+    tab.add_row(["029199990001", *(["第一行\n第二行\t尾"] * (width - 1))], True)
+    tab.add_row(["029199990002", *([""] * (width - 1))], False)
+
+    tab.copy_bar.button.invoke()
+
+    lines = master.clipboard_get().split("\n")
+    assert lines[0] == "\t".join(headings(tab))
+    assert lines[1].split("\t") == ["029199990001", *(["第一行 第二行 尾"] * (width - 1))], (
+        "前導零保留；換行、Tab 換成空白"
+    )
+    assert lines[2].split("\t") == ["029199990002", *([""] * (width - 1))]
+    assert tab.copy_bar.button.cget("text") == "已複製 2 列"
+
+
+def test_copy_all_on_an_empty_table_leaves_the_clipboard_alone(master, tmp_path: Path) -> None:
+    tab = new_window(master, tmp_path).daily
+    master.clipboard_clear()
+    master.clipboard_append("原本的內容")
+
+    tab.copy_bar.button.invoke()
+
+    assert master.clipboard_get() == "原本的內容"
+    assert tab.copy_bar.button.cget("text") == "表上沒有資料"
+
+
+def test_copy_all_keeps_the_product_being_edited(master, tmp_path: Path) -> None:
+    window = order_window(master, tmp_path, order_row("029199990001"), order_row("029199990002"))
+    tab = window.orders
+    second = tab.table.get_children()[1]
+    tab.table.selection_set(second)
+    tab.master.update()
+    editing = tab.editor.draft
+
+    tab.copy_bar.button.invoke()
+
+    assert tab.table.selection() == (second,) and tab.editor.draft is editing
+    assert len(master.clipboard_get().split("\n")) == 3
+
+
+def test_right_click_copies_one_cell(master, tmp_path: Path) -> None:
+    tab = new_window(master, tmp_path).daily
+    tab.add_row(["029199990001", "新增交易", "說明"], False)
+    item = tab.table.get_children()[0]
+
+    tab.copier.fill_menu(item, "#1")
+
+    labels = [tab.copier.menu.entrycget(i, "label") for i in range(tab.copier.menu.index(tk.END) + 1)]
+    assert labels == ["複製「029199990001」", "複製這一列", "複製選取的列（0 列）", "全部複製（含表頭）"]
+    assert tab.copier.menu.entrycget(2, "state") == "disabled", "沒選列時不能複製選取的列"
+    tab.copier.menu.invoke(0)
+    assert master.clipboard_get() == "029199990001"
+    tab.copier.menu.invoke(1)
+    assert master.clipboard_get() == "029199990001\t新增交易\t說明"
+    assert tab.table.selection() == (), "右鍵複製不換選取的列"
+
+
+def test_select_all_and_copy_selected_rows(master, tmp_path: Path) -> None:
+    tab = new_window(master, tmp_path).daily
+    for n in (1, 2, 3):
+        tab.add_row([f"02919999000{n}", "新增交易", ""], False)
+
+    tab.copier.select_all()
+    assert len(tab.table.selection()) == 3, "Ctrl+A 全部反白"
+    tab.table.selection_set(tab.table.get_children()[2], tab.table.get_children()[0])
+    tab.copier.copy_selected()
+
+    assert master.clipboard_get() == "029199990001\t新增交易\t\n029199990003\t新增交易\t", "照畫面的順序，不含表頭"
+
+
+def test_check_tab_tables_can_be_copied(master, tmp_path: Path) -> None:
+    results = new_window(master, tmp_path).check.results
+
+    assert isinstance(results.item_table.copier, app.TableCopy)
+    assert isinstance(results.table.copier, app.TableCopy)
+
+
+def test_maintenance_check_table_copies_cells_rows_and_everything(master, tmp_path: Path) -> None:
+    window = checked_window(
+        master, tmp_path, missing(B_TDCC, **{"Maturity date": None}), missing(NEW_TDCC, MAINTAIN_NEW)
+    )
+    tab = window.manual
+    cells = tab.cells
+    cells.select(B_TDCC)
+
+    tab.copy_bar.button.invoke()
+
+    lines = master.clipboard_get().split("\n")
+    assert lines[0].split("\t") == ["TDCC", "上手", "狀態", *REQUIRED]
+    assert lines[1].split("\t")[:3] == [B_TDCC, "BARC", MAINTAIN_OPEN]
+    assert lines[1].split("\t")[3 + REQUIRED.index("Maturity date")] == ""
+    assert len(lines) == 3 and tab.copy_bar.button.cget("text") == "已複製 2 列"
+
+    cells.fill_menu(NEW_TDCC, "tdcc")
+    labels = [cells.menu.entrycget(i, "label") for i in range(cells.menu.index(tk.END) + 1)]
+    assert labels == [f"複製「{NEW_TDCC}」", f"複製 {NEW_TDCC} 這一列", "全部複製（含表頭）"]
+    cells.menu.invoke(0)
+    assert master.clipboard_get() == NEW_TDCC
+    cells.menu.invoke(1)
+    assert master.clipboard_get().split("\t")[:3] == [NEW_TDCC, "BARC", MAINTAIN_NEW]
+    cells.fill_menu(B_TDCC, "issuer")
+    cells.menu.invoke(0)
+    assert master.clipboard_get() == "BARC"
+    assert cells.selected == B_TDCC, "右鍵複製不換選取的列"
+
+
+def test_right_click_on_a_blank_cell_offers_the_row_and_the_table_only(master, tmp_path: Path) -> None:
+    cells = checked_window(master, tmp_path, missing(B_TDCC, **{"Maturity date": None})).manual.cells
+
+    cells.fill_menu(B_TDCC, "Maturity date")
+    first = [cells.menu.entrycget(i, "label") for i in range(cells.menu.index(tk.END) + 1)]
+    cells.fill_menu(None, None)
+    outside = [cells.menu.entrycget(i, "label") for i in range(cells.menu.index(tk.END) + 1)]
+
+    assert first == [f"複製 {B_TDCC} 這一列", "全部複製（含表頭）"]
+    assert outside == ["全部複製（含表頭）"]
+
+
+# ---------------------------------------------------------------- 匯出商品條件（#122）
+
+
+def test_export_asks_where_to_save_before_connecting(master, tmp_path: Path, monkeypatch) -> None:
+    tab = new_window(master, tmp_path).manual
+    asked_settings = []
+    monkeypatch.setattr(tab.db, "settings", lambda **k: asked_settings.append(1))
+    monkeypatch.setattr(app.filedialog, "asksaveasfilename", lambda **k: "")
+
+    tab.export()
+
+    assert asked_settings == [], "按取消時不連資料庫"
+
+
+def test_export_remembers_the_folder_and_runs_in_the_background(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    tab = window.manual
+    started = without_database(tab, monkeypatch)
+    asked = []
+    target = tmp_path / "out" / "products.xlsx"
+
+    def ask(**options):
+        asked.append(options)
+        return str(target)
+
+    monkeypatch.setattr(app.filedialog, "asksaveasfilename", ask)
+
+    tab.export()
+    assert started == ["匯出商品條件中…"]
+    assert str(tab.export_button.cget("state")) == "disabled", "匯出中不能再按"
+    tab.export()
+    assert len(asked) == 1
+    tab._exported(app.ExportReceipt(target, 1, ("tdcc",)), unsaved=False)
+    tab.export()
+
+    assert asked[0]["initialfile"].startswith("workflow_product_") and asked[0]["initialfile"].endswith(".xlsx")
+    assert asked[0]["initialdir"] is None and asked[1]["initialdir"] == str(target.parent), "下次從上次的位置開始"
+
+
+def test_export_result_says_how_many_products_and_where(master, tmp_path: Path) -> None:
+    tab = new_window(master, tmp_path).manual
+    path = tmp_path / "products.xlsx"
+
+    tab._exported(app.ExportReceipt(path, 12, ("tdcc",)), unsaved=True)
+
+    assert tab.status_var.get() == (
+        f"已匯出資料庫的商品條件（workflow.product）12 檔：{path}\n注意：畫面上還沒存檔的修改不在匯出檔裡。"
+    )
+    assert tab.status_label.cget("style") == "Done.TLabel"
+    assert str(tab.export_button.cget("state")) == "normal"
