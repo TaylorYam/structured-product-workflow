@@ -1,0 +1,458 @@
+"""比價（#155、ADR 0020）：每檔商品逐日比到收盤價表最新的一天，判定 KO、KI 觸及、到期接股或到期還本。
+
+- 範圍：核對條件「完成」的商品（各標的進場價、執行價、下限價、KO 價已算出或由 TS 回填），已鎖住與未鎖住都比，
+  比價狀態記下比價時是否鎖住（畫面標「未鎖住」）。已登記顧客贖回的不比。已算出自動事件的每次照樣重算，
+  收盤價更正後事件跟著整組取代。
+- KO：收盤價 ≥ KO 價。非記憶式要同一個觀察日所有標的都達標；記憶式每檔標的在任一觀察日達標就記住，全部記過即 KO。
+  D 型的觀察日是第一個比價日（比價日_{Non-Call}）起到最終比價日止、所有標的市場都開市的日子；P 型只看各期比價日。
+  Non-Call 等於天期的商品不會提前出場，不觀察 KO。
+- KI：EKI 只在最終比價日，收盤價 < 下限價；AKI 自 Strike date 之後、該標的市場的每個交易日；
+  MKI（每期觀察）不比，比價狀態待確認「每期觀察 KI 需人工追蹤」，KO 照比。
+- 到期（最終比價日，沒有 KO）：沒有 KI，或 KI 曾觸及，且最差表現的標的（最終收盤價 ÷ 進場價最低）收盤價 < 執行價
+  → 接股（記最差標的）；否則到期還本。事件日一律是觸價或判定的那個觀察日。
+- 缺價格就停住：某標的在它市場的交易日要用到價格、收盤價表沒有，這檔停在那一天（已比到的日期是前一天），
+  比價狀態「等股價」寫出標的與日期。交易所不在假日表、日期超出假日表涵蓋範圍、要比價了收盤價表卻完全沒有這個代碼
+  → 待確認並寫原因。
+- 寫入：自動事件經 `lifecycle.replace_auto_events`（整組取代、有變才寫、差異留紀錄）；每檔一筆
+  `workflow.pricing_status`，和上一次不同才寫。有舊清單事件的商品只比較、不寫自動事件：結果不同時待確認、寫出兩邊。
+
+`observe` 只算一檔、不碰資料庫；`observe_all` 讀資料庫、算全部、寫回。
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass
+from decimal import Decimal
+from typing import TYPE_CHECKING
+
+from sp_workflow.check_terms import DONE as TERMS_DONE
+from sp_workflow.check_terms import NO_BARRIER as NO_KI
+from sp_workflow.lifecycle import (
+    DELIVERY,
+    KO,
+    LEGACY,
+    MANUAL,
+    MATURITY,
+    OBSERVATION,
+    AutoEvent,
+    LifecycleError,
+    StoredEvent,
+    current_events_of,
+    replace_auto_events,
+)
+from sp_workflow.product_record import KO_TYPES
+
+if TYPE_CHECKING:
+    import psycopg
+
+    from fcn_checker.trading_calendar import Market, TradingCalendar
+
+ON_BOOK = "在庫"
+WAIT_PRICES = "等股價"
+TO_CONFIRM = "待確認"
+EXITED = "已出場"
+STATUSES = (ON_BOOK, WAIT_PRICES, TO_CONFIRM, EXITED)
+UNLOCKED = "未鎖住"
+
+MEMORY_TYPES = frozenset(("Daily Memory", "Period End Memory"))
+DAILY_TYPES = frozenset(("Daily", "Daily Memory"))
+EKI, AKI, MKI = "EKI", "AKI", "MKI"
+MKI_REASON = "每期觀察 KI 需人工追蹤"
+
+
+@dataclass(frozen=True)
+class Underlying:
+    """一個標的的代碼與核對條件算出的四個價格。"""
+
+    seq: int
+    code: str
+    initial: Decimal | None  # 進場價
+    strike: Decimal | None  # 執行價
+    ki: Decimal | None  # 下限價
+    ko: Decimal | None  # KO 價
+
+    @property
+    def name(self) -> str:
+        return f"UL_{self.seq} {self.code}"
+
+
+@dataclass(frozen=True)
+class Terms:
+    """比價用的商品條件。"""
+
+    tdcc: str
+    ko_type: str | None
+    barrier_type: str | None
+    strike_date: dt.date | None
+    final_date: dt.date | None  # 最終比價日
+    autocall: tuple[dt.date, ...]  # 資料庫的比價日（空白的不算），由早到晚
+    underlyings: tuple[Underlying, ...]
+    no_autocall: bool = False  # Non-Call 等於天期：不會提前出場
+
+
+@dataclass(frozen=True)
+class Outcome:
+    """一檔的比價結果：比價狀態、原因、已比到的日期（含）與算出的自動事件。"""
+
+    status: str
+    reason: str = ""
+    observed_through: dt.date | None = None
+    events: tuple[AutoEvent, ...] = ()
+
+
+def observe(
+    terms: Terms,
+    closes: Mapping[str, Mapping[dt.date, Decimal]],
+    calendar: TradingCalendar,
+    through: dt.date | None,
+) -> Outcome:
+    """把一檔商品逐日比到 `through`（收盤價表最新的一天）。`closes` 是代碼 → {收盤日: 收盤價}。"""
+    problem = _terms_problem(terms, calendar)
+    if problem:
+        return Outcome(TO_CONFIRM, problem)
+    markets = {u.code: calendar.market_of(u.code) for u in terms.underlyings}
+    final = terms.final_date
+    assert final is not None and markets  # 由 _terms_problem 確認
+    daily = terms.ko_type in DAILY_TYPES
+    memory = terms.ko_type in MEMORY_TYPES
+    ko_days = frozenset() if terms.no_autocall or daily else frozenset(terms.autocall)
+    ko_start = terms.autocall[0] if daily and not terms.no_autocall else None
+    aki = terms.barrier_type == AKI
+    first = min(
+        day
+        for day in (
+            terms.strike_date + dt.timedelta(days=1) if aki and terms.strike_date else None,
+            ko_start,
+            min(ko_days) if ko_days else None,
+            final,
+        )
+        if day is not None
+    )
+    if through is None or through < first:
+        if terms.barrier_type == MKI:
+            return Outcome(TO_CONFIRM, MKI_REASON)
+        return Outcome(ON_BOOK, "還沒到第一個觀察日" if through is not None else "收盤價表還沒有資料")
+    unknown = [u.name for u in terms.underlyings if u.code not in closes]
+    if unknown:
+        return Outcome(TO_CONFIRM, "；".join(f"{name}：收盤價表沒有這個代碼" for name in unknown))
+    last = min(final, through)
+    for code, market in markets.items():
+        assert market is not None
+        if not market.covers(first, last):
+            return Outcome(
+                TO_CONFIRM,
+                f"{_name(terms, code)}：{first}～{last} 超出{market.name}假日表的涵蓋範圍"
+                f"（{market.covered_from}～{market.covered_through}）",
+            )
+
+    remembered: set[str] = set()
+    touched = False
+    day = first
+    while day <= last:
+        open_ = {code for code, market in markets.items() if _open(market, day)}
+        is_final = day == final
+        ko_day = (ko_start is not None and day >= ko_start and len(open_) == len(markets)) or day in ko_days
+        needed = set(markets) if ko_day or is_final else set()
+        if aki and terms.strike_date is not None and day > terms.strike_date:
+            needed |= open_
+        closed = sorted(needed - open_)
+        if closed:
+            what = "最終比價日" if is_final else "比價日"
+            return Outcome(
+                TO_CONFIRM,
+                f"{what} {day} 是 {'、'.join(_name(terms, c) for c in closed)} 市場的休市日",
+                _before(day, first),
+            )
+        prices: dict[str, Decimal] = {}
+        for u in terms.underlyings:
+            if u.code not in needed:
+                continue
+            price = closes.get(u.code, {}).get(day)
+            if price is None:
+                return Outcome(WAIT_PRICES, f"{u.name}：{day} 沒有收盤價", _before(day, first))
+            prices[u.code] = price
+        if aki and any(prices[u.code] < u.ki for u in terms.underlyings if u.code in prices and u.ki is not None):
+            touched = True
+        if ko_day:
+            hit = {u.code for u in terms.underlyings if u.ko is not None and prices[u.code] >= u.ko}
+            remembered |= hit
+            if (memory and remembered == set(markets)) or (not memory and hit == set(markets)):
+                return Outcome(EXITED, f"KO {day}", day, (AutoEvent(KO, day),))
+        if is_final:
+            return _maturity(terms, prices, touched, day)
+        day += dt.timedelta(days=1)
+    if terms.barrier_type == MKI:
+        return Outcome(TO_CONFIRM, MKI_REASON, last)
+    return Outcome(ON_BOOK, "", last)
+
+
+def _maturity(terms: Terms, prices: Mapping[str, Decimal], touched: bool, day: dt.date) -> Outcome:
+    """最終比價日沒有 KO：依 KI 與最差表現判定接股或到期還本。"""
+    if terms.barrier_type == MKI:
+        return Outcome(TO_CONFIRM, f"{MKI_REASON}（最終比價日 {day} 沒有 KO，要人工判定接股或到期還本）", day)
+    if terms.barrier_type == EKI:
+        touched = any(prices[u.code] < u.ki for u in terms.underlyings if u.ki is not None)
+    worst = min(terms.underlyings, key=lambda u: (prices[u.code] / u.initial, u.seq))  # type: ignore[operator]
+    knocked = terms.barrier_type == NO_KI or touched
+    assert worst.strike is not None
+    if knocked and prices[worst.code] < worst.strike:
+        return Outcome(EXITED, f"接股 {worst.code} {day}", day, (AutoEvent(DELIVERY, day, worst.code),))
+    return Outcome(EXITED, f"到期還本 {day}", day, (AutoEvent(MATURITY, day),))
+
+
+def _terms_problem(terms: Terms, calendar: TradingCalendar) -> str:
+    """比價前先確認條件齊全；有問題時回傳待確認的原因。"""
+    if not terms.underlyings:
+        return "核對條件沒有標的價格"
+    if terms.ko_type not in KO_TYPES:
+        return f"KO Type「{terms.ko_type or ''}」不認得"
+    if terms.barrier_type not in (NO_KI, EKI, AKI, MKI):
+        return f"Barrier Type「{terms.barrier_type or ''}」不認得"
+    if terms.final_date is None:
+        return "沒有最終比價日"
+    if not terms.autocall:
+        return "沒有比價日"
+    if terms.autocall[-1] != terms.final_date:
+        return f"最後一個比價日 {terms.autocall[-1]} 和最終比價日 {terms.final_date} 不同"
+    if terms.barrier_type == AKI and terms.strike_date is None:
+        return "每日觀察 KI 要有 Strike date"
+    problems = []
+    for u in terms.underlyings:
+        wanted = {"進場價": u.initial, "執行價": u.strike}
+        if not terms.no_autocall:
+            wanted["KO 價"] = u.ko
+        if terms.barrier_type in (EKI, AKI):
+            wanted["下限價"] = u.ki
+        missing = [name for name, value in wanted.items() if value is None or (name == "進場價" and value <= 0)]
+        if missing:
+            problems.append(f"{u.name} 缺{'、'.join(missing)}")
+        elif calendar.market_of(u.code) is None:
+            problems.append(f"{u.name}：交易所不在假日表")
+    return "；".join(problems)
+
+
+def _open(market: Market, day: dt.date) -> bool:
+    return day.weekday() < 5 and day not in market.holidays
+
+
+def _before(day: dt.date, first: dt.date) -> dt.date | None:
+    return None if day <= first else day - dt.timedelta(days=1)
+
+
+def _name(terms: Terms, code: str) -> str:
+    return next(u.name for u in terms.underlyings if u.code == code)
+
+
+# ---------- 資料庫 ----------
+
+
+@dataclass(frozen=True)
+class Observed:
+    """一檔比價後的狀態（給完成訊息看）。"""
+
+    tdcc: str
+    status: str
+    reason: str
+    observed_through: dt.date | None
+    locked: bool
+
+
+@dataclass(frozen=True)
+class EventChange:
+    """這次比價改了的自動事件：[事件, 事件日, 標的]，依事件日排序。"""
+
+    tdcc: str
+    previous: tuple[tuple[str, str, str | None], ...]
+    current: tuple[tuple[str, str, str | None], ...]
+
+
+@dataclass(frozen=True)
+class ObservationReceipt:
+    """一次比價的結果：比到哪一天、每檔的比價狀態、這次改了的自動事件。"""
+
+    through: dt.date | None  # 收盤價表最新的一天
+    results: tuple[Observed, ...] = ()
+    changes: tuple[EventChange, ...] = ()
+    written: int = 0  # 比價狀態有變、寫了的檔數
+    errors: tuple[tuple[str, str], ...] = ()  # (TDCC, 原因)：自動事件寫不進去的
+
+    def count(self, status: str) -> int:
+        return sum(r.status == status for r in self.results)
+
+    def unfinished(self) -> tuple[Observed, ...]:
+        """還沒完成的比價狀態：等股價、待確認。"""
+        return tuple(r for r in self.results if r.status in (WAIT_PRICES, TO_CONFIRM))
+
+
+def observe_all(conn: psycopg.Connection, calendar: TradingCalendar, *, user: str | None = None) -> ObservationReceipt:
+    """比價全部：核對條件完成的商品逐日比到收盤價表最新的一天，寫自動事件與比價狀態（有變才寫）。
+
+    核對條件不再是完成、但以前比過的商品不比，比價狀態改成待確認（事件不動）。
+    """
+    with conn.transaction():
+        (through,) = conn.execute("SELECT max(close_date) FROM workflow.close_price").fetchone()
+        terms, locked, not_done = _load_terms(conn)
+        closes = _load_closes(conn, terms)
+        stored = _stored_status(conn)
+        existing = current_events_of(conn, [t.tdcc for t in terms])
+        results: list[Observed] = []
+        changes: list[EventChange] = []
+        errors: list[tuple[str, str]] = []
+        for t in terms:
+            events = existing.get(t.tdcc, [])
+            outcome, write_events = _decide(t, events, observe(t, closes, calendar, through))
+            previous = tuple(sorted(AutoEvent(e.event, e.event_date, e.underlying).key() for e in _auto(events)))
+            if write_events is not None and previous != tuple(sorted(e.key() for e in write_events)):
+                try:
+                    if replace_auto_events(conn, t.tdcc, write_events, user=user):
+                        changes.append(EventChange(t.tdcc, previous, tuple(e.key() for e in _sorted(write_events))))
+                except LifecycleError as exc:  # 例如比價中有人登記了顧客贖回
+                    errors.append((t.tdcc, str(exc)))
+                    outcome = Outcome(TO_CONFIRM, f"自動事件寫不進去：{exc}", outcome.observed_through)
+            results.append(Observed(t.tdcc, outcome.status, outcome.reason, outcome.observed_through, locked[t.tdcc]))
+        for tdcc, (status, reason) in not_done.items():
+            if tdcc in stored:
+                text = f"核對條件{status}，這次沒有比價" + (f"：{reason}" if reason else "")
+                results.append(Observed(tdcc, TO_CONFIRM, text, stored[tdcc][2], locked[tdcc]))
+        written = 0
+        for r in results:
+            if stored.get(r.tdcc) != (r.status, r.reason or None, r.observed_through, r.locked):
+                _write_status(conn, r)
+                written += 1
+    return ObservationReceipt(through, tuple(results), tuple(changes), written, tuple(errors))
+
+
+def _decide(
+    terms: Terms, events: Sequence[StoredEvent], outcome: Outcome
+) -> tuple[Outcome, Sequence[AutoEvent] | None]:
+    """依這檔現有的事件決定比價狀態與要寫的自動事件（None 是不寫）。"""
+    manual = [e for e in events if e.source == MANUAL]
+    if manual:
+        e = manual[-1]
+        return Outcome(EXITED, f"{e.event} {e.event_date or ''}".strip()), None
+    legacy = [e for e in events if e.source == LEGACY]
+    if legacy:
+        if _same_as_legacy(outcome, legacy):
+            return Outcome(EXITED, f"同舊清單：{_events_text(legacy)}", outcome.observed_through), None
+        computed = outcome.reason if outcome.status == EXITED else f"{outcome.status}（{outcome.reason or '沒有事件'}）"
+        return (
+            Outcome(
+                TO_CONFIRM, f"和舊清單不同：舊清單 {_events_text(legacy)}；比價 {computed}", outcome.observed_through
+            ),
+            None,
+        )
+    auto = _auto(events)
+    if outcome.status in (WAIT_PRICES, TO_CONFIRM) and auto:
+        # 算不出結果時不拿掉已經算出的事件
+        return (
+            Outcome(TO_CONFIRM, f"{outcome.reason}；原本的 {_events_text(auto)} 先保留", outcome.observed_through),
+            None,
+        )
+    if outcome.status in (WAIT_PRICES, TO_CONFIRM):
+        return outcome, None
+    return outcome, outcome.events
+
+
+def _same_as_legacy(outcome: Outcome, legacy: Sequence[StoredEvent]) -> bool:
+    """比價結果和舊清單的事件一樣：同一種事件；舊清單有事件日、標的時也要一樣。"""
+    if len(outcome.events) != len(legacy):
+        return False
+    for new, old in zip(_sorted(outcome.events), legacy, strict=True):
+        if new.event != old.event:
+            return False
+        if old.event_date is not None and old.event_date != new.event_date:
+            return False
+        if old.underlying and new.underlying and old.underlying != new.underlying:
+            return False
+    return True
+
+
+def _auto(events: Sequence[StoredEvent]) -> list[StoredEvent]:
+    return [e for e in events if e.source == OBSERVATION]
+
+
+def _sorted(events: Sequence[AutoEvent]) -> list[AutoEvent]:
+    return sorted(events, key=lambda e: (e.event_date, e.event, e.underlying or ""))
+
+
+def _events_text(events: Sequence[StoredEvent]) -> str:
+    return "、".join(
+        " ".join(str(part) for part in (e.event, e.underlying, e.event_date or "沒有事件日") if part) for e in events
+    )
+
+
+def _load_terms(
+    conn: psycopg.Connection,
+) -> tuple[list[Terms], dict[str, bool], dict[str, tuple[str, str | None]]]:
+    """核對條件完成的商品的比價條件、每檔是否鎖住，以及核對條件不是完成的 {TDCC: (狀態, 原因)}。"""
+    rows = conn.execute(
+        "SELECT p.tdcc, p.ko_type, p.barrier_type, p.strike_date, p.final_valuation_date,"
+        " p.non_call_months, p.tenor_months, p.locked_at IS NOT NULL, c.status, c.reason"
+        " FROM workflow.product p JOIN workflow.check_terms c ON c.tdcc = p.tdcc ORDER BY p.tdcc"
+    ).fetchall()
+    locked = {row[0]: row[7] for row in rows}
+    not_done = {row[0]: (row[8], row[9]) for row in rows if row[8] != TERMS_DONE}
+    done = [row for row in rows if row[8] == TERMS_DONE]
+    tdccs = [row[0] for row in done]
+    underlyings: dict[str, list[Underlying]] = {}
+    for tdcc, seq, code, initial, strike, ki, ko in conn.execute(
+        "SELECT tdcc, seq, code, initial_price, strike_price, ki_price, ko_price FROM workflow.underlying_price"
+        " WHERE tdcc = ANY(%s) ORDER BY tdcc, seq",
+        (tdccs,),
+    ):
+        underlyings.setdefault(tdcc, []).append(Underlying(seq, code, initial, strike, ki, ko))
+    autocall: dict[str, list[dt.date]] = {}
+    for tdcc, value in conn.execute(
+        "SELECT tdcc, value FROM workflow.autocall_date WHERE tdcc = ANY(%s) AND value IS NOT NULL ORDER BY tdcc, value",
+        (tdccs,),
+    ):
+        autocall.setdefault(tdcc, []).append(value)
+    terms = [
+        Terms(
+            tdcc,
+            ko_type,
+            barrier,
+            strike_date,
+            final,
+            tuple(autocall.get(tdcc, ())),
+            tuple(underlyings.get(tdcc, ())),
+            non_call is not None and tenor is not None and non_call >= tenor,
+        )
+        for tdcc, ko_type, barrier, strike_date, final, non_call, tenor, *_ in done
+    ]
+    return terms, locked, not_done
+
+
+def _load_closes(conn: psycopg.Connection, terms: Collection[Terms]) -> dict[str, dict[dt.date, Decimal]]:
+    """比價會用到的代碼的收盤價（從最早的 Strike date 起）。"""
+    codes = sorted({u.code for t in terms for u in t.underlyings})
+    starts = [d for t in terms for d in (t.strike_date, *t.autocall[:1]) if d is not None]
+    closes: dict[str, dict[dt.date, Decimal]] = {}
+    if not codes or not starts:
+        return closes
+    for code, day, price in conn.execute(
+        "SELECT code, close_date, close FROM workflow.close_price WHERE code = ANY(%s) AND close_date >= %s",
+        (codes, min(starts)),
+    ):
+        closes.setdefault(code, {})[day] = price
+    return closes
+
+
+def _stored_status(conn: psycopg.Connection) -> dict[str, tuple[str, str | None, dt.date | None, bool]]:
+    return {
+        tdcc: (status, reason, through, locked)
+        for tdcc, status, reason, through, locked in conn.execute(
+            "SELECT tdcc, status, reason, observed_through, locked FROM workflow.pricing_status"
+        )
+    }
+
+
+def _write_status(conn: psycopg.Connection, r: Observed) -> None:
+    conn.execute(
+        "INSERT INTO workflow.pricing_status (tdcc, status, reason, observed_through, locked) VALUES (%s, %s, %s, %s, %s)"
+        " ON CONFLICT (tdcc) DO UPDATE SET status = EXCLUDED.status, reason = EXCLUDED.reason,"
+        " observed_through = EXCLUDED.observed_through, locked = EXCLUDED.locked, calculated_at = now()",
+        (r.tdcc, r.status, r.reason or None, r.observed_through, r.locked),
+    )

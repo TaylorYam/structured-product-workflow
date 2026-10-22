@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -15,6 +16,7 @@ import pytest
 from db_synth import csv_price, price, seed_mailbox, trade, write_daily, write_price_csv
 from fcn_checker.check_config import ConfigPaths
 from order_synth import CONFIG, SHEET, A, order_row, sheet_line, write_sheet
+from sp_workflow import window_actions
 from sp_workflow.check_terms import CheckTermsError
 from sp_workflow.database import DatabaseError
 from sp_workflow.order_import import drafts_from, import_drafts
@@ -22,6 +24,7 @@ from sp_workflow.product_write import NEW
 from sp_workflow.window_actions import (
     import_close_history,
     import_order_sheet,
+    observe_products,
     read_order_sheet,
     run_daily_import,
     run_price_csv,
@@ -114,6 +117,33 @@ def test_a_failed_recalculation_keeps_the_price_csv(pg, pg_settings, tmp_path: P
 
 
 @pytest.mark.db
+def test_a_failed_observation_keeps_the_price_csv(pg, pg_settings, tmp_path: Path, monkeypatch) -> None:
+    source = write_price_csv(tmp_path / "MarketData_20261015.csv", [csv_price("AAA UW")])
+
+    def broken(conn, calendar):
+        raise RuntimeError("壞掉了")
+
+    monkeypatch.setattr(window_actions, "observe_all", broken)
+
+    result = run_price_csv(pg_settings, source, PATHS)
+
+    assert result.observation.receipt is None and "比價程式出錯（RuntimeError：壞掉了）" in result.observation.error
+    assert count(pg, "workflow.daily_price") == 1 and count(pg, "workflow.close_price") == 1, "匯入照樣保留"
+
+
+@pytest.mark.db
+def test_close_history_is_observed_after_the_import(pg, pg_settings, tmp_path: Path) -> None:
+    from test_close_prices import write_history
+
+    source = write_history(tmp_path / "HP.xlsx", [["AAA", "AAA UW Equity", "虛構", 10, 11, 12, 13, 14]])
+
+    result = import_close_history(pg_settings, source, PATHS)
+
+    assert result.receipt.summary.stored > 0
+    assert result.observation.receipt is not None and result.observation.receipt.through == dt.date(2026, 10, 16)
+
+
+@pytest.mark.db
 def test_price_csv_is_recalculated(pg, pg_settings, tmp_path: Path) -> None:
     source = write_price_csv(tmp_path / "MarketData_20261015.csv", [csv_price("AAA UW")])
 
@@ -121,6 +151,7 @@ def test_price_csv_is_recalculated(pg, pg_settings, tmp_path: Path) -> None:
 
     assert result.recalc.receipt is not None and not result.recalc.error
     assert result.receipt.closes is not None and result.receipt.closes.stored == 1, "讀得到假日表時同時存收盤價"
+    assert result.observation.receipt is not None and result.observation.receipt.through == dt.date(2026, 10, 15)
 
 
 def test_a_price_csv_without_holidays_stores_no_closes(pg, pg_settings, tmp_path: Path) -> None:
@@ -129,6 +160,17 @@ def test_a_price_csv_without_holidays_stores_no_closes(pg, pg_settings, tmp_path
     result = run_price_csv(pg_settings, source, no_holidays(tmp_path))
 
     assert result.receipt.closes is None and count(pg, "workflow.close_price") == 0
+    assert result.observation.receipt is None and "讀不到交易所假日表" in result.observation.error
+
+
+@pytest.mark.db
+def test_reobserve_needs_the_holiday_calendar(pg, pg_settings, tmp_path: Path) -> None:
+    with pytest.raises(CheckTermsError):
+        observe_products(pg_settings, no_holidays(tmp_path))
+
+    receipt = observe_products(pg_settings, PATHS)
+
+    assert receipt.through is None and receipt.results == ()
 
 
 def test_close_history_needs_the_holiday_calendar(pg, pg_settings, tmp_path: Path) -> None:

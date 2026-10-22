@@ -24,9 +24,10 @@ from sp_workflow.daily_import import (
     PriceSummary,
 )
 from sp_workflow.local_settings import FolderMemory
+from sp_workflow.observation import EventChange, ObservationReceipt, Observed
 from sp_workflow.order_terms import PENDING as ORDER_PENDING
 from sp_workflow.order_terms import OrderRow
-from sp_workflow.window_actions import DailyResult, PriceCsvResult, Recalc
+from sp_workflow.window_actions import DailyResult, HistoryResult, Observation, PriceCsvResult, Recalc
 from window_synth import NEEDS_RELEASE, UF_DIFF, hint_change_button, new_window, read_result, release_without_database
 
 
@@ -191,7 +192,8 @@ def test_close_history_runs_on_this_page_and_lists_problems(master, tmp_path: Pa
         problems=(HistoryProblem("AAA UW", "抓價未完成（#N/A Requesting Data...），請重抓再匯", day, day, 1),),
         error_book_path=tmp_path / "歷史收盤價錯誤.xlsx",
     )
-    monkeypatch.setattr(sp_workflow.tabs.daily, "import_close_history", lambda settings, path, paths: receipt)
+    result = HistoryResult(receipt, Observation(error="讀不到交易所假日表，這次沒有比價"))
+    monkeypatch.setattr(sp_workflow.tabs.daily, "import_close_history", lambda settings, path, paths: result)
 
     window._import_close_history()
     assert str(window.daily.start_button.cget("state")) == "disabled"
@@ -201,14 +203,68 @@ def test_close_history_runs_on_this_page_and_lists_problems(master, tmp_path: Pa
     status = window.daily.status_var.get()
     assert "完成（歷史收盤價）：2022-07-28～2026-10-21，代碼 507 個，沒有價格 12 格（休市日不算）。" in status
     assert f"錯誤清單：{tmp_path / '歷史收盤價錯誤.xlsx'}" in status
+    assert "比價：沒有跑，讀不到交易所假日表，這次沒有比價。匯入已經完成，修好後按「維護 → 重新比價全部」。" in status
     assert [window.daily.table.item(i, "values")[0] for i in window.daily.table.get_children()] == ["AAA UW"]
     assert window.daily.kpis.values == (
         ("收盤價（筆）", 500000, False),
         ("沒有價格（格）", 12, True),
         ("錯誤清單（項）", 1, True),
+        ("比價沒有跑", 1, True),
     )
     assert FolderMemory.under(tmp_path).load()["close_history"] == str(source)
     assert str(window.daily.start_button.cget("state")) == "normal"
+
+
+OBSERVED = ObservationReceipt(
+    dt.date(2026, 10, 21),
+    (
+        Observed("147199990001", "已出場", "KO 2026-10-20", dt.date(2026, 10, 20), True),
+        Observed("147199990002", "等股價", "UL_2 BBB UN：2026-10-21 沒有收盤價", dt.date(2026, 10, 20), False),
+        Observed("147199990003", "在庫", "", dt.date(2026, 10, 21), True),
+    ),
+    (EventChange("147199990001", (), (("KO", "2026-10-20", None),)),),
+    2,
+)
+
+
+def test_price_csv_import_lists_changed_events_and_unfinished_observation(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    receipt = PriceCsvReceipt(
+        run_id=8,
+        close_date=dt.date(2026, 10, 21),
+        prices=PriceSummary(dt.date(2026, 10, 22), 2, 0, ()),
+        lines=(),
+        error_book_path=tmp_path / "錯誤.xlsx",
+    )
+
+    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar), Observation(OBSERVED)))
+
+    rows = [window.daily.table.item(i, "values") for i in window.daily.table.get_children()]
+    assert [tuple(r) for r in rows] == [
+        ("147199990001", "存續事件有變", "沒有 → KO 2026-10-20"),
+        ("147199990002", "比價等股價", "UL_2 BBB UN：2026-10-21 沒有收盤價（已比到 2026-10-20）；未鎖住"),
+    ]
+    assert "比價：比到 2026-10-21，共 3 檔（在庫 1、已出場 1、等股價 1、待確認 0）；存續事件有變 1 檔。" in (
+        window.daily.status_var.get()
+    )
+    assert ("存續事件有變（檔）", 1, False) in window.daily.kpis.values
+    assert ("比價沒完成（檔）", 1, True) in window.daily.kpis.values
+
+
+def test_reobserve_runs_on_this_page(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    actions = []
+    monkeypatch.setattr(window.daily.db, "settings", lambda: object())
+    monkeypatch.setattr(window.daily, "run_in_background", lambda action, *a, **k: actions.append((action, a[1])))
+    monkeypatch.setattr(sp_workflow.tabs.daily, "observe_products", lambda settings, paths: OBSERVED)
+
+    window._reobserve()
+    action, done = actions.pop()
+    done(action())
+
+    assert window.notebook.select() == str(window.daily.frame)
+    assert "完成（重新比價全部）。\n比價：比到 2026-10-21" in window.daily.status_var.get()
+    assert len(window.daily.table.get_children()) == 2
 
 
 def test_close_history_does_nothing_without_a_file(master, tmp_path: Path, monkeypatch) -> None:

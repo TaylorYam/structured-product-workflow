@@ -1,6 +1,8 @@
 """「1 每日匯入」分頁：匯入每日更新的交易明細與股價、回補股價 CSV（#112），完成後把 FCN TDCC 帶到起單資料頁（#90）。
 
 MarketData CSV 同時寫收盤價（#153）；維護選單的「匯入歷史收盤價…」也在這一頁的背景執行、顯示結果。
+匯入收盤價之後比價（#155），完成訊息列出這次有變的存續事件與還沒完成的比價狀態；維護選單的「重新比價全部」
+也在這一頁執行。
 """
 
 from __future__ import annotations
@@ -13,16 +15,21 @@ from tkinter import messagebox, ttk
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import NextButton
 from sp_workflow.check_terms import TO_CONFIRM, CalcLine
-from sp_workflow.close_prices import CloseSummary, HistoryReceipt
+from sp_workflow.close_prices import CloseSummary
 from sp_workflow.daily_import import ImportReceipt, PriceCsvReceipt, PriceSummary
 from sp_workflow.local_settings import FolderMemory
+from sp_workflow.observation import EXITED, ON_BOOK, UNLOCKED, WAIT_PRICES, ObservationReceipt, Observed
+from sp_workflow.observation import TO_CONFIRM as OBSERVE_TO_CONFIRM
 from sp_workflow.tabs.base import TITLE, DatabaseLogin, Tab, ask_csv, ask_excel
 from sp_workflow.tabs.recalc import Releaser, recalc_text
 from sp_workflow.window_actions import (
     DailyResult,
+    HistoryResult,
+    Observation,
     PriceCsvResult,
     Recalc,
     import_close_history,
+    observe_products,
     run_daily_import,
     run_price_csv,
 )
@@ -145,21 +152,22 @@ class DailyImportTab(Tab):
         for line in receipt.lines:
             self.add_row((line.tdcc, line.kind, line.detail), problem=line.problem)
         self._show_recalc(recalc)
+        self._show_observation(result.observation.receipt)
         problems = len(receipt.lines)
         kpis = [("要注意（項）", problems, problems > 0), ("股價（筆）", receipt.prices.count, False)]
         if receipt.closes is not None:
             kpis.append(("收盤價（筆）", receipt.closes.stored, False))
         self.finish(
-            kpis + self._recalc_kpis(recalc),
+            kpis + self._recalc_kpis(recalc) + _observation_kpis(result.observation),
             f"完成（第 {receipt.run_id} 次匯入，回補股價）：{receipt.close_date:%Y-%m-%d} 收盤，"
             f"存成取價日 {receipt.prices.price_date:%Y-%m-%d}（等同隔天早上取價）。\n"
             f"{_price_text(receipt.prices)}\n{_close_text(receipt)}\n{recalc_text(recalc)}"
-            f"\n錯誤清單：{receipt.error_book_path}",
+            f"\n{observation_text(result.observation)}\n錯誤清單：{receipt.error_book_path}",
         )
         self.releaser.show(recalc)
 
     def can_import_history(self) -> bool:
-        """維護選單的「匯入歷史收盤價…」：這一頁沒有在匯入時才能按。"""
+        """維護選單的「匯入歷史收盤價…」「重新比價全部」：這一頁沒有在匯入時才能按。"""
         return str(self.start_button.cget("state")) != tk.DISABLED
 
     def import_history(self) -> None:
@@ -179,7 +187,7 @@ class DailyImportTab(Tab):
         self.restart()
         paths = self.config_paths()
 
-        def run() -> HistoryReceipt:
+        def run() -> HistoryResult:
             return import_close_history(settings, source, paths)
 
         self.run_in_background(run, "匯入歷史收盤價中…（整份檢查完才寫入）", self._history_done)
@@ -187,8 +195,9 @@ class DailyImportTab(Tab):
     def _history_done(self, result: object) -> None:
         self._busy(False)
         self.db.after_run(result)
-        if not isinstance(result, HistoryReceipt):
+        if not isinstance(result, HistoryResult):
             return
+        observation, result = result.observation, result.receipt
         for p in result.problems:
             if p.first is None or p.last is None:
                 when = "整列"
@@ -197,6 +206,7 @@ class DailyImportTab(Tab):
             else:
                 when = f"{p.first:%Y-%m-%d}～{p.last:%Y-%m-%d}"
             self.add_row((p.code, p.reason, f"{when}，{p.cells} 格"), problem=True)
+        self._show_observation(observation.receipt)
         listed = sum(p.cells for p in result.problems)
         kpis = [
             ("收盤價（筆）", result.summary.stored, False),
@@ -205,13 +215,50 @@ class DailyImportTab(Tab):
         ]
         book = f"錯誤清單：{result.error_book_path}" if result.error_book_path else "沒有問題，沒有寫錯誤清單。"
         self.finish(
-            kpis,
+            kpis + _observation_kpis(observation),
             f"完成（歷史收盤價）：{result.first_date:%Y-%m-%d}～{result.last_date:%Y-%m-%d}，"
             f"代碼 {result.codes} 個，沒有價格 {result.missing} 格（休市日不算）。\n"
             f"{_summary_text(result.summary)}休市日有值、沒有存 {result.closed} 格；"
             f"超出交易所假日表涵蓋範圍、沒有存 {result.uncovered} 格；"
-            f"錯誤清單列了 {len(result.problems)} 項、{listed} 格。\n{book}",
+            f"錯誤清單列了 {len(result.problems)} 項、{listed} 格。\n{book}\n{observation_text(observation)}",
         )
+
+    def reobserve(self) -> None:
+        """重新比價全部（#155，維護選單）：不匯入，直接用收盤價表現有的價格比一次。"""
+        settings = self.db.settings()
+        if settings is None:
+            return
+        self._busy(True)
+        self.next_button.withdraw()
+        self.releaser.show(Recalc())
+        self.restart()
+        paths = self.config_paths()
+
+        def run() -> ObservationReceipt:
+            return observe_products(settings, paths)
+
+        self.run_in_background(run, "重新比價全部中…", self._reobserved)
+
+    def _reobserved(self, result: object) -> None:
+        self._busy(False)
+        self.db.after_run(result)
+        if not isinstance(result, ObservationReceipt):
+            return
+        observation = Observation(result)
+        self._show_observation(result)
+        self.finish(_observation_kpis(observation), f"完成（重新比價全部）。\n{observation_text(observation)}")
+
+    def _show_observation(self, receipt: ObservationReceipt | None) -> None:
+        """結果表列出這次有變的存續事件、寫不進去的與還沒完成的比價狀態（#155）。"""
+        if receipt is None:
+            return
+        for change in receipt.changes:
+            detail = f"{_events_text(change.previous)} → {_events_text(change.current)}"
+            self.add_row((change.tdcc, "存續事件有變", detail), problem=False)
+        for tdcc, reason in receipt.errors:
+            self.add_row((tdcc, "比價寫不進去", reason), problem=True)
+        for r in receipt.unfinished():
+            self.add_row((r.tdcc, f"比價{r.status}", _observed_detail(r)), problem=True)
 
     def _show_recalc(self, recalc: Recalc) -> None:
         for calc in () if recalc.receipt is None else recalc.receipt.to_show():
@@ -294,6 +341,41 @@ def _close_text(receipt: PriceCsvReceipt) -> str:
     if receipt.close_conflicts:
         text += f"去掉 Equity 這類字尾後重複、值不同、沒有存：{'、'.join(receipt.close_conflicts)}；"
     return text.rstrip("；") + "。"
+
+
+def _observation_kpis(observation: Observation) -> list[tuple[str, int, bool]]:
+    receipt = observation.receipt
+    if receipt is None:
+        return [("比價沒有跑", 1, True)] if observation.error else []
+    unfinished = len(receipt.unfinished())
+    return [("存續事件有變（檔）", len(receipt.changes), False), ("比價沒完成（檔）", unfinished, unfinished > 0)]
+
+
+def observation_text(observation: Observation) -> str:
+    """完成訊息裡的比價一句（#155）。"""
+    receipt = observation.receipt
+    if receipt is None and not observation.error:
+        return "比價：這次沒有跑。"
+    if receipt is None:
+        return f"比價：沒有跑，{observation.error}。匯入已經完成，修好後按「維護 → 重新比價全部」。"
+    through = "收盤價表還沒有資料" if receipt.through is None else f"比到 {receipt.through:%Y-%m-%d}"
+    counts = "、".join(
+        f"{status} {receipt.count(status)}" for status in (ON_BOOK, EXITED, WAIT_PRICES, OBSERVE_TO_CONFIRM)
+    )
+    text = f"比價：{through}，共 {len(receipt.results)} 檔（{counts}）；存續事件有變 {len(receipt.changes)} 檔"
+    if receipt.errors:
+        text += f"；寫不進去 {len(receipt.errors)} 檔"
+    return text + "。"
+
+
+def _events_text(events: Sequence[tuple[str, str, str | None]]) -> str:
+    texts = [" ".join(part for part in (event, underlying, day) if part) for event, day, underlying in events]
+    return "、".join(texts) or "沒有"
+
+
+def _observed_detail(r: Observed) -> str:
+    through = "" if r.observed_through is None else f"（已比到 {r.observed_through:%Y-%m-%d}）"
+    return f"{r.reason}{through}" + ("" if r.locked else f"；{UNLOCKED}")
 
 
 def _calc_row(line: CalcLine) -> tuple[str, str, str]:
