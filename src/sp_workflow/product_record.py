@@ -10,7 +10,7 @@
 
 `REQUIRED` 與欄位對照放在這裡、不放在 `order_import` 或 `product_write`：`check_terms` 也要用，
 而它被 `product_write` import，放在寫入那邊會循環 import（ADR 0016 當時因此搬到 `order_terms`，#126 再收到這裡）。
-這個 module 不 import 其他 `sp_workflow` 的商品 module。
+這個 module 只 import `daily_import`（商品種類 FCN），不 import 上面那些 module。
 
 畫面上的 Upfront / NotePrice (%) 是價格，資料庫存 UF = 100 − 價格（`invert_upfront`，兩個方向一樣）。
 """
@@ -151,23 +151,20 @@ def columns_of(
     `issuer` 是發行機構的寫法；`denominations` 是幣別 → 單位面額預設值。空白的欄（人工維護，#115）寫空白，
     換算的代碼與單位面額也是空白；商品種類一律 FCN。
     """
-    ko_freq, ko_memory = KO_CODES.get(values.get("KO Type"), (None, None))
-    currency, upfront = values.get("Currency"), values.get(UPFRONT_FIELD)
-    columns: dict[str, object] = {
-        "product": FCN,
-        "issuer": issuer,
-        "ko_freq": ko_freq,
-        "ko_memory": ko_memory,
-        "ki_freq": KI_CODES.get(values.get("Barrier Type")),
-        "denomination": None if currency is None else Decimal(denominations[currency]).quantize(_AMOUNT),
-    }
+    columns: dict[str, object] = {}
     for column, name in COLUMN_FIELDS.items():
-        if column == "product":
-            continue
         value = values.get(name)
-        if column == "upfront_pct" and upfront is not None:
-            value = invert_upfront(Decimal(upfront))
+        if column == "upfront_pct" and value is not None:
+            value = invert_upfront(Decimal(value))
         columns[column] = _pct(value) if KINDS[name] is FieldKind.PERCENT else value
+    currency = values.get("Currency")
+    columns["ko_freq"], columns["ko_memory"] = KO_CODES.get(values.get("KO Type"), (None, None))
+    columns.update(
+        product=FCN,
+        issuer=issuer,
+        ki_freq=KI_CODES.get(values.get("Barrier Type")),
+        denomination=None if currency is None else Decimal(denominations[currency]).quantize(_AMOUNT),
+    )
     return {column: columns[column] for column in PRODUCT_COLUMNS}
 
 
