@@ -43,12 +43,12 @@ def export_name(now: dt.datetime | None = None) -> str:
 
 
 def export_products(conn: psycopg.Connection, path: Path) -> ExportReceipt:
-    with conn.cursor() as cur:
+    with conn.transaction(), conn.cursor() as cur:  # 商品與存續事件讀同一個時間點
         cur.execute(f"SELECT * FROM {TABLE} ORDER BY tdcc")
         columns = tuple(column.name for column in cur.description or ())
         rows = cur.fetchall()
-    tdcc = columns.index("tdcc")
-    statuses = lifecycle_status(conn, (row[tdcc] for row in rows))
+        tdcc = columns.index("tdcc")
+        statuses = lifecycle_status(conn, (row[tdcc] for row in rows))
     _save(path, (*columns, LIFECYCLE_COLUMN), [(*row, statuses[row[tdcc]].status) for row in rows])
     return ExportReceipt(path, len(rows))
 

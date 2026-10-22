@@ -246,3 +246,30 @@ def test_change_record_is_json(products) -> None:
     (raw,) = products.execute("SELECT current::text FROM workflow.product_event_change").fetchone()
 
     assert json.loads(raw) == [[KO, "2026-11-02", None], [MATURITY, "2027-04-22", None]]
+
+
+def test_redemption_stops_observation(products) -> None:
+    record_redemption(products, A, D1, user="op")
+
+    with pytest.raises(LifecycleError, match="已登記顧客贖回，停止比價"):
+        replace_auto_events(products, A, [AutoEvent(KO, D2)], user="tester")
+    assert lifecycle_status(products, [A])[A].status == REDEMPTION
+
+
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "UPDATE workflow.product_event_change SET changed_by = 'x'",
+        "DELETE FROM workflow.product_event_change",
+        "UPDATE workflow.event_objection SET note = 'x'",
+        "DELETE FROM workflow.event_objection",
+    ],
+)
+def test_change_records_and_objections_are_kept(products, statement: str) -> None:
+    import psycopg
+
+    replace_auto_events(products, A, [AutoEvent(KO, D1)], user="tester")
+    raise_objection(products, current_events(products, A)[0].event_id, "待查", user="op")
+
+    with pytest.raises(psycopg.errors.RaiseException, match="不能"):
+        products.execute(statement)

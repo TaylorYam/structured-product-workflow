@@ -42,7 +42,7 @@ CREATE TRIGGER product_event_insert_only
     BEFORE UPDATE OR DELETE ON workflow.product_event
     FOR EACH ROW EXECUTE FUNCTION workflow.product_event_insert_only();
 
--- 自動事件整組取代的紀錄：[[事件, 事件日, 標的]]，依事件日排序
+-- 自動事件整組取代的紀錄：[[事件, 事件日, 標的]]，依事件日排序；只新增
 CREATE TABLE workflow.product_event_change (
     change_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     tdcc text NOT NULL REFERENCES workflow.product (tdcc),
@@ -51,6 +51,17 @@ CREATE TABLE workflow.product_event_change (
     previous jsonb NOT NULL,                  -- 取代前的自動事件（沒有時是空陣列）
     current jsonb NOT NULL                    -- 取代後的自動事件（沒有時是空陣列）
 );
+
+CREATE FUNCTION workflow.product_event_change_insert_only() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION '存續事件的取代紀錄只新增，不能修改或刪除（紀錄 %）', OLD.change_id;
+END;
+$$;
+
+CREATE TRIGGER product_event_change_insert_only
+    BEFORE UPDATE OR DELETE ON workflow.product_event_change
+    FOR EACH ROW EXECUTE FUNCTION workflow.product_event_change_insert_only();
 
 CREATE TABLE workflow.event_objection (
     objection_id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -63,11 +74,30 @@ CREATE TABLE workflow.event_objection (
     CHECK ((resolved_at IS NULL) = (resolved_by IS NULL))
 );
 
+-- 異議不能刪除；唯一能改的是還沒解除時記一次解除的人與時間
+CREATE FUNCTION workflow.event_objection_resolve_only() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION '異議不能刪除（異議 %）', OLD.objection_id;
+    END IF;
+    IF OLD.resolved_at IS NOT NULL OR NEW.resolved_at IS NULL
+        OR (to_jsonb(NEW) - 'resolved_at' - 'resolved_by') <> (to_jsonb(OLD) - 'resolved_at' - 'resolved_by') THEN
+        RAISE EXCEPTION '異議不能修改（異議 %），只能解除一次', OLD.objection_id;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER event_objection_resolve_only
+    BEFORE UPDATE OR DELETE ON workflow.event_objection
+    FOR EACH ROW EXECUTE FUNCTION workflow.event_objection_resolve_only();
+
 -- 舊清單匯入的狀態轉成事件（ADR 0019）；原欄位保留但程式不再讀寫，之後另行移除
 INSERT INTO workflow.product_event (tdcc, event, event_date, underlying, source, note, recorded_by)
 SELECT tdcc, status_event, status_date, status_underlying, '舊清單', status_raw, '資料表版本 0016'
 FROM workflow.product
-WHERE status_event IS NOT NULL AND status_event <> '在庫'
+WHERE status_event <> '在庫'
 ORDER BY tdcc;
 
 ALTER TABLE workflow.product ALTER COLUMN status_event DROP NOT NULL;  -- 新商品不再寫

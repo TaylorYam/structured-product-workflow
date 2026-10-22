@@ -28,9 +28,8 @@ MATURITY = "到期還本"
 REDEMPTION = "顧客贖回"
 AUTO_EVENTS = (KO, DELIVERY, MATURITY)
 
-OBSERVATION = "比價"  # 事件的來源
+OBSERVATION = "比價"  # 事件的來源（另有資料表版本 0016 轉換的「舊清單」）
 MANUAL = "人工"
-OLD_LIST = "舊清單"
 
 _EVENT_COLUMNS = "event_id, tdcc, event, event_date, underlying, source, note, recorded_by, recorded_at"
 
@@ -48,7 +47,8 @@ class AutoEvent:
     underlying: str | None = None
 
     def key(self) -> tuple[str, str, str | None]:
-        return (self.event, self.event_date.isoformat(), self.underlying)
+        """比對與取代紀錄用的 [事件, 事件日, 標的]。"""
+        return _key(self.event, self.event_date, self.underlying)
 
 
 @dataclass(frozen=True)
@@ -98,20 +98,23 @@ def current_events(conn: psycopg.Connection, tdcc: str) -> list[StoredEvent]:
 def replace_auto_events(
     conn: psycopg.Connection, tdcc: str, events: Sequence[AutoEvent], *, user: str | None = None
 ) -> bool:
-    """比價算出這檔的整組自動事件；和資料庫現有的不同才整組取代並留紀錄，回傳有沒有改。"""
+    """比價算出這檔的整組自動事件；和資料庫現有的不同才整組取代並留紀錄，回傳有沒有改。
+
+    已登記顧客贖回的商品停止比價，給了也不寫。一組依事件日寫入（同一天的後寫，存續狀態取後寫的那筆）。
+    """
     wrong = [e.event for e in events if e.event not in AUTO_EVENTS]
     if wrong:
         raise LifecycleError(f"{tdcc} 的 {'、'.join(wrong)} 不是自動事件（只有 KO、接股、到期還本）")
     by = user or getpass.getuser()
-    new = sorted(e.key() for e in events)
+    ordered = sorted(events, key=lambda e: (e.event_date, AUTO_EVENTS.index(e.event), e.underlying or ""))
+    new = [e.key() for e in ordered]
     with conn.transaction():
         _lock_product(conn, tdcc)
-        old = sorted(
-            (e.event, e.event_date.isoformat() if e.event_date else None, e.underlying)
-            for e in current_events(conn, tdcc)
-            if e.source == OBSERVATION
-        )
-        if old == new:
+        current = current_events(conn, tdcc)
+        if any(e.source == MANUAL for e in current):
+            raise LifecycleError(f"{tdcc} 已登記顧客贖回，停止比價，不寫自動事件")
+        old = [_key(e.event, e.event_date, e.underlying) for e in current if e.source == OBSERVATION]
+        if sorted(old) == sorted(new):
             return False
         conn.execute(
             "UPDATE workflow.product_event SET superseded_at = now()"
@@ -122,10 +125,7 @@ def replace_auto_events(
             cur.executemany(
                 "INSERT INTO workflow.product_event (tdcc, event, event_date, underlying, source, recorded_by)"
                 " VALUES (%s, %s, %s, %s, %s, %s)",
-                [
-                    (tdcc, e.event, e.event_date, e.underlying, OBSERVATION, by)
-                    for e in sorted(events, key=AutoEvent.key)
-                ],
+                [(tdcc, e.event, e.event_date, e.underlying, OBSERVATION, by) for e in ordered],
             )
         conn.execute(
             "INSERT INTO workflow.product_event_change (tdcc, changed_by, previous, current) VALUES (%s, %s, %s, %s)",
@@ -192,6 +192,10 @@ def _lock_product(conn: psycopg.Connection, tdcc: str) -> None:
     """鎖住這檔的商品列，同時寫同一檔的事件時一個一個來。"""
     if conn.execute("SELECT 1 FROM workflow.product WHERE tdcc = %s FOR UPDATE", (tdcc,)).fetchone() is None:
         raise LifecycleError(f"資料庫沒有 {tdcc} 的商品條件")
+
+
+def _key(event: str, day: dt.date | None, underlying: str | None) -> tuple[str, str, str | None]:
+    return (event, day.isoformat() if day else "", underlying)
 
 
 def _date_text(day: dt.date | None) -> str:
