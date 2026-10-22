@@ -97,7 +97,6 @@ from sp_workflow.daily_import import (
     import_daily,
     import_price_csv,
     latest_import,
-    trade_value,
 )
 from sp_workflow.database import (
     ConnectionSettings,
@@ -105,6 +104,17 @@ from sp_workflow.database import (
     connect,
     default_env_path,
     settings_from_env,
+)
+from sp_workflow.editor_cells import (
+    CellState,
+    K,
+    Tone,
+    commit_order,
+    commit_trade_rows,
+    order_cell_states,
+    order_texts,
+    trade_cell_states,
+    trade_texts,
 )
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.mail_drafts import (
@@ -140,12 +150,10 @@ from sp_workflow.order_terms import (
     CHOICES,
     FIELDS,
     REQUIRED,
-    STRIKE_FIELD,
     OrderRow,
     OrderTermsError,
     collect_orders,
     format_field,
-    parse_field,
 )
 from sp_workflow.preparation import (
     LIST_NAME,
@@ -173,7 +181,7 @@ from sp_workflow.product_write import (
 )
 from sp_workflow.returning import PENDING_SUFFIX, ReturnError, ReturnReceipt, return_to_folders
 from sp_workflow.trade_rows import FIELDS as TRADE_ROW_FIELDS
-from sp_workflow.trade_rows import TradeRowsDraft, load_trade_rows, trade_notes, trade_problems
+from sp_workflow.trade_rows import TradeRowsDraft, load_trade_rows
 
 if TYPE_CHECKING:
     import psycopg
@@ -895,6 +903,7 @@ class MailDraftTab(_Tab):
 
 _PROBLEM_BG = "#FFC7CE"  # 同 Excel 的淺紅色填滿：擋匯入，或讀起單建檔時有問題
 _DIFFERENT_BG = "#FFEB9C"  # 同 Excel 的淺黃色：和資料庫的值不同
+_TONE_BG = {Tone.PLAIN: SURFACE, Tone.DIFFERENT: _DIFFERENT_BG, Tone.PROBLEM: _PROBLEM_BG}
 # 起單建檔的資料夾（#97）；本機沒有選過時「選擇…」先打開這裡
 ORDER_SHEET_DIR = Path(r"G:\Bond Data\PM事項\0.常用工具\ELN每日起單建檔")
 
@@ -1091,15 +1100,16 @@ class _FieldRow:
         """說明依欄位區的寬度換行。"""
         self.note.configure(wraplength=max(240, width - 20))
 
-    def mark(self, background: str, note: str, *, offer_database: bool = False) -> None:
+    def mark(self, state: CellState) -> None:
+        """套用格子狀態（`editor_cells.CellState`）。"""
         for widget in (self.label, self.note):
-            widget.configure(background=background)
-        self.note.configure(text=note, foreground=DANGER if background == _PROBLEM_BG else TEXT_SECONDARY)
-        if note:
+            widget.configure(background=_TONE_BG[state.tone])
+        self.note.configure(text=state.note, foreground=DANGER if state.tone is Tone.PROBLEM else TEXT_SECONDARY)
+        if state.note:
             self.note.grid()
         else:
             self.note.grid_remove()
-        if offer_database:
+        if state.offer_database:
             self.database.grid()
         else:
             self.database.grid_remove()
@@ -1155,7 +1165,8 @@ class OrderEditor(ttk.Frame):
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.LEFT, fill=tk.Y)
         self.rows = {
-            name: _FieldRow(self.fields, i, name, self._commit, self._use_database) for i, name in enumerate(FIELDS)
+            name: _FieldRow(self.fields, i, name, lambda name: self._commit([name]), self._use_database)
+            for i, name in enumerate(FIELDS)
         }
         self.show(None)
 
@@ -1166,15 +1177,15 @@ class OrderEditor(ttk.Frame):
     def show(self, draft: OrderDraft | None, row: OrderRow | None = None) -> None:
         """顯示一檔；`draft` 是 None 時（起單建檔裡沒有這檔）只顯示 `row` 的原因，欄位不能改。"""
         self.draft = draft
-        typed = self.typed.get(draft.tdcc, {}) if draft else {}
+        texts = order_texts(draft, self.typed.get(draft.tdcc, {})) if draft else {}
         for name, field_row in self.rows.items():
-            field_row.var.set("" if draft is None else typed.get(name, format_field(draft.values.get(name))))
+            field_row.var.set(texts.get(name, ""))
         self._apply_state()
         if draft is None:
             self.title_var.set(self.placeholder if row is None else f"{row.tdcc}　{row.issuer}　{row.status}")
             self.note_var.set("" if row is None else "沒有可以改的條件：" + describe(row.notes))
             for field_row in self.rows.values():
-                field_row.mark(SURFACE, "")
+                field_row.mark(CellState())
             return
         self.refresh()
 
@@ -1195,60 +1206,29 @@ class OrderEditor(ttk.Frame):
             return
         config = self.config()
         problems = self.check(draft, config) if config else dict(draft.input_errors)
-        notes = draft.notes
-        differences = draft.differences()
+        states = order_cell_states(draft, problems, fixed=self.fixed, fixed_note=self.FIXED_NOTE)
         for name, field_row in self.rows.items():
-            reading = f"起單建檔：{notes.get(name, '')}"
-            if name in problems:
-                field_row.mark(_PROBLEM_BG, problems[name])
-            elif name in differences:
-                database = f"資料庫是 {format_field(differences[name]) or '空白'}"
-                if name in notes:
-                    field_row.mark(_PROBLEM_BG, f"{reading}；{database}", offer_database=True)
-                else:
-                    field_row.mark(_DIFFERENT_BG, database, offer_database=True)
-            elif name in notes:
-                field_row.mark(_PROBLEM_BG, reading)
-            else:
-                field_row.mark(SURFACE, self.FIXED_NOTE if name in self.fixed else "")
+            field_row.mark(states[name])
         self.title_var.set(f"{draft.tdcc}　{draft.issuer}")
-        row_notes = [problems.get(TDCC_FIELD, ""), notes.get(TDCC_FIELD, "")]
+        row_notes = [problems.get(TDCC_FIELD, ""), draft.notes.get(TDCC_FIELD, "")]
         self.note_var.set("；".join(filter(None, dict.fromkeys(row_notes))))
 
     def commit(self) -> bool:
         """把目前這檔畫面上的輸入都解讀一次（換檔、存檔、關閉前用）；有改到才通知，回傳有沒有改到。"""
-        if not self.editable:
-            return False
-        changed = [self._commit(name, notify=False) for name in self.rows]
-        if any(changed):
-            self.refresh()
-            self.on_change(self.draft)
-        return any(changed)
+        return self._commit(self.rows)
 
-    def _commit(self, name: str, *, notify: bool = True) -> bool:
+    def _commit(self, names: Iterable[str]) -> bool:
+        """解讀這幾欄（離開欄位時只有那一欄）；有改到才重畫、通知。"""
         draft = self.draft
-        if draft is None or not self.editable or name in self.fixed:
+        if draft is None or not self.editable:
             return False
-        text = self.rows[name].var.get()
         typed = self.typed.setdefault(draft.tdcc, {})
-        try:
-            value = parse_field(name, text)
-        except ValueError as exc:
-            changed = typed.get(name) != text
-            typed[name] = text
-            draft.input_errors[name] = str(exc)
-        else:
-            changed = name in typed or format_field(draft.values.get(name)) != format_field(value)
-            typed.pop(name, None)
-            draft.input_errors.pop(name, None)
-            strike = self.rows[STRIKE_FIELD]
-            follow = strike.var.get() == format_field(draft.values.get(STRIKE_FIELD))
-            for other in draft.set_value(name, value, follow=follow):  # 例：Strike date 跟著 Trade date
-                self.rows[other].var.set(format_field(draft.values.get(other)))
-            self.rows[name].var.set(format_field(value))
+        texts = {name: field_row.var.get() for name, field_row in self.rows.items() if name not in self.fixed}
+        changed = commit_order(draft, typed, texts, names)
+        _show_texts(self.rows, order_texts(draft, typed))
         if not typed:
             self.typed.pop(draft.tdcc, None)
-        if changed and notify:
+        if changed:
             self.refresh()
             self.on_change(draft)
         return changed
@@ -1258,7 +1238,14 @@ class OrderEditor(ttk.Frame):
         if draft is None or draft.stored is None:
             return
         self.rows[name].var.set(format_field(draft.stored.get(name)))
-        self._commit(name)
+        self._commit([name])
+
+
+def _show_texts(rows: Mapping[K, _FieldRow], texts: Mapping[K, str]) -> None:
+    """解讀後的字寫回輸入框；沒變的不動（游標留在原位）。"""
+    for key, text in texts.items():
+        if rows[key].var.get() != text:
+            rows[key].var.set(text)
 
 
 class TradeRowsEditor:
@@ -1317,7 +1304,7 @@ class TradeRowsEditor:
                     self.parent,
                     row,
                     name,
-                    lambda _name, key=key: self._commit(key),
+                    lambda _name: self.commit(),
                     lambda _name, key=key: self._use_database(key),
                     follow_width=False,
                 )
@@ -1335,58 +1322,21 @@ class TradeRowsEditor:
 
     def refresh(self) -> None:
         """依目前的值重新標紅、標黃與寫說明。"""
-        trades = self.trades
-        if trades is None:
+        if self.trades is None:
             return
-        problems, notes = trade_problems(trades), trade_notes(trades)
-        rows = {trade.seq: trade for trade in trades.rows}
+        states = trade_cell_states(self.trades)
         for key, field_row in self.rows.items():
-            seq, name = key
-            stored = rows[seq].stored.get(name)
-            database = f"資料庫是 {format_field(stored) or '空白'}"
-            if key in problems:
-                field_row.mark(_PROBLEM_BG, problems[key])
-            elif stored != rows[seq].values.get(name):
-                if key in notes:
-                    field_row.mark(_PROBLEM_BG, f"{notes[key]}；{database}", offer_database=True)
-                else:
-                    field_row.mark(_DIFFERENT_BG, database, offer_database=True)
-            elif key in notes:
-                field_row.mark(_PROBLEM_BG, notes[key])
-            else:
-                field_row.mark(SURFACE, "")
+            field_row.mark(states[key])
 
     def commit(self) -> bool:
-        """把畫面上的輸入都解讀一次（換檔、存檔、關閉前用）；有改到才通知，回傳有沒有改到。"""
-        if not self.editable:
-            return False
-        changed = [self._commit(key, notify=False) for key in self.rows]
-        if any(changed):
-            self.refresh()
-            self._notify()
-        return any(changed)
-
-    def _commit(self, key: tuple[int, str], *, notify: bool = True) -> bool:
+        """把畫面上的輸入都解讀一次（離開欄位、換檔、存檔、關閉前用）；有改到才通知，回傳有沒有改到。"""
         trades = self.trades
         if trades is None or not self.editable:
             return False
-        seq, name = key
-        trade = next(trade for trade in trades.rows if trade.seq == seq)
-        text = self.rows[key].var.get()
-        try:
-            value = trade_value(name, text)
-        except ValueError as exc:
-            changed = self.typed.get(key) != text
-            self.typed[key] = text
-            trade.input_errors[name] = str(exc)
-        else:
-            changed = key in self.typed or format_field(trade.values.get(name)) != format_field(value)
-            self.typed.pop(key, None)
-            trade.input_errors.pop(name, None)
-            if changed:
-                trade.values[name] = value
-            self.rows[key].var.set(format_field(trade.values.get(name)))
-        if changed and notify:
+        texts = {key: field_row.var.get() for key, field_row in self.rows.items()}
+        changed = commit_trade_rows(trades, self.typed, texts)
+        _show_texts(self.rows, trade_texts(trades, self.typed))
+        if changed:
             self.refresh()
             self._notify()
         return changed
@@ -1398,7 +1348,7 @@ class TradeRowsEditor:
         seq, name = key
         trade = next(trade for trade in trades.rows if trade.seq == seq)
         self.rows[key].var.set(format_field(trade.stored.get(name)))
-        self._commit(key)
+        self.commit()
 
     def _notify(self) -> None:
         if self.trades is not None:

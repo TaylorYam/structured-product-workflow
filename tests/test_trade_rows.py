@@ -127,6 +127,12 @@ def test_edits_list_each_changed_cell_by_row() -> None:
     assert trades({"金額": Decimal(100000)}).edits() == [], "100000 和 100000.0000 一樣"
 
 
+def test_differences_map_each_changed_cell_to_the_database_value() -> None:
+    draft = trades({}, {"金額": Decimal(120000), "備註": "改"})
+
+    assert draft.differences() == {(2, "金額"): Decimal("100000.0000"), (2, "備註"): None}
+
+
 # ---------- 資料庫 ----------
 
 B = "029199990002"  # 只有交易明細（BARC）
