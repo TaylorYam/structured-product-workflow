@@ -155,12 +155,12 @@ def test_a_missed_file_in_between_needs_confirmation() -> None:
 
 
 def test_an_exchange_not_in_the_calendar_needs_confirmation() -> None:
-    found = quotes(FRI, AAA_UW=("100.5", "1"), **{"700_HK": ("400", "1")})
+    found = quotes(FRI, AAA_UW=("100.5", "1"), **{"BMW_GY": ("400", "1")})
 
-    result = calc(product(underlyings=("AAA UW", "700 HK", None, None, None)), found=found)
+    result = calc(product(underlyings=("AAA UW", "BMW GY", None, None, None)), found=found)
 
     assert result.status == TO_CONFIRM
-    assert result.reason.startswith("UL_2 700 HK：交易所不在交易所假日表")
+    assert result.reason.startswith("UL_2 BMW GY：交易所不在交易所假日表")
     assert result.prices[0].initial == Decimal("100.5") and result.prices[1].initial is None
 
 

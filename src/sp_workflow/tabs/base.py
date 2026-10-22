@@ -26,6 +26,7 @@ from fcn_checker.ui import (
     TableCopy,
 )
 from sp_workflow.check_terms import CheckTermsError
+from sp_workflow.close_prices import ClosePriceError
 from sp_workflow.daily_import import DailyImportError
 from sp_workflow.database import ConnectionSettings, DatabaseError, settings_from_env
 from sp_workflow.local_settings import FolderMemory
@@ -40,6 +41,7 @@ from sp_workflow.step_records import Recorded
 
 TITLE = "FCN Workflow"
 _EXPECTED_ERRORS = (
+    ClosePriceError,
     PreparationError,
     ReturnError,
     DailyImportError,

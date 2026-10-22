@@ -76,6 +76,7 @@ class _CloseWarning:
 
 WINDOW_FILE = "window.json"  # 視窗上次的大小，和上次選的資料夾放在同一個 .local/
 APPROVAL_DATES, EXPORT_BUNDLE = "審查通過日期…", "匯出回報包…"  # 「維護」選單依名稱更新能不能按
+CLOSE_HISTORY = "匯入歷史收盤價…"
 
 
 class WindowSize:
@@ -248,6 +249,7 @@ class PanelWindow:
         menu = tk.Menu(bar, tearoff=False, postcommand=self._refresh_maintenance)
         menu.add_command(label=APPROVAL_DATES, command=self.check.edit_approval_dates)
         menu.add_command(label=EXPORT_BUNDLE, command=self._export_bundle)
+        menu.add_command(label=CLOSE_HISTORY, command=self._import_close_history)
         menu.add_separator()
         menu.add_command(label="使用的設定檔…", command=self.check.show_config_paths)
         bar.add_cascade(label="維護", menu=menu)
@@ -259,12 +261,17 @@ class PanelWindow:
         for label, allowed in (
             (APPROVAL_DATES, self.check.can_edit_approval_dates()),
             (EXPORT_BUNDLE, self.check.can_export_bundle()),
+            (CLOSE_HISTORY, self.daily.can_import_history()),
         ):
             self.maintenance.entryconfigure(label, state=tk.NORMAL if allowed else tk.DISABLED)
 
     def _export_bundle(self) -> None:
         self.notebook.select(self.check)  # 匯出的進度與結果顯示在核對頁
         self.check.export_bundle()
+
+    def _import_close_history(self) -> None:
+        self.notebook.select(self.daily.frame)  # 匯入的進度與結果顯示在每日匯入頁
+        self.daily.import_history()
 
     def restore_size(self) -> None:
         """照上次的大小顯示；第一次開啟時在 Windows 最大化。"""
