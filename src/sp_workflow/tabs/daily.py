@@ -1,4 +1,7 @@
-"""「1 每日匯入」分頁：匯入每日更新的交易明細與股價、回補股價 CSV（#112），完成後把 FCN TDCC 帶到起單資料頁（#90）。"""
+"""「1 每日匯入」分頁：匯入每日更新的交易明細與股價、回補股價 CSV（#112），完成後把 FCN TDCC 帶到起單資料頁（#90）。
+
+MarketData CSV 同時寫收盤價（#153）；維護選單的「匯入歷史收盤價…」也在這一頁的背景執行、顯示結果。
+"""
 
 from __future__ import annotations
 
@@ -10,11 +13,19 @@ from tkinter import messagebox, ttk
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import NextButton
 from sp_workflow.check_terms import TO_CONFIRM, CalcLine
-from sp_workflow.daily_import import ImportReceipt, PriceSummary
+from sp_workflow.close_prices import CloseSummary, HistoryReceipt
+from sp_workflow.daily_import import ImportReceipt, PriceCsvReceipt, PriceSummary
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.tabs.base import TITLE, DatabaseLogin, Tab, ask_csv, ask_excel
 from sp_workflow.tabs.recalc import Releaser, recalc_text
-from sp_workflow.window_actions import DailyResult, PriceCsvResult, Recalc, run_daily_import, run_price_csv
+from sp_workflow.window_actions import (
+    DailyResult,
+    PriceCsvResult,
+    Recalc,
+    import_close_history,
+    run_daily_import,
+    run_price_csv,
+)
 
 
 class DailyImportTab(Tab):
@@ -36,6 +47,7 @@ class DailyImportTab(Tab):
         self.daily_var = tk.StringVar(value=folders.get("daily", ""))
         self.trades_only_var = tk.BooleanVar(value=False)
         self.csv_var = tk.StringVar(value=folders.get("price_csv", ""))
+        self.history_var = tk.StringVar(value=folders.get("close_history", ""))
         self.status_var.set(f"選每日更新，按「匯入」。資料庫連線設定：{db.env_path}")
 
         self.page_header(
@@ -56,7 +68,7 @@ class DailyImportTab(Tab):
             "回補股價",
             self.csv_var,
             lambda: ask_csv("選擇股價 CSV", self.csv_var),
-            "放假或請假後回補用：MarketData_YYYYMMDD.csv，一次一個",
+            "MarketData_YYYYMMDD.csv，一次一個：每天匯（收盤價給比價用），放假或請假後也用它回補",
         )
         self.result_area(body, row)
         self.start_button = ttk.Button(self.buttons, text="匯入", command=self.start, style="Primary.TButton")
@@ -135,13 +147,65 @@ class DailyImportTab(Tab):
         self._show_recalc(recalc)
         problems = len(receipt.lines)
         kpis = [("要注意（項）", problems, problems > 0), ("股價（筆）", receipt.prices.count, False)]
+        if receipt.closes is not None:
+            kpis.append(("收盤價（筆）", receipt.closes.stored, False))
         self.finish(
             kpis + self._recalc_kpis(recalc),
             f"完成（第 {receipt.run_id} 次匯入，回補股價）：{receipt.close_date:%Y-%m-%d} 收盤，"
             f"存成取價日 {receipt.prices.price_date:%Y-%m-%d}（等同隔天早上取價）。\n"
-            f"{_price_text(receipt.prices)}\n{recalc_text(recalc)}\n錯誤清單：{receipt.error_book_path}",
+            f"{_price_text(receipt.prices)}\n{_close_text(receipt)}\n{recalc_text(recalc)}"
+            f"\n錯誤清單：{receipt.error_book_path}",
         )
         self.releaser.show(recalc)
+
+    def can_import_history(self) -> bool:
+        """維護選單的「匯入歷史收盤價…」：這一頁沒有在匯入時才能按。"""
+        return str(self.start_button.cget("state")) != tk.DISABLED
+
+    def import_history(self) -> None:
+        """匯入歷史收盤價（#153，維護選單）：選一份 HP 格式的 Excel，整份檢查後寫入。"""
+        chosen = ask_excel("選擇歷史收盤價", self.history_var)
+        if not chosen:
+            return
+        settings = self.db.settings()
+        if settings is None:
+            return
+        source = Path(chosen)
+        self.history_var.set(str(source))
+        self.memory.remember(close_history=str(source))
+        self._busy(True)
+        self.next_button.withdraw()
+        self.releaser.show(Recalc())
+        self.restart()
+        paths = self.config_paths()
+
+        def run() -> HistoryReceipt:
+            return import_close_history(settings, source, paths)
+
+        self.run_in_background(run, "匯入歷史收盤價中…（整份檢查完才寫入）", self._history_done)
+
+    def _history_done(self, result: object) -> None:
+        self._busy(False)
+        self.db.after_run(result)
+        if not isinstance(result, HistoryReceipt):
+            return
+        for p in result.problems:
+            when = f"{p.first:%Y-%m-%d}" if p.first == p.last else f"{p.first:%Y-%m-%d}～{p.last:%Y-%m-%d}"
+            self.add_row((p.code, p.reason, f"{when}，{p.cells} 格"), problem=True)
+        listed = sum(p.cells for p in result.problems)
+        kpis = [
+            ("收盤價（筆）", result.summary.stored, False),
+            ("沒有價格（格）", result.missing, result.missing > 0),
+            ("錯誤清單（項）", len(result.problems), bool(result.problems)),
+        ]
+        book = f"錯誤清單：{result.error_book_path}" if result.error_book_path else "沒有問題，沒有寫錯誤清單。"
+        self.finish(
+            kpis,
+            f"完成（歷史收盤價）：{result.first_date:%Y-%m-%d}～{result.last_date:%Y-%m-%d}，"
+            f"代碼 {result.codes} 個，沒有價格 {result.missing} 格（休市日不算）。\n"
+            f"{_summary_text(result.summary)}休市日有值、沒有存 {result.closed} 格；"
+            f"錯誤清單列了 {len(result.problems)} 項、{listed} 格。\n{book}",
+        )
 
     def _show_recalc(self, recalc: Recalc) -> None:
         for calc in () if recalc.receipt is None else recalc.receipt.to_show():
@@ -200,6 +264,25 @@ def _price_text(prices: PriceSummary) -> str:
     if prices.conflicts:
         text += f"；值不一樣的重複代碼 {len(prices.conflicts)} 個，價格沒有存：{'、'.join(prices.conflicts)}"
     return text + "。"
+
+
+def _summary_text(closes: CloseSummary) -> str:
+    text = f"收盤價：存了 {closes.stored} 筆"
+    if closes.replaced:
+        text += f"（取代原本的 {closes.replaced} 筆，其中 {closes.changed} 筆的值不同，舊值留在紀錄）"
+    return text + "；"
+
+
+def _close_text(receipt: PriceCsvReceipt) -> str:
+    """回補股價完成訊息裡的收盤價一句（#153）。"""
+    if receipt.closes is None:
+        return "收盤價：讀不到交易所假日表，這次沒有存，修好假日表後再匯一次這個 CSV。"
+    text = _summary_text(receipt.closes)
+    if receipt.closed:
+        text += f"那一天休市、沒有存 {len(receipt.closed)} 個代碼；"
+    if receipt.close_conflicts:
+        text += f"去掉 Equity 這類字尾後重複、值不同、沒有存：{'、'.join(receipt.close_conflicts)}；"
+    return text.rstrip("；") + "。"
 
 
 def _calc_row(line: CalcLine) -> tuple[str, str, str]:

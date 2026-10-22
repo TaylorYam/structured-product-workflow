@@ -13,6 +13,7 @@ import pytest
 import sp_workflow.tabs.daily
 from order_synth import CONFIG, order_row
 from sp_workflow.check_terms import DONE, WAIT_PRICES, CalcLine, CalcReceipt, Difference
+from sp_workflow.close_prices import CloseSummary, HistoryProblem, HistoryReceipt
 from sp_workflow.daily_import import (
     NEW_TRADES,
     PRICE_CONFLICT,
@@ -137,6 +138,7 @@ def test_price_csv_import_shows_the_stored_price_date(master, tmp_path: Path, mo
     status = window.daily.status_var.get()
     assert "回補股價）：2026-10-16 收盤，存成取價日 2026-10-17" in status
     assert "股價：取價日 2026-10-17，505 筆（取代了這一天原本的 504 筆）。" in status
+    assert "收盤價：讀不到交易所假日表，這次沒有存" in status
     assert window.daily.kpis.values == (
         ("要注意（項）", 1, True),
         ("股價（筆）", 505, False),
@@ -145,6 +147,75 @@ def test_price_csv_import_shows_the_stored_price_date(master, tmp_path: Path, mo
     assert [window.daily.table.item(i, "values")[1] for i in window.daily.table.get_children()] == [PRICE_CONFLICT]
     assert FolderMemory.under(tmp_path).load()["price_csv"] == str(source)
     assert str(window.daily.start_button.cget("state")) == "normal"
+
+
+def test_price_csv_import_says_how_many_closes_were_stored(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    receipt = PriceCsvReceipt(
+        run_id=9,
+        close_date=dt.date(2026, 10, 16),
+        prices=PriceSummary(dt.date(2026, 10, 17), 505, 0, ()),
+        lines=(),
+        error_book_path=tmp_path / "每日匯入錯誤.xlsx",
+        closes=CloseSummary(3, dt.date(2026, 10, 16), dt.date(2026, 10, 16), 500, 500, 2, 1),
+        closed=("7203 JT", "6758 JT"),
+        close_conflicts=("AAA UW",),
+    )
+
+    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar)))
+
+    status = window.daily.status_var.get()
+    assert (
+        "收盤價：存了 500 筆（取代原本的 2 筆，其中 1 筆的值不同，舊值留在紀錄）；那一天休市、沒有存 2 個代碼；"
+        "去掉 Equity 這類字尾後重複、值不同、沒有存：AAA UW。"
+    ) in status
+    assert ("收盤價（筆）", 500, False) in window.daily.kpis.values
+
+
+def test_close_history_runs_on_this_page_and_lists_problems(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    actions = []
+    source = tmp_path / "HP.xlsx"
+    monkeypatch.setattr(sp_workflow.tabs.daily, "ask_excel", lambda *a: str(source))
+    monkeypatch.setattr(window.daily.db, "settings", lambda: object())
+    monkeypatch.setattr(window.daily, "run_in_background", lambda action, *a, **k: actions.append(action))
+    day = dt.date(2026, 10, 15)
+    receipt = HistoryReceipt(
+        summary=CloseSummary(1, dt.date(2022, 7, 28), dt.date(2026, 10, 21), 507, 500000, 0, 0),
+        first_date=dt.date(2022, 7, 28),
+        last_date=dt.date(2026, 10, 21),
+        codes=507,
+        missing=12,
+        closed=3,
+        problems=(HistoryProblem("AAA UW", "抓價未完成（#N/A Requesting Data...），請重抓再匯", day, day, 1),),
+        error_book_path=tmp_path / "歷史收盤價錯誤.xlsx",
+    )
+    monkeypatch.setattr(sp_workflow.tabs.daily, "import_close_history", lambda settings, path, paths: receipt)
+
+    window._import_close_history()
+    assert str(window.daily.start_button.cget("state")) == "disabled"
+    window.daily._history_done(actions[-1]())
+
+    assert window.notebook.select() == str(window.daily.frame)
+    status = window.daily.status_var.get()
+    assert "完成（歷史收盤價）：2022-07-28～2026-10-21，代碼 507 個，沒有價格 12 格（休市日不算）。" in status
+    assert f"錯誤清單：{tmp_path / '歷史收盤價錯誤.xlsx'}" in status
+    assert [window.daily.table.item(i, "values")[0] for i in window.daily.table.get_children()] == ["AAA UW"]
+    assert window.daily.kpis.values == (
+        ("收盤價（筆）", 500000, False),
+        ("沒有價格（格）", 12, True),
+        ("錯誤清單（項）", 1, True),
+    )
+    assert FolderMemory.under(tmp_path).load()["close_history"] == str(source)
+    assert str(window.daily.start_button.cget("state")) == "normal"
+
+
+def test_close_history_does_nothing_without_a_file(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    monkeypatch.setattr(sp_workflow.tabs.daily, "ask_excel", lambda *a: "")
+    monkeypatch.setattr(window.daily, "run_in_background", lambda *a, **k: pytest.fail("沒選檔不匯入"))
+
+    window.daily.import_history()
 
 
 def test_price_csv_import_needs_a_file(master, tmp_path: Path, monkeypatch) -> None:

@@ -84,6 +84,9 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
         "workflow.branch_allocation",
         "workflow.check_result",
         "workflow.check_terms",
+        "workflow.close_price",
+        "workflow.close_price_change",
+        "workflow.close_price_import",
         "workflow.cross_check_release",
         "workflow.daily_price",
         "workflow.event_objection",
@@ -249,3 +252,20 @@ def test_old_statuses_become_old_list_events(pg) -> None:
     ], "在庫的不轉；沒有日期的照樣轉、事件日空白"
     assert pg.execute("SELECT count(*) FROM workflow.product WHERE status_event IS NOT NULL").fetchone()[0] == 4
     assert _nullable(pg)["status_event"], "新商品不再寫 status_event"
+
+
+@pytest.mark.db
+def test_close_prices_migration_keeps_products(pg) -> None:
+    """資料表版本 0017 只新增收盤價表（#153），既有的商品條件不動。"""
+    _database_before(pg, 17)
+    pg.execute(
+        "INSERT INTO workflow.product (tdcc, product, issuer, status_event, source) VALUES (%s, 'FCN', 'SG', '在庫', '人工維護')",
+        ("147000000001",),
+    )
+
+    apply_migrations(pg)
+
+    assert pg.execute("SELECT tdcc, issuer, source FROM workflow.product").fetchall() == [
+        ("147000000001", "SG", "人工維護")
+    ]
+    assert pg.execute("SELECT count(*) FROM workflow.close_price").fetchone()[0] == 0

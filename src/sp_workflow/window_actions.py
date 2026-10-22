@@ -4,6 +4,8 @@
 匯入成功、之後的重算失敗時匯入保留（ADR 0012）：重算的錯誤不丟出，原因放在結果裡。
 寄信草稿分兩個動作（讀最近一次匯入 → 建草稿），中間的確認對話框留在視窗。
 準備、放回、建草稿的步驟紀錄（#151）在清單產出之後另寫；寫入失敗不丟出（清單已經產出），原因放在結果裡。
+收盤價（#153）要用交易所假日表判斷休市日：回補股價讀不到假日表時照樣匯股價、收盤價不存；
+歷史收盤價讀不到假日表就整份不匯入。
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from sp_workflow.check_terms import (
     recalculate,
     release_differences,
 )
+from sp_workflow.close_prices import HistoryReceipt, import_history
 from sp_workflow.daily_import import (
     ImportInfo,
     ImportReceipt,
@@ -152,10 +155,22 @@ def run_daily_import(settings: ConnectionSettings, daily: Path, paths: ConfigPat
 
 
 def run_price_csv(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> PriceCsvResult:
-    """回補股價（#112）：匯入一個 MarketData CSV，再重算核對條件；交易明細不動。"""
+    """回補股價（#112）：匯入一個 MarketData CSV（同時寫收盤價，#153），再重算核對條件；交易明細不動。"""
+    try:
+        calendar = load_calendar(paths.exchange_holidays)
+    except CheckTermsError:
+        calendar = None  # 收盤價這次不存；讀不到的原因由重算寫在結果裡
     with connect(settings) as conn:
-        receipt = import_price_csv(source, conn)
+        receipt = import_price_csv(source, conn, calendar)
         return PriceCsvResult(receipt, _recalculate_after_import(conn, paths.exchange_holidays))
+
+
+def import_close_history(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> HistoryReceipt:
+    """匯入歷史收盤價（#153，維護選單）：讀不到假日表、檔案格式不對或寫不出錯誤清單就整份不匯入。"""
+    calendar = load_calendar(paths.exchange_holidays)
+    with connect(settings) as conn:
+        require_current_schema(conn)
+        return import_history(source, conn, calendar)
 
 
 def release_line(

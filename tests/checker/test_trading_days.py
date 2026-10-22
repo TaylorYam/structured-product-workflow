@@ -97,14 +97,15 @@ def test_ticker_suffix_decides_the_market():
     assert REPO.market_of("ABC UN Equity").code == "US"
     assert REPO.market_of("abc us").code == "US"
     assert REPO.market_of("7203 JT Equity").code == "JP"
-    assert REPO.market_of("700 HK") is None
+    assert REPO.market_of("700 HK Equity").code == "HK"
+    assert REPO.market_of("BMW GY") is None
     assert REPO.market_of("GOOGL") is None
 
 
 def test_unknown_exchange_or_dates_outside_the_table_are_uncertain():
-    hk = REPO.next_trading_day(D(2027, 1, 15), ["GOOGL UW", "700 HK"])
-    assert hk.day == D(2027, 1, 19), "已知市場的休市日照樣跳過"
-    assert "700 HK" in hk.uncertain and "不在交易所假日表" in hk.uncertain
+    gy = REPO.next_trading_day(D(2027, 1, 15), ["GOOGL UW", "BMW GY"])
+    assert gy.day == D(2027, 1, 19), "已知市場的休市日照樣跳過"
+    assert "BMW GY" in gy.uncertain and "不在交易所假日表" in gy.uncertain
     late = REPO.next_trading_day(D(2030, 3, 8), ["GOOGL UW"])
     assert late.day == D(2030, 3, 11) and "涵蓋範圍" in late.uncertain and "2028-12-31" in late.uncertain
     early = REPO.next_trading_day(D(2025, 12, 30), ["GOOGL UW"])
@@ -174,14 +175,14 @@ def test_barc_start_that_skips_a_trading_day_or_lands_on_a_holiday_is_mismatch(t
     assert "第 3 期期始日應為 2030-03-12" in starts(on_holiday)[0].message
 
 
-HK = Spec(underlyings=(UL("甲乙丙控股", "香港交易所", "ABC HK", Decimal("50.0000")),))
+GY = Spec(underlyings=(UL("甲乙丙控股", "德國交易所", "ABC GY", Decimal("50.0000")),))  # 交易所不在假日表
 
 
 def test_barc_start_with_an_unknown_exchange_requires_review_only_when_later(tmp_path):
-    assert [x.status for x in starts(report(tmp_path, HK))] == [S.PASS], "剛好是下一個平日：照舊通過"
-    (result,) = starts(report(tmp_path / "s", HK, edits=[START]))
+    assert [x.status for x in starts(report(tmp_path, GY))] == [S.PASS], "剛好是下一個平日：照舊通過"
+    (result,) = starts(report(tmp_path / "s", GY, edits=[START]))
     assert result.status == S.REVIEW_REQUIRED and result.reason_code == "trading_calendar_uncertain"
-    assert "ABC HK" in result.message and "第 3 期期始日應為 2030-03-11" in result.message
+    assert "ABC GY" in result.message and "第 3 期期始日應為 2030-03-11" in result.message
 
 
 @pytest.mark.parametrize(
@@ -191,13 +192,13 @@ def test_barc_start_with_an_unknown_exchange_requires_review_only_when_later(tmp
 )
 def test_barc_start_that_cannot_be_a_holiday_shift_is_mismatch_even_when_uncertain(tmp_path, new):
     """假日只會讓期始日往後延：比推算結果早、或落在週末，不論假日表確不確定都是不一致。"""
-    (result,) = starts(report(tmp_path, HK, edits=[Edit("2030 年3 月11 日", new, "ts.art13.ko.3.start")]))
+    (result,) = starts(report(tmp_path, GY, edits=[Edit("2030 年3 月11 日", new, "ts.art13.ko.3.start")]))
     assert result.status == S.MISMATCH and "第 3 期期始日應為 2030-03-11" in result.message
 
 
 def test_barc_mixed_basket_skips_known_holidays_and_reviews_the_rest(tmp_path):
-    """美股＋港股：美股休市日照樣跳過（落在美股休市日一定不一致），晚於推算結果才轉人工覆核。"""
-    mixed = Spec(underlyings=(*Spec().underlyings[:1], *HK.underlyings))
+    """美股＋交易所不在假日表的股票：美股休市日照樣跳過（落在美股休市日一定不一致），晚於推算結果才轉人工覆核。"""
+    mixed = Spec(underlyings=(*Spec().underlyings[:1], *GY.underlyings))
     config = with_holidays(D(2030, 3, 11))
     shifted = report(tmp_path, mixed, edits=[START], config=config)
     assert [x.status for x in starts(shifted)] == [S.PASS], "跳過美股休市日：期始日 = 推算結果"
@@ -205,7 +206,7 @@ def test_barc_mixed_basket_skips_known_holidays_and_reviews_the_rest(tmp_path):
     assert on_holiday.status == S.MISMATCH and "第 3 期期始日應為 2030-03-12" in on_holiday.message
     later = Edit("2030 年3 月11 日", "2030 年3 月13 日", "ts.art13.ko.3.start")
     (unsure,) = starts(report(tmp_path / "l", mixed, edits=[later], config=config))
-    assert unsure.status == S.REVIEW_REQUIRED and "ABC HK" in unsure.message
+    assert unsure.status == S.REVIEW_REQUIRED and "ABC GY" in unsure.message
 
 
 JT = Spec(underlyings=(UL("虛構日本株式會社", "東京證券交易所", "ZZJ JT", Decimal("1234.0000")),))
