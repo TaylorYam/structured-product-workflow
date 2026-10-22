@@ -8,6 +8,8 @@
   `reload_stored` 在匯入後重讀資料庫的值與鎖住狀態（畫面上改到一半的值不動）。
 - `load_correction`／`apply_correction`：已鎖住的商品更正條件（#55、ADR 0014）：維持鎖住、核對結果不動，
   有核對條件的重算價格，每次在 `workflow.term_correction` 留紀錄。
+- `missing_products`／`open_maintenance`／`save_maintenance`：人工維護（#115、ADR 0017）：列出還沒鎖住、缺必填欄的商品
+  與只有交易明細的 TDCC；打開任何一檔（已鎖住的照更正規則存檔），還沒鎖住的可以留空白，存檔後重算核對條件。
 規則式、不猜值：單位面額依幣別預設值（審查標準 `[denomination]`），發行機構寫法依參考條件表 `[issuer_values]`。
 已鎖住（`locked_at` 有值：TS 核對通過，或 migration 0006 之前就在資料庫）的商品不能匯入，要改走更正（`apply_correction`）；
 migration 0006 之後、清單更新停用（#87）之前由清單更新建立的商品沒有鎖，Order 匯入可以接手
@@ -20,11 +22,11 @@ import datetime as dt
 import getpass
 import json
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import Decimal, InvalidOperation
 from typing import TYPE_CHECKING, Any
 
-from sp_workflow.check_terms import CalcLine, recalculate_corrected
+from sp_workflow.check_terms import CalcLine, recalculate, recalculate_corrected
 from sp_workflow.daily_import import FCN
 from sp_workflow.database import DatabaseError, require_current_schema
 from sp_workflow.order_terms import (
@@ -43,6 +45,7 @@ from sp_workflow.order_terms import (
     UPFRONT_FIELD,
     FieldKind,
     OrderRow,
+    missing_fields,
     plain,
     unknown_issuer,
 )
@@ -57,6 +60,7 @@ STATUS_IN_STOCK = "在庫"
 # workflow.product.source：商品資料由哪裡建立（#86）；清單更新已停用（#87），只剩以前建立的商品
 INVENTORY_SOURCE = "清單更新"
 ORDER_SOURCE = "Order"  # 「匯入起單資料」（#97 起從起單建檔讀）
+MANUAL_SOURCE = "人工維護"  # 只有交易明細的 TDCC 在人工維護建立（#115）
 
 # 匯入結果
 NEW = "新增"
@@ -85,6 +89,8 @@ _TYPES: dict[FieldKind, tuple[type, ...]] = {
 }
 
 _CONFLICT = "起單建檔裡這檔有好幾列、這欄不同，要填正確的值（正確是空白的話請改起單建檔後重新讀取）"
+# 人工維護可以空白的必填欄（#115）：資料庫的商品種類不可空白（ADR 0016）
+_BLANK_ALLOWED = frozenset(REQUIRED) - {"Product"}
 
 # 資料庫商品欄位（和畫面的欄的對照是 `order_terms.COLUMN_FIELDS`）
 _PRODUCT_COLUMNS = (
@@ -256,9 +262,9 @@ def _stored(conn: psycopg.Connection, tdcc: str) -> _Stored | None:
     if locked_at is None:
         locked = ""
     elif source == INVENTORY_SOURCE:
-        locked = "以前清單更新匯入的商品，條件已鎖住，要改請按「更正商品條件…」"
+        locked = "以前清單更新匯入的商品，條件已鎖住，要改請到「7 人工維護」"
     else:
-        locked = "已核對通過，條件已鎖住，要改請按「更正商品條件…」"
+        locked = "已核對通過，條件已鎖住，要改請到「7 人工維護」"
     return _Stored(columns, _fields_of(columns), source, locked)
 
 
@@ -296,7 +302,10 @@ def review_status(row: OrderRow, draft: OrderDraft | None, config: ImportConfig)
     return READY, "", False
 
 
-def _value_problems(values: Mapping[str, object], draft: OrderDraft, config: ImportConfig) -> dict[str, str]:
+def _value_problems(
+    values: Mapping[str, object], draft: OrderDraft, config: ImportConfig, *, allow_blank: bool = False
+) -> dict[str, str]:
+    """`allow_blank`（人工維護，#115）：必填欄（商品種類除外）與有 KI 時的 KI(%) 可以空白，只檢查有填的欄。"""
     problems: dict[str, str] = {}
     if not draft.issuer:
         problems[TDCC_FIELD] = unknown_issuer(draft.tdcc)
@@ -309,33 +318,38 @@ def _value_problems(values: Mapping[str, object], draft: OrderDraft, config: Imp
                 problems[name] = _CONFLICT
             elif name in draft.row.unresolved:
                 problems[name] = "起單建檔算不出來，要填"
-            elif name in REQUIRED:
+            elif name in REQUIRED and not (allow_blank and name in _BLANK_ALLOWED):
                 problems[name] = "必填"
             continue
         if not isinstance(value, _TYPES[KINDS[name]]) or isinstance(value, bool):
             problems[name] = f"要填{KINDS[name].value}"
         elif KINDS[name] is FieldKind.CHOICE and value not in CHOICES[name]:
             problems[name] = f"要選 {'／'.join(CHOICES[name])}"
-    if "Product" not in problems and str(values["Product"]).upper() != FCN:
+
+    def filled(name: str) -> bool:
+        return name not in problems and values.get(name) is not None
+
+    if filled("Product") and str(values["Product"]).upper() != FCN:
         problems["Product"] = "目前只做 FCN"
-    if "Currency" not in problems and values["Currency"] not in config.denominations:
+    if filled("Currency") and values["Currency"] not in config.denominations:
         problems["Currency"] = "這個幣別沒有單位面額預設值"
     for name in ("Guaranteed Periods (m)", "Tenor (m)"):
-        if name not in problems and values[name] < 1:
+        if filled(name) and values[name] < 1:
             problems[name] = "至少 1"
-    trade, strike = values.get(TRADE_FIELD), values.get(STRIKE_FIELD)
-    if TRADE_FIELD not in problems and STRIKE_FIELD not in problems and strike < trade:
+    if filled(TRADE_FIELD) and filled(STRIKE_FIELD) and values[STRIKE_FIELD] < values[TRADE_FIELD]:
         problems[STRIKE_FIELD] = "不能早於 Trade date"
-    filled = [values.get(name) is not None for name in UNDERLYINGS]
-    if any(later and not earlier for earlier, later in zip(filled, filled[1:], strict=False)):
-        gap = UNDERLYINGS[filled.index(False)]
+    underlyings = [values.get(name) is not None for name in UNDERLYINGS]
+    if any(later and not earlier for earlier, later in zip(underlyings, underlyings[1:], strict=False)):
+        gap = UNDERLYINGS[underlyings.index(False)]
         problems.setdefault(gap, "標的要從 BBG Code 1 依序填，中間不能空")
-    if "Barrier Type" not in problems and "KI Barrier (%)" not in problems:
+    if filled("Barrier Type") and "KI Barrier (%)" not in problems:
         ki = values.get("KI Barrier (%)")
         if values["Barrier Type"] == "NONE" and ki is not None:
             problems["KI Barrier (%)"] = "Barrier Type 是 NONE 時要空白"
         elif values["Barrier Type"] != "NONE" and ki is None:
-            problems["KI Barrier (%)"] = "有 KI 時必填"
+            # 人工維護也擋：KI(%) 不在必填欄，空著存進去「檢查」找不到、寄信會寫成「-」
+            hint = "；還不確定就把 Barrier Type 也先空著" if allow_blank else ""
+            problems["KI Barrier (%)"] = f"有 KI 時必填{hint}"
     return problems
 
 
@@ -463,7 +477,7 @@ def _import_one(conn: psycopg.Connection, draft: OrderDraft, config: ImportConfi
     names = list(dict.fromkeys(COLUMN_FIELDS.get(c) or _DERIVED_COLUMNS[c] for c in changed))
     detail = "改了：" + "、".join(names) if names else ""
     if stored.source != ORDER_SOURCE:
-        detail = "；".join(filter(None, ("清單更新建立的商品改由起單資料匯入接手", detail)))
+        detail = "；".join(filter(None, (f"{stored.source}建立的商品改由起單資料匯入接手", detail)))
     return _Outcome(OrderImportLine(draft.tdcc, OVERWRITTEN, detail), values, stored.columns, edits)
 
 
@@ -488,32 +502,33 @@ def _keep_database_values(draft: OrderDraft, stored: _Stored | None) -> dict[str
 
 
 def _product_columns(values: Mapping[str, Any], issuer: str, config: ImportConfig) -> dict[str, object]:
-    ko_freq, ko_memory = KO_CODES[values["KO Type"]]
-    barrier = values["Barrier Type"]
+    """畫面的值 → 資料庫商品欄位；空白的欄（人工維護，#115）寫空白，換算的代碼與單位面額也是空白。"""
+    ko_freq, ko_memory = KO_CODES.get(values.get("KO Type"), (None, None))
+    barrier, currency, upfront = values.get("Barrier Type"), values.get("Currency"), values.get(UPFRONT_FIELD)
     return {
         "product": FCN,
         "issuer": config.issuer_names.get(issuer),  # 更正時不用（上手不改）
-        "currency": values["Currency"],
-        "trade_date": values[TRADE_FIELD],
-        "strike_date": values[STRIKE_FIELD],
+        "currency": currency,
+        "trade_date": values.get(TRADE_FIELD),
+        "strike_date": values.get(STRIKE_FIELD),
         "issue_date": values.get("Issue date"),
-        "final_valuation_date": values["Final valuation date"],
-        "maturity_date": values["Maturity date"],
-        "initial_pricing": values[PRICING_FIELD],
-        "non_call_months": values["Guaranteed Periods (m)"],
+        "final_valuation_date": values.get("Final valuation date"),
+        "maturity_date": values.get("Maturity date"),
+        "initial_pricing": values.get(PRICING_FIELD),
+        "non_call_months": values.get("Guaranteed Periods (m)"),
         **{f"underlying_{n}": values.get(name) for n, name in enumerate(UNDERLYINGS, 1)},
-        "strike_pct": _pct(values["Strike (%)"]),
+        "strike_pct": _pct(values.get("Strike (%)")),
         "ko_freq": ko_freq,
         "ko_memory": ko_memory,
-        "ko_type": values["KO Type"],
-        "ko_pct": _pct(values["KO Barrier (%)"]),
-        "coupon_pct": _pct(values["Coupon p.a. (%)"]),
-        "upfront_pct": _pct(_HUNDRED - Decimal(values[UPFRONT_FIELD])),
-        "tenor_months": values["Tenor (m)"],
-        "ki_freq": KI_CODES[barrier],
+        "ko_type": values.get("KO Type"),
+        "ko_pct": _pct(values.get("KO Barrier (%)")),
+        "coupon_pct": _pct(values.get("Coupon p.a. (%)")),
+        "upfront_pct": None if upfront is None else _pct(_HUNDRED - Decimal(upfront)),
+        "tenor_months": values.get("Tenor (m)"),
+        "ki_freq": KI_CODES.get(barrier),
         "barrier_type": barrier,
-        "ki_pct": None if values.get("KI Barrier (%)") is None else _pct(values["KI Barrier (%)"]),
-        "denomination": Decimal(config.denominations[values["Currency"]]).quantize(_AMOUNT),
+        "ki_pct": _pct(values.get("KI Barrier (%)")),
+        "denomination": None if currency is None else Decimal(config.denominations[currency]).quantize(_AMOUNT),
     }
 
 
@@ -534,10 +549,15 @@ class CorrectionError(Exception):
 
 @dataclass(frozen=True)
 class CorrectionReceipt:
+    """更正或人工維護存檔的結果；`correction_id` 是 `workflow.term_correction` 的那一筆。"""
+
     tdcc: str
     correction_id: int | None  # 沒有改任何欄時 None（沒有寫入）
     changes: tuple[tuple[str, object, object], ...] = ()  # (欄位或 UL_n_價格, 更正前, 更正後)
     calc: CalcLine | None = None  # 重算後的核對條件；沒有算過核對條件的商品（以前清單更新匯入的）是 None
+    locked: bool = True  # 存檔時已鎖住（更正）；False 是還沒鎖住的商品（人工維護，#115）
+    created: bool = False  # 只有交易明細的 TDCC 新建了商品條件
+    missing: tuple[str, ...] = ()  # 存檔後還空著的必填欄（只有還沒鎖住的商品會有）
 
 
 def load_correction(conn: psycopg.Connection, tdcc: str, config: ImportConfig) -> OrderDraft:
@@ -565,8 +585,8 @@ def apply_correction(
     """把更正後的條件寫進資料庫：商品維持鎖住、核對結果不動，有核對條件的重算價格，每次留一筆紀錄。
 
     照起單資料匯入的規則檢查；上手、發行日不改，單位面額只有幣別改了時換成新幣別的預設值。
-    打開之後資料庫的條件被改過、或已經不是鎖住的，不寫入。整次在同一個 transaction 裡；寫入後 `draft` 的
-    打開時的值改成寫入的值。
+    打開之後資料庫的條件被改過、或已經不是鎖住的，不寫入。整次在同一個 transaction 裡；寫入後 `draft` 換成
+    資料庫存的值（同重新打開）。
     """
     _require_schema(conn)
     tdcc = draft.tdcc
@@ -575,8 +595,7 @@ def apply_correction(
         stored = _stored(conn, tdcc)
         _require_locked(tdcc, stored)
         assert stored is not None
-        seen = draft.stored or {}
-        if any(not _same(stored.fields[name], seen.get(name)) for name in stored.fields):
+        if _changed_since_opened(stored, draft):
             raise CorrectionError(f"{tdcc}：資料庫裡這檔的條件在打開之後改過了，請重新載入再更正")
         values = draft.values
         problems = {**_value_problems(values, draft, config), **draft.input_errors}
@@ -593,17 +612,7 @@ def apply_correction(
         changed = [c for c in _PRODUCT_COLUMNS if not _same(stored.columns[c], product[c])]
         if not changed:
             return CorrectionReceipt(tdcc, None)
-        changes = [
-            (name, stored.fields.get(name), values.get(name))
-            for name in FIELDS
-            if not _same(stored.fields.get(name), values.get(name))
-        ]
-        edited = {name for name, _, _ in changes}
-        for column in changed:  # 換算的代碼欄、單位面額：畫面上對應的欄沒改時另外記（例：舊資料的代碼和現在的換算不同）
-            source = _DERIVED_COLUMNS.get(column)
-            if source is not None and source not in edited:
-                item = source if source not in FIELDS else column
-                changes.append((item, stored.columns[column], product[column]))
+        changes = _changes(stored.fields, stored.columns, values, product, changed)
         assignments = ", ".join(f"{c} = %s" for c in changed)
         conn.execute(
             f"UPDATE workflow.product SET {assignments} WHERE tdcc = %s", (*(product[c] for c in changed), tdcc)
@@ -624,9 +633,27 @@ def apply_correction(
                 _json(stored.columns),
             ),
         ).fetchone()[0]
-    draft.original = dict(values)
-    draft.stored = dict(values)
+        saved = _saved_fields(conn, tdcc)
+    _reopen(draft, saved)
     return CorrectionReceipt(tdcc, correction_id, tuple(changes), calc)
+
+
+def _changed_since_opened(stored: _Stored, draft: OrderDraft) -> bool:
+    """資料庫裡這檔的條件和打開時看到的（`draft.stored`）不同：打開之後有別人改過。"""
+    seen = draft.stored or {}
+    return any(not _same(stored.fields[name], seen.get(name)) for name in stored.fields)
+
+
+def _saved_fields(conn: psycopg.Connection, tdcc: str) -> dict[str, object]:
+    stored = _stored(conn, tdcc)
+    assert stored is not None
+    return stored.fields
+
+
+def _reopen(draft: OrderDraft, saved: Mapping[str, object]) -> None:
+    """存檔後當成重新打開：畫面與打開時的值都換成資料庫存的值（百分比存成小數 6 位），
+    同一檔接著改、再存時才不會誤判成打開之後有別人改過。"""
+    draft.values, draft.original, draft.stored = dict(saved), dict(saved), dict(saved)
 
 
 def _require_schema(conn: psycopg.Connection) -> None:
@@ -640,7 +667,208 @@ def _require_locked(tdcc: str, stored: _Stored | None) -> None:
     if stored is None:
         raise CorrectionError(f"{tdcc}：資料庫沒有這檔商品")
     if not stored.locked:
-        raise CorrectionError(f"{tdcc}：還沒鎖住（還沒核對通過），請用起單資料的「匯入資料庫」修改")
+        raise CorrectionError(f"{tdcc}：還沒鎖住（還沒核對通過），不用更正；請重新載入")
+
+
+def _changes(
+    before_fields: Mapping[str, object],
+    before_columns: Mapping[str, object],
+    values: Mapping[str, object],
+    product: Mapping[str, object],
+    changed: Sequence[str],
+) -> list[tuple[str, object, object]]:
+    """存檔紀錄的 [(欄位, 存檔前, 存檔後)]：畫面的欄，加上換算的代碼欄、上手與單位面額
+    （畫面上對應的欄沒改時另外記，例：舊資料的代碼和現在的換算不同、幣別換了面額跟著換）。"""
+    changes = [
+        (name, before_fields.get(name), values.get(name))
+        for name in FIELDS
+        if not _same(before_fields.get(name), values.get(name))
+    ]
+    edited = {name for name, _, _ in changes}
+    for column in changed:
+        source = _DERIVED_COLUMNS.get(column)
+        if source is not None and source not in edited:
+            item = source if source not in FIELDS else column
+            changes.append((item, before_columns.get(column), product[column]))
+    return changes
+
+
+# ---------- 人工維護（#115） ----------
+
+# 打開時這檔的狀態（`OrderDraft.row.status`）：已鎖住的存檔照更正（ADR 0014）
+MAINTAIN_LOCKED = LOCKED
+MAINTAIN_OPEN = "未鎖住"
+MAINTAIN_NEW = "只有交易明細"
+MISSING_NOTE = "缺，可以先存、之後再補"  # 還沒鎖住的商品空著的必填欄：畫面標紅但不擋存檔
+_ALREADY_CREATED = "打開之後資料庫已經有這檔的商品條件，請重新載入"
+
+
+@dataclass(frozen=True)
+class MissingProduct:
+    """「檢查」列出的一檔：還沒鎖住而且缺必填欄的商品，或只有交易明細的 TDCC。"""
+
+    tdcc: str
+    issuer: str  # 上手代號
+    status: str  # 未鎖住／只有交易明細
+    values: Mapping[str, object]  # 畫面的欄 → 資料庫的值（只有交易明細時都是空白）
+    missing: tuple[str, ...]  # 缺的必填欄，依 `REQUIRED` 的順序
+
+
+def missing_products(conn: psycopg.Connection, config: ImportConfig) -> tuple[MissingProduct, ...]:
+    """還沒鎖住、缺必填欄的商品，和只有交易明細（還沒有商品條件）的 TDCC，依 TDCC 排。
+
+    缺資料以起單資料的必填欄（`order_terms.REQUIRED`）為準，ISIN、發行日這類由 TS 回填的不算；
+    只有交易明細的，必填欄全部算缺。
+    """
+    _require_schema(conn)
+    found = []
+    with conn.transaction():
+        for tdcc, *row in conn.execute(
+            f"SELECT tdcc, {', '.join(_PRODUCT_COLUMNS)} FROM workflow.product WHERE locked_at IS NULL"
+        ):
+            columns = dict(zip(_PRODUCT_COLUMNS, row, strict=True))
+            missing = tuple(missing_fields(columns))
+            if missing:
+                issuer = _issuer_code(tdcc, columns["issuer"], config)
+                found.append(MissingProduct(tdcc, issuer, MAINTAIN_OPEN, _fields_of(columns), missing))
+        for (tdcc,) in conn.execute(
+            "SELECT DISTINCT tdcc FROM workflow.trade_row t"
+            " WHERE NOT EXISTS (SELECT 1 FROM workflow.product p WHERE p.tdcc = t.tdcc)"
+        ):
+            issuer = config.issuer_prefixes.get(tdcc[:3], "")
+            found.append(MissingProduct(tdcc, issuer, MAINTAIN_NEW, dict.fromkeys(FIELDS), REQUIRED))
+    return tuple(sorted(found, key=lambda product: product.tdcc))
+
+
+def open_maintenance(conn: psycopg.Connection, tdcc: str, config: ImportConfig) -> OrderDraft:
+    """打開一檔來維護：資料庫有商品條件的帶出目前的值（已鎖住的同 `load_correction`）；只有交易明細的
+    從空白開始（商品種類 FCN，上手依上手編號對照）。兩邊都沒有時丟 `CorrectionError`。"""
+    _require_schema(conn)
+    stored = _stored(conn, tdcc)
+    if stored is not None and stored.locked:
+        return load_correction(conn, tdcc, config)
+    if stored is not None:
+        fields = stored.fields
+        row = OrderRow(tdcc, MAINTAIN_OPEN, _issuer_code(tdcc, stored.columns["issuer"], config), dict(fields))
+        return OrderDraft(row, dict(fields), dict(fields), dict(fields), database_checked=True, correcting=True)
+    if not _has_trade_rows(conn, tdcc):
+        raise CorrectionError(f"{tdcc}：交易明細和商品條件都沒有這檔，不能在這裡新增")
+    values: dict[str, object] = {**dict.fromkeys(FIELDS), "Product": FCN}  # 交易明細只有 FCN
+    row = OrderRow(tdcc, MAINTAIN_NEW, config.issuer_prefixes.get(tdcc[:3], ""), dict(values))
+    return OrderDraft(row, dict(values), dict(values), dict(values), database_checked=True, correcting=True)
+
+
+def maintenance_problems(draft: OrderDraft, config: ImportConfig) -> dict[str, str]:
+    """畫面標紅用：擋存檔的問題，加上還沒鎖住的商品空著的必填欄（`MISSING_NOTE`，不擋存檔）。
+
+    已鎖住的照更正的規則（空白也擋）。上手的問題放在 TDCC；資料庫已有的商品上手不改，不擋。
+    """
+    if draft.row.status == MAINTAIN_LOCKED:
+        problems = {**_value_problems(draft.values, draft, config), **draft.input_errors}
+        problems.pop(TDCC_FIELD, None)
+        return problems
+    problems = _maintenance_blocking(draft, config)
+    blank = [name for name in REQUIRED if draft.values.get(name) is None and name not in problems]
+    return {**problems, **dict.fromkeys(blank, MISSING_NOTE)}
+
+
+def _maintenance_blocking(draft: OrderDraft, config: ImportConfig) -> dict[str, str]:
+    problems = {**_value_problems(draft.values, draft, config, allow_blank=True), **draft.input_errors}
+    if draft.row.status == MAINTAIN_OPEN:
+        problems.pop(TDCC_FIELD, None)  # 上手沿用資料庫的，不改
+    return problems
+
+
+def save_maintenance(
+    conn: psycopg.Connection, draft: OrderDraft, config: ImportConfig, *, reason: str = "", user: str | None = None
+) -> CorrectionReceipt:
+    """人工維護存檔。已鎖住的照更正（`apply_correction`）；還沒鎖住的可以留空白（格式錯的擋），寫入後重算核對條件；
+    只有交易明細的新建商品條件（來源「人工維護」）。每次在 `workflow.term_correction` 留一筆（`locked` 是 false），
+    沒改任何欄時不寫入。打開之後資料庫的這檔被改過、鎖住、建立了商品條件或交易明細沒了，不寫入。
+    整次在同一個 transaction 裡；寫入後 `draft` 換成資料庫存的值（同重新打開）。
+    """
+    if draft.row.status == MAINTAIN_LOCKED:
+        return apply_correction(conn, draft, config, reason=reason, user=user)
+    _require_schema(conn)
+    tdcc, values = draft.tdcc, draft.values
+    with conn.transaction():
+        conn.execute("SELECT 1 FROM workflow.product WHERE tdcc = %s FOR UPDATE", (tdcc,))
+        stored = _stored(conn, tdcc)
+        _require_unchanged(conn, draft, stored)
+        problems = _maintenance_blocking(draft, config)
+        if problems:
+            raise CorrectionError(f"{tdcc} 沒有存檔：{describe(problems)}")
+        product = _product_columns(values, draft.issuer, config)
+        if stored is None:
+            before_fields, before_columns = dict.fromkeys(FIELDS), dict.fromkeys(_PRODUCT_COLUMNS)
+        else:
+            before_fields, before_columns = stored.fields, stored.columns
+            product["issuer"] = stored.columns["issuer"]  # 上手不改
+            if _same(values.get("Currency"), stored.fields["Currency"]):
+                product["denomination"] = stored.columns["denomination"]  # 幣別沒改時面額不動（可能是放行的 TS 值）
+        changed = [c for c in _PRODUCT_COLUMNS if not _same(before_columns[c], product[c])]
+        if not changed or (stored is None and not _edits(draft.stored or {}, values)):
+            return CorrectionReceipt(tdcc, None, locked=False)  # 新建時商品種類、上手一定有值，要看畫面有沒有改
+        if stored is None:
+            columns = ("tdcc", *_PRODUCT_COLUMNS, "status_event", "source")
+            inserted = conn.execute(
+                f"INSERT INTO workflow.product ({', '.join(columns)}) VALUES ({', '.join(['%s'] * len(columns))})"
+                " ON CONFLICT (tdcc) DO NOTHING RETURNING tdcc",
+                (tdcc, *(product[c] for c in _PRODUCT_COLUMNS), STATUS_IN_STOCK, MANUAL_SOURCE),
+            ).fetchone()
+            if inserted is None:  # 別人同時新增了這檔：還不存在的列 FOR UPDATE 鎖不到
+                raise CorrectionError(f"{tdcc}：{_ALREADY_CREATED}")
+        else:
+            assignments = ", ".join(f"{c} = %s" for c in changed)
+            conn.execute(
+                f"UPDATE workflow.product SET {assignments} WHERE tdcc = %s", (*(product[c] for c in changed), tdcc)
+            )
+        changes = _changes(before_fields, before_columns, values, product, changed)
+        (calc,) = recalculate(conn, config.calendar, tdccs=[tdcc]).lines
+        correction_id = conn.execute(
+            "INSERT INTO workflow.term_correction (tdcc, corrected_by, reason, changes, previous, locked)"
+            " VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, false) RETURNING correction_id",
+            (
+                tdcc,
+                user or getpass.getuser(),
+                reason.strip() or None,
+                _json([list(change) for change in changes]),
+                _json(None if stored is None else stored.columns),
+            ),
+        ).fetchone()[0]
+        saved = _saved_fields(conn, tdcc)
+    _reopen(draft, saved)
+    draft.row = replace(draft.row, status=MAINTAIN_OPEN)
+    return CorrectionReceipt(
+        tdcc,
+        correction_id,
+        tuple(changes),
+        calc,
+        locked=False,
+        created=stored is None,
+        missing=tuple(missing_fields(product)),
+    )
+
+
+def _require_unchanged(conn: psycopg.Connection, draft: OrderDraft, stored: _Stored | None) -> None:
+    """打開之後資料庫的這檔有沒有變：還沒鎖住的值改過、鎖住了；只有交易明細的建立了商品條件、交易明細沒了。"""
+    tdcc = draft.tdcc
+    if draft.row.status == MAINTAIN_NEW:
+        if stored is not None:
+            raise CorrectionError(f"{tdcc}：{_ALREADY_CREATED}")
+        if not _has_trade_rows(conn, tdcc):
+            raise CorrectionError(f"{tdcc}：交易明細已經沒有這檔，不能新增商品條件")
+        return
+    if stored is None:
+        raise CorrectionError(f"{tdcc}：資料庫已經沒有這檔商品，請重新載入")
+    if stored.locked:
+        raise CorrectionError(f"{tdcc}：打開之後已經鎖住了（核對通過），請重新載入")
+    if _changed_since_opened(stored, draft):
+        raise CorrectionError(f"{tdcc}：資料庫裡這檔的條件在打開之後改過了，請重新載入")
+
+
+def _has_trade_rows(conn: psycopg.Connection, tdcc: str) -> bool:
+    return conn.execute("SELECT 1 FROM workflow.trade_row WHERE tdcc = %s LIMIT 1", (tdcc,)).fetchone() is not None
 
 
 # ---------- 值的轉換 ----------
@@ -660,7 +888,9 @@ def _same(a: object, b: object) -> bool:
     return a == b
 
 
-def _pct(value: object) -> Decimal:
+def _pct(value: object) -> Decimal | None:
+    if value is None:
+        return None
     try:
         return Decimal(value).quantize(_PCT)  # type: ignore[arg-type]
     except InvalidOperation as exc:

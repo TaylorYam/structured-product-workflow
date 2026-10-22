@@ -1,6 +1,6 @@
 # 0014: 鎖住後更正商品條件／Correct Product Terms After Locking
 
-- 狀態／Status: Accepted
+- 狀態／Status: Accepted；入口改到「7 人工維護」分頁，由 [ADR 0017](0017-manual-maintenance-tab.md) 取代，更正的規則照舊／Accepted; the entry point moved to the "7 人工維護" tab, superseded by ADR 0017; the correction rules still stand
 - 日期／Date: 2026-10-21
 - 追蹤／Tracking: #55
 - 補充／Completes: [ADR 0006](0006-new-product-data-from-order.md)「重複匯入」的「更正商品條件」、[ADR 0013](0013-check-from-database.md) 的鎖住／the "correct product terms" flow named by ADR 0006's re-import rule and the locking of ADR 0013
