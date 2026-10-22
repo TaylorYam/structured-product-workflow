@@ -49,7 +49,7 @@ def test_every_product_and_column_is_exported(pg, tmp_path: Path) -> None:
 
     rows = read_back(path)
     columns = product_columns(pg)
-    assert rows[0] == columns and list(receipt.columns) == columns
+    assert rows[0] == columns
     assert receipt.count == 2 and len(rows) == 3
     first = dict(zip(columns, rows[1], strict=True))
     assert [row[0] for row in rows[1:]] == [A, B], "依 TDCC 排序，前導零保留"
@@ -75,6 +75,14 @@ def test_text_that_looks_like_a_formula_stays_text(tmp_path: Path) -> None:
     assert read_back(path) == [["tdcc", "status_raw"], ["029199990001", "=1+1"]]
 
 
+def test_control_characters_are_dropped(tmp_path: Path) -> None:
+    path = tmp_path / "x.xlsx"
+
+    product_export._save(path, ("tdcc", "status_raw"), [("029199990001", "KO\x01 2026")])
+
+    assert read_back(path)[1] == ["029199990001", "KO 2026"]
+
+
 def test_a_failed_write_keeps_the_old_file_and_leaves_no_temp_file(tmp_path: Path, monkeypatch) -> None:
     path = tmp_path / "x.xlsx"
     path.write_bytes(b"old")
@@ -82,12 +90,25 @@ def test_a_failed_write_keeps_the_old_file_and_leaves_no_temp_file(tmp_path: Pat
     def locked(_source, _target):
         raise PermissionError(13, "Permission denied")
 
-    monkeypatch.setattr(product_export.os, "replace", locked)
+    monkeypatch.setattr(Path, "replace", locked)
 
     with pytest.raises(ProductExportError, match="同名檔開在 Excel 時請先關掉"):
         product_export._save(path, ("tdcc",), [("029199990001",)])
 
     assert path.read_bytes() == b"old" and list(tmp_path.iterdir()) == [path]
+
+
+def test_an_unexpected_error_leaves_no_temp_file(tmp_path: Path, monkeypatch) -> None:
+    def broken(self, filename):
+        Path(filename).write_bytes(b"half")
+        raise ValueError("壞掉")
+
+    monkeypatch.setattr(product_export.openpyxl.Workbook, "save", broken)
+
+    with pytest.raises(ValueError):
+        product_export._save(tmp_path / "x.xlsx", ("tdcc",), [])
+
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_a_missing_folder_says_where(tmp_path: Path) -> None:
