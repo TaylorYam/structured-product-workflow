@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -101,13 +101,13 @@ class Opened:
     trades: TradeRowsDraft | None = None
 
 
-def recalculate_after_import(conn: psycopg.Connection, calendar: Callable[[], TradingCalendar]) -> Recalc:
-    """匯入之後重算；失敗時不丟錯誤（匯入已經完成），說明放在結果裡。"""
+def _recalculate_after_import(conn: psycopg.Connection, holidays: Path) -> Recalc:
+    """匯入之後重算；讀不到假日表或重算失敗時不丟錯誤（匯入已經完成），說明放在結果裡。"""
     import psycopg
 
     try:
-        found = calendar()
-        return Recalc(recalculate(conn, found), found)
+        calendar = load_calendar(holidays)
+        return Recalc(recalculate(conn, calendar), calendar)
     except (CheckTermsError, DatabaseError, psycopg.Error) as exc:
         return Recalc(error=_first_line(exc))
 
@@ -119,14 +119,14 @@ def run_daily_import(settings: ConnectionSettings, daily: Path, paths: ConfigPat
     """匯入每日更新（`prices` 為 False 時只匯交易明細），再重算核對條件。"""
     with connect(settings) as conn:
         receipt = import_daily(daily, conn, prices=prices)
-        return DailyResult(receipt, recalculate_after_import(conn, lambda: load_calendar(paths.exchange_holidays)))
+        return DailyResult(receipt, _recalculate_after_import(conn, paths.exchange_holidays))
 
 
 def run_price_csv(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> PriceCsvResult:
     """回補股價（#112）：匯入一個 MarketData CSV，再重算核對條件；交易明細不動。"""
     with connect(settings) as conn:
         receipt = import_price_csv(source, conn)
-        return PriceCsvResult(receipt, recalculate_after_import(conn, lambda: load_calendar(paths.exchange_holidays)))
+        return PriceCsvResult(receipt, _recalculate_after_import(conn, paths.exchange_holidays))
 
 
 def release_line(
@@ -174,6 +174,7 @@ def read_latest_import(settings: ConnectionSettings) -> ImportInfo | None:
 def make_mail_drafts(
     settings: ConnectionSettings, text: str, root: Path, out: Path, *, template_path: Path | None
 ) -> DraftReceipt:
+    """在 Outlook 建 TS／IIS 草稿（#29），結果清單存在 `out` 底下。"""
     with connect(settings) as conn:
         return create_drafts(text, root, out, conn, template_path=template_path)
 
@@ -203,6 +204,7 @@ def save_product(
     trades: TradeRowsDraft | None,
     reason: str,
 ) -> CorrectionReceipt:
+    """人工維護存檔（已鎖住的照更正的規則），商品條件與交易明細一起。"""
     with connect(settings) as conn:
         return save_maintenance(conn, draft, config, trades=trades, reason=reason)
 
