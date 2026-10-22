@@ -68,7 +68,6 @@ def test_marking_sent_finishes_the_product_and_a_bad_tdcc_only_fails_itself(pg, 
     assert sent_before(pg_settings, [B, A, A]) == (A,), "登記前從資料庫查已寄出過的"
 
 
-
 @pytest.mark.db
 def test_redemption_is_refused_for_products_with_events(pg, pg_settings) -> None:
     seed_products(pg, [inventory(t, [("台北", 10000)]) for t in (A, B)])
