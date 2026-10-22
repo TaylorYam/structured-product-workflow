@@ -38,6 +38,7 @@ from sp_workflow.daily_import import (
     latest_import,
 )
 from sp_workflow.database import ConnectionSettings, DatabaseError, connect, require_current_schema
+from sp_workflow.legacy_backfill import BackfillReceipt, LegacyBackfillError, backfill_legacy
 from sp_workflow.lifecycle import LifecycleError
 from sp_workflow.mail_drafts import DraftReceipt, create_drafts
 from sp_workflow.observation import ObservationReceipt, observe_all
@@ -106,6 +107,14 @@ class PriceCsvResult:
 @dataclass(frozen=True)
 class HistoryResult:
     receipt: HistoryReceipt
+    observation: Observation = Observation()
+
+
+@dataclass(frozen=True)
+class LegacyResult:
+    """匯入舊商品的價格與比價日（#154）與之後的比價。"""
+
+    receipt: BackfillReceipt
     observation: Observation = Observation()
 
 
@@ -207,6 +216,25 @@ def import_close_history(settings: ConnectionSettings, source: Path, paths: Conf
         require_current_schema(conn)
         receipt = import_history(source, conn, calendar)
         return HistoryResult(receipt, _observe_after_import(conn, calendar))
+
+
+def import_legacy_products(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> LegacyResult:
+    """匯入舊商品的價格與比價日（#154，維護選單），再比價（#155）：讀不到參考條件表格式、檔案不對就整份不匯入。"""
+    from fcn_checker.config import load_reference_format
+    from fcn_checker.ingestion import IngestionError
+
+    try:
+        fmt = load_reference_format(paths.reference_format)
+    except IngestionError as exc:
+        raise LegacyBackfillError(f"{exc}，整份不匯入") from exc
+    try:
+        calendar = load_calendar(paths.exchange_holidays)
+    except CheckTermsError:
+        calendar = None  # 照樣匯入；比價寫「讀不到交易所假日表」
+    with connect(settings) as conn:
+        require_current_schema(conn)
+        receipt = backfill_legacy(conn, source, fmt)
+        return LegacyResult(receipt, _observe_after_import(conn, calendar))
 
 
 def observe_products(settings: ConnectionSettings, paths: ConfigPaths) -> ObservationReceipt:

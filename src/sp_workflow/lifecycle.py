@@ -4,7 +4,7 @@
 - 自動事件（KO、接股、到期還本）只由比價寫，`replace_auto_events` 每次給這檔算出的整組，和資料庫現有的
   不同才整組取代（舊的記取代時間、新增新的一組），差異寫進 `workflow.product_event_change`；人工不能新增、修改或刪除。
 - 人工事件只有顧客贖回（`record_redemption`），已有存續事件的商品不能登記。
-- 舊清單的狀態在資料表版本 0016 轉成來源「舊清單」的事件；比價不取代它們。
+- 舊清單的狀態在資料表版本 0016 轉成來源「舊清單」的事件，舊商品匯入（`record_legacy`，#154）也寫這種；比價不取代它們。
 - 對自動事件有意見只能提出異議（`raise_objection`／`resolve_objection`），異議不改事件。
 `workflow.product.status_event` 等四欄不再讀寫（之後另行移除）。
 """
@@ -163,6 +163,28 @@ def record_redemption(
             "INSERT INTO workflow.product_event (tdcc, event, event_date, source, note, recorded_by)"
             f" VALUES (%s, %s, %s, %s, %s, %s) RETURNING {_EVENT_COLUMNS}",
             (tdcc, REDEMPTION, event_date, MANUAL, note.strip() or None, user or getpass.getuser()),
+        ).fetchone()
+    return StoredEvent(*row)
+
+
+def record_legacy(
+    conn: psycopg.Connection, tdcc: str, event: str, event_date: dt.date | None, note: str, *, user: str | None = None
+) -> StoredEvent:
+    """舊商品匯入（#154）寫一筆來源「舊清單」的事件（KO 或到期還本）；已有存續事件（任何來源）的商品不能寫。"""
+    if event not in (KO, MATURITY):
+        raise LifecycleError(f"舊清單事件只能是 KO 或到期還本，不能是「{event}」")
+    with conn.transaction():
+        _lock_product(conn, tdcc)
+        existing = current_events(conn, tdcc)
+        if existing:
+            last = existing[-1]
+            raise LifecycleError(
+                f"{tdcc} 已有存續事件「{last.event}」（{_date_text(last.event_date)}，{last.source}），不能再寫舊清單事件"
+            )
+        row = conn.execute(
+            "INSERT INTO workflow.product_event (tdcc, event, event_date, source, note, recorded_by)"
+            f" VALUES (%s, %s, %s, %s, %s, %s) RETURNING {_EVENT_COLUMNS}",
+            (tdcc, event, event_date, LEGACY, note.strip() or None, user or getpass.getuser()),
         ).fetchone()
     return StoredEvent(*row)
 

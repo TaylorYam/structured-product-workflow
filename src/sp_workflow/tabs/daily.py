@@ -1,6 +1,7 @@
 """「1 每日匯入」分頁：匯入每日更新的交易明細與股價、回補股價 CSV（#112），完成後把 FCN TDCC 帶到起單資料頁（#90）。
 
-MarketData CSV 同時寫收盤價（#153）；維護選單的「匯入歷史收盤價…」也在這一頁的背景執行、顯示結果。
+MarketData CSV 同時寫收盤價（#153）；維護選單的「匯入歷史收盤價…」「匯入舊商品的價格與比價日…」（#154）
+也在這一頁的背景執行、顯示結果。
 匯入收盤價之後比價（#155），完成訊息列出這次有變的存續事件與還沒完成的比價狀態；維護選單的「重新比價全部」
 也在這一頁執行。
 """
@@ -17,6 +18,7 @@ from fcn_checker.ui import NextButton
 from sp_workflow.check_terms import TO_CONFIRM, CalcLine
 from sp_workflow.close_prices import CloseSummary
 from sp_workflow.daily_import import ImportReceipt, PriceCsvReceipt, PriceSummary
+from sp_workflow.legacy_backfill import EXISTING, FILLED, SKIPPED
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.observation import EXITED, ON_BOOK, UNLOCKED, WAIT_PRICES, ObservationReceipt, Observed
 from sp_workflow.observation import TO_CONFIRM as OBSERVE_TO_CONFIRM
@@ -25,10 +27,12 @@ from sp_workflow.tabs.recalc import Releaser, recalc_text
 from sp_workflow.window_actions import (
     DailyResult,
     HistoryResult,
+    LegacyResult,
     Observation,
     PriceCsvResult,
     Recalc,
     import_close_history,
+    import_legacy_products,
     observe_products,
     run_daily_import,
     run_price_csv,
@@ -55,6 +59,7 @@ class DailyImportTab(Tab):
         self.trades_only_var = tk.BooleanVar(value=False)
         self.csv_var = tk.StringVar(value=folders.get("price_csv", ""))
         self.history_var = tk.StringVar(value=folders.get("close_history", ""))
+        self.legacy_var = tk.StringVar(value=folders.get("legacy_backfill", ""))
         self.status_var.set(f"選每日更新，按「匯入」。資料庫連線設定：{db.env_path}")
 
         self.page_header(
@@ -167,7 +172,7 @@ class DailyImportTab(Tab):
         self.releaser.show(recalc)
 
     def can_import_history(self) -> bool:
-        """維護選單的「匯入歷史收盤價…」「重新比價全部」：這一頁沒有在匯入時才能按。"""
+        """維護選單的「匯入歷史收盤價…」「重新比價全部」「匯入舊商品的價格與比價日…」：這一頁沒有在匯入時才能按。"""
         return str(self.start_button.cget("state")) != tk.DISABLED
 
     def import_history(self) -> None:
@@ -221,6 +226,54 @@ class DailyImportTab(Tab):
             f"{_summary_text(result.summary)}休市日有值、沒有存 {result.closed} 格；"
             f"超出交易所假日表涵蓋範圍、沒有存 {result.uncovered} 格；"
             f"錯誤清單列了 {len(result.problems)} 項、{listed} 格。\n{book}\n{observation_text(observation)}",
+        )
+
+    def import_legacy(self) -> None:
+        """匯入舊商品的價格與比價日（#154，維護選單）：選一份參考條件表格式的 Excel，只補已鎖住、還缺資料的商品。"""
+        chosen = ask_excel("選擇舊商品的參考條件表（例如回填後的庫存總表）", self.legacy_var)
+        if not chosen:
+            return
+        settings = self.db.settings()
+        if settings is None:
+            return
+        source = Path(chosen)
+        self.legacy_var.set(str(source))
+        self.memory.remember(legacy_backfill=str(source))
+        self._busy(True)
+        self.next_button.withdraw()
+        self.releaser.show(Recalc())
+        self.restart()
+        paths = self.config_paths()
+
+        def run() -> LegacyResult:
+            return import_legacy_products(settings, source, paths)
+
+        self.run_in_background(run, "匯入舊商品的價格與比價日中…", self._legacy_done)
+
+    def _legacy_done(self, result: object) -> None:
+        self._busy(False)
+        self.db.after_run(result)
+        if not isinstance(result, LegacyResult):
+            return
+        observation, receipt = result.observation, result.receipt
+        for line in receipt.lines:
+            if line.result != EXISTING:  # 已存在的不列，數字在上面
+                self.add_row((line.tdcc, f"舊商品{line.result}", line.detail), problem=line.result == SKIPPED)
+        self._show_observation(observation.receipt)
+        filled, existing, skipped = (receipt.count(r) for r in (FILLED, EXISTING, SKIPPED))
+        kpis = [
+            ("已補（檔）", filled, False),
+            ("已存在（檔）", existing, False),
+            ("不匯入（檔）", skipped, skipped > 0),
+        ]
+        book = f"錯誤清單：{receipt.error_book_path}" if receipt.error_book_path else "沒有問題，沒有寫錯誤清單。"
+        events = (
+            f"寫了舊清單事件 {receipt.events} 筆。" if receipt.has_status else "表上沒有「庫存狀態」欄，沒有寫事件。"
+        )
+        self.finish(
+            kpis + _observation_kpis(observation),
+            f"完成（舊商品的價格與比價日）：已補 {filled} 檔、已存在 {existing} 檔、不匯入 {skipped} 檔；{events}\n"
+            f"{book}\n{observation_text(observation)}",
         )
 
     def reobserve(self) -> None:

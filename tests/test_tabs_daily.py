@@ -23,11 +23,12 @@ from sp_workflow.daily_import import (
     PriceCsvReceipt,
     PriceSummary,
 )
+from sp_workflow.legacy_backfill import EXISTING, FILLED, SKIPPED, BackfillLine, BackfillReceipt
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.observation import EventChange, ObservationReceipt, Observed
 from sp_workflow.order_terms import PENDING as ORDER_PENDING
 from sp_workflow.order_terms import OrderRow
-from sp_workflow.window_actions import DailyResult, HistoryResult, Observation, PriceCsvResult, Recalc
+from sp_workflow.window_actions import DailyResult, HistoryResult, LegacyResult, Observation, PriceCsvResult, Recalc
 from window_synth import NEEDS_RELEASE, UF_DIFF, hint_change_button, new_window, read_result, release_without_database
 
 
@@ -265,6 +266,39 @@ def test_reobserve_runs_on_this_page(master, tmp_path: Path, monkeypatch) -> Non
     assert window.notebook.select() == str(window.daily.frame)
     assert "完成（重新比價全部）。\n比價：比到 2026-10-21" in window.daily.status_var.get()
     assert len(window.daily.table.get_children()) == 2
+
+
+def test_legacy_backfill_runs_on_this_page_and_lists_what_changed(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    actions = []
+    source = tmp_path / "庫存總表.xlsx"
+    monkeypatch.setattr(sp_workflow.tabs.daily, "ask_excel", lambda *a: str(source))
+    monkeypatch.setattr(window.daily.db, "settings", lambda: object())
+    monkeypatch.setattr(window.daily, "run_in_background", lambda action, *a, **k: actions.append(action))
+    receipt = BackfillReceipt(
+        (
+            BackfillLine("147199990001", FILLED, "補了價格、比價日 1～12；寫了KO事件（2026-10-01）", (2,)),
+            BackfillLine("147199990002", EXISTING, "價格與比價日都有了，沒有動", (3,)),
+            BackfillLine("147199990003", SKIPPED, "資料庫沒有這檔", (4,)),
+        ),
+        has_status=True,
+        events=1,
+        error_book_path=tmp_path / "舊商品補資料錯誤.xlsx",
+    )
+    result = LegacyResult(receipt, Observation(error="讀不到交易所假日表，這次沒有比價"))
+    monkeypatch.setattr(sp_workflow.tabs.daily, "import_legacy_products", lambda settings, path, paths: result)
+
+    window._import_legacy()
+    assert str(window.daily.start_button.cget("state")) == "disabled"
+    window.daily._legacy_done(actions[-1]())
+
+    assert window.notebook.select() == str(window.daily.frame)
+    status = window.daily.status_var.get()
+    assert "完成（舊商品的價格與比價日）：已補 1 檔、已存在 1 檔、不匯入 1 檔；寫了舊清單事件 1 筆。" in status
+    assert f"錯誤清單：{tmp_path / '舊商品補資料錯誤.xlsx'}" in status
+    rows = [window.daily.table.item(i, "values") for i in window.daily.table.get_children()]
+    assert [r[:2] for r in rows] == [("147199990001", "舊商品已補"), ("147199990003", "舊商品不匯入")], "已存在的不列"
+    assert window.daily.memory.load()["legacy_backfill"] == str(source)
 
 
 def test_close_history_does_nothing_without_a_file(master, tmp_path: Path, monkeypatch) -> None:
