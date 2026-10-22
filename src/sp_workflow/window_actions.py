@@ -51,7 +51,14 @@ from sp_workflow.preparation import PrepareReceipt, prepare_batch
 from sp_workflow.product_export import ExportReceipt, export_products
 from sp_workflow.product_write import CorrectionReceipt
 from sp_workflow.returning import ReturnReceipt, return_to_folders
-from sp_workflow.step_records import StepRecord, drafted_records, prepared_records, returned_records, write_records
+from sp_workflow.step_records import (
+    Recorded,
+    StepRecord,
+    drafted_records,
+    prepared_records,
+    returned_records,
+    write_records,
+)
 from sp_workflow.trade_rows import TradeRowsDraft, load_trade_rows
 
 if TYPE_CHECKING:
@@ -77,16 +84,6 @@ class DailyResult:
 class PriceCsvResult:
     receipt: PriceCsvReceipt
     recalc: Recalc = Recalc()
-
-
-@dataclass(frozen=True)
-class Recorded:
-    """步驟紀錄（#151）寫了幾筆；沒有登入資料庫時 skipped，寫入失敗時 error（清單已經產出）。"""
-
-    count: int = 0
-    skipped: bool = False
-    error: str = ""
-    database_error: DatabaseError | None = None  # 連不上資料庫（可能是密碼錯，視窗要重新詢問）
 
 
 @dataclass(frozen=True)
@@ -170,13 +167,18 @@ def release_line(
 
 
 def _record_steps(settings: ConnectionSettings | None, records: Sequence[StepRecord]) -> Recorded:
-    """清單產出之後寫步驟紀錄；沒有連線設定（只用 Excel 跑）時不寫，連不上或寫入失敗時原因放在結果裡。"""
+    """清單產出之後寫步驟紀錄；沒有連線設定（只用 Excel 跑）時不寫，連不上或寫入失敗時原因放在結果裡。
+
+    沒有要寫的（例如整批跳過）不連資料庫。
+    """
     if settings is None:
         return Recorded(skipped=True)
+    if not records:
+        return Recorded()
     try:
         conn = connect(settings)
     except DatabaseError as exc:
-        return Recorded(error=str(exc), database_error=exc)
+        return Recorded(error=_first_line(exc), database_error=exc)
     with conn:
         return _record_with(conn, records)
 

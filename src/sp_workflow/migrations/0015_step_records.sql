@@ -13,3 +13,14 @@ CREATE TABLE workflow.step_record (
 );
 
 CREATE INDEX step_record_tdcc ON workflow.step_record (tdcc, step, recorded_at);
+
+CREATE FUNCTION workflow.step_record_insert_only() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION '步驟紀錄只新增，不能修改或刪除（紀錄 %）', OLD.record_id;
+END;
+$$;
+
+CREATE TRIGGER step_record_insert_only
+    BEFORE UPDATE OR DELETE ON workflow.step_record
+    FOR EACH ROW EXECUTE FUNCTION workflow.step_record_insert_only();

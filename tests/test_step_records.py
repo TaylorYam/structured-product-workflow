@@ -25,6 +25,7 @@ from sp_workflow.step_records import (
     DRAFTED_STEP,
     PREPARED_STEP,
     RETURNED_STEP,
+    Recorded,
     drafted_records,
     prepared_records,
     returned_records,
@@ -139,13 +140,37 @@ def test_redoing_a_step_adds_a_record(pg, tmp_path: Path) -> None:
 
 
 @pytest.mark.db
-def test_records_are_insert_only_with_known_steps(pg) -> None:
+def test_only_known_steps(pg) -> None:
     import psycopg
 
     with pytest.raises(psycopg.errors.CheckViolation):
         pg.execute(
             "INSERT INTO workflow.step_record (tdcc, step, recorded_by, result) VALUES (%s, '核對', 'x', 'x')", (A,)
         )
+
+
+@pytest.mark.db
+@pytest.mark.parametrize(
+    "statement", ["UPDATE workflow.step_record SET result = '改過'", "DELETE FROM workflow.step_record"]
+)
+def test_records_cannot_be_changed_or_deleted(pg, tmp_path: Path, statement: str) -> None:
+    import psycopg
+
+    write_records(pg, prepared_records(prepare_receipt(tmp_path)), user="tester")
+
+    with pytest.raises(psycopg.errors.RaiseException, match="步驟紀錄只新增"):
+        pg.execute(statement)
+    assert len(records(pg)) == 1
+
+
+def test_nothing_to_record_does_not_connect(tmp_path: Path, monkeypatch) -> None:
+    skipped = replace(prepare_receipt(tmp_path), outcomes=(ProductOutcome(B, SKIPPED, "找不到說明書"),))
+    monkeypatch.setattr("sp_workflow.window_actions.prepare_batch", lambda text, root, out: skipped)
+    monkeypatch.setattr("sp_workflow.window_actions.connect", lambda settings: pytest.fail("不該連資料庫"))
+
+    result = run_prepare(object(), B, tmp_path, tmp_path)
+
+    assert result.recorded == Recorded(), "整批跳過：沒有要寫的，連不上的資料庫也不會被提起"
 
 
 def test_without_database_settings_no_records_and_the_list_is_kept(tmp_path: Path, monkeypatch) -> None:

@@ -79,24 +79,24 @@ class PrepareTab(Tab):
         if not isinstance(result, PrepareResult):
             return
         self.db.after_run(result.recorded.database_error)
-        recorded, result = result.recorded, result.receipt
-        for o in result.outcomes:
+        recorded, receipt = result.recorded, result.receipt
+        for o in receipt.outcomes:
             self.add_row((o.tdcc, o.status, o.reason), problem=o.status != PREPARED)
-        prepared = sum(o.status == PREPARED for o in result.outcomes)
-        skipped = len(result.outcomes) - prepared
-        from_word = sum(d.from_word for o in result.outcomes if o.status == PREPARED for d in o.documents)
-        status = f"完成：{prepared} 個商品已準備、{skipped} 個跳過。批次資料夾：{result.batch_dir}"
-        if result.unreadable_dirs:
-            status += f"\n注意：搜尋時有 {len(result.unreadable_dirs)} 個資料夾讀不到（例如 {result.unreadable_dirs[0]}），裡面的商品資料夾找不到。"
+        prepared = sum(o.status == PREPARED for o in receipt.outcomes)
+        skipped = len(receipt.outcomes) - prepared
+        from_word = sum(d.from_word for o in receipt.outcomes if o.status == PREPARED for d in o.documents)
+        status = f"完成：{prepared} 個商品已準備、{skipped} 個跳過。批次資料夾：{receipt.batch_dir}"
+        if receipt.unreadable_dirs:
+            status += f"\n注意：搜尋時有 {len(receipt.unreadable_dirs)} 個資料夾讀不到（例如 {receipt.unreadable_dirs[0]}），裡面的商品資料夾找不到。"
         kpis = (
             ("已準備（檔）", prepared, False),
             ("跳過（檔）", skipped, skipped > 0),
             ("Word 轉檔（份）", from_word, False),
         )
         self.finish(kpis, status + record_note(recorded))
-        self.batch_dir = result.batch_dir
+        self.batch_dir = receipt.batch_dir
         self.open_button.configure(state=tk.NORMAL)
-        if self.on_prepared(result):  # 核對頁真的帶入了這批 PDF，才有下一步
+        if self.on_prepared(receipt):  # 核對頁真的帶入了這批 PDF，才有下一步
             self.next_button.offer()
 
     def open_batch(self) -> None:

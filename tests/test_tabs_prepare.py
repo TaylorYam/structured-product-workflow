@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 
-from sp_workflow.window_actions import Recorded
+from sp_workflow.step_records import Recorded
 from window_synth import new_window, prepared_result
 
 
@@ -39,4 +39,4 @@ def test_prepare_without_database_says_no_step_records(master, tmp_path: Path) -
 
     window.prepare._done(replace(result, recorded=Recorded(skipped=True)))
 
-    assert "沒有登入資料庫，這次沒有留步驟紀錄" in window.prepare.status_var.get()
+    assert "沒有登入資料庫（沒有連線設定或取消登入），這次沒有留步驟紀錄" in window.prepare.status_var.get()

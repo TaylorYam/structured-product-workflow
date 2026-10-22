@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from sp_workflow.mail_drafts import DRAFTED, NOT_NEEDED, DraftOutcome, DraftReceipt
-from sp_workflow.window_actions import DraftResult, Recorded
+from sp_workflow.step_records import Recorded
+from sp_workflow.window_actions import DraftResult
 from window_synth import new_window
 
 

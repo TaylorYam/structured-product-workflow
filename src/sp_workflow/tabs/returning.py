@@ -91,12 +91,12 @@ class ReturnTab(Tab):
         if not isinstance(result, ReturnResult):
             return
         self.db.after_run(result.recorded.database_error)
-        recorded, result = result.recorded, result.receipt
-        for o in result.outcomes:
+        recorded, receipt = result.recorded, result.receipt
+        for o in receipt.outcomes:
             self.add_row((o.tdcc, o.ts, o.iis, o.reason), problem=o.blocked or o.pending or bool(o.reason))
-        blocked = sum(o.blocked for o in result.outcomes)
-        pending = sum(o.pending and not o.blocked for o in result.outcomes)
-        returned = len(result.outcomes) - blocked - pending
+        blocked = sum(o.blocked for o in receipt.outcomes)
+        pending = sum(o.pending and not o.blocked for o in receipt.outcomes)
+        returned = len(receipt.outcomes) - blocked - pending
         kpis = (
             ("已放回或已在（檔）", returned, False),
             ("含待確認（檔）", pending, pending > 0),
@@ -105,5 +105,5 @@ class ReturnTab(Tab):
         self.finish(
             kpis,
             f"完成：{returned} 個商品已放回或已在、{pending} 個含「{PENDING_SUFFIX}」檔、"
-            f"{blocked} 個不放回。放回清單：{result.list_path}" + record_note(recorded),
+            f"{blocked} 個不放回。放回清單：{receipt.list_path}" + record_note(recorded),
         )

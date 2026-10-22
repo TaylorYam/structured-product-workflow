@@ -36,7 +36,7 @@ from sp_workflow.preparation import PreparationError, parse_tdccs
 from sp_workflow.product_export import ProductExportError
 from sp_workflow.product_write import CorrectionError
 from sp_workflow.returning import ReturnError
-from sp_workflow.window_actions import Recorded
+from sp_workflow.step_records import Recorded
 
 TITLE = "FCN Workflow"
 _EXPECTED_ERRORS = (
@@ -309,7 +309,7 @@ class DatabaseLogin:
 def record_note(recorded: Recorded) -> str:
     """步驟紀錄（#151）沒有寫進資料庫時接在完成訊息後面的一句；寫進去了是空字串。"""
     if recorded.skipped:
-        return "\n注意：沒有登入資料庫，這次沒有留步驟紀錄（清單照常產出）。"
+        return "\n注意：沒有登入資料庫（沒有連線設定或取消登入），這次沒有留步驟紀錄（清單照常產出）。"
     if recorded.error:
         return f"\n注意：步驟紀錄沒有寫進資料庫：{recorded.error}（清單照常產出）。"
     return ""

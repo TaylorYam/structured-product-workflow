@@ -11,6 +11,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from sp_workflow.database import DatabaseError
 from sp_workflow.mail_drafts import DRAFTED, DraftReceipt
 from sp_workflow.preparation import PREPARED, PrepareReceipt
 from sp_workflow.returning import ReturnReceipt
@@ -21,7 +22,6 @@ if TYPE_CHECKING:
 PREPARED_STEP = "已準備"
 RETURNED_STEP = "已放回"
 DRAFTED_STEP = "草稿已建立"
-SENT_STEP = "已寄出"
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,16 @@ class StepRecord:
     step: str
     result: str
     related_file: str | None = None
+
+
+@dataclass(frozen=True)
+class Recorded:
+    """寫了幾筆步驟紀錄；沒有連線設定（或取消登入）時 skipped，寫入失敗時 error（清單已經產出）。"""
+
+    count: int = 0
+    skipped: bool = False
+    error: str = ""
+    database_error: DatabaseError | None = None  # 連不上資料庫（可能是密碼錯，視窗要重新詢問）
 
 
 def prepared_records(receipt: PrepareReceipt) -> list[StepRecord]:

@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 from sp_workflow.returning import NOT_RETURNED, RETURNED, ReturnOutcome, ReturnReceipt
-from sp_workflow.window_actions import Recorded, ReturnResult
+from sp_workflow.step_records import Recorded
+from sp_workflow.window_actions import ReturnResult
 from window_synth import new_window
 
 
