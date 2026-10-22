@@ -9,6 +9,10 @@
 6. 寄信草稿：貼核對通過的 TDCC，在 Outlook 建 TS／IIS 草稿給承作的 FC（#29）。
 7. 人工維護：按「檢查」列出還沒鎖住、缺資料的商品（缺的格子淺紅底），或輸入 TDCC 打開任何一檔，
    在右邊補齊、修改資料庫裡的商品條件與交易明細列的值；已鎖住的照更正的規則存檔（#55、#115、#116）。
+   「匯出商品條件…」把資料庫目前的 `workflow.product` 整張匯出成 Excel，位置自己選（#122）。
+
+1、2、3、5、6、7 頁的結果表右上方有「全部複製」；結果表按右鍵可以只複製一格或一列，
+Treeview 的表（7 的檢查結果表除外）另有 Ctrl+A 全選、Ctrl+C 複製選取的列（#121）。
 
 商品資料夾所在的根目錄在視窗最上方設一次，3、6 兩頁共用（#75）。
 做完一步，下一頁先帶入結果並用藍色提示條寫出來，按「下一步 →」才切頁，不自動執行（#76）：
@@ -16,8 +20,8 @@
 準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔。
 審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
 視窗只收輸入、在背景執行 `collect_orders`／`import_drafts`／`missing_products`／`open_maintenance`／`load_trade_rows`／`save_maintenance`／
-`import_daily`／`recalculate`／`release_differences`／`prepare_batch`／核對／`return_to_folders`／`create_drafts`
-並顯示結果，不含判斷邏輯。
+`import_daily`／`recalculate`／`release_differences`／`prepare_batch`／核對／`return_to_folders`／`create_drafts`／
+`export_products` 並顯示結果，不含判斷邏輯。
 """
 
 from __future__ import annotations
@@ -52,10 +56,13 @@ from fcn_checker.panel import (
     TEXT,
     TEXT_SECONDARY,
     CheckTab,
+    CopyArea,
+    CopyMenu,
     HintBar,
     KpiRow,
     NextButton,
     PageHeader,
+    TableCopy,
     apply_style,
     apply_window_icon,
     enable_windows_dpi_awareness,
@@ -64,6 +71,8 @@ from fcn_checker.panel import (
     parse_args,
     session_from_args,
     set_windows_app_id,
+    tab_separated,
+    to_clipboard,
 )
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.trading_calendar import TradingCalendar
@@ -160,6 +169,7 @@ from sp_workflow.preparation import (
     parse_tdccs,
     prepare_batch,
 )
+from sp_workflow.product_export import ExportReceipt, ProductExportError, export_name, export_products
 from sp_workflow.returning import PENDING_SUFFIX, ReturnError, ReturnReceipt, return_to_folders
 from sp_workflow.trade_rows import FIELDS as TRADE_ROW_FIELDS
 from sp_workflow.trade_rows import TradeRowsDraft, load_trade_rows, trade_notes, trade_problems
@@ -178,7 +188,10 @@ _EXPECTED_ERRORS = (
     OrderImportError,
     CheckTermsError,
     CorrectionError,
+    ProductExportError,
 )  # 訊息本身就是給作業人員看的
+COPY_HINT = "按右鍵可以只複製一格或一列；Ctrl+A 全選、Ctrl+C 複製選取的列"  # 結果表上方（#121）
+CELL_COPY_HINT = "按右鍵可以只複製一格或一列"  # 人工維護的檢查結果表（Canvas，不能用 Ctrl+A／Ctrl+C）
 
 
 class _Tab:
@@ -196,11 +209,13 @@ class _Tab:
         self.frame.columnconfigure(0, weight=1)
         self.status_var = tk.StringVar()
         self.columns = columns
-        self.table = ttk.Treeview(self.frame, columns=[c for c, _, _ in columns], show="headings")
+        self.table_area = CopyArea(self.frame, COPY_HINT, lambda: self.copier.copy_all())  # #121
+        self.table = ttk.Treeview(self.table_area, columns=[c for c, _, _ in columns], show="headings")
         for col, label, width in columns:
             self.table.heading(col, text=label)
             self.table.column(col, width=width, stretch=col == columns[-1][0])
         self.table.tag_configure("problem", foreground=DANGER)
+        self.copier = TableCopy(self.table)
 
     def page_header(self, title: str, description: str) -> None:
         """第 0 列：步驟 N／總數（由視窗填）、標題（只寫功能）與一行說明。"""
@@ -285,12 +300,21 @@ class _Tab:
         body.bind("<Configure>", lambda event: self.status_label.configure(wraplength=max(300, event.width - 20)))
 
     def place_table(self, row: int) -> None:
-        """結果表與捲軸放在第 row 列，並讓它佔滿剩下的高度。"""
+        """結果表與捲軸放在第 row 列，並讓它佔滿剩下的高度；表的右上方是「全部複製」（#121）。"""
         self.frame.rowconfigure(row, weight=1)
-        self.table.grid(row=row, column=0, sticky="nsew", pady=(16, 0))
-        scroll = ttk.Scrollbar(self.frame, orient=tk.VERTICAL, command=self.table.yview)
-        scroll.grid(row=row, column=1, sticky="ns", pady=(16, 0))
+        self.table_area.grid(row=row, column=0, columnspan=2, sticky="nsew", pady=(16, 0))
+        self.table.grid(row=1, column=0, sticky="nsew")
+        scroll = ttk.Scrollbar(self.table_area, orient=tk.VERTICAL, command=self.table.yview)
+        scroll.grid(row=1, column=1, sticky="ns")
         self.table.configure(yscrollcommand=scroll.set)
+
+    def selected_item(self) -> str | None:
+        """選取的列裡作業人員點的那一列；Ctrl+A 全選時不換（#121）。沒點過時是第一個選取的列。"""
+        selection = self.table.selection()
+        if not selection:
+            return None
+        focus = self.table.focus()
+        return focus if focus in selection else selection[0]
 
     def mark_done(self, done: bool) -> None:
         """狀態列：做完時是綠色結果條（#83），處理中或出錯時是一般顏色。"""
@@ -609,8 +633,8 @@ class DailyImportTab(_Tab):
             button.configure(state=tk.DISABLED if busy else tk.NORMAL)
 
     def _selected_tdcc(self) -> str | None:
-        selection = self.table.selection()
-        return self.table.set(selection[0], "tdcc") if selection else None
+        item = self.selected_item()
+        return None if item is None else self.table.set(item, "tdcc")
 
     def _released(self, line: CalcLine) -> None:
         iid = f"calc-{line.tdcc}"
@@ -1477,8 +1501,8 @@ class OrderTermsTab(_Tab):
         )
 
     def _selected_tdcc(self) -> str | None:
-        selection = self.table.selection()
-        found = self.items.get(selection[0]) if selection else None
+        item = self.selected_item()
+        found = None if item is None else self.items.get(item)
         return None if found is None else found[0].tdcc
 
     def _released(self, calc: CalcLine) -> None:
@@ -1675,10 +1699,10 @@ class OrderTermsTab(_Tab):
             self._selected()
 
     def _selected(self, _event: object = None) -> None:
-        selection = self.table.selection()
-        if self.working or not selection or selection[0] not in self.items:
+        item = self.selected_item()
+        if self.working or item not in self.items:
             return
-        row, draft = self.items[selection[0]]
+        row, draft = self.items[item]
         if draft is self.editor.draft and draft is not None:
             return  # 同一檔（例如 selection_set 之後又收到一次通知）
         self.editor.commit()  # 換檔前把上一檔還沒解讀的輸入解讀掉
@@ -1761,6 +1785,7 @@ class CellTable(ttk.Frame):
 
     `ttk.Treeview` 只能整列上色，所以用 Canvas 自己畫：第一欄（TDCC）固定在左邊，其他欄可以左右捲動，
     表頭跟著左右捲、不跟著上下捲；上下捲時左右兩塊一起動。點一列就選它並通知 `on_select`（傳那一列的 key）。
+    按右鍵可以複製那一格、那一列或整張表（含表頭），不改變選取的列（#121）。
     """
 
     PAD = 8  # 格子左右的留白
@@ -1785,6 +1810,9 @@ class CellTable(ttk.Frame):
         self._rects: dict[tuple[str, str], tuple[tk.Canvas, int]] = {}  # (key, 欄) → 格子的方塊
         self._labels: dict[tuple[str, str], tuple[tk.Canvas, int]] = {}  # (key, 欄) → 格子的字
         self._missing: dict[str, frozenset[str]] = {}
+        self._cells: dict[str, Mapping[str, str]] = {}  # key → {欄: 顯示的字}（複製用）
+        self._edges: list[tuple[int, str]] = []  # 可以左右捲的欄：(右邊界, 欄)
+        self.menu = CopyMenu(self, self.copy_all)
 
         def canvas() -> tk.Canvas:
             return tk.Canvas(self, background=SURFACE, highlightthickness=0, borderwidth=0)
@@ -1805,6 +1833,7 @@ class CellTable(ttk.Frame):
         self.rowconfigure(1, weight=1)
         for widget in (self.side, self.body):
             widget.bind("<Button-1>", self._click)
+            widget.bind("<Button-3>", self._popup)
             widget.bind("<MouseWheel>", lambda event: self._yview("scroll", self._steps(event), "units"))
             widget.bind("<Shift-MouseWheel>", lambda event: self._xview("scroll", self._steps(event) * 3, "units"))
         self.set_rows(())
@@ -1813,18 +1842,20 @@ class CellTable(ttk.Frame):
         """換成這些列：(key, {欄: 顯示的字}, 缺的欄)；key 也是第一欄顯示的字。選中的那列還在就照樣選著。"""
         for widget in (self.corner, self.header, self.side, self.body):
             widget.delete("all")
-        self._rects, self._labels = {}, {}
+        self._rects, self._labels, self._edges = {}, {}, []
         self.keys = [key for key, _, _ in rows]
         self._missing = {key: frozenset(gone) for key, _, gone in rows}
+        self._cells = {key: cells for key, cells, _ in rows}
         first, first_label = self.first
         first_width = self._width(first_label, self.keys)
         widths = [self._width(label, [cells.get(name, "") for _, cells, _ in rows]) for name, label in self.columns]
         height = self.row_height
         self._header(self.corner, 0, first_width, first_label)
         x = 0
-        for (_, label), width in zip(self.columns, widths, strict=True):
+        for (name, label), width in zip(self.columns, widths, strict=True):
             self._header(self.header, x, width, label)
             x += width
+            self._edges.append((x, name))
         for i, (key, cells, _) in enumerate(rows):
             y = i * height
             self._cell(self.side, key, first, 0, y, first_width, key)
@@ -1854,6 +1885,40 @@ class CellTable(ttk.Frame):
     def text(self, key: str, column: str) -> str:
         canvas, item = self._labels[(key, column)]
         return str(canvas.itemcget(item, "text"))
+
+    def rows(self, keys: Iterable[str] | None = None, *, header: bool = False) -> list[list[str]]:
+        """表上的列（照畫面的順序）；`header` 時第一列是表頭。"""
+        names = [name for name, _ in self.columns]
+        rows = [[self.first[1], *(label for _, label in self.columns)]] if header else []
+        for key in self.keys if keys is None else keys:
+            rows.append([key, *(self._cells[key].get(name, "") for name in names)])
+        return rows
+
+    def copy_all(self) -> int:
+        """整張表（含表頭）放進剪貼簿；回傳幾列（不算表頭），表上沒有列時不動剪貼簿。"""
+        if self.keys:
+            to_clipboard(self, tab_separated(self.rows(header=True)))
+        return len(self.keys)
+
+    def fill_menu(self, key: str | None, column: str | None) -> None:
+        """右鍵點到的格子（點到表外是 None）→ 選單的項目；不改變選取的列。"""
+        if key is None:
+            self.menu.fill(None)
+            return
+        cell = key if column == self.first[0] else self._cells[key].get(column or "", "")
+        self.menu.fill(self.rows([key])[0], cell)
+
+    def _popup(self, event: tk.Event) -> None:
+        canvas = event.widget
+        index = int(canvas.canvasy(event.y) // self.row_height)
+        key = self.keys[index] if 0 <= index < len(self.keys) else None
+        if canvas is self.side:
+            column = self.first[0]
+        else:
+            x = canvas.canvasx(event.x)
+            column = next((name for right, name in self._edges if x < right), None)
+        self.fill_menu(key, column)
+        self.menu.tk_popup(event.x_root, event.y_root)
 
     def _choose(self, key: str) -> None:
         """點了一列：選它，再通知 `on_select`（分頁決定要不要換檔，不換時用 `select` 改回去）。"""
@@ -1929,8 +1994,15 @@ class MaintenanceTab(_Tab):
     }
     COLUMNS = (("issuer", "上手"), ("status", "狀態"), *((name, name) for name in REQUIRED))
 
-    def __init__(self, notebook: ttk.Notebook, db: _DatabaseLogin, config_paths: Callable[[], ConfigPaths]) -> None:
+    def __init__(
+        self,
+        notebook: ttk.Notebook,
+        memory: FolderMemory,
+        db: _DatabaseLogin,
+        config_paths: Callable[[], ConfigPaths],
+    ) -> None:
         super().__init__(notebook, "人工維護", ())
+        self.memory = memory
         self.db = db
         self.config_paths = config_paths
         self.config: ImportConfig | None = None  # 最近一次檢查或打開時讀的設定
@@ -1961,9 +2033,13 @@ class MaintenanceTab(_Tab):
         self.result_area(body, 2)
         self.check_button = ttk.Button(self.buttons, text="檢查", command=self.check, style="Primary.TButton")
         self.check_button.pack(side=tk.LEFT)
+        self.export_button = ttk.Button(self.buttons, text="匯出商品條件…", command=self.export)
+        self.export_button.pack(side=tk.LEFT, padx=(8, 0))
 
-        self.cells = CellTable(self.frame, ("tdcc", "TDCC"), self.COLUMNS, self._selected)
-        self.cells.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(16, 0))
+        self.cell_area = CopyArea(self.frame, CELL_COPY_HINT, lambda: self.cells.copy_all())  # #121
+        self.cell_area.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(16, 0))
+        self.cells = CellTable(self.cell_area, ("tdcc", "TDCC"), self.COLUMNS, self._selected)
+        self.cells.grid(row=1, column=0, sticky="nsew")
         self.frame.rowconfigure(2, weight=1)
         self.frame.columnconfigure(2, weight=1)
         side = ttk.Frame(self.frame)
@@ -2002,7 +2078,7 @@ class MaintenanceTab(_Tab):
         self.editor.set_frozen(busy)
         self.trade_editor.set_frozen(busy)
         state = tk.DISABLED if busy else tk.NORMAL
-        for widget in (self.check_button, self.open_button):
+        for widget in (self.check_button, self.open_button, self.export_button):
             widget.configure(state=state)
         has_draft = state if self.editor.draft is not None else tk.DISABLED
         for widget in (self.save_button, self.reload_button, self.reason_entry):
@@ -2081,6 +2157,48 @@ class MaintenanceTab(_Tab):
         ]
         self.cells.set_rows(rows)
         self.cells.select(self._current_tdcc())
+
+    # ---------- 匯出商品條件（#122） ----------
+
+    def export(self) -> None:
+        """選存放位置，把資料庫目前的 `workflow.product` 整張匯出成 Excel；按取消時不連資料庫。"""
+        if self.working:
+            return
+        chosen = filedialog.asksaveasfilename(
+            title="匯出資料庫的商品條件（workflow.product）",
+            initialdir=self.memory.load().get("product_export") or None,
+            initialfile=export_name(),
+            defaultextension=".xlsx",
+            filetypes=[("Excel 活頁簿", "*.xlsx")],
+            parent=self.master,
+        )
+        if not chosen:
+            return
+        path = Path(chosen)
+        settings = self.db.settings()
+        if settings is None:
+            return
+        self.memory.remember(product_export=str(path.parent))
+        unsaved = self.has_unsaved()
+        self._busy(True)
+        self.mark_done(False)
+
+        def run() -> ExportReceipt:
+            with connect(settings) as conn:
+                return export_products(conn, path)
+
+        self.run_in_background(run, "匯出商品條件中…", lambda result: self._exported(result, unsaved), clear=False)
+
+    def _exported(self, result: object, unsaved: bool) -> None:
+        self.db.after_run(result)
+        self._busy(False)
+        if not isinstance(result, ExportReceipt):
+            return
+        status = f"已匯出資料庫的商品條件（workflow.product）{result.count} 檔：{result.path}"
+        if unsaved:
+            status += "\n注意：畫面上還沒存檔的修改不在匯出檔裡。"
+        self.status_var.set(status)
+        self.mark_done(True)
 
     # ---------- 打開 ----------
 
@@ -2337,7 +2455,7 @@ class PanelWindow:
         self.notebook.add(self.check, text="核對")
         self.returning = ReturnTab(self.notebook, memory)
         self.mail = MailDraftTab(self.notebook, memory, db, self.root_folder)
-        self.manual = MaintenanceTab(self.notebook, db, lambda: self.session.paths)
+        self.manual = MaintenanceTab(self.notebook, memory, db, lambda: self.session.paths)
         tabs = self.notebook.tabs()
         for number, tab in enumerate(tabs, 1):
             self.notebook.tab(tab, text=f"{number} {self.notebook.tab(tab, 'text')}")
