@@ -27,7 +27,7 @@ ADR 0006 決定核對改從資料庫讀條件，核對完把 TS 回填的 ISIN�
 - **寫回的內容**：說明書這次寫進「回填後」的格子（回填與 VWAP 覆寫）→ `workflow.product` 的 ISIN、發行日，`workflow.autocall_date` 的比價日（空值寫法存空白），`workflow.underlying_price` 的 VWAP 價格；單位面額見上；然後鎖住（`locked_at`）。每個改變的原值記在 `workflow.backfill_log`。每份文件最新的核對結果存 `workflow.check_result`（存檔時寫入，再存一次就覆蓋；人工放行後要存檔才會更新；資料庫沒有這檔的文件不存）。整次寫回在一個 transaction 裡。
 - **核對後條件又改了**：回填前用資料庫現在的值重新產生那一列，和核對時那份表比（回填欄位除外），並確認核對條件仍是完成；不同就不回填、不鎖住，請作業人員重新核對。這樣鎖住的一定是核對過的條件（預覽之後重新匯入起單資料或重算的情況）。
 - **已鎖住的商品**：照資料庫的值產生（TS、IIS 打勾、回填過的欄位有值），可以再核對，但不再回填、不改商品資料；核對結果照樣保存。
-- **畫面**：核對分頁多一列「條件來源」，預設 Excel（行為不變）；選資料庫時不用選參考條件表。寫回失敗時出現「重新寫回資料庫」。`fcn-batch --database <PDF…>` 做同樣的事，寫回失敗只提示。
+- **畫面**：核對分頁多一列「條件來源」，預設 Excel（行為不變）；選資料庫時不用選參考條件表。（[#108](https://github.com/TaylorYam/structured-product-workflow/issues/108) 改為預設資料庫，選資料庫時參考條件表那一列收起。）寫回失敗時出現「重新寫回資料庫」。`fcn-batch --database <PDF…>` 做同樣的事，寫回失敗只提示。
 
 ### 考慮過的替代方案
 
@@ -65,7 +65,7 @@ Implementation choices (low risk, reversible):
 - **What is written back**: the cells this term sheet writes into 回填後 (fill and VWAP overwrite) → ISIN and issue date in `workflow.product`, observation dates in `workflow.autocall_date` (the empty-value marker stored as blank), VWAP prices in `workflow.underlying_price`; the denomination as above; then the lock (`locked_at`). Every changed value's old value goes into `workflow.backfill_log`. Each document's latest result is kept in `workflow.check_result` (written on save and overwritten by the next one; a manual release is stored once saved; documents whose TDCC is not in the database are not stored). The whole write-back is one transaction.
 - **Terms changed after checking**: before backfilling, the row is regenerated from current database values and compared with the checked workbook (backfill fields excluded), and the check terms must still be 完成; otherwise the product is neither backfilled nor locked and the operator rechecks. This guarantees that what gets locked is what was checked (for order-sheet re-imports or recalculations after the preview).
 - **Locked products** are exported from their database values (TS/IIS checked, backfilled fields filled) and can be checked again, but are not backfilled again and their product data is not changed; results are still saved.
-- **Window**: the check tab gets a 條件來源 row defaulting to Excel (behaviour unchanged); with the database no reference workbook is chosen. A failed write-back shows 重新寫回資料庫. `fcn-batch --database <PDFs…>` does the same and only warns when the write-back fails.
+- **Window**: the check tab gets a 條件來源 row defaulting to Excel (behaviour unchanged); with the database no reference workbook is chosen. ([#108](https://github.com/TaylorYam/structured-product-workflow/issues/108) changed the default to the database and hides the reference workbook row while it is chosen.) A failed write-back shows 重新寫回資料庫. `fcn-batch --database <PDFs…>` does the same and only warns when the write-back fails.
 
 ### Alternatives considered
 

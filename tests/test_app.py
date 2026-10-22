@@ -406,8 +406,8 @@ def test_prepared_pdfs_are_handed_to_the_check_tab_without_switching(master, tmp
 
     assert window.check.pdf_paths == (batch / "147000000001_TS.pdf", batch / "147000000001_IIS.pdf"), "只帶已準備的"
     assert window.check.hint.text.get() == (
-        f"已帶入「3 準備」的批次（2 份 PDF），選好參考條件表後按「載入／重新載入預覽」：\n{batch}"
-    )
+        f"已帶入「3 準備」的批次（2 份 PDF），按「載入／重新載入預覽」：\n{batch}"
+    ), "預設資料庫來源，不用選參考條件表（#108）"
     assert window.notebook.select() == str(window.prepare.frame), "不自動切頁"
     assert window.session.preview is None and not window.check.working, "不自動載入預覽或核對"
     assert window.prepare.next_button.winfo_manager() == "pack"
@@ -1155,19 +1155,81 @@ def test_order_import_shows_the_check_terms_of_the_batch(master, tmp_path: Path,
 # ---------------------------------------------------------------- 核對分頁的條件來源（#68）
 
 
-def test_check_tab_can_read_terms_from_the_database(master, tmp_path: Path) -> None:
+def shown(widget: tk.Misc) -> bool:
+    return widget.winfo_manager() != ""
+
+
+def test_check_tab_reads_terms_from_the_database_by_default(master, tmp_path: Path) -> None:
+    """預設資料庫（#108）：不用選參考條件表，那一列收起來；改選 Excel 才出現。"""
     window = new_window(master, tmp_path)
     check = window.check
 
     assert window.session.database is not None
-    assert "Excel 參考條件表" in texts(check, ttk.Radiobutton) and check.source.get() == "excel"
+    assert texts(check, ttk.Radiobutton)[:2] == ["資料庫（依 PDF 的 TDCC）", "Excel 參考條件表"]
+    assert check.source.get() == "database" and window.session.use_database
+    assert not shown(check.sheet_button) and str(check.sheet_button.cget("state")) == "disabled"
+    assert check.sheet_text.get().startswith("由資料庫產生")
+    assert check.status.get() == "請選取說明書 PDF。"
+
+    check.source.set("excel")
+    check._source_changed()
+
+    assert not window.session.use_database
+    assert shown(check.sheet_button) and str(check.sheet_button.cget("state")) == "normal"
+    assert check.status.get() == "請選取參考條件表與說明書 PDF。"
 
     check.source.set("database")
     check._source_changed()
 
-    assert window.session.use_database
-    assert str(check.sheet_button.cget("state")) == "disabled"
-    assert check.sheet_text.get().startswith("由資料庫產生")
+    assert window.session.use_database and not shown(check.sheet_button)
+
+
+class Preview:
+    rows = ()
+
+
+def test_check_setup_folds_into_one_line_after_the_preview(master, tmp_path: Path) -> None:
+    """載入預覽後頁首說明與選檔的幾列收成一行摘要，「變更…」展開，換 PDF 時也展開（#108）。"""
+    window = new_window(master, tmp_path)
+    check = window.check
+    check.receive_pdfs((tmp_path / "147000000001_TS.pdf", tmp_path / "147000000001_IIS.pdf"), "帶入")
+    pdf_button = check.setup_rows[-1][-1]
+    assert not check.compact and not shown(check.summary)
+    assert shown(check.header.description) and shown(pdf_button)
+
+    check._show_preview(Preview())
+
+    assert check.compact and shown(check.summary)
+    assert not shown(check.header.description) and not shown(pdf_button) and not shown(check.sheet_button)
+    assert not shown(check.hint) and check.hint.shown, "提示條收起，但保留內容"
+    assert check.summary_source.get() == "資料庫"
+    assert check.pdf_text.get().startswith("已選 2 份")
+
+    check.expand_button.invoke()
+
+    assert not check.compact and not shown(check.summary) and shown(pdf_button) and not shown(check.sheet_button)
+    assert shown(check.hint)
+
+    check._show_preview(Preview())
+    check.receive_pdfs((tmp_path / "147000000002_TS.pdf",), "帶入")
+
+    assert not check.compact and shown(pdf_button), "換了 PDF，展開讓作業人員看清楚選了什麼"
+
+
+def test_folded_excel_setup_names_the_reference_workbook(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    check = window.check
+    check.source.set("excel")
+    check._source_changed()
+    check.sheet_path = tmp_path / "參考條件表.xlsx"
+
+    check._show_preview(Preview())
+
+    assert check.summary_source.get() == "Excel：參考條件表.xlsx"
+
+    check.expand_button.invoke()
+
+    assert shown(check.sheet_button), "Excel 來源展開時有參考條件表那一列"
 
 
 # ---------------------------------------------------------------- 更正商品條件（#55）

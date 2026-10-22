@@ -186,7 +186,7 @@ def apply_style(root: tk.Tk) -> Callable[[float], int]:
 class PageHeader(ttk.Frame):
     """分頁最上方：「步驟 N／6」、標題（只寫功能，#85）與一行說明（#83）。
 
-    步驟編號由視窗依分頁順序填入 step。
+    步驟編號由視窗依分頁順序填入 step；畫面需要騰出高度時可用 show_description 收起說明（#108）。
     """
 
     def __init__(self, parent: tk.Misc, title: str, description: str):
@@ -194,9 +194,15 @@ class PageHeader(ttk.Frame):
         self.step = tk.StringVar()
         ttk.Label(self, textvariable=self.step, style="Step.TLabel").pack(anchor="w")
         ttk.Label(self, text=title, style="Title.TLabel").pack(anchor="w", pady=(2, 4))
-        text = ttk.Label(self, text=description, style="Muted.TLabel", wraplength=900)
+        self.description = text = ttk.Label(self, text=description, style="Muted.TLabel", wraplength=900)
         text.pack(anchor="w", fill="x")
         self.bind("<Configure>", lambda event: text.configure(wraplength=max(300, event.width - 20)))
+
+    def show_description(self, shown: bool) -> None:
+        if shown:
+            self.description.pack(anchor="w", fill="x")
+        else:
+            self.description.pack_forget()
 
 
 class KpiRow(ttk.Frame):
@@ -333,6 +339,15 @@ def _text(parent, height: int) -> tk.Text:
         pady=6,
         state="disabled",
     )
+
+
+def _show_grid(widgets: Iterable[tk.Misc], shown: bool) -> None:
+    """顯示或收起已 grid 過的元件，收起時保留原本的位置設定。"""
+    for widget in widgets:
+        if shown:
+            widget.grid()
+        else:
+            widget.grid_remove()
 
 
 def _write(widget: tk.Text, text: str) -> None:
@@ -608,8 +623,9 @@ class CheckTab(ttk.Frame):
     視窗本身（標題、大小、關閉）由 `sp_workflow.app` 建立；審查通過日期、匯出回報包與使用的設定檔
     在視窗的「維護」選單，選單呼叫 edit_approval_dates、export_bundle、show_config_paths。
     上一步帶入的 PDF 用 receive_pdfs；存檔成功時呼叫 on_saved(核對結果檔)，下一步按鈕由 add_next_step 加上（#76）。
-    工作階段有資料庫來源時（#68），卡片最上面多一列「條件來源」：Excel 參考條件表或資料庫；資料庫來源存檔後寫回資料庫，
-    寫回失敗時出現「重新寫回資料庫」。
+    工作階段有資料庫來源時（#68），卡片最上面多一列「條件來源」：資料庫（預設，#108）或 Excel 參考條件表；
+    選資料庫時「參考條件表」那一列收起來。資料庫來源存檔後寫回資料庫，寫回失敗時出現「重新寫回資料庫」。
+    載入預覽後頁首說明與選檔的幾列收成一行摘要，讓預覽與結果有更多高度；按「變更…」或換來源、換 PDF 時展開（#108）。
     """
 
     def __init__(
@@ -644,7 +660,7 @@ class CheckTab(ttk.Frame):
         self.header = PageHeader(
             self,
             "核對說明書與投資人須知",
-            "選參考條件表與這批 PDF（同一檔商品的 _TS 與 _IIS 一起選），先載入預覽確認每份對到的列，再開始核對。"
+            "選條件來源與這批 PDF（同一檔商品的 _TS 與 _IIS 一起選），先載入預覽確認每份對到的條件，再開始核對。"
             "上手由 PDF 檔名前三碼決定。按「儲存核對結果」才會寫出核對結果檔，原參考條件表不動；錯誤清單上的說明書請交由人工核對。",
         )
         self.header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
@@ -658,15 +674,15 @@ class CheckTab(ttk.Frame):
         self.pdf_text = tk.StringVar()
         self.controls: list[ttk.Widget] = []
         self.source = tk.StringVar(value=EXCEL_SOURCE)
-        first = 0
-        if session.database is not None:  # 條件來源（#68）：預設 Excel，行為和以前一樣
-            first = 1
-            ttk.Label(card, text="條件來源", style="Card.TLabel").grid(
-                row=0, column=0, sticky="w", padx=(0, 16), pady=5
-            )
+        self.compact = False  # 設定區收成一行摘要（#108）
+        self.setup_rows: list[tuple[tk.Misc, ...]] = []  # 展開時才顯示的幾列；參考條件表那列另外看條件來源
+        if session.database is not None:  # 條件來源（#68）：預設資料庫（#108），由 __init__ 最後套用
+            label = ttk.Label(card, text="條件來源", style="Card.TLabel")
+            label.grid(row=0, column=0, sticky="w", padx=(0, 16), pady=5)
             choices = ttk.Frame(card, style="CardBody.TFrame")
             choices.grid(row=0, column=1, columnspan=2, sticky="w", pady=5)
-            for text, value in (("Excel 參考條件表", EXCEL_SOURCE), ("資料庫（依 PDF 的 TDCC）", DATABASE_SOURCE)):
+            self.setup_rows.append((label, choices))
+            for text, value in (("資料庫（依 PDF 的 TDCC）", DATABASE_SOURCE), ("Excel 參考條件表", EXCEL_SOURCE)):
                 radio = ttk.Radiobutton(
                     choices,
                     text=text,
@@ -677,21 +693,33 @@ class CheckTab(ttk.Frame):
                 )
                 radio.pack(side="left", padx=(0, 18))
                 self.controls.append(radio)
-        for row, label, variable, kind in (
-            (first, "參考條件表", self.sheet_text, "sheet"),
-            (first + 1, "說明書／投資人須知 PDF", self.pdf_text, "pdf"),
+        for row, text, variable, kind in (
+            (1, "參考條件表", self.sheet_text, "sheet"),
+            (2, "說明書／投資人須知 PDF", self.pdf_text, "pdf"),
         ):
-            ttk.Label(card, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="w", padx=(0, 16), pady=5)
-            ttk.Entry(card, textvariable=variable, state="readonly").grid(
-                row=row, column=1, sticky="ew", padx=(0, 12), pady=5
-            )
+            label = ttk.Label(card, text=text, style="Card.TLabel")
+            label.grid(row=row, column=0, sticky="w", padx=(0, 16), pady=5)
+            entry = ttk.Entry(card, textvariable=variable, state="readonly")
+            entry.grid(row=row, column=1, sticky="ew", padx=(0, 12), pady=5)
             button = ttk.Button(card, text="選取檔案…", command=lambda k=kind: self.choose_files(k))
             button.grid(row=row, column=2, pady=5)
             self.controls.append(button)
             if kind == "sheet":
-                self.sheet_button = button
+                self.sheet_button, self.sheet_row = button, (label, entry, button)
+            else:
+                self.setup_rows.append((label, entry, button))
+        self.summary = ttk.Frame(card, style="CardBody.TFrame")  # 收起時的一行摘要：來源＋已選的 PDF＋變更…
+        self.summary.grid(row=3, column=0, columnspan=3, sticky="ew")
+        self.summary.columnconfigure(1, weight=1)
+        self.summary_source = tk.StringVar()
+        ttk.Label(self.summary, textvariable=self.summary_source, style="Hint.TLabel", padding=(8, 2)).grid(
+            row=0, column=0, sticky="w", padx=(0, 12)
+        )
+        ttk.Label(self.summary, textvariable=self.pdf_text, style="Card.TLabel").grid(row=0, column=1, sticky="w")
+        self.expand_button = ttk.Button(self.summary, text="變更…", command=lambda: self._layout(False))
+        self.expand_button.grid(row=0, column=2, sticky="e", padx=(12, 0))
         bottom = ttk.Frame(card, style="CardBody.TFrame")  # 左邊按鈕、右邊核對完的重點數字
-        bottom.grid(row=first + 2, column=0, columnspan=3, sticky="ew", pady=(10, 0))
+        bottom.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 0))
         bottom.columnconfigure(1, weight=1)
         self.actions = ttk.Frame(bottom, style="CardBody.TFrame")
         self.actions.grid(row=0, column=0, sticky="sw")
@@ -743,6 +771,11 @@ class CheckTab(ttk.Frame):
         self.status_label.grid(row=4, column=0, sticky="ew")
         self.bind("<Configure>", self._resize)
         self.root.after(1000, self._watch_sources)
+        if session.database is not None:
+            self.source.set(DATABASE_SOURCE)
+            self._source_changed()
+        else:
+            self._layout(False)
 
     def _resize(self, event):
         if event.widget is self:
@@ -777,7 +810,21 @@ class CheckTab(ttk.Frame):
     def _selection_changed(self):
         self.session.select(self.sheet_path, self.pdf_paths)
         self._clear()
+        self._layout(False)
         self.status.set(self.session.message)
+
+    def _layout(self, compact: bool) -> None:
+        """compact 時頁首說明、提示條與選檔的幾列收成一行摘要，否則展開；參考條件表那列只在 Excel 來源時顯示（#108）。"""
+        self.compact = compact
+        self.header.show_description(not compact)
+        if self.hint.shown:  # 上一步帶入的提示條也一起收起，展開時再出現
+            _show_grid((self.hint,), not compact)
+        for row in self.setup_rows:
+            _show_grid(row, not compact)
+        _show_grid(self.sheet_row, not compact and not self.uses_database)
+        name = self.sheet_path.name if self.sheet_path is not None else "未選參考條件表"
+        self.summary_source.set("資料庫" if self.uses_database else f"Excel：{name}")
+        _show_grid((self.summary,), compact)
 
     @property
     def uses_database(self) -> bool:
@@ -791,6 +838,7 @@ class CheckTab(ttk.Frame):
             self.sheet_text.set("由資料庫產生（載入預覽時依 PDF 檔名的 TDCC 讀取）")
         else:
             self.sheet_text.set(str(self.sheet_path) if self.sheet_path is not None else "")
+        self._layout(False)
         self._busy(False)
         self.status.set(self.session.message)
 
@@ -892,6 +940,7 @@ class CheckTab(ttk.Frame):
             finish(future.result())
         except IngestionError as e:
             self._clear()
+            self._layout(False)  # 讀不到或來源變了：展開設定區方便改選
             self.status.set(str(e))
         except Exception as e:
             self.status.set(f"{failure}：{e}")
@@ -919,6 +968,7 @@ class CheckTab(ttk.Frame):
         self.shown = preview
         for row in preview.rows:
             self.preview_table.insert("", "end", values=PanelOutcome.preview_row(row))
+        self._layout(True)
         self.status.set(self.session.message)
         self.tabs.select(0)
 
