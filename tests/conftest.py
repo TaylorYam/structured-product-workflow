@@ -54,6 +54,10 @@ def pytest_addoption(parser: pytest.Parser) -> None:
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    # 用到 `pg` 的測試一律算 db：漏標時本機 `-m "not db" -n auto` 也不會平行碰 spw_test（#142）
+    for item in items:
+        if "pg" in getattr(item, "fixturenames", ()):
+            item.add_marker("db")
     spec = config.getoption("--shard")
     if not spec:
         return
