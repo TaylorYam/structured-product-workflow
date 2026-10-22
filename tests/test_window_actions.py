@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -22,6 +23,7 @@ from sp_workflow.product_write import NEW
 from sp_workflow.window_actions import (
     import_close_history,
     import_order_sheet,
+    observe_products,
     read_order_sheet,
     run_daily_import,
     run_price_csv,
@@ -121,6 +123,7 @@ def test_price_csv_is_recalculated(pg, pg_settings, tmp_path: Path) -> None:
 
     assert result.recalc.receipt is not None and not result.recalc.error
     assert result.receipt.closes is not None and result.receipt.closes.stored == 1, "讀得到假日表時同時存收盤價"
+    assert result.observation.receipt is not None and result.observation.receipt.through == dt.date(2026, 10, 15)
 
 
 def test_a_price_csv_without_holidays_stores_no_closes(pg, pg_settings, tmp_path: Path) -> None:
@@ -129,6 +132,17 @@ def test_a_price_csv_without_holidays_stores_no_closes(pg, pg_settings, tmp_path
     result = run_price_csv(pg_settings, source, no_holidays(tmp_path))
 
     assert result.receipt.closes is None and count(pg, "workflow.close_price") == 0
+    assert result.observation.receipt is None and "讀不到交易所假日表" in result.observation.error
+
+
+@pytest.mark.db
+def test_reobserve_needs_the_holiday_calendar(pg, pg_settings, tmp_path: Path) -> None:
+    with pytest.raises(CheckTermsError):
+        observe_products(pg_settings, no_holidays(tmp_path))
+
+    receipt = observe_products(pg_settings, PATHS)
+
+    assert receipt.through is None and receipt.results == ()
 
 
 def test_close_history_needs_the_holiday_calendar(pg, pg_settings, tmp_path: Path) -> None:

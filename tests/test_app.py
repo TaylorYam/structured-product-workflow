@@ -54,7 +54,7 @@ def test_maintenance_actions_live_in_the_menu_only(master, tmp_path: Path) -> No
     menu = window.maintenance
 
     labels = [menu.entrycget(i, "label") for i in range(menu.index(tk.END) + 1) if menu.type(i) == "command"]
-    assert labels == ["審查通過日期…", "匯出回報包…", "匯入歷史收盤價…", "使用的設定檔…"]
+    assert labels == ["審查通過日期…", "匯出回報包…", "匯入歷史收盤價…", "重新比價全部", "使用的設定檔…"]
     assert not {"審查通過日期…", "匯出回報包…"} & set(texts(window.check, ttk.Button)), "核對頁畫面上不再有維護功能"
     window._refresh_maintenance()
     assert str(menu.entrycget(0, "state")) == "normal"
@@ -63,6 +63,7 @@ def test_maintenance_actions_live_in_the_menu_only(master, tmp_path: Path) -> No
     window.daily._busy(True)
     window._refresh_maintenance()
     assert str(menu.entrycget(2, "state")) == "disabled", "每日匯入頁正在匯入時不能匯歷史收盤價"
+    assert str(menu.entrycget(3, "state")) == "disabled", "也不能重新比價"
 
 
 class UnsavedSession(PanelSession):

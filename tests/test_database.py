@@ -95,6 +95,7 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
         "workflow.order_import_line",
         "workflow.other_product",
         "workflow.price_import",
+        "workflow.pricing_status",
         "workflow.product",
         "workflow.product_event",
         "workflow.product_event_change",
@@ -269,3 +270,21 @@ def test_close_prices_migration_keeps_products(pg) -> None:
         ("147000000001", "SG", "人工維護")
     ]
     assert pg.execute("SELECT count(*) FROM workflow.close_price").fetchone()[0] == 0
+
+
+@pytest.mark.db
+def test_pricing_status_migration_keeps_products(pg) -> None:
+    """資料表版本 0018 只新增比價狀態表（#155），既有的商品條件與存續事件不動。"""
+    _database_before(pg, 18)
+    pg.execute(
+        "INSERT INTO workflow.product (tdcc, product, issuer, status_event, source) VALUES (%s, 'FCN', 'SG', '在庫', '人工維護')",
+        ("147000000001",),
+    )
+
+    apply_migrations(pg)
+
+    assert pg.execute("SELECT tdcc, issuer, source FROM workflow.product").fetchall() == [
+        ("147000000001", "SG", "人工維護")
+    ]
+    assert pg.execute("SELECT count(*) FROM workflow.pricing_status").fetchone()[0] == 0
+    assert pg.execute("SELECT count(*) FROM workflow.product_event").fetchone()[0] == 0
