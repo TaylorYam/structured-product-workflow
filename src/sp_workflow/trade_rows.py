@@ -62,6 +62,10 @@ class TradeRowsDraft:
         """改了的格子：(row_seq, 欄, 打開時的值, 改成)。"""
         return [(row.seq, *edit) for row in self.rows for edit in row.edits()]
 
+    def differences(self) -> dict[tuple[int, str], object]:
+        """和打開時不同的格子 (row_seq, 欄) → 資料庫的值（畫面標黃）；同 `OrderDraft.differences`。"""
+        return {(seq, name): stored for seq, name, stored, _ in self.edits()}
+
     def has_input_errors(self) -> bool:
         return any(row.input_errors for row in self.rows)
 

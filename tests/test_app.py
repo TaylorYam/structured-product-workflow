@@ -979,7 +979,7 @@ def table_rows(tab) -> list[tuple[str, str]]:
 
 def type_into(editor, name: str, text: str) -> None:
     editor.rows[name].var.set(text)
-    editor._commit(name)
+    editor.commit()
 
 
 def test_products_needing_work_come_first_and_the_first_one_opens(master, tmp_path: Path) -> None:
@@ -1660,7 +1660,7 @@ def opened_with(window: app.PanelWindow, draft: OrderDraft, trades: TradeRowsDra
 
 def type_trade(editor, key: tuple[int, str], text: str) -> None:
     editor.rows[key].var.set(text)
-    editor._commit(key)
+    editor.commit()
 
 
 def grid_row(widget: tk.Misc) -> int:
