@@ -15,10 +15,12 @@ import pytest
 from db_synth import csv_price, price, seed_mailbox, trade, write_daily, write_price_csv
 from fcn_checker.check_config import ConfigPaths
 from order_synth import CONFIG, SHEET, A, order_row, sheet_line, write_sheet
+from sp_workflow.check_terms import CheckTermsError
 from sp_workflow.database import DatabaseError
 from sp_workflow.order_import import drafts_from, import_drafts
 from sp_workflow.product_write import NEW
 from sp_workflow.window_actions import (
+    import_close_history,
     import_order_sheet,
     read_order_sheet,
     run_daily_import,
@@ -118,6 +120,22 @@ def test_price_csv_is_recalculated(pg, pg_settings, tmp_path: Path) -> None:
     result = run_price_csv(pg_settings, source, PATHS)
 
     assert result.recalc.receipt is not None and not result.recalc.error
+    assert result.receipt.closes is not None and result.receipt.closes.stored == 1, "讀得到假日表時同時存收盤價"
+
+
+def test_a_price_csv_without_holidays_stores_no_closes(pg, pg_settings, tmp_path: Path) -> None:
+    source = write_price_csv(tmp_path / "MarketData_20261015.csv", [csv_price("AAA UW")])
+
+    result = run_price_csv(pg_settings, source, no_holidays(tmp_path))
+
+    assert result.receipt.closes is None and count(pg, "workflow.close_price") == 0
+
+
+def test_close_history_needs_the_holiday_calendar(pg, pg_settings, tmp_path: Path) -> None:
+    with pytest.raises(CheckTermsError):
+        import_close_history(pg_settings, tmp_path / "HP.xlsx", no_holidays(tmp_path))
+
+    assert count(pg, "workflow.close_price_import") == 0
 
 
 # ---------- 讀起單建檔：能連就帶入資料庫的值，連不上就退回 ----------

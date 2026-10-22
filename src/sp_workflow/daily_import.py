@@ -15,6 +15,8 @@
 - 回補股價 CSV（`MarketData_YYYYMMDD.csv`，#112）：第 1 列欄名要完全相同，「取價日」是收盤那一天、整份同一天；
   存成取價日＋1 天，等同隔天早上用 BBG_Data 取到的價格。沒有 1日前收盤價；幣別、市值(百萬美元) 不存。
   代碼、重複代碼、不是數字、整天取代的處理同 BBG_Data；也留一筆 `workflow.import_run`。
+  同一個 transaction 也把 CSV 那一天的收盤價寫進 `workflow.close_price`（#153、ADR 0020，見 `close_prices`）；
+  讀不到交易所假日表時不能判斷休市日，收盤價這次不存。BBG_Data 不寫收盤價。
 - 信箱由資料庫直接維護（#35、ADR 0004）：匯入不修改 `mailbox`，只用它比對 FC 名字。
 - 結果另外列出交易明細的 FCN TDCC（依第一次出現的順序、不重複，不是剛好 12 碼與整檔都取消的不列），
   給視窗帶到起單資料頁（#90）。
@@ -40,10 +42,13 @@ import openpyxl
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
+from sp_workflow.close_prices import CSV_SOURCE, CloseSummary, closes_from_csv, write_closes
 from sp_workflow.database import DatabaseError, require_current_schema
 
 if TYPE_CHECKING:
     import psycopg
+
+    from fcn_checker.trading_calendar import TradingCalendar
 
 TRADE_SHEET = "交易明細"
 PRICE_SHEET = "BBG_Data"
@@ -160,6 +165,10 @@ class PriceCsvReceipt:
     prices: PriceSummary
     lines: tuple[ImportLine, ...]  # 股價不是數字、股價衝突
     error_book_path: Path
+    closes: CloseSummary | None = None  # 收盤價（#153）；讀不到假日表時沒有存
+    closed: tuple[str, ...] = ()  # 那一天休市、收盤價沒有存的代碼
+    close_uncovered: tuple[str, ...] = ()  # 那一天超出假日表涵蓋範圍、收盤價沒有存的代碼
+    close_conflicts: tuple[str, ...] = ()  # 去掉類別字後才重複、值不同、收盤價沒有存的代碼
 
 
 @dataclass(frozen=True)
@@ -251,18 +260,47 @@ def import_daily(daily_book: Path, conn: psycopg.Connection, *, prices: bool = T
     return receipt
 
 
-def import_price_csv(path: Path, conn: psycopg.Connection) -> PriceCsvReceipt:
-    """回補股價（#112）：匯入一份 `MarketData_YYYYMMDD.csv`。整份有問題時丟 `DailyImportError`、不寫入任何資料。"""
+def import_price_csv(path: Path, conn: psycopg.Connection, calendar: TradingCalendar | None = None) -> PriceCsvReceipt:
+    """回補股價（#112）：匯入一份 `MarketData_YYYYMMDD.csv`。整份有問題時丟 `DailyImportError`、不寫入任何資料。
+
+    有 `calendar`（交易所假日表）時同時寫 CSV 那一天的收盤價（#153）；沒有時收盤價不存。"""
     _require_schema(conn)
     close_date, prices = _read_price_csv(path)
+    sha256 = _sha256(path)
     with conn.transaction():
         run_id = conn.execute(
             "INSERT INTO workflow.import_run (daily_file_name, daily_sha256, summary) VALUES (%s, %s, '{}') RETURNING run_id",
-            (path.name, _sha256(path)),
+            (path.name, sha256),
         ).fetchone()[0]
         summary = _write_prices(conn, prices, run_id)
+        closes, closed, uncovered, close_conflicts = None, (), (), ()
+        if calendar is not None:
+            found = closes_from_csv(
+                close_date, {code: price.last_close for code, price in prices.rows.items()}, calendar, prices.conflicts
+            )
+            closed, uncovered, close_conflicts = found.closed, found.uncovered, found.conflicts
+            details = {"closed": list(closed), "uncovered": list(uncovered), "conflicts": list(close_conflicts)}
+            closes = write_closes(
+                conn,
+                found.closes,
+                source=CSV_SOURCE,
+                file_name=path.name,
+                sha256=sha256,
+                details=details,
+                run_id=run_id,
+            )
         error_book_path = path.parent / IMPORT_ERROR_BOOK_NAME
-        receipt = PriceCsvReceipt(run_id, close_date, summary, tuple(prices.problems), error_book_path)
+        receipt = PriceCsvReceipt(
+            run_id,
+            close_date,
+            summary,
+            tuple(prices.problems),
+            error_book_path,
+            closes,
+            closed,
+            uncovered,
+            close_conflicts,
+        )
         record = {
             "counts": dict(Counter(line.kind for line in receipt.lines)),
             "close_date": close_date.isoformat(),

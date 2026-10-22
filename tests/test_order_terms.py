@@ -83,15 +83,15 @@ def test_strike_date_equals_trade_date_otherwise(tmp_path: Path) -> None:
 
 def test_next_day_open_without_a_known_market_leaves_the_strike_date_blank(tmp_path: Path) -> None:
     lines = [
-        sheet_line(A, {"BBG Code 1": "700 HK", "BBG Code 2": None, "期初價格": "明日開盤價"}),
+        sheet_line(A, {"BBG Code 1": "BMW GY", "BBG Code 2": None, "期初價格": "明日開盤價"}),
         sheet_line(B, {**JAPAN, "Trade date": None, "期初價格": "明日開盤價"}),
     ]
     path = write_sheet(tmp_path / "s.xlsx", lines)
 
-    hk, blank = read(path, f"{A} {B}")
+    gy, blank = read(path, f"{A} {B}")
 
-    assert hk.values["Strike date"] is None and hk.status == PENDING and hk.unresolved == {"Strike date"}
-    assert hk.notes["Strike date"] == "期初價格是明日開盤價，標的 700 HK 的交易所不在交易所假日表；請填下一個營業日"
+    assert gy.values["Strike date"] is None and gy.status == PENDING and gy.unresolved == {"Strike date"}
+    assert gy.notes["Strike date"] == "期初價格是明日開盤價，標的 BMW GY 的交易所不在交易所假日表；請填下一個營業日"
     assert blank.notes["Strike date"] == "期初價格是明日開盤價，Trade date 空白，算不出來"
 
 
