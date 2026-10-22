@@ -93,6 +93,7 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
         "workflow.product",
         "workflow.term_correction",
         "workflow.trade_row",
+        "workflow.trade_row_correction",
         "workflow.underlying_price",
     ]
 
@@ -166,7 +167,7 @@ def test_upgrading_to_0013_keeps_corrections_and_allows_manual_products(pg) -> N
 
     applied = apply_migrations(pg)
 
-    assert applied == ["0013_manual_maintenance.sql"]
+    assert applied[0] == "0013_manual_maintenance.sql"
     assert pg.execute("SELECT locked, previous FROM workflow.term_correction").fetchall() == [(True, {})]
     insert = "INSERT INTO workflow.product (tdcc, product, issuer, status_event, source) VALUES (%s, 'FCN', 'SG', '在庫', %s)"
     pg.execute(insert, ("037199990002", "人工維護"))

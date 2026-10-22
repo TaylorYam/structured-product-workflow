@@ -1,6 +1,7 @@
 """每日匯入：把每日更新（`交易明細`＋`BBG_Data`）匯入最小 FCN 資料庫（#32、#87、ADR 0003、0008）。
 
-對外是 `import_daily` 與回補股價用的 `import_price_csv`（#112）。規則：
+對外是 `import_daily` 與回補股價用的 `import_price_csv`（#112）；交易明細的欄與解讀規則（`TRADE_FIELDS`、
+`TRADE_REQUIRED`、`trade_value`、`is_cancel_note`）也給人工維護修改交易明細用（#116），兩邊存進去的值一樣。規則：
 - 需要 `交易明細`、`BBG_Data` 兩張工作表，少一張就整份不匯入；`清單更新` 已停用，檔案裡有也不讀（#87）。
   「只匯交易明細」（`prices=False`，回補時用）不讀 `BBG_Data`、不動股價，沒有這張工作表也可以。
   商品條件改由「匯入起單資料」建立（#86），每日匯入不再寫商品條件、也不做分公司對帳。
@@ -99,10 +100,14 @@ _PCT = Decimal("0.000001")
 _AMOUNT = Decimal("0.0001")
 _FULL_TDCC = re.compile(rf"[0-9]{{{TDCC_DIGITS}}}")
 
-_TRADE_COLUMNS = (
-    "number", "trade_date", "product", "currency", "amount", "fc_name", "branch", "supervisor", "uf",
-    "initial_pricing", "note", "raised", "ts_iis_checked", "checker", "originator",
-)  # fmt: skip
+# 交易明細的欄 → `workflow.trade_row` 的欄（Product 只收 FCN、TDCC 是哪一檔，不在這裡）；人工維護可以改這些欄（#116）
+TRADE_FIELDS = {
+    "編號": "number", "交易日期": "trade_date", "幣別": "currency", "金額": "amount", "FC/PB": "fc_name",
+    "分公司": "branch", "前台主管/投專": "supervisor", "UF": "uf", "期初價格": "initial_pricing", "備註": "note",
+    "募集": "raised", "TS/IIS 核對": "ts_iis_checked", "核對TS/IIS人員": "checker", "起單人員": "originator",
+}  # fmt: skip
+TRADE_REQUIRED = ("交易日期", "幣別", "金額", "FC/PB", "分公司")
+_TRADE_COLUMNS = ("product", *TRADE_FIELDS.values())  # 寫入、比對資料庫的交易列用的欄
 
 
 class DailyImportError(Exception):
@@ -497,7 +502,7 @@ def _parse_trades(rows: Iterable[_SheetRow], parsed: _Parsed) -> None:
         parsed.fcn_trade_rows += 1
         _remember_fcn(parsed, row)
         where = f"交易明細第 {number} 列"
-        if _is_cancel_note(row["備註"]):
+        if is_cancel_note(row["備註"]):
             parsed.cancelled_trade_rows += 1
             parsed.cancelled_lines.append(
                 ImportLine(
@@ -534,28 +539,26 @@ def _remember_fcn(parsed: _Parsed, row: Mapping[str, Any]) -> None:
     tdcc = _text(row["TDCC"])
     if tdcc is None or not _FULL_TDCC.fullmatch(tdcc):
         return
-    parsed.fcn_tdccs[tdcc] = parsed.fcn_tdccs.get(tdcc, False) or not _is_cancel_note(row["備註"])
+    parsed.fcn_tdccs[tdcc] = parsed.fcn_tdccs.get(tdcc, False) or not is_cancel_note(row["備註"])
 
 
 def _trade(row: Mapping[str, Any]) -> dict[str, Any]:
-    number = row["編號"]
-    return {
-        "number": None if _text(number) is None else _required_int(row, "編號"),
-        "trade_date": _required_date(row, "交易日期"),
-        "product": FCN,
-        "currency": _required_text(row, "幣別"),
-        "amount": _required(row, "金額", _amount),
-        "fc_name": _required_text(row, "FC/PB"),
-        "branch": _required_text(row, "分公司"),
-        "supervisor": _text(row["前台主管/投專"]),
-        "uf": _pct(row["UF"]),
-        "initial_pricing": _text(row["期初價格"]),
-        "note": _text(row["備註"]),
-        "raised": _text(row["募集"]),
-        "ts_iis_checked": _text(row["TS/IIS 核對"]),
-        "checker": _text(row["核對TS/IIS人員"]),
-        "originator": _text(row["起單人員"]),
-    }
+    trade: dict[str, Any] = {"product": FCN}
+    for header, column in TRADE_FIELDS.items():
+        try:
+            value = trade_value(header, row[header])
+        except ValueError as exc:
+            raise ValueError(f"{header}：{exc}") from exc
+        if value is None and header in TRADE_REQUIRED:
+            raise ValueError(f"{header} 沒有值")
+        trade[column] = value
+    return trade
+
+
+def trade_value(header: str, value: Any) -> Any:
+    """交易明細的一格（Excel 的值或畫面打的字）→ 存進資料庫的值；每日匯入與人工維護（#116）共用，
+    存進去的值才會和之後匯入的一樣。空白（含 `-`）回傳 None，必填由呼叫端擋；格式錯丟 ValueError（不含欄名）。"""
+    return _TRADE_CONVERT.get(header, _text)(value)
 
 
 # ---------- 寫入資料庫 ----------
@@ -733,7 +736,8 @@ def _text(value: Any, *, dash_is_none: bool = True) -> str | None:
     return text
 
 
-def _is_cancel_note(value: Any) -> bool:
+def is_cancel_note(value: Any) -> bool:
+    """交易列的備註是 Cancel 或含「取消」：每日匯入不存進資料庫（人工維護也不能改成這樣，#116）。"""
     text = (_text(value, dash_is_none=False) or "").casefold()
     return text == "cancel" or "取消" in text
 
@@ -768,6 +772,13 @@ def _decimal(value: Any) -> Decimal | None:
     return number
 
 
+def _whole_number(value: Any) -> int | None:
+    number = _decimal(value)
+    if number is not None and number != number.to_integral_value():
+        raise ValueError(f"「{number}」不是整數")
+    return None if number is None else int(number)
+
+
 def _pct(value: Any) -> Decimal | None:
     number = _decimal(value)
     return None if number is None else number.quantize(_PCT)
@@ -794,26 +805,5 @@ def _date(value: Any) -> dt.date | None:
     raise ValueError(f"「{text}」不是日期")
 
 
-def _required(row: Mapping[str, Any], name: str, convert: Any) -> Any:
-    try:
-        value = convert(row[name])
-    except ValueError as exc:
-        raise ValueError(f"{name}：{exc}") from exc
-    if value is None:
-        raise ValueError(f"{name} 沒有值")
-    return value
-
-
-def _required_text(row: Mapping[str, Any], name: str) -> str:
-    return _required(row, name, _text)
-
-
-def _required_date(row: Mapping[str, Any], name: str) -> dt.date:
-    return _required(row, name, _date)
-
-
-def _required_int(row: Mapping[str, Any], name: str) -> int:
-    number = _required(row, name, _decimal)
-    if number != number.to_integral_value():
-        raise ValueError(f"{name}「{number}」不是整數")
-    return int(number)
+# 交易明細各欄的轉換（`trade_value`）；沒列的是文字
+_TRADE_CONVERT = {"編號": _whole_number, "交易日期": _date, "金額": _amount, "UF": _pct}

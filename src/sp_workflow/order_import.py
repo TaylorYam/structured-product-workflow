@@ -10,6 +10,7 @@
   有核對條件的重算價格，每次在 `workflow.term_correction` 留紀錄。
 - `missing_products`／`open_maintenance`／`save_maintenance`：人工維護（#115、ADR 0017）：列出還沒鎖住、缺必填欄的商品
   與只有交易明細的 TDCC；打開任何一檔（已鎖住的照更正規則存檔），還沒鎖住的可以留空白，存檔後重算核對條件。
+  這檔的交易明細（`trade_rows`，#116、ADR 0018）和商品條件一起存檔，在 `workflow.trade_row_correction` 另外留紀錄。
 規則式、不猜值：單位面額依幣別預設值（審查標準 `[denomination]`），發行機構寫法依參考條件表 `[issuer_values]`。
 已鎖住（`locked_at` 有值：TS 核對通過，或 migration 0006 之前就在資料庫）的商品不能匯入，要改走更正（`apply_correction`）；
 migration 0006 之後、清單更新停用（#87）之前由清單更新建立的商品沒有鎖，Order 匯入可以接手
@@ -48,6 +49,16 @@ from sp_workflow.order_terms import (
     missing_fields,
     plain,
     unknown_issuer,
+)
+from sp_workflow.trade_rows import (
+    CHECK_TERM_FIELDS,
+    TradeEdit,
+    TradeRowsDraft,
+    changed_since_opened,
+    read_rows,
+    trade_problems,
+    unmatched_names,
+    write_trade_rows,
 )
 
 if TYPE_CHECKING:
@@ -549,15 +560,24 @@ class CorrectionError(Exception):
 
 @dataclass(frozen=True)
 class CorrectionReceipt:
-    """更正或人工維護存檔的結果；`correction_id` 是 `workflow.term_correction` 的那一筆。"""
+    """更正或人工維護存檔的結果；`correction_id` 是 `workflow.term_correction` 的那一筆，
+    `trade_correction_id` 是 `workflow.trade_row_correction` 的那一筆（#116）。"""
 
     tdcc: str
-    correction_id: int | None  # 沒有改任何欄時 None（沒有寫入）
+    correction_id: int | None  # 沒有改商品條件時 None（沒有寫入）
     changes: tuple[tuple[str, object, object], ...] = ()  # (欄位或 UL_n_價格, 更正前, 更正後)
-    calc: CalcLine | None = None  # 重算後的核對條件；沒有算過核對條件的商品（以前清單更新匯入的）是 None
+    calc: CalcLine | None = None  # 重算後的核對條件；沒有重算（沒有核對條件、沒改到影響核對條件的欄）是 None
     locked: bool = True  # 存檔時已鎖住（更正）；False 是還沒鎖住的商品（人工維護，#115）
     created: bool = False  # 只有交易明細的 TDCC 新建了商品條件
     missing: tuple[str, ...] = ()  # 存檔後還空著的必填欄（只有還沒鎖住的商品會有）
+    trade_correction_id: int | None = None  # 沒有改交易明細時 None
+    trade_changes: tuple[TradeEdit, ...] = ()  # (row_seq, 欄, 存檔前, 存檔後)
+    unmatched: tuple[str, ...] = ()  # 改了的 FC 名字裡對不到信箱的
+
+    @property
+    def saved(self) -> bool:
+        """有寫入（商品條件或交易明細）。"""
+        return self.correction_id is not None or self.trade_correction_id is not None
 
 
 def load_correction(conn: psycopg.Connection, tdcc: str, config: ImportConfig) -> OrderDraft:
@@ -580,13 +600,20 @@ def _issuer_code(tdcc: str, issuer: str, config: ImportConfig) -> str:
 
 
 def apply_correction(
-    conn: psycopg.Connection, draft: OrderDraft, config: ImportConfig, *, reason: str = "", user: str | None = None
+    conn: psycopg.Connection,
+    draft: OrderDraft,
+    config: ImportConfig,
+    *,
+    trades: TradeRowsDraft | None = None,
+    reason: str = "",
+    user: str | None = None,
 ) -> CorrectionReceipt:
     """把更正後的條件寫進資料庫：商品維持鎖住、核對結果不動，有核對條件的重算價格，每次留一筆紀錄。
 
     照起單資料匯入的規則檢查；上手、發行日不改，單位面額只有幣別改了時換成新幣別的預設值。
-    打開之後資料庫的條件被改過、或已經不是鎖住的，不寫入。整次在同一個 transaction 裡；寫入後 `draft` 換成
-    資料庫存的值（同重新打開）。
+    `trades` 是這檔的交易明細（人工維護，#116）：改了的格子一起寫入、另外留一筆紀錄；改到核對條件會用到的欄
+    （分公司配置、交叉比對）時，條件沒改也重算。打開之後資料庫的條件或交易明細被改過、或已經不是鎖住的，不寫入。
+    整次在同一個 transaction 裡；寫入後 `draft`、`trades` 換成資料庫存的值（同重新打開）。
     """
     _require_schema(conn)
     tdcc = draft.tdcc
@@ -597,45 +624,48 @@ def apply_correction(
         assert stored is not None
         if _changed_since_opened(stored, draft):
             raise CorrectionError(f"{tdcc}：資料庫裡這檔的條件在打開之後改過了，請重新載入再更正")
+        _require_trades_unchanged(conn, trades)
         values = draft.values
         problems = {**_value_problems(values, draft, config), **draft.input_errors}
         problems.pop(TDCC_FIELD, None)  # 只有上手的問題放在 TDCC；上手不改，不擋更正
         for name in FIXED_IN_CORRECTION:
             if not _same(values.get(name), stored.fields.get(name)):
                 problems[name] = "TS 回填的欄位，不能更正"
-        if problems:
-            raise CorrectionError(f"{tdcc} 沒有更正：{describe(problems)}")
+        _raise_problems(f"{tdcc} 沒有更正", problems, trades)
         product = _product_columns(values, draft.issuer, config)
         product["issuer"], product["issue_date"] = stored.columns["issuer"], stored.columns["issue_date"]
         if values["Currency"] == stored.fields["Currency"]:
             product["denomination"] = stored.columns["denomination"]
         changed = [c for c in _PRODUCT_COLUMNS if not _same(stored.columns[c], product[c])]
-        if not changed:
+        trade_changes = [] if trades is None else write_trade_rows(conn, trades)
+        if not changed and not trade_changes:
             return CorrectionReceipt(tdcc, None)
-        changes = _changes(stored.fields, stored.columns, values, product, changed)
-        assignments = ", ".join(f"{c} = %s" for c in changed)
-        conn.execute(
-            f"UPDATE workflow.product SET {assignments} WHERE tdcc = %s", (*(product[c] for c in changed), tdcc)
-        )
-        recalc = recalculate_corrected(conn, config.calendar, tdcc, stored.columns)
-        calc = None
-        if recalc is not None:
-            calc, price_changes = recalc
-            changes += price_changes
-        correction_id = conn.execute(
-            "INSERT INTO workflow.term_correction (tdcc, corrected_by, reason, changes, previous)"
-            " VALUES (%s, %s, %s, %s::jsonb, %s::jsonb) RETURNING correction_id",
-            (
-                tdcc,
-                user or getpass.getuser(),
-                reason.strip() or None,
-                _json([list(change) for change in changes]),
-                _json(stored.columns),
-            ),
-        ).fetchone()[0]
+        changes = _changes(stored.fields, stored.columns, values, product, changed) if changed else []
+        if changed:
+            assignments = ", ".join(f"{c} = %s" for c in changed)
+            conn.execute(
+                f"UPDATE workflow.product SET {assignments} WHERE tdcc = %s", (*(product[c] for c in changed), tdcc)
+            )
+        affected = any(name in CHECK_TERM_FIELDS for _, name, _, _ in trade_changes)
+        recalc = recalculate_corrected(conn, config.calendar, tdcc, stored.columns, trades_changed=affected)
+        calc, price_changes = (None, ()) if recalc is None else recalc
+        changes += price_changes
+        user = user or getpass.getuser()
+        correction_id = None
+        if changed:
+            correction_id = _record_terms(conn, tdcc, changes, stored.columns, locked=True, reason=reason, user=user)
+        trade_id = None
+        if trades is not None and trade_changes:
+            prices = () if changed else price_changes  # 商品條件也改了時，價格記在商品條件的紀錄
+            trade_id = _record_trades(conn, trades, trade_changes, prices, locked=True, reason=reason, user=user)
         saved = _saved_fields(conn, tdcc)
+        saved_trades = None if trades is None else read_rows(conn, tdcc)
     _reopen(draft, saved)
-    return CorrectionReceipt(tdcc, correction_id, tuple(changes), calc)
+    if trades is not None and saved_trades is not None:
+        trades.reopen(saved_trades)
+    return CorrectionReceipt(
+        tdcc, correction_id, tuple(changes), calc, **_trade_receipt(trades, trade_changes, trade_id)
+    )
 
 
 def _changed_since_opened(stored: _Stored, draft: OrderDraft) -> bool:
@@ -780,24 +810,30 @@ def _maintenance_blocking(draft: OrderDraft, config: ImportConfig) -> dict[str, 
 
 
 def save_maintenance(
-    conn: psycopg.Connection, draft: OrderDraft, config: ImportConfig, *, reason: str = "", user: str | None = None
+    conn: psycopg.Connection,
+    draft: OrderDraft,
+    config: ImportConfig,
+    *,
+    trades: TradeRowsDraft | None = None,
+    reason: str = "",
+    user: str | None = None,
 ) -> CorrectionReceipt:
     """人工維護存檔。已鎖住的照更正（`apply_correction`）；還沒鎖住的可以留空白（格式錯的擋），寫入後重算核對條件；
-    只有交易明細的新建商品條件（來源「人工維護」）。每次在 `workflow.term_correction` 留一筆（`locked` 是 false），
-    沒改任何欄時不寫入。打開之後資料庫的這檔被改過、鎖住、建立了商品條件或交易明細沒了，不寫入。
-    整次在同一個 transaction 裡；寫入後 `draft` 換成資料庫存的值（同重新打開）。
+    只有交易明細的新建商品條件（來源「人工維護」）。商品條件每次在 `workflow.term_correction` 留一筆（`locked` 是
+    false）。`trades` 是這檔的交易明細（#116）：改了的格子一起寫入，在 `workflow.trade_row_correction` 另外留一筆。
+    沒改任何欄時不寫入。打開之後資料庫的這檔（商品條件或交易明細）被改過、鎖住、建立了商品條件或交易明細沒了，不寫入。
+    整次在同一個 transaction 裡；寫入後 `draft`、`trades` 換成資料庫存的值（同重新打開）。
     """
     if draft.row.status == MAINTAIN_LOCKED:
-        return apply_correction(conn, draft, config, reason=reason, user=user)
+        return apply_correction(conn, draft, config, trades=trades, reason=reason, user=user)
     _require_schema(conn)
     tdcc, values = draft.tdcc, draft.values
     with conn.transaction():
         conn.execute("SELECT 1 FROM workflow.product WHERE tdcc = %s FOR UPDATE", (tdcc,))
         stored = _stored(conn, tdcc)
         _require_unchanged(conn, draft, stored)
-        problems = _maintenance_blocking(draft, config)
-        if problems:
-            raise CorrectionError(f"{tdcc} 沒有存檔：{describe(problems)}")
+        _require_trades_unchanged(conn, trades)
+        _raise_problems(f"{tdcc} 沒有存檔", _maintenance_blocking(draft, config), trades)
         product = _product_columns(values, draft.issuer, config)
         if stored is None:
             before_fields, before_columns = dict.fromkeys(FIELDS), dict.fromkeys(_PRODUCT_COLUMNS)
@@ -807,9 +843,12 @@ def save_maintenance(
             if _same(values.get("Currency"), stored.fields["Currency"]):
                 product["denomination"] = stored.columns["denomination"]  # 幣別沒改時面額不動（可能是放行的 TS 值）
         changed = [c for c in _PRODUCT_COLUMNS if not _same(before_columns[c], product[c])]
-        if not changed or (stored is None and not _edits(draft.stored or {}, values)):
-            return CorrectionReceipt(tdcc, None, locked=False)  # 新建時商品種類、上手一定有值，要看畫面有沒有改
-        if stored is None:
+        if stored is None and not _edits(draft.stored or {}, values):
+            changed = []  # 新建時商品種類、上手一定有值，要看畫面有沒有改
+        trade_changes = [] if trades is None else write_trade_rows(conn, trades)
+        if not changed and not trade_changes:
+            return CorrectionReceipt(tdcc, None, locked=False)
+        if stored is None and changed:
             columns = ("tdcc", *_PRODUCT_COLUMNS, "status_event", "source")
             inserted = conn.execute(
                 f"INSERT INTO workflow.product ({', '.join(columns)}) VALUES ({', '.join(['%s'] * len(columns))})"
@@ -818,35 +857,38 @@ def save_maintenance(
             ).fetchone()
             if inserted is None:  # 別人同時新增了這檔：還不存在的列 FOR UPDATE 鎖不到
                 raise CorrectionError(f"{tdcc}：{_ALREADY_CREATED}")
-        else:
+        elif changed:
             assignments = ", ".join(f"{c} = %s" for c in changed)
             conn.execute(
                 f"UPDATE workflow.product SET {assignments} WHERE tdcc = %s", (*(product[c] for c in changed), tdcc)
             )
-        changes = _changes(before_fields, before_columns, values, product, changed)
-        (calc,) = recalculate(conn, config.calendar, tdccs=[tdcc]).lines
-        correction_id = conn.execute(
-            "INSERT INTO workflow.term_correction (tdcc, corrected_by, reason, changes, previous, locked)"
-            " VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, false) RETURNING correction_id",
-            (
-                tdcc,
-                user or getpass.getuser(),
-                reason.strip() or None,
-                _json([list(change) for change in changes]),
-                _json(None if stored is None else stored.columns),
-            ),
-        ).fetchone()[0]
-        saved = _saved_fields(conn, tdcc)
-    _reopen(draft, saved)
-    draft.row = replace(draft.row, status=MAINTAIN_OPEN)
+        exists = stored is not None or bool(changed)  # 只改了交易明細、還沒有商品條件的不重算
+        calc = recalculate(conn, config.calendar, tdccs=[tdcc]).lines[0] if exists else None
+        changes = _changes(before_fields, before_columns, values, product, changed) if changed else []
+        user = user or getpass.getuser()
+        correction_id = None
+        if changed:
+            previous = None if stored is None else stored.columns
+            correction_id = _record_terms(conn, tdcc, changes, previous, locked=False, reason=reason, user=user)
+        trade_id = None
+        if trades is not None and trade_changes:
+            trade_id = _record_trades(conn, trades, trade_changes, (), locked=False, reason=reason, user=user)
+        saved = _saved_fields(conn, tdcc) if exists else None
+        saved_trades = None if trades is None else read_rows(conn, tdcc)
+    if saved is not None:
+        _reopen(draft, saved)
+        draft.row = replace(draft.row, status=MAINTAIN_OPEN)
+    if trades is not None and saved_trades is not None:
+        trades.reopen(saved_trades)
     return CorrectionReceipt(
         tdcc,
         correction_id,
         tuple(changes),
         calc,
         locked=False,
-        created=stored is None,
-        missing=tuple(missing_fields(product)),
+        created=stored is None and bool(changed),
+        missing=tuple(missing_fields(product)) if exists else REQUIRED,
+        **_trade_receipt(trades, trade_changes, trade_id),
     )
 
 
@@ -869,6 +911,77 @@ def _require_unchanged(conn: psycopg.Connection, draft: OrderDraft, stored: _Sto
 
 def _has_trade_rows(conn: psycopg.Connection, tdcc: str) -> bool:
     return conn.execute("SELECT 1 FROM workflow.trade_row WHERE tdcc = %s LIMIT 1", (tdcc,)).fetchone() is not None
+
+
+def _require_trades_unchanged(conn: psycopg.Connection, trades: TradeRowsDraft | None) -> None:
+    """鎖住這檔的交易明細列；打開之後被改過（#116）就不寫入。"""
+    if trades is not None and changed_since_opened(conn, trades):
+        raise CorrectionError(f"{trades.tdcc}：資料庫裡這檔的交易明細在打開之後改過了，請重新載入")
+
+
+def _raise_problems(prefix: str, problems: Mapping[str, str], trades: TradeRowsDraft | None) -> None:
+    """商品條件或交易明細有擋存檔的問題時，兩邊一起寫出來、整次不寫入。"""
+    found = [describe(problems)] if problems else []
+    if trades is not None:
+        found += [f"交易明細第 {seq} 列 {name}：{text}" for (seq, name), text in trade_problems(trades).items()]
+    if found:
+        raise CorrectionError(f"{prefix}：{'；'.join(found)}")
+
+
+def _record_terms(
+    conn: psycopg.Connection,
+    tdcc: str,
+    changes: Sequence[tuple[str, object, object]],
+    previous: Mapping[str, object] | None,
+    *,
+    locked: bool,
+    reason: str,
+    user: str,
+) -> int:
+    """商品條件的紀錄（`workflow.term_correction`）：改了的欄與價格、存檔前的商品欄位（新建時空白）。"""
+    return conn.execute(
+        "INSERT INTO workflow.term_correction (tdcc, corrected_by, reason, changes, previous, locked)"
+        " VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s) RETURNING correction_id",
+        (tdcc, user, reason.strip() or None, _json([list(change) for change in changes]), _json(previous), locked),
+    ).fetchone()[0]
+
+
+def _record_trades(
+    conn: psycopg.Connection,
+    trades: TradeRowsDraft,
+    changes: Sequence[TradeEdit],
+    price_changes: Sequence[tuple[str, object, object]],
+    *,
+    locked: bool,
+    reason: str,
+    user: str,
+) -> int:
+    """交易明細的紀錄（`workflow.trade_row_correction`，#116）：改了的格子、存檔前的列；只改交易明細時重算後
+    改變的價格也記在這裡。"""
+    return conn.execute(
+        "INSERT INTO workflow.trade_row_correction (tdcc, corrected_by, reason, changes, previous, price_changes, locked)"
+        " VALUES (%s, %s, %s, %s::jsonb, %s::jsonb, %s::jsonb, %s) RETURNING correction_id",
+        (
+            trades.tdcc,
+            user,
+            reason.strip() or None,
+            _json([list(change) for change in changes]),
+            _json(trades.previous()),
+            _json([list(change) for change in price_changes] or None),
+            locked,
+        ),
+    ).fetchone()[0]
+
+
+def _trade_receipt(trades: TradeRowsDraft | None, changes: Sequence[TradeEdit], trade_id: int | None) -> dict[str, Any]:
+    """收據裡交易明細的部分：紀錄、改了的格子、改了的 FC 名字裡對不到信箱的；沒改交易明細時都是空的。"""
+    if trades is None or trade_id is None:
+        return {}
+    return {
+        "trade_correction_id": trade_id,
+        "trade_changes": tuple(changes),
+        "unmatched": unmatched_names(trades.mailbox, changes),
+    }
 
 
 # ---------- 值的轉換 ----------

@@ -1,4 +1,4 @@
-"""FCN Workflow 視窗：七個分頁照每天的作業順序排（#73、#74、#90、#115）。
+"""FCN Workflow 視窗：七個分頁照每天的作業順序排（#73、#74、#90、#115、#116）。
 
 1. 每日匯入：選每日更新，把交易明細與每日股價匯入最小 FCN 資料庫（#32、#87）；信箱在資料庫直接維護（#35）。
 2. 起單資料：貼 TDCC、選一份起單建檔（#97），在右邊逐檔確認、修改後匯入資料庫（#86）。
@@ -8,14 +8,14 @@
 5. 放回：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾。
 6. 寄信草稿：貼核對通過的 TDCC，在 Outlook 建 TS／IIS 草稿給承作的 FC（#29）。
 7. 人工維護：按「檢查」列出還沒鎖住、缺資料的商品（缺的格子淺紅底），或輸入 TDCC 打開任何一檔，
-   在右邊補齊、修改資料庫裡的商品條件；已鎖住的照更正的規則存檔（#55、#115）。
+   在右邊補齊、修改資料庫裡的商品條件與交易明細列的值；已鎖住的照更正的規則存檔（#55、#115、#116）。
 
 商品資料夾所在的根目錄在視窗最上方設一次，3、6 兩頁共用（#75）。
 做完一步，下一頁先帶入結果並用藍色提示條寫出來，按「下一步 →」才切頁，不自動執行（#76）：
 每日匯入完成 → 起單資料頁帶入交易明細的 FCN TDCC（#90）；
 準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔。
 審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
-視窗只收輸入、在背景執行 `collect_orders`／`import_drafts`／`missing_products`／`open_maintenance`／`save_maintenance`／
+視窗只收輸入、在背景執行 `collect_orders`／`import_drafts`／`missing_products`／`open_maintenance`／`load_trade_rows`／`save_maintenance`／
 `import_daily`／`recalculate`／`release_differences`／`prepare_batch`／核對／`return_to_folders`／`create_drafts`
 並顯示結果，不含判斷邏輯。
 """
@@ -88,6 +88,7 @@ from sp_workflow.daily_import import (
     import_daily,
     import_price_csv,
     latest_import,
+    trade_value,
 )
 from sp_workflow.database import (
     ConnectionSettings,
@@ -160,6 +161,8 @@ from sp_workflow.preparation import (
     prepare_batch,
 )
 from sp_workflow.returning import PENDING_SUFFIX, ReturnError, ReturnReceipt, return_to_folders
+from sp_workflow.trade_rows import FIELDS as TRADE_ROW_FIELDS
+from sp_workflow.trade_rows import TradeRowsDraft, load_trade_rows, trade_notes, trade_problems
 
 if TYPE_CHECKING:
     import psycopg
@@ -922,10 +925,11 @@ class _Checked:
 
 @dataclass(frozen=True)
 class _Opened:
-    """人工維護打開的一檔（#115）。"""
+    """人工維護打開的一檔（#115）與它的交易明細（#116）。"""
 
     draft: OrderDraft
     config: ImportConfig
+    trades: TradeRowsDraft | None = None
 
 
 @dataclass(frozen=True)
@@ -1025,7 +1029,10 @@ class _CloseWarning:
 
 
 class _FieldRow:
-    """編輯區的一欄：欄名、輸入框（選項用下拉）、和資料庫不同時的「用資料庫的值」；說明放在下一行，有才顯示。"""
+    """編輯區的一欄：欄名、輸入框（選項用下拉）、和資料庫不同時的「用資料庫的值」；說明放在下一行，有才顯示。
+
+    `follow_width` 是 False 時說明的換行寬度由呼叫端更新（會拿掉重畫的欄，不能在 parent 上留自己的事件）。
+    """
 
     def __init__(
         self,
@@ -1034,6 +1041,8 @@ class _FieldRow:
         name: str,
         on_commit: Callable[[str], object],
         on_database: Callable[[str], None],
+        *,
+        follow_width: bool = True,
     ) -> None:
         self.var = tk.StringVar()
         row *= 2  # 每欄兩行：輸入一行、說明一行
@@ -1053,7 +1062,16 @@ class _FieldRow:
         self.note = tk.Label(parent, anchor="w", justify=tk.LEFT, background=SURFACE, font=(FONT, 9), padx=6)
         self.note.grid(row=row + 1, column=0, columnspan=3, sticky="ew", pady=(0, 2))
         self.note.grid_remove()
-        parent.bind("<Configure>", lambda event: self.note.configure(wraplength=max(240, event.width - 20)), add="+")
+        if follow_width:
+            parent.bind("<Configure>", lambda event: self.wrap(event.width), add="+")
+
+    @property
+    def widgets(self) -> tuple[tk.Misc, ...]:
+        return self.label, self.input, self.database, self.note
+
+    def wrap(self, width: int) -> None:
+        """說明依欄位區的寬度換行。"""
+        self.note.configure(wraplength=max(240, width - 20))
 
     def mark(self, background: str, note: str, *, offer_database: bool = False) -> None:
         for widget in (self.label, self.note):
@@ -1223,6 +1241,179 @@ class OrderEditor(ttk.Frame):
             return
         self.rows[name].var.set(format_field(draft.stored.get(name)))
         self._commit(name)
+
+
+class TradeRowsEditor:
+    """人工維護編輯區裡、商品條件底下的交易明細（#116）：一列一段，欄位是交易明細的表頭（`trade_rows.FIELDS`）。
+
+    畫在 `OrderEditor` 的欄位區、接在商品條件後面（同一個 grid，欄寬對齊），換檔時整段重畫。只改值，不新增、
+    不刪除列。和起單資料的欄一樣：離開欄位、按 Enter 才解讀（規則同每日匯入），寫錯的保留打的字並標紅；
+    必填空白、備註改成取消標紅（擋存檔）；改過的標黃、寫出資料庫的值，可以一鍵改回；FC 名字對不到信箱標紅提示（不擋）。
+    """
+
+    TITLE = "交易明細"
+    NOTE = (
+        "只改值，不新增、不刪除列；存檔時和上面的商品條件一起寫入。"
+        "改到交易日期、幣別、金額、分公司、UF 時重算核對條件（分公司配置、交叉比對）。"
+    )
+    EMPTY = "資料庫還沒有這檔的交易明細。"
+
+    def __init__(self, editor: OrderEditor, on_change: Callable[[TradeRowsDraft], None]) -> None:
+        self.parent = editor.fields
+        self.first_row = len(FIELDS)  # 接在商品條件的欄後面（`_FieldRow` 的列號）
+        self.on_change = on_change
+        self.trades: TradeRowsDraft | None = None
+        self.rows: dict[tuple[int, str], _FieldRow] = {}  # (row_seq, 欄) → 那一欄
+        self.typed: dict[tuple[int, str], str] = {}  # 寫錯時打的字
+        self.frozen = False
+        self.widgets: list[tk.Misc] = []  # 這一段所有的元件（換檔時拿掉）
+        self.note: tk.Label | None = None  # 標題下的說明
+        self.empty: tk.Label | None = None  # 沒有交易明細時的說明
+        self.parent.bind("<Configure>", lambda event: self._wrap(event.width), add="+")
+
+    @property
+    def editable(self) -> bool:
+        return self.trades is not None and not self.frozen
+
+    def show(self, trades: TradeRowsDraft | None) -> None:
+        """換成這檔的交易明細；None 時（還沒打開任何一檔）整段不顯示。"""
+        for widget in self.widgets:
+            widget.destroy()
+        self.widgets, self.rows, self.typed = [], {}, {}
+        self.note = self.empty = None
+        self.trades = trades
+        if trades is None:
+            return
+        row = self.first_row
+        self._label(row, self.TITLE, (FONT, 11, "bold"), pady=(14, 0))
+        self.note = self._label(row, self.NOTE, (FONT, 9), foreground=TEXT_SECONDARY, second=True)
+        if not trades.rows:
+            self.empty = self._label(row + 1, self.EMPTY, (FONT, 10))
+        for trade in trades.rows:
+            row += 1
+            self._label(row, f"第 {trade.seq} 列", (FONT, 10, "bold"), pady=(8, 0))
+            for name in TRADE_ROW_FIELDS:
+                row += 1
+                key = (trade.seq, name)
+                field_row = _FieldRow(
+                    self.parent,
+                    row,
+                    name,
+                    lambda _name, key=key: self._commit(key),
+                    lambda _name, key=key: self._use_database(key),
+                    follow_width=False,
+                )
+                field_row.var.set(format_field(trade.values.get(name)))
+                self.rows[key] = field_row
+                self.widgets += field_row.widgets
+        self._wrap(self.parent.winfo_width())
+        self._apply_state()
+        self.refresh()
+
+    def set_frozen(self, frozen: bool) -> None:
+        """存檔時不能改，存完再打開。"""
+        self.frozen = frozen
+        self._apply_state()
+
+    def refresh(self) -> None:
+        """依目前的值重新標紅、標黃與寫說明。"""
+        trades = self.trades
+        if trades is None:
+            return
+        problems, notes = trade_problems(trades), trade_notes(trades)
+        rows = {trade.seq: trade for trade in trades.rows}
+        for key, field_row in self.rows.items():
+            seq, name = key
+            stored = rows[seq].stored.get(name)
+            database = f"資料庫是 {format_field(stored) or '空白'}"
+            if key in problems:
+                field_row.mark(_PROBLEM_BG, problems[key])
+            elif stored != rows[seq].values.get(name):
+                if key in notes:
+                    field_row.mark(_PROBLEM_BG, f"{notes[key]}；{database}", offer_database=True)
+                else:
+                    field_row.mark(_DIFFERENT_BG, database, offer_database=True)
+            elif key in notes:
+                field_row.mark(_PROBLEM_BG, notes[key])
+            else:
+                field_row.mark(SURFACE, "")
+
+    def commit(self) -> bool:
+        """把畫面上的輸入都解讀一次（換檔、存檔、關閉前用）；有改到才通知，回傳有沒有改到。"""
+        if not self.editable:
+            return False
+        changed = [self._commit(key, notify=False) for key in self.rows]
+        if any(changed):
+            self.refresh()
+            self._notify()
+        return any(changed)
+
+    def _commit(self, key: tuple[int, str], *, notify: bool = True) -> bool:
+        trades = self.trades
+        if trades is None or not self.editable:
+            return False
+        seq, name = key
+        trade = next(trade for trade in trades.rows if trade.seq == seq)
+        text = self.rows[key].var.get()
+        try:
+            value = trade_value(name, text)
+        except ValueError as exc:
+            changed = self.typed.get(key) != text
+            self.typed[key] = text
+            trade.input_errors[name] = str(exc)
+        else:
+            changed = key in self.typed or format_field(trade.values.get(name)) != format_field(value)
+            self.typed.pop(key, None)
+            trade.input_errors.pop(name, None)
+            if changed:
+                trade.values[name] = value
+            self.rows[key].var.set(format_field(trade.values.get(name)))
+        if changed and notify:
+            self.refresh()
+            self._notify()
+        return changed
+
+    def _use_database(self, key: tuple[int, str]) -> None:
+        trades = self.trades
+        if trades is None:
+            return
+        seq, name = key
+        trade = next(trade for trade in trades.rows if trade.seq == seq)
+        self.rows[key].var.set(format_field(trade.stored.get(name)))
+        self._commit(key)
+
+    def _notify(self) -> None:
+        if self.trades is not None:
+            self.on_change(self.trades)
+
+    def _apply_state(self) -> None:
+        state = tk.NORMAL if self.editable else tk.DISABLED
+        for field_row in self.rows.values():
+            field_row.input.configure(state=state)
+
+    def _wrap(self, width: int) -> None:
+        if self.note is not None:
+            self.note.configure(wraplength=max(240, width - 20))
+        for field_row in self.rows.values():
+            field_row.wrap(width)
+
+    def _label(
+        self,
+        row: int,
+        text: str,
+        font: tuple[object, ...],
+        *,
+        foreground: str = TEXT,
+        second: bool = False,
+        pady: tuple[int, int] = (0, 0),
+    ) -> tk.Label:
+        """這一段的標題或說明，佔一整行（`_FieldRow` 的列號；`second` 放在那一列的第二行）。"""
+        label = tk.Label(
+            self.parent, text=text, anchor="w", justify=tk.LEFT, background=SURFACE, foreground=foreground, font=font
+        )
+        label.grid(row=row * 2 + second, column=0, columnspan=3, sticky="ew", padx=6, pady=pady)
+        self.widgets.append(label)
+        return label
 
 
 class OrderTermsTab(_Tab):
@@ -1789,6 +1980,7 @@ class MaintenanceTab(_Tab):
             placeholder="點左邊的商品，或輸入 TDCC 打開",
         )
         self.editor.pack(fill=tk.BOTH, expand=True, pady=(6, 8))
+        self.trade_editor = TradeRowsEditor(self.editor, lambda trades: self._edited_tdcc(trades.tdcc))
         actions = ttk.Frame(side, style="Card.TFrame", padding=(14, 10))
         actions.pack(fill=tk.X)
         actions.columnconfigure(1, weight=1)
@@ -1808,6 +2000,7 @@ class MaintenanceTab(_Tab):
         """處理中：按鈕與編輯區都不能用；還沒打開任何一檔時不能存檔、重新載入。"""
         self.working = busy
         self.editor.set_frozen(busy)
+        self.trade_editor.set_frozen(busy)
         state = tk.DISABLED if busy else tk.NORMAL
         for widget in (self.check_button, self.open_button):
             widget.configure(state=state)
@@ -1816,10 +2009,12 @@ class MaintenanceTab(_Tab):
             widget.configure(state=has_draft)
 
     def has_unsaved(self) -> bool:
-        """有改過、還沒存檔的內容（先把編輯區還沒解讀的輸入解讀掉）。"""
+        """有改過、還沒存檔的內容（先把編輯區還沒解讀的輸入解讀掉），包括交易明細。"""
         self.editor.commit()
-        draft = self.editor.draft
-        return draft is not None and bool(draft.edits() or draft.input_errors)
+        self.trade_editor.commit()
+        draft, trades = self.editor.draft, self.trade_editor.trades
+        terms = draft is not None and bool(draft.edits() or draft.input_errors)
+        return terms or (trades is not None and bool(trades.edits() or trades.has_input_errors()))
 
     def _may_discard(self, action: str) -> bool:
         return not self.has_unsaved() or messagebox.askyesno(
@@ -1923,7 +2118,7 @@ class MaintenanceTab(_Tab):
         def run() -> _Opened:
             config = load_import_config(paths)
             with connect(settings) as conn:
-                return _Opened(open_maintenance(conn, tdcc, config), config)
+                return _Opened(open_maintenance(conn, tdcc, config), config, load_trade_rows(conn, tdcc))
 
         self.run_in_background(run, f"讀取 {tdcc} 的條件中…", self._opened, clear=False)
 
@@ -1931,29 +2126,34 @@ class MaintenanceTab(_Tab):
         self.db.after_run(result)
         if isinstance(result, _Opened):
             self.config = result.config
-            self._show(result.draft)
+            self._show(result.draft, result.trades)
             self.status_var.set(f"已打開 {result.draft.tdcc}（{result.draft.row.status}），改好按「存檔」。")
         self._busy(False)
         self.cells.select(self._current_tdcc())
 
-    def _show(self, draft: OrderDraft) -> None:
+    def _show(self, draft: OrderDraft, trades: TradeRowsDraft | None) -> None:
         self.editor.fixed = frozenset(FIXED_IN_CORRECTION if draft.row.status == MAINTAIN_LOCKED else ())
         self.editor.typed = {}
         self.editor.show(draft)
+        self.trade_editor.show(trades)
         self.intro_var.set(self.INTROS[draft.row.status])
         self.reason_var.set("")
 
     def _edited(self, draft: OrderDraft) -> None:
+        self._edited_tdcc(draft.tdcc)
+
+    def _edited_tdcc(self, tdcc: str) -> None:
         self.mark_done(False)
-        self.status_var.set(f"{draft.tdcc} 有改過、還沒存檔。")
+        self.status_var.set(f"{tdcc} 有改過、還沒存檔。")
 
     # ---------- 存檔 ----------
 
     def save(self) -> None:
-        draft, config = self.editor.draft, self.config
+        draft, trades, config = self.editor.draft, self.trade_editor.trades, self.config
         if self.working or draft is None or config is None:
             return
         self.editor.commit()
+        self.trade_editor.commit()
         settings = self.db.settings()
         if settings is None:
             return
@@ -1963,7 +2163,7 @@ class MaintenanceTab(_Tab):
 
         def run() -> CorrectionReceipt:
             with connect(settings) as conn:
-                return save_maintenance(conn, draft, config, reason=reason)
+                return save_maintenance(conn, draft, config, trades=trades, reason=reason)
 
         self.run_in_background(run, f"存檔中…（{draft.tdcc}）", self._saved, clear=False)
 
@@ -1973,11 +2173,13 @@ class MaintenanceTab(_Tab):
         if not isinstance(result, CorrectionReceipt):
             return  # 錯誤已顯示；畫面上的值不動，可以改好再存或重新載入
         draft = self.editor.draft
+        if result.saved and draft is not None:
+            # 已換成資料庫存的值：黃色的差異清掉，只有交易明細的新增了商品條件時變成未鎖住
+            self._show(draft, self.trade_editor.trades)
         if result.correction_id is not None and draft is not None:
-            self._show(draft)  # 已換成資料庫存的值：黃色的差異清掉，只有交易明細的變成未鎖住
             self._update_checked(result, draft)
         self.status_var.set(_correction_text(result))
-        self.mark_done(result.correction_id is not None)
+        self.mark_done(result.saved)
 
     def _update_checked(self, receipt: CorrectionReceipt, draft: OrderDraft) -> None:
         """檢查結果裡有這檔時跟著更新：補齊了就拿掉，還缺的寫入後的值與缺的欄。"""
@@ -2258,21 +2460,37 @@ def _calc_row(line: CalcLine) -> tuple[str, str, str]:
 
 
 def _correction_text(receipt: CorrectionReceipt) -> str:
-    """人工維護存檔（已鎖住的是更正）的結果：改了什麼（前 → 後）、重算後的核對條件。"""
-    if receipt.correction_id is None:
+    """人工維護存檔（已鎖住的是更正）的結果：改了什麼（前 → 後）、重算後的核對條件、對不到信箱的 FC 名字。"""
+    if not receipt.saved:
         return f"{receipt.tdcc} 沒有改任何欄位，沒有寫入。"
-    changes = "、".join(
-        f"{name} {format_field(before) or '空白'} → {format_field(after) or '空白'}"
-        for name, before, after in receipt.changes
-    )
-    if receipt.locked:
-        text = f"已更正 {receipt.tdcc}（第 {receipt.correction_id} 次更正）：{changes}。商品維持鎖住，核對結果沒有變。"
-    else:
+    tdcc, text = receipt.tdcc, ""
+    changes = _changes_text(receipt.changes)
+    if receipt.correction_id is not None and receipt.locked:
+        text += f"已更正 {tdcc}（第 {receipt.correction_id} 次更正）：{changes}。"
+    elif receipt.correction_id is not None:
         action = "新增" if receipt.created else "存檔"
-        text = f"已{action} {receipt.tdcc} 的商品條件（第 {receipt.correction_id} 筆紀錄）：{changes}。"
+        text += f"已{action} {tdcc} 的商品條件（第 {receipt.correction_id} 筆紀錄）：{changes}。"
+    if receipt.trade_correction_id is not None:
+        rows = _changes_text(
+            (f"第 {seq} 列 {name}", before, after) for seq, name, before, after in receipt.trade_changes
+        )
+        text += f"已改 {tdcc} 的交易明細（第 {receipt.trade_correction_id} 筆紀錄）：{rows}。"
+        if receipt.correction_id is None and receipt.changes:
+            text += f"重算後改變的價格：{changes}。"
+    if receipt.locked:
+        text += "商品維持鎖住，核對結果沒有變。"
     if receipt.calc is not None:
         text += f"\n核對條件重算後：{_calc_status(receipt.calc)}。"
+    if receipt.unmatched:
+        names = "、".join(receipt.unmatched)
+        text += f"\n注意：FC 名字對不到信箱：{names}（寄信草稿找不到收件人；請確認名字或在信箱表補上）。"
     return text
+
+
+def _changes_text(changes: Iterable[tuple[str, object, object]]) -> str:
+    return "、".join(
+        f"{name} {format_field(before) or '空白'} → {format_field(after) or '空白'}" for name, before, after in changes
+    )
 
 
 def _status_counts(lines: Iterable[CalcLine]) -> str:
