@@ -25,6 +25,7 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import hashlib
+import io
 import json
 import re
 from collections import Counter, defaultdict
@@ -290,11 +291,11 @@ class ImportInfo:
 
 
 def latest_import(conn: psycopg.Connection) -> ImportInfo | None:
-    """最近一次每日匯入；還沒匯入過時回傳 None。"""
+    """最近一次每日匯入；還沒匯入過時回傳 None。回補股價 CSV（summary 有 close_date）不算：寄信前要看的是交易明細。"""
     with conn.transaction():
         row = conn.execute(
             "SELECT run_id, imported_at, daily_file_name, daily_sha256 FROM workflow.import_run"
-            " ORDER BY run_id DESC LIMIT 1"
+            " WHERE NOT summary ? 'close_date' ORDER BY run_id DESC LIMIT 1"
         ).fetchone()
     return None if row is None else ImportInfo(*row)
 
@@ -391,7 +392,7 @@ def _read_price_csv(path: Path) -> tuple[dt.date, _Prices]:
         raise DailyImportError(f"股價 CSV 不是 UTF-8 編碼，整份不匯入：{path}") from exc
     except OSError as exc:
         raise DailyImportError(f"打不開股價 CSV：{path}（{exc}）") from exc
-    rows = list(csv.reader(text.splitlines()))
+    rows = list(csv.reader(io.StringIO(text, newline="")))  # 引號裡的換行留在同一格
     header = [_text(v) for v in (rows[0] if rows else [])]
     while header and header[-1] is None:
         header.pop()
@@ -759,9 +760,12 @@ def _decimal(value: Any) -> Decimal | None:
     if isinstance(value, bool):
         raise ValueError(f"「{value}」不是數字")
     try:
-        return Decimal(str(value).strip().replace(",", ""))
+        number = Decimal(str(value).strip().replace(",", ""))
     except InvalidOperation as exc:
         raise ValueError(f"「{value}」不是數字") from exc
+    if not number.is_finite():  # NaN、Infinity 算價格時會中斷
+        raise ValueError(f"「{value}」不是數字")
+    return number
 
 
 def _pct(value: Any) -> Decimal | None:

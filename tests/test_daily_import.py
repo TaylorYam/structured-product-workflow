@@ -538,7 +538,37 @@ def test_a_price_csv_is_stored_as_the_next_morning(pg, tmp_path: Path, mailbox) 
     assert pg.execute("SELECT daily_file_name FROM workflow.import_run").fetchall() == [("MarketData_20261015.csv",)]
     assert pg.execute("SELECT price_date, price_count FROM workflow.price_import").fetchall() == [(day, 2)]
     assert count(pg, "workflow.trade_row") == 0
-    assert latest_import(pg).file_name == "MarketData_20261015.csv"
+    assert latest_import(pg) is None, "回補股價不算每日匯入：寄信前要看的是交易明細"
+
+
+def test_the_latest_import_skips_price_csvs(pg, tmp_path: Path, mailbox) -> None:
+    """寄信前確認用的「最近一次每日匯入」：之後回補了股價 CSV，仍然是那份每日更新。"""
+    import_daily(write_daily(tmp_path / "每日更新.xlsx", [trade(A, "Amy", "北區", 1)]), pg)
+    import_price_csv(write_price_csv(tmp_path / "m.csv", [csv_price("AAA UW")]), pg)
+
+    assert latest_import(pg).file_name == "每日更新.xlsx"
+
+
+def test_a_quoted_line_break_stays_in_one_price_csv_row(pg, tmp_path: Path, mailbox) -> None:
+    source = tmp_path / "m.csv"
+    lines = [",".join(PRICE_CSV_HEADERS), '2026-10-15,AAA UW,"虛構\n公司",101,100,31.5,12345.6,USD,12345.6']
+    source.write_bytes(("\r\n".join(lines) + "\r\n").encode("utf-8-sig"))
+
+    receipt = import_price_csv(source, pg)
+
+    assert receipt.prices.count == 1 and receipt.lines == ()
+    assert [(row[1], row[2], row[3]) for row in prices_in(pg)] == [("AAA UW", "虛構\n公司", Decimal("101"))]
+
+
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-inf"])
+def test_nan_and_infinity_are_not_prices(pg, tmp_path: Path, mailbox, value) -> None:
+    """NaN、Infinity 會讓算價格中斷：當成不是數字，存成空白並列出來（CSV 與 BBG_Data 都一樣）。"""
+    other_day = csv_price("AAA UW", value, day="2026-10-18")  # 存成 10-19，不和 BBG_Data 的 10-16 同一天
+    csv_receipt = import_price_csv(write_price_csv(tmp_path / "m.csv", [other_day]), pg)
+    daily_receipt = import_daily(write_daily(tmp_path / "d.xlsx", [], [price("BBB UN", value)]), pg)
+
+    assert [line.kind for line in csv_receipt.lines + daily_receipt.lines] == [PRICE_NOT_NUMBER, PRICE_NOT_NUMBER]
+    assert [(row[1], row[3]) for row in prices_in(pg)] == [("AAA UW", None), ("BBB UN", None)]
 
 
 def test_a_price_csv_replaces_the_day_it_is_stored_as(pg, tmp_path: Path, mailbox) -> None:
