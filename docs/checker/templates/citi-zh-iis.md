@@ -111,13 +111,13 @@
 
 | 值 | 出處 | 注意 |
 |---|---|---|
-| 固定警語（Citi 版本） | 警語 1.（1 次） | 比對用審查標準 `risk.fixed_warning_by_issuer.citi`；投資人須知次數 `iis.fixed_warning_occurrences.citi = 1`。商品簡介 `本商品之風險程度：RR4` 不是固定警語 |
+| 固定警語（Citi 版本） | 警語 1.（1 次） | 比對用審查標準 `issuer.citi.fixed_warning`；投資人須知次數 `issuer.citi.iis_fixed_warning_occurrences = 1`。商品簡介 `本商品之風險程度：RR4` 不是固定警語 |
 | 風險等級 | 警語 1. 兩處 `【RR4】`；商品簡介 `本商品之風險程度：RR4` | 前兩處用預設【RRn】寫法；商品簡介另外讀出 |
 | 受託機構名稱 | 警語 4.（3 處）、5.（1 處）簡稱 `玉山證券`；一、4. 全名（共 5 處） | 簡稱是審查標準 `distributor.name_equivalents` 的等價寫法 |
 | 受託機構地址 | 一、4. `(營業所在地：…)` 或 `（營業所在地：…）` | 8 份 = `distributor.address`；沒有電話 |
-| 發行機構名稱 | 一、1.；警語 5. `Citigroup Global Markets Holdings Inc.（發行機構）` | 全部 = `issuer_name.citi`（去掉 `(“CGMHI”)`，忽略空白）。三、1.(5) 信用風險段也寫名稱，不算出處 |
-| 保證機構名稱 | 警語 5. `Citigroup Inc.花旗集團（保證機構）`；一、2. `花旗集團`（只寫中文） | 警語 5. = `guarantor_name.citi.cover`；一、2. 只寫中文名，視為等價寫法（`guarantor_name_equivalents.citi = ["花旗集團"]`，SG 實作加入的機制；2026-10-14 確認）。三、1.(5) 不算出處 |
-| 總代理人名稱 | 一、3. | = `agent_name.citi.cover` |
+| 發行機構名稱 | 一、1.；警語 5. `Citigroup Global Markets Holdings Inc.（發行機構）` | 全部 = `issuer.citi.issuer_name`（去掉 `(“CGMHI”)`，忽略空白）。三、1.(5) 信用風險段也寫名稱，不算出處 |
+| 保證機構名稱 | 警語 5. `Citigroup Inc.花旗集團（保證機構）`；一、2. `花旗集團`（只寫中文） | 警語 5. = `issuer.citi.guarantor_name.cover`；一、2. 只寫中文名，視為等價寫法（`issuer.citi.guarantor_name_equivalents = ["花旗集團"]`，SG 實作加入的機制；2026-10-14 確認）。三、1.(5) 不算出處 |
+| 總代理人名稱 | 一、3. | = `issuer.citi.agent_name.cover` |
 | 刊印日期 | 第 1 頁 | 只有 1 處；商品簡介信用評等 `(截至刊印日期)` 不是日期值 |
 | 配息率 | 收益分配事項（D 型 3 處、P 型／無自動提前出場 1 處；CT2 寫 `第1 - 6 期配息日`） | 每處 = 年利率 ÷ 12 四捨五入 4 位，比數值（可能去尾零） |
 | 「受託投資」 | 警語 7.、9.；五 1.、2. | 8 份各 4 次；警語 7.「受託投資、受託買賣之投資標的」、9.「當受託投資或銷售本商品」、五「受託投資或受託買賣」都允許（2026-10-14 確認） |

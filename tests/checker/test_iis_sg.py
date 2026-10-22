@@ -156,11 +156,11 @@ def test_bloomberg_code_wrapped_onto_two_lines_is_still_read(tmp_path):
 
 
 def test_guarantor_name_without_brackets_is_an_equivalent(tmp_path):
-    """相關機構壹 2. 的英文名沒有括號：審查標準 guarantor_name_equivalents.sg 的等價寫法，照常通過並寫出依據。"""
+    """相關機構壹 2. 的英文名沒有括號：審查標準 issuer.sg.guarantor_name_equivalents 的等價寫法，照常通過並寫出依據。"""
     _, iis = check_pair(tmp_path)
     r = next(r for r in iis.report.results if r.field == "guarantor_name_org")
     assert (r.status, r.actual) == (PASS, GUARANTOR_ORG.replace(" ", ""))  # 讀出值去空白
-    assert "guarantor_name_equivalents.sg" in (r.tolerance or "")
+    assert "issuer.sg.guarantor_name_equivalents" in (r.tolerance or "")
 
 
 def test_the_equivalent_guarantor_name_is_only_accepted_in_the_institutions(tmp_path):
@@ -388,13 +388,13 @@ def test_wording_outside_the_template_requires_review(tmp_path, change, fields):
 def test_agent_name_missing_from_the_review_standard_requires_review(tmp_path):
     standard = tmp_path / "standard.toml"
     text = REVIEW_STANDARD.read_text(encoding="utf-8")
-    old = f'[agent_name.sg]\ncover = "{AGENT["cover"]}"\n'
+    old = f'[issuer.sg.agent_name]\ncover = "{AGENT["cover"]}"\n'
     assert old in text
-    standard.write_text(text.replace(old, "[agent_name.sg]\n"), encoding="utf-8")
+    standard.write_text(text.replace(old, "[issuer.sg.agent_name]\n"), encoding="utf-8")
     (tmp_path / "pair").mkdir()
     _, iis = check_pair(tmp_path / "pair", config=load_config(review_standard=standard))
     assert ("standard.agent_name", "agent_name_org", REVIEW) in bad(iis)
-    assert any("agent_name.sg.cover" in m for m in iis.problem_messages)
+    assert any("issuer.sg.agent_name.cover" in m for m in iis.problem_messages)
 
 
 # ---------------------------------------------------------------- 範本辨識

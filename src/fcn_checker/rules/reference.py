@@ -605,7 +605,7 @@ def compare_sheet_prices(
 def min_amounts(ctx: Context) -> list[CheckResult]:
     """說明書各最低金額出處（最低交易／申購／加購／贖回金額）= 參考條件表「單位面額」× 該出處的倍數。
 
-    倍數取自審查標準 `min_amount_multiples.<上手>.<出處欄位>`（BNP 最低申購／最低贖回為 5 倍），沒設定為 1。
+    倍數取自審查標準 `issuer.<上手>.min_amount_multiples.<出處欄位>`（BNP 最低申購／最低贖回為 5 倍），沒設定為 1。
     """
     rid = "field.min_amounts"
     items, problem = occurrences_of(ctx, rid, "min_amounts", Item.sheet("最低金額"))

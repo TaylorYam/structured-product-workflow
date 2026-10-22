@@ -273,10 +273,10 @@ def _issuer_name_text(s: str, ignore: frozenset[str]) -> str:
 
 
 def _issuer_name(ctx: Context) -> list[CheckResult]:
-    """發行機構中英文法人全名：封面「發行機構」與第二章「發行機構」條事業名稱 = 審查標準 issuer_name.<上手>。
+    """發行機構中英文法人全名：封面「發行機構」與第二章「發行機構」條事業名稱 = 審查標準 issuer.<上手>.issuer_name。
 
     範本另有只寫中文的出處（`issuer_name_ch1`）時那一處只比中文；範本沒有的出處（不適用）不核對。
-    上手另有寫法差異時依審查標準 issuer_name_ignore 忽略。
+    上手另有寫法差異時依審查標準 issuer.<上手>.issuer_name_ignore 忽略。
     """
     rid, issuer, std = "standard.issuer_name", ctx.issuer, ctx.issuer_std
     expected = std.issuer_name
@@ -296,7 +296,7 @@ def _issuer_name(ctx: Context) -> list[CheckResult]:
             .result(
                 S.REVIEW_REQUIRED,
                 reason="standard_missing",
-                message=f"審查標準沒有 {issuer} 的發行機構全名（issuer_name.{issuer.lower()}）",
+                message=f"審查標準沒有 {issuer} 的發行機構全名（issuer.{issuer.lower()}.issuer_name）",
             )
             for name, _, zh, _ in fields
         ]
@@ -494,7 +494,7 @@ def _name_flags(ctx: Context, used: frozenset[str]) -> tuple[dict[str, bool], Pa
 def _product_name(ctx: Context) -> list[CheckResult]:
     """用說明書的天期、幣別、是否記憶式（樣板有用到時再加標的數、KO 觀察方式）組出預期名稱後比對。
 
-    名稱樣板依上手讀取審查標準 `product_name.<上手代號小寫>`；沒有樣板時轉人工覆核。中文名稱括號全半形不計。
+    名稱樣板依上手讀取審查標準 `issuer.<上手代號小寫>.product_name`；沒有樣板時轉人工覆核。中文名稱括號全半形不計。
     """
     rid, issuer = "standard.product_name", ctx.issuer
     items = {"name_zh": Item.standard("中文商品名稱"), "name_en": Item.standard("英文商品名稱")}
@@ -507,7 +507,7 @@ def _product_name(ctx: Context) -> list[CheckResult]:
                 S.REVIEW_REQUIRED,
                 actual=pf.value,
                 reason="standard_missing",
-                message=f"審查標準沒有 {issuer} 的商品名稱樣板（product_name.{issuer.lower()}）",
+                message=f"審查標準沒有 {issuer} 的商品名稱樣板（issuer.{issuer.lower()}.product_name）",
             )
             for field, pf in ((f, standard_field(ctx, f)) for f in ("name_zh", "name_en"))
         ]
@@ -596,7 +596,7 @@ def _product_name(ctx: Context) -> list[CheckResult]:
 
 
 def _guarantor_name(ctx: Context) -> list[CheckResult]:
-    """保證機構名稱：審查標準 guarantor_name.<上手> 列出的每個出處 = 該出處的固定值（三處寫法可不同）；
+    """保證機構名稱：審查標準 issuer.<上手>.guarantor_name 列出的每個出處 = 該出處的固定值（三處寫法可不同）；
     沒有該上手分節的上手不核對（沒有保證機構的範本）。"""
     rid = "standard.guarantor_name"
     return [
@@ -607,7 +607,7 @@ def _guarantor_name(ctx: Context) -> list[CheckResult]:
 
 
 def _agent_name(ctx: Context) -> list[CheckResult]:
-    """總代理人名稱：審查標準 agent_name.<上手> 列出的每個出處 = 固定值（SG；地址電話不核對）；沒有分節的上手不核對。"""
+    """總代理人名稱：審查標準 issuer.<上手>.agent_name 列出的每個出處 = 固定值（SG；地址電話不核對）；沒有分節的上手不核對。"""
     rid = "standard.agent_name"
     return [
         _fixed_text(rid, field, standard_field(ctx, field), expected, what, name, document=ctx.document)
@@ -617,7 +617,7 @@ def _agent_name(ctx: Context) -> list[CheckResult]:
 
 
 def _product_type(ctx: Context) -> list[CheckResult]:
-    """封面「商品種類」= 審查標準 product_type.<上手> 的固定值；沒有設定的上手不核對（MS 依標的數由上手規則核對）。"""
+    """封面「商品種類」= 審查標準 issuer.<上手>.product_type 的固定值；沒有設定的上手不核對（MS 依標的數由上手規則核對）。"""
     expected = ctx.issuer_std.product_type
     if expected is None:
         return []
@@ -630,7 +630,7 @@ def _product_type(ctx: Context) -> list[CheckResult]:
 
 
 def _minimum_issue_size(ctx: Context) -> list[CheckResult]:
-    """第四章發行不成立門檻的金額寫法 = 審查標準 minimum_issue_size.<上手>；沒有設定的上手不核對。"""
+    """第四章發行不成立門檻的金額寫法 = 審查標準 issuer.<上手>.minimum_issue_size；沒有設定的上手不核對。"""
     expected = ctx.issuer_std.minimum_issue_size
     if expected is None:
         return []
@@ -658,7 +658,7 @@ def _iis_warning(ctx: Context) -> CheckResult:
         return Check("standard.fixed_warning", "fixed_warning", Item.standard("固定風險警語"), ctx.document).result(
             S.REVIEW_REQUIRED,
             reason="standard_missing",
-            message=f"審查標準沒有 {ctx.issuer} 投資人須知的固定警語次數（iis.fixed_warning_occurrences.{ctx.issuer.lower()}）",
+            message=f"審查標準沒有 {ctx.issuer} 投資人須知的固定警語次數（issuer.{ctx.issuer.lower()}.iis_fixed_warning_occurrences）",
         )
     return _fixed_warning(ctx, expected)
 
@@ -705,8 +705,8 @@ _IIS_PLACE_NAMES = {
 
 
 def _iis_place_names(ctx: Context, name: str) -> list[CheckResult]:
-    """投資人須知各處保證機構／總代理人名稱 = 審查標準 guarantor_name／agent_name.<上手> 某出處的固定值
-    （出處見 `_IIS_PLACE_NAMES`）；相關機構的保證機構名稱另接受 guarantor_name_equivalents.<上手>（SG 英文名沒有括號）。
+    """投資人須知各處保證機構／總代理人名稱 = 審查標準 issuer.<上手>.guarantor_name／agent_name 某出處的固定值
+    （出處見 `_IIS_PLACE_NAMES`）；相關機構的保證機構名稱另接受 issuer.<上手>.guarantor_name_equivalents（SG 英文名沒有括號）。
     沒有該值時轉人工覆核。"""
     std = ctx.issuer_std
     rid, what, table, place, equivalent = _IIS_PLACE_NAMES[name]
@@ -717,7 +717,7 @@ def _iis_place_names(ctx: Context, name: str) -> list[CheckResult]:
         return [Check(rid, name, Item.standard(what), ctx.document).review(container)]
     expected = names.get(place)
     if expected is None:
-        missing = f"審查標準沒有 {ctx.issuer} 的{what}（{table}.{ctx.issuer.lower()}.{place}）"
+        missing = f"審查標準沒有 {ctx.issuer} 的{what}（issuer.{ctx.issuer.lower()}.{table}.{place}）"
         return [
             Check(rid, occ.field, Item.standard(occ.name), ctx.document)
             .needs(occ.value)
@@ -728,7 +728,7 @@ def _iis_place_names(ctx: Context, name: str) -> list[CheckResult]:
     for occ in container.value:
         if occ.value.ok and squash(occ.value.value) in listed:
             check = Check(rid, occ.field, Item.standard(occ.name), ctx.document).needs(occ.value)
-            source = f"guarantor_name_equivalents.{ctx.issuer.lower()}"
+            source = f"issuer.{ctx.issuer.lower()}.guarantor_name_equivalents"
             out.append(
                 check.result(
                     S.PASS,
@@ -759,7 +759,7 @@ def iis_review_standard_rules(ctx: Context, *, trade: ParsedField) -> list[Check
         out.extend(_print_dates(ctx, trade))
     if provides("issue_price_pct"):
         out.extend(_issue_price(ctx, others=False))
-    no_issuer = f"審查標準沒有 {ctx.issuer} 的發行機構全名（issuer_name.{ctx.issuer.lower()}）"
+    no_issuer = f"審查標準沒有 {ctx.issuer} 的發行機構全名（issuer.{ctx.issuer.lower()}.issuer_name）"
     occurrence_checks = (  # 欄位、rule_id、審查標準值、說明用名稱、審查標準沒有值時的說明、種類（決定等價寫法）
         ("issuer_names", "standard.issuer_name", issuer_name, "發行機構名稱", no_issuer, "issuer"),
         ("issuer_names_zh", "standard.issuer_name", issuer_name_zh, "發行機構名稱", no_issuer, "issuer"),
@@ -777,7 +777,7 @@ def iis_review_standard_rules(ctx: Context, *, trade: ParsedField) -> list[Check
         out.extend(_fees(ctx))
     if provides("subscription_dates"):
         out.extend(_subscription_dates(ctx, trade))
-    if provides("product_type"):  # 沒有 product_type.<上手> 的上手不核對（MS 依標的數由範本專屬規則核對）
+    if provides("product_type"):  # 沒有 issuer.<上手>.product_type 的上手不核對（MS 依標的數由範本專屬規則核對）
         out.extend(_product_type(ctx))
     if provides("minimum_issue_size"):
         out.extend(_minimum_issue_size(ctx))

@@ -344,7 +344,7 @@ STANDARD_FIELDS: dict[str, str] = {
     "initial_pricing": "str：期初定價（參考條件表格式 [values.initial_pricing] 的對照值 open／close／vwap）；說明書寫明時才交出"
     "（Citi 標的表表頭「期初評價日之收盤價格／VWAP」），範本沒有交 absent，共用規則只檢查表上是允許值",
     "min_amounts": "tuple[Occurrence, ...]：須等於參考條件表單位面額 × 倍數的各最低金額出處（最低交易／申購／加購／贖回金額）；"
-    "倍數依審查標準 min_amount_multiples.<上手>.<出處欄位>，沒設定為 1",
+    "倍數依審查標準 issuer.<上手>.min_amount_multiples.<出處欄位>，沒設定為 1",
     "subscription_dates": "tuple[Occurrence, ...]：須等於交易日的受理申購日出處（開始、結束）",
     "print_dates": "tuple[Occurrence, ...]：須在交易日當天至允許天數內的刊印日期出處",
     "monthly_coupon_pct": "Decimal：說明書正式的月配息率 %（例：配息表、條款寫的每月配息率），保留說明書顯示位數；"
@@ -370,13 +370,13 @@ STANDARD_FIELDS: dict[str, str] = {
     "distributor_name_ch2": "str：第二章受託或銷售機構事業名稱",
     "distributor_address_ch2": "str：第二章受託或銷售機構營業所在地",
     # 審查標準有該上手分節才核對的固定值（BNP）；沒有分節的上手不會被讀，可不交出（issuer-onboarding §6.2a）
-    "product_type": "str：封面「商品種類」（審查標準 product_type.<上手> 有固定值時核對；MS 依標的數另由上手規則核對）",
-    "guarantor_name_cover": "str：封面「保證機構」名稱（審查標準 guarantor_name.<上手> 有 cover 時核對）",
-    "guarantor_name_ch1": "str：第一章保證機構名稱（審查標準 guarantor_name.<上手> 有 ch1 時核對）",
-    "guarantor_name_ch2": "str：第二章「保證機構」事業名稱（審查標準 guarantor_name.<上手> 有 ch2 時核對）",
-    "agent_name_cover": "str：封面「總代理人」名稱（審查標準 agent_name.<上手> 有 cover 時核對；SG）",
-    "agent_name_ch2": "str：第二章「總代理人」事業名稱（審查標準 agent_name.<上手> 有 ch2 時核對；SG）",
-    "minimum_issue_size": "str：第四章發行不成立門檻的金額寫法（審查標準 minimum_issue_size.<上手> 有固定值時核對）",
+    "product_type": "str：封面「商品種類」（審查標準 issuer.<上手>.product_type 有固定值時核對；MS 依標的數另由上手規則核對）",
+    "guarantor_name_cover": "str：封面「保證機構」名稱（審查標準 issuer.<上手>.guarantor_name 有 cover 時核對）",
+    "guarantor_name_ch1": "str：第一章保證機構名稱（審查標準 issuer.<上手>.guarantor_name 有 ch1 時核對）",
+    "guarantor_name_ch2": "str：第二章「保證機構」事業名稱（審查標準 issuer.<上手>.guarantor_name 有 ch2 時核對）",
+    "agent_name_cover": "str：封面「總代理人」名稱（審查標準 issuer.<上手>.agent_name 有 cover 時核對；SG）",
+    "agent_name_ch2": "str：第二章「總代理人」事業名稱（審查標準 issuer.<上手>.agent_name 有 ch2 時核對；SG）",
+    "minimum_issue_size": "str：第四章發行不成立門檻的金額寫法（審查標準 issuer.<上手>.minimum_issue_size 有固定值時核對）",
     "distributor_phone_ch4": "str：第四章受託機構聯絡電話（BNP 第四章第 16 項）；範本沒有這處時交出 absent",
     "distributor_names_others": "tuple[Occurrence, ...]：受託機構名稱的其他出處（值為 str，例：BBVA 第 1 頁 13. 後的明細 (i)；"
     "Issue #305；Natixis 封面與第三章警語、第四章 10.、14.，Issue #318）；範本沒有時交出 absent",
@@ -386,13 +386,13 @@ STANDARD_FIELDS: dict[str, str] = {
 # 受託機構名稱、地址、負責人的其他出處（Issue #305）：BBVA 範本有、Natixis 有名稱（Issue #318），其他上手一起交出 absent（`absent_all`）
 DISTRIBUTOR_OTHERS = ("distributor_names_others", "distributor_addresses_others", "chairman_others")
 
-# 保證機構名稱的出處（審查標準 guarantor_name.<上手> 的鍵）→ 標準欄位、說明的開頭、項目名稱；設定檔與審查標準規則共用這一份
+# 保證機構名稱的出處（審查標準 issuer.<上手>.guarantor_name 的鍵）→ 標準欄位、說明的開頭、項目名稱；設定檔與審查標準規則共用這一份
 GUARANTOR_PLACES = {
     "cover": ("guarantor_name_cover", "封面「保證機構」名稱", "封面保證機構名稱"),
     "ch1": ("guarantor_name_ch1", "第一章保證機構名稱", "第一章保證機構名稱"),
     "ch2": ("guarantor_name_ch2", "第二章「保證機構」事業名稱", "第二章保證機構名稱"),
 }
-# 總代理人名稱的出處（審查標準 agent_name.<上手> 的鍵，SG）→ 標準欄位、說明的開頭、項目名稱
+# 總代理人名稱的出處（審查標準 issuer.<上手>.agent_name 的鍵，SG）→ 標準欄位、說明的開頭、項目名稱
 AGENT_PLACES = {
     "cover": ("agent_name_cover", "封面「總代理人」名稱", "封面總代理人名稱"),
     "ch2": ("agent_name_ch2", "第二章「總代理人」事業名稱", "第二章總代理人名稱"),

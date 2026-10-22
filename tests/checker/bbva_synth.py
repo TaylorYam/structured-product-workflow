@@ -29,11 +29,11 @@ from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import Edit, PdfWriter, require_used
 from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
 
-NAME = STANDARD["product_name"]["bbva"]
-WARNING = STANDARD["risk"]["fixed_warning_by_issuer"]["bbva"]
-ISSUER = STANDARD["issuer_name"]["bbva"]  # 荷蘭商BBVA GLOBAL MARKETS, B.V.
+NAME = STANDARD["issuer"]["bbva"]["product_name"]
+WARNING = STANDARD["issuer"]["bbva"]["fixed_warning"]
+ISSUER = STANDARD["issuer"]["bbva"]["issuer_name"]  # 荷蘭商BBVA GLOBAL MARKETS, B.V.
 ISSUER_EN = "BBVA GLOBAL MARKETS, B.V."
-PRODUCT_TYPE = STANDARD["product_type"]["bbva"]
+PRODUCT_TYPE = STANDARD["issuer"]["bbva"]["product_type"]
 DIST = STANDARD["distributor"]
 PHONE = "+886 2 5556 1313"  # 審查標準 phone_equivalents 的寫法
 GUARANTOR = "西班牙商虛構銀行股份有限公司（Fictional Bank, S.A.）"

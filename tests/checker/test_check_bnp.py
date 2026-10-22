@@ -80,7 +80,7 @@ def test_monthly_rate_uses_the_digits_shown_in_the_document(tmp_path):
 
 
 def test_min_amounts_use_bnp_multiples(tmp_path):
-    """最低申購／最低贖回 = 5 × 單位面額，最低加購／增加贖回單位 = 單位面額（審查標準 min_amount_multiples.bnp）。"""
+    """最低申購／最低贖回 = 5 × 單位面額，最低加購／增加贖回單位 = 單位面額（審查標準 issuer.bnp.min_amount_multiples）。"""
     r = check(tmp_path)
     amounts = {x.field: x for x in rule(r, "field.min_amounts")}
     assert amounts["minimum_subscription"].expected == 50000 and amounts["minimum_redemption"].expected == 50000

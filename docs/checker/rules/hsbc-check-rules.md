@@ -83,11 +83,11 @@
 | 受託機構審查通過日期 | = 審查標準 `approval_dates` 中交易日當天或之前最近一次的日期 |
 | 刊印日期 | 參考性審閱版與最終版刊印日期都在交易日當天到交易日 + 1 之內（共用 `doc.print_date`） |
 | 風險等級 | = 審查標準（RR4） |
-| 固定風險警語 | 審查標準 `risk.fixed_warning_by_issuer.hsbc`，忽略空白後逐字比對，出現 3 次 |
+| 固定風險警語 | 審查標準 `issuer.hsbc.fixed_warning`，忽略空白後逐字比對，出現 3 次 |
 | 「受託投資」 | 只能出現在允許片語內（含 HSBC 的「受託投資、受託買賣或為投資型保單」） |
 | 受託機構負責人 | 第二章受託或銷售機構段落 = 審查標準（林晋輝，古字晋） |
-| 中文商品名稱 | 審查標準 `product_name.hsbc.zh`；括號全半形不計 |
-| 英文商品名稱 | 審查標準 `product_name.hsbc.en`（Maxi／Daily／Memory 前綴）；忽略所有空白 |
+| 中文商品名稱 | 審查標準 `issuer.hsbc.product_name.zh`；括號全半形不計 |
+| 英文商品名稱 | 審查標準 `issuer.hsbc.product_name.en`（Maxi／Daily／Memory 前綴）；忽略所有空白 |
 | 範本辨識 vs 商品代號前綴 | 商品代號前 3 碼 `325` 對應 HSBC；與範本辨識結果不一致轉人工覆核 |
 
 

@@ -38,7 +38,7 @@
 | 年利率 `coupon_pa_pct` | 共用 `field.coupon_pa_pct` | 第 14 項情境一、二的年化報酬率（§3.3；兩處不同 → 歧義，讀不到 → 不合法，都轉人工覆核；Issue #297） |
 | 標的 `underlyings`、各標的價格 | 共用 `field.underlyings`、價格規則 | 依順序比對（8 份表上順序都和說明書相同）；彭博代碼去掉 ` Equity` |
 | 期初定價 `initial_pricing` | 共用 `field.initial_pricing` | 說明書沒有出處 → 交 `absent`，不核對 |
-| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 第四章 4. 最低申購、最低加價申購、8. 最低贖回、增加贖回單位、第一章第 16 項(1) 最低提前贖回金額、增加贖回單位 = 單位面額 × 1（所有幣別；不需要 `min_amount_multiples.nomura`） |
+| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 第四章 4. 最低申購、最低加價申購、8. 最低贖回、增加贖回單位、第一章第 16 項(1) 最低提前贖回金額、增加贖回單位 = 單位面額 × 1（所有幣別；不需要 `issuer.nomura.min_amount_multiples`） |
 | 金額旁的幣別 `currency_others` | 共用 `field.currency`（Issue #170） | 第 7 項表最低投資金額、面額；第 14 項面額；第 16 項(1) 兩處；第四章 4. 兩處、8. 兩處各一筆。Issue #316 加上：第 7 項 `以X為計價單位給付` 每處、第三章匯率風險 `本商品係以X計價`／`轉換成X進行投資`、利率風險 `若X利率上漲`、第 14 項設定參數 `投資金額 … = X幣別`、情境三整段每一處金額（Nomura 情境三的假設股價、執行價也寫承作幣別）。標的表價格不列入；第一章第 16 項 (6)(d) 借款債務門檻 `10,000,000美元` 是固定美元，不是承作幣別出處，不列入 |
 | 期初定價 `VWAP` 的價格 | 共用（Issue #122） | 價格欄不比對、通過後覆寫（NR6） |
 
@@ -49,14 +49,14 @@
 | 審查通過日期 | 封面 `玉山綜合證券股份有限公司(受託機構)審查通過之日期：` | 共用（依交易日）；**`approval_dates` 加入 2025-06-24**（2026-10-15 作業人員確認是受託機構真實的歷次審查日期；NR1、NR2 因此通過）。所有上手生效：交易日早於 2025-12-18 的既有上手樣本原本轉人工覆核（`approval_date_not_configured`），加入後改和 2025-06-24 比，實作時要核對既有上手本機樣本的結果變化 |
 | 受託機構負責人 | 第二章 3.(4)(d) `負責人姓名：` | 共用 |
 | 受託機構名稱／電話／地址 | 封面；第二章 3.(4)(a)(c)；第四章第 15 項電話 | 共用；封面與第四章電話 `+886 2 5556 1313`、地址 `台北市民生東路三段158號6樓` 都已在等價寫法；第四章電話用 `distributor_phone_ch4`（同 BNP） |
-| 發行機構全名 | 封面 `發行機構之名稱及地址：`；第二章 1.(1) | 新增 `issuer_name.nomura = "Nomura International Funding Pte. Ltd."`（兩處相同，只有英文名）；第一章沒有出處（`issuer_name_ch1` 交 `absent`） |
-| 保證機構名稱 | 封面；第一章第 3 項；第二章 2.(1) | 新增 `guarantor_name.nomura`：cover、ch1、ch2 皆 `Nomura Holdings, Inc.`（§3.6） |
-| 總代理人名稱 | 封面；第二章 3.(1)(a) | 新增 `agent_name.nomura`，cover／ch2 皆 `香港商野村國際證券有限公司台北分公司`（§3.6） |
-| 固定風險警語、風險等級 | 封面(一)、第三章 6.(1) | **SG 版本、說明書 2 次**（§3.6）；風險等級沒有【】→ 新增 `risk.level_formats.nomura` |
+| 發行機構全名 | 封面 `發行機構之名稱及地址：`；第二章 1.(1) | 新增 `issuer.nomura.issuer_name = "Nomura International Funding Pte. Ltd."`（兩處相同，只有英文名）；第一章沒有出處（`issuer_name_ch1` 交 `absent`） |
+| 保證機構名稱 | 封面；第一章第 3 項；第二章 2.(1) | 新增 `issuer.nomura.guarantor_name`：cover、ch1、ch2 皆 `Nomura Holdings, Inc.`（§3.6） |
+| 總代理人名稱 | 封面；第二章 3.(1)(a) | 新增 `issuer.nomura.agent_name`，cover／ch2 皆 `香港商野村國際證券有限公司台北分公司`（§3.6） |
+| 固定風險警語、風險等級 | 封面(一)、第三章 6.(1) | **SG 版本、說明書 2 次**（§3.6）；風險等級沒有【】→ 新增 `issuer.nomura.risk_level_formats` |
 | 禁用語「受託投資」 | 全文 | 共用（8 份 0 次） |
-| 商品中英文名稱 | 封面 | 新增 `product_name.nomura`（§3.6）；第一章第 1 項另由 Nomura 專屬規則核對（§3.5） |
-| 商品種類 | 封面 | 新增 `product_type.nomura = "連結股權之結構型債券"`（不隨標的數改變） |
-| 發行不成立門檻 | 第四章 7. | 新增 `minimum_issue_size.nomura = "三十萬美元"`（非美元商品也寫美元；2026-10-15 確認） |
+| 商品中英文名稱 | 封面 | 新增 `issuer.nomura.product_name`（§3.6）；第一章第 1 項另由 Nomura 專屬規則核對（§3.5） |
+| 商品種類 | 封面 | 新增 `issuer.nomura.product_type = "連結股權之結構型債券"`（不隨標的數改變） |
+| 發行不成立門檻 | 第四章 7. | 新增 `issuer.nomura.minimum_issue_size = "三十萬美元"`（非美元商品也寫美元；2026-10-15 確認） |
 | 費率 | 第四章 2. 費用表 | 共用（申購、提前贖回、分銷皆 `0%~5%`）；分銷費用單列 |
 | 發行價格 | 第 7 項表 `每單位商品面額的100％`；第 14 項 `100%`；第四章 5. `× 100%` | 共用；每處一筆 |
 | 面額預設值、刊印日期 | 第 7 項表；封面 | 共用（`print_dates` 1 個） |
@@ -103,22 +103,22 @@
 
 ### 3.6 固定警語、名稱、保證機構與總代理人（審查標準 Nomura 設定）
 
-**固定風險警語**：與現有 **SG 版本**（`risk.fixed_warning_by_issuer.sg`：沒有【】、有「*」、結尾有句號）逐字相同（8 份封面(一)、第三章 6.(1)、投資人須知(一)；忽略空白）。實作時 `fixed_warning_by_issuer.nomura` 設成同一段文字（2026-10-15 確認視為正確）。
+**固定風險警語**：與現有 **SG 版本**（`issuer.sg.fixed_warning`：沒有【】、有「*」、結尾有句號）逐字相同（8 份封面(一)、第三章 6.(1)、投資人須知(一)；忽略空白）。實作時 `fixed_warning_by_issuer.nomura` 設成同一段文字（2026-10-15 確認視為正確）。
 
-- **說明書次數 2**（封面(一)、第三章 6.(1)；第一章第 2 項只寫 `商品風險程度：RR4`）：上手別的說明書次數設定 `risk.fixed_warning_occurrences_by_issuer.nomura = 2`（沒列出的上手沿用 `risk.fixed_warning_occurrences = 3`；比照投資人須知的 `iis.fixed_warning_occurrences`）。投資人須知 1 次（`iis.fixed_warning_occurrences.nomura = 1`）。
-- 風險等級無括號：`risk.level_formats.nomura = ["風險程度等級為{level}", "歸類為{level}", "風險程度：{level}"]`——第三個寫法涵蓋說明書第一章第 2 項 `商品風險程度：RR4` 與投資人須知第二 3. `本商品風險程度：RR4`（實作時確認不會重複計到其他寫法）。
+- **說明書次數 2**（封面(一)、第三章 6.(1)；第一章第 2 項只寫 `商品風險程度：RR4`）：上手別的說明書次數設定 `issuer.nomura.fixed_warning_occurrences = 2`（沒列出的上手沿用 `risk.fixed_warning_occurrences = 3`；比照投資人須知的 `issuer.<上手>.iis_fixed_warning_occurrences`）。投資人須知 1 次（`issuer.nomura.iis_fixed_warning_occurrences = 1`）。
+- 風險等級無括號：`issuer.nomura.risk_level_formats = ["風險程度等級為{level}", "歸類為{level}", "風險程度：{level}"]`——第三個寫法涵蓋說明書第一章第 2 項 `商品風險程度：RR4` 與投資人須知第二 3. `本商品風險程度：RR4`（實作時確認不會重複計到其他寫法）。
 
-**商品名稱樣板**（`product_name.nomura`，8 份全部符合；2026-10-15 確認視為正確）：
+**商品名稱樣板**（`issuer.nomura.product_name`，8 份全部符合；2026-10-15 確認視為正確）：
 
 - 中文：`Nomura International Funding Pte. Ltd.發行{tenor}個月{ccy_zh}計價固定配息({memory_zh}自動提前出場){underlying_zh}結構型商品(無擔保)`——`memory_zh = "記憶式"`；`single_zh = "股票連結"`、`basket_zh = "連結一籃子股票"`（連結 ETF 也寫股票）。**不分 KI、Non-Call**（NR2 Non-Call = 天期也寫 `(自動提前出場)`）。
 - 英文：`{tenor}-Month {ccy} Autocall Fixed Coupon Notes {memory_en}linked to {underlying_en} issued by Nomura International Funding Pte. Ltd. (unsecured)`——`memory_en = "with Memory Knock-Out "`；`single_en = "a Single Stock"`、`basket_en = "a basket of stocks"`。
 - 封面名稱截到 `(ISIN No.` 之前（後面的 ISIN／代號括號不屬於名稱）；中文忽略空白（NR1 `4 個月`），英文忽略所有空白（`ignore_whitespace_en = true`）。第一章第 1 項英文名稱寫法不同，見 §3.5。
 
-**發行機構全名**（`issuer_name.nomura`）：`Nomura International Funding Pte. Ltd.`；封面、第二章 1.(1) 兩處相同；第一章沒有出處。2026-10-15 確認 Nomura 目前只有這一個發行主體；其他寫法判不一致或轉人工覆核。
+**發行機構全名**（`issuer.nomura.issuer_name`）：`Nomura International Funding Pte. Ltd.`；封面、第二章 1.(1) 兩處相同；第一章沒有出處。2026-10-15 確認 Nomura 目前只有這一個發行主體；其他寫法判不一致或轉人工覆核。
 
-**保證機構名稱**（`guarantor_name.nomura`）：cover = ch1 = ch2 = `Nomura Holdings, Inc.`；地址電話不核對。投資人須知第一 2. 用 cover；警語(六) 不核對。
+**保證機構名稱**（`issuer.nomura.guarantor_name`）：cover = ch1 = ch2 = `Nomura Holdings, Inc.`；地址電話不核對。投資人須知第一 2. 用 cover；警語(六) 不核對。
 
-**總代理人名稱**（`agent_name.nomura`，cover／ch2）：`香港商野村國際證券有限公司台北分公司`；地址電話、負責人不核對。
+**總代理人名稱**（`issuer.nomura.agent_name`，cover／ch2）：`香港商野村國際證券有限公司台北分公司`；地址電話、負責人不核對。
 
 ### 3.7 情境分析（第一章第 14 項）
 
@@ -189,7 +189,7 @@
 | 說明書 | 上手登記（`issuers.py`）；Nomura `LayoutSpec`（「一、」章名、21 條、條號 1–9 與標題分行）；範本辨識；`read` 交出全部標準欄位（`issuer_name_ch1`、`initial_pricing` 交 `absent`；`subscription_dates` 2 筆；`distributor_phone_ch4` 第四章第 15 項）；§3.3–§3.5、§3.7 |
 | 年利率 | parser 以第 14 項情境一、二年化報酬率交出 `coupon_pa_pct`（Issue #297；導入時曾交 `absent`、由 Nomura 專屬規則讀參考條件表比「每期 × 12」） |
 | 投資人須知 | `parsers/nomura_iis.py`、`IisTemplate`（頁首 `N/4` 的 `page_totals`，與 JPM 共用讀法；`print_dates` 交 `absent`）、範本專屬規則：每期配息率（= 年利率 ÷ 12、= 說明書）、D 型 KO 起日 = 說明書、標的英文名稱 = 說明書第 8 項、受理贖回日期文字 = 說明書；[投資人須知核對規則](iis-check-rules.md) Nomura 欄 |
-| 共用設定 | 審查標準 Nomura 分節（`fixed_warning_by_issuer.nomura`、**新增**上手別說明書固定警語次數、`risk.level_formats.nomura`、名稱樣板、發行機構、保證機構、總代理人、商品種類、`minimum_issue_size.nomura`、`iis.fixed_warning_occurrences.nomura`）、`approval_dates` 加 2025-06-24；`config/reference_sheet.toml` 的 `[issuer_values] NOMURA` |
+| 共用設定 | 審查標準 Nomura 分節（`fixed_warning_by_issuer.nomura`、**新增**上手別說明書固定警語次數、`issuer.nomura.risk_level_formats`、名稱樣板、發行機構、保證機構、總代理人、商品種類、`issuer.nomura.minimum_issue_size`、`issuer.nomura.iis_fixed_warning_occurrences`）、`approval_dates` 加 2025-06-24；`config/reference_sheet.toml` 的 `[issuer_values] NOMURA` |
 
 要有合成 PDF 測試（D／P、記憶式／非記憶式／單一標的、KI 無／AM／D／P、Non-Call = 天期的 P 型、日期表 KO 價欄、JPY、AUD、VWAP、NR1 式多空白、頁首 `N/4`、投資人須知沒有刊印日期）、本機 8 份真實樣本測試（`tests/checker/test_real_nomura.py`，結果與 §5 一致：NR6 說明書與投資人須知因到期日不一致不通過，其餘 7 組通過並回填），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM 樣本的負面測試；新增 `approval_dates` 與上手別次數設定後，既有上手的合成與本機真實樣本測試結果須逐份比較，變化只能來自 2025-06-24（交易日早於 2025-12-18 的樣本）。
 

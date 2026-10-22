@@ -25,15 +25,15 @@ from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
 from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
 
-NAME = STANDARD["product_name"]["citi"]
-WARNING = STANDARD["risk"]["fixed_warning_by_issuer"]["citi"]
-ISSUER = STANDARD["issuer_name"]["citi"]
-GUARANTOR = STANDARD["guarantor_name"]["citi"]
-AGENT = STANDARD["agent_name"]["citi"]
-PRODUCT_TYPE = STANDARD["product_type"]["citi"]
-MINIMUM_ISSUE = STANDARD["minimum_issue_size"]["citi"]
+NAME = STANDARD["issuer"]["citi"]["product_name"]
+WARNING = STANDARD["issuer"]["citi"]["fixed_warning"]
+ISSUER = STANDARD["issuer"]["citi"]["issuer_name"]
+GUARANTOR = STANDARD["issuer"]["citi"]["guarantor_name"]
+AGENT = STANDARD["issuer"]["citi"]["agent_name"]
+PRODUCT_TYPE = STANDARD["issuer"]["citi"]["product_type"]
+MINIMUM_ISSUE = STANDARD["issuer"]["citi"]["minimum_issue_size"]
 DIST = STANDARD["distributor"]
-IIS_GUARANTOR = STANDARD["guarantor_name_equivalents"]["citi"][0]  # 投資人須知相關機構 2. 只寫中文
+IIS_GUARANTOR = STANDARD["issuer"]["citi"]["guarantor_name_equivalents"][0]  # 投資人須知相關機構 2. 只寫中文
 PHONE = "(+886)2-5556-1313"  # 審查標準 phone_equivalents 的 Citi 封面寫法
 APPROVAL = dt.date(2026, 6, 11)
 ZH_NUM = "一二三四五六七八九十"

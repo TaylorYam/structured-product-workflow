@@ -37,7 +37,7 @@
 | 商品代號、ISIN、幣別、面額、各日期、天期、年利率、百分比、KO／KI 型態、Non-Call、比價日 | 共用（`field.*`、`backfill.*`） | 年利率在第 8 項 `x Y% x 1/12`；KI 欄位來自「觸碰價」；Non-Call 在 D、P 型都由第 8 項 `(t=k)` 讀出 |
 | 標的 `underlyings`、各標的價格 | 共用 `field.underlyings`、價格規則 | **JPM 不看順序**（2026-10-15 確認，比照 Citi）：加入 `[underlyings] any_order_issuers`，依彭博代號配對後比各價格；回填（VWAP 覆寫）依代號寫入對應格。JPM 說明書依英文公司名稱字母順序排列標的，表上依交易順序，4 份多標的樣本都不同 |
 | 期初定價 `initial_pricing` | 共用 `field.initial_pricing` | 說明書沒有出處 → 交 `absent`，不核對（同 SG） |
-| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 第 IV 部分 4. 最低申購、最低加購、8. 最低贖回 = 單位面額 × 1（所有幣別；不需要 `min_amount_multiples.jpm`） |
+| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 第 IV 部分 4. 最低申購、最低加購、8. 最低贖回 = 單位面額 × 1（所有幣別；不需要 `issuer.jpm.min_amount_multiples`） |
 | 金額旁的幣別 `currency_others` | 共用 `field.currency`（Issue #170） | 第 5 項面額、第 15 項假設本金、第 IV 部分 4. 兩處、8. 各一筆；第 15 項情境 (i)～(iii) 各一筆（配息、本金、到期贖回、剩餘金額旁的幣別，Issue #315）。第 9、15 項標的價格（JP1 日股標的寫 `日圓`）與情境裡的收盤價、執行價、含「股」的交割算式行不列入。說明文字沒有商品幣別字：全文兩處「轉換成美元」（修正條款「轉換成美元，歐元或其他主要貨幣」、付款中斷「美元等值金額」）與付款日「若為澳幣，則為雪梨」是一般條款，不列入 |
 | 期初定價 `VWAP` 的價格 | 共用（Issue #122） | 價格欄不比對、通過後依代號覆寫（JP4） |
 
@@ -48,14 +48,14 @@
 | 審查通過日期 | 封面 `受託機構審查通過之日期及文號：` 下一行 | 共用（依交易日）；月日補零 |
 | 受託機構負責人 | 第 II 部分 3.(3) `負責人姓名：` | 共用 |
 | 受託機構名稱／電話／地址 | 封面（名稱到 `、電話` 之前）；第 II 部分 3.(3) `事業名稱：`、`營業所在地：` | 共用；封面電話 `+886 2 5556 1313` 已在 `phone_equivalents`；兩處地址結尾 `(營業活動所在地)` 不屬於地址（同 HSBC、MS 的處理），去掉後 = `distributor.address` |
-| 發行機構全名 | 封面 `發行機構註冊地：` 句；第 II 部分 1.(1) | 新增 `issuer_name.jpm = "荷蘭商J.P. Morgan Structured Products B.V."`（兩處相同，忽略空白）；第 I 部分沒有出處（`issuer_name_ch1` 交 `absent`） |
-| 保證機構名稱 | 封面；第 I 部分第 3 項；第 II 部分 2.(2) | 新增 `guarantor_name.jpm`：cover、ch2 全名、ch1 簡稱（§3.6） |
-| 總代理人名稱 | 封面；第 II 部分 3.(1) | 新增 `agent_name.jpm`，cover／ch2 皆 `美商摩根大通銀行股份有限公司台北分公司`（§3.6） |
-| 固定風險警語、風險等級 | 封面 1.、第 I 部分第 2 項、第 III 部分 6.(1) | **JPM 版本**（§3.6）；風險等級沒有【】→ 新增 `risk.level_formats.jpm`（同 MS：`風險程度等級為{level}`、`歸類為{level}`） |
+| 發行機構全名 | 封面 `發行機構註冊地：` 句；第 II 部分 1.(1) | 新增 `issuer.jpm.issuer_name = "荷蘭商J.P. Morgan Structured Products B.V."`（兩處相同，忽略空白）；第 I 部分沒有出處（`issuer_name_ch1` 交 `absent`） |
+| 保證機構名稱 | 封面；第 I 部分第 3 項；第 II 部分 2.(2) | 新增 `issuer.jpm.guarantor_name`：cover、ch2 全名、ch1 簡稱（§3.6） |
+| 總代理人名稱 | 封面；第 II 部分 3.(1) | 新增 `issuer.jpm.agent_name`，cover／ch2 皆 `美商摩根大通銀行股份有限公司台北分公司`（§3.6） |
+| 固定風險警語、風險等級 | 封面 1.、第 I 部分第 2 項、第 III 部分 6.(1) | **JPM 版本**（§3.6）；風險等級沒有【】→ 新增 `issuer.jpm.risk_level_formats`（同 MS：`風險程度等級為{level}`、`歸類為{level}`） |
 | 禁用語「受託投資」 | 全文 | 共用；**新增允許片語**「受託投資/受託買賣」（2026-10-15 確認；所有上手生效）。本機全部樣本（含已支援與未支援上手）只有 JPM 有這個寫法，其他上手結果不變 |
-| 商品中英文名稱 | 封面 | 新增 `product_name.jpm`（§3.6） |
-| 商品種類 | 封面 | 新增 `product_type.jpm = "股權連結結構型商品"`（不隨標的數改變） |
-| 發行不成立門檻 | 範本沒有 | 不新增 `minimum_issue_size.jpm`；adapter 交 `absent` |
+| 商品中英文名稱 | 封面 | 新增 `issuer.jpm.product_name`（§3.6） |
+| 商品種類 | 封面 | 新增 `issuer.jpm.product_type = "股權連結結構型商品"`（不隨標的數改變） |
+| 發行不成立門檻 | 範本沒有 | 不新增 `issuer.jpm.minimum_issue_size`；adapter 交 `absent` |
 | 費率 | 第 IV 部分 2. 費用表 | 共用（申購、提前贖回、分銷皆 `0%~5%`）；分銷費用單列 |
 | 發行價格 | 第 5 項 `每單位面額之100%`；第 IV 部分 5. `x 100%` | 共用；每處一筆 |
 | 面額預設值、刊印日期 | 第 5 項；封面 | 共用（`print_dates` 1 個） |
@@ -96,27 +96,27 @@
 
 ### 3.6 固定警語、名稱、保證機構與總代理人（審查標準 JPM 版本）
 
-**固定風險警語**（`risk.fixed_warning_by_issuer.jpm`，2026-10-15 確認視為正確）：
+**固定風險警語**（`issuer.jpm.fixed_warning`，2026-10-15 確認視為正確）：
 
 ```text
 本商品風險程度等級為RR4。根據受託或銷售機構的風險等級分類，由於本商品並不保本，連結標的為證券交易所交易證券，在綜合評量包括但不僅限於產品天期、發行機構信用評等與前述因素後，根據受託或銷售機構受託買賣境外商品審查管理辦法之境外結構型商品風險及適合度評估標準將本商品在風險等級中歸類為RR4。*投資人請注意，受託或銷售機構將風險等級區分為RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型，RR5為積極型，本商品風險等級由受託或銷售機構釐定及提供，發行機構及/或總代理人不對此評級之準確性負任何責任。受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人(包括OSU客戶)以下稱「投資人」)。本商品風險等級(Product Risk Rating)由受託機構釐定及提供，發行機構及總代理人不對此評級之準確性負任何責任。
 ```
 
 - 與標準版本的差異：`【RR4】`、`【證券交易所交易證券】` 無【】；4 處 `受託機構` 寫 `受託或銷售機構`（`根據…的風險等級分類`、`…受託買賣境外商品審查管理辦法`、`…將風險等級區分`、`由…釐定及提供`）；OSU 段改寫成 `…之專業投資人(包括OSU客戶)以下稱「投資人」)。`（括號不成對，照原文）；結尾多一句 `本商品風險等級(Product Risk Rating)由受託機構釐定及提供，發行機構及總代理人不對此評級之準確性負任何責任。`（第 2 處 `受託機構` 保持原字）。
-- 5 份封面 1.、第 I 部分第 2 項、第 III 部分 6.(1) 逐字相同（忽略空白），合計 3 次；投資人須知 1 次（`iis.fixed_warning_occurrences.jpm = 1`）。
-- 風險等級無括號，寫在 `風險程度等級為`、`歸類為` 之後 → `risk.level_formats.jpm = ["風險程度等級為{level}", "歸類為{level}"]`。
+- 5 份封面 1.、第 I 部分第 2 項、第 III 部分 6.(1) 逐字相同（忽略空白），合計 3 次；投資人須知 1 次（`issuer.jpm.iis_fixed_warning_occurrences = 1`）。
+- 風險等級無括號，寫在 `風險程度等級為`、`歸類為` 之後 → `issuer.jpm.risk_level_formats = ["風險程度等級為{level}", "歸類為{level}"]`。
 
-**商品名稱樣板**（`product_name.jpm`，5 份同一個樣板）：
+**商品名稱樣板**（`issuer.jpm.product_name`，5 份同一個樣板）：
 
 - 中文：`摩根大通{tenor}個月{ccy_zh}計價連結股權固定配息可自動提前出場結構型商品(無擔保)(不保本)(下稱「本商品」)`——**不分記憶式、KI、標的數、Non-Call**（JP5 Non-Call = 天期也寫「可自動提前出場」），不需要 `{autocall_*}`、`{underlying_*}` 佔位符。
 - 英文：`JPMorgan {tenor}Months {ccy} Link to Equity Securities Callable Fixed Coupon Note (Unsecured)(Non-Principal Protected)`；`{tenor}` 與 `Months` 之間沒有空白（`6Months`、`12Months`），`{ccy}` 為 ISO 代碼。
 - 比對：中文忽略空白、括號全半形；英文忽略所有空白（跨行處可能多空白，例 `(Non- Principal Protected)`；`ignore_whitespace_en = true`）。
 
-**發行機構全名**（`issuer_name.jpm`）：`荷蘭商J.P. Morgan Structured Products B.V.`；封面（`發行機構註冊地：` 句內）、第 II 部分 1.(1) 兩處相同。2026-10-15 確認 JPM 目前只有這一個發行主體；其他寫法判不一致或轉人工覆核。
+**發行機構全名**（`issuer.jpm.issuer_name`）：`荷蘭商J.P. Morgan Structured Products B.V.`；封面（`發行機構註冊地：` 句內）、第 II 部分 1.(1) 兩處相同。2026-10-15 確認 JPM 目前只有這一個發行主體；其他寫法判不一致或轉人工覆核。
 
-**保證機構名稱**（`guarantor_name.jpm`）：cover = ch2 = `美商摩根大通銀行股份有限公司(JPMorgan Chase Bank, N.A.)`；ch1 = `美商摩根大通銀行股份有限公司`（第 I 部分第 3 項簡稱）；地址不核對。投資人須知相關機構 2. 用 cover、警語 5. 用 ch1。
+**保證機構名稱**（`issuer.jpm.guarantor_name`）：cover = ch2 = `美商摩根大通銀行股份有限公司(JPMorgan Chase Bank, N.A.)`；ch1 = `美商摩根大通銀行股份有限公司`（第 I 部分第 3 項簡稱）；地址不核對。投資人須知相關機構 2. 用 cover、警語 5. 用 ch1。
 
-**總代理人名稱**（`agent_name.jpm`，cover／ch2）：`美商摩根大通銀行股份有限公司台北分公司`；地址電話、負責人不核對。
+**總代理人名稱**（`issuer.jpm.agent_name`，cover／ch2）：`美商摩根大通銀行股份有限公司台北分公司`；地址電話、負責人不核對。
 
 ### 3.7 情境分析（第 15 項）
 
@@ -186,7 +186,7 @@ Issue #315（比照 BBVA #305、UBS #303）起，情境 (i)～(iii) 重複寫出
 |---|---|
 | 說明書 | 上手登記（`issuers.py`）；JPM `LayoutSpec`（羅馬數字＋句點、五部分、`III.` 後無空白、26 條、條號與標題分行、註腳上標數字）；範本辨識；`read` 交出全部標準欄位（`issuer_name_ch1`、`initial_pricing`、`minimum_issue_size`、`distributor_phone_ch4` 交 `absent`；`subscription_dates` 1 筆）；§3.3–§3.5、§3.7 |
 | 投資人須知 | `parsers/jpm_iis.py`、`IisTemplate`（頁碼 `N/4` 的 `page_totals`）、範本專屬規則 `rules/jpm_iis.py`（D 型自動提前出場配息金額的年利率 = 收益分配事項的年利率，`iis.coupon_pa_mentions`）；KO 型態與 k 由共用規則和參考條件表比（與說明書一致）；開始受理贖回日期不核對；[投資人須知核對規則](iis-check-rules.md) JPM 欄 |
-| 共用設定 | 審查標準 JPM 分節（固定警語、`risk.level_formats.jpm`、名稱樣板、發行機構、保證機構、總代理人、商品種類、`iis.fixed_warning_occurrences.jpm`）、允許片語「受託投資/受託買賣」；`config/reference_sheet.toml` 的 `[issuer_values] JPM`、`any_order_issuers` 加 `JPM` |
+| 共用設定 | 審查標準 JPM 分節（固定警語、`issuer.jpm.risk_level_formats`、名稱樣板、發行機構、保證機構、總代理人、商品種類、`issuer.jpm.iis_fixed_warning_occurrences`）、允許片語「受託投資/受託買賣」；`config/reference_sheet.toml` 的 `[issuer_values] JPM`、`any_order_issuers` 加 `JPM` |
 
 要有合成 PDF 測試（D-4／D-3／P、記憶式／非記憶式／單一標的、KI 無／AM／D、JPY、AUD、VWAP、標的順序不同、Non-Call = 天期的 P 型、頁碼 `N/4`）、本機 5 份真實樣本測試（`tests/checker/test_real_jpm.py`，結果與 §5 一致），以及 BARC、HSBC、MS、BNP、SG、Citi 樣本的負面測試；新增允許片語後，既有上手的合成與本機真實樣本測試結果不變。
 

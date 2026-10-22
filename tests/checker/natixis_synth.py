@@ -26,10 +26,10 @@ from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
 from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
 
-NAME = STANDARD["product_name"]["natixis"]
-WARNING = STANDARD["risk"]["fixed_warning_by_issuer"]["natixis"]
-ISSUER = STANDARD["issuer_name"]["natixis"]
-PRODUCT_TYPE = STANDARD["product_type"]["natixis"]
+NAME = STANDARD["issuer"]["natixis"]["product_name"]
+WARNING = STANDARD["issuer"]["natixis"]["fixed_warning"]
+ISSUER = STANDARD["issuer"]["natixis"]["issuer_name"]
+PRODUCT_TYPE = STANDARD["issuer"]["natixis"]["product_type"]
 DIST = STANDARD["distributor"]
 PHONE = "+886 2 5556 1313"  # 審查標準 phone_equivalents 的寫法
 ADDRESS = "台北市民生東路三段158號6樓"  # 審查標準 address_equivalents（沒有「松山區」）

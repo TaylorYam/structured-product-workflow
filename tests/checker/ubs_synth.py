@@ -29,10 +29,10 @@ from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
 from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
 
-NAME = STANDARD["product_name"]["ubs"]
-WARNING = STANDARD["risk"]["fixed_warning_by_issuer"]["ubs"]
-ISSUER = STANDARD["issuer_name"]["ubs"]
-PRODUCT_TYPE = STANDARD["product_type"]["ubs"]
+NAME = STANDARD["issuer"]["ubs"]["product_name"]
+WARNING = STANDARD["issuer"]["ubs"]["fixed_warning"]
+ISSUER = STANDARD["issuer"]["ubs"]["issuer_name"]
+PRODUCT_TYPE = STANDARD["issuer"]["ubs"]["product_type"]
 DIST = STANDARD["distributor"]
 PHONE = "+886-2-5556-1313"  # 受託機構電話的國際寫法（審查標準 phone_equivalents）
 ISIN = "XS1999900092"

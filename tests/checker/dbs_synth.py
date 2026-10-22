@@ -28,10 +28,10 @@ from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
 from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
 
-NAME = STANDARD["product_name"]["dbs"]
-WARNING = STANDARD["risk"]["fixed_warning_by_issuer"]["dbs"]
-ISSUER = STANDARD["issuer_name"]["dbs"]
-PRODUCT_TYPE = STANDARD["product_type"]["dbs"]
+NAME = STANDARD["issuer"]["dbs"]["product_name"]
+WARNING = STANDARD["issuer"]["dbs"]["fixed_warning"]
+ISSUER = STANDARD["issuer"]["dbs"]["issuer_name"]
+PRODUCT_TYPE = STANDARD["issuer"]["dbs"]["product_type"]
 DIST_NAME = "玉山綜合證券股份有限公司(含國際證券業務分公司)"  # 封面、投資人須知（審查標準等價寫法）
 DIST_PHONE = "(02)5556-1313"
 DIST_ADDRESS = "臺北市105民生東路三段158號6樓"
