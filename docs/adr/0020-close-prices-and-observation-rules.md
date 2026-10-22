@@ -2,7 +2,7 @@
 
 - 狀態／Status: Accepted
 - 日期／Date: 2026-10-22
-- 追蹤／Tracking: 實作 Issue 由本 ADR 的 PR 之後拆出／implementation issues are split off after this ADR's PR
+- 追蹤／Tracking: #153（收盤價表、HP 匯入、港股假日表）、#154（舊商品補資料）、#155（比價引擎）／#153 (close-price table, HP import, Hong Kong calendar), #154 (old-product backfill), #155 (observation engine)
 - 補充／Completes: [ADR 0019](0019-progress-step-records-and-lifecycle-events.md) 的存續事件由誰產生；[ADR 0008](0008-daily-prices-denomination-and-order-dates.md)、[ADR 0015](0015-price-csv-backfill.md) 的股價（取價日）只用於核對條件／who produces the lifecycle events of ADR 0019; the price-date prices of ADR 0008 and ADR 0015 serve check terms only
 
 ## 繁體中文

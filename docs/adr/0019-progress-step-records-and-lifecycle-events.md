@@ -2,7 +2,7 @@
 
 - 狀態／Status: Accepted
 - 日期／Date: 2026-10-22
-- 追蹤／Tracking: 實作 Issue 由本 ADR 的 PR 之後拆出／implementation issues are split off after this ADR's PR
+- 追蹤／Tracking: #151（步驟紀錄）、#152（存續事件表）、#156（進度頁）、#157（登記已寄出、顧客贖回、異議）；前置 #138／#151 (step records), #152 (lifecycle events), #156 (progress tab), #157 (sent mark, client redemption, objections); prerequisite #138
 - 補充／Completes: [ADR 0003](0003-minimal-fcn-database.md)「已存在商品的庫存狀態暫不更新」、[ADR 0006](0006-new-product-data-from-order.md)「進度分頁等合成一個 PANEL 再做」、[待定事項](../open-questions.md)的「案件及狀態名稱」／ADR 0003's "inventory status is not refreshed yet", ADR 0006's "the progress tab waits for the single PANEL", and the open question on case and status naming
 
 ## 繁體中文
