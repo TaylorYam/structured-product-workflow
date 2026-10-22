@@ -12,7 +12,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -38,7 +38,17 @@ from sp_workflow.daily_import import (
     latest_import,
 )
 from sp_workflow.database import ConnectionSettings, DatabaseError, connect, require_current_schema
-from sp_workflow.lifecycle import LifecycleError
+from sp_workflow.lifecycle import (
+    OBSERVATION,
+    LifecycleError,
+    Objection,
+    StoredEvent,
+    current_events,
+    open_objections,
+    raise_objection,
+    record_redemption,
+    resolve_objection,
+)
 from sp_workflow.mail_drafts import DraftReceipt, create_drafts
 from sp_workflow.observation import ObservationReceipt, observe_all
 from sp_workflow.order_import import (
@@ -57,7 +67,7 @@ from sp_workflow.order_terms import OrderRow, collect_orders
 from sp_workflow.preparation import PrepareReceipt, prepare_batch
 from sp_workflow.product_export import ExportReceipt, export_products
 from sp_workflow.product_write import CorrectionReceipt
-from sp_workflow.progress import ProgressRow, load_progress
+from sp_workflow.progress import SENT_STEP, ProgressRow, load_progress
 from sp_workflow.returning import ReturnReceipt, return_to_folders
 from sp_workflow.step_records import (
     Recorded,
@@ -134,6 +144,23 @@ class ReadResult:
     config: ImportConfig
     database_note: str = ""  # 沒有帶入資料庫的值時的說明
     database_error: DatabaseError | None = None
+
+
+@dataclass(frozen=True)
+class Registered:
+    """進度頁一次登記（#157）的結果：寫好的 TDCC 與寫不進去的 (TDCC, 原因)。"""
+
+    done: tuple[str, ...] = ()
+    failed: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class EventChoices:
+    """一檔可以提出異議的自動事件與還沒解除的異議（#157）。"""
+
+    tdcc: str
+    events: tuple[StoredEvent, ...]  # 還有效、來源比價的事件
+    objections: tuple[Objection, ...]
 
 
 @dataclass(frozen=True)
@@ -357,6 +384,75 @@ def load_progress_rows(
     with connect(settings) as conn:
         require_current_schema(conn)
         return load_progress(conn, config, today or dt.date.today())
+
+
+def sent_before(settings: ConnectionSettings, tdccs: Sequence[str]) -> tuple[str, ...]:
+    """登記已寄出前查（#157）：這些 TDCC 裡已經有「已寄出」步驟紀錄的，依傳入的順序。"""
+    with connect(settings) as conn:
+        require_current_schema(conn)
+        found = {
+            row[0]
+            for row in conn.execute(
+                "SELECT DISTINCT tdcc FROM workflow.step_record WHERE step = %s AND tdcc = ANY(%s)",
+                (SENT_STEP, list(tdccs)),
+            )
+        }
+    return tuple(t for t in dict.fromkeys(tdccs) if t in found)
+
+
+def mark_sent(settings: ConnectionSettings, tdccs: Sequence[str]) -> Registered:
+    """登記已寄出（#157）：每檔寫一筆「已寄出」步驟紀錄（誰、何時）；寫不進去只影響那一檔。"""
+    with connect(settings) as conn:
+        require_current_schema(conn)
+        return _each(tdccs, lambda tdcc: write_records(conn, [StepRecord(tdcc, SENT_STEP, "進度頁登記已寄出")]))
+
+
+def register_redemptions(settings: ConnectionSettings, tdccs: Sequence[str], day: dt.date, note: str) -> Registered:
+    """登記顧客贖回（#157）：每檔寫一筆來源「人工」的事件；已有存續事件的那一檔寫不進去並寫出原因。"""
+    with connect(settings) as conn:
+        require_current_schema(conn)
+        return _each(tdccs, lambda tdcc: record_redemption(conn, tdcc, day, note))
+
+
+def event_choices(settings: ConnectionSettings, tdcc: str) -> EventChoices:
+    """提出、解除異議前讀這檔的自動事件與還沒解除的異議（#157）。"""
+    with connect(settings) as conn:
+        require_current_schema(conn)
+        events = tuple(e for e in current_events(conn, tdcc) if e.source == OBSERVATION)
+        return EventChoices(tdcc, events, tuple(open_objections(conn, [tdcc]).get(tdcc, ())))
+
+
+def object_to_event(settings: ConnectionSettings, event_id: int, note: str) -> int:
+    """提出異議（#157）：異議不改事件；回傳異議編號。不能提出時丟 `LifecycleError`。"""
+    with connect(settings) as conn:
+        require_current_schema(conn)
+        return raise_objection(conn, event_id, note)
+
+
+def resolve_event_objection(settings: ConnectionSettings, objection_id: int) -> int:
+    """解除異議（#157）：記下解除的人與時間；回傳解除的異議編號。"""
+    with connect(settings) as conn:
+        require_current_schema(conn)
+        resolve_objection(conn, objection_id)
+        return objection_id
+
+
+def _each(tdccs: Sequence[str], write: Callable[[str], object]) -> Registered:
+    """一檔一個 transaction：寫不進去的只影響那一檔，原因放在結果裡。"""
+    import psycopg
+
+    done: list[str] = []
+    failed: list[tuple[str, str]] = []
+    for tdcc in tdccs:
+        try:
+            write(tdcc)
+        except LifecycleError as exc:
+            failed.append((tdcc, _first_line(exc)))
+        except psycopg.Error as exc:
+            failed.append((tdcc, f"資料庫錯誤：{_first_line(exc)}"))
+        else:
+            done.append(tdcc)
+    return Registered(tuple(done), tuple(failed))
 
 
 def _first_line(exc: Exception) -> str:
