@@ -234,6 +234,21 @@ def test_an_unknown_initial_pricing_needs_confirmation() -> None:
     assert result.status == TO_CONFIRM and "期初定價「明日開盤價」" in result.reason
 
 
+def test_missing_required_terms_need_confirmation_and_name_the_fields() -> None:
+    """#114：商品條件缺必填欄時不算價格、不交叉比對，分公司配置照樣由交易明細算。"""
+    terms = product(strike_pct=None, missing=("Strike (%)", "Maturity date"))
+
+    with_trades = calc(terms, trades=[row("台北", 100000), row("台中", 5000, currency="JPY")])
+    without = calc(terms, trades=[])
+
+    assert (with_trades.status, with_trades.reason) == (TO_CONFIRM, "缺 Strike (%)、Maturity date")
+    assert with_trades.prices == (UnderlyingPrice(1, "AAA UW"), UnderlyingPrice(2, "BBB UN"))
+    assert with_trades.price_date is None and with_trades.differences == (), "缺欄時沒有可以放行的差異"
+    assert with_trades.allocation == (("台北", Decimal(100000)), ("台中", Decimal(5000)))
+    assert (without.status, without.reason) == (TO_CONFIRM, "缺 Strike (%)、Maturity date；交易明細還沒有這檔")
+    assert without.allocation is None
+
+
 # ---------- 分公司配置與交叉比對 ----------
 
 
@@ -399,6 +414,39 @@ def test_a_release_records_who_and_lasts_until_the_difference_changes(pg, tmp_pa
     again = recalculate(pg, CALENDAR).line_of(A)
     assert again is not None and again.status == TO_CONFIRM
     assert again.unreleased == (Difference("UF", "1.9", "0.0215"),), "差異變了要重新放行"
+
+
+@pytest.mark.db
+def test_products_with_blank_required_terms_stay_to_confirm_until_filled(pg, tmp_path) -> None:
+    """#114：人工維護先存一部分（這裡直接改資料庫）：重算不中斷，待確認並寫出缺的欄；補齊後照常算。"""
+    import_trades_and_prices(pg, tmp_path, [trade(A, "Amy", "台北", 100000)], [price("AAA UW"), price("BBB UN")])
+    import_order(pg)
+    pg.execute("UPDATE workflow.product SET maturity_date = NULL, strike_pct = NULL WHERE tdcc = %s", (A,))
+    (import_id,) = pg.execute("SELECT max(import_id) FROM workflow.order_import").fetchone()
+    pg.execute(  # 只有識別欄的商品（例：只有交易明細、在人工維護從頭補）
+        "INSERT INTO workflow.product (tdcc, product, issuer, status_event, source, order_import_id)"
+        " VALUES (%s, 'FCN', 'SG', '在庫', 'Order', %s)",
+        (B, import_id),
+    )
+
+    receipt = recalculate(pg, CALENDAR)
+
+    partial, bare = receipt.line_of(A), receipt.line_of(B)
+    assert partial is not None and bare is not None
+    assert (partial.status, partial.reason, partial.unreleased) == (TO_CONFIRM, "缺 Strike (%)、Maturity date", ())
+    assert stored(pg) == (
+        (TO_CONFIRM, "缺 Strike (%)、Maturity date", None),
+        [(1, "AAA UW", None, None, None, None), (2, "BBB UN", None, None, None, None)],
+        [(1, "台北", Decimal("100000.0000"))],
+    )
+    assert bare.status == TO_CONFIRM
+    assert bare.reason.startswith("缺 Currency、Guaranteed Periods (m)、BBG Code 1、Strike (%)、KO Type")
+    assert bare.reason.endswith("Maturity date、期初價格；交易明細還沒有這檔")
+    assert "Product" not in bare.reason
+
+    pg.execute("UPDATE workflow.product SET maturity_date = '2027-04-22', strike_pct = 80 WHERE tdcc = %s", (A,))
+    filled = recalculate(pg, CALENDAR).line_of(A)
+    assert filled is not None and (filled.status, filled.changed) == (DONE, True)
 
 
 @pytest.mark.db

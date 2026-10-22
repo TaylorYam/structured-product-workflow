@@ -284,6 +284,27 @@ def test_missing_database_data_and_unmatched_names_are_all_listed(db, tmp_path: 
     assert reasons["12345"] == "不是 12 碼數字"
 
 
+def test_blank_required_terms_wait_with_the_fields_named(db, tmp_path: Path, root: Path, out: Path) -> None:
+    """#114：商品條件缺必填欄時不建草稿、寫出缺的欄，同批其他照常；期初價格空白照舊可以寄（以前清單更新的商品）。"""
+    load(
+        db,
+        tmp_path,
+        [trade(A, "Amy", "北區", 1), trade(B, "Ben", "北區", 1)],
+        [inventory(A, [("北區", 1)]), inventory(B, [("北區", 1)], **{"期初定價": None})],
+    )
+    passed_folder(root, A)
+    passed_folder(root, B)
+    db.execute("UPDATE workflow.product SET maturity_date = NULL, coupon_pct = NULL WHERE tdcc = %s", (A,))
+
+    receipt, drafter = run(db, root, out, f"{A} {B}")
+
+    assert [(o.tdcc, o.status, o.reason) for o in receipt.outcomes] == [
+        (A, PENDING, "商品條件缺 Coupon p.a. (%)、Maturity date"),
+        (B, DRAFTED, ""),
+    ]
+    assert [d.tdcc for d in drafter.drafts] == [B]
+
+
 def test_one_failed_draft_does_not_stop_the_others(db, tmp_path: Path, root: Path, out: Path) -> None:
     load(
         db,

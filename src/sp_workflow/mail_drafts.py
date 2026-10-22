@@ -1,7 +1,7 @@
 """寄信草稿：為核對通過的 FCN 在 Outlook 建立 TS／IIS 草稿給承作的 FC（#29，需求更新見 #29 留言）。
 
 對外只有 `create_drafts`。資料全部讀最小 FCN 資料庫（#32、#35），不讀 Excel。每檔 TDCC 都要符合：
-1. 資料庫有這檔的商品條件與交易列；
+1. 資料庫有這檔的商品條件（沒有缺信裡要用的必填欄，#114）與交易列；
 2. 根目錄底下找得到剛好一個商品資料夾，裡面有 `<TDCC>_TS.pdf` 與 `<TDCC>_IIS.pdf`
    （準備與放回工具只會以標準檔名放回核對通過的文件，所以這就代表核對通過）；
 3. 交易列上的 FC（略過 PB）都對得到信箱（不分大小寫、別名）。
@@ -31,6 +31,7 @@ from openpyxl.utils import get_column_letter
 
 from sp_workflow.daily_import import ImportInfo, Mailbox, is_pb, latest_import, load_mailbox
 from sp_workflow.database import DatabaseError, load_env_file, require_current_schema
+from sp_workflow.order_terms import PRICING_FIELD, REQUIRED, STRIKE_FIELD, missing_fields, with_required
 from sp_workflow.preparation import find_product_folders, is_tdcc, parse_tdccs
 
 if TYPE_CHECKING:
@@ -214,8 +215,12 @@ def _draft_one(
     problems = []
     if product is None:
         problems.append("資料庫沒有這檔的商品條件（還沒匯入起單資料）")
-    elif product["issue_date"] is None:
-        problems.append("商品資料還沒有發行日（等核對回填）")
+    else:
+        missing = missing_fields(product, _MAIL_REQUIRED)
+        if missing:
+            problems.append(f"商品條件缺 {'、'.join(missing)}")
+        if product["issue_date"] is None:
+            problems.append("商品資料還沒有發行日（等核對回填）")
     if not fc_names:
         problems.append("資料庫沒有這檔的交易列")
     names = list(dict.fromkeys(n for n in fc_names if not is_pb(n)))
@@ -271,11 +276,16 @@ _PRODUCT_FIELDS = (
     "non_call_months", "underlying_1", "underlying_2", "underlying_3", "underlying_4", "underlying_5", "strike_pct",
     "ko_type", "ko_pct", "coupon_pct", "upfront_pct", "tenor_months", "barrier_type", "ki_pct",
 )  # fmt: skip
+# 信裡要用、空白就不寄的必填欄（#114）：信裡沒有 Strike date；期初價格空白時信裡空白（以前清單更新的商品可能沒有）
+_MAIL_REQUIRED = tuple(name for name in REQUIRED if name not in (STRIKE_FIELD, PRICING_FIELD))
+_SELECTED_FIELDS = with_required(_PRODUCT_FIELDS)  # 加上 `missing_fields` 要看的必填欄
 
 
 def _product(conn: psycopg.Connection, tdcc: str) -> dict[str, Any] | None:
-    row = conn.execute(f"SELECT {', '.join(_PRODUCT_FIELDS)} FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
-    return None if row is None else dict(zip(_PRODUCT_FIELDS, row, strict=True))
+    row = conn.execute(
+        f"SELECT {', '.join(_SELECTED_FIELDS)} FROM workflow.product WHERE tdcc = %s", (tdcc,)
+    ).fetchone()
+    return None if row is None else dict(zip(_SELECTED_FIELDS, row, strict=True))
 
 
 def _attachments(tdcc: str, folders: Sequence[Path], unreadable: Sequence[Path]) -> tuple[tuple[Path, ...], str]:

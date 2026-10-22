@@ -2,6 +2,8 @@
 
 對外是 `collect_orders`（讀選的那份起單建檔，依貼上的 TDCC 回傳逐檔結果）；`parse_field`／`format_field`
 給畫面輸入與顯示用，和讀起單建檔是同一套解讀。起單建檔只讀、不修改。
+`REQUIRED`、`COLUMN_FIELDS`（欄位 ↔ 資料庫的欄）與 `missing_fields`（資料庫商品條件缺哪幾個必填欄，#114）
+由起單資料匯入、核對條件、核對讀資料庫與寄信草稿共用。
 
 起單建檔（`起單建檔_<日期>.xlsm`）只有一張工作表：表頭在前幾列（目前是第 2 列、從 B 欄開始），一檔一列。
 欄位依表頭文字對（不分大小寫、不看位置）；畫面上可以改的欄是 `KINDS`，起單建檔其他的欄
@@ -90,6 +92,53 @@ KINDS: dict[str, FieldKind] = {
 }
 FIELDS = tuple(KINDS)
 SHEET_FIELDS = tuple(name for name in FIELDS if name != STRIKE_FIELD)  # 起單建檔上有的欄
+# 必填欄：起單資料匯入時空白就擋下（#86）。資料庫的商品條件可以先存一部分（#114、ADR 0016），
+# 缺這幾欄的商品核對條件停在待確認，不能核對、寄信（`missing_fields`）
+REQUIRED = (
+    "Product",
+    "Currency",
+    "Guaranteed Periods (m)",
+    "BBG Code 1",
+    "Strike (%)",
+    "KO Type",
+    "KO Barrier (%)",
+    "Coupon p.a. (%)",
+    UPFRONT_FIELD,
+    "Tenor (m)",
+    "Barrier Type",
+    TRADE_FIELD,
+    STRIKE_FIELD,
+    "Final valuation date",
+    "Maturity date",
+    PRICING_FIELD,
+)
+# 資料庫 workflow.product 的欄 ↔ 畫面的欄（畫面上的 Upfront / NotePrice = 100 − UF）
+COLUMN_FIELDS = {
+    "product": "Product",
+    "currency": "Currency",
+    "non_call_months": "Guaranteed Periods (m)",
+    **{f"underlying_{n}": name for n, name in enumerate(UNDERLYINGS, 1)},
+    "strike_pct": "Strike (%)",
+    "ko_type": "KO Type",
+    "ko_pct": "KO Barrier (%)",
+    "coupon_pct": "Coupon p.a. (%)",
+    "upfront_pct": UPFRONT_FIELD,
+    "tenor_months": "Tenor (m)",
+    "barrier_type": "Barrier Type",
+    "ki_pct": "KI Barrier (%)",
+    "trade_date": TRADE_FIELD,
+    "strike_date": STRIKE_FIELD,
+    "issue_date": "Issue date",
+    "final_valuation_date": "Final valuation date",
+    "maturity_date": "Maturity date",
+    "initial_pricing": PRICING_FIELD,
+}
+_FIELD_COLUMNS = {name: column for column, name in COLUMN_FIELDS.items()}
+# KO Type、Barrier Type 另外存換算的代碼（`order_import.KO_CODES`／`KI_CODES`）
+_CODE_COLUMNS = {"KO Type": ("ko_freq", "ko_memory"), "Barrier Type": ("ki_freq",)}
+# 必填欄 → 資料庫裡存它的欄
+_REQUIRED_STORED = {name: (_FIELD_COLUMNS[name], *_CODE_COLUMNS.get(name, ())) for name in REQUIRED}
+REQUIRED_COLUMNS = tuple(column for columns in _REQUIRED_STORED.values() for column in columns)
 # 起單建檔的表頭（不分大小寫）→ 欄位；UF (%) 是 2026 年起的表頭
 _HEADERS = {name.casefold(): name for name in (TDCC_FIELD, *SHEET_FIELDS)} | {"uf (%)": UPFRONT_FIELD}
 _HEADER_ROWS = 5  # 表頭在前幾列找
@@ -242,6 +291,19 @@ def _row_for(
 def unknown_issuer(tdcc: str) -> str:
     """TDCC 前三碼不在上手編號對照時的說明（讀取與匯入檢查共用）。"""
     return f"TDCC 前三碼 {tdcc[:3]} 不在上手編號對照"
+
+
+def missing_fields(product: Mapping[str, object], names: Sequence[str] = REQUIRED) -> list[str]:
+    """資料庫商品條件的一列（`workflow.product` 的欄 → 值）裡空白的必填欄，依 `names` 的順序回傳畫面的欄名。
+
+    換算的代碼欄空白也算那一欄缺（沒有存齊）。`product` 要有 `REQUIRED_COLUMNS`（讀資料庫時用 `with_required`）。
+    """
+    return [name for name in names if any(product[column] is None for column in _REQUIRED_STORED[name])]
+
+
+def with_required(columns: Sequence[str]) -> tuple[str, ...]:
+    """要讀的 `workflow.product` 欄，加上還沒列到、`missing_fields` 要看的必填欄。"""
+    return (*columns, *(column for column in REQUIRED_COLUMNS if column not in columns))
 
 
 def _compare_key(name: str, parsed: tuple[object, str], raw: object) -> object:

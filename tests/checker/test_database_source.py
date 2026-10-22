@@ -162,6 +162,24 @@ def test_missing_or_unfinished_products_need_review_and_cannot_be_released(pg, t
             assert item.release_problem, "不能人工放行"
 
 
+@pytest.mark.db
+def test_products_with_blank_required_terms_are_not_checked(pg, tmp_path) -> None:
+    """#114：商品條件缺必填欄時不產生列，那一份需人工覆核、不能放行；核對條件還寫著完成（還沒重算）也一樣擋。"""
+    spec = Spec()
+    seed(pg, spec)
+    pg.execute(
+        "UPDATE workflow.product SET maturity_date = NULL, coupon_pct = NULL WHERE tdcc = %s", (spec.product_code,)
+    )
+
+    outcome, _ = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
+
+    assert not load_reference_sheet(outcome.reference_sheet, FMT).rows
+    for item in outcome.items:
+        assert item.category == Category.REVIEW
+        assert any("商品條件缺 Coupon p.a. (%)、Maturity date；補齊後再核對" in m for m in item.problem_messages)
+        assert item.release_problem, "不能人工放行"
+
+
 # ---------- 寫回 ----------
 
 
@@ -211,6 +229,24 @@ def test_terms_changed_after_checking_are_not_backfilled_or_locked(pg, tmp_path)
         "SELECT isin, locked_at FROM workflow.product WHERE tdcc = %s", (spec.product_code,)
     ).fetchone()
     assert isin is None and locked_at is None
+
+
+@pytest.mark.db
+def test_terms_blanked_after_checking_are_not_backfilled_or_locked(pg, tmp_path) -> None:
+    """#114：核對後在人工維護清掉必填欄（核對條件還沒重算）：寫回時擋下，不回填、不鎖住。"""
+    spec = Spec()
+    seed(pg, spec)
+    outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
+    pg.execute("UPDATE workflow.product SET strike_pct = NULL WHERE tdcc = %s", (spec.product_code,))
+
+    result = write_back(pg, outcome, receipt, FMT, user="operator1")
+
+    assert (result.locked, result.stale) == ((), (spec.product_code,))
+    isin, locked_at = pg.execute(
+        "SELECT isin, locked_at FROM workflow.product WHERE tdcc = %s", (spec.product_code,)
+    ).fetchone()
+    assert isin is None and locked_at is None
+    assert pg.execute("SELECT count(*) FROM workflow.backfill_log").fetchone() == (0,)
 
 
 @pytest.mark.db

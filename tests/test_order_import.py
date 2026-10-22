@@ -364,6 +364,31 @@ def test_rereading_keeps_manual_fills_and_shows_database_differences(pg) -> None
 
 
 @pytest.mark.db
+def test_reimporting_over_partial_database_terms(pg) -> None:
+    """#114：資料庫的商品條件只有一部分（人工維護先存的）：只比兩邊都有值的欄，起單建檔也空白的必填欄照舊擋下，
+    補齊後照常覆蓋。"""
+    import_drafts([draft_of(order_row(), pg)], pg, CONFIG, user="tester")
+    pg.execute(
+        "UPDATE workflow.product SET maturity_date = NULL, coupon_pct = NULL, strike_pct = 85 WHERE tdcc = %s", (A,)
+    )
+
+    blank = draft_of(order_row(changes={"Maturity date": None}), pg)
+    skipped = import_drafts([blank], pg, CONFIG, user="tester")
+    full = draft_of(order_row(), pg)
+    filled = import_drafts([full], pg, CONFIG, user="tester")
+
+    assert blank.differences() == {"Strike (%)": Decimal(85)}
+    assert (skipped.lines[0].result, skipped.lines[0].detail) == (SKIPPED, "Maturity date：必填")
+    assert full.differences() == {"Strike (%)": Decimal(85)}
+    assert (filled.lines[0].result, filled.lines[0].detail) == (
+        OVERWRITTEN,
+        "改了：Maturity date、Strike (%)、Coupon p.a. (%)",
+    )
+    p = product(pg, A)
+    assert (p["maturity_date"], p["coupon_pct"], p["strike_pct"]) == (dt.date(2027, 4, 22), Decimal("12.5"), 80)
+
+
+@pytest.mark.db
 def test_conflicting_fields_are_not_filled_from_the_database(pg) -> None:
     import_drafts([draft_of(order_row(), pg)], pg, CONFIG, user="tester")
 

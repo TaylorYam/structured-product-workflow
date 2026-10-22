@@ -6,8 +6,13 @@ from pathlib import Path
 
 import pytest
 
+from db_synth import inventory, seed_products
 from sp_workflow import database
 from sp_workflow.database import DatabaseError, apply_migrations, load_env_file, settings_from_env
+from sp_workflow.order_terms import REQUIRED_COLUMNS
+
+A = "029199990001"
+IDENTITY_COLUMNS = ("tdcc", "product", "issuer", "status_event", "source")  # TDCC、商品種類、上手、狀態、來源
 
 
 def test_env_file_is_read_without_exposing_values(tmp_path: Path) -> None:
@@ -108,3 +113,57 @@ def test_database_on_0001_upgrades_to_0002_keeping_data(pg) -> None:
     assert pg.execute("SELECT name, name_key, email FROM mailbox.person").fetchall() == [
         ("Amy", "amy", "amy@example.com")
     ]
+
+
+def _nullable(pg) -> dict[str, bool]:
+    return dict(
+        pg.execute(
+            "SELECT column_name, is_nullable = 'YES' FROM information_schema.columns"
+            " WHERE table_schema = 'workflow' AND table_name = 'product'"
+        ).fetchall()
+    )
+
+
+@pytest.mark.db
+def test_upgrading_to_0012_lets_required_terms_be_blank_and_keeps_existing_products(pg) -> None:
+    """#114：起單資料必填欄對應的欄可以空白，識別欄照舊不可空白；migration 前已有的商品不變。"""
+    pg.execute("DROP SCHEMA mailbox, workflow CASCADE")
+    pg.execute(f"DELETE FROM public.{database.VERSION_TABLE}")
+    for version, name, text in database.migration_files():
+        if version >= 12:
+            break
+        pg.execute(text)
+        pg.execute(f"INSERT INTO public.{database.VERSION_TABLE} (version, name) VALUES (%s, %s)", (version, name))
+    seed_products(pg, [inventory(A, [("台北", 100000)])])
+    before = pg.execute("SELECT * FROM workflow.product").fetchall()
+
+    applied = apply_migrations(pg)
+
+    assert applied == ["0012_partial_product_terms.sql"]
+    assert pg.execute("SELECT * FROM workflow.product").fetchall() == before
+    nullable = _nullable(pg)
+    blank = [c for c in REQUIRED_COLUMNS if c not in IDENTITY_COLUMNS]  # 含 KO Type／Barrier Type 換算的代碼欄
+    assert [c for c in blank if not nullable[c]] == []
+    assert [c for c in IDENTITY_COLUMNS if nullable[c]] == []
+
+
+@pytest.mark.db
+def test_a_product_can_be_stored_with_only_some_required_terms(pg) -> None:
+    """#114：人工維護可以先存一部分商品條件；上手這類識別欄照舊不可空白。"""
+    import psycopg
+
+    (import_id,) = pg.execute(
+        "INSERT INTO workflow.order_import (imported_by, summary) VALUES ('tester', '{}') RETURNING import_id"
+    ).fetchone()
+    insert = (
+        "INSERT INTO workflow.product (tdcc, product, issuer, currency, status_event, source, order_import_id)"
+        " VALUES (%s, 'FCN', %s, 'USD', '在庫', 'Order', %s)"
+    )
+
+    pg.execute(insert, (A, "Barclays", import_id))
+
+    assert pg.execute("SELECT currency, maturity_date, strike_pct FROM workflow.product").fetchall() == [
+        ("USD", None, None)
+    ]
+    with pytest.raises(psycopg.errors.NotNullViolation):
+        pg.execute(insert, ("029199990002", None, import_id))  # 上手照舊不可空白
