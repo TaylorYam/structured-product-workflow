@@ -128,14 +128,7 @@ from sp_workflow.order_import import (
     maintenance_problems,
     review_status,
 )
-from sp_workflow.order_terms import (
-    CHOICES,
-    FIELDS,
-    REQUIRED,
-    OrderRow,
-    OrderTermsError,
-    format_field,
-)
+from sp_workflow.order_terms import OrderRow, OrderTermsError, format_field
 from sp_workflow.preparation import (
     LIST_NAME,
     PREPARED,
@@ -145,6 +138,7 @@ from sp_workflow.preparation import (
     prepare_batch,
 )
 from sp_workflow.product_export import ExportReceipt, ProductExportError, export_name
+from sp_workflow.product_record import CHOICES, FIELDS, REQUIRED
 from sp_workflow.product_write import (
     FIXED_IN_CORRECTION,
     LOCKED,
@@ -1048,7 +1042,7 @@ class _FieldRow:
 
 
 class OrderEditor(ttk.Frame):
-    """起單資料頁右邊的編輯區：一次一檔，欄位是 `order_terms.FIELDS`（#86、#97、ADR 0009、0010）。
+    """起單資料頁右邊的編輯區：一次一檔，欄位是 `product_record.FIELDS`（#86、#97、ADR 0009、0010）。
 
     擋匯入的欄與讀起單建檔時有提醒的欄淺紅底並寫原因；和資料庫不同的欄淺黃底，寫出資料庫的值，可以一鍵改回。
     離開欄位、按 Enter 或選了下拉時才解讀；寫錯的欄保留打的字並標紅（說明記在 `OrderDraft.input_errors`，

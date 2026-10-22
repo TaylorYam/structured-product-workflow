@@ -9,7 +9,7 @@ import pytest
 from db_synth import inventory, seed_products
 from sp_workflow import database
 from sp_workflow.database import DatabaseError, apply_migrations, load_env_file, settings_from_env
-from sp_workflow.order_terms import REQUIRED_COLUMNS
+from sp_workflow.product_record import REQUIRED_COLUMNS
 
 A = "029199990001"
 IDENTITY_COLUMNS = ("tdcc", "product", "issuer", "status_event", "source")  # TDCC、商品種類、上手、狀態、來源

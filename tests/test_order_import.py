@@ -27,7 +27,8 @@ from sp_workflow.order_import import (
     reload_stored,
     review_status,
 )
-from sp_workflow.order_terms import FIELDS, TDCC_FIELD, OrderRow, collect_orders
+from sp_workflow.order_terms import TDCC_FIELD, OrderRow, collect_orders
+from sp_workflow.product_record import FIELDS
 from sp_workflow.product_write import (
     LOCKED,
     NEW,
