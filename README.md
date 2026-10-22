@@ -94,7 +94,7 @@ spw-db-migrate --admin-user postgres
 2. 視窗切到「1 每日匯入」，選每日更新，按「匯入」。
 3. 看結果：
    - 「新增交易」：寫入成功。「已存在」：之前匯過，這次沒有寫入。
-   - 「內容不同（未覆蓋）」：交易列和資料庫裡的不一樣，資料庫保留第一次的內容。
+   - 「內容不同（未覆蓋）」：交易列和資料庫裡的不一樣，資料庫保留第一次的內容。資料庫的值寫錯時在「7 人工維護」改（見下面「人工維護」），改到和 Excel 一樣後再匯入就是「已存在」。
    - 「擋下」：這一列缺值或寫法不認得，修正 Excel 後重新匯入。
    - 「股價衝突」：`BBG_Data` 同一個代碼出現多列、值不一樣；這個代碼的價格不存，算價格時不能用。值都一樣的重複列只算一筆。
    - 「股價不是數字」：價格格子不是數字（例如 `#N/A`），存成空白。
@@ -172,15 +172,16 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 
 ### 人工維護
 
-找出還缺資料的商品，手動補齊或修改資料庫裡的商品條件（[#115](https://github.com/TaylorYam/structured-product-workflow/issues/115)、[ADR 0017](docs/adr/0017-manual-maintenance-tab.md)）。已鎖住商品的更正（[#55](https://github.com/TaylorYam/structured-product-workflow/issues/55)、[ADR 0014](docs/adr/0014-term-correction.md)）也在這裡做。
+找出還缺資料的商品，手動補齊或修改資料庫裡的商品條件（[#115](https://github.com/TaylorYam/structured-product-workflow/issues/115)、[ADR 0017](docs/adr/0017-manual-maintenance-tab.md)）與交易明細（[#116](https://github.com/TaylorYam/structured-product-workflow/issues/116)、[ADR 0018](docs/adr/0018-maintenance-trade-rows.md)）。已鎖住商品的更正（[#55](https://github.com/TaylorYam/structured-product-workflow/issues/55)、[ADR 0014](docs/adr/0014-term-correction.md)）也在這裡做。
 
 1. 視窗切到「7 人工維護」，按「檢查」：列出還沒鎖住、缺起單資料必填欄的商品，和交易明細有、資料庫還沒有商品條件的 TDCC（狀態「只有交易明細」），依 TDCC 排；上方寫缺資料幾檔、其中只有交易明細幾檔。表格一格一格列出上手、狀態與必填欄，缺的格子淺紅底；欄位多時左右捲動，TDCC 欄固定在左邊。已鎖住的不列（鎖住前一定齊全）。
 2. 點一檔打開，或在 TDCC 欄輸入任何一檔按「打開」（包括已鎖住、沒缺資料的；交易明細和資料庫都沒有的不能打開）。右邊是和「2 起單資料」同一套的編輯區，上方寫這檔存檔時怎麼處理。改過的欄（包含清空、補上的）標黃並寫出資料庫的值，可以一鍵改回。
    - 還沒鎖住：帶出資料庫目前的值。必填欄可以先空著（淺紅底，寫「缺，可以先存、之後再補」），商品種類除外；格式錯、欄位之間對不上照起單資料匯入的規則擋存檔，有 KI 時 KI Barrier (%) 照舊必填（還不確定就把 Barrier Type 也先空著）。上手不能改；幣別改了時單位面額換成新幣別的預設值。
    - 只有交易明細：從空白開始，商品種類 FCN，上手依上手編號對照（查不到時擋存檔），單位面額依幣別預設值。存檔時新增商品條件，來源「人工維護」；之後重新匯入起單資料時照常整檔覆蓋。
    - 已鎖住：照更正的規則：不能留空白，Issue date 由 TS 回填、不能改，上手不能改，幣別改了時單位面額換成新幣別的預設值。存檔後商品維持鎖住（重新匯入照樣不覆蓋）、核對結果不動；算過核對條件的商品，改到標的、比例、Strike date、期初定價、幣別、交易日、UF 這類欄位時重算價格與交叉比對（VWAP 保留 TS 回填的價格，只重算比例改了的；換了標的的位置空白並標待確認），只改 Coupon、到期日等不重算。
-3. 按「存檔」（原因選填）：還沒鎖住的寫進資料庫並重算這一檔的核對條件（缺欄時停在待確認），重算失敗時整次不寫入；完成訊息列出改了什麼與重算後的狀態，檢查結果表跟著更新（補齊的那檔拿掉）。存檔後畫面換成資料庫存的值，可以接著改、再存。
-4. 每次存檔在 `workflow.term_correction` 留一筆：存檔前後的值（含改變的價格）、存檔前的商品欄位（新增時空白）、Windows 使用者名稱、時間、原因，`locked` 記存檔時是否已鎖住。沒有改任何欄位時不寫入；打開之後資料庫的這檔被改過、被鎖住（核對通過），或別人已經建了這檔的商品條件時不寫入，請按「重新載入」。有改過還沒存檔就打開別檔、重新載入或關閉視窗時會先問。更新程式後請執行一次 `spw-db-migrate`（資料表版本 0013，以前的更正紀錄不變）。
+   - 交易明細：商品條件底下依資料庫的列序（「第 n 列」）列出這檔的交易明細，欄位同每日匯入；只有交易明細的那檔也一樣。只改值，不能新增、刪除列，備註也不能改成 Cancel 或「取消」。打的字照每日匯入的規則解讀，交易日期、幣別、金額、FC/PB、分公司必填，空白或寫錯標紅、擋存檔；改過的格子同樣標黃、可以一鍵改回。沒改的格子照資料庫的值，不擋存檔。改了的 FC 名字照每日匯入的規則比對信箱，對不到時標紅字提醒（寄信草稿會找不到這位 FC），但可以存檔。
+3. 按「存檔」（原因選填）：商品條件與交易明細一起存。還沒鎖住的寫進資料庫並重算這一檔的核對條件（缺欄時停在待確認；只有交易明細、還沒有商品條件的不重算），重算失敗時整次不寫入；已鎖住的只改交易明細時，改到交易日期、幣別、金額、分公司、UF 才重算，商品照樣維持鎖住、核對結果不動；完成訊息列出改了什麼、重算後的狀態與對不到信箱的 FC 名字，檢查結果表跟著更新（補齊的那檔拿掉）。存檔後畫面換成資料庫存的值，可以接著改、再存。
+4. 每次存檔在 `workflow.term_correction` 留一筆：存檔前後的值（含改變的價格）、存檔前的商品欄位（新增時空白）、Windows 使用者名稱、時間、原因，`locked` 記存檔時是否已鎖住。沒有改任何欄位時不寫入；打開之後資料庫的這檔被改過、被鎖住（核對通過），或別人已經建了這檔的商品條件時不寫入，請按「重新載入」。改了交易明細時另外在 `workflow.trade_row_correction` 留一筆：改了哪些格（第幾列、欄、存檔前後）、存檔前這檔的交易明細、使用者、時間、原因，已鎖住的商品只改交易明細時也記重算後改變的價格。打開之後這檔的交易明細被改過（例如重新匯入多了一列）時也不寫入。有改過還沒存檔就打開別檔、重新載入或關閉視窗時會先問。之後的每日匯入照舊不覆蓋資料庫。更新程式後請執行一次 `spw-db-migrate`（資料表版本 0014，以前的紀錄不變）。
 
 ### 核對條件
 
@@ -291,7 +292,7 @@ Run the same command again after updates that add schema versions. When moving t
 2. In the window, open "1 每日匯入", choose the daily update, and click "匯入".
 3. Review the results:
    - "新增交易": written. "已存在": imported before; nothing written this time.
-   - "內容不同（未覆蓋）": the trade rows differ from the database, which keeps the first version.
+   - "內容不同（未覆蓋）": the trade rows differ from the database, which keeps the first version. If the database value is wrong, fix it on "7 人工維護" (see "Manual maintenance" below); once it matches the workbook, a re-import shows "已存在".
    - "擋下": a row is missing values or uses an unrecognized form; fix the workbook and re-import.
    - "股價衝突": a code appears on several `BBG_Data` rows with different values; its prices are not stored and cannot be used for pricing. Duplicate rows with identical values count once.
    - "股價不是數字": a price cell is not a number (for example `#N/A`) and is stored blank.
@@ -369,15 +370,16 @@ Reads the operators' daily order sheet `起單建檔_<date>.xlsm`; operators con
 
 ### Manual maintenance (人工維護)
 
-Find products that still lack data, and fill in or change product terms in the database by hand ([#115](https://github.com/TaylorYam/structured-product-workflow/issues/115), [ADR 0017](docs/adr/0017-manual-maintenance-tab.md)). Corrections of locked products ([#55](https://github.com/TaylorYam/structured-product-workflow/issues/55), [ADR 0014](docs/adr/0014-term-correction.md)) are made here too.
+Find products that still lack data, and fill in or change product terms ([#115](https://github.com/TaylorYam/structured-product-workflow/issues/115), [ADR 0017](docs/adr/0017-manual-maintenance-tab.md)) and trade rows ([#116](https://github.com/TaylorYam/structured-product-workflow/issues/116), [ADR 0018](docs/adr/0018-maintenance-trade-rows.md)) in the database by hand. Corrections of locked products ([#55](https://github.com/TaylorYam/structured-product-workflow/issues/55), [ADR 0014](docs/adr/0014-term-correction.md)) are made here too.
 
 1. In the window, open "7 人工維護" and click "檢查": it lists unlocked products missing order-sheet required fields, plus TDCCs in the trade rows with no product terms in the database yet (status "只有交易明細", trade rows only), sorted by TDCC; the figures above give how many lack data and how many of those are trade-only. The table shows issuer, status, and the required fields cell by cell, with missing cells in light red; scroll sideways when the columns do not fit, with the TDCC column fixed on the left. Locked products are not listed (they are complete before locking).
 2. Click a product to open it, or type any TDCC in the TDCC box and click "打開" (including locked and complete products; a TDCC in neither the trade rows nor the database cannot be opened). The editor on the right is the same as on "2 起單資料", with a note above it on how this product is saved. Changed fields (including cleared or newly filled ones) turn yellow showing the database value, with a button to restore it.
    - Unlocked: the database's current values are shown. Required fields may stay blank for now (light red, noted "缺，可以先存、之後再補"), except the product type; bad formats and inconsistent fields block the save under the order-sheet import rules, and KI Barrier (%) is still required with a KI barrier type (when unsure, leave Barrier Type blank too). The issuer cannot change; a changed currency switches the denomination to the new currency's default.
    - Trade rows only: starts blank with product type FCN, the issuer from the issuer prefix map (an unknown prefix blocks the save), and the denomination from the currency default. Saving creates the product terms with source 人工維護; a later order-sheet import overwrites them as usual.
    - Locked: the correction rules apply: no blanks, Issue date is backfilled from the TS and cannot change, the issuer cannot change, and a changed currency switches the denomination to the new currency's default. After saving the product stays locked (re-imports still do not overwrite it) and check results are untouched; products with check terms have their prices and cross-check recalculated when underlyings, percentages, Strike date, initial pricing, currency, trade date, UF, or similar fields change (VWAP keeps the TS-backfilled prices and recalculates only those whose percentage changed; positions with a new underlying are blank and marked 待確認), while changing only the coupon, maturity date, and the like does not recalculate.
-3. Click "存檔" (the reason is optional): unlocked products are written to the database and their check terms recalculated (staying 待確認 while fields are blank), and nothing is written if the recalculation fails; the completion message lists what changed and the recalculated status, and the check table updates (a product now complete drops off). After saving, the editor shows the values as stored, so you can keep editing and save again.
-4. Each save writes one `workflow.term_correction` row: values before and after (including changed prices), the previous product columns (blank for a new product), the Windows user name, the time, and the reason, with `locked` recording whether the product was locked. Nothing is written when nothing changed, or when after opening the product changed in the database, became locked (check passed), or got product terms from someone else; click "重新載入" (reload) first. Opening another product, reloading, or closing the window with unsaved edits asks first. Run `spw-db-migrate` once after updating (schema version 0013; earlier correction rows are unchanged).
+   - Trade rows: the product's trade rows are listed under the product terms in database row order ("第 n 列"), with the daily import's columns; trade-only products show them too. Only values change: rows cannot be added or deleted, and 備註 cannot become Cancel or 取消. Typed text is read with the daily import's rules; 交易日期, 幣別, 金額, FC/PB, and 分公司 are required, and blanks or bad formats turn red and block the save; changed cells likewise turn yellow with a button to restore them. Unchanged cells keep their database values and never block the save. A changed FC name is matched against the mailbox with the daily import's rules; an unmatched name gets a red warning (mail drafts will not find that FC), but the save is allowed.
+3. Click "存檔" (the reason is optional): product terms and trade rows are saved together. Unlocked products are written to the database and their check terms recalculated (staying 待確認 while fields are blank; trade-only products without product terms are not recalculated), and nothing is written if the recalculation fails; for a locked product whose trade rows alone changed, check terms are recalculated only when 交易日期, 幣別, 金額, 分公司, or UF changes, and the product stays locked with check results untouched; the completion message lists what changed, the recalculated status, and any FC names not in the mailbox, and the check table updates (a product now complete drops off). After saving, the editor shows the values as stored, so you can keep editing and save again.
+4. Each save writes one `workflow.term_correction` row: values before and after (including changed prices), the previous product columns (blank for a new product), the Windows user name, the time, and the reason, with `locked` recording whether the product was locked. Nothing is written when nothing changed, or when after opening the product changed in the database, became locked (check passed), or got product terms from someone else; click "重新載入" (reload) first. Changed trade rows get their own `workflow.trade_row_correction` row: the changed cells (row, column, before and after), the product's trade rows before the save, the user, the time, and the reason, plus the recalculated prices that changed when only a locked product's trade rows changed. Nothing is written either when the product's trade rows changed after opening (for example a re-import added a row). Opening another product, reloading, or closing the window with unsaved edits asks first. Later daily imports still do not overwrite the database. Run `spw-db-migrate` once after updating (schema version 0014; earlier records are unchanged).
 
 ### Check terms
 

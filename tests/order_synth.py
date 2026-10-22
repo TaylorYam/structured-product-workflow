@@ -10,8 +10,10 @@ from pathlib import Path
 import openpyxl
 
 from fcn_checker.config import load_exchange_holidays
+from sp_workflow.daily_import import Mailbox, Person
 from sp_workflow.order_import import MAINTAIN_OPEN, ImportConfig, OrderDraft
 from sp_workflow.order_terms import NOT_FOUND, PENDING, READ, TDCC_FIELD, OrderRow
+from sp_workflow.trade_rows import TradeRowDraft, TradeRowsDraft
 
 A = "029199990001"  # BARC
 B = "037199990002"  # SG
@@ -74,6 +76,32 @@ def maintenance_draft(status: str = MAINTAIN_OPEN, tdcc: str = A, issuer: str = 
     values = {**VALUES, **changes}
     row = OrderRow(tdcc, status, issuer, dict(values))
     return OrderDraft(row, dict(values), dict(values), dict(values), database_checked=True, correcting=True)
+
+
+# 資料庫裡一列交易明細（表頭 → 值），同 db_synth.trade 匯入後的樣子
+TRADE: dict[str, object] = {
+    "編號": 1,
+    "交易日期": dt.date(2026, 10, 15),
+    "幣別": "USD",
+    "金額": Decimal("100000.0000"),
+    "FC/PB": "Amy",
+    "分公司": "台北",
+    "前台主管/投專": None,
+    "UF": Decimal("0.021500"),
+    "期初價格": "收盤價",
+    "備註": None,
+    "募集": "N",
+    "TS/IIS 核對": None,
+    "核對TS/IIS人員": None,
+    "起單人員": "A",
+}
+MAILBOX = Mailbox((Person("Amy", "amy@example.com", "FC", False),), {})
+
+
+def maintenance_trades(*rows: Mapping[str, object], tdcc: str = A, mailbox: Mailbox = MAILBOX) -> TradeRowsDraft:
+    """人工維護打開的交易明細（`load_trade_rows` 的結果，不連資料庫）：每列是畫面上對 `TRADE` 的修改。"""
+    drafts = [TradeRowDraft(seq, {**TRADE, **changes}, dict(TRADE)) for seq, changes in enumerate(rows, 1)]
+    return TradeRowsDraft(tdcc, drafts, mailbox)
 
 
 # 起單建檔的表頭（第 2 列、從 B 欄開始；欄名後面的空白照真的檔）

@@ -19,7 +19,7 @@ from fcn_checker.ingestion import IngestionError
 from fcn_checker.panel import parse_args
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.saving import SaveReceipt
-from order_synth import CONFIG, VALUES, maintenance_draft, missing_row, order_row
+from order_synth import CONFIG, VALUES, maintenance_draft, maintenance_trades, missing_row, order_row
 from sp_workflow import app
 from sp_workflow.check_terms import DONE, TO_CONFIRM, WAIT_PRICES, CalcLine, CalcReceipt, Difference
 from sp_workflow.daily_import import (
@@ -50,6 +50,7 @@ from sp_workflow.order_terms import FIELDS, REQUIRED, OrderRow
 from sp_workflow.order_terms import PENDING as ORDER_PENDING
 from sp_workflow.preparation import PREPARED, SKIPPED, PreparedDocument, PrepareReceipt, ProductOutcome
 from sp_workflow.returning import NOT_RETURNED, RETURNED, ReturnOutcome, ReturnReceipt
+from sp_workflow.trade_rows import CANCEL_NOTE, UNMATCHED_NOTE, TradeRowsDraft
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -1639,3 +1640,165 @@ def test_closing_with_unsaved_maintenance_asks_and_stays_on_the_tab(master, tmp_
 
     assert len(asked) == 1 and "人工維護頁有改過、還沒存檔" in asked[0]
     assert master.winfo_exists() and window.notebook.select() == str(window.manual.frame)
+
+
+# ---------------------------------------------------------------- 人工維護：交易明細（#116）
+
+
+def opened_trades(*rows: dict) -> TradeRowsDraft:
+    """打開時的交易明細（畫面還沒改）：每列是對 `order_synth.TRADE` 的修改。"""
+    trades = maintenance_trades(*rows)
+    for row in trades.rows:
+        row.stored = dict(row.values)
+    return trades
+
+
+def opened_with(window: app.PanelWindow, draft: OrderDraft, trades: TradeRowsDraft):
+    window.manual._opened(app._Opened(draft, CONFIG, trades))
+    return window.manual.trade_editor
+
+
+def type_trade(editor, key: tuple[int, str], text: str) -> None:
+    editor.rows[key].var.set(text)
+    editor._commit(key)
+
+
+def grid_row(widget: tk.Misc) -> int:
+    return int(widget.grid_info()["row"])
+
+
+def test_trade_rows_are_listed_under_the_terms(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+
+    editor = opened_with(window, maintenance_draft(), opened_trades({}, {"編號": None, "FC/PB": "Ben"}))
+
+    assert sorted({seq for seq, _ in editor.rows}) == [1, 2]
+    shown = [editor.rows[(1, name)].var.get() for name in ("交易日期", "金額", "UF")]
+    assert shown == ["2026-10-15", "100000", "0.0215"]
+    assert editor.rows[(2, "編號")].var.get() == ""
+    last_term = window.manual.editor.rows[FIELDS[-1]].label
+    assert grid_row(editor.rows[(1, "編號")].label) > grid_row(last_term), "在商品條件底下"
+    fc = editor.rows[(2, "FC/PB")]
+    assert fc.label.cget("background") == app.SURFACE, "沒改的名字照資料庫的，不比對信箱"
+    type_trade(editor, (2, "FC/PB"), "Zed")
+    assert fc.label.cget("background") == app._PROBLEM_BG and fc.note.cget("text").startswith(UNMATCHED_NOTE)
+
+
+def test_editing_a_trade_cell_marks_it_and_counts_as_unsaved(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    editor = opened_with(window, maintenance_draft(), opened_trades({}))
+    assert not window.manual.has_unsaved()
+
+    type_trade(editor, (1, "金額"), "120,000")
+
+    amount = editor.rows[(1, "金額")]
+    assert amount.var.get() == "120000" and editor.trades.rows[0].values["金額"] == Decimal(120000)
+    assert amount.label.cget("background") == app._DIFFERENT_BG and amount.note.cget("text") == "資料庫是 100000"
+    assert window.manual.has_unsaved() and window.manual.status_var.get() == "029199990001 有改過、還沒存檔。"
+    editor._use_database((1, "金額"))
+    assert not window.manual.has_unsaved() and amount.label.cget("background") == app.SURFACE
+
+
+def test_trade_problems_are_marked_red(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    editor = opened_with(window, maintenance_draft(), opened_trades({}))
+
+    type_trade(editor, (1, "分公司"), "")
+    type_trade(editor, (1, "UF"), "abc")
+    type_trade(editor, (1, "備註"), "Cancel")
+
+    assert editor.rows[(1, "分公司")].note.cget("text") == "必填"
+    uf = editor.rows[(1, "UF")]
+    assert uf.var.get() == "abc" and uf.note.cget("text") == "「abc」不是數字", "寫錯的保留打的字"
+    assert editor.rows[(1, "備註")].note.cget("text") == CANCEL_NOTE
+    assert window.manual.has_unsaved()
+
+
+def test_a_product_without_trade_rows_says_so(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+
+    editor = opened_with(window, maintenance_draft(), opened_trades())
+
+    assert editor.rows == {} and "還沒有這檔的交易明細" in editor.empty.cget("text")
+
+
+def test_opening_another_product_replaces_the_trade_rows(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    first = opened_with(window, maintenance_draft(), opened_trades({}, {}))
+    old = first.rows[(2, "金額")].input
+
+    editor = opened_with(window, maintenance_draft(tdcc=B_TDCC), opened_trades({"FC/PB": "Amy"}))
+    master.update_idletasks()
+
+    assert sorted(editor.rows) == [(1, name) for name in sorted(editor.trades.rows[0].values)]
+    assert not old.winfo_exists(), "上一檔的欄拿掉"
+
+
+def test_trade_rows_cannot_be_edited_while_saving(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    without_database(window.manual, monkeypatch)
+    editor = opened_with(window, maintenance_draft(), opened_trades({}))
+    type_trade(editor, (1, "募集"), "Y")
+
+    window.manual.save()
+
+    assert str(editor.rows[(1, "金額")].input.cget("state")) == "disabled"
+
+
+def test_saving_sends_the_trade_rows_with_the_terms(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    tab = window.manual
+    monkeypatch.setattr(tab.db, "settings", lambda **k: object())
+    monkeypatch.setattr(app, "connect", lambda settings: contextlib.nullcontext(object()))
+    saved = []
+
+    def save(conn, draft, config, *, trades, reason):
+        saved.append(trades)
+        trades.reopen({row.seq: row.values for row in trades.rows})
+        return app.CorrectionReceipt(
+            draft.tdcc, None, locked=False, trade_correction_id=4, trade_changes=((1, "募集", "N", "Y"),)
+        )
+
+    monkeypatch.setattr(app, "save_maintenance", save)
+    monkeypatch.setattr(tab, "run_in_background", lambda action, busy, on_done, **k: on_done(action()))
+    editor = opened_with(window, maintenance_draft(), opened_trades({}))
+    editor.rows[(1, "募集")].var.set("Y")  # 還沒離開欄位就按存檔
+
+    tab.save()
+
+    assert saved == [editor.trades] and saved[0].rows[0].values["募集"] == "Y"
+    assert tab.status_var.get() == "已改 029199990001 的交易明細（第 4 筆紀錄）：第 1 列 募集 N → Y。"
+    assert tab.status_label.cget("style") == "Done.TLabel", "只改交易明細也算存好了"
+    assert not tab.has_unsaved() and editor.rows[(1, "募集")].label.cget("background") == app.SURFACE
+
+
+def test_save_messages_for_trade_rows() -> None:
+    both = app.CorrectionReceipt(
+        A_TDCC,
+        5,
+        (("Coupon p.a. (%)", Decimal("12.5"), Decimal(11)),),
+        CalcLine(A_TDCC, DONE, "", True),
+        locked=False,
+        trade_correction_id=6,
+        trade_changes=((2, "金額", Decimal("50000.0000"), Decimal(70000)), (2, "分公司", "台中", "台北")),
+        unmatched=("Zed",),
+    )
+    locked = app.CorrectionReceipt(
+        A_TDCC,
+        None,
+        (("UL_1_進場價", Decimal("100.5"), Decimal("100.6")),),
+        CalcLine(A_TDCC, DONE, "", True),
+        trade_correction_id=7,
+        trade_changes=((1, "UF", Decimal("0.0215"), None),),
+    )
+
+    assert app._correction_text(both) == (
+        f"已存檔 {A_TDCC} 的商品條件（第 5 筆紀錄）：Coupon p.a. (%) 12.5 → 11。"
+        f"已改 {A_TDCC} 的交易明細（第 6 筆紀錄）：第 2 列 金額 50000 → 70000、第 2 列 分公司 台中 → 台北。"
+        "\n核對條件重算後：完成。"
+        "\n注意：FC 名字對不到信箱：Zed（寄信草稿找不到收件人；請確認名字或在信箱表補上）。"
+    )
+    assert app._correction_text(locked) == (
+        f"已改 {A_TDCC} 的交易明細（第 7 筆紀錄）：第 1 列 UF 0.0215 → 空白。重算後改變的價格：UL_1_進場價 100.5 → 100.6。"
+        "商品維持鎖住，核對結果沒有變。\n核對條件重算後：完成。"
+    )

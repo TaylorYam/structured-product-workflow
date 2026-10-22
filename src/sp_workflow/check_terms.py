@@ -4,7 +4,7 @@
 和上一次算的不同才寫入；已鎖住（`locked_at` 有值）的商品不重算。對外：
 - `recalculate`：重算還沒鎖住的商品，回傳每檔的狀態（完成／等股價／等交易明細／待確認）。
 - `release_differences`：作業人員放行交叉比對的差異（記 Windows 使用者名稱與時間），再重算那一檔。
-- `recalculate_corrected`：更正商品條件（#55、ADR 0014）後重算那一檔，已鎖住也算；VWAP 保留 TS 回填的價格。
+- `recalculate_corrected`：更正商品條件（#55、ADR 0014）或交易明細（#116、ADR 0018）後重算那一檔，已鎖住也算；VWAP 保留 TS 回填的價格。
 - `calculate`：一檔商品的計算本身（不碰資料庫）。
 
 規則：
@@ -406,6 +406,8 @@ _PRODUCT_COLUMNS = (
 )  # fmt: skip
 # 另外讀的必填欄只用來看缺哪幾欄（#114），值不放進 `ProductTerms`：更正只改 Coupon、到期日時照舊不重算
 _SELECTED_COLUMNS = with_required(_PRODUCT_COLUMNS)
+# 計算要用的交易明細欄（`TradeRow`）：人工維護改了這幾欄才算影響核對條件（#116）
+CHECK_TRADE_COLUMNS = ("trade_date", "currency", "amount", "branch", "uf")
 
 
 def recalculate(
@@ -424,20 +426,26 @@ _PRICE_NAMES = (("進場價", "initial"), ("執行價", "strike"), ("下限價",
 
 
 def recalculate_corrected(
-    conn: psycopg.Connection, calendar: TradingCalendar, tdcc: str, previous: Mapping[str, Any]
+    conn: psycopg.Connection,
+    calendar: TradingCalendar,
+    tdcc: str,
+    previous: Mapping[str, Any],
+    *,
+    trades_changed: bool = False,
 ) -> tuple[CalcLine, tuple[tuple[str, Any, Any], ...]] | None:
     """更正商品條件（#55）之後重算這一檔（已鎖住也算），回傳 (結果, 改變的價格 [(UL_n_進場價…, 前, 後)])。
 
     `previous` 是更正前的商品欄位。沒有算過核對條件的商品（以前清單更新匯入的），或改的欄都不影響核對條件
     （例：Coupon），不重算、回傳 None（股價檔或假日表之後變了也不會把原本的價格算掉）。
     VWAP 的價格是 TS 回填的：更正前也是 VWAP、同一位置同一標的的保留，執行價(%)、KI(%)、KO(%) 或 Barrier Type
-    改了的價格由保留的進場價重算；其他位置的價格空白。在呼叫端的 transaction 裡執行。
+    改了的價格由保留的進場價重算；其他位置的價格空白。`trades_changed`：同一次也改了交易明細裡核對條件會用到的欄
+    （`CHECK_TRADE_COLUMNS`，#116），條件沒改也重算（分公司配置、交叉比對）。在呼叫端的 transaction 裡執行。
     """
     if conn.execute("SELECT 1 FROM workflow.check_terms WHERE tdcc = %s", (tdcc,)).fetchone() is None:
         return None
     before = _product(tuple({**previous, "tdcc": tdcc}[c] for c in _SELECTED_COLUMNS))
     products = _products(conn, "tdcc = %s", (tdcc,))
-    if products == [before]:
+    if products == [before] and not trades_changed:
         return None
     ((line, stored, calc),) = _recalculate(conn, products, calendar, vwap_from=before)
     old = {p.seq: p for p in stored.prices} if stored is not None else {}
@@ -586,8 +594,7 @@ def _product(row: Sequence[Any]) -> ProductTerms:
 def _trades(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, list[TradeRow]]:
     found: dict[str, list[TradeRow]] = {}
     for tdcc, *values in conn.execute(
-        "SELECT tdcc, trade_date, currency, amount, branch, uf FROM workflow.trade_row"
-        " WHERE tdcc = ANY(%s) ORDER BY tdcc, row_seq",
+        f"SELECT tdcc, {', '.join(CHECK_TRADE_COLUMNS)} FROM workflow.trade_row WHERE tdcc = ANY(%s) ORDER BY tdcc, row_seq",
         (list(tdccs),),
     ):
         found.setdefault(tdcc, []).append(TradeRow(*values))
