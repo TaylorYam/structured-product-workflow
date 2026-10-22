@@ -2,6 +2,8 @@
 
 按「重新整理」在背景讀資料庫（`window_actions.load_progress_rows`），篩選與排序只在畫面上做、不再連資料庫；
 「匯出 Excel…」把目前篩選、排序後的整張表寫成一份 Excel（`progress.export_progress`）。
+人工能做的三件事只在這一頁登記（#157）：對選中的商品「登記已寄出」「登記顧客贖回…」、對一檔的自動事件
+「提出異議…」與「解除異議…」；都在背景寫資料庫，一檔失敗只影響那一檔，寫完重新整理。
 """
 
 from __future__ import annotations
@@ -10,9 +12,10 @@ import datetime as dt
 import tkinter as tk
 from collections.abc import Callable
 from pathlib import Path
-from tkinter import filedialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from fcn_checker.check_config import ConfigPaths
+from sp_workflow.database import ConnectionSettings
 from sp_workflow.lifecycle import DELIVERY, IN_STOCK, KO, MATURITY, REDEMPTION
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.progress import (
@@ -26,8 +29,19 @@ from sp_workflow.progress import (
     export_progress,
     filter_rows,
 )
-from sp_workflow.tabs.base import DatabaseLogin, Tab
-from sp_workflow.window_actions import load_progress_rows
+from sp_workflow.tabs.base import TITLE, DatabaseLogin, Tab
+from sp_workflow.tabs.progress_dialogs import ask_objection, ask_redemption, ask_resolution, tdcc_list
+from sp_workflow.window_actions import (
+    EventChoices,
+    Registered,
+    event_choices,
+    load_progress_rows,
+    mark_sent,
+    object_to_event,
+    register_redemptions,
+    resolve_event_objection,
+    sent_before,
+)
 
 LIFECYCLES = (IN_STOCK, KO, DELIVERY, MATURITY, REDEMPTION)
 ALL_ISSUERS = "全部"
@@ -40,6 +54,7 @@ COLUMNS = (
     ("days", "距今天數", 70),
     ("progress", "作業進度", 90),
     ("lifecycle", "存續狀態", 80),
+    ("objection", "異議", 160),
     *((key, name, 95) for key, name in zip(_DATE_KEYS, DATE_COLUMNS, strict=True)),
     ("reason", "卡住的原因", 320),
 )
@@ -57,6 +72,7 @@ class ProgressTab(Tab):
         self.rows: tuple[ProgressRow, ...] | None = None  # 最近一次重新整理讀到的全部商品；還沒讀過是 None
         self.shown: list[ProgressRow] = []  # 篩選、排序後畫面上的列
         self.sort: tuple[str, bool] | None = None  # 點欄位排序：(欄, 由大到小)；None 是預設（距今天數由大到小）
+        self.notice = ""  # 剛做完的登記（#157），重新整理後寫在狀態列最前面
         self.status_var.set("按「重新整理」讀資料庫，列出每檔商品的作業進度；篩選與排序不會再讀資料庫。")
 
         self.page_header(
@@ -91,6 +107,12 @@ class ProgressTab(Tab):
         self.refresh_button.pack(side=tk.LEFT)
         self.export_button = ttk.Button(self.buttons, text="匯出 Excel…", command=self.export)
         self.export_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.sent_button = ttk.Button(self.buttons, text="登記已寄出", command=self.record_sent)
+        self.redeem_button = ttk.Button(self.buttons, text="登記顧客贖回…", command=self.register_redemption)
+        self.object_button = ttk.Button(self.buttons, text="提出異議…", command=self.raise_objection)
+        self.resolve_button = ttk.Button(self.buttons, text="解除異議…", command=self.resolve_objection)
+        for button in (self.sent_button, self.redeem_button, self.object_button, self.resolve_button):
+            button.pack(side=tk.LEFT, padx=(8, 0))
         self.place_table(2)
         for key, _, _ in COLUMNS:
             self.table.heading(key, command=lambda k=key: self.sort_by(k))
@@ -115,16 +137,20 @@ class ProgressTab(Tab):
         self.working = busy
         self.refresh_button.configure(state=tk.DISABLED if busy else tk.NORMAL)
         self.export_button.configure(state=tk.DISABLED if busy or not self.shown else tk.NORMAL)
+        for button in (self.sent_button, self.redeem_button, self.object_button, self.resolve_button):
+            button.configure(state=tk.DISABLED if busy or not self.shown else tk.NORMAL)
 
     # ---------- 重新整理 ----------
 
-    def refresh(self) -> None:
+    def refresh(self, notice: str = "") -> None:
+        """重新讀資料庫；`notice` 是剛做完的登記，寫在狀態列最前面。"""
         if self.working:
             return
         settings = self.db.settings()
         if settings is None:
             return
         paths = self.config_paths()
+        self.notice = notice
         self._busy(True)
         self.restart()
 
@@ -171,16 +197,22 @@ class ProgressTab(Tab):
             issuer="" if issuer == ALL_ISSUERS else issuer,
         )
         self.shown = self._sorted(rows)
+        selected = {self.table.set(item, "tdcc") for item in self.table.selection()}  # 重畫後還在表上的照樣選著
         self.table.delete(*self.table.get_children())
+        keep = []
         for row in self.shown:
             problem = row.progress != FINISHED and bool(row.reason)
-            self.table.insert("", tk.END, values=_cells(row), tags=("problem",) if problem else ())
+            item = self.table.insert("", tk.END, values=_cells(row), tags=("problem",) if problem else ())
+            if row.tdcc in selected:
+                keep.append(item)
+        self.table.selection_set(keep)
         unfinished = sum(row.progress != FINISHED for row in self.shown)
         notes = " ".join(error for error in (first_error, last_error) if error)
         self.finish(
             (("顯示（檔）", len(self.shown), False), ("還沒完成（檔）", unfinished, False)),
-            f"共 {len(self.rows)} 檔，篩選後 {len(self.shown)} 檔；依{self._sort_text()}排序。{notes}".rstrip(),
+            f"{self.notice}共 {len(self.rows)} 檔，篩選後 {len(self.shown)} 檔；依{self._sort_text()}排序。{notes}".rstrip(),
         )
+        self.notice = ""  # 登記結果只在寫完後那一次顯示
         self._busy(self.working)
 
     def sort_by(self, key: str) -> None:
@@ -205,6 +237,167 @@ class ProgressTab(Tab):
         key, descending = self.sort
         name = next(label for k, label, _ in COLUMNS if k == key)
         return f"{name}{'由大到小' if descending else '由小到大'}"
+
+    # ---------- 登記（#157） ----------
+
+    def _selected(self, *, one: bool = False) -> list[str]:
+        """表上選中的 TDCC；沒選或要一檔卻選了多檔時說明，回傳空的。"""
+        tdccs = [self.table.set(item, "tdcc") for item in self.table.selection()]
+        if not tdccs:
+            messagebox.showinfo(TITLE, "請先在表上選商品（可以按住 Ctrl 或 Shift 多選）。", parent=self.master)
+        elif one and len(tdccs) > 1:
+            messagebox.showinfo(TITLE, "這個動作一次只能選一檔。", parent=self.master)
+            return []
+        return tdccs
+
+    def _start(
+        self, action: Callable[[ConnectionSettings], object], busy: str, on_done: Callable[[object], None]
+    ) -> None:
+        settings = self.db.settings()
+        if settings is None:
+            return
+        self._busy(True)
+        self.mark_done(False)
+        self.run_in_background(lambda: action(settings), busy, on_done, clear=False)
+
+    def record_sent(self) -> None:
+        """登記已寄出：先在背景查選中的哪幾檔已經登記過，問過才寫；每檔寫一筆「已寄出」。"""
+        if self.working:
+            return
+        tdccs = self._selected()
+        if not tdccs:
+            return
+        self._start(
+            lambda settings: sent_before(settings, tdccs),
+            "檢查是否登記過已寄出中…",
+            lambda result: self._sent_checked(tdccs, result),
+        )
+
+    def _sent_checked(self, tdccs: list[str], result: object) -> None:
+        self.db.after_run(result)
+        self._busy(False)
+        if not isinstance(result, tuple):
+            return
+        again = [t for t in tdccs if t in result]
+        if again:
+            fresh = len(tdccs) - len(again)
+            answer = messagebox.askyesnocancel(
+                TITLE,
+                f"{tdcc_list(again)} 已經登記過已寄出。\n"
+                f"是：這幾檔也再寫一筆；否：只寫還沒登記過的 {fresh} 檔；取消：都不寫。",
+                parent=self.master,
+            )
+            if answer is None:
+                self.refilter()
+                return
+            if not answer:
+                tdccs = [t for t in tdccs if t not in again]
+                if not tdccs:
+                    messagebox.showinfo(TITLE, "選中的都已經登記過已寄出，這次沒有寫。", parent=self.master)
+                    self.refilter()
+                    return
+        elif not messagebox.askokcancel(TITLE, f"登記 {len(tdccs)} 檔已寄出：{tdcc_list(tdccs)}？", parent=self.master):
+            self.refilter()
+            return
+        self._start(lambda settings: mark_sent(settings, tdccs), "登記已寄出中…", self._registered("已寄出"))
+
+    def register_redemption(self) -> None:
+        """登記顧客贖回：填事件日與備註，選中的每檔寫一筆來源「人工」的事件。"""
+        if self.working:
+            return
+        tdccs = self._selected()
+        if not tdccs:
+            return
+        found = ask_redemption(self.master, tdccs)
+        if found is None:
+            return
+        day, note = found
+        self._start(
+            lambda settings: register_redemptions(settings, tdccs, day, note),
+            "登記顧客贖回中…",
+            self._registered("顧客贖回"),
+        )
+
+    def _registered(self, what: str) -> Callable[[object], None]:
+        def done(result: object) -> None:
+            self.db.after_run(result)
+            self._busy(False)
+            if not isinstance(result, Registered):
+                return
+            text = f"登記{what}：寫了 {len(result.done)} 檔"
+            if result.failed:
+                failed = result.failed[:10]
+                text += f"；寫不進去 {len(result.failed)} 檔：" + "；".join(f"{t} {why}" for t, why in failed)
+                if len(result.failed) > len(failed):
+                    text += f"；…另外 {len(result.failed) - len(failed)} 檔"
+                messagebox.showwarning(TITLE, text, parent=self.master)
+            self.refresh(text + "。\n")
+
+        return done
+
+    def raise_objection(self) -> None:
+        """提出異議：選一檔，讀它比價產生的事件，選一筆、寫備註。"""
+        self._choose_event(self._objection_chosen)
+
+    def resolve_objection(self) -> None:
+        """解除異議：選一檔，讀它還沒解除的異議，選一筆解除。"""
+        self._choose_event(self._resolution_chosen)
+
+    def _choose_event(self, on_choices: Callable[[EventChoices], None]) -> None:
+        if self.working:
+            return
+        tdccs = self._selected(one=True)
+        if not tdccs:
+            return
+        tdcc = tdccs[0]
+
+        def done(result: object) -> None:
+            self.db.after_run(result)
+            self._busy(False)
+            if isinstance(result, EventChoices):
+                on_choices(result)
+
+        self._start(lambda settings: event_choices(settings, tdcc), "讀取存續事件中…", done)
+
+    def _objection_chosen(self, choices: EventChoices) -> None:
+        if not choices.events:
+            messagebox.showinfo(TITLE, f"{choices.tdcc} 沒有比價產生的自動事件，不能提出異議。", parent=self.master)
+            self.refilter()
+            return
+        found = ask_objection(self.master, choices.tdcc, choices.events)
+        if found is None:
+            self.refilter()
+            return
+        event_id, note = found
+        self._start(
+            lambda settings: object_to_event(settings, event_id, note),
+            "提出異議中…",
+            self._changed(f"{choices.tdcc} 已提出異議（待確認）。\n"),
+        )
+
+    def _resolution_chosen(self, choices: EventChoices) -> None:
+        if not choices.objections:
+            messagebox.showinfo(TITLE, f"{choices.tdcc} 沒有還沒解除的異議。", parent=self.master)
+            self.refilter()
+            return
+        objection_id = ask_resolution(self.master, choices.tdcc, choices.objections)
+        if objection_id is None:
+            self.refilter()
+            return
+        self._start(
+            lambda settings: resolve_event_objection(settings, objection_id),
+            "解除異議中…",
+            self._changed(f"{choices.tdcc} 已解除異議。\n"),
+        )
+
+    def _changed(self, notice: str) -> Callable[[object], None]:
+        def done(result: object) -> None:
+            self.db.after_run(result)
+            self._busy(False)
+            if isinstance(result, int):
+                self.refresh(notice)
+
+        return done
 
     # ---------- 匯出 ----------
 
@@ -244,7 +437,7 @@ def _cells(row: ProgressRow) -> tuple[str, ...]:
     trade_date = "" if row.trade_date is None else f"{row.trade_date:%Y-%m-%d}"
     days = "" if row.days is None else str(row.days)
     dates = tuple("" if value is None else f"{value.astimezone():%Y-%m-%d}" for value in row.dates)
-    return (row.tdcc, row.issuer, trade_date, days, row.progress, row.lifecycle, *dates, row.reason)
+    return (row.tdcc, row.issuer, trade_date, days, row.progress, row.lifecycle, row.objection, *dates, row.reason)
 
 
 def _sort_value(row: ProgressRow, index: int) -> object:
@@ -256,6 +449,7 @@ def _sort_value(row: ProgressRow, index: int) -> object:
         row.days,
         PROGRESS.index(row.progress),
         LIFECYCLES.index(row.lifecycle) if row.lifecycle in LIFECYCLES else len(LIFECYCLES),
+        row.objection or None,
         *row.dates,
         row.reason or None,
     )

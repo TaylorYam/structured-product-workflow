@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sp_workflow.check_terms import DONE as TERMS_DONE
-from sp_workflow.lifecycle import lifecycle_status
+from sp_workflow.lifecycle import Objection, lifecycle_status, open_objections
 from sp_workflow.order_import import ImportConfig, issuer_code
 from sp_workflow.product_export import save_rows
 from sp_workflow.product_record import PRODUCT_COLUMNS, missing_fields
@@ -49,7 +49,7 @@ DATE_COLUMNS = (
     TRADES_IMPORTED, TERMS_IMPORTED, CHECK_TERMS_DONE, PREPARED_STEP, CHECKED, LOCKED, RETURNED_STEP, DRAFTED_STEP,
     SENT_STEP,
 )  # fmt: skip
-EXPORT_COLUMNS = ("TDCC", "上手", "交易日", "距今天數", "作業進度", "存續狀態", *DATE_COLUMNS, "卡住的原因")
+EXPORT_COLUMNS = ("TDCC", "上手", "交易日", "距今天數", "作業進度", "存續狀態", "異議", *DATE_COLUMNS, "卡住的原因")
 
 
 @dataclass(frozen=True)
@@ -77,6 +77,7 @@ class ProgressRow:
     lifecycle: str  # 存續狀態
     dates: tuple[dt.datetime | None, ...]  # 依 `DATE_COLUMNS`
     reason: str  # 卡住的原因
+    objection: str = ""  # 還沒解除的異議：「待確認：事件 事件日：備註」（#157）；沒有時空白
 
 
 @dataclass(frozen=True)
@@ -164,6 +165,7 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
                 facts[tdcc]["dates"][step] = recorded_at
         tdccs = sorted(facts)
         statuses = lifecycle_status(conn, tdccs)
+        objections = open_objections(conn, tdccs)
     rows = []
     for tdcc in tdccs:
         found = Facts(**facts[tdcc])
@@ -179,6 +181,7 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
                 statuses[tdcc].status,
                 tuple(found.dates.get(name) for name in DATE_COLUMNS),
                 reason,
+                objection_text(objections.get(tdcc, ())),
             )
         )
     return tuple(rows)
@@ -223,7 +226,16 @@ def export_progress(rows: Sequence[ProgressRow], path: Path) -> ProgressExport:
 
 def export_values(row: ProgressRow) -> tuple[object, ...]:
     """一列的值，依 `EXPORT_COLUMNS`。"""
-    return (row.tdcc, row.issuer, row.trade_date, row.days, row.progress, row.lifecycle, *row.dates, row.reason)
+    return (
+        row.tdcc, row.issuer, row.trade_date, row.days, row.progress, row.lifecycle, row.objection, *row.dates,
+        row.reason,
+    )  # fmt: skip
+
+
+def objection_text(objections: Iterable[Objection]) -> str:
+    """進度頁的異議欄：有還沒解除的異議時是「待確認：事件 事件日：備註」（多筆用「；」接）。"""
+    notes = [f"{o.event} {o.event_date or ''}".strip() + f"：{o.note}" for o in objections]
+    return f"待確認：{'；'.join(notes)}" if notes else ""
 
 
 def _put(dates: dict[str, dt.datetime], name: str, value: dt.datetime | None) -> None:
