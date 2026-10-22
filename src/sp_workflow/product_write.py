@@ -60,7 +60,6 @@ if TYPE_CHECKING:
 
     from sp_workflow.order_import import ImportConfig, OrderDraft
 
-STATUS_IN_STOCK = "在庫"
 # workflow.product.source：商品資料由哪裡建立（#86）；清單更新已停用（#87），只剩以前建立的商品
 INVENTORY_SOURCE = "清單更新"
 ORDER_SOURCE = "Order"  # 「匯入起單資料」（#97 起從起單建檔讀）
@@ -529,11 +528,11 @@ def _write(
     新增時別人同時新增了這檔（還不存在的列 `FOR UPDATE` 鎖不到）不寫入、回傳 False。
     """
     if stored is None:
-        columns = ("tdcc", *PRODUCT_COLUMNS, "status_event", *extra)
+        columns = ("tdcc", *PRODUCT_COLUMNS, *extra)  # 存續狀態看存續事件（ADR 0019），不寫 status_event
         inserted = conn.execute(
             f"INSERT INTO workflow.product ({', '.join(columns)}) VALUES ({', '.join(['%s'] * len(columns))})"
             " ON CONFLICT (tdcc) DO NOTHING RETURNING tdcc",
-            (tdcc, *(product[c] for c in PRODUCT_COLUMNS), STATUS_IN_STOCK, *extra.values()),
+            (tdcc, *(product[c] for c in PRODUCT_COLUMNS), *extra.values()),
         ).fetchone()
         return inserted is not None
     updates = {**{c: product[c] for c in changed}, **extra}
