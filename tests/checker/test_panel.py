@@ -14,10 +14,10 @@ import pytest
 
 from barc_synth import SYNTH_ISIN, Spec, build_pdf
 from fcn_checker.ingestion import IngestionError, SourceSnapshot
-from fcn_checker.panel import parse_args, session_from_args
 from fcn_checker.panel_workflow import PanelOutcome, PanelSession
 from harness import ISSUER_PREFIXES, REVIEW_STANDARD, ROOT, with_iis
 from reference_synth import REFERENCE_FORMAT, build_reference_sheet, reference_row
+from sp_workflow.app import parse_args, session_from_args
 
 NOW = dt.datetime(2030, 2, 3, 4, 5, 6)
 
@@ -717,7 +717,7 @@ def test_panel_icon_ships_every_windows_size():
     """
     import struct
 
-    from fcn_checker.panel import PANEL_ICON
+    from fcn_checker.ui import PANEL_ICON
 
     data = PANEL_ICON.read_bytes()
     reserved, kind, count = struct.unpack_from("<HHH", data)
@@ -731,7 +731,7 @@ def test_window_icon_failure_keeps_the_default_icon():
     """圖示無法載入時不跳錯誤，PANEL 照常開啟。"""
     import tkinter as tk
 
-    from fcn_checker.panel import apply_window_icon
+    from fcn_checker.ui import apply_window_icon
 
     class Root:
         def iconbitmap(self, default=None):
@@ -742,7 +742,7 @@ def test_window_icon_failure_keeps_the_default_icon():
 
 def test_app_id_is_windows_only(monkeypatch):
     """非 Windows 平台不碰 Windows 專屬 API。"""
-    import fcn_checker.panel as panel
+    import fcn_checker.ui as ui
 
     touched = []
 
@@ -751,15 +751,15 @@ def test_app_id_is_windows_only(monkeypatch):
             touched.append(name)
             raise AssertionError(name)
 
-    monkeypatch.setattr(panel.sys, "platform", "linux")
-    monkeypatch.setattr(panel, "ctypes", NoCtypes())
-    panel.set_windows_app_id()
+    monkeypatch.setattr(ui.sys, "platform", "linux")
+    monkeypatch.setattr(ui, "ctypes", NoCtypes())
+    ui.set_windows_app_id()
     assert touched == []
 
 
 def test_window_icon_on_non_windows_only_uses_tk(monkeypatch):
     """非 Windows 平台只交給 Tk 設圖示，不碰 Windows 專屬 API。"""
-    import fcn_checker.panel as panel
+    import fcn_checker.ui as ui
 
     calls = []
 
@@ -767,10 +767,10 @@ def test_window_icon_on_non_windows_only_uses_tk(monkeypatch):
         def iconbitmap(self, default=None):
             calls.append(default)
 
-    monkeypatch.setattr(panel.sys, "platform", "linux")
-    monkeypatch.setattr(panel, "_set_window_icons", lambda hwnd: calls.append("win32"))
-    panel.apply_window_icon(Root())
-    assert calls == [str(panel.PANEL_ICON)]
+    monkeypatch.setattr(ui.sys, "platform", "linux")
+    monkeypatch.setattr(ui, "_set_window_icons", lambda hwnd: calls.append("win32"))
+    ui.apply_window_icon(Root())
+    assert calls == [str(ui.PANEL_ICON)]
 
 
 # ---------------------------------------------------------------- 選檔起始資料夾

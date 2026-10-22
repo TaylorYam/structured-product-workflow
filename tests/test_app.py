@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import datetime as dt
 import runpy
+import threading
+import time
 import tkinter as tk
 from concurrent.futures import Future
 from dataclasses import replace
@@ -15,9 +17,9 @@ import pytest
 
 import fcn_checker.panel
 from fcn_checker.ingestion import IngestionError
-from fcn_checker.panel import parse_args
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.saving import SaveReceipt
+from fcn_checker.ui import Background
 from order_synth import CONFIG, VALUES, maintenance_draft, maintenance_trades, missing_row, order_row
 from sp_workflow import app
 from sp_workflow.check_terms import DONE, TO_CONFIRM, WAIT_PRICES, CalcLine, CalcReceipt, Difference
@@ -93,7 +95,7 @@ def texts(widget: tk.Misc, kind: type[tk.Misc]) -> list[str]:
 
 
 def test_tabs_follow_the_daily_order(master, tmp_path: Path) -> None:
-    window = app.PanelWindow(master, FolderMemory.under(tmp_path), session=PanelSession(install_root=tmp_path))
+    window = new_window(master, tmp_path)
 
     assert master.title() == "FCN Workflow"
     assert tab_titles(window) == ["1 每日匯入", "2 起單資料", "3 準備", "4 核對", "5 放回", "6 寄信草稿", "7 人工維護"]
@@ -101,15 +103,13 @@ def test_tabs_follow_the_daily_order(master, tmp_path: Path) -> None:
 
 
 def test_checker_entry_starts_on_the_check_tab(master, tmp_path: Path) -> None:
-    window = app.PanelWindow(
-        master, FolderMemory.under(tmp_path), session=PanelSession(install_root=tmp_path), start_on_check=True
-    )
+    window = new_window(master, tmp_path, start_on_check=True)
 
     assert window.notebook.select() == str(window.check)
 
 
 def test_maintenance_actions_live_in_the_menu_only(master, tmp_path: Path) -> None:
-    window = app.PanelWindow(master, FolderMemory.under(tmp_path), session=PanelSession(install_root=tmp_path))
+    window = new_window(master, tmp_path)
     menu = window.maintenance
 
     labels = [menu.entrycget(i, "label") for i in range(menu.index(tk.END) + 1) if menu.type(i) == "command"]
@@ -126,7 +126,7 @@ class UnsavedSession(PanelSession):
 
 @pytest.mark.parametrize("answer", [False, True])
 def test_closing_with_an_unsaved_check_result_asks_first(master, tmp_path: Path, monkeypatch, answer) -> None:
-    window = app.PanelWindow(master, FolderMemory.under(tmp_path), session=UnsavedSession(install_root=tmp_path))
+    window = new_window(master, tmp_path, UnsavedSession(install_root=tmp_path))
     asked = []
     monkeypatch.setattr(app.messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or answer)
 
@@ -139,7 +139,7 @@ def test_closing_with_an_unsaved_check_result_asks_first(master, tmp_path: Path,
 
 
 def test_closing_while_the_check_tab_is_working_asks_first(master, tmp_path: Path, monkeypatch) -> None:
-    window = app.PanelWindow(master, FolderMemory.under(tmp_path), session=PanelSession(install_root=tmp_path))
+    window = new_window(master, tmp_path)
     window.check.check_pending = Future()  # 核對還在背景跑，還沒有結果
     asked = []
     monkeypatch.setattr(app.messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or False)
@@ -151,7 +151,7 @@ def test_closing_while_the_check_tab_is_working_asks_first(master, tmp_path: Pat
 
 
 def test_closing_without_an_unsaved_result_does_not_ask(master, tmp_path: Path, monkeypatch) -> None:
-    window = app.PanelWindow(master, FolderMemory.under(tmp_path), session=PanelSession(install_root=tmp_path))
+    window = new_window(master, tmp_path)
     monkeypatch.setattr(app.messagebox, "askyesno", lambda *a, **k: pytest.fail("不該提醒"))
 
     window.close()
@@ -238,7 +238,7 @@ def test_both_entry_points_open_the_merged_window(monkeypatch) -> None:
     fcn_checker.panel.main(["--install-root", str(ROOT)])
 
     (workflow_argv, workflow_kwargs), (checker_argv, checker_kwargs) = opened
-    args = parse_args(workflow_argv)
+    args = app.parse_args(workflow_argv)
     assert (args.install_root, args.config_dir) == (ROOT, ROOT / "config")
     assert workflow_kwargs == {}
     assert checker_argv == ["--install-root", str(ROOT)] and checker_kwargs == {"start_on_check": True}
@@ -248,7 +248,7 @@ def test_window_builds_with_remembered_folders(master, tmp_path: Path) -> None:
     memory = FolderMemory.under(tmp_path)
     memory.remember(root="R:/FCN", out="D:/out", batch="D:/out/待核對_1")
 
-    window = app.PanelWindow(master, memory)
+    window = new_window(master, tmp_path)
 
     assert (window.root_folder.var.get(), window.prepare.out_var.get()) == ("R:/FCN", "D:/out")
     assert str(window.prepare.open_button.cget("state")) == "disabled"
@@ -256,7 +256,7 @@ def test_window_builds_with_remembered_folders(master, tmp_path: Path) -> None:
 
 
 def test_prepared_batch_is_filled_into_the_return_tab(master, tmp_path: Path) -> None:
-    window = app.PanelWindow(master, FolderMemory.under(tmp_path))
+    window = new_window(master, tmp_path)
 
     window.prepare.on_prepared(prepared_receipt(Path("D:/out/待核對_20261019-103000")))
 
@@ -272,7 +272,7 @@ def test_daily_import_tab_remembers_files_and_env_path(master, tmp_path: Path) -
     memory = FolderMemory.under(tmp_path)
     memory.remember(daily="D:/每日更新.xlsx")
 
-    window = app.PanelWindow(master, memory, tmp_path / ".env")
+    window = new_window(master, tmp_path)
 
     assert window.daily.daily_var.get() == "D:/每日更新.xlsx"
     assert window.daily.db.env_path == tmp_path / ".env" and window.mail.db is window.daily.db
@@ -282,7 +282,7 @@ def test_mail_draft_tab_reuses_the_root_and_remembers_its_output(master, tmp_pat
     memory = FolderMemory.under(tmp_path)
     memory.remember(root="R:/FCN", mail_out="D:/寄信")
 
-    window = app.PanelWindow(master, memory, tmp_path / ".env")
+    window = new_window(master, tmp_path)
 
     assert window.mail.root_folder is window.root_folder and window.mail.out_var.get() == "D:/寄信"
 
@@ -291,7 +291,7 @@ def test_order_terms_tab_remembers_its_sheet(master, tmp_path: Path) -> None:
     memory = FolderMemory.under(tmp_path)
     memory.remember(root="R:/FCN", order_sheet="D:/ELN/起單建檔_20261015.xlsm")
 
-    window = app.PanelWindow(master, memory, tmp_path / ".env")
+    window = new_window(master, tmp_path)
 
     assert window.orders.sheet_var.get() == "D:/ELN/起單建檔_20261015.xlsm"
     assert not hasattr(window.orders, "root_folder"), "起單資料頁不用根目錄（#97）"
@@ -337,7 +337,7 @@ def test_reading_without_a_sheet_asks_to_choose_it_first(master, tmp_path: Path,
 
 def test_root_is_set_once_at_the_top_for_two_tabs(master, tmp_path: Path, monkeypatch) -> None:
     memory = FolderMemory.under(tmp_path)
-    window = app.PanelWindow(master, memory, session=PanelSession(install_root=tmp_path))
+    window = new_window(master, tmp_path)
     tabs = (window.prepare, window.mail)
     assert all(tab.root_folder is window.root_folder for tab in tabs)
     assert not any("根目錄" in texts(tab.frame, ttk.Label) for tab in tabs), "兩頁不再各有根目錄欄位"
@@ -355,14 +355,14 @@ def test_root_remembered_before_the_upgrade_is_kept(master, tmp_path: Path) -> N
     record.parent.mkdir()
     record.write_text('{"root": "R:/FCN", "out": "D:/out", "mail_out": "D:/寄信"}', encoding="utf-8")
 
-    window = app.PanelWindow(master, FolderMemory.under(tmp_path), session=PanelSession(install_root=tmp_path))
+    window = new_window(master, tmp_path)
 
     assert window.root_folder.var.get() == "R:/FCN"
 
 
 @pytest.mark.parametrize("tab_name", ["prepare", "mail"])
 def test_starting_without_a_root_asks_to_set_it_first(master, tmp_path: Path, monkeypatch, tab_name) -> None:
-    window = app.PanelWindow(master, FolderMemory.under(tmp_path), session=PanelSession(install_root=tmp_path))
+    window = new_window(master, tmp_path)
     tab = getattr(window, tab_name)
     tab.out_var.set("D:/out")
     errors = []
@@ -377,7 +377,7 @@ def test_starting_without_a_root_asks_to_set_it_first(master, tmp_path: Path, mo
 def test_each_tab_still_remembers_its_own_output(master, tmp_path: Path, monkeypatch) -> None:
     memory = FolderMemory.under(tmp_path)
     memory.remember(root="R:/FCN")
-    window = app.PanelWindow(master, memory, session=PanelSession(install_root=tmp_path))
+    window = new_window(master, tmp_path)
     monkeypatch.setattr(window.mail.db, "settings", lambda **kwargs: object())  # 寄信草稿先登入資料庫，這裡不連線
     monkeypatch.setattr(app, "mail_template_from_env", lambda env_path: None)
     for tab, out in ((window.prepare, "D:/out"), (window.mail, "D:/寄信")):
@@ -413,8 +413,15 @@ def prepared_receipt(batch: Path) -> PrepareReceipt:
     return PrepareReceipt(batch, batch / "準備清單.xlsx", (ready, skipped))
 
 
-def new_window(master, tmp_path: Path, session: PanelSession | None = None) -> app.PanelWindow:
-    return app.PanelWindow(master, FolderMemory.under(tmp_path), session=session or PanelSession(install_root=tmp_path))
+def new_window(
+    master, tmp_path: Path, session: PanelSession | None = None, *, start_on_check: bool = False
+) -> app.PanelWindow:
+    """和 main 一樣組視窗（#129），根目錄是 tmp_path；給了 session 時改用它（沒有資料庫來源）。"""
+    args = app.parse_args(["--install-root", str(tmp_path)])
+    if session is None:
+        return app.build_window(master, args, start_on_check=start_on_check)
+    db = app._DatabaseLogin(master, tmp_path / ".env")
+    return app.PanelWindow(master, FolderMemory.under(tmp_path), db, session, start_on_check=start_on_check)
 
 
 def hint_change_button(hint) -> ttk.Button:
@@ -2090,3 +2097,85 @@ def test_export_result_says_how_many_products_and_where(master, tmp_path: Path) 
     )
     assert tab.status_label.cget("style") == "Done.TLabel"
     assert str(tab.export_button.cget("state")) == "normal"
+
+
+# ---------------------------------------------------------------- 視窗外殼整理（#129）
+
+
+def wait_until(master: tk.Misc, condition, timeout: float = 5.0) -> None:
+    """讓 Tk 處理 after 排程，直到 condition 成立。"""
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "等太久"
+        master.update()
+        time.sleep(0.01)
+
+
+def test_background_reports_back_on_the_main_thread(master) -> None:
+    """全視窗唯一的背景作業寫法：動作在背景執行緒做，做完才回主執行緒呼叫 done；錯誤也在 Future 裡。"""
+    background = Background(master)
+    done = []
+
+    background.run(threading.get_ident, lambda future: done.append((future.result(), threading.get_ident())))
+    background.run(lambda: 1 / 0, lambda future: done.append(type(future.exception())))
+    wait_until(master, lambda: len(done) == 2)
+
+    (worker, caller), error = done
+    assert worker != threading.get_ident() and caller == threading.get_ident()
+    assert error is ZeroDivisionError
+
+
+def test_a_closed_background_stops_reporting(master) -> None:
+    """視窗關閉後背景做完也不再回頭動畫面。"""
+    background = Background(master)
+    release, done = threading.Event(), []
+    future = background.run(release.wait, done.append)
+
+    background.close()
+    release.set()
+    future.result(timeout=5)
+    for _ in range(20):
+        master.update()
+        time.sleep(0.01)
+
+    assert done == []
+
+
+def no_password_env(tmp_path: Path) -> None:
+    """有資料庫連線設定、沒有密碼的 .env（虛構的帳號）。"""
+    (tmp_path / ".env").write_text("PGDATABASE=spw_fake\nPGUSER=operator1\n", encoding="utf-8")
+
+
+def test_check_tab_asks_the_shell_to_log_in_before_reading_the_database(master, tmp_path, monkeypatch) -> None:
+    """資料庫來源連線前，核對頁請外殼在主執行緒登入（問密碼）；取消時不開始、不碰背景。"""
+    no_password_env(tmp_path)
+    check = new_window(master, tmp_path).check
+    asked = []
+    monkeypatch.setattr(app.simpledialog, "askstring", lambda *a, **k: asked.append(a[1]) or None)
+
+    check.load()
+
+    assert asked == ["operator1@localhost 的資料庫密碼"]
+    assert check.pending is None and check.status.get() == "沒有登入資料庫，沒有開始。"
+
+
+def test_database_source_uses_the_settings_the_shell_logged_in_with(master, tmp_path, monkeypatch) -> None:
+    """核對的資料庫來源在背景拿外殼登入過的連線設定，不會再問；連不上時外殼忘記密碼，下次重新問。"""
+    no_password_env(tmp_path)
+    asked = []
+    monkeypatch.setattr(app.simpledialog, "askstring", lambda *a, **k: asked.append(a[1]) or "secret")
+    db = app._DatabaseLogin(master, tmp_path / ".env")
+    source = app._check_database(db, tmp_path)
+    assert source.folder == tmp_path.resolve() / "runtime" / app.EXPORT_FOLDER
+    assert db.current() is None, "還沒登入"
+
+    assert db.log_in()
+    assert source._require().password == "secret" and len(asked) == 1, "背景拿設定不再問"
+
+    (tmp_path / ".env").write_text("PGUSER=operator1\n", encoding="utf-8")  # 別的分頁安靜地讀，連線設定檔壞了
+    assert db.settings(quiet=True) is None
+    assert source._require().password == "secret", "別的分頁沒讀到，不會把核對頁登出"
+
+    source.on_failure()
+
+    assert db.current() is None and db.password is None

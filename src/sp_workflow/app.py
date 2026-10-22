@@ -25,21 +25,24 @@ Treeview 的表（7 的檢查結果表除外）另有 Ctrl+A 全選、Ctrl+C 複
 
 from __future__ import annotations
 
+import argparse
 import os
-import queue
 import re
 import subprocess
 import sys
-import threading
 import tkinter as tk
 from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
+from concurrent.futures import Future
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter import font as tkfont
 
-from fcn_checker.check_config import ConfigPaths
-from fcn_checker.panel import (
+from fcn_checker.check_config import CONFIG_DIR, DEFAULTS, ConfigPaths
+from fcn_checker.panel import CheckTab
+from fcn_checker.panel_workflow import DatabaseSource, PanelSession
+from fcn_checker.trading_calendar import TradingCalendar
+from fcn_checker.ui import (
     ACCENT,
     ACCENT_SOFT,
     BACKGROUND,
@@ -53,7 +56,7 @@ from fcn_checker.panel import (
     SURFACE,
     TEXT,
     TEXT_SECONDARY,
-    CheckTab,
+    Background,
     CopyArea,
     CopyMenu,
     HintBar,
@@ -66,14 +69,10 @@ from fcn_checker.panel import (
     enable_windows_dpi_awareness,
     flat,
     flat_states,
-    parse_args,
-    session_from_args,
     set_windows_app_id,
     tab_separated,
     to_clipboard,
 )
-from fcn_checker.panel_workflow import PanelSession
-from fcn_checker.trading_calendar import TradingCalendar
 from sp_workflow.check_source import EXPORT_FOLDER, WorkflowDatabase
 from sp_workflow.check_terms import (
     DONE,
@@ -203,7 +202,7 @@ class _Tab:
 
     def __init__(self, notebook: ttk.Notebook, title: str, columns: Sequence[tuple[str, str, int]]) -> None:
         self.master = notebook.winfo_toplevel()
-        self.results: queue.Queue[object] = queue.Queue()
+        self.background = Background(self.master)
         self.frame = ttk.Frame(notebook, padding=(28, 22))
         notebook.add(self.frame, text=title)
         self.frame.columnconfigure(0, weight=1)
@@ -218,9 +217,12 @@ class _Tab:
         self.copier = TableCopy(self.table)
 
     def page_header(self, title: str, description: str) -> None:
-        """第 0 列：步驟 N／總數（由視窗填）、標題（只寫功能）與一行說明。"""
+        """第 0 列：步驟 N／總數（由視窗用 show_step 填）、標題（只寫功能）與一行說明。"""
         self.header = PageHeader(self.frame, title, description)
         self.header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
+
+    def show_step(self, step: str) -> None:
+        self.header.step.set(step)
 
     def card(self, row: int) -> ttk.Frame:
         """第 row 列的白色輸入卡片。"""
@@ -334,32 +336,22 @@ class _Tab:
     def run_in_background(
         self, action: Callable[[], object], busy: str, on_done: Callable[[object], None], *, clear: bool = True
     ) -> None:
+        """用分頁的 `Background` 在背景做 action；做完回主執行緒呼叫 on_done(結果)，出錯時結果是那個例外（先顯示原因）。"""
         if clear:
             self.table.delete(*self.table.get_children())
         self.status_var.set(busy)
+        self.background.run(action, lambda future: self._show_result(future, on_done))
 
-        def work() -> None:
-            try:
-                self.results.put(action())
-            except Exception as exc:  # 背景執行緒的錯誤一律交回主執行緒顯示
-                self.results.put(exc)
-
-        def poll() -> None:
-            try:
-                result = self.results.get_nowait()
-            except queue.Empty:
-                self.master.after(200, poll)
-                return
-            if isinstance(result, _EXPECTED_ERRORS):
-                self.status_var.set(str(result))
-                messagebox.showerror(TITLE, str(result))
-            elif isinstance(result, Exception):
-                self.status_var.set(f"執行失敗：{result}")
-                messagebox.showerror(TITLE, f"執行失敗：{result!r}")
-            on_done(result)
-
-        threading.Thread(target=work, daemon=True).start()
-        self.master.after(200, poll)
+    def _show_result(self, future: Future[object], on_done: Callable[[object], None]) -> None:
+        error = future.exception()  # 背景執行緒的錯誤一律交回主執行緒顯示
+        result = future.result() if error is None else error
+        if isinstance(result, _EXPECTED_ERRORS):
+            self.status_var.set(str(result))
+            messagebox.showerror(TITLE, str(result))
+        elif isinstance(result, Exception):
+            self.status_var.set(f"執行失敗：{result}")
+            messagebox.showerror(TITLE, f"執行失敗：{result!r}")
+        on_done(result)
 
     def add_row(self, values: Sequence[str], problem: bool) -> None:
         self.table.insert("", tk.END, values=list(values), tags=("problem",) if problem else ())
@@ -754,15 +746,33 @@ class DailyImportTab(_Tab):
 
 
 class _DatabaseLogin:
-    """各分頁共用的資料庫連線設定；`.env` 沒有密碼時詢問一次，只留在記憶體。"""
+    """各分頁共用的資料庫連線設定；`.env` 沒有密碼時詢問一次，只留在記憶體。
+
+    `settings` 在主執行緒登入（需要時問密碼）；核對的資料庫來源在背景用 `current` 拿登入過的設定，不會問（#129）。
+    """
 
     def __init__(self, master: tk.Misc, env_path: Path) -> None:
         self.master = master
         self.env_path = env_path
         self.password: str | None = None
+        self._current: ConnectionSettings | None = None
 
     def settings(self, *, quiet: bool = False) -> ConnectionSettings | None:
         """連線設定；沒有密碼時詢問一次，取消就是 None。`quiet`：沒有連線設定檔或格式不對時不跳錯誤（讀 Order 時用）。"""
+        settings = self._ask(quiet)
+        if settings is not None:  # 沒拿到時不覆蓋：別的分頁取消或安靜地讀失敗，不會把核對頁登出
+            self._current = settings
+        return settings
+
+    def log_in(self) -> bool:
+        """在主執行緒登入（需要時問密碼）；取消或沒有連線設定時 False。"""
+        return self.settings() is not None
+
+    def current(self) -> ConnectionSettings | None:
+        """最近一次 `settings` 拿到的連線設定，不詢問；還沒登入或忘記密碼後是 None。"""
+        return self._current
+
+    def _ask(self, quiet: bool) -> ConnectionSettings | None:
         try:
             settings = settings_from_env(self.env_path)
         except DatabaseError as exc:
@@ -783,6 +793,7 @@ class _DatabaseLogin:
     def forget_password(self) -> None:
         """連不上資料庫：可能是密碼錯，下次重新詢問。"""
         self.password = None
+        self._current = None
 
 
 class MailDraftTab(_Tab):
@@ -2253,14 +2264,14 @@ class PanelWindow:
         self,
         master: tk.Tk,
         memory: FolderMemory,
-        env_path: Path | None = None,
+        db: _DatabaseLogin,
+        session: PanelSession,
         *,
-        session: PanelSession | None = None,
         start_on_check: bool = False,
     ) -> None:
-        """session 是核對的工作階段；沒給時用執行目錄的 config（開發時從專案根目錄執行）。"""
+        """db 是各分頁共用的資料庫登入；session 是核對的工作階段，建好時已帶著資料庫來源（`build_window` 組好，#129）。"""
         self.master = master
-        self.session = session if session is not None else PanelSession()
+        self.session = session
         self.size = WindowSize(memory.path.with_name(WINDOW_FILE))
         master.title(TITLE)
         self.pixels = apply_style(master)
@@ -2274,13 +2285,6 @@ class PanelWindow:
         body = ttk.Frame(master)
         body.pack(fill=tk.BOTH, expand=True)
         self.notebook = ttk.Notebook(body, style="Workflow.TNotebook")
-        db = _DatabaseLogin(master, env_path or default_env_path())
-        if self.session.database is None:  # 核對分頁可以改從資料庫讀條件（#68）
-            self.session.database = WorkflowDatabase(
-                db.settings,
-                self.session.install_root / "runtime" / EXPORT_FOLDER,
-                on_failure=db.forget_password,
-            )
         # 分頁照每天的作業順序建立，前面自動加上 1～7 的編號；人工維護不是每天的步驟，放最後（#115）
         self.daily = DailyImportTab(
             self.notebook,
@@ -2298,7 +2302,7 @@ class PanelWindow:
             on_prepared=self._prepared,
             on_next=lambda: self.notebook.select(self.check),
         )
-        self.check = CheckTab(self.notebook, self.session, self.pixels, on_saved=self._check_saved)
+        self.check = CheckTab(self.notebook, self.session, self.pixels, on_saved=self._check_saved, login=db.log_in)
         self.check.add_next_step("下一步：放回 →", lambda: self.notebook.select(self.returning.frame))
         self.notebook.add(self.check, text="核對")
         self.returning = ReturnTab(self.notebook, memory)
@@ -2307,9 +2311,9 @@ class PanelWindow:
         tabs = self.notebook.tabs()
         for number, tab in enumerate(tabs, 1):
             self.notebook.tab(tab, text=f"{number} {self.notebook.tab(tab, 'text')}")
-        pages = (self.daily, self.orders, self.prepare, self.returning, self.mail, self.manual)
-        for page, page_header in [(p.frame, p.header) for p in pages] + [(self.check, self.check.header)]:
-            page_header.step.set(f"步驟 {self.notebook.index(page) + 1}／{len(tabs)}")
+        self.pages = (self.daily, self.orders, self.prepare, self.returning, self.mail, self.manual)
+        for page, tab in [(p.frame, p) for p in self.pages] + [(self.check, self.check)]:
+            tab.show_step(f"步驟 {self.notebook.index(page) + 1}／{len(tabs)}")
         self.sidebar = StepSidebar(body, self.notebook, self.pixels)
         self.sidebar.pack(side=tk.LEFT, fill=tk.Y)
         tk.Frame(body, width=1, background=BORDER).pack(side=tk.LEFT, fill=tk.Y)
@@ -2323,7 +2327,7 @@ class PanelWindow:
         """準備完成：放回頁帶入批次資料夾；核對頁帶入已準備的 PDF 並顯示提示條，回傳核對頁是否帶入。不切頁、不自動核對（#76）。"""
         self.returning.batch_var.set(str(receipt.batch_dir))
         pdfs = receipt.prepared_pdfs
-        then = "" if self.check.uses_database else "選好參考條件表後"
+        then = "" if self.session.use_database else "選好參考條件表後"
         return bool(pdfs) and self.check.receive_pdfs(
             pdfs,
             f"已帶入「3 準備」的批次（{len(pdfs)} 份 PDF），{then}按「載入／重新載入預覽」：\n{receipt.batch_dir}",
@@ -2331,7 +2335,7 @@ class PanelWindow:
 
     def _check_saved(self, result: Path) -> None:
         """核對存檔：放回頁帶入剛存的核對結果檔；PDF 都在同一個有準備清單的資料夾時，那就是這批的批次資料夾（#76）。"""
-        folders = {pdf.parent for pdf in self.check.pdf_paths}
+        folders = {pdf.parent for pdf in self.session.term_sheets}
         batch = folders.pop() if len(folders) == 1 else None
         self.returning.receive(result, batch if batch is not None and (batch / LIST_NAME).is_file() else None)
 
@@ -2392,6 +2396,8 @@ class PanelWindow:
             return
         self.size.remember(self.master)
         self.check.close()
+        for page in self.pages:
+            page.background.close()
         self.master.destroy()
 
 
@@ -2498,6 +2504,43 @@ def _open_folder(folder: Path) -> None:
         subprocess.Popen(["xdg-open", str(folder)])
 
 
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """視窗的啟動參數（#129 前在 `fcn_checker.panel`）；`fcn-panel`、雙擊入口與 `spw-panel` 共用。"""
+    parser = argparse.ArgumentParser(
+        description="FCN Workflow 視窗：每日匯入、起單資料、準備、核對、放回與寄信草稿；"
+        "核對時以參考條件表預覽並核對多份說明書 PDF，按儲存才寫出核對結果檔。"
+    )
+    parser.add_argument(
+        "--config-dir",
+        type=Path,
+        default=None,
+        help="設定檔資料夾（預設 config）；缺少參考條件表格式或上手編號對照時改用程式內建設定",
+    )
+    parser.add_argument(
+        "--builtin-config-dir", type=Path, default=None, help="程式內建設定資料夾（雙擊入口傳入專案的 config）"
+    )
+    parser.add_argument("--order-formats-dir", type=Path, help=argparse.SUPPRESS)  # 舊版啟動器仍會傳入
+    parser.add_argument("--review-standard", type=Path, default=DEFAULTS.review_standard, help="審查標準設定檔")
+    parser.add_argument(
+        "--install-root", type=Path, help="雙擊入口提供的安裝目錄；上次選的資料夾、.env 與核對紀錄都在它底下"
+    )
+    args = parser.parse_args(argv)
+    if args.config_dir is None:
+        args.config_dir = args.order_formats_dir.parent if args.order_formats_dir else CONFIG_DIR
+    return args
+
+
+def session_from_args(args: argparse.Namespace, database: DatabaseSource | None = None) -> PanelSession:
+    """核對的工作階段，建好時就帶著資料庫來源（#129）；根目錄與設定檔一致：雙擊入口給的專案根目錄，直接啟動時為執行目錄。"""
+    return PanelSession(
+        args.review_standard,
+        args.config_dir,
+        builtin_config_dir=args.builtin_config_dir,
+        install_root=args.install_root,
+        database=database,
+    )
+
+
 def folder_memory(argv: list[str] | None = None) -> FolderMemory:
     """依啟動參數決定上次選的資料夾記在哪：有 --install-root 就記在它底下的 .local/。"""
     return _memory_under(parse_args(argv).install_root)
@@ -2507,19 +2550,26 @@ def _memory_under(install_root: Path | None) -> FolderMemory:
     return FolderMemory.under(install_root) if install_root else FolderMemory()
 
 
+def build_window(master: tk.Tk, args: argparse.Namespace, *, start_on_check: bool = False) -> PanelWindow:
+    """依啟動參數組視窗（#129）：資料庫登入 → 核對的資料庫來源 → 建好就帶著它的核對工作階段 → 視窗。"""
+    db = _DatabaseLogin(master, default_env_path(args.install_root))
+    session = session_from_args(args, _check_database(db, args.install_root))
+    return PanelWindow(master, _memory_under(args.install_root), db, session, start_on_check=start_on_check)
+
+
+def _check_database(db: _DatabaseLogin, install_root: Path | None) -> WorkflowDatabase:
+    """核對分頁從資料庫讀條件（#68）：用視窗登入過的連線設定；產生的參考條件表放在根目錄的 runtime/ 底下。"""
+    folder = Path(install_root or ".").resolve() / "runtime" / EXPORT_FOLDER  # 根目錄和 PanelSession 一樣
+    return WorkflowDatabase(db.current, folder, on_failure=db.forget_password)
+
+
 def main(argv: list[str] | None = None, *, start_on_check: bool = False) -> None:
-    """開 FCN Workflow 視窗；參數和核對 PANEL 相同（`fcn_checker.panel.parse_args`），舊的啟動方式照舊有效。"""
+    """開 FCN Workflow 視窗；參數見 `parse_args`（和以前的核對 PANEL 相同），舊的啟動方式照舊有效。"""
     args = parse_args(argv)
     enable_windows_dpi_awareness()
     set_windows_app_id()
     master = tk.Tk()
-    window = PanelWindow(
-        master,
-        _memory_under(args.install_root),
-        default_env_path(args.install_root),
-        session=session_from_args(args),
-        start_on_check=start_on_check,
-    )
+    window = build_window(master, args, start_on_check=start_on_check)
     window.restore_size()
     apply_window_icon(master)
     master.mainloop()

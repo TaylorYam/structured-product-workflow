@@ -15,6 +15,7 @@ import pytest
 
 from barc_synth import SYNTH_ISIN, Spec, build_pdf
 from fcn_checker.batch import Category, check_batch, preview_batch
+from fcn_checker.ingestion import IngestionError
 from fcn_checker.orders.reference import load_reference_sheet
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.saving import run_batch, save_batch
@@ -301,9 +302,6 @@ class FakeDatabase:
         self.sheet = sheet
         self.attempts = 0
 
-    def ready(self) -> bool:
-        return True
-
     def export(self, term_sheets, fmt):
         return self.sheet, {}
 
@@ -344,6 +342,15 @@ def test_excel_source_never_touches_the_database(tmp_path) -> None:
     session.save(tmp_path / "out", now=NOW)
 
     assert database.attempts == 0 and session.write_back_error == ""
+
+
+def test_database_source_never_asks_for_a_login(tmp_path) -> None:
+    """登入由外殼在主執行緒先處理（#129）：資料庫來源沒有 ready()，沒有連線設定時不問、直接說沒有登入。"""
+    source = WorkflowDatabase(lambda: None, tmp_path)
+
+    assert not hasattr(source, "ready")
+    with pytest.raises(IngestionError, match="沒有登入資料庫"):
+        source.export([tmp_path / f"{OTHER}_TS.pdf"], FMT)
 
 
 def test_new_export_files_never_overwrite_earlier_ones(tmp_path) -> None:

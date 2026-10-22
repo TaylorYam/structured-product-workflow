@@ -457,10 +457,10 @@ def _text(value: Any) -> str | None:
 
 
 class WorkflowDatabase:
-    """`fcn_checker.panel_workflow.DatabaseSource` 的實作：連線設定由呼叫端給（視窗的資料庫登入、或 `.env`）。
+    """`fcn_checker.panel_workflow.DatabaseSource` 的實作：連線設定由外殼先取得（視窗的資料庫登入、或 `.env`）。
 
-    `ready` 在主執行緒取得連線設定（需要時問密碼）；`export`、`write_back` 可以在背景執行。
-    產生的參考條件表放在 `folder`（每次一個新檔，留作紀錄）。
+    `settings` 回傳已取得的連線設定、不詢問，`export`、`write_back` 在背景連線時才呼叫；None 表示沒有登入。
+    問密碼是畫面的事，由外殼在主執行緒先處理（#129）。產生的參考條件表放在 `folder`（每次一個新檔，留作紀錄）。
     """
 
     def __init__(
@@ -471,15 +471,10 @@ class WorkflowDatabase:
         user: str | None = None,
         on_failure: Callable[[], None] = lambda: None,
     ) -> None:
-        self._ask = settings
+        self._current_settings = settings
         self.folder = folder
         self.user = user
         self.on_failure = on_failure  # 連不上資料庫時呼叫（例：視窗下次重新問密碼）
-        self._settings: ConnectionSettings | None = None
-
-    def ready(self) -> bool:
-        self._settings = self._ask()
-        return self._settings is not None
 
     def export(self, term_sheets: Sequence[Path], fmt: ReferenceFormat) -> tuple[Path, dict[str, str]]:
         import psycopg
@@ -511,9 +506,10 @@ class WorkflowDatabase:
             raise
 
     def _require(self) -> ConnectionSettings:
-        if self._settings is None:
+        settings = self._current_settings()
+        if settings is None:
             raise CheckSourceError("沒有登入資料庫")
-        return self._settings
+        return settings
 
     def _new_path(self) -> Path:
         stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
