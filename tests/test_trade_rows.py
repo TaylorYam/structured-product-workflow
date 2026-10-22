@@ -12,13 +12,15 @@ from order_synth import CONFIG, MAILBOX, TRADE, A, maintenance_trades, order_row
 from sp_workflow.check_terms import DONE, recalculate
 from sp_workflow.daily_import import DIFFERENT, UNCHANGED, Mailbox, import_daily, trade_value
 from sp_workflow.order_import import (
-    LOCKED,
-    MAINTAIN_NEW,
-    CorrectionError,
     drafts_from,
     import_drafts,
     open_maintenance,
     save_maintenance,
+)
+from sp_workflow.product_write import (
+    LOCKED,
+    MAINTAIN_NEW,
+    CorrectionError,
 )
 from sp_workflow.trade_rows import (
     CANCEL_NOTE,

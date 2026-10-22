@@ -32,6 +32,7 @@ from openpyxl.styles import Font
 from sp_workflow.check_terms import DONE
 from sp_workflow.database import ConnectionSettings, DatabaseError, connect, require_current_schema
 from sp_workflow.order_terms import missing_fields, with_required
+from sp_workflow.product_write import lock_terms
 
 if TYPE_CHECKING:
     import psycopg
@@ -309,10 +310,8 @@ def write_back(
             tdcc = item.product_code
             if tdcc not in known:
                 continue
-            (locked_at,) = conn.execute(
-                "SELECT locked_at FROM workflow.product WHERE tdcc = %s FOR UPDATE", (tdcc,)
-            ).fetchone()
-            if locked_at is not None:
+            stored = lock_terms(conn, tdcc)  # 和商品條件寫入共用同一把鎖（#124）
+            if stored is not None and stored.locked:
                 already.append(tdcc)
                 continue
             current = _load(conn, [tdcc]).get(tdcc)

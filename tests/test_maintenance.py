@@ -12,13 +12,7 @@ from order_synth import CONFIG, A, B, maintenance_draft, order_row
 from sp_workflow.check_terms import DONE, TO_CONFIRM, recalculate
 from sp_workflow.daily_import import import_daily
 from sp_workflow.order_import import (
-    LOCKED,
-    MAINTAIN_NEW,
-    MAINTAIN_OPEN,
-    MANUAL_SOURCE,
     MISSING_NOTE,
-    OVERWRITTEN,
-    CorrectionError,
     drafts_from,
     import_drafts,
     maintenance_problems,
@@ -27,6 +21,14 @@ from sp_workflow.order_import import (
     save_maintenance,
 )
 from sp_workflow.order_terms import FIELDS, REQUIRED, TDCC_FIELD
+from sp_workflow.product_write import (
+    LOCKED,
+    MAINTAIN_NEW,
+    MAINTAIN_OPEN,
+    MANUAL_SOURCE,
+    OVERWRITTEN,
+    CorrectionError,
+)
 
 UF_215 = {"Upfront / NotePrice (%)": Decimal("97.85")}  # UF 2.15，和 db_synth 的交易列一樣
 C = "029199990003"  # 只有交易明細（BARC）
@@ -332,7 +334,7 @@ def test_a_product_created_by_someone_else_at_the_same_time_asks_for_a_reload(pg
     draft = open_maintenance(pg, C, CONFIG)
     draft.values["Coupon p.a. (%)"] = Decimal(11)
     import_order(pg, C)
-    monkeypatch.setattr("sp_workflow.order_import._stored", lambda conn, tdcc: None)  # 確認時還看不到
+    monkeypatch.setattr("sp_workflow.product_write.lock_terms", lambda conn, tdcc: None)  # 確認時還看不到
 
     with pytest.raises(CorrectionError, match="打開之後資料庫已經有這檔的商品條件"):
         save_maintenance(pg, draft, CONFIG, user="operator1")
