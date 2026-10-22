@@ -1,0 +1,262 @@
+"""「8 進度」分頁（#156、ADR 0019）：每檔商品走到哪一個作業進度、各步日期與存續狀態；篩選、排序、匯出 Excel。
+
+按「重新整理」在背景讀資料庫（`window_actions.load_progress_rows`），篩選與排序只在畫面上做、不再連資料庫；
+「匯出 Excel…」把目前篩選、排序後的整張表寫成一份 Excel（`progress.export_progress`）。
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import tkinter as tk
+from collections.abc import Callable
+from pathlib import Path
+from tkinter import filedialog, ttk
+
+from fcn_checker.check_config import ConfigPaths
+from sp_workflow.lifecycle import DELIVERY, IN_STOCK, KO, MATURITY, REDEMPTION
+from sp_workflow.local_settings import FolderMemory
+from sp_workflow.progress import (
+    DATE_COLUMNS,
+    FINISHED,
+    PROGRESS,
+    ProgressExport,
+    ProgressRow,
+    by_days,
+    export_name,
+    export_progress,
+    filter_rows,
+)
+from sp_workflow.tabs.base import DatabaseLogin, Tab
+from sp_workflow.window_actions import load_progress_rows
+
+LIFECYCLES = (IN_STOCK, KO, DELIVERY, MATURITY, REDEMPTION)
+ALL_ISSUERS = "全部"
+_DATE_KEYS = tuple(f"date_{i}" for i in range(len(DATE_COLUMNS)))
+_DESCENDING_FIRST = frozenset(("trade_date", "days", *_DATE_KEYS))  # 第一次點就由大到小的欄
+COLUMNS = (
+    ("tdcc", "TDCC", 120),
+    ("issuer", "上手", 60),
+    ("trade_date", "交易日", 90),
+    ("days", "距今天數", 70),
+    ("progress", "作業進度", 90),
+    ("lifecycle", "存續狀態", 80),
+    *((key, name, 95) for key, name in zip(_DATE_KEYS, DATE_COLUMNS, strict=True)),
+    ("reason", "卡住的原因", 320),
+)
+
+
+class ProgressTab(Tab):
+    def __init__(
+        self, notebook: ttk.Notebook, memory: FolderMemory, db: DatabaseLogin, config_paths: Callable[[], ConfigPaths]
+    ) -> None:
+        super().__init__(notebook, "進度", COLUMNS)
+        self.memory = memory
+        self.db = db
+        self.config_paths = config_paths
+        self.working = False
+        self.rows: tuple[ProgressRow, ...] = ()  # 最近一次重新整理讀到的全部商品
+        self.shown: list[ProgressRow] = []  # 篩選、排序後畫面上的列
+        self.sort: tuple[str, bool] | None = None  # 點欄位排序：(欄, 由大到小)；None 是預設（距今天數由大到小）
+        self.status_var.set("按「重新整理」讀資料庫，列出每檔商品的作業進度；篩選與排序不會再讀資料庫。")
+
+        self.page_header(
+            "作業進度",
+            "每檔商品走到哪一步、各步的日期、距交易日幾天與存續狀態；落後的依距今天數排在上面。",
+        )
+        body = self.body(self.card(1))
+        filters = ttk.Frame(body, style="CardBody.TFrame")
+        filters.grid(row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(filters, text="交易日", style="Card.TLabel").grid(row=0, column=0, sticky="w")
+        self.first_var, self.last_var = tk.StringVar(), tk.StringVar()
+        dates = ttk.Frame(filters, style="CardBody.TFrame")
+        dates.grid(row=0, column=1, sticky="w", padx=(8, 0))
+        for i, var in enumerate((self.first_var, self.last_var)):
+            entry = ttk.Entry(dates, textvariable=var, width=12)
+            entry.grid(row=0, column=i * 2)
+            entry.bind("<Return>", lambda _event: self.refilter())
+            entry.bind("<FocusOut>", lambda _event: self.refilter())
+        ttk.Label(dates, text="～", style="Card.TLabel").grid(row=0, column=1, padx=4)
+        ttk.Label(dates, text="YYYY-MM-DD，空白是不限", style="CardMuted.TLabel").grid(row=0, column=3, padx=(8, 0))
+        ttk.Label(filters, text="上手", style="Card.TLabel").grid(row=0, column=2, sticky="w", padx=(24, 0))
+        self.issuer_var = tk.StringVar(value=ALL_ISSUERS)
+        self.issuer_box = ttk.Combobox(
+            filters, textvariable=self.issuer_var, values=(ALL_ISSUERS,), state="readonly", width=10
+        )
+        self.issuer_box.grid(row=0, column=3, sticky="w", padx=(8, 0))
+        self.issuer_box.bind("<<ComboboxSelected>>", lambda _event: self.refilter())
+        self.progress_vars = self._checks(filters, 1, "作業進度", PROGRESS)
+        self.lifecycle_vars = self._checks(filters, 2, "存續狀態", LIFECYCLES)
+        self.result_area(body, 1)
+        self.refresh_button = ttk.Button(self.buttons, text="重新整理", command=self.refresh, style="Primary.TButton")
+        self.refresh_button.pack(side=tk.LEFT)
+        self.export_button = ttk.Button(self.buttons, text="匯出 Excel…", command=self.export)
+        self.export_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.place_table(2)
+        for key, _, _ in COLUMNS:
+            self.table.heading(key, command=lambda k=key: self.sort_by(k))
+        self._busy(False)
+
+    def _checks(self, parent: ttk.Frame, row: int, label: str, names: tuple[str, ...]) -> dict[str, tk.BooleanVar]:
+        """一列多選的勾選框；都不勾等於全部。"""
+        ttk.Label(parent, text=label, style="Card.TLabel").grid(row=row, column=0, sticky="nw", pady=(10, 0))
+        box = ttk.Frame(parent, style="CardBody.TFrame")
+        box.grid(row=row, column=1, columnspan=3, sticky="w", padx=(8, 0), pady=(10, 0))
+        found = {}
+        for i, name in enumerate(names):
+            var = tk.BooleanVar(value=False)
+            ttk.Checkbutton(box, text=name, variable=var, command=self.refilter, style="Card.TCheckbutton").grid(
+                row=0, column=i, sticky="w", padx=(0, 12)
+            )
+            found[name] = var
+        ttk.Label(box, text="都不勾是全部", style="CardMuted.TLabel").grid(row=0, column=len(names), sticky="w")
+        return found
+
+    def _busy(self, busy: bool) -> None:
+        self.working = busy
+        self.refresh_button.configure(state=tk.DISABLED if busy else tk.NORMAL)
+        self.export_button.configure(state=tk.DISABLED if busy or not self.shown else tk.NORMAL)
+
+    # ---------- 重新整理 ----------
+
+    def refresh(self) -> None:
+        if self.working:
+            return
+        settings = self.db.settings()
+        if settings is None:
+            return
+        paths = self.config_paths()
+        self._busy(True)
+        self.restart()
+
+        def run() -> tuple[ProgressRow, ...]:
+            return load_progress_rows(settings, paths)
+
+        self.run_in_background(run, "讀取作業進度中…", self._loaded, clear=False)
+
+    def _loaded(self, result: object) -> None:
+        self.db.after_run(result)
+        if isinstance(result, tuple):
+            self.rows = result
+            issuers = sorted({row.issuer for row in result if row.issuer})
+            self.issuer_box.configure(values=(ALL_ISSUERS, *issuers))
+            if self.issuer_var.get() not in (ALL_ISSUERS, *issuers):
+                self.issuer_var.set(ALL_ISSUERS)
+            self.refilter()
+        self._busy(False)
+
+    # ---------- 篩選、排序 ----------
+
+    def _date(self, var: tk.StringVar, label: str) -> tuple[dt.date | None, str]:
+        text = var.get().strip()
+        if not text:
+            return None, ""
+        try:
+            return dt.date.fromisoformat(text), ""
+        except ValueError:
+            return None, f"{label}「{text}」不是 YYYY-MM-DD，這一邊先不限。"
+
+    def refilter(self) -> None:
+        """依目前的篩選條件與排序重畫結果表；還沒重新整理過時不動。"""
+        if not self.rows:
+            return
+        first, first_error = self._date(self.first_var, "交易日起")
+        last, last_error = self._date(self.last_var, "交易日迄")
+        issuer = self.issuer_var.get()
+        rows = filter_rows(
+            self.rows,
+            first=first,
+            last=last,
+            progress={name for name, var in self.progress_vars.items() if var.get()},
+            lifecycle={name for name, var in self.lifecycle_vars.items() if var.get()},
+            issuer="" if issuer == ALL_ISSUERS else issuer,
+        )
+        self.shown = self._sorted(rows)
+        self.table.delete(*self.table.get_children())
+        for row in self.shown:
+            problem = row.progress != FINISHED and bool(row.reason)
+            self.table.insert("", tk.END, values=_cells(row), tags=("problem",) if problem else ())
+        unfinished = sum(row.progress != FINISHED for row in self.shown)
+        notes = " ".join(error for error in (first_error, last_error) if error)
+        self.finish(
+            (("顯示（檔）", len(self.shown), False), ("還沒完成（檔）", unfinished, False)),
+            f"共 {len(self.rows)} 檔，篩選後 {len(self.shown)} 檔；依{self._sort_text()}排序。{notes}".rstrip(),
+        )
+        self._busy(self.working)
+
+    def sort_by(self, key: str) -> None:
+        """點欄位排序：第一次由大到小（距今天數、日期）或由小到大（文字），再點一次反過來。"""
+        current, descending = self.sort or ("days", True)  # 預設就是距今天數由大到小
+        self.sort = (key, not descending if key == current else key in _DESCENDING_FIRST)
+        self.refilter()
+
+    def _sorted(self, rows: list[ProgressRow]) -> list[ProgressRow]:
+        if self.sort is None:
+            return by_days(rows)
+        key, descending = self.sort
+        index = [k for k, _, _ in COLUMNS].index(key)
+        present = [row for row in rows if _sort_value(row, index) is not None]
+        blank = [row for row in rows if _sort_value(row, index) is None]
+        present.sort(key=lambda row: _sort_value(row, index), reverse=descending)
+        return present + sorted(blank, key=lambda row: row.tdcc)  # 空白的一律放最後
+
+    def _sort_text(self) -> str:
+        if self.sort is None:
+            return "距今天數由大到小"
+        key, descending = self.sort
+        name = next(label for k, label, _ in COLUMNS if k == key)
+        return f"{name}{'由大到小' if descending else '由小到大'}"
+
+    # ---------- 匯出 ----------
+
+    def export(self) -> None:
+        if self.working or not self.shown:
+            return
+        chosen = filedialog.asksaveasfilename(
+            title="匯出作業進度",
+            initialdir=self.memory.load().get("progress_export") or None,
+            initialfile=export_name(),
+            defaultextension=".xlsx",
+            filetypes=[("Excel 活頁簿", "*.xlsx")],
+            parent=self.master,
+        )
+        if not chosen:
+            return
+        path = Path(chosen)
+        self.memory.remember(progress_export=str(path.parent))
+        rows = list(self.shown)
+        self._busy(True)
+        self.mark_done(False)
+
+        def run() -> ProgressExport:
+            return export_progress(rows, path)
+
+        self.run_in_background(run, "匯出作業進度中…", self._exported, clear=False)
+
+    def _exported(self, result: object) -> None:
+        self._busy(False)
+        if not isinstance(result, ProgressExport):
+            return
+        self.status_var.set(f"已匯出作業進度 {result.count} 檔（目前的篩選與排序）：{result.path}")
+        self.mark_done(True)
+
+
+def _cells(row: ProgressRow) -> tuple[str, ...]:
+    trade_date = "" if row.trade_date is None else f"{row.trade_date:%Y-%m-%d}"
+    days = "" if row.days is None else str(row.days)
+    dates = tuple("" if value is None else f"{value.astimezone():%Y-%m-%d}" for value in row.dates)
+    return (row.tdcc, row.issuer, trade_date, days, row.progress, row.lifecycle, *dates, row.reason)
+
+
+def _sort_value(row: ProgressRow, index: int) -> object:
+    """排序用的值（依 `COLUMNS` 的位置）；作業進度依九步的順序，空白是 None。"""
+    values = (
+        row.tdcc,
+        row.issuer or None,
+        row.trade_date,
+        row.days,
+        PROGRESS.index(row.progress),
+        LIFECYCLES.index(row.lifecycle) if row.lifecycle in LIFECYCLES else len(LIFECYCLES),
+        *row.dates,
+        row.reason or None,
+    )
+    return values[index]

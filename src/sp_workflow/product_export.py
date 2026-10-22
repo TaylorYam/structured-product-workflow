@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -49,7 +50,7 @@ def export_products(conn: psycopg.Connection, path: Path) -> ExportReceipt:
         rows = cur.fetchall()
         tdcc = columns.index("tdcc")
         statuses = lifecycle_status(conn, (row[tdcc] for row in rows))
-    _save(path, (*columns, LIFECYCLE_COLUMN), [(*row, statuses[row[tdcc]].status) for row in rows])
+    save_rows(path, TABLE, (*columns, LIFECYCLE_COLUMN), [(*row, statuses[row[tdcc]].status) for row in rows])
     return ExportReceipt(path, len(rows))
 
 
@@ -62,10 +63,11 @@ def _excel(value: object) -> object:
     return value
 
 
-def _save(path: Path, columns: tuple[str, ...], rows: list[tuple[object, ...]]) -> None:
+def save_rows(path: Path, title: str, columns: Sequence[str], rows: Sequence[Sequence[object]]) -> None:
+    """一張工作表（`title`）：第 1 列粗體欄名、凍結窗格、自動篩選；先寫暫存檔再換名（進度頁匯出也用，#156）。"""
     workbook = openpyxl.Workbook()
     sheet = workbook.active
-    sheet.title = TABLE
+    sheet.title = title
     sheet.append(list(columns))
     for cell in sheet[1]:
         cell.font = Font(bold=True)

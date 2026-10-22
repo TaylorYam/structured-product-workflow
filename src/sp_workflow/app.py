@@ -1,4 +1,4 @@
-"""FCN Workflow 視窗：七個分頁照每天的作業順序排（#73、#74、#90、#115、#116）。
+"""FCN Workflow 視窗：八個分頁照每天的作業順序排（#73、#74、#90、#115、#116、#156）。
 
 1. 每日匯入：選每日更新，把交易明細與每日股價匯入最小 FCN 資料庫（#32、#87）；信箱在資料庫直接維護（#35）。
 2. 起單資料：貼 TDCC、選一份起單建檔（#97），在右邊逐檔確認、修改後匯入資料庫（#86）。
@@ -10,8 +10,10 @@
 7. 人工維護：按「檢查」列出還沒鎖住、缺資料的商品（缺的格子淺紅底），或輸入 TDCC 打開任何一檔，
    在右邊補齊、修改資料庫裡的商品條件與交易明細列的值；已鎖住的照更正的規則存檔（#55、#115、#116）。
    「匯出商品條件…」把資料庫目前的 `workflow.product` 整張匯出成 Excel，位置自己選（#122）。
+8. 進度：按「重新整理」列出每檔商品的作業進度、各步日期與存續狀態；依交易日、作業進度、存續狀態、上手篩選，
+   點欄位排序，「匯出 Excel…」匯出目前的篩選結果（#156）。
 
-1、2、3、5、6、7 頁的結果表右上方有「全部複製」；結果表按右鍵可以只複製一格或一列，
+1、2、3、5、6、7、8 頁的結果表右上方有「全部複製」；結果表按右鍵可以只複製一格或一列，
 Treeview 的表（7 的檢查結果表除外）另有 Ctrl+A 全選、Ctrl+C 複製選取的列（#121）。
 
 商品資料夾所在的根目錄在視窗最上方設一次，3、6 兩頁共用（#75）。
@@ -65,6 +67,7 @@ from sp_workflow.tabs.mail import MailDraftTab
 from sp_workflow.tabs.manual import MaintenanceTab
 from sp_workflow.tabs.orders import OrderTermsTab
 from sp_workflow.tabs.prepare import PrepareTab
+from sp_workflow.tabs.progress import ProgressTab
 from sp_workflow.tabs.returning import ReturnTab
 
 
@@ -134,7 +137,7 @@ def _style_shell(master: tk.Tk) -> None:
 
 
 class StepSidebar(ttk.Frame):
-    """左側步驟欄（#83）：照每天的順序列出 1～7，按了切到那一步；目前所在的那一步用淺藍底標出。
+    """左側步驟欄（#83）：照每天的順序列出 1～8，按了切到那一步；目前所在的那一步用淺藍底標出。
 
     分頁標籤已藏起來，切頁一律經過 notebook.select（「下一步 →」也是），步驟欄跟著 <<NotebookTabChanged>> 更新。
     """
@@ -187,7 +190,7 @@ class PanelWindow:
         body = ttk.Frame(master)
         body.pack(fill=tk.BOTH, expand=True)
         self.notebook = ttk.Notebook(body, style="Workflow.TNotebook")
-        # 分頁照每天的作業順序建立，前面自動加上 1～7 的編號；人工維護不是每天的步驟，放最後（#115）
+        # 分頁照每天的作業順序建立，前面自動加上 1～8 的編號；人工維護不是每天的步驟（#115），進度頁放最後（#156）
         self.daily = DailyImportTab(
             self.notebook,
             memory,
@@ -211,10 +214,11 @@ class PanelWindow:
         self.returning = ReturnTab(self.notebook, memory, db)
         self.mail = MailDraftTab(self.notebook, memory, db, self.root_folder)
         self.manual = MaintenanceTab(self.notebook, memory, db, lambda: self.session.paths)
+        self.progress = ProgressTab(self.notebook, memory, db, lambda: self.session.paths)
         tabs = self.notebook.tabs()
         for number, tab in enumerate(tabs, 1):
             self.notebook.tab(tab, text=f"{number} {self.notebook.tab(tab, 'text')}")
-        self.pages = (self.daily, self.orders, self.prepare, self.returning, self.mail, self.manual)
+        self.pages = (self.daily, self.orders, self.prepare, self.returning, self.mail, self.manual, self.progress)
         for page, tab in [(p.frame, p) for p in self.pages] + [(self.check, self.check)]:
             tab.show_step(f"步驟 {self.notebook.index(page) + 1}／{len(tabs)}")
         self.sidebar = StepSidebar(body, self.notebook, self.pixels)

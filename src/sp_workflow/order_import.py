@@ -357,11 +357,11 @@ def load_correction(conn: psycopg.Connection, tdcc: str, config: ImportConfig) -
         raise CorrectionError(f"{tdcc}：{refused}")
     assert stored is not None
     fields = stored.fields
-    row = OrderRow(tdcc, LOCKED, _issuer_code(tdcc, stored.columns["issuer"], config), dict(fields))
+    row = OrderRow(tdcc, LOCKED, issuer_code(tdcc, stored.columns["issuer"], config), dict(fields))
     return OrderDraft(row, dict(fields), dict(fields), dict(fields), database_checked=True, correcting=True)
 
 
-def _issuer_code(tdcc: str, issuer: str, config: ImportConfig) -> str:
+def issuer_code(tdcc: str, issuer: str, config: ImportConfig) -> str:
     """上手代號：TDCC 前三碼；對照沒有時用資料庫的發行機構寫法反查（上手不改，只用來檢查與顯示）。"""
     code = config.issuer_prefixes.get(tdcc[:3], "")
     if code in config.issuer_names:
@@ -426,7 +426,7 @@ def missing_products(conn: psycopg.Connection, config: ImportConfig) -> tuple[Mi
             columns = dict(zip(PRODUCT_COLUMNS, row, strict=True))
             missing = tuple(missing_fields(columns))
             if missing:
-                issuer = _issuer_code(tdcc, columns["issuer"], config)
+                issuer = issuer_code(tdcc, columns["issuer"], config)
                 found.append(MissingProduct(tdcc, issuer, MAINTAIN_OPEN, fields_of(columns), missing))
         for (tdcc,) in conn.execute(
             "SELECT DISTINCT tdcc FROM workflow.trade_row t"
@@ -446,7 +446,7 @@ def open_maintenance(conn: psycopg.Connection, tdcc: str, config: ImportConfig) 
         return load_correction(conn, tdcc, config)
     if stored is not None:
         fields = stored.fields
-        row = OrderRow(tdcc, MAINTAIN_OPEN, _issuer_code(tdcc, stored.columns["issuer"], config), dict(fields))
+        row = OrderRow(tdcc, MAINTAIN_OPEN, issuer_code(tdcc, stored.columns["issuer"], config), dict(fields))
         return OrderDraft(row, dict(fields), dict(fields), dict(fields), database_checked=True, correcting=True)
     if not has_trade_rows(conn, tdcc):
         raise CorrectionError(f"{tdcc}：交易明細和商品條件都沒有這檔，不能在這裡新增")

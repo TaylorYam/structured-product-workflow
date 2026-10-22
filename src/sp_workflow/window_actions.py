@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -50,6 +51,7 @@ from sp_workflow.order_terms import OrderRow, collect_orders
 from sp_workflow.preparation import PrepareReceipt, prepare_batch
 from sp_workflow.product_export import ExportReceipt, export_products
 from sp_workflow.product_write import CorrectionReceipt
+from sp_workflow.progress import ProgressRow, load_progress
 from sp_workflow.returning import ReturnReceipt, return_to_folders
 from sp_workflow.step_records import (
     Recorded,
@@ -285,6 +287,19 @@ def export_product_terms(settings: ConnectionSettings, path: Path) -> ExportRece
     """把資料庫目前的 `workflow.product` 整張匯出成 Excel（#122）。"""
     with connect(settings) as conn:
         return export_products(conn, path)
+
+
+# ---------- 8 進度 ----------
+
+
+def load_progress_rows(
+    settings: ConnectionSettings, paths: ConfigPaths, today: dt.date | None = None
+) -> tuple[ProgressRow, ...]:
+    """所有商品的作業進度（#156）；上手代號照上手編號對照，距今天數以今天（或 `today`）算。"""
+    config = load_import_config(paths)
+    with connect(settings) as conn:
+        require_current_schema(conn)
+        return load_progress(conn, config, today or dt.date.today())
 
 
 def _first_line(exc: Exception) -> str:
