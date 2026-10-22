@@ -476,7 +476,7 @@ class WorkflowDatabase:
         user: str | None = None,
         on_failure: Callable[[], None] = lambda: None,
     ) -> None:
-        self._settings = settings
+        self._current_settings = settings
         self.folder = folder
         self.user = user
         self.on_failure = on_failure  # 連不上資料庫時呼叫（例：視窗下次重新問密碼）
@@ -511,7 +511,7 @@ class WorkflowDatabase:
             raise
 
     def _require(self) -> ConnectionSettings:
-        settings = self._settings()
+        settings = self._current_settings()
         if settings is None:
             raise CheckSourceError("沒有登入資料庫")
         return settings

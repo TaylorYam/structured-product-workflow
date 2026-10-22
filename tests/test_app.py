@@ -2168,8 +2168,12 @@ def test_database_source_uses_the_settings_the_shell_logged_in_with(master, tmp_
     assert source.folder == tmp_path.resolve() / "runtime" / app.EXPORT_FOLDER
     assert db.current() is None, "還沒登入"
 
-    assert db.logged_in()
+    assert db.log_in()
     assert source._require().password == "secret" and len(asked) == 1, "背景拿設定不再問"
+
+    (tmp_path / ".env").write_text("PGUSER=operator1\n", encoding="utf-8")  # 別的分頁安靜地讀，連線設定檔壞了
+    assert db.settings(quiet=True) is None
+    assert source._require().password == "secret", "別的分頁沒讀到，不會把核對頁登出"
 
     source.on_failure()
 

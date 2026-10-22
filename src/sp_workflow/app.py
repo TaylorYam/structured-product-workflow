@@ -765,15 +765,17 @@ class _DatabaseLogin:
 
     def settings(self, *, quiet: bool = False) -> ConnectionSettings | None:
         """連線設定；沒有密碼時詢問一次，取消就是 None。`quiet`：沒有連線設定檔或格式不對時不跳錯誤（讀 Order 時用）。"""
-        self._current = self._ask(quiet)
-        return self._current
+        settings = self._ask(quiet)
+        if settings is not None:  # 沒拿到時不覆蓋：別的分頁取消或安靜地讀失敗，不會把核對頁登出
+            self._current = settings
+        return settings
 
-    def logged_in(self) -> bool:
+    def log_in(self) -> bool:
         """在主執行緒登入（需要時問密碼）；取消或沒有連線設定時 False。"""
         return self.settings() is not None
 
     def current(self) -> ConnectionSettings | None:
-        """最近一次 `settings` 登入的連線設定，不詢問；還沒登入、取消或忘記密碼後是 None。"""
+        """最近一次 `settings` 拿到的連線設定，不詢問；還沒登入或忘記密碼後是 None。"""
         return self._current
 
     def _ask(self, quiet: bool) -> ConnectionSettings | None:
@@ -2266,7 +2268,7 @@ class PanelWindow:
 
     def __init__(
         self,
-        master: tk.Misc,
+        master: tk.Tk,
         memory: FolderMemory,
         db: _DatabaseLogin,
         session: PanelSession,
@@ -2306,7 +2308,7 @@ class PanelWindow:
             on_prepared=self._prepared,
             on_next=lambda: self.notebook.select(self.check),
         )
-        self.check = CheckTab(self.notebook, self.session, self.pixels, on_saved=self._check_saved, login=db.logged_in)
+        self.check = CheckTab(self.notebook, self.session, self.pixels, on_saved=self._check_saved, login=db.log_in)
         self.check.add_next_step("下一步：放回 →", lambda: self.notebook.select(self.returning.frame))
         self.notebook.add(self.check, text="核對")
         self.returning = ReturnTab(self.notebook, memory)
@@ -2554,7 +2556,7 @@ def _memory_under(install_root: Path | None) -> FolderMemory:
     return FolderMemory.under(install_root) if install_root else FolderMemory()
 
 
-def build_window(master: tk.Misc, args: argparse.Namespace, *, start_on_check: bool = False) -> PanelWindow:
+def build_window(master: tk.Tk, args: argparse.Namespace, *, start_on_check: bool = False) -> PanelWindow:
     """依啟動參數組視窗（#129）：資料庫登入 → 核對的資料庫來源 → 建好就帶著它的核對工作階段 → 視窗。"""
     db = _DatabaseLogin(master, default_env_path(args.install_root))
     session = session_from_args(args, _check_database(db, args.install_root))
