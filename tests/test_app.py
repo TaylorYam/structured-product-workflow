@@ -34,21 +34,24 @@ from sp_workflow.documents import DocKind
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.mail_drafts import DRAFTED, NOT_NEEDED, DraftOutcome, DraftReceipt
 from sp_workflow.order_import import (
-    LOCKED,
-    MAINTAIN_NEW,
-    MAINTAIN_OPEN,
     MISSING_NOTE,
     MissingProduct,
     OrderDraft,
-    OrderImportLine,
     OrderImportReceipt,
+    OrderImportResult,
     drafts_from,
 )
-from sp_workflow.order_import import NEW as ORDER_NEW
-from sp_workflow.order_import import SKIPPED as ORDER_SKIPPED
 from sp_workflow.order_terms import FIELDS, REQUIRED, OrderRow
 from sp_workflow.order_terms import PENDING as ORDER_PENDING
 from sp_workflow.preparation import PREPARED, SKIPPED, PreparedDocument, PrepareReceipt, ProductOutcome
+from sp_workflow.product_write import (
+    LOCKED,
+    MAINTAIN_NEW,
+    MAINTAIN_OPEN,
+    OrderImportLine,
+)
+from sp_workflow.product_write import NEW as ORDER_NEW
+from sp_workflow.product_write import SKIPPED as ORDER_SKIPPED
 from sp_workflow.returning import NOT_RETURNED, RETURNED, ReturnOutcome, ReturnReceipt
 from sp_workflow.trade_rows import CANCEL_NOTE, UNMATCHED_NOTE, TradeRowsDraft
 
@@ -1104,7 +1107,7 @@ def test_import_results_replace_the_status_column(master, tmp_path: Path) -> Non
         OrderImportLine("029199990001", ORDER_SKIPPED, "Currency：問題"),
     )
 
-    window.orders._saved(app._SaveResult(OrderImportReceipt(7, lines)))
+    window.orders._saved(OrderImportResult(OrderImportReceipt(7, lines)))
 
     assert table_rows(window.orders) == [("029199990002", ORDER_NEW), ("029199990001", ORDER_SKIPPED)]
     assert window.orders.kpis.values == (("已匯入（檔）", 1, False), ("沒匯入（檔）", 1, True))
@@ -1121,7 +1124,7 @@ def test_reload_failure_after_import_says_the_database_was_written(master, tmp_p
     window = order_window(master, tmp_path, order_row("029199990001"))
     receipt = OrderImportReceipt(8, (OrderImportLine("029199990001", ORDER_NEW),))
 
-    window.orders._saved(app._SaveResult(receipt, "connection lost"))
+    window.orders._saved(OrderImportResult(receipt, reload_error="connection lost"))
 
     assert "已寫進資料庫，但重新讀取資料庫的值失敗（connection lost）" in window.orders.status_var.get()
 
@@ -1234,9 +1237,7 @@ def test_order_import_shows_the_check_terms_of_the_batch(master, tmp_path: Path,
     window = order_window(master, tmp_path, order_row("029199990001"), order_row("029199990002"))
     lines = (OrderImportLine("029199990001", ORDER_NEW), OrderImportLine("029199990002", ORDER_NEW))
     calcs = (NEEDS_RELEASE, CalcLine("029199990002", DONE, "", True), CalcLine("029199990009", WAIT_PRICES, "", True))
-    recalc = app._Recalc(CalcReceipt(calcs), CONFIG.calendar)
-
-    window.orders._saved(app._SaveResult(OrderImportReceipt(7, lines), recalc=recalc))
+    window.orders._saved(OrderImportResult(OrderImportReceipt(7, lines), CalcReceipt(calcs)))
 
     values = {
         window.orders.table.set(iid, "tdcc"): window.orders.table.item(iid, "values") for iid in window.orders.items
