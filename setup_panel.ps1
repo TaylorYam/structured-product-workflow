@@ -8,6 +8,31 @@ try {
     if ($LASTEXITCODE -ne 0) { throw '需要 Python 3.11 以上及 Tcl/Tk。' }
     $pythonVersion = (& $pythonExe @pythonArgs -c "import sys, platform; print(sys.version.split()[0], platform.machine(), sys.executable)" | Out-String).Trim()
     Write-Host ('使用 Python ' + $pythonVersion)
+    # 顯示裝的是哪個版本的程式（#136）：公司電腦停在功能 branch 時，git pull 拉的不是 main，重裝也看不到新功能。
+    # 找不到 git、不是 git repo（例如用 ZIP 複製）或沒有 origin/main 時整段略過；只提醒、不中止，也不自己 fetch／pull／checkout。
+    try {
+        if ((Get-Command git -ErrorAction SilentlyContinue) -and (Test-Path -LiteralPath (Join-Path $PSScriptRoot '.git'))) {
+            $branch = (& git rev-parse --abbrev-ref HEAD | Out-String).Trim()
+            $commit = (& git log -1 --format=%h | Out-String).Trim()
+            $commitDate = (& git log -1 --format=%cs | Out-String).Trim()
+            if ($LASTEXITCODE -eq 0 -and $branch -and $commit) {
+                Write-Host ('程式版本：' + $branch + ' ' + $commit + '（' + $commitDate + '）')
+                if ($branch -ne 'main') {
+                    Write-Host ('提醒：目前不在 main（在 ' + $branch + '），裝的不是最新版。要更新請先在這個資料夾執行 git checkout main、git pull，再重跑安裝。')
+                } else {
+                    & git rev-parse --verify --quiet origin/main | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        $behind = (& git rev-list --count HEAD..origin/main | Out-String).Trim()
+                        if ($LASTEXITCODE -eq 0 -and $behind -match '^\d+$' -and [int]$behind -gt 0) {
+                            Write-Host ('提醒：本機 main 落後 origin/main ' + $behind + ' 個 commit，請先 git pull 再重跑安裝。')
+                        }
+                    }
+                }
+            }
+        }
+    } catch {
+        # 版本提示只是提醒，失敗不影響安裝
+    }
     # FCN Workflow 開著時 .venv 的 DLL 被鎖住，--clear 會刪到一半失敗（#110）。
     # .venv\Scripts\python(w).exe 會再開系統 Python 的子程序，子程序的命令列仍以 .venv 路徑開頭，所以兩者都要比對
     $venvPrefix = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '.venv')).TrimEnd('\') + '\'
