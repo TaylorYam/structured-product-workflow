@@ -42,7 +42,7 @@
 | 年利率 `coupon_pa_pct` | 共用 `field.coupon_pa_pct` | 第 13 項 `即年利率y%` 的 y（說明書有年利率，不需要 `reference_fields`） |
 | 標的 `underlyings`、各標的價格 | 共用 `field.underlyings`、價格規則 | 照順序比對（7 份順序相同，不加 `any_order_issuers`）；彭博代碼本來就沒有 ` Equity` |
 | 期初定價 `initial_pricing` | 共用 `field.initial_pricing` | 交 `absent`：不和說明書比，只檢查表上是允許值（2026-10-15 確認）；表上 `VWAP` 時價格欄照 Issue #122、#246 不比對、通過後覆寫（NX5） |
-| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 第四章 4.、8. 的 `即X幣別`（4 筆）；倍數都是預設 1（不設 `min_amount_multiples.natixis`） |
+| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 第四章 4.、8. 的 `即X幣別`（4 筆）；倍數都是預設 1（不設 `issuer.natixis.min_amount_multiples`） |
 | 金額旁的幣別 `currency_others` | 共用 `field.currency`（Issue #170） | 第一章第 5 項(2) 面額；第四章 4.、8. 的 `即X幣別` 各一筆。說明文字的幣別字每處一筆（Issue #318）：第 6 項 `低於100% X投資本金`、第 8 項 `條款以X計算及支付`／`以X支付`（3 處）、第 15 項 `所得之X金額`（剩餘現金金額）、第 13 項 `無條件捨去至整數位之X金額`（日圓商品才有，沒有就不核對）；情境一～四每個情境一筆（金額旁的幣別字逐處，§3.7）。連結標的表 `貨幣` 欄不列入 |
 
 ### 3.2 審查標準規則（共用 `rules/review_standard.py`）
@@ -52,13 +52,13 @@
 | 審查通過日期 | 封面 `受託(或銷售)機構審查通過之日期及文號：` | 共用（依交易日）；**`approval_dates` 加入 2024-03-20、2024-08-28**（2026-10-15 作業人員確認都是受託機構真實的歷次審查日期；NX1 寫 2024-03-20、Citi CT1 寫 2024-08-28）。所有上手生效：交易日早於 2025-06-24 的既有上手舊文件從「轉人工覆核（`approval_date_not_configured`）」改成和這兩天比；本機其他上手樣本（含 OOS 回報包）只有 Citi CT1 的審查日期由轉人工覆核改為通過，其餘結果不變 |
 | 受託機構負責人 | 第二章 3.5 `• 負責人姓名：` | 共用 |
 | 受託機構名稱／電話／地址 | 封面；第二章 3.5 `• 事業名稱：`、`• 營業所在地：` | 共用；名稱的其他出處 `distributor_names_others`（Issue #318）：封面警語與第三章 5. 警語 (5) `而非由…(名稱)所保證`、(6) `由…(名稱)另行訂定者`、`係由…(名稱)負責外` 各 3 處，第四章 10. `投資人應向…(名稱)提出贖回指示`、`…(名稱)需俟實際收到`，14. `給付之方式：…(名稱)於實際收到`（52 份都有，讀不到轉人工覆核）；地址、負責人沒有其他出處；電話 `+886 2 5556 1313` 已在 `phone_equivalents`，地址 `台北市民生東路三段158號6樓` 已在 `address_equivalents`；第二章、第四章都沒有受託機構電話（`distributor_phone_ch4` 交 `absent`） |
-| 發行機構名稱 | 封面 `發行機構名稱：`；第一章第 3 項；第二章 1.(1) | 新增 `issuer_name.natixis = "法國外貿銀行"`（只有中文，三處相同；`issuer_name_ch1` 交第一章第 3 項） |
-| 發行人、保證機構名稱 | — | **不核對**：不設 `agent_name.natixis`、`guarantor_name.natixis`（2026-10-15 確認） |
-| 固定風險警語、風險等級 | 封面警語 (1)、第一章第 2 項、第三章 5.(1) | **Natixis 版本、說明書 3 次**（§3.6）；風險等級 `[RR4]`（`risk.level_formats.natixis`，同 BNP） |
+| 發行機構名稱 | 封面 `發行機構名稱：`；第一章第 3 項；第二章 1.(1) | 新增 `issuer.natixis.issuer_name = "法國外貿銀行"`（只有中文，三處相同；`issuer_name_ch1` 交第一章第 3 項） |
+| 發行人、保證機構名稱 | — | **不核對**：不設 `issuer.natixis.agent_name`、`issuer.natixis.guarantor_name`（2026-10-15 確認） |
+| 固定風險警語、風險等級 | 封面警語 (1)、第一章第 2 項、第三章 5.(1) | **Natixis 版本、說明書 3 次**（§3.6）；風險等級 `[RR4]`（`issuer.natixis.risk_level_formats`，同 BNP） |
 | 禁用語「受託投資」 | 全文 | 共用（8 份 0 次） |
-| 商品中英文名稱 | 封面 `商品中文名稱`、`商品英文名稱` | 新增 `product_name.natixis`（§3.6）；封面標題、第一章第 1 項另由 Natixis 專屬規則核對（§3.5） |
-| 商品種類 | 封面 `商品種類：` | 新增 `product_type.natixis = "股權連結結構型商品"`（同 BNP、JPM） |
-| 發行不成立門檻 | — | **不核對**：不設 `minimum_issue_size.natixis`（2026-10-15 確認） |
+| 商品中英文名稱 | 封面 `商品中文名稱`、`商品英文名稱` | 新增 `issuer.natixis.product_name`（§3.6）；封面標題、第一章第 1 項另由 Natixis 專屬規則核對（§3.5） |
+| 商品種類 | 封面 `商品種類：` | 新增 `issuer.natixis.product_type = "股權連結結構型商品"`（同 BNP、JPM） |
+| 發行不成立門檻 | — | **不核對**：不設 `issuer.natixis.minimum_issue_size`（2026-10-15 確認） |
 | 費率 | 第四章 2. 費用表 | 共用（申購、提前贖回、分銷皆 `0%~5%`；分銷費用沒有子列） |
 | 發行價格 | 第一章第 5 項(3) `發行價格：100%`；第四章 5. `發行價格(100%)` | 共用 `issue_price.pct`（`issue_price_pct`＋`issue_price_others` 1 筆；不符轉人工覆核） |
 | 面額預設值、刊印日期 | 第一章第 5 項(2)；第 2 頁末 | 共用（`print_dates` 1 個） |
@@ -98,12 +98,12 @@
 
 ### 3.6 固定警語與名稱（審查標準 Natixis 設定）
 
-**固定風險警語**（`risk.fixed_warning_by_issuer.natixis`，2026-10-15 確認視為正確）：Natixis 版本 = BNP 版（`風險程度等級為[RR4]`、`歸類為[RR4]`；`連結標的為證券交易所交易證券` 沒有【】）在 `投資人請注意` 前多一個 `*`；5 處都寫 `受託機構`；有 OSU 客戶段，結尾 `…(專業投資人與OSU客戶以下合稱「投資人」)。`。換句話說 = 共用版把 `【RR4】` 換成 `[RR4]`、`【證券交易所交易證券】` 去掉括號。8 份（新舊兩版）封面警語 (1)、第一章第 2 項、第三章 5.(1)、投資人須知警語 (1) 與商品簡介逐字相同（忽略空白）。
+**固定風險警語**（`issuer.natixis.fixed_warning`，2026-10-15 確認視為正確）：Natixis 版本 = BNP 版（`風險程度等級為[RR4]`、`歸類為[RR4]`；`連結標的為證券交易所交易證券` 沒有【】）在 `投資人請注意` 前多一個 `*`；5 處都寫 `受託機構`；有 OSU 客戶段，結尾 `…(專業投資人與OSU客戶以下合稱「投資人」)。`。換句話說 = 共用版把 `【RR4】` 換成 `[RR4]`、`【證券交易所交易證券】` 去掉括號。8 份（新舊兩版）封面警語 (1)、第一章第 2 項、第三章 5.(1)、投資人須知警語 (1) 與商品簡介逐字相同（忽略空白）。
 
-- 說明書 **3 次**（沿用 `risk.fixed_warning_occurrences = 3`，不需要上手別次數）；投資人須知 2 次（`iis.fixed_warning_occurrences.natixis = 2`）。
-- 風險等級寫法 `risk.level_formats.natixis = ["風險程度等級為[{level}]", "歸類為[{level}]"]`（同 BNP）。
+- 說明書 **3 次**（沿用 `risk.fixed_warning_occurrences = 3`，不需要上手別次數）；投資人須知 2 次（`issuer.natixis.iis_fixed_warning_occurrences = 2`）。
+- 風險等級寫法 `issuer.natixis.risk_level_formats = ["風險程度等級為[{level}]", "歸類為[{level}]"]`（同 BNP）。
 
-**商品名稱樣板**（`product_name.natixis`，8 份全部符合；2026-10-15 確認）：
+**商品名稱樣板**（`issuer.natixis.product_name`，8 份全部符合；2026-10-15 確認）：
 
 - 中文：`法國外貿銀行{tenor}個月{ccy_zh}計價固定配息(自動提前到期)連結一籃子標的結構型商品(不保本、無擔保及無保證機構)`。
 - 英文：`Natixis – {tenor}-Month {ccy} – Autocallable Fixed Coupon Note Linked to Basket of Equities (Non-Principal Protected, Unsecured and Non-Guaranteed)`。
@@ -111,7 +111,7 @@
 - 名稱截到 `(下稱「本商品」)` 之前；中文、英文都忽略空白（`ignore_whitespace_en = true`）、括號統一（`normalize_brackets = true`）。
 - **連字號**：封面英文名稱寫 `Non-Principal`（= 樣板）；第一章第 1 項、投資人須知寫 `Non Principal`（沒有連字號），視為一致（2026-10-15 確認）。建議實作：第一章第 1 項與投資人須知讀出英文名稱時，把 `(Non Principal` 正規化成 `(Non-Principal` 再交出（證據保留原文）；封面不正規化，封面寫錯仍判不一致。
 
-**發行機構名稱**（`issuer_name.natixis`）：`法國外貿銀行`；封面、第一章第 3 項、第二章 1.(1)、投資人須知壹 1. 都只寫中文。2026-10-15 確認 Natixis 只有這一個發行主體；其他寫法判不一致或轉人工覆核。
+**發行機構名稱**（`issuer.natixis.issuer_name`）：`法國外貿銀行`；封面、第一章第 3 項、第二章 1.(1)、投資人須知壹 1. 都只寫中文。2026-10-15 確認 Natixis 只有這一個發行主體；其他寫法判不一致或轉人工覆核。
 
 ### 3.7 情境分析（第一章第 16 項(3)）
 
@@ -137,7 +137,7 @@
 
 - 第四章 4. `本商品最低申購金額為1 單位商品面額，即X幣別；並以1 單位商品面額，即X幣別為累加申購金額`：最低申購、最低加購 = X。
 - 第四章 8. `本商品最低贖回金額為…，即X幣別；並以…，即X幣別為累加贖回金額`：最低贖回、增加贖回單位 = X。
-- 不設 `min_amount_multiples.natixis`：四項倍數都是預設 1（8 份都是 1 單位，不分幣別）。
+- 不設 `issuer.natixis.min_amount_multiples`：四項倍數都是預設 1（8 份都是 1 單位，不分幣別）。
 - 錨點要在 `本商品最低申購金額為`、`本商品最低贖回金額為` 之後（第二章財報中譯本也有「並以」「即」）。
 
 ### 3.9 核對範圍決定（2026-10-15，Issue #261）
@@ -201,7 +201,7 @@
 |---|---|
 | 說明書 | 上手登記（`issuers.py`）；Natixis `LayoutSpec`（`第一章、` 章名五章；頁底英文名稱兩行、`第N頁/共計M頁`、分類標記排除；NX8 左上角單獨數字略過）；範本辨識；`read` 交出全部標準欄位（`initial_pricing`、`distributor_phone_ch4` 交 `absent`；`subscription_dates` 2 筆；`min_amounts` 4 筆；`issue_price_others` 1 筆；KO D／P、KI AM／D／P／無）；§3.3–§3.8 |
 | 投資人須知 | `parsers/natixis_iis.py`、`IisTemplate`（頁底 `第N頁/共M頁` 的 `page_totals`；刊印日期在第 1 行標題同一行）；投資人須知的 KO 定義沒寫 % 是參照說明書第一章第 14 項、不核對 KO %（Issue #272），其他寫法判不一致（不是讀不到就轉人工）；[投資人須知核對規則](iis-check-rules.md) Natixis 欄 |
-| 共用設定 | 審查標準 Natixis 分節（`fixed_warning_by_issuer.natixis`、`level_formats.natixis`、`product_name.natixis`、`issuer_name.natixis`、`product_type.natixis`、`iis.fixed_warning_occurrences.natixis = 2`）；`distributor.approval_dates` 加 2024-03-20；`config/reference_sheet.toml` 的 `[issuer_values] NATIXIS = "Natixis"` |
+| 共用設定 | 審查標準 Natixis 分節（`fixed_warning_by_issuer.natixis`、`level_formats.natixis`、`issuer.natixis.product_name`、`issuer.natixis.issuer_name`、`issuer.natixis.product_type`、`issuer.natixis.iis_fixed_warning_occurrences = 2`）；`distributor.approval_dates` 加 2024-03-20；`config/reference_sheet.toml` 的 `[issuer_values] NATIXIS = "Natixis"` |
 
 要有合成 PDF 測試（KO D 記憶式／非記憶式、KO P（含 Non-Call = 天期、觀察日表 1 列）、KI 無／AM／D／P、單一／多標的、JPY 整數期初價格、AUD、VWAP、新舊兩版標籤、頁底英文名稱兩行、連結標的表數字拆行、欄序 KO → KI → K、投資人須知 5 頁、投資人須知 KO 定義少 %）、本機 8 份真實樣本測試（`tests/checker/test_real_natixis.py`，結果與 §5 一致：NX6 投資人須知頁數判不一致，該組不回填；NX8 沒有參考條件表列；其餘有表上列的組別通過並回填），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura、GS 樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變（`approval_dates` 加 2024-03-20 造成的改變要逐份列出）。
 

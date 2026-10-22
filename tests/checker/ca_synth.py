@@ -28,11 +28,11 @@ from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
 from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
 
-NAME = STANDARD["product_name"]["ca"]
-WARNING = STANDARD["risk"]["fixed_warning_by_issuer"]["ca"]
-WARNING_CH1 = STANDARD["risk"]["fixed_warning_variants"]["ca"][0]
-ISSUER = STANDARD["issuer_name"]["ca"]
-PRODUCT_TYPE = STANDARD["product_type"]["ca"]
+NAME = STANDARD["issuer"]["ca"]["product_name"]
+WARNING = STANDARD["issuer"]["ca"]["fixed_warning"]
+WARNING_CH1 = STANDARD["issuer"]["ca"]["fixed_warning_variants"][0]
+ISSUER = STANDARD["issuer"]["ca"]["issuer_name"]
+PRODUCT_TYPE = STANDARD["issuer"]["ca"]["product_type"]
 DIST = STANDARD["distributor"]
 ISIN = "XS1999900086"
 APPROVAL = dt.date(2026, 6, 11)

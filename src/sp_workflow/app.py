@@ -19,7 +19,7 @@ Treeview 的表（7 的檢查結果表除外）另有 Ctrl+A 全選、Ctrl+C 複
 每日匯入完成 → 起單資料頁帶入交易明細的 FCN TDCC（#90）；
 準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔。
 審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
-視窗只收輸入、在背景執行 `collect_orders`／`import_drafts`／`missing_products`／`open_maintenance`／`load_trade_rows`／`save_maintenance`／
+視窗只收輸入、在背景執行 `collect_orders`／`import_orders`／`missing_products`／`open_maintenance`／`load_trade_rows`／`save_maintenance`／
 `import_daily`／`recalculate`／`release_differences`／`prepare_batch`／核對／`return_to_folders`／`create_drafts`／
 `export_products` 並顯示結果，不含判斷邏輯。
 """
@@ -127,36 +127,22 @@ from sp_workflow.mail_drafts import (
 )
 from sp_workflow.order_import import (
     BLOCKED,
-    FIXED_IN_CORRECTION,
     IMPORTABLE,
-    LOCKED,
-    MAINTAIN_LOCKED,
-    MAINTAIN_NEW,
-    MAINTAIN_OPEN,
-    NEW,
-    OVERWRITTEN,
     READY,
-    SAME,
-    SKIPPED,
     TDCC_FIELD,
     TO_CHECK,
-    CorrectionError,
-    CorrectionReceipt,
     ImportConfig,
     MissingProduct,
     OrderDraft,
     OrderImportError,
-    OrderImportLine,
-    OrderImportReceipt,
+    OrderImportResult,
     check_draft,
-    describe,
     drafts_from,
-    import_drafts,
+    import_orders,
     load_import_config,
     maintenance_problems,
     missing_products,
     open_maintenance,
-    reload_stored,
     review_status,
     save_maintenance,
 )
@@ -178,6 +164,21 @@ from sp_workflow.preparation import (
     prepare_batch,
 )
 from sp_workflow.product_export import ExportReceipt, ProductExportError, export_name, export_products
+from sp_workflow.product_write import (
+    FIXED_IN_CORRECTION,
+    LOCKED,
+    MAINTAIN_LOCKED,
+    MAINTAIN_NEW,
+    MAINTAIN_OPEN,
+    NEW,
+    OVERWRITTEN,
+    SAME,
+    SKIPPED,
+    CorrectionError,
+    CorrectionReceipt,
+    OrderImportLine,
+    describe,
+)
 from sp_workflow.returning import PENDING_SUFFIX, ReturnError, ReturnReceipt, return_to_folders
 from sp_workflow.trade_rows import FIELDS as TRADE_ROW_FIELDS
 from sp_workflow.trade_rows import TradeRowsDraft, load_trade_rows
@@ -965,13 +966,6 @@ class _Opened:
     trades: TradeRowsDraft | None = None
 
 
-@dataclass(frozen=True)
-class _SaveResult:
-    receipt: OrderImportReceipt
-    reload_error: str = ""  # 匯入成功但重讀資料庫狀態失敗
-    recalc: _Recalc = _Recalc()
-
-
 class _Releaser:
     """「放行差異…」（#88）：選到的商品有還沒放行的交叉比對差異時可以按；確認後記下放行人與時間，再重算那一檔。
 
@@ -1679,28 +1673,22 @@ class OrderTermsTab(_Tab):
         self._busy(True)
         self.mark_done(False)
 
-        def run() -> _SaveResult:
-            import psycopg
-
+        def run() -> OrderImportResult:
             with connect(settings) as conn:
-                receipt = import_drafts(read.drafts, conn, read.config)
-                recalc = _recalculate(conn, lambda: read.config.calendar)
-                try:
-                    reload_stored(read.drafts, conn)
-                except (DatabaseError, psycopg.Error) as exc:
-                    return _SaveResult(receipt, _first_line(exc), recalc)
-            return _SaveResult(receipt, recalc=recalc)
+                return import_orders(read.drafts, conn, read.config)
 
         self.run_in_background(run, "匯入資料庫中…", self._saved, clear=False)
 
     def _saved(self, result: object) -> None:
         self.db.after_run(result)
-        if isinstance(result, _SaveResult):
+        if isinstance(result, OrderImportResult):
             self.unsaved = False
         self._busy(False)
-        if not isinstance(result, _SaveResult):
+        if not isinstance(result, OrderImportResult):
             return
-        receipt, calcs = result.receipt, result.recalc.receipt
+        receipt, calcs = result.receipt, result.recalc
+        calendar = None if self.read is None else self.read.config.calendar  # 放行後重算要用
+        recalc = _Recalc(calcs, calendar, result.recalc_error)
         self.imported = {line.tdcc: line for line in receipt.lines}
         batch: dict[str, CalcLine] = {}
         for iid, (row, draft) in self.items.items():
@@ -1718,8 +1706,8 @@ class OrderTermsTab(_Tab):
         status = f"完成（第 {receipt.import_id} 次起單資料匯入）：{counts}。"
         if calcs is not None:
             status += f"\n核對條件（這批匯入的 {len(batch)} 檔）：{_status_counts(batch.values())}。"
-        elif result.recalc.error:
-            status += f"\n{_recalc_text(result.recalc)}"
+        elif recalc.error:
+            status += f"\n{_recalc_text(recalc)}"
         if result.reload_error:
             status += f"\n注意：已寫進資料庫，但重新讀取資料庫的值失敗（{result.reload_error}）；再匯入前請重新讀取。"
         kpis = [("已匯入（檔）", imported, False), ("沒匯入（檔）", not_imported, receipt.count(SKIPPED) > 0)]
@@ -1727,7 +1715,7 @@ class OrderTermsTab(_Tab):
             to_confirm = sum(calc.problem for calc in batch.values())
             kpis.append(("核對條件待確認（檔）", to_confirm, to_confirm > 0))
         self.finish(kpis, status)
-        self.releaser.show(result.recalc)
+        self.releaser.show(recalc)
 
 
 class CellTable(ttk.Frame):

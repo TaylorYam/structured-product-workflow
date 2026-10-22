@@ -42,7 +42,7 @@
 | 期初定價 | `initial_pricing` | 表上須是 `開盤價`／`收盤價`／`VWAP`；表上空白時當成不是 VWAP。說明書寫明期初定價的範本（範本沒有就是 `absent`），表上有值時須相同，表上空白時依說明書判斷（Issue #122、#246） |
 | UL_1～UL_5 | `underlyings` | 見 §5；`-` 表示沒有這檔標的 |
 | UL_n_進場價／執行價／下限價／KO價 | `underlying_prices` | 表上值四捨五入到 4 位後相等。同一檔標的可比對的價格欄全部與說明書差同一比例（表上值 ÷ 說明書值，4 位）且不是 1 時，該檔轉人工覆核並寫出比例（疑為股票分割調整後的價格，`split_suspected`，Issue #191）；只有部分欄位不同或比例不同時照常判不一致。無 KI 時下限價必須是 `-`。期初定價為 `VWAP` 時不比對，通過或人工放行後以說明書價格覆寫（`backfill.underlying_prices`） |
-| 最低申購、最低贖回金額 | `min_amounts`（出處清單） | 每一處 = 單位面額（`field.min_amounts`）；倍數依審查標準 `min_amount_multiples.<上手>` |
+| 最低申購、最低贖回金額 | `min_amounts`（出處清單） | 每一處 = 單位面額（`field.min_amounts`）；倍數依審查標準 `issuer.<上手>.min_amount_multiples` |
 | 比價日_1～12 | `autocall_schedule` | 回填欄位（`backfill.compare_dates`）。D：`比價日_{Non-Call}` 與 `比價日_{期數}` = 各該期比價日；P：`比價日_{Non-Call}`～`比價日_{期數}` = 各期比價日；其他格 `-`。期數須等於天期、不超過 12；最晚的比價日須等於最終比價日 |
 | TS、IIS | — | 回填欄位：說明書與投資人須知都通過或人工放行的商品打 `V`；表上是 `V` 以外的值就是不一致、保留原值（`backfill.checked`） |
 

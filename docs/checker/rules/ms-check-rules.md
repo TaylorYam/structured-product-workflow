@@ -40,10 +40,10 @@
 | 審查通過日期 | 封面 15 | 共用（依交易日）；只以 2026 年後的文件為準，不為 2025 年的舊審查日期加清單（2026-10-08 確認） |
 | 受託機構負責人 | 第二章 §3(3) | 共用 |
 | 受託機構名稱／電話／地址 | 封面 14；第二章 §3(3) 名稱、營業所在地（第二章沒有電話） | 共用；封面電話寫成 `+886 2 5556 1313`（空格分隔，現有 `phone_equivalents` 是連字號寫法，忽略空白後不相等），實作時在 `phone_equivalents` 加這個寫法；封面地址後的 `(營業活動所在地)` 不屬於地址；第二章營業所在地少「松山區」，以 `address_equivalents` 視為正確（2026-10-09 確認） |
-| 發行機構全名 | 封面 10；第二章 §1(1)；第一章 §3（只有中文） | 新增 `issuer_name.ms`；第二章中英文之間沒有括號、英文名結尾沒有句點，比對時忽略空白、括號（全半形）與英文名結尾句點；第一章 §3 只比中文部分 |
+| 發行機構全名 | 封面 10；第二章 §1(1)；第一章 §3（只有中文） | 新增 `issuer.ms.issuer_name`；第二章中英文之間沒有括號、英文名結尾沒有句點，比對時忽略空白、括號（全半形）與英文名結尾句點；第一章 §3 只比中文部分 |
 | 固定風險警語、風險等級 | 封面警語 1)、第一章 §2、第三章 §4 1) | MS 版本，見 §3.6 |
 | 禁用語「受託投資」 | 全文 | 共用 |
-| 商品中英文名稱 | 封面 4、5 | 新增 `product_name.ms`，見 §3.6 |
+| 商品中英文名稱 | 封面 4、5 | 新增 `issuer.ms.product_name`，見 §3.6 |
 | 費率 | 第四章 §2 費用表 | 共用（申購、提前贖回、分銷） |
 | 發行價格 | 第一章 §7；第四章 §5 `發行價格(商品面額的 N%)` | 共用；兩處各一筆結果 |
 | 面額預設值、刊印日期 | 第一章 §6；封面刊印日期 | 共用（`print_dates` 1 個） |
@@ -90,9 +90,9 @@
 - MS 版本 = 現行 `risk.fixed_warning` 去掉【】（`【RR4】`→`RR4`、`【證券交易所交易證券】`→`證券交易所交易證券`），結尾到 `(專業投資人與OSU客戶以下合稱「投資人」)` 為止（封面與第三章後面沒有句號）。
 - 第一章 §2 開頭為 `本商品風險程度為RR4。`（少「等級」），其餘相同；這一處的寫法也視為正確。
 - 出現次數合計 3 次（封面、第一章 §2、第三章各 1）。
-- 實作時新增 `risk.fixed_warning_by_issuer.ms`，並以設定（不寫死在程式）表達第一章 §2 允許的開頭寫法。
+- 實作時新增 `issuer.ms.fixed_warning`，並以設定（不寫死在程式）表達第一章 §2 允許的開頭寫法。
 
-**商品名稱樣板**（`product_name.ms`，依 6 份新版樣本推得，2026-10-08 確認照此核對）：
+**商品名稱樣板**（`issuer.ms.product_name`，依 6 份新版樣本推得，2026-10-08 確認照此核對）：
 
 - 中文：`英商摩根士丹利發行{tenor}個月期{ccy_zh}計價連結{標的寫法}固定配息{memory_zh}結構型商品(無保證機構)(無擔保)(不保本)(下稱「本商品」)`
   - `{標的寫法}`：1 檔 `股票或指數股票型基金`；2 檔以上 `一籃子股票與/或指數股票型基金`
@@ -236,6 +236,6 @@
 | §3.7 情境標題 | `doc.scenario_parameters` | `scenario_titles` | 標題未知 → 人工覆核 |
 | §3.7 每期配息、損益（每期配息的預期值 = 面額 × 表上年利率 ÷ 12） | `doc.scenario_calculations` | `情境X_coupon`、`情境X_pnl` | 不一致；算式找不到或有算式讀不出來 → 人工覆核 |
 
-審查標準的 MS 設定（[審查標準](review-standard.md) §2.6）：`risk.fixed_warning_by_issuer.ms`、`risk.fixed_warning_openings.ms`（第一章 §2 開頭）、`risk.level_formats.ms`（沒有【】的風險等級）、`issuer_name.ms`、`issuer_name_ignore.ms`（括號、英文名結尾句點）、`product_name.ms`（`{underlying_zh}`／`{underlying_en}`）、`distributor.phone_equivalents`（`+886 2 5556 1313`）、`distributor.address_equivalents`（第二章沒有「松山區」的地址）。
+審查標準的 MS 設定（[審查標準](review-standard.md) §2.6）：`issuer.ms.fixed_warning`、`issuer.ms.fixed_warning_openings`（第一章 §2 開頭）、`issuer.ms.risk_level_formats`（沒有【】的風險等級）、`issuer.ms.issuer_name`、`issuer.ms.issuer_name_ignore`（括號、英文名結尾句點）、`issuer.ms.product_name`（`{underlying_zh}`／`{underlying_en}`）、`distributor.phone_equivalents`（`+886 2 5556 1313`）、`distributor.address_equivalents`（第二章沒有「松山區」的地址）。
 
 未涵蓋清單（PANEL「待處理」）：`doc.underlying_names`、`doc.initial_prices`、`doc.scenario_worse_details`、`doc.template_variants`（§6 的樣本缺口）。

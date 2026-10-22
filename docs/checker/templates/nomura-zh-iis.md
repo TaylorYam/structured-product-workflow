@@ -96,14 +96,14 @@
 
 | 值 | 出處 | 注意 |
 |---|---|---|
-| 固定警語（SG 版本） | 警語(一)（1 次） | 比對用審查標準 `risk.fixed_warning_by_issuer.nomura`（= SG 版本）；投資人須知次數 `iis.fixed_warning_occurrences.nomura = 1` |
-| 風險等級 | 警語(一) 的 `風險程度等級為RR4`、`歸類為RR4`（無【】）；第二 3. `本商品風險程度：RR4` | 全文用 `risk.level_formats.nomura`；第二 3. 也在格式內（`風險程度：{level}`） |
+| 固定警語（SG 版本） | 警語(一)（1 次） | 比對用審查標準 `issuer.nomura.fixed_warning`（= SG 版本）；投資人須知次數 `issuer.nomura.iis_fixed_warning_occurrences = 1` |
+| 風險等級 | 警語(一) 的 `風險程度等級為RR4`、`歸類為RR4`（無【】）；第二 3. `本商品風險程度：RR4` | 全文用 `issuer.nomura.risk_level_formats`；第二 3. 也在格式內（`風險程度：{level}`） |
 | 受託機構名稱 | 第一 4.（1 處全名） | 警語(五) 3 次、(六) 1 次、第三 2.、第五 2. 也寫全名，不算名稱出處（同說明書只核對固定出處） |
 | 受託機構地址 | 第一 4. `營業所在地：` | 8 份 = `台北市民生東路三段158號6樓`（`address_equivalents`） |
 | 受託機構電話 | 第九 1. `受託機構聯絡方式：` | 8 份 = `+886 2 5556 1313`（`phone_equivalents`；同 BNP） |
-| 發行機構名稱 | 第一 1. | = `issuer_name.nomura`；名稱、第二 4. 評等句、第六 風險揭露中的機構名稱不算出處 |
-| 保證機構名稱 | 第一 2. | = `guarantor_name.nomura` 的 cover；警語(六) 2 處、第二 4. 評等句不算出處（2026-10-15 確認只核對相關機構） |
-| 總代理人名稱 | 第一 3. | = `agent_name.nomura` 的 cover；警語(七)、第八不算出處 |
+| 發行機構名稱 | 第一 1. | = `issuer.nomura.issuer_name`；名稱、第二 4. 評等句、第六 風險揭露中的機構名稱不算出處 |
+| 保證機構名稱 | 第一 2. | = `issuer.nomura.guarantor_name` 的 cover；警語(六) 2 處、第二 4. 評等句不算出處（2026-10-15 確認只核對相關機構） |
+| 總代理人名稱 | 第一 3. | = `issuer.nomura.agent_name` 的 cover；警語(七)、第八不算出處 |
 | 商品代號 | 封面 `TDCC商品代號為` | 1 處（沒有受託機構商品代號）= 檔名前 12 碼 |
 | 標的 | 第二 9. 英文名稱 | 檔數與名稱 = 說明書第一章第 8 項（忽略空白；名稱本身是否正確不核對） |
 | 「受託投資」 | 全文 | 8 份 0 次 |

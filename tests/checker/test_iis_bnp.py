@@ -391,7 +391,7 @@ def test_term_sheet_values_unavailable_require_review_on_the_iis(tmp_path):
 
 
 def test_guarantor_short_name_missing_from_the_review_standard_requires_review(tmp_path):
-    """審查標準沒有簡稱（guarantor_name.bnp.ch1）時，寫簡稱的三處轉人工覆核，寫全名那處照常核對。"""
+    """審查標準沒有簡稱（issuer.bnp.guarantor_name.ch1）時，寫簡稱的三處轉人工覆核，寫全名那處照常核對。"""
     standard = tmp_path / "standard.toml"
     text = REVIEW_STANDARD.read_text(encoding="utf-8")
     standard.write_text(text.replace(f'ch1 = "{SHORT}"\n', "", 1), encoding="utf-8")
@@ -400,7 +400,7 @@ def test_guarantor_short_name_missing_from_the_review_standard_requires_review(t
     assert {(f, s) for r, f, s in bad(iis) if r == "standard.guarantor_name"} == {
         (f, REVIEW) for f in ("guarantor_name_w5a", "guarantor_name_w5b", "guarantor_name_risk")
     }
-    assert any("guarantor_name.bnp.ch1" in m for m in iis.problem_messages)
+    assert any("issuer.bnp.guarantor_name.ch1" in m for m in iis.problem_messages)
 
 
 # ---------------------------------------------------------------- 範本辨識

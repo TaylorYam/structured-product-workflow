@@ -92,13 +92,13 @@
 
 | 值 | 出處 | 注意 |
 |---|---|---|
-| 固定警語（JPM 版本） | 警語 1.（1 次） | 比對用審查標準 `risk.fixed_warning_by_issuer.jpm`；投資人須知次數 `iis.fixed_warning_occurrences.jpm = 1` |
-| 風險等級 | 警語 1. 的 `等級為RR4`、`歸類為RR4`（無【】） | 用 `risk.level_formats.jpm`；商品簡介沒有 RRn |
+| 固定警語（JPM 版本） | 警語 1.（1 次） | 比對用審查標準 `issuer.jpm.fixed_warning`；投資人須知次數 `issuer.jpm.iis_fixed_warning_occurrences = 1` |
+| 風險等級 | 警語 1. 的 `等級為RR4`、`歸類為RR4`（無【】） | 用 `issuer.jpm.risk_level_formats`；商品簡介沒有 RRn |
 | 受託機構名稱 | 一、4.（1 處全名） | 警語 4.、6.、9. 只寫「受託機構」，不算名稱出處 |
 | 受託機構地址 | 一、4. `(地址：…(營業活動所在地))` | 5 份去掉 `(營業活動所在地)` 後 = `distributor.address`；沒有電話 |
-| 發行機構名稱 | 一、1.；警語 5. | 全部 = `issuer_name.jpm`（忽略空白）。三、1. 信用風險段不算出處 |
-| 保證機構名稱 | 一、2.（全名）；警語 5.（簡稱 `美商摩根大通銀行股份有限公司`） | 一、2. = `guarantor_name.jpm.cover`；警語 5. = `guarantor_name.jpm.ch1`。三、1.(4) 信用風險段 `美商摩根大通銀行` 不算出處 |
-| 總代理人名稱 | 一、3. | = `agent_name.jpm.cover`；警語 6.、五 4. 也有名稱，不算出處（同說明書只核對固定出處） |
+| 發行機構名稱 | 一、1.；警語 5. | 全部 = `issuer.jpm.issuer_name`（忽略空白）。三、1. 信用風險段不算出處 |
+| 保證機構名稱 | 一、2.（全名）；警語 5.（簡稱 `美商摩根大通銀行股份有限公司`） | 一、2. = `issuer.jpm.guarantor_name.cover`；警語 5. = `issuer.jpm.guarantor_name.ch1`。三、1.(4) 信用風險段 `美商摩根大通銀行` 不算出處 |
+| 總代理人名稱 | 一、3. | = `issuer.jpm.agent_name.cover`；警語 6.、五 4. 也有名稱，不算出處（同說明書只核對固定出處） |
 | 刊印日期 | 第 1 頁 | 只有 1 處 |
 | 年利率 | 收益分配事項 `配息金額：`；D 型贖回價金 `自動提前出場配息金額：…x Y% x 1/12 x n/N` | 前者 = 參考條件表年利率；後者每處 = 前者（範本專屬規則 `iis.coupon_pa_mentions`，寫錯判不一致） |
 | 標的與價格 | 商品簡介 `連結標的資產：` 表 | 和參考條件表比（JPM 依代號配對）；VWAP 商品和說明書比 |

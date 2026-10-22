@@ -43,7 +43,7 @@
 | 年利率 `coupon_pa_pct` | 共用 `field.coupon_pa_pct` | `最大利率值：…（即y%/12）` 的 y（說明書有年利率，不需要 `reference_fields`） |
 | 標的 `underlyings`、各標的價格 | 共用 `field.underlyings`、價格規則 | 代號取連結標的資產表；表1 有彭博代碼，須和標的表同代碼同順序；照順序比對（4 份順序相同，不加 `any_order_issuers`） |
 | 期初定價 `initial_pricing` | 共用 `field.initial_pricing` | 交 `absent`：不和說明書比，只檢查表上是允許值（2026-10-15 確認） |
-| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 一般交易事項 4. 兩筆（最低申購、最低加購）、8.(3) 兩筆（最低贖回、累加單位）；**最低申購倍數依幣別**（`min_amount_multiples.dbs`，§3.8） |
+| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 一般交易事項 4. 兩筆（最低申購、最低加購）、8.(3) 兩筆（最低贖回、累加單位）；**最低申購倍數依幣別**（`issuer.dbs.min_amount_multiples`，§3.8） |
 | 金額旁的幣別 `currency_others` | 共用 `field.currency`（Issue #170） | 商品基本資料 `商品面額：每單位X幣別`；一般交易事項 4.、8.(3) `即X幣別`；情境基本假設 `商品面額 = X幣別`、`投資金額 = … = X幣別`；Issue #321 加上情境一～三每個情境一筆（`{金額}{幣別}` 與 `即{幣別}{金額}`；情境三從最終價格表之後的 `依上所示` 起算）。**表1、情境價格表與情境三最終價格表的幣別字、情境股價與匯率不列入**（Quanto：DB1 澳幣、DB4 日圓連美股；2026-10-15 確認）。說明文字沒有寫出承作幣別的句子（只寫「計價幣別」），沒有說明文字幣別出處 |
 
 ### 3.2 審查標準規則（共用 `rules/review_standard.py`）
@@ -53,13 +53,13 @@
 | 審查通過日期 | 封面 `受託或銷售機構審查通過之日期及文號：` | 共用（依交易日；4 份都是最新一筆） |
 | 受託機構負責人 | 相關機構事業概況 4.`(4) 負責人姓名：` | 共用 |
 | 受託機構名稱／電話／地址 | 封面 `受託或銷售機構之名稱、電話及地址：`（頓號分隔）；相關機構事業概況 4.`(1) 事業名稱：`、`(2) 營業所在地：` | 封面名稱 `玉山綜合證券股份有限公司(含國際證券業務分公司)`、電話 `(02)5556-1313` **加進 `name_equivalents`、`phone_equivalents`**（所有上手生效；2026-10-15 確認）；地址 `臺北市105民生東路三段158號6樓` 已在 `address_equivalents`；相關機構與一般交易事項沒有受託機構電話（`distributor_phone_ch4` 交 `absent`） |
-| 發行機構名稱 | 封面 `發行機構之名稱：`；相關機構事業概況 1.(1) | 新增 `issuer_name.dbs = "新加坡商星展銀行股份有限公司(DBS Bank Ltd)"`（中文＋括號英文，兩處相同；沒有只寫中文的出處，`issuer_name_ch1` 交 `absent`） |
-| 保證機構、發行人名稱 | — | **不核對**：不設 `guarantor_name.dbs`、`agent_name.dbs`（2026-10-15 確認） |
-| 固定風險警語、風險等級 | 封面警語 1.、商品主要風險揭露 五、1.；商品基本資料 `商品風險程度：` | **DBS 版本、說明書 2 次**（§3.6）；風險等級 `【RR4】` 與 `風險程度：RR4`（`risk.level_formats.dbs`） |
+| 發行機構名稱 | 封面 `發行機構之名稱：`；相關機構事業概況 1.(1) | 新增 `issuer.dbs.issuer_name = "新加坡商星展銀行股份有限公司(DBS Bank Ltd)"`（中文＋括號英文，兩處相同；沒有只寫中文的出處，`issuer_name_ch1` 交 `absent`） |
+| 保證機構、發行人名稱 | — | **不核對**：不設 `issuer.dbs.guarantor_name`、`issuer.dbs.agent_name`（2026-10-15 確認） |
+| 固定風險警語、風險等級 | 封面警語 1.、商品主要風險揭露 五、1.；商品基本資料 `商品風險程度：` | **DBS 版本、說明書 2 次**（§3.6）；風險等級 `【RR4】` 與 `風險程度：RR4`（`issuer.dbs.risk_level_formats`） |
 | 禁用語「受託投資」 | 全文 | 共用（4 份全部是允許片語 `受託投資或受託買賣`；不需要新增片語） |
-| 商品中英文名稱 | 封面 `商品中文名稱`、`商品英文名稱` | 新增 `product_name.dbs`（§3.6）；商品基本資料 `商品名稱：` 另由 DBS 專屬規則核對（§3.5） |
-| 商品種類 | 封面 `商品種類：` | 新增 `product_type.dbs = "股權連結債券"`（2026-10-15 確認） |
-| 發行不成立門檻 | — | 範本沒有：不設 `minimum_issue_size.dbs` |
+| 商品中英文名稱 | 封面 `商品中文名稱`、`商品英文名稱` | 新增 `issuer.dbs.product_name`（§3.6）；商品基本資料 `商品名稱：` 另由 DBS 專屬規則核對（§3.5） |
+| 商品種類 | 封面 `商品種類：` | 新增 `issuer.dbs.product_type = "股權連結債券"`（2026-10-15 確認） |
+| 發行不成立門檻 | — | 範本沒有：不設 `issuer.dbs.minimum_issue_size` |
 | 費率 | 一般交易事項 2. 費用表 | 共用（申購、提前贖回、分銷皆 `0%~5%`；分銷費用取 `費用` 子列） |
 | 發行價格 | 商品基本資料 `發行價格：商品面額的100.00%` | 共用 `issue_price.pct`（`issue_price_others` 0 筆；不符轉人工覆核） |
 | 面額預設值、刊印日期 | 商品基本資料 `商品面額：`；第 2 頁末 `中文產品說明書刊印日期：` | 共用（`print_dates` 1 個） |
@@ -102,12 +102,12 @@
 
 ### 3.6 固定警語、名稱與發行機構（審查標準 DBS 設定）
 
-**固定風險警語**（`risk.fixed_warning_by_issuer.dbs`，2026-10-15 確認視為正確）：DBS 版本 = CA 版（`【RR4】`、`【證券交易所交易證券】`、有 `*`、有 OSU 客戶段、5 處都寫 `受託或銷售機構`），在 `依據國際證券業務分公司(下稱「OSU」)辦理受託買賣相關規定` 之後**多 `(下稱「OSU相關規範」)`**（警語 10. 引用這個簡稱），其他逐字相同。4 份封面警語 1.、商品主要風險揭露 五、1.、投資人須知警語 1. 逐字相同（忽略空白）。
+**固定風險警語**（`issuer.dbs.fixed_warning`，2026-10-15 確認視為正確）：DBS 版本 = CA 版（`【RR4】`、`【證券交易所交易證券】`、有 `*`、有 OSU 客戶段、5 處都寫 `受託或銷售機構`），在 `依據國際證券業務分公司(下稱「OSU」)辦理受託買賣相關規定` 之後**多 `(下稱「OSU相關規範」)`**（警語 10. 引用這個簡稱），其他逐字相同。4 份封面警語 1.、商品主要風險揭露 五、1.、投資人須知警語 1. 逐字相同（忽略空白）。
 
-- 說明書 **2 次**（`risk.fixed_warning_occurrences_by_issuer.dbs = 2`，同 Nomura 的上手別次數設定）；投資人須知 **1 次**（`iis.fixed_warning_occurrences.dbs = 1`）。
-- 風險等級寫法 `risk.level_formats.dbs = ["【{level}】", "風險程度：{level}"]`（警語有【】；說明書商品基本資料 `商品風險程度：RR4`、投資人須知商品簡介 `本商品風險程度：RR4`；2026-10-15 確認都核對 = RR4）。
+- 說明書 **2 次**（`issuer.dbs.fixed_warning_occurrences = 2`，同 Nomura 的上手別次數設定）；投資人須知 **1 次**（`issuer.dbs.iis_fixed_warning_occurrences = 1`）。
+- 風險等級寫法 `issuer.dbs.risk_level_formats = ["【{level}】", "風險程度：{level}"]`（警語有【】；說明書商品基本資料 `商品風險程度：RR4`、投資人須知商品簡介 `本商品風險程度：RR4`；2026-10-15 確認都核對 = RR4）。
 
-**商品名稱樣板**（`product_name.dbs`，4 份全部符合；2026-10-15 確認）：
+**商品名稱樣板**（`issuer.dbs.product_name`，4 份全部符合；2026-10-15 確認）：
 
 - 中文：`星展銀行{tenor}個月期{ccy_zh}計價{quanto_zh}固定利率記憶型每日觀察自動提前出場{ki_zh}{underlying_zh}股權連結結構型商品(無擔保及無保證機構)(不保本)`（`basket_zh = "一籃子中表現最差"`）。
 - 英文：`DBS Bank Ltd {tenor}-Month {ccy} {quanto_en}Fixed Coupon Memory Daily Knock-Out {ki_en}{underlying_en}Equity Linked Notes (unsecured and non-guaranteed) (non-principal protected)`（`basket_en = "Worst of Basket "`）。
@@ -117,7 +117,7 @@
 - 名稱截到 `(下稱「本商品」)` 之前；中文、英文都忽略空白（`ignore_whitespace_en = true`）、括號統一（`normalize_brackets = true`）。
 - **單一標的**（沒有樣本，「一籃子中表現最差」的寫法未知）：名稱轉人工覆核（樣板 `single_unsupported = true`，共用名稱規則在標的 1 檔時不套樣板、`variant_not_covered`；2026-10-15 確認）。
 
-**發行機構名稱**（`issuer_name.dbs`）：`新加坡商星展銀行股份有限公司(DBS Bank Ltd)`；封面、相關機構事業概況 1.(1)、投資人須知相關機構 1. 都相同。2026-10-15 確認 DBS 只有這一個發行主體；其他寫法判不一致或轉人工覆核。
+**發行機構名稱**（`issuer.dbs.issuer_name`）：`新加坡商星展銀行股份有限公司(DBS Bank Ltd)`；封面、相關機構事業概況 1.(1)、投資人須知相關機構 1. 都相同。2026-10-15 確認 DBS 只有這一個發行主體；其他寫法判不一致或轉人工覆核。
 
 **受託機構等價寫法**（`distributor.name_equivalents`、`distributor.phone_equivalents`，所有上手生效；2026-10-15 確認）：
 
@@ -153,7 +153,7 @@ Issue #294 起，情境價格表（`scenario.reprint`）、基本假設的年期
 
 - 一般交易事項 4. `最低申購金額為m單位商品面額，即X幣別{金額}，並以1單位商品面額為最低加購金額。`：最低申購 = `即` 後的金額，須 = m × 面額；最低加購 = 1 × 面額。
 - 8.(3) `最低贖回金額為1單位商品面額，即X幣別{金額}，並以1單位商品面額為累加單位。`：最低贖回、增加贖回單位 = 1 × 面額。
-- 新增 `min_amount_multiples.dbs`：`minimum_subscription = { USD = 5, AUD = 7, JPY = 8, CNH = 4 }`（CNH 於 2026-10-16 加入，Issue #296；其他幣別轉人工覆核）、`minimum_additional = 1`、`minimum_redemption = 1`、`redemption_increment = 1`（比照 GS 依幣別）。
+- 新增 `issuer.dbs.min_amount_multiples`：`minimum_subscription = { USD = 5, AUD = 7, JPY = 8, CNH = 4 }`（CNH 於 2026-10-16 加入，Issue #296；其他幣別轉人工覆核）、`minimum_additional = 1`、`minimum_redemption = 1`、`redemption_increment = 1`（比照 GS 依幣別）。
 
 ### 3.9 核對範圍決定（2026-10-15，Issue #280）
 
@@ -213,7 +213,7 @@ Issue #294 起，情境價格表（`scenario.reprint`）、基本假設的年期
 |---|---|
 | 說明書 | 上手登記（`issuers.py`）；DBS `LayoutSpec`（**沒有章號**：段落標題整行比對；商品基本資料兩欄表依 x 座標分標籤與值；頁底 `N / M頁` 排除）；範本辨識；`read` 交出全部標準欄位（`initial_pricing`、`issuer_name_ch1`、`distributor_phone_ch4` 交 `absent`；`subscription_dates` 1 筆；`min_amounts` 4 筆；`issue_price_others` 0 筆；KO D、KI AM／無）；§3.3–§3.8 |
 | 投資人須知 | `parsers/dbs_iis.py`、`IisTemplate`（頁底 `第N 頁/共M 頁` 的 `page_totals`；每頁頁首刊印日期；價格表表頭跨頁、費用表列跨頁）；範本專屬規則 `rules/dbs_iis.py`（頁首刊印日期 4 處相同且 = 說明書）；[投資人須知核對規則](iis-check-rules.md) DBS 欄 |
-| 共用設定 | 審查標準 DBS 分節（`fixed_warning_by_issuer.dbs`、`fixed_warning_occurrences_by_issuer.dbs = 2`、`level_formats.dbs`、`product_name.dbs`、`issuer_name.dbs`、`product_type.dbs`、`min_amount_multiples.dbs`、`iis.fixed_warning_occurrences.dbs = 1`）；`distributor.name_equivalents`、`phone_equivalents` 各加一種寫法；共用名稱規則加 `{quanto_*}`、`{ki_*}` 佔位符與 `single_unsupported`；`config/reference_sheet.toml` 的 `[issuer_values] DBS = "DBS"`；`config/issuer_prefixes.toml` 把 `078` 移到「已有範本」 |
+| 共用設定 | 審查標準 DBS 分節（`fixed_warning_by_issuer.dbs`、`fixed_warning_occurrences_by_issuer.dbs = 2`、`level_formats.dbs`、`issuer.dbs.product_name`、`issuer.dbs.issuer_name`、`issuer.dbs.product_type`、`issuer.dbs.min_amount_multiples`、`issuer.dbs.iis_fixed_warning_occurrences = 1`）；`distributor.name_equivalents`、`phone_equivalents` 各加一種寫法；共用名稱規則加 `{quanto_*}`、`{ki_*}` 佔位符與 `single_unsupported`；`config/reference_sheet.toml` 的 `[issuer_values] DBS = "DBS"`；`config/issuer_prefixes.toml` 把 `078` 移到「已有範本」 |
 
 要有合成 PDF 測試（KO D 記憶式 × KI AM／無、Non-Call 1 與 2、USD 與 Quanto（AUD、JPY）、3 檔與 4 檔、非整數 K %、最大利率值無條件進位 ≠ 四捨五入、表1 表頭 % 同行／另起一行、情境表全形表頭、投資人須知價格表表頭跨頁、費用表列跨頁、每頁頁首刊印日期、單一標的名稱轉人工覆核）、本機 4 份真實樣本測試（`tests/checker/test_real_dbs.py`，結果與 §5 一致：4 組都通過並回填），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura、GS、Natixis、CA、BBVA（及 UBS）樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變（受託機構等價寫法與名稱佔位符新增造成的改變要逐份列出，預期沒有）。
 

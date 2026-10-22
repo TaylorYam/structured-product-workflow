@@ -88,7 +88,7 @@
 | 投資人須知範本規格 | `docs/checker/templates/<上手>-zh-iis.md` | 每檔商品另有一份投資人須知（[ADR 0007](adr/0007-iis-paired-with-term-sheet.md)）：骨架、欄位錨點、範本辨識條件，並在[投資人須知核對規則](rules/iis-check-rules.md) §3 補該上手的檢查點欄 |
 | 參考條件表對照 | `docs/checker/order-formats/<上手>-fcn-reference.md` | 參考條件表各欄在該上手說明書的來源、比價日的日期定義；共用格式見 [reference-sheet.md](order-formats/reference-sheet.md) |
 | 核對規則 | `docs/checker/rules/<上手>-check-rules.md` | 標準欄位對照、值對應、數值與容差、推算規則、說明書內部交叉驗證、日期規則、不核對項目、待確認事項、決策紀錄 |
-| 審查標準 | `config/review_standard.toml`＋`docs/checker/rules/review-standard.md` | 只新增該上手不同的基準（例如名稱樣板）；共用基準不重複 |
+| 審查標準 | `config/review_standard.toml`＋`docs/checker/rules/review-standard.md` | 新增該上手的一張表 `[issuer.<上手代號小寫>]`，只寫該上手不同的基準（例如發行機構全名、名稱樣板）；共用基準不重複（Issue #128） |
 
 撰寫規則：
 
@@ -114,13 +114,16 @@
 | 上手編號 | `config/issuer_prefixes.toml`、`config/reference_sheet.toml` | 登記商品代號前三碼 → 上手代號，以及該上手在參考條件表「發行機構」欄的寫法（[參考條件表格式](order-formats/reference-sheet.md)） |
 | 支援樣態 | `config/issuer_prefixes.toml` 的 `[unsupported_variants]` | 確認這家上手已依作業人員的「上手支援樣態清單」登記不支援樣態（沒有時寫空清單，沒登記載入設定就報錯）；不支援樣態的商品在辨識時就攔下，不需要範本（Issue #207） |
 | 說明書 parser | `src/fcn_checker/parsers/<上手>.py`（表格可拆檔；數字、推得欄位、`Hit`／`hits`／`one`、`Mention` 用 `parsers/common.py`，不複製） | 範本辨識 `detect`；讀出 `read` 交出 `standard_fields.STANDARD_FIELDS` 的全部標準欄位（含提前出場排程、各出處清單）與該上手規則需要的專屬資料；`TEMPLATE_ID`、`PARSER_VERSION`；提供自己的 `LayoutSpec` |
-| 投資人須知 parser | `src/fcn_checker/parsers/<上手>_iis.py` | `detect`、`read` 交出 `investor_sheet.py` 的 `IisSheet`（範本有的欄位以 `provides` 宣告），在 `issuers.py` 以 `IisTemplate` 掛到該上手的 `iis`；規則各上手共用（`rules/iis.py`、`review_standard.iis_review_standard_rules`），範本特有的固定警語次數放審查標準 `[iis]`（ADR 0007）；共用規則表達不了的範本專屬檢查（例：MS 商品種類依標的數）才寫在 `rules/<上手>_iis.py`，以 `IisTemplate.rules` 掛上，只拿到投資人須知與同商品說明書的讀出結果 |
+| 投資人須知 parser | `src/fcn_checker/parsers/<上手>_iis.py` | `detect`、`read` 交出 `investor_sheet.py` 的 `IisSheet`（範本有的欄位以 `provides` 宣告），在 `issuers.py` 以 `IisTemplate` 掛到該上手的 `iis`；規則各上手共用（`rules/iis.py`、`review_standard.iis_review_standard_rules`），範本特有的固定警語次數放審查標準 `[issuer.<上手>]` 的 `iis_fixed_warning_occurrences`（ADR 0007）；共用規則表達不了的範本專屬檢查（例：MS 商品種類依標的數）才寫在 `rules/<上手>_iis.py`，以 `IisTemplate.rules` 掛上，只拿到投資人須知與同商品說明書的讀出結果 |
 | 版面工具 | `src/fcn_checker/parsers/layout.py` | 共用；章名、條號、子項格式由各上手的 `LayoutSpec` 提供，不複製一份 |
 | 價格表 | `src/fcn_checker/parsers/price_table.py` | 共用；上手只用 `TableSpec` 宣告這張表長什麼樣子（錯訊裡的表名 `where`、期初價格與各價格欄的表頭關鍵字、表頭百分比寫法 `pct`／`pct_label`、列錨點 `number`（`1` 或 `k=1`）／`ticker`／`price`、代碼欄、其他文字欄 `texts`；某欄表頭可不寫 % 時 `Column.pct_optional`），範圍（表在文件的哪裡）由上手切好交進來；`read` 交出 `PriceTable`，`price_rows` 轉成標準欄位 `underlying_prices`。跨頁、彭博代碼換行、幣別字換行、擠成一行的格都在 module 裡處理，不在上手 parser 自己找列或分欄（Issue #287、#288）。代碼從哪裡來、百分比從表頭或定義句讀、沒有 KO 欄時 KO 價 = 期初價格、列名、期初定價、`PriceRow.currency` 留在上手 |
+| 審查標準 | `config/review_standard.toml` 的 `[issuer.<上手代號小寫>]` | 該上手不同的基準一家一張表：發行機構全名、固定警語版本與次數、風險等級寫法、投資人須知固定警語次數、商品名稱樣板 `[issuer.<上手>.product_name]` 等；可用的欄位與檢查只定義在 `src/fcn_checker/config.py` 的 `ISSUER_FIELDS`，寫錯欄位名稱或值時載入設定就回報。`config.py` 與 `rules/review_standard.py` 不用改（Issue #128） |
 | 參考條件表 adapter | `src/fcn_checker/orders/reference.py` | 所有上手共用，欄名對應走設定檔；新上手不需新增 adapter |
 | 規則 | `src/fcn_checker/rules/<上手>.py` | 只寫該上手專屬的說明書內部規則（不碰參考條件表）與未涵蓋清單；其他規則自動沿用（§6.2a） |
 | 合成測試資料 | `tests/checker/<上手>_synth.py` | `Spec` 繼承 `reference_synth.ProductSpec`（補預設商品代號、該上手專屬的文件選項），依該上手版面把規格畫成虛構 PDF（版面文字由規格算出），只用 `tests/checker/pdf_writer.py` 排版；`build_pdf`／`build_iis_pdf` 收 `edits`（`pdf_writer.Edit`，每個至少換到一處）製造錯誤，模組說明列出段落代號；參考條件表列一律 `reference_synth.reference_row(spec)`（不自己產），固定文字取 `harness.STANDARD`，單份核對用 `tests/checker/harness.py`；不引用其他上手合成器 |
 | 測試 | `tests/checker/test_check_<上手>*.py`、`tests/checker/test_real_samples.py` | 合成測試進 CI；真實樣本測試只在本機 |
+
+新上手要碰的檔只有：`parsers/<上手>.py`、`parsers/<上手>_iis.py`、`rules/<上手>.py`、`rules/<上手>_iis.py`（有範本專屬檢查才需要）、`issuers.py` 的 `REGISTRY` 一筆、三個設定檔（`review_standard.toml` 的 `[issuer.<上手>]`、`issuer_prefixes.toml`、`reference_sheet.toml`）、合成測試與文件。共用的 `config.py`、`rules/review_standard.py` 不在清單裡；需要新的「一種基準」（所有上手都可能用到的新欄位）時才在 `ISSUER_FIELDS` 加一個欄位，另開 Issue。
 
 ### 6.2a 新上手要提供什麼、哪些自動沿用（[ADR 0009](adr/0009-shared-rules-defined-per-rule.md)）
 
@@ -138,7 +141,7 @@
 - 說明書推算規則（`rules/derivation.py`）：價格推算 `derive.prices`（各標的執行價／KO 價／下限價 = 最初價格 × 百分比，四捨五入到 4 位；價格表列數 = 標的數、下限價欄與 KI 型態一致），只讀 `underlyings`、`underlying_prices`、`strike_pct`／`ko_pct`／`ki_pct`、`ki_type`。
 - 日期表結構檢查（`rules/schedule.py`）：期數 = 天期、配息日與觀察日順序、末期觀察日 = 最終評價日、末期配息日 = 到期日、期始日（依上手宣告的定義），只讀 `schedule_table`、`tenor_months`、`issue_date`、`final_valuation_date`、`maturity_date`、`underlyings`；上手規則不再自寫這幾項（[共用核對規則](rules/shared-check-rules.md) §6.1）。
 - 情境分析檢查（`rules/scenario.py`，Issue #294）：情境重印的價格表 = 主價格表、情境假設值 = 說明書正式值（範本沒有正式值時比參考條件表）、較差情境寫出的執行價等 = 價格表（接受 #259 的兩種進位），只讀 `main_price_table`、`scenario_reprint_table`、`scenario_params`、`scenario_prices` 與它們對應的正式值欄位；範本沒有的那一塊交 `absent`（[共用核對規則](rules/shared-check-rules.md) §7）。
-- 審查標準規則（`rules/review_standard.py` 的 `review_standard_rules`）：面額預設值、受理申購日、刊印日期、審查日期、負責人、固定警語、風險等級、禁用語、商品名稱、發行機構全名、受託機構資訊、費率、發行價格。上手不同的基準只放在 `config/review_standard.toml`。
+- 審查標準規則（`rules/review_standard.py` 的 `review_standard_rules`）：面額預設值、受理申購日、刊印日期、審查日期、負責人、固定警語、風險等級、禁用語、商品名稱、發行機構全名、受託機構資訊、費率、發行價格。上手不同的基準只放在 `config/review_standard.toml` 的 `[issuer.<上手>]`，規則一律讀已解析的 `ctx.issuer_std`，沒有依上手代號的分支。
 - 回填（`backfill.py`）：TS、IIS 打勾，ISIN、發行日、比價日的核對、回填決策與寫入。
 - 單份核對順序（`single_check.py`）與批量入口、CLI、PANEL。
 
@@ -147,7 +150,7 @@
 - 參考條件表欄位與回填用：商品代號 `product_code`、`isin`、中文幣別 `currency_zh`、承作幣別的其他出處 `currency_others`（範本沒有就交 `absent`）、標的 `underlyings`、各標的價格列 `underlying_prices`、百分比 `strike_pct`／`ko_pct`／`ki_pct`／`coupon_pa_pct`、天期 `tenor_months`、日期 `trade_date`／`issue_date`／`final_valuation_date`／`maturity_date`、面額 `denomination`、KO 觀察方式 `ko_observation`、記憶式 `ko_memory`、KI 型態 `ki_type`、提前出場排程 `autocall_schedule`、日期表 `schedule_table`、出處清單 `min_amounts`／`subscription_dates`／`print_dates`。
 - 情境分析用（範本沒有就交 `absent`）：主價格表 `main_price_table` 與情境重印的價格表 `scenario_reprint_table`（`TableAt`，`parsers/price_table.at` 由讀出的表與 `TableSpec.where` 產生）、情境假設值出處清單 `scenario_params`（`ScenarioParam`：出處代號、位置、值、倍數；名稱查 `OCCURRENCE_NAMES`、要等於的正式值查 `SCENARIO_TARGETS`）、較差情境寫出的價格 `scenario_prices`（`ScenarioPrice`：位置、第幾檔、哪一欄、值）、正式月配息率 `monthly_coupon_pct`（有情境月配息率出處時）。
 - 審查標準規則用：商品中英文名稱 `name_zh`／`name_en`、審查通過日期 `approval_date`、負責人姓名 `chairman`、發行價格 `issue_price_pct`（其他出處 `issue_price_others`，範本沒有就交出 `absent`）、發行機構名稱 `issuer_name_cover`／`issuer_name_ch2`／`issuer_name_ch1`（只寫中文的出處，範本沒有就交出 `absent`）、受託或銷售機構 `distributor_name_cover`／`distributor_phone_cover`／`distributor_address_cover`／`distributor_name_ch2`／`distributor_address_ch2`，以及費用表各項費率（名稱由 `standard_fields.fee_field(<費用項目>)` 產生，費用項目同 `config/review_standard.toml` 的 `[fees]`）。
-- 審查標準有該上手分節才核對的固定值（例外：沒有分節的上手不會被讀，可不交出，也不必交 `absent`）：商品種類 `product_type`（`product_type.<上手>`）、保證機構名稱 `guarantor_name_cover`／`guarantor_name_ch1`／`guarantor_name_ch2`（`guarantor_name.<上手>` 的 cover／ch1／ch2）、總代理人名稱 `agent_name_cover`／`agent_name_ch2`（`agent_name.<上手>` 的 cover／ch2）、發行不成立門檻 `minimum_issue_size`（`minimum_issue_size.<上手>`）；最低金額倍數 `min_amount_multiples.<上手>` 不是欄位，由共用 `field.min_amounts` 讀設定。
+- 審查標準有該上手分節才核對的固定值（例外：沒有分節的上手不會被讀，可不交出，也不必交 `absent`）：商品種類 `product_type`（`issuer.<上手>.product_type`）、保證機構名稱 `guarantor_name_cover`／`guarantor_name_ch1`／`guarantor_name_ch2`（`issuer.<上手>.guarantor_name` 的 cover／ch1／ch2）、總代理人名稱 `agent_name_cover`／`agent_name_ch2`（`issuer.<上手>.agent_name` 的 cover／ch2）、發行不成立門檻 `minimum_issue_size`（`issuer.<上手>.minimum_issue_size`）；最低金額倍數 `issuer.<上手>.min_amount_multiples` 不是欄位，由共用 `field.min_amounts` 讀設定。
 - 範本另有、其他範本沒有的出處（範本沒有就交 `absent`，共用規則不核對、不產生結果）：第一章只寫中文的發行機構名稱 `issuer_name_ch1`（MS、BNP）、封面發行機構名稱 `issuer_name_cover`（BBVA 沒有封面發行機構欄，交 `absent`）、第四章受託機構電話 `distributor_phone_ch4`（BNP；UBS 取一般交易事項十六「受託機構聯絡方式」；由共用 `standard.distributor` 核對，含電話等價寫法）；受託機構名稱、地址、負責人的其他出處 `distributor_names_others`／`distributor_addresses_others`／`chairman_others`（出處清單；BBVA 第 1 頁明細，其他範本用 `standard_fields.absent_all(standard_fields.DISTRIBUTOR_OTHERS, …)` 一起交 `absent`；Issue #305）；說明書寫明的期初定價 `initial_pricing`（Citi 標的表表頭；範本沒有就交 `absent`，共用 `field.initial_pricing` 只檢查表上是允許值）。
 
 各欄位值的形狀見 `STANDARD_FIELDS` 與 `FEE_FIELD_SHAPE`。共用規則只透過 `rules/kit.py` 的 `read_standard` 讀欄位，讀不在清單上的名稱會直接失敗；新增共用規則需要的欄位時，同步更新 `STANDARD_FIELDS`、本節與各上手的 `read`。adapter 少交某個標準欄位時，相關規則轉人工覆核並寫出欄位名稱，不會整份變成執行錯誤；共用規則的語意見[共用核對規則](rules/shared-check-rules.md)，範本差異由 adapter 宣告（ADR 0009）。
@@ -195,7 +198,7 @@
 | `checker.py` | 直接呼叫 BARC parser 與規則，`template.barc` | 依序以各上手 `detect` 辨識；恰好一個命中才繼續，零個（`template_unknown`）或多個（`template_ambiguous`）命中轉人工覆核；`rule_id` 為 `template.detect`；詢價格式設定的上手不符 → `order.issuer` 人工覆核 |
 | `cli.py` | 預設 `config/order_formats/barc.toml` | `--order-format` 選填；未指定時依辨識到的上手選格式設定 |
 | `panel.py`、`panel_workflow.py` | 只列 BARC 選項並呼叫 BARC `detect` | 由上手註冊表產生選項；格式設定依選取的上手（雙擊入口傳 `--order-formats-dir`） |
-| `config.py`、`review_standard.toml` | `product_name.barc` 寫死 | 依上手讀取 `product_name.<上手>`；其他依上手不同的基準日後同樣分節，共用基準不變 |
+| `config.py`、`review_standard.toml` | `product_name.barc` 寫死 | 依上手讀取 `product_name.<上手>`；其他依上手不同的基準日後同樣分節，共用基準不變（Issue #128 再改成每家上手一張表 `[issuer.<上手>]`） |
 | `rules/barc.py` | 通用規則與 BARC 專屬規則放在一起 | 通用部分（結果建構、缺值處理、百分比與日期比對、詢價表欄位檢查、審查標準規則）抽到 `rules/common.py`，各上手只寫專屬規則與「未涵蓋」清單 |
 | `parsers/layout.py` | 章名、條號格式依 BARC | `LayoutSpec` 參數，由各上手提供（BARC：`parsers/barc.py` 的 `LAYOUT`） |
 

@@ -54,7 +54,7 @@
 | 第 1 頁 | ISIN 括號之後，到 `※投資風險警語：` 之前 | `DBS Bank Ltd 6-Month USD Fixed Coupon Memory Daily Knock-Out Worst of Basket Equity Linked Notes (unsecured and non-guaranteed) (non-principal protected)` | 英文名稱（`name_en`；跨行合併、比對忽略空白） |
 | 相關機構 1. | `發行機構：` | `新加坡商星展銀行股份有限公司(DBS Bank Ltd)；營業所在地：…` | 發行機構名稱（到 `；營業所在地` 之前） |
 | 相關機構 3. | `受託或銷售機構：` | `玉山綜合證券股份有限公司(含國際證券業務分公司)；營業所在地：臺北市105民生東路三段158號6樓。` | 受託機構名稱（到 `；營業所在地`）、地址（去掉結尾 `。`） |
-| 商品簡介 | `本商品風險程度：` | `RR4` | 風險等級（`risk.level_formats.dbs` 收 `風險程度：{level}`） |
+| 商品簡介 | `本商品風險程度：` | `RR4` | 風險等級（`issuer.dbs.risk_level_formats` 收 `風險程度：{level}`） |
 | 商品簡介 | `計價幣別：` | `美元(USD)；計價貨幣本金保本率：…`（人民幣：`人民幣(RMB)。「人民幣」是指…台灣；`，定義不核對，Issue #296） | 幣別（到 `；`） |
 | 商品簡介 | `連結標的資產：` | `甲公司 (Alpha Inc)，彭博代碼為ABC UW、乙公司 (Beta Corp)，彭博代碼為DEF UW。` | 標的代號（依順序；名稱不核對） |
 | 商品簡介 | 價格表（`連結標的資產：` 句之後、`商品面額：` 之前） | 同說明書表1（`彭博代碼`／`期初價格`／`執行價格 (期初價格的X%)`／`自動提前出場價格 (期初價格的Y%)`／有 KI 時 `下限觸發價格 (期初價格的Z%)`） | 各標的期初價格、K／KO／KI % 與價格（B17–B19a） |
@@ -112,11 +112,11 @@
 
 | 值 | 出處 | 注意 |
 |---|---|---|
-| 固定警語（DBS 版本） | 警語 1.（1 次） | 比對用審查標準 `risk.fixed_warning_by_issuer.dbs`；投資人須知次數 `iis.fixed_warning_occurrences.dbs = 1` |
-| 風險等級 | 警語 1. 的 `【RR4】`（2 處）；商品簡介 `本商品風險程度：RR4` | 依 `risk.level_formats.dbs` |
+| 固定警語（DBS 版本） | 警語 1.（1 次） | 比對用審查標準 `issuer.dbs.fixed_warning`；投資人須知次數 `issuer.dbs.iis_fixed_warning_occurrences = 1` |
+| 風險等級 | 警語 1. 的 `【RR4】`（2 處）；商品簡介 `本商品風險程度：RR4` | 依 `issuer.dbs.risk_level_formats` |
 | 受託機構名稱 | 相關機構 3.（1 處全名，帶 `(含國際證券業務分公司)`） | = `distributor.name` 或 `name_equivalents`（2026-10-15 確認加入）；警語只寫「受託或銷售機構」 |
 | 受託機構地址 | 相關機構 3. `；營業所在地：…。` | 4 份 = `臺北市105民生東路三段158號6樓`（`address_equivalents`） |
-| 發行機構名稱 | 相關機構 1. | 中文＋括號英文 = `issuer_name.dbs`；商品主要風險揭露的 `新加坡商星展銀行股份有限公司`（信用風險）不算出處 |
+| 發行機構名稱 | 相關機構 1. | 中文＋括號英文 = `issuer.dbs.issuer_name`；商品主要風險揭露的 `新加坡商星展銀行股份有限公司`（信用風險）不算出處 |
 | 發行人 | 相關機構 2. | 不核對（2026-10-15 確認） |
 | 商品代號 | 第 1 頁 `(商品代號：…)`、`( 受託或銷售機構商品代號：…)` | 2 處；= 檔名前 12 碼 |
 | ISIN | 第 1 頁 `( 國際證券編碼ISIN：…)` | 1 處 |

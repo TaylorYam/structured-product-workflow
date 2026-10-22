@@ -94,7 +94,7 @@ fcn-batch data/orders/核對表格式..xlsx data/term-sheets/IS/029*.pdf --out r
 |---|---|
 | 第 1 個 | 參考條件表 Excel（讀第一張工作表），格式見[參考條件表格式](order-formats/reference-sheet.md) |
 | 其後 | 一或多份說明書與投資人須知 PDF；檔名須為 `<商品代號>_TS.pdf`（說明書）或 `<商品代號>_IIS.pdf`（投資人須知），前三碼是上手編號（`config/issuer_prefixes.toml`），用來挑範本 |
-| `--review-standard` | 審查標準設定檔，預設 `config/review_standard.toml` |
+| `--review-standard` | 審查標準設定檔，預設 `config/review_standard.toml`（舊版面先用 `fcn-config-migrate` 轉換） |
 | `--reference-format` | 參考條件表格式設定檔，預設 `config/reference_sheet.toml` |
 | `--issuer-prefixes` | 上手編號對照設定檔，預設 `config/issuer_prefixes.toml` |
 | `--exchange-holidays` | 交易所假日表設定檔，預設 `config/exchange_holidays.toml` |
@@ -140,7 +140,7 @@ PANEL 使用 Python 內建 Tkinter，與 `fcn-batch` 共用同一套批量核對
 
    未通過以「錯誤清單」為準；未支援上手（例如尚無範本的上手）與不支援樣態不列入，只算進摘要；人工放行過的也不列入。維護者可在 Bash 用 `fcn-batch 參考條件表_未通過.xlsx PDF/*.pdf` 重跑；PowerShell 須如上方範例先用 `Get-ChildItem` 展開 PDF 清單（PDF 檔名是辨識依據、不改名；有同名的不同 PDF 時另放 `PDF/同名<n>/`，摘要會註明，重跑時一起帶入）。資料夾已存在時不覆蓋；來源檔案核對後被改過時拒絕匯出。**回報包含真實交易資料，只能推到 Private Repo（`TaylorYam/fcn-oos-samples`），不能放進本 Repo、Issue 或 PR。**
 
-設定檔：PANEL 讀專案根目錄 `config/` 的 `review_standard.toml`、`reference_sheet.toml`、`issuer_prefixes.toml` 與 `exchange_holidays.toml`。實際使用的設定檔路徑在「維護」→「使用的設定檔…」。
+設定檔：PANEL 讀專案根目錄 `config/` 的 `review_standard.toml`、`reference_sheet.toml`、`issuer_prefixes.toml` 與 `exchange_holidays.toml`。實際使用的設定檔路徑在「維護」→「使用的設定檔…」。`review_standard.toml` 裡上手不同的基準每家上手一張表 `[issuer.<上手代號小寫>]`（Issue #128，欄位見[審查標準](rules/review-standard.md) §1）；讀到舊版面（每種基準一個表）時會停止並提示執行 `fcn-config-migrate` 一次性轉換（原檔另存 `.bak`）。repo 的 `config/` 已經是新版面，`git pull` 更新後不必另外轉換；只有自己另外保存的舊設定檔（例如用 `--review-standard` 指定的副本）需要轉換。
 
 **交易所假日表**（`config/exchange_holidays.toml`）：提前出場觀察期的期始日是前一期期末日後的下一個「一籃子預定交易日」（所有標的交易所都開市的日子），要跳過標的交易所的休市日。標的的市場由彭博代號最後的交易所碼決定（例：`GOOGL UW` → 美國、`7203 JT` → 日本）。目前有美國與日本（東京證交所，structured-product-workflow#67）兩個市場，各自涵蓋到自己的 `covered_through`；**每年由維護者依交易所官方公告補下一年的休市日並延長 `covered_through`**（來源與休市日的算法寫在設定檔該市場的註解；官方還沒公布的年份不要自行推算），同時更新 `version` 與 `effective_date`。標的交易所不在表上、或日期超出涵蓋範圍時，已知市場的休市日照樣跳過；期始日等於推算結果就通過，比推算結果晚就轉需人工覆核並寫出原因（可能是表上沒有的假日），比推算結果早或落在週末仍是不一致（假日只會讓日期往後延）。
 

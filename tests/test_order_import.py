@@ -18,12 +18,7 @@ from sp_workflow.mail_drafts import PENDING as MAIL_PENDING
 from sp_workflow.mail_drafts import create_drafts
 from sp_workflow.order_import import (
     BLOCKED,
-    LOCKED,
-    NEW,
-    OVERWRITTEN,
     READY,
-    SAME,
-    SKIPPED,
     TO_CHECK,
     check_draft,
     drafts_from,
@@ -33,6 +28,13 @@ from sp_workflow.order_import import (
     review_status,
 )
 from sp_workflow.order_terms import FIELDS, TDCC_FIELD, OrderRow, collect_orders
+from sp_workflow.product_write import (
+    LOCKED,
+    NEW,
+    OVERWRITTEN,
+    SAME,
+    SKIPPED,
+)
 
 BUILTIN = ConfigPaths.with_fallback(Path(__file__).resolve().parents[1] / "config" / "review_standard.toml")
 CONFLICT = "起單建檔裡這檔有好幾列、這欄不同，要填正確的值（正確是空白的話請改起單建檔後重新讀取）"

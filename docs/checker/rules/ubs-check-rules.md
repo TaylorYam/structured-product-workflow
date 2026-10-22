@@ -42,7 +42,7 @@
 | 年利率 `coupon_pa_pct` | 共用 `field.coupon_pa_pct` | 八 `固定配息率：x%（年化配息率為y%）` 的 y（說明書有年利率，不需要 `reference_fields`） |
 | 標的 `underlyings`、各標的價格 | 共用 `field.underlyings`、價格規則 | 代號取九；價格表只有中文名稱，依名稱（= 九同列名稱）對到代號；照順序比對（6 份順序相同，不加 `any_order_issuers`） |
 | 期初定價 `initial_pricing` | 共用 `field.initial_pricing` | 交 `absent`：不和說明書比，只檢查表上是允許值（2026-10-15 確認）；`VWAP` 是不支援樣態 |
-| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 5 筆：八 `最低交易金額`、一般交易事項四 `最低申購金額`、`最低累加申購金額`、八 `最低投資人提前贖回單位數`、`最低累加投資人提前贖回單位數`；倍數 `min_amount_multiples.ubs`（5／5／1／1／1，不分幣別；§3.8） |
+| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 5 筆：八 `最低交易金額`、一般交易事項四 `最低申購金額`、`最低累加申購金額`、八 `最低投資人提前贖回單位數`、`最低累加投資人提前贖回單位數`；倍數 `issuer.ubs.min_amount_multiples`（5／5／1／1／1，不分幣別；§3.8） |
 | 金額旁的幣別 `currency_others` | 共用 `field.currency`（Issue #170） | 八 `發行價格：100%，即X幣別`（有時）、`每單位面額`、`最低交易金額`；一般交易事項四三處、五 `申購價金之計算`（#303）、八兩處；十五情境 `每單位面額`、`每單位面額初始投資金額`；八到期日給付 `以X支付剩餘金額`；說明文字八 `換算後的X金額`、`以每一X可兌`（跨幣別才有）、十五情境三 `則以X支付（“剩餘金額”）`、`以X支付的剩餘金額`；十五情境分析一～四每段小數 2 位的金額與 `價值為0X`（#320）。**價格表幣別字、到期交割句與情境裡小數 4 位的股價、期末匯率、八 ADE 提前贖回 `美元價值的美元金額`（固定美元）不列入**（UB3 澳幣連日股、UB6 日圓連美股；2026-10-15 確認） |
 
 ### 3.2 審查標準規則（共用 `rules/review_standard.py`）
@@ -52,13 +52,13 @@
 | 審查通過日期 | 第 1 頁九、`{日期}經受託機構(…)審查通過`（沒有標籤） | 共用（依交易日；6 份都成立） |
 | 受託機構負責人 | 相關機構事業概況三、受託機構簡介 `負責人姓名：` | 共用 |
 | 受託機構名稱／電話／地址 | 第 1 頁七、；相關機構事業概況三、受託機構簡介 `事業名稱：`、`地址：`／`地址為`；一般交易事項十六 `受託機構聯絡方式：…電話：` | 共用（6 份都 = 設定檔；電話 `+886-2-5556-1313` 已在 `phone_equivalents`）；地址後的 `(營業活動所在地)` 不屬於地址；**`distributor_phone_ch4` 取一般交易事項十六的電話**（同 BNP 第四章 §16） |
-| 發行機構名稱 | 第 1 頁四、；商品基本資料三、；相關機構事業概況一、(一) | 新增 `issuer_name.ubs = "瑞士銀行"`：parser 交出各出處的名稱本身（到第一個 `（` 或 `，` 之前）；**發行分行另由 UBS 專屬規則核對**（§3.5） |
-| 保證機構、總代理人名稱 | — | 範本沒有：不設 `guarantor_name.ubs`、`agent_name.ubs`（「總代理人」字樣照原文放行，2026-10-15 確認） |
+| 發行機構名稱 | 第 1 頁四、；商品基本資料三、；相關機構事業概況一、(一) | 新增 `issuer.ubs.issuer_name = "瑞士銀行"`：parser 交出各出處的名稱本身（到第一個 `（` 或 `，` 之前）；**發行分行另由 UBS 專屬規則核對**（§3.5） |
+| 保證機構、總代理人名稱 | — | 範本沒有：不設 `issuer.ubs.guarantor_name`、`issuer.ubs.agent_name`（「總代理人」字樣照原文放行，2026-10-15 確認） |
 | 固定風險警語、風險等級 | 第 1 頁十、1.、商品基本資料二、投資風險警語段第一點 | **UBS 版本、說明書 3 次**（§3.6）；風險等級預設【RRn】寫法 |
 | 禁用語「受託投資」 | 全文 | 共用（6 份都沒有） |
-| 商品中英文名稱 | 第 1 頁一、二、 | 新增 `product_name.ubs`（§3.6；需要新佔位符）；商品基本資料一另由 UBS 專屬規則核對（§3.5） |
-| 商品種類 | 第 1 頁三、 | 新增 `product_type.ubs = "股權結構型商品"` |
-| 發行不成立門檻 | — | 範本沒有門檻：不設 `minimum_issue_size.ubs` |
+| 商品中英文名稱 | 第 1 頁一、二、 | 新增 `issuer.ubs.product_name`（§3.6；需要新佔位符）；商品基本資料一另由 UBS 專屬規則核對（§3.5） |
+| 商品種類 | 第 1 頁三、 | 新增 `issuer.ubs.product_type = "股權結構型商品"` |
+| 發行不成立門檻 | — | 範本沒有門檻：不設 `issuer.ubs.minimum_issue_size` |
 | 費率 | 一般交易事項二、費用表 | 共用（申購、提前贖回、分銷皆 `0%~5%`；分銷費用沒有子列） |
 | 發行價格 | 商品基本資料八、`發行價格：100%，即X幣別`／`每單位面額之100%` | 共用 `issue_price.pct`（`issue_price_others` 0 筆；不符轉人工覆核） |
 | 面額預設值、刊印日期 | 商品基本資料八；第 1 頁十二、`本產品說明書刋印日期：` | 共用（`print_dates` 1 個；標籤 `刋`／`刊` 都收） |
@@ -105,7 +105,7 @@
 
 ### 3.6 固定警語、名稱（審查標準 UBS 設定）
 
-**固定風險警語**（`risk.fixed_warning_by_issuer.ubs`，2026-10-15 確認視為正確）：UBS 版本 = 共用版（`risk.fixed_warning`）只差 3 處：
+**固定風險警語**（`issuer.ubs.fixed_warning`，2026-10-15 確認視為正確）：UBS 版本 = 共用版（`risk.fixed_warning`）只差 3 處：
 
 | 共用版 | UBS 版 |
 |---|---|
@@ -115,10 +115,10 @@
 
 其餘相同（有「*」、有 OSU 客戶段、5 處都寫 `受託機構`、`發行機構及/或總代理人不對此評級…`）。新版 5 份第 1 頁、商品基本資料二、投資風險警語段、投資人須知警語 1. 逐字相同（忽略空白、刪除 U+F020）。
 
-- 說明書 **3 次**（沿用 `risk.fixed_warning_occurrences = 3`）；投資人須知 **1 次**（`iis.fixed_warning_occurrences.ubs = 1`）。
-- 風險等級：預設【RRn】寫法（每次 2 處）；不需要 `risk.level_formats.ubs`。
+- 說明書 **3 次**（沿用 `risk.fixed_warning_occurrences = 3`）；投資人須知 **1 次**（`issuer.ubs.iis_fixed_warning_occurrences = 1`）。
+- 風險等級：預設【RRn】寫法（每次 2 處）；不需要 `issuer.ubs.risk_level_formats`。
 
-**商品名稱樣板**（`product_name.ubs`；新版 5 份的結構全部符合，觀察方式字樣 UB2、UB4 判不一致；2026-10-15 確認）：
+**商品名稱樣板**（`issuer.ubs.product_name`；新版 5 份的結構全部符合，觀察方式字樣 UB2、UB4 判不一致；2026-10-15 確認）：
 
 - 中文：`瑞銀{ko_observation_zh}{memory_zh}提前出場固定配息連結股票（不保本）{ki_zh}（無擔保）（無保證機構）結構型商品`。
 - 英文：`UBS {ko_observation_en} {memory_en}Callable Variable Maturity Equity Linked Notes with {ki_en}Fixed Coupon`。
@@ -127,7 +127,7 @@
 - 名稱比對：中文、英文都忽略空白（`ignore_whitespace_en = true`）、括號統一（`normalize_brackets = true`）、去掉句尾 `。`；**`瑞銀（定期觀察）`／`瑞銀（每日觀察）` 視為不加括號的寫法**（2026-10-15 確認；實作方式（名稱正規化或等價寫法設定）在實作 PR 決定，各名稱出處——說明書第 1 頁、商品基本資料一、投資人須知——都適用）。
 - 名稱後的 `（下稱“本商品”）` 不屬於名稱。
 
-**發行機構名稱**（`issuer_name.ubs = "瑞士銀行"`）：三處的名稱本身都是 `瑞士銀行`（第 1 頁後接 `（下稱…）`、相關機構事業概況後接 `（UBS AG）`，都不屬於名稱）；發行分行見 §3.5。UBS 目前只有倫敦分行（2026-10-15 確認）。
+**發行機構名稱**（`issuer.ubs.issuer_name = "瑞士銀行"`）：三處的名稱本身都是 `瑞士銀行`（第 1 頁後接 `（下稱…）`、相關機構事業概況後接 `（UBS AG）`，都不屬於名稱）；發行分行見 §3.5。UBS 目前只有倫敦分行（2026-10-15 確認）。
 
 ### 3.7 情境分析（商品基本資料十五）
 
@@ -150,7 +150,7 @@
 | 一般交易事項八 `最低投資人提前贖回單位數`（`即一單位面額`） | 1 |
 | 一般交易事項八 `最低累加投資人提前贖回單位數`（`即一單位面額`） | 1 |
 
-設 `min_amount_multiples.ubs`（`minimum_trade = 5`、`minimum_subscription = 5`、`minimum_additional = 1`、`minimum_redemption = 1`、`redemption_increment = 1`；不分幣別，USD、JPY、AUD 6 份都相同）。
+設 `issuer.ubs.min_amount_multiples`（`minimum_trade = 5`、`minimum_subscription = 5`、`minimum_additional = 1`、`minimum_redemption = 1`、`redemption_increment = 1`；不分幣別，USD、JPY、AUD 6 份都相同）。
 
 ### 3.9 核對範圍決定（2026-10-15，Issue #279）
 
@@ -213,7 +213,7 @@
 |---|---|
 | 說明書 | 上手登記（`issuers.py`）；UBS `LayoutSpec`（沒有章號，段名單獨一行、段內項號 `一、`～重新起算；頁底 `第N頁，共M頁` 排除；先刪除 U+F000–U+F0FF）；範本辨識（含舊版辨識失敗原因）；`read` 交出全部標準欄位（`initial_pricing`、`issue_price_others` 交 `absent`／0 筆；`guarantor_*`、`agent_*`、`minimum_issue_size` 不交；`subscription_dates` 1 筆；`min_amounts` 5 筆；`distributor_phone_ch4` 取一般交易事項十六；KO D／P、KI D／P／AM／無）；§3.3–§3.8 |
 | 投資人須知 | `parsers/ubs_iis.py`、`IisTemplate`（頁底 `第N頁，共4頁` 的 `page_totals`；段名前綴 `一、`／`二、` 可有可無）；商品代號、ISIN 不交（範本沒有）；[投資人須知核對規則](iis-check-rules.md) UBS 欄 |
-| 共用設定 | 審查標準 UBS 分節（`fixed_warning_by_issuer.ubs`、`product_name.ubs`、`issuer_name.ubs`、`product_type.ubs`、`min_amount_multiples.ubs`、`iis.fixed_warning_occurrences.ubs = 1`）；名稱佔位符 `{ko_observation_*}`、`{ki_*}` 與括號等價寫法；`config/reference_sheet.toml` 的 `[issuer_values] UBS = "UBS"` |
+| 共用設定 | 審查標準 UBS 分節（`fixed_warning_by_issuer.ubs`、`issuer.ubs.product_name`、`issuer.ubs.issuer_name`、`issuer.ubs.product_type`、`issuer.ubs.min_amount_multiples`、`issuer.ubs.iis_fixed_warning_occurrences = 1`）；名稱佔位符 `{ko_observation_*}`、`{ki_*}` 與括號等價寫法；`config/reference_sheet.toml` 的 `[issuer_values] UBS = "UBS"` |
 
 要有合成 PDF 測試（KO P 記憶式／非記憶式多標的、KO D 記憶式／非記憶式單一標的、Non-Call 1 與 > 1、KI 無／D／P／AM、AUD 連日股、JPY 連美股、價格表名稱拆行與 U+F020、欄序 K → KI → KO、名稱觀察方式錯、`瑞銀（定期觀察）` 等價寫法、舊版辨識失敗）、本機 6 份真實樣本測試（`tests/checker/test_real_ubs.py`，結果與 §5 一致：UB1 辨識失敗、UB2 與 UB4 名稱不一致（UB4 另有表上幣別不一致）、UB3、UB5、UB6 說明書與投資人須知都通過並回填），以及其他上手樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變（新增名稱佔位符不影響既有樣板）。
 

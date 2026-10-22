@@ -100,11 +100,11 @@ z = KI %；無 KI 時 y = 說明書轉換比例（K %）。寫法不在表內 �
 
 | 值 | 出處 | 注意 |
 |---|---|---|
-| 固定警語（GS 版本） | 警語 1.、二、 1.(3) 商品簡介（2 次） | 比對用審查標準 `risk.fixed_warning_by_issuer.bbva`（= GS 版本）；投資人須知次數 `iis.fixed_warning_occurrences.bbva = 2` |
+| 固定警語（GS 版本） | 警語 1.、二、 1.(3) 商品簡介（2 次） | 比對用審查標準 `issuer.bbva.fixed_warning`（= GS 版本）；投資人須知次數 `issuer.bbva.iis_fixed_warning_occurrences = 2` |
 | 風險等級 | 兩段固定警語內的 `風險程度等級為【RR4】`、`歸類為【RR4】`（共 4 處） | 預設寫法 `【{level}】` |
 | 受託機構名稱 | 一、 4.（1 處全名）；警語 4.（3 處）、5.、6.、9. 的全名（Issue #305） | 每處 = `distributor.name`（2026-10-16 決定警語裡的全名也算名稱出處） |
 | 受託機構電話、地址 | 一、 4. `(電話: …，營業所在地：…)` | 電話 `+886 2 5556 1313`（`phone_equivalents`）、地址 = `distributor.address` |
-| 發行機構名稱 | 一、 1.（`發行機構:` 半形冒號） | `荷蘭商BBVA GLOBAL MARKETS, B.V.` = `issuer_name.bbva`；二、 1.(4) 評等句的 `發行機構(BBVA GLOBAL MARKETS, B.V.)`、警語 5.、6. 不算出處 |
+| 發行機構名稱 | 一、 1.（`發行機構:` 半形冒號） | `荷蘭商BBVA GLOBAL MARKETS, B.V.` = `issuer.bbva.issuer_name`；二、 1.(4) 評等句的 `發行機構(BBVA GLOBAL MARKETS, B.V.)`、警語 5.、6. 不算出處 |
 | 保證機構、總代理人 | 一、 2.、3.；警語 5.、6.；五、六、七 | 不核對（2026-10-15 確認）；一、 2. 寫 `…S.A)`（少句點） |
 | 商品代號 | 第 1 頁 `TDCC 商品代號：`、`受託機構商品代號：` | 2 處；= 檔名前 12 碼 |
 | ISIN | 第 1 頁 `(ISIN: …)` | 1 處 |

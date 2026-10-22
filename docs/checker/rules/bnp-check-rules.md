@@ -18,7 +18,7 @@
 
 - 第一章第 10 項後多一項第 11 項「人民幣付款中斷事件」，之後條號全部 +1（共 28 條）。第一章各項依**項目名稱**（條號右側標題開頭，例 `配息資料及其計算公式`、`投資收益計算方法`）找，不寫死號碼；錯訊與項目名稱寫文件上的條號（例：人民幣版寫「第 16 項月配息率」、「第 19 項情境標題」）。「人民幣付款中斷事件」不核對。
 - 封面 9 與第一章 §5 `計價幣別：境外人民幣。本中文產品說明書中所述人民幣均係指境外人民幣。…`：只讀第一個句號前的幣別字，後面的定義句不核對；`境外人民幣` = CNH（比照 #296 RMB = CNH）。面額預設值照 CNH（100,000）；最低金額倍數 BNP 不分幣別（5 倍／1 倍）。
-- 英文名稱的 `CNY` 對參考條件表的 CNH（`product_name.bnp.ccy_aliases`，審查標準 v25）。
+- 英文名稱的 `CNY` 對參考條件表的 CNH（`issuer.bnp.product_name.ccy_aliases`，審查標準 v25）。
 
 修後 2 份說明書全部通過；本機 BNP 真實樣本（IS 12 份、OOS 98 份）前後結果逐份相同。投資人須知內文參照說明書的條號（`第一章第14 項`、`第20 項`、`第13 項`）在人民幣版沒有跟著 +1，投資人須知不核對這些參照。
 
@@ -55,11 +55,11 @@
 | 審查通過日期 | 封面 13 | 共用（依交易日）；寫法月份補零（`2026 年06 月11 日`），parser 要能讀 |
 | 受託機構負責人 | 第二章 §3(4) | 共用 |
 | 受託機構名稱／電話／地址 | 封面 12；第二章 §3(4) 名稱、營業所在地；第四章 §16 電話 | 共用；電話寫成 `+886 (2) 5556 1313`（區碼加括號，現有 `phone_equivalents` 沒有），實作時加入；地址寫成 `臺北市105 民生東路三段158 號6 樓`（「臺」、郵遞區號、沒有「松山區」），`address_equivalents` 加入 `臺北市105民生東路三段158號6樓` |
-| 發行機構全名 | 封面 5；第一章 §3；第二章 §1(1)；警語 (5) 不算 | 新增 `issuer_name.bnp = "BNP Paribas Issuance B.V."`（只有英文法人名，三處寫法相同） |
+| 發行機構全名 | 封面 5；第一章 §3；第二章 §1(1)；警語 (5) 不算 | 新增 `issuer.bnp.issuer_name = "BNP Paribas Issuance B.V."`（只有英文法人名，三處寫法相同） |
 | 保證機構名稱 | 封面 11；第一章 §3；第二章 §2(1) | **BNP 特有**，見 §3.6 |
 | 固定風險警語、風險等級 | 封面 14(1)、第一章 §2、第三章 §6(1) | BNP 版本，見 §3.6 |
 | 禁用語「受託投資」 | 全文 | 共用；兩個允許片語都出現 |
-| 商品中英文名稱 | 封面 2、3 | 新增 `product_name.bnp`，見 §3.6 |
+| 商品中英文名稱 | 封面 2、3 | 新增 `issuer.bnp.product_name`，見 §3.6 |
 | 商品種類 | 封面 4 | 固定值 `股權連結結構型商品`（不隨標的數改變；BNP 專屬） |
 | 費率 | 第四章 §2 費用表 | 共用（申購、提前贖回、分銷皆 `0%~5%`） |
 | 發行價格 | 第一章 §7 `100.00%`；§18 假設 `發行價格：100.00%`、`× 100.00%`；第四章 §5 `× 100%` | 共用；每處一筆 |
@@ -107,9 +107,9 @@
 
 - BNP 版本 = 現行 `risk.fixed_warning` 的 `【RR4】` 改為 `[RR4]`（半形方括號）、`【證券交易所交易證券】` 去掉【】、去掉 `*投資人請注意` 的 `*`；結尾有句號。7 份 3 處逐字相同（忽略空白）。
 - 出現次數合計 3 次（封面 14(1)、第一章 §2、第三章 §6(1)）。
-- 實作時新增 `risk.fixed_warning_by_issuer.bnp`，風險等級寫法 `risk.level_formats.bnp = ["風險程度等級為[{level}]", "歸類為[{level}]"]`。
+- 實作時新增 `issuer.bnp.fixed_warning`，風險等級寫法 `issuer.bnp.risk_level_formats = ["風險程度等級為[{level}]", "歸類為[{level}]"]`。
 
-**商品名稱樣板**（`product_name.bnp`，依 7 份樣本推得，2026-10-13 確認照此核對）：
+**商品名稱樣板**（`issuer.bnp.product_name`，依 7 份樣本推得，2026-10-13 確認照此核對）：
 
 - 中文：`法國巴黎銀行{tenor}個月期{ccy_zh}計價固定配息{autocall_zh}連結{underlying_zh}股票/交易所買賣基金結構型商品(不保本)(無擔保)`
   - `{underlying_zh}`：1 檔 `單一`；2 檔以上 `一籃子`
@@ -121,7 +121,7 @@
 - 境外人民幣（CNH）英文名稱寫 `CNY`（`ccy_aliases = { CNH = "CNY" }`，Issue #345）；中文 `{ccy_zh}` 是封面 9 的幣別字（`境外人民幣`）。
 - `{autocall_*}` 是**新的佔位符**（依 Non-Call 與天期填入），實作時新增並更新[審查標準](review-standard.md) §2.3。
 
-**保證機構名稱**（決定 F，2026-10-13）：BNP 特有角色，三處寫法不同，各自為固定值（審查標準 BNP 分節 `guarantor_name.bnp`，三個鍵）：
+**保證機構名稱**（決定 F，2026-10-13）：BNP 特有角色，三處寫法不同，各自為固定值（審查標準 BNP 分節 `issuer.bnp.guarantor_name`，三個鍵）：
 
 | 出處 | 寫法 |
 |---|---|
@@ -233,7 +233,7 @@
 | 核對規則 | rule_id | 位置 |
 |---|---|---|
 | §3.1 參考條件表欄位、回填、VWAP | `field.*`、`backfill.*` | 共用 `rules/reference.py`、`backfill.py` |
-| §3.1 最低金額倍數 | `field.min_amounts`（倍數 `min_amount_multiples.bnp`） | 共用 `rules/reference.py` |
+| §3.1 最低金額倍數 | `field.min_amounts`（倍數 `issuer.bnp.min_amount_multiples`） | 共用 `rules/reference.py` |
 | §3.2 審查標準共用項目 | `standard.approval_date`、`standard.chairman`、`standard.distributor`（含第四章 §16 電話：標準欄位 `distributor_phone_ch4`，由共用規則核對，Issue #196）、`standard.issuer_name`、`standard.fixed_warning`、`standard.risk_level`、`standard.forbidden_wording`、`standard.product_name`、`standard.fees`、`standard.issue_price`（三處重印）、`doc.denomination`、`doc.print_date`、`doc.subscription_start_date` | 共用 `rules/review_standard.py` |
 | §3.2 商品種類、發行不成立門檻 | `standard.product_type`、`standard.minimum_issue_size` | 共用 `rules/review_standard.py`（有該上手分節才核對） |
 | §3.3 年利率與月配息率 | `field.coupon_pa_pct`、`derive.monthly_coupon`（第 15 項兩處）、`doc.min_coupon_rate` | `rules/bnp.py` |
@@ -241,5 +241,5 @@
 | §3.4 價格推算、分割轉人工 | `derive.prices`、`field.underlying_prices`、投資人須知 `iis.underlying_prices`（`split_suspected`，Issue #222） | 共用 `rules/reference.py` 的 `compare_sheet_prices` |
 | §3.4 重印表、較差情境執行價（Issue #294） | 共用 `scenario.reprint`、`scenario.strike`（假設句與股數算式的執行價格各一筆；表現最差標的 = 假設句「(假設為X)」對到 §11 名稱列的那一檔；單一標的就是那一檔；對不到轉人工覆核） | `rules/scenario.py`（對檔在 `parsers/bnp.py`） |
 | §3.5 內部交叉驗證 | `doc.trustee_product_code`、`doc.name_consistency`、`doc.currency_consistency`、`doc.coupon_periods`、`doc.ko_observation`、`doc.ko_memory`、`doc.redemption_pct`、`doc.base_prospectus_date`、`doc.page_count`（頁首「共M頁」= PDF 頁數，含沒有文字層的附件頁）、`schedule.autocall_dates` | `rules/bnp.py`（日期表結構為共用 `schedule.period_count`／`payment_order`／`observation_order`／`last_observation`／`last_payment`／`period_start`（[共用核對規則](shared-check-rules.md) §6.1，Issue #289）） |
-| §3.6 保證機構名稱 | `standard.guarantor_name`（`guarantor_name.bnp` 三處） | 共用 `rules/review_standard.py` |
+| §3.6 保證機構名稱 | `standard.guarantor_name`（`issuer.bnp.guarantor_name` 三處） | 共用 `rules/review_standard.py` |
 | §3.7 情境分析 | 共用 `scenario.params`（假設的商品面額、投資本金）、`doc.scenario_parameters`（情境種類）、`doc.scenario_calculations`（`情境一_assumed` 假設句期別、`情境X_coupon`／`_cumulative`／`_redemption`／`_return`／`_shares`／`_remainder`） | `rules/bnp_scenario.py` |

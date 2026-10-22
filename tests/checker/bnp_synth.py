@@ -26,13 +26,13 @@ from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
 from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
 
-NAME = STANDARD["product_name"]["bnp"]
-WARNING = STANDARD["risk"]["fixed_warning_by_issuer"]["bnp"]
-ISSUER = STANDARD["issuer_name"]["bnp"]
-GUARANTOR = STANDARD["guarantor_name"]["bnp"]
-PRODUCT_TYPE = STANDARD["product_type"]["bnp"]
-ISSUE_SIZE = STANDARD["minimum_issue_size"]["bnp"]
-MULTIPLES = STANDARD["min_amount_multiples"]["bnp"]
+NAME = STANDARD["issuer"]["bnp"]["product_name"]
+WARNING = STANDARD["issuer"]["bnp"]["fixed_warning"]
+ISSUER = STANDARD["issuer"]["bnp"]["issuer_name"]
+GUARANTOR = STANDARD["issuer"]["bnp"]["guarantor_name"]
+PRODUCT_TYPE = STANDARD["issuer"]["bnp"]["product_type"]
+ISSUE_SIZE = STANDARD["issuer"]["bnp"]["minimum_issue_size"]
+MULTIPLES = STANDARD["issuer"]["bnp"]["min_amount_multiples"]
 DIST = STANDARD["distributor"]
 PHONE = "+886 (2) 5556 1313"  # 審查標準 phone_equivalents 的 BNP 寫法
 ADDRESS = "臺北市105 民生東路三段158 號6 樓"  # 審查標準 address_equivalents 的 BNP 寫法

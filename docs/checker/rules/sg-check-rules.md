@@ -3,7 +3,7 @@
 - 文件側：[SG 範本規格](../templates/sg-zh-product-description.md)
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [SG 下單資料格式](../order-formats/sg-fcn-reference.md)
 - 會隨時間改變的基準見[審查標準](review-standard.md) §2.8（設定檔 `config/review_standard.toml`）
-- 狀態：核對範圍與規則已與作業人員確認（2026-10-13，Issue #192）；已實作（Issue #194）。rule_id 對照：§3.3 `derive.monthly_coupon`（第 8 項）；§3.4 `derive.prices`（共用）；共用情境規則（Issue #294）`scenario.reprint`（重印價格表逐格，表頭 % = 第 8 項 KO／KI／執行價定義）、`scenario.params`（假設的總投資金額 = 單位數 × 面額、天期、配息率；各情境配息算式的配息率；獲利情境平均年化報酬率 = 第 8 項年率，依說明書位數四捨五入，決定 4 起不再和參考條件表比）、`scenario.strike`（較差／最差情境數額算式的執行價）；§3.5 `doc.trustee_product_code`、`doc.isin_consistency`、`doc.name_consistency`、`doc.currency_consistency`、`doc.coupon_periods`、`doc.autocall_wording`、`doc.ko_observation`、`doc.ko_memory`、`doc.ki_consistency`、`doc.worst_of_count`、`doc.redemption_pct`、共用 `schedule.period_count`／`payment_order`／`observation_order`／`last_observation`／`last_payment`／`period_start`（Issue #289）、`schedule.row_labels`（末列標籤）／`schedule.autocall_dates`；§3.6 `standard.fixed_warning`（含 `risk.fixed_warning_variants.sg`）、`standard.risk_level`、`standard.product_name`、`standard.issuer_name`、`standard.guarantor_name`、`standard.agent_name`、`standard.product_type`、`standard.distributor`（`name_equivalents`、`address_equivalents`）；§3.1 最低申購倍數 `field.min_amounts`（`min_amount_multiples.sg` 依幣別，沒列的幣別 `multiple_not_configured` 轉人工覆核）；§3.7 `doc.scenario_parameters`（情境種類）、`doc.scenario_calculations`（欄位 `情境X_coupon`／`_cumulative`／`_redemption`／`_return`／`_shares`／`_cash`／`_annualized`／`_assumed`）。無自動提前出場（Non-Call = 天期：機制仍在、只是不會觸發）時 `ko_pct` 交出 100、各標的 KO 價 = 期初價格，與表上 `100`／進場價照常比對（2026-10-14 確認）。第二章後的年報附件（`YYYY年發行機構年報之會計師查核報告` 到第三章章名之前）不算內文
+- 狀態：核對範圍與規則已與作業人員確認（2026-10-13，Issue #192）；已實作（Issue #194）。rule_id 對照：§3.3 `derive.monthly_coupon`（第 8 項）；§3.4 `derive.prices`（共用）；共用情境規則（Issue #294）`scenario.reprint`（重印價格表逐格，表頭 % = 第 8 項 KO／KI／執行價定義）、`scenario.params`（假設的總投資金額 = 單位數 × 面額、天期、配息率；各情境配息算式的配息率；獲利情境平均年化報酬率 = 第 8 項年率，依說明書位數四捨五入，決定 4 起不再和參考條件表比）、`scenario.strike`（較差／最差情境數額算式的執行價）；§3.5 `doc.trustee_product_code`、`doc.isin_consistency`、`doc.name_consistency`、`doc.currency_consistency`、`doc.coupon_periods`、`doc.autocall_wording`、`doc.ko_observation`、`doc.ko_memory`、`doc.ki_consistency`、`doc.worst_of_count`、`doc.redemption_pct`、共用 `schedule.period_count`／`payment_order`／`observation_order`／`last_observation`／`last_payment`／`period_start`（Issue #289）、`schedule.row_labels`（末列標籤）／`schedule.autocall_dates`；§3.6 `standard.fixed_warning`（含 `issuer.sg.fixed_warning_variants`）、`standard.risk_level`、`standard.product_name`、`standard.issuer_name`、`standard.guarantor_name`、`standard.agent_name`、`standard.product_type`、`standard.distributor`（`name_equivalents`、`address_equivalents`）；§3.1 最低申購倍數 `field.min_amounts`（`issuer.sg.min_amount_multiples` 依幣別，沒列的幣別 `multiple_not_configured` 轉人工覆核）；§3.7 `doc.scenario_parameters`（情境種類）、`doc.scenario_calculations`（欄位 `情境X_coupon`／`_cumulative`／`_redemption`／`_return`／`_shares`／`_cash`／`_annualized`／`_assumed`）。無自動提前出場（Non-Call = 天期：機制仍在、只是不會觸發）時 `ko_pct` 交出 100、各標的 KO 價 = 期初價格，與表上 `100`／進場價照常比對（2026-10-14 確認）。第二章後的年報附件（`YYYY年發行機構年報之會計師查核報告` 到第三章章名之前）不算內文
 - 本文件只寫與 [BARC](barc-check-rules.md)、[HSBC](hsbc-check-rules.md)、[MS](ms-check-rules.md)、[BNP 核對規則](bnp-check-rules.md)不同或 SG 特有的部分；未提到的原則（判定原則、數值處理、標的只核對彭博代號、期初價格本身不核對等）見[共用核對規則](shared-check-rules.md)
 
 ## 1. 範圍
@@ -46,12 +46,12 @@
 | 審查通過日期 | 封面 `受託或銷售機構審查通過之日期及文號` | 共用（依交易日）；月份補零（`2026年06月11日`），parser 要能讀 |
 | 受託機構負責人 | 第二章 §3(4) | 共用 |
 | 受託機構名稱／電話／地址 | 封面（名稱到 `（下稱` 之前）；第二章 §3(4) 名稱、營業所在地 | 共用；第二章名稱寫簡稱 `玉山證券` → `name_equivalents`（新增，或 adapter 交出全名時註明簡稱）；封面地址 `台北市松山區民生東路3段158號6樓`（阿拉伯數字）→ `address_equivalents` 加入；電話 `+886 2 5556 1313` 已在 `phone_equivalents` |
-| 發行機構全名 | 封面；第二章 §1(1) | 新增 `issuer_name.sg = "SG ISSUER"`（只有英文法人名，兩處相同；第一章沒有出處，`issuer_name_ch1` 交 `absent`） |
+| 發行機構全名 | 封面；第二章 §1(1) | 新增 `issuer.sg.issuer_name = "SG ISSUER"`（只有英文法人名，兩處相同；第一章沒有出處，`issuer_name_ch1` 交 `absent`） |
 | 保證機構名稱 | 封面；第一章 §3；第二章 §2(1) | **SG 特有**（同 BNP 的 `guarantor_name`），見 §3.6 |
 | 總代理人名稱 | 封面；第二章 §3(1) | **SG 特有**，固定值 `法商法國興業銀行股份有限公司台北分行`（兩處相同；MS、BNP 不核對，SG 2026-10-13 決定只核對名稱） |
 | 固定風險警語、風險等級 | 封面一、第一章 §2、第三章 §5 一 | SG 版本，見 §3.6 |
 | 禁用語「受託投資」 | 全文 | 共用；新版面 0 次；舊版面出現即判錯（預期） |
-| 商品中英文名稱 | 封面 | 新增 `product_name.sg`，見 §3.6 |
+| 商品中英文名稱 | 封面 | 新增 `issuer.sg.product_name`，見 §3.6 |
 | 商品種類 | 封面 | 固定值 `股權連結結構型債券`（SG 專屬；不隨標的數改變） |
 | 費率 | 第四章 §2 費用表 | 共用（申購、提前贖回、分銷皆 `0%~5%`） |
 | 發行價格 | §5(2) `每單位面額的100%`；§8 贖回金額 `每單位面額×100%`（兩處）；第四章 §5 `×100%` | 共用；每處一筆 |
@@ -101,11 +101,11 @@
 **固定風險警語**（固定警語 = 警語一段）：
 
 - SG 版本 = MS 版本（無【】、有 `*`）加結尾句號；6 份封面與第三章 §5 逐字相同（忽略空白；舊版面編號後的空白一併忽略）。
-- 第一章 §2 的風險等級寫 `[RR4]`（半形方括號，兩處），封面與第三章寫 `RR4`：實作時 `risk.level_formats.sg = ["風險程度等級為{level}", "歸類為{level}", "風險程度等級為[{level}]", "歸類為[{level}]"]`，固定警語比對前把 `[RRn]` 正規化為 `RRn`（或 `fixed_warning_by_issuer.sg` 允許兩種寫法），不得因方括號判不一致。
+- 第一章 §2 的風險等級寫 `[RR4]`（半形方括號，兩處），封面與第三章寫 `RR4`：實作時 `issuer.sg.risk_level_formats = ["風險程度等級為{level}", "歸類為{level}", "風險程度等級為[{level}]", "歸類為[{level}]"]`，固定警語比對前把 `[RRn]` 正規化為 `RRn`（或 `fixed_warning_by_issuer.sg` 允許兩種寫法），不得因方括號判不一致。
 - 出現次數合計 3 次（封面一、第一章 §2、第三章 §5 一）。
 - 警語七：封面 `為於中華民國境內受託買賣`、第三章 `於中華民國境內受託買賣`，兩種都允許（不核對全文，只做禁用語檢查）。
 
-**商品名稱樣板**（`product_name.sg`，依 6 份樣本推得，2026-10-13 確認照此核對）：
+**商品名稱樣板**（`issuer.sg.product_name`，依 6 份樣本推得，2026-10-13 確認照此核對）：
 
 - 中文：`SG ISSUER {ccy_zh}計價{tenor}個月固定配息{autocall_zh}股權連結結構型商品（不保本及無擔保）`
   - `{autocall_zh}`：記憶式 `（記憶式自動提前出場）`；非記憶式有自動提前出場 `可自動提前出場`；無自動提前出場空白
@@ -115,9 +115,9 @@
 - 沒有單一／一籃子字樣。比對：中文忽略空白與全形括號；英文忽略多餘空白。
 - `{autocall_zh}` 同時依記憶式與有無自動提前出場填入，是 BNP `{autocall_*}` 佔位符的延伸（三值：記憶式／非記憶式／無），實作時在[審查標準](review-standard.md) §2.3 定義。
 
-**保證機構名稱**（SG 特有，審查標準 SG 分節 `guarantor_name.sg`，一個值）：封面 `保證機構之名稱及地址`（到 `（下稱` 之前）、第一章 §3（到 `，截至` 之前）、第二章 §2(1) `事業名稱：` 三處皆 `法商法國興業銀行股份有限公司(Societe Generale)`；忽略空白後逐字相等。地址電話不核對。
+**保證機構名稱**（SG 特有，審查標準 SG 分節 `issuer.sg.guarantor_name`，一個值）：封面 `保證機構之名稱及地址`（到 `（下稱` 之前）、第一章 §3（到 `，截至` 之前）、第二章 §2(1) `事業名稱：` 三處皆 `法商法國興業銀行股份有限公司(Societe Generale)`；忽略空白後逐字相等。地址電話不核對。
 
-**總代理人名稱**（SG 特有，`agent_name.sg`）：封面 `總代理人之名稱、電話及地址` 名稱行、第二章 §3(1) `事業名稱：` 皆 `法商法國興業銀行股份有限公司台北分行`。地址電話、負責人不核對。
+**總代理人名稱**（SG 特有，`issuer.sg.agent_name`）：封面 `總代理人之名稱、電話及地址` 名稱行、第二章 §3(1) `事業名稱：` 皆 `法商法國興業銀行股份有限公司台北分行`。地址電話、負責人不核對。
 
 ### 3.7 情境分析（§15(3)，SG 專屬）
 
