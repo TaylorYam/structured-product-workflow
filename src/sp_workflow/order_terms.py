@@ -2,8 +2,7 @@
 
 對外是 `collect_orders`（讀選的那份起單建檔，依貼上的 TDCC 回傳逐檔結果）；`parse_field`／`format_field`
 給畫面輸入與顯示用，和讀起單建檔是同一套解讀。起單建檔只讀、不修改。
-`REQUIRED`、`COLUMN_FIELDS`（欄位 ↔ 資料庫的欄）與 `missing_fields`（資料庫商品條件缺哪幾個必填欄，#114）
-由起單資料匯入、核對條件、核對讀資料庫與寄信草稿共用。
+畫面的欄、型別、必填欄與資料庫的欄的對照在 `product_record`（#126）。
 
 起單建檔（`起單建檔_<日期>.xlsm`）只有一張工作表：表頭在前幾列（目前是第 2 列、從 B 欄開始），一檔一列。
 欄位依表頭文字對（不分大小寫、不看位置）；畫面上可以改的欄是 `KINDS`，起單建檔其他的欄
@@ -13,7 +12,7 @@
 - 格子的型別不對、選項不認得時那一格留空，`OrderRow.notes` 寫出讀到的值。
 - 選項不分大小寫（`DAILY MEMORY` 就是 Daily Memory，Barrier Type 的 `None` 就是 NONE）。
 - `UF (%)` 欄放的是價格（例：97.14；舊表頭叫 `Upfront / NotePrice (%)`），畫面上叫 Upfront / NotePrice (%)，
-  寫進資料庫時才換成 UF = 100 − 價格（`order_import`）。
+  寫進資料庫時才換成 UF = 100 − 價格（`product_record`）。
 - 同一檔 TDCC 有好幾列：內容一樣就用；不一樣的欄留空並寫出各列的值（`OrderRow.conflicts`），由作業人員填好才能匯入。
 - 上手依 TDCC 前三碼（上手編號對照 `config/issuer_prefixes.toml`）。
 - Strike date（期初定價日，#101）起單建檔沒有這欄，由期初價格推：期初價格寫「明日開盤價」時，期初價格記成開盤價、
@@ -28,13 +27,25 @@ import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
-from enum import Enum
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import openpyxl
 
 from sp_workflow.preparation import is_tdcc, parse_tdccs
+from sp_workflow.product_record import (
+    CHOICES,
+    FIELDS,
+    KINDS,
+    OPEN,
+    PRICING_FIELD,
+    STRIKE_FIELD,
+    TRADE_FIELD,
+    UNDERLYINGS,
+    UPFRONT_FIELD,
+    FieldKind,
+    plain,
+)
 
 if TYPE_CHECKING:
     from fcn_checker.trading_calendar import TradingCalendar
@@ -44,101 +55,9 @@ PENDING = "待確認"
 NOT_FOUND = "找不到"
 
 TDCC_FIELD = "TDCC"
-UPFRONT_FIELD = "Upfront / NotePrice (%)"
-TRADE_FIELD = "Trade date"
-STRIKE_FIELD = "Strike date"
-PRICING_FIELD = "期初價格"
 NEXT_OPEN = "明日開盤價"  # 交易日隔一個營業日的開盤價（#101）
 
-
-class FieldKind(Enum):
-    TEXT = "文字"
-    CHOICE = "選項"
-    PERCENT = "百分比"
-    INT = "整數"
-    DATE = "日期"
-
-
-KO_TYPES = ("Daily", "Daily Memory", "Period End", "Period End Memory")
-BARRIER_TYPES = ("NONE", "EKI", "AKI")
-OPEN = "開盤價"
-INITIAL_PRICINGS = (OPEN, "收盤價", "VWAP")
-UNDERLYINGS = tuple(f"BBG Code {n}" for n in range(1, 6))
-CHOICES: dict[str, tuple[str, ...]] = {
-    "KO Type": KO_TYPES,
-    "Barrier Type": BARRIER_TYPES,
-    PRICING_FIELD: INITIAL_PRICINGS,
-}
-# 畫面上可以改的欄（依起單建檔的順序）→ 型別
-KINDS: dict[str, FieldKind] = {
-    "Product": FieldKind.TEXT,
-    "Currency": FieldKind.TEXT,
-    "Guaranteed Periods (m)": FieldKind.INT,
-    **dict.fromkeys(UNDERLYINGS, FieldKind.TEXT),
-    "Strike (%)": FieldKind.PERCENT,
-    "KO Type": FieldKind.CHOICE,
-    "KO Barrier (%)": FieldKind.PERCENT,
-    "Coupon p.a. (%)": FieldKind.PERCENT,
-    UPFRONT_FIELD: FieldKind.PERCENT,
-    "Tenor (m)": FieldKind.INT,
-    "Barrier Type": FieldKind.CHOICE,
-    "KI Barrier (%)": FieldKind.PERCENT,
-    TRADE_FIELD: FieldKind.DATE,
-    STRIKE_FIELD: FieldKind.DATE,
-    "Issue date": FieldKind.DATE,
-    "Final valuation date": FieldKind.DATE,
-    "Maturity date": FieldKind.DATE,
-    PRICING_FIELD: FieldKind.CHOICE,
-}
-FIELDS = tuple(KINDS)
 SHEET_FIELDS = tuple(name for name in FIELDS if name != STRIKE_FIELD)  # 起單建檔上有的欄
-# 必填欄：起單資料匯入時空白就擋下（#86）。資料庫的商品條件可以先存一部分（#114、ADR 0016），
-# 缺這幾欄的商品核對條件停在待確認，不能核對、寄信（`missing_fields`）
-REQUIRED = (
-    "Product",
-    "Currency",
-    "Guaranteed Periods (m)",
-    "BBG Code 1",
-    "Strike (%)",
-    "KO Type",
-    "KO Barrier (%)",
-    "Coupon p.a. (%)",
-    UPFRONT_FIELD,
-    "Tenor (m)",
-    "Barrier Type",
-    TRADE_FIELD,
-    STRIKE_FIELD,
-    "Final valuation date",
-    "Maturity date",
-    PRICING_FIELD,
-)
-# 資料庫 workflow.product 的欄 ↔ 畫面的欄（畫面上的 Upfront / NotePrice = 100 − UF）
-COLUMN_FIELDS = {
-    "product": "Product",
-    "currency": "Currency",
-    "non_call_months": "Guaranteed Periods (m)",
-    **{f"underlying_{n}": name for n, name in enumerate(UNDERLYINGS, 1)},
-    "strike_pct": "Strike (%)",
-    "ko_type": "KO Type",
-    "ko_pct": "KO Barrier (%)",
-    "coupon_pct": "Coupon p.a. (%)",
-    "upfront_pct": UPFRONT_FIELD,
-    "tenor_months": "Tenor (m)",
-    "barrier_type": "Barrier Type",
-    "ki_pct": "KI Barrier (%)",
-    "trade_date": TRADE_FIELD,
-    "strike_date": STRIKE_FIELD,
-    "issue_date": "Issue date",
-    "final_valuation_date": "Final valuation date",
-    "maturity_date": "Maturity date",
-    "initial_pricing": PRICING_FIELD,
-}
-_FIELD_COLUMNS = {name: column for column, name in COLUMN_FIELDS.items()}
-# KO Type、Barrier Type 另外存換算的代碼（`order_import.KO_CODES`／`KI_CODES`）
-_CODE_COLUMNS = {"KO Type": ("ko_freq", "ko_memory"), "Barrier Type": ("ki_freq",)}
-# 必填欄 → 資料庫裡存它的欄
-_REQUIRED_STORED = {name: (_FIELD_COLUMNS[name], *_CODE_COLUMNS.get(name, ())) for name in REQUIRED}
-REQUIRED_COLUMNS = tuple(column for columns in _REQUIRED_STORED.values() for column in columns)
 # 起單建檔的表頭（不分大小寫）→ 欄位；UF (%) 是 2026 年起的表頭
 _HEADERS = {name.casefold(): name for name in (TDCC_FIELD, *SHEET_FIELDS)} | {"uf (%)": UPFRONT_FIELD}
 _HEADER_ROWS = 5  # 表頭在前幾列找
@@ -293,19 +212,6 @@ def unknown_issuer(tdcc: str) -> str:
     return f"TDCC 前三碼 {tdcc[:3]} 不在上手編號對照"
 
 
-def missing_fields(product: Mapping[str, object], names: Sequence[str] = REQUIRED) -> list[str]:
-    """資料庫商品條件的一列（`workflow.product` 的欄 → 值）裡空白的必填欄，依 `names` 的順序回傳畫面的欄名。
-
-    換算的代碼欄空白也算那一欄缺（沒有存齊）。`product` 要有 `REQUIRED_COLUMNS`（讀資料庫時用 `with_required`）。
-    """
-    return [name for name in names if any(product[column] is None for column in _REQUIRED_STORED[name])]
-
-
-def with_required(columns: Sequence[str]) -> tuple[str, ...]:
-    """要讀的 `workflow.product` 欄，加上還沒列到、`missing_fields` 要看的必填欄。"""
-    return (*columns, *(column for column in REQUIRED_COLUMNS if column not in columns))
-
-
 def _compare_key(name: str, parsed: tuple[object, str], raw: object) -> object:
     """重複列比較用：比解讀後的值（`DAILY MEMORY` 和 `Daily Memory` 一樣）；讀不到的比原本的字；
     期初價格的明日開盤價和開盤價不同。"""
@@ -418,13 +324,6 @@ def format_field(value: object) -> str:
     if isinstance(value, Decimal):
         return format(plain(value), "f")
     return str(value)
-
-
-def plain(value: Decimal) -> Decimal:
-    """去掉多餘的 0，但不變成科學記號（例：80.000000 → 80、2.150000 → 2.15）。"""
-    if value == value.to_integral_value():
-        return value.quantize(Decimal(1))
-    return value.normalize()
 
 
 def parse_date(text: str) -> dt.date:

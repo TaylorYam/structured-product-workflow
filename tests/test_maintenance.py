@@ -20,7 +20,8 @@ from sp_workflow.order_import import (
     open_maintenance,
     save_maintenance,
 )
-from sp_workflow.order_terms import FIELDS, REQUIRED, TDCC_FIELD
+from sp_workflow.order_terms import TDCC_FIELD
+from sp_workflow.product_record import FIELDS, REQUIRED
 from sp_workflow.product_write import (
     LOCKED,
     MAINTAIN_NEW,

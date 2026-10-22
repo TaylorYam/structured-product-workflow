@@ -31,7 +31,7 @@ from openpyxl.styles import Font
 
 from sp_workflow.check_terms import DONE
 from sp_workflow.database import ConnectionSettings, DatabaseError, connect, require_current_schema
-from sp_workflow.order_terms import missing_fields, with_required
+from sp_workflow.product_record import PRODUCT_COLUMNS, missing_fields
 from sp_workflow.product_write import lock_terms
 
 if TYPE_CHECKING:
@@ -52,13 +52,8 @@ CHECKED_FIELDS = ("checked_term_sheet", "checked_iis")
 DENOMINATION_RULE = "field.denomination"
 DENOMINATION_COLUMN = "單位面額"
 
-_PRODUCT_COLUMNS = (
-    "tdcc", "product", "issuer", "isin", "currency", "trade_date", "issue_date", "final_valuation_date",
-    "maturity_date", "initial_pricing", "non_call_months", "underlying_1", "underlying_2", "underlying_3",
-    "underlying_4", "underlying_5", "strike_pct", "ko_freq", "ko_memory", "ko_pct", "coupon_pct", "upfront_pct",
-    "tenor_months", "ki_freq", "barrier_type", "ki_pct", "denomination", "locked_at",
-)  # fmt: skip
-_SELECTED_COLUMNS = with_required(_PRODUCT_COLUMNS)  # 參考條件表沒有的必填欄只用來看有沒有缺欄（#114）
+# 參考條件表沒有的商品欄只用來看有沒有缺欄（#114）
+_SELECTED_COLUMNS = ("tdcc", *PRODUCT_COLUMNS, "isin", "locked_at")
 
 
 class CheckSourceError(Exception):

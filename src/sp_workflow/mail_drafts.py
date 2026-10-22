@@ -31,8 +31,15 @@ from openpyxl.utils import get_column_letter
 
 from sp_workflow.daily_import import ImportInfo, Mailbox, is_pb, latest_import, load_mailbox
 from sp_workflow.database import DatabaseError, load_env_file, require_current_schema
-from sp_workflow.order_terms import PRICING_FIELD, REQUIRED, STRIKE_FIELD, missing_fields, with_required
 from sp_workflow.preparation import find_product_folders, is_tdcc, parse_tdccs
+from sp_workflow.product_record import (
+    PRICING_FIELD,
+    PRODUCT_COLUMNS,
+    REQUIRED,
+    STRIKE_FIELD,
+    invert_upfront,
+    missing_fields,
+)
 
 if TYPE_CHECKING:
     import psycopg
@@ -271,21 +278,13 @@ def _order_fixed_cc(people: Sequence[Any]) -> tuple[Any, ...]:
     return tuple(sorted(people, key=key))
 
 
-_PRODUCT_FIELDS = (
-    "trade_date", "issue_date", "final_valuation_date", "maturity_date", "initial_pricing", "product", "currency",
-    "non_call_months", "underlying_1", "underlying_2", "underlying_3", "underlying_4", "underlying_5", "strike_pct",
-    "ko_type", "ko_pct", "coupon_pct", "upfront_pct", "tenor_months", "barrier_type", "ki_pct",
-)  # fmt: skip
 # 信裡要用、空白就不寄的必填欄（#114）：信裡沒有 Strike date；期初價格空白時信裡空白（以前清單更新的商品可能沒有）
 _MAIL_REQUIRED = tuple(name for name in REQUIRED if name not in (STRIKE_FIELD, PRICING_FIELD))
-_SELECTED_FIELDS = with_required(_PRODUCT_FIELDS)  # 加上 `missing_fields` 要看的必填欄
 
 
 def _product(conn: psycopg.Connection, tdcc: str) -> dict[str, Any] | None:
-    row = conn.execute(
-        f"SELECT {', '.join(_SELECTED_FIELDS)} FROM workflow.product WHERE tdcc = %s", (tdcc,)
-    ).fetchone()
-    return None if row is None else dict(zip(_SELECTED_FIELDS, row, strict=True))
+    row = conn.execute(f"SELECT {', '.join(PRODUCT_COLUMNS)} FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
+    return None if row is None else dict(zip(PRODUCT_COLUMNS, row, strict=True))
 
 
 def _attachments(tdcc: str, folders: Sequence[Path], unreadable: Sequence[Path]) -> tuple[tuple[Path, ...], str]:
@@ -325,7 +324,7 @@ def render_body(tdcc: str, product: dict[str, Any], branches: Sequence[str]) -> 
         ("KO Type", p["ko_type"]),
         ("KO Barrier (%)", _pct(p["ko_pct"])),
         ("Coupon p.a. (%)", _pct(p["coupon_pct"])),
-        ("Upfront / NotePrice (%)", _pct(Decimal(100) - p["upfront_pct"])),
+        ("Upfront / NotePrice (%)", _pct(invert_upfront(p["upfront_pct"]))),
         ("Tenor (m)", str(p["tenor_months"])),
         ("Barrier Type", p["barrier_type"]),
         ("KI Barrier (%)", _pct(p["ki_pct"]) if p["ki_pct"] is not None else "-"),
@@ -531,7 +530,7 @@ class OutlookDrafter:
             product["ko_type"],
             product["ko_pct"],
             product["coupon_pct"],
-            Decimal(100) - product["upfront_pct"],
+            invert_upfront(product["upfront_pct"]),
             product["tenor_months"],
             product["barrier_type"],
             product["ki_pct"] if product["ki_pct"] is not None else "-",
