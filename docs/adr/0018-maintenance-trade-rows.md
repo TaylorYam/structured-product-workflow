@@ -34,7 +34,7 @@
 
 ### 後果
 
-- 新增 migration 0014（資料表版本 0014），更新程式後請執行一次 `spw-db-migrate`。
+- 新增 migration 0014（資料表版本 0014）；更新程式後重新執行安裝，安裝器會自動套用（#119）。
 - 每日匯入的交易明細欄位與轉換規則公開為 `TRADE_FIELDS`、`TRADE_REQUIRED`、`trade_value`、`is_cancel_note`，人工維護共用，改匯入規則時兩邊一起變。
 - `check_terms.recalculate_corrected` 多一個 `trades_changed`：已鎖住的商品只改交易明細時也能重算。
 - 查「這檔被誰改過什麼」要看 `workflow.term_correction` 與 `workflow.trade_row_correction` 兩張表。
@@ -68,7 +68,7 @@ The daily import treats the database as authoritative: trade rows that differ fr
 
 ### Consequences
 
-- New migration 0014 (schema version 0014); run `spw-db-migrate` once after updating.
+- New migration 0014 (schema version 0014); rerun the installer after updating and it applies the migration automatically (#119).
 - The daily import's trade columns and conversion rules are public as `TRADE_FIELDS`, `TRADE_REQUIRED`, `trade_value`, and `is_cancel_note`, shared with manual maintenance, so a change to the import rules applies to both.
 - `check_terms.recalculate_corrected` gains `trades_changed`, so a locked product can be recalculated when only its trade rows change.
 - "Who changed what on this product" now spans `workflow.term_correction` and `workflow.trade_row_correction`.

@@ -2,7 +2,7 @@
 
 ## 繁體中文
 
-狀態：PostgreSQL 選型已記錄於 [ADR 0001](adr/0001-postgresql-workflow-storage.md)。已完成本機 PostgreSQL 測試連線及第一批庫存 Excel 的測試匯入；正式作業 schema、遷移流程與部署仍待另行確認。
+狀態：PostgreSQL 選型已記錄於 [ADR 0001](adr/0001-postgresql-workflow-storage.md)。已完成本機 PostgreSQL 測試連線及第一批庫存 Excel 的測試匯入；正式作業主機與部署仍待另行確認。作業安裝器會以安裝資料夾的 `.env` 自動套用已版本化的資料表遷移。
 
 ### 資料責任
 
@@ -32,7 +32,7 @@
 
 #### 庫存 Excel 第一次測試匯入
 
-第一階段的正式資料表與每日匯入見 [ADR 0003](adr/0003-minimal-fcn-database.md) 與 README「每日匯入」：資料表版本在套件的 `migrations/`，以 `spw-db-migrate` 套用；換電腦以「建立資料表＋重新匯入」重建，不複製資料庫。以下 `scripts/` 的測試匯入表是早期試作，不被正式流程使用。PostgreSQL 驅動已包含在套件裡。資料表版本 0012（[#114](https://github.com/TaylorYam/structured-product-workflow/issues/114)、[ADR 0016](adr/0016-partial-product-terms.md)）起，商品條件的必填欄可以空白（缺資料的商品停在待確認），更新程式後請執行一次 `spw-db-migrate`；已有的資料不變。資料表版本 0014（[#116](https://github.com/TaylorYam/structured-product-workflow/issues/116)、[ADR 0018](adr/0018-maintenance-trade-rows.md)）新增 `workflow.trade_row_correction`，記人工維護改了哪些交易明細。
+第一階段的正式資料表與每日匯入見 [ADR 0003](adr/0003-minimal-fcn-database.md) 與 README「每日匯入」：資料表版本在套件的 `migrations/`，以 `spw-db-migrate` 套用；作業安裝／更新時，`setup_panel.cmd` 會使用安裝資料夾的 `.env` 自動套用尚未執行的版本；開發或手動遷移時請明確使用 `spw-db-migrate --env-file .env`。換電腦以「建立資料表＋重新匯入」重建，不複製資料庫。以下 `scripts/` 的測試匯入表是早期試作，不被正式流程使用。PostgreSQL 驅動已包含在套件裡。資料表版本 0012（[#114](https://github.com/TaylorYam/structured-product-workflow/issues/114)、[ADR 0016](adr/0016-partial-product-terms.md)）起，商品條件的必填欄可以空白（缺資料的商品停在待確認）；套用 migration 不會覆蓋既有商品資料。資料表版本 0014（[#116](https://github.com/TaylorYam/structured-product-workflow/issues/116)、[ADR 0018](adr/0018-maintenance-trade-rows.md)）新增 `workflow.trade_row_correction`，記人工維護改了哪些交易明細。
 
 測試匯入器位於 `scripts/import_inventory_excel.py`，會主動讀取本機 `.env`；`.env` 必須維持在 Git ignore 範圍內，密碼不得寫入 repository、log 或輸出。`PGPASSWORD` 只能放在本機 `.env`；沒放時匯入器會用隱藏輸入詢問。建立資料庫用的 `PGADMINPASSWORD`、`PGDEVPASSWORD` 不寫進任何檔案，只在執行時設成命令列環境變數。匯入器預設只做 dry-run；寫入時會在同一個 transaction 內完成對帳，對帳不符就整批 rollback：
 
@@ -59,7 +59,7 @@ flowchart LR
 
 - 筆電與作業主機各有獨立資料庫，開發不必連正式資料庫。主要版本與擴充盡量一致。
 - 主機、port、database、帳號與文件根目錄採環境設定。憑證不進 Git；APP 使用專用帳號，管理及 schema 更新權限分開設計。
-- 遷移檔版本化，開發先驗證，再於作業環境備份並執行。破壞性變更與還原計畫需另審查；不手動在兩台各自改表而不留紀錄。
+- 遷移檔版本化並先在開發環境驗證；作業安裝／更新由安裝器連到 `.env` 指定的資料庫套用待執行版本，因此執行前應先備份。破壞性變更與還原計畫需另審查；不手動在兩台各自改表而不留紀錄。
 - 文件保存相對路徑與 hash，以環境設定指定根目錄，避免綁定個人磁碟代號。
 - 不能用 Git 同步正在運作的資料庫目錄。使用 PostgreSQL 支援的備份／還原方式；一致備份可以放公槽，需有還原演練與存取權限。
 - 首次試行資料搬遷需明確決定保留內容，不能把虛構資料誤當正式資料。切換時停止舊端寫入、備份還原、驗證資料及文件，再切換連線；切換後只有一份正式寫入來源。
@@ -73,7 +73,7 @@ flowchart LR
 
 ## English
 
-Status: PostgreSQL selection is recorded in [ADR 0001](adr/0001-postgresql-workflow-storage.md). The local PostgreSQL connection and the first inventory-Excel test import are complete. The operational schema, migration process, and deployment remain subject to separate confirmation.
+Status: PostgreSQL selection is recorded in [ADR 0001](adr/0001-postgresql-workflow-storage.md). The local PostgreSQL connection and the first inventory-Excel test import are complete. The operational host and deployment remain subject to separate confirmation; the operator installer applies versioned schema migrations using the install folder's `.env`.
 
 ### Data ownership
 
@@ -95,7 +95,7 @@ Persist full results, allowed backfills, and case progress separately. Validate 
 
 #### First inventory Excel test import
 
-First-phase tables and the daily import are in [ADR 0003](adr/0003-minimal-fcn-database.md) and the README "Daily import" section: schema versions live in the package `migrations/` and are applied with `spw-db-migrate`; moving computers means rebuilding (create tables, re-import), not copying the database. The `scripts/` test-import tables below are an early experiment unused by the workflow. The PostgreSQL driver is included in the package. From schema version 0012 ([#114](https://github.com/TaylorYam/structured-product-workflow/issues/114), [ADR 0016](adr/0016-partial-product-terms.md)) the required product-term columns may be blank (products with missing data stay 待確認); run `spw-db-migrate` once after updating. Existing data is unchanged. Schema version 0014 ([#116](https://github.com/TaylorYam/structured-product-workflow/issues/116), [ADR 0018](adr/0018-maintenance-trade-rows.md)) adds `workflow.trade_row_correction`, recording which trade rows manual maintenance changed.
+First-phase tables and the daily import are in [ADR 0003](adr/0003-minimal-fcn-database.md) and the README "Daily import" section: schema versions live in the package `migrations/` and are applied with `spw-db-migrate`. On operator install/update, `setup_panel.cmd` applies pending versions using the install folder's `.env`; during development or manual migration, specify the repository environment with `spw-db-migrate --env-file .env`. Moving computers means rebuilding (create tables, re-import), not copying the database. The `scripts/` test-import tables below are an early experiment unused by the workflow. The PostgreSQL driver is included in the package. From schema version 0012 ([#114](https://github.com/TaylorYam/structured-product-workflow/issues/114), [ADR 0016](adr/0016-partial-product-terms.md)) the required product-term columns may be blank (products with missing data stay 待確認); migrations leave existing product data intact. Schema version 0014 ([#116](https://github.com/TaylorYam/structured-product-workflow/issues/116), [ADR 0018](adr/0018-maintenance-trade-rows.md)) adds `workflow.trade_row_correction`, recording which trade rows manual maintenance changed.
 
 The test importer is `scripts/import_inventory_excel.py`. It actively loads the local `.env`; `.env` must remain covered by Git ignore, and passwords must not enter the repository, logs, or output. `PGPASSWORD` may live only in the local `.env`; without it the importer prompts with hidden input. The provisioning passwords `PGADMINPASSWORD` and `PGDEVPASSWORD` are never written to a file and are set only as shell environment variables for that run. The importer defaults to a dry-run; a write reconciles counts inside the same transaction and rolls back the whole batch on mismatch:
 
@@ -109,7 +109,7 @@ The first test import identifies reruns with `(source_sha256, sheet_name, config
 
 The diagram above separates laptop code/tests and a development PostgreSQL from the operational host/database. GitHub transfers code and migrations, not business data. Future users connect through the company network or an approved VPN.
 
-Use independent development and operational databases with matching major versions/extensions where practical. Configure host, port, database, account, and document root per environment; keep credentials outside Git and separate application privileges from administration/migration privileges. Version schema migrations, test in development, then back up and apply operationally. Review destructive changes and restore plans separately.
+Use independent development and operational databases with matching major versions/extensions where practical. Configure host, port, database, account, and document root per environment; keep credentials outside Git and separate application privileges from administration/migration privileges. Version schema migrations and validate in development. During operator installation/updates, the installer applies pending versions to the database configured in the install folder's `.env`, so back up before updating. Review destructive changes and restore plans separately.
 
 Store relative document paths and hashes. Never synchronize live data directories through Git. Use supported PostgreSQL backup/restore methods; consistent backups may be stored on the share with access control and restore exercises. During initial migration explicitly select retained pilot data, stop old writes, back up/restore, validate records and files, then switch clients to one authoritative write location. Routine deployments never replace operational data with development data.
 
