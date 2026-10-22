@@ -147,6 +147,19 @@ def test_export_writes_what_is_shown(master, tmp_path: Path, monkeypatch) -> Non
     assert FolderMemory.under(tmp_path).load()["progress_export"] == str(path.parent)
 
 
+def test_a_refresh_with_no_products_clears_the_table(master, tmp_path: Path, monkeypatch) -> None:
+    _, tab, actions = loaded(master, tmp_path, monkeypatch)
+    monkeypatch.setattr(sp_workflow.tabs.progress, "load_progress_rows", lambda settings, paths: ())
+
+    tab.refresh()
+    action, done = actions.pop()
+    done(action())
+
+    assert shown(tab) == [] and tab.shown == []
+    assert "共 0 檔，篩選後 0 檔" in tab.status_var.get()
+    assert str(tab.export_button.cget("state")) == "disabled", "沒有列時不能匯出舊資料"
+
+
 def test_nothing_to_export_before_a_refresh(master, tmp_path: Path, monkeypatch) -> None:
     window = new_window(master, tmp_path)
     monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **k: (_ for _ in ()).throw(AssertionError))

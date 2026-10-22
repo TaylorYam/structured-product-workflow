@@ -114,7 +114,7 @@ def progress_of(facts: Facts) -> tuple[str, str]:
 
 
 def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date) -> tuple[ProgressRow, ...]:
-    """所有有交易明細或商品條件的商品的進度，依 TDCC 排（畫面再依天數排）。全部在同一個時間點讀。"""
+    """所有有交易明細或商品條件的商品的進度，依 TDCC 排（畫面再依天數排）。在同一個 transaction 裡讀。"""
     with conn.transaction():
         facts: dict[str, dict] = {}
         issuers: dict[str, str] = {}

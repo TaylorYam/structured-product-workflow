@@ -54,7 +54,7 @@ class ProgressTab(Tab):
         self.db = db
         self.config_paths = config_paths
         self.working = False
-        self.rows: tuple[ProgressRow, ...] = ()  # 最近一次重新整理讀到的全部商品
+        self.rows: tuple[ProgressRow, ...] | None = None  # 最近一次重新整理讀到的全部商品；還沒讀過是 None
         self.shown: list[ProgressRow] = []  # 篩選、排序後畫面上的列
         self.sort: tuple[str, bool] | None = None  # 點欄位排序：(欄, 由大到小)；None 是預設（距今天數由大到小）
         self.status_var.set("按「重新整理」讀資料庫，列出每檔商品的作業進度；篩選與排序不會再讀資料庫。")
@@ -157,7 +157,7 @@ class ProgressTab(Tab):
 
     def refilter(self) -> None:
         """依目前的篩選條件與排序重畫結果表；還沒重新整理過時不動。"""
-        if not self.rows:
+        if self.rows is None:
             return
         first, first_error = self._date(self.first_var, "交易日起")
         last, last_error = self._date(self.last_var, "交易日迄")
