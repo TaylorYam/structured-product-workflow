@@ -5,13 +5,24 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import re
 from decimal import Decimal
 from pathlib import Path
 
 import openpyxl
 import pytest
 
-from db_synth import PRICE_DATE, inventory, price, seed_mailbox, seed_products, trade, write_daily
+from db_synth import (
+    PRICE_DATE,
+    csv_price,
+    inventory,
+    price,
+    seed_mailbox,
+    seed_products,
+    trade,
+    write_daily,
+    write_price_csv,
+)
 from sp_workflow import daily_import
 from sp_workflow.daily_import import (
     BLOCKED,
@@ -21,12 +32,14 @@ from sp_workflow.daily_import import (
     NAME_UNMATCHED,
     NEW_TRADES,
     PRICE_CONFLICT,
+    PRICE_CSV_HEADERS,
     PRICE_HEADERS,
     PRICE_NOT_NUMBER,
     TRADE_HEADERS,
     UNCHANGED,
     DailyImportError,
     import_daily,
+    import_price_csv,
     is_pb,
     latest_import,
 )
@@ -500,3 +513,115 @@ def test_a_price_sheet_without_prices_rejects_the_whole_file(pg, tmp_path: Path,
         import_daily(write_daily(tmp_path / "2.xlsx", [trade(A, "Amy", "北區", 1)], [("", "代碼空白")]), pg)
 
     assert count(pg, "workflow.daily_price") == 1 and count(pg, "workflow.import_run") == 1
+
+
+# ---------------------------------------------------------------- 回補股價 CSV 與只匯交易明細（#112）
+
+
+def test_a_price_csv_is_stored_as_the_next_morning(pg, tmp_path: Path, mailbox) -> None:
+    """CSV 的取價日是收盤那一天，存成下一天：等同隔天早上用 BBG_Data 取到的價格。"""
+    source = write_price_csv(
+        tmp_path / "MarketData_20261015.csv",
+        [csv_price(" AAA UW ", "101.25"), csv_price("USDJPY", "150.123456", open_=""), ["2026-10-15", "", "空白代碼"]],
+    )
+
+    receipt = import_price_csv(source, pg)
+
+    day = dt.date(2026, 10, 16)
+    assert receipt.close_date == dt.date(2026, 10, 15)
+    assert (receipt.prices.price_date, receipt.prices.count, receipt.prices.replaced) == (day, 2, 0)
+    assert prices_in(pg) == [
+        (day, "AAA UW", "虛構公司", Decimal("101.25"), Decimal("99.25"), None, Decimal("31.5"), Decimal("12345.6"),
+         False),
+        (day, "USDJPY", "虛構公司", Decimal("150.123456"), None, None, Decimal("31.5"), Decimal("12345.6"), False),
+    ]  # fmt: skip
+    assert pg.execute("SELECT daily_file_name FROM workflow.import_run").fetchall() == [("MarketData_20261015.csv",)]
+    assert pg.execute("SELECT price_date, price_count FROM workflow.price_import").fetchall() == [(day, 2)]
+    assert count(pg, "workflow.trade_row") == 0
+    assert latest_import(pg).file_name == "MarketData_20261015.csv"
+
+
+def test_a_price_csv_replaces_the_day_it_is_stored_as(pg, tmp_path: Path, mailbox) -> None:
+    """回補時先用 BBG_Data 匯進了錯的價格（取價日 10-16）：10-15 收盤的 CSV 整天取代它。"""
+    import_daily(write_daily(tmp_path / "d.xlsx", [], [price("AAA UW", 200), price("BBB UN")]), pg)
+
+    receipt = import_price_csv(write_price_csv(tmp_path / "m.csv", [csv_price("AAA UW", "101")]), pg)
+
+    assert receipt.prices.replaced == 2
+    assert [(row[0], row[1], row[3]) for row in prices_in(pg)] == [(PRICE_DATE.date(), "AAA UW", Decimal("101"))]
+
+
+def test_price_csv_problems_are_listed_and_kept_in_the_error_book(pg, tmp_path: Path, mailbox) -> None:
+    rows = [csv_price("AAA UW", "#N/A N/A"), csv_price("BBB UN", "1"), csv_price("BBB UN", "2")]
+
+    receipt = import_price_csv(write_price_csv(tmp_path / "m.csv", rows), pg)
+
+    assert [(line.kind, line.detail) for line in receipt.lines] == [
+        (PRICE_NOT_NUMBER, "m.csv第 2 列 AAA UW：收盤價「#N/A N/A」不是數字，存成空白"),
+        (PRICE_CONFLICT, "BBB UN：同一個代碼有 2 列、值不同，價格沒有存，算價格時不能用"),
+    ]
+    error_book = openpyxl.load_workbook(receipt.error_book_path)
+    assert [row[2:5] for row in list(error_book.active.values)[1:]] == [
+        ("m.csv", None, PRICE_NOT_NUMBER),
+        ("m.csv", None, PRICE_CONFLICT),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("rows", "headers", "message"),
+    [
+        ([csv_price("AAA UW")], ("取價日", "代碼", "公司名稱", "開盤價"), "第 4 欄應為「收盤價」，實際是「開盤價」"),
+        ([csv_price("AAA UW")], (*PRICE_CSV_HEADERS, "備註"), "之後還有其他欄"),
+        ([csv_price("AAA UW", day="2026/10/32")], PRICE_CSV_HEADERS, "第 2 列的取價日「2026/10/32」不是日期"),
+        ([csv_price("AAA UW", day="")], PRICE_CSV_HEADERS, "第 2 列的取價日「空白」不是日期"),
+        (
+            [csv_price("AAA UW"), csv_price("BBB UN", day="2026-10-16")],
+            PRICE_CSV_HEADERS,
+            "取價日不只一天：2026-10-15（第 2 列起）、2026-10-16（第 3 列起）",
+        ),
+        ([["2026-10-15", ""]], PRICE_CSV_HEADERS, "沒有任何股價"),
+    ],
+)
+def test_a_bad_price_csv_changes_nothing(pg, tmp_path: Path, mailbox, rows, headers, message) -> None:
+    import_daily(write_daily(tmp_path / "d.xlsx", [], [price("AAA UW")]), pg)
+    source = write_price_csv(tmp_path / "m.csv", rows, headers=headers)
+
+    with pytest.raises(DailyImportError, match=re.escape(message)):
+        import_price_csv(source, pg)
+
+    assert count(pg, "workflow.import_run") == 1 and count(pg, "workflow.daily_price") == 1
+
+
+def test_a_price_csv_that_is_not_utf8_changes_nothing(pg, tmp_path: Path, mailbox) -> None:
+    source = tmp_path / "m.csv"
+    source.write_bytes(",".join(PRICE_CSV_HEADERS).encode("big5"))
+
+    with pytest.raises(DailyImportError, match="不是 UTF-8"):
+        import_price_csv(source, pg)
+
+    assert count(pg, "workflow.import_run") == 0
+
+
+def test_trades_only_leaves_prices_alone(pg, tmp_path: Path, mailbox) -> None:
+    """只匯交易明細：不讀 BBG_Data（沒有這張工作表也可以），已存的股價不動。"""
+    import_daily(write_daily(tmp_path / "1.xlsx", [], [price("AAA UW", 100)]), pg)
+    daily = write_daily(tmp_path / "2.xlsx", [trade(A, "Amy", "北區", 1)], [price("AAA UW", 999)])
+    wb = openpyxl.load_workbook(daily)
+    del wb[daily_import.PRICE_SHEET]
+    wb.save(daily)
+
+    receipt = import_daily(daily, pg, prices=False)
+
+    assert receipt.prices is None and kinds(receipt, A) == [NEW_TRADES]
+    assert [(row[1], row[3]) for row in prices_in(pg)] == [("AAA UW", Decimal("100"))]
+    assert count(pg, "workflow.price_import") == 1
+    summary = pg.execute("SELECT summary FROM workflow.import_run ORDER BY run_id DESC LIMIT 1").fetchone()[0]
+    assert (summary["price_date"], summary["price_count"]) == (None, None)
+
+
+def test_trades_only_ignores_a_stale_price_sheet(pg, tmp_path: Path, mailbox) -> None:
+    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [price("AAA UW")], price_date="壞掉的")
+
+    receipt = import_daily(daily, pg, prices=False)
+
+    assert kinds(receipt, A) == [NEW_TRADES] and count(pg, "workflow.daily_price") == 0
