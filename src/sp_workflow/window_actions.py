@@ -6,6 +6,7 @@
 準備、放回、建草稿的步驟紀錄（#151）在清單產出之後另寫；寫入失敗不丟出（清單已經產出），原因放在結果裡。
 收盤價（#153）要用交易所假日表判斷休市日：回補股價讀不到假日表時照樣匯股價、收盤價不存；
 歷史收盤價讀不到假日表就整份不匯入。
+比價（#155）在回補股價與歷史收盤價匯入之後跑；比價失敗時匯入保留，原因放在結果裡。
 """
 
 from __future__ import annotations
@@ -37,7 +38,9 @@ from sp_workflow.daily_import import (
     latest_import,
 )
 from sp_workflow.database import ConnectionSettings, DatabaseError, connect, require_current_schema
+from sp_workflow.lifecycle import LifecycleError
 from sp_workflow.mail_drafts import DraftReceipt, create_drafts
+from sp_workflow.observation import ObservationReceipt, observe_all
 from sp_workflow.order_import import (
     ImportConfig,
     MissingProduct,
@@ -80,6 +83,14 @@ class Recalc:
 
 
 @dataclass(frozen=True)
+class Observation:
+    """匯入收盤價後的比價（#155）結果；比價失敗時只有 error（匯入已經寫進資料庫）。"""
+
+    receipt: ObservationReceipt | None = None
+    error: str = ""
+
+
+@dataclass(frozen=True)
 class DailyResult:
     receipt: ImportReceipt
     recalc: Recalc = Recalc()
@@ -89,6 +100,13 @@ class DailyResult:
 class PriceCsvResult:
     receipt: PriceCsvReceipt
     recalc: Recalc = Recalc()
+    observation: Observation = Observation()
+
+
+@dataclass(frozen=True)
+class HistoryResult:
+    receipt: HistoryReceipt
+    observation: Observation = Observation()
 
 
 @dataclass(frozen=True)
@@ -146,6 +164,20 @@ def _recalculate_after_import(conn: psycopg.Connection, holidays: Path) -> Recal
         return Recalc(error=_first_line(exc))
 
 
+def _observe_after_import(conn: psycopg.Connection, calendar: TradingCalendar | None) -> Observation:
+    """匯入收盤價之後比價全部；讀不到假日表或比價失敗時不丟錯誤（匯入已經完成），說明放在結果裡。"""
+    import psycopg
+
+    if calendar is None:
+        return Observation(error="讀不到交易所假日表，這次沒有比價")
+    try:
+        return Observation(observe_all(conn, calendar))
+    except (LifecycleError, DatabaseError, psycopg.Error) as exc:
+        return Observation(error=_first_line(exc))
+    except Exception as exc:  # 程式錯誤也不能讓已經寫好的匯入跟著失敗
+        return Observation(error=f"比價程式出錯（{type(exc).__name__}：{_first_line(exc)}）")
+
+
 # ---------- 1 每日匯入 ----------
 
 
@@ -157,22 +189,32 @@ def run_daily_import(settings: ConnectionSettings, daily: Path, paths: ConfigPat
 
 
 def run_price_csv(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> PriceCsvResult:
-    """回補股價（#112）：匯入一個 MarketData CSV（同時寫收盤價，#153），再重算核對條件；交易明細不動。"""
+    """回補股價（#112）：匯入一個 MarketData CSV（同時寫收盤價，#153），再重算核對條件、比價（#155）；交易明細不動。"""
     try:
         calendar = load_calendar(paths.exchange_holidays)
     except CheckTermsError:
         calendar = None  # 收盤價這次不存；讀不到的原因由重算寫在結果裡
     with connect(settings) as conn:
         receipt = import_price_csv(source, conn, calendar)
-        return PriceCsvResult(receipt, _recalculate_after_import(conn, paths.exchange_holidays))
+        recalc = _recalculate_after_import(conn, paths.exchange_holidays)
+        return PriceCsvResult(receipt, recalc, _observe_after_import(conn, calendar))
 
 
-def import_close_history(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> HistoryReceipt:
-    """匯入歷史收盤價（#153，維護選單）：讀不到假日表、檔案格式不對或寫不出錯誤清單就整份不匯入。"""
+def import_close_history(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> HistoryResult:
+    """匯入歷史收盤價（#153，維護選單），再比價（#155）：讀不到假日表、檔案格式不對或寫不出錯誤清單就整份不匯入。"""
     calendar = load_calendar(paths.exchange_holidays)
     with connect(settings) as conn:
         require_current_schema(conn)
-        return import_history(source, conn, calendar)
+        receipt = import_history(source, conn, calendar)
+        return HistoryResult(receipt, _observe_after_import(conn, calendar))
+
+
+def observe_products(settings: ConnectionSettings, paths: ConfigPaths) -> ObservationReceipt:
+    """重新比價全部（#155，維護選單）：讀不到假日表時丟 `CheckTermsError`。"""
+    calendar = load_calendar(paths.exchange_holidays)
+    with connect(settings) as conn:
+        require_current_schema(conn)
+        return observe_all(conn, calendar)
 
 
 def release_line(

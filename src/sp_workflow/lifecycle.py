@@ -28,8 +28,9 @@ MATURITY = "到期還本"
 REDEMPTION = "顧客贖回"
 AUTO_EVENTS = (KO, DELIVERY, MATURITY)
 
-OBSERVATION = "比價"  # 事件的來源（另有資料表版本 0016 轉換的「舊清單」）
+OBSERVATION = "比價"  # 事件的來源
 MANUAL = "人工"
+LEGACY = "舊清單"  # 資料表版本 0016 轉換的舊狀態
 
 _EVENT_COLUMNS = "event_id, tdcc, event, event_date, underlying, source, note, recorded_by, recorded_at"
 
@@ -83,6 +84,18 @@ def lifecycle_status(conn: psycopg.Connection, tdccs: Iterable[str]) -> dict[str
     ).fetchall()
     latest = {row[1]: StoredEvent(*row) for row in rows}
     return {t: Lifecycle(latest[t].event, latest[t]) if t in latest else Lifecycle(IN_STOCK) for t in wanted}
+
+
+def current_events_of(conn: psycopg.Connection, tdccs: Iterable[str]) -> dict[str, list[StoredEvent]]:
+    """多檔一次讀：每個 TDCC 還有效的事件，依事件日、寫入先後排序；沒有事件的不放。"""
+    found: dict[str, list[StoredEvent]] = {}
+    for row in conn.execute(
+        f"SELECT {_EVENT_COLUMNS} FROM workflow.product_event WHERE tdcc = ANY(%s) AND superseded_at IS NULL"
+        " ORDER BY tdcc, event_date NULLS FIRST, event_id",
+        (list(dict.fromkeys(tdccs)),),
+    ):
+        found.setdefault(row[1], []).append(StoredEvent(*row))
+    return found
 
 
 def current_events(conn: psycopg.Connection, tdcc: str) -> list[StoredEvent]:
