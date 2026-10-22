@@ -19,9 +19,8 @@ Treeview 的表（7 的檢查結果表除外）另有 Ctrl+A 全選、Ctrl+C 複
 每日匯入完成 → 起單資料頁帶入交易明細的 FCN TDCC（#90）；
 準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔。
 審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
-視窗只收輸入、在背景執行 `collect_orders`／`import_orders`／`missing_products`／`open_maintenance`／`load_trade_rows`／`save_maintenance`／
-`import_daily`／`recalculate`／`release_differences`／`prepare_batch`／核對／`return_to_folders`／`create_drafts`／
-`export_products` 並顯示結果，不含判斷邏輯。
+視窗只收輸入、在背景執行一個動作並顯示結果，不含判斷邏輯：要連資料庫的按鈕各呼叫 `window_actions` 的一個動作，
+連線、transaction 與容錯（ADR 0012）都在那裡（#125）；不連資料庫的直接呼叫 `prepare_batch`／核對／`return_to_folders`。
 """
 
 from __future__ import annotations
@@ -38,7 +37,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter import font as tkfont
-from typing import TYPE_CHECKING
 
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.panel import (
@@ -82,26 +80,17 @@ from sp_workflow.check_terms import (
     STATUSES,
     TO_CONFIRM,
     CalcLine,
-    CalcReceipt,
     CheckTermsError,
-    load_calendar,
-    recalculate,
-    release_differences,
 )
 from sp_workflow.daily_import import (
     DailyImportError,
     ImportInfo,
     ImportReceipt,
-    PriceCsvReceipt,
     PriceSummary,
-    import_daily,
-    import_price_csv,
-    latest_import,
 )
 from sp_workflow.database import (
     ConnectionSettings,
     DatabaseError,
-    connect,
     default_env_path,
     settings_from_env,
 )
@@ -122,7 +111,6 @@ from sp_workflow.mail_drafts import (
     NOT_NEEDED,
     DraftReceipt,
     MailDraftError,
-    create_drafts,
     mail_template_from_env,
 )
 from sp_workflow.order_import import (
@@ -137,14 +125,8 @@ from sp_workflow.order_import import (
     OrderImportError,
     OrderImportResult,
     check_draft,
-    drafts_from,
-    import_orders,
-    load_import_config,
     maintenance_problems,
-    missing_products,
-    open_maintenance,
     review_status,
-    save_maintenance,
 )
 from sp_workflow.order_terms import (
     CHOICES,
@@ -152,7 +134,6 @@ from sp_workflow.order_terms import (
     REQUIRED,
     OrderRow,
     OrderTermsError,
-    collect_orders,
     format_field,
 )
 from sp_workflow.preparation import (
@@ -163,7 +144,7 @@ from sp_workflow.preparation import (
     parse_tdccs,
     prepare_batch,
 )
-from sp_workflow.product_export import ExportReceipt, ProductExportError, export_name, export_products
+from sp_workflow.product_export import ExportReceipt, ProductExportError, export_name
 from sp_workflow.product_write import (
     FIXED_IN_CORRECTION,
     LOCKED,
@@ -181,10 +162,26 @@ from sp_workflow.product_write import (
 )
 from sp_workflow.returning import PENDING_SUFFIX, ReturnError, ReturnReceipt, return_to_folders
 from sp_workflow.trade_rows import FIELDS as TRADE_ROW_FIELDS
-from sp_workflow.trade_rows import TradeRowsDraft, load_trade_rows
-
-if TYPE_CHECKING:
-    import psycopg
+from sp_workflow.trade_rows import TradeRowsDraft
+from sp_workflow.window_actions import (
+    Checked,
+    DailyResult,
+    Opened,
+    PriceCsvResult,
+    ReadResult,
+    Recalc,
+    check_missing,
+    export_product_terms,
+    import_order_sheet,
+    make_mail_drafts,
+    open_product,
+    read_latest_import,
+    read_order_sheet,
+    release_line,
+    run_daily_import,
+    run_price_csv,
+    save_product,
+)
 
 TITLE = "FCN Workflow"
 _EXPECTED_ERRORS = (
@@ -663,14 +660,12 @@ class DailyImportTab(_Tab):
         self.memory.remember(daily=str(daily))
         self._busy(True)
         self.next_button.withdraw()
-        self.releaser.show(_Recalc())
+        self.releaser.show(Recalc())
         self.restart()
         paths = self.config_paths()
 
-        def run() -> _DailyResult:
-            with connect(settings) as conn:
-                receipt = import_daily(daily, conn, prices=prices)
-                return _DailyResult(receipt, _recalculate(conn, lambda: load_calendar(paths.exchange_holidays)))
+        def run() -> DailyResult:
+            return run_daily_import(settings, daily, paths, prices=prices)
 
         self.run_in_background(run, "匯入中…", self._done)
 
@@ -687,21 +682,19 @@ class DailyImportTab(_Tab):
         self.memory.remember(price_csv=str(source))
         self._busy(True)
         self.next_button.withdraw()
-        self.releaser.show(_Recalc())
+        self.releaser.show(Recalc())
         self.restart()
         paths = self.config_paths()
 
-        def run() -> _PriceCsvResult:
-            with connect(settings) as conn:
-                receipt = import_price_csv(source, conn)
-                return _PriceCsvResult(receipt, _recalculate(conn, lambda: load_calendar(paths.exchange_holidays)))
+        def run() -> PriceCsvResult:
+            return run_price_csv(settings, source, paths)
 
         self.run_in_background(run, "回補股價中…", self._csv_done)
 
     def _csv_done(self, result: object) -> None:
         self._busy(False)
         self.db.after_run(result)
-        if not isinstance(result, _PriceCsvResult):
+        if not isinstance(result, PriceCsvResult):
             return
         receipt, recalc = result.receipt, result.recalc
         for line in receipt.lines:
@@ -717,13 +710,13 @@ class DailyImportTab(_Tab):
         )
         self.releaser.show(recalc)
 
-    def _show_recalc(self, recalc: _Recalc) -> None:
+    def _show_recalc(self, recalc: Recalc) -> None:
         for calc in () if recalc.receipt is None else recalc.receipt.to_show():
             tags = ("problem",) if calc.problem else ()
             self.table.insert("", tk.END, iid=f"calc-{calc.tdcc}", values=_calc_row(calc), tags=tags)
 
     @staticmethod
-    def _recalc_kpis(recalc: _Recalc) -> list[tuple[str, int, bool]]:
+    def _recalc_kpis(recalc: Recalc) -> list[tuple[str, int, bool]]:
         if recalc.receipt is None:
             return []
         to_confirm = recalc.receipt.count(TO_CONFIRM)
@@ -732,7 +725,7 @@ class DailyImportTab(_Tab):
     def _done(self, result: object) -> None:
         self._busy(False)
         self.db.after_run(result)
-        if not isinstance(result, _DailyResult):
+        if not isinstance(result, DailyResult):
             return
         receipt, recalc = result.receipt, result.recalc
         for line in receipt.lines:
@@ -854,8 +847,7 @@ class MailDraftTab(_Tab):
         self.restart()
 
         def check() -> ImportInfo | None:
-            with connect(settings) as conn:
-                return latest_import(conn)
+            return read_latest_import(settings)
 
         def confirm(result: object) -> None:
             # 先讓作業人員看到用的是哪一次每日匯入，確認後才建草稿，避免用到舊資料
@@ -874,8 +866,7 @@ class MailDraftTab(_Tab):
                 return
 
             def run() -> DraftReceipt:
-                with connect(settings) as conn:
-                    return create_drafts(text, root, out, conn, template_path=template_path)
+                return make_mail_drafts(settings, text, root, out, template_path=template_path)
 
             self.run_in_background(run, "建立草稿中…（在根目錄底下搜尋商品資料夾）", self._done)
 
@@ -908,64 +899,6 @@ _TONE_BG = {Tone.PLAIN: SURFACE, Tone.DIFFERENT: _DIFFERENT_BG, Tone.PROBLEM: _P
 ORDER_SHEET_DIR = Path(r"G:\Bond Data\PM事項\0.常用工具\ELN每日起單建檔")
 
 
-@dataclass(frozen=True)
-class _ReadResult:
-    rows: tuple[OrderRow, ...]
-    drafts: list[OrderDraft]
-    config: ImportConfig
-    database_note: str = ""  # 沒有帶入資料庫的值時的說明
-    database_error: DatabaseError | None = None
-
-
-@dataclass(frozen=True)
-class _Recalc:
-    """匯入後重算核對條件（#88）的結果；重算失敗時只有 error（匯入已經寫進資料庫）。"""
-
-    receipt: CalcReceipt | None = None
-    calendar: TradingCalendar | None = None  # 放行後重算要用
-    error: str = ""
-
-
-def _recalculate(conn: psycopg.Connection, calendar: Callable[[], TradingCalendar]) -> _Recalc:
-    """匯入之後重算；失敗時不丟錯誤（匯入已經完成），說明放在結果裡。"""
-    import psycopg
-
-    try:
-        found = calendar()
-        return _Recalc(recalculate(conn, found), found)
-    except (CheckTermsError, DatabaseError, psycopg.Error) as exc:
-        return _Recalc(error=_first_line(exc))
-
-
-@dataclass(frozen=True)
-class _DailyResult:
-    receipt: ImportReceipt
-    recalc: _Recalc = _Recalc()
-
-
-@dataclass(frozen=True)
-class _PriceCsvResult:
-    receipt: PriceCsvReceipt
-    recalc: _Recalc = _Recalc()
-
-
-@dataclass(frozen=True)
-class _Checked:
-    """人工維護「檢查」的結果（#115）。"""
-
-    products: tuple[MissingProduct, ...]
-    config: ImportConfig
-
-
-@dataclass(frozen=True)
-class _Opened:
-    """人工維護打開的一檔（#115）與它的交易明細（#116）。"""
-
-    draft: OrderDraft
-    config: ImportConfig
-    trades: TradeRowsDraft | None = None
-
-
 class _Releaser:
     """「放行差異…」（#88）：選到的商品有還沒放行的交叉比對差異時可以按；確認後記下放行人與時間，再重算那一檔。
 
@@ -995,8 +928,8 @@ class _Releaser:
         self.button.pack(side=tk.LEFT, padx=(8, 0))
         tab.table.bind("<<TreeviewSelect>>", lambda _event: self.refresh(), add="+")
 
-    def show(self, recalc: _Recalc) -> None:
-        """換成這次重算的結果（空的 `_Recalc` 是清掉）。"""
+    def show(self, recalc: Recalc) -> None:
+        """換成這次重算的結果（空的 `Recalc` 是清掉）。"""
         self.lines = {} if recalc.receipt is None else {line.tdcc: line for line in recalc.receipt.lines}
         self.calendar = recalc.calendar
         self.refresh()
@@ -1033,8 +966,7 @@ class _Releaser:
         self.refresh()
 
         def run() -> CalcLine:
-            with connect(settings) as conn:
-                return release_differences(conn, tdcc, differences, calendar)
+            return release_line(settings, tdcc, differences, calendar)
 
         self.tab.run_in_background(run, f"放行中…（{tdcc}）", self._done, clear=False)
 
@@ -1408,7 +1340,7 @@ class OrderTermsTab(_Tab):
         self.memory = memory
         self.db = db
         self.config_paths = config_paths
-        self.read: _ReadResult | None = None  # 最近一次讀取的結果
+        self.read: ReadResult | None = None  # 最近一次讀取的結果
         self.items: dict[str, tuple[OrderRow, OrderDraft | None]] = {}  # 結果表的列 → (讀取結果, 確認資料)
         self.unsaved = False  # 有改過、還沒匯入資料庫
         self.working = False  # 正在讀取或匯入
@@ -1551,7 +1483,7 @@ class OrderTermsTab(_Tab):
         self.read = None
         self.items = {}
         self.imported = {}
-        self.releaser.show(_Recalc())
+        self.releaser.show(Recalc())
         self.unsaved = False
         self.editor.typed = {}
         self.editor.show(None)
@@ -1592,27 +1524,18 @@ class OrderTermsTab(_Tab):
         config_paths = self.config_paths()
         self._busy(True)
 
-        def run() -> _ReadResult:
-            config = load_import_config(config_paths)
-            rows = collect_orders(text, sheet, config.issuer_prefixes, config.calendar)
-            if settings is None:
-                return _ReadResult(rows, drafts_from(rows), config, "沒有登入資料庫，沒有帶入資料庫的值")
-            try:
-                with connect(settings) as conn:
-                    return _ReadResult(rows, drafts_from(rows, conn), config)
-            except DatabaseError as exc:
-                note = f"資料庫沒有連上，沒有帶入資料庫的值（{exc}）"
-                return _ReadResult(rows, drafts_from(rows), config, note, exc)
+        def run() -> ReadResult:
+            return read_order_sheet(settings, text, sheet, config_paths)
 
         self.run_in_background(run, f"讀取中…（{sheet.name}）", self._done)
 
     def _done(self, result: object) -> None:
-        if isinstance(result, _ReadResult):
+        if isinstance(result, ReadResult):
             self.db.after_run(result.database_error)
             self.read = result
             self._fill_table(result)
         self._busy(False)
-        if not isinstance(result, _ReadResult):
+        if not isinstance(result, ReadResult):
             return
         statuses = [self.table.set(iid, "status") for iid in self.items]
         ready = sum(status in IMPORTABLE for status in statuses)
@@ -1626,7 +1549,7 @@ class OrderTermsTab(_Tab):
             status += f"\n注意：{result.database_note}。"
         self.finish((("可匯入（檔）", ready, False), ("要處理（檔）", todo, todo > 0)), status)
 
-    def _fill_table(self, result: _ReadResult) -> None:
+    def _fill_table(self, result: ReadResult) -> None:
         """有問題的排前面：待確認（含找不到）、請確認、可匯入、已鎖住。"""
         by_tdcc = {draft.tdcc: draft for draft in result.drafts}
         order = {BLOCKED: 0, TO_CHECK: 1, READY: 2, LOCKED: 3}
@@ -1674,8 +1597,7 @@ class OrderTermsTab(_Tab):
         self.mark_done(False)
 
         def run() -> OrderImportResult:
-            with connect(settings) as conn:
-                return import_orders(read.drafts, conn, read.config)
+            return import_order_sheet(settings, read.drafts, read.config)
 
         self.run_in_background(run, "匯入資料庫中…", self._saved, clear=False)
 
@@ -1688,7 +1610,7 @@ class OrderTermsTab(_Tab):
             return
         receipt, calcs = result.receipt, result.recalc
         calendar = None if self.read is None else self.read.config.calendar  # 放行後重算要用
-        recalc = _Recalc(calcs, calendar, result.recalc_error)
+        recalc = Recalc(calcs, calendar, result.recalc_error)
         self.imported = {line.tdcc: line for line in receipt.lines}
         batch: dict[str, CalcLine] = {}
         for iid, (row, draft) in self.items.items():
@@ -2054,17 +1976,15 @@ class MaintenanceTab(_Tab):
         self._busy(True)
         self.restart()
 
-        def run() -> _Checked:
-            config = load_import_config(paths)
-            with connect(settings) as conn:
-                return _Checked(missing_products(conn, config), config)
+        def run() -> Checked:
+            return check_missing(settings, paths)
 
         self.run_in_background(run, "檢查中…", self._checked, clear=False)
 
     def _checked(self, result: object) -> None:
         self.db.after_run(result)
         self._busy(False)
-        if not isinstance(result, _Checked):
+        if not isinstance(result, Checked):
             return
         self.config = result.config
         self.checked = {product.tdcc: product for product in result.products}
@@ -2122,8 +2042,7 @@ class MaintenanceTab(_Tab):
         self.mark_done(False)
 
         def run() -> ExportReceipt:
-            with connect(settings) as conn:
-                return export_products(conn, path)
+            return export_product_terms(settings, path)
 
         self.run_in_background(run, "匯出商品條件中…", lambda result: self._exported(result, unsaved), clear=False)
 
@@ -2171,16 +2090,14 @@ class MaintenanceTab(_Tab):
         paths = self.config_paths()
         self._busy(True)
 
-        def run() -> _Opened:
-            config = load_import_config(paths)
-            with connect(settings) as conn:
-                return _Opened(open_maintenance(conn, tdcc, config), config, load_trade_rows(conn, tdcc))
+        def run() -> Opened:
+            return open_product(settings, tdcc, paths)
 
         self.run_in_background(run, f"讀取 {tdcc} 的條件中…", self._opened, clear=False)
 
     def _opened(self, result: object) -> None:
         self.db.after_run(result)
-        if isinstance(result, _Opened):
+        if isinstance(result, Opened):
             self.config = result.config
             self._show(result.draft, result.trades)
             self.status_var.set(f"已打開 {result.draft.tdcc}（{result.draft.row.status}），改好按「存檔」。")
@@ -2218,8 +2135,7 @@ class MaintenanceTab(_Tab):
         self.mark_done(False)
 
         def run() -> CorrectionReceipt:
-            with connect(settings) as conn:
-                return save_maintenance(conn, draft, config, trades=trades, reason=reason)
+            return save_product(settings, draft, config, trades=trades, reason=reason)
 
         self.run_in_background(run, f"存檔中…（{draft.tdcc}）", self._saved, clear=False)
 
@@ -2554,7 +2470,7 @@ def _status_counts(lines: Iterable[CalcLine]) -> str:
     return "、".join(f"{status} {statuses.count(status)}" for status in STATUSES)
 
 
-def _recalc_text(recalc: _Recalc) -> str:
+def _recalc_text(recalc: Recalc) -> str:
     """完成訊息裡的核對條件一句（#88）。"""
     if recalc.receipt is None:
         return f"注意：匯入已寫進資料庫，但核對條件沒有重算（{recalc.error}）；排除後重新匯入一次就會重算。"
@@ -2563,10 +2479,6 @@ def _recalc_text(recalc: _Recalc) -> str:
         f"核對條件（還沒鎖住的 {len(receipt.lines)} 檔，這次有變 {receipt.changed} 檔）："
         f"{_status_counts(receipt.lines)}。"
     )
-
-
-def _first_line(exc: Exception) -> str:
-    return str(exc).splitlines()[0] if str(exc) else type(exc).__name__
 
 
 def _import_text(info: ImportInfo) -> str:
