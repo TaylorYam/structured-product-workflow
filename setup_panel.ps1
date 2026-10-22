@@ -8,6 +8,16 @@ try {
     if ($LASTEXITCODE -ne 0) { throw '需要 Python 3.11 以上及 Tcl/Tk。' }
     $pythonVersion = (& $pythonExe @pythonArgs -c "import sys, platform; print(sys.version.split()[0], platform.machine(), sys.executable)" | Out-String).Trim()
     Write-Host ('使用 Python ' + $pythonVersion)
+    # FCN Workflow 開著時 .venv 的 DLL 被鎖住，--clear 會刪到一半失敗（#110）。
+    # .venv\Scripts\python(w).exe 會再開系統 Python 的子程序，子程序的命令列仍以 .venv 路徑開頭，所以兩者都要比對
+    $venvPrefix = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '.venv')).TrimEnd('\') + '\'
+    $venvInUse = @(Get-CimInstance Win32_Process | Where-Object {
+        ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($venvPrefix, [StringComparison]::OrdinalIgnoreCase)) -or
+        ($_.Name -like 'python*' -and $_.CommandLine -and $_.CommandLine.TrimStart('"', ' ').StartsWith($venvPrefix, [StringComparison]::OrdinalIgnoreCase))
+    })
+    if ($venvInUse.Count -gt 0) {
+        throw ('FCN Workflow（或其他用本專案 .venv 執行的 Python）還開著，請先關閉視窗再重新執行安裝。若視窗都已關閉仍出現此訊息，請到工作管理員「詳細資料」結束以下程序：' + (($venvInUse | ForEach-Object { $_.Name + ' (PID ' + $_.ProcessId + ')' }) -join '、'))
+    }
     & $pythonExe @pythonArgs -m venv --clear .venv  # 重跑安裝時重建，避免新舊 Python 版本混在一起
     if ($LASTEXITCODE -ne 0) { throw '無法建立本機虛擬環境。' }
     & '.\.venv\Scripts\python.exe' -m pip install -c constraints.txt .
