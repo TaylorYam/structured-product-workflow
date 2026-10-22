@@ -1,7 +1,8 @@
 """每日匯入：把每日更新（`交易明細`＋`BBG_Data`）匯入最小 FCN 資料庫（#32、#87、ADR 0003、0008）。
 
-對外只有 `import_daily`。規則：
+對外是 `import_daily` 與回補股價用的 `import_price_csv`（#112）。規則：
 - 需要 `交易明細`、`BBG_Data` 兩張工作表，少一張就整份不匯入；`清單更新` 已停用，檔案裡有也不讀（#87）。
+  「只匯交易明細」（`prices=False`，回補時用）不讀 `BBG_Data`、不動股價，沒有這張工作表也可以。
   商品條件改由「匯入起單資料」建立（#86），每日匯入不再寫商品條件、也不做分公司對帳。
 - `交易明細` 第 1 列是欄名，必須和交易清單月份工作表的欄名與順序完全相同；不同就整份不匯入。
   只收 Product 為 FCN 的列，其他略過並計數；略過的 TDCC 與 Product 記在 `workflow.other_product`。
@@ -10,6 +11,9 @@
   代碼只去頭尾空白；代碼空白的列略過；價格格子空白就存空白，不是數字也存空白並列出來。
   同一個代碼出現多列：值都一樣算一筆，值不一樣記成衝突（價格留空），算價格時（#88）不能用。
   同一個取價日重新匯入時，整份取代那一天的股價；每次匯入都留紀錄（`workflow.price_import`）。
+- 回補股價 CSV（`MarketData_YYYYMMDD.csv`，#112）：第 1 列欄名要完全相同，「取價日」是收盤那一天、整份同一天；
+  存成取價日＋1 天，等同隔天早上用 BBG_Data 取到的價格。沒有 1日前收盤價；幣別、市值(百萬美元) 不存。
+  代碼、重複代碼、不是數字、整天取代的處理同 BBG_Data；也留一筆 `workflow.import_run`。
 - 信箱由資料庫直接維護（#35、ADR 0004）：匯入不修改 `mailbox`，只用它比對 FC 名字。
 - 結果另外列出交易明細的 FCN TDCC（依第一次出現的順序、不重複，不是剛好 12 碼與整檔都取消的不列），
   給視窗帶到起單資料頁（#90）。
@@ -18,8 +22,10 @@
 
 from __future__ import annotations
 
+import csv
 import datetime as dt
 import hashlib
+import io
 import json
 import re
 from collections import Counter, defaultdict
@@ -56,6 +62,11 @@ PRICE_HEADERS = (
     "代碼(值)", "公司名稱", "最新收盤價(值)", "最新開盤價(值)", "1日前收盤價(值)", "200日波動率(值)",
     "市值(原幣/百萬)(值)",
 )  # fmt: skip
+# 回補股價 CSV（#112）：取價日是收盤那一天，存成下一天（同 BBG_Data 的取價日：內容是前一個交易日的價格）
+PRICE_CSV_HEADERS = (
+    "取價日", "代碼", "公司名稱", "收盤價", "開盤價", "200日波動率(%)", "市值(原幣/百萬)", "幣別", "市值(百萬美元)",
+)  # fmt: skip
+PRICE_CSV_DATE_SHIFT = dt.timedelta(days=1)
 
 
 class Price(NamedTuple):
@@ -127,12 +138,23 @@ class ImportReceipt:
     skipped_trade_rows: int
     cancelled_trade_rows: int
     error_book_path: Path
-    prices: PriceSummary
+    prices: PriceSummary | None  # 只匯交易明細時是 None
     fcn_trade_rows: int  # 交易明細裡 Product 為 FCN 的列數，含取消的
     fcn_tdccs: tuple[str, ...]  # 帶到起單資料頁的 TDCC（#90）
 
     def count(self, kind: str) -> int:
         return sum(line.kind == kind for line in self.lines)
+
+
+@dataclass(frozen=True)
+class PriceCsvReceipt:
+    """回補股價 CSV 的結果（#112）。"""
+
+    run_id: int
+    close_date: dt.date  # CSV 的取價日（收盤那一天）；存進資料庫的取價日是 `prices.price_date`
+    prices: PriceSummary
+    lines: tuple[ImportLine, ...]  # 股價不是數字、股價衝突
+    error_book_path: Path
 
 
 @dataclass(frozen=True)
@@ -174,7 +196,7 @@ class _Prices:
 
 @dataclass
 class _Parsed:
-    prices: _Prices
+    prices: _Prices | None  # 只匯交易明細時是 None
     trades: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     blocked: list[ImportLine] = field(default_factory=list)
     cancelled_lines: list[ImportLine] = field(default_factory=list)
@@ -185,13 +207,13 @@ class _Parsed:
     fcn_trade_rows: int = 0
 
 
-def import_daily(daily_book: Path, conn: psycopg.Connection) -> ImportReceipt:
-    """匯入一份每日更新；回傳每檔 TDCC 的結果。整份有問題時丟 `DailyImportError`、不寫入任何資料。"""
-    try:
-        require_current_schema(conn)
-    except DatabaseError as exc:
-        raise DailyImportError(str(exc)) from exc
-    parsed = _read_daily(daily_book)
+def import_daily(daily_book: Path, conn: psycopg.Connection, *, prices: bool = True) -> ImportReceipt:
+    """匯入一份每日更新；回傳每檔 TDCC 的結果。整份有問題時丟 `DailyImportError`、不寫入任何資料。
+
+    `prices=False`：只匯交易明細，不讀 BBG_Data、不動股價（回補時股價改用 `import_price_csv`）。
+    """
+    _require_schema(conn)
+    parsed = _read_daily(daily_book, prices=prices)
 
     with conn.transaction():
         mailbox = load_mailbox(conn)
@@ -199,10 +221,10 @@ def import_daily(daily_book: Path, conn: psycopg.Connection) -> ImportReceipt:
             "INSERT INTO workflow.import_run (daily_file_name, daily_sha256, summary) VALUES (%s, %s, '{}') RETURNING run_id",
             (daily_book.name, _sha256(daily_book)),
         ).fetchone()[0]
-        lines = [*parsed.blocked, *parsed.cancelled_lines, *parsed.prices.problems]
+        lines = [*parsed.blocked, *parsed.cancelled_lines, *(parsed.prices.problems if parsed.prices else ())]
         lines += _write_trades(conn, parsed, run_id)
         _write_other_products(conn, parsed, run_id)
-        prices = _write_prices(conn, parsed.prices, run_id)
+        summary = None if parsed.prices is None else _write_prices(conn, parsed.prices, run_id)
         lines += _unmatched_names(parsed, mailbox)
         error_book_path = daily_book.parent / IMPORT_ERROR_BOOK_NAME
         receipt = ImportReceipt(
@@ -212,7 +234,7 @@ def import_daily(daily_book: Path, conn: psycopg.Connection) -> ImportReceipt:
             skipped_trade_rows=parsed.skipped_trade_rows,
             cancelled_trade_rows=parsed.cancelled_trade_rows,
             error_book_path=error_book_path,
-            prices=prices,
+            prices=summary,
             fcn_trade_rows=parsed.fcn_trade_rows,
             fcn_tdccs=tuple(tdcc for tdcc, live in parsed.fcn_tdccs.items() if live),
         )
@@ -222,6 +244,40 @@ def import_daily(daily_book: Path, conn: psycopg.Connection) -> ImportReceipt:
         )
         _write_error_book(conn, error_book_path)
     return receipt
+
+
+def import_price_csv(path: Path, conn: psycopg.Connection) -> PriceCsvReceipt:
+    """回補股價（#112）：匯入一份 `MarketData_YYYYMMDD.csv`。整份有問題時丟 `DailyImportError`、不寫入任何資料。"""
+    _require_schema(conn)
+    close_date, prices = _read_price_csv(path)
+    with conn.transaction():
+        run_id = conn.execute(
+            "INSERT INTO workflow.import_run (daily_file_name, daily_sha256, summary) VALUES (%s, %s, '{}') RETURNING run_id",
+            (path.name, _sha256(path)),
+        ).fetchone()[0]
+        summary = _write_prices(conn, prices, run_id)
+        error_book_path = path.parent / IMPORT_ERROR_BOOK_NAME
+        receipt = PriceCsvReceipt(run_id, close_date, summary, tuple(prices.problems), error_book_path)
+        record = {
+            "counts": dict(Counter(line.kind for line in receipt.lines)),
+            "close_date": close_date.isoformat(),
+            "price_date": summary.price_date.isoformat(),
+            "price_count": summary.count,
+            "lines": [[line.tdcc, line.kind, line.detail] for line in receipt.lines],
+        }
+        conn.execute(
+            "UPDATE workflow.import_run SET summary = %s::jsonb WHERE run_id = %s",
+            (json.dumps(record, ensure_ascii=False), run_id),
+        )
+        _write_error_book(conn, error_book_path)
+    return receipt
+
+
+def _require_schema(conn: psycopg.Connection) -> None:
+    try:
+        require_current_schema(conn)
+    except DatabaseError as exc:
+        raise DailyImportError(str(exc)) from exc
 
 
 @dataclass(frozen=True)
@@ -235,11 +291,11 @@ class ImportInfo:
 
 
 def latest_import(conn: psycopg.Connection) -> ImportInfo | None:
-    """最近一次每日匯入；還沒匯入過時回傳 None。"""
+    """最近一次每日匯入；還沒匯入過時回傳 None。回補股價 CSV（summary 有 close_date）不算：寄信前要看的是交易明細。"""
     with conn.transaction():
         row = conn.execute(
             "SELECT run_id, imported_at, daily_file_name, daily_sha256 FROM workflow.import_run"
-            " ORDER BY run_id DESC LIMIT 1"
+            " WHERE NOT summary ? 'close_date' ORDER BY run_id DESC LIMIT 1"
         ).fetchone()
     return None if row is None else ImportInfo(*row)
 
@@ -264,17 +320,16 @@ def load_mailbox(conn: psycopg.Connection) -> Mailbox:
 # ---------- 每日更新 ----------
 
 
-def _read_daily(path: Path) -> _Parsed:
+def _read_daily(path: Path, *, prices: bool) -> _Parsed:
     wb = _open(path)
     try:
-        for sheet in (TRADE_SHEET, PRICE_SHEET):
+        for sheet in (TRADE_SHEET, PRICE_SHEET) if prices else (TRADE_SHEET,):
             if sheet not in wb.sheetnames:
                 raise DailyImportError(f"每日更新缺少工作表「{sheet}」")
         trade_rows = _rows_with_header(wb[TRADE_SHEET], TRADE_HEADERS)
-        prices = _read_prices(wb[PRICE_SHEET])
+        parsed = _Parsed(_read_prices(wb[PRICE_SHEET]) if prices else None)
     finally:
         wb.close()
-    parsed = _Parsed(prices)
     _parse_trades(trade_rows, parsed)
     return parsed
 
@@ -311,18 +366,74 @@ def _read_prices(sheet: Any) -> _Prices:
     prices = _Prices(_price_date(rows[PRICE_DATE_ROW - 1] if len(rows) >= PRICE_DATE_ROW else blank))
     _check_price_headers(rows[PRICE_HEADER_ROW - 1] if len(rows) >= PRICE_HEADER_ROW else blank)
     for number, row in enumerate(rows[PRICE_FIRST_ROW - 1 :], PRICE_FIRST_ROW):
-        _add_price(prices, number, row[PRICE_FIRST_COLUMN - 1 :])
+        _add_price(prices, number, row[PRICE_FIRST_COLUMN - 1 :], PRICE_SHEET, PRICE_HEADERS[2:])
     if not prices.rows and not prices.conflicts:
         raise DailyImportError(
             f"「{PRICE_SHEET}」沒有任何股價（第 {PRICE_FIRST_ROW} 列起都沒有代碼），整份不匯入；請確認取價是否完成"
         )
+    _list_conflicts(prices)
+    return prices
+
+
+def _list_conflicts(prices: _Prices) -> None:
     prices.problems += [
         ImportLine(
             "", PRICE_CONFLICT, f"{code}：同一個代碼有 {prices.row_counts[code]} 列、值不同，價格沒有存，算價格時不能用"
         )
         for code in prices.conflicts
     ]
-    return prices
+
+
+def _read_price_csv(path: Path) -> tuple[dt.date, _Prices]:
+    """回補股價 CSV（#112）：回傳 (收盤那一天, 股價)；股價的取價日是下一天。欄名、取價日不對或沒有股價就整份不匯入。"""
+    try:
+        text = path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as exc:
+        raise DailyImportError(f"股價 CSV 不是 UTF-8 編碼，整份不匯入：{path}") from exc
+    except OSError as exc:
+        raise DailyImportError(f"打不開股價 CSV：{path}（{exc}）") from exc
+    rows = list(csv.reader(io.StringIO(text, newline="")))  # 引號裡的換行留在同一格
+    header = [_text(v) for v in (rows[0] if rows else [])]
+    while header and header[-1] is None:
+        header.pop()
+    width = len(PRICE_CSV_HEADERS)
+    for i, want in enumerate(PRICE_CSV_HEADERS):
+        got = header[i] if i < len(header) else None
+        if got != want:
+            raise DailyImportError(
+                f"股價 CSV 的欄名和範本不同，整份不匯入：第 {i + 1} 欄應為「{want}」，實際是「{got or '空白'}」"
+            )
+    if len(header) > width:
+        raise DailyImportError(f"股價 CSV 在「{PRICE_CSV_HEADERS[-1]}」之後還有其他欄，整份不匯入")
+
+    found: list[tuple[int, list[str]]] = []
+    dates: dict[dt.date, int] = {}  # 取價日 → 第一次出現的列號
+    for number, raw in enumerate(rows[1:], 2):
+        row = (raw + [""] * width)[:width]
+        if _text(row[1], dash_is_none=False) is None:
+            continue  # 代碼空白的列略過
+        try:
+            close_date = _date(row[0])
+        except ValueError:
+            close_date = None
+        if close_date is None:
+            raise DailyImportError(f"股價 CSV 第 {number} 列的取價日「{row[0] or '空白'}」不是日期，整份不匯入")
+        dates.setdefault(close_date, number)
+        found.append((number, row))
+    if not found:
+        raise DailyImportError(f"股價 CSV 沒有任何股價（第 2 列起都沒有代碼），整份不匯入：{path}")
+    if len(dates) > 1:
+        shown = "、".join(f"{d:%Y-%m-%d}（第 {n} 列起）" for d, n in sorted(dates.items()))
+        raise DailyImportError(f"股價 CSV 的取價日不只一天：{shown}，整份不匯入；一個 CSV 只放一天")
+
+    close_date = next(iter(dates))
+    prices = _Prices(close_date + PRICE_CSV_DATE_SHIFT)
+    labels = (*PRICE_CSV_HEADERS[3:5], "1日前收盤價", *PRICE_CSV_HEADERS[5:7])
+    for number, row in found:
+        code, name, close, open_, volatility, market_cap = row[1:7]
+        _add_price(prices, number, (code, name, close, open_, None, volatility, market_cap), path.name, labels)
+    _list_conflicts(prices)
+    return close_date, prices
 
 
 def _price_date(row: Sequence[Any]) -> dt.date:
@@ -346,20 +457,21 @@ def _check_price_headers(row: Sequence[Any]) -> None:
             )
 
 
-def _add_price(prices: _Prices, number: int, values: Sequence[Any]) -> None:
-    """一列股價（從代碼那一欄起）；代碼空白的列略過。同一個代碼再出現時，值一樣不重複算，值不一樣記成衝突。"""
+def _add_price(prices: _Prices, number: int, values: Sequence[Any], source: str, labels: Sequence[str]) -> None:
+    """一列股價（代碼、公司名稱，再依 `Price` 價格欄的順序）；代碼空白的列略過。
+    同一個代碼再出現時，值一樣不重複算，值不一樣記成衝突。`source`、`labels` 是訊息裡的來源與價格欄名。"""
     code = _text(values[0], dash_is_none=False)
     if code is None:
         return
     prices.row_counts[code] += 1
     numbers = []
-    for header, value in zip(PRICE_HEADERS[2:], values[2:], strict=True):
+    for header, value in zip(labels, values[2:], strict=True):
         try:
             numbers.append(_decimal(value))
         except ValueError:
             prices.problems.append(
                 ImportLine(
-                    "", PRICE_NOT_NUMBER, f"{PRICE_SHEET}第 {number} 列 {code}：{header}「{value}」不是數字，存成空白"
+                    "", PRICE_NOT_NUMBER, f"{source}第 {number} 列 {code}：{header}「{value}」不是數字，存成空白"
                 )
             )
             numbers.append(None)
@@ -539,8 +651,8 @@ def _summary(receipt: ImportReceipt) -> dict[str, Any]:
         "counts": dict(counts),
         "people": receipt.people,
         "skipped_trade_rows": receipt.skipped_trade_rows,
-        "price_date": receipt.prices.price_date.isoformat(),
-        "price_count": receipt.prices.count,
+        "price_date": None if receipt.prices is None else receipt.prices.price_date.isoformat(),
+        "price_count": None if receipt.prices is None else receipt.prices.count,
         "lines": [[line.tdcc, line.kind, line.detail] for line in receipt.lines],
     }
 
@@ -648,9 +760,12 @@ def _decimal(value: Any) -> Decimal | None:
     if isinstance(value, bool):
         raise ValueError(f"「{value}」不是數字")
     try:
-        return Decimal(str(value).strip().replace(",", ""))
+        number = Decimal(str(value).strip().replace(",", ""))
     except InvalidOperation as exc:
         raise ValueError(f"「{value}」不是數字") from exc
+    if not number.is_finite():  # NaN、Infinity 算價格時會中斷
+        raise ValueError(f"「{value}」不是數字")
+    return number
 
 
 def _pct(value: Any) -> Decimal | None:

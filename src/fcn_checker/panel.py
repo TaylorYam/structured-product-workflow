@@ -146,6 +146,7 @@ def apply_style(root: tk.Tk) -> Callable[[float], int]:
     style.configure("Title.TLabel", foreground=NAVY, font=(FONT, 18, "bold"))
     style.configure("Card.TLabel", background=SURFACE)
     style.configure("Card.TRadiobutton", background=SURFACE)
+    style.configure("Card.TCheckbutton", background=SURFACE)
     style.configure("CardMuted.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=(FONT, 10))
     style.configure("KpiCaption.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=(FONT, 10))
     style.configure("KpiValue.TLabel", background=SURFACE, foreground=NAVY, font=(NUMBER_FONT, 18, "bold"))
