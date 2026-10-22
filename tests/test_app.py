@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import datetime as dt
 import runpy
 import tkinter as tk
@@ -55,6 +54,7 @@ from sp_workflow.product_write import NEW as ORDER_NEW
 from sp_workflow.product_write import SKIPPED as ORDER_SKIPPED
 from sp_workflow.returning import NOT_RETURNED, RETURNED, ReturnOutcome, ReturnReceipt
 from sp_workflow.trade_rows import CANCEL_NOTE, UNMATCHED_NOTE, TradeRowsDraft
+from sp_workflow.window_actions import Checked, DailyResult, Opened, PriceCsvResult, ReadResult, Recalc
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -693,7 +693,7 @@ def test_a_new_check_result_clears_the_last_return(master, tmp_path: Path) -> No
 
 def daily_receipt(
     tmp_path: Path, tdccs: tuple[str, ...] = (), fcn_rows: int | None = None, *, lines=(), prices=None, calcs=None
-) -> app._DailyResult:
+) -> DailyResult:
     """每日匯入的結果；`calcs` 是重算核對條件的結果（CalcLine），沒給時是空的重算。"""
     receipt = ImportReceipt(
         run_id=7,
@@ -706,7 +706,7 @@ def daily_receipt(
         fcn_trade_rows=len(tdccs) if fcn_rows is None else fcn_rows,
         fcn_tdccs=tdccs,
     )
-    return app._DailyResult(receipt, app._Recalc(CalcReceipt(tuple(calcs or ())), CONFIG.calendar))
+    return DailyResult(receipt, Recalc(CalcReceipt(tuple(calcs or ())), CONFIG.calendar))
 
 
 def test_reimporting_a_price_date_says_how_many_prices_were_replaced(master, tmp_path: Path) -> None:
@@ -724,7 +724,7 @@ def test_trades_only_import_says_prices_were_left_alone(master, tmp_path: Path) 
     window = new_window(master, tmp_path)
     result = daily_receipt(tmp_path)
 
-    window.daily._done(app._DailyResult(replace(result.receipt, prices=None), result.recalc))
+    window.daily._done(DailyResult(replace(result.receipt, prices=None), result.recalc))
 
     assert "股價：只匯交易明細，股價沒有變動。" in window.daily.status_var.get()
     assert [caption for caption, _, _ in window.daily.kpis.values] == [
@@ -739,10 +739,8 @@ def test_the_trades_only_box_is_passed_to_the_import(master, tmp_path: Path, mon
     actions = []
     monkeypatch.setattr(window.daily.db, "settings", lambda: object())
     monkeypatch.setattr(window.daily, "run_in_background", lambda action, *a, **k: actions.append(action))
-    monkeypatch.setattr(app, "connect", lambda settings: contextlib.nullcontext("conn"))
     calls = []
-    monkeypatch.setattr(app, "import_daily", lambda daily, conn, *, prices: calls.append(prices))
-    monkeypatch.setattr(app, "_recalculate", lambda conn, calendar: app._Recalc())
+    monkeypatch.setattr(app, "run_daily_import", lambda settings, daily, paths, *, prices: calls.append(prices))
     window.daily.daily_var.set(str(tmp_path / "每日更新.xlsx"))
 
     window.daily.trades_only_var.set(True)
@@ -760,7 +758,6 @@ def test_price_csv_import_shows_the_stored_price_date(master, tmp_path: Path, mo
     actions = []
     monkeypatch.setattr(window.daily.db, "settings", lambda: object())
     monkeypatch.setattr(window.daily, "run_in_background", lambda action, *a, **k: actions.append(action))
-    monkeypatch.setattr(app, "connect", lambda settings: contextlib.nullcontext("conn"))
     receipt = PriceCsvReceipt(
         run_id=9,
         close_date=dt.date(2026, 10, 16),
@@ -768,8 +765,8 @@ def test_price_csv_import_shows_the_stored_price_date(master, tmp_path: Path, mo
         lines=(ImportLine("", PRICE_CONFLICT, "AAA UW：同一個代碼有 2 列、值不同，價格沒有存，算價格時不能用"),),
         error_book_path=tmp_path / "每日匯入錯誤.xlsx",
     )
-    monkeypatch.setattr(app, "import_price_csv", lambda source, conn: receipt)
-    monkeypatch.setattr(app, "_recalculate", lambda conn, calendar: app._Recalc(CalcReceipt(()), CONFIG.calendar))
+    result = PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar))
+    monkeypatch.setattr(app, "run_price_csv", lambda settings, source, paths: result)
     source = tmp_path / "MarketData_20261016.csv"
     window.daily.csv_var.set(str(source))
 
@@ -800,9 +797,9 @@ def test_price_csv_import_needs_a_file(master, tmp_path: Path, monkeypatch) -> N
     assert errors == ["請先選擇股價 CSV。"]
 
 
-def read_result(*rows: OrderRow) -> app._ReadResult:
+def read_result(*rows: OrderRow) -> ReadResult:
     """讀完起單建檔的結果（沒有連資料庫）。"""
-    return app._ReadResult(rows, drafts_from(rows), CONFIG)
+    return ReadResult(rows, drafts_from(rows), CONFIG)
 
 
 def pasted(tab) -> str:
@@ -1239,7 +1236,7 @@ def test_daily_import_says_when_check_terms_were_not_recalculated(master, tmp_pa
     window = new_window(master, tmp_path)
     result = daily_receipt(tmp_path)
 
-    window.daily._done(app._DailyResult(result.receipt, app._Recalc(error="找不到交易所假日表設定檔")))
+    window.daily._done(DailyResult(result.receipt, Recalc(error="找不到交易所假日表設定檔")))
 
     assert "核對條件沒有重算（找不到交易所假日表設定檔）" in window.daily.status_var.get()
     assert [caption for caption, _, _ in window.daily.kpis.values] == ["正常（項）", "要注意（項）", "股價（筆）"]
@@ -1415,12 +1412,12 @@ def missing(tdcc: str, status: str = MAINTAIN_OPEN, **changes) -> MissingProduct
 
 def checked_window(master, tmp_path: Path, *products: MissingProduct) -> app.PanelWindow:
     window = new_window(master, tmp_path)
-    window.manual._checked(app._Checked(products, CONFIG))
+    window.manual._checked(Checked(products, CONFIG))
     return window
 
 
 def opened(window: app.PanelWindow, draft: OrderDraft):
-    window.manual._opened(app._Opened(draft, CONFIG))
+    window.manual._opened(Opened(draft, CONFIG))
     return window.manual.editor
 
 
@@ -1667,7 +1664,7 @@ def opened_trades(*rows: dict) -> TradeRowsDraft:
 
 
 def opened_with(window: app.PanelWindow, draft: OrderDraft, trades: TradeRowsDraft):
-    window.manual._opened(app._Opened(draft, CONFIG, trades))
+    window.manual._opened(Opened(draft, CONFIG, trades))
     return window.manual.trade_editor
 
 
@@ -1762,17 +1759,16 @@ def test_saving_sends_the_trade_rows_with_the_terms(master, tmp_path: Path, monk
     window = new_window(master, tmp_path)
     tab = window.manual
     monkeypatch.setattr(tab.db, "settings", lambda **k: object())
-    monkeypatch.setattr(app, "connect", lambda settings: contextlib.nullcontext(object()))
     saved = []
 
-    def save(conn, draft, config, *, trades, reason):
+    def save(settings, draft, config, *, trades, reason):
         saved.append(trades)
         trades.reopen({row.seq: row.values for row in trades.rows})
         return app.CorrectionReceipt(
             draft.tdcc, None, locked=False, trade_correction_id=4, trade_changes=((1, "募集", "N", "Y"),)
         )
 
-    monkeypatch.setattr(app, "save_maintenance", save)
+    monkeypatch.setattr(app, "save_product", save)
     monkeypatch.setattr(tab, "run_in_background", lambda action, busy, on_done, **k: on_done(action()))
     editor = opened_with(window, maintenance_draft(), opened_trades({}))
     editor.rows[(1, "募集")].var.set("Y")  # 還沒離開欄位就按存檔

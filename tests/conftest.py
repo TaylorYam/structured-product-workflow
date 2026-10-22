@@ -1,6 +1,7 @@
 """共用 fixture 與選項。
 
 - `pg`：測試用 PostgreSQL（設定 SPW_TEST_DSN 才執行，CI 由 PostgreSQL 服務提供）。
+- `pg_settings`：同一個測試資料庫的連線設定（自己開連線的視窗動作用）。
 - `--shard=i/n`：只跑第 i 份（依測試檔分組，見 shard.py；CI 用來把核對測試分給幾台機器同時跑，#69）。
 """
 
@@ -37,6 +38,15 @@ def pg():
     apply_migrations(conn)
     yield conn
     conn.close()
+
+
+@pytest.fixture
+def pg_settings(pg):
+    """連到 `pg` 同一個測試資料庫的 `ConnectionSettings`：給自己開連線的視窗動作用（#125）。"""
+    from sp_workflow.database import ConnectionSettings
+
+    info = pg.info
+    return ConnectionSettings(info.host, str(info.port), info.dbname, info.user, info.password or None)
 
 
 def pytest_addoption(parser: pytest.Parser) -> None:
