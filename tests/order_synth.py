@@ -10,7 +10,7 @@ from pathlib import Path
 import openpyxl
 
 from fcn_checker.config import load_exchange_holidays
-from sp_workflow.order_import import ImportConfig
+from sp_workflow.order_import import MAINTAIN_OPEN, ImportConfig, OrderDraft
 from sp_workflow.order_terms import NOT_FOUND, PENDING, READ, TDCC_FIELD, OrderRow
 
 A = "029199990001"  # BARC
@@ -67,6 +67,13 @@ def order_row(
 
 def missing_row(tdcc: str) -> OrderRow:
     return OrderRow(tdcc, NOT_FOUND, PREFIXES.get(tdcc[:3], ""), notes={TDCC_FIELD: f"{SHEET.name} 裡沒有這檔"})
+
+
+def maintenance_draft(status: str = MAINTAIN_OPEN, tdcc: str = A, issuer: str = "BARC", **changes) -> OrderDraft:
+    """人工維護打開的一檔（`open_maintenance` 的結果，不連資料庫）：`changes` 改欄位的值。"""
+    values = {**VALUES, **changes}
+    row = OrderRow(tdcc, status, issuer, dict(values))
+    return OrderDraft(row, dict(values), dict(values), dict(values), database_checked=True, correcting=True)
 
 
 # 起單建檔的表頭（第 2 列、從 B 欄開始；欄名後面的空白照真的檔）

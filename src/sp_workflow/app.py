@@ -1,21 +1,23 @@
-"""FCN Workflow 視窗：六個分頁照每天的作業順序排（#73、#74、#90）。
+"""FCN Workflow 視窗：七個分頁照每天的作業順序排（#73、#74、#90、#115）。
 
 1. 每日匯入：選每日更新，把交易明細與每日股價匯入最小 FCN 資料庫（#32、#87）；信箱在資料庫直接維護（#35）。
 2. 起單資料：貼 TDCC、選一份起單建檔（#97），在右邊逐檔確認、修改後匯入資料庫（#86）。
-   核對通過、條件已鎖住的商品要改時，按「更正商品條件…」輸入 TDCC，在另一個視窗更正（#55）。
    1、2 匯入完成後重算還沒鎖住的商品的核對條件（#88），逐檔顯示狀態；交叉比對的差異可以在這兩頁放行。
 3. 準備：貼 TDCC、選輸出位置，產生批次資料夾與準備清單。
 4. 核對：參考條件表＋說明書／投資人須知 PDF 的預覽、核對與儲存（`fcn_checker.panel.CheckTab`）。
 5. 放回：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾。
 6. 寄信草稿：貼核對通過的 TDCC，在 Outlook 建 TS／IIS 草稿給承作的 FC（#29）。
+7. 人工維護：按「檢查」列出還沒鎖住、缺資料的商品（缺的格子淺紅底），或輸入 TDCC 打開任何一檔，
+   在右邊補齊、修改資料庫裡的商品條件；已鎖住的照更正的規則存檔（#55、#115）。
 
 商品資料夾所在的根目錄在視窗最上方設一次，3、6 兩頁共用（#75）。
 做完一步，下一頁先帶入結果並用藍色提示條寫出來，按「下一步 →」才切頁，不自動執行（#76）：
 每日匯入完成 → 起單資料頁帶入交易明細的 FCN TDCC（#90）；
 準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔。
 審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
-視窗只收輸入、在背景執行 `collect_orders`／`import_drafts`／`load_correction`／`apply_correction`／`import_daily`／`recalculate`／
-`release_differences`／`prepare_batch`／核對／`return_to_folders`／`create_drafts` 並顯示結果，不含判斷邏輯。
+視窗只收輸入、在背景執行 `collect_orders`／`import_drafts`／`missing_products`／`open_maintenance`／`save_maintenance`／
+`import_daily`／`recalculate`／`release_differences`／`prepare_batch`／核對／`return_to_folders`／`create_drafts`
+並顯示結果，不含判斷邏輯。
 """
 
 from __future__ import annotations
@@ -27,10 +29,11 @@ import subprocess
 import sys
 import threading
 import tkinter as tk
-from collections.abc import Callable, Collection, Iterable, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import font as tkfont
 from typing import TYPE_CHECKING
 
 from fcn_checker.check_config import ConfigPaths
@@ -46,6 +49,7 @@ from fcn_checker.panel import (
     NAVY,
     NUMBER_FONT,
     SURFACE,
+    TEXT,
     TEXT_SECONDARY,
     CheckTab,
     HintBar,
@@ -106,6 +110,9 @@ from sp_workflow.order_import import (
     FIXED_IN_CORRECTION,
     IMPORTABLE,
     LOCKED,
+    MAINTAIN_LOCKED,
+    MAINTAIN_NEW,
+    MAINTAIN_OPEN,
     NEW,
     OVERWRITTEN,
     READY,
@@ -116,23 +123,27 @@ from sp_workflow.order_import import (
     CorrectionError,
     CorrectionReceipt,
     ImportConfig,
+    MissingProduct,
     OrderDraft,
     OrderImportError,
     OrderImportLine,
     OrderImportReceipt,
-    apply_correction,
     check_draft,
     describe,
     drafts_from,
     import_drafts,
-    load_correction,
     load_import_config,
+    maintenance_problems,
+    missing_products,
+    open_maintenance,
     reload_stored,
     review_status,
+    save_maintenance,
 )
 from sp_workflow.order_terms import (
     CHOICES,
     FIELDS,
+    REQUIRED,
     STRIKE_FIELD,
     OrderRow,
     OrderTermsError,
@@ -189,7 +200,7 @@ class _Tab:
         self.table.tag_configure("problem", foreground=DANGER)
 
     def page_header(self, title: str, description: str) -> None:
-        """第 0 列：步驟 N／6（由視窗填）、標題（只寫功能）與一行說明。"""
+        """第 0 列：步驟 N／總數（由視窗填）、標題（只寫功能）與一行說明。"""
         self.header = PageHeader(self.frame, title, description)
         self.header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
 
@@ -902,7 +913,17 @@ class _PriceCsvResult:
 
 
 @dataclass(frozen=True)
-class _LoadedCorrection:
+class _Checked:
+    """人工維護「檢查」的結果（#115）。"""
+
+    products: tuple[MissingProduct, ...]
+    config: ImportConfig
+
+
+@dataclass(frozen=True)
+class _Opened:
+    """人工維護打開的一檔（#115）。"""
+
     draft: OrderDraft
     config: ImportConfig
 
@@ -1053,7 +1074,8 @@ class OrderEditor(ttk.Frame):
 
     擋匯入的欄與讀起單建檔時有提醒的欄淺紅底並寫原因；和資料庫不同的欄淺黃底，寫出資料庫的值，可以一鍵改回。
     離開欄位、按 Enter 或選了下拉時才解讀；寫錯的欄保留打的字並標紅（說明記在 `OrderDraft.input_errors`，
-    匯入時那一檔不匯入）。值真的變了才通知 `on_change`。`fixed` 的欄只顯示、不能改（更正時的 Issue date，#55）。
+    匯入時那一檔不匯入）。值真的變了才通知 `on_change`。`fixed` 的欄只顯示、不能改（已鎖住時的 Issue date，#55）。
+    `check` 決定哪些欄標紅（起單資料用匯入的檢查，人工維護用 `maintenance_problems`，#115）。
     """
 
     PLACEHOLDER = "點左邊的商品來確認、修改"
@@ -1066,15 +1088,19 @@ class OrderEditor(ttk.Frame):
         on_change: Callable[[OrderDraft], None],
         *,
         fixed: Collection[str] = (),
+        check: Callable[[OrderDraft, ImportConfig], dict[str, str]] = check_draft,
+        placeholder: str = PLACEHOLDER,
     ) -> None:
         super().__init__(parent, style="Card.TFrame", padding=(14, 12))
         self.config = config
         self.on_change = on_change
         self.fixed = frozenset(fixed)
+        self.check = check
+        self.placeholder = placeholder
         self.draft: OrderDraft | None = None
         self.typed: dict[str, dict[str, str]] = {}  # TDCC → {欄位: 寫錯時打的字}
         self.frozen = False  # 存檔中整個編輯區不能改
-        self.title_var = tk.StringVar(value=self.PLACEHOLDER)
+        self.title_var = tk.StringVar(value=placeholder)
         self.note_var = tk.StringVar()
         ttk.Label(self, textvariable=self.title_var, style="Card.TLabel").pack(anchor="w")
         self.note = ttk.Label(self, textvariable=self.note_var, style="CardMuted.TLabel", justify=tk.LEFT)
@@ -1109,7 +1135,7 @@ class OrderEditor(ttk.Frame):
             field_row.var.set("" if draft is None else typed.get(name, format_field(draft.values.get(name))))
         self._apply_state()
         if draft is None:
-            self.title_var.set(self.PLACEHOLDER if row is None else f"{row.tdcc}　{row.issuer}　{row.status}")
+            self.title_var.set(self.placeholder if row is None else f"{row.tdcc}　{row.issuer}　{row.status}")
             self.note_var.set("" if row is None else "沒有可以改的條件：" + describe(row.notes))
             for field_row in self.rows.values():
                 field_row.mark(SURFACE, "")
@@ -1132,7 +1158,7 @@ class OrderEditor(ttk.Frame):
         if draft is None:
             return
         config = self.config()
-        problems = check_draft(draft, config) if config else dict(draft.input_errors)
+        problems = self.check(draft, config) if config else dict(draft.input_errors)
         notes = draft.notes
         differences = draft.differences()
         for name, field_row in self.rows.items():
@@ -1249,8 +1275,6 @@ class OrderTermsTab(_Tab):
         self.start_button.pack(side=tk.LEFT)
         self.import_button = ttk.Button(self.buttons, text="匯入資料庫", command=self.import_now, state=tk.DISABLED)
         self.import_button.pack(side=tk.LEFT, padx=(8, 0))
-        self.correct_button = ttk.Button(self.buttons, text="更正商品條件…", command=self.correct)
-        self.correct_button.pack(side=tk.LEFT, padx=(8, 0))
         self.place_table(3)
         self.frame.columnconfigure(2, weight=1)
         self.editor = OrderEditor(self.frame, lambda: self.read.config if self.read else None, self._edited)
@@ -1380,7 +1404,6 @@ class OrderTermsTab(_Tab):
         self.editor.set_frozen(busy)
         state = tk.DISABLED if busy else tk.NORMAL
         self.start_button.configure(state=state)
-        self.correct_button.configure(state=state)
         has_drafts = self.read is not None and bool(self.read.drafts)
         self.import_button.configure(state=state if has_drafts else tk.DISABLED)
         self.releaser.refresh()
@@ -1541,146 +1564,433 @@ class OrderTermsTab(_Tab):
         self.finish(kpis, status)
         self.releaser.show(result.recalc)
 
-    # ---------- 更正（#55） ----------
 
-    def correct(self) -> None:
-        """已鎖住的商品要改條件：問 TDCC（選中的那檔已鎖住時先帶入），讀資料庫目前的條件後打開更正視窗。"""
-        if self.working:
-            return
-        selection = self.table.selection()
-        _, draft = self.items.get(selection[0], (None, None)) if selection else (None, None)
-        initial = draft.tdcc if draft is not None and draft.locked else ""
-        text = simpledialog.askstring(
-            TITLE, "要更正的 TDCC（已核對通過、條件鎖住的商品）：", initialvalue=initial, parent=self.master
+class CellTable(ttk.Frame):
+    """人工維護的檢查結果表（#115）：一列一檔，可以替每一格上色（缺的格子淺紅底）。
+
+    `ttk.Treeview` 只能整列上色，所以用 Canvas 自己畫：第一欄（TDCC）固定在左邊，其他欄可以左右捲動，
+    表頭跟著左右捲、不跟著上下捲；上下捲時左右兩塊一起動。點一列就選它並通知 `on_select`（傳那一列的 key）。
+    """
+
+    PAD = 8  # 格子左右的留白
+    MIN_WIDTH = 48
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        first: tuple[str, str],
+        columns: Sequence[tuple[str, str]],
+        on_select: Callable[[str], None],
+    ) -> None:
+        super().__init__(parent, style="Card.TFrame")
+        self.first = first  # (欄, 表頭)：固定在左邊
+        self.columns = tuple(columns)  # [(欄, 表頭)]：可以左右捲動
+        self.on_select = on_select
+        self.font = tkfont.Font(family=FONT, size=10)
+        self.header_font = tkfont.Font(family=FONT, size=10, weight="bold")
+        self.row_height = self.font.metrics("linespace") + 10
+        self.keys: list[str] = []
+        self.selected: str | None = None
+        self._rects: dict[tuple[str, str], tuple[tk.Canvas, int]] = {}  # (key, 欄) → 格子的方塊
+        self._labels: dict[tuple[str, str], tuple[tk.Canvas, int]] = {}  # (key, 欄) → 格子的字
+        self._missing: dict[str, frozenset[str]] = {}
+
+        def canvas() -> tk.Canvas:
+            return tk.Canvas(self, background=SURFACE, highlightthickness=0, borderwidth=0)
+
+        self.corner, self.header, self.side, self.body = canvas(), canvas(), canvas(), canvas()
+        for scrolling in (self.side, self.body):
+            scrolling.configure(yscrollincrement=self.row_height)
+        self.vbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self._yview)
+        self.hbar = ttk.Scrollbar(self, orient=tk.HORIZONTAL, command=self._xview)
+        self.body.configure(yscrollcommand=self.vbar.set, xscrollcommand=self.hbar.set)
+        self.corner.grid(row=0, column=0, sticky="nsew")
+        self.header.grid(row=0, column=1, sticky="ew")
+        self.side.grid(row=1, column=0, sticky="ns")
+        self.body.grid(row=1, column=1, sticky="nsew")
+        self.vbar.grid(row=1, column=2, sticky="ns")
+        self.hbar.grid(row=2, column=1, sticky="ew")
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(1, weight=1)
+        for widget in (self.side, self.body):
+            widget.bind("<Button-1>", self._click)
+            widget.bind("<MouseWheel>", lambda event: self._yview("scroll", self._steps(event), "units"))
+            widget.bind("<Shift-MouseWheel>", lambda event: self._xview("scroll", self._steps(event) * 3, "units"))
+        self.set_rows(())
+
+    def set_rows(self, rows: Sequence[tuple[str, Mapping[str, str], Collection[str]]]) -> None:
+        """換成這些列：(key, {欄: 顯示的字}, 缺的欄)；key 也是第一欄顯示的字。選中的那列還在就照樣選著。"""
+        for widget in (self.corner, self.header, self.side, self.body):
+            widget.delete("all")
+        self._rects, self._labels = {}, {}
+        self.keys = [key for key, _, _ in rows]
+        self._missing = {key: frozenset(gone) for key, _, gone in rows}
+        first, first_label = self.first
+        first_width = self._width(first_label, self.keys)
+        widths = [self._width(label, [cells.get(name, "") for _, cells, _ in rows]) for name, label in self.columns]
+        height = self.row_height
+        self._header(self.corner, 0, first_width, first_label)
+        x = 0
+        for (_, label), width in zip(self.columns, widths, strict=True):
+            self._header(self.header, x, width, label)
+            x += width
+        for i, (key, cells, _) in enumerate(rows):
+            y = i * height
+            self._cell(self.side, key, first, 0, y, first_width, key)
+            x = 0
+            for (name, _), width in zip(self.columns, widths, strict=True):
+                self._cell(self.body, key, name, x, y, width, cells.get(name, ""))
+                x += width
+        total = len(rows) * height
+        self.corner.configure(width=first_width, height=height, scrollregion=(0, 0, first_width, height))
+        self.side.configure(width=first_width, scrollregion=(0, 0, first_width, total))
+        self.header.configure(height=height, scrollregion=(0, 0, x, height))
+        self.body.configure(scrollregion=(0, 0, x, total))
+        if self.selected not in self._missing:
+            self.selected = None
+        self._paint(self.selected, selected=True)
+
+    def select(self, key: str | None) -> None:
+        """選這一列（淺藍底，缺的格子照樣淺紅）；不在表上或 None 時不選任何一列。不通知 `on_select`。"""
+        self._paint(self.selected, selected=False)
+        self.selected = key if key in self._missing else None
+        self._paint(self.selected, selected=True)
+
+    def background(self, key: str, column: str) -> str:
+        canvas, item = self._rects[(key, column)]
+        return str(canvas.itemcget(item, "fill"))
+
+    def text(self, key: str, column: str) -> str:
+        canvas, item = self._labels[(key, column)]
+        return str(canvas.itemcget(item, "text"))
+
+    def _choose(self, key: str) -> None:
+        """點了一列：選它，再通知 `on_select`（分頁決定要不要換檔，不換時用 `select` 改回去）。"""
+        self.select(key)
+        self.on_select(key)
+
+    def _click(self, event: tk.Event) -> None:
+        index = int(event.widget.canvasy(event.y) // self.row_height)
+        if 0 <= index < len(self.keys):
+            self._choose(self.keys[index])
+
+    def _yview(self, *args: object) -> None:
+        self.side.yview(*args)
+        self.body.yview(*args)
+
+    def _xview(self, *args: object) -> None:
+        self.header.xview(*args)
+        self.body.xview(*args)
+
+    @staticmethod
+    def _steps(event: tk.Event) -> int:
+        """滾輪轉一格（Windows 是 ±120）→ 捲一列；方向和 Windows 一樣，往下轉是往下捲。"""
+        return -1 if event.delta > 0 else 1
+
+    def _width(self, label: str, texts: Iterable[str]) -> int:
+        measured = [self.header_font.measure(label), *(self.font.measure(text) for text in texts)]
+        return max(self.MIN_WIDTH, max(measured) + 2 * self.PAD)
+
+    def _header(self, canvas: tk.Canvas, x: int, width: int, label: str) -> None:
+        canvas.create_rectangle(x, 0, x + width, self.row_height, fill=BACKGROUND, outline=BORDER)
+        canvas.create_text(
+            x + self.PAD, self.row_height // 2, text=label, anchor="w", font=self.header_font, fill=TEXT_SECONDARY
         )
-        if text is None:
+
+    def _cell(self, canvas: tk.Canvas, key: str, name: str, x: int, y: int, width: int, text: str) -> None:
+        fill = _PROBLEM_BG if name in self._missing[key] else SURFACE
+        rect = canvas.create_rectangle(x, y, x + width, y + self.row_height, fill=fill, outline=BORDER)
+        label = canvas.create_text(
+            x + self.PAD, y + self.row_height // 2, text=text, anchor="w", font=self.font, fill=TEXT
+        )
+        self._rects[(key, name)] = (canvas, rect)
+        self._labels[(key, name)] = (canvas, label)
+
+    def _paint(self, key: str | None, *, selected: bool) -> None:
+        if key is None:
             return
-        tdccs = parse_tdccs(text)
-        if len(tdccs) != 1:
-            messagebox.showerror(TITLE, "請輸入一筆 TDCC。", parent=self.master)
+        for (row, name), (canvas, rect) in self._rects.items():
+            if row == key and name not in self._missing[key]:
+                canvas.itemconfigure(rect, fill=ACCENT_SOFT if selected else SURFACE)
+
+
+class MaintenanceTab(_Tab):
+    """「7 人工維護」（#115、ADR 0017）：檢查缺資料的商品，手動補齊、修改資料庫裡的商品條件。
+
+    左邊是「檢查」的結果（`CellTable`，缺的格子淺紅底），也可以輸入 TDCC 打開任何一檔；右邊是和起單資料頁
+    同一套的編輯區。已鎖住的照更正的規則存檔（ADR 0014），還沒鎖住的可以留空白；每次存檔都留紀錄。
+    """
+
+    READY_TEXT = "按「檢查」列出還沒鎖住、缺資料的商品；或輸入 TDCC 按「打開」，改任何一檔（包括已鎖住的）。"
+    INTROS = {
+        MAINTAIN_LOCKED: (
+            "已核對通過、條件已鎖住：存檔照更正的規則，商品維持鎖住、核對結果不動，算過核對條件的商品會重算價格。"
+            "不能留空白；Issue date 由 TS 回填，不能改。"
+        ),
+        MAINTAIN_OPEN: (
+            "還沒鎖住：存檔寫進資料庫並重算核對條件。必填欄可以先空著（淺紅底），缺欄時核對條件停在待確認、不能核對；"
+            "重新匯入起單資料時照舊整檔覆蓋。"
+        ),
+        MAINTAIN_NEW: (
+            "資料庫還沒有這檔的商品條件（只有交易明細）：存檔時新增，上手依上手編號對照。"
+            "必填欄可以先空著，缺欄時核對條件停在待確認、不能核對。"
+        ),
+    }
+    COLUMNS = (("issuer", "上手"), ("status", "狀態"), *((name, name) for name in REQUIRED))
+
+    def __init__(self, notebook: ttk.Notebook, db: _DatabaseLogin, config_paths: Callable[[], ConfigPaths]) -> None:
+        super().__init__(notebook, "人工維護", ())
+        self.db = db
+        self.config_paths = config_paths
+        self.config: ImportConfig | None = None  # 最近一次檢查或打開時讀的設定
+        self.working = False  # 正在檢查、讀取或存檔
+        self.checked: dict[str, MissingProduct] = {}  # 最近一次檢查的結果（依 TDCC 排）
+        self.status_var.set(self.READY_TEXT)
+
+        self.page_header(
+            "維護商品條件",
+            "檢查還缺資料的商品，手動補齊或修改資料庫裡的商品條件；已鎖住的照更正的規則，每次存檔都留紀錄。",
+        )
+        self.header.grid_configure(columnspan=3)
+        body = self.body(self.card(1))
+        title = ttk.Frame(body, style="CardBody.TFrame")
+        title.grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        ttk.Label(title, text="TDCC", style="Card.TLabel").pack(side=tk.LEFT)
+        ttk.Label(title, text="直接打開任何一檔，包括已鎖住、沒缺資料的", style="CardMuted.TLabel").pack(
+            side=tk.LEFT, padx=(10, 0)
+        )
+        self.tdcc_var = tk.StringVar()
+        entry = ttk.Entry(body, textvariable=self.tdcc_var, width=18, font=(NUMBER_FONT, 11))
+        entry.grid(row=1, column=0, sticky="w")
+        entry.bind("<Return>", lambda _event: self.open_typed())
+        self.open_button = ttk.Button(body, text="打開", command=self.open_typed)
+        self.open_button.grid(row=1, column=1, sticky="w", padx=(8, 0))
+        body.columnconfigure(0, weight=0)
+        body.columnconfigure(1, weight=1)
+        self.result_area(body, 2)
+        self.check_button = ttk.Button(self.buttons, text="檢查", command=self.check, style="Primary.TButton")
+        self.check_button.pack(side=tk.LEFT)
+
+        self.cells = CellTable(self.frame, ("tdcc", "TDCC"), self.COLUMNS, self._selected)
+        self.cells.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(16, 0))
+        self.frame.rowconfigure(2, weight=1)
+        self.frame.columnconfigure(2, weight=1)
+        side = ttk.Frame(self.frame)
+        side.grid(row=1, rowspan=2, column=2, sticky="nsew", padx=(16, 0))  # 從卡片那一列拉到底
+        self.intro_var = tk.StringVar()
+        intro = ttk.Label(side, textvariable=self.intro_var, style="Muted.TLabel", justify=tk.LEFT)
+        intro.pack(anchor="w", fill=tk.X)
+        side.bind("<Configure>", lambda event: intro.configure(wraplength=max(240, event.width - 20)))
+        self.editor = OrderEditor(
+            side,
+            lambda: self.config,
+            self._edited,
+            check=maintenance_problems,
+            placeholder="點左邊的商品，或輸入 TDCC 打開",
+        )
+        self.editor.pack(fill=tk.BOTH, expand=True, pady=(6, 8))
+        actions = ttk.Frame(side, style="Card.TFrame", padding=(14, 10))
+        actions.pack(fill=tk.X)
+        actions.columnconfigure(1, weight=1)
+        ttk.Label(actions, text="原因（選填）", style="Card.TLabel").grid(row=0, column=0, sticky="w")
+        self.reason_var = tk.StringVar()
+        self.reason_entry = ttk.Entry(actions, textvariable=self.reason_var)
+        self.reason_entry.grid(row=0, column=1, sticky="ew", padx=(8, 0))
+        buttons = ttk.Frame(actions, style="CardBody.TFrame")
+        buttons.grid(row=1, column=0, columnspan=2, sticky="e", pady=(10, 0))
+        self.save_button = ttk.Button(buttons, text="存檔", command=self.save, style="Primary.TButton")
+        self.save_button.pack(side=tk.LEFT)
+        self.reload_button = ttk.Button(buttons, text="重新載入", command=self.reload)
+        self.reload_button.pack(side=tk.LEFT, padx=(8, 0))
+        self._busy(False)
+
+    def _busy(self, busy: bool) -> None:
+        """處理中：按鈕與編輯區都不能用；還沒打開任何一檔時不能存檔、重新載入。"""
+        self.working = busy
+        self.editor.set_frozen(busy)
+        state = tk.DISABLED if busy else tk.NORMAL
+        for widget in (self.check_button, self.open_button):
+            widget.configure(state=state)
+        has_draft = state if self.editor.draft is not None else tk.DISABLED
+        for widget in (self.save_button, self.reload_button, self.reason_entry):
+            widget.configure(state=has_draft)
+
+    def has_unsaved(self) -> bool:
+        """有改過、還沒存檔的內容（先把編輯區還沒解讀的輸入解讀掉）。"""
+        self.editor.commit()
+        draft = self.editor.draft
+        return draft is not None and bool(draft.edits() or draft.input_errors)
+
+    def _may_discard(self, action: str) -> bool:
+        return not self.has_unsaved() or messagebox.askyesno(
+            TITLE,
+            f"人工維護頁有改過、還沒存檔的內容，{action}後會不見。\n\n確定要繼續嗎？",
+            icon=messagebox.WARNING,
+            default=messagebox.NO,
+            parent=self.master,
+        )
+
+    def _current_tdcc(self) -> str | None:
+        return None if self.editor.draft is None else self.editor.draft.tdcc
+
+    # ---------- 檢查 ----------
+
+    def check(self) -> None:
+        if self.working:
             return
         settings = self.db.settings()
         if settings is None:
             return
-        config_paths = self.config_paths()
+        paths = self.config_paths()
         self._busy(True)
+        self.restart()
 
-        def run() -> _LoadedCorrection:
-            config = load_import_config(config_paths)
+        def run() -> _Checked:
+            config = load_import_config(paths)
             with connect(settings) as conn:
-                return _LoadedCorrection(load_correction(conn, tdccs[0], config), config)
+                return _Checked(missing_products(conn, config), config)
 
-        self.run_in_background(run, f"讀取 {tdccs[0]} 的條件中…", self._correction_loaded, clear=False)
+        self.run_in_background(run, "檢查中…", self._checked, clear=False)
 
-    def _correction_loaded(self, result: object) -> None:
+    def _checked(self, result: object) -> None:
         self.db.after_run(result)
         self._busy(False)
-        if isinstance(result, _LoadedCorrection):
-            self.status_var.set(f"已打開 {result.draft.tdcc} 的更正視窗。")
-            CorrectionDialog(self, result.draft, result.config)
-
-
-class CorrectionDialog:
-    """「更正商品條件」視窗（#55）：一次一檔，欄位同起單資料的編輯區；改過的欄標黃並寫出資料庫的值，可以改回。
-
-    儲存後商品維持鎖住、核對結果不動，有核對條件的商品重算價格；Issue date 由 TS 回填，不能改。
-    儲存期間整個視窗不能改；這個視窗開著時主視窗不能操作。
-    """
-
-    INTRO = (
-        "這檔已核對通過、條件已鎖住。改好後按「儲存更正」：商品維持鎖住、核對結果不動，"
-        "算過核對條件的商品會重算價格。Issue date 由 TS 回填，不能改。"
-    )
-
-    def __init__(self, tab: OrderTermsTab, draft: OrderDraft, config: ImportConfig) -> None:
-        self.tab = tab
-        self.draft = draft
-        self.config = config
-        self.window = tk.Toplevel(tab.master)
-        self.window.title(f"更正商品條件　{draft.tdcc}")
-        self.window.transient(tab.master)
-        self.window.configure(background=BACKGROUND)
-        self.window.geometry("640x780")
-        frame = ttk.Frame(self.window, padding=16)
-        frame.pack(fill=tk.BOTH, expand=True)
-        intro = ttk.Label(frame, text=self.INTRO, justify=tk.LEFT)
-        intro.pack(anchor="w", fill=tk.X)
-        self.editor = OrderEditor(frame, lambda: config, self._edited, fixed=FIXED_IN_CORRECTION)
-        self.editor.pack(fill=tk.BOTH, expand=True, pady=(8, 8))
-        reason = ttk.Frame(frame)
-        reason.pack(fill=tk.X)
-        ttk.Label(reason, text="原因（選填）").pack(side=tk.LEFT)
-        self.reason_var = tk.StringVar()
-        self.reason_entry = ttk.Entry(reason, textvariable=self.reason_var)
-        self.reason_entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
-        self.status_var = tk.StringVar()
-        status = ttk.Label(frame, textvariable=self.status_var, justify=tk.LEFT)
-        status.pack(anchor="w", fill=tk.X, pady=(8, 0))
-        for label in (intro, status):  # 依視窗寬度換行
-            frame.bind(
-                "<Configure>", lambda event, w=label: w.configure(wraplength=max(240, event.width - 20)), add="+"
+        if not isinstance(result, _Checked):
+            return
+        self.config = result.config
+        self.checked = {product.tdcc: product for product in result.products}
+        self._fill_cells()
+        found = len(self.checked)
+        new = sum(product.status == MAINTAIN_NEW for product in self.checked.values())
+        if found:
+            status = (
+                f"檢查完了：{found} 檔還沒鎖住而且缺資料（其中 {new} 檔只有交易明細）。"
+                "缺的格子是淺紅底，點一列在右邊補齊。"
             )
-        buttons = ttk.Frame(frame)
-        buttons.pack(anchor="e", pady=(8, 0))
-        self.save_button = ttk.Button(buttons, text="儲存更正", command=self.save, style="Primary.TButton")
-        self.save_button.pack(side=tk.LEFT)
-        self.close_button = ttk.Button(buttons, text="關閉", command=self.close)
-        self.close_button.pack(side=tk.LEFT, padx=(8, 0))
-        self.window.protocol("WM_DELETE_WINDOW", self.close)
+        else:
+            status = "檢查完了：沒有還沒鎖住、缺資料的商品。"
+        self.finish((("缺資料（檔）", found, found > 0), ("只有交易明細（檔）", new, False)), status)
+
+    def _fill_cells(self) -> None:
+        rows = [
+            (
+                product.tdcc,
+                {
+                    "issuer": product.issuer,
+                    "status": product.status,
+                    **{name: format_field(product.values.get(name)) for name in REQUIRED},
+                },
+                product.missing,
+            )
+            for product in self.checked.values()
+        ]
+        self.cells.set_rows(rows)
+        self.cells.select(self._current_tdcc())
+
+    # ---------- 打開 ----------
+
+    def _selected(self, tdcc: str) -> None:
+        if self.working or tdcc == self._current_tdcc():
+            self.cells.select(self._current_tdcc())
+            return
+        self.open(tdcc)
+
+    def open_typed(self) -> None:
+        tdccs = parse_tdccs(self.tdcc_var.get())
+        if len(tdccs) != 1:
+            messagebox.showerror(TITLE, "請輸入一筆 TDCC。", parent=self.master)
+            return
+        self.open(tdccs[0])
+
+    def reload(self) -> None:
+        """重新讀資料庫目前的值（例如存檔時說打開之後被改過）。"""
+        tdcc = self._current_tdcc()
+        if tdcc is not None:
+            self.open(tdcc, action="重新載入")
+
+    def open(self, tdcc: str, *, action: str = "") -> None:
+        """讀這檔目前的條件到右邊；有改過、還沒存檔的先問。"""
+        if self.working or not self._may_discard(action or f"打開 {tdcc}"):
+            self.cells.select(self._current_tdcc())
+            return
+        settings = self.db.settings()
+        if settings is None:
+            self.cells.select(self._current_tdcc())
+            return
+        paths = self.config_paths()
+        self._busy(True)
+
+        def run() -> _Opened:
+            config = load_import_config(paths)
+            with connect(settings) as conn:
+                return _Opened(open_maintenance(conn, tdcc, config), config)
+
+        self.run_in_background(run, f"讀取 {tdcc} 的條件中…", self._opened, clear=False)
+
+    def _opened(self, result: object) -> None:
+        self.db.after_run(result)
+        if isinstance(result, _Opened):
+            self.config = result.config
+            self._show(result.draft)
+            self.status_var.set(f"已打開 {result.draft.tdcc}（{result.draft.row.status}），改好按「存檔」。")
+        self._busy(False)
+        self.cells.select(self._current_tdcc())
+
+    def _show(self, draft: OrderDraft) -> None:
+        self.editor.fixed = frozenset(FIXED_IN_CORRECTION if draft.row.status == MAINTAIN_LOCKED else ())
+        self.editor.typed = {}
         self.editor.show(draft)
-        self.window.grab_set()
+        self.intro_var.set(self.INTROS[draft.row.status])
+        self.reason_var.set("")
 
-    def _edited(self, _draft: OrderDraft) -> None:
-        self.status_var.set("有改過、還沒儲存。")
+    def _edited(self, draft: OrderDraft) -> None:
+        self.mark_done(False)
+        self.status_var.set(f"{draft.tdcc} 有改過、還沒存檔。")
 
-    def _set_busy(self, busy: bool) -> None:
-        self.tab._busy(busy)  # 背景工作用分頁的結果佇列，分頁也一起停用
-        self.editor.set_frozen(busy)
-        state = tk.DISABLED if busy else tk.NORMAL
-        for widget in (self.save_button, self.close_button, self.reason_entry):
-            widget.configure(state=state)
+    # ---------- 存檔 ----------
 
     def save(self) -> None:
+        draft, config = self.editor.draft, self.config
+        if self.working or draft is None or config is None:
+            return
         self.editor.commit()
-        settings = self.tab.db.settings()
+        settings = self.db.settings()
         if settings is None:
             return
-        draft, config, reason = self.draft, self.config, self.reason_var.get()
-        self._set_busy(True)
+        reason = self.reason_var.get()
+        self._busy(True)
+        self.mark_done(False)
 
         def run() -> CorrectionReceipt:
             with connect(settings) as conn:
-                return apply_correction(conn, draft, config, reason=reason)
+                return save_maintenance(conn, draft, config, reason=reason)
 
-        self.tab.run_in_background(run, f"更正 {draft.tdcc} 中…", self._saved, clear=False)
+        self.run_in_background(run, f"存檔中…（{draft.tdcc}）", self._saved, clear=False)
 
     def _saved(self, result: object) -> None:
-        self.tab.db.after_run(result)
-        self._set_busy(False)
-        if isinstance(result, CorrectionError):
-            self.status_var.set(str(result))
+        self.db.after_run(result)
+        self._busy(False)
         if not isinstance(result, CorrectionReceipt):
-            return
-        text = _correction_text(result)
-        self.tab.status_var.set(text)
-        if result.correction_id is None:
-            self.status_var.set(text)
-            return
-        self.window.destroy()
-        messagebox.showinfo(TITLE, text, parent=self.tab.master)
+            return  # 錯誤已顯示；畫面上的值不動，可以改好再存或重新載入
+        draft = self.editor.draft
+        if result.correction_id is not None and draft is not None:
+            self._show(draft)  # 已換成資料庫存的值：黃色的差異清掉，只有交易明細的變成未鎖住
+            self._update_checked(result, draft)
+        self.status_var.set(_correction_text(result))
+        self.mark_done(result.correction_id is not None)
 
-    def close(self) -> None:
-        """有改過、還沒儲存的更正先問。"""
-        self.editor.commit()
-        if (self.draft.edits() or self.draft.input_errors) and not messagebox.askyesno(
-            TITLE,
-            "有改過、還沒儲存的更正，關閉後會不見。\n\n確定要關閉嗎？",
-            icon=messagebox.WARNING,
-            default=messagebox.NO,
-            parent=self.window,
-        ):
+    def _update_checked(self, receipt: CorrectionReceipt, draft: OrderDraft) -> None:
+        """檢查結果裡有這檔時跟著更新：補齊了就拿掉，還缺的寫入後的值與缺的欄。"""
+        if receipt.tdcc not in self.checked:
             return
-        self.window.destroy()
+        if receipt.missing:
+            listed = self.checked[receipt.tdcc]
+            self.checked[receipt.tdcc] = MissingProduct(
+                receipt.tdcc, listed.issuer, MAINTAIN_OPEN, dict(draft.values), receipt.missing
+            )
+        else:
+            del self.checked[receipt.tdcc]
+        self._fill_cells()
 
 
 WINDOW_FILE = "window.json"  # 視窗上次的大小，和上次選的資料夾放在同一個 .local/
@@ -1743,7 +2053,7 @@ def _style_shell(master: tk.Tk) -> None:
 
 
 class StepSidebar(ttk.Frame):
-    """左側步驟欄（#83）：照每天的順序列出 1～6，按了切到那一步；目前所在的那一步用淺藍底標出。
+    """左側步驟欄（#83）：照每天的順序列出 1～7，按了切到那一步；目前所在的那一步用淺藍底標出。
 
     分頁標籤已藏起來，切頁一律經過 notebook.select（「下一步 →」也是），步驟欄跟著 <<NotebookTabChanged>> 更新。
     """
@@ -1803,7 +2113,7 @@ class PanelWindow:
                 self.session.install_root / "runtime" / EXPORT_FOLDER,
                 on_failure=db.forget_password,
             )
-        # 分頁照每天的作業順序建立，前面自動加上 1～6 的編號
+        # 分頁照每天的作業順序建立，前面自動加上 1～7 的編號；人工維護不是每天的步驟，放最後（#115）
         self.daily = DailyImportTab(
             self.notebook,
             memory,
@@ -1825,10 +2135,11 @@ class PanelWindow:
         self.notebook.add(self.check, text="核對")
         self.returning = ReturnTab(self.notebook, memory)
         self.mail = MailDraftTab(self.notebook, memory, db, self.root_folder)
+        self.manual = MaintenanceTab(self.notebook, db, lambda: self.session.paths)
         tabs = self.notebook.tabs()
         for number, tab in enumerate(tabs, 1):
             self.notebook.tab(tab, text=f"{number} {self.notebook.tab(tab, 'text')}")
-        pages = (self.daily, self.orders, self.prepare, self.returning, self.mail)
+        pages = (self.daily, self.orders, self.prepare, self.returning, self.mail, self.manual)
         for page, page_header in [(p.frame, p.header) for p in pages] + [(self.check, self.check.header)]:
             page_header.step.set(f"步驟 {self.notebook.index(page) + 1}／{len(tabs)}")
         self.sidebar = StepSidebar(body, self.notebook, self.pixels)
@@ -1893,6 +2204,10 @@ class PanelWindow:
             return _CloseWarning("起單資料頁還在處理（讀取或匯入），關閉後要重新來。", self.orders.frame)
         if self.orders.has_unsaved():
             return _CloseWarning("起單資料頁有改過、還沒匯入資料庫的內容，關閉後會不見。", self.orders.frame)
+        if self.manual.working:
+            return _CloseWarning("人工維護頁還在處理（檢查、讀取或存檔），關閉後要重新來。", self.manual.frame)
+        if self.manual.has_unsaved():
+            return _CloseWarning("人工維護頁有改過、還沒存檔的內容，關閉後會不見。", self.manual.frame)
         return None
 
     def close(self) -> None:
@@ -1943,14 +2258,18 @@ def _calc_row(line: CalcLine) -> tuple[str, str, str]:
 
 
 def _correction_text(receipt: CorrectionReceipt) -> str:
-    """更正的結果：改了什麼（前 → 後）、重算後的核對條件。"""
+    """人工維護存檔（已鎖住的是更正）的結果：改了什麼（前 → 後）、重算後的核對條件。"""
     if receipt.correction_id is None:
         return f"{receipt.tdcc} 沒有改任何欄位，沒有寫入。"
     changes = "、".join(
         f"{name} {format_field(before) or '空白'} → {format_field(after) or '空白'}"
         for name, before, after in receipt.changes
     )
-    text = f"已更正 {receipt.tdcc}（第 {receipt.correction_id} 次更正）：{changes}。商品維持鎖住，核對結果沒有變。"
+    if receipt.locked:
+        text = f"已更正 {receipt.tdcc}（第 {receipt.correction_id} 次更正）：{changes}。商品維持鎖住，核對結果沒有變。"
+    else:
+        action = "新增" if receipt.created else "存檔"
+        text = f"已{action} {receipt.tdcc} 的商品條件（第 {receipt.correction_id} 筆紀錄）：{changes}。"
     if receipt.calc is not None:
         text += f"\n核對條件重算後：{_calc_status(receipt.calc)}。"
     return text
