@@ -16,6 +16,7 @@ import pytest
 from db_synth import csv_price, price, seed_mailbox, trade, write_daily, write_price_csv
 from fcn_checker.check_config import ConfigPaths
 from order_synth import CONFIG, SHEET, A, order_row, sheet_line, write_sheet
+from sp_workflow import window_actions
 from sp_workflow.check_terms import CheckTermsError
 from sp_workflow.database import DatabaseError
 from sp_workflow.order_import import drafts_from, import_drafts
@@ -113,6 +114,33 @@ def test_a_failed_recalculation_keeps_the_price_csv(pg, pg_settings, tmp_path: P
 
     assert result.receipt.prices.count == 1 and result.recalc.receipt is None and result.recalc.error
     assert count(pg, "workflow.daily_price") == 1
+
+
+@pytest.mark.db
+def test_a_failed_observation_keeps_the_price_csv(pg, pg_settings, tmp_path: Path, monkeypatch) -> None:
+    source = write_price_csv(tmp_path / "MarketData_20261015.csv", [csv_price("AAA UW")])
+
+    def broken(conn, calendar):
+        raise RuntimeError("壞掉了")
+
+    monkeypatch.setattr(window_actions, "observe_all", broken)
+
+    result = run_price_csv(pg_settings, source, PATHS)
+
+    assert result.observation.receipt is None and "比價程式出錯（RuntimeError：壞掉了）" in result.observation.error
+    assert count(pg, "workflow.daily_price") == 1 and count(pg, "workflow.close_price") == 1, "匯入照樣保留"
+
+
+@pytest.mark.db
+def test_close_history_is_observed_after_the_import(pg, pg_settings, tmp_path: Path) -> None:
+    from test_close_prices import write_history
+
+    source = write_history(tmp_path / "HP.xlsx", [["AAA", "AAA UW Equity", "虛構", 10, 11, 12, 13, 14]])
+
+    result = import_close_history(pg_settings, source, PATHS)
+
+    assert result.receipt.summary.stored > 0
+    assert result.observation.receipt is not None and result.observation.receipt.through == dt.date(2026, 10, 16)
 
 
 @pytest.mark.db

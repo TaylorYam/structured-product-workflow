@@ -452,3 +452,29 @@ def test_products_whose_check_terms_are_no_longer_done(pg) -> None:
         dt.date(2026, 11, 20),
         True,
     )
+
+
+def test_a_code_without_closes_waits_until_its_first_observation_day() -> None:
+    prices = {A.code: closes()[A.code]}
+
+    assert run(terms(), prices, dt.date(2026, 11, 10)) == Outcome(ON_BOOK, "還沒到第一個觀察日")
+    assert run(terms(), prices) == Outcome(TO_CONFIRM, "UL_2 7203 JT：收盤價表沒有這個代碼")
+
+
+@pytest.mark.db
+def test_an_event_that_cannot_be_written_needs_confirmation(pg, monkeypatch) -> None:
+    import sp_workflow.observation
+    from sp_workflow.lifecycle import LifecycleError
+
+    seed(pg, T1)
+    write_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
+
+    def refused(conn, tdcc, events, *, user=None):
+        raise LifecycleError(f"{tdcc} 已登記顧客贖回，停止比價，不寫自動事件")
+
+    monkeypatch.setattr(sp_workflow.observation, "replace_auto_events", refused)
+
+    receipt = observe_all(pg, CALENDAR)
+
+    assert receipt.errors == ((T1, f"{T1} 已登記顧客贖回，停止比價，不寫自動事件"),)
+    assert status(pg, T1)[:2] == (TO_CONFIRM, f"自動事件寫不進去：{T1} 已登記顧客贖回，停止比價，不寫自動事件")

@@ -174,6 +174,8 @@ def _observe_after_import(conn: psycopg.Connection, calendar: TradingCalendar | 
         return Observation(observe_all(conn, calendar))
     except (LifecycleError, DatabaseError, psycopg.Error) as exc:
         return Observation(error=_first_line(exc))
+    except Exception as exc:  # 程式錯誤也不能讓已經寫好的匯入跟著失敗
+        return Observation(error=f"比價程式出錯（{type(exc).__name__}：{_first_line(exc)}）")
 
 
 # ---------- 1 每日匯入 ----------

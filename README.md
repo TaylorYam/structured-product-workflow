@@ -129,7 +129,7 @@ spw-db-migrate --env-file .env --admin-user postgres
 - KO：收盤價 ≥ KO 價。非記憶式要同一個觀察日所有標的都達標；記憶式每檔在任一觀察日達標就記住，全部記過就 KO。KO Type 每日型的觀察日是第一個比價日起到最終比價日、所有標的市場都開市的日子；每期型只看各期比價日；Non-Call 等於天期的不觀察 KO。
 - KI：到期觀察（EKI）只看最終比價日，收盤價 < 下限價；每日觀察（AKI）看 Strike date 之後該標的市場的每個交易日；每期觀察（MKI）不比，狀態待確認「每期觀察 KI 需人工追蹤」，KO 照比。
 - 到期（最終比價日沒有 KO）：沒有 KI 或 KI 曾觸及，且最差表現的標的（最終收盤價 ÷ 進場價最低）收盤價 < 執行價 → 接股（記那一檔）；否則到期還本。事件日是觸價或判定的觀察日。
-- 某標的在它市場的交易日要用的價格不在收盤價表 → 停在前一天，狀態「等股價」寫出標的與日期；補了價格下一次比價自然接上。交易所不在假日表、日期超出假日表涵蓋範圍、收盤價表沒有這個代碼、比價日是休市日、條件缺價格或比價日 → 待確認並寫原因。
+- 某標的在它市場的交易日要用的價格不在收盤價表 → 停在那一天（已比到前一天），狀態「等股價」寫出標的與日期；補了價格下一次比價自然接上。交易所不在假日表、日期超出假日表涵蓋範圍、要比價了收盤價表卻完全沒有這個代碼、比價日是休市日、條件缺價格或比價日 → 待確認並寫原因。
 - 已登記顧客贖回的不比（已出場）。有舊清單事件的只比較、不寫：一樣時已出場，不同時待確認並寫出兩邊。已經算出事件、這次卻等股價或待確認時，原本的事件先保留。核對條件後來不是「完成」的，狀態改待確認、事件不動。
 - 完成訊息列出比到哪一天、各狀態的檔數；結果表列出這次有變的存續事件與還沒完成（等股價、待確認）的商品，未鎖住的標「未鎖住」。比價失敗時匯入照樣保留，完成訊息寫原因。
 
@@ -369,7 +369,7 @@ After an operator code update, rerun `setup_panel.cmd` to apply pending versions
 - KO: close ≥ KO price. Non-memory needs every underlying on the same observation day; memory remembers each underlying that reached it on any observation day and knocks out once all have. Daily KO types observe every day from the first autocall date to the final valuation date on which all underlying markets are open; period-end types look only at the stored autocall dates; products whose Non-Call equals the tenor are not observed for KO.
 - KI: at-maturity (EKI) looks only at the final valuation date, close < KI price; daily (AKI) looks at every trading day of the underlying's market after the Strike date; periodic (MKI) is not observed, the status is 待確認 "每期觀察 KI 需人工追蹤", and KO is still observed.
 - Maturity (final valuation date without KO): with no KI, or with KI touched, when the worst performer (lowest final close ÷ initial price) closes below its strike → 接股 (recording that underlying); otherwise 到期還本. The event date is the observation day of the trigger or decision.
-- When a price needed on a trading day of an underlying's market is missing from the close table, the product stops on the day before with status 等股價 naming the underlying and date; once the price arrives the next run carries on. An exchange not in the holiday calendar, a date outside its coverage, a code absent from the close table, an autocall date on a closed day, or missing prices or autocall dates in the terms → 待確認 with the reason.
+- When a price needed on a trading day of an underlying's market is missing from the close table, the product stops on that day (observed through the day before) with status 等股價 naming the underlying and date; once the price arrives the next run carries on. An exchange not in the holiday calendar, a date outside its coverage, a code with no closes at all once it is needed, an autocall date on a closed day, or missing prices or autocall dates in the terms → 待確認 with the reason.
 - Products with a recorded 顧客贖回 are not observed (已出場). Products with 舊清單 events are compared but nothing is written: 已出場 when they agree, 待確認 with both sides when they differ. When events were already found and this run ends 等股價 or 待確認, the existing events are kept. Products whose check terms are no longer 完成 become 待確認 with their events untouched.
 - The completion message gives the observed-through day and the count per status; the result table lists the lifecycle events that changed and the products not done (等股價, 待確認), marking unlocked ones 未鎖住. When observation fails the import is kept and the message gives the reason.
 

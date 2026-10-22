@@ -1,7 +1,8 @@
-"""比價（#155、ADR 0020）：每檔還在庫的商品逐日比到收盤價表最新的一天，判定 KO、KI 觸及、到期接股或到期還本。
+"""比價（#155、ADR 0020）：每檔商品逐日比到收盤價表最新的一天，判定 KO、KI 觸及、到期接股或到期還本。
 
 - 範圍：核對條件「完成」的商品（各標的進場價、執行價、下限價、KO 價已算出或由 TS 回填），已鎖住與未鎖住都比，
-  未鎖住的比價狀態記「未鎖住」。已登記顧客贖回的不比。
+  比價狀態記下比價時是否鎖住（畫面標「未鎖住」）。已登記顧客贖回的不比。已算出自動事件的每次照樣重算，
+  收盤價更正後事件跟著整組取代。
 - KO：收盤價 ≥ KO 價。非記憶式要同一個觀察日所有標的都達標；記憶式每檔標的在任一觀察日達標就記住，全部記過即 KO。
   D 型的觀察日是第一個比價日（比價日_{Non-Call}）起到最終比價日止、所有標的市場都開市的日子；P 型只看各期比價日。
   Non-Call 等於天期的商品不會提前出場，不觀察 KO。
@@ -9,8 +10,9 @@
   MKI（每期觀察）不比，比價狀態待確認「每期觀察 KI 需人工追蹤」，KO 照比。
 - 到期（最終比價日，沒有 KO）：沒有 KI，或 KI 曾觸及，且最差表現的標的（最終收盤價 ÷ 進場價最低）收盤價 < 執行價
   → 接股（記最差標的）；否則到期還本。事件日一律是觸價或判定的那個觀察日。
-- 缺價格就停住：某標的在它市場的交易日要用到價格、收盤價表沒有，這檔停在前一天，比價狀態「等股價」寫出標的與日期。
-  交易所不在假日表、日期超出假日表涵蓋範圍、收盤價表沒有這個代碼 → 待確認並寫原因。
+- 缺價格就停住：某標的在它市場的交易日要用到價格、收盤價表沒有，這檔停在那一天（已比到的日期是前一天），
+  比價狀態「等股價」寫出標的與日期。交易所不在假日表、日期超出假日表涵蓋範圍、要比價了收盤價表卻完全沒有這個代碼
+  → 待確認並寫原因。
 - 寫入：自動事件經 `lifecycle.replace_auto_events`（整組取代、有變才寫、差異留紀錄）；每檔一筆
   `workflow.pricing_status`，和上一次不同才寫。有舊清單事件的商品只比較、不寫自動事件：結果不同時待確認、寫出兩邊。
 
@@ -26,18 +28,21 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sp_workflow.check_terms import DONE as TERMS_DONE
+from sp_workflow.check_terms import NO_BARRIER as NO_KI
 from sp_workflow.lifecycle import (
     DELIVERY,
     KO,
+    LEGACY,
     MANUAL,
     MATURITY,
     OBSERVATION,
     AutoEvent,
     LifecycleError,
     StoredEvent,
-    current_events,
+    current_events_of,
     replace_auto_events,
 )
+from sp_workflow.product_record import KO_TYPES
 
 if TYPE_CHECKING:
     import psycopg
@@ -53,10 +58,8 @@ UNLOCKED = "未鎖住"
 
 MEMORY_TYPES = frozenset(("Daily Memory", "Period End Memory"))
 DAILY_TYPES = frozenset(("Daily", "Daily Memory"))
-KO_TYPES = DAILY_TYPES | MEMORY_TYPES | {"Period End"}
-NO_KI, EKI, AKI, MKI = "NONE", "EKI", "AKI", "MKI"
+EKI, AKI, MKI = "EKI", "AKI", "MKI"
 MKI_REASON = "每期觀察 KI 需人工追蹤"
-LEGACY = "舊清單"  # 資料表版本 0016 轉換的事件來源
 
 
 @dataclass(frozen=True)
@@ -106,7 +109,7 @@ def observe(
     through: dt.date | None,
 ) -> Outcome:
     """把一檔商品逐日比到 `through`（收盤價表最新的一天）。`closes` 是代碼 → {收盤日: 收盤價}。"""
-    problem = _terms_problem(terms, closes, calendar)
+    problem = _terms_problem(terms, calendar)
     if problem:
         return Outcome(TO_CONFIRM, problem)
     markets = {u.code: calendar.market_of(u.code) for u in terms.underlyings}
@@ -131,6 +134,9 @@ def observe(
         if terms.barrier_type == MKI:
             return Outcome(TO_CONFIRM, MKI_REASON)
         return Outcome(ON_BOOK, "還沒到第一個觀察日" if through is not None else "收盤價表還沒有資料")
+    unknown = [u.name for u in terms.underlyings if u.code not in closes]
+    if unknown:
+        return Outcome(TO_CONFIRM, "；".join(f"{name}：收盤價表沒有這個代碼" for name in unknown))
     last = min(final, through)
     for code, market in markets.items():
         assert market is not None
@@ -196,7 +202,7 @@ def _maturity(terms: Terms, prices: Mapping[str, Decimal], touched: bool, day: d
     return Outcome(EXITED, f"到期還本 {day}", day, (AutoEvent(MATURITY, day),))
 
 
-def _terms_problem(terms: Terms, closes: Mapping[str, Mapping[dt.date, Decimal]], calendar: TradingCalendar) -> str:
+def _terms_problem(terms: Terms, calendar: TradingCalendar) -> str:
     """比價前先確認條件齊全；有問題時回傳待確認的原因。"""
     if not terms.underlyings:
         return "核對條件沒有標的價格"
@@ -224,8 +230,6 @@ def _terms_problem(terms: Terms, closes: Mapping[str, Mapping[dt.date, Decimal]]
             problems.append(f"{u.name} 缺{'、'.join(missing)}")
         elif calendar.market_of(u.code) is None:
             problems.append(f"{u.name}：交易所不在假日表")
-        elif u.code not in closes:
-            problems.append(f"{u.name}：收盤價表沒有這個代碼")
     return "；".join(problems)
 
 
@@ -292,20 +296,21 @@ def observe_all(conn: psycopg.Connection, calendar: TradingCalendar, *, user: st
         terms, locked, not_done = _load_terms(conn)
         closes = _load_closes(conn, terms)
         stored = _stored_status(conn)
+        existing = current_events_of(conn, [t.tdcc for t in terms])
         results: list[Observed] = []
         changes: list[EventChange] = []
         errors: list[tuple[str, str]] = []
         for t in terms:
-            events = current_events(conn, t.tdcc)
+            events = existing.get(t.tdcc, [])
             outcome, write_events = _decide(t, events, observe(t, closes, calendar, through))
-            if write_events is not None:
-                previous = tuple(AutoEvent(e.event, e.event_date, e.underlying).key() for e in _auto(events))
+            previous = tuple(sorted(AutoEvent(e.event, e.event_date, e.underlying).key() for e in _auto(events)))
+            if write_events is not None and previous != tuple(sorted(e.key() for e in write_events)):
                 try:
                     if replace_auto_events(conn, t.tdcc, write_events, user=user):
                         changes.append(EventChange(t.tdcc, previous, tuple(e.key() for e in _sorted(write_events))))
-                except LifecycleError as exc:
+                except LifecycleError as exc:  # 例如比價中有人登記了顧客贖回
                     errors.append((t.tdcc, str(exc)))
-                    continue
+                    outcome = Outcome(TO_CONFIRM, f"自動事件寫不進去：{exc}", outcome.observed_through)
             results.append(Observed(t.tdcc, outcome.status, outcome.reason, outcome.observed_through, locked[t.tdcc]))
         for tdcc, (status, reason) in not_done.items():
             if tdcc in stored:
