@@ -2,18 +2,42 @@
 
 - `pg`：測試用 PostgreSQL（設定 SPW_TEST_DSN 才執行，CI 由 PostgreSQL 服務提供）。
 - `pg_settings`：同一個測試資料庫的連線設定（自己開連線的視窗動作用）。
+- `tk_root`、`master`：開視窗的測試用的 Tk（整個測試程序一個）與每個測試自己的 Toplevel；沒有顯示器（CI）時略過（#138）。
 - `--shard=i/n`：只跑第 i 份（依測試檔分組，見 shard.py；CI 用來把核對測試分給幾台機器同時跑，#69）。
 """
 
 from __future__ import annotations
 
 import os
+import tkinter as tk
 
 import pytest
 
 from shard import assign_shards, parse_shard
 
 TEST_DSN_ENV = "SPW_TEST_DSN"
+
+
+@pytest.fixture(scope="session")
+def tk_root():
+    """整個測試程序共用一個 Tk：在 Windows 上一再重建 Tk 偶爾會找不到 tk.tcl（拆成多個測試檔後一個 module 一個也會，#138）。"""
+    try:
+        root = tk.Tk()
+    except tk.TclError as error:
+        pytest.skip(f"沒有顯示器：{error}")
+    root.withdraw()
+    yield root
+    root.destroy()
+
+
+@pytest.fixture
+def master(tk_root):
+    """每個測試一個新的視窗；共用同一個 Tk，因為在 Windows 上一再重建 Tk 偶爾會找不到 tk.tcl。"""
+    window = tk.Toplevel(tk_root)
+    window.withdraw()
+    yield window
+    if window.winfo_exists():  # 關閉的測試已經關掉視窗
+        window.destroy()
 
 
 @pytest.fixture
