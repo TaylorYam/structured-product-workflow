@@ -282,11 +282,10 @@ class ReleasePlan(NamedTuple):
 
 
 class DatabaseSource(Protocol):
-    """核對的資料庫來源（#68）；實作在 sp_workflow（核對程式不直接連資料庫）。"""
+    """核對的資料庫來源（#68）；實作在 sp_workflow（核對程式不直接連資料庫）。
 
-    def ready(self) -> bool:
-        """在主執行緒呼叫：需要時詢問資料庫密碼；取消或沒有連線設定時 False。"""
-        ...
+    登入（需要時問密碼）是外殼的事：外殼取得連線設定後才建來源，兩個方法都可以在背景執行緒呼叫（#129）。
+    """
 
     def export(self, term_sheets: Sequence[Path], fmt: ReferenceFormat) -> tuple[Path, Mapping[str, str]]:
         """依 PDF 檔名的 TDCC 從資料庫產生參考條件表，回傳 (檔案, {沒有列的 TDCC: 原因})。"""

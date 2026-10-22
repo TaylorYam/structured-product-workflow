@@ -1,430 +1,24 @@
 """Tkinter 核對分頁：參考條件表＋多份說明書的預覽、核對、逐份結果與手動儲存。
 
-#74 起核對是 FCN Workflow 視窗（`sp_workflow.app`）的一個分頁；這裡提供分頁、對話框與整個視窗共用的樣式、圖示。
+#74 起核對是 FCN Workflow 視窗（`sp_workflow.app`）的一個分頁；這裡只有分頁、它的對話框與 `fcn-panel` 入口。
+整個視窗共用的樣式、圖示、widgets 與背景作業在 `fcn_checker.ui`，啟動參數由視窗外殼擁有（#129）。
 """
 
 from __future__ import annotations
 
-import argparse
-import ctypes
 import json
-import re
-import sys
 import tkinter as tk
-from collections.abc import Callable, Iterable, Sequence
-from concurrent.futures import Future, ThreadPoolExecutor
+from collections.abc import Callable, Iterable
+from concurrent.futures import Future
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
 from .approval_dates import parse_input_date
-from .check_config import CONFIG_DIR, DEFAULTS
 from .ingestion import IngestionError, SourceSnapshot
 from .panel_workflow import PanelOutcome, PanelSession, ReleasePlan, ReleaseState
 from .saving import SaveReceipt
-
-
-def enable_windows_dpi_awareness() -> None:
-    """在建立 Tk 視窗前啟用 system DPI awareness，避免 Windows 點陣放大。
-
-    Tk 8.6 不在此處承諾跨螢幕動態 DPI 排版；已由宿主設定 awareness 時維持其設定。
-    """
-    if sys.platform != "win32":
-        return
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
-    try:
-        set_awareness = user32.SetProcessDpiAwarenessContext
-    except AttributeError:
-        user32.SetProcessDPIAware()
-        return
-    set_awareness.argtypes = [ctypes.c_void_p]
-    set_awareness.restype = ctypes.c_bool
-    set_awareness(ctypes.c_void_p(-2))  # DPI_AWARENESS_CONTEXT_SYSTEM_AWARE
-
-
-PANEL_ICON = Path(__file__).parent / "assets" / "panel.ico"
-APP_USER_MODEL_ID = "TaylorYam.FcnTermSheetChecker.Panel"
-
-
-def set_windows_app_id() -> None:
-    """在建立 Tk 視窗前設定專屬 AppUserModelID，工作列才顯示 PANEL 圖示，不與其他 Python 程式合併成一組。"""
-    if sys.platform != "win32":
-        return
-    try:
-        ctypes.WinDLL("shell32").SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
-    except (AttributeError, OSError):
-        pass
-
-
-def apply_window_icon(root: tk.Misc) -> None:
-    """標題列、Alt-Tab、工作列與之後開啟的對話框都使用 PANEL 圖示；找不到或無法載入時沿用 Tk 預設圖示。"""
-    try:
-        root.iconbitmap(default=str(PANEL_ICON))
-    except tk.TclError:
-        return
-    if sys.platform == "win32":
-        root.update_idletasks()  # 建立外框視窗後 wm_frame 才是實際的視窗代碼
-        _set_window_icons(int(root.wm_frame(), 16))
-
-
-def _set_window_icons(hwnd: int) -> None:
-    """Tk 只把圖示設在視窗類別上，Windows 11 工作列會改拿小圖示放大而變糊（#111）。
-
-    依目前縮放從 .ico 載入剛好的大、小圖示尺寸，直接設給視窗。
-    """
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
-    user32.LoadImageW.restype = ctypes.c_void_p
-    user32.LoadImageW.argtypes = [
-        ctypes.c_void_p,
-        ctypes.c_wchar_p,
-        ctypes.c_uint,
-        ctypes.c_int,
-        ctypes.c_int,
-        ctypes.c_uint,
-    ]
-    user32.SendMessageW.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p]
-    for kind, metric in ((1, 11), (0, 49)):  # (ICON_BIG, SM_CXICON)、(ICON_SMALL, SM_CXSMICON)
-        size = user32.GetSystemMetrics(metric)
-        icon = user32.LoadImageW(None, str(PANEL_ICON), 1, size, size, 0x10)  # IMAGE_ICON、LR_LOADFROMFILE
-        if icon:
-            user32.SendMessageW(hwnd, 0x80, kind, icon)  # WM_SETICON
-
-
-# 整個視窗的配色（#83）：淺灰底、白色卡片、深藍字；只用一個亮藍當強調色，紅色只給有問題的、綠色只給完成
-BACKGROUND = "#F5F5F7"
-SURFACE = "#FFFFFF"
-FIELD_READONLY = "#FAFAFC"
-HOVER = "#F2F2F7"
-PRESSED = "#E8E8ED"
-BORDER = "#E3E3E8"
-CONTROL_BORDER = "#D2D2D7"
-TEXT = "#1D1D1F"
-TEXT_SECONDARY = "#6E6E73"
-TEXT_DISABLED = "#A1A1A6"
-NAVY = "#0B1F3A"
-ACCENT = "#2251FF"
-ACCENT_ACTIVE = "#1A3FCC"
-ACCENT_DISABLED = "#B9C7F5"
-ACCENT_SOFT = "#EAF0FF"
-DANGER = "#C4262E"
-SUCCESS = "#1E7A4C"
-SUCCESS_SOFT = "#E8F5EE"
-FONT = "Microsoft JhengHei UI"  # 公司 Windows 都有；數字另用 Segoe UI
-NUMBER_FONT = "Segoe UI"
-
-
-def flat(color: str) -> dict[str, str]:
-    """clam 主題的元件有立體邊（lightcolor／darkcolor）；三個設成同一色就是平的。"""
-    return {"background": color, "lightcolor": color, "darkcolor": color}
-
-
-def flat_states(states: list[tuple[str, str]]) -> dict[str, list[tuple[str, str]]]:
-    """style.map 用：各狀態的底色與立體邊一起換，維持平的。"""
-    return {"background": states, "lightcolor": states, "darkcolor": states}
-
-
-def apply_style(root: tk.Tk) -> Callable[[float], int]:
-    """整個視窗共用的配色、字型、按鈕與表格樣式（#74 起每個分頁都用這一套，#83 改成蘋果 × 麥肯錫風格）。
-
-    回傳 pixels：把 96 DPI 下的像素依目前螢幕縮放換算成實際像素。視窗外殼（頂端列、步驟欄）的樣式在 sp_workflow.app。
-    """
-    scale = root.winfo_fpixels("1i") / 96
-
-    def pixels(value):
-        return round(value * scale)
-
-    root.configure(background=BACKGROUND)
-    style = ttk.Style(root)
-    style.theme_use("clam")
-    style.configure(
-        ".", background=BACKGROUND, foreground=TEXT, font=(FONT, 11), focuscolor=ACCENT_SOFT, bordercolor=BORDER
-    )
-    style.configure(".", lightcolor=BORDER, darkcolor=BORDER)
-    style.configure("Card.TFrame", background=SURFACE, relief="solid", borderwidth=1)
-    style.configure("CardBody.TFrame", background=SURFACE)
-    style.configure("Muted.TLabel", foreground=TEXT_SECONDARY)
-    style.configure("Step.TLabel", foreground=TEXT_SECONDARY, font=(FONT, 10))
-    style.configure("Title.TLabel", foreground=NAVY, font=(FONT, 18, "bold"))
-    style.configure("Card.TLabel", background=SURFACE)
-    style.configure("Card.TRadiobutton", background=SURFACE)
-    style.configure("Card.TCheckbutton", background=SURFACE)
-    style.configure("CardMuted.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=(FONT, 10))
-    style.configure("KpiCaption.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=(FONT, 10))
-    style.configure("KpiValue.TLabel", background=SURFACE, foreground=NAVY, font=(NUMBER_FONT, 18, "bold"))
-    style.configure("KpiBad.TLabel", background=SURFACE, foreground=DANGER, font=(NUMBER_FONT, 18, "bold"))
-    style.configure("TButton", padding=(14, 7), bordercolor=CONTROL_BORDER, **flat(SURFACE))
-    style.map(
-        "TButton",
-        foreground=[("disabled", TEXT_DISABLED)],
-        **flat_states([("disabled", BACKGROUND), ("pressed", PRESSED), ("active", HOVER)]),
-    )
-    style.configure("Primary.TButton", foreground=SURFACE, font=(FONT, 11, "bold"), bordercolor=ACCENT, **flat(ACCENT))
-    accent_states = [("disabled", ACCENT_DISABLED), ("pressed", ACCENT_ACTIVE), ("active", ACCENT_ACTIVE)]
-    style.map(
-        "Primary.TButton", foreground=[("disabled", SURFACE)], bordercolor=accent_states, **flat_states(accent_states)
-    )
-    style.configure("Next.TButton", foreground=ACCENT, font=(FONT, 11, "bold"))
-    style.configure("TEntry", padding=6, fieldbackground=SURFACE, bordercolor=CONTROL_BORDER, **flat(SURFACE))
-    style.map("TEntry", fieldbackground=[("readonly", FIELD_READONLY)], bordercolor=[("focus", ACCENT)])
-    style.configure("Treeview", background=SURFACE, fieldbackground=SURFACE, rowheight=pixels(32))
-    style.configure(
-        "Treeview.Heading", background=BACKGROUND, foreground=TEXT_SECONDARY, font=(FONT, 10, "bold"), relief="flat"
-    )
-    style.map("Treeview.Heading", background=[("active", PRESSED)])
-    style.map("Treeview", background=[("selected", ACCENT_SOFT)], foreground=[("selected", TEXT)])
-    style.configure("TNotebook", borderwidth=0)
-    style.configure("TNotebook.Tab", foreground=TEXT_SECONDARY, padding=(14, 6))
-    style.map("TNotebook.Tab", background=[("selected", SURFACE)], foreground=[("selected", TEXT)])
-    style.configure("TScrollbar", troughcolor=SURFACE, arrowcolor=TEXT_SECONDARY)
-    style.configure("Hint.TFrame", background=ACCENT_SOFT)
-    style.configure("Hint.TLabel", background=ACCENT_SOFT, foreground=NAVY)
-    # 這一步做完時，狀態列變成綠色結果條（#83）
-    style.configure(
-        "Done.TLabel", background=SUCCESS_SOFT, foreground=SUCCESS, font=(FONT, 11, "bold"), padding=(12, 7)
-    )
-    return pixels
-
-
-class PageHeader(ttk.Frame):
-    """分頁最上方：「步驟 N／總數」、標題（只寫功能，#85）與一行說明（#83）。
-
-    步驟編號由視窗依分頁順序填入 step；畫面需要騰出高度時可用 show_description 收起說明（#108）。
-    """
-
-    def __init__(self, parent: tk.Misc, title: str, description: str):
-        super().__init__(parent)
-        self.step = tk.StringVar()
-        ttk.Label(self, textvariable=self.step, style="Step.TLabel").pack(anchor="w")
-        ttk.Label(self, text=title, style="Title.TLabel").pack(anchor="w", pady=(2, 4))
-        self.description = text = ttk.Label(self, text=description, style="Muted.TLabel", wraplength=900)
-        text.pack(anchor="w", fill="x")
-        self.bind("<Configure>", lambda event: text.configure(wraplength=max(300, event.width - 20)))
-
-    def show_description(self, shown: bool) -> None:
-        if shown:
-            self.description.pack(anchor="w", fill="x")
-        else:
-            self.description.pack_forget()
-
-
-class KpiRow(ttk.Frame):
-    """完成後的重點數字（#83）：一格一個數字，有問題的用紅色；沒有結果時不顯示。
-
-    放在白色卡片裡；建立後由呼叫端 grid，再呼叫 hide()。values 是目前顯示的（標題, 數字, 是否有問題）。
-    """
-
-    def __init__(self, parent: tk.Misc):
-        super().__init__(parent, style="CardBody.TFrame")
-        self.values: tuple[tuple[str, int, bool], ...] = ()
-
-    def show(self, values: Iterable[tuple[str, int, bool]]) -> None:
-        for tile in self.winfo_children():
-            tile.destroy()
-        self.values = tuple(values)
-        for column, (caption, value, bad) in enumerate(self.values):
-            tile = ttk.Frame(self, style="Card.TFrame", padding=(14, 6, 26, 6))
-            tile.grid(row=0, column=column, sticky="w", padx=(0, 10))
-            ttk.Label(tile, text=caption, style="KpiCaption.TLabel").pack(anchor="w")
-            ttk.Label(tile, text=str(value), style="KpiBad.TLabel" if bad else "KpiValue.TLabel").pack(anchor="w")
-        self.grid()
-
-    def hide(self) -> None:
-        self.values = ()
-        self.grid_remove()
-
-
-class HintBar(ttk.Frame):
-    """分頁上方的藍色提示條：寫出從上一步帶入了什麼，旁邊「改選…」可以換掉（#76）；沒有帶入時不顯示。
-
-    建立後由呼叫端 grid 到分頁最上方，再呼叫 hide()。
-    """
-
-    def __init__(self, parent: tk.Misc, change: Callable[[], None]):
-        super().__init__(parent, style="Hint.TFrame", padding=(10, 6))
-        self.text = tk.StringVar()
-        label = ttk.Label(self, textvariable=self.text, style="Hint.TLabel", wraplength=900)
-        label.pack(side="left", fill="x", expand=True)
-        ttk.Button(self, text="改選…", command=change).pack(side="left", padx=(10, 0))
-        self.bind("<Configure>", lambda event: label.configure(wraplength=max(300, event.width - 180)))
-
-    @property
-    def shown(self) -> bool:
-        return bool(self.text.get())
-
-    def show(self, text: str) -> None:
-        self.text.set(text)
-        self.grid()
-
-    def hide(self) -> None:
-        self.text.set("")
-        self.grid_remove()
-
-
-class NextButton(ttk.Button):
-    """完成訊息旁的「下一步：… →」：做完這一步才出現，按了才切到下一頁，不會自動執行（#76）。
-
-    放在用 pack 排列的按鈕列最後面。
-    """
-
-    def __init__(self, parent: tk.Misc, text: str, command: Callable[[], None]):
-        super().__init__(parent, text=text, command=command, style="Next.TButton")
-
-    def offer(self) -> None:
-        self.pack(side="left", padx=(12, 0))
-
-    def withdraw(self) -> None:
-        self.pack_forget()
-
-
-def tab_separated(rows: Iterable[Iterable[object]]) -> str:
-    """表格 → 放進剪貼簿的文字（#121）：Tab 分欄、換行分列，貼到 Excel 會照格子分開；格子裡的 Tab、換行換成空白。"""
-    return "\n".join("\t".join(re.sub(r"\s*[\t\r\n]+\s*", " ", str(cell)) for cell in row) for row in rows)
-
-
-def to_clipboard(widget: tk.Misc, text: str) -> None:
-    widget.clipboard_clear()
-    widget.clipboard_append(text)
-
-
-def _shorten(text: str, limit: int = 30) -> str:
-    """右鍵選單上顯示的格子內容：太長的截掉。"""
-    return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
-class CopyMenu(tk.Menu):
-    """結果表的右鍵選單（#121）：複製那一格、那一列、選取的列（可以多選的表）或整張表（含表頭）。
-
-    一格、一列和整張表一樣用 `tab_separated`：格子裡的換行、Tab 換成空白，貼到 Excel 不會錯位。
-    """
-
-    COPY_ALL = "全部複製（含表頭）"
-
-    def __init__(self, widget: tk.Misc, copy_all: Callable[[], int]):
-        super().__init__(widget, tearoff=False)
-        self.widget = widget
-        self.copy_all = copy_all
-
-    def fill(self, row: Sequence[str] | None, cell: str = "", selected: tuple[int, Callable[[], object]] | None = None):
-        """右鍵點到的那一列（點到表外是 None）與那一格的字；`selected` 是（選取了幾列, 複製選取的列）。"""
-        self.delete(0, tk.END)
-        if cell:
-            text = tab_separated([[cell]])
-            self.add_command(label=f"複製「{_shorten(text)}」", command=lambda: to_clipboard(self.widget, text))
-        if row is not None:
-            self.add_command(label="複製這一列", command=lambda: self._copy([row]))
-        if selected is not None:
-            count, copy_selected = selected
-            self.add_command(
-                label=f"複製選取的列（{count} 列）", command=copy_selected, state="normal" if count else "disabled"
-            )
-        self.add_command(label=self.COPY_ALL, command=self.copy_all)
-
-    def labels(self) -> list[str]:
-        return [str(self.entrycget(i, "label")) for i in range(self.index(tk.END) + 1)]
-
-    def _copy(self, rows: Sequence[Sequence[str]]) -> None:
-        to_clipboard(self.widget, tab_separated(rows))
-
-
-class TableCopy:
-    """結果表可以複製（#121）：右鍵選單（`CopyMenu`）；Ctrl+A 全選、Ctrl+C 複製選取的列。
-
-    值直接讀 Tk 裡的字串：`item(..., "values")` 在部分 Python 版本會把 0 開頭的 TDCC 轉成整數、掉了前導零。
-    一次只能選一列（`browse`）的表不全選。
-    """
-
-    def __init__(self, table: ttk.Treeview):
-        self.table = table
-        self.menu = CopyMenu(table, self.copy_all)
-        table.bind("<Button-3>", self._popup, add="+")
-        for key in ("<Control-a>", "<Control-A>"):
-            table.bind(key, lambda _event: self._break(self.select_all))
-        for key in ("<Control-c>", "<Control-C>"):
-            table.bind(key, lambda _event: self._break(self.copy_selected))
-
-    def rows(self, items: Iterable[str] | None = None, *, header: bool = False) -> list[list[str]]:
-        """表上的列（照畫面的順序）；`header` 時第一列是表頭。"""
-        columns = [str(column) for column in self.table["columns"]]
-        rows = [[self._tcl_text("heading", column, "-text") for column in columns]] if header else []
-        for item in self.table.get_children() if items is None else items:
-            rows.append([self._tcl_text("set", item, column) for column in columns])
-        return rows
-
-    def copy_all(self) -> int:
-        """整張表（含表頭）放進剪貼簿；回傳幾列（不算表頭），表上沒有列時不動剪貼簿。"""
-        rows = self.rows(header=True)
-        if len(rows) > 1:
-            to_clipboard(self.table, tab_separated(rows))
-        return len(rows) - 1
-
-    def copy_selected(self) -> int:
-        """選取的列（照畫面的順序，不含表頭）放進剪貼簿；回傳幾列。"""
-        selected = set(self.table.selection())
-        items = [item for item in self.table.get_children() if item in selected]
-        if items:
-            to_clipboard(self.table, tab_separated(self.rows(items)))
-        return len(items)
-
-    def select_all(self) -> None:
-        if str(self.table.cget("selectmode")) == "extended":
-            self.table.selection_set(self.table.get_children())
-
-    def fill_menu(self, item: str, column: str) -> None:
-        """右鍵點到的格子（`item` 是列、`column` 是 `#N`；點到空白處是空字串）→ 選單的項目。"""
-        row = self.rows([item])[0] if item else None
-        cell = self._tcl_text("set", item, self._tcl_text("column", column, "-id")) if item and column else ""
-        selected = (len(self.table.selection()), self.copy_selected)
-        self.menu.fill(row, cell, selected if str(self.table.cget("selectmode")) == "extended" else None)
-
-    def _popup(self, event: tk.Event) -> None:
-        self.fill_menu(self.table.identify_row(event.y), self.table.identify_column(event.x))
-        self.menu.tk_popup(event.x_root, event.y_root)
-
-    def _tcl_text(self, *args: str) -> str:
-        """Treeview 的 Tcl 指令（`set`、`heading`…）回傳的原始字串。"""
-        return str(self.table.tk.call(str(self.table), *args))
-
-    @staticmethod
-    def _break(action: Callable[[], object]) -> str:
-        action()
-        return "break"
-
-
-class CopyButton(ttk.Button):
-    """結果表右上方的「全部複製」（#121）：一鍵把整張表（含表頭）放進剪貼簿，按完短暫顯示複製了幾列。"""
-
-    TEXT = "全部複製"
-
-    def __init__(self, parent: tk.Misc, copy_all: Callable[[], int]):
-        super().__init__(parent, text=self.TEXT, command=self.copy, width=12)
-        self.copy_all = copy_all
-        self._reset_job: str | None = None  # 換回「全部複製」的 after 排程
-
-    def copy(self) -> None:
-        count = self.copy_all()
-        self.configure(text=f"已複製 {count} 列" if count else "表上沒有資料")
-        if self._reset_job is not None:
-            self.after_cancel(self._reset_job)
-        self._reset_job = self.after(1500, self._reset)
-
-    def _reset(self) -> None:
-        self._reset_job = None
-        self.configure(text=self.TEXT)
-
-
-class CopyArea(ttk.Frame):
-    """結果表那一塊（#121）：第 0 列左邊寫怎麼複製、右邊「全部複製」；表由呼叫端建在這裡面、放在第 1 列。"""
-
-    def __init__(self, parent: tk.Misc, hint: str, copy_all: Callable[[], int]):
-        super().__init__(parent)
-        self.columnconfigure(0, weight=1)
-        self.rowconfigure(1, weight=1)
-        bar = ttk.Frame(self)
-        bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
-        ttk.Label(bar, text=hint, style="Muted.TLabel").pack(side="left")
-        self.button = CopyButton(bar, copy_all)
-        self.button.pack(side="right")
-
+from .ui import Background, HintBar, KpiRow, NextButton, PageHeader, TableCopy
 
 FOLDERS_RECORD = Path(".local") / "panel_folders.json"  # 兩個選檔按鈕各自記住的上次資料夾（根目錄下）
 
@@ -776,6 +370,7 @@ class CheckTab(ttk.Frame):
     視窗本身（標題、大小、關閉）由 `sp_workflow.app` 建立；審查通過日期、匯出回報包與使用的設定檔
     在視窗的「維護」選單，選單呼叫 edit_approval_dates、export_bundle、show_config_paths。
     上一步帶入的 PDF 用 receive_pdfs；存檔成功時呼叫 on_saved(核對結果檔)，下一步按鈕由 add_next_step 加上（#76）。
+    資料庫來源要連線前，先在主執行緒呼叫外殼給的 login（需要時問密碼，取消時回傳 False，#129）。
     工作階段有資料庫來源時（#68），卡片最上面多一列「條件來源」：資料庫（預設，#108）或 Excel 參考條件表；
     選資料庫時「參考條件表」那一列收起來。資料庫來源存檔後寫回資料庫，寫回失敗時出現「重新寫回資料庫」。
     載入預覽後頁首說明與選檔的幾列收成一行摘要，讓預覽與結果有更多高度；按「變更…」或換來源、換 PDF 時展開（#108）。
@@ -788,12 +383,13 @@ class CheckTab(ttk.Frame):
         pixels: Callable[[float], int],
         *,
         on_saved: Callable[[Path], None] | None = None,
+        login: Callable[[], bool] = lambda: True,
     ):
         super().__init__(parent, padding=(pixels(28), pixels(22)))
         self.root, self.session, self.pixels = self.winfo_toplevel(), session, pixels
-        self.on_saved = on_saved
+        self.on_saved, self.login = on_saved, login
         self.next_button: NextButton | None = None
-        self.executor = ThreadPoolExecutor(max_workers=1)
+        self.background = Background(self.root)
         self.pending: Future | None = None
         self.check_pending: Future[PanelOutcome] | None = None
         self.save_pending: Future[SaveReceipt] | None = None
@@ -930,6 +526,10 @@ class CheckTab(ttk.Frame):
             self._source_changed()
         else:
             self._expand()
+
+    def show_step(self, step: str) -> None:
+        """頁首的「步驟 N／總數」，由視窗依分頁順序填入。"""
+        self.header.step.set(step)
 
     def _resize(self, event):
         if event.widget is self:
@@ -1091,14 +691,15 @@ class CheckTab(ttk.Frame):
             self.write_back_button.pack_forget()
         self._refresh_next()
 
+    def _start(self, name: str, action: Callable[[], object], finish: Callable[[object], None], failure: str) -> None:
+        """在背景做 action，Future 記在欄位 name（_busy_any 看它）；做完由 _after 在主執行緒呼叫 finish。"""
+        setattr(self, name, self.background.run(action, lambda _: self._after(name, finish, failure)))
+
     def _after(self, name: str, finish: Callable[[object], None], failure: str) -> None:
         """背景工作完成後在主執行緒呼叫 finish；IngestionError 顯示原因並清除結果。"""
         if self.closed or getattr(self, name) is None:
             return
         future = getattr(self, name)
-        if not future.done():
-            self.root.after(80, lambda: self._after(name, finish, failure))
-            return
         setattr(self, name, None)
         try:
             finish(future.result())
@@ -1112,8 +713,8 @@ class CheckTab(ttk.Frame):
         self._busy(False)
 
     def _database_ready(self) -> bool:
-        """資料庫來源：在主執行緒先登入（需要時問密碼）；取消時不開始。"""
-        if not self.uses_database or self.session.database is None or self.session.database.ready():
+        """資料庫來源：在主執行緒先由外殼登入（需要時問密碼）；取消時不開始。"""
+        if not self.uses_database or self.login():
             return True
         self.status.set("沒有登入資料庫，沒有開始。")
         return False
@@ -1124,9 +725,8 @@ class CheckTab(ttk.Frame):
         self._clear()
         self._busy(True)
         self.status.set("正在讀取參考條件表與說明書，請稍候…")
-        self.pending = self.executor.submit(self.session.load_preview)
-        self.root.after(
-            80, lambda: self._after("pending", self._show_preview, "預覽讀取失敗，請確認檔案與設定後重新載入")
+        self._start(
+            "pending", self.session.load_preview, self._show_preview, "預覽讀取失敗，請確認檔案與設定後重新載入"
         )
 
     def _show_preview(self, preview):
@@ -1144,9 +744,8 @@ class CheckTab(ttk.Frame):
         self._busy(True)
         self.status.set("正在核對，請稍候…")
         self.tabs.select(self.results)
-        self.check_pending = self.executor.submit(self.session.start_check)
-        self.root.after(
-            80, lambda: self._after("check_pending", self._show_outcome, "核對失敗，請確認檔案與設定後重新載入預覽")
+        self._start(
+            "check_pending", self.session.start_check, self._show_outcome, "核對失敗，請確認檔案與設定後重新載入預覽"
         )
 
     def _show_outcome(self, outcome: PanelOutcome):
@@ -1192,10 +791,7 @@ class CheckTab(ttk.Frame):
 
         self._busy(True)
         self.status.set("確認來源中…")
-        self.release_pending = self.executor.submit(run)
-        self.root.after(
-            80, lambda: self._after("release_pending", lambda e: self._show_release(targets, focus, e), "人工放行失敗")
-        )
+        self._start("release_pending", run, lambda e: self._show_release(targets, focus, e), "人工放行失敗")
 
     def _show_release(self, items, focus, error: IngestionError | None):
         if error is not None:
@@ -1218,8 +814,9 @@ class CheckTab(ttk.Frame):
             self._busy(False)
             return
         self.status.set("儲存中…")
-        self.save_pending = self.executor.submit(self.session.save, Path(destination))
-        self.root.after(80, lambda: self._after("save_pending", self._show_receipt, "儲存失敗，核對結果仍保留"))
+        self._start(
+            "save_pending", lambda: self.session.save(Path(destination)), self._show_receipt, "儲存失敗，核對結果仍保留"
+        )
 
     def _show_receipt(self, receipt: SaveReceipt):
         if self.session.outcome is None:
@@ -1242,8 +839,7 @@ class CheckTab(ttk.Frame):
             except IngestionError as e:
                 return str(e)
 
-        self.write_back_pending = self.executor.submit(run)
-        self.root.after(80, lambda: self._after("write_back_pending", self.status.set, "寫回資料庫失敗"))
+        self._start("write_back_pending", run, self.status.set, "寫回資料庫失敗")
 
     @property
     def working(self) -> bool:
@@ -1282,8 +878,7 @@ class CheckTab(ttk.Frame):
             return self.session.message
 
         self.status.set("匯出回報包中…")
-        self.export_pending = self.executor.submit(run)
-        self.root.after(80, lambda: self._after("export_pending", self.status.set, "匯出回報包失敗，核對結果仍保留"))
+        self._start("export_pending", run, self.status.set, "匯出回報包失敗，核對結果仍保留")
 
     def edit_approval_dates(self):
         if not self.can_edit_approval_dates():
@@ -1324,48 +919,13 @@ class CheckTab(ttk.Frame):
         snapshot = self.session.snapshot
         if not self._busy_any() and snapshot is not None and self.validation is None:
             self.checking_for = snapshot
-            self.validation = self.executor.submit(snapshot.still_valid)
+            self.validation = self.background.run(snapshot.still_valid)
         self.root.after(100 if self.validation is not None else 1500, self._watch_sources)
 
     def close(self):
         """視窗關閉前：停止背景工作與來源檢查（視窗由外殼關閉）。"""
         self.closed = True
-        self.executor.shutdown(wait=False, cancel_futures=True)
-
-
-def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="FCN Workflow 視窗：每日匯入、起單資料、準備、核對、放回與寄信草稿；"
-        "核對時以參考條件表預覽並核對多份說明書 PDF，按儲存才寫出核對結果檔。"
-    )
-    parser.add_argument(
-        "--config-dir",
-        type=Path,
-        default=None,
-        help="設定檔資料夾（預設 config）；缺少參考條件表格式或上手編號對照時改用程式內建設定",
-    )
-    parser.add_argument(
-        "--builtin-config-dir", type=Path, default=None, help="程式內建設定資料夾（雙擊入口傳入專案的 config）"
-    )
-    parser.add_argument("--order-formats-dir", type=Path, help=argparse.SUPPRESS)  # 舊版啟動器仍會傳入
-    parser.add_argument("--review-standard", type=Path, default=DEFAULTS.review_standard, help="審查標準設定檔")
-    parser.add_argument(
-        "--install-root", type=Path, help="雙擊入口提供的安裝目錄；上次選的資料夾、.env 與核對紀錄都在它底下"
-    )
-    args = parser.parse_args(argv)
-    if args.config_dir is None:
-        args.config_dir = args.order_formats_dir.parent if args.order_formats_dir else CONFIG_DIR
-    return args
-
-
-def session_from_args(args: argparse.Namespace) -> PanelSession:
-    """根目錄與設定檔一致：雙擊入口給的專案根目錄，直接啟動時為執行目錄。"""
-    return PanelSession(
-        args.review_standard,
-        args.config_dir,
-        builtin_config_dir=args.builtin_config_dir,
-        install_root=args.install_root,
-    )
+        self.background.close()
 
 
 def main(argv: list[str] | None = None) -> int:
