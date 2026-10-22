@@ -24,6 +24,9 @@ try {
     if ($LASTEXITCODE -ne 0) { throw ('套件安裝失敗（Python ' + $pythonVersion + '）。請確認公司網路或套件來源；若訊息寫某個套件沒有適合這個環境的版本，請把整個畫面交給維護人員。') }
     & '.\.venv\Scripts\python.exe' -c "import tkinter, sp_workflow.app, sp_workflow.word_worker, win32com.client, psycopg, fcn_checker.panel"
     if ($LASTEXITCODE -ne 0) { throw '安裝驗證失敗。' }
+    # Match the app's install-local settings instead of the packaged CLI's home-directory default.
+    & '.\.venv\Scripts\spw-db-migrate.exe' --env-file (Join-Path $PSScriptRoot '.env') --admin-user postgres
+    if ($LASTEXITCODE -ne 0) { throw '資料庫遷移失敗；請確認安裝資料夾的 .env、PostgreSQL 連線及管理者權限後重試。' }
     # 核對紀錄記下程式版本用（.local\installed.json）
     & '.\.venv\Scripts\python.exe' -m fcn_checker.version --record-installation $PSScriptRoot
     if ($LASTEXITCODE -ne 0) { throw '安裝版本紀錄失敗。' }
