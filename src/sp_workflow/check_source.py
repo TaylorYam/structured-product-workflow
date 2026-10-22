@@ -31,7 +31,7 @@ from openpyxl.styles import Font
 
 from sp_workflow.check_terms import DONE
 from sp_workflow.database import ConnectionSettings, DatabaseError, connect, require_current_schema
-from sp_workflow.order_terms import missing_fields
+from sp_workflow.order_terms import missing_fields, with_required
 
 if TYPE_CHECKING:
     import psycopg
@@ -56,8 +56,8 @@ _PRODUCT_COLUMNS = (
     "maturity_date", "initial_pricing", "non_call_months", "underlying_1", "underlying_2", "underlying_3",
     "underlying_4", "underlying_5", "strike_pct", "ko_freq", "ko_memory", "ko_pct", "coupon_pct", "upfront_pct",
     "tenor_months", "ki_freq", "barrier_type", "ki_pct", "denomination", "locked_at",
-    "ko_type", "strike_date",  # 參考條件表沒有這兩欄，只用來看有沒有缺必填欄
 )  # fmt: skip
+_SELECTED_COLUMNS = with_required(_PRODUCT_COLUMNS)  # 參考條件表沒有的必填欄只用來看有沒有缺欄（#114）
 
 
 class CheckSourceError(Exception):
@@ -125,9 +125,9 @@ def _absent_reason(found: _Stored | None) -> str:
 
 def _load(conn: psycopg.Connection, tdccs: list[str]) -> dict[str, _Stored]:
     products = {
-        row[0]: dict(zip(_PRODUCT_COLUMNS, row, strict=True))
+        row[0]: dict(zip(_SELECTED_COLUMNS, row, strict=True))
         for row in conn.execute(
-            f"SELECT {', '.join(_PRODUCT_COLUMNS)} FROM workflow.product WHERE tdcc = ANY(%s)", (tdccs,)
+            f"SELECT {', '.join(_SELECTED_COLUMNS)} FROM workflow.product WHERE tdcc = ANY(%s)", (tdccs,)
         )
     }
     terms = {

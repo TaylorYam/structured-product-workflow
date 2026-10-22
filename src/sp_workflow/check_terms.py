@@ -33,7 +33,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
 
 from sp_workflow.database import DatabaseError, require_current_schema
-from sp_workflow.order_terms import REQUIRED_COLUMNS, missing_fields, plain
+from sp_workflow.order_terms import missing_fields, plain, with_required
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -79,19 +79,23 @@ def load_calendar(path: Path) -> TradingCalendar:
 
 @dataclass(frozen=True)
 class ProductTerms:
-    """`workflow.product` 裡計算要用的欄位。`missing` 有值時（缺必填欄，#114）缺的欄位是 None，不算價格。"""
+    """`workflow.product` 裡計算要用的欄位。
+
+    必填欄可以空白（#114）：`missing` 有值時 `calculate` 不算價格、不交叉比對，所以後面的計算只會拿到
+    `missing` 是空的商品，那時只有 `ki_pct` 與 UL_2～UL_5 可能是 None。
+    """
 
     tdcc: str
-    currency: str
-    trade_date: dt.date
+    currency: str | None
+    trade_date: dt.date | None
     strike_date: dt.date | None
     initial_pricing: str | None
     underlyings: tuple[str | None, ...]  # UL_1～UL_5
-    strike_pct: Decimal
-    ko_pct: Decimal
-    barrier_type: str
+    strike_pct: Decimal | None
+    ko_pct: Decimal | None
+    barrier_type: str | None
     ki_pct: Decimal | None
-    upfront_pct: Decimal  # 百分點（起單建檔的價格 98.01 → 1.99）
+    upfront_pct: Decimal | None  # 百分點（起單建檔的價格 98.01 → 1.99）
     missing: tuple[str, ...] = ()  # 空白的必填欄（畫面的欄名，依 `order_terms.REQUIRED` 的順序）
 
 
@@ -401,7 +405,7 @@ _PRODUCT_COLUMNS = (
     "underlying_3", "underlying_4", "underlying_5", "strike_pct", "ko_pct", "barrier_type", "ki_pct", "upfront_pct",
 )  # fmt: skip
 # 另外讀的必填欄只用來看缺哪幾欄（#114），值不放進 `ProductTerms`：更正只改 Coupon、到期日時照舊不重算
-_COLUMNS = (*_PRODUCT_COLUMNS, *(c for c in REQUIRED_COLUMNS if c not in _PRODUCT_COLUMNS))
+_SELECTED_COLUMNS = with_required(_PRODUCT_COLUMNS)
 
 
 def recalculate(
@@ -431,7 +435,7 @@ def recalculate_corrected(
     """
     if conn.execute("SELECT 1 FROM workflow.check_terms WHERE tdcc = %s", (tdcc,)).fetchone() is None:
         return None
-    before = _product(tuple({**previous, "tdcc": tdcc}[c] for c in _COLUMNS))
+    before = _product(tuple({**previous, "tdcc": tdcc}[c] for c in _SELECTED_COLUMNS))
     products = _products(conn, "tdcc = %s", (tdcc,))
     if products == [before]:
         return None
@@ -451,7 +455,7 @@ def _products(conn: psycopg.Connection, where: str, params: Sequence[Any]) -> li
     return [
         _product(row)
         for row in conn.execute(
-            f"SELECT {', '.join(_COLUMNS)} FROM workflow.product WHERE {where} ORDER BY tdcc FOR UPDATE",
+            f"SELECT {', '.join(_SELECTED_COLUMNS)} FROM workflow.product WHERE {where} ORDER BY tdcc FOR UPDATE",
             params,
         )
     ]
@@ -562,7 +566,7 @@ def release_differences(
 
 
 def _product(row: Sequence[Any]) -> ProductTerms:
-    values = dict(zip(_COLUMNS, row, strict=True))
+    values = dict(zip(_SELECTED_COLUMNS, row, strict=True))
     return ProductTerms(
         tdcc=values["tdcc"],
         currency=values["currency"],

@@ -142,13 +142,14 @@ def test_upgrading_to_0012_lets_required_terms_be_blank_and_keeps_existing_produ
     assert applied == ["0012_partial_product_terms.sql"]
     assert pg.execute("SELECT * FROM workflow.product").fetchall() == before
     nullable = _nullable(pg)
-    blank = [c for c in (*REQUIRED_COLUMNS, "ko_freq", "ko_memory", "ki_freq") if c not in IDENTITY_COLUMNS]
+    blank = [c for c in REQUIRED_COLUMNS if c not in IDENTITY_COLUMNS]  # 含 KO Type／Barrier Type 換算的代碼欄
     assert [c for c in blank if not nullable[c]] == []
     assert [c for c in IDENTITY_COLUMNS if nullable[c]] == []
 
 
 @pytest.mark.db
 def test_a_product_can_be_stored_with_only_some_required_terms(pg) -> None:
+    """#114：人工維護可以先存一部分商品條件；上手這類識別欄照舊不可空白。"""
     import psycopg
 
     (import_id,) = pg.execute(

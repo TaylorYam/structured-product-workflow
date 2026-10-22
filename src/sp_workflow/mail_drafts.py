@@ -31,7 +31,7 @@ from openpyxl.utils import get_column_letter
 
 from sp_workflow.daily_import import ImportInfo, Mailbox, is_pb, latest_import, load_mailbox
 from sp_workflow.database import DatabaseError, load_env_file, require_current_schema
-from sp_workflow.order_terms import PRICING_FIELD, REQUIRED, STRIKE_FIELD, missing_fields
+from sp_workflow.order_terms import PRICING_FIELD, REQUIRED, STRIKE_FIELD, missing_fields, with_required
 from sp_workflow.preparation import find_product_folders, is_tdcc, parse_tdccs
 
 if TYPE_CHECKING:
@@ -216,7 +216,7 @@ def _draft_one(
     if product is None:
         problems.append("資料庫沒有這檔的商品條件（還沒匯入起單資料）")
     else:
-        missing = missing_fields(product, _MAIL_FIELDS)
+        missing = missing_fields(product, _MAIL_REQUIRED)
         if missing:
             problems.append(f"商品條件缺 {'、'.join(missing)}")
         if product["issue_date"] is None:
@@ -277,12 +277,15 @@ _PRODUCT_FIELDS = (
     "ko_type", "ko_pct", "coupon_pct", "upfront_pct", "tenor_months", "barrier_type", "ki_pct",
 )  # fmt: skip
 # 信裡要用、空白就不寄的必填欄（#114）：信裡沒有 Strike date；期初價格空白時信裡空白（以前清單更新的商品可能沒有）
-_MAIL_FIELDS = tuple(name for name in REQUIRED if name not in (STRIKE_FIELD, PRICING_FIELD))
+_MAIL_REQUIRED = tuple(name for name in REQUIRED if name not in (STRIKE_FIELD, PRICING_FIELD))
+_SELECTED_FIELDS = with_required(_PRODUCT_FIELDS)  # 加上 `missing_fields` 要看的必填欄
 
 
 def _product(conn: psycopg.Connection, tdcc: str) -> dict[str, Any] | None:
-    row = conn.execute(f"SELECT {', '.join(_PRODUCT_FIELDS)} FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
-    return None if row is None else dict(zip(_PRODUCT_FIELDS, row, strict=True))
+    row = conn.execute(
+        f"SELECT {', '.join(_SELECTED_FIELDS)} FROM workflow.product WHERE tdcc = %s", (tdcc,)
+    ).fetchone()
+    return None if row is None else dict(zip(_SELECTED_FIELDS, row, strict=True))
 
 
 def _attachments(tdcc: str, folders: Sequence[Path], unreadable: Sequence[Path]) -> tuple[tuple[Path, ...], str]:
