@@ -661,7 +661,7 @@ class CheckTab(ttk.Frame):
             self,
             "核對說明書與投資人須知",
             "選條件來源與這批 PDF（同一檔商品的 _TS 與 _IIS 一起選），先載入預覽確認每份對到的條件，再開始核對。"
-            "上手由 PDF 檔名前三碼決定。按「儲存核對結果」才會寫出核對結果檔，原參考條件表不動；錯誤清單上的說明書請交由人工核對。",
+            "上手由 PDF 檔名前三碼決定。按「儲存核對結果」才會寫出核對結果檔（Excel 來源不改原參考條件表；資料庫來源存檔後寫回資料庫）；錯誤清單上的說明書請交由人工核對。",
         )
         self.header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
         self.hint = HintBar(self, lambda: self.choose_files("pdf"))
@@ -674,7 +674,7 @@ class CheckTab(ttk.Frame):
         self.pdf_text = tk.StringVar()
         self.controls: list[ttk.Widget] = []
         self.source = tk.StringVar(value=EXCEL_SOURCE)
-        self.compact = False  # 設定區收成一行摘要（#108）
+        self.folded = False  # 設定區收成一行摘要（#108）
         self.setup_rows: list[tuple[tk.Misc, ...]] = []  # 展開時才顯示的幾列；參考條件表那列另外看條件來源
         if session.database is not None:  # 條件來源（#68）：預設資料庫（#108），由 __init__ 最後套用
             label = ttk.Label(card, text="條件來源", style="Card.TLabel")
@@ -707,6 +707,7 @@ class CheckTab(ttk.Frame):
             if kind == "sheet":
                 self.sheet_button, self.sheet_row = button, (label, entry, button)
             else:
+                self.pdf_button = button
                 self.setup_rows.append((label, entry, button))
         self.summary = ttk.Frame(card, style="CardBody.TFrame")  # 收起時的一行摘要：來源＋已選的 PDF＋變更…
         self.summary.grid(row=3, column=0, columnspan=3, sticky="ew")
@@ -716,7 +717,7 @@ class CheckTab(ttk.Frame):
             row=0, column=0, sticky="w", padx=(0, 12)
         )
         ttk.Label(self.summary, textvariable=self.pdf_text, style="Card.TLabel").grid(row=0, column=1, sticky="w")
-        self.expand_button = ttk.Button(self.summary, text="變更…", command=lambda: self._layout(False))
+        self.expand_button = ttk.Button(self.summary, text="變更…", command=self._expand)
         self.expand_button.grid(row=0, column=2, sticky="e", padx=(12, 0))
         bottom = ttk.Frame(card, style="CardBody.TFrame")  # 左邊按鈕、右邊核對完的重點數字
         bottom.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(10, 0))
@@ -775,7 +776,7 @@ class CheckTab(ttk.Frame):
             self.source.set(DATABASE_SOURCE)
             self._source_changed()
         else:
-            self._layout(False)
+            self._expand()
 
     def _resize(self, event):
         if event.widget is self:
@@ -798,6 +799,11 @@ class CheckTab(ttk.Frame):
         self.check_button.configure(state="disabled")
         self._clear_results()
 
+    def _reset(self):
+        """清除預覽與結果並展開設定區（#108）：要重新載入時，作業人員看得到條件來源與選了哪些 PDF。"""
+        self._clear()
+        self._expand()
+
     def _clear_results(self):
         self.has_result = False
         self.save_button.configure(state="disabled")
@@ -809,22 +815,28 @@ class CheckTab(ttk.Frame):
 
     def _selection_changed(self):
         self.session.select(self.sheet_path, self.pdf_paths)
-        self._clear()
-        self._layout(False)
+        self._reset()
         self.status.set(self.session.message)
 
-    def _layout(self, compact: bool) -> None:
-        """compact 時頁首說明、提示條與選檔的幾列收成一行摘要，否則展開；參考條件表那列只在 Excel 來源時顯示（#108）。"""
-        self.compact = compact
-        self.header.show_description(not compact)
-        if self.hint.shown:  # 上一步帶入的提示條也一起收起，展開時再出現
-            _show_grid((self.hint,), not compact)
-        for row in self.setup_rows:
-            _show_grid(row, not compact)
-        _show_grid(self.sheet_row, not compact and not self.uses_database)
+    def _fold(self) -> None:
+        """頁首說明、提示條與選檔的幾列收成一行摘要，讓預覽與結果有更多高度（#108）。"""
         name = self.sheet_path.name if self.sheet_path is not None else "未選參考條件表"
         self.summary_source.set("資料庫" if self.uses_database else f"Excel：{name}")
-        _show_grid((self.summary,), compact)
+        self._set_folded(True)
+
+    def _expand(self) -> None:
+        """展開完整設定區；參考條件表那列只在 Excel 來源時顯示（#108）。"""
+        self._set_folded(False)
+
+    def _set_folded(self, folded: bool) -> None:
+        self.folded = folded
+        self.header.show_description(not folded)
+        if self.hint.shown:  # 上一步帶入的提示條也一起收起，展開時再出現
+            _show_grid((self.hint,), not folded)
+        for row in self.setup_rows:
+            _show_grid(row, not folded)
+        _show_grid(self.sheet_row, not folded and not self.uses_database)
+        _show_grid((self.summary,), folded)
 
     @property
     def uses_database(self) -> bool:
@@ -833,12 +845,11 @@ class CheckTab(ttk.Frame):
     def _source_changed(self):
         """條件來源換了：資料庫來源不用選參考條件表（由資料庫產生）；清除預覽與結果。"""
         self.session.select_source(self.source.get() == DATABASE_SOURCE)
-        self._clear()
+        self._reset()
         if self.uses_database:
             self.sheet_text.set("由資料庫產生（載入預覽時依 PDF 檔名的 TDCC 讀取）")
         else:
             self.sheet_text.set(str(self.sheet_path) if self.sheet_path is not None else "")
-        self._layout(False)
         self._busy(False)
         self.status.set(self.session.message)
 
@@ -939,10 +950,11 @@ class CheckTab(ttk.Frame):
         try:
             finish(future.result())
         except IngestionError as e:
-            self._clear()
-            self._layout(False)  # 讀不到或來源變了：展開設定區方便改選
+            self._reset()
             self.status.set(str(e))
         except Exception as e:
+            if self.shown is None:  # 預覽讀取失敗（load 已先清掉預覽）：展開設定區方便改選
+                self._expand()
             self.status.set(f"{failure}：{e}")
         self._busy(False)
 
@@ -968,7 +980,7 @@ class CheckTab(ttk.Frame):
         self.shown = preview
         for row in preview.rows:
             self.preview_table.insert("", "end", values=PanelOutcome.preview_row(row))
-        self._layout(True)
+        self._fold()
         self.status.set(self.session.message)
         self.tabs.select(0)
 
@@ -1035,7 +1047,7 @@ class CheckTab(ttk.Frame):
     def _show_release(self, items, focus, error: IngestionError | None):
         if error is not None:
             if self.session.outcome is None:  # 來源已變更、結果失效：清空畫面，不顯示空結果
-                self._clear()
+                self._reset()
             self.status.set(str(error))
             return
         outcome = self.session.outcome
@@ -1058,7 +1070,7 @@ class CheckTab(ttk.Frame):
 
     def _show_receipt(self, receipt: SaveReceipt):
         if self.session.outcome is None:
-            self._clear()
+            self._reset()
         written = self.session.use_database and receipt.output is not None  # 資料庫來源：另寫寫回的結果
         self.status.set(receipt.summary + (f"\n{self.session.message}" if written else ""))
         if receipt.output is not None and self.on_saved is not None:
@@ -1131,7 +1143,7 @@ class CheckTab(ttk.Frame):
 
     def _approval_dates_changed(self):
         """設定檔已改寫：工作階段已清除預覽與結果，畫面跟著清空。"""
-        self._clear()
+        self._reset()
         self.status.set(self.session.message)
         self._busy(False)
 
@@ -1150,7 +1162,7 @@ class CheckTab(ttk.Frame):
             if not self._busy_any() and not valid:  # 回到主執行緒才清除；快照已換過（重新載入）就不動
                 self.session.invalidate(self.checking_for)
                 if self.session.preview is None and self.shown is not None:
-                    self._clear()
+                    self._reset()
                     self.status.set(self.session.message)
             self.validation = None
             self.checking_for = None

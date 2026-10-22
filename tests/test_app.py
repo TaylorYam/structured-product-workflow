@@ -13,6 +13,7 @@ from tkinter import messagebox, ttk
 import pytest
 
 import fcn_checker.panel
+from fcn_checker.ingestion import IngestionError
 from fcn_checker.panel import parse_args
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.saving import SaveReceipt
@@ -1193,13 +1194,13 @@ def test_check_setup_folds_into_one_line_after_the_preview(master, tmp_path: Pat
     window = new_window(master, tmp_path)
     check = window.check
     check.receive_pdfs((tmp_path / "147000000001_TS.pdf", tmp_path / "147000000001_IIS.pdf"), "帶入")
-    pdf_button = check.setup_rows[-1][-1]
-    assert not check.compact and not shown(check.summary)
+    pdf_button = check.pdf_button
+    assert not check.folded and not shown(check.summary)
     assert shown(check.header.description) and shown(pdf_button)
 
     check._show_preview(Preview())
 
-    assert check.compact and shown(check.summary)
+    assert check.folded and shown(check.summary)
     assert not shown(check.header.description) and not shown(pdf_button) and not shown(check.sheet_button)
     assert not shown(check.hint) and check.hint.shown, "提示條收起，但保留內容"
     assert check.summary_source.get() == "資料庫"
@@ -1207,13 +1208,59 @@ def test_check_setup_folds_into_one_line_after_the_preview(master, tmp_path: Pat
 
     check.expand_button.invoke()
 
-    assert not check.compact and not shown(check.summary) and shown(pdf_button) and not shown(check.sheet_button)
+    assert not check.folded and not shown(check.summary) and shown(pdf_button) and not shown(check.sheet_button)
     assert shown(check.hint)
 
     check._show_preview(Preview())
     check.receive_pdfs((tmp_path / "147000000002_TS.pdf",), "帶入")
 
-    assert not check.compact and shown(pdf_button), "換了 PDF，展開讓作業人員看清楚選了什麼"
+    assert not check.folded and shown(pdf_button), "換了 PDF，展開讓作業人員看清楚選了什麼"
+
+
+def fold(check) -> None:
+    check.receive_pdfs((Path("D:/out/147000000001_TS.pdf"),), "帶入")
+    check._show_preview(Preview())
+    assert check.folded
+
+
+def failed_load(error: Exception):
+    def run(check) -> None:
+        check._clear()  # 和 load() 一樣先清掉預覽，背景讀取再失敗
+        check.pending = Future()
+        check.pending.set_exception(error)
+        check._after("pending", check._show_preview, "預覽讀取失敗")
+
+    return run
+
+
+@pytest.mark.parametrize(
+    "clear",
+    [
+        pytest.param(lambda check: check._approval_dates_changed(), id="審查通過日期改了"),
+        pytest.param(failed_load(IngestionError("unreadable", "讀不到")), id="來源讀不到"),
+        pytest.param(failed_load(OSError("磁碟錯誤")), id="預覽讀取失敗"),
+    ],
+)
+def test_clearing_the_preview_expands_the_setup(master, tmp_path: Path, clear) -> None:
+    """清掉預覽時一律展開設定區，不會停在只剩摘要、預覽卻是空的畫面（#108）。"""
+    check = new_window(master, tmp_path).check
+    fold(check)
+
+    clear(check)
+
+    assert check.shown is None and not check.folded and shown(check.pdf_button) and not shown(check.summary)
+
+
+def test_a_failed_check_keeps_the_setup_folded(master, tmp_path: Path) -> None:
+    """核對失敗時預覽還在，設定區維持收起。"""
+    check = new_window(master, tmp_path).check
+    fold(check)
+    check.check_pending = Future()
+    check.check_pending.set_exception(OSError("核對失敗"))
+
+    check._after("check_pending", check._show_outcome, "核對失敗")
+
+    assert check.shown is not None and check.folded
 
 
 def test_folded_excel_setup_names_the_reference_workbook(master, tmp_path: Path) -> None:
