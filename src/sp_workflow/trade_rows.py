@@ -2,8 +2,9 @@
 
 「7 人工維護」打開一檔時一起讀這個 TDCC 的交易明細列，放在編輯區的商品條件底下逐列修改；存檔由
 `order_import.save_maintenance` 和商品條件在同一個 transaction 裡寫入、重算核對條件、留紀錄。對外：
-- `load_trade_rows`：讀這檔的交易明細列（依 row_seq）與信箱；畫面直接改 `TradeRowsDraft` 每列的值。
-  畫面打的字用 `daily_import.trade_value` 解讀（同每日匯入），存進去的值才會和之後匯入的一樣。
+- `load_trade_rows`：讀這檔的交易明細列（依 row_seq）與信箱；畫面打的字由 `editor_cells.commit_trade_rows` 解讀進
+  `TradeRowsDraft` 每列的值（用 `daily_import.trade_value`，同每日匯入），存進去的值才會和之後匯入的一樣。
+  `TradeRowsDraft.differences`：改了的格子 → 資料庫的值（畫面標黃）。
 - `trade_problems`：擋存檔的問題（改了的格子必填空白、備註改成取消；寫錯的格子）；`trade_notes`／`unmatched_names`：
   改了的 FC 名字對不到信箱（照每日匯入的規則），只提示、不擋存檔。沒改的格子照資料庫的值，不擋也不提示。
 - `changed_since_opened`、`write_trade_rows`、`read_rows`：存檔時鎖住這檔的列、確認打開之後沒變、寫入改了的格子。

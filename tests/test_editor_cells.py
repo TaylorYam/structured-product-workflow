@@ -187,6 +187,15 @@ def test_a_mistyped_strike_date_does_not_follow_the_trade_date() -> None:
     assert draft.values["Strike date"] == dt.date(2026, 10, 15) and typed == {"Strike date": "abc"}
 
 
+def test_committing_one_field_leaves_a_cleared_strike_date_alone() -> None:
+    draft, typed = maintenance_draft(), {}
+    commit_order(draft, typed, {**order_texts(draft, typed), "Strike date": ""}, ["Strike date"])
+
+    changed = commit_order(draft, typed, {**order_texts(draft, typed), "Coupon p.a. (%)": "13"}, ["Coupon p.a. (%)"])
+
+    assert changed and draft.values["Strike date"] is None
+
+
 def test_fields_left_out_of_the_texts_are_not_touched() -> None:
     draft, typed = maintenance_draft(), {}
 

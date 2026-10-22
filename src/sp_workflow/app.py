@@ -38,7 +38,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 from tkinter import font as tkfont
-from typing import TYPE_CHECKING, TypeVar
+from typing import TYPE_CHECKING
 
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.panel import (
@@ -107,6 +107,7 @@ from sp_workflow.database import (
 )
 from sp_workflow.editor_cells import (
     CellState,
+    K,
     Tone,
     commit_order,
     commit_trade_rows,
@@ -901,7 +902,6 @@ class MailDraftTab(_Tab):
 
 _PROBLEM_BG = "#FFC7CE"  # 同 Excel 的淺紅色填滿：擋匯入，或讀起單建檔時有問題
 _DIFFERENT_BG = "#FFEB9C"  # 同 Excel 的淺黃色：和資料庫的值不同
-_K = TypeVar("_K")  # 編輯區格子的 key：商品條件是欄名，交易明細是 (row_seq, 欄)
 _TONE_BG = {Tone.PLAIN: SURFACE, Tone.DIFFERENT: _DIFFERENT_BG, Tone.PROBLEM: _PROBLEM_BG}
 # 起單建檔的資料夾（#97）；本機沒有選過時「選擇…」先打開這裡
 ORDER_SHEET_DIR = Path(r"G:\Bond Data\PM事項\0.常用工具\ELN每日起單建檔")
@@ -1072,7 +1072,7 @@ class _FieldRow:
         parent: tk.Frame,
         row: int,
         name: str,
-        on_commit: Callable[[], object],
+        on_commit: Callable[[str], object],
         on_database: Callable[[str], None],
         *,
         follow_width: bool = True,
@@ -1083,12 +1083,12 @@ class _FieldRow:
         self.label.grid(row=row, column=0, sticky="nsew", pady=(1, 0))
         if name in CHOICES:
             self.input: ttk.Entry = ttk.Combobox(parent, textvariable=self.var, values=CHOICES[name], width=18)
-            self.input.bind("<<ComboboxSelected>>", lambda _e: on_commit())
+            self.input.bind("<<ComboboxSelected>>", lambda _e: on_commit(name))
         else:
             self.input = ttk.Entry(parent, textvariable=self.var, width=20)
         self.input.grid(row=row, column=1, sticky="ew", pady=(1, 0))
         for event in ("<FocusOut>", "<Return>"):
-            self.input.bind(event, lambda _e: on_commit())
+            self.input.bind(event, lambda _e: on_commit(name))
         self.database = ttk.Button(parent, text="用資料庫的值", command=lambda: on_database(name))
         self.database.grid(row=row, column=2, sticky="w", padx=(6, 0), pady=(1, 0))
         self.database.grid_remove()
@@ -1107,7 +1107,7 @@ class _FieldRow:
         self.note.configure(wraplength=max(240, width - 20))
 
     def mark(self, state: CellState) -> None:
-        """套用格子狀態（`editor_cells.cell_states`）。"""
+        """套用格子狀態（`editor_cells.CellState`）。"""
         for widget in (self.label, self.note):
             widget.configure(background=_TONE_BG[state.tone])
         self.note.configure(text=state.note, foreground=DANGER if state.tone is Tone.PROBLEM else TEXT_SECONDARY)
@@ -1171,7 +1171,8 @@ class OrderEditor(ttk.Frame):
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.LEFT, fill=tk.Y)
         self.rows = {
-            name: _FieldRow(self.fields, i, name, self.commit, self._use_database) for i, name in enumerate(FIELDS)
+            name: _FieldRow(self.fields, i, name, lambda name: self._commit([name]), self._use_database)
+            for i, name in enumerate(FIELDS)
         }
         self.show(None)
 
@@ -1219,13 +1220,17 @@ class OrderEditor(ttk.Frame):
         self.note_var.set("；".join(filter(None, dict.fromkeys(row_notes))))
 
     def commit(self) -> bool:
-        """把目前這檔畫面上的輸入都解讀一次（離開欄位、換檔、存檔、關閉前用）；有改到才通知，回傳有沒有改到。"""
+        """把目前這檔畫面上的輸入都解讀一次（換檔、存檔、關閉前用）；有改到才通知，回傳有沒有改到。"""
+        return self._commit(self.rows)
+
+    def _commit(self, names: Iterable[str]) -> bool:
+        """解讀這幾欄（離開欄位時只有那一欄）；有改到才重畫、通知。"""
         draft = self.draft
         if draft is None or not self.editable:
             return False
         typed = self.typed.setdefault(draft.tdcc, {})
         texts = {name: field_row.var.get() for name, field_row in self.rows.items() if name not in self.fixed}
-        changed = commit_order(draft, typed, texts)
+        changed = commit_order(draft, typed, texts, names)
         _show_texts(self.rows, order_texts(draft, typed))
         if not typed:
             self.typed.pop(draft.tdcc, None)
@@ -1239,10 +1244,10 @@ class OrderEditor(ttk.Frame):
         if draft is None or draft.stored is None:
             return
         self.rows[name].var.set(format_field(draft.stored.get(name)))
-        self.commit()
+        self._commit([name])
 
 
-def _show_texts(rows: Mapping[_K, _FieldRow], texts: Mapping[_K, str]) -> None:
+def _show_texts(rows: Mapping[K, _FieldRow], texts: Mapping[K, str]) -> None:
     """解讀後的字寫回輸入框；沒變的不動（游標留在原位）。"""
     for key, text in texts.items():
         if rows[key].var.get() != text:
@@ -1305,7 +1310,7 @@ class TradeRowsEditor:
                     self.parent,
                     row,
                     name,
-                    self.commit,
+                    lambda _name: self.commit(),
                     lambda _name, key=key: self._use_database(key),
                     follow_width=False,
                 )

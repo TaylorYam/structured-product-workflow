@@ -978,8 +978,9 @@ def table_rows(tab) -> list[tuple[str, str]]:
 
 
 def type_into(editor, name: str, text: str) -> None:
+    """打字後離開那一欄。"""
     editor.rows[name].var.set(text)
-    editor.commit()
+    editor._commit([name])
 
 
 def test_products_needing_work_come_first_and_the_first_one_opens(master, tmp_path: Path) -> None:
@@ -1063,6 +1064,16 @@ def test_conflicting_duplicate_fields_are_red_until_filled(master, tmp_path: Pat
     type_into(window.orders.editor, "Coupon p.a. (%)", "13")
 
     assert table_rows(window.orders) == [("029199990001", app.TO_CHECK)]
+
+
+def test_leaving_another_field_keeps_a_cleared_strike_date(master, tmp_path: Path) -> None:
+    window = order_window(master, tmp_path, order_row("029199990001"))
+    editor = window.orders.editor
+
+    type_into(editor, "Strike date", "")
+    type_into(editor, "Coupon p.a. (%)", "13")
+
+    assert editor.rows["Strike date"].var.get() == "" and editor.draft.values["Strike date"] is None
 
 
 def test_editing_the_trade_date_moves_an_equal_strike_date(master, tmp_path: Path) -> None:
