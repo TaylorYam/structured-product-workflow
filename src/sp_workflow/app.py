@@ -1165,10 +1165,9 @@ class OrderTermsTab(_Tab):
         self.hint = HintBar(self.frame, self._clear_handed_off)
         self.hint.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 12))
         self.hint.hide()
-        card = self.card(2)
-        card.grid_configure(columnspan=3)
+        card = self.card(2)  # 只佔左邊，和結果表同寬；右邊讓給確認區（#106）
         self.tdcc_column(card)
-        self.tdcc_text.configure(height=6)  # 讓出高度給下方的確認區
+        self.tdcc_text.configure(height=6)  # 讓出高度給下方的結果表
         body = self.body(card, column=1)
         row = self.field(body, 0, "起單建檔", self.sheet_var, self._ask_sheet, "每天的 起單建檔_<日期>.xlsm")
         self.result_area(body, row)
@@ -1181,7 +1180,7 @@ class OrderTermsTab(_Tab):
         self.place_table(3)
         self.frame.columnconfigure(2, weight=1)
         self.editor = OrderEditor(self.frame, lambda: self.read.config if self.read else None, self._edited)
-        self.editor.grid(row=3, column=2, sticky="nsew", padx=(16, 0), pady=(16, 0))
+        self.editor.grid(row=2, rowspan=2, column=2, sticky="nsew", padx=(16, 0))  # 從卡片那一列拉到底
         self.table.bind("<<TreeviewSelect>>", self._selected)
         self.imported: dict[str, OrderImportLine] = {}  # 最近一次匯入每檔的結果（放行後重寫那一列）
         self.releaser = _Releaser(
