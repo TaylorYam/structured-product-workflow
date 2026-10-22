@@ -16,7 +16,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import getpass
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -51,6 +50,7 @@ SLOTS = 12
 UNDERLYINGS = 5
 PRICES = (("initial", "initial_price", "進場價"), ("strike", "strike_price", "執行價"),
           ("ki", "ki_price", "下限價"), ("ko", "ko_price", "KO 價"))  # fmt: skip
+REQUIRED_PRICES = frozenset(("進場價", "執行價", "KO 價"))  # 下限價在沒有 KI 時本來就空白
 FILLED, EXISTING, SKIPPED = "已補", "已存在", "不匯入"
 ERROR_BOOK = "舊商品補資料錯誤_{stamp}.xlsx"
 ERROR_BOOK_COLUMNS = (("TDCC", 16), ("原因", 80), ("表上的列", 10))
@@ -88,7 +88,20 @@ class _Product:
     codes: tuple[str | None, ...]  # UL_1～UL_5
     has_prices: bool
     has_dates: bool
-    has_terms: bool
+    terms_status: str | None  # 核對條件的狀態；沒有時 None
+
+
+@dataclass(frozen=True)
+class _LegacyEvent:
+    """庫存狀態要寫成的舊清單事件。"""
+
+    event: str
+    event_date: dt.date | None
+
+    def text(self) -> str:
+        return (
+            f"{self.event}事件（{self.event_date:%Y-%m-%d}）" if self.event_date else f"{self.event}事件（沒有事件日）"
+        )
 
 
 def backfill_legacy(
@@ -101,74 +114,86 @@ def backfill_legacy(
 ) -> BackfillReceipt:
     """讀一份參考條件表格式的 Excel，補舊商品的價格與比價日、寫舊清單事件；一個 transaction，失敗時什麼都不寫。"""
     records, statuses, has_status = _read(path, fmt)
-    by = user or getpass.getuser()
     note = f"舊商品匯入：{path.name}"
     lines: list[BackfillLine] = []
     events = 0
     error_book = None
-    with conn.transaction():
-        products = _products(conn, sorted({r.product_code.value for r in records}))
-        grouped: dict[str, list[OrderRecord]] = {}
-        for record in records:
-            grouped.setdefault(record.product_code.value, []).append(record)
-        existing = current_events_of(conn, list(grouped))
-        for tdcc, rows in grouped.items():
-            numbers = tuple(r.row for r in rows)
-            found = products.get(tdcc)
-            problem = _scope_problem(found, rows)
-            if problem:
-                lines.append(BackfillLine(tdcc, SKIPPED, problem, numbers))
-                continue
-            if found.has_prices and found.has_dates:
-                lines.append(BackfillLine(tdcc, EXISTING, "價格與比價日都有了，沒有動", numbers))
-                continue
-            (record,) = rows
-            status = statuses.get(record.row)
-            problems = [
-                *([] if found.has_prices else _price_problems(record, found, fmt)),
-                *([] if found.has_dates else _date_problems(record, fmt)),
-            ]
-            event, event_problem = _status_event(status)
-            if event_problem:
-                problems.append(event_problem)
-            stored = existing.get(tdcc, [])
-            if event and any(e.event != event[0] for e in stored):
-                other = next(e for e in stored if e.event != event[0])
-                problems.append(f"已有存續事件「{other.event}」（{other.source}），和表上的「{status}」不同")
+    try:
+        with conn.transaction():
+            products = _products(conn, sorted({r.product_code.value for r in records}))
+            grouped: dict[str, list[OrderRecord]] = {}
+            for record in records:
+                grouped.setdefault(record.product_code.value, []).append(record)
+            existing = current_events_of(conn, list(grouped))
+            for tdcc, rows in grouped.items():
+                numbers = tuple(r.row for r in rows)
+                found = products.get(tdcc)
+                problem = _scope_problem(found, rows)
+                if problem:
+                    lines.append(BackfillLine(tdcc, SKIPPED, problem, numbers))
+                    continue
+                if found.has_prices and found.has_dates:
+                    lines.append(BackfillLine(tdcc, EXISTING, "價格與比價日都有了，沒有動", numbers))
+                    continue
+                (record,) = rows
+                status = statuses.get(record.row)
+                problems = [
+                    *([] if found.has_prices else _price_problems(record, found, fmt)),
+                    *([] if found.has_dates else _date_problems(record, fmt)),
+                ]
+                event, event_problem = _status_event(status)
+                if event_problem:
+                    problems.append(event_problem)
+                stored = existing.get(tdcc, [])
+                other = next((e for e in stored if event and e.event != event.event), None)
+                if other is not None:
+                    problems.append(f"已有存續事件「{other.event}」（{other.source}），和表上的「{status}」不同")
+                if problems:
+                    lines.append(BackfillLine(tdcc, SKIPPED, "；".join(problems), numbers))
+                    continue
+                done = []
+                if not found.has_prices:
+                    if found.terms_status is None:
+                        conn.execute(
+                            "INSERT INTO workflow.check_terms (tdcc, status, reason) VALUES (%s, %s, %s)",
+                            (tdcc, DONE, f"{note}（舊商品，價格由表上補入）"),
+                        )
+                    _write_prices(conn, tdcc, record, found, fmt)
+                    done.append("價格")
+                if not found.has_dates:
+                    _write_dates(conn, tdcc, record, fmt)
+                    done.append("比價日 1～12")
+                detail = f"補了{'、'.join(done)}"
+                if found.terms_status not in (None, DONE):
+                    detail += f"；核對條件是「{found.terms_status}」，比價不會比這檔，要先處理核對條件"
+                if event:
+                    same = next((e for e in stored if e.event == event.event), None)
+                    if same is not None:
+                        detail += f"；已有{event.event}事件，沒有再寫"
+                        if event.event_date and same.event_date != event.event_date:
+                            when = same.event_date or "沒有事件日"
+                            detail += f"（日期不同：資料庫 {when}，表上 {event.event_date}，請確認）"
+                    else:
+                        try:
+                            record_legacy(
+                                conn, tdcc, event.event, event.event_date, f"{note}，庫存狀態「{status}」", user=user
+                            )
+                        except LifecycleError as exc:
+                            raise LegacyBackfillError(f"{tdcc} 舊清單事件寫不進去，整份不匯入：{exc}") from exc
+                        events += 1
+                        detail += f"；寫了{event.text()}"
+                lines.append(BackfillLine(tdcc, FILLED, detail, numbers))
+            for tdcc, found in sorted(products.items()):
+                if tdcc not in grouped and found.locked and not (found.has_prices and found.has_dates):
+                    lines.append(BackfillLine(tdcc, SKIPPED, "表上沒有這檔（已鎖住，還缺價格或比價日）"))
+            problems = [line for line in lines if line.result == SKIPPED]
             if problems:
-                lines.append(BackfillLine(tdcc, SKIPPED, "；".join(problems), numbers))
-                continue
-            done = []
-            if not found.has_prices:
-                if not found.has_terms:
-                    conn.execute(
-                        "INSERT INTO workflow.check_terms (tdcc, status, reason) VALUES (%s, %s, %s)",
-                        (tdcc, DONE, f"{note}（舊商品，價格由表上補入）"),
-                    )
-                _write_prices(conn, tdcc, record, found, fmt)
-                done.append("價格")
-            if not found.has_dates:
-                _write_dates(conn, tdcc, record, fmt)
-                done.append("比價日 1～12")
-            detail = f"補了{'、'.join(done)}"
-            if event:
-                if any(e.event == event[0] for e in stored):
-                    detail += f"；已有{event[0]}事件，沒有再寫"
-                else:
-                    try:
-                        record_legacy(conn, tdcc, event[0], event[1], f"{note}，庫存狀態「{status}」", user=by)
-                    except LifecycleError as exc:
-                        raise LegacyBackfillError(f"{tdcc} 舊清單事件寫不進去，整份不匯入：{exc}") from exc
-                    events += 1
-                    detail += f"；寫了{event[0]}事件" + (f"（{event[1]:%Y-%m-%d}）" if event[1] else "（沒有事件日）")
-            lines.append(BackfillLine(tdcc, FILLED, detail, numbers))
-        for tdcc, found in sorted(products.items()):
-            if tdcc not in grouped and found.locked and not (found.has_prices and found.has_dates):
-                lines.append(BackfillLine(tdcc, SKIPPED, "表上沒有這檔（已鎖住，還缺價格或比價日）"))
-        problems = [line for line in lines if line.result == SKIPPED]
-        if problems:
-            error_book = path.parent / ERROR_BOOK.format(stamp=f"{(now or dt.datetime.now()):%Y%m%d-%H%M%S}")
-            _write_error_book(error_book, problems)
+                error_book = path.parent / ERROR_BOOK.format(stamp=f"{(now or dt.datetime.now()):%Y%m%d-%H%M%S}")
+                _write_error_book(error_book, problems)
+    except BaseException:
+        if error_book is not None:  # 沒有匯入就不留錯誤清單
+            error_book.unlink(missing_ok=True)
+        raise
     return BackfillReceipt(tuple(lines), has_status, events, error_book)
 
 
@@ -201,7 +226,7 @@ def _products(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, _Prod
         f"SELECT p.tdcc, p.locked_at IS NOT NULL, {codes},"
         " EXISTS (SELECT 1 FROM workflow.underlying_price u WHERE u.tdcc = p.tdcc),"
         " EXISTS (SELECT 1 FROM workflow.autocall_date a WHERE a.tdcc = p.tdcc),"
-        " EXISTS (SELECT 1 FROM workflow.check_terms c WHERE c.tdcc = p.tdcc)"
+        " (SELECT c.status FROM workflow.check_terms c WHERE c.tdcc = p.tdcc)"
         " FROM workflow.product p WHERE p.tdcc = ANY(%s) OR (p.locked_at IS NOT NULL AND ("
         " NOT EXISTS (SELECT 1 FROM workflow.underlying_price u WHERE u.tdcc = p.tdcc)"
         " OR NOT EXISTS (SELECT 1 FROM workflow.autocall_date a WHERE a.tdcc = p.tdcc)))"
@@ -221,6 +246,8 @@ def _scope_problem(found: _Product | None, rows: Sequence[OrderRecord]) -> str:
         return "還沒鎖住：價格與比價日由核對寫回，不用這個匯入"
     if len(rows) > 1:
         return f"表上有 {len(rows)} 列（第 {'、'.join(str(r.row) for r in rows)} 列），不知道用哪一列"
+    if not found.has_prices and not any(found.codes):
+        return "資料庫這檔沒有任何標的，補不了價格"
     return ""
 
 
@@ -245,7 +272,9 @@ def _price_problems(record: OrderRecord, found: _Product, fmt: ReferenceFormat) 
         elif _code(str(listed)) != _code(code):
             problems.append(f"UL_{i} 代碼和資料庫不同（表上 {listed}，資料庫 {code}）")
         for label, value in values.items():
-            if value is not None and not isinstance(value, Decimal):
+            if value is None and label in REQUIRED_PRICES:
+                problems.append(f"UL_{i} {label}是空白")
+            elif value is not None and not isinstance(value, Decimal):
                 problems.append(f"UL_{i} {label}不是數字（{value}）")
     return problems
 
@@ -259,20 +288,20 @@ def _date_problems(record: OrderRecord, fmt: ReferenceFormat) -> list[str]:
     return problems
 
 
-def _status_event(status: str | None) -> tuple[tuple[str, dt.date | None] | None, str]:
+def _status_event(status: str | None) -> tuple[_LegacyEvent | None, str]:
     """庫存狀態 → (事件, 事件日)；看不懂的 KO 寫法是錯誤，其他狀態（在庫、接股等）不寫事件。"""
     if not status:
         return None, ""
     match = _KO.search(status)
     if match:
         try:
-            return (KO, dt.date(*(int(part) for part in match.groups()))), ""
+            return _LegacyEvent(KO, dt.date(*(int(part) for part in match.groups()))), ""
         except ValueError:
             return None, f"庫存狀態「{status}」的 KO 日期不是有效的日期"
     if "KO" in status.upper():
         return None, f"庫存狀態「{status}」看不出 KO 的日期（要寫成「已於 Y/M/D KO」）"
     if "到期還本" in status:
-        return (MATURITY, None), ""
+        return _LegacyEvent(MATURITY, None), ""
     return None, ""
 
 

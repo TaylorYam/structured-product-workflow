@@ -21,6 +21,7 @@ from sp_workflow.legacy_backfill import (
     FILLED,
     SKIPPED,
     LegacyBackfillError,
+    _LegacyEvent,
     _status_event,
     backfill_legacy,
 )
@@ -133,7 +134,7 @@ def test_a_bad_row_only_skips_that_product(pg, tmp_path: Path) -> None:
         [
             sheet_row(B, UL_1="ZZZ UW"),
             sheet_row(C, UL_1_進場價="abc"),
-            sheet_row(D, 比價日_3="下週"),
+            sheet_row(D, 比價日_3="下週", UL_2_KO價="-"),
             sheet_row(E),
             sheet_row(G, UL_1="aaa  uw equity"),
             sheet_row(H),
@@ -147,7 +148,7 @@ def test_a_bad_row_only_skips_that_product(pg, tmp_path: Path) -> None:
     assert found[G][0] == FILLED, "代碼不分大小寫、空白與結尾的 Equity"
     assert "UL_1 代碼和資料庫不同（表上 ZZZ UW，資料庫 AAA UW）" in found[B][1]
     assert "UL_1 進場價不是數字（abc）" in found[C][1]
-    assert "比價日_3 不是日期（下週）" in found[D][1]
+    assert "比價日_3 不是日期（下週）" in found[D][1] and "UL_2 KO 價是空白" in found[D][1]
     assert found[E][1] == "資料庫沒有這檔"
     assert found[F][1].startswith("表上沒有這檔")
     assert "表上有 2 列" in found[H][1]
@@ -167,7 +168,7 @@ def test_events_are_not_duplicated_or_contradicted(pg, tmp_path: Path) -> None:
     record_legacy(pg, B, KO, dt.date(2026, 10, 1), "舊清單", user="tester")
     source = write_sheet(
         tmp_path / "庫存總表.xlsx",
-        [sheet_row(A, 庫存狀態="已於2026/10/1 KO"), sheet_row(B, 庫存狀態="已於2026/10/1 KO")],
+        [sheet_row(A, 庫存狀態="已於2026/10/1 KO"), sheet_row(B, 庫存狀態="已於2026/10/2 KO")],
     )
 
     receipt = backfill_legacy(pg, source, FMT, user="tester")
@@ -176,8 +177,44 @@ def test_events_are_not_duplicated_or_contradicted(pg, tmp_path: Path) -> None:
     assert (
         found[A][0] == SKIPPED and "已有存續事件「顧客贖回」（人工），和表上的「已於2026/10/1 KO」不同" in found[A][1]
     )
-    assert found[B] == (FILLED, "補了價格、比價日 1～12；已有KO事件，沒有再寫")
+    assert found[B] == (
+        FILLED,
+        "補了價格、比價日 1～12；已有KO事件，沒有再寫（日期不同：資料庫 2026-10-01，表上 2026-10-02，請確認）",
+    )
     assert len(current_events(pg, B)) == 1 and receipt.events == 0
+
+
+@pytest.mark.db
+def test_check_terms_that_are_not_done_are_kept_and_flagged(pg, tmp_path: Path) -> None:
+    locked(pg, A)
+    pg.execute("INSERT INTO workflow.check_terms (tdcc, status, reason) VALUES (%s, '待確認', '舊的原因')", (A,))
+    source = write_sheet(tmp_path / "庫存總表.xlsx", [sheet_row(A)])
+
+    receipt = backfill_legacy(pg, source, FMT, user="tester")
+
+    assert lines(receipt)[A] == (
+        FILLED,
+        "補了價格、比價日 1～12；核對條件是「待確認」，比價不會比這檔，要先處理核對條件",
+    )
+    (terms,) = pg.execute("SELECT status, reason FROM workflow.check_terms WHERE tdcc = %s", (A,)).fetchall()
+    assert terms == ("待確認", "舊的原因"), "已有的核對條件不動"
+
+
+@pytest.mark.db
+def test_a_failed_import_leaves_no_error_book(pg, tmp_path: Path, monkeypatch) -> None:
+    import sp_workflow.legacy_backfill
+
+    locked(pg, A)
+    source = write_sheet(tmp_path / "庫存總表.xlsx", [sheet_row(A), sheet_row(E)])
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("寫不進去")
+
+    monkeypatch.setattr(sp_workflow.legacy_backfill, "_write_dates", broken)
+
+    with pytest.raises(RuntimeError):
+        backfill_legacy(pg, source, FMT, user="tester")
+    assert list(tmp_path.glob("舊商品補資料錯誤_*.xlsx")) == [] and prices(pg, A) == []
 
 
 @pytest.mark.db
@@ -227,9 +264,9 @@ def test_the_window_action_observes_afterwards(pg, pg_settings, tmp_path: Path) 
 @pytest.mark.parametrize(
     ("status", "found"),
     [
-        ("已於2026/10/1 KO", ((KO, dt.date(2026, 10, 1)), "")),
-        ("已於 2026 / 3 / 5 KO", ((KO, dt.date(2026, 3, 5)), "")),
-        ("到期還本", ((MATURITY, None), "")),
+        ("已於2026/10/1 KO", (_LegacyEvent(KO, dt.date(2026, 10, 1)), "")),
+        ("已於 2026 / 3 / 5 KO", (_LegacyEvent(KO, dt.date(2026, 3, 5)), "")),
+        ("到期還本", (_LegacyEvent(MATURITY, None), "")),
         ("在庫", (None, "")),
         (None, (None, "")),
         ("已於2026/2/30 KO", (None, "庫存狀態「已於2026/2/30 KO」的 KO 日期不是有效的日期")),

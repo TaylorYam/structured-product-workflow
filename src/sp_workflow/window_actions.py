@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fcn_checker.check_config import ConfigPaths
+from fcn_checker.config import load_reference_format
+from fcn_checker.ingestion import IngestionError
 from fcn_checker.trading_calendar import TradingCalendar
 from sp_workflow.check_terms import (
     CalcLine,
@@ -247,9 +249,6 @@ def import_close_history(settings: ConnectionSettings, source: Path, paths: Conf
 
 def import_legacy_products(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> LegacyResult:
     """匯入舊商品的價格與比價日（#154，維護選單），再比價（#155）：讀不到參考條件表格式、檔案不對就整份不匯入。"""
-    from fcn_checker.config import load_reference_format
-    from fcn_checker.ingestion import IngestionError
-
     try:
         fmt = load_reference_format(paths.reference_format)
     except IngestionError as exc:
