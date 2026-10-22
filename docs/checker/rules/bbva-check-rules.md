@@ -41,7 +41,7 @@
 | 年利率 `coupon_pa_pct` | 共用 `field.coupon_pa_pct` | D：第 13 項 `年利率：y%`；P：第 16 項 `年利率相當於約y%`（§3.3；說明書都有年利率，不需要 `reference_fields`） |
 | 標的 `underlyings`、各標的價格 | 共用 `field.underlyings`、價格規則 | **依代碼配對、不看順序**（`any_order_issuers` 加 `BBVA`；BV2 順序不同）；彭博代碼去掉 ` Equity`；價格取第 14 項價格表 |
 | 期初定價 `initial_pricing` | 共用 `field.initial_pricing` | 交 `absent`：不和說明書比，只檢查表上是允許值（2026-10-15 確認）；表上 `VWAP` 時價格欄照 Issue #122、#246 不比對、通過後覆寫（BV4） |
-| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 第四章 4.(2) 最低申購、4.(3) 最低加購、8. 最低贖回（3 筆）；倍數都是預設 1（不設 `min_amount_multiples.bbva`） |
+| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 第四章 4.(2) 最低申購、4.(3) 最低加購、8. 最低贖回（3 筆）；倍數都是預設 1（不設 `issuer.bbva.min_amount_multiples`） |
 | 金額旁的幣別 `currency_others` | 共用 `field.currency`（Issue #170） | 第四章 4.(1)～(3)、8. 金額旁的幣別字各一筆；Issue #305 加上第一章第 8 項 (1)～(3)、第 15 項的 `以X為計價單位`、第三章匯率風險 `本商品屬X計價之產品`／`轉換成X來投資本商品` 每處一筆，第 16 項情境一～四每個情境一筆（配息、累積配息、贖回金額與現金旁的幣別；收盤價、期初價格、剩餘金額、轉換匯率與除法算式那幾行跟著標的走，不列入）。價格表幣別字（標的報價幣別）不列入 |
 
 ### 3.2 審查標準規則（共用 `rules/review_standard.py`）
@@ -51,13 +51,13 @@
 | 審查通過日期 | 第 1 頁 13. `受託機構審查通過之日期及文號：` | 共用（依交易日）；5 份都是設定檔既有日期 |
 | 受託機構負責人 | 第二章 3.(4) `負責人姓名：`；第 1 頁 13. 後明細 `(iv) 負責人`（有這段才核，Issue #305：交出 `chairman_others`） | 共用 |
 | 受託機構名稱／電話／地址 | 第 1 頁 11.；第二章 3.(4) `事業名稱：`、`營業所在地：`；第 1 頁 13. 後明細 `(i) 事業名稱`、`(iii) 營業所在地`（有這段才核，Issue #305：交出 `distributor_names_others`／`distributor_addresses_others`，共用規則核對） | 共用；電話 `+886 2 5556 1313` 已在 `phone_equivalents`，地址 `台北市松山區民生東路三段158號6樓` = `distributor.address`；第二章、第四章都沒有受託機構電話（`distributor_phone_ch4` 交 `absent`） |
-| 發行機構名稱 | 第一章 3.(1)；第二章 1.(1)(a) | 新增 `issuer_name.bbva = "荷蘭商BBVA GLOBAL MARKETS, B.V."`；第一章寫 `BBVA GLOBAL MARKETS, B.V.`（沒有「荷蘭商」）也算一致（§3.6）；第 1 頁沒有發行機構名稱欄（`issuer_name_cover` 交 `absent`，不報缺漏） |
-| 保證機構、總代理人名稱 | — | **不核對**：不設 `guarantor_name.bbva`、`agent_name.bbva`（2026-10-15 確認） |
+| 發行機構名稱 | 第一章 3.(1)；第二章 1.(1)(a) | 新增 `issuer.bbva.issuer_name = "荷蘭商BBVA GLOBAL MARKETS, B.V."`；第一章寫 `BBVA GLOBAL MARKETS, B.V.`（沒有「荷蘭商」）也算一致（§3.6）；第 1 頁沒有發行機構名稱欄（`issuer_name_cover` 交 `absent`，不報缺漏） |
+| 保證機構、總代理人名稱 | — | **不核對**：不設 `issuer.bbva.guarantor_name`、`issuer.bbva.agent_name`（2026-10-15 確認） |
 | 固定風險警語、風險等級 | 第 1 頁警語 (1)、第一章第 2 項、第三章 5.(1) | **GS 版本、說明書 3 次**（§3.6）；風險等級預設 `【RR4】` |
 | 禁用語「受託投資」 | 全文 | 共用：警語 (7) 與第三章 `受託投資或受託買賣` 是允許片語；**第四章 7. `受託投資本商品之總金額`** 不加允許片語，依 Issue #247 交易日特例（交易日 ≤ 2026-10-30 通過並註明，之後判不一致；2026-10-15 確認） |
-| 商品中英文名稱 | 第 1 頁 4.、5. | 新增 `product_name.bbva`（§3.6）；第一章第 1 項中文名稱另由 BBVA 專屬規則核對（§3.5） |
-| 商品種類 | 第 1 頁 6. | 新增 `product_type.bbva = "股權連結結構型商品"`（同 BNP、JPM、Natixis） |
-| 發行不成立門檻 | — | 範本沒有門檻：不設 `minimum_issue_size.bbva` |
+| 商品中英文名稱 | 第 1 頁 4.、5. | 新增 `issuer.bbva.product_name`（§3.6）；第一章第 1 項中文名稱另由 BBVA 專屬規則核對（§3.5） |
+| 商品種類 | 第 1 頁 6. | 新增 `issuer.bbva.product_type = "股權連結結構型商品"`（同 BNP、JPM、Natixis） |
+| 發行不成立門檻 | — | 範本沒有門檻：不設 `issuer.bbva.minimum_issue_size` |
 | 費率 | 第四章 2. 費用表 | 共用（申購、提前贖回、分銷皆 `0%~5%`；分銷費用取 `費用` 子列，依座標讀，同 GS） |
 | 發行價格 | 第四章 5. `發行價格(商品面額的100%)` | 共用 `issue_price.pct`（範本沒有獨立欄位，這 1 處為 `issue_price_pct`，同 GS；`issue_price_others` 交 `absent`；不符轉人工覆核） |
 | 面額預設值、刊印日期 | 第四章 4.(1)；第 2 頁末 `產品說明書刊印日期` | 共用（`print_dates` 1 個） |
@@ -102,21 +102,21 @@
 
 ### 3.6 固定警語與名稱（審查標準 BBVA 設定）
 
-**固定風險警語**（`risk.fixed_warning_by_issuer.bbva`，2026-10-15 確認視為正確）：= **GS 版本**（逐字相同）：有【】（`【RR4】`、`【證券交易所交易證券】`）、有「*」、4 處 `受託或銷售機構`、**沒有 OSU 客戶段**，結尾 `…投資本商品之專業投資人(以下稱「投資人」)。`。5 份第 1 頁警語 (1)、第一章第 2 項、第三章 5.(1)、投資人須知警語 1. 與二、 1.(3) 逐字相同（忽略空白）。
+**固定風險警語**（`issuer.bbva.fixed_warning`，2026-10-15 確認視為正確）：= **GS 版本**（逐字相同）：有【】（`【RR4】`、`【證券交易所交易證券】`）、有「*」、4 處 `受託或銷售機構`、**沒有 OSU 客戶段**，結尾 `…投資本商品之專業投資人(以下稱「投資人」)。`。5 份第 1 頁警語 (1)、第一章第 2 項、第三章 5.(1)、投資人須知警語 1. 與二、 1.(3) 逐字相同（忽略空白）。
 
-- 說明書 **3 次**（沿用 `risk.fixed_warning_occurrences = 3`）；投資人須知 2 次（`iis.fixed_warning_occurrences.bbva = 2`）。
+- 說明書 **3 次**（沿用 `risk.fixed_warning_occurrences = 3`）；投資人須知 2 次（`issuer.bbva.iis_fixed_warning_occurrences = 2`）。
 - 只數完全相同的段落：BV1 第三章 5.(1) 之後多貼的一段（開頭多 `本商品風險程度:`、結尾少句號）不算次數，**也不另外判錯**（2026-10-15 確認）。
-- 風險等級預設寫法 `【{level}】`（不需要 `risk.level_formats.bbva`）。
+- 風險等級預設寫法 `【{level}】`（不需要 `issuer.bbva.risk_level_formats`）。
 - 設定上可直接複製 GS 字串成 `bbva`，或實作時讓 `bbva` 參照 GS 版本（實作時決定，不改 GS）。
 
-**商品名稱樣板**（`product_name.bbva`，5 份全部符合；2026-10-15 確認）：
+**商品名稱樣板**（`issuer.bbva.product_name`，5 份全部符合；2026-10-15 確認）：
 
 - 中文：`BBVA GLOBAL MARKETS, B.V. {tenor} 個月期{ccy_zh}計價自動提前贖回連結一籃子股票結構型商品 (無擔保及不保本)`。
 - 英文：`BBVA GLOBAL MARKETS, B.V. {ccy} {tenor}-month Autocallable Basket of Equity Linked Notes (Non Principal Guaranteed and Unsecured)`（`Non Principal` 沒有連字號，第 1 頁與投資人須知相同）。
 - **只有天期、幣別兩個佔位符**：不分標的數（單一標的 BV3 也寫「一籃子」／`Basket of`）、記憶式、KO／KI 型態、Non-Call。`memory_zh`／`memory_en` 設空字串。
 - 中文截到 `(下稱「本商品」)` 之前、英文截到 `(the "Product")` 之前；中文、英文都忽略空白（`ignore_whitespace_en = true`）、括號統一（`normalize_brackets = true`）。
 
-**發行機構名稱**（`issuer_name.bbva`）：`荷蘭商BBVA GLOBAL MARKETS, B.V.`（第二章 1.(1)(a)、投資人須知一、 1.）；第一章 3.(1) 寫 `BBVA GLOBAL MARKETS, B.V.`（沒有「荷蘭商」）也算一致（2026-10-15 確認）。實作：parser 讀第一章 3.(1) 時沒有「荷蘭商」就補上再交出 `issuer_name_ch1`（證據保留原文），和固定值比；其他出處仍須等於固定值。第 1 頁沒有發行機構名稱欄，`issuer_name_cover` 交 `absent`，共用規則對不適用的出處不產生結果。2026-10-15 確認 BBVA 只有這一個發行主體；其他寫法判不一致或轉人工覆核。
+**發行機構名稱**（`issuer.bbva.issuer_name`）：`荷蘭商BBVA GLOBAL MARKETS, B.V.`（第二章 1.(1)(a)、投資人須知一、 1.）；第一章 3.(1) 寫 `BBVA GLOBAL MARKETS, B.V.`（沒有「荷蘭商」）也算一致（2026-10-15 確認）。實作：parser 讀第一章 3.(1) 時沒有「荷蘭商」就補上再交出 `issuer_name_ch1`（證據保留原文），和固定值比；其他出處仍須等於固定值。第 1 頁沒有發行機構名稱欄，`issuer_name_cover` 交 `absent`，共用規則對不適用的出處不產生結果。2026-10-15 確認 BBVA 只有這一個發行主體；其他寫法判不一致或轉人工覆核。
 
 ### 3.7 情境分析（第一章第 16 項）
 
@@ -133,7 +133,7 @@
 ### 3.8 最低申購與贖回（2026-10-15 確認）
 
 - 第四章 4.(1) 每單位面額；(2) 最低申購金額、(3) 最低加購金額 `X幣別（相當於一單位面額）`（也有 `相當於1單位面額`）；8. `最低贖回金額為X幣別（每單位）`。
-- 不設 `min_amount_multiples.bbva`：三項倍數都是預設 1（5 份都是 1 單位，不分幣別）。
+- 不設 `issuer.bbva.min_amount_multiples`：三項倍數都是預設 1（5 份都是 1 單位，不分幣別）。
 - 錨點在第四章 4.、8. 的標籤之後（第一章第 19 項、投資人須知二、 3.(3) 的次級市場 `最低總額` 不是條件）。
 
 ### 3.9 核對範圍決定（2026-10-15，Issue #269）
@@ -195,7 +195,7 @@
 |---|---|
 | 說明書 | 上手登記（`issuers.py`）；BBVA `LayoutSpec`（`一、` 章名六章；頁底 `N/M` 排除；先轉 U+F900–FAFF 相容字）；範本辨識；`read` 交出全部標準欄位（`initial_pricing`、`issuer_name_cover`、`distributor_phone_ch4`、`issue_price_others` 交 `absent`；`subscription_dates` 1 筆；`min_amounts` 3 筆；KO D／P、KI AM／無）；§3.3–§3.8 |
 | 投資人須知 | `parsers/bbva_iis.py`、`IisTemplate`（頁底 `N/4` 的 `page_totals`；沒有刊印日期）；開始受理贖回日期 = 說明書（D36，比照 MS、Citi 的範本專屬規則）；P 型每期配息率與天數慣例 = 說明書；[投資人須知核對規則](iis-check-rules.md) BBVA 欄 |
-| 共用設定 | 審查標準 BBVA 分節（`fixed_warning_by_issuer.bbva`、`product_name.bbva`、`issuer_name.bbva`、`product_type.bbva`、`iis.fixed_warning_occurrences.bbva = 2`）；`config/reference_sheet.toml` 的 `[issuer_values] BBVA = "BBVA"` 與 `[underlyings] any_order_issuers` 加 `BBVA` |
+| 共用設定 | 審查標準 BBVA 分節（`fixed_warning_by_issuer.bbva`、`issuer.bbva.product_name`、`issuer.bbva.issuer_name`、`issuer.bbva.product_type`、`issuer.bbva.iis_fixed_warning_occurrences = 2`）；`config/reference_sheet.toml` 的 `[issuer_values] BBVA = "BBVA"` 與 `[underlyings] any_order_issuers` 加 `BBVA` |
 
 要有合成 PDF 測試（KO D 記憶式／非記憶式、KO P 記憶式、KI 無／AM、單一／多標的、JPY 計價美股標的、VWAP、標的順序和表上不同、第 1 頁有無受託機構明細、相容字章名、價格表欄序 KO → K → KI、分銷費用子列）、本機 5 份真實樣本測試（`tests/checker/test_real_bbva.py`，結果與 §5 一致：BV3 到期日判不一致、該組不回填；其餘 4 組通過並回填），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura、GS、Natixis 樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變。
 

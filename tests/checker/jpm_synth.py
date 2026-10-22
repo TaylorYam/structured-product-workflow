@@ -24,12 +24,12 @@ from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
 from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
 
-NAME = STANDARD["product_name"]["jpm"]
-WARNING = STANDARD["risk"]["fixed_warning_by_issuer"]["jpm"]
-ISSUER = STANDARD["issuer_name"]["jpm"]
-GUARANTOR = STANDARD["guarantor_name"]["jpm"]
-AGENT = STANDARD["agent_name"]["jpm"]["cover"]
-PRODUCT_TYPE = STANDARD["product_type"]["jpm"]
+NAME = STANDARD["issuer"]["jpm"]["product_name"]
+WARNING = STANDARD["issuer"]["jpm"]["fixed_warning"]
+ISSUER = STANDARD["issuer"]["jpm"]["issuer_name"]
+GUARANTOR = STANDARD["issuer"]["jpm"]["guarantor_name"]
+AGENT = STANDARD["issuer"]["jpm"]["agent_name"]["cover"]
+PRODUCT_TYPE = STANDARD["issuer"]["jpm"]["product_type"]
 DIST = STANDARD["distributor"]
 PHONE = "+886 2 5556 1313"  # 審查標準 phone_equivalents 的 JPM 封面寫法
 APPROVAL = dt.date(2026, 6, 11)

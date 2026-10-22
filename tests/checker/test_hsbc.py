@@ -355,7 +355,7 @@ def test_distributor_standard_difference(tmp_path, field, new, rule):
 
 def test_warning_risk_wording_and_name_rules(tmp_path):
 
-    warning = STANDARD["risk"]["fixed_warning_by_issuer"]["hsbc"]
+    warning = STANDARD["issuer"]["hsbc"]["fixed_warning"]
     r = check(tmp_path, edits=[Edit(warning, warning.replace("RR4", "RR3"), "ts")])
     assert any(x.rule_id == "standard.fixed_warning" and x.status == S.MISMATCH for x in r.results)
     assert any(x.rule_id == "standard.risk_level" and x.status == S.MISMATCH for x in r.results)

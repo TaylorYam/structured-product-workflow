@@ -106,13 +106,13 @@ class Spec(ProductSpec):
 
     @property
     def name(self):
-        return STANDARD["product_name"]["hsbc"]["zh"].format(
+        return STANDARD["issuer"]["hsbc"]["product_name"]["zh"].format(
             tenor=self.tenor, ccy_zh=self.currency_zh, memory_zh="記憶式" if self.memory else ""
         )
 
     @property
     def en(self):
-        return STANDARD["product_name"]["hsbc"]["en"].format(
+        return STANDARD["issuer"]["hsbc"]["product_name"]["en"].format(
             maxi_en="Maxi " if len(self.underlyings) > 1 else "",
             daily_en="Daily " if self.ko_obs == "D" else "",
             memory_en="Memory " if self.memory else "",
@@ -189,7 +189,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     line(f"商品英文名稱：{s.en}")
     line("商品種類：股權連結商品")
     line(f"計價幣別：{ccy}")
-    line("發行機構：" + STANDARD["issuer_name"]["hsbc"])
+    line("發行機構：" + STANDARD["issuer"]["hsbc"]["issuer_name"])
     line("電話：+852-0000-0000")
     line("[受託或銷售機構]審查通過之日期：2026年6月11日")
     line(f"(參考性審閱版)內容，刊印日期：{zh_date_tight(s.trade_date)}")
@@ -198,7 +198,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     line("電話：+886-2-5556-1313")
     line(STANDARD["distributor"]["address"])
     line("公會審查")
-    warning = STANDARD["risk"]["fixed_warning_by_issuer"]["hsbc"]
+    warning = STANDARD["issuer"]["hsbc"]["fixed_warning"]
     line(warning)
     chapter("一", "商品基本資料")
     for k in range(1, 32):
@@ -324,7 +324,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                     if i > 0:
                         line(f"平均年化報酬率(以簡單平均年化報酬率之方式計算)為{s.annual:.2f}%")
     chapter("二", "相關機構事業概況")
-    line("發行機構：(1)事業名稱：" + STANDARD["issuer_name"]["hsbc"].replace("（", "(").replace("）", ")"))
+    line("發行機構：(1)事業名稱：" + STANDARD["issuer"]["hsbc"]["issuer_name"].replace("（", "(").replace("）", ")"))
     line("受託或銷售機構：(a)事業名稱：" + STANDARD["distributor"]["name"] + "(b)電話：02-5556-1313")
     line(
         "(c)營業所在地：" + STANDARD["distributor"]["address"] + "(d)負責人姓名：" + STANDARD["distributor"]["chairman"]
@@ -365,8 +365,8 @@ def build_iis_pdf(
     `page_total` 改頁首「共 M 頁」的 M。`used` 給 `build_pdf` 用：換到的改字記在呼叫端的 set，由它檢查；省略時這裡自己檢查。"""
     w = PdfWriter(edits, kind="iis", used=used)
     dist, addr = STANDARD["distributor"]["name"], STANDARD["distributor"]["address"]
-    warning = STANDARD["risk"]["fixed_warning_by_issuer"]["hsbc"]
-    issuer = STANDARD["issuer_name"]["hsbc"].split("（")[0]
+    warning = STANDARD["issuer"]["hsbc"]["fixed_warning"]
+    issuer = STANDARD["issuer"]["hsbc"]["issuer_name"].split("（")[0]
     short = s.name.replace("（以下簡稱「本商品」）", "").replace("（", "(").replace("）", ")")
     names = [u.name for u in s.underlyings]
     tickers = [u.ticker for u in s.underlyings]

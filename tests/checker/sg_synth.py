@@ -24,19 +24,20 @@ from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
 from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
 
-NAME = STANDARD["product_name"]["sg"]
-WARNING = STANDARD["risk"]["fixed_warning_by_issuer"]["sg"]
-WARNING_CH1 = STANDARD["risk"]["fixed_warning_variants"]["sg"][0]
-ISSUER = STANDARD["issuer_name"]["sg"]
-GUARANTOR = STANDARD["guarantor_name"]["sg"]
-AGENT = STANDARD["agent_name"]["sg"]
-PRODUCT_TYPE = STANDARD["product_type"]["sg"]
-MULTIPLES = STANDARD["min_amount_multiples"]["sg"]
+NAME = STANDARD["issuer"]["sg"]["product_name"]
+WARNING = STANDARD["issuer"]["sg"]["fixed_warning"]
+WARNING_CH1 = STANDARD["issuer"]["sg"]["fixed_warning_variants"][0]
+ISSUER = STANDARD["issuer"]["sg"]["issuer_name"]
+GUARANTOR = STANDARD["issuer"]["sg"]["guarantor_name"]
+AGENT = STANDARD["issuer"]["sg"]["agent_name"]
+PRODUCT_TYPE = STANDARD["issuer"]["sg"]["product_type"]
+MULTIPLES = STANDARD["issuer"]["sg"]["min_amount_multiples"]
 DIST = STANDARD["distributor"]
 PHONE = "+886 2 5556 1313"  # 審查標準 phone_equivalents 的 SG 寫法
 ADDRESS_COVER = "台北市松山區民生東路3段158號6樓"  # 審查標準 address_equivalents 的 SG 封面寫法
 DIST_SHORT = "玉山證券"  # 審查標準 name_equivalents 的 SG 第二章寫法
-GUARANTOR_ORG = STANDARD["guarantor_name_equivalents"]["sg"][0]  # 投資人須知相關機構壹 2. 的寫法（英文名沒有括號）
+# 投資人須知相關機構壹 2. 的寫法（英文名沒有括號）
+GUARANTOR_ORG = STANDARD["issuer"]["sg"]["guarantor_name_equivalents"][0]
 AGENT_SHORT = "法商法國興業銀行台北分行"  # 投資人須知警語六、伍 4. 的總代理人簡稱（不核對）
 APPROVAL = dt.date(2026, 6, 11)
 ZH = "一二三四五六七八九十"

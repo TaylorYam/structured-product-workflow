@@ -29,7 +29,7 @@ pytestmark = [
     requires(TERM_SHEETS / "037*_TS.pdf", CHECK_FORMAT),
 ]
 PROBLEMS = (S.MISMATCH, S.REVIEW_REQUIRED, S.ERROR)
-WARNING = squash(STANDARD["risk"]["fixed_warning_by_issuer"]["sg"])
+WARNING = squash(STANDARD["issuer"]["sg"]["fixed_warning"])
 
 
 @pytest.fixture(scope="module")

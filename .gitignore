@@ -10,6 +10,7 @@ credentials.*
 # Local runtime data and databases
 /data/
 /runtime/
+/config/*.bak
 /.local/
 *.db
 *.sqlite

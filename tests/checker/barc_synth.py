@@ -33,7 +33,7 @@ from reference_synth import Q4, ProductSpec, build_reference_sheet, price, refer
 
 FIXED_WARNING = STANDARD["risk"]["fixed_warning"]
 DISTRIBUTOR = STANDARD["distributor"]
-ISSUER_NAME = STANDARD["issuer_name"]["barc"]
+ISSUER_NAME = STANDARD["issuer"]["barc"]["issuer_name"]
 FEES = dict(STANDARD["fees"])
 SYNTH_ISIN = "XS0000000000"  # 合成說明書封面的 ISIN
 APPROVAL_DATE = dt.date(2026, 6, 11)  # 封面受託或銷售機構審查通過之日期

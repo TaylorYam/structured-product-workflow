@@ -44,7 +44,7 @@
 | 年利率 `coupon_pa_pct` | 共用 `field.coupon_pa_pct` | 第 16 項基本假設 `年化配息率為y%` 的 y（說明書有年利率，不需要 `reference_fields`） |
 | 標的 `underlyings`、各標的價格 | 共用 `field.underlyings`、價格規則 | 代號取第 10 項；價格表只有中文名稱，第 n 列對第 10 項第 n 列；照順序比對（5 份順序相同，不加 `any_order_issuers`） |
 | 期初定價 `initial_pricing` | 共用 `field.initial_pricing` | 交 `absent`：不和說明書比，只檢查表上是允許值（2026-10-15 確認）；表上 `VWAP` 時價格欄照 Issue #122、#246 不比對、通過後覆寫（CA2） |
-| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 第四章 4. 兩筆（最低申購、最低累加申購）、8. 一筆（最低贖回）；倍數都是預設 1（不設 `min_amount_multiples.ca`） |
+| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 第四章 4. 兩筆（最低申購、最低累加申購）、8. 一筆（最低贖回）；倍數都是預設 1（不設 `issuer.ca.min_amount_multiples`） |
 | 金額旁的幣別 `currency_others` | 共用 `field.currency`（Issue #170） | 第一章第 6 項面額與發行價格 `即X幣別`；第四章 4.、8.；第 16 項基本假設 `每單位面額`、`初始投資金額`；情境一～三各金額（每個情境一筆：配息金額、累積配息，情境一、二另有贖回金額）；說明文字（Issue #319）：第 9 項 (c)、情境三 `以X支付剩餘金額`，第 15 項 (3)、第四章 9. `可能低於100%X投資本金`，第三章 1.(3) `X利率` 3 處，第三章 3.、4. `直接導致X投資本金損失之虞`（共 19 筆）。**價格表幣別字、情境三的股價、股數與剩餘金額算式所在的行不列入**（CA1 港股、CA4 歐元連美股；2026-10-15 確認） |
 
 ### 3.2 審查標準規則（共用 `rules/review_standard.py`）
@@ -54,13 +54,13 @@
 | 審查通過日期 | 封面 `●受託或銷售機構審查通過之日期：` | 共用（依交易日；5 份都是最新一筆） |
 | 受託機構負責人 | 第二章 3.(5) `(d) 負責人姓名：` | 共用 |
 | 受託機構名稱／電話／地址 | 封面 `● 受託或銷售機構之名稱、電話及地址：`；第二章 3.(5) `(a) 事業名稱：`、`(c) 營業所在地：`；名稱另有封面警語 4、（3 處）、5、、6、，第三章 6.(4) 前兩處、6.(5)，第二章 4. 交易架構 2 處（`distributor_names_others`，Issue #319） | 共用（IS＋OOS 25 份都 = 設定檔標準寫法）；第二章、第四章沒有受託機構電話（`distributor_phone_ch4` 交 `absent`）；地址、負責人沒有其他出處；第三章 6.(4) 第三處的錯字不核對（§2） |
-| 發行機構名稱 | 封面 `● 發行機構名稱及註冊辦公地點`；第一章第 3 項；第二章 1.(1) | 新增 `issuer_name.ca = "Crédit Agricole CIB Financial Solutions"`（只有英文，三處相同） |
-| 保證機構、總代理人名稱 | — | **不核對**：不設 `guarantor_name.ca`、`agent_name.ca`（2026-10-15 確認） |
-| 固定風險警語、風險等級 | 封面警語 1、第一章第 2 項、第三章 6.(1) | **CA 版本、說明書 3 次**（§3.6）；風險等級 `【RR4】` 與第一章第 2 項沒有【】的寫法（`risk.level_formats.ca`） |
+| 發行機構名稱 | 封面 `● 發行機構名稱及註冊辦公地點`；第一章第 3 項；第二章 1.(1) | 新增 `issuer.ca.issuer_name = "Crédit Agricole CIB Financial Solutions"`（只有英文，三處相同） |
+| 保證機構、總代理人名稱 | — | **不核對**：不設 `issuer.ca.guarantor_name`、`issuer.ca.agent_name`（2026-10-15 確認） |
+| 固定風險警語、風險等級 | 封面警語 1、第一章第 2 項、第三章 6.(1) | **CA 版本、說明書 3 次**（§3.6）；風險等級 `【RR4】` 與第一章第 2 項沒有【】的寫法（`issuer.ca.risk_level_formats`） |
 | 禁用語「受託投資」 | 全文 | 共用；**新增允許片語 5 個**（§3.6；所有上手生效） |
-| 商品中英文名稱 | 封面 `商品中文名稱`、`商品英文名稱` | 新增 `product_name.ca`（§3.6）；第一章第 1 項另由 CA 專屬規則核對（§3.5） |
-| 商品種類 | 封面 `● 商品種類：` | 新增 `product_type.ca = "股權連結結構型商品"`（同 BBVA、BNP、JPM、Natixis） |
-| 發行不成立門檻 | — | **不核對**：不設 `minimum_issue_size.ca`（2026-10-15 確認） |
+| 商品中英文名稱 | 封面 `商品中文名稱`、`商品英文名稱` | 新增 `issuer.ca.product_name`（§3.6）；第一章第 1 項另由 CA 專屬規則核對（§3.5） |
+| 商品種類 | 封面 `● 商品種類：` | 新增 `issuer.ca.product_type = "股權連結結構型商品"`（同 BBVA、BNP、JPM、Natixis） |
+| 發行不成立門檻 | — | **不核對**：不設 `issuer.ca.minimum_issue_size`（2026-10-15 確認） |
 | 費率 | 第四章 2. 費用表 | 共用（申購、提前贖回、分銷皆 `0%~5%`；分銷費用取 `費用` 子列，同 Citi 新文件） |
 | 發行價格 | 第一章第 6 項 `發行價格：每單位(張)商品面額的100%` | 共用 `issue_price.pct`（`issue_price_pct`；`issue_price_others` 0 筆；不符轉人工覆核） |
 | 面額預設值、刊印日期 | 第一章第 6 項；第 2 頁末 `● 中文產品說明書刊印日期：` | 共用（`print_dates` 1 個） |
@@ -102,20 +102,20 @@
 
 ### 3.6 固定警語、名稱與禁用語（審查標準 CA 設定）
 
-**固定風險警語**（`risk.fixed_warning_by_issuer.ca`，2026-10-15 確認視為正確）：CA 版本 = HSBC 版（`【RR4】`、`【證券交易所交易證券】`、有 `*`、有 OSU 客戶段，結尾 `…(專業投資人與OSU客戶以下合稱「投資人」)。`），**5 處都寫 `受託或銷售機構`**（HSBC 第 5 處 `依受託機構審核適合投資本產品`，CA 寫 `依受託或銷售機構審核適合投資本產品`）。5 份封面警語 1、第三章 6.(1)、投資人須知警語 1. 逐字相同（忽略空白）。
+**固定風險警語**（`issuer.ca.fixed_warning`，2026-10-15 確認視為正確）：CA 版本 = HSBC 版（`【RR4】`、`【證券交易所交易證券】`、有 `*`、有 OSU 客戶段，結尾 `…(專業投資人與OSU客戶以下合稱「投資人」)。`），**5 處都寫 `受託或銷售機構`**（HSBC 第 5 處 `依受託機構審核適合投資本產品`，CA 寫 `依受託或銷售機構審核適合投資本產品`）。5 份封面警語 1、第三章 6.(1)、投資人須知警語 1. 逐字相同（忽略空白）。
 
-- **第一章第 2 項是同一段去掉【】**（`風險程度等級為RR4`、`連結標的為證券交易所交易證券`、`歸類為RR4`），也算一次：登記為 `risk.fixed_warning_variants.ca`（同 SG 第一章第 2 項的作法）。
-- 說明書 **3 次**（沿用 `risk.fixed_warning_occurrences = 3`，主版本 2 次＋變體 1 次）；投資人須知 **1 次**（`iis.fixed_warning_occurrences.ca = 1`）。
-- 風險等級寫法 `risk.level_formats.ca = ["【{level}】", "風險程度等級為{level}", "歸類為{level}", "本商品風險等級為{level}"]`（封面、第三章、投資人須知警語 1. 有【】；說明書第一章第 2 項沒有【】；投資人須知二、1.(3) `本商品風險等級為RR4`；2026-10-15 確認都核對 = RR4）。
+- **第一章第 2 項是同一段去掉【】**（`風險程度等級為RR4`、`連結標的為證券交易所交易證券`、`歸類為RR4`），也算一次：登記為 `issuer.ca.fixed_warning_variants`（同 SG 第一章第 2 項的作法）。
+- 說明書 **3 次**（沿用 `risk.fixed_warning_occurrences = 3`，主版本 2 次＋變體 1 次）；投資人須知 **1 次**（`issuer.ca.iis_fixed_warning_occurrences = 1`）。
+- 風險等級寫法 `issuer.ca.risk_level_formats = ["【{level}】", "風險程度等級為{level}", "歸類為{level}", "本商品風險等級為{level}"]`（封面、第三章、投資人須知警語 1. 有【】；說明書第一章第 2 項沒有【】；投資人須知二、1.(3) `本商品風險等級為RR4`；2026-10-15 確認都核對 = RR4）。
 
-**商品名稱樣板**（`product_name.ca`，5 份全部符合；2026-10-15 確認）：
+**商品名稱樣板**（`issuer.ca.product_name`，5 份全部符合；2026-10-15 確認）：
 
 - 中文：`Crédit Agricole CIB Financial Solutions {tenor} 個月{ccy_zh}計價固定配息自動提前出場結構型商品(無擔保) (不保本)`。
 - 英文：`Crédit Agricole CIB Financial Solutions {ccy} {tenor}-Month Fixed Coupon Autocall Note (Unsecured)(Non-principal protected)`。
 - **只有天期、幣別兩個佔位符**：不分標的數、記憶式、KO／KI 型態、Non-Call。`memory_zh`／`memory_en` 設空字串。
 - 名稱截到 `(ISIN：` 之前（`(ISIN：…)` 不算名稱，ISIN 另外比對）；中文、英文都忽略空白（`ignore_whitespace_en = true`）、括號統一（`normalize_brackets = true`）。
 
-**發行機構名稱**（`issuer_name.ca`）：`Crédit Agricole CIB Financial Solutions`；封面、第一章第 3 項、第二章 1.(1)、投資人須知一、1. 都只寫英文。2026-10-15 確認 CA 只有這一個發行主體；其他寫法判不一致或轉人工覆核。
+**發行機構名稱**（`issuer.ca.issuer_name`）：`Crédit Agricole CIB Financial Solutions`；封面、第一章第 3 項、第二章 1.(1)、投資人須知一、1. 都只寫英文。2026-10-15 確認 CA 只有這一個發行主體；其他寫法判不一致或轉人工覆核。
 
 **禁用語允許片語**（`wording.allowed_phrases`，2026-10-15 確認加入，不走 #247 特例；所有上手生效）：
 
@@ -151,7 +151,7 @@
 
 - 第四章 4. `最低申購金額： X幣別(相當於一單位(張)商品)`、`最低累加申購金額：商品面額X幣別(相當於一單位(張)商品)`：最低申購、最低加購 = X。
 - 第四章 8. `最低贖回金額或單位(張)數：不得小於X幣別(相當於一單位(張)商品)…`：最低贖回 = X。
-- 不設 `min_amount_multiples.ca`：三項倍數都是預設 1（5 份都是 1 單位，不分幣別）。
+- 不設 `issuer.ca.min_amount_multiples`：三項倍數都是預設 1（5 份都是 1 單位，不分幣別）。
 
 ### 3.9 核對範圍決定（2026-10-15，Issue #274）
 
@@ -232,7 +232,7 @@
 |---|---|
 | 說明書 | 上手登記（`issuers.py`）；CA `LayoutSpec`（`第一章、` 章名七章；頁底 `第N 頁，共M頁` 排除；CJK 相容字 NFKC）；範本辨識；`read` 交出全部標準欄位（`initial_pricing`、`distributor_phone_ch4` 交 `absent`；`subscription_dates` 2 筆；`min_amounts` 3 筆；`issue_price_others` 0 筆；KO D／P、KI AM／D／無）；§3.3–§3.8 |
 | 投資人須知 | `parsers/ca_iis.py`、`IisTemplate`（頁底 `第N頁，共M頁` 的 `page_totals`；CJK 相容字 NFKC 同 `gs_iis`）；[投資人須知核對規則](iis-check-rules.md) CA 欄 |
-| 共用設定 | 審查標準 CA 分節（`fixed_warning_by_issuer.ca`、`fixed_warning_variants.ca`、`level_formats.ca`、`product_name.ca`、`issuer_name.ca`、`product_type.ca`、`iis.fixed_warning_occurrences.ca = 1`）；`wording.allowed_phrases` 加 5 個片語；`config/reference_sheet.toml` 的 `[issuer_values] CA = "CA"` |
+| 共用設定 | 審查標準 CA 分節（`fixed_warning_by_issuer.ca`、`fixed_warning_variants.ca`、`level_formats.ca`、`issuer.ca.product_name`、`issuer.ca.issuer_name`、`issuer.ca.product_type`、`issuer.ca.iis_fixed_warning_occurrences = 1`）；`wording.allowed_phrases` 加 5 個片語；`config/reference_sheet.toml` 的 `[issuer_values] CA = "CA"` |
 
 要有合成 PDF 測試（KO P 記憶式、KO P Non-Call = 天期（觀察日表 1 列）、KO D 記憶式／非記憶式、KI 無／AM／D、單一／多標的、EUR 連美股、JPY、非整數 K %、VWAP、價格表幣別字拆行、欄序 K → KI → KO、投資人須知相容字「年」）、本機 5 份真實樣本測試（`tests/checker/test_real_ca.py`，結果與 §5 一致：5 組都通過並回填），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura、GS、Natixis（及 BBVA）樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變（允許片語新增造成的改變要逐份列出，預期沒有）。
 

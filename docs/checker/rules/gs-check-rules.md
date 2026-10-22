@@ -39,7 +39,7 @@
 | 年利率 `coupon_pa_pct` | 共用 `field.coupon_pa_pct` | 第 14 項 `年利率X% / 12` 的 X（說明書有年利率，不需要 `reference_fields`） |
 | 標的 `underlyings`、各標的價格 | 共用 `field.underlyings`、價格規則 | **依代號配對、不看順序**（`any_order_issuers` 加 `GS`，同 Citi、JPM）；彭博代碼去掉 ` Equity` |
 | 期初定價 `initial_pricing` | 共用 `field.initial_pricing` | 第 15 項 `初始參考價格` 一句（範本規格 §4.7；收盤價是間接寫法）；表上空白時照 Issue #246（VWAP 才不比價格） |
-| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 第四章 4.、8.(2) 寫**單位數**，parser 換算成金額（§3.8）；倍數依幣別 `min_amount_multiples.gs` |
+| 最低金額 `min_amounts` | 共用 `field.min_amounts` | 第四章 4.、8.(2) 寫**單位數**，parser 換算成金額（§3.8）；倍數依幣別 `issuer.gs.min_amount_multiples` |
 | 金額旁的幣別 `currency_others` | 共用 `field.currency`（Issue #170） | 第一章第 6 項面額；第四章 4. `每一單位為`、5. `每單位面額（…）` 各一筆。Issue #317 加上重複寫出的面額、說明文字、通路服務費說明與情境金額的幣別字（§3.10）。價格表價格、情境 4 價格段不列入 |
 | 期初定價 `VWAP` 的價格 | 共用（Issue #122、#246） | 價格欄不比對、通過後依代號覆寫（GS3） |
 
@@ -50,13 +50,13 @@
 | 審查通過日期 | 第 1 頁第 12 項 | 共用（依交易日；5 份都在現有清單內） |
 | 受託機構負責人 | 第二章 3.(2)(iv) `負責人:` | 共用 |
 | 受託機構名稱／電話／地址 | 第 1 頁第 10 項；第二章 3.(2)(i)(iii) | 共用；電話 `+886 2 5556 1313` 已在 `phone_equivalents`；第 1 頁地址結尾 `(營業活動所在地)` 不屬於地址（同 HSBC、MS、JPM），去掉後 = `distributor.address`；第二章地址相同。第四章沒有受託機構電話（`distributor_phone_ch4` 交 `absent`） |
-| 發行機構全名 | 第 1 頁第 7 項；第一章第 3 項；第二章 1.(1) | 新增 `issuer_name.gs = "英商高盛國際公司（Goldman Sachs International）"`（三處相同；第一章第 3 項英文一字一行，忽略空白） |
-| 保證機構、總代理人名稱 | — | **不核對**：不設 `guarantor_name.gs`、`agent_name.gs`（2026-10-15 確認） |
+| 發行機構全名 | 第 1 頁第 7 項；第一章第 3 項；第二章 1.(1) | 新增 `issuer.gs.issuer_name = "英商高盛國際公司（Goldman Sachs International）"`（三處相同；第一章第 3 項英文一字一行，忽略空白） |
+| 保證機構、總代理人名稱 | — | **不核對**：不設 `issuer.gs.guarantor_name`、`issuer.gs.agent_name`（2026-10-15 確認） |
 | 固定風險警語、風險等級 | 第 1 頁 13.(1)、第一章第 2 項、第三章 5.(1) | **GS 版本、說明書 3 次**（§3.6）；風險等級為預設【RRn】寫法 |
 | 禁用語「受託投資」 | 全文 | 共用（說明書 5 份 0 次；投資人須知見[投資人須知核對規則](iis-check-rules.md) C26 與 Issue #247 的交易日特例） |
-| 商品中英文名稱 | 第 1 頁第 1、2 項 | 新增 `product_name.gs`（§3.6）；第一章第 1 項中文名稱另由 GS 專屬規則核對（§3.5） |
-| 商品種類 | 第 1 頁第 3 項 | 新增 `product_type.gs = "股權連結結構型債券"`（同 SG） |
-| 發行不成立門檻 | — | **不核對**：不設 `minimum_issue_size.gs`（2026-10-15 確認） |
+| 商品中英文名稱 | 第 1 頁第 1、2 項 | 新增 `issuer.gs.product_name`（§3.6）；第一章第 1 項中文名稱另由 GS 專屬規則核對（§3.5） |
+| 商品種類 | 第 1 頁第 3 項 | 新增 `issuer.gs.product_type = "股權連結結構型債券"`（同 SG） |
+| 發行不成立門檻 | — | **不核對**：不設 `issuer.gs.minimum_issue_size`（2026-10-15 確認） |
 | 費率 | 第四章 2. 費用表 | 共用（申購、提前贖回、分銷皆 `0%~5%`）；分銷費用取 `費用` 子列（同 Citi 新文件） |
 | 發行價格 | 第四章 5. `申購單位數 × 每單位面額（…）× 100%` | 共用 `issue_price.pct`（範本沒有「發行價格」欄位，以申購價金百分比為出處，1 處；不符轉人工覆核；2026-10-15 確認） |
 | 面額預設值、刊印日期 | 第一章第 6 項；第 2 頁末 | 共用（`print_dates` 1 個；`西元` 前綴要能讀） |
@@ -97,18 +97,18 @@
 
 ### 3.6 固定警語與名稱（審查標準 GS 設定）
 
-**固定風險警語**（`risk.fixed_warning_by_issuer.gs`，2026-10-15 確認視為正確）：GS 版本——有【】、有「*」，OSU 段以外的 4 處都寫 `受託或銷售機構`（共用版寫 `受託機構`；同 HSBC 版的前 4 處），**沒有 OSU 客戶段**（等於 HSBC 版去掉 OSU 段），結尾 `…受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人(以下稱「投資人」)。`（同 Citi 沒有 OSU 段的處理）。5 份第 1 頁 13.(1)、第一章第 2 項、第三章 5.(1)、投資人須知警語一逐字相同（忽略空白）。
+**固定風險警語**（`issuer.gs.fixed_warning`，2026-10-15 確認視為正確）：GS 版本——有【】、有「*」，OSU 段以外的 4 處都寫 `受託或銷售機構`（共用版寫 `受託機構`；同 HSBC 版的前 4 處），**沒有 OSU 客戶段**（等於 HSBC 版去掉 OSU 段），結尾 `…受託對象僅限依據境外結構型商品管理規則(下稱「管理規則」)投資本商品之專業投資人(以下稱「投資人」)。`（同 Citi 沒有 OSU 段的處理）。5 份第 1 頁 13.(1)、第一章第 2 項、第三章 5.(1)、投資人須知警語一逐字相同（忽略空白）。
 
-- 說明書 **3 次**（沿用 `risk.fixed_warning_occurrences = 3`，不需要上手別次數）；投資人須知 1 次（`iis.fixed_warning_occurrences.gs = 1`）。
-- 風險等級為預設【RRn】寫法（`風險程度等級為【RR4】`、`歸類為【RR4】`），不需要 `risk.level_formats.gs`。
+- 說明書 **3 次**（沿用 `risk.fixed_warning_occurrences = 3`，不需要上手別次數）；投資人須知 1 次（`issuer.gs.iis_fixed_warning_occurrences = 1`）。
+- 風險等級為預設【RRn】寫法（`風險程度等級為【RR4】`、`歸類為【RR4】`），不需要 `issuer.gs.risk_level_formats`。
 
-**商品名稱樣板**（`product_name.gs`，5 份全部符合；2026-10-15 確認）：
+**商品名稱樣板**（`issuer.gs.product_name`，5 份全部符合；2026-10-15 確認）：
 
 - 中文：`{tenor}個月英商高盛國際公司{ccy_zh}計價固定配息{memory_zh}自動提前出場股權連結結構型商品（無擔保）（不保本）`——`memory_zh = "記憶式"`。**不分 KI、標的數、Non-Call**。
 - 英文：`{tenor} Months {ccy} {memory_en}Autocallable Fixed Coupon Equity Linked Notes by Goldman Sachs International (Unsecured) (Non-principal protected)`——`memory_en = "Memory "`；`ccy_aliases = { CNH = "CNY" }`（同 SG）。
 - 名稱截到 `（TDCC`／`(TDCC Product Code` 之前；中文、英文都忽略空白（`ignore_whitespace_en = true`）。
 
-**發行機構全名**（`issuer_name.gs`）：`英商高盛國際公司（Goldman Sachs International）`；第 1 頁第 7 項、第一章第 3 項、第二章 1.(1) 三處相同。2026-10-15 確認 GS 目前只有這一個發行主體；其他寫法判不一致或轉人工覆核。投資人須知一. 1. 只寫中文，比中文部分（同 HSBC）。
+**發行機構全名**（`issuer.gs.issuer_name`）：`英商高盛國際公司（Goldman Sachs International）`；第 1 頁第 7 項、第一章第 3 項、第二章 1.(1) 三處相同。2026-10-15 確認 GS 目前只有這一個發行主體；其他寫法判不一致或轉人工覆核。投資人須知一. 1. 只寫中文，比中文部分（同 HSBC）。
 
 ### 3.7 情境分析（第一章第 17 項）
 
@@ -126,7 +126,7 @@
 
 - 第四章 4. `最低申購為N單位且其後增加單位應為一單位之倍數。每一單位為X幣別。`：parser 交出最低申購 = N × X、最低加購 = 1 × X（`每一單位` 的金額 X 也列入 `currency_others`）。
 - 第四章 8.(2) `每筆交易之最低贖回單位數為1單位，後續為一單位之倍數`：最低贖回、增加贖回單位 = 單位數 × 面額。
-- 審查標準 `min_amount_multiples.gs`：`minimum_subscription = { USD = 5, JPY = 1, CNH = 1 }`（其他幣別沒有樣本 → 轉人工覆核，同 SG 依幣別的寫法）、`minimum_additional = 1`、`minimum_redemption = 1`、`redemption_increment = 1`。
+- 審查標準 `issuer.gs.min_amount_multiples`：`minimum_subscription = { USD = 5, JPY = 1, CNH = 1 }`（其他幣別沒有樣本 → 轉人工覆核，同 SG 依幣別的寫法）、`minimum_additional = 1`、`minimum_redemption = 1`、`redemption_increment = 1`。
 - 交叉驗證：第 17 項 `最低申購單位數（N單位）` 的 N = 第四章 4. 的 N（`doc.scenario_units`）；任一邊讀不到轉人工覆核（Issue #294 起，原本判不一致）。
 
 ### 3.10 重複寫出的值（2026-10-16，Issue #317）
@@ -211,7 +211,7 @@
 |---|---|
 | 說明書 | 上手登記（`issuers.py`）；GS `LayoutSpec`（`第一章:` 章名六章、頁底 `第- N -頁，共M頁` 與右上角重複章名排除、第 1 頁 1–13 項與第一章 1–36(37) 項分開）；範本辨識；`read` 交出全部標準欄位（`distributor_phone_ch4`、`issue_price_others` 交 `absent`；`subscription_dates` 2 筆；`min_amounts` 由單位數換算；`initial_pricing` 依範本規格 §4.7）；§3.3–§3.8 |
 | 投資人須知 | `parsers/gs_iis.py`（先轉 CJK 相容字 U+F900–U+FAFF）、`IisTemplate`（頁底 `第- N -頁，共4頁` 的 `page_totals`；刊印日期在第 1 行）；`rules/gs_iis.py` 專屬核對重複天期 `iis.tenor_mentions` 與到期買回比例 `iis.redemption_pct`（Issue #317）；每月配息率用共用 `iis.monthly_coupon`；[投資人須知核對規則](iis-check-rules.md) GS 欄 |
-| 共用設定 | 審查標準 GS 分節（`fixed_warning_by_issuer.gs`、名稱樣板、`issuer_name.gs`、`product_type.gs`、`min_amount_multiples.gs`、`iis.fixed_warning_occurrences.gs`）；`config/reference_sheet.toml` 的 `[issuer_values] GS`、`[underlyings] any_order_issuers` 加 `GS` |
+| 共用設定 | 審查標準 GS 分節（`fixed_warning_by_issuer.gs`、名稱樣板、`issuer.gs.issuer_name`、`issuer.gs.product_type`、`issuer.gs.min_amount_multiples`、`issuer.gs.iis_fixed_warning_occurrences`）；`config/reference_sheet.toml` 的 `[issuer_values] GS`、`[underlyings] any_order_issuers` 加 `GS` |
 | 禁用語特例 | 依 Issue #247（PR #250，已合併）的共用設定 `wording.exempt_until`，GS 不另寫 |
 
 要有合成 PDF 測試（D 型記憶式／單一標的非記憶式、KI 無／AM／D、Non-Call 1／3、JPY、CNH（CNY 寫法）、VWAP 與開盤價、收盤價間接寫法、非整數 K %、頁底 `第- N -頁`、價格數字拆行、投資人須知相容字「利」）、本機 5 份真實樣本測試（`tests/checker/test_real_gs.py`，結果與 §5 一致：GS2 說明書與投資人須知因一檔價格疑似分割轉人工覆核，其餘 4 組通過並回填；投資人須知「受託投資」依 #247 特例通過），以及 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura 樣本的負面測試；既有上手的合成與本機真實樣本測試結果須不變。

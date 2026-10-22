@@ -22,10 +22,10 @@ from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
 from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
 
-NAME = STANDARD["product_name"]["ms"]
-WARNING = STANDARD["risk"]["fixed_warning_by_issuer"]["ms"]
-WARNING_CH1 = STANDARD["risk"]["fixed_warning_openings"]["ms"][0] + WARNING[WARNING.index("。") + 1 :] + "。"
-ISSUER = STANDARD["issuer_name"]["ms"]
+NAME = STANDARD["issuer"]["ms"]["product_name"]
+WARNING = STANDARD["issuer"]["ms"]["fixed_warning"]
+WARNING_CH1 = STANDARD["issuer"]["ms"]["fixed_warning_openings"][0] + WARNING[WARNING.index("。") + 1 :] + "。"
+ISSUER = STANDARD["issuer"]["ms"]["issuer_name"]
 DIST = STANDARD["distributor"]
 TRADE, ISSUE, APPROVAL = dt.date(2030, 1, 7), dt.date(2030, 1, 14), dt.date(2026, 6, 11)
 NUMERIC = set("0123456789,.")

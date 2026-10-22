@@ -107,11 +107,11 @@
 
 | 值 | 出處 | 注意 |
 |---|---|---|
-| 固定警語（Natixis 版本） | 警語 (1)、貳 1. 商品簡介（2 次） | 比對用審查標準 `risk.fixed_warning_by_issuer.natixis`；投資人須知次數 `iis.fixed_warning_occurrences.natixis = 2` |
-| 風險等級 | 兩段固定警語內的 `風險程度等級為[RR4]`、`歸類為[RR4]`（共 4 處） | 依 `risk.level_formats.natixis`（半形方括號，同 BNP）；沒有另寫 `本商品風險程度：RR4` |
+| 固定警語（Natixis 版本） | 警語 (1)、貳 1. 商品簡介（2 次） | 比對用審查標準 `issuer.natixis.fixed_warning`；投資人須知次數 `issuer.natixis.iis_fixed_warning_occurrences = 2` |
+| 風險等級 | 兩段固定警語內的 `風險程度等級為[RR4]`、`歸類為[RR4]`（共 4 處） | 依 `issuer.natixis.risk_level_formats`（半形方括號，同 BNP）；沒有另寫 `本商品風險程度：RR4` |
 | 受託機構名稱 | 壹 4.（1 處全名） | 警語 (5) 1 處、(6) 2 處的全名每處都算名稱出處（Issue #306） |
 | 受託機構地址 | 壹 4. `(地址：…)` | 8 份 = `台北市民生東路三段158號6樓`（`address_equivalents`） |
-| 發行機構名稱 | 壹 1. | **只寫中文** `法國外貿銀行` = `issuer_name.natixis`；警語 (5)～(7) 與叁的名稱不算出處 |
+| 發行機構名稱 | 壹 1. | **只寫中文** `法國外貿銀行` = `issuer.natixis.issuer_name`；警語 (5)～(7) 與叁的名稱不算出處 |
 | 發行人、保證機構 | 壹 2.、3.；警語 (5)(6) | 不核對（2026-10-15 確認） |
 | 商品代號、ISIN | 第 1 頁 `TDCC商品代號為`、`ISIN為` | 各 1 處；代號 = 檔名前 12 碼 |
 | 最低申購金額 | 貳 1. `●最低申購金額：1單位商品面額，即X幣別` | 取 `即` 後的金額 = 說明書第四章 4. |

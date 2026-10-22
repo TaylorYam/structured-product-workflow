@@ -18,8 +18,13 @@ from pdf_writer import Edit
 from reference_synth import build_reference_sheet, reference_row
 
 BARC_WARNING = STANDARD["risk"]["fixed_warning"]
-HSBC_WARNING = STANDARD["risk"]["fixed_warning_by_issuer"]["hsbc"]
+HSBC_WARNING = STANDARD["issuer"]["hsbc"]["fixed_warning"]
 PHONE = STANDARD["distributor"]["phone"]
+# 設定檢查用的上手表寫法：每家上手一張表後同一個欄位名稱各家都有，取只有該上手才有的寫法（Issue #128）
+MS_LEVELS = 'risk_level_formats = ["風險程度等級為{level}", "風險程度為'
+MS_IGNORE = 'issuer_name_ignore = ["brackets", "'
+MS_OPENING = 'fixed_warning_openings = ["本商品風險程度為RR4'
+NOMURA_COUNT = "Issue #239）。\nfixed_warning_occurrences = "
 
 
 def sub(tmp_path: Path, name: str) -> Path:
@@ -92,7 +97,7 @@ def test_unknown_product_name_placeholder_is_a_batch_config_error(tmp_path):
         load_config(review_standard=standard)
     err = raised.value
     assert err.reason_code == "config_invalid"
-    assert "fancy_en" in str(err) and "product_name.hsbc" in str(err)
+    assert "fancy_en" in str(err) and "issuer.hsbc.product_name" in str(err)
 
 
 def test_product_name_placeholders_are_filled_from_the_document_for_any_issuer(tmp_path):
@@ -143,7 +148,7 @@ def test_months_templates_take_the_singular_for_one_month(issuer, one, three):
 
 
 def test_missing_issuer_name_requires_review(tmp_path):
-    standard = standard_with(tmp_path, '\nhsbc = "香港商', '\nfake = "香港商')
+    standard = standard_with(tmp_path, '\nissuer_name = "香港商', '\n# issuer_name = "香港商')
     report = check_hsbc(tmp_path, standard=standard)
     for r in results(report, "standard.issuer_name"):
         assert (r.status, r.reason_code) == (REVIEW, "standard_missing")
@@ -184,24 +189,28 @@ def test_phone_form_not_listed_in_standard_is_mismatch(tmp_path):
     "old,new,where",
     [
         ('basket_en = "Worst of Shares and/or ETFs"\n', "", "basket_en"),
-        ('ms = ["風險程度等級為{level}"', 'ms = ["風險程度等級為RRn"', "risk.level_formats.ms"),
-        ('ms = ["brackets", "trailing_period"]', 'ms = ["brackets", "commas"]', "issuer_name_ignore.ms"),
-        ('ms = ["本商品風險程度為RR4。"]', 'ms = ["本商品風險程度為RR4"]', "risk.fixed_warning_openings.ms"),
-        ('ms = ["本商品風險程度為RR4。"]', 'ms = ["本商品風險程度等級為RR4。"]', "risk.fixed_warning_openings.ms"),
+        (f'{MS_LEVELS}{{level}}"', f'{MS_LEVELS}RRn"', "issuer.ms.risk_level_formats"),
+        (f"{MS_IGNORE}trailing_period", f"{MS_IGNORE}commas", "issuer.ms.issuer_name_ignore"),
+        (f'{MS_OPENING}。"]', f'{MS_OPENING}"]', "issuer.ms.fixed_warning_openings"),
+        (
+            f'{MS_OPENING}。"]',
+            'fixed_warning_openings = ["本商品風險程度等級為RR4。"]',
+            "issuer.ms.fixed_warning_openings",
+        ),
         # SG 分節（Issue #194）：依幣別的倍數、固定警語其他寫法、英文名稱幣別代碼對照
         (
             "minimum_subscription = { USD = 10, JPY = 1, CNH = 1 }",
             "minimum_subscription = { USD = 10, JPY = 0, CNH = 1 }",
-            "min_amount_multiples.sg",
+            "issuer.sg.min_amount_multiples",
         ),
         (
             'autocall_en = "Autocallable "\nccy_aliases = { CNH = "CNY" }',  # SG 才有這兩行相連（BNP、GS 也有 ccy_aliases）
             'autocall_en = "Autocallable "\nccy_aliases = { CNH = 1 }',
-            "product_name.sg.ccy_aliases",
+            "issuer.sg.product_name.ccy_aliases",
         ),
         # Nomura 分節（Issue #239）：上手別說明書固定警語次數須是正整數
-        ("nomura = 2\n", "nomura = 0\n", "risk.fixed_warning_occurrences_by_issuer.nomura"),
-        ("nomura = 2\n", 'nomura = "2"\n', "risk.fixed_warning_occurrences_by_issuer.nomura"),
+        (f"{NOMURA_COUNT}2\n", f"{NOMURA_COUNT}0\n", "issuer.nomura.fixed_warning_occurrences"),
+        (f"{NOMURA_COUNT}2\n", f'{NOMURA_COUNT}"2"\n', "issuer.nomura.fixed_warning_occurrences"),
         # UBS 分節（Issue #279）：名稱用了 {ko_observation_*} 就要有每日與每期兩種寫法
         ('periodic_zh = "定期觀察"\n', "", "periodic_zh"),
     ],
@@ -214,9 +223,9 @@ def test_invalid_ms_review_standard_is_a_batch_config_error(tmp_path, old, new, 
 
 def test_issuer_name_ignores_apply_only_to_the_configured_issuer(tmp_path):
     """BARC 沒有設定 issuer_name_ignore：第二章少了括號仍是不一致。"""
-    plain = STANDARD["issuer_name"]["barc"].replace("（", "").replace("）", "")
+    plain = STANDARD["issuer"]["barc"]["issuer_name"].replace("（", "").replace("）", "")
     r = results(
-        check(tmp_path, edits=[Edit(STANDARD["issuer_name"]["barc"], plain, "ts.ch二.1")]),
+        check(tmp_path, edits=[Edit(STANDARD["issuer"]["barc"]["issuer_name"], plain, "ts.ch二.1")]),
         "standard.issuer_name",
         "issuer_name_ch2",
     )[0]

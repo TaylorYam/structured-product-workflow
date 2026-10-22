@@ -26,6 +26,7 @@ spw-panel = "sp_workflow.app:main"
 spw-db-migrate = "sp_workflow.database:migrate_main"
 fcn-batch = "fcn_checker.cli:main"
 fcn-panel = "fcn_checker.panel:main"
+fcn-config-migrate = "fcn_checker.config_migrate:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

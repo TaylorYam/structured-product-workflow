@@ -26,12 +26,12 @@ from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
 from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
 
-NAME = STANDARD["product_name"]["gs"]
-WARNING = STANDARD["risk"]["fixed_warning_by_issuer"]["gs"]
-ISSUER = STANDARD["issuer_name"]["gs"]
+NAME = STANDARD["issuer"]["gs"]["product_name"]
+WARNING = STANDARD["issuer"]["gs"]["fixed_warning"]
+ISSUER = STANDARD["issuer"]["gs"]["issuer_name"]
 ISSUER_ZH = ISSUER.split("（")[0]
-PRODUCT_TYPE = STANDARD["product_type"]["gs"]
-MULTIPLES = STANDARD["min_amount_multiples"]["gs"]["minimum_subscription"]
+PRODUCT_TYPE = STANDARD["issuer"]["gs"]["product_type"]
+MULTIPLES = STANDARD["issuer"]["gs"]["min_amount_multiples"]["minimum_subscription"]
 DIST = STANDARD["distributor"]
 PHONE = "+886 2 5556 1313"  # 審查標準 phone_equivalents 的 GS 寫法
 ADDRESS = DIST["address"]
@@ -117,7 +117,7 @@ class Spec(ProductSpec):
 
     @property
     def units(self) -> int:
-        """最低申購單位數（審查標準 min_amount_multiples.gs 依幣別）。"""
+        """最低申購單位數（審查標準 issuer.gs.min_amount_multiples 依幣別）。"""
         return MULTIPLES[self.ccy]
 
     @property

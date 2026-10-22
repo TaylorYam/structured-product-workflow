@@ -340,13 +340,13 @@ def test_review_standard_reads_product_name_per_issuer(tmp_path):
     text = REVIEW_STANDARD.read_text(encoding="utf-8")
     extra = tmp_path / "with_other.toml"
     extra.write_text(
-        text + '\n[product_name.fake]\nzh = "假{tenor}"\nen = "Fake {ccy}"\nmemory_zh = ""\nmemory_en = ""\n',
+        text + '\n[issuer.fake.product_name]\nzh = "假{tenor}"\nen = "Fake {ccy}"\nmemory_zh = ""\nmemory_en = ""\n',
         encoding="utf-8",
     )
     assert run(extra).status == PASS, "其他上手的名稱樣板不影響 BARC"
 
     missing = tmp_path / "without_barc.toml"
-    missing.write_text(text.replace("[product_name.barc]", "[product_name.fake]"), encoding="utf-8")
+    missing.write_text(text.replace("[issuer.barc.product_name]", "[issuer.fake.product_name]"), encoding="utf-8")
     report = run(missing)
     for field in ("name_zh", "name_en"):
         r = only(report, "standard.product_name", field)

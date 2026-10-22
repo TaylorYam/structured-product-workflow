@@ -222,12 +222,12 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
             ("issuer_name_org", "issuer_name_org", "相關機構第 1 點", r"1\.發行機構：(.+?)\(地址："),
         ),
     )
-    fields["guarantor_names"] = iis.occurrences(  # 全名 = guarantor_name.jpm.cover
+    fields["guarantor_names"] = iis.occurrences(  # 全名 = issuer.jpm.guarantor_name.cover
         "guarantor_names",
         ti,
         (("guarantor_name_org", "guarantor_name_org", "相關機構第 2 點", r"2\.保證機構：(.+?)\(地址："),),
     )
-    fields["guarantor_names_short"] = iis.occurrences(  # 簡稱 = guarantor_name.jpm.ch1
+    fields["guarantor_names_short"] = iis.occurrences(  # 簡稱 = issuer.jpm.guarantor_name.ch1
         "guarantor_names_short",
         ti,
         (

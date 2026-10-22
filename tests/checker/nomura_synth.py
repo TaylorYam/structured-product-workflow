@@ -27,13 +27,13 @@ from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import Edit, PdfWriter, require_used
 from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
 
-NAME = STANDARD["product_name"]["nomura"]
-WARNING = STANDARD["risk"]["fixed_warning_by_issuer"]["nomura"]
-ISSUER = STANDARD["issuer_name"]["nomura"]
-GUARANTOR = STANDARD["guarantor_name"]["nomura"]
-AGENT = STANDARD["agent_name"]["nomura"]
-PRODUCT_TYPE = STANDARD["product_type"]["nomura"]
-MINIMUM_ISSUE = STANDARD["minimum_issue_size"]["nomura"]
+NAME = STANDARD["issuer"]["nomura"]["product_name"]
+WARNING = STANDARD["issuer"]["nomura"]["fixed_warning"]
+ISSUER = STANDARD["issuer"]["nomura"]["issuer_name"]
+GUARANTOR = STANDARD["issuer"]["nomura"]["guarantor_name"]
+AGENT = STANDARD["issuer"]["nomura"]["agent_name"]
+PRODUCT_TYPE = STANDARD["issuer"]["nomura"]["product_type"]
+MINIMUM_ISSUE = STANDARD["issuer"]["nomura"]["minimum_issue_size"]
 DIST = STANDARD["distributor"]
 PHONE = "+886 2 5556 1313"  # 審查標準 phone_equivalents 的 Nomura 寫法
 ADDRESS = "台北市民生東路三段158號6樓"  # 審查標準 address_equivalents 的 Nomura 寫法

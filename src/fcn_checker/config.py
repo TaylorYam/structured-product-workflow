@@ -129,37 +129,21 @@ class ReviewStandard:
     distributor_name: str
     distributor_phone: str
     distributor_address: str
-    issuer_names: dict[str, str]  # 上手代號（小寫）→ 發行機構中英文法人全名
     fees: dict[str, str]  # 第四章費用項目 → 費率區間
     issue_price_pct: Decimal
     risk_level: str
-    fixed_warning: str
-    fixed_warning_occurrences: int  # 說明書的固定警語次數（沒有上手別設定的上手）
+    fixed_warning: str  # 共用的固定警語（上手表沒有 fixed_warning 時用）
+    fixed_warning_occurrences: int  # 說明書的固定警語次數（上手表沒有 fixed_warning_occurrences 時用）
     forbidden: tuple[str, ...]
     allowed_phrases: tuple[str, ...]
-    product_names: dict[str, ProductNameTemplate]  # 上手代號（小寫）→ 名稱樣板
     currency_zh_to_iso: dict[str, str]
     denomination: dict[str, int]
     iis_pages: int  # 投資人須知必須剛好的頁數
-    iis_fixed_warning_occurrences: dict[str, int]  # 上手代號（小寫）→ 固定警語在投資人須知出現的次數
-    fixed_warning_by_issuer: dict[str, str] = field(default_factory=dict)
-    # 上手代號（小寫）→ 固定警語在說明書出現的次數（risk.fixed_warning_occurrences_by_issuer；沒列出的上手用 fixed_warning_occurrences）
-    fixed_warning_occurrences_by_issuer: dict[str, int] = field(default_factory=dict)
+    # 上手代號（小寫）→ 該上手表 [issuer.<上手>] 已檢查過的欄位值（欄位與讀法見 ISSUER_FIELDS）
+    issuers: dict[str, dict[str, Any]] = field(default_factory=dict)
     distributor_phone_equivalents: tuple[str, ...] = ()
     distributor_address_equivalents: tuple[str, ...] = ()
     distributor_name_equivalents: tuple[str, ...] = ()
-    fixed_warning_openings: dict[str, tuple[str, ...]] = field(default_factory=dict)  # 上手 → 警語開頭句的其他寫法
-    risk_level_formats: dict[str, tuple[str, ...]] = field(default_factory=dict)  # 上手 → 風險等級寫法
-    issuer_name_ignore: dict[str, frozenset[str]] = field(default_factory=dict)  # 上手 → 全名比對另外忽略的差異
-    guarantor_names: dict[str, dict[str, str]] = field(default_factory=dict)  # 上手 → 出處 → 保證機構名稱
-    guarantor_name_equivalents: dict[str, tuple[str, ...]] = field(default_factory=dict)  # 上手 → 其他寫法
-    agent_names: dict[str, dict[str, str]] = field(default_factory=dict)  # 上手 → 出處 → 總代理人名稱
-    product_types: dict[str, str] = field(default_factory=dict)  # 上手 → 封面商品種類固定值
-    minimum_issue_sizes: dict[str, str] = field(default_factory=dict)  # 上手 → 發行不成立門檻寫法
-    # 上手 → 最低金額出處 → 倍數（或 {ISO 代碼: 倍數}）
-    min_amount_multiples: dict[str, dict[str, int | dict[str, int]]] = field(default_factory=dict)
-    # 上手 → 固定警語的其他完整寫法（整段逐字；SG 第一章 §2 的風險等級寫 [RRn]），每一處都算一次
-    fixed_warning_variants: dict[str, tuple[str, ...]] = field(default_factory=dict)
     # 交易日（參考條件表）在這天（含）以前的文件出現禁用語時特例通過（已通知上手改版，Issue #247）；None 不特例
     forbidden_exempt_until: dt.date | None = None
 
@@ -168,35 +152,36 @@ class ReviewStandard:
         return next((d for d in reversed(self.approval_dates) if d <= trade_date), None)
 
     def for_issuer(self, issuer: str) -> IssuerStandard:
-        key = issuer.lower()
-        warning = self.fixed_warning_by_issuer.get(key, self.fixed_warning)
+        """該上手適用的審查標準：上手表有的欄位用上手的值，沒有的用共用值或視為該上手沒有這項基準。"""
+        v = self.issuers.get(issuer.lower(), {})
+        warning = v.get("fixed_warning", self.fixed_warning)
         rest = warning[warning.find("。") + 1 :]  # 開頭句以後；有其他開頭寫法時載入已確認有句號
         return IssuerStandard(
             issuer=issuer,
             fixed_warning=warning,
             fixed_warnings=(
                 warning,
-                *(alt + rest for alt in self.fixed_warning_openings.get(key, ())),
-                *self.fixed_warning_variants.get(key, ()),
+                *(alt + rest for alt in v.get("fixed_warning_openings", ())),
+                *v.get("fixed_warning_variants", ()),
             ),
-            fixed_warning_occurrences=self.fixed_warning_occurrences_by_issuer.get(key, self.fixed_warning_occurrences),
-            risk_level_formats=self.risk_level_formats.get(key, ("【" + RISK_LEVEL + "】",)),
-            issuer_name=self.issuer_names.get(key),
-            issuer_name_ignore=self.issuer_name_ignore.get(key, frozenset()),
-            product_name=self.product_names.get(key),
+            fixed_warning_occurrences=v.get("fixed_warning_occurrences", self.fixed_warning_occurrences),
+            risk_level_formats=v.get("risk_level_formats", ("【" + RISK_LEVEL + "】",)),
+            issuer_name=v.get("issuer_name"),
+            issuer_name_ignore=v.get("issuer_name_ignore", frozenset()),
+            product_name=v.get("product_name"),
             distributor_name=self.distributor_name,
             distributor_phone=self.distributor_phone,
             distributor_phone_equivalents=self.distributor_phone_equivalents,
             distributor_address=self.distributor_address,
             distributor_address_equivalents=self.distributor_address_equivalents,
             distributor_name_equivalents=self.distributor_name_equivalents,
-            iis_fixed_warning_occurrences=self.iis_fixed_warning_occurrences.get(key),
-            guarantor_names=dict(self.guarantor_names.get(key, {})),
-            guarantor_name_equivalents=self.guarantor_name_equivalents.get(key, ()),
-            agent_names=dict(self.agent_names.get(key, {})),
-            product_type=self.product_types.get(key),
-            minimum_issue_size=self.minimum_issue_sizes.get(key),
-            min_amount_multiples=dict(self.min_amount_multiples.get(key, {})),
+            iis_fixed_warning_occurrences=v.get("iis_fixed_warning_occurrences"),
+            guarantor_names=dict(v.get("guarantor_name", {})),
+            guarantor_name_equivalents=v.get("guarantor_name_equivalents", ()),
+            agent_names=dict(v.get("agent_name", {})),
+            product_type=v.get("product_type"),
+            minimum_issue_size=v.get("minimum_issue_size"),
+            min_amount_multiples=dict(v.get("min_amount_multiples", {})),
         )
 
 
@@ -243,7 +228,96 @@ def load_toml(path: Path, what: str) -> dict[str, Any]:
         raise IngestionError("config_invalid", f"{what}設定檔格式錯誤：{e}") from e
 
 
-def _product_name(issuer: str, n: dict[str, Any]) -> ProductNameTemplate:
+def _fail(message: str) -> IngestionError:
+    return IngestionError("config_invalid", message)
+
+
+def _text(v: Any) -> bool:
+    return isinstance(v, str) and bool(v.strip())
+
+
+def _text_value(v: Any, where: str) -> str:
+    """一段不空白的文字。"""
+    if not _text(v):
+        raise _fail(f"審查標準 {where} 須是一段不空白的文字")
+    return v
+
+
+def _texts(v: Any, where: str) -> tuple[str, ...]:
+    """一串不空白的文字。"""
+    if not isinstance(v, list) or not v or not all(isinstance(x, str) and x for x in v):
+        raise _fail(f"審查標準 {where} 須是一串不空白的文字")
+    return tuple(v)
+
+
+def _positive_int(v: Any, where: str) -> int:
+    if type(v) is not int or v <= 0:
+        raise _fail(f"審查標準 {where} 須是正整數")
+    return v
+
+
+def _name_ignores(v: Any, where: str) -> frozenset[str]:
+    """發行機構全名比對另外忽略的寫法差異：ISSUER_NAME_IGNORES 的項目。"""
+    unknown = sorted(set(_texts(v, where)) - set(ISSUER_NAME_IGNORES))
+    if unknown:
+        raise _fail(
+            f"審查標準 {where} 有未知的項目：{'、'.join(unknown)}（可用：{'、'.join(sorted(ISSUER_NAME_IGNORES))}）"
+        )
+    return frozenset(v)
+
+
+def _level_formats(v: Any, where: str) -> tuple[str, ...]:
+    """風險等級的寫法：每個都剛好有一個 {level}。"""
+    formats = _texts(v, where)
+    if any(f.count(RISK_LEVEL) != 1 for f in formats):
+        raise _fail(f"審查標準 {where} 的每個寫法都要剛好有一個 {RISK_LEVEL}")
+    return formats
+
+
+def _table(v: Any, where: str, what: str) -> dict[str, Any]:
+    """不空的子表 [<where>]（`what` 為錯訊中表的說明）。"""
+    if not isinstance(v, dict) or not v:
+        raise _fail(f"審查標準 {where} 須是{what}（[{where}]）")
+    return dict(v)
+
+
+def _place_texts(places: Iterable[str]) -> Callable[[Any, str], dict[str, str]]:
+    """機構名稱的出處（例：保證機構 cover／ch1／ch2、總代理人 cover／ch2）→ 不空白的文字。"""
+    keys = tuple(places)
+
+    def read(v: Any, where: str) -> dict[str, str]:
+        table = _table(v, where, "一個表，每個鍵一段文字")
+        bad = [k for k, x in table.items() if not _text(x)] + sorted(set(table) - set(keys))
+        if bad:
+            raise _fail(f"審查標準 {where} 的鍵須為 {'、'.join(keys)}，值為不空白的文字（有問題：{'、'.join(bad)}）")
+        return table
+
+    return read
+
+
+def _multiple_ok(v: Any) -> bool:
+    """倍數：正整數，或依幣別的表 {ISO 代碼: 正整數}。"""
+    if type(v) is int:
+        return v >= 1
+    return (
+        isinstance(v, dict)
+        and bool(v)
+        and all(isinstance(k, str) and len(k) == 3 and k.isupper() and type(x) is int and x >= 1 for k, x in v.items())
+    )
+
+
+def _min_amount_multiples(v: Any, where: str) -> dict[str, int | dict[str, int]]:
+    """最低金額出處欄位 → 正整數倍數，或依承作幣別的 {ISO 代碼: 倍數}（SG 最低申購金額）。"""
+    table = _table(v, where, "一個表，每個最低金額出處一個倍數")
+    bad = [k for k, x in table.items() if not _multiple_ok(x)]
+    if bad:
+        raise _fail(
+            f"審查標準 {where}.{bad[0]} 須是正整數（單位面額的倍數）或依幣別的表（例：{{ USD = 10, JPY = 1 }}）"
+        )
+    return table
+
+
+def _product_name(n: dict[str, Any], where: str) -> ProductNameTemplate:
     tpl = ProductNameTemplate(
         zh=n["zh"],
         en=n["en"],
@@ -273,16 +347,12 @@ def _product_name(issuer: str, n: dict[str, Any]) -> ProductNameTemplate:
         periodic_en=n.get("periodic_en", ""),
     )
     if any(not (isinstance(k, str) and isinstance(v, str) and v) for k, v in tpl.ccy_aliases.items()):
-        raise IngestionError(
-            "config_invalid",
-            f"審查標準商品名稱樣板 product_name.{issuer}.ccy_aliases 須是 ISO 代碼 → 名稱用代碼的文字表",
-        )
+        raise _fail(f"審查標準商品名稱樣板 {where}.ccy_aliases 須是 ISO 代碼 → 名稱用代碼的文字表")
     for lang in ("zh", "en"):
         unknown = sorted(tpl.placeholders(lang) - NAME_PLACEHOLDERS)
         if unknown:
-            raise IngestionError(
-                "config_invalid",
-                f"審查標準商品名稱樣板 product_name.{issuer}.{lang} 有未知的佔位符："
+            raise _fail(
+                f"審查標準商品名稱樣板 {where}.{lang} 有未知的佔位符："
                 + "、".join(f"{{{u}}}" for u in unknown)
                 + "（可用："
                 + "、".join(f"{{{p}}}" for p in sorted(NAME_PLACEHOLDERS))
@@ -290,160 +360,110 @@ def _product_name(issuer: str, n: dict[str, Any]) -> ProductNameTemplate:
             )
         need = [k for k in (f"daily_{lang}", f"periodic_{lang}") if not getattr(tpl, k)]
         if f"ko_observation_{lang}" in tpl.placeholders(lang) and need:
-            raise IngestionError(
-                "config_invalid",
-                f"審查標準商品名稱樣板 product_name.{issuer}.{lang} 用了 {{ko_observation_{lang}}}，"
+            raise _fail(
+                f"審查標準商品名稱樣板 {where}.{lang} 用了 {{ko_observation_{lang}}}，"
                 f"但沒有設定 {'、'.join(need)}（KO 每日與每期觀察的寫法）",
             )
         needed = (f"basket_{lang}",) if tpl.single_unsupported else (f"single_{lang}", f"basket_{lang}")
         missing = [k for k in needed if not getattr(tpl, k)]
         if f"underlying_{lang}" in tpl.placeholders(lang) and missing:
-            raise IngestionError(
-                "config_invalid",
-                f"審查標準商品名稱樣板 product_name.{issuer}.{lang} 用了 {{underlying_{lang}}}，"
+            raise _fail(
+                f"審查標準商品名稱樣板 {where}.{lang} 用了 {{underlying_{lang}}}，"
                 f"但沒有設定 {'、'.join(missing)}（1 檔與 2 檔以上的標的寫法）",
             )
     return tpl
 
 
-def _per_issuer_lists(d: dict[str, Any], where: str) -> dict[str, tuple[str, ...]]:
-    """`[<表>]` 裡每個上手（小寫）一串不空白的文字。"""
-    if not isinstance(d, dict):
-        raise IngestionError("config_invalid", f"審查標準 {where} 須是一個表（[{where}]）")
-    out = {}
-    for issuer, values in d.items():
-        if not isinstance(values, list) or not values or not all(isinstance(v, str) and v for v in values):
-            raise IngestionError("config_invalid", f"審查標準 {where}.{issuer} 須是一串不空白的文字")
-        out[issuer] = tuple(values)
-    return out
+# 每家上手一張表 [issuer.<上手代號小寫>] 的欄位與讀法（schema 只在這裡宣告，Issue #128）：新上手只在審查標準加一張表，
+# 不改程式。讀法收（值, 位置）回傳解析後的值；沒寫的欄位用共用值，或視為該上手沒有這項基準（見 ReviewStandard.for_issuer）。
+ISSUER_FIELDS: dict[str, Callable[[Any, str], Any]] = {
+    "issuer_name": _text_value,  # 發行機構中英文法人全名；沒有 → 規則轉人工覆核
+    "issuer_name_ignore": _name_ignores,  # 全名比對另外忽略的寫法差異（ISSUER_NAME_IGNORES）
+    "fixed_warning": _text_value,  # 該上手的固定警語版本；沒有 → [risk] fixed_warning
+    "fixed_warning_occurrences": _positive_int,  # 說明書的固定警語次數；沒有 → [risk] fixed_warning_occurrences
+    "fixed_warning_openings": _texts,  # 固定警語開頭句的其他寫法
+    "fixed_warning_variants": _texts,  # 固定警語的其他完整寫法
+    "risk_level_formats": _level_formats,  # 風險等級的寫法；沒有 → 【{level}】
+    "iis_fixed_warning_occurrences": _positive_int,  # 投資人須知的固定警語次數；沒有 → 轉人工覆核
+    "product_type": _text_value,  # 封面商品種類固定值；沒有 → 不核對
+    "minimum_issue_size": _text_value,  # 發行不成立門檻的金額寫法；沒有 → 不核對
+    "guarantor_name_equivalents": _texts,  # 投資人須知相關機構的保證機構名稱其他寫法
+    "product_name": _product_name,  # 子表 [issuer.<上手>.product_name]：商品名稱樣板；沒有 → 轉人工覆核
+    "guarantor_name": _place_texts(GUARANTOR_PLACES),  # 子表：出處 → 保證機構名稱；沒有 → 不核對
+    "agent_name": _place_texts(AGENT_PLACES),  # 子表：出處 → 總代理人名稱；沒有 → 不核對
+    "min_amount_multiples": _min_amount_multiples,  # 子表：最低金額出處 → 單位面額的倍數；沒列為 1
+}
+
+# 舊版面（每種基準一個表、底下分上手）的表 → [issuer.<上手>] 的欄位（Issue #128）；讀到舊版面時停止並提示轉換指令
+LEGACY_TABLES: dict[tuple[str, ...], str] = {
+    ("issuer_name",): "issuer_name",
+    ("issuer_name_ignore",): "issuer_name_ignore",
+    ("risk", "fixed_warning_by_issuer"): "fixed_warning",
+    ("risk", "fixed_warning_occurrences_by_issuer"): "fixed_warning_occurrences",
+    ("risk", "fixed_warning_openings"): "fixed_warning_openings",
+    ("risk", "fixed_warning_variants"): "fixed_warning_variants",
+    ("risk", "level_formats"): "risk_level_formats",
+    ("iis", "fixed_warning_occurrences"): "iis_fixed_warning_occurrences",
+    ("product_type",): "product_type",
+    ("minimum_issue_size",): "minimum_issue_size",
+    ("guarantor_name_equivalents",): "guarantor_name_equivalents",
+    ("product_name",): "product_name",
+    ("guarantor_name",): "guarantor_name",
+    ("agent_name",): "agent_name",
+    ("min_amount_multiples",): "min_amount_multiples",
+}
+MIGRATE_COMMAND = "fcn-config-migrate"  # 舊版面轉新版面的指令（fcn_checker.config_migrate）
 
 
-def _risk_extras(risk: dict[str, Any], warnings: dict[str, str]) -> dict[str, Any]:
-    """依上手的固定警語開頭句其他寫法與風險等級寫法；寫法有誤時載入就回報。"""
-    openings = _per_issuer_lists(risk.get("fixed_warning_openings", {}), "risk.fixed_warning_openings")
-    for issuer, values in openings.items():
-        warning = warnings.get(issuer, risk["fixed_warning"])
-        if "。" not in warning or any(not v.endswith("。") for v in values):
-            raise IngestionError(
-                "config_invalid",
-                f"審查標準 risk.fixed_warning_openings.{issuer}：固定警語與每個開頭寫法都要有以「。」結尾的開頭句",
-            )
+def legacy_tables(d: dict[str, Any]) -> list[tuple[str, ...]]:
+    """設定內容裡舊版面的表（例 ("risk", "level_formats")），依 LEGACY_TABLES 的順序。"""
+    found = []
+    for path in LEGACY_TABLES:
+        node: Any = d
+        for key in path:
+            node = node.get(key) if isinstance(node, dict) else None
+        if isinstance(node, dict):
+            found.append(path)
+    return found
+
+
+def _warning_forms(where: str, values: dict[str, Any], warning: str) -> None:
+    """固定警語開頭句與其他完整寫法要和該上手的警語相容；寫法有誤時載入就回報。"""
+    openings = values.get("fixed_warning_openings", ())
+    if openings:
+        if "。" not in warning or any(not v.endswith("。") for v in openings):
+            raise _fail(f"審查標準 {where}.fixed_warning_openings：固定警語與每個開頭寫法都要有以「。」結尾的開頭句")
         own = warning[: warning.index("。") + 1]
-        if len({own, *values}) != len(values) + 1:  # 重複的寫法會讓同一段警語算兩次
-            raise IngestionError(
-                "config_invalid", f"審查標準 risk.fixed_warning_openings.{issuer} 的開頭寫法重複或與原本的開頭相同"
-            )
-    formats = _per_issuer_lists(risk.get("level_formats", {}), "risk.level_formats")
-    for issuer, values in formats.items():
-        if any(v.count(RISK_LEVEL) != 1 for v in values):
-            raise IngestionError(
-                "config_invalid", f"審查標準 risk.level_formats.{issuer} 的每個寫法都要剛好有一個 {RISK_LEVEL}"
-            )
-    variants = _per_issuer_lists(risk.get("fixed_warning_variants", {}), "risk.fixed_warning_variants")
-    for issuer, values in variants.items():
-        warning = warnings.get(issuer, risk["fixed_warning"])
-        if any(v.replace(" ", "") == warning.replace(" ", "") for v in values) or len(set(values)) != len(values):
-            raise IngestionError(
-                "config_invalid", f"審查標準 risk.fixed_warning_variants.{issuer} 的寫法重複或與該上手的固定警語相同"
-            )
-    return {"fixed_warning_openings": openings, "risk_level_formats": formats, "fixed_warning_variants": variants}
+        if len({own, *openings}) != len(openings) + 1:  # 重複的寫法會讓同一段警語算兩次
+            raise _fail(f"審查標準 {where}.fixed_warning_openings 的開頭寫法重複或與原本的開頭相同")
+    variants = values.get("fixed_warning_variants", ())
+    if any(v.replace(" ", "") == warning.replace(" ", "") for v in variants) or len(set(variants)) != len(variants):
+        raise _fail(f"審查標準 {where}.fixed_warning_variants 的寫法重複或與該上手的固定警語相同")
 
 
-def _issuer_name_ignore(d: dict[str, Any]) -> dict[str, frozenset[str]]:
-    lists = _per_issuer_lists(d, "issuer_name_ignore")
-    for issuer, values in lists.items():
-        unknown = sorted(set(values) - set(ISSUER_NAME_IGNORES))
-        if unknown:
-            raise IngestionError(
-                "config_invalid",
-                f"審查標準 issuer_name_ignore.{issuer} 有未知的項目：{'、'.join(unknown)}"
-                f"（可用：{'、'.join(sorted(ISSUER_NAME_IGNORES))}）",
-            )
-    return {k: frozenset(v) for k, v in lists.items()}
+def _issuer_values(code: str, table: Any, shared_warning: str) -> dict[str, Any]:
+    """[issuer.<上手>]：只能有 ISSUER_FIELDS 的欄位，每個欄位依它的讀法檢查。"""
+    where = f"issuer.{code}"
+    if not isinstance(table, dict):
+        raise _fail(f"審查標準 {where} 須是一個表（[{where}]）")
+    unknown = sorted(set(table) - set(ISSUER_FIELDS))
+    if unknown:
+        raise _fail(f"審查標準 {where} 有未知的欄位：{'、'.join(unknown)}（可用：{'、'.join(ISSUER_FIELDS)}）")
+    values = {key: ISSUER_FIELDS[key](v, f"{where}.{key}") for key, v in table.items()}
+    _warning_forms(where, values, values.get("fixed_warning", shared_warning))
+    return values
 
 
-def _text(v: Any) -> bool:
-    return isinstance(v, str) and bool(v.strip())
-
-
-def _per_issuer(d: Any, where: str, valid: Callable[[Any], bool], what: str) -> dict[str, Any]:
-    """`[<表>]` 裡每個上手一個值，都要 `valid`（`what` 為錯訊中值的說明）。"""
+def _issuers(d: Any, shared_warning: str) -> dict[str, dict[str, Any]]:
+    """[issuer.<上手>] 全部的表；上手代號不分大小寫（存成小寫）。"""
     if not isinstance(d, dict):
-        raise IngestionError("config_invalid", f"審查標準 {where} 須是一個表（[{where}]）")
-    bad = [k for k, v in d.items() if not valid(v)]
-    if bad:
-        raise IngestionError("config_invalid", f"審查標準 {where}.{bad[0]} 須是{what}")
-    return dict(d)
-
-
-def _per_issuer_text(d: Any, where: str) -> dict[str, str]:
-    """`[<表>]` 裡每個上手一段不空白的文字。"""
-    return _per_issuer(d, where, _text, "一段不空白的文字")
-
-
-def _per_issuer_tables(
-    d: Any,
-    where: str,
-    valid: Callable[[Any], bool],
-    table: str,
-    problem: Callable[[str, list[str], list[str]], str],
-    keys: Iterable[str] | None = None,
-) -> dict[str, dict[str, Any]]:
-    """`[<表>.<上手>]`：每個上手一個不空的表（`table` 為錯訊中表的說明），表內每個值都要 `valid`；
-    `keys` 給了就只允許這些鍵。有不合法的值或未知的鍵時，`problem(上手, 不合法的鍵, 未知的鍵)` 為錯訊。"""
-    allowed = tuple(keys) if keys is not None else ()
-    tables = _per_issuer(d, where, lambda v: isinstance(v, dict) and bool(v), table)
-    for issuer, values in tables.items():
-        bad = [k for k, v in values.items() if not valid(v)]
-        unknown = sorted(set(values) - set(allowed)) if allowed else []
-        if bad or unknown:
-            raise IngestionError("config_invalid", problem(issuer, bad, unknown))
-    return {issuer: dict(values) for issuer, values in tables.items()}
-
-
-def _place_texts(d: Any, where: str, places: Iterable[str]) -> dict[str, dict[str, str]]:
-    """`[<表>.<上手>]`：機構名稱的出處（例：保證機構 cover／ch1／ch2、總代理人 cover／ch2）→ 不空白的文字。"""
-    keys = tuple(places)
-    return _per_issuer_tables(
-        d,
-        where,
-        _text,
-        "一個表，每個鍵一段文字",
-        lambda issuer, bad, unknown: (
-            f"審查標準 {where}.{issuer} 的鍵須為 {'、'.join(keys)}，值為不空白的文字（有問題：{'、'.join(bad + unknown)}）"
-        ),
-        keys,
-    )
-
-
-def _multiple_ok(v: Any) -> bool:
-    """倍數：正整數，或依幣別的表 {ISO 代碼: 正整數}。"""
-    if type(v) is int:
-        return v >= 1
-    return (
-        isinstance(v, dict)
-        and bool(v)
-        and all(isinstance(k, str) and len(k) == 3 and k.isupper() and type(x) is int and x >= 1 for k, x in v.items())
-    )
-
-
-def _min_amount_multiples(d: Any) -> dict[str, dict[str, int | dict[str, int]]]:
-    """`[min_amount_multiples.<上手>]`：最低金額出處欄位 → 正整數倍數，或依承作幣別的 {ISO 代碼: 倍數}（SG 最低申購金額）。"""
-    where = "min_amount_multiples"
-    return _per_issuer_tables(
-        d,
-        where,
-        _multiple_ok,
-        "一個表，每個最低金額出處一個倍數",
-        lambda issuer, bad, unknown: (
-            f"審查標準 {where}.{issuer}.{bad[0]} 須是正整數（單位面額的倍數）或依幣別的表（例：{{ USD = 10, JPY = 1 }}）"
-        ),
-    )
-
-
-def _occurrence_counts(d: Any, where: str) -> dict[str, int]:
-    """上手代號（小寫）→ 固定警語次數：須是正整數。"""
-    return _per_issuer(d, where, lambda v: type(v) is int and v > 0, "正整數")
+        raise _fail("審查標準 issuer 須是每家上手一張表（[issuer.<上手代號小寫>]）")
+    out: dict[str, dict[str, Any]] = {}
+    for code, table in d.items():
+        if code.lower() in out:
+            raise _fail(f"審查標準 issuer.{code} 重複（上手代號不分大小寫）")
+        out[code.lower()] = _issuer_values(code, table, shared_warning)
+    return out
 
 
 def _approval_dates(value: Any) -> tuple[dt.date, ...]:
@@ -462,9 +482,15 @@ def _approval_dates(value: Any) -> tuple[dt.date, ...]:
 
 def load_review_standard(path: Path) -> ReviewStandard:
     d = load_toml(path, "審查標準")
+    legacy = legacy_tables(d)
+    if legacy:
+        shown = "、".join(f"[{'.'.join(t)}]" for t in legacy[:3])
+        raise IngestionError(
+            "config_outdated",
+            f"審查標準設定檔 {path} 還是舊版面（{shown} 等每種基準一個表），現在改成每家上手一張表 [issuer.<上手>]。"
+            f'請執行 {MIGRATE_COMMAND} "{path}" 轉換（原檔另存 .bak）後再試。',
+        )
     try:
-        names = {issuer: _product_name(issuer, n) for issuer, n in d["product_name"].items()}
-        warnings = dict(d["risk"].get("fixed_warning_by_issuer", {}))
         return ReviewStandard(
             version=int(d["version"]),
             effective_date=d["effective_date"],
@@ -476,34 +502,18 @@ def load_review_standard(path: Path) -> ReviewStandard:
             distributor_address_equivalents=tuple(d["distributor"].get("address_equivalents", ())),
             distributor_name_equivalents=tuple(d["distributor"].get("name_equivalents", ())),
             distributor_address=d["distributor"]["address"],
-            issuer_names=dict(d["issuer_name"]),
             fees=dict(d["fees"]),
             issue_price_pct=Decimal(str(d["issue_price"]["pct"])),
             risk_level=d["risk"]["level"],
             fixed_warning=d["risk"]["fixed_warning"],
-            fixed_warning_by_issuer=warnings,
-            **_risk_extras(d["risk"], warnings),
-            issuer_name_ignore=_issuer_name_ignore(d.get("issuer_name_ignore", {})),
             fixed_warning_occurrences=int(d["risk"]["fixed_warning_occurrences"]),
-            fixed_warning_occurrences_by_issuer=_occurrence_counts(
-                d["risk"].get("fixed_warning_occurrences_by_issuer", {}), "risk.fixed_warning_occurrences_by_issuer"
-            ),
             forbidden=tuple(d["wording"]["forbidden"]),
             allowed_phrases=tuple(d["wording"]["allowed_phrases"]),
             forbidden_exempt_until=d["wording"].get("exempt_until"),
-            product_names=names,
             currency_zh_to_iso=dict(d["currency"]),
             denomination={k: int(v) for k, v in d["denomination"].items()},
             iis_pages=int(d["iis"]["pages"]),
-            iis_fixed_warning_occurrences={k: int(v) for k, v in d["iis"]["fixed_warning_occurrences"].items()},
-            guarantor_names=_place_texts(d.get("guarantor_name", {}), "guarantor_name", GUARANTOR_PLACES),
-            guarantor_name_equivalents=_per_issuer_lists(
-                d.get("guarantor_name_equivalents", {}), "guarantor_name_equivalents"
-            ),
-            agent_names=_place_texts(d.get("agent_name", {}), "agent_name", AGENT_PLACES),
-            product_types=_per_issuer_text(d.get("product_type", {}), "product_type"),
-            minimum_issue_sizes=_per_issuer_text(d.get("minimum_issue_size", {}), "minimum_issue_size"),
-            min_amount_multiples=_min_amount_multiples(d.get("min_amount_multiples", {})),
+            issuers=_issuers(d.get("issuer", {}), d["risk"]["fixed_warning"]),
         )
     except (KeyError, TypeError, ValueError) as e:
         raise IngestionError("config_invalid", f"審查標準設定檔缺少或格式錯誤的項目：{e}") from e
