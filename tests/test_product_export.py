@@ -86,7 +86,7 @@ def test_lifecycle_status_is_exported(pg, tmp_path: Path) -> None:
 def test_text_that_looks_like_a_formula_stays_text(tmp_path: Path) -> None:
     path = tmp_path / "x.xlsx"
 
-    product_export._save(path, ("tdcc", "status_raw"), [("029199990001", "=1+1")])
+    product_export.save_rows(path, "t", ("tdcc", "status_raw"), [("029199990001", "=1+1")])
 
     assert read_back(path) == [["tdcc", "status_raw"], ["029199990001", "=1+1"]]
 
@@ -94,7 +94,7 @@ def test_text_that_looks_like_a_formula_stays_text(tmp_path: Path) -> None:
 def test_control_characters_are_dropped(tmp_path: Path) -> None:
     path = tmp_path / "x.xlsx"
 
-    product_export._save(path, ("tdcc", "status_raw"), [("029199990001", "KO\x01 2026")])
+    product_export.save_rows(path, "t", ("tdcc", "status_raw"), [("029199990001", "KO\x01 2026")])
 
     assert read_back(path)[1] == ["029199990001", "KO 2026"]
 
@@ -109,7 +109,7 @@ def test_a_failed_write_keeps_the_old_file_and_leaves_no_temp_file(tmp_path: Pat
     monkeypatch.setattr(Path, "replace", locked)
 
     with pytest.raises(ProductExportError, match="同名檔開在 Excel 時請先關掉"):
-        product_export._save(path, ("tdcc",), [("029199990001",)])
+        product_export.save_rows(path, "t", ("tdcc",), [("029199990001",)])
 
     assert path.read_bytes() == b"old" and list(tmp_path.iterdir()) == [path]
 
@@ -122,11 +122,11 @@ def test_an_unexpected_error_leaves_no_temp_file(tmp_path: Path, monkeypatch) ->
     monkeypatch.setattr(product_export.openpyxl.Workbook, "save", broken)
 
     with pytest.raises(ValueError):
-        product_export._save(tmp_path / "x.xlsx", ("tdcc",), [])
+        product_export.save_rows(tmp_path / "x.xlsx", "t", ("tdcc",), [])
 
     assert list(tmp_path.iterdir()) == []
 
 
 def test_a_missing_folder_says_where(tmp_path: Path) -> None:
     with pytest.raises(ProductExportError, match="寫不進"):
-        product_export._save(tmp_path / "沒有這個資料夾" / "x.xlsx", ("tdcc",), [])
+        product_export.save_rows(tmp_path / "沒有這個資料夾" / "x.xlsx", "t", ("tdcc",), [])

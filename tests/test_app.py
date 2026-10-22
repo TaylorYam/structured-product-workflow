@@ -39,7 +39,16 @@ def test_tabs_follow_the_daily_order(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
 
     assert master.title() == "FCN Workflow"
-    assert tab_titles(window) == ["1 每日匯入", "2 起單資料", "3 準備", "4 核對", "5 放回", "6 寄信草稿", "7 人工維護"]
+    assert tab_titles(window) == [
+        "1 每日匯入",
+        "2 起單資料",
+        "3 準備",
+        "4 核對",
+        "5 放回",
+        "6 寄信草稿",
+        "7 人工維護",
+        "8 進度",
+    ]
     assert window.notebook.select() == str(window.daily.frame)
 
 
@@ -430,7 +439,7 @@ def test_sidebar_switches_steps_and_follows_the_next_buttons(master, tmp_path: P
     window = new_window(master, tmp_path)
     steps = window.sidebar.steps
 
-    assert [step.cget("text").split()[0] for step in steps.values()] == ["1", "2", "3", "4", "5", "6", "7"]
+    assert [step.cget("text").split()[0] for step in steps.values()] == ["1", "2", "3", "4", "5", "6", "7", "8"]
     steps[str(window.prepare.frame)].invoke()
     master.update()
     assert window.notebook.select() == str(window.prepare.frame)
@@ -447,15 +456,24 @@ def test_sidebar_switches_steps_and_follows_the_next_buttons(master, tmp_path: P
 def test_page_headers_show_their_step(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
 
-    assert window.prepare.header.step.get() == "步驟 3／7"
-    assert window.check.header.step.get() == "步驟 4／7"
+    assert window.prepare.header.step.get() == "步驟 3／8"
+    assert window.check.header.step.get() == "步驟 4／8"
 
 
 def test_every_page_header_shows_its_step(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
-    pages = (window.daily, window.orders, window.prepare, window.check, window.returning, window.mail, window.manual)
+    pages = (
+        window.daily,
+        window.orders,
+        window.prepare,
+        window.check,
+        window.returning,
+        window.mail,
+        window.manual,
+        window.progress,
+    )
 
-    assert [page.header.step.get() for page in pages] == [f"步驟 {n}／7" for n in range(1, 8)]
+    assert [page.header.step.get() for page in pages] == [f"步驟 {n}／8" for n in range(1, 9)]
 
 
 def test_check_key_figures_hide_when_results_are_cleared(master, tmp_path: Path) -> None:
