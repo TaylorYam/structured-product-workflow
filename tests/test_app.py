@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import datetime as dt
 import runpy
 import tkinter as tk
 from concurrent.futures import Future
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from tkinter import messagebox, ttk
@@ -20,7 +22,14 @@ from fcn_checker.saving import SaveReceipt
 from order_synth import CONFIG, missing_row, order_row
 from sp_workflow import app
 from sp_workflow.check_terms import DONE, TO_CONFIRM, WAIT_PRICES, CalcLine, CalcReceipt, Difference
-from sp_workflow.daily_import import NEW_TRADES, PRICE_CONFLICT, ImportLine, ImportReceipt, PriceSummary
+from sp_workflow.daily_import import (
+    NEW_TRADES,
+    PRICE_CONFLICT,
+    ImportLine,
+    ImportReceipt,
+    PriceCsvReceipt,
+    PriceSummary,
+)
 from sp_workflow.documents import DocKind
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.mail_drafts import DRAFTED, NOT_NEEDED, DraftOutcome, DraftReceipt
@@ -691,6 +700,89 @@ def test_reimporting_a_price_date_says_how_many_prices_were_replaced(master, tmp
     window.daily._done(daily_receipt(tmp_path, prices=PriceSummary(dt.date(2026, 10, 16), 3, 2, ())))
 
     assert "股價：取價日 2026-10-16，3 筆（取代了這一天原本的 2 筆）。" in window.daily.status_var.get()
+
+
+# ---------------------------------------------------------------- 回補股價 CSV 與只匯交易明細（#112）
+
+
+def test_trades_only_import_says_prices_were_left_alone(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    result = daily_receipt(tmp_path)
+
+    window.daily._done(app._DailyResult(replace(result.receipt, prices=None), result.recalc))
+
+    assert "股價：只匯交易明細，股價沒有變動。" in window.daily.status_var.get()
+    assert [caption for caption, _, _ in window.daily.kpis.values] == [
+        "正常（項）",
+        "要注意（項）",
+        "核對條件待確認（檔）",
+    ]
+
+
+def test_the_trades_only_box_is_passed_to_the_import(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    actions = []
+    monkeypatch.setattr(window.daily.db, "settings", lambda: object())
+    monkeypatch.setattr(window.daily, "run_in_background", lambda action, *a, **k: actions.append(action))
+    monkeypatch.setattr(app, "connect", lambda settings: contextlib.nullcontext("conn"))
+    calls = []
+    monkeypatch.setattr(app, "import_daily", lambda daily, conn, *, prices: calls.append(prices))
+    monkeypatch.setattr(app, "_recalculate", lambda conn, calendar: app._Recalc())
+    window.daily.daily_var.set(str(tmp_path / "每日更新.xlsx"))
+
+    window.daily.trades_only_var.set(True)
+    window.daily.start()
+    actions[-1]()
+    window.daily.trades_only_var.set(False)
+    window.daily.start()
+    actions[-1]()
+
+    assert calls == [False, True]
+
+
+def test_price_csv_import_shows_the_stored_price_date(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    actions = []
+    monkeypatch.setattr(window.daily.db, "settings", lambda: object())
+    monkeypatch.setattr(window.daily, "run_in_background", lambda action, *a, **k: actions.append(action))
+    monkeypatch.setattr(app, "connect", lambda settings: contextlib.nullcontext("conn"))
+    receipt = PriceCsvReceipt(
+        run_id=9,
+        close_date=dt.date(2026, 10, 16),
+        prices=PriceSummary(dt.date(2026, 10, 17), 505, 504, ()),
+        lines=(ImportLine("", PRICE_CONFLICT, "AAA UW：同一個代碼有 2 列、值不同，價格沒有存，算價格時不能用"),),
+        error_book_path=tmp_path / "每日匯入錯誤.xlsx",
+    )
+    monkeypatch.setattr(app, "import_price_csv", lambda source, conn: receipt)
+    monkeypatch.setattr(app, "_recalculate", lambda conn, calendar: app._Recalc(CalcReceipt(()), CONFIG.calendar))
+    source = tmp_path / "MarketData_20261016.csv"
+    window.daily.csv_var.set(str(source))
+
+    window.daily.start_csv()
+    window.daily._csv_done(actions[-1]())
+
+    status = window.daily.status_var.get()
+    assert "回補股價）：2026-10-16 收盤，存成取價日 2026-10-17" in status
+    assert "股價：取價日 2026-10-17，505 筆（取代了這一天原本的 504 筆）。" in status
+    assert window.daily.kpis.values == (
+        ("要注意（項）", 1, True),
+        ("股價（筆）", 505, False),
+        ("核對條件待確認（檔）", 0, False),
+    )
+    assert [window.daily.table.item(i, "values")[1] for i in window.daily.table.get_children()] == [PRICE_CONFLICT]
+    assert FolderMemory.under(tmp_path).load()["price_csv"] == str(source)
+    assert str(window.daily.start_button.cget("state")) == "normal"
+
+
+def test_price_csv_import_needs_a_file(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    errors = []
+    monkeypatch.setattr(app.messagebox, "showerror", lambda *a, **k: errors.append(a[1]))
+    window.daily.csv_var.set("")
+
+    window.daily.start_csv()
+
+    assert errors == ["請先選擇股價 CSV。"]
 
 
 def read_result(*rows: OrderRow) -> app._ReadResult:

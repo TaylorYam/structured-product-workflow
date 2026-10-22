@@ -79,8 +79,10 @@ from sp_workflow.daily_import import (
     DailyImportError,
     ImportInfo,
     ImportReceipt,
+    PriceCsvReceipt,
     PriceSummary,
     import_daily,
+    import_price_csv,
     latest_import,
 )
 from sp_workflow.database import (
@@ -555,6 +557,8 @@ class DailyImportTab(_Tab):
         self.on_imported = on_imported
         folders = memory.load()
         self.daily_var = tk.StringVar(value=folders.get("daily", ""))
+        self.trades_only_var = tk.BooleanVar(value=False)
+        self.csv_var = tk.StringVar(value=folders.get("price_csv", ""))
         self.status_var.set(f"選每日更新，按「匯入」。資料庫連線設定：{db.env_path}")
 
         self.page_header(
@@ -563,18 +567,32 @@ class DailyImportTab(_Tab):
         )
         body = self.body(self.card(1))
         row = self.field(body, 0, "每日更新", self.daily_var, lambda: _ask_excel("選擇每日更新", self.daily_var))
+        ttk.Checkbutton(
+            body,
+            text="只匯交易明細（回補時用：不讀 BBG_Data、不動股價）",
+            variable=self.trades_only_var,
+            style="Card.TCheckbutton",
+        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        row = self.field(
+            body,
+            row + 1,
+            "回補股價",
+            self.csv_var,
+            lambda: _ask_csv("選擇股價 CSV", self.csv_var),
+            "放假或請假後回補用：MarketData_YYYYMMDD.csv，一次一個",
+        )
         self.result_area(body, row)
         self.start_button = ttk.Button(self.buttons, text="匯入", command=self.start, style="Primary.TButton")
         self.start_button.pack(side=tk.LEFT)
-        self.releaser = _Releaser(
-            self,
-            db,
-            self._selected_tdcc,
-            self._released,
-            busy=lambda busy: self.start_button.configure(state=tk.DISABLED if busy else tk.NORMAL),
-        )
+        self.csv_button = ttk.Button(self.buttons, text="回補股價", command=self.start_csv)
+        self.csv_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.releaser = _Releaser(self, db, self._selected_tdcc, self._released, busy=self._busy)
         self.next_button = NextButton(self.buttons, "下一步：起單資料 →", on_next)
         self.place_table(2)
+
+    def _busy(self, busy: bool) -> None:
+        for button in (self.start_button, self.csv_button):
+            button.configure(state=tk.DISABLED if busy else tk.NORMAL)
 
     def _selected_tdcc(self) -> str | None:
         selection = self.table.selection()
@@ -594,8 +612,9 @@ class DailyImportTab(_Tab):
         if settings is None:
             return
         daily = Path(daily_text)
+        prices = not self.trades_only_var.get()
         self.memory.remember(daily=str(daily))
-        self.start_button.configure(state=tk.DISABLED)
+        self._busy(True)
         self.next_button.withdraw()
         self.releaser.show(_Recalc())
         self.restart()
@@ -603,38 +622,87 @@ class DailyImportTab(_Tab):
 
         def run() -> _DailyResult:
             with connect(settings) as conn:
-                receipt = import_daily(daily, conn)
+                receipt = import_daily(daily, conn, prices=prices)
                 return _DailyResult(receipt, _recalculate(conn, lambda: load_calendar(paths.exchange_holidays)))
 
         self.run_in_background(run, "匯入中…", self._done)
 
+    def start_csv(self) -> None:
+        """回補股價（#112）：匯入一個 MarketData CSV，再重算核對條件；交易明細不動。"""
+        csv_text = self.csv_var.get().strip()
+        if not csv_text:
+            messagebox.showerror(TITLE, "請先選擇股價 CSV。")
+            return
+        settings = self.db.settings()
+        if settings is None:
+            return
+        source = Path(csv_text)
+        self.memory.remember(price_csv=str(source))
+        self._busy(True)
+        self.next_button.withdraw()
+        self.releaser.show(_Recalc())
+        self.restart()
+        paths = self.config_paths()
+
+        def run() -> _PriceCsvResult:
+            with connect(settings) as conn:
+                receipt = import_price_csv(source, conn)
+                return _PriceCsvResult(receipt, _recalculate(conn, lambda: load_calendar(paths.exchange_holidays)))
+
+        self.run_in_background(run, "回補股價中…", self._csv_done)
+
+    def _csv_done(self, result: object) -> None:
+        self._busy(False)
+        self.db.after_run(result)
+        if not isinstance(result, _PriceCsvResult):
+            return
+        receipt, recalc = result.receipt, result.recalc
+        for line in receipt.lines:
+            self.add_row((line.tdcc, line.kind, line.detail), problem=line.problem)
+        self._show_recalc(recalc)
+        problems = len(receipt.lines)
+        kpis = [("要注意（項）", problems, problems > 0), ("股價（筆）", receipt.prices.count, False)]
+        self.finish(
+            kpis + self._recalc_kpis(recalc),
+            f"完成（第 {receipt.run_id} 次匯入，回補股價）：{receipt.close_date:%Y-%m-%d} 收盤，"
+            f"存成取價日 {receipt.prices.price_date:%Y-%m-%d}（等同隔天早上取價）。\n"
+            f"{_price_text(receipt.prices)}\n{_recalc_text(recalc)}\n錯誤清單：{receipt.error_book_path}",
+        )
+        self.releaser.show(recalc)
+
+    def _show_recalc(self, recalc: _Recalc) -> None:
+        for calc in () if recalc.receipt is None else recalc.receipt.to_show():
+            tags = ("problem",) if calc.problem else ()
+            self.table.insert("", tk.END, iid=f"calc-{calc.tdcc}", values=_calc_row(calc), tags=tags)
+
+    @staticmethod
+    def _recalc_kpis(recalc: _Recalc) -> list[tuple[str, int, bool]]:
+        if recalc.receipt is None:
+            return []
+        to_confirm = recalc.receipt.count(TO_CONFIRM)
+        return [("核對條件待確認（檔）", to_confirm, to_confirm > 0)]
+
     def _done(self, result: object) -> None:
-        self.start_button.configure(state=tk.NORMAL)
+        self._busy(False)
         self.db.after_run(result)
         if not isinstance(result, _DailyResult):
             return
         receipt, recalc = result.receipt, result.recalc
         for line in receipt.lines:
             self.add_row((line.tdcc, line.kind, line.detail), problem=line.problem)
-        for calc in () if recalc.receipt is None else recalc.receipt.to_show():
-            tags = ("problem",) if calc.problem else ()
-            self.table.insert("", tk.END, iid=f"calc-{calc.tdcc}", values=_calc_row(calc), tags=tags)
+        self._show_recalc(recalc)
         problems = sum(line.problem for line in receipt.lines)
         normal = len(receipt.lines) - problems
         prices = receipt.prices
-        kpis = [
-            ("正常（項）", normal, False),
-            ("要注意（項）", problems, problems > 0),
-            ("股價（筆）", prices.count, False),
-        ]
-        if recalc.receipt is not None:
-            to_confirm = recalc.receipt.count(TO_CONFIRM)
-            kpis.append(("核對條件待確認（檔）", to_confirm, to_confirm > 0))
+        kpis = [("正常（項）", normal, False), ("要注意（項）", problems, problems > 0)]
+        if prices is not None:
+            kpis.append(("股價（筆）", prices.count, False))
+        price_text = "股價：只匯交易明細，股價沒有變動。" if prices is None else _price_text(prices)
         self.finish(
-            kpis,
+            kpis + self._recalc_kpis(recalc),
             f"完成（第 {receipt.run_id} 次匯入）：{normal} 項正常、{problems} 項要注意；"
             f"略過非 FCN 交易 {receipt.skipped_trade_rows} 列；取消交易 {receipt.cancelled_trade_rows} 列；"
-            f"信箱 {receipt.people} 人。\n{_price_text(prices)}\n{_recalc_text(recalc)}"
+            f"信箱 {receipt.people} 人。\n{price_text}\n{_recalc_text(recalc)}"
             f"\n錯誤清單：{receipt.error_book_path}\n{self._hand_off(receipt)}",
         )
         self.releaser.show(recalc)
@@ -824,6 +892,12 @@ def _recalculate(conn: psycopg.Connection, calendar: Callable[[], TradingCalenda
 @dataclass(frozen=True)
 class _DailyResult:
     receipt: ImportReceipt
+    recalc: _Recalc = _Recalc()
+
+
+@dataclass(frozen=True)
+class _PriceCsvResult:
+    receipt: PriceCsvReceipt
     recalc: _Recalc = _Recalc()
 
 
@@ -1911,6 +1985,11 @@ def _ask_excel(title: str, current: tk.StringVar) -> str:
     return filedialog.askopenfilename(
         title=title, initialdir=start, filetypes=[("Excel", "*.xlsx"), ("全部檔案", "*.*")]
     )
+
+
+def _ask_csv(title: str, current: tk.StringVar) -> str:
+    start = Path(current.get()).parent if current.get() else None
+    return filedialog.askopenfilename(title=title, initialdir=start, filetypes=[("CSV", "*.csv"), ("全部檔案", "*.*")])
 
 
 def _open_folder(folder: Path) -> None:

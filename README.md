@@ -105,6 +105,10 @@ spw-db-migrate --admin-user postgres
    - 「核對條件：…」：匯入後重算還沒鎖住的商品（見下面「核對條件」），列出這次有變、或還沒完成的商品。
 4. 匯入完成後，這份交易明細的 FCN TDCC 已經帶到「2 起單資料」（完成訊息寫出帶了幾筆）；按「下一步：起單資料 →」接著讀起單建檔（[#90](https://github.com/TaylorYam/structured-product-workflow/issues/90)）。已存在的商品照樣帶；交易明細沒有 FCN 或整份不匯入時不帶。
 
+**回補前幾天**（台灣放假或請假之後，[#112](https://github.com/TaylorYam/structured-product-workflow/issues/112)、[ADR 0015](docs/adr/0015-price-csv-backfill.md)）：BBG_Data 只抓得到最新的價格，所以交易明細和股價分開匯入。
+1. 交易明細：照舊用每日更新，勾「只匯交易明細」再按「匯入」；不讀 BBG_Data、股價不動。
+2. 股價：在「回補股價」選 Bloomberg 匯出的 `MarketData_YYYYMMDD.csv`（一次一個），按「回補股價」。CSV 的取價日是收盤那一天，存成**下一天**（10/16 收盤 → 取價日 10/17），等同隔天早上用 BBG_Data 取到的價格；那一天原本的股價整份取代。欄名要完全相同，取價日不是日期、不只一天或沒有任何代碼時整份不匯入；沒有 1日前收盤價，幣別、市值(百萬美元) 不存。匯入後重算核對條件，問題寫進 CSV 同資料夾的 `每日匯入錯誤.xlsx`。
+
 只收 FCN，其他商品略過並計數；備註為 `Cancel` 或包含「取消」的交易列不會匯入資料庫；同一份重複匯入不會重複寫入交易；任何錯誤都不會留下一半的資料。所有匯入問題會集中重建到來源檔同資料夾的 `每日匯入錯誤.xlsx`，包含既有匯入歷史；因此 9 月、10 月會在同一份檔案。交易列是否取消以備註欄為準，不讀取 Excel 底色。股價以「取價日＋代碼」為一筆，代碼只去頭尾空白，不改大小寫、不換交易所碼；`BBG_Data` 的 C1 不是日期或第 2 列欄名不同時整份不匯入。每日匯入不寫商品條件、不做分公司對帳，也不會修改信箱；分公司配置在匯入後重算核對條件時由交易明細算（#88）。#87 之前清單更新寫入的商品照舊保留，還沒鎖住的會一起重算。
 
 **信箱維護**：直接在資料庫的 `mailbox.person`（人員）、`mailbox.alias`（別名）新增或修改，例如用 pgAdmin 以有寫入權限的帳號執行 SQL。比對用的小寫鍵由資料庫自動產生；名字不分大小寫不能重複，信箱格式不對、別名指到不存在的人都會被拒絕。改名時別名會跟著改。
@@ -288,6 +292,10 @@ Run the same command again after updates that add schema versions. When moving t
    - The completion message also gives the price date and count; re-importing the same price date replaces that whole day (every import is recorded).
    - "核對條件：…": unlocked products are recalculated after the import (see "Check terms" below); products that changed or are not done are listed.
 4. After the import, the trade sheet's FCN TDCCs are already filled into "2 起單資料" (the completion message says how many); click "下一步：起單資料 →" to go on and read the order sheet ([#90](https://github.com/TaylorYam/structured-product-workflow/issues/90)). Products already in the database are included; nothing is filled in when the trade sheet has no FCN or the whole file is rejected.
+
+**Backfilling earlier days** (after Taiwan holidays or leave, [#112](https://github.com/TaylorYam/structured-product-workflow/issues/112), [ADR 0015](docs/adr/0015-price-csv-backfill.md)): BBG_Data only fetches the latest prices, so trade rows and prices are imported separately.
+1. Trade rows: use the daily update as usual, tick "只匯交易明細", and click "匯入"; BBG_Data is not read and prices are untouched.
+2. Prices: choose the Bloomberg export `MarketData_YYYYMMDD.csv` under "回補股價" (one at a time) and click "回補股價". The CSV price date is the closing day and is stored as **the next day** (10/16 close → price date 10/17), the same as a BBG_Data pull the next morning; that day's existing prices are replaced whole. Headers must match exactly; the whole file is rejected when a price date is not a date, spans more than one day, or there are no codes. There is no previous close, and currency and USD market cap are not stored. Check terms are recalculated afterwards, and problems go to `每日匯入錯誤.xlsx` beside the CSV.
 
 Only FCN is imported; other products are skipped and counted. Trade rows whose 備註 is `Cancel` or contains `取消` are not imported. Re-importing the same file writes no new trades, and any error leaves no partial data. All import problems are rebuilt into one `每日匯入錯誤.xlsx` beside the source workbook, including prior import history, so September and October appear in the same workbook. The note field is authoritative for cancellation; Excel fill colors are not inspected. Prices are keyed by price date and code; codes are only trimmed, never re-cased or mapped to another exchange; the whole file is rejected when `BBG_Data` C1 is not a date or the row-2 headers differ. The daily import writes no product terms, does no branch reconciliation, and never changes the mailbox; branch allocations are derived from the trade rows when check terms are recalculated after the import (#88). Products written by 清單更新 before #87 are kept, and unlocked ones are recalculated too.
 

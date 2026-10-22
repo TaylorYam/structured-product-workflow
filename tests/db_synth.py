@@ -9,7 +9,7 @@ from pathlib import Path
 import openpyxl
 
 from sp_workflow import daily_import
-from sp_workflow.daily_import import PRICE_HEADERS, TRADE_HEADERS
+from sp_workflow.daily_import import PRICE_CSV_HEADERS, PRICE_HEADERS, TRADE_HEADERS
 
 PRICE_DATE = dt.datetime(2026, 10, 16)  # 虛構的取價日：交易日 2026-10-15 的下一份股價檔
 
@@ -72,6 +72,18 @@ def write_daily(
     for row in prices:
         bbg.append([None, *row])
     wb.save(path)
+    return path
+
+
+def csv_price(code: str, close: str = "100.5", *, day: str = "2026-10-15", open_: str = "99.25") -> list[str]:
+    """回補股價 CSV 的一列（#112）：取價日（收盤那一天）、代碼、公司名稱、收盤、開盤、200日波動率、市值、幣別、市值美元。"""
+    return [day, code, "虛構公司", close, open_, "31.5", "12345.6", "USD", "12345.6"]
+
+
+def write_price_csv(path: Path, rows: Sequence[Sequence[str]], *, headers=PRICE_CSV_HEADERS) -> Path:
+    """Bloomberg 匯出的 MarketData CSV（UTF-8 有 BOM，同真實檔）。"""
+    lines = [",".join(headers), *(",".join(row) for row in rows)]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
     return path
 
 
