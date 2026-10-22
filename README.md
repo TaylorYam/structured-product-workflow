@@ -50,6 +50,7 @@ spw-panel
 6. 說明書或投資人須知任一份找不到、或有兩份以上候選時，整個商品跳過並寫出原因與候選檔名。
    **重新核對上手修正版**：資料夾裡上次放回的「_待確認」檔不當候選，只用來認出哪一版沒通過（比對全文）；內容相同的幾份只算一份。上手寄來新版時會挑新版，連上次已放回的標準名舊版也一併換掉（修正版沿用舊檔名、覆蓋了舊原檔也一樣：內容不同時上手檔名的版本優先，只以標準檔名存在的內容當成上次放回的舊版）；上手還沒寄新版時，沿用上次沒通過的那一版照常準備（原因寫「沿用上次沒通過的版本」；資料夾裡若另有封面商品代號不符或轉檔失敗的新檔，也會一起寫出），所以改過參考條件表或核對規則後，可以用同一版重複核對；同一版又沒通過時，錯訊和資料夾裡最新的錯訊檔不同才會再寫一份。準備清單的原因欄會寫出排除了哪些舊版。MS、BNP 這類只給 Word 的上手，只有沒通過的那份會換成新版；如果兩份都改了，請先把舊的標準名檔移到子資料夾。上次沒通過的是 PDF 時，修正版也要有 PDF 才會被挑到（例如 JPM 同時給 PDF 和 Word，修正版只有 Word 時請上手補 PDF）。
 7. 批次資料夾裡的 `準備清單.xlsx` 記錄每份文件的來源檔、是否由 Word 轉檔、輸出檔名、SHA-256 指紋、狀態與原因。完成後可以按「打開批次資料夾」查看；按「下一步：核對 →」切到「4 核對」，這批已準備的 PDF 已經帶入，條件來源預設資料庫，直接載入預覽（選 Excel 時先選好參考條件表）。
+8. **同時留步驟紀錄**（[#151](https://github.com/TaylorYam/structured-product-workflow/issues/151)、[ADR 0019](docs/adr/0019-progress-step-records-and-lifecycle-events.md)）：`.env` 有資料庫連線設定時，每個已準備的商品在資料庫多一筆「已準備」紀錄（誰、什麼時候、準備清單），之後進度頁靠它判斷走到哪一步；跳過的不寫，同一檔重新準備多一筆。沒有連線設定或取消登入時照樣準備、不留紀錄；連不上或寫入失敗時準備清單照常產出，完成訊息寫出原因。作業人員更新時由安裝器自動套用資料表版本 0015。
 
 核對完、存下核對結果檔後，按「下一步：放回 →」切到「5 放回」分頁：
 
@@ -57,6 +58,7 @@ spw-panel
 2. 按「放回資料夾」。核對結果檔「回填後」上 `TS/IIS完成檢核` 為 `V` 的商品（說明書與投資人須知都通過或人工放行）用標準檔名放回；「錯誤清單」上沒通過的那份，檔名最後加「_待確認」放回（例：`<TDCC>_TS_待確認.pdf`），同商品通過的那份仍用標準檔名，原因欄附上錯訊；同時在商品資料夾寫一份 `<TDCC>_錯誤訊息_<日期時間>.xlsx`（一條錯訊一列，附 PDF 頁碼，頁碼對應放回的「_待確認」檔），打開資料夾就看得到問題在哪裡。重複放回、待確認檔已經在時不會再寫。核對結果檔裡沒出現的商品（還沒核對）不放回。
 3. 放回前重算批次裡 PDF 的指紋，和準備清單不符就不放。商品資料夾已有同名檔：內容相同（位元組相同，或全文相同，例如同一份 Word 重新轉出的 PDF）算「已在」（例如 UBS 本來就給標準檔名），內容不同不覆蓋、整個商品不放回，由作業人員決定留哪份。
 4. 只複製，批次資料夾保留；結果寫在批次資料夾的 `放回清單_<日期時間>.xlsx`；這批準備了但還沒核對的商品也會列出，標「不放回」。修好未通過的商品、重新核對後可以再放一次，已放回的會顯示「已在」；改用標準檔名放回時，舊的「_待確認」檔和舊錯訊檔不會自動刪除，清單會提醒你確認後手動刪除。
+5. **同時留步驟紀錄**（[#151](https://github.com/TaylorYam/structured-product-workflow/issues/151)、[ADR 0019](docs/adr/0019-progress-step-records-and-lifecycle-events.md)）：放回或已在的每個商品多一筆「已放回」紀錄（含放回「_待確認」檔的，結果寫「含待確認」與兩份的狀態），不放回的不寫；連線設定與失敗時的做法同「3 準備」。
 
 ### TS／IIS 核對
 
@@ -145,6 +147,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 4. 信件：一檔一封；收件人是承作的 FC（略過 PB，只有 PB 時標「不需寄送」），副本是信箱裡 `fixed_cc` 的人；主旨 `[中文TS/IIS] [FCN] - <TDCC>`；內文使用 `.env` 的 `SPW_MAIL_TEMPLATE` Excel 範本，填入資料後以可編輯表格貼進 Outlook；附上兩份 PDF。
    表格內容置中；英文字型使用 Calibri、中文字型使用 Microsoft JhengHei；表頭最多兩行。固定副本排序為 MAX、BOB、PM，再接其他人員。
 5. 結果清單 `寄信草稿清單_<日期時間>.xlsx` 列出每檔的狀態、收件人、副本與原因；「資料來源」工作表記錄用的是哪一次每日匯入（時間、編號、檔名、SHA-256）與搜尋時讀不到的資料夾。
+6. **同時留步驟紀錄**（[#151](https://github.com/TaylorYam/structured-product-workflow/issues/151)、[ADR 0019](docs/adr/0019-progress-step-records-and-lifecycle-events.md)）：建了草稿的每檔多一筆「草稿已建立」紀錄（誰、什麼時候、結果清單）；待處理、不需寄送、建立失敗的不寫。寫入失敗時草稿與結果清單照常，完成訊息寫出原因。
 
 每日匯入略過的非 FCN 商品會標「不支援的商品類型」。同一檔重跑會再建一封草稿，重複的請自己刪除。某一檔出錯（例如 Outlook 沒回應、資料有問題）只標那一檔「建立失敗」，其他檔照常處理。商品資料夾只讀不改。作業人員更新程式後重新執行 `setup_panel.cmd` 即會套用新增的資料表版本；開發環境請用上面的手動遷移指令。
 
@@ -255,6 +258,7 @@ On the 3 準備 (prepare) tab:
 6. If either document is missing or has multiple candidates, the whole product is skipped with the reason and candidate names.
    **Rechecking revised issuer documents**: `_待確認` files returned last time are never candidates and only identify which version failed (full-text comparison); identical copies count once. A newly sent version is picked, replacing even the previously returned standard-name version (also when the revision reuses the old file name and overwrites the old original: with differing contents the issuer-named version wins and content found only under the standard name is treated as the previous return); until the issuer sends one, the previously failed version is reused (the reason says so, and also lists new files that could not be used because of a cover-code mismatch or failed conversion), so the same version can be rechecked after fixing the reference workbook or checker rules; a new error workbook is written only when the errors differ from the latest one in the folder. The preparation list's reason column names the excluded versions. For Word-only issuers such as MS and BNP, only the failed document is replaced; if both changed, move the old standard-name file into a subfolder first. When the failed version was a PDF, the revision must also include a PDF to be picked (for example, ask JPM, which sends both PDF and Word, for a PDF when the revision is Word only).
 7. `準備清單.xlsx` in the batch folder records each document's source, whether it was converted from Word, output name, SHA-256, status, and reason. Optionally press 打開批次資料夾 to look at the batch folder; press 下一步：核對 → to switch to 4 核對 (check), where the prepared PDFs are already filled in; the 條件來源 defaults to the database, so load the preview directly (with Excel, choose the reference workbook first).
+8. **Step records at the same time** ([#151](https://github.com/TaylorYam/structured-product-workflow/issues/151), [ADR 0019](docs/adr/0019-progress-step-records-and-lifecycle-events.md)): when `.env` has database connection settings, every prepared product gets a 已準備 record in the database (who, when, the preparation list), which the progress tab later uses to tell which step it has reached; skipped products get none, and preparing a product again adds another record. Without connection settings, or when the login is cancelled, preparation runs as usual without records; when the database cannot be reached or the write fails, the preparation list is still produced and the completion message says why. Operator installs/updates apply schema version 0015 automatically.
 
 After checking and saving the checker result workbook, press 下一步：放回 → to switch to the 5 放回 (return) tab:
 
@@ -262,6 +266,7 @@ After checking and saving the checker result workbook, press 下一步：放回 
 2. Press Return. Products whose `TS/IIS完成檢核` is `V` on the result workbook's 回填後 sheet (both documents passed or manually released) are returned under standard names. A document listed on the error-list sheet is returned with `_待確認` appended (for example `<TDCC>_TS_待確認.pdf`), while the product's passing document keeps its standard name and the reason column carries the error messages; a `<TDCC>_錯誤訊息_<timestamp>.xlsx` workbook (one error per row with the PDF page numbers, which refer to the returned `_待確認` file) is also written to the product folder so operators can see the problems there. It is not written again when the pending files are already in place. Products absent from the result workbook (not yet checked) are not returned.
 3. Batch PDFs are re-hashed and must match the preparation list. When a product folder already has a same-named file, identical content (same bytes, or the same full text such as a PDF re-converted from the same Word file) counts as already there (for example UBS issuing standard names); different content is never overwritten and the whole product is not returned, leaving the decision to the operator.
 4. Files are copied only and the batch folder is kept; results go to `放回清單_<timestamp>.xlsx` in the batch folder, which also lists prepared products not yet checked as not returned. After fixing and rechecking failed products, returning again marks already returned files as already there; when a standard name is returned, old `_待確認` files and error workbooks are never deleted automatically and the list reminds you to remove them after review.
+5. **Step records at the same time** ([#151](https://github.com/TaylorYam/structured-product-workflow/issues/151), [ADR 0019](docs/adr/0019-progress-step-records-and-lifecycle-events.md)): every product returned or already there gets a 已放回 record (including products returned with a `_待確認` file, whose result says 含待確認 and both documents' statuses); products not returned get none; connection settings and failures are handled as in 3 準備.
 
 ### TS/IIS checking
 
@@ -350,6 +355,7 @@ Creates TS/IIS emails to the FCs handling each checked FCN in **your own classic
 4. Mail: one per product; recipients are the FCs (PB skipped; PB-only products are "不需寄送"), CC is everyone with `fixed_cc` in the mailbox; subject `[中文TS/IIS] [FCN] - <TDCC>`; the body uses the Excel template configured by `.env` `SPW_MAIL_TEMPLATE`, fills it, and pastes editable tables into Outlook; both PDFs are attached.
    Table content is centered; English uses Calibri and Chinese uses Microsoft JhengHei; table headers are limited to two lines. Fixed CCs are ordered MAX, BOB, then PM, followed by other people.
 5. The result list `寄信草稿清單_<timestamp>.xlsx` records each product's status, recipients, CCs, and reasons; its "資料來源" sheet records which daily import was used (time, run number, file name, SHA-256) and any folders that could not be read.
+6. **Step records at the same time** ([#151](https://github.com/TaylorYam/structured-product-workflow/issues/151), [ADR 0019](docs/adr/0019-progress-step-records-and-lifecycle-events.md)): every product with a draft gets a 草稿已建立 record (who, when, the result list); 待處理, 不需寄送, and 建立失敗 products get none. When the write fails, the drafts and result list stay as they are and the completion message says why.
 
 Non-FCN products skipped by the daily import are marked "不支援的商品類型". Running a product again creates another draft; delete duplicates yourself. An error on one product (for example Outlook not responding or bad data) marks only that product "建立失敗"; the others continue. Product folders are read only. After an operator code update, rerun `setup_panel.cmd` to apply pending schema versions; in development, use the manual migration command above.
 

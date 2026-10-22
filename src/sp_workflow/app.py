@@ -200,6 +200,7 @@ class PanelWindow:
         self.prepare = PrepareTab(
             self.notebook,
             memory,
+            db,
             self.root_folder,
             on_prepared=self._prepared,
             on_next=lambda: self.notebook.select(self.check),
@@ -207,7 +208,7 @@ class PanelWindow:
         self.check = CheckTab(self.notebook, self.session, self.pixels, on_saved=self._check_saved, login=db.log_in)
         self.check.add_next_step("下一步：放回 →", lambda: self.notebook.select(self.returning.frame))
         self.notebook.add(self.check, text="核對")
-        self.returning = ReturnTab(self.notebook, memory)
+        self.returning = ReturnTab(self.notebook, memory, db)
         self.mail = MailDraftTab(self.notebook, memory, db, self.root_folder)
         self.manual = MaintenanceTab(self.notebook, memory, db, lambda: self.session.paths)
         tabs = self.notebook.tabs()

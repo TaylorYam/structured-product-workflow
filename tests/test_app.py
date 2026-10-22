@@ -26,7 +26,7 @@ from sp_workflow.app import PanelWindow
 from sp_workflow.check_source import EXPORT_FOLDER
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.tabs.base import DatabaseLogin, RootFolder
-from window_synth import hint_change_button, new_window, prepared_receipt, texts
+from window_synth import hint_change_button, new_window, prepared_receipt, prepared_result, texts
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -300,7 +300,7 @@ def test_prepared_pdfs_are_handed_to_the_check_tab_without_switching(master, tmp
     window.notebook.select(window.prepare.frame)
     batch = tmp_path / "待核對_20261020-103000"
 
-    window.prepare._done(prepared_receipt(batch))
+    window.prepare._done(prepared_result(batch))
 
     assert window.check.pdf_paths == (batch / "147000000001_TS.pdf", batch / "147000000001_IIS.pdf"), "只帶已準備的"
     assert window.check.hint.text.get() == (
@@ -317,7 +317,7 @@ def test_prepared_pdfs_are_handed_to_the_check_tab_without_switching(master, tmp
 
 def test_choosing_other_pdfs_hides_the_hint(master, tmp_path: Path, monkeypatch) -> None:
     window = new_window(master, tmp_path)
-    window.prepare._done(prepared_receipt(tmp_path / "待核對_1"))
+    window.prepare._done(prepared_result(tmp_path / "待核對_1"))
     other = tmp_path / "其他" / "147000000009_TS.pdf"
     monkeypatch.setattr(fcn_checker.panel.filedialog, "askopenfilenames", lambda **kwargs: (str(other),))
 
@@ -332,7 +332,7 @@ def test_an_unsaved_check_result_is_kept_unless_the_operator_agrees(master, tmp_
     asked = []
     monkeypatch.setattr(fcn_checker.panel.messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or answer)
 
-    window.prepare._done(prepared_receipt(tmp_path / "待核對_1"))
+    window.prepare._done(prepared_result(tmp_path / "待核對_1"))
 
     assert len(asked) == 1 and "沒存檔的核對結果" in asked[0]
     assert bool(window.check.pdf_paths) is answer and window.check.hint.shown is answer
@@ -345,7 +345,7 @@ def test_a_busy_check_tab_does_not_take_the_batch(master, tmp_path: Path, monkey
     told = []
     monkeypatch.setattr(fcn_checker.panel.messagebox, "showinfo", lambda *a, **k: told.append(a[1]))
 
-    window.prepare._done(prepared_receipt(tmp_path / "待核對_1"))
+    window.prepare._done(prepared_result(tmp_path / "待核對_1"))
 
     assert len(told) == 1 and "正在處理" in told[0]
     assert window.check.pdf_paths == () and not window.check.hint.shown
@@ -432,7 +432,7 @@ def test_sidebar_switches_steps_and_follows_the_next_buttons(master, tmp_path: P
     assert window.notebook.select() == str(window.prepare.frame)
     assert steps[str(window.prepare.frame)].cget("style") == "CurrentStep.TButton"
 
-    window.prepare._done(prepared_receipt(tmp_path / "待核對_1"))
+    window.prepare._done(prepared_result(tmp_path / "待核對_1"))
     window.prepare.next_button.invoke()
     master.update()
 

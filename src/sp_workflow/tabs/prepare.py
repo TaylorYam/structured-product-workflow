@@ -1,4 +1,4 @@
-"""「3 準備」分頁：貼 TDCC、選輸出位置，產生批次資料夾與準備清單。"""
+"""「3 準備」分頁：貼 TDCC、選輸出位置，產生批次資料夾與準備清單；登入了資料庫時同時留步驟紀錄（#151）。"""
 
 from __future__ import annotations
 
@@ -9,8 +9,9 @@ from tkinter import ttk
 
 from fcn_checker.ui import NextButton
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.preparation import PREPARED, PrepareReceipt, prepare_batch
-from sp_workflow.tabs.base import RootFolder, Tab, ask_dir, open_folder
+from sp_workflow.preparation import PREPARED, PrepareReceipt
+from sp_workflow.tabs.base import DatabaseLogin, RootFolder, Tab, ask_dir, open_folder, record_note
+from sp_workflow.window_actions import PrepareResult, run_prepare
 
 
 class PrepareTab(Tab):
@@ -18,6 +19,7 @@ class PrepareTab(Tab):
         self,
         notebook: ttk.Notebook,
         memory: FolderMemory,
+        db: DatabaseLogin,
         root_folder: RootFolder,
         on_prepared: Callable[[PrepareReceipt], bool],
         on_next: Callable[[], None],
@@ -25,6 +27,7 @@ class PrepareTab(Tab):
         super().__init__(notebook, "準備", (("tdcc", "TDCC", 130), ("status", "狀態", 70), ("reason", "原因", 520)))
         self.on_prepared = on_prepared
         self.memory = memory
+        self.db = db
         self.root_folder = root_folder
         self.batch_dir: Path | None = None
         self.out_var = tk.StringVar(value=memory.load().get("out", ""))
@@ -59,21 +62,24 @@ class PrepareTab(Tab):
         if paths is None:
             return
         root, out = paths
+        settings = self.db.settings(quiet=True)  # 沒有連線設定或取消登入：照樣準備，不留步驟紀錄
         self.memory.remember(out=str(out))
         self.start_button.configure(state=tk.DISABLED)
         self.open_button.configure(state=tk.DISABLED)
         self.next_button.withdraw()
         self.restart()
         self.run_in_background(
-            lambda: prepare_batch(text, root, out),
+            lambda: run_prepare(settings, text, root, out),
             "處理中…（在根目錄底下搜尋商品資料夾，公槽上可能要一點時間）",
             self._done,
         )
 
     def _done(self, result: object) -> None:
         self.start_button.configure(state=tk.NORMAL)
-        if not isinstance(result, PrepareReceipt):
+        if not isinstance(result, PrepareResult):
             return
+        self.db.after_run(result.recorded.database_error)
+        recorded, result = result.recorded, result.receipt
         for o in result.outcomes:
             self.add_row((o.tdcc, o.status, o.reason), problem=o.status != PREPARED)
         prepared = sum(o.status == PREPARED for o in result.outcomes)
@@ -87,7 +93,7 @@ class PrepareTab(Tab):
             ("跳過（檔）", skipped, skipped > 0),
             ("Word 轉檔（份）", from_word, False),
         )
-        self.finish(kpis, status)
+        self.finish(kpis, status + record_note(recorded))
         self.batch_dir = result.batch_dir
         self.open_button.configure(state=tk.NORMAL)
         if self.on_prepared(result):  # 核對頁真的帶入了這批 PDF，才有下一步

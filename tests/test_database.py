@@ -91,6 +91,7 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
         "workflow.other_product",
         "workflow.price_import",
         "workflow.product",
+        "workflow.step_record",
         "workflow.term_correction",
         "workflow.trade_row",
         "workflow.trade_row_correction",
