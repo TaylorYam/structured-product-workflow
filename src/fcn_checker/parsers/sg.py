@@ -22,8 +22,9 @@ from .layout import Document, LayoutSpec, TextIndex, capture, join_text, parse_d
 
 TEMPLATE_ID = "sg-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #288）；3：日期表標準欄位與共用排程推導（Issue #289）；
-# 4：重印價格表、情境假設值與較差情境執行價交成共用情境規則的標準欄位（Issue #294）
-PARSER_VERSION = "4"
+# 4：重印價格表、情境假設值與較差情境執行價交成共用情境規則的標準欄位（Issue #294）；
+# 5：無自動提前出場的單一評價日寫法（只有配息日欄的日期表、§12「評價日：」，Issue #130）
+PARSER_VERSION = "5"
 CHAPTER_NAMES = {
     1: ("一", "商品基本資料"),
     2: ("二", "相關機構事業概況"),
@@ -343,6 +344,7 @@ def read(lines: Sequence[Line]) -> SgTermSheet:
     put("maturity_date", art12, r"到期日：" + D, parse_date)
     fields["autocall_day"] = _autocall_day(t12, art12, has_autocall)
     fields["date_table"] = sg_tables.date_table(art12)
+    fields["valuation_date"] = _valuation_date(t12, fields["date_table"])
     _schedule(fields)
     scenarios = sg_scenario.section(doc.span_lines(doc.subitems(arts.get(15)).get(3)), n)
 
@@ -471,7 +473,8 @@ def _ko_wording(t8: TextIndex, art8: list[Line], has_autocall: bool) -> ParsedFi
 
 
 def ki_type(t8: TextIndex, art8: list[Line], where: str = "第 8 項") -> ParsedField:
-    """第 8 項到期贖回款數與觀察寫法 → KI 型態（範本規格 §4.4）；無 KI 以 present「none」交出。
+    """第 8 項到期贖回款數與觀察寫法 → KI 型態（範本規格 §4.4）；無 KI 以 present「none」交出。無 KI 的到期觀察也可能寫
+    「於評價日」（無自動提前出場的單一評價日寫法，Issue #130）。
 
     投資人須知收益分配事項的各款相同（parsers/sg_iis.py），`where` 是錯訊裡的出處。"""
     name = "ki_type"
@@ -482,7 +485,7 @@ def ki_type(t8: TextIndex, art8: list[Line], where: str = "第 8 項") -> Parsed
     red = text[a:b]
     lns = t8.lines_for(a, b)
     cases = len(re.findall(r"\(\d\)若於", red))
-    if cases == 2 and re.search(r"\(1\)若於最終評價日(?:最差表現之)?連結標的收盤價大於或等於執行價", red):
+    if cases == 2 and re.search(r"\(1\)若於(?:最終)?評價日(?:最差表現之)?連結標的收盤價大於或等於執行價", red):
         if "下限價" in red:
             return ParsedField.invalid(name, lns, "到期贖回以執行價判，但出現下限價")
         return ParsedField.present(name, "none", lns)
@@ -554,12 +557,26 @@ def _autocall_day(t12: TextIndex, art12: list[Line], has_autocall: bool) -> Pars
     return ParsedField.missing(name, "第 12 項找不到自動提前出場日的定義")
 
 
+def _valuation_date(t12: TextIndex, table: ParsedField) -> ParsedField:
+    """單一評價日寫法（日期表 S 型，Issue #130）的 §12「評價日：日期」；日期表有評價日欄時不適用（評價日在表上）。"""
+    name = "valuation_date"
+    if not table.ok or table.value["type"] != "S":
+        return _absent(name, "只有單一評價日寫法（日期表只有配息日欄）才讀第 12 項的評價日")
+    return capture(name, t12, r"(?<!最終)評價日：" + D, parse_date, whole_match=True)
+
+
 SCHEDULE_WHERE = "第 12 項日期表"
 
 
-def _schedule_table(value: dict) -> standard_fields.DateTable:
+def _schedule_table(value: dict, valuation: ParsedField) -> standard_fields.DateTable | ParsedField:
     """日期表：D 觀察日 = 配息週期終止日，起始日（不含）= 前期終止日，第 1～Non-Call 期起始日「不適用」；P 觀察日 = 評價日，
-    沒有起始日欄。"""
+    沒有起始日欄；S 只有末期有觀察日，取 §12 的評價日（`valuation`，讀不到時整張表跟著它）。"""
+    if value["type"] == "S":
+        if not valuation.ok:
+            return valuation
+        last = len(value["rows"])
+        rows = [{**r, "pricing": valuation.value if r["period"] == last else None} for r in value["rows"]]
+        return standard_fields.DateTable(SCHEDULE_WHERE, schedule.rows_of(rows, "pricing", value["row_lines"]))
     if value["type"] != "D":
         rows = schedule.rows_of(value["rows"], "pricing", value["row_lines"])
         return standard_fields.DateTable(SCHEDULE_WHERE, rows)
@@ -572,10 +589,11 @@ def _schedule(fields: dict[str, ParsedField]) -> None:
     """日期表、KO 觀察方式、第一個可提前出場期、提前出場排程（`parsers/schedule.py`）與最終評價日（範本規格 §4.1、§4.3）。
 
     D：日期表第一個有起始日的期別 i → k = i − 1，比價日為第 8 項觀察期間起始日與末期的配息週期終止日。P：k 取第 8 項，比價日為第 k 期起的
-    評價日。無自動提前出場：k = 天期，以 P 表示，比價日只有末期評價日。"""
-    table, wording = fields["date_table"], fields["ko_wording"]
-    fields["schedule_table"] = schedule.table_field(table, _schedule_table)
-    bad = next((p for p in (table, wording) if not p.ok), None)
+    評價日。無自動提前出場：k = 天期，以 P 表示，比價日只有末期評價日（S 型日期表取 §12 的評價日）。"""
+    table, wording, valuation = fields["date_table"], fields["ko_wording"], fields["valuation_date"]
+    fields["schedule_table"] = schedule.table_field(table, lambda value: _schedule_table(value, valuation))
+    single = table.ok and table.value["type"] == "S"
+    bad = next((p for p in (table, wording, *([valuation] if single else [])) if not p.ok), None)
     if bad is not None:
         fields.update(schedule.failed(bad))
         fields["final_valuation_date"] = derived("final_valuation_date", bad)
@@ -583,16 +601,23 @@ def _schedule(fields: dict[str, ParsedField]) -> None:
     kind, rows = table.value["type"], table.value["rows"]
     ev = table.evidence + wording.evidence
     wtype = wording.value["type"]
-    last = rows[-1]
-    final = last["end"] if kind == "D" else last["pricing"]
-    fields["final_valuation_date"] = (
-        ParsedField("final_valuation_date", FieldStatus.PRESENT, final, list(table.evidence))
-        if final is not None
-        else ParsedField.invalid("final_valuation_date", table.value["row_lines"][-1], "日期表末列的評價日是「不適用」")
-    )
+    if kind == "S":
+        fields["final_valuation_date"] = derived("final_valuation_date", valuation, valuation.value)
+    else:
+        last = rows[-1]
+        final = last["end"] if kind == "D" else last["pricing"]
+        fields["final_valuation_date"] = (
+            ParsedField("final_valuation_date", FieldStatus.PRESENT, final, list(table.evidence))
+            if final is not None
+            else ParsedField.invalid(
+                "final_valuation_date", table.value["row_lines"][-1], "日期表末列的評價日是「不適用」"
+            )
+        )
     note, k = "", None
     if (wtype == "D") != (kind == "D"):
         note = "第 8 項觀察期間的寫法與第 12 項日期表表頭不一致（一個是每日觀察、一個是每期觀察）"
+    elif kind == "S" and wtype != "none":
+        note = "第 12 項日期表沒有評價日欄（單一評價日寫法），但第 8 項有自動提前出場"
     elif wtype == "D":
         dated = next((r["period"] for r in rows if r["start"] is not None), None)
         if dated is None:

@@ -73,6 +73,9 @@ VARIANTS = {
         iis_strike_pct=False,
     ),
     "日圓、4 檔": Spec(currency_zh="日圓", ko=Decimal("105.00"), count=4),
+    "無自動提前出場、單一評價日（Issue #130）": Spec(
+        autocall=False, ki="none", tenor=12, strike=Decimal("80.00"), single_valuation=True
+    ),
 }
 
 

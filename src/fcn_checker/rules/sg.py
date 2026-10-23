@@ -177,13 +177,15 @@ def autocall_terms(ctx: IssuerContext) -> list[CheckResult]:
         )
     )
     kinds = {"D": "每日觀察", "P": "每期觀察", "none": "無自動提前出場"}
+    tables = {"D": "每日觀察", "P": "每期觀察／無自動提前出場", "S": "無自動提前出場（單一評價日）"}
+    wtype, dtype = (wording.value["type"] if wording.ok else None), (dtable.value["type"] if dtable.ok else None)
     out.append(
         kit.doc_check(
             ctx, "doc.ko_observation", "ko_observation", "KO 觀察方式（第 8 項寫法與日期表）", wording, dtable
         ).compare(
-            kinds.get(wording.value["type"]) if wording.ok else None,
-            ("每日觀察" if dtable.value["type"] == "D" else "每期觀察／無自動提前出場") if dtable.ok else None,
-            ok=wording.ok and dtable.ok and (wording.value["type"] == "D") == (dtable.value["type"] == "D"),
+            kinds.get(wtype),
+            tables.get(dtype),
+            ok=wording.ok and dtable.ok and (wtype == "D") == (dtype == "D") and (dtype != "S" or wtype == "none"),
             fail=S.REVIEW_REQUIRED,
             reason="document_inconsistent",
             fail_message="第 8 項觀察期間的寫法與第 12 項日期表表頭不一致",
@@ -272,7 +274,7 @@ def redemption(ctx: IssuerContext) -> list[CheckResult]:
 def schedule(ctx: IssuerContext) -> list[CheckResult]:
     """SG 獨有的日期表交叉驗證；期數、配息日與觀察日順序、末期日期、起始日由共用規則（rules/schedule.py）檢查。
 
-    - 末列標「（最終評價日）」「（到期日）」，其他列不標。
+    - 末列標「（最終評價日）」「（到期日）」，其他列不標；單一評價日寫法（S 型，Issue #130）表上沒有評價日，只標「（到期日）」。
     - D：第 k+1 期起始日 = 第 8 項觀察期間起始日；配息按比例條款與自動提前出場日寫法。P：第 8 項期數與評價日「不適用」列。
     """
     f = ctx.ts.f
@@ -280,10 +282,14 @@ def schedule(ctx: IssuerContext) -> list[CheckResult]:
     names = {"schedule.row_labels": "日期表末列標籤", "schedule.autocall_dates": "提前出場期別與觀察期間"}
     if not table.ok:
         return [Check(rid, "date_table", Item.expected(n), ctx.document).review(table) for rid, n in names.items()]
-    rows = table.value["rows"]
+    rows, single = table.value["rows"], table.value["type"] == "S"
     last, issues = rows[-1]["period"], []
     for key, text in (("final_label_rows", "（最終評價日）"), ("maturity_label_rows", "（到期日）")):
         marked = table.value[key]
+        if single and key == "final_label_rows":
+            if marked:
+                issues.append(f"日期表沒有評價日欄，第 {'、'.join(map(str, marked))} 期卻標「{text}」")
+            continue
         if last not in marked:
             issues.append(f"末列沒有標「{text}」")
         if other := sorted({p for p in marked if p != last}):
@@ -318,7 +324,7 @@ def schedule(ctx: IssuerContext) -> list[CheckResult]:
                 want = r["period"] >= n
                 if (r["pricing"] is not None) != want:
                     issues.append(f"第 {r['period']} 期評價日{'應有日期' if want else '應為「不適用」'}")
-        else:
+        elif not single:  # 單一評價日寫法沒有評價日欄，評價日只在 §12
             for r in rows:
                 want = r["period"] == len(rows)
                 if (r["pricing"] is not None) != want:

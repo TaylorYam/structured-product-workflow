@@ -101,12 +101,14 @@ def price_table(name: str, lines: list[Line], spec: price_table_module.TableSpec
 
 
 def date_table(lines: list[Line]) -> ParsedField:
-    """§12 日期表：表頭「配息週期(i)」之後的表頭格決定表型（D：配息週期起始日／終止日／配息日；P：評價日／配息日），
+    """§12 日期表：表頭「配息週期(i)」之後的表頭格決定表型（D：配息週期起始日／終止日／配息日；P：評價日／配息日；
+    S：只有配息日，無自動提前出場的單一評價日寫法，評價日寫在 §12「評價日：」，Issue #130），
     資料列從「i=1」起到第一個不是日期、「不適用」或末列標籤的行為止。
 
-    值：{"type": "D"|"P", "rows": [...], "row_lines": [...], "final_label_rows": [...], "maturity_label_rows": [...]}
+    值：{"type": "D"|"P"|"S", "rows": [...], "row_lines": [...], "final_label_rows": [...], "maturity_label_rows": [...]}
     （標「（最終評價日）」「（到期日）」的期別；範本只標在末列）；
-    D 列為 period／start／end／payment（第 1～Non-Call 期起始與終止日為 None），P 列為 period／pricing／payment。
+    D 列為 period／start／end／payment（第 1～Non-Call 期起始與終止日為 None），P 列為 period／pricing／payment，
+    S 列為 period／payment。
     """
     name = "date_table"
     heads = [i for i, ln in enumerate(lines) if squash(ln.text) == DATE_HEAD]
@@ -120,8 +122,10 @@ def date_table(lines: list[Line]) -> ParsedField:
         kind, keys = "D", ("start", "end", "payment")
     elif header.startswith("評價日(i)"):
         kind, keys = "P", ("pricing", "payment")
+    elif header == "配息日(i)":
+        kind, keys = "S", ("payment",)
     else:
-        return ParsedField.invalid(name, lines[heads[0] : first], "日期表表頭不是已知的兩種寫法")
+        return ParsedField.invalid(name, lines[heads[0] : first], "日期表表頭不是已知的三種寫法")
     rows: list[dict] = []
     row_lines: list[list[Line]] = []
     labels: dict[str, list[int]] = {FINAL_LABEL: [], MATURITY_LABEL: []}
