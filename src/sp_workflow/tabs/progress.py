@@ -161,6 +161,7 @@ class ProgressTab(Tab):
             button.configure(state=tk.DISABLED if busy or not self.shown else tk.NORMAL)
 
     def _actions(self) -> tuple[ttk.Button, ...]:
+        """登記用的按鈕：重新整理過、沒有在背景做事時才能按。"""
         return (self.sent_button, self.batch_sent_button, self.redeem_button, self.object_button, self.resolve_button)
 
     # ---------- 重新整理 ----------
@@ -341,17 +342,19 @@ class ProgressTab(Tab):
         self._busy(False)
         if not isinstance(result, SentBatch):
             return
-        unchecked = f"交易日 {result.through} 以前還沒核對完、這次沒有登記的 {result.unchecked} 檔"
+        skipped_note = f"交易日 {result.through} 以前還沒核對完、這次沒有登記的 {result.unchecked} 檔"
         if not result.tdccs:
             messagebox.showinfo(
-                TITLE, f"交易日 {result.through} 以前沒有待寄信的商品，這次沒有寫。\n{unchecked}。", parent=self.master
+                TITLE,
+                f"交易日 {result.through} 以前沒有待寄信的商品，這次沒有寫。\n{skipped_note}。",
+                parent=self.master,
             )
             self.refilter()
             return
         if not messagebox.askokcancel(
             TITLE,
             f"登記 {len(result.tdccs)} 檔已寄出（交易日 {result.through} 以前、核對通過、還沒登記已寄出）："
-            f"{tdcc_list(result.tdccs)}？\n{unchecked}。",
+            f"{tdcc_list(result.tdccs)}？\n{skipped_note}。",
             parent=self.master,
         ):
             self.refilter()
@@ -359,7 +362,7 @@ class ProgressTab(Tab):
         self._start(
             lambda settings: mark_sent_batch(settings, result),
             "批次登記已寄出中…",
-            self._registered("已寄出", f"；{unchecked}"),
+            self._registered("已寄出", f"；{skipped_note}"),
         )
 
     def register_redemption(self) -> None:

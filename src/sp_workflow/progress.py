@@ -175,8 +175,9 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
             "SELECT t.tdcc, min(t.trade_date), max(r.imported_at) FROM workflow.trade_row t"
             " JOIN workflow.import_run r ON r.run_id = t.first_run_id GROUP BY t.tdcc"
         ):
-            of(tdcc)["dates"][TRADES_IMPORTED] = imported
-            facts[tdcc]["has_trades"] = True
+            item = of(tdcc)
+            item["dates"][TRADES_IMPORTED] = imported
+            item["has_trades"] = True
             trade_dates[tdcc] = first_trade
         initial_prices: dict[str, dict[int, Decimal | None]] = {}
         for tdcc, seq, price in conn.execute("SELECT tdcc, seq, initial_price FROM workflow.underlying_price"):
@@ -296,7 +297,7 @@ class SentBatch:
 
 
 def sent_batch(rows: Iterable[ProgressRow], through: dt.date) -> SentBatch:
-    """交易日在 `through` 以前（含）、目前是待寄信的商品；沒有交易日的不算。其他階段的一律不動。"""
+    """交易日在 `through` 以前（含）、目前是待寄信的商品；沒有交易日的（例如還沒有交易明細）兩邊都不算。"""
     due = [row for row in rows if row.trade_date is not None and row.trade_date <= through]
     return SentBatch(
         through,

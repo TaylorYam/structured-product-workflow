@@ -46,7 +46,7 @@
 - 人工事件只有「顧客贖回」（事件日、備註），登記後這檔停止比價。
 - 舊清單匯入的狀態轉成來源「舊清單」的事件（ADR 0020）；`status_event`、`status_date`、`status_underlying`、`status_raw` 不再寫入，之後另行移除。
 
-**進度頁**：「8 進度」分頁：篩選交易日區間、作業進度、存續狀態、上手；每列一檔，顯示各步日期、目前進度、距交易日天數；可匯出 Excel（整張篩選結果）；按鈕「登記已寄出」「登記顧客贖回」「提出異議」，登記的入口只在這一頁。「批次登記已寄出」（#186）選一個交易日，把交易日在這天以前（含）、目前是待寄信的商品各寫一筆「已寄出」：先列出這批有幾檔、哪些 TDCC，確認後才寫；寫的時候已經登記過的不重複寫；完成後提示同一個範圍裡還沒核對完、這次沒有登記的檔數。落後以距交易日天數排序，不設門檻。
+**進度頁**：「8 進度」分頁：篩選交易日區間、作業進度、存續狀態、上手；每列一檔，顯示各步日期、目前進度、距交易日天數；可匯出 Excel（整張篩選結果）；按鈕「登記已寄出」「登記顧客贖回」「提出異議」，登記的入口只在這一頁。「批次登記已寄出」（#186）選一個交易日，把交易日在這天以前（含）、目前是待寄信的商品各寫一筆「已寄出」：先列出這批有幾檔、哪些 TDCC，確認後才寫；寫的時候已經登記過或已經解鎖的跳過；完成後提示同一個範圍裡還沒核對完、這次沒有登記的檔數。落後以距交易日天數排序，不設門檻。
 
 **實作順序**：先完成 #138（每個分頁一個 module）再加進度頁。寄信草稿的建立條件不變，仍以商品資料夾的標準檔名 PDF 為準。
 
@@ -107,7 +107,7 @@ The user's goal: automate the whole path from start to finish, see every product
 - The only manual event is 顧客贖回 (event date, note); after it is recorded the product is no longer observed.
 - Statuses imported from the old 清單更新 become events with source 舊清單 (ADR 0020); `status_event`, `status_date`, `status_underlying`, and `status_raw` are no longer written and will be removed separately.
 
-**Progress tab**: an "8 進度" tab filtered by trade-date range, workflow progress, lifecycle status, and issuer; one row per product showing each step's date, the current progress, and days since the trade date; export to Excel (the whole filtered result); buttons 登記已寄出, 登記顧客贖回, and 提出異議, the only place these are entered. 批次登記已寄出 (batch sent, #186) takes a trade date and writes one 已寄出 for every product traded on or before it that is currently 待寄信: it lists how many and which TDCCs first and writes only after confirmation, skips products already recorded at write time, and afterwards says how many products in the same range are not checked yet and were not recorded. Laggards are sorted by days since the trade date, with no threshold.
+**Progress tab**: an "8 進度" tab filtered by trade-date range, workflow progress, lifecycle status, and issuer; one row per product showing each step's date, the current progress, and days since the trade date; export to Excel (the whole filtered result); buttons 登記已寄出, 登記顧客贖回, and 提出異議, the only place these are entered. 批次登記已寄出 (batch sent, #186) takes a trade date and writes one 已寄出 for every product traded on or before it that is currently 待寄信: it lists how many and which TDCCs first and writes only after confirmation, skips products already recorded or no longer locked at write time, and afterwards says how many products in the same range are not checked yet and were not recorded. Laggards are sorted by days since the trade date, with no threshold.
 
 **Order of work**: finish #138 (one module per tab) before adding the progress tab. The mail-draft criteria are unchanged and still rely on standard-named PDFs in the product folder.
 

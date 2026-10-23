@@ -82,14 +82,16 @@ def test_marking_sent_finishes_the_product_and_a_bad_tdcc_only_fails_itself(pg, 
 
 @pytest.mark.db
 def test_a_batch_of_sent_skips_products_already_sent(pg, pg_settings) -> None:
-    """#186：寫的時候已經有「已寄出」的跳過，不重複寫；結果寫出選的交易日。"""
-    seed_products(pg, [inventory(t, [("台北", 10000)]) for t in (A, B)])
+    """#186：寫的時候已經有「已寄出」或已經解鎖的跳過，不重複寫、不動其他階段；結果寫出選的交易日。"""
+    c = "147199990003"
+    seed_products(pg, [inventory(t, [("台北", 10000)]) for t in (A, B, c)])
+    pg.execute("UPDATE workflow.product SET locked_at = %s WHERE tdcc IN (%s, %s)", (T, A, B))  # c 確認期間被解鎖
     mark_sent(pg_settings, [B])  # 找出這批之後別人剛登記過
 
-    result = mark_sent_batch(pg_settings, SentBatch(dt.date(2026, 10, 22), (A, B), 0))
+    result = mark_sent_batch(pg_settings, SentBatch(dt.date(2026, 10, 22), (A, B, c), 0))
 
     assert result.done == (A,) and result.failed == ()
-    assert (step_count(pg, A), step_count(pg, B)) == (1, 1)
+    assert (step_count(pg, A), step_count(pg, B), step_count(pg, c)) == (1, 1, 0)
     (note,) = pg.execute("SELECT result FROM workflow.step_record WHERE tdcc = %s", (A,)).fetchone()
     assert note == "進度頁批次登記已寄出（交易日 2026-10-22 以前）"
 

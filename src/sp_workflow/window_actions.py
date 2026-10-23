@@ -456,12 +456,19 @@ def find_sent_batch(settings: ConnectionSettings, paths: ConfigPaths, through: d
 
 
 def mark_sent_batch(settings: ConnectionSettings, batch: SentBatch) -> Registered:
-    """批次登記已寄出（#186）：`batch` 的每檔寫一筆「已寄出」；寫的時候已經有「已寄出」的跳過，不重複寫。"""
+    """批次登記已寄出（#186）：`batch` 的每檔寫一筆「已寄出」；寫的時候已經有「已寄出」或已經不是鎖住（確認期間
+    被更正解鎖）的跳過，不重複寫、其他階段的不動。"""
     result = f"進度頁批次登記已寄出（交易日 {batch.through} 以前）"
     with connect(settings) as conn:
         require_current_schema(conn)
         sent = set(_sent(conn, batch.tdccs))
-        fresh = [tdcc for tdcc in batch.tdccs if tdcc not in sent]
+        locked = {
+            row[0]
+            for row in conn.execute(
+                "SELECT tdcc FROM workflow.product WHERE locked_at IS NOT NULL AND tdcc = ANY(%s)", (list(batch.tdccs),)
+            )
+        }
+        fresh = [tdcc for tdcc in batch.tdccs if tdcc in locked and tdcc not in sent]
         return _each(fresh, lambda tdcc: write_records(conn, [StepRecord(tdcc, SENT_STEP, result)]))
 
 
