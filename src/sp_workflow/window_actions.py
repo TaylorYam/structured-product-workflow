@@ -518,7 +518,7 @@ def resolve_event_objection(settings: ConnectionSettings, objection_id: int) -> 
 
 
 def load_exit_list(settings: ConnectionSettings, paths: ConfigPaths, day: dt.date | None) -> ExitList:
-    """那一天（沒有時用收盤價表最新的收盤日）比價算出的出場事件（#171）；上手代號照上手編號對照。"""
+    """那一天（沒有時用收盤價表最新的收盤日）還有效的出場事件，來源不限（#171、#188）；上手代號照上手編號對照。"""
     config = load_import_config(paths)
     with connect(settings) as conn:
         require_current_schema(conn)

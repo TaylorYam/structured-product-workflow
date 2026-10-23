@@ -1,4 +1,4 @@
-"""「9 出場清單」分頁（`sp_workflow.tabs.exits`，#171）：重新整理、改日期、帶入比到的那一天、匯出 Excel。"""
+"""「9 出場清單」分頁（`sp_workflow.tabs.exits`，#171、#188）：重新整理、改日期、帶入比到的那一天、匯出 Excel。"""
 
 from __future__ import annotations
 
@@ -15,8 +15,9 @@ from window_synth import new_window
 DAY = dt.date(2026, 10, 21)
 T = dt.datetime(2026, 10, 22, 8, 30, tzinfo=dt.UTC)
 ROWS = (
-    ExitRow("029199990001", "BARC", "FCN", "KO", DAY, "", True, T),
-    ExitRow("037199990002", "SG", "FCN", "接股", DAY, "AAA UW", False, T),
+    ExitRow("029199990001", "BARC", "FCN", "KO", DAY, "", "比價", True, T),
+    ExitRow("037199990002", "SG", "FCN", "接股", DAY, "AAA UW", "舊清單", False, T),
+    ExitRow("037199990003", "SG", "FCN", "KO", DAY, "", "舊清單", True, T),
 )
 
 
@@ -54,12 +55,28 @@ def test_a_blank_day_reads_the_latest_close_day(master, tmp_path: Path, monkeypa
     _, tab, asked = loaded(master, tmp_path, monkeypatch)
 
     assert asked == [None] and tab.day_var.get() == "2026-10-21", "讀到後把日期填回去"
+    at = f"{T.astimezone():%Y-%m-%d %H:%M}"
     assert cells(tab) == [
-        ("029199990001", "BARC", "FCN", "KO", "2026-10-21", "", "已鎖住", f"{T.astimezone():%Y-%m-%d %H:%M}"),
-        ("037199990002", "SG", "FCN", "接股", "2026-10-21", "AAA UW", "未鎖住", f"{T.astimezone():%Y-%m-%d %H:%M}"),
+        ("029199990001", "BARC", "FCN", "KO", "2026-10-21", "", "比價", "已鎖住", at),
+        ("037199990002", "SG", "FCN", "接股", "2026-10-21", "AAA UW", "舊清單", "未鎖住", at),
+        ("037199990003", "SG", "FCN", "KO", "2026-10-21", "", "舊清單", "已鎖住", at),
     ]
-    assert tab.kpis.values == (("KO（檔）", 1, False), ("接股（檔）", 1, False), ("到期還本（檔）", 0, False))
-    assert tab.status_var.get() == "收盤日 2026-10-21：出場 2 檔。"
+    assert tab.kpis.values == (
+        ("KO（檔）", 2, False),
+        ("接股（檔）", 1, False),
+        ("到期還本（檔）", 0, False),
+        ("顧客贖回（檔）", 0, False),
+    )
+    assert tab.status_var.get() == "收盤日 2026-10-21：出場 3 檔（比價 1、舊清單 2）。", "寫出各來源的檔數"
+
+
+def test_two_events_of_one_product_count_as_one(master, tmp_path: Path, monkeypatch) -> None:
+    rows = (*ROWS, ExitRow("037199990003", "SG", "FCN", "顧客贖回", DAY, "", "人工", True, T))
+    _, tab, _ = loaded(master, tmp_path, monkeypatch, ExitList(DAY, rows))
+
+    assert len(cells(tab)) == 4, "一筆一列"
+    assert tab.kpis.values[0] == ("KO（檔）", 2, False) and tab.kpis.values[3] == ("顧客贖回（檔）", 1, False)
+    assert tab.status_var.get() == "收盤日 2026-10-21：出場 3 檔（比價 1、舊清單 2、人工 1）。", "檔數依 TDCC 算"
     assert str(tab.export_button.cget("state")) == "normal"
 
 
@@ -118,8 +135,9 @@ def test_export_writes_what_is_shown(master, tmp_path: Path, monkeypatch) -> Non
 
     assert offered["initialfile"] == "出場清單_20261021.xlsx"
     rows = list(openpyxl.load_workbook(path).active.iter_rows(values_only=True))
-    assert [r[:7] for r in rows[1:]] == [
-        ("029199990001", "BARC", "FCN", "KO", dt.datetime(2026, 10, 21), None, "已鎖住"),
-        ("037199990002", "SG", "FCN", "接股", dt.datetime(2026, 10, 21), "AAA UW", "未鎖住"),
+    assert [r[:8] for r in rows[1:]] == [
+        ("029199990001", "BARC", "FCN", "KO", dt.datetime(2026, 10, 21), None, "比價", "已鎖住"),
+        ("037199990002", "SG", "FCN", "接股", dt.datetime(2026, 10, 21), "AAA UW", "舊清單", "未鎖住"),
+        ("037199990003", "SG", "FCN", "KO", dt.datetime(2026, 10, 21), None, "舊清單", "已鎖住"),
     ]
-    assert tab.status_var.get() == f"已匯出出場清單 2 檔：{path}"
+    assert tab.status_var.get() == f"已匯出出場清單 3 檔：{path}"

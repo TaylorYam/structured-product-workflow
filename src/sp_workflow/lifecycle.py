@@ -28,10 +28,12 @@ DELIVERY = "接股"
 MATURITY = "到期還本"
 REDEMPTION = "顧客贖回"
 AUTO_EVENTS = (KO, DELIVERY, MATURITY)
+EXIT_EVENTS = (*AUTO_EVENTS, REDEMPTION)  # 會讓商品出場的事件：自動事件加顧客贖回（#188）
 
 OBSERVATION = "比價"  # 事件的來源
 MANUAL = "人工"
 LEGACY = "舊清單"  # 資料表版本 0016 轉換的舊狀態
+SOURCES = (OBSERVATION, LEGACY, MANUAL)
 
 _EVENT_COLUMNS = "event_id, tdcc, event, event_date, underlying, source, note, recorded_by, recorded_at"
 
@@ -123,12 +125,12 @@ def current_events(conn: psycopg.Connection, tdcc: str) -> list[StoredEvent]:
     return [StoredEvent(*row) for row in rows]
 
 
-def observed_exits_on(conn: psycopg.Connection, day: dt.date) -> list[StoredEvent]:
-    """出場清單（#171）：事件日是 `day`、比價產生、還有效的自動事件，依 TDCC、寫入先後排序。"""
+def exits_on(conn: psycopg.Connection, day: dt.date) -> list[StoredEvent]:
+    """出場清單（#171、#188）：事件日是 `day`、還有效的出場事件，來源不限（比價、舊清單、人工），依 TDCC、寫入先後排序。"""
     rows = conn.execute(
-        f"SELECT {_EVENT_COLUMNS} FROM workflow.product_event WHERE event_date = %s AND source = %s"
+        f"SELECT {_EVENT_COLUMNS} FROM workflow.product_event WHERE event_date = %s"
         " AND event = ANY(%s) AND superseded_at IS NULL ORDER BY tdcc, event_id",
-        (day, OBSERVATION, list(AUTO_EVENTS)),
+        (day, list(EXIT_EVENTS)),
     ).fetchall()
     return [StoredEvent(*row) for row in rows]
 
