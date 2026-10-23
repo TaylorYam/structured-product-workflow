@@ -22,6 +22,7 @@ from sp_workflow.progress import (
     EXPORT_COLUMNS,
     FINISHED,
     LOCKED,
+    PRICING_COLUMNS,
     PROGRESS,
     SENT_STEP,
     TERMS_IMPORTED,
@@ -143,6 +144,22 @@ def test_rows_are_filtered_by_trade_date_progress_lifecycle_and_issuer() -> None
     assert tdccs(issuer="BARC") == ["6"]
 
 
+def test_rows_are_filtered_by_pricing_status() -> None:
+    rows = [row("1", pricing="在庫"), row("2", pricing="等股價"), row("3"), row("4", pricing="待確認")]
+
+    def tdccs(**filters) -> list[str]:
+        return [r.tdcc for r in filter_rows(rows, **filters)]
+
+    assert tdccs() == ["1", "2", "3", "4"]
+    assert tdccs(pricing={"等股價", "待確認"}) == ["2", "4"], "選了比價狀態時還沒比過的不列"
+
+
+def test_pricing_text_marks_unlocked_products() -> None:
+    assert row("1", pricing="在庫", pricing_unlocked=True).pricing_text == "在庫（未鎖住）"
+    assert row("1", pricing="在庫").pricing_text == "在庫"
+    assert row("1", pricing_unlocked=True).pricing_text == "", "還沒比過的空白"
+
+
 def test_default_order_puts_the_most_behind_first() -> None:
     rows = [row("3", days=None), row("1", days=3), row("2", days=30), row("0", days=3)]
 
@@ -153,13 +170,29 @@ def test_export_writes_the_rows_as_shown(tmp_path: Path) -> None:
     dates = (T, None, None, None, None, None, None, None, None)
     path = tmp_path / "進度.xlsx"
 
-    receipt = export_progress([row("037199990002", dates=dates, reason="還沒有商品條件")], path)
+    shown = row(
+        "037199990002",
+        dates=dates,
+        reason="還沒有商品條件",
+        pricing="等股價",
+        pricing_reason="UL_1 AAA UW：2026-10-21 沒有收盤價",
+        observed_through=dt.date(2026, 10, 20),
+        pricing_unlocked=True,
+    )
+    receipt = export_progress([shown], path)
 
     assert (receipt.path, receipt.count) == (path, 1)
     sheet = openpyxl.load_workbook(path).active
     rows = list(sheet.iter_rows(values_only=True))
     assert rows[0] == EXPORT_COLUMNS
     assert rows[1][:6] == ("037199990002", "SG", dt.datetime(2026, 10, 15), 7, TO_PREPARE, "在庫")
+    pricing = rows[0].index(PRICING_COLUMNS[0])
+    assert rows[0][pricing : pricing + 3] == PRICING_COLUMNS
+    assert rows[1][pricing : pricing + 3] == (
+        "等股價（未鎖住）",
+        dt.datetime(2026, 10, 20),
+        "UL_1 AAA UW：2026-10-21 沒有收盤價",
+    )
     assert rows[1][-1] == "還沒有商品條件"
     assert list(tmp_path.iterdir()) == [path], "暫存檔換名後不留"
 
@@ -221,6 +254,15 @@ def test_progress_is_read_from_the_database(pg) -> None:
     step(pg, A, RETURNED_STEP, later)
     step(pg, "999999999999", PREPARED_STEP, T)  # 交易明細與商品條件都沒有：不列
     record_redemption(pg, A, dt.date(2026, 10, 21), user="tester")
+    for pricing in (
+        (A, "已出場", "顧客贖回 2026-10-21", dt.date(2026, 10, 20), True),
+        (B, "等股價", None, None, False),
+    ):
+        pg.execute(
+            "INSERT INTO workflow.pricing_status (tdcc, status, reason, observed_through, locked)"
+            " VALUES (%s, %s, %s, %s, %s)",
+            pricing,
+        )
 
     rows = {r.tdcc: r for r in load_progress(pg, CONFIG, dt.date(2026, 10, 22))}
 
@@ -248,6 +290,13 @@ def test_progress_is_read_from_the_database(pg) -> None:
         "還沒有商品條件",
     )
     assert d.lifecycle == "在庫"
+    pricing = {t: (r.pricing_text, r.pricing_reason, r.observed_through) for t, r in rows.items()}
+    assert pricing == {
+        A: ("已出場", "顧客贖回 2026-10-21", dt.date(2026, 10, 20)),
+        B: ("等股價（未鎖住）", "", None),
+        C: ("", "", None),
+        D: ("", "", None),
+    }, "沒有比價狀態的空白"
 
 
 @pytest.mark.db
