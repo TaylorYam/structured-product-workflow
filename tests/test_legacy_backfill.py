@@ -34,6 +34,7 @@ PATHS = ConfigPaths.with_fallback(CONFIG_DIR / "review_standard.toml")
 HEADERS = [*dict.fromkeys(headers_of(FMT).values()), "發行機構", "庫存狀態"]
 A, B, C, D, E, F, G, H = (f"14719999000{i}" for i in range(1, 9))
 DAY_1 = dt.date(2026, 4, 22)
+FINAL = dt.date(2027, 4, 22)  # db_synth 商品的最終比價日
 
 
 def sheet_row(tdcc: str, **cells) -> dict:
@@ -114,7 +115,8 @@ def test_prices_dates_and_legacy_events_are_filled_once(pg, tmp_path: Path) -> N
     (ko,) = current_events(pg, A)
     assert (ko.event, ko.event_date, ko.source, ko.recorded_by) == (KO, dt.date(2026, 10, 1), LEGACY, "tester")
     (maturity,) = current_events(pg, B)
-    assert (maturity.event, maturity.event_date, maturity.source) == (MATURITY, None, LEGACY)
+    assert (maturity.event, maturity.event_date, maturity.source) == (MATURITY, FINAL, LEGACY), "事件日是最終比價日"
+    assert lines(receipt)[B][1].endswith("寫了到期還本事件（2027-04-22）")
     assert lines(receipt)[C][0] == SKIPPED and "還沒鎖住" in lines(receipt)[C][1]
     assert prices(pg, C) == [] and dates(pg, C) == []
     (name,) = pg.execute("SELECT isin FROM workflow.product WHERE tdcc = %s", (A,)).fetchone()
@@ -266,7 +268,7 @@ def test_the_window_action_observes_afterwards(pg, pg_settings, tmp_path: Path) 
     [
         ("已於2026/10/1 KO", (_LegacyEvent(KO, dt.date(2026, 10, 1)), "")),
         ("已於 2026 / 3 / 5 KO", (_LegacyEvent(KO, dt.date(2026, 3, 5)), "")),
-        ("到期還本", (_LegacyEvent(MATURITY, None), "")),
+        ("到期還本", (_LegacyEvent(MATURITY, FINAL), "")),
         ("在庫", (None, "")),
         (None, (None, "")),
         ("已於2026/2/30 KO", (None, "庫存狀態「已於2026/2/30 KO」的 KO 日期不是有效的日期")),
@@ -274,7 +276,20 @@ def test_the_window_action_observes_afterwards(pg, pg_settings, tmp_path: Path) 
     ],
 )
 def test_status_text_becomes_an_event(status, found) -> None:
-    assert _status_event(status) == found
+    assert _status_event(status, FINAL) == found, "到期還本的事件日是最終比價日，KO 用表上的日期"
+
+
+@pytest.mark.db
+def test_maturity_without_a_final_date_has_no_event_date(pg, tmp_path: Path) -> None:
+    locked(pg, A)
+    pg.execute("UPDATE workflow.product SET final_valuation_date = NULL WHERE tdcc = %s", (A,))
+    source = write_sheet(tmp_path / "庫存總表.xlsx", [sheet_row(A, 庫存狀態="到期還本")])
+
+    receipt = backfill_legacy(pg, source, FMT, user="tester")
+
+    (maturity,) = current_events(pg, A)
+    assert (maturity.event, maturity.event_date) == (MATURITY, None)
+    assert lines(receipt)[A][1].endswith("寫了到期還本事件（沒有事件日）")
 
 
 @pytest.mark.db

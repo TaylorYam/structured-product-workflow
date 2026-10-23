@@ -6,8 +6,8 @@
 - 價格：UL_1～UL_5 的進場價、執行價、下限價、KO 價寫進 `workflow.underlying_price`（代碼用資料庫的，表上的代碼要一樣）；
   它掛在核對條件上，還沒有核對條件的商品先寫一筆「完成」的核對條件（之後比價就會比這檔）。
 - 比價日 1～12 寫進 `workflow.autocall_date`，空值寫法存成空白。
-- 表上的「庫存狀態」：「已於 Y/M/D KO」寫成 KO 事件（事件日是那一天）、「到期還本」寫成到期還本事件（沒有事件日），
-  來源「舊清單」（`lifecycle.record_legacy`）；已有同種事件的不重複寫，已有別種事件的那一檔不匯入。
+- 表上的「庫存狀態」：「已於 Y/M/D KO」寫成 KO 事件（事件日是那一天）、「到期還本」寫成到期還本事件（事件日是資料庫
+  這檔的最終比價日，#189；沒有最終比價日時空白），來源「舊清單」（`lifecycle.record_legacy`）；已有同種事件的不重複寫，已有別種事件的那一檔不匯入。
 - 表上沒有、資料庫沒有、還沒鎖住、表上有兩列、代碼和資料庫不同、價格不是數字、比價日不是日期的：那一檔不匯入並
   寫出原因，其他照常；不匯入的另外寫一份錯誤清單放在來源檔旁邊。
 - 整次匯入一個 transaction；重跑同一份，補過的都是「已存在」，不重寫。
@@ -88,6 +88,7 @@ class _Product:
     has_prices: bool
     has_dates: bool
     terms_status: str | None  # 核對條件的狀態；沒有時 None
+    final_date: dt.date | None  # 最終比價日：舊清單到期還本的事件日
 
 
 @dataclass(frozen=True)
@@ -140,7 +141,7 @@ def backfill_legacy(
                     *([] if found.has_prices else _price_problems(record, found, fmt)),
                     *([] if found.has_dates else _date_problems(record, fmt)),
                 ]
-                event, event_problem = _status_event(status)
+                event, event_problem = _status_event(status, found.final_date)
                 if event_problem:
                     problems.append(event_problem)
                 stored = existing.get(tdcc, [])
@@ -225,7 +226,7 @@ def _products(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, _Prod
         f"SELECT p.tdcc, p.locked_at IS NOT NULL, {codes},"
         " EXISTS (SELECT 1 FROM workflow.underlying_price u WHERE u.tdcc = p.tdcc),"
         " EXISTS (SELECT 1 FROM workflow.autocall_date a WHERE a.tdcc = p.tdcc),"
-        " (SELECT c.status FROM workflow.check_terms c WHERE c.tdcc = p.tdcc)"
+        " (SELECT c.status FROM workflow.check_terms c WHERE c.tdcc = p.tdcc), p.final_valuation_date"
         " FROM workflow.product p WHERE p.tdcc = ANY(%s) OR (p.locked_at IS NOT NULL AND ("
         " NOT EXISTS (SELECT 1 FROM workflow.underlying_price u WHERE u.tdcc = p.tdcc)"
         " OR NOT EXISTS (SELECT 1 FROM workflow.autocall_date a WHERE a.tdcc = p.tdcc)))"
@@ -287,8 +288,8 @@ def _date_problems(record: OrderRecord, fmt: ReferenceFormat) -> list[str]:
     return problems
 
 
-def _status_event(status: str | None) -> tuple[_LegacyEvent | None, str]:
-    """庫存狀態 → (事件, 事件日)；看不懂的 KO 寫法是錯誤，其他狀態（在庫、接股等）不寫事件。"""
+def _status_event(status: str | None, final_date: dt.date | None) -> tuple[_LegacyEvent | None, str]:
+    """庫存狀態 → (事件, 事件日)；到期還本的事件日是最終比價日。看不懂的 KO 寫法是錯誤，其他狀態（在庫、接股等）不寫事件。"""
     if not status:
         return None, ""
     match = _KO.search(status)
@@ -300,7 +301,7 @@ def _status_event(status: str | None) -> tuple[_LegacyEvent | None, str]:
     if "KO" in status.upper():
         return None, f"庫存狀態「{status}」看不出 KO 的日期（要寫成「已於 Y/M/D KO」）"
     if "到期還本" in status:
-        return _LegacyEvent(MATURITY, None), ""
+        return _LegacyEvent(MATURITY, final_date), ""
     return None, ""
 
 

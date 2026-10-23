@@ -328,7 +328,7 @@ def test_old_status_columns_are_dropped_and_everything_else_is_kept(pg) -> None:
     _old_status(pg, "147000000003", "在庫")
     _old_status(pg, "147000000004", None)  # 0016 之後建立的商品不寫舊狀態
 
-    assert apply_migrations(pg) == ["0020_drop_product_status.sql"]
+    assert apply_migrations(pg)[0] == "0020_drop_product_status.sql"
 
     assert not STATUS_COLUMNS & set(_nullable(pg))
     assert pg.execute("SELECT tdcc, issuer, source FROM workflow.product ORDER BY tdcc").fetchall() == [
@@ -357,3 +357,36 @@ def test_an_old_status_without_its_old_list_event_stops_the_migration(pg) -> Non
 
     assert STATUS_COLUMNS <= set(_nullable(pg)), "舊狀態欄照舊在"
     assert 20 not in database.applied_versions(pg)
+
+
+@pytest.mark.db
+def test_old_list_maturity_gets_the_final_valuation_date(pg) -> None:
+    """資料表版本 0021（#189）：舊清單到期還本沒有事件日的補成商品的最終比價日，其他事件不動，事件照樣不能改。"""
+    import psycopg
+
+    _database_before(pg, 21)
+    tdccs = [f"02919999000{i}" for i in range(1, 6)]
+    seed_products(pg, [inventory(t, [("台北", 100000)]) for t in tdccs])  # 最終比價日 2027-04-22
+    pg.execute("UPDATE workflow.product SET final_valuation_date = NULL WHERE tdcc = %s", (tdccs[1],))
+    insert = (
+        "INSERT INTO workflow.product_event (tdcc, event, event_date, source, note, recorded_by)"
+        " VALUES (%s, %s, %s, %s, %s, '資料表版本 0016')"
+    )
+    pg.execute(insert, (tdccs[0], "到期還本", None, "舊清單", "到期還本"))
+    pg.execute(insert, (tdccs[1], "到期還本", None, "舊清單", None))  # 商品沒有最終比價日
+    pg.execute(insert, (tdccs[2], "KO", None, "舊清單", None))
+    pg.execute(insert, (tdccs[3], "到期還本", dt.date(2027, 4, 20), "舊清單", None))  # 已有日期
+    pg.execute(insert, (tdccs[4], "到期還本", dt.date(2027, 4, 22), "比價", None))
+
+    assert apply_migrations(pg) == ["0021_legacy_maturity_date.sql"]
+
+    added = "事件日由資料表版本 0021 補成最終比價日（#189）"
+    assert pg.execute("SELECT tdcc, event, event_date, note FROM workflow.product_event ORDER BY tdcc").fetchall() == [
+        (tdccs[0], "到期還本", dt.date(2027, 4, 22), f"到期還本；{added}"),
+        (tdccs[1], "到期還本", None, None),
+        (tdccs[2], "KO", None, None),
+        (tdccs[3], "到期還本", dt.date(2027, 4, 20), None),
+        (tdccs[4], "到期還本", dt.date(2027, 4, 22), None),
+    ]
+    with pytest.raises(psycopg.errors.RaiseException, match="存續事件不能修改"):
+        pg.execute("UPDATE workflow.product_event SET event_date = NULL WHERE tdcc = %s", (tdccs[0],))
