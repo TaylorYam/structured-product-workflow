@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from decimal import Decimal
 from pathlib import Path
 
 import openpyxl
@@ -297,6 +298,36 @@ def test_progress_is_read_from_the_database(pg) -> None:
         C: ("", "", None),
         D: ("", "", None),
     }, "沒有比價狀態的空白"
+
+
+@pytest.mark.db
+def test_blank_initial_pricing_counts_only_until_every_underlying_has_an_initial_price(pg) -> None:
+    """#182：期初價格（定價方式）只是用來取進場價；每個標的都有進場價時空白不算缺。"""
+    E = "148199990005"
+    seed_products(pg, [inventory(t, [("台北", 10000)]) for t in (A, B, C, E)])
+    pg.execute("UPDATE workflow.product SET strike_date = trade_date, initial_pricing = NULL")
+    pg.execute("UPDATE workflow.product SET maturity_date = NULL WHERE tdcc = %s", (C,))
+    for tdcc, prices in (
+        (A, {1: "100", 2: "50"}),
+        (B, {1: "100"}),  # UL_2 沒有進場價
+        (C, {1: "100", 2: "50"}),
+        (E, {1: "100", 2: "0"}),
+    ):
+        check_terms(pg, tdcc)
+        for seq, price in prices.items():
+            pg.execute(
+                "INSERT INTO workflow.underlying_price (tdcc, seq, code, initial_price) VALUES (%s, %s, %s, %s)",
+                (tdcc, seq, ("AAA UW", "BBB UN")[seq - 1], Decimal(price)),
+            )
+
+    rows = {r.tdcc: (r.progress, r.reason) for r in load_progress(pg, CONFIG, dt.date(2026, 10, 22))}
+
+    assert rows == {
+        A: (TO_PREPARE, ""),
+        B: (WAIT_TERMS, "缺：期初價格"),
+        C: (WAIT_TERMS, "缺：Maturity date"),
+        E: (WAIT_TERMS, "缺：期初價格"),
+    }, "進場價不齊（沒有或是 0）時照舊算缺；其他必填欄照舊"
 
 
 @pytest.mark.db

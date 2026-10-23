@@ -1,7 +1,7 @@
 """作業進度（#156、ADR 0019）：每檔商品走到九個作業進度的哪一步，由資料庫事實推出，不另外手填。
 
 一檔一個進度：有「已寄出」一律完成；其餘依序判斷（`progress_of`），同一步有多筆紀錄取最新一筆：
-等商品條件（沒有商品條件或缺必填欄）→ 等核對條件（不是「完成」）→ 待準備（沒有「已準備」）→
+等商品條件（沒有商品條件或缺必填欄；每個標的都有進場價時期初價格空白不算缺，#182）→ 等核對條件（不是「完成」）→ 待準備（沒有「已準備」）→
 待核對（沒有核對結果）→ 核對未通過（有核對結果但還沒鎖住）→ 待放回（沒有「已放回」）→
 待寄信（沒有「草稿已建立」）→ 待寄出。
 商品的範圍是有交易明細或有商品條件的 TDCC。各步日期：交易明細匯入、商品條件匯入（Order 匯入、人工維護
@@ -15,6 +15,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -24,7 +25,7 @@ from sp_workflow.observation import TO_CONFIRM as PRICING_TO_CONFIRM
 from sp_workflow.observation import UNLOCKED, WAIT_PRICES
 from sp_workflow.order_import import ImportConfig, issuer_code
 from sp_workflow.product_export import save_rows
-from sp_workflow.product_record import PRODUCT_COLUMNS, missing_fields
+from sp_workflow.product_record import PRICING_FIELD, PRODUCT_COLUMNS, REQUIRED, missing_fields
 from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP
 
 if TYPE_CHECKING:
@@ -41,6 +42,8 @@ TO_RETURN = "待放回"
 TO_MAIL = "待寄信"
 TO_SEND = "待寄出"
 FINISHED = "完成"
+# 每個標的都有進場價時的必填欄（#182）：期初價格（定價方式）只是用來取進場價，取到了就沒差
+_PRICED_REQUIRED = tuple(name for name in REQUIRED if name != PRICING_FIELD)
 PROGRESS = (WAIT_TERMS, WAIT_CHECK_TERMS, TO_PREPARE, TO_CHECK, CHECK_FAILED, TO_RETURN, TO_MAIL, TO_SEND, FINISHED)
 
 TRADES_IMPORTED = "交易明細匯入"
@@ -150,6 +153,9 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
         ):
             of(tdcc)["dates"][TRADES_IMPORTED] = imported
             trade_dates[tdcc] = first_trade
+        initial_prices: dict[str, dict[int, Decimal | None]] = {}
+        for tdcc, seq, price in conn.execute("SELECT tdcc, seq, initial_price FROM workflow.underlying_price"):
+            initial_prices.setdefault(tdcc, {})[seq] = price
         columns = ", ".join(f"p.{c}" for c in PRODUCT_COLUMNS)
         for tdcc, locked_at, terms_imported, *row in conn.execute(
             f"SELECT p.tdcc, p.locked_at, CASE p.source WHEN 'Order' THEN o.imported_at WHEN '清單更新' THEN r.imported_at"
@@ -160,7 +166,8 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
         ):
             product = dict(zip(PRODUCT_COLUMNS, row, strict=True))
             item = of(tdcc)
-            item.update(has_terms=True, missing=tuple(missing_fields(product)))
+            required = _PRICED_REQUIRED if _has_initial_prices(product, initial_prices.get(tdcc, {})) else REQUIRED
+            item.update(has_terms=True, missing=tuple(missing_fields(product, required)))
             _put(item["dates"], TERMS_IMPORTED, terms_imported)
             _put(item["dates"], LOCKED, locked_at)
             issuers[tdcc] = issuer_code(tdcc, product["issuer"], config)
@@ -217,6 +224,12 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
             )
         )
     return tuple(rows)
+
+
+def _has_initial_prices(product: Mapping[str, object], prices: Mapping[int, Decimal | None]) -> bool:
+    """商品有填的每個標的（UL_1～UL_5）都有大於 0 的進場價（`prices` 是標的序號 → 進場價）。"""
+    seqs = [n for n in range(1, 6) if product[f"underlying_{n}"] is not None]
+    return bool(seqs) and all((prices.get(n) or 0) > 0 for n in seqs)
 
 
 def filter_rows(
