@@ -180,9 +180,9 @@ class Tab:
         self.table.grid(row=1, column=0, sticky="nsew")
         scroll = ttk.Scrollbar(self.table_area, orient=tk.VERTICAL, command=self.table.yview)
         scroll.grid(row=1, column=1, sticky="ns")
-        self.hscroll = ttk.Scrollbar(self.table_area, orient=tk.HORIZONTAL, command=self.table.xview)
-        self.hscroll.grid(row=2, column=0, sticky="ew")
-        self.table.configure(yscrollcommand=scroll.set, xscrollcommand=self.hscroll.set)
+        self.hbar = ttk.Scrollbar(self.table_area, orient=tk.HORIZONTAL, command=self.table.xview)
+        self.hbar.grid(row=2, column=0, sticky="ew")
+        self.table.configure(yscrollcommand=scroll.set, xscrollcommand=self.hbar.set)
 
     def selected_item(self) -> str | None:
         """選取的列裡作業人員點的那一列；Ctrl+A 全選時不換（#121）。沒點過時是第一個選取的列。"""
