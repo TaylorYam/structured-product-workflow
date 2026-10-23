@@ -1,6 +1,6 @@
 # 0020: 收盤價資料與比價規則／Close Prices and Observation Rules
 
-- 狀態／Status: Accepted
+- 狀態／Status: Accepted（舊商品「重算後和舊清單事件比對、不同標待確認」由 [ADR 0021](0021-stop-observing-exited-products.md) 取代／the old products' "recalculate and mark 待確認 when it differs from the old-list event" superseded by ADR 0021）
 - 日期／Date: 2026-10-22
 - 追蹤／Tracking: 實作 Issue 由本 ADR 的 PR 之後拆出／implementation issues are split off after this ADR's PR
 - 補充／Completes: [ADR 0019](0019-progress-step-records-and-lifecycle-events.md) 的存續事件由誰產生；[ADR 0008](0008-daily-prices-denomination-and-order-dates.md)、[ADR 0015](0015-price-csv-backfill.md) 的股價（取價日）只用於核對條件／who produces the lifecycle events of ADR 0019; the price-date prices of ADR 0008 and ADR 0015 serve check terms only
@@ -34,11 +34,11 @@
 - 到期（最終比價日）：沒有 KI 的商品，或有 KI 且曾觸及，且最差表現標的的收盤價 < 執行價 → 接股，標的是最差表現那檔（最終收盤價 ÷ 進場價最低）；否則到期還本。有 KI 但未觸及 → 到期還本。
 - 事件日是觸價或判定的那個觀察日；不推算上手贖回日。干擾日（市場中斷）不處理。
 - 缺價格就停住：某標的在它市場的交易日沒有價格，這檔停在那一天，比價狀態「等股價」寫出標的與日期，之後的日子不看；價格補進來下一次重算自然接上。
-- 比價狀態：每檔一筆 `workflow.pricing_status`（狀態、原因、已比到的日期、算出時間）：在庫（已比到某日）／等股價／待確認（代碼對不到、市場不在假日表、日期超出涵蓋範圍、MKI）／已出場（有存續事件，任何來源都算；不再比價、事件不重算，先假設收盤價不會事後更正，2026-10-23 #169）。事件寫進 `workflow.product_event`（ADR 0019）。
+- 比價狀態：每檔一筆 `workflow.pricing_status`（狀態、原因、已比到的日期、算出時間）：在庫（已比到某日）／等股價／待確認（代碼對不到、市場不在假日表、日期超出涵蓋範圍、MKI、和舊清單事件不同）／已出場（有存續事件）。事件寫進 `workflow.product_event`（ADR 0019）。
 
 **舊商品**
 
-- 「維護」選單「匯入舊商品的價格與比價日…」：讀參考條件表格式的 Excel（例如回填後的庫存總表），只補已鎖住、還沒有 `underlying_price` 或 `autocall_date` 的商品的四個價格與比價日 1～12，其他欄不碰；表上的「已於 Y/M/D KO」「到期還本」寫成來源「舊清單」的事件。有舊清單事件的商品已出場，不再比價（2026-10-23 改，#169：庫存清單匯入的舊商品視為已核定完成，原本「重算後和舊清單比對、不同標待確認」取消）。
+- 「維護」選單「匯入舊商品的價格與比價日…」：讀參考條件表格式的 Excel（例如回填後的庫存總表），只補已鎖住、還沒有 `underlying_price` 或 `autocall_date` 的商品的四個價格與比價日 1～12，其他欄不碰；表上的「已於 Y/M/D KO」「到期還本」寫成來源「舊清單」的事件。之後比價照樣重算，結果和舊清單事件不同時標待確認，等人看過。
 
 ### 考慮過的替代方案
 
@@ -47,7 +47,7 @@
 - **缺價格的日子跳過**：驗證時兩檔因此錯一天。
 - **核對寫回時存整張日期表以支援 MKI**：要動核對寫回；目前 841 檔沒有 MKI，等有樣本再做。
 - **只比已鎖住的商品**：AKI 從 Strike date 隔天就開始觀察，TS 常晚幾天才到，會漏掉前幾天。
-- **直接相信舊清單的事件、不重算**：失去一次復核；這次驗證就找到 3 檔要看。2026-10-23 改採這個做法（#169）：庫存清單匯入的舊商品視為已核定完成，已出場的不再比價；驗證找到的那幾檔由人工查證。
+- **直接相信舊清單的事件、不重算**：失去一次復核；這次驗證就找到 3 檔要看。
 
 ### 後果
 
@@ -88,11 +88,11 @@ Validation: of the 202 products the old inventory master (9/1 to 10/12) marks "K
 - Maturity (final valuation date): a product without KI, or with KI that was touched, whose worst performer closes < strike price → 接股 with the worst performer as the underlying (lowest final close ÷ initial price); otherwise 到期還本. KI present but never touched → 到期還本.
 - The event date is the observation day of the trigger or determination; the issuer's redemption date is not inferred. Disrupted days are not handled.
 - Stop at a missing price: when an underlying has no price on a trading day of its market, the product stops on that day with observation status 等股價 naming the underlying and the date, and later days are not examined; once the price arrives the next run carries on.
-- Observation status: one row per product in `workflow.pricing_status` (status, reason, compared-through date, calculated at): 在庫 (compared through a date) / 等股價 / 待確認 (unmatched code, market not in the calendar, date outside its coverage, MKI) / 已出場 (a lifecycle event of any source exists; the product is no longer observed and its events are not recalculated, assuming close prices are not corrected later, 2026-10-23 #169). Events go to `workflow.product_event` (ADR 0019).
+- Observation status: one row per product in `workflow.pricing_status` (status, reason, compared-through date, calculated at): 在庫 (compared through a date) / 等股價 / 待確認 (unmatched code, market not in the calendar, date outside its coverage, MKI, disagreement with an old-list event) / 已出場 (a lifecycle event exists). Events go to `workflow.product_event` (ADR 0019).
 
 **Old products**
 
-- "匯入舊商品的價格與比價日…" on the 維護 menu reads a reference-workbook-format Excel (for example the backfilled inventory master) and fills only the four prices and 比價日 1 to 12 of locked products that still lack `underlying_price` or `autocall_date`, touching nothing else; the sheet's "已於 Y/M/D KO" and "到期還本" become events with source 舊清單. A product with an old-list event has exited and is no longer observed (changed 2026-10-23, #169: old products from the inventory list are treated as already checked, and the former "recalculate, compare with the old list, mark 待確認 when different" is dropped).
+- "匯入舊商品的價格與比價日…" on the 維護 menu reads a reference-workbook-format Excel (for example the backfilled inventory master) and fills only the four prices and 比價日 1 to 12 of locked products that still lack `underlying_price` or `autocall_date`, touching nothing else; the sheet's "已於 Y/M/D KO" and "到期還本" become events with source 舊清單. Observation then recalculates them as usual, and a result that differs from an old-list event is marked 待確認 for a person to review.
 
 ### Alternatives considered
 
@@ -101,7 +101,7 @@ Validation: of the 202 products the old inventory master (9/1 to 10/12) marks "K
 - **Skipping days with a missing price**: the validation showed two products off by one day for exactly this reason.
 - **Storing the whole date table at check write-back to support MKI**: changes the check write-back; none of the 841 products has MKI, so it waits for a sample.
 - **Observing only locked products**: AKI starts the day after the Strike date and the TS often arrives days later, so early days would be missed.
-- **Trusting old-list events without recalculating**: loses a review; this validation alone found 3 products to look at. Adopted on 2026-10-23 (#169): old products from the inventory list are treated as already checked and exited ones are no longer observed; the products the validation found are checked by hand.
+- **Trusting old-list events without recalculating**: loses a review; this validation alone found 3 products to look at.
 
 ### Consequences
 
