@@ -2,7 +2,7 @@
 
 ## 繁體中文
 
-狀態：FCN Workflow 視窗的九個分頁都已實作：1 每日匯入（交易明細與每日股價進最小 FCN 資料庫、回補股價 CSV）、2 起單資料（讀起單建檔、在視窗裡確認後匯入、匯入後算出核對條件）、3 準備（從商品資料夾挑出 TS／IIS、標準命名、Word 轉 PDF）、4 核對（從資料庫讀條件、核對完寫回）、5 放回、6 寄信草稿（只建 Outlook 草稿、不寄出）、7 人工維護（補齊、更正商品條件與交易明細）、8 進度（每檔商品的作業進度、篩選與匯出）、9 出場清單（某一個收盤日比價算出的 KO、接股、到期還本）。本機開發、公司電腦試用中，正式驗收（[驗收流程](docs/checker/acceptance.md)）尚未完成；自動寄信、EXPRESS FCN／BEN、公司伺服器協作尚未授權，見[待定事項](docs/open-questions.md)。
+狀態：FCN Workflow 視窗的九個分頁都已實作：1 每日匯入（交易明細與每日股價進最小 FCN 資料庫、回補股價 CSV）、2 起單資料（讀起單建檔、在視窗裡確認後匯入、匯入後算出核對條件）、3 準備（從商品資料夾挑出 TS／IIS、標準命名、Word 轉 PDF）、4 核對（從資料庫讀條件、核對完寫回）、5 放回、6 寄信草稿（只建 Outlook 草稿、不寄出）、7 人工維護（補齊、更正商品條件與交易明細）、8 進度（每檔商品的作業進度、篩選與匯出）、9 出場清單（某一個收盤日出場的 KO、接股、到期還本、顧客贖回）。本機開發、公司電腦試用中，正式驗收（[驗收流程](docs/checker/acceptance.md)）尚未完成；自動寄信、EXPRESS FCN／BEN、公司伺服器協作尚未授權，見[待定事項](docs/open-questions.md)。
 
 本專案管理正式 Order、建檔、上手文件歸檔、核對串接及 FC 寄送。詢價端沿用既有系統。
 核對規則原本在獨立的 [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker)，已併入本專案（[ADR 0005](docs/adr/0005-merge-checker-into-workflow.md)）：程式與歷史在 `src/fcn_checker/`，同一次安裝就有 `fcn-batch`、`fcn-panel`，核對文件在 [docs/checker/](docs/checker/README.md)；新商品資料改由 Order、交易明細與股價建立（[ADR 0006](docs/adr/0006-new-product-data-from-order.md)）。
@@ -232,10 +232,10 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
   - 「提出異議…」：選一檔，從它比價產生的自動事件裡選一筆、寫備註（必填，例如上手通知的內容）。異議不改事件；「異議」欄顯示「待確認：事件：備註」，直到解除。
   - 「解除異議…」：選一檔，選一筆還沒解除的異議解除（修好資料或程式、確認之後），記下解除的人與時間。
 
-「9 出場清單」列出某一個收盤日比價算出的 KO、接股、到期還本（[#171](https://github.com/TaylorYam/structured-product-workflow/issues/171)）：早上匯入昨日收盤價後，看昨天有哪些商品出場。
+「9 出場清單」列出某一個收盤日出場的 KO、接股、到期還本、顧客贖回（[#171](https://github.com/TaylorYam/structured-product-workflow/issues/171)、[#188](https://github.com/TaylorYam/structured-product-workflow/issues/188)）：早上匯入昨日收盤價後，看昨天有哪些商品出場。
 - 收盤日填 YYYY-MM-DD，空白是收盤價表最新的一天；按「重新整理」讀資料庫，讀到後把日期填回去，改日期再按一次就看那一天。回補股價或匯入歷史收盤價比價完成後，這一頁先帶入比到的那一天並顯示提示條，「1 每日匯入」出現「下一步：出場清單 →」，按了才切過來，也要按「重新整理」才讀。
-- 只列來源「比價」、還有效（沒有被取代）、事件日是那一天的 KO、接股、到期還本，一檔一列；人工登記的顧客贖回與舊清單事件不列。依事件、TDCC 排序。那天沒有時顯示「沒有出場的商品」。
-- 欄位：TDCC、上手、商品、事件、事件日、標的（接股時是最差表現的標的）、鎖住（已鎖住／未鎖住）、記錄時間（比價寫入事件的時間）。
+- 列還有效（沒有被取代）、事件日是那一天的 KO、接股、到期還本、顧客贖回，一筆一列；來源不限：比價算出的、舊清單（以前清單更新的狀態）、人工登記的顧客贖回都列，和「8 進度」的存續狀態對得起來（#188）。沒有事件日的事件（例如部分舊清單的到期還本）不在任何一天。依事件、TDCC 排序。重點數字是 KO、接股、到期還本、顧客贖回四格，完成訊息寫出各來源的檔數；那天沒有時顯示「沒有出場的商品」。
+- 欄位：TDCC、上手、商品、事件、事件日、標的（接股時是最差表現的標的）、來源（比價、舊清單、人工）、鎖住（已鎖住／未鎖住）、記錄時間（事件寫入的時間）。
 - 「匯出 Excel…」：把畫面上的表寫成 Excel，預設檔名 `出場清單_<收盤日>.xlsx`，從上次匯出的資料夾開始；欄位同畫面。
 
 ### 核對條件
@@ -261,7 +261,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 
 ## English
 
-Status: all nine tabs of the FCN Workflow window are implemented: 1 daily import (trade rows and daily prices into the minimal FCN database, price CSV backfill), 2 order sheet (reading the daily order sheet, confirming in the window before import, calculating check terms after import), 3 preparation (picking TS/IIS from product folders, standard names, Word to PDF), 4 checking (terms read from the database, results written back), 5 return, 6 mail drafts (Outlook drafts only, nothing is sent), 7 manual maintenance (filling in and correcting product terms and trade rows), 8 progress (each product's workflow progress, with filters and export), 9 exit list (the KO, 接股, and 到期還本 that observation found on one closing day). Developed on the laptop and in trial use on the company computer; formal acceptance ([acceptance process](docs/checker/acceptance.md)) is not finished, and automatic sending, EXPRESS FCN/BEN, and company-server collaboration are not authorized yet, see [open questions](docs/open-questions.md).
+Status: all nine tabs of the FCN Workflow window are implemented: 1 daily import (trade rows and daily prices into the minimal FCN database, price CSV backfill), 2 order sheet (reading the daily order sheet, confirming in the window before import, calculating check terms after import), 3 preparation (picking TS/IIS from product folders, standard names, Word to PDF), 4 checking (terms read from the database, results written back), 5 return, 6 mail drafts (Outlook drafts only, nothing is sent), 7 manual maintenance (filling in and correcting product terms and trade rows), 8 progress (each product's workflow progress, with filters and export), 9 exit list (the KO, 接股, 到期還本, and 顧客贖回 on one closing day). Developed on the laptop and in trial use on the company computer; formal acceptance ([acceptance process](docs/checker/acceptance.md)) is not finished, and automatic sending, EXPRESS FCN/BEN, and company-server collaboration are not authorized yet, see [open questions](docs/open-questions.md).
 
 This project coordinates formal Orders, booking, issuer document archiving, checker integration, and FC distribution. Inquiry remains in the existing system.
 Checking rules used to live in the independent [fcn-term-sheet-checker](https://github.com/TaylorYam/fcn-term-sheet-checker) and have been merged into this repository ([ADR 0005](docs/adr/0005-merge-checker-into-workflow.md)): their code and history live in `src/fcn_checker/`, one installation provides `fcn-batch` and `fcn-panel`, and its documents are in [docs/checker/](docs/checker/README.md); new product data will be built from Orders, trade rows, and prices ([ADR 0006](docs/adr/0006-new-product-data-from-order.md)).
@@ -491,10 +491,10 @@ Find products that still lack data, and fill in or change product terms ([#115](
   - "提出異議…" (raise objection): pick one product, choose one of its automatic events from observation, and write a note (required, for example what the issuer's notice says). The objection does not change the event; the "異議" column shows "待確認：event：note" until it is resolved.
   - "解除異議…" (resolve objection): pick one product and one open objection to resolve (after the data or the program is fixed and checked); who resolved it and when is recorded.
 
-"9 出場清單" (exit list) lists the KO, 接股, and 到期還本 that observation found on one closing day ([#171](https://github.com/TaylorYam/structured-product-workflow/issues/171)): after importing yesterday's closes in the morning, see which products exited yesterday.
+"9 出場清單" (exit list) lists the KO, 接股, 到期還本, and 顧客贖回 on one closing day ([#171](https://github.com/TaylorYam/structured-product-workflow/issues/171), [#188](https://github.com/TaylorYam/structured-product-workflow/issues/188)): after importing yesterday's closes in the morning, see which products exited yesterday.
 - Enter the closing day as YYYY-MM-DD, blank meaning the latest day in the close-price table; "重新整理" (refresh) reads the database and fills the day back in, and changing the day and refreshing again shows that day. After the price backfill or the historical close import finishes observation, this tab receives the day observation reached and shows a hint bar, and "1 每日匯入" shows "下一步：出場清單 →", which switches tabs only when pressed; the list is read only on refresh.
-- Only current (not superseded) KO, 接股, and 到期還本 events with source 比價 and that event date are listed, one row per product; recorded 顧客贖回 and old-list events are not. Rows are ordered by event, then TDCC. A day without any shows "沒有出場的商品" (no products exited).
-- Columns: TDCC, issuer, product, event, event date, underlying (the worst performer for 接股), locked (已鎖住／未鎖住), and recorded at (when observation wrote the event).
+- Current (not superseded) KO, 接股, 到期還本, and 顧客贖回 events with that event date are listed, one row per event, whatever the source: found by observation, from the old list (statuses of the former 清單更新), or a recorded 顧客贖回, so the list matches the lifecycle status on "8 進度" (#188). Events without an event date (for example some old-list 到期還本) fall on no day. Rows are ordered by event, then TDCC. The key figures are KO, 接股, 到期還本, and 顧客贖回, and the completion message gives the count per source; a day without any shows "沒有出場的商品" (no products exited).
+- Columns: TDCC, issuer, product, event, event date, underlying (the worst performer for 接股), source (比價, 舊清單, or 人工), locked (已鎖住／未鎖住), and recorded at (when the event was written).
 - "匯出 Excel…" (export) writes the table on screen to Excel, default name `出場清單_<closing day>.xlsx`, starting in the last export folder, with the same columns as the screen.
 
 ### Check terms

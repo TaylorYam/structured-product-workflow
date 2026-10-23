@@ -1,4 +1,5 @@
-"""「9 出場清單」分頁（#171）：某一個收盤日比價算出的 KO、接股、到期還本，一檔一列；匯出 Excel。
+"""「9 出場清單」分頁（#171、#188）：某一個收盤日還有效的 KO、接股、到期還本、顧客贖回（比價、舊清單、人工都列，
+「來源」欄寫出是哪一種），一筆一列；匯出 Excel。
 
 收盤日空白時按「重新整理」用收盤價表最新的收盤日，讀到後把日期填回去；改日期再按一次就看那一天
 （`window_actions.load_exit_list`）。每日匯入（回補股價、歷史收盤價）比價完成後由視窗呼叫 `receive_day`
@@ -16,7 +17,7 @@ from tkinter import filedialog, ttk
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import HintBar
 from sp_workflow.exits import LOCKED_TEXT, ExitExport, ExitList, ExitRow, export_exits, export_name
-from sp_workflow.lifecycle import AUTO_EVENTS
+from sp_workflow.lifecycle import EXIT_EVENTS, LEGACY, MANUAL, OBSERVATION
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.tabs.base import DatabaseLogin, Tab
 from sp_workflow.window_actions import load_exit_list
@@ -28,6 +29,7 @@ COLUMNS = (
     ("event", "事件", 80),
     ("event_date", "事件日", 90),
     ("underlying", "標的", 120),
+    ("source", "來源", 70),
     ("locked", "鎖住", 70),
     ("recorded_at", "記錄時間", 140),
 )
@@ -43,11 +45,13 @@ class ExitListTab(Tab):
         self.config_paths = config_paths
         self.working = False
         self.shown: ExitList | None = None  # 最近一次讀到的那一天；還沒讀過是 None
-        self.status_var.set("按「重新整理」列出那一天比價算出的 KO、接股、到期還本；收盤日空白是收盤價表最新的一天。")
+        self.status_var.set(
+            "按「重新整理」列出那一天出場的商品（比價、舊清單、顧客贖回）；收盤日空白是收盤價表最新的一天。"
+        )
 
         self.page_header(
             "出場清單",
-            "某一個收盤日比價算出的 KO、接股、到期還本；早上匯入昨日收盤價後看昨天有哪些商品出場。",
+            "某一個收盤日的 KO、接股、到期還本、顧客贖回，比價、舊清單都列；早上匯入昨日收盤價後看昨天有哪些商品出場。",
         )
         self.hint = HintBar(self.frame, self._hint_closed)
         self.hint.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
@@ -88,7 +92,7 @@ class ExitListTab(Tab):
         self.shown = None
         self.table.delete(*self.table.get_children())
         self.restart()
-        self.status_var.set("按「重新整理」列出那天比價算出的 KO、接股、到期還本。")
+        self.status_var.set("按「重新整理」列出那天出場的商品（比價、舊清單、顧客贖回）。")
         self._busy(False)
         self.hint.show(f"比價已比到 {day:%Y-%m-%d}，已帶入這一天；按「重新整理」列出那天出場的商品。")
         return True
@@ -133,9 +137,11 @@ class ExitListTab(Tab):
             else:
                 self.day_var.set(f"{result.day:%Y-%m-%d}")
                 counts = [
-                    (f"{event}（檔）", sum(r.event == event for r in result.rows), False) for event in AUTO_EVENTS
+                    (f"{event}（檔）", sum(r.event == event for r in result.rows), False) for event in EXIT_EVENTS
                 ]
-                text = f"出場 {len(result.rows)} 檔。" if result.rows else "沒有出場的商品。"
+                text = (
+                    f"出場 {len(result.rows)} 檔（{_by_source(result.rows)}）。" if result.rows else "沒有出場的商品。"
+                )
                 self.finish(counts, f"收盤日 {result.day:%Y-%m-%d}：{text}")
         self._busy(False)
 
@@ -181,6 +187,13 @@ def _cells(row: ExitRow) -> tuple[str, ...]:
         row.event,
         f"{row.event_date:%Y-%m-%d}",
         row.underlying,
+        row.source,
         LOCKED_TEXT[row.locked],
         f"{row.recorded_at.astimezone():%Y-%m-%d %H:%M}",
     )
+
+
+def _by_source(rows: tuple[ExitRow, ...]) -> str:
+    """完成訊息的各來源檔數，例如「比價 1、舊清單 2」；沒有的來源不寫。"""
+    counts = [(source, sum(r.source == source for r in rows)) for source in (OBSERVATION, LEGACY, MANUAL)]
+    return "、".join(f"{source} {n}" for source, n in counts if n)
