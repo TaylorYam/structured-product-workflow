@@ -11,6 +11,7 @@ import tkinter as tk
 from collections.abc import Callable, Sequence
 from tkinter import ttk
 
+from fcn_checker.date_picker import DateEntry
 from sp_workflow.lifecycle import Objection, StoredEvent
 
 
@@ -94,9 +95,9 @@ class FormDialog(tk.Toplevel):
         self.day_var = tk.StringVar()
         if with_day:
             ttk.Label(frame, text=day_label).grid(row=row, column=0, sticky="w", pady=(12, 0))
-            day = ttk.Entry(frame, textvariable=self.day_var, width=14)
+            day = DateEntry(frame, self.day_var, width=14)  # 小日曆（#192）
             day.grid(row=row, column=1, sticky="w", pady=(12, 0))
-            fields.append(day)
+            fields.append(day.entry)
             row += 1
         self.note_var = tk.StringVar()
         if with_note:

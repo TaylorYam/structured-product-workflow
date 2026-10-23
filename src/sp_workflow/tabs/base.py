@@ -21,6 +21,7 @@ from fcn_checker.ui import (
     NUMBER_FONT,
     Background,
     CopyArea,
+    FitTreeview,
     KpiRow,
     PageHeader,
     TableCopy,
@@ -77,10 +78,11 @@ class Tab:
         self.status_var = tk.StringVar()
         self.columns = columns
         self.table_area = CopyArea(self.frame, COPY_HINT, lambda: self.copier.copy_all())  # #121
-        self.table = ttk.Treeview(self.table_area, columns=[c for c, _, _ in columns], show="headings")
+        self.table = FitTreeview(self.table_area, columns=[c for c, _, _ in columns], show="headings")
         for col, label, width in columns:
             self.table.heading(col, text=label)
-            last = col == columns[-1][0]  # 最後一欄跟著視窗變寬，但不縮到比原本窄（窄了就左右捲動，#179）
+            # 最後一欄跟著視窗變寬，但不縮到比內容窄（窄了就左右捲動，#179）；欄寬依內容（#192）
+            last = col == columns[-1][0]
             self.table.column(col, width=width, minwidth=width if last else 20, stretch=last)
         self.table.tag_configure("problem", foreground=DANGER)
         self.copier = TableCopy(self.table)

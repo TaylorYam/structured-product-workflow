@@ -1,7 +1,7 @@
 """整個 FCN Workflow 視窗共用的外觀與背景作業（#129 從 `fcn_checker.panel` 搬出來）。
 
 配色與 `apply_style`（#83）、Windows DPI 與圖示、各分頁共用的頁首、提示條、下一步按鈕、重點數字、
-結果表的複製元件（#121），以及全視窗唯一的背景作業寫法 `Background`。核對分頁（`fcn_checker.panel`）與
+結果表的複製元件（#121）與自動欄寬（#192），以及全視窗唯一的背景作業寫法 `Background`。核對分頁（`fcn_checker.panel`）與
 視窗外殼（`sp_workflow.app`）都從這裡 import；這裡不 import 任何核對或流程的業務邏輯。
 """
 
@@ -14,6 +14,7 @@ import tkinter as tk
 from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
+from tkinter import font as tkfont
 from tkinter import ttk
 from typing import TypeVar
 
@@ -384,6 +385,93 @@ class TableCopy:
     def _break(action: Callable[[], object]) -> str:
         action()
         return "break"
+
+
+def _text_weight(text: str) -> int:
+    """估字的寬度：中文等全形字算兩個；只用來挑出最長的幾格去量。"""
+    return sum(2 if ord(ch) > 0x2E7F else 1 for ch in text)
+
+
+class FitTreeview(ttk.Treeview):
+    """欄寬依內容自動調整的結果表（#192）：列有變動（新增、刪除、改值）後，等畫面空下來重算一次欄寬。
+
+    每一欄 = 表頭與內容最寬的那個加左右留白；內容最寬算到 `MAX_WIDTH`（96 DPI 下的像素），太長的照舊左右捲動或右鍵複製。
+    最後一欄照舊跟著視窗變寬，但不縮到比內容窄（#179）。
+    """
+
+    PAD = 24
+    MAX_WIDTH = 420
+    SAMPLES = 8  # 每欄只量估起來最長的幾格，表很長時不用每格都量
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._fit_job: str | None = None
+        self._fonts: tuple[tkfont.Font, tkfont.Font] | None = None
+        self._schedule_fit()  # 表頭設好、還沒有列時也照表頭寬度
+
+    def insert(self, parent, index, iid=None, **kw):
+        item = super().insert(parent, index, iid, **kw)
+        self._schedule_fit()
+        return item
+
+    def delete(self, *items) -> None:
+        super().delete(*items)
+        self._schedule_fit()
+
+    def item(self, item, option=None, **kw):
+        result = super().item(item, option, **kw)
+        if "values" in kw:
+            self._schedule_fit()
+        return result
+
+    def set(self, item, column=None, value=None):
+        result = super().set(item, column, value)
+        if value is not None:
+            self._schedule_fit()
+        return result
+
+    def destroy(self) -> None:
+        if self._fit_job is not None:
+            self.after_cancel(self._fit_job)
+            self._fit_job = None
+        super().destroy()
+
+    def fit_columns(self) -> None:
+        """依現在表上的列重算每一欄的寬度。"""
+        self._fit_job = None
+        body, heading = self._measuring_fonts()
+        scale = self.winfo_fpixels("1i") / 96
+        pad, limit = round(self.PAD * scale), round(self.MAX_WIDTH * scale)
+        columns = [str(column) for column in self["columns"]]
+        texts: list[list[str]] = [[] for _ in columns]
+        for item in self.get_children():
+            for i, value in enumerate(self.tk.splitlist(self.tk.call(str(self), "item", item, "-values"))):
+                if i < len(texts):
+                    texts[i].append(str(value))
+        shown = [str(column) for column in self["displaycolumns"]]
+        last = (columns if shown in (["#all"], []) else shown)[-1] if columns else None
+        for column, values in zip(columns, texts, strict=True):
+            longest = sorted(set(values), key=_text_weight, reverse=True)[: self.SAMPLES]
+            content = max((body.measure(text) for text in longest), default=0)
+            title = heading.measure(str(self.tk.call(str(self), "heading", column, "-text")))
+            width = max(title + pad, min(content + pad, limit))
+            if column == last:
+                self.column(column, width=width, minwidth=width)
+            else:
+                self.column(column, width=width)
+
+    def _schedule_fit(self) -> None:
+        if self._fit_job is None:
+            self._fit_job = self.after_idle(self.fit_columns)
+
+    def _measuring_fonts(self) -> tuple[tkfont.Font, tkfont.Font]:
+        """表身與表頭的字型（照 `apply_style` 的 Treeview 樣式；沒設時用 Tk 預設字型）。"""
+        if self._fonts is None:
+            style = ttk.Style(self)
+            body = style.lookup("Treeview", "font") or "TkDefaultFont"
+            heading = style.lookup("Treeview.Heading", "font") or "TkHeadingFont"
+            self._fonts = (tkfont.Font(self, font=body), tkfont.Font(self, font=heading))
+        return self._fonts
 
 
 class CopyButton(ttk.Button):

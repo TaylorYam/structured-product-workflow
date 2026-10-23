@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import Future
 from tkinter import messagebox, ttk
 
-from fcn_checker.ui import DANGER, Background
+from fcn_checker.ui import DANGER, Background, FitTreeview
 from sp_workflow.database import ConnectionSettings, DatabaseError
 from sp_workflow.mailbox import Alias, MailboxError, MailboxRows, Person, alias_from, person_from
 from sp_workflow.tabs.base import TITLE, DatabaseLogin
@@ -83,7 +83,7 @@ class MailboxWindow(tk.Toplevel):
         box.grid(row=1, column=column, sticky="nsew", padx=(0, 12) if column == 0 else 0)
         box.columnconfigure(0, weight=1)
         box.rowconfigure(0, weight=1)
-        table = ttk.Treeview(box, columns=[c for c, _, _ in columns], show="headings", selectmode="browse")
+        table = FitTreeview(box, columns=[c for c, _, _ in columns], show="headings", selectmode="browse")
         for col, label, width in columns:
             table.heading(col, text=label)
             table.column(col, width=width, stretch=col == columns[-1][0])

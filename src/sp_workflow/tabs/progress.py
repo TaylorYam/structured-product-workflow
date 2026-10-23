@@ -17,6 +17,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from fcn_checker.check_config import ConfigPaths
+from fcn_checker.date_picker import DateEntry
 from sp_workflow.database import ConnectionSettings
 from sp_workflow.lifecycle import DELIVERY, IN_STOCK, KO, MATURITY, REDEMPTION
 from sp_workflow.local_settings import FolderMemory
@@ -105,10 +106,10 @@ class ProgressTab(Tab):
         dates = ttk.Frame(filters, style="CardBody.TFrame")
         dates.grid(row=0, column=1, sticky="w", padx=(8, 0))
         for i, var in enumerate((self.first_var, self.last_var)):
-            entry = ttk.Entry(dates, textvariable=var, width=12)
-            entry.grid(row=0, column=i * 2)
-            entry.bind("<Return>", lambda _event: self.refilter())
-            entry.bind("<FocusOut>", lambda _event: self.refilter())
+            field = DateEntry(dates, var, on_pick=self.refilter, style="CardBody.TFrame")  # 小日曆（#192）
+            field.grid(row=0, column=i * 2)
+            field.entry.bind("<Return>", lambda _event: self.refilter())
+            field.entry.bind("<FocusOut>", lambda _event: self.refilter())
         ttk.Label(dates, text="～", style="Card.TLabel").grid(row=0, column=1, padx=4)
         ttk.Label(dates, text="YYYY-MM-DD，空白是不限", style="CardMuted.TLabel").grid(row=0, column=3, padx=(8, 0))
         ttk.Label(filters, text="上手", style="Card.TLabel").grid(row=0, column=2, sticky="w", padx=(24, 0))
