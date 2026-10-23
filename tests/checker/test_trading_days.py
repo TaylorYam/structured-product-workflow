@@ -87,6 +87,15 @@ def test_japanese_holidays_are_skipped_through_2027():
     assert REPO.next_trading_day(D(2026, 11, 25), ["GOOGL UW", "7203 JT"]).day == D(2026, 11, 27), "11/26 感恩節"
 
 
+def test_history_from_2022_07_28_is_covered():
+    """歷史收盤價從 2022-07-28 起：三個市場往前補到那天，含臨時休市（#166）。"""
+    assert REPO.next_trading_day(D(2025, 1, 8), ["GOOGL UW"]).day == D(2025, 1, 10), "1/9 卡特前總統國喪日"
+    assert REPO.next_trading_day(D(2024, 12, 30), ["7203 JT"]).day == D(2025, 1, 6), "12/31～1/3 東證休市"
+    hk = REPO.next_trading_day(D(2023, 7, 14), ["700 HK"])
+    assert hk.day == D(2023, 7, 18) and not hk.uncertain, "7/17 八號颱風信號全天停市"
+    assert not REPO.next_trading_day(D(2022, 7, 28), ["GOOGL UW", "7203 JT", "700 HK"]).uncertain
+
+
 def test_japanese_dates_after_2027_are_uncertain():
     """日本假日表只涵蓋 JPX 已公布的年份：之後的日期無法確定。"""
     late = REPO.next_trading_day(D(2028, 1, 7), ["7203 JT"])
@@ -108,8 +117,8 @@ def test_unknown_exchange_or_dates_outside_the_table_are_uncertain():
     assert "BMW GY" in gy.uncertain and "不在交易所假日表" in gy.uncertain
     late = REPO.next_trading_day(D(2030, 3, 8), ["GOOGL UW"])
     assert late.day == D(2030, 3, 11) and "涵蓋範圍" in late.uncertain and "2028-12-31" in late.uncertain
-    early = REPO.next_trading_day(D(2025, 12, 30), ["GOOGL UW"])
-    assert "涵蓋範圍" in early.uncertain and "2026-01-01" in early.uncertain
+    early = REPO.next_trading_day(D(2022, 7, 26), ["GOOGL UW"])
+    assert "涵蓋範圍" in early.uncertain and "2022-07-28" in early.uncertain
     assert "讀不到標的" in REPO.next_trading_day(D(2027, 1, 15), None).uncertain
 
 
