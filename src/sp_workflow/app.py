@@ -1,4 +1,4 @@
-"""FCN Workflow 視窗：八個分頁照每天的作業順序排（#73、#74、#90、#115、#116、#156）。
+"""FCN Workflow 視窗：九個分頁照每天的作業順序排（#73、#74、#90、#115、#116、#156、#171）。
 
 1. 每日匯入：選每日更新，把交易明細與每日股價匯入最小 FCN 資料庫（#32、#87）；信箱在資料庫裡（#35），
    由「維護」選單的「信箱維護…」另開視窗新增、修改、刪除人員與別名（#158）。
@@ -13,13 +13,15 @@
    「匯出商品條件…」把資料庫目前的 `workflow.product` 整張匯出成 Excel，位置自己選（#122）。
 8. 進度：按「重新整理」列出每檔商品的作業進度、各步日期與存續狀態；依交易日、作業進度、存續狀態、上手篩選，
    點欄位排序，「匯出 Excel…」匯出目前的篩選結果（#156）。
+9. 出場清單：選一個收盤日（預設收盤價表最新的一天），按「重新整理」列出那天比價算出的 KO、接股、到期還本，
+   「匯出 Excel…」匯出（#171）。
 
-1、2、3、5、6、7、8 頁的結果表右上方有「全部複製」；結果表按右鍵可以只複製一格或一列，
+1、2、3、5、6、7、8、9 頁的結果表右上方有「全部複製」；結果表按右鍵可以只複製一格或一列，
 Treeview 的表（7 的檢查結果表除外）另有 Ctrl+A 全選、Ctrl+C 複製選取的列（#121）。
 
 商品資料夾所在的根目錄在視窗最上方設一次，3、6 兩頁共用（#75）。
 做完一步，下一頁先帶入結果並用藍色提示條寫出來，按「下一步 →」才切頁，不自動執行（#76）：
-每日匯入完成 → 起單資料頁帶入交易明細的 FCN TDCC（#90）；
+每日匯入完成 → 起單資料頁帶入交易明細的 FCN TDCC（#90）；回補股價、歷史收盤價比價完成 → 出場清單帶入比到的那一天（#171）；
 準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔。
 審查通過日期、匯出回報包、信箱維護與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
 視窗只收輸入、在背景執行一個動作並顯示結果，不含判斷邏輯：要連資料庫的按鈕各呼叫 `window_actions` 的一個動作，
@@ -64,6 +66,7 @@ from sp_workflow.local_settings import FolderMemory
 from sp_workflow.preparation import LIST_NAME, PrepareReceipt
 from sp_workflow.tabs.base import TITLE, DatabaseLogin, RootFolder
 from sp_workflow.tabs.daily import DailyImportTab
+from sp_workflow.tabs.exits import ExitListTab
 from sp_workflow.tabs.mail import MailDraftTab
 from sp_workflow.tabs.mailbox import MailboxWindow
 from sp_workflow.tabs.manual import MaintenanceTab
@@ -143,7 +146,7 @@ def _style_shell(master: tk.Tk) -> None:
 
 
 class StepSidebar(ttk.Frame):
-    """左側步驟欄（#83）：照每天的順序列出 1～8，按了切到那一步；目前所在的那一步用淺藍底標出。
+    """左側步驟欄（#83）：照每天的順序列出 1～9，按了切到那一步；目前所在的那一步用淺藍底標出。
 
     分頁標籤已藏起來，切頁一律經過 notebook.select（「下一步 →」也是），步驟欄跟著 <<NotebookTabChanged>> 更新。
     """
@@ -198,7 +201,7 @@ class PanelWindow:
         body = ttk.Frame(master)
         body.pack(fill=tk.BOTH, expand=True)
         self.notebook = ttk.Notebook(body, style="Workflow.TNotebook")
-        # 分頁照每天的作業順序建立，前面自動加上 1～8 的編號；人工維護不是每天的步驟（#115），進度頁放最後（#156）
+        # 分頁照每天的作業順序建立，前面自動加上 1～9 的編號；人工維護不是每天的步驟（#115），進度頁、出場清單放最後（#156、#171）
         self.daily = DailyImportTab(
             self.notebook,
             memory,
@@ -206,6 +209,8 @@ class PanelWindow:
             lambda: self.session.paths,
             on_imported=lambda tdccs: self.orders.receive_tdccs(tdccs),
             on_next=lambda: self.notebook.select(self.orders.frame),
+            on_observed=lambda day: self.exits.receive_day(day),
+            on_exits=lambda: self.notebook.select(self.exits.frame),
         )
         self.orders = OrderTermsTab(self.notebook, memory, db, lambda: self.session.paths)
         self.prepare = PrepareTab(
@@ -223,10 +228,20 @@ class PanelWindow:
         self.mail = MailDraftTab(self.notebook, memory, db, self.root_folder)
         self.manual = MaintenanceTab(self.notebook, memory, db, lambda: self.session.paths)
         self.progress = ProgressTab(self.notebook, memory, db, lambda: self.session.paths)
+        self.exits = ExitListTab(self.notebook, memory, db, lambda: self.session.paths)
         tabs = self.notebook.tabs()
         for number, tab in enumerate(tabs, 1):
             self.notebook.tab(tab, text=f"{number} {self.notebook.tab(tab, 'text')}")
-        self.pages = (self.daily, self.orders, self.prepare, self.returning, self.mail, self.manual, self.progress)
+        self.pages = (
+            self.daily,
+            self.orders,
+            self.prepare,
+            self.returning,
+            self.mail,
+            self.manual,
+            self.progress,
+            self.exits,
+        )
         for page, tab in [(p.frame, p) for p in self.pages] + [(self.check, self.check)]:
             tab.show_step(f"步驟 {self.notebook.index(page) + 1}／{len(tabs)}")
         self.sidebar = StepSidebar(body, self.notebook, self.pixels)

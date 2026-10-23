@@ -41,6 +41,7 @@ from sp_workflow.daily_import import (
     latest_import,
 )
 from sp_workflow.database import ConnectionSettings, DatabaseError, connect, require_current_schema
+from sp_workflow.exits import ExitList, load_exits
 from sp_workflow.legacy_backfill import BackfillReceipt, LegacyBackfillError, backfill_legacy
 from sp_workflow.lifecycle import (
     OBSERVATION,
@@ -484,6 +485,17 @@ def resolve_event_objection(settings: ConnectionSettings, objection_id: int) -> 
         require_current_schema(conn)
         resolve_objection(conn, objection_id)
         return objection_id
+
+
+# ---------- 9 出場清單 ----------
+
+
+def load_exit_list(settings: ConnectionSettings, paths: ConfigPaths, day: dt.date | None) -> ExitList:
+    """那一天（沒有時用收盤價表最新的收盤日）比價算出的出場事件（#171）；上手代號照上手編號對照。"""
+    config = load_import_config(paths)
+    with connect(settings) as conn:
+        require_current_schema(conn)
+        return load_exits(conn, config, day)
 
 
 # ---------- 信箱維護 ----------

@@ -3,11 +3,12 @@
 MarketData CSV 同時寫收盤價（#153）；維護選單的「匯入歷史收盤價…」「匯入舊商品的價格與比價日…」（#154）
 也在這一頁的背景執行、顯示結果。
 匯入收盤價之後比價（#155），完成訊息列出這次有變的存續事件與還沒完成的比價狀態；維護選單的「重新比價全部」
-也在這一頁執行。
+也在這一頁執行。回補股價、歷史收盤價比價完成後把比到的那一天帶到「9 出場清單」，按「下一步」才切過去（#171）。
 """
 
 from __future__ import annotations
 
+import datetime as dt
 import tkinter as tk
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -48,12 +49,15 @@ class DailyImportTab(Tab):
         config_paths: Callable[[], ConfigPaths],
         on_imported: Callable[[Sequence[str]], bool],
         on_next: Callable[[], None],
+        on_observed: Callable[[dt.date], None],
+        on_exits: Callable[[], None],
     ) -> None:
         super().__init__(notebook, "每日匯入", (("tdcc", "TDCC", 130), ("kind", "結果", 150), ("detail", "說明", 440)))
         self.memory = memory
         self.db = db
         self.config_paths = config_paths
         self.on_imported = on_imported
+        self.on_observed = on_observed
         folders = memory.load()
         self.daily_var = tk.StringVar(value=folders.get("daily", ""))
         self.trades_only_var = tk.BooleanVar(value=False)
@@ -89,6 +93,7 @@ class DailyImportTab(Tab):
         self.csv_button.pack(side=tk.LEFT, padx=(8, 0))
         self.releaser = Releaser(self, db, self._selected_tdcc, self._released, busy=self._busy)
         self.next_button = NextButton(self.buttons, "下一步：起單資料 →", on_next)
+        self.exits_button = NextButton(self.buttons, "下一步：出場清單 →", on_exits)  # #171
         self.place_table(2)
 
     def _busy(self, busy: bool) -> None:
@@ -117,6 +122,7 @@ class DailyImportTab(Tab):
         self.memory.remember(daily=str(daily))
         self._busy(True)
         self.next_button.withdraw()
+        self.exits_button.withdraw()
         self.releaser.show(Recalc())
         self.restart()
         paths = self.config_paths()
@@ -139,6 +145,7 @@ class DailyImportTab(Tab):
         self.memory.remember(price_csv=str(source))
         self._busy(True)
         self.next_button.withdraw()
+        self.exits_button.withdraw()
         self.releaser.show(Recalc())
         self.restart()
         paths = self.config_paths()
@@ -167,7 +174,8 @@ class DailyImportTab(Tab):
             f"完成（第 {receipt.run_id} 次匯入，回補股價）：{receipt.close_date:%Y-%m-%d} 收盤，"
             f"存成取價日 {receipt.prices.price_date:%Y-%m-%d}（等同隔天早上取價）。\n"
             f"{_price_text(receipt.prices)}\n{_close_text(receipt)}\n{recalc_text(recalc)}"
-            f"\n{observation_text(result.observation)}\n錯誤清單：{receipt.error_book_path}",
+            f"\n{observation_text(result.observation)}{self._hand_off_day(result.observation)}"
+            f"\n錯誤清單：{receipt.error_book_path}",
         )
         self.releaser.show(recalc)
 
@@ -188,6 +196,7 @@ class DailyImportTab(Tab):
         self.memory.remember(close_history=str(source))
         self._busy(True)
         self.next_button.withdraw()
+        self.exits_button.withdraw()
         self.releaser.show(Recalc())
         self.restart()
         paths = self.config_paths()
@@ -225,7 +234,8 @@ class DailyImportTab(Tab):
             f"代碼 {result.codes} 個，沒有價格 {result.missing} 格（休市日不算）。\n"
             f"{_summary_text(result.summary)}休市日有值、沒有存 {result.closed} 格；"
             f"超出交易所假日表涵蓋範圍、沒有存 {result.uncovered} 格；"
-            f"錯誤清單列了 {len(result.problems)} 項、{listed} 格。\n{book}\n{observation_text(observation)}",
+            f"錯誤清單列了 {len(result.problems)} 項、{listed} 格。\n{book}\n{observation_text(observation)}"
+            f"{self._hand_off_day(observation)}",
         )
 
     def import_legacy(self) -> None:
@@ -241,6 +251,7 @@ class DailyImportTab(Tab):
         self.memory.remember(legacy_backfill=str(source))
         self._busy(True)
         self.next_button.withdraw()
+        self.exits_button.withdraw()
         self.releaser.show(Recalc())
         self.restart()
         paths = self.config_paths()
@@ -283,6 +294,7 @@ class DailyImportTab(Tab):
             return
         self._busy(True)
         self.next_button.withdraw()
+        self.exits_button.withdraw()
         self.releaser.show(Recalc())
         self.restart()
         paths = self.config_paths()
@@ -312,6 +324,15 @@ class DailyImportTab(Tab):
             self.add_row((tdcc, "比價寫不進去", reason), problem=True)
         for r in receipt.unfinished():
             self.add_row((r.tdcc, f"比價{r.status}", _observed_detail(r)), problem=True)
+
+    def _hand_off_day(self, observation: Observation) -> str:
+        """比價比到某一天時帶到出場清單（#171）並有下一步；回傳接在完成訊息後面的一句（沒有帶入時空白）。"""
+        receipt = observation.receipt
+        if receipt is None or receipt.through is None:
+            return ""
+        self.on_observed(receipt.through)
+        self.exits_button.offer()
+        return f"\n已把 {receipt.through:%Y-%m-%d} 帶到「9 出場清單」。"
 
     def _show_recalc(self, recalc: Recalc) -> None:
         for calc in () if recalc.receipt is None else recalc.receipt.to_show():

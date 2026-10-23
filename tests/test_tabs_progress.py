@@ -57,11 +57,11 @@ def shown(tab) -> list[str]:
     return [tab.table.set(item, "tdcc") for item in tab.table.get_children()]
 
 
-def test_progress_is_the_last_tab(master, tmp_path: Path) -> None:
+def test_progress_comes_before_the_exit_list(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
 
-    assert window.notebook.tab(window.notebook.tabs()[-1], "text") == "8 進度"
-    assert window.progress.header.step.get() == "步驟 8／8"
+    assert window.notebook.tab(window.notebook.tabs()[-2], "text") == "8 進度"
+    assert window.progress.header.step.get() == "步驟 8／9"
 
 
 def test_refresh_lists_the_most_behind_first(master, tmp_path: Path, monkeypatch) -> None:
