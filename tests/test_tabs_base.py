@@ -28,6 +28,20 @@ def test_order_and_mail_pages_count_pasted_tdccs(master, tmp_path: Path, tab_nam
     assert tab.count_var.get() == "已貼 2 筆"
 
 
+# ---------------------------------------------------------------- 結果表左右捲動（#179）
+
+
+@pytest.mark.parametrize("tab_name", ["daily", "orders", "prepare", "returning", "mail", "progress", "exits"])
+def test_result_tables_scroll_sideways(master, tmp_path: Path, tab_name) -> None:
+    tab = getattr(new_window(master, tmp_path), tab_name)
+
+    assert str(tab.hbar.cget("orient")) == "horizontal"
+    assert tab.hbar.grid_info()["row"] == 2, "在表的下方"
+    assert tab.table.cget("xscrollcommand"), "表捲動時捲軸跟著動"
+    last = tab.columns[-1][0]
+    assert tab.table.column(last, "minwidth") == tab.columns[-1][2], "最後一欄不會被擠到看不見"
+
+
 # ---------------------------------------------------------------- 結果表複製（#121）
 
 
