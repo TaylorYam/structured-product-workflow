@@ -424,8 +424,8 @@ def test_products_with_blank_required_terms_stay_to_confirm_until_filled(pg, tmp
     pg.execute("UPDATE workflow.product SET maturity_date = NULL, strike_pct = NULL WHERE tdcc = %s", (A,))
     (import_id,) = pg.execute("SELECT max(import_id) FROM workflow.order_import").fetchone()
     pg.execute(  # 只有識別欄的商品（例：只有交易明細、在人工維護從頭補）
-        "INSERT INTO workflow.product (tdcc, product, issuer, status_event, source, order_import_id)"
-        " VALUES (%s, 'FCN', 'SG', '在庫', 'Order', %s)",
+        "INSERT INTO workflow.product (tdcc, product, issuer, source, order_import_id)"
+        " VALUES (%s, 'FCN', 'SG', 'Order', %s)",
         (B, import_id),
     )
 

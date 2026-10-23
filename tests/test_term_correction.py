@@ -223,10 +223,10 @@ def insert_old_product(pg, tdcc: str, *, issuer: str = "Barclays", ko_freq: str 
         "INSERT INTO workflow.product (tdcc, product, issuer, isin, currency, trade_date, strike_date, issue_date,"
         " final_valuation_date, maturity_date, initial_pricing, non_call_months, underlying_1, strike_pct, ko_freq,"
         " ko_memory, ko_type, ko_pct, coupon_pct, upfront_pct, tenor_months, ki_freq, barrier_type, ki_pct,"
-        " denomination, status_event, first_run_id, locked_at)"
+        " denomination, first_run_id, locked_at)"
         " VALUES (%s, 'FCN', 'Barclays', 'XS0000000001', 'USD', '2026-01-15', '2026-01-15', '2026-01-22',"
         " '2026-07-15', '2026-07-22', '收盤價', 1, 'AAA UW', 80, 'D', 'Y', 'Daily Memory', 100, 12.5, 1.5, 6, 'AM',"
-        " 'EKI', 65, 10000, '在庫', %s, now())",
+        " 'EKI', 65, 10000, %s, now())",
         (tdcc, run_id),
     )
     pg.execute("UPDATE workflow.product SET issuer = %s, ko_freq = %s WHERE tdcc = %s", (issuer, ko_freq, tdcc))

@@ -212,7 +212,7 @@ def test_import_writes_a_new_product_from_the_confirmed_values(pg) -> None:
     assert (p["ki_freq"], p["barrier_type"], p["ki_pct"]) == ("AM", "EKI", Decimal(65))
     assert p["upfront_pct"] == Decimal("1.5")
     assert p["denomination"] == Decimal(10000) and p["order_amount"] is None  # 金額以交易明細為準（#97）
-    assert p["maturity_date"] == dt.date(2027, 4, 22) and p["status_event"] is None
+    assert p["maturity_date"] == dt.date(2027, 4, 22) and "status_event" not in p  # 舊狀態欄已移除（#172）
     assert p["strike_date"] == dt.date(2026, 10, 15)
     assert (p["underlying_1"], p["underlying_2"], p["underlying_3"]) == ("AAA UW", "BBB UN", None)
     imported_by, counts = pg.execute(

@@ -7,7 +7,7 @@
 - 人工事件只有顧客贖回（`record_redemption`），已有存續事件的商品不能登記。
 - 舊清單的狀態在資料表版本 0016 轉成來源「舊清單」的事件，舊商品匯入（`record_legacy`，#154）也寫這種；比價不取代它們。
 - 對自動事件有意見只能提出異議（`raise_objection`／`resolve_objection`），異議不改事件。
-`workflow.product.status_event` 等四欄不再讀寫（之後另行移除）。
+`workflow.product` 舊的 `status_event` 等四欄已由資料表版本 0020 移除（#172）。
 """
 
 from __future__ import annotations
