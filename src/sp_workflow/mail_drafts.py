@@ -573,14 +573,14 @@ def _excel_date(value: dt.date) -> dt.datetime:
 def _write_list(
     path: Path, outcomes: Sequence[DraftOutcome], last_import: ImportInfo | None, unreadable: Sequence[Path]
 ) -> None:
-    wb = table_book(
+    book = table_book(
         "寄信草稿清單",
         [name for name, _ in LIST_COLUMNS],
         ([o.tdcc, o.status, "、".join(o.to) or None, "、".join(o.cc) or None, o.reason or None] for o in outcomes),
         widths=[width for _, width in LIST_COLUMNS],
         style=tdcc_as_text,
     )
-    info = wb.create_sheet("資料來源")
+    info = book.create_sheet("資料來源")
     if last_import is None:
         info.append(["最近一次每日匯入", "沒有匯入紀錄"])
     else:
@@ -593,4 +593,4 @@ def _write_list(
         info.append([None, str(folder)])
     info.column_dimensions["A"].width = 20
     info.column_dimensions["B"].width = 70
-    save_book(wb, path)
+    save_book(book, path)
