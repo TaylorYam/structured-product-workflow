@@ -11,13 +11,14 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
 
 import pymupdf
+
+from sp_workflow.file_tools import sha256_bytes
 
 TITLE_WINDOW = 300
 _WHITESPACE = re.compile(r"\s+")
@@ -83,7 +84,7 @@ def content_key(path: Path) -> str:
         text = ""
     compact = _WHITESPACE.sub("", text)
     data = compact.encode("utf-8") if compact else path.read_bytes()
-    return hashlib.sha256(data).hexdigest()
+    return sha256_bytes(data)
 
 
 def read_pdf(path: Path, tdcc: str) -> Reading:

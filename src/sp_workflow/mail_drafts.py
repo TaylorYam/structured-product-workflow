@@ -25,12 +25,11 @@ from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import openpyxl
-from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
 from sp_workflow.daily_import import ImportInfo, Mailbox, is_pb, latest_import, load_mailbox
 from sp_workflow.database import DatabaseError, load_env_file, require_current_schema
+from sp_workflow.file_tools import save_book, table_book, tdcc_as_text
 from sp_workflow.preparation import find_product_folders, is_tdcc, parse_tdccs
 from sp_workflow.product_record import (
     PRICING_FIELD,
@@ -574,18 +573,13 @@ def _excel_date(value: dt.date) -> dt.datetime:
 def _write_list(
     path: Path, outcomes: Sequence[DraftOutcome], last_import: ImportInfo | None, unreadable: Sequence[Path]
 ) -> None:
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "寄信草稿清單"
-    ws.append([name for name, _ in LIST_COLUMNS])
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-    for o in outcomes:
-        ws.append([o.tdcc, o.status, "、".join(o.to) or None, "、".join(o.cc) or None, o.reason or None])
-        ws.cell(ws.max_row, 1).number_format = "@"  # TDCC 是文字，保留前導零
-    for i, (_, width) in enumerate(LIST_COLUMNS, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = width
-    ws.freeze_panes = "A2"
+    wb = table_book(
+        "寄信草稿清單",
+        [name for name, _ in LIST_COLUMNS],
+        ([o.tdcc, o.status, "、".join(o.to) or None, "、".join(o.cc) or None, o.reason or None] for o in outcomes),
+        widths=[width for _, width in LIST_COLUMNS],
+        style=tdcc_as_text,
+    )
     info = wb.create_sheet("資料來源")
     if last_import is None:
         info.append(["最近一次每日匯入", "沒有匯入紀錄"])
@@ -599,4 +593,4 @@ def _write_list(
         info.append([None, str(folder)])
     info.column_dimensions["A"].width = 20
     info.column_dimensions["B"].width = 70
-    wb.save(path)
+    save_book(wb, path)

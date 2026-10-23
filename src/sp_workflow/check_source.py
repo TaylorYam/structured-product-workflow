@@ -26,11 +26,11 @@ from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-import openpyxl
-from openpyxl.styles import Font
+from openpyxl.cell.cell import Cell
 
 from sp_workflow.check_terms import DONE
 from sp_workflow.database import ConnectionSettings, DatabaseError, connect, require_current_schema
+from sp_workflow.file_tools import save_book, table_book
 from sp_workflow.product_record import PRODUCT_COLUMNS, missing_fields
 from sp_workflow.product_write import lock_terms
 
@@ -226,26 +226,17 @@ def _row(found: _Stored, fmt: ReferenceFormat, headers: Sequence[str]) -> dict[s
 
 def _write_sheet(path: Path, headers: Sequence[str], rows: Iterable[Mapping[str, Any]]) -> None:
     """第 1 列表頭、第 2 列起每檔一列；日期用日期格式。寫到暫存檔再改名，失敗時不留半份。"""
-    workbook = openpyxl.Workbook()
-    sheet = workbook.active
-    sheet.title = SHEET_TITLE
-    sheet.append(list(headers))
-    for cell in sheet[1]:
-        cell.font = Font(bold=True)
-    for row in rows:
-        sheet.append([row.get(h) for h in headers])
-        for cell in sheet[sheet.max_row]:
-            if isinstance(cell.value, dt.date):
-                cell.number_format = DATE_FORMAT
-    sheet.freeze_panes = "A2"
+    book = table_book(SHEET_TITLE, headers, ([row.get(h) for h in headers] for row in rows), style=_date_cell)
     path.parent.mkdir(parents=True, exist_ok=True)
-    temp = path.with_name(path.name + ".tmp")
     try:
-        workbook.save(temp)
-        temp.replace(path)
+        save_book(book, path)
     except OSError as exc:
-        temp.unlink(missing_ok=True)
         raise CheckSourceError(f"資料庫參考條件表寫入失敗：{path}（{exc}）") from exc
+
+
+def _date_cell(cell: Cell) -> None:
+    if isinstance(cell.value, dt.date):
+        cell.number_format = DATE_FORMAT
 
 
 # ---------- 寫回 ----------

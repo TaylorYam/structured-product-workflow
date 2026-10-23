@@ -545,7 +545,7 @@ def test_error_book_write_failure_keeps_the_returned_files(
     assert o.ts == PENDING_RETURNED
     assert (root / B / f"{B}_TS_待確認.pdf").exists()
     assert "錯訊檔寫不進去" in o.reason
-    assert not list((root / B).glob("*.spw-tmp"))
+    assert not list((root / B).glob("*tmp"))  # 放回的 .spw-tmp 與錯訊檔的 .tmp 都不留
 
 
 def test_old_error_book_is_kept_and_reported_when_the_product_passes(root: Path, batch: Path, tmp_path: Path) -> None:
