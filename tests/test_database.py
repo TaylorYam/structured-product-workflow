@@ -13,7 +13,7 @@ from sp_workflow.database import DatabaseError, apply_migrations, load_env_file,
 from sp_workflow.product_record import REQUIRED_COLUMNS
 
 A = "029199990001"
-IDENTITY_COLUMNS = ("tdcc", "product", "issuer", "source")  # TDCC、商品種類、上手、來源（狀態自 0016 起可以空白，#152）
+IDENTITY_COLUMNS = ("tdcc", "product", "issuer", "source")  # TDCC、商品種類、上手、來源（舊狀態欄 0020 起移除，#172）
 
 
 def test_env_file_is_read_without_exposing_values(tmp_path: Path) -> None:
@@ -240,7 +240,7 @@ def test_step_records_migration_keeps_products(pg) -> None:
 
 @pytest.mark.db
 def test_old_statuses_become_old_list_events(pg) -> None:
-    """資料表版本 0016（#152）：不是在庫的舊狀態轉成來源「舊清單」的事件，原欄位保留、之後新商品不再寫。"""
+    """資料表版本 0016（#152）：不是在庫的舊狀態轉成來源「舊清單」的事件，原欄位保留、之後新商品不再寫（版本 0020 再移除）。"""
     _database_before(pg, 16)
     insert = (
         "INSERT INTO workflow.product (tdcc, product, issuer, source, status_event, status_date, status_underlying,"

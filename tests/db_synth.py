@@ -132,7 +132,7 @@ def seed_products(pg, inventories: Sequence[dict]) -> None:
             ("0" * 64,),
         ).fetchone()[0]
     )
-    old_status = pg.execute(  # 資料表版本 0020 之前（升級測試）舊狀態欄還在，0016 之前不可空白
+    has_status_column = pg.execute(  # 資料表版本 0020 之前（升級測試）舊狀態欄還在，0016 之前不可空白
         "SELECT count(*) FROM information_schema.columns"
         " WHERE table_schema = 'workflow' AND table_name = 'product' AND column_name = 'status_event'"
     ).fetchone()[0]
@@ -165,7 +165,7 @@ def seed_products(pg, inventories: Sequence[dict]) -> None:
             "barrier_type": BARRIER_TYPES[ki_freq],
             "ki_pct": None if ki_freq == "-" else row["KI(%)"],
             "first_run_id": run_id,
-            **({"status_event": "在庫"} if old_status else {}),
+            **({"status_event": "在庫"} if has_status_column else {}),
         }
         pg.execute(
             f"INSERT INTO workflow.product ({', '.join(product)}) VALUES ({', '.join(['%s'] * len(product))})",
