@@ -152,6 +152,7 @@ class CorrectionReceipt:
     trade_correction_id: int | None = None  # 沒有改交易明細時 None
     trade_changes: tuple[TradeEdit, ...] = ()  # (row_seq, 欄, 存檔前, 存檔後)
     unmatched: tuple[str, ...] = ()  # 改了的 FC 名字裡對不到信箱的
+    exited: str = ""  # 改了商品條件、這檔已出場時的存續事件（#169）：比價不會重算，事件不會跟著改
 
     @property
     def saved(self) -> bool:

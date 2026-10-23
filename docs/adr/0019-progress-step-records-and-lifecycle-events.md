@@ -42,7 +42,7 @@
 
 **存續事件**：新增 `workflow.product_event`（TDCC、事件、事件日、標的、來源、備註、誰、何時）。存續狀態 = 最新一筆事件，沒有事件就是在庫。事件日是觸價或判定的那一個觀察日，不存上手實際贖回付款日。
 
-- 自動事件（KO、接股、到期還本）只由比價產生：每次比價把這檔的自動事件全部重算，和資料庫不同才整組取代，改變寫 `workflow.product_event_change`（誰、何時、舊值、新值）。人工不能新增、修改或刪除自動事件；結果和上手通知不同時只能「提出異議」（`workflow.event_objection`：針對的事件、備註、誰、何時、解除時間），進度頁顯示待確認，解法是修資料或修程式。
+- 自動事件（KO、接股、到期還本）只由比價產生：第一次算出時整組寫入，改變寫 `workflow.product_event_change`（誰、何時、舊值、新值）；之後這檔已出場，照 ADR 0020 不再比價，事件不再重算（2026-10-23 使用者確認，#169）。收盤價每天直接從彭博來，先假設不會事後更正；真的遇到時另外處理。人工不能新增、修改或刪除自動事件；結果和上手通知不同時只能「提出異議」（`workflow.event_objection`：針對的事件、備註、誰、何時、解除時間），進度頁顯示待確認，解法是修資料或修程式。
 - 人工事件只有「顧客贖回」（事件日、備註），登記後這檔停止比價。
 - 舊清單匯入的狀態轉成來源「舊清單」的事件（ADR 0020）；`status_event`、`status_date`、`status_underlying`、`status_raw` 不再寫入，之後另行移除。
 
@@ -103,7 +103,7 @@ The user's goal: automate the whole path from start to finish, see every product
 
 **Lifecycle events**: a new `workflow.product_event` (TDCC, event, event date, underlying, source, note, who, when). The lifecycle status is the latest event; no event means 在庫. The event date is the observation day on which the trigger or the determination happened; the issuer's actual redemption or payment date is not stored.
 
-- Automatic events (KO, 接股, 到期還本) come only from observation: each run recalculates the product's automatic events in full and replaces them as a set only when they differ from the database, recording the change in `workflow.product_event_change` (who, when, old, new). Nobody may add, edit, or delete an automatic event by hand; when the result differs from the issuer's notice the operator can only raise an objection (`workflow.event_objection`: the event, note, who, when, resolved at), which shows as 待確認 on the progress tab; the fix is to correct the data or the program.
+- Automatic events (KO, 接股, 到期還本) come only from observation: they are written as a set when first found, recording the change in `workflow.product_event_change` (who, when, old, new); from then on the product has exited, and per ADR 0020 it is no longer observed and its events are not recalculated (confirmed by the user 2026-10-23, #169). Close prices come straight from Bloomberg every day and are assumed not to be corrected later; a correction, if it ever happens, will be handled separately. Nobody may add, edit, or delete an automatic event by hand; when the result differs from the issuer's notice the operator can only raise an objection (`workflow.event_objection`: the event, note, who, when, resolved at), which shows as 待確認 on the progress tab; the fix is to correct the data or the program.
 - The only manual event is 顧客贖回 (event date, note); after it is recorded the product is no longer observed.
 - Statuses imported from the old 清單更新 become events with source 舊清單 (ADR 0020); `status_event`, `status_date`, `status_underlying`, and `status_raw` are no longer written and will be removed separately.
 

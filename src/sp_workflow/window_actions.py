@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -48,6 +48,7 @@ from sp_workflow.lifecycle import (
     Objection,
     StoredEvent,
     current_events,
+    lifecycle_status,
     open_objections,
     raise_objection,
     record_redemption,
@@ -400,9 +401,19 @@ def save_product(
     trades: TradeRowsDraft | None,
     reason: str,
 ) -> CorrectionReceipt:
-    """人工維護存檔（已鎖住的照更正的規則），商品條件與交易明細一起。"""
+    """人工維護存檔（已鎖住的照更正的規則），商品條件與交易明細一起。
+
+    改了商品條件、這檔已出場時，結果另外寫出存續事件（#169）：已出場的不再比價，事件不會跟著改。
+    """
     with connect(settings) as conn:
-        return save_maintenance(conn, draft, config, trades=trades, reason=reason)
+        receipt = save_maintenance(conn, draft, config, trades=trades, reason=reason)
+        if receipt.correction_id is None:
+            return receipt
+        latest = lifecycle_status(conn, [receipt.tdcc])[receipt.tdcc].latest
+        if latest is None:
+            return receipt
+        when = latest.event_date or "沒有事件日"
+        return replace(receipt, exited=" ".join(str(p) for p in (latest.event, latest.underlying, when) if p))
 
 
 def export_product_terms(settings: ConnectionSettings, path: Path) -> ExportReceipt:

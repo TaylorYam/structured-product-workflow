@@ -1,8 +1,9 @@
 """比價（#155、ADR 0020）：每檔商品逐日比到收盤價表最新的一天，判定 KO、KI 觸及、到期接股或到期還本。
 
 - 範圍：核對條件「完成」的商品（各標的進場價、執行價、下限價、KO 價已算出或由 TS 回填），已鎖住與未鎖住都比，
-  比價狀態記下比價時是否鎖住（畫面標「未鎖住」）。已登記顧客贖回的不比。已算出自動事件的每次照樣重算，
-  收盤價更正後事件跟著整組取代。
+  比價狀態記下比價時是否鎖住（畫面標「未鎖住」）。已出場的不比（#169、ADR 0020）：已有存續事件
+  （比價算出的 KO、接股、到期還本，人工登記的顧客贖回，舊清單）的商品比價狀態是已出場，事件不再重算；
+  先假設收盤價不會事後更正。
 - KO：收盤價 ≥ KO 價。非記憶式要同一個觀察日所有標的都達標；記憶式每檔標的在任一觀察日達標就記住，全部記過即 KO。
   D 型的觀察日是第一個比價日（比價日_{Non-Call}）起到最終比價日止、所有標的市場都開市的日子；P 型只看各期比價日。
   Non-Call 等於天期的商品不會提前出場，不觀察 KO。
@@ -13,8 +14,8 @@
 - 缺價格就停住：某標的在它市場的交易日要用到價格、收盤價表沒有，這檔停在那一天（已比到的日期是前一天），
   比價狀態「等股價」寫出標的與日期。交易所不在假日表、日期超出假日表涵蓋範圍、要比價了收盤價表卻完全沒有這個代碼
   → 待確認並寫原因。
-- 寫入：自動事件經 `lifecycle.replace_auto_events`（整組取代、有變才寫、差異留紀錄）；每檔一筆
-  `workflow.pricing_status`，和上一次不同才寫。有舊清單事件的商品只比較、不寫自動事件：結果不同時待確認、寫出兩邊。
+- 寫入：第一次算出出場事件時經 `lifecycle.replace_auto_events` 寫入（留紀錄）；每檔一筆
+  `workflow.pricing_status`，和上一次不同才寫。
 
 `observe` 只算一檔、不碰資料庫；`observe_all` 讀資料庫、算全部、寫回。
 """
@@ -35,7 +36,6 @@ from sp_workflow.lifecycle import (
     LEGACY,
     MANUAL,
     MATURITY,
-    OBSERVATION,
     AutoEvent,
     LifecycleError,
     StoredEvent,
@@ -287,9 +287,10 @@ class ObservationReceipt:
 
 
 def observe_all(conn: psycopg.Connection, calendar: TradingCalendar, *, user: str | None = None) -> ObservationReceipt:
-    """比價全部：核對條件完成的商品逐日比到收盤價表最新的一天，寫自動事件與比價狀態（有變才寫）。
+    """比價全部：核對條件完成、還沒出場的商品逐日比到收盤價表最新的一天，寫出場事件與比價狀態（有變才寫）。
 
-    核對條件不再是完成、但以前比過的商品不比，比價狀態改成待確認（事件不動）。
+    已出場的不比，比價狀態是已出場。核對條件不再是完成、但以前比過的商品不比，
+    還沒出場的比價狀態改成待確認（事件不動）。
     """
     with conn.transaction():
         (through,) = conn.execute("SELECT max(close_date) FROM workflow.close_price").fetchone()
@@ -302,18 +303,24 @@ def observe_all(conn: psycopg.Connection, calendar: TradingCalendar, *, user: st
         errors: list[tuple[str, str]] = []
         for t in terms:
             events = existing.get(t.tdcc, [])
-            outcome, write_events = _decide(t, events, observe(t, closes, calendar, through))
-            previous = tuple(sorted(AutoEvent(e.event, e.event_date, e.underlying).key() for e in _auto(events)))
-            if write_events is not None and previous != tuple(sorted(e.key() for e in write_events)):
+            if events:  # 已出場：不再比價（ADR 0020），已比到的日期沿用上一次
+                through_before = stored[t.tdcc][2] if t.tdcc in stored else None
+                results.append(Observed(t.tdcc, EXITED, _exit_reason(events), through_before, locked[t.tdcc]))
+                continue
+            outcome = observe(t, closes, calendar, through)
+            if outcome.status == EXITED:
                 try:
-                    if replace_auto_events(conn, t.tdcc, write_events, user=user):
-                        changes.append(EventChange(t.tdcc, previous, tuple(e.key() for e in _sorted(write_events))))
+                    if replace_auto_events(conn, t.tdcc, outcome.events, user=user):
+                        changes.append(EventChange(t.tdcc, (), tuple(e.key() for e in _sorted(outcome.events))))
                 except LifecycleError as exc:  # 例如比價中有人登記了顧客贖回
                     errors.append((t.tdcc, str(exc)))
                     outcome = Outcome(TO_CONFIRM, f"自動事件寫不進去：{exc}", outcome.observed_through)
             results.append(Observed(t.tdcc, outcome.status, outcome.reason, outcome.observed_through, locked[t.tdcc]))
+        exited = current_events_of(conn, [tdcc for tdcc in not_done if tdcc in stored])
         for tdcc, (status, reason) in not_done.items():
-            if tdcc in stored:
+            if exited.get(tdcc):  # 已出場的商品，核對條件後來不是完成也不影響
+                results.append(Observed(tdcc, EXITED, _exit_reason(exited[tdcc]), stored[tdcc][2], locked[tdcc]))
+            elif tdcc in stored:
                 text = f"核對條件{status}，這次沒有比價" + (f"：{reason}" if reason else "")
                 results.append(Observed(tdcc, TO_CONFIRM, text, stored[tdcc][2], locked[tdcc]))
         written = 0
@@ -324,53 +331,16 @@ def observe_all(conn: psycopg.Connection, calendar: TradingCalendar, *, user: st
     return ObservationReceipt(through, tuple(results), tuple(changes), written, tuple(errors))
 
 
-def _decide(
-    terms: Terms, events: Sequence[StoredEvent], outcome: Outcome
-) -> tuple[Outcome, Sequence[AutoEvent] | None]:
-    """依這檔現有的事件決定比價狀態與要寫的自動事件（None 是不寫）。"""
+def _exit_reason(events: Sequence[StoredEvent]) -> str:
+    """已出場的比價原因：顧客贖回、舊清單寫出來源；比價事件和當初算出時一樣（例：KO 2026-11-18）。"""
     manual = [e for e in events if e.source == MANUAL]
     if manual:
         e = manual[-1]
-        return Outcome(EXITED, f"{e.event} {e.event_date or ''}".strip()), None
+        return f"{e.event} {e.event_date or ''}".strip()
     legacy = [e for e in events if e.source == LEGACY]
     if legacy:
-        if _same_as_legacy(outcome, legacy):
-            return Outcome(EXITED, f"同舊清單：{_events_text(legacy)}", outcome.observed_through), None
-        computed = outcome.reason if outcome.status == EXITED else f"{outcome.status}（{outcome.reason or '沒有事件'}）"
-        return (
-            Outcome(
-                TO_CONFIRM, f"和舊清單不同：舊清單 {_events_text(legacy)}；比價 {computed}", outcome.observed_through
-            ),
-            None,
-        )
-    auto = _auto(events)
-    if outcome.status in (WAIT_PRICES, TO_CONFIRM) and auto:
-        # 算不出結果時不拿掉已經算出的事件
-        return (
-            Outcome(TO_CONFIRM, f"{outcome.reason}；原本的 {_events_text(auto)} 先保留", outcome.observed_through),
-            None,
-        )
-    if outcome.status in (WAIT_PRICES, TO_CONFIRM):
-        return outcome, None
-    return outcome, outcome.events
-
-
-def _same_as_legacy(outcome: Outcome, legacy: Sequence[StoredEvent]) -> bool:
-    """比價結果和舊清單的事件一樣：同一種事件；舊清單有事件日、標的時也要一樣。"""
-    if len(outcome.events) != len(legacy):
-        return False
-    for new, old in zip(_sorted(outcome.events), legacy, strict=True):
-        if new.event != old.event:
-            return False
-        if old.event_date is not None and old.event_date != new.event_date:
-            return False
-        if old.underlying and new.underlying and old.underlying != new.underlying:
-            return False
-    return True
-
-
-def _auto(events: Sequence[StoredEvent]) -> list[StoredEvent]:
-    return [e for e in events if e.source == OBSERVATION]
+        return f"舊清單：{_events_text(legacy)}"
+    return _events_text(events)
 
 
 def _sorted(events: Sequence[AutoEvent]) -> list[AutoEvent]:

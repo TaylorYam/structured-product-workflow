@@ -224,6 +224,10 @@ def test_save_messages_for_new_and_locked_products() -> None:
         "商品維持鎖住，核對結果沒有變。\n核對條件重算後：待確認（UF：起單資料 2、交易明細 0.0215）。"
     )
     assert correction_text(CorrectionReceipt(A_TDCC, None, locked=False)) == (f"{A_TDCC} 沒有改任何欄位，沒有寫入。")
+    exited = CorrectionReceipt(A_TDCC, 4, (("Coupon p.a. (%)", Decimal("12.5"), Decimal(11)),), exited="KO 2026-11-18")
+    assert correction_text(exited).endswith(
+        "\n注意：這檔已出場（KO 2026-11-18），不再比價，存續事件不會跟著改；結果和上手通知不同時，到「8 進度」提出異議。"
+    )
 
 
 def test_a_rejected_save_keeps_the_edits(master, tmp_path: Path, monkeypatch) -> None:

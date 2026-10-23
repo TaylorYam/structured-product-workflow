@@ -372,32 +372,32 @@ def test_observe_all_writes_events_and_status_only_when_changed(pg) -> None:
 
 
 @pytest.mark.db
-def test_a_corrected_close_replaces_the_events(pg) -> None:
+def test_exited_products_are_not_observed_again(pg) -> None:
+    """已出場的不再比價（#169）：先假設收盤價不會事後更正，改了價格、條件或代碼事件都不動。"""
     seed(pg, T1)
     write_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
     observe_all(pg, CALENDAR)
 
-    write_closes(pg, {"AAA UW": {KO_DAY: "99"}})
+    write_closes(pg, {**us_closes(dt.date(2026, 11, 27)), "AAA UW": {KO_DAY: "99"}})
+    pg.execute("UPDATE workflow.underlying_price SET code = 'CCC UN' WHERE tdcc = %s AND seq = 2", (T1,))
     receipt = observe_all(pg, CALENDAR)
 
-    assert status(pg, T1) == (ON_BOOK, None, dt.date(2026, 11, 20), True)
-    assert events(pg, T1) == []
-    assert receipt.changes[0].previous == ((KO, KO_DAY.isoformat(), None),) and receipt.changes[0].current == ()
+    assert events(pg, T1) == [(KO, KO_DAY, None, "比價")]
+    assert status(pg, T1) == (EXITED, f"KO {KO_DAY}", KO_DAY, True), "已比到的日期沿用上一次"
+    assert receipt.changes == () and receipt.written == 0
 
 
 @pytest.mark.db
-def test_existing_events_are_kept_when_prices_go_missing(pg) -> None:
+def test_exited_products_stay_exited_when_check_terms_change(pg) -> None:
     seed(pg, T1)
     write_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
     observe_all(pg, CALENDAR)
-    pg.execute(
-        "UPDATE workflow.underlying_price SET code = 'CCC UN' WHERE tdcc = %s AND seq = 2", (T1,)
-    )  # 例如更正了代碼、收盤價表還沒有
+    pg.execute("UPDATE workflow.check_terms SET status = '待確認', reason = '更正後重算' WHERE tdcc = %s", (T1,))
 
     observe_all(pg, CALENDAR)
 
+    assert status(pg, T1) == (EXITED, f"KO {KO_DAY}", KO_DAY, True)
     assert events(pg, T1) == [(KO, KO_DAY, None, "比價")]
-    assert status(pg, T1)[0] == TO_CONFIRM and "原本的 KO 2026-11-18 先保留" in status(pg, T1)[1]
 
 
 @pytest.mark.db
@@ -413,7 +413,8 @@ def test_redeemed_products_are_not_observed(pg) -> None:
 
 
 @pytest.mark.db
-def test_legacy_events_are_compared_not_replaced(pg) -> None:
+def test_legacy_events_stop_observation(pg) -> None:
+    """舊清單的 KO、到期還本當作已確認（#169）：不再比對，比價狀態是已出場。"""
     seed(pg, T1)
     seed(pg, T2)
     for tdcc, day in ((T1, KO_DAY), (T2, dt.date(2026, 11, 19))):
@@ -426,8 +427,8 @@ def test_legacy_events_are_compared_not_replaced(pg) -> None:
 
     observe_all(pg, CALENDAR)
 
-    assert status(pg, T1) == (EXITED, f"同舊清單：KO {KO_DAY}", KO_DAY, True)
-    assert status(pg, T2) == (TO_CONFIRM, f"和舊清單不同：舊清單 KO 2026-11-19；比價 KO {KO_DAY}", KO_DAY, True)
+    assert status(pg, T1) == (EXITED, f"舊清單：KO {KO_DAY}", None, True)
+    assert status(pg, T2) == (EXITED, "舊清單：KO 2026-11-19", None, True), "和比價結果不同也不再比對"
     assert events(pg, T1) == [(KO, KO_DAY, None, "舊清單")] and events(pg, T2) == [
         (KO, dt.date(2026, 11, 19), None, "舊清單")
     ]
