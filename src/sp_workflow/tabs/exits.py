@@ -49,7 +49,7 @@ class ExitListTab(Tab):
             "出場清單",
             "某一個收盤日比價算出的 KO、接股、到期還本；早上匯入昨日收盤價後看昨天有哪些商品出場。",
         )
-        self.hint = HintBar(self.frame, self.hint_dismissed)
+        self.hint = HintBar(self.frame, self._hint_closed)
         self.hint.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         self.hint.hide()
         body = self.body(self.card(2))
@@ -77,14 +77,23 @@ class ExitListTab(Tab):
         has_rows = self.shown is not None and bool(self.shown.rows)
         self.export_button.configure(state=tk.DISABLED if busy or not has_rows else tk.NORMAL)
 
-    def receive_day(self, day: dt.date) -> None:
-        """每日匯入比價完成後帶入比到的那一天（#171）；正在讀時不換。不自動讀、不切頁。"""
-        if self.working:
-            return
-        self.day_var.set(f"{day:%Y-%m-%d}")
-        self.hint.show(f"比價已比到 {day:%Y-%m-%d}，已帶入這一天；按「重新整理」列出那天出場的商品。")
+    def receive_day(self, day: dt.date) -> bool:
+        """每日匯入比價完成後帶入比到的那一天（#171），回傳是否帶入；正在讀或匯出時不換。
 
-    def hint_dismissed(self) -> None:
+        上一次讀到的表先清掉（那是別天的），不自動讀、不切頁。
+        """
+        if self.working:
+            return False
+        self.day_var.set(f"{day:%Y-%m-%d}")
+        self.shown = None
+        self.table.delete(*self.table.get_children())
+        self.restart()
+        self.status_var.set("按「重新整理」列出那天比價算出的 KO、接股、到期還本。")
+        self._busy(False)
+        self.hint.show(f"比價已比到 {day:%Y-%m-%d}，已帶入這一天；按「重新整理」列出那天出場的商品。")
+        return True
+
+    def _hint_closed(self) -> None:
         """提示條的「改選…」：收起提示條，自己改收盤日。"""
         self.hint.hide()
 
@@ -126,7 +135,7 @@ class ExitListTab(Tab):
                 counts = [
                     (f"{event}（檔）", sum(r.event == event for r in result.rows), False) for event in AUTO_EVENTS
                 ]
-                text = f"{result.day:%Y-%m-%d} 出場 {len(result.rows)} 檔。" if result.rows else "沒有出場的商品。"
+                text = f"出場 {len(result.rows)} 檔。" if result.rows else "沒有出場的商品。"
                 self.finish(counts, f"收盤日 {result.day:%Y-%m-%d}：{text}")
         self._busy(False)
 

@@ -13,14 +13,18 @@ import pytest
 
 from db_synth import inventory, seed_products
 from order_synth import CONFIG
-from sp_workflow.exits import EXPORT_COLUMNS, ExitRow, export_exits, export_name, latest_close_day, load_exits
+from sp_workflow.close_prices import latest_close_date
+from sp_workflow.exits import EXPORT_COLUMNS, ExitRow, export_exits, export_name, load_exits
+from sp_workflow.lifecycle import LEGACY, MANUAL, OBSERVATION
 
 DAY = dt.date(2026, 10, 21)
 T = dt.datetime(2026, 10, 22, 8, 30, tzinfo=dt.UTC)
 A, B, C, D, E, F = (f"0291999900{i:02d}" for i in range(1, 7))
 
 
-def event(pg, tdcc: str, name: str, day: dt.date | None, source: str = "比價", underlying: str | None = None) -> int:
+def event(
+    pg, tdcc: str, name: str, day: dt.date | None, source: str = OBSERVATION, underlying: str | None = None
+) -> int:
     (event_id,) = pg.execute(
         "INSERT INTO workflow.product_event (tdcc, event, event_date, underlying, source, recorded_by, recorded_at)"
         " VALUES (%s, %s, %s, %s, %s, 'tester', %s) RETURNING event_id",
@@ -52,12 +56,12 @@ def test_the_latest_close_day_lists_exits_from_observation_only(pg) -> None:
     event(pg, D, "KO", DAY - dt.timedelta(days=1))  # 別天
     old = event(pg, E, "KO", DAY)
     pg.execute("UPDATE workflow.product_event SET superseded_at = now() WHERE event_id = %s", (old,))  # 已被取代
-    event(pg, F, "顧客贖回", DAY, source="人工")
-    event(pg, D, "KO", DAY, source="舊清單")
+    event(pg, F, "顧客贖回", DAY, source=MANUAL)
+    event(pg, D, "KO", DAY, source=LEGACY)
 
     found = load_exits(pg, CONFIG)
 
-    assert found.day == latest_close_day(pg) == DAY
+    assert found.day == latest_close_date(pg) == DAY
     assert [(r.tdcc, r.event, r.event_date, r.underlying, r.locked) for r in found.rows] == [
         (A, "KO", DAY, "", True),
         (B, "接股", DAY, "AAA UW", True),
@@ -88,4 +92,5 @@ def test_export_writes_the_rows_as_shown(tmp_path: Path) -> None:
     assert path.name == "出場清單_20261021.xlsx" and (receipt.path, receipt.count) == (path, 1)
     values = list(openpyxl.load_workbook(path).active.iter_rows(values_only=True))
     assert values[0] == EXPORT_COLUMNS
-    assert values[1][:7] == (B, "BARC", "FCN", "接股", dt.datetime(2026, 10, 21), "AAA UW", "未鎖住")
+    recorded = T.astimezone().replace(tzinfo=None)  # Excel 不收時區，存成本機時間
+    assert values[1] == (B, "BARC", "FCN", "接股", dt.datetime(2026, 10, 21), "AAA UW", "未鎖住", recorded)

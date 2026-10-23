@@ -123,6 +123,16 @@ def current_events(conn: psycopg.Connection, tdcc: str) -> list[StoredEvent]:
     return [StoredEvent(*row) for row in rows]
 
 
+def observed_exits_on(conn: psycopg.Connection, day: dt.date) -> list[StoredEvent]:
+    """出場清單（#171）：事件日是 `day`、比價產生、還有效的自動事件，依 TDCC、寫入先後排序。"""
+    rows = conn.execute(
+        f"SELECT {_EVENT_COLUMNS} FROM workflow.product_event WHERE event_date = %s AND source = %s"
+        " AND event = ANY(%s) AND superseded_at IS NULL ORDER BY tdcc, event_id",
+        (day, OBSERVATION, list(AUTO_EVENTS)),
+    ).fetchall()
+    return [StoredEvent(*row) for row in rows]
+
+
 def open_objections(conn: psycopg.Connection, tdccs: Iterable[str]) -> dict[str, list[Objection]]:
     """每個 TDCC 還沒解除的異議（含針對已被重新比價取代的事件），依提出先後；沒有的不放。"""
     found: dict[str, list[Objection]] = {}

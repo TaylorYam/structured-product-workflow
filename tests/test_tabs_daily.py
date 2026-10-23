@@ -275,6 +275,12 @@ def test_observation_hands_the_day_to_the_exit_list(master, tmp_path: Path) -> N
     window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar), Observation(error="x")))
     assert "出場清單" not in window.daily.status_var.get(), "比價沒有跑就不帶入"
 
+    window.exits.working = True
+    window.daily.exits_button.withdraw()  # 開始回補股價時收起（start_csv）
+    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar), Observation(OBSERVED)))
+    assert "「9 出場清單」正在處理，比到的那一天沒有帶入。" in window.daily.status_var.get()
+    assert window.daily.exits_button.winfo_manager() == "", "沒帶入就沒有下一步"
+
 
 def test_reobserve_runs_on_this_page(master, tmp_path: Path, monkeypatch) -> None:
     window = new_window(master, tmp_path)

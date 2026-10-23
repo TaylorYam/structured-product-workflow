@@ -59,7 +59,7 @@ def test_a_blank_day_reads_the_latest_close_day(master, tmp_path: Path, monkeypa
         ("037199990002", "SG", "FCN", "接股", "2026-10-21", "AAA UW", "未鎖住", f"{T.astimezone():%Y-%m-%d %H:%M}"),
     ]
     assert tab.kpis.values == (("KO（檔）", 1, False), ("接股（檔）", 1, False), ("到期還本（檔）", 0, False))
-    assert tab.status_var.get() == "收盤日 2026-10-21：2026-10-21 出場 2 檔。"
+    assert tab.status_var.get() == "收盤日 2026-10-21：出場 2 檔。"
     assert str(tab.export_button.cget("state")) == "normal"
 
 
@@ -92,13 +92,16 @@ def test_received_day_shows_a_hint_until_refreshed(master, tmp_path: Path, monke
     window, tab, asked = loaded(master, tmp_path, monkeypatch)
     tab.day_var.set("")
 
-    tab.receive_day(DAY)
+    assert tab.receive_day(DAY)
 
     assert tab.day_var.get() == "2026-10-21" and tab.hint.shown
+    assert cells(tab) == [] and str(tab.export_button.cget("state")) == "disabled", "上一次讀到的是別天，先清掉"
     assert window.notebook.select() == str(window.daily.frame), "不自動切頁"
     assert asked == [None], "帶入時不自動讀"
     tab.refresh()
     assert not tab.hint.shown and asked[-1] == DAY
+    tab.working = True
+    assert not tab.receive_day(DAY), "正在讀或匯出時不帶入"
 
 
 def test_export_writes_what_is_shown(master, tmp_path: Path, monkeypatch) -> None:
@@ -115,5 +118,8 @@ def test_export_writes_what_is_shown(master, tmp_path: Path, monkeypatch) -> Non
 
     assert offered["initialfile"] == "出場清單_20261021.xlsx"
     rows = list(openpyxl.load_workbook(path).active.iter_rows(values_only=True))
-    assert [r[:4] for r in rows[1:]] == [("029199990001", "BARC", "FCN", "KO"), ("037199990002", "SG", "FCN", "接股")]
+    assert [r[:7] for r in rows[1:]] == [
+        ("029199990001", "BARC", "FCN", "KO", dt.datetime(2026, 10, 21), None, "已鎖住"),
+        ("037199990002", "SG", "FCN", "接股", dt.datetime(2026, 10, 21), "AAA UW", "未鎖住"),
+    ]
     assert tab.status_var.get() == f"已匯出出場清單 2 檔：{path}"

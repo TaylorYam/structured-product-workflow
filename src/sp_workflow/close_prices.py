@@ -102,6 +102,12 @@ class HistoryReceipt:
     error_book_path: Path | None  # 沒有問題時不寫
 
 
+def latest_close_date(conn: psycopg.Connection) -> dt.date | None:
+    """收盤價表最新的收盤日；還沒有資料時是 None（出場清單的預設日期，#171）。"""
+    (day,) = conn.execute("SELECT max(close_date) FROM workflow.close_price").fetchone()
+    return day
+
+
 def normalize_code(raw: str) -> str:
     """去掉彭博代碼最後的類別字（例：`AA UN Equity` → `AA UN`），其餘一字不差；只去頭尾空白。"""
     code = raw.strip()

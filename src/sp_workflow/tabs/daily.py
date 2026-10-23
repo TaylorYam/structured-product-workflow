@@ -49,7 +49,7 @@ class DailyImportTab(Tab):
         config_paths: Callable[[], ConfigPaths],
         on_imported: Callable[[Sequence[str]], bool],
         on_next: Callable[[], None],
-        on_observed: Callable[[dt.date], None],
+        on_observed: Callable[[dt.date], bool],
         on_exits: Callable[[], None],
     ) -> None:
         super().__init__(notebook, "每日匯入", (("tdcc", "TDCC", 130), ("kind", "結果", 150), ("detail", "說明", 440)))
@@ -174,7 +174,7 @@ class DailyImportTab(Tab):
             f"完成（第 {receipt.run_id} 次匯入，回補股價）：{receipt.close_date:%Y-%m-%d} 收盤，"
             f"存成取價日 {receipt.prices.price_date:%Y-%m-%d}（等同隔天早上取價）。\n"
             f"{_price_text(receipt.prices)}\n{_close_text(receipt)}\n{recalc_text(recalc)}"
-            f"\n{observation_text(result.observation)}{self._hand_off_day(result.observation)}"
+            f"\n{observation_text(result.observation)}{self._hand_off_exits(result.observation)}"
             f"\n錯誤清單：{receipt.error_book_path}",
         )
         self.releaser.show(recalc)
@@ -235,7 +235,7 @@ class DailyImportTab(Tab):
             f"{_summary_text(result.summary)}休市日有值、沒有存 {result.closed} 格；"
             f"超出交易所假日表涵蓋範圍、沒有存 {result.uncovered} 格；"
             f"錯誤清單列了 {len(result.problems)} 項、{listed} 格。\n{book}\n{observation_text(observation)}"
-            f"{self._hand_off_day(observation)}",
+            f"{self._hand_off_exits(observation)}",
         )
 
     def import_legacy(self) -> None:
@@ -325,12 +325,13 @@ class DailyImportTab(Tab):
         for r in receipt.unfinished():
             self.add_row((r.tdcc, f"比價{r.status}", _observed_detail(r)), problem=True)
 
-    def _hand_off_day(self, observation: Observation) -> str:
-        """比價比到某一天時帶到出場清單（#171）並有下一步；回傳接在完成訊息後面的一句（沒有帶入時空白）。"""
+    def _hand_off_exits(self, observation: Observation) -> str:
+        """比價比到某一天時帶到出場清單（#171），真的帶入了才有下一步；回傳接在完成訊息後面的一句。"""
         receipt = observation.receipt
         if receipt is None or receipt.through is None:
             return ""
-        self.on_observed(receipt.through)
+        if not self.on_observed(receipt.through):
+            return "\n「9 出場清單」正在處理，比到的那一天沒有帶入。"
         self.exits_button.offer()
         return f"\n已把 {receipt.through:%Y-%m-%d} 帶到「9 出場清單」。"
 

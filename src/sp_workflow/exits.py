@@ -13,15 +13,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from sp_workflow.lifecycle import AUTO_EVENTS, OBSERVATION
+from sp_workflow.close_prices import latest_close_date
+from sp_workflow.lifecycle import AUTO_EVENTS, observed_exits_on
+from sp_workflow.observation import UNLOCKED
 from sp_workflow.order_import import ImportConfig, issuer_code
 from sp_workflow.product_export import save_rows
+from sp_workflow.product_write import LOCKED
 
 if TYPE_CHECKING:
     import psycopg
 
 EXPORT_COLUMNS = ("TDCC", "上手", "商品", "事件", "事件日", "標的", "鎖住", "記錄時間")
-LOCKED_TEXT = {True: "已鎖住", False: "未鎖住"}
+LOCKED_TEXT = {True: LOCKED, False: UNLOCKED}
 
 
 @dataclass(frozen=True)
@@ -50,29 +53,36 @@ class ExitExport:
     count: int
 
 
-def latest_close_day(conn: psycopg.Connection) -> dt.date | None:
-    """收盤價表最新的收盤日；還沒有資料時是 None。"""
-    (day,) = conn.execute("SELECT max(close_date) FROM workflow.close_price").fetchone()
-    return day
-
-
 def load_exits(conn: psycopg.Connection, config: ImportConfig, day: dt.date | None = None) -> ExitList:
     """`day`（沒有時用最新的收盤日）比價算出、還有效的出場事件。在同一個 transaction 裡讀。"""
     with conn.transaction():
         if day is None:
-            day = latest_close_day(conn)
+            day = latest_close_date(conn)
         if day is None:
             return ExitList(None, ())
-        found = conn.execute(
-            "SELECT e.tdcc, p.issuer, p.product, e.event, e.event_date, e.underlying, p.locked_at IS NOT NULL,"
-            " e.recorded_at FROM workflow.product_event e JOIN workflow.product p ON p.tdcc = e.tdcc"
-            " WHERE e.superseded_at IS NULL AND e.source = %s AND e.event = ANY(%s) AND e.event_date = %s",
-            (OBSERVATION, list(AUTO_EVENTS), day),
-        ).fetchall()
-    rows = [
-        ExitRow(tdcc, issuer_code(tdcc, issuer, config), product or "", event, event_date, underlying or "", locked, at)
-        for tdcc, issuer, product, event, event_date, underlying, locked, at in found
-    ]
+        events = observed_exits_on(conn, day)
+        products = {
+            tdcc: (issuer, product, locked)
+            for tdcc, issuer, product, locked in conn.execute(
+                "SELECT tdcc, issuer, product, locked_at IS NOT NULL FROM workflow.product WHERE tdcc = ANY(%s)",
+                ([e.tdcc for e in events],),
+            )
+        }
+    rows = []
+    for e in events:
+        issuer, product, locked = products[e.tdcc]
+        rows.append(
+            ExitRow(
+                e.tdcc,
+                issuer_code(e.tdcc, issuer, config),
+                product or "",
+                e.event,
+                day,
+                e.underlying or "",
+                locked,
+                e.recorded_at,
+            )
+        )
     rows.sort(key=lambda row: (AUTO_EVENTS.index(row.event), row.tdcc))
     return ExitList(day, tuple(rows))
 
