@@ -15,7 +15,6 @@ MS 說明書封面空白的「受託機構商品代號」在暫存複本補上 T
 from __future__ import annotations
 
 import datetime as dt
-import hashlib
 import os
 import re
 import shutil
@@ -24,12 +23,9 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
-import openpyxl
-from openpyxl.styles import Font
-from openpyxl.utils import get_column_letter
-
 from sp_workflow.conversion import ConversionError, Converter, default_converter
 from sp_workflow.documents import DocKind, content_key, read_pdf
+from sp_workflow.file_tools import save_book, sha256_file, table_book, tdcc_as_text
 from sp_workflow.trustee_code import fill_trustee_code, needs_fill
 
 PREPARED = "已準備"
@@ -252,7 +248,7 @@ def _prepare_folder(tdcc: str, folder: Path, batch_dir: Path, convert: Converter
             [picked] = selections[kind].chosen
             target = batch_dir / _output_name(tdcc, kind)
             shutil.copyfile(picked.pdf, target)
-            docs.append(PreparedDocument(kind, picked.source, target.name, sha256(target), picked.from_word))
+            docs.append(PreparedDocument(kind, picked.source, target.name, sha256_file(target), picked.from_word))
     filled = [c for kind in DocKind for c in selections[kind].chosen if c.filled]
     fill_note = f"已補受託機構商品代號（{_names(filled)}）" if filled else ""
     reason = "；".join(p for p in [fill_note, _version_note(selections), *unusable] if p)
@@ -426,14 +422,6 @@ def _names(candidates: list[_Candidate]) -> str:
     return "、".join(c.source.name for c in candidates)
 
 
-def sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
 def _list_rows(outcomes: Iterable[ProductOutcome]) -> Iterable[tuple[str, ...]]:
     for o in outcomes:
         folder = str(o.folder) if o.folder else ""
@@ -447,16 +435,12 @@ def _list_rows(outcomes: Iterable[ProductOutcome]) -> Iterable[tuple[str, ...]]:
 
 
 def _write_list(path: Path, outcomes: Iterable[ProductOutcome]) -> None:
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "準備清單"
-    ws.append([name for name, _ in LIST_COLUMNS])
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-    for row in _list_rows(outcomes):
-        ws.append([v or None for v in row])
-        ws.cell(ws.max_row, 1).number_format = "@"  # TDCC 是文字，保留前導零
-    for i, (_, width) in enumerate(LIST_COLUMNS, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = width
-    ws.freeze_panes = "A2"
-    wb.save(path)
+    rows = ([v or None for v in row] for row in _list_rows(outcomes))
+    book = table_book(
+        "準備清單",
+        [name for name, _ in LIST_COLUMNS],
+        rows,
+        widths=[width for _, width in LIST_COLUMNS],
+        style=tdcc_as_text,
+    )
+    save_book(book, path)

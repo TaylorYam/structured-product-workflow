@@ -13,11 +13,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import openpyxl
-from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE
-from openpyxl.styles import Font
-from openpyxl.utils import get_column_letter
+from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE, Cell
 
+from sp_workflow.file_tools import save_book, table_book
 from sp_workflow.lifecycle import lifecycle_status
 
 if TYPE_CHECKING:
@@ -65,31 +63,28 @@ def _excel(value: object) -> object:
 
 def save_rows(path: Path, title: str, columns: Sequence[str], rows: Sequence[Sequence[object]]) -> None:
     """一張工作表（`title`）：第 1 列粗體欄名、凍結窗格、自動篩選；先寫暫存檔再換名（進度頁匯出也用，#156）。"""
-    workbook = openpyxl.Workbook()
-    sheet = workbook.active
-    sheet.title = title
-    sheet.append(list(columns))
-    for cell in sheet[1]:
-        cell.font = Font(bold=True)
+    values = [[_excel(value) for value in row] for row in rows]
     widths = [len(name) for name in columns]
-    for row in rows:
-        sheet.append([_excel(value) for value in row])
-        for i, cell in enumerate(sheet[sheet.max_row]):
-            if isinstance(cell.value, str):
-                cell.data_type = "s"  # 「=」開頭的文字照文字寫，不當公式
-                cell.number_format = "@"  # TDCC 等文字保留前導零
-            widths[i] = max(widths[i], len(str(cell.value or "")))
-    for i, width in enumerate(widths, start=1):
-        sheet.column_dimensions[get_column_letter(i)].width = min(width + 2, _MAX_WIDTH)
-    sheet.freeze_panes = "A2"
-    sheet.auto_filter.ref = sheet.dimensions
-    temp = path.with_name(path.name + ".tmp")
+    for row in values:
+        for i, value in enumerate(row):
+            widths[i] = max(widths[i], len(str(value or "")))
+    book = table_book(
+        title,
+        columns,
+        values,
+        widths=[min(width + 2, _MAX_WIDTH) for width in widths],
+        style=_text_cell,
+        auto_filter=True,
+    )
     try:
-        workbook.save(temp)
-        temp.replace(path)
+        save_book(book, path)
     except OSError as exc:
         raise ProductExportError(
             f"寫不進 {path}：{exc.strerror or exc}。同名檔開在 Excel 時請先關掉，或換一個檔名再匯出。"
         ) from exc
-    finally:
-        temp.unlink(missing_ok=True)  # 換名成功時已經不在
+
+
+def _text_cell(cell: Cell) -> None:
+    if isinstance(cell.value, str):
+        cell.data_type = "s"  # 「=」開頭的文字照文字寫，不當公式
+        cell.number_format = "@"  # TDCC 等文字保留前導零

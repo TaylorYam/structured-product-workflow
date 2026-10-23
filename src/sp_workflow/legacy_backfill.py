@@ -24,8 +24,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import openpyxl
-from openpyxl.styles import Font
-from openpyxl.utils import get_column_letter
 
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.orders.reference import (
@@ -37,6 +35,7 @@ from fcn_checker.orders.reference import (
     underlying_key,
 )
 from sp_workflow.check_terms import DONE
+from sp_workflow.file_tools import save_book, table_book
 from sp_workflow.lifecycle import KO, MATURITY, LifecycleError, current_events_of, record_legacy
 
 if TYPE_CHECKING:
@@ -337,18 +336,13 @@ def _write_dates(conn: psycopg.Connection, tdcc: str, record: OrderRecord, fmt: 
 
 
 def _write_error_book(path: Path, lines: Sequence[BackfillLine]) -> None:
-    book = openpyxl.Workbook()
-    sheet = book.active
-    sheet.title = "舊商品補資料錯誤"
-    sheet.append([name for name, _ in ERROR_BOOK_COLUMNS])
-    for cell in sheet[1]:
-        cell.font = Font(bold=True)
-    for line in lines:
-        sheet.append([line.tdcc, line.detail, "、".join(map(str, line.rows))])
-    for i, (_, width) in enumerate(ERROR_BOOK_COLUMNS, start=1):
-        sheet.column_dimensions[get_column_letter(i)].width = width
-    sheet.freeze_panes = "A2"
+    book = table_book(
+        "舊商品補資料錯誤",
+        [name for name, _ in ERROR_BOOK_COLUMNS],
+        ([line.tdcc, line.detail, "、".join(map(str, line.rows))] for line in lines),
+        widths=[width for _, width in ERROR_BOOK_COLUMNS],
+    )
     try:
-        book.save(path)
+        save_book(book, path)
     except OSError as exc:
         raise LegacyBackfillError(f"錯誤清單寫不進去，整份不匯入：{path}（{exc.strerror or exc}）") from exc

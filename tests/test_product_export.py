@@ -120,7 +120,7 @@ def test_an_unexpected_error_leaves_no_temp_file(tmp_path: Path, monkeypatch) ->
         Path(filename).write_bytes(b"half")
         raise ValueError("壞掉")
 
-    monkeypatch.setattr(product_export.openpyxl.Workbook, "save", broken)
+    monkeypatch.setattr(openpyxl.Workbook, "save", broken)
 
     with pytest.raises(ValueError):
         product_export.save_rows(tmp_path / "x.xlsx", "t", ("tdcc",), [])

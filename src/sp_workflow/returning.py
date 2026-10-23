@@ -25,11 +25,11 @@ from pathlib import Path
 from typing import NamedTuple
 
 import openpyxl
-from openpyxl.styles import Font
-from openpyxl.utils import get_column_letter
+from openpyxl.cell.cell import Cell
 
 from sp_workflow.documents import DocKind, content_key
-from sp_workflow.preparation import LIST_NAME, PENDING_SUFFIX, PREPARED, sha256
+from sp_workflow.file_tools import save_book, sha256_file, table_book, tdcc_as_text
+from sp_workflow.preparation import LIST_NAME, PENDING_SUFFIX, PREPARED
 
 RETURNED = "已放回"
 ALREADY_THERE = "已在"
@@ -294,7 +294,7 @@ def _return_product(
         batch_file = batch_dir / doc.output_name
         if not batch_file.is_file():
             problems.append(f"批次資料夾裡找不到 {doc.output_name}")
-        elif sha256(batch_file) != doc.sha256:
+        elif sha256_file(batch_file) != doc.sha256:
             problems.append(f"批次資料夾裡的 {doc.output_name} 和準備清單的指紋不符")
     folder = docs[DocKind.TS].folder
     if not folder.is_dir():
@@ -321,7 +321,7 @@ def _return_product(
         # 先寫成暫存名並確認指紋，兩份都好了才改成正式檔名；複製到一半失敗也不會留下半個檔
         for kind in to_copy:
             shutil.copyfile(batch_dir / docs[kind].output_name, temps[kind])
-            if sha256(temps[kind]) != docs[kind].sha256:
+            if sha256_file(temps[kind]) != docs[kind].sha256:
                 raise OSError(f"{names[kind]} 複製後指紋不符")
         for kind in to_copy:
             target = folder / names[kind]
@@ -371,7 +371,7 @@ def _same_version(existing: Path, batch_file: Path, batch_sha256: str) -> bool:
 
     同一份 Word 每次轉出的 PDF 位元組不同但文字相同；沿用 Word 舊版重複核對時不能因此擋下（#25）。
     """
-    return sha256(existing) == batch_sha256 or content_key(existing) == content_key(batch_file)
+    return sha256_file(existing) == batch_sha256 or content_key(existing) == content_key(batch_file)
 
 
 def _latest_error_book(folder: Path, tdcc: str) -> Path | None:
@@ -396,41 +396,31 @@ def _write_error_book(path: Path, rows: list[tuple[str, str, str, str, str]]) ->
     """在商品資料夾寫錯訊檔（不覆蓋）；回傳要寫進原因欄的說明。寫不進去不影響已放回的檔。"""
     if path.exists():
         return f"錯訊檔已存在，沒有覆蓋：{path.name}"
-    temp = path.with_name(path.name + _TEMP_SUFFIX)
+    book = table_book(
+        "錯誤訊息",
+        [name for name, _ in ERROR_BOOK_COLUMNS],
+        rows,
+        widths=[width for _, width in ERROR_BOOK_COLUMNS],
+        style=_error_cell,
+    )
     try:
-        wb = openpyxl.Workbook()
-        ws = wb.active
-        ws.title = "錯誤訊息"
-        ws.append([name for name, _ in ERROR_BOOK_COLUMNS])
-        for cell in ws[1]:
-            cell.font = Font(bold=True)
-        for row in rows:
-            ws.append(list(row))
-            for cell in ws[ws.max_row]:
-                cell.data_type = "s"  # 一律存成文字：錯訊以「=」開頭也不會變成公式
-            ws.cell(ws.max_row, 1).number_format = "@"  # TDCC 是文字，保留前導零
-        for i, (_, width) in enumerate(ERROR_BOOK_COLUMNS, start=1):
-            ws.column_dimensions[get_column_letter(i)].width = width
-        ws.freeze_panes = "A2"
-        wb.save(temp)
-        os.rename(temp, path)  # Windows 上目的地已存在時會失敗，不會覆蓋
+        save_book(book, path, overwrite=False)
     except OSError as exc:
-        temp.unlink(missing_ok=True)
         return f"錯訊檔寫不進去：{path.name}（{exc}）"
     return f"錯訊寫在 {path.name}"
 
 
+def _error_cell(cell: Cell) -> None:
+    cell.data_type = "s"  # 一律存成文字：錯訊以「=」開頭也不會變成公式
+    tdcc_as_text(cell)
+
+
 def _write_list(path: Path, outcomes: Iterable[ReturnOutcome]) -> None:
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "放回清單"
-    ws.append([name for name, _ in LIST_COLUMNS])
-    for cell in ws[1]:
-        cell.font = Font(bold=True)
-    for o in outcomes:
-        ws.append([o.tdcc, o.ts, o.iis, o.reason or None])
-        ws.cell(ws.max_row, 1).number_format = "@"  # TDCC 是文字，保留前導零
-    for i, (_, width) in enumerate(LIST_COLUMNS, start=1):
-        ws.column_dimensions[get_column_letter(i)].width = width
-    ws.freeze_panes = "A2"
-    wb.save(path)
+    book = table_book(
+        "放回清單",
+        [name for name, _ in LIST_COLUMNS],
+        ([o.tdcc, o.ts, o.iis, o.reason or None] for o in outcomes),
+        widths=[width for _, width in LIST_COLUMNS],
+        style=tdcc_as_text,
+    )
+    save_book(book, path)

@@ -27,7 +27,6 @@ from __future__ import annotations
 
 import csv
 import datetime as dt
-import hashlib
 import io
 import json
 import re
@@ -39,11 +38,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import openpyxl
-from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
 from sp_workflow.close_prices import CSV_SOURCE, CloseSummary, closes_from_csv, write_closes
 from sp_workflow.database import DatabaseError, require_current_schema
+from sp_workflow.file_tools import save_book, sha256_file, table_book
 
 if TYPE_CHECKING:
     import psycopg
@@ -233,7 +232,7 @@ def import_daily(daily_book: Path, conn: psycopg.Connection, *, prices: bool = T
         mailbox = load_mailbox(conn)
         run_id = conn.execute(
             "INSERT INTO workflow.import_run (daily_file_name, daily_sha256, summary) VALUES (%s, %s, '{}') RETURNING run_id",
-            (daily_book.name, _sha256(daily_book)),
+            (daily_book.name, sha256_file(daily_book)),
         ).fetchone()[0]
         lines = [*parsed.blocked, *parsed.cancelled_lines, *(parsed.prices.problems if parsed.prices else ())]
         lines += _write_trades(conn, parsed, run_id)
@@ -266,7 +265,7 @@ def import_price_csv(path: Path, conn: psycopg.Connection, calendar: TradingCale
     有 `calendar`（交易所假日表）時同時寫 CSV 那一天的收盤價（#153）；沒有時收盤價不存。"""
     _require_schema(conn)
     close_date, prices = _read_price_csv(path)
-    sha256 = _sha256(path)
+    sha256 = sha256_file(path)
     with conn.transaction():
         run_id = conn.execute(
             "INSERT INTO workflow.import_run (daily_file_name, daily_sha256, summary) VALUES (%s, %s, '{}') RETURNING run_id",
@@ -718,26 +717,16 @@ def _write_error_book(conn: psycopg.Connection, path: Path) -> None:
                 )
             )
 
-    temp = path.with_name(path.name + ".tmp")
+    book = table_book(
+        "匯入錯誤",
+        ("匯入時間", "批次", "來源檔案", "TDCC", "錯誤類型", "說明"),
+        rows,
+        widths=(22, 10, 30, 16, 24, 80),
+        auto_filter=True,
+    )
     try:
-        workbook = openpyxl.Workbook()
-        sheet = workbook.active
-        sheet.title = "匯入錯誤"
-        headers = ("匯入時間", "批次", "來源檔案", "TDCC", "錯誤類型", "說明")
-        sheet.append(headers)
-        for cell in sheet[1]:
-            cell.font = Font(bold=True)
-        for row in rows:
-            sheet.append(row)
-        sheet.freeze_panes = "A2"
-        sheet.auto_filter.ref = sheet.dimensions
-        widths = (22, 10, 30, 16, 24, 80)
-        for index, width in enumerate(widths, 1):
-            sheet.column_dimensions[get_column_letter(index)].width = width
-        workbook.save(temp)
-        temp.replace(path)
+        save_book(book, path)
     except OSError as exc:
-        temp.unlink(missing_ok=True)
         raise DailyImportError(f"錯誤清單寫入失敗：{path}（{exc}）") from exc
 
 
@@ -749,14 +738,6 @@ def _open(path: Path) -> Any:
         return openpyxl.load_workbook(path, read_only=True, data_only=True)
     except (OSError, ValueError, KeyError) as exc:
         raise DailyImportError(f"打不開 Excel：{path}（{exc}）") from exc
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _name_key(name: str) -> str:

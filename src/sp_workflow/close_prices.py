@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import datetime as dt
 import getpass
-import hashlib
 import json
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
@@ -26,8 +25,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import openpyxl
-from openpyxl.styles import Font
+from openpyxl.cell.cell import Cell
 from openpyxl.utils import get_column_letter
+
+from sp_workflow.file_tools import save_book, sha256_file, table_book
 
 if TYPE_CHECKING:
     import psycopg
@@ -285,7 +286,7 @@ def import_history(
                 history.closes,
                 source=HISTORY_SOURCE,
                 file_name=path.name,
-                sha256=_sha256(path),
+                sha256=sha256_file(path),
                 details=details,
                 user=user,
             )
@@ -418,27 +419,19 @@ def _reason_text(value: str) -> str:
 
 
 def _write_error_book(path: Path, problems: tuple[HistoryProblem, ...]) -> None:
-    book = openpyxl.Workbook()
-    sheet = book.active
-    sheet.title = "歷史收盤價錯誤"
-    sheet.append([name for name, _ in ERROR_BOOK_COLUMNS])
-    for cell in sheet[1]:
-        cell.font = Font(bold=True)
-    for p in problems:
-        sheet.append([p.code, p.reason, p.first, p.last, p.cells])
-        sheet.cell(sheet.max_row, 3).number_format = sheet.cell(sheet.max_row, 4).number_format = "yyyy-mm-dd"
-    for i, (_, width) in enumerate(ERROR_BOOK_COLUMNS, start=1):
-        sheet.column_dimensions[get_column_letter(i)].width = width
-    sheet.freeze_panes = "A2"
+    book = table_book(
+        "歷史收盤價錯誤",
+        [name for name, _ in ERROR_BOOK_COLUMNS],
+        ([p.code, p.reason, p.first, p.last, p.cells] for p in problems),
+        widths=[width for _, width in ERROR_BOOK_COLUMNS],
+        style=_error_cell,
+    )
     try:
-        book.save(path)
+        save_book(book, path)
     except OSError as exc:
         raise ClosePriceError(f"錯誤清單寫不進去，整份不匯入：{path}（{exc.strerror or exc}）") from exc
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+def _error_cell(cell: Cell) -> None:
+    if cell.column in (3, 4):  # 第一天、最後一天
+        cell.number_format = "yyyy-mm-dd"
