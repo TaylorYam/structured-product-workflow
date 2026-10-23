@@ -36,7 +36,7 @@
 | 6 待放回 | 已鎖住，沒有「已放回」紀錄 |
 | 7 待寄信 | 有「已放回」，沒有「草稿已建立」紀錄 |
 | 8 待寄出 | 有「草稿已建立」，沒有「已寄出」 |
-| 9 完成 | 有「已寄出」 |
+| 9 完成 | 有「已寄出」；或以前清單更新建立、已鎖住的舊商品（ADR 0020），還沒有任何步驟紀錄（2026-10-23 確認，#184：以前在 Excel 走完） |
 
 **步驟紀錄**：新增 `workflow.step_record`（TDCC、步驟、時間、Windows 使用者名稱、結果、關聯檔案），只新增、不修改。「3 準備」寫「已準備」、「5 放回」寫「已放回」（含放回待確認檔）、「6 寄信草稿」寫「草稿已建立」，各自在寫 Excel 清單的同時寫；Excel 清單照舊產出。「已寄出」由作業人員在進度頁手動標記，不讀 Outlook。
 
@@ -62,7 +62,7 @@
 
 - 新增三張表與一個分頁，更新程式後要跑 migration。
 - 作業人員每天多一個動作：寄出後到進度頁標記；忘了標會停在「待寄出」，進度頁看得到。
-- 進度只反映資料庫知道的事：以前只用 Excel 跑過的步驟沒有紀錄，會顯示在較早的進度，可用「登記已寄出」補到完成。
+- 進度只反映資料庫知道的事：以前只用 Excel 跑過的步驟沒有紀錄，會顯示在較早的進度，可用「登記已寄出」補到完成。2026-10-23 起（#184）已鎖住的舊商品沒有步驟紀錄時直接算完成。
 - 寄信草稿改成以「核對通過並回填」為準（ADR 0006 的過渡期）仍是另一個決定。
 - CONTEXT.md 名詞段新增上述名詞。
 
@@ -97,7 +97,7 @@ The user's goal: automate the whole path from start to finish, see every product
 | 6 待放回 | locked, no 已放回 record |
 | 7 待寄信 | 已放回 exists, no 草稿已建立 record |
 | 8 待寄出 | 草稿已建立 exists, no 已寄出 |
-| 9 完成 | 已寄出 exists |
+| 9 完成 | 已寄出 exists; or a locked legacy product created by 清單更新 (ADR 0020) with no step records yet (confirmed 2026-10-23, #184: finished in Excel) |
 
 **Step records**: a new `workflow.step_record` (TDCC, step, time, Windows user name, result, related file), insert-only. "3 準備" writes 已準備, "5 放回" writes 已放回 (including pending files returned), and "6 寄信草稿" writes 草稿已建立, each at the moment it writes its Excel list; the Excel lists are still produced. 已寄出 is marked by the operator on the progress tab; Outlook is not read.
 
@@ -123,6 +123,6 @@ The user's goal: automate the whole path from start to finish, see every product
 
 - Three new tables and one new tab; run the migration after updating.
 - Operators gain one daily action: marking 已寄出 after sending; a forgotten mark leaves the product at 待寄出, visible on the progress tab.
-- Progress reflects only what the database knows: steps run earlier through Excel alone have no records and show an earlier progress, which 登記已寄出 can bring to 完成.
+- Progress reflects only what the database knows: steps run earlier through Excel alone have no records and show an earlier progress, which 登記已寄出 can bring to 完成. Since 2026-10-23 (#184), locked legacy products with no step records count as 完成 directly.
 - Switching mail drafts to "passed and backfilled" (ADR 0006's transition) remains a separate decision.
 - The CONTEXT.md glossary gains the terms above.

@@ -1,6 +1,6 @@
 """作業進度（#156、ADR 0019）：每檔商品走到九個作業進度的哪一步，由資料庫事實推出，不另外手填。
 
-一檔一個進度：有「已寄出」一律完成；其餘依序判斷（`progress_of`），同一步有多筆紀錄取最新一筆：
+一檔一個進度：有「已寄出」一律完成；以前清單更新建立、已鎖住的舊商品沒有步驟紀錄也算完成（以前在 Excel 走完，#184）；其餘依序判斷（`progress_of`），同一步有多筆紀錄取最新一筆：
 等商品條件（沒有商品條件或缺必填欄；每個標的都有進場價時期初價格空白不算缺，#182）→ 等核對條件（不是「完成」）→ 待準備（沒有「已準備」）→
 待核對（沒有核對結果）→ 核對未通過（有核對結果但還沒鎖住）→ 待放回（沒有「已放回」）→
 待寄信（沒有「草稿已建立」）→ 待寄出。
@@ -26,12 +26,14 @@ from sp_workflow.observation import UNLOCKED, WAIT_PRICES
 from sp_workflow.order_import import ImportConfig, issuer_code
 from sp_workflow.product_export import save_rows
 from sp_workflow.product_record import PRICING_FIELD, PRODUCT_COLUMNS, REQUIRED, missing_fields
+from sp_workflow.product_write import INVENTORY_SOURCE
 from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP
 
 if TYPE_CHECKING:
     import psycopg
 
 SENT_STEP = "已寄出"  # 進度頁登記（#157）
+_FLOW_STEPS = (PREPARED_STEP, RETURNED_STEP, DRAFTED_STEP, SENT_STEP)  # 新流程的步驟紀錄
 
 WAIT_TERMS = "等商品條件"
 WAIT_CHECK_TERMS = "等核對條件"
@@ -67,6 +69,7 @@ class Facts:
 
     tdcc: str
     has_terms: bool = False  # 有商品條件
+    locked_inventory: bool = False  # 以前清單更新建立、已鎖住的舊商品（ADR 0020）
     missing: tuple[str, ...] = ()  # 缺的必填欄（畫面的欄名）
     terms_status: str | None = None  # 核對條件狀態；還沒算過時是 None
     terms_reason: str | None = None
@@ -114,6 +117,8 @@ def progress_of(facts: Facts) -> tuple[str, str]:
     dates = facts.dates
     if SENT_STEP in dates:
         return FINISHED, ""
+    if facts.locked_inventory and not any(name in dates for name in _FLOW_STEPS):
+        return FINISHED, ""  # 以前在 Excel 走完（#184）；走過新流程的照下面的順序
     if not facts.has_terms:
         return WAIT_TERMS, "還沒有商品條件"
     if facts.missing:
@@ -157,8 +162,8 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
         for tdcc, seq, price in conn.execute("SELECT tdcc, seq, initial_price FROM workflow.underlying_price"):
             initial_prices.setdefault(tdcc, {})[seq] = price
         columns = ", ".join(f"p.{c}" for c in PRODUCT_COLUMNS)
-        for tdcc, locked_at, terms_imported, *row in conn.execute(
-            f"SELECT p.tdcc, p.locked_at, CASE p.source WHEN 'Order' THEN o.imported_at WHEN '清單更新' THEN r.imported_at"
+        for tdcc, locked_at, source, terms_imported, *row in conn.execute(
+            f"SELECT p.tdcc, p.locked_at, p.source, CASE p.source WHEN 'Order' THEN o.imported_at WHEN '清單更新' THEN r.imported_at"
             " ELSE (SELECT max(c.corrected_at) FROM workflow.term_correction c WHERE c.tdcc = p.tdcc) END,"
             f" {columns} FROM workflow.product p"
             " LEFT JOIN workflow.order_import o ON o.import_id = p.order_import_id"
@@ -167,7 +172,11 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
             product = dict(zip(PRODUCT_COLUMNS, row, strict=True))
             item = of(tdcc)
             required = _PRICED_REQUIRED if _has_initial_prices(product, initial_prices.get(tdcc, {})) else REQUIRED
-            item.update(has_terms=True, missing=tuple(missing_fields(product, required)))
+            item.update(
+                has_terms=True,
+                locked_inventory=source == INVENTORY_SOURCE and locked_at is not None,
+                missing=tuple(missing_fields(product, required)),
+            )
             _put(item["dates"], TERMS_IMPORTED, terms_imported)
             _put(item["dates"], LOCKED, locked_at)
             issuers[tdcc] = issuer_code(tdcc, product["issuer"], config)

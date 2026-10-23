@@ -88,6 +88,9 @@ READY = {"has_terms": True, "terms_status": "完成"}
             "",
         ),
         (Facts("1", dates={SENT_STEP: T}), FINISHED, ""),  # 有已寄出一律完成
+        (Facts("1", locked_inventory=True), FINISHED, ""),  # 以前在 Excel 走完的舊商品（#184）
+        (Facts("1", locked_inventory=True, **READY, dates={PREPARED_STEP: T}), TO_CHECK, ""),  # 走過新流程的照順序
+        (Facts("1", locked_inventory=True, **READY, dates={RETURNED_STEP: T}), TO_PREPARE, ""),
     ],
 )
 def test_progress_is_the_first_step_not_yet_done(facts: Facts, progress: str, reason: str) -> None:
@@ -328,6 +331,28 @@ def test_blank_initial_pricing_counts_only_until_every_underlying_has_an_initial
         C: (WAIT_TERMS, "缺：Maturity date"),
         E: (WAIT_TERMS, "缺：期初價格"),
     }, "進場價不齊（沒有或是 0）時照舊算缺；其他必填欄照舊"
+
+
+@pytest.mark.db
+def test_locked_legacy_products_without_step_records_are_finished(pg) -> None:
+    """#184：以前清單更新建立、已鎖住的舊商品，以前在 Excel 走完；走過新流程的、沒鎖住的、人工維護的照順序。"""
+    seed_products(pg, [inventory(t, [("台北", 10000)]) for t in (A, B, C, D)])
+    pg.execute("UPDATE workflow.product SET strike_date = trade_date")
+    pg.execute("UPDATE workflow.product SET locked_at = %s WHERE tdcc IN (%s, %s, %s)", (T, A, B, D))
+    pg.execute("UPDATE workflow.product SET source = '人工維護' WHERE tdcc = %s", (D,))
+    for tdcc in (A, B, C, D):
+        check_terms(pg, tdcc)
+    step(pg, B, PREPARED_STEP, T)
+
+    rows = {r.tdcc: r for r in load_progress(pg, CONFIG, dt.date(2026, 10, 22))}
+
+    assert {t: (r.progress, r.reason) for t, r in rows.items()} == {
+        A: (FINISHED, ""),
+        B: (TO_CHECK, ""),
+        C: (TO_PREPARE, ""),
+        D: (TO_PREPARE, ""),
+    }
+    assert dict(zip(DATE_COLUMNS, rows[A].dates, strict=True))[LOCKED] == T, "各步日期照實際有的顯示"
 
 
 @pytest.mark.db
