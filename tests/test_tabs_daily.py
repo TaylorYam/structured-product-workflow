@@ -252,6 +252,36 @@ def test_price_csv_import_lists_changed_events_and_unfinished_observation(master
     assert ("比價沒完成（檔）", 1, True) in window.daily.kpis.values
 
 
+def test_observation_hands_the_day_to_the_exit_list(master, tmp_path: Path) -> None:
+    """回補股價比價完成（#171）：出場清單帶入比到的那一天並顯示提示條，按「下一步」才切過去。"""
+    window = new_window(master, tmp_path)
+    receipt = PriceCsvReceipt(
+        run_id=8,
+        close_date=dt.date(2026, 10, 21),
+        prices=PriceSummary(dt.date(2026, 10, 22), 2, 0, ()),
+        lines=(),
+        error_book_path=tmp_path / "錯誤.xlsx",
+    )
+
+    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar), Observation(OBSERVED)))
+
+    assert window.exits.day_var.get() == "2026-10-21" and window.exits.hint.shown
+    assert "已把 2026-10-21 帶到「9 出場清單」。" in window.daily.status_var.get()
+    assert window.notebook.select() == str(window.daily.frame), "不自動切頁"
+    assert window.daily.exits_button.winfo_manager() == "pack"
+    window.daily.exits_button.invoke()
+    assert window.notebook.select() == str(window.exits.frame)
+
+    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar), Observation(error="x")))
+    assert "出場清單" not in window.daily.status_var.get(), "比價沒有跑就不帶入"
+
+    window.exits.working = True
+    window.daily.exits_button.withdraw()  # 開始回補股價時收起（start_csv）
+    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar), Observation(OBSERVED)))
+    assert "「9 出場清單」正在處理，比到的那一天沒有帶入。" in window.daily.status_var.get()
+    assert window.daily.exits_button.winfo_manager() == "", "沒帶入就沒有下一步"
+
+
 def test_reobserve_runs_on_this_page(master, tmp_path: Path, monkeypatch) -> None:
     window = new_window(master, tmp_path)
     actions = []
