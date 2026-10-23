@@ -1,10 +1,11 @@
-"""「8 進度」分頁（#156、ADR 0019）：每檔商品走到哪一個作業進度、各步日期、存續狀態與比價狀態（#170）；
-篩選、排序、匯出 Excel。
+"""「8 進度」分頁（#156、#186、ADR 0019）：每檔商品在五個階段的哪一個、核對前三件齊了沒、各步日期、存續狀態與
+比價狀態（#170）；篩選、排序、匯出 Excel。
 
 按「重新整理」在背景讀資料庫（`window_actions.load_progress_rows`），篩選與排序只在畫面上做、不再連資料庫；
 「匯出 Excel…」把目前篩選、排序後的整張表寫成一份 Excel（`progress.export_progress`）。
 人工能做的三件事只在這一頁登記（#157）：對選中的商品「登記已寄出」「登記顧客贖回…」、對一檔的自動事件
 「提出異議…」與「解除異議…」；都在背景寫資料庫，一檔失敗只影響那一檔，寫完重新整理。
+「批次登記已寄出…」（#186）選一個交易日，重新讀進度、列出交易日在這天以前的待寄信商品，確認後各寫一筆「已寄出」。
 """
 
 from __future__ import annotations
@@ -24,21 +25,31 @@ from sp_workflow.progress import (
     DATE_COLUMNS,
     FINISHED,
     PROGRESS,
+    READY_COLUMNS,
     ProgressExport,
     ProgressRow,
+    SentBatch,
     by_days,
     export_name,
     export_progress,
     filter_rows,
 )
 from sp_workflow.tabs.base import TITLE, DatabaseLogin, Tab
-from sp_workflow.tabs.progress_dialogs import ask_objection, ask_redemption, ask_resolution, tdcc_list
+from sp_workflow.tabs.progress_dialogs import (
+    ask_objection,
+    ask_redemption,
+    ask_resolution,
+    ask_sent_through,
+    tdcc_list,
+)
 from sp_workflow.window_actions import (
     EventChoices,
     Registered,
     event_choices,
+    find_sent_batch,
     load_progress_rows,
     mark_sent,
+    mark_sent_batch,
     object_to_event,
     register_redemptions,
     resolve_event_objection,
@@ -47,6 +58,7 @@ from sp_workflow.window_actions import (
 
 LIFECYCLES = (IN_STOCK, KO, DELIVERY, MATURITY, REDEMPTION)
 ALL_ISSUERS = "全部"
+_READY_KEYS = tuple(f"ready_{i}" for i in range(len(READY_COLUMNS)))
 _DATE_KEYS = tuple(f"date_{i}" for i in range(len(DATE_COLUMNS)))
 _DESCENDING_FIRST = frozenset(("trade_date", "days", "observed_through", *_DATE_KEYS))  # 第一次點就由大到小的欄
 COLUMNS = (
@@ -55,6 +67,7 @@ COLUMNS = (
     ("trade_date", "交易日", 90),
     ("days", "距今天數", 70),
     ("progress", "作業進度", 90),
+    *((key, name, 70) for key, name in zip(_READY_KEYS, READY_COLUMNS, strict=True)),
     ("lifecycle", "存續狀態", 80),
     ("pricing", "比價狀態", 110),
     ("observed_through", "已比到", 90),
@@ -82,7 +95,7 @@ class ProgressTab(Tab):
 
         self.page_header(
             "作業進度",
-            "每檔商品走到哪一步、各步的日期、距交易日幾天、存續狀態與比價狀態；落後的依距今天數排在上面。",
+            "每檔商品在哪個階段、核對前三件齊了沒、各步的日期、距交易日幾天、存續狀態與比價狀態；落後的依距今天數排在上面。",
         )
         body = self.body(self.card(1))
         filters = ttk.Frame(body, style="CardBody.TFrame")
@@ -114,10 +127,11 @@ class ProgressTab(Tab):
         self.export_button = ttk.Button(self.buttons, text="匯出 Excel…", command=self.export)
         self.export_button.pack(side=tk.LEFT, padx=(8, 0))
         self.sent_button = ttk.Button(self.buttons, text="登記已寄出", command=self.record_sent)
+        self.batch_sent_button = ttk.Button(self.buttons, text="批次登記已寄出…", command=self.record_sent_batch)
         self.redeem_button = ttk.Button(self.buttons, text="登記顧客贖回…", command=self.register_redemption)
         self.object_button = ttk.Button(self.buttons, text="提出異議…", command=self.raise_objection)
         self.resolve_button = ttk.Button(self.buttons, text="解除異議…", command=self.resolve_objection)
-        for button in (self.sent_button, self.redeem_button, self.object_button, self.resolve_button):
+        for button in self._actions():
             button.pack(side=tk.LEFT, padx=(8, 0))
         self.place_table(2)
         for key, _, _ in COLUMNS:
@@ -143,8 +157,11 @@ class ProgressTab(Tab):
         self.working = busy
         self.refresh_button.configure(state=tk.DISABLED if busy else tk.NORMAL)
         self.export_button.configure(state=tk.DISABLED if busy or not self.shown else tk.NORMAL)
-        for button in (self.sent_button, self.redeem_button, self.object_button, self.resolve_button):
+        for button in self._actions():
             button.configure(state=tk.DISABLED if busy or not self.shown else tk.NORMAL)
+
+    def _actions(self) -> tuple[ttk.Button, ...]:
+        return (self.sent_button, self.batch_sent_button, self.redeem_button, self.object_button, self.resolve_button)
 
     # ---------- 重新整理 ----------
 
@@ -307,6 +324,44 @@ class ProgressTab(Tab):
             return
         self._start(lambda settings: mark_sent(settings, tdccs), "登記已寄出中…", self._registered("已寄出"))
 
+    def record_sent_batch(self) -> None:
+        """批次登記已寄出（#186）：選交易日，在背景重新讀進度找出這批，列出來確認後才寫。"""
+        if self.working:
+            return
+        through = ask_sent_through(self.master)
+        if through is None:
+            return
+        paths = self.config_paths()
+        self._start(
+            lambda settings: find_sent_batch(settings, paths, through), "找出要登記已寄出的商品中…", self._batch_found
+        )
+
+    def _batch_found(self, result: object) -> None:
+        self.db.after_run(result)
+        self._busy(False)
+        if not isinstance(result, SentBatch):
+            return
+        unchecked = f"交易日 {result.through} 以前還沒核對完、這次沒有登記的 {result.unchecked} 檔"
+        if not result.tdccs:
+            messagebox.showinfo(
+                TITLE, f"交易日 {result.through} 以前沒有待寄信的商品，這次沒有寫。\n{unchecked}。", parent=self.master
+            )
+            self.refilter()
+            return
+        if not messagebox.askokcancel(
+            TITLE,
+            f"登記 {len(result.tdccs)} 檔已寄出（交易日 {result.through} 以前、核對通過、還沒登記已寄出）："
+            f"{tdcc_list(result.tdccs)}？\n{unchecked}。",
+            parent=self.master,
+        ):
+            self.refilter()
+            return
+        self._start(
+            lambda settings: mark_sent_batch(settings, result),
+            "批次登記已寄出中…",
+            self._registered("已寄出", f"；{unchecked}"),
+        )
+
     def register_redemption(self) -> None:
         """登記顧客贖回：填事件日與備註，選中的每檔寫一筆來源「人工」的事件。"""
         if self.working:
@@ -324,7 +379,9 @@ class ProgressTab(Tab):
             self._registered("顧客贖回"),
         )
 
-    def _registered(self, what: str) -> Callable[[object], None]:
+    def _registered(self, what: str, note: str = "") -> Callable[[object], None]:
+        """寫完的處理：有寫不進去的跳警告；重新整理，狀態列最前面寫登記結果（`note` 接在最後）。"""
+
         def done(result: object) -> None:
             self.db.after_run(result)
             self._busy(False)
@@ -337,7 +394,7 @@ class ProgressTab(Tab):
                 if len(result.failed) > len(failed):
                     text += f"；…另外 {len(result.failed) - len(failed)} 檔"
                 messagebox.showwarning(TITLE, text, parent=self.master)
-            self.refresh(text + "。\n")
+            self.refresh(text + note + "。\n")
 
         return done
 
@@ -445,19 +502,20 @@ def _cells(row: ProgressRow) -> tuple[str, ...]:
     through = "" if row.observed_through is None else f"{row.observed_through:%Y-%m-%d}"
     dates = tuple("" if value is None else f"{value.astimezone():%Y-%m-%d}" for value in row.dates)
     return (
-        row.tdcc, row.issuer, trade_date, days, row.progress, row.lifecycle, row.pricing_text, through,
-        row.pricing_reason, row.objection, *dates, row.reason,
+        row.tdcc, row.issuer, trade_date, days, row.progress, *row.ready_marks, row.lifecycle, row.pricing_text,
+        through, row.pricing_reason, row.objection, *dates, row.reason,
     )  # fmt: skip
 
 
 def _sort_value(row: ProgressRow, index: int) -> object:
-    """排序用的值（依 `COLUMNS` 的位置）；作業進度、比價狀態依定義的順序，空白是 None。"""
+    """排序用的值（依 `COLUMNS` 的位置）；作業進度、比價狀態依定義的順序，三件打勾的齊了排後面，空白是 None。"""
     values = (
         row.tdcc,
         row.issuer or None,
         row.trade_date,
         row.days,
         PROGRESS.index(row.progress),
+        *row.ready,
         LIFECYCLES.index(row.lifecycle) if row.lifecycle in LIFECYCLES else len(LIFECYCLES),
         PRICING_STATUSES.index(row.pricing) if row.pricing in PRICING_STATUSES else None,
         row.observed_through,

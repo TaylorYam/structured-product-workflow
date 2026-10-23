@@ -1,4 +1,4 @@
-"""「8 進度」分頁（`sp_workflow.tabs.progress`，#156）：重新整理、篩選、點欄位排序、匯出 Excel。"""
+"""「8 進度」分頁（`sp_workflow.tabs.progress`，#156、#186）：重新整理、三件打勾、篩選、點欄位排序、匯出 Excel。"""
 
 from __future__ import annotations
 
@@ -11,13 +11,13 @@ import openpyxl
 import sp_workflow.tabs.progress
 from sp_workflow.lifecycle import KO
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.progress import DATE_COLUMNS, FINISHED, TO_PREPARE, WAIT_TERMS, ProgressRow
+from sp_workflow.progress import DATE_COLUMNS, FINISHED, PREPARING, TO_CHECK, ProgressRow
 from window_synth import new_window
 
 T = dt.datetime(2026, 10, 20, 9, 0, tzinfo=dt.UTC)
 
 
-def row(tdcc: str, days: int | None, progress: str = TO_PREPARE, **changes) -> ProgressRow:
+def row(tdcc: str, days: int | None, progress: str = TO_CHECK, **changes) -> ProgressRow:
     trade_date = None if days is None else dt.date(2026, 10, 22) - dt.timedelta(days=days)
     values = {
         "tdcc": tdcc,
@@ -34,7 +34,7 @@ def row(tdcc: str, days: int | None, progress: str = TO_PREPARE, **changes) -> P
 
 ROWS = (
     row("037199990001", 3),
-    row("037199990002", 30, WAIT_TERMS, reason="還沒有商品條件"),
+    row("037199990002", 30, PREPARING, reason="還沒有商品條件", ready=(True, False, True)),
     row("029199990003", 10, FINISHED, issuer="BARC"),
     row("037199990004", None, lifecycle=KO),
 )
@@ -71,6 +71,8 @@ def test_refresh_lists_the_most_behind_first(master, tmp_path: Path, monkeypatch
     first = tab.table.get_children()[0]
     assert tab.table.set(first, "reason") == "還沒有商品條件" and tab.table.item(first, "tags") == ("problem",)
     assert tab.table.set(first, "date_0") == f"{T.astimezone():%Y-%m-%d}"
+    assert [tab.table.set(first, f"ready_{i}") for i in range(3)] == ["✓", "", "✓"], "交易明細、商品條件、股價"
+    assert [tab.table.heading(f"ready_{i}", "text") for i in range(3)] == ["交易明細", "商品條件", "股價"]
     assert tab.kpis.values == (("顯示（檔）", 4, False), ("還沒完成（檔）", 3, False))
     assert "共 4 檔，篩選後 4 檔；依距今天數由大到小排序。" in tab.status_var.get()
     assert tuple(tab.issuer_box.cget("values")) == ("全部", "BARC", "SG")
@@ -81,7 +83,7 @@ def test_filters_apply_without_reading_the_database_again(master, tmp_path: Path
     _, tab, actions = loaded(master, tmp_path, monkeypatch)
 
     tab.progress_vars[FINISHED].set(True)
-    tab.progress_vars[TO_PREPARE].set(True)
+    tab.progress_vars[TO_CHECK].set(True)
     tab.refilter()
     assert shown(tab) == ["029199990003", "037199990001", "037199990004"]
 
@@ -156,7 +158,7 @@ def test_clicking_a_heading_sorts_and_clicking_again_reverses(master, tmp_path: 
     assert shown(tab) == ["037199990004", "037199990002", "037199990001", "029199990003"]
 
     tab.sort_by("progress")
-    assert shown(tab)[0] == "037199990002", "作業進度依九步的順序"
+    assert shown(tab)[0] == "037199990002", "作業進度依五個階段的順序"
 
 
 def test_export_writes_what_is_shown(master, tmp_path: Path, monkeypatch) -> None:
@@ -164,7 +166,7 @@ def test_export_writes_what_is_shown(master, tmp_path: Path, monkeypatch) -> Non
     path = tmp_path / "out" / "進度.xlsx"
     path.parent.mkdir()
     monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **k: str(path))
-    tab.progress_vars[WAIT_TERMS].set(True)
+    tab.progress_vars[PREPARING].set(True)
     tab.refilter()
 
     tab.export()

@@ -83,7 +83,7 @@ from sp_workflow.order_terms import OrderRow, collect_orders
 from sp_workflow.preparation import PrepareReceipt, prepare_batch
 from sp_workflow.product_export import ExportReceipt, export_products
 from sp_workflow.product_write import CorrectionReceipt
-from sp_workflow.progress import SENT_STEP, ProgressRow, load_progress
+from sp_workflow.progress import SENT_STEP, ProgressRow, SentBatch, load_progress, sent_batch
 from sp_workflow.returning import ReturnReceipt, return_to_folders
 from sp_workflow.step_records import (
     Recorded,
@@ -440,14 +440,7 @@ def sent_before(settings: ConnectionSettings, tdccs: Sequence[str]) -> tuple[str
     """登記已寄出前查（#157）：這些 TDCC 裡已經有「已寄出」步驟紀錄的，依傳入的順序。"""
     with connect(settings) as conn:
         require_current_schema(conn)
-        found = {
-            row[0]
-            for row in conn.execute(
-                "SELECT DISTINCT tdcc FROM workflow.step_record WHERE step = %s AND tdcc = ANY(%s)",
-                (SENT_STEP, list(tdccs)),
-            )
-        }
-    return tuple(t for t in dict.fromkeys(tdccs) if t in found)
+        return _sent(conn, tdccs)
 
 
 def mark_sent(settings: ConnectionSettings, tdccs: Sequence[str]) -> Registered:
@@ -455,6 +448,33 @@ def mark_sent(settings: ConnectionSettings, tdccs: Sequence[str]) -> Registered:
     with connect(settings) as conn:
         require_current_schema(conn)
         return _each(tdccs, lambda tdcc: write_records(conn, [StepRecord(tdcc, SENT_STEP, "進度頁登記已寄出")]))
+
+
+def find_sent_batch(settings: ConnectionSettings, paths: ConfigPaths, through: dt.date) -> SentBatch:
+    """批次登記已寄出前（#186）重新讀進度：交易日在 `through` 以前（含）、目前是待寄信的商品與還沒核對完的檔數。"""
+    return sent_batch(load_progress_rows(settings, paths), through)
+
+
+def mark_sent_batch(settings: ConnectionSettings, batch: SentBatch) -> Registered:
+    """批次登記已寄出（#186）：`batch` 的每檔寫一筆「已寄出」；寫的時候已經有「已寄出」的跳過，不重複寫。"""
+    result = f"進度頁批次登記已寄出（交易日 {batch.through} 以前）"
+    with connect(settings) as conn:
+        require_current_schema(conn)
+        sent = set(_sent(conn, batch.tdccs))
+        fresh = [tdcc for tdcc in batch.tdccs if tdcc not in sent]
+        return _each(fresh, lambda tdcc: write_records(conn, [StepRecord(tdcc, SENT_STEP, result)]))
+
+
+def _sent(conn: psycopg.Connection, tdccs: Sequence[str]) -> tuple[str, ...]:
+    """這些 TDCC 裡已經有「已寄出」步驟紀錄的，依傳入的順序、不重複。"""
+    found = {
+        row[0]
+        for row in conn.execute(
+            "SELECT DISTINCT tdcc FROM workflow.step_record WHERE step = %s AND tdcc = ANY(%s)",
+            (SENT_STEP, list(tdccs)),
+        )
+    }
+    return tuple(t for t in dict.fromkeys(tdccs) if t in found)
 
 
 def register_redemptions(settings: ConnectionSettings, tdccs: Sequence[str], day: dt.date, note: str) -> Registered:
