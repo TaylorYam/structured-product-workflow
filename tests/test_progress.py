@@ -88,8 +88,9 @@ READY = {"has_terms": True, "terms_status": "完成"}
             "",
         ),
         (Facts("1", dates={SENT_STEP: T}), FINISHED, ""),  # 有已寄出一律完成
-        (Facts("1", legacy=True), FINISHED, ""),  # 以前在 Excel 走完的舊商品（#184）
-        (Facts("1", legacy=True, **READY, dates={PREPARED_STEP: T}), TO_CHECK, ""),  # 走過新流程的照順序
+        (Facts("1", locked_inventory=True), FINISHED, ""),  # 以前在 Excel 走完的舊商品（#184）
+        (Facts("1", locked_inventory=True, **READY, dates={PREPARED_STEP: T}), TO_CHECK, ""),  # 走過新流程的照順序
+        (Facts("1", locked_inventory=True, **READY, dates={RETURNED_STEP: T}), TO_PREPARE, ""),
     ],
 )
 def test_progress_is_the_first_step_not_yet_done(facts: Facts, progress: str, reason: str) -> None:

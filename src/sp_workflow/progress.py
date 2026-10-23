@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     import psycopg
 
 SENT_STEP = "已寄出"  # 進度頁登記（#157）
+_FLOW_STEPS = (PREPARED_STEP, RETURNED_STEP, DRAFTED_STEP, SENT_STEP)  # 新流程的步驟紀錄
 
 WAIT_TERMS = "等商品條件"
 WAIT_CHECK_TERMS = "等核對條件"
@@ -68,7 +69,7 @@ class Facts:
 
     tdcc: str
     has_terms: bool = False  # 有商品條件
-    legacy: bool = False  # 以前清單更新建立、已鎖住的舊商品（ADR 0020）
+    locked_inventory: bool = False  # 以前清單更新建立、已鎖住的舊商品（ADR 0020）
     missing: tuple[str, ...] = ()  # 缺的必填欄（畫面的欄名）
     terms_status: str | None = None  # 核對條件狀態；還沒算過時是 None
     terms_reason: str | None = None
@@ -116,7 +117,7 @@ def progress_of(facts: Facts) -> tuple[str, str]:
     dates = facts.dates
     if SENT_STEP in dates:
         return FINISHED, ""
-    if facts.legacy and not any(name in dates for name in (PREPARED_STEP, RETURNED_STEP, DRAFTED_STEP)):
+    if facts.locked_inventory and not any(name in dates for name in _FLOW_STEPS):
         return FINISHED, ""  # 以前在 Excel 走完（#184）；走過新流程的照下面的順序
     if not facts.has_terms:
         return WAIT_TERMS, "還沒有商品條件"
@@ -173,7 +174,7 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
             required = _PRICED_REQUIRED if _has_initial_prices(product, initial_prices.get(tdcc, {})) else REQUIRED
             item.update(
                 has_terms=True,
-                legacy=source == INVENTORY_SOURCE and locked_at is not None,
+                locked_inventory=source == INVENTORY_SOURCE and locked_at is not None,
                 missing=tuple(missing_fields(product, required)),
             )
             _put(item["dates"], TERMS_IMPORTED, terms_imported)
