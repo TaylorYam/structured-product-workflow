@@ -1,4 +1,5 @@
-"""「8 進度」分頁（#156、ADR 0019）：每檔商品走到哪一個作業進度、各步日期與存續狀態；篩選、排序、匯出 Excel。
+"""「8 進度」分頁（#156、ADR 0019）：每檔商品走到哪一個作業進度、各步日期、存續狀態與比價狀態（#170）；
+篩選、排序、匯出 Excel。
 
 按「重新整理」在背景讀資料庫（`window_actions.load_progress_rows`），篩選與排序只在畫面上做、不再連資料庫；
 「匯出 Excel…」把目前篩選、排序後的整張表寫成一份 Excel（`progress.export_progress`）。
@@ -18,6 +19,8 @@ from fcn_checker.check_config import ConfigPaths
 from sp_workflow.database import ConnectionSettings
 from sp_workflow.lifecycle import DELIVERY, IN_STOCK, KO, MATURITY, REDEMPTION
 from sp_workflow.local_settings import FolderMemory
+from sp_workflow.observation import STATUSES as PRICING_STATUSES
+from sp_workflow.observation import TO_CONFIRM, WAIT_PRICES
 from sp_workflow.progress import (
     DATE_COLUMNS,
     FINISHED,
@@ -46,7 +49,7 @@ from sp_workflow.window_actions import (
 LIFECYCLES = (IN_STOCK, KO, DELIVERY, MATURITY, REDEMPTION)
 ALL_ISSUERS = "全部"
 _DATE_KEYS = tuple(f"date_{i}" for i in range(len(DATE_COLUMNS)))
-_DESCENDING_FIRST = frozenset(("trade_date", "days", *_DATE_KEYS))  # 第一次點就由大到小的欄
+_DESCENDING_FIRST = frozenset(("trade_date", "days", "observed_through", *_DATE_KEYS))  # 第一次點就由大到小的欄
 COLUMNS = (
     ("tdcc", "TDCC", 120),
     ("issuer", "上手", 60),
@@ -54,6 +57,9 @@ COLUMNS = (
     ("days", "距今天數", 70),
     ("progress", "作業進度", 90),
     ("lifecycle", "存續狀態", 80),
+    ("pricing", "比價狀態", 110),
+    ("observed_through", "已比到", 90),
+    ("pricing_reason", "比價原因", 220),
     ("objection", "異議", 160),
     *((key, name, 95) for key, name in zip(_DATE_KEYS, DATE_COLUMNS, strict=True)),
     ("reason", "卡住的原因", 320),
@@ -102,6 +108,7 @@ class ProgressTab(Tab):
         self.issuer_box.bind("<<ComboboxSelected>>", lambda _event: self.refilter())
         self.progress_vars = self._checks(filters, 1, "作業進度", PROGRESS)
         self.lifecycle_vars = self._checks(filters, 2, "存續狀態", LIFECYCLES)
+        self.pricing_vars = self._checks(filters, 3, "比價狀態", PRICING_STATUSES)
         self.result_area(body, 1)
         self.refresh_button = ttk.Button(self.buttons, text="重新整理", command=self.refresh, style="Primary.TButton")
         self.refresh_button.pack(side=tk.LEFT)
@@ -194,6 +201,7 @@ class ProgressTab(Tab):
             last=last,
             progress={name for name, var in self.progress_vars.items() if var.get()},
             lifecycle={name for name, var in self.lifecycle_vars.items() if var.get()},
+            pricing={name for name, var in self.pricing_vars.items() if var.get()},
             issuer="" if issuer == ALL_ISSUERS else issuer,
         )
         self.shown = self._sorted(rows)
@@ -201,7 +209,7 @@ class ProgressTab(Tab):
         self.table.delete(*self.table.get_children())
         keep = []
         for row in self.shown:
-            problem = row.progress != FINISHED and bool(row.reason)
+            problem = (row.progress != FINISHED and bool(row.reason)) or row.pricing in (WAIT_PRICES, TO_CONFIRM)
             item = self.table.insert("", tk.END, values=_cells(row), tags=("problem",) if problem else ())
             if row.tdcc in selected:
                 keep.append(item)
@@ -436,12 +444,16 @@ class ProgressTab(Tab):
 def _cells(row: ProgressRow) -> tuple[str, ...]:
     trade_date = "" if row.trade_date is None else f"{row.trade_date:%Y-%m-%d}"
     days = "" if row.days is None else str(row.days)
+    through = "" if row.observed_through is None else f"{row.observed_through:%Y-%m-%d}"
     dates = tuple("" if value is None else f"{value.astimezone():%Y-%m-%d}" for value in row.dates)
-    return (row.tdcc, row.issuer, trade_date, days, row.progress, row.lifecycle, row.objection, *dates, row.reason)
+    return (
+        row.tdcc, row.issuer, trade_date, days, row.progress, row.lifecycle, row.pricing_text, through,
+        row.pricing_reason, row.objection, *dates, row.reason,
+    )  # fmt: skip
 
 
 def _sort_value(row: ProgressRow, index: int) -> object:
-    """排序用的值（依 `COLUMNS` 的位置）；作業進度依九步的順序，空白是 None。"""
+    """排序用的值（依 `COLUMNS` 的位置）；作業進度、比價狀態依定義的順序，空白是 None。"""
     values = (
         row.tdcc,
         row.issuer or None,
@@ -449,6 +461,9 @@ def _sort_value(row: ProgressRow, index: int) -> object:
         row.days,
         PROGRESS.index(row.progress),
         LIFECYCLES.index(row.lifecycle) if row.lifecycle in LIFECYCLES else len(LIFECYCLES),
+        PRICING_STATUSES.index(row.pricing) if row.pricing in PRICING_STATUSES else None,
+        row.observed_through,
+        row.pricing_reason or None,
         row.objection or None,
         *row.dates,
         row.reason or None,

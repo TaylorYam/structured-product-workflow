@@ -6,6 +6,7 @@
 待寄信（沒有「草稿已建立」）→ 待寄出。
 商品的範圍是有交易明細或有商品條件的 TDCC。各步日期：交易明細匯入、商品條件匯入（Order 匯入、人工維護
 存檔或清單更新）、核對條件完成（最後一次計算）、已準備、核對、鎖住、已放回、草稿已建立、已寄出。
+比價狀態（#170、ADR 0020）照 `workflow.pricing_status` 帶出：狀態、原因、已比到的日期；還沒比過的空白。
 只讀資料庫；匯出 Excel 的存檔方式同商品匯出（`product_export.save_rows`）。
 """
 
@@ -19,6 +20,7 @@ from typing import TYPE_CHECKING
 
 from sp_workflow.check_terms import DONE as TERMS_DONE
 from sp_workflow.lifecycle import Objection, lifecycle_status, open_objections
+from sp_workflow.observation import UNLOCKED
 from sp_workflow.order_import import ImportConfig, issuer_code
 from sp_workflow.product_export import save_rows
 from sp_workflow.product_record import PRODUCT_COLUMNS, missing_fields
@@ -49,7 +51,10 @@ DATE_COLUMNS = (
     TRADES_IMPORTED, TERMS_IMPORTED, CHECK_TERMS_DONE, PREPARED_STEP, CHECKED, LOCKED, RETURNED_STEP, DRAFTED_STEP,
     SENT_STEP,
 )  # fmt: skip
-EXPORT_COLUMNS = ("TDCC", "上手", "交易日", "距今天數", "作業進度", "存續狀態", "異議", *DATE_COLUMNS, "卡住的原因")
+PRICING_COLUMNS = ("比價狀態", "已比到", "比價原因")  # #170
+EXPORT_COLUMNS = (
+    "TDCC", "上手", "交易日", "距今天數", "作業進度", "存續狀態", *PRICING_COLUMNS, "異議", *DATE_COLUMNS, "卡住的原因",
+)  # fmt: skip
 
 
 @dataclass(frozen=True)
@@ -78,6 +83,15 @@ class ProgressRow:
     dates: tuple[dt.datetime | None, ...]  # 依 `DATE_COLUMNS`
     reason: str  # 卡住的原因
     objection: str = ""  # 還沒解除的異議：「待確認：事件 事件日：備註」（#157）；沒有時空白
+    pricing: str = ""  # 比價狀態（#170）：在庫、等股價、待確認、已出場；還沒比過空白
+    pricing_reason: str = ""
+    observed_through: dt.date | None = None  # 已比到的日期
+    pricing_unlocked: bool = False  # 比價時還沒鎖住
+
+    @property
+    def pricing_text(self) -> str:
+        """畫面與匯出的比價狀態：比價時還沒鎖住的後面標「（未鎖住）」。"""
+        return f"{self.pricing}（{UNLOCKED}）" if self.pricing and self.pricing_unlocked else self.pricing
 
 
 @dataclass(frozen=True)
@@ -163,6 +177,12 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
         ):
             if tdcc in facts:  # 步驟紀錄沒有外鍵：交易明細與商品條件都沒有的 TDCC 不列
                 facts[tdcc]["dates"][step] = recorded_at
+        pricing = {
+            tdcc: (status, reason or "", through, not locked)
+            for tdcc, status, reason, through, locked in conn.execute(
+                "SELECT tdcc, status, reason, observed_through, locked FROM workflow.pricing_status"
+            )
+        }
         tdccs = sorted(facts)
         statuses = lifecycle_status(conn, tdccs)
         objections = open_objections(conn, tdccs)
@@ -182,6 +202,7 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
                 tuple(found.dates.get(name) for name in DATE_COLUMNS),
                 reason,
                 objection_text(objections.get(tdcc, ())),
+                *pricing.get(tdcc, ()),
             )
         )
     return tuple(rows)
@@ -194,9 +215,11 @@ def filter_rows(
     last: dt.date | None = None,
     progress: Collection[str] = (),
     lifecycle: Collection[str] = (),
+    pricing: Collection[str] = (),
     issuer: str = "",
 ) -> list[ProgressRow]:
-    """篩選：交易日區間（含頭尾；有區間時沒有交易日的不列）、作業進度與存續狀態（多選，空的是全部）、上手。"""
+    """篩選：交易日區間（含頭尾；有區間時沒有交易日的不列）、作業進度、存續狀態與比價狀態（多選，空的是全部；
+    選了比價狀態時還沒比過的不列）、上手。"""
     return [
         row
         for row in rows
@@ -204,6 +227,7 @@ def filter_rows(
         and (last is None or (row.trade_date is not None and row.trade_date <= last))
         and (not progress or row.progress in progress)
         and (not lifecycle or row.lifecycle in lifecycle)
+        and (not pricing or row.pricing in pricing)
         and (not issuer or row.issuer == issuer)
     ]
 
@@ -227,8 +251,8 @@ def export_progress(rows: Sequence[ProgressRow], path: Path) -> ProgressExport:
 def export_values(row: ProgressRow) -> tuple[object, ...]:
     """一列的值，依 `EXPORT_COLUMNS`。"""
     return (
-        row.tdcc, row.issuer, row.trade_date, row.days, row.progress, row.lifecycle, row.objection, *row.dates,
-        row.reason,
+        row.tdcc, row.issuer, row.trade_date, row.days, row.progress, row.lifecycle, row.pricing_text,
+        row.observed_through, row.pricing_reason, row.objection, *row.dates, row.reason,
     )  # fmt: skip
 
 

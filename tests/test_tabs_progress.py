@@ -103,6 +103,36 @@ def test_filters_apply_without_reading_the_database_again(master, tmp_path: Path
     assert actions == [], "篩選不再讀資料庫"
 
 
+def test_pricing_status_is_shown_filtered_and_marked(master, tmp_path: Path, monkeypatch) -> None:
+    """比價狀態（#170）：三欄、可篩選，等股價與待確認用問題色。"""
+    rows = (
+        row("037199990001", 3, pricing="等股價", pricing_reason="UL_1 AAA UW：2026-10-21 沒有收盤價",
+            observed_through=dt.date(2026, 10, 20), pricing_unlocked=True),
+        row("037199990002", 5, pricing="在庫", observed_through=dt.date(2026, 10, 21)),
+        row("037199990003", 7),
+    )  # fmt: skip
+    _, tab, _ = loaded(master, tmp_path, monkeypatch, rows)
+
+    cells = {
+        tab.table.set(item, "tdcc"): (
+            tab.table.set(item, "pricing"),
+            tab.table.set(item, "observed_through"),
+            tab.table.set(item, "pricing_reason"),
+            tab.table.item(item, "tags"),
+        )
+        for item in tab.table.get_children()
+    }
+    assert cells == {
+        "037199990001": ("等股價（未鎖住）", "2026-10-20", "UL_1 AAA UW：2026-10-21 沒有收盤價", ("problem",)),
+        "037199990002": ("在庫", "2026-10-21", "", ""),
+        "037199990003": ("", "", "", ""),
+    }
+
+    tab.pricing_vars["等股價"].set(True)
+    tab.refilter()
+    assert shown(tab) == ["037199990001"]
+
+
 def test_a_bad_date_filter_is_ignored_and_explained(master, tmp_path: Path, monkeypatch) -> None:
     _, tab, _ = loaded(master, tmp_path, monkeypatch)
 
