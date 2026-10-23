@@ -7,6 +7,7 @@
 收盤價（#153）要用交易所假日表判斷休市日：回補股價讀不到假日表時照樣匯股價、收盤價不存；
 歷史收盤價讀不到假日表就整份不匯入。
 比價（#155）在回補股價與歷史收盤價匯入之後跑；比價失敗時匯入保留，原因放在結果裡。
+信箱維護（#158）每次存檔一個動作，寫完重讀全部人員與別名給畫面重新顯示。
 """
 
 from __future__ import annotations
@@ -53,6 +54,16 @@ from sp_workflow.lifecycle import (
     resolve_objection,
 )
 from sp_workflow.mail_drafts import DraftReceipt, create_drafts
+from sp_workflow.mailbox import (
+    Alias,
+    MailboxRows,
+    Person,
+    delete_alias,
+    delete_person,
+    load_rows,
+    save_alias,
+    save_person,
+)
 from sp_workflow.observation import ObservationReceipt, observe_all
 from sp_workflow.order_import import (
     ImportConfig,
@@ -462,6 +473,40 @@ def resolve_event_objection(settings: ConnectionSettings, objection_id: int) -> 
         require_current_schema(conn)
         resolve_objection(conn, objection_id)
         return objection_id
+
+
+# ---------- 信箱維護 ----------
+
+
+def load_mailbox_rows(settings: ConnectionSettings) -> MailboxRows:
+    """信箱維護（#158）：全部人員與別名。"""
+    return _mailbox_change(settings, lambda conn: None)
+
+
+def save_mailbox_person(settings: ConnectionSettings, before: Person | None, after: Person) -> MailboxRows:
+    """新增（before 是 None）或修改一個人；寫不進去時丟 `MailboxError`。"""
+    return _mailbox_change(settings, lambda conn: save_person(conn, before, after))
+
+
+def delete_mailbox_person(settings: ConnectionSettings, before: Person) -> MailboxRows:
+    """刪除一個人與他的別名。"""
+    return _mailbox_change(settings, lambda conn: delete_person(conn, before))
+
+
+def save_mailbox_alias(settings: ConnectionSettings, before: Alias | None, after: Alias) -> MailboxRows:
+    return _mailbox_change(settings, lambda conn: save_alias(conn, before, after))
+
+
+def delete_mailbox_alias(settings: ConnectionSettings, before: Alias) -> MailboxRows:
+    return _mailbox_change(settings, lambda conn: delete_alias(conn, before))
+
+
+def _mailbox_change(settings: ConnectionSettings, write: Callable[[psycopg.Connection], object]) -> MailboxRows:
+    """寫一筆（自己一個 transaction），再重讀全部人員與別名。"""
+    with connect(settings) as conn:
+        require_current_schema(conn)
+        write(conn)
+        return load_rows(conn)
 
 
 def _each(tdccs: Sequence[str], write: Callable[[str], object]) -> Registered:
