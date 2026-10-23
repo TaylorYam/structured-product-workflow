@@ -82,6 +82,18 @@ def test_renaming_a_person_moves_their_aliases(pg) -> None:
 
     assert load_rows(pg).aliases == (Alias("Amie", "Amelia"),)
     assert load_mailbox(pg).match("amie").name == "Amelia", "寄信與匯入照舊用別名比對"
+    ((_, _, _, before, after),) = log(pg)
+    assert (before["name"], before["aliases"]) == ("Amy", ["Amie"]), "跟著改的別名也寫進紀錄"
+    assert (after["name"], after["aliases"]) == ("Amelia", ["Amie"])
+
+
+def test_a_missing_write_permission_becomes_a_reason(pg) -> None:
+    from psycopg import errors
+
+    from sp_workflow.mailbox import _explained
+
+    with pytest.raises(MailboxError, match="這個資料庫帳號沒有修改信箱的權限"), _explained(pg, "Amy"):
+        raise errors.InsufficientPrivilege("permission denied for table person")
 
 
 def test_deleting_a_person_deletes_their_aliases_and_records_them(pg) -> None:

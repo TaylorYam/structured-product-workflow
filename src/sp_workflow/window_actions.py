@@ -480,7 +480,9 @@ def resolve_event_objection(settings: ConnectionSettings, objection_id: int) -> 
 
 def load_mailbox_rows(settings: ConnectionSettings) -> MailboxRows:
     """信箱維護（#158）：全部人員與別名。"""
-    return _mailbox_change(settings, lambda conn: None)
+    with connect(settings) as conn:
+        require_current_schema(conn)
+        return load_rows(conn)
 
 
 def save_mailbox_person(settings: ConnectionSettings, before: Person | None, after: Person) -> MailboxRows:
@@ -494,10 +496,12 @@ def delete_mailbox_person(settings: ConnectionSettings, before: Person) -> Mailb
 
 
 def save_mailbox_alias(settings: ConnectionSettings, before: Alias | None, after: Alias) -> MailboxRows:
+    """新增（before 是 None）或修改一個別名；寫不進去時丟 `MailboxError`。"""
     return _mailbox_change(settings, lambda conn: save_alias(conn, before, after))
 
 
 def delete_mailbox_alias(settings: ConnectionSettings, before: Alias) -> MailboxRows:
+    """刪除一個別名。"""
     return _mailbox_change(settings, lambda conn: delete_alias(conn, before))
 
 

@@ -2,7 +2,8 @@
 
 每個動作一個 transaction：鎖住那一列、確認打開後沒被改過，再寫入並留一筆 `mailbox.change_log`（誰、何時、改前改後）。
 名字不分大小寫不重複、信箱格式、別名指到存在的人、別名不分大小寫不重複都由資料庫檢查（0002）；
-檢查失敗時轉成作業人員看得懂的 `MailboxError`。改名時資料庫讓別名跟著改；刪除人員時連帶刪掉他的別名。
+檢查失敗或帳號沒有寫入權限時轉成作業人員看得懂的 `MailboxError`。改名時資料庫讓別名跟著改、刪除人員時連帶刪掉
+他的別名，這兩種的紀錄另外寫出那些別名。
 畫面在 `sp_workflow.tabs.mailbox`。
 """
 
@@ -76,7 +77,7 @@ def load_rows(conn: psycopg.Connection) -> MailboxRows:
 
 
 def save_person(conn: psycopg.Connection, before: Person | None, after: Person, *, user: str | None = None) -> bool:
-    """新增（before 是 None）或修改一個人；沒有改任何欄位時不寫，回傳 False。"""
+    """新增（before 是 None）或修改一個人；沒有改任何欄位時不寫，回傳 False。改名時紀錄寫出跟著改的別名。"""
     if before == after:
         return False
     with _explained(conn, after.name, email=after.email):
@@ -85,13 +86,15 @@ def save_person(conn: psycopg.Connection, before: Person | None, after: Person, 
                 "INSERT INTO mailbox.person (name, email, unit, fixed_cc) VALUES (%s, %s, %s, %s)",
                 (after.name, after.email, after.unit, after.fixed_cc),
             )
-        else:
-            _lock_person(conn, before)
-            conn.execute(
-                "UPDATE mailbox.person SET name = %s, email = %s, unit = %s, fixed_cc = %s WHERE name = %s",
-                (after.name, after.email, after.unit, after.fixed_cc, before.name),
-            )
-        _log(conn, PERSON, EDIT if before else ADD, before and asdict(before), asdict(after), user)
+            _log(conn, PERSON, ADD, None, asdict(after), user)
+            return True
+        _lock_person(conn, before)
+        moved = {"aliases": _aliases_of(conn, before.name)} if after.name != before.name else {}
+        conn.execute(
+            "UPDATE mailbox.person SET name = %s, email = %s, unit = %s, fixed_cc = %s WHERE name = %s",
+            (after.name, after.email, after.unit, after.fixed_cc, before.name),
+        )
+        _log(conn, PERSON, EDIT, {**asdict(before), **moved}, {**asdict(after), **moved}, user)
     return True
 
 
@@ -99,15 +102,10 @@ def delete_person(conn: psycopg.Connection, before: Person, *, user: str | None 
     """刪除一個人，資料庫連帶刪掉他的別名；回傳刪掉的別名，改前紀錄也寫出它們。"""
     with _explained(conn, before.name):
         _lock_person(conn, before)
-        aliases = tuple(
-            Alias(alias, before.name)
-            for (alias,) in conn.execute(
-                "SELECT alias FROM mailbox.alias WHERE person_name = %s ORDER BY alias_key FOR UPDATE", (before.name,)
-            )
-        )
+        aliases = _aliases_of(conn, before.name)
         conn.execute("DELETE FROM mailbox.person WHERE name = %s", (before.name,))
-        _log(conn, PERSON, DELETE, {**asdict(before), "aliases": [a.alias for a in aliases]}, None, user)
-    return aliases
+        _log(conn, PERSON, DELETE, {**asdict(before), "aliases": aliases}, None, user)
+    return tuple(Alias(alias, before.name) for alias in aliases)
 
 
 def save_alias(conn: psycopg.Connection, before: Alias | None, after: Alias, *, user: str | None = None) -> bool:
@@ -119,13 +117,14 @@ def save_alias(conn: psycopg.Connection, before: Alias | None, after: Alias, *, 
             conn.execute(
                 "INSERT INTO mailbox.alias (alias, person_name) VALUES (%s, %s)", (after.alias, after.person_name)
             )
-        else:
-            _lock_alias(conn, before)
-            conn.execute(
-                "UPDATE mailbox.alias SET alias = %s, person_name = %s WHERE alias_key = lower(btrim(%s))",
-                (after.alias, after.person_name, before.alias),
-            )
-        _log(conn, ALIAS, EDIT if before else ADD, before and asdict(before), asdict(after), user)
+            _log(conn, ALIAS, ADD, None, asdict(after), user)
+            return True
+        _lock_alias(conn, before)
+        conn.execute(
+            "UPDATE mailbox.alias SET alias = %s, person_name = %s WHERE alias_key = lower(btrim(%s))",
+            (after.alias, after.person_name, before.alias),
+        )
+        _log(conn, ALIAS, EDIT, asdict(before), asdict(after), user)
     return True
 
 
@@ -147,17 +146,26 @@ _REASONS = {  # 資料庫檢查（0001、0002 的 constraint）→ 給作業人�
 
 @contextmanager
 def _explained(conn: psycopg.Connection, name: str, *, email: str = "", alias: str = "") -> Iterator[None]:
-    """一個 transaction；資料庫的檢查失敗時整個不寫，改丟 `MailboxError` 寫出哪一個值不行。"""
+    """一個 transaction；資料庫的檢查失敗或沒有權限時整個不寫，改丟 `MailboxError` 寫出原因。"""
     from psycopg import errors
 
     try:
         with conn.transaction():
             yield
+    except errors.InsufficientPrivilege as exc:
+        raise MailboxError("這個資料庫帳號沒有修改信箱的權限，請找管理者開權限。") from exc
     except errors.IntegrityError as exc:
         reason = _REASONS.get(exc.diag.constraint_name or "")
         if reason is None:
-            raise MailboxError(f"資料庫拒絕這次存檔：{str(exc).splitlines()[0]}") from exc
+            first = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+            raise MailboxError(f"資料庫拒絕這次存檔：{first}") from exc
         raise MailboxError(reason.format(name=name, email=email, alias=alias)) from exc
+
+
+def _aliases_of(conn: psycopg.Connection, name: str) -> list[str]:
+    """這個人的別名，鎖住：改名、刪除人員時會跟著改、跟著刪的那些。"""
+    rows = conn.execute("SELECT alias FROM mailbox.alias WHERE person_name = %s ORDER BY alias_key FOR UPDATE", (name,))
+    return [alias for (alias,) in rows]
 
 
 def _lock_person(conn: psycopg.Connection, before: Person) -> None:

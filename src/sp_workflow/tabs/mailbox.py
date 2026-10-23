@@ -101,7 +101,7 @@ class MailboxWindow(tk.Toplevel):
         """重新讀資料庫；`notice` 是剛存好的那一筆，寫在狀態列。"""
         self._run(load_mailbox_rows, "讀取信箱中…", lambda rows: self._show(rows, notice))
 
-    def _show(self, rows: MailboxRows, notice: str = "", select: str = "") -> None:
+    def _show(self, rows: MailboxRows, notice: str = "") -> None:
         self.rows = rows
         self.people.delete(*self.people.get_children())
         self.aliases.delete(*self.aliases.get_children())
@@ -144,8 +144,10 @@ class MailboxWindow(tk.Toplevel):
         if self.working:
             return
         before = self._picked_person()
-        after = before and ask_person(self, before)
-        if before is None or after is None:
+        if before is None:
+            return
+        after = ask_person(self, before)
+        if after is None:
             return
         if after == before:
             self.status_var.set("沒有改任何欄位，這次沒有存。")
@@ -186,8 +188,10 @@ class MailboxWindow(tk.Toplevel):
         if self.working:
             return
         before = self._picked_alias()
-        after = before and ask_alias(self, before, [p.name for p in self.rows.people])
-        if before is None or after is None:
+        if before is None:
+            return
+        after = ask_alias(self, before, [p.name for p in self.rows.people])
+        if after is None:
             return
         if after == before:
             self.status_var.set("沒有改任何欄位，這次沒有存。")
