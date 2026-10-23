@@ -529,7 +529,7 @@ def _write(
     新增時別人同時新增了這檔（還不存在的列 `FOR UPDATE` 鎖不到）不寫入、回傳 False。
     """
     if stored is None:
-        columns = ("tdcc", *PRODUCT_COLUMNS, *extra)  # 存續狀態看存續事件（ADR 0019），不寫 status_event
+        columns = ("tdcc", *PRODUCT_COLUMNS, *extra)  # 存續狀態看存續事件（ADR 0019）
         inserted = conn.execute(
             f"INSERT INTO workflow.product ({', '.join(columns)}) VALUES ({', '.join(['%s'] * len(columns))})"
             " ON CONFLICT (tdcc) DO NOTHING RETURNING tdcc",

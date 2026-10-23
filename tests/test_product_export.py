@@ -52,6 +52,7 @@ def test_every_product_and_column_is_exported(pg, tmp_path: Path) -> None:
     rows = read_back(path)
     columns = [*product_columns(pg), "存續狀態"]
     assert rows[0] == columns
+    assert not [c for c in columns if c.startswith("status_")], "舊狀態欄已移除（#172），只有存續狀態"
     assert receipt.count == 2 and len(rows) == 3
     first = dict(zip(columns, rows[1], strict=True))
     assert [row[0] for row in rows[1:]] == [A, B], "依 TDCC 排序，前導零保留"
@@ -86,15 +87,15 @@ def test_lifecycle_status_is_exported(pg, tmp_path: Path) -> None:
 def test_text_that_looks_like_a_formula_stays_text(tmp_path: Path) -> None:
     path = tmp_path / "x.xlsx"
 
-    product_export.save_rows(path, "t", ("tdcc", "status_raw"), [("029199990001", "=1+1")])
+    product_export.save_rows(path, "t", ("tdcc", "note"), [("029199990001", "=1+1")])
 
-    assert read_back(path) == [["tdcc", "status_raw"], ["029199990001", "=1+1"]]
+    assert read_back(path) == [["tdcc", "note"], ["029199990001", "=1+1"]]
 
 
 def test_control_characters_are_dropped(tmp_path: Path) -> None:
     path = tmp_path / "x.xlsx"
 
-    product_export.save_rows(path, "t", ("tdcc", "status_raw"), [("029199990001", "KO\x01 2026")])
+    product_export.save_rows(path, "t", ("tdcc", "note"), [("029199990001", "KO\x01 2026")])
 
     assert read_back(path)[1] == ["029199990001", "KO 2026"]
 

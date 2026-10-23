@@ -13,7 +13,7 @@ from sp_workflow.database import DatabaseError, apply_migrations, load_env_file,
 from sp_workflow.product_record import REQUIRED_COLUMNS
 
 A = "029199990001"
-IDENTITY_COLUMNS = ("tdcc", "product", "issuer", "source")  # TDCC、商品種類、上手、來源（狀態自 0016 起可以空白，#152）
+IDENTITY_COLUMNS = ("tdcc", "product", "issuer", "source")  # TDCC、商品種類、上手、來源（舊狀態欄 0020 起移除，#172）
 
 
 def test_env_file_is_read_without_exposing_values(tmp_path: Path) -> None:
@@ -135,6 +135,16 @@ def _nullable(pg) -> dict[str, bool]:
     )
 
 
+STATUS_COLUMNS = {"status_event", "status_date", "status_underlying", "status_raw"}
+
+
+def _products(pg) -> list[dict]:
+    """全部商品（舊狀態欄除外：資料表版本 0020 會移除，#172）。"""
+    cursor = pg.execute("SELECT * FROM workflow.product ORDER BY tdcc")
+    names = [column.name for column in cursor.description]
+    return [{k: v for k, v in zip(names, row, strict=True) if k not in STATUS_COLUMNS} for row in cursor.fetchall()]
+
+
 def _database_before(pg, version: int) -> None:
     """把測試資料庫重建成只套用到 `version` 之前的資料表版本（模擬還沒升級的資料庫）。"""
     pg.execute("DROP SCHEMA mailbox, workflow CASCADE")
@@ -151,12 +161,12 @@ def test_upgrading_to_0012_lets_required_terms_be_blank_and_keeps_existing_produ
     """#114：起單資料必填欄對應的欄可以空白，識別欄照舊不可空白；migration 前已有的商品不變。"""
     _database_before(pg, 12)
     seed_products(pg, [inventory(A, [("台北", 100000)])])
-    before = pg.execute("SELECT * FROM workflow.product").fetchall()
+    before = _products(pg)
 
     applied = apply_migrations(pg)
 
     assert applied[0] == "0012_partial_product_terms.sql"
-    assert pg.execute("SELECT * FROM workflow.product").fetchall() == before
+    assert _products(pg) == before
     nullable = _nullable(pg)
     blank = [c for c in REQUIRED_COLUMNS if c not in IDENTITY_COLUMNS]  # 含 KO Type／Barrier Type 換算的代碼欄
     assert [c for c in blank if not nullable[c]] == []
@@ -179,7 +189,7 @@ def test_upgrading_to_0013_keeps_corrections_and_allows_manual_products(pg) -> N
 
     assert applied[0] == "0013_manual_maintenance.sql"
     assert pg.execute("SELECT locked, previous FROM workflow.term_correction").fetchall() == [(True, {})]
-    insert = "INSERT INTO workflow.product (tdcc, product, issuer, status_event, source) VALUES (%s, 'FCN', 'SG', '在庫', %s)"
+    insert = "INSERT INTO workflow.product (tdcc, product, issuer, source) VALUES (%s, 'FCN', 'SG', %s)"
     pg.execute(insert, ("037199990002", "人工維護"))
     pg.execute(
         "INSERT INTO workflow.term_correction (tdcc, corrected_by, changes, locked) VALUES (%s, 'op', '[]', false)",
@@ -198,8 +208,8 @@ def test_a_product_can_be_stored_with_only_some_required_terms(pg) -> None:
         "INSERT INTO workflow.order_import (imported_by, summary) VALUES ('tester', '{}') RETURNING import_id"
     ).fetchone()
     insert = (
-        "INSERT INTO workflow.product (tdcc, product, issuer, currency, status_event, source, order_import_id)"
-        " VALUES (%s, 'FCN', %s, 'USD', '在庫', 'Order', %s)"
+        "INSERT INTO workflow.product (tdcc, product, issuer, currency, source, order_import_id)"
+        " VALUES (%s, 'FCN', %s, 'USD', 'Order', %s)"
     )
 
     pg.execute(insert, (A, "Barclays", import_id))
@@ -230,7 +240,7 @@ def test_step_records_migration_keeps_products(pg) -> None:
 
 @pytest.mark.db
 def test_old_statuses_become_old_list_events(pg) -> None:
-    """資料表版本 0016（#152）：不是在庫的舊狀態轉成來源「舊清單」的事件，原欄位保留、之後新商品不再寫。"""
+    """資料表版本 0016（#152）：不是在庫的舊狀態轉成來源「舊清單」的事件，原欄位保留、之後新商品不再寫（版本 0020 再移除）。"""
     _database_before(pg, 16)
     insert = (
         "INSERT INTO workflow.product (tdcc, product, issuer, source, status_event, status_date, status_underlying,"
@@ -252,8 +262,7 @@ def test_old_statuses_become_old_list_events(pg) -> None:
         ("147000000002", "接股", dt.date(2026, 8, 3), "AAA UW", "舊清單", "接股 AAA", None),
         ("147000000004", "到期還本", None, None, "舊清單", "到期還本", None),
     ], "在庫的不轉；沒有日期的照樣轉、事件日空白"
-    assert pg.execute("SELECT count(*) FROM workflow.product WHERE status_event IS NOT NULL").fetchone()[0] == 4
-    assert _nullable(pg)["status_event"], "新商品不再寫 status_event"
+    assert not STATUS_COLUMNS & set(_nullable(pg)), "資料表版本 0020（#172）把舊狀態欄移除"
 
 
 @pytest.mark.db
@@ -289,3 +298,62 @@ def test_pricing_status_migration_keeps_products(pg) -> None:
     ]
     assert pg.execute("SELECT count(*) FROM workflow.pricing_status").fetchone()[0] == 0
     assert pg.execute("SELECT count(*) FROM workflow.product_event").fetchone()[0] == 0
+
+
+def _old_status(pg, tdcc: str, status: str | None, day: dt.date | None = None) -> None:
+    """0016 之後、0020 之前的商品：舊狀態欄還在（新商品是空白）。"""
+    pg.execute(
+        "INSERT INTO workflow.product (tdcc, product, issuer, source, status_event, status_date, status_raw)"
+        " VALUES (%s, 'FCN', 'SG', '人工維護', %s, %s, %s)",
+        (tdcc, status, day, status),
+    )
+
+
+def _old_list_event(pg, tdcc: str, event: str, day: dt.date | None) -> None:
+    pg.execute(
+        "INSERT INTO workflow.product_event (tdcc, event, event_date, source, recorded_by)"
+        " VALUES (%s, %s, %s, '舊清單', '資料表版本 0016')",
+        (tdcc, event, day),
+    )
+
+
+@pytest.mark.db
+def test_old_status_columns_are_dropped_and_everything_else_is_kept(pg) -> None:
+    """資料表版本 0020（#172）：每個舊狀態都有舊清單事件時，刪掉四個舊狀態欄，商品與事件不動。"""
+    _database_before(pg, 20)
+    _old_status(pg, "147000000001", "KO", dt.date(2026, 9, 1))
+    _old_list_event(pg, "147000000001", "KO", dt.date(2026, 9, 1))
+    _old_status(pg, "147000000002", "到期還本")
+    _old_list_event(pg, "147000000002", "到期還本", None)
+    _old_status(pg, "147000000003", "在庫")
+    _old_status(pg, "147000000004", None)  # 0016 之後建立的商品不寫舊狀態
+
+    assert apply_migrations(pg) == ["0020_drop_product_status.sql"]
+
+    assert not STATUS_COLUMNS & set(_nullable(pg))
+    assert pg.execute("SELECT tdcc, issuer, source FROM workflow.product ORDER BY tdcc").fetchall() == [
+        (f"14700000000{i}", "SG", "人工維護") for i in range(1, 5)
+    ]
+    assert pg.execute("SELECT tdcc, event, event_date FROM workflow.product_event ORDER BY tdcc").fetchall() == [
+        ("147000000001", "KO", dt.date(2026, 9, 1)),
+        ("147000000002", "到期還本", None),
+    ]
+
+
+@pytest.mark.db
+def test_an_old_status_without_its_old_list_event_stops_the_migration(pg) -> None:
+    """舊狀態沒有對應（同一種事件、同一個事件日）的舊清單事件時整個版本失敗、寫出 TDCC，什麼都不改。"""
+    import psycopg
+
+    _database_before(pg, 20)
+    _old_status(pg, "147000000001", "KO", dt.date(2026, 9, 1))
+    _old_list_event(pg, "147000000001", "KO", dt.date(2026, 9, 1))
+    _old_status(pg, "147000000002", "KO", dt.date(2026, 9, 2))
+    _old_list_event(pg, "147000000002", "KO", dt.date(2026, 9, 3))  # 日期不同
+    _old_status(pg, "147000000003", "接股", dt.date(2026, 8, 3))  # 沒有事件
+
+    with pytest.raises(psycopg.errors.RaiseException, match="147000000002、147000000003"):
+        apply_migrations(pg)
+
+    assert STATUS_COLUMNS <= set(_nullable(pg)), "舊狀態欄照舊在"
+    assert 20 not in database.applied_versions(pg)

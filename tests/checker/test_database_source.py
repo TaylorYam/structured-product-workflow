@@ -58,7 +58,6 @@ def seed(pg, spec: Spec, *, pricing="收盤價", denomination=None, status="完�
         "barrier_type": "NONE",
         "ki_pct": None,
         "denomination": denomination or spec.denom,
-        "status_event": "在庫",
         "source": "Order",
         "order_import_id": import_id,
     }
