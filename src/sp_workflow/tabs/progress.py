@@ -20,7 +20,6 @@ from sp_workflow.database import ConnectionSettings
 from sp_workflow.lifecycle import DELIVERY, IN_STOCK, KO, MATURITY, REDEMPTION
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.observation import STATUSES as PRICING_STATUSES
-from sp_workflow.observation import TO_CONFIRM, WAIT_PRICES
 from sp_workflow.progress import (
     DATE_COLUMNS,
     FINISHED,
@@ -83,7 +82,7 @@ class ProgressTab(Tab):
 
         self.page_header(
             "作業進度",
-            "每檔商品走到哪一步、各步的日期、距交易日幾天與存續狀態；落後的依距今天數排在上面。",
+            "每檔商品走到哪一步、各步的日期、距交易日幾天、存續狀態與比價狀態；落後的依距今天數排在上面。",
         )
         body = self.body(self.card(1))
         filters = ttk.Frame(body, style="CardBody.TFrame")
@@ -209,8 +208,7 @@ class ProgressTab(Tab):
         self.table.delete(*self.table.get_children())
         keep = []
         for row in self.shown:
-            problem = (row.progress != FINISHED and bool(row.reason)) or row.pricing in (WAIT_PRICES, TO_CONFIRM)
-            item = self.table.insert("", tk.END, values=_cells(row), tags=("problem",) if problem else ())
+            item = self.table.insert("", tk.END, values=_cells(row), tags=("problem",) if row.problem else ())
             if row.tdcc in selected:
                 keep.append(item)
         self.table.selection_set(keep)

@@ -20,7 +20,8 @@ from typing import TYPE_CHECKING
 
 from sp_workflow.check_terms import DONE as TERMS_DONE
 from sp_workflow.lifecycle import Objection, lifecycle_status, open_objections
-from sp_workflow.observation import UNLOCKED
+from sp_workflow.observation import TO_CONFIRM as PRICING_TO_CONFIRM
+from sp_workflow.observation import UNLOCKED, WAIT_PRICES
 from sp_workflow.order_import import ImportConfig, issuer_code
 from sp_workflow.product_export import save_rows
 from sp_workflow.product_record import PRODUCT_COLUMNS, missing_fields
@@ -84,7 +85,7 @@ class ProgressRow:
     reason: str  # 卡住的原因
     objection: str = ""  # 還沒解除的異議：「待確認：事件 事件日：備註」（#157）；沒有時空白
     pricing: str = ""  # 比價狀態（#170）：在庫、等股價、待確認、已出場；還沒比過空白
-    pricing_reason: str = ""
+    pricing_reason: str = ""  # 等股價的標的與日期、待確認的原因、出場的事件
     observed_through: dt.date | None = None  # 已比到的日期
     pricing_unlocked: bool = False  # 比價時還沒鎖住
 
@@ -92,6 +93,11 @@ class ProgressRow:
     def pricing_text(self) -> str:
         """畫面與匯出的比價狀態：比價時還沒鎖住的後面標「（未鎖住）」。"""
         return f"{self.pricing}（{UNLOCKED}）" if self.pricing and self.pricing_unlocked else self.pricing
+
+    @property
+    def problem(self) -> bool:
+        """畫面用問題色：還沒完成又有卡住的原因，或比價狀態是等股價、待確認。"""
+        return (self.progress != FINISHED and bool(self.reason)) or self.pricing in (WAIT_PRICES, PRICING_TO_CONFIRM)
 
 
 @dataclass(frozen=True)
@@ -178,7 +184,12 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
             if tdcc in facts:  # 步驟紀錄沒有外鍵：交易明細與商品條件都沒有的 TDCC 不列
                 facts[tdcc]["dates"][step] = recorded_at
         pricing = {
-            tdcc: (status, reason or "", through, not locked)
+            tdcc: {
+                "pricing": status,
+                "pricing_reason": reason or "",
+                "observed_through": through,
+                "pricing_unlocked": not locked,
+            }
             for tdcc, status, reason, through, locked in conn.execute(
                 "SELECT tdcc, status, reason, observed_through, locked FROM workflow.pricing_status"
             )
@@ -202,7 +213,7 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
                 tuple(found.dates.get(name) for name in DATE_COLUMNS),
                 reason,
                 objection_text(objections.get(tdcc, ())),
-                *pricing.get(tdcc, ()),
+                **pricing.get(tdcc, {}),
             )
         )
     return tuple(rows)
