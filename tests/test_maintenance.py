@@ -297,6 +297,28 @@ def test_a_locked_product_is_saved_like_a_correction(pg) -> None:
         save_maintenance(pg, blanked, CONFIG, user="operator1")
 
 
+@pytest.mark.db
+def test_correcting_an_exited_product_points_out_the_event_stays(pg, pg_settings) -> None:
+    """已出場的商品更正條件（#169）：不重新比價，存檔結果寫出事件不會跟著改。"""
+    from sp_workflow.window_actions import save_product
+
+    import_order(pg, A)
+    lock(pg, A)
+    pg.execute(
+        "INSERT INTO workflow.product_event (tdcc, event, event_date, source, recorded_by)"
+        " VALUES (%s, 'KO', '2026-11-18', '比價', 'tester')",
+        (A,),
+    )
+    draft = open_maintenance(pg, A, CONFIG)
+    draft.values["Coupon p.a. (%)"] = Decimal(11)
+
+    receipt = save_product(pg_settings, draft, CONFIG, trades=None, reason="Order 抄錯")
+
+    assert receipt.correction_id is not None and receipt.exited == "KO 2026-11-18"
+    unchanged = save_product(pg_settings, open_maintenance(pg, A, CONFIG), CONFIG, trades=None, reason="")
+    assert unchanged.exited == "", "沒有改商品條件時不提醒"
+
+
 def changed_terms(pg) -> None:
     pg.execute("UPDATE workflow.product SET tenor_months = 12 WHERE tdcc = %s", (A,))
 

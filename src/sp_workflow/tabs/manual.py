@@ -389,6 +389,11 @@ def correction_text(receipt: CorrectionReceipt) -> str:
         text += "商品維持鎖住，核對結果沒有變。"
     if receipt.calc is not None:
         text += f"\n核對條件重算後：{calc_status(receipt.calc)}。"
+    if receipt.exited:
+        text += (
+            f"\n注意：這檔已出場（{receipt.exited}），不再比價，存續事件不會跟著改；"
+            "結果和上手通知不同時，到「8 進度」提出異議。"
+        )
     if receipt.unmatched:
         names = "、".join(receipt.unmatched)
         text += f"\n注意：FC 名字對不到信箱：{names}（寄信草稿找不到收件人；請確認名字或在信箱表補上）。"

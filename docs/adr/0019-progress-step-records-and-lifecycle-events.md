@@ -1,6 +1,6 @@
 # 0019: 作業進度、步驟紀錄與存續事件／Workflow Progress, Step Records, and Lifecycle Events
 
-- 狀態／Status: Accepted
+- 狀態／Status: Accepted（「每次比價把自動事件全部重算」由 [ADR 0021](0021-stop-observing-exited-products.md) 取代／"each run recalculates the automatic events" superseded by ADR 0021）
 - 日期／Date: 2026-10-22
 - 追蹤／Tracking: 實作 Issue 由本 ADR 的 PR 之後拆出／implementation issues are split off after this ADR's PR
 - 補充／Completes: [ADR 0003](0003-minimal-fcn-database.md)「已存在商品的庫存狀態暫不更新」、[ADR 0006](0006-new-product-data-from-order.md)「進度分頁等合成一個 PANEL 再做」、[待定事項](../open-questions.md)的「案件及狀態名稱」／ADR 0003's "inventory status is not refreshed yet", ADR 0006's "the progress tab waits for the single PANEL", and the open question on case and status naming

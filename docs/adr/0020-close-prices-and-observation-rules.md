@@ -1,6 +1,6 @@
 # 0020: 收盤價資料與比價規則／Close Prices and Observation Rules
 
-- 狀態／Status: Accepted
+- 狀態／Status: Accepted（舊商品「重算後和舊清單事件比對、不同標待確認」由 [ADR 0021](0021-stop-observing-exited-products.md) 取代／the old products' "recalculate and mark 待確認 when it differs from the old-list event" superseded by ADR 0021）
 - 日期／Date: 2026-10-22
 - 追蹤／Tracking: 實作 Issue 由本 ADR 的 PR 之後拆出／implementation issues are split off after this ADR's PR
 - 補充／Completes: [ADR 0019](0019-progress-step-records-and-lifecycle-events.md) 的存續事件由誰產生；[ADR 0008](0008-daily-prices-denomination-and-order-dates.md)、[ADR 0015](0015-price-csv-backfill.md) 的股價（取價日）只用於核對條件／who produces the lifecycle events of ADR 0019; the price-date prices of ADR 0008 and ADR 0015 serve check terms only
