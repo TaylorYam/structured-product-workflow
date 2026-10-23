@@ -28,7 +28,7 @@
 
 | 進度 | 判定 |
 |---|---|
-| 1 等商品條件 | 有交易明細，沒有商品條件或缺必填欄（[ADR 0016](0016-partial-product-terms.md)） |
+| 1 等商品條件 | 有交易明細，沒有商品條件或缺必填欄（[ADR 0016](0016-partial-product-terms.md)）；每個標的都已有進場價時，期初價格空白不算缺（#182） |
 | 2 等核對條件 | 核對條件不是「完成」 |
 | 3 待準備 | 沒有「已準備」紀錄 |
 | 4 待核對 | 有「已準備」，沒有核對結果 |
@@ -89,7 +89,7 @@ The user's goal: automate the whole path from start to finish, see every product
 
 | Progress | Rule |
 |---|---|
-| 1 等商品條件 | trade rows exist, product terms missing or required fields blank ([ADR 0016](0016-partial-product-terms.md)) |
+| 1 等商品條件 | trade rows exist, product terms missing or required fields blank ([ADR 0016](0016-partial-product-terms.md)); a blank 期初價格 does not count once every underlying has an initial price (#182) |
 | 2 等核對條件 | check terms are not 完成 |
 | 3 待準備 | no 已準備 record |
 | 4 待核對 | 已準備 exists, no check result |
