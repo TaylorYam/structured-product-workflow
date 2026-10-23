@@ -19,7 +19,8 @@ from . import iis, money, price_table, sg, sg_tables
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "sg-zh-iis"
-PARSER_VERSION = "2"  # 2：價格表改由 parsers/price_table.py 讀（Issue #288）
+# 2：價格表改由 parsers/price_table.py 讀（Issue #288）；3：單一評價日寫法「評價日：」（Issue #130）
+PARSER_VERSION = "3"
 TITLE = "中文投資人須知"
 NAME_ZH_TAIL = "（不保本及無擔保）"
 NAME_EN_TAIL = squash(sg.NAME_EN_TAIL)
@@ -222,7 +223,8 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
     put("tenor_months", r"商品年期：(\d+)個月", int)
     put("trade_date", r"訂價日：" + iis.DATE, parse_date)
     put("issue_date", r"發行日[／∕/]交割日：" + iis.DATE, parse_date)
-    put("final_valuation_date", r"最終評價日：" + iis.DATE, parse_date)
+    # 單一評價日寫法只寫「評價日：」（Issue #130）
+    put("final_valuation_date", r"(?:最終)?評價日：" + iis.DATE, parse_date)
     put("maturity_date", r"到期日：" + iis.DATE, parse_date)
     put("subscription_start", r"商品開始受理申購日期：" + iis.DATE + "起", parse_date)
     fields["subscription_dates"] = standard_fields.occurrences(

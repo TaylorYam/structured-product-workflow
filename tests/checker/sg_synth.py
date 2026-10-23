@@ -84,9 +84,13 @@ class Spec(ProductSpec):
     iis_strike_pct: bool = True  # 投資人須知標的表「執行價」表頭寫出 %（舊版面 SG6 沒寫）
     iis_ticker_wrap: bool = False  # 投資人須知標的表彭博代碼換成兩行（代號／交易所碼，4 碼以上代號的真實樣本）
     cumulative: str = "rounded"  # 累積配息：rounded 每期四捨五入後 × 期數；exact 總投資金額 × 配息率 × 期數再四捨五入
+    # 無自動提前出場的單一評價日寫法（Issue #130）：條文寫「評價日」、§12「評價日：日期」、日期表只有配息日欄、末列只標（到期日）
+    single_valuation: bool = False
 
     def __post_init__(self) -> None:
         self.underlyings = underlyings(self.count)
+        if self.single_valuation and self.autocall:
+            raise ValueError("單一評價日寫法只用在無自動提前出場")
         if not self.autocall:
             self.first_callable = self.tenor
             self.ko = Decimal("100.00")
@@ -154,6 +158,11 @@ class Spec(ProductSpec):
             memory_en=NAME["memory_en"] if self.memory and self.autocall else "",
             autocall_en=NAME["autocall_en"] if self.autocall else "",
         )
+
+    @property
+    def valuation_term(self) -> str:
+        """到期贖回、數額與情境條文裡的評價日名稱。"""
+        return "評價日" if self.single_valuation else "最終評價日"
 
     def date(self, d: dt.date) -> str:
         return (
@@ -300,13 +309,13 @@ def _scenarios(d: _Doc, s: Spec) -> None:
             d.text(28, f"假設於{when}，發生自動提前出場事件，於自動提前出場日以現金結算收益：")
         elif kind in ("best", "middle"):
             lead = "假設不曾發生任何自動提前出場事件，" if s.autocall else ""
-            d.text(28, f"{lead}於最終評價日{worst_of}收盤價大於或等於{barrier}，於到期日以現金結算收益：")
+            d.text(28, f"{lead}於{s.valuation_term}{worst_of}收盤價大於或等於{barrier}，於到期日以現金結算收益：")
         else:
             close = Decimal(0) if kind == "worst" else (strike / 5).quantize(Decimal(1), ROUND_DOWN)
             lead = "假設不曾發生任何自動提前出場事件，" if s.autocall else ""
             d.text(
                 28,
-                f"{lead}於最終評價日{worst_of}{k_tag}收盤價= {s.money(close, s.underlying_ccy, 0)}小於{barrier}，於到期日以實體交付應實際交付數並支付剩餘金額的形式結算收益：",
+                f"{lead}於{s.valuation_term}{worst_of}{k_tag}收盤價= {s.money(close, s.underlying_ccy, 0)}小於{barrier}，於到期日以實體交付應實際交付數並支付剩餘金額的形式結算收益：",
             )
         d.text(28, span)
         d.text(136, f"= {s.units}單位面額x{s.amount(s.denom)}x{s.monthly}%")
@@ -330,7 +339,7 @@ def _scenarios(d: _Doc, s: Spec) -> None:
         whole = int(quantity.quantize(Decimal(1), ROUND_DOWN))
         frac = quantity - whole
         cash = (close * frac * (s.fx if s.fx is not None else 1)).quantize(Q2, ROUND_CEILING)
-        d.text(28, f"數額計算 = 每單位面額 / 於最終評價日{worst_of}執行價")
+        d.text(28, f"數額計算 = 每單位面額 / 於{s.valuation_term}{worst_of}執行價")
         strike_text = s.money(strike, s.underlying_ccy, 4)
         if s.fx is None:
             d.text(136, f"= {s.amount(s.denom)} / {strike_text}")
@@ -347,7 +356,7 @@ def _scenarios(d: _Doc, s: Spec) -> None:
         d.text(136, f"= {s.money(cash)}")
         d.text(
             28,
-            f"總投資金額 = {s.units}單位面額，因此，到期日將獲得最終評價日{worst_of}{whole * s.units:,}單位加上現金{s.money(cash * s.units)}",
+            f"總投資金額 = {s.units}單位面額，因此，到期日將獲得{s.valuation_term}{worst_of}{whole * s.units:,}單位加上現金{s.money(cash * s.units)}",
         )
         value = s.total * close / strike + cum
         exact = value / s.total * 100 - 100
@@ -427,7 +436,7 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         f"商品年期：{s.months(s.tenor)} (請見中文產品說明書)",
         f"訂價日：{s.date(s.trade_date)}",
         f"發行日/交割日：{s.date(s.issue_date)}",
-        f"最終評價日：{s.date(s.final_date)}",
+        f"{s.valuation_term}：{s.date(s.final_date)}",
         f"到期日：{s.date(s.maturity_date)}",
         "預定交易日、配息週期起始日、配息週期終止日與配息日：請見中文產品說明書。",
         f"商品開始受理申購日期：{s.date(s.trade_date)}起",
@@ -573,8 +582,8 @@ def _iis_coupon(d: _Doc, s: Spec, unit: str, worst: str) -> None:
     if s.ki in ("none", "AM"):
         barrier = "執行價" if s.ki == "none" else "下限價"
         d.text(40, f"■到期贖回金額：{lead}發行機構將於到期日將依下列 (1) 或(2)方式贖回：")
-        d.text(40, f"(1) 若於最終評價日{worst}收盤價大於或等於{barrier}，到期贖回金額＝每單位面額×100%")
-        d.text(40, f"(2) 若於最終評價日{worst}收盤價小於{barrier}，{deliver}：")
+        d.text(40, f"(1) 若於{s.valuation_term}{worst}收盤價大於或等於{barrier}，到期贖回金額＝每單位面額×100%")
+        d.text(40, f"(2) 若於{s.valuation_term}{worst}收盤價小於{barrier}，{deliver}：")
     else:
         if s.ki == "D":
             obs1 = "訂價日（含）起至最終評價日（含）止之每一個預定交易日（「觀察期間」），每日"
@@ -591,7 +600,7 @@ def _iis_coupon(d: _Doc, s: Spec, unit: str, worst: str) -> None:
         )
         d.text(40, f"(3) 若於{obs2}{worst}收盤價小於下限價，且於最終評價日{worst}收盤價小於執行價，{deliver}。")
     d.text(40, "應實際交付數 = 數額向下調整至最接近的整數位或交易單位。")
-    d.text(40, f"數額 = 每單位面額 / 於最終評價日{worst}之執行價，並無條件進入至小數點第四位。")
+    d.text(40, f"數額 = 每單位面額 / 於{s.valuation_term}{worst}之執行價，並無條件進入至小數點第四位。")
     d.text(40, "收盤價：請參閱中文產品說明書。")
     if s.count > 1:
         ks = "、 ".join(str(i) for i in range(1, s.count + 1))
@@ -850,10 +859,10 @@ def _article8(d: _Doc, s: Spec, unit: str, worst_of: str) -> None:
     if s.ki in ("none", "AM"):
         barrier = "執行價" if s.ki == "none" else "下限價"
         d.text(68, f"到期贖回金額：{lead}發行機構將於到期日將依下列 (1) 或(2)方式贖回：")
-        d.sub(1, f"若於最終評價日{worst_of}收盤價大於或等於{barrier}，到期贖回金額＝每單位面額×100%", 72)
+        d.sub(1, f"若於{s.valuation_term}{worst_of}收盤價大於或等於{barrier}，到期贖回金額＝每單位面額×100%", 72)
         d.sub(
             2,
-            f"若於最終評價日{worst_of}收盤價小於{barrier}，於到期日將實體交付該連結標的之應實際交付數並支付剩餘金額。",
+            f"若於{s.valuation_term}{worst_of}收盤價小於{barrier}，於到期日將實體交付該連結標的之應實際交付數並支付剩餘金額。",
             72,
         )
     else:
@@ -876,10 +885,10 @@ def _article8(d: _Doc, s: Spec, unit: str, worst_of: str) -> None:
             72,
         )
     d.text(86, "應實際交付數 = 數額向下調整至最接近的整數位或交易單位")
-    d.text(86, f"數額 = 每單位面額 / 於最終評價日{worst_of}執行價，並無條件進入至小數點第四位。")
+    d.text(86, f"數額 = 每單位面額 / 於{s.valuation_term}{worst_of}執行價，並無條件進入至小數點第四位。")
     d.text(
         86,
-        f"倘計算數額之結果有畸零數，則該畸零數應乘以於最終評價日{worst_of}收盤價，並無條件進入至小數點第二位，以現金支付（「剩餘金額」）。",
+        f"倘計算數額之結果有畸零數，則該畸零數應乘以於{s.valuation_term}{worst_of}收盤價，並無條件進入至小數點第二位，以現金支付（「剩餘金額」）。",
     )
     if s.fx is not None:
         d.text(50, "最終匯率定價：於最終評價日東京時間15:00於彭博頁面“BFIX”公佈之日圓兌商品幣別之匯率水準。")
@@ -920,6 +929,12 @@ def _dates(d: _Doc, s: Spec, ends, payments) -> None:
                 "評價日、最終評價日：請參考下表相對應之日期；如當日非所有連結標的之預定交易日，次一所有連結標的之預定交易日為之。",
             )
         n += 2
+    elif s.single_valuation:
+        d.sub(
+            n,
+            f"評價日：{s.date(s.final_date)}; 如當日非所有連結標的之預定交易日，次一所有連結標的之預定交易日為之。",
+        )
+        n += 1
     else:
         d.sub(
             n,
@@ -934,6 +949,9 @@ def _dates(d: _Doc, s: Spec, ends, payments) -> None:
     elif s.autocall:
         d.sub(n + 2, "評價日與配息日或自動提前出場日：受限於自動提前出場事件，目前預定之日期如下：")
         header = ["評價日(i)", "配息日或自動提前出場日"]
+    elif s.single_valuation:
+        d.sub(n + 2, "配息日：目前預定之日期如下")
+        header = ["配息日(i)"]
     else:
         header = ["評價日(i)", "配息日"]
     d.section = "art12.table"
@@ -953,11 +971,13 @@ def _dates(d: _Doc, s: Spec, ends, payments) -> None:
                 cells = [s.date(ends[j - 2]), s.date(ends[j - 1])]
         elif s.autocall:
             cells = [s.date(ends[j - 1]) if j >= k else "不適用"]
+        elif s.single_valuation:
+            cells = []
         else:
             cells = [s.date(ends[j - 1]) if j == s.tenor else "不適用"]
         for c in cells:
             d.cell(200, c)
-        if j == labelled:
+        if j == labelled and not s.single_valuation:
             d.cell(316, "（最終評價日）")
         d.cell(450, s.date(payments[j - 1]))
         if j == labelled:

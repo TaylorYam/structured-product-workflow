@@ -251,7 +251,7 @@ def _scenario(number: str, title: str, lines: list[Line]) -> Scenario:
     s.holdings = one(
         hits(
             ti,
-            rf"總投資金額=(\d+)單位面額，因此，到期日將獲得(?:最終評價日)?(?:最差表現之)?連結標的([\d,]+)單位加上現金{NUM}({U})",
+            rf"總投資金額=(\d+)單位面額，因此，到期日將獲得(?:(?:最終)?評價日)?(?:最差表現之)?連結標的([\d,]+)單位加上現金{NUM}({U})",
             lambda m: Holdings(int(m[1]), int(dec(m[2])), dec(m[3]), m[4]),
         )
     )

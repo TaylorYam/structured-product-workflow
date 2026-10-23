@@ -41,10 +41,12 @@ from sg_synth import Spec, build_pdf, check
         ),  # 無自動提前出場、CNH quanto、舊版面
         Spec(currency_zh="日圓", ko=Decimal("105.00"), count=4),
         Spec(ko_obs="D", memory=False, ki="AM", count=2, tenor=12, first_callable=4),
+        Spec(autocall=False, ki="none", tenor=12, strike=Decimal("80.00"), single_valuation=True),  # Issue #130
     ],
     ids=lambda s: (
         f"{'A' if s.autocall else 'none'}-{s.ko_obs}-{'mem' if s.memory else 'plain'}-KI{s.ki}-{s.count}UL-{s.tenor}m-NC{s.first_callable}-{s.ccy}"
         + ("-legacy" if s.legacy else "")
+        + ("-single-valuation" if s.single_valuation else "")
     ),
 )
 def test_supported_types_pass(tmp_path, spec):
@@ -328,6 +330,39 @@ def test_no_autocall_sheet_ko_must_be_100_pct_of_initial(tmp_path, column, value
     r = check(tmp_path, Spec(autocall=False, ki="none", tenor=3), **{column: value})
     rid = "field.ko_pct" if column == "KO(%)" else "field.underlying_prices"
     assert flagged(r, rid)
+
+
+SINGLE_VALUATION = Spec(autocall=False, ki="none", tenor=12, single_valuation=True)
+
+
+def test_single_valuation_date_is_the_final_valuation_date(tmp_path):
+    """無自動提前出場的單一評價日寫法（Issue #130）：§12「評價日：日期」就是最終評價日，和表上最終比價日比；
+    日期表只有配息日欄，末列只標「（到期日）」。"""
+    r = check(tmp_path, SINGLE_VALUATION)
+    assert r.status == S.PASS, problems(r)
+    final = rule(r, "field.final_valuation_date")[0]
+    assert final.status == S.PASS and final.actual == SINGLE_VALUATION.final_date
+    assert rule(r, "field.first_callable_period")[0].actual == 12
+    assert rule(r, "schedule.row_labels")[0].status == S.PASS
+    other = tmp_path / "other"
+    other.mkdir()
+    r = check(other, SINGLE_VALUATION, 最終比價日=dt.datetime(2031, 2, 3))
+    assert rule(r, "field.final_valuation_date")[0].status == S.MISMATCH
+
+
+def test_single_valuation_table_with_a_final_valuation_label_is_a_mismatch(tmp_path):
+    """單一評價日寫法的日期表沒有評價日欄，末列不該標「（最終評價日）」。"""
+    r = check(tmp_path, SINGLE_VALUATION, edits=[Edit("（到期日）", "（最終評價日）", "ts.art12.table")])
+    x = rule(r, "schedule.row_labels")[0]
+    assert x.status == S.MISMATCH
+    assert "第 12 期卻標「（最終評價日）」" in problem_message(x) and "末列沒有標「（到期日）」" in problem_message(x)
+
+
+def test_single_valuation_wording_needs_a_valuation_date_in_article_12(tmp_path):
+    """單一評價日寫法但 §12 沒有「評價日：日期」→ 最終評價日讀不到，轉人工覆核。"""
+    s = SINGLE_VALUATION
+    r = check(tmp_path, s, edits=[Edit(f"評價日：{s.date(s.final_date)}", "評價日：請參考下表", "ts.art12")])
+    assert rule(r, "field.final_valuation_date")[0].status == S.REVIEW_REQUIRED
 
 
 def test_tables_split_across_pages_still_read(tmp_path):
