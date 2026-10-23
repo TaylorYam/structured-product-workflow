@@ -30,6 +30,10 @@ ADR 0003 讓每日匯入同時讀 `信箱.xlsx`，每次整份取代 `mailbox` �
 - 人工 SQL 沒有程式的格式檢查，因此改由資料表約束擋下常見錯誤；更細的規則（例如別名不能和其他人的名字相同）仍靠比對時的處理。
 - 維護信箱的人需要有 `mailbox` 寫入權限的帳號；異動不會自動留下歷史紀錄。
 
+### 補充：在視窗裡維護（2026-10-23，#158）
+
+公司電腦不能安裝 PostgreSQL 的 GUI，用 pgAdmin 寫 SQL 實際上做不到。改在視窗「維護」選單的「信箱維護…」新增、修改、刪除人員與別名。資料庫仍是唯一來源、不讀 Excel（和上面否決的「更新信箱」按鈕不同）；資料表約束照舊是檢查的依據，畫面把失敗轉成原因。每次存檔在 `mailbox.change_log` 留誰、何時、改前改後（版本 0019）。直接寫 SQL 仍可當備用，但不會留紀錄。
+
 ## English
 
 ### Context
@@ -54,3 +58,7 @@ ADR 0003 made the daily import also read `信箱.xlsx` and replace the stored pe
 - An external `public.mailbox` is not a project mailbox source. If its names are needed, an administrator must explicitly copy them into the project tables and separately confirm `fixed_cc` and aliases.
 - Manual SQL bypasses program validation, so table constraints catch common mistakes; finer rules (such as an alias equal to another person's name) still rely on matching behavior.
 - Mailbox maintainers need an account with write access to `mailbox`; changes keep no automatic history.
+
+### Addendum: maintenance in the window (2026-10-23, #158)
+
+Company computers cannot install a PostgreSQL GUI, so writing SQL in pgAdmin is not possible in practice. People and aliases are now added, edited, and deleted through 「信箱維護…」 in the window's 「維護」 menu. The database stays the only source and no Excel is read (unlike the rejected "update mailbox" button above); the table constraints remain the checks, and the window turns failures into reasons. Each save records who, when, and the before and after values in `mailbox.change_log` (schema version 0019). Direct SQL remains a fallback but keeps no record.

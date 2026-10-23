@@ -1,6 +1,7 @@
 """FCN Workflow 視窗：八個分頁照每天的作業順序排（#73、#74、#90、#115、#116、#156）。
 
-1. 每日匯入：選每日更新，把交易明細與每日股價匯入最小 FCN 資料庫（#32、#87）；信箱在資料庫直接維護（#35）。
+1. 每日匯入：選每日更新，把交易明細與每日股價匯入最小 FCN 資料庫（#32、#87）；信箱在資料庫裡（#35），
+   由「維護」選單的「信箱維護…」另開視窗新增、修改、刪除人員與別名（#158）。
 2. 起單資料：貼 TDCC、選一份起單建檔（#97），在右邊逐檔確認、修改後匯入資料庫（#86）。
    1、2 匯入完成後重算還沒鎖住的商品的核對條件（#88），逐檔顯示狀態；交叉比對的差異可以在這兩頁放行。
 3. 準備：貼 TDCC、選輸出位置，產生批次資料夾與準備清單。
@@ -20,7 +21,7 @@ Treeview 的表（7 的檢查結果表除外）另有 Ctrl+A 全選、Ctrl+C 複
 做完一步，下一頁先帶入結果並用藍色提示條寫出來，按「下一步 →」才切頁，不自動執行（#76）：
 每日匯入完成 → 起單資料頁帶入交易明細的 FCN TDCC（#90）；
 準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔。
-審查通過日期、匯出回報包與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
+審查通過日期、匯出回報包、信箱維護與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
 視窗只收輸入、在背景執行一個動作並顯示結果，不含判斷邏輯：要連資料庫的按鈕各呼叫 `window_actions` 的一個動作，
 連線、transaction 與容錯（ADR 0012）都在那裡（#125）；不連資料庫的直接呼叫 `prepare_batch`／核對／`return_to_folders`。
 這個 module 只有外殼：頂端列、步驟欄、「維護」選單、關閉、視窗大小與啟動參數；各分頁一頁一個 module 在 `sp_workflow.tabs`（#138）。
@@ -64,6 +65,7 @@ from sp_workflow.preparation import LIST_NAME, PrepareReceipt
 from sp_workflow.tabs.base import TITLE, DatabaseLogin, RootFolder
 from sp_workflow.tabs.daily import DailyImportTab
 from sp_workflow.tabs.mail import MailDraftTab
+from sp_workflow.tabs.mailbox import MailboxWindow
 from sp_workflow.tabs.manual import MaintenanceTab
 from sp_workflow.tabs.orders import OrderTermsTab
 from sp_workflow.tabs.prepare import PrepareTab
@@ -82,6 +84,7 @@ APPROVAL_DATES, EXPORT_BUNDLE = "審查通過日期…", "匯出回報包…"  #
 CLOSE_HISTORY = "匯入歷史收盤價…"
 REOBSERVE = "重新比價全部"
 LEGACY_BACKFILL = "匯入舊商品的價格與比價日…"
+MAILBOX = "信箱維護…"
 
 
 class WindowSize:
@@ -180,6 +183,8 @@ class PanelWindow:
         """db 是各分頁共用的資料庫登入；session 是核對的工作階段，建好時已帶著資料庫來源（`build_window` 組好，#129）。"""
         self.master = master
         self.session = session
+        self.db = db
+        self.mailbox: MailboxWindow | None = None  # 「信箱維護…」開著時的視窗（#158）
         self.size = WindowSize(memory.path.with_name(WINDOW_FILE))
         master.title(TITLE)
         self.pixels = apply_style(master)
@@ -258,6 +263,7 @@ class PanelWindow:
         menu.add_command(label=CLOSE_HISTORY, command=self._import_close_history)
         menu.add_command(label=REOBSERVE, command=self._reobserve)
         menu.add_command(label=LEGACY_BACKFILL, command=self._import_legacy)
+        menu.add_command(label=MAILBOX, command=self.open_mailbox)
         menu.add_separator()
         menu.add_command(label="使用的設定檔…", command=self.check.show_config_paths)
         bar.add_cascade(label="維護", menu=menu)
@@ -291,6 +297,16 @@ class PanelWindow:
         self.notebook.select(self.daily.frame)  # 比價的進度與結果顯示在每日匯入頁
         self.daily.reobserve()
 
+    def open_mailbox(self) -> None:
+        """另開信箱維護視窗並讀一次；已經開著就拉到前面，不重開（#158）。"""
+        if self._mailbox_open():
+            self.mailbox.deiconify()
+            self.mailbox.lift()
+            self.mailbox.focus_set()
+            return
+        self.mailbox = MailboxWindow(self.master, self.db)
+        self.mailbox.refresh()
+
     def restore_size(self) -> None:
         """照上次的大小顯示；第一次開啟時在 Windows 最大化。"""
         self.size.restore(self.master, self.pixels)
@@ -310,6 +326,9 @@ class PanelWindow:
             return _CloseWarning("人工維護頁有改過、還沒存檔的內容，關閉後會不見。", self.manual.frame)
         return None
 
+    def _mailbox_open(self) -> bool:
+        return self.mailbox is not None and bool(self.mailbox.winfo_exists())
+
     def close(self) -> None:
         """核對頁還在處理或有還沒存檔的核對結果時先問一次；關閉前記住視窗大小。"""
         warning = self._close_warning()
@@ -326,6 +345,8 @@ class PanelWindow:
         self.check.close()
         for page in self.pages:
             page.background.close()
+        if self._mailbox_open():
+            self.mailbox.close()
         self.master.destroy()
 
 

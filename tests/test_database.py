@@ -78,6 +78,7 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
     ).fetchall()
     assert [t for (t,) in tables] == [
         "mailbox.alias",
+        "mailbox.change_log",
         "mailbox.person",
         "workflow.autocall_date",
         "workflow.backfill_log",

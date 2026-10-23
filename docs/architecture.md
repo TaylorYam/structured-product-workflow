@@ -34,7 +34,7 @@ flowchart TD
 
 本專案負責案件進度、Order 輸入、文件準備、歸檔、庫存讀取與寄送；核對專案負責文件解析及核對規則。正式 Order 經確認後提供參考條件表；庫存總表提供寄送資訊，兩者不互相默默覆蓋。
 
-建議以內部案件編號支援尚未取得 TDCC 的階段，取得後再綁定。保存 Order 修訂、原始附件、轉檔輸出、人工決定與寄送紀錄。資料庫選用 PostgreSQL，詳見 [ADR 0001](adr/0001-postgresql-workflow-storage.md)；第一階段只存寄信與對帳需要的 FCN 資料，見 [ADR 0003](adr/0003-minimal-fcn-database.md)，信箱改由資料庫直接維護見 [ADR 0004](adr/0004-mailbox-maintained-in-database.md)；schema、多人併發實作及保存期限未定。
+建議以內部案件編號支援尚未取得 TDCC 的階段，取得後再綁定。保存 Order 修訂、原始附件、轉檔輸出、人工決定與寄送紀錄。資料庫選用 PostgreSQL，詳見 [ADR 0001](adr/0001-postgresql-workflow-storage.md)；第一階段只存寄信與對帳需要的 FCN 資料，見 [ADR 0003](adr/0003-minimal-fcn-database.md)，信箱改由資料庫直接維護見 [ADR 0004](adr/0004-mailbox-maintained-in-database.md)，在視窗「維護」選單的「信箱維護…」新增、修改、刪除人員與別名、每次存檔留 `mailbox.change_log`（#158；寫入與資料庫檢查的原因在 `sp_workflow.mailbox`，視窗在 `sp_workflow.tabs.mailbox`）；schema、多人併發實作及保存期限未定。
 
 建議每階段獨立保存進度及重試；自動核對不通過不等於可直接寄送。人工核對須記錄人員、時間、結論及文件版本。原始與確認版本分開管理，附件使用已確認版本的指紋。
 
@@ -60,7 +60,7 @@ The diagram above connects formal Orders, normalization/booking, incoming archiv
 
 This repository owns case progress, Order ingestion, document preparation, archives, inventory lookup, and distribution. The checker owns parsing and checking rules. Confirmed formal Orders supply the checking reference workbook; inventory supplies distribution information. Neither silently overwrites the other.
 
-Use an internal case ID before TDCC is available, then bind it. Preserve Order revisions, original attachments, converted outputs, human decisions, and distribution records. PostgreSQL is selected; see [ADR 0001](adr/0001-postgresql-workflow-storage.md). The first phase stores only FCN data needed for mail and reconciliation; see [ADR 0003](adr/0003-minimal-fcn-database.md); the mailbox is maintained directly in the database per [ADR 0004](adr/0004-mailbox-maintained-in-database.md). Schema, concurrency implementation, and retention remain unresolved.
+Use an internal case ID before TDCC is available, then bind it. Preserve Order revisions, original attachments, converted outputs, human decisions, and distribution records. PostgreSQL is selected; see [ADR 0001](adr/0001-postgresql-workflow-storage.md). The first phase stores only FCN data needed for mail and reconciliation; see [ADR 0003](adr/0003-minimal-fcn-database.md); the mailbox is maintained directly in the database per [ADR 0004](adr/0004-mailbox-maintained-in-database.md), through 「信箱維護…」 in the window's 「維護」 menu, which adds, edits, and deletes people and aliases and records each save in `mailbox.change_log` (#158; writes and the reasons for database check failures live in `sp_workflow.mailbox`, the window in `sp_workflow.tabs.mailbox`). Schema, concurrency implementation, and retention remain unresolved.
 
 Persist progress and retry each stage independently. Manual checking records reviewer, time, conclusion, and document version. Separate incoming sources from approved versions; bind attachments to approved file hashes.
 
