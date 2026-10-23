@@ -17,7 +17,7 @@ from tkinter import filedialog, ttk
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import HintBar
 from sp_workflow.exits import LOCKED_TEXT, ExitExport, ExitList, ExitRow, export_exits, export_name
-from sp_workflow.lifecycle import EXIT_EVENTS, LEGACY, MANUAL, OBSERVATION
+from sp_workflow.lifecycle import EXIT_EVENTS, SOURCES
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.tabs.base import DatabaseLogin, Tab
 from sp_workflow.window_actions import load_exit_list
@@ -136,11 +136,11 @@ class ExitListTab(Tab):
                 self.status_var.set("收盤價表還沒有資料；先匯入收盤價，或填一個收盤日。")
             else:
                 self.day_var.set(f"{result.day:%Y-%m-%d}")
-                counts = [
-                    (f"{event}（檔）", sum(r.event == event for r in result.rows), False) for event in EXIT_EVENTS
-                ]
+                counts = [(f"{event}（檔）", _products(result.rows, event=event), False) for event in EXIT_EVENTS]
                 text = (
-                    f"出場 {len(result.rows)} 檔（{_by_source(result.rows)}）。" if result.rows else "沒有出場的商品。"
+                    f"出場 {_products(result.rows)} 檔（{_by_source(result.rows)}）。"
+                    if result.rows
+                    else "沒有出場的商品。"
                 )
                 self.finish(counts, f"收盤日 {result.day:%Y-%m-%d}：{text}")
         self._busy(False)
@@ -193,7 +193,12 @@ def _cells(row: ExitRow) -> tuple[str, ...]:
     )
 
 
+def _products(rows: tuple[ExitRow, ...], *, event: str = "", source: str = "") -> int:
+    """有這種事件、這個來源（空白是不限）的商品檔數；一檔同一天有兩筆事件時算一檔。"""
+    return len({r.tdcc for r in rows if (not event or r.event == event) and (not source or r.source == source)})
+
+
 def _by_source(rows: tuple[ExitRow, ...]) -> str:
     """完成訊息的各來源檔數，例如「比價 1、舊清單 2」；沒有的來源不寫。"""
-    counts = [(source, sum(r.source == source for r in rows)) for source in (OBSERVATION, LEGACY, MANUAL)]
+    counts = [(source, _products(rows, source=source)) for source in SOURCES]
     return "、".join(f"{source} {n}" for source, n in counts if n)

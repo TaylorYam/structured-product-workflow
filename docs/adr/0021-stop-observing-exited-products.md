@@ -31,7 +31,7 @@ ADR 0019 寫每次比價把自動事件全部重算、不同才整組取代；AD
 - 已出場的商品每次比價只讀事件、不再算，比價變快。
 - 收盤價真的事後更正時，事件不會自己改；要另外處理（修資料或修程式），在那之前只能提出異議。
 - 已出場商品的條件更正只會提醒，事件要對時由人看。
-- 舊商品的出場事件只有舊清單事件、不會有比價事件，所以「9 出場清單」改成列那天所有還有效的出場事件，來源不限（比價、舊清單、人工），並加「來源」欄，才和進度頁的存續狀態對得起來（2026-10-24 確認，#188）。
+- 舊商品的出場事件只有舊清單事件、不會有比價事件，所以「9 出場清單」改成列那天所有還有效的出場事件，來源不限（比價、舊清單、人工），並加「來源」欄，才和進度頁的存續狀態對得起來（2026-10-23 確認，#188）。
 
 ## English
 
@@ -59,4 +59,4 @@ ADR 0019 says each run recalculates the automatic events in full and replaces th
 - Exited products only have their events read on each run, so observation is faster.
 - If a close price is ever corrected later, events do not change by themselves; it needs separate handling (fix the data or the program), and until then only an objection is possible.
 - A term correction on an exited product only gives a reminder; a person checks whether the events are still right.
-- Old products only have old-list exit events and never get observation events, so "9 出場清單" now lists every current exit event of the day whatever its source (比價, 舊清單, 人工), with a source column, to match the lifecycle status on the progress tab (confirmed 2026-10-24, #188).
+- Old products only have old-list exit events and never get observation events, so "9 出場清單" now lists every current exit event of the day whatever its source (比價, 舊清單, 人工), with a source column, to match the lifecycle status on the progress tab (confirmed 2026-10-23, #188).

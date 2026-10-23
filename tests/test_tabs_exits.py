@@ -68,6 +68,15 @@ def test_a_blank_day_reads_the_latest_close_day(master, tmp_path: Path, monkeypa
         ("顧客贖回（檔）", 0, False),
     )
     assert tab.status_var.get() == "收盤日 2026-10-21：出場 3 檔（比價 1、舊清單 2）。", "寫出各來源的檔數"
+
+
+def test_two_events_of_one_product_count_as_one(master, tmp_path: Path, monkeypatch) -> None:
+    rows = (*ROWS, ExitRow("037199990003", "SG", "FCN", "顧客贖回", DAY, "", "人工", True, T))
+    _, tab, _ = loaded(master, tmp_path, monkeypatch, ExitList(DAY, rows))
+
+    assert len(cells(tab)) == 4, "一筆一列"
+    assert tab.kpis.values[0] == ("KO（檔）", 2, False) and tab.kpis.values[3] == ("顧客贖回（檔）", 1, False)
+    assert tab.status_var.get() == "收盤日 2026-10-21：出場 3 檔（比價 1、舊清單 2、人工 1）。", "檔數依 TDCC 算"
     assert str(tab.export_button.cget("state")) == "normal"
 
 

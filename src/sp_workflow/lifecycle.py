@@ -28,11 +28,12 @@ DELIVERY = "接股"
 MATURITY = "到期還本"
 REDEMPTION = "顧客贖回"
 AUTO_EVENTS = (KO, DELIVERY, MATURITY)
-EXIT_EVENTS = (*AUTO_EVENTS, REDEMPTION)  # 出場清單列的事件（#188）
+EXIT_EVENTS = (*AUTO_EVENTS, REDEMPTION)  # 會讓商品出場的事件：自動事件加顧客贖回（#188）
 
 OBSERVATION = "比價"  # 事件的來源
 MANUAL = "人工"
 LEGACY = "舊清單"  # 資料表版本 0016 轉換的舊狀態
+SOURCES = (OBSERVATION, LEGACY, MANUAL)
 
 _EVENT_COLUMNS = "event_id, tdcc, event, event_date, underlying, source, note, recorded_by, recorded_at"
 
