@@ -360,8 +360,8 @@ def test_single_valuation_table_with_a_final_valuation_label_is_a_mismatch(tmp_p
 
 def test_single_valuation_wording_needs_a_valuation_date_in_article_12(tmp_path):
     """單一評價日寫法但 §12 沒有「評價日：日期」→ 最終評價日讀不到，轉人工覆核。"""
-    spec = SINGLE_VALUATION
-    r = check(tmp_path, spec, edits=[Edit(f"評價日：{spec.date(spec.final_date)}", "評價日：請參考下表", "ts.art12")])
+    s = SINGLE_VALUATION
+    r = check(tmp_path, s, edits=[Edit(f"評價日：{s.date(s.final_date)}", "評價日：請參考下表", "ts.art12")])
     assert rule(r, "field.final_valuation_date")[0].status == S.REVIEW_REQUIRED
 
 

@@ -177,14 +177,14 @@ def autocall_terms(ctx: IssuerContext) -> list[CheckResult]:
         )
     )
     kinds = {"D": "每日觀察", "P": "每期觀察", "none": "無自動提前出場"}
-    tables = {"D": "每日觀察", "P": "每期觀察／無自動提前出場", "S": "無自動提前出場（單一評價日）"}
+    table_kinds = {"D": "每日觀察", "P": "每期觀察／無自動提前出場", "S": "無自動提前出場（單一評價日）"}
     wtype, dtype = (wording.value["type"] if wording.ok else None), (dtable.value["type"] if dtable.ok else None)
     out.append(
         kit.doc_check(
             ctx, "doc.ko_observation", "ko_observation", "KO 觀察方式（第 8 項寫法與日期表）", wording, dtable
         ).compare(
             kinds.get(wtype),
-            tables.get(dtype),
+            table_kinds.get(dtype),
             ok=wording.ok and dtable.ok and (wtype == "D") == (dtype == "D") and (dtype != "S" or wtype == "none"),
             fail=S.REVIEW_REQUIRED,
             reason="document_inconsistent",
