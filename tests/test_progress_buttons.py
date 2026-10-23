@@ -1,4 +1,4 @@
-"""進度頁的三個登記（#157、ADR 0019）：登記已寄出、登記顧客贖回、提出與解除異議。
+"""進度頁的登記（#157、#186、ADR 0019）：登記已寄出、批次登記已寄出、登記顧客贖回、提出與解除異議。
 
 資料庫測試對真的 PostgreSQL；視窗測試把資料庫動作換掉。商品、事件與備註全部虛構。
 """
@@ -12,6 +12,7 @@ from tkinter import messagebox
 import pytest
 
 import sp_workflow.tabs.progress
+import sp_workflow.window_actions
 from db_synth import inventory, seed_products
 from order_synth import CONFIG
 from sp_workflow.lifecycle import (
@@ -24,13 +25,24 @@ from sp_workflow.lifecycle import (
     open_objections,
     replace_auto_events,
 )
-from sp_workflow.progress import DATE_COLUMNS, FINISHED, SENT_STEP, TO_PREPARE, ProgressRow, load_progress
-from sp_workflow.tabs.progress_dialogs import FormDialog, parse_redemption, tdcc_list
+from sp_workflow.progress import (
+    DATE_COLUMNS,
+    FINISHED,
+    SENT_STEP,
+    TO_CHECK,
+    TO_MAIL,
+    ProgressRow,
+    SentBatch,
+    load_progress,
+)
+from sp_workflow.tabs.progress_dialogs import FormDialog, parse_redemption, parse_sent_through, tdcc_list
 from sp_workflow.window_actions import (
     EventChoices,
     Registered,
     event_choices,
+    find_sent_batch,
     mark_sent,
+    mark_sent_batch,
     object_to_event,
     register_redemptions,
     resolve_event_objection,
@@ -66,6 +78,29 @@ def test_marking_sent_finishes_the_product_and_a_bad_tdcc_only_fails_itself(pg, 
     (row,) = load_progress(pg, CONFIG, dt.date(2026, 10, 22))
     assert row.progress == FINISHED
     assert sent_before(pg_settings, [B, A, A]) == (A,), "登記前從資料庫查已寄出過的"
+
+
+@pytest.mark.db
+def test_a_batch_of_sent_skips_products_already_sent(pg, pg_settings) -> None:
+    """#186：寫的時候已經有「已寄出」或已經解鎖的跳過，不重複寫、不動其他階段；結果寫出選的交易日。"""
+    c = "147199990003"
+    seed_products(pg, [inventory(t, [("台北", 10000)]) for t in (A, B, c)])
+    pg.execute("UPDATE workflow.product SET locked_at = %s WHERE tdcc IN (%s, %s)", (T, A, B))  # c 確認期間被解鎖
+    mark_sent(pg_settings, [B])  # 找出這批之後別人剛登記過
+
+    result = mark_sent_batch(pg_settings, SentBatch(dt.date(2026, 10, 22), (A, B, c), 0))
+
+    assert result.done == (A,) and result.failed == ()
+    assert (step_count(pg, A), step_count(pg, B), step_count(pg, c)) == (1, 1, 0)
+    (note,) = pg.execute("SELECT result FROM workflow.step_record WHERE tdcc = %s", (A,)).fetchone()
+    assert note == "進度頁批次登記已寄出（交易日 2026-10-22 以前）"
+
+
+def test_a_batch_of_sent_reads_the_progress_again(monkeypatch) -> None:
+    rows = (row(A, progress=TO_MAIL), row(B, progress=TO_MAIL, trade_date=dt.date(2026, 10, 23)), row("3"))
+    monkeypatch.setattr(sp_workflow.window_actions, "load_progress_rows", lambda settings, paths: rows)
+
+    assert find_sent_batch(object(), object(), dt.date(2026, 10, 22)) == SentBatch(dt.date(2026, 10, 22), (A,), 1)
 
 
 @pytest.mark.db
@@ -123,6 +158,24 @@ def test_redemption_day_is_required(text: str, found) -> None:
     assert parse_redemption(text) == found
 
 
+def test_the_trade_day_of_a_batch_of_sent_is_required() -> None:
+    assert parse_sent_through(" 2026-10-22 ") == (dt.date(2026, 10, 22), "")
+    assert parse_sent_through("")[1].startswith("請填交易日")
+    assert parse_sent_through("10/22") == (None, "交易日「10/22」不是 YYYY-MM-DD。")
+
+
+def test_the_batch_form_asks_for_a_trade_day(master) -> None:
+    dialog = FormDialog(master, "批次登記已寄出", "選交易日", with_day=True, day_label="交易日",
+                        parse_day=parse_sent_through, with_note=False)  # fmt: skip
+
+    dialog.confirm()
+    assert dialog.result is None and dialog.error_var.get().startswith("請填交易日")
+
+    dialog.day_var.set("2026-10-22")
+    dialog.confirm()
+    assert dialog.result == (None, dt.date(2026, 10, 22), "")
+
+
 def test_the_form_keeps_open_until_the_input_is_valid(master) -> None:
     dialog = FormDialog(master, "提出異議", "選一筆", choices=["KO 2026-10-01"], note_required=True)
 
@@ -143,9 +196,10 @@ def test_long_tdcc_lists_are_shortened() -> None:
 # ---------------------------------------------------------------- 視窗
 
 
-def row(tdcc: str, sent: bool = False) -> ProgressRow:
+def row(tdcc: str, sent: bool = False, **changes) -> ProgressRow:
     dates = tuple(T if sent and i == SENT else None for i in range(len(DATE_COLUMNS)))
-    return ProgressRow(tdcc, "SG", dt.date(2026, 10, 15), 7, FINISHED if sent else TO_PREPARE, "在庫", dates, "")
+    values = {"progress": FINISHED if sent else TO_CHECK, "trade_date": dt.date(2026, 10, 15), **changes}
+    return ProgressRow(tdcc, "SG", values.pop("trade_date"), 7, values.pop("progress"), "在庫", dates, "", **values)
 
 
 ROWS = (row(A), row(B, sent=True))
@@ -287,6 +341,69 @@ def test_cancelling_the_redemption_form_writes_nothing(master, tmp_path: Path, m
     assert actions == []
 
 
+DAY = dt.date(2026, 10, 22)
+
+
+def batch(tab, monkeypatch, found: SentBatch, day: dt.date | None = DAY) -> list:
+    calls = []
+    monkeypatch.setattr(sp_workflow.tabs.progress, "ask_sent_through", lambda parent: day)
+    monkeypatch.setattr(sp_workflow.tabs.progress, "find_sent_batch", lambda settings, paths, through: found)
+    monkeypatch.setattr(
+        sp_workflow.tabs.progress,
+        "mark_sent_batch",
+        lambda settings, chosen: calls.append(chosen) or Registered(chosen.tdccs),
+    )
+    return calls
+
+
+@pytest.mark.parametrize(("answer", "written"), [(True, True), (False, False)])
+def test_a_batch_of_sent_is_listed_and_confirmed_first(master, tmp_path: Path, monkeypatch, answer, written) -> None:
+    tab, actions = loaded(master, tmp_path, monkeypatch)
+    asked = []
+    monkeypatch.setattr(messagebox, "askokcancel", lambda *a, **k: asked.append(a[1]) or answer)
+    found = SentBatch(DAY, (A, B), 3)
+    calls = batch(tab, monkeypatch, found)
+
+    tab.record_sent_batch()
+    run_all(actions)
+
+    assert asked == [
+        f"登記 2 檔已寄出（交易日 2026-10-22 以前、核對通過、還沒登記已寄出）：{A}、{B}？\n"
+        "交易日 2026-10-22 以前還沒核對完、這次沒有登記的 3 檔。"
+    ]
+    assert calls == ([found] if written else [])
+    if written:
+        assert tab.status_var.get().startswith(
+            "登記已寄出：寫了 2 檔；交易日 2026-10-22 以前還沒核對完、這次沒有登記的 3 檔。"
+        ), "寫完提示沒登記的檔數"
+    else:
+        assert tab.status_var.get().startswith("共 2 檔")
+
+
+def test_a_batch_with_nothing_waiting_for_mail_writes_nothing(master, tmp_path: Path, monkeypatch) -> None:
+    tab, actions = loaded(master, tmp_path, monkeypatch)
+    shown = []
+    monkeypatch.setattr(messagebox, "showinfo", lambda *a, **k: shown.append(a[1]))
+    calls = batch(tab, monkeypatch, SentBatch(DAY, (), 2))
+
+    tab.record_sent_batch()
+    run_all(actions)
+
+    assert calls == []
+    assert shown == [
+        "交易日 2026-10-22 以前沒有待寄信的商品，這次沒有寫。\n交易日 2026-10-22 以前還沒核對完、這次沒有登記的 2 檔。"
+    ]
+
+
+def test_cancelling_the_batch_form_reads_nothing(master, tmp_path: Path, monkeypatch) -> None:
+    tab, actions = loaded(master, tmp_path, monkeypatch)
+    batch(tab, monkeypatch, SentBatch(DAY, (A,), 0), day=None)
+
+    tab.record_sent_batch()
+
+    assert actions == []
+
+
 EVENT = StoredEvent(7, A, KO, dt.date(2026, 10, 1), None, "比價", None, "tester", T)
 
 
@@ -390,3 +507,4 @@ def test_the_buttons_wait_for_a_refresh(master, tmp_path: Path) -> None:
     tab = new_window(master, tmp_path).progress
 
     assert str(tab.sent_button.cget("state")) == "disabled" and str(tab.object_button.cget("state")) == "disabled"
+    assert str(tab.batch_sent_button.cget("state")) == "disabled"

@@ -1,4 +1,5 @@
-"""「8 進度」登記用的小視窗（#157）：顧客贖回（事件日、備註）、提出異議（選一筆自動事件、備註）、解除異議（選一筆）。
+"""「8 進度」登記用的小視窗（#157）：顧客贖回（事件日、備註）、提出異議（選一筆自動事件、備註）、解除異議（選一筆）、
+批次登記已寄出（交易日，#186）。
 
 `ask_*` 開視窗、等作業人員按確定或取消，回傳輸入的值或 None；檢查輸入的規則在 `parse_*`，不碰 Tk。
 """
@@ -7,7 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 import tkinter as tk
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from tkinter import ttk
 
 from sp_workflow.lifecycle import Objection, StoredEvent
@@ -22,13 +23,22 @@ def tdcc_list(tdccs: Sequence[str], limit: int = 10) -> str:
 
 def parse_redemption(day_text: str) -> tuple[dt.date | None, str]:
     """(事件日, 錯誤說明)：事件日必填、格式 YYYY-MM-DD。"""
+    return _parse_day(day_text, "事件日", "請填事件日（顧客贖回的日期）。")
+
+
+def parse_sent_through(day_text: str) -> tuple[dt.date | None, str]:
+    """(交易日, 錯誤說明)：批次登記已寄出的交易日必填、格式 YYYY-MM-DD。"""
+    return _parse_day(day_text, "交易日", "請填交易日（這天以前、含這天的待寄信商品會登記已寄出）。")
+
+
+def _parse_day(day_text: str, label: str, blank: str) -> tuple[dt.date | None, str]:
     text = day_text.strip()
     if not text:
-        return None, "請填事件日（顧客贖回的日期）。"
+        return None, blank
     try:
         return dt.date.fromisoformat(text), ""
     except ValueError:
-        return None, f"事件日「{text}」不是 YYYY-MM-DD。"
+        return None, f"{label}「{text}」不是 YYYY-MM-DD。"
 
 
 def event_label(event: StoredEvent) -> str:
@@ -43,7 +53,8 @@ def objection_label(objection: Objection) -> str:
 
 
 class FormDialog(tk.Toplevel):
-    """一個選項清單（可以沒有）、事件日（可以沒有）與備註的小視窗；按確定（或 Enter）時檢查，有錯寫在視窗裡、不關。"""
+    """一個選項清單（可以沒有）、日期（可以沒有）與備註的小視窗；按確定（或 Enter）時檢查，有錯寫在視窗裡、不關。
+    日期欄預設是事件日，`day_label` 與 `parse_day` 可以換。"""
 
     def __init__(
         self,
@@ -53,6 +64,8 @@ class FormDialog(tk.Toplevel):
         *,
         choices: Sequence[str] = (),
         with_day: bool = False,
+        day_label: str = "事件日",
+        parse_day: Callable[[str], tuple[dt.date | None, str]] = parse_redemption,
         with_note: bool = True,
         note_required: bool = False,
     ) -> None:
@@ -62,6 +75,7 @@ class FormDialog(tk.Toplevel):
         self.result: tuple[int | None, dt.date | None, str] | None = None
         self.note_required = note_required
         self.with_day = with_day
+        self.parse_day = parse_day
         self.has_choices = bool(choices)
         frame = ttk.Frame(self, padding=16)
         frame.pack(fill="both", expand=True)
@@ -79,7 +93,7 @@ class FormDialog(tk.Toplevel):
             row += 1
         self.day_var = tk.StringVar()
         if with_day:
-            ttk.Label(frame, text="事件日").grid(row=row, column=0, sticky="w", pady=(12, 0))
+            ttk.Label(frame, text=day_label).grid(row=row, column=0, sticky="w", pady=(12, 0))
             day = ttk.Entry(frame, textvariable=self.day_var, width=14)
             day.grid(row=row, column=1, sticky="w", pady=(12, 0))
             fields.append(day)
@@ -120,7 +134,7 @@ class FormDialog(tk.Toplevel):
             choice = picked[0]
         day = None
         if self.with_day:
-            day, error = parse_redemption(self.day_var.get())
+            day, error = self.parse_day(self.day_var.get())
             if error:
                 self.error_var.set(error)
                 return
@@ -182,3 +196,20 @@ def ask_resolution(parent: tk.Misc, tdcc: str, objections: Sequence[Objection]) 
     if found is None or found[0] is None:
         return None
     return objections[found[0]].objection_id
+
+
+def ask_sent_through(parent: tk.Misc) -> dt.date | None:
+    """批次登記已寄出的交易日（#186）；取消時 None。"""
+    found = _ask(
+        FormDialog(
+            parent,
+            "批次登記已寄出",
+            "交易日在這天以前（含）、目前是待寄信（核對通過、還沒登記已寄出）的商品，各寫一筆「已寄出」。"
+            "其他階段的不動；寫之前會先列出這批商品。",
+            with_day=True,
+            day_label="交易日",
+            parse_day=parse_sent_through,
+            with_note=False,
+        )
+    )
+    return None if found is None else found[1]

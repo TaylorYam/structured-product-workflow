@@ -20,23 +20,23 @@
 **名詞**
 
 - 「核對條件狀態」照舊：完成／等股價／等交易明細／待確認。
-- 「作業進度」：一檔商品走到七步的哪一步。
+- 「作業進度」：一檔商品在五個階段的哪一個（#186）。
 - 「存續狀態」：在庫／KO／接股／到期還本／顧客贖回；取代舊文件的「庫存狀態」，庫存總表已經退役。
 - 「比價」：每天用收盤價對 KO 價、下限價判定存續事件（ADR 0020）；「比價日」維持原義，是可以 KO 的觀察日。
 
-**作業進度由資料庫事實推出，不另外手填**。每檔只有一個進度；有「已寄出」的一律是完成，其餘依序判斷，同一步有多筆紀錄取最新一筆：
+**作業進度由資料庫事實推出，不另外手填**。每檔只有一個進度，照下表的順序判斷，第一個符合的就是目前的階段（2026-10-23 從九個縮成五個，#186）：
 
 | 進度 | 判定 |
 |---|---|
-| 1 等商品條件 | 有交易明細，沒有商品條件或缺必填欄（[ADR 0016](0016-partial-product-terms.md)）；每個標的都已有進場價時，期初價格空白不算缺（#182） |
-| 2 等核對條件 | 核對條件不是「完成」 |
-| 3 待準備 | 沒有「已準備」紀錄 |
-| 4 待核對 | 有「已準備」，沒有核對結果 |
-| 5 核對未通過 | 有核對結果但還沒鎖住（最新一次不是通過或人工放行） |
-| 6 待放回 | 已鎖住，沒有「已放回」紀錄 |
-| 7 待寄信 | 有「已放回」，沒有「草稿已建立」紀錄 |
-| 8 待寄出 | 有「草稿已建立」，沒有「已寄出」 |
-| 9 完成 | 有「已寄出」；或以前清單更新建立、已鎖住的舊商品（ADR 0020），還沒有任何步驟紀錄（2026-10-23 確認，#184：以前在 Excel 走完） |
+| 完成 | 有「已寄出」；或以前清單更新建立、已鎖住的舊商品（ADR 0020），還沒有任何步驟紀錄（2026-10-23 確認，#184：以前在 Excel 走完） |
+| 1 資料準備中 | 核對前的三件裡有任一件還沒齊 |
+| 2 待核對 | 三件都齊了，還沒有核對結果 |
+| 3 待修正 | 有核對結果，但還沒鎖住（沒通過，等修正後再核一次） |
+| 4 待寄信 | 已鎖住（核對通過），還沒有「已寄出」 |
+| 5 完成 | 見第一列 |
+
+- 核對前的三件彼此平行、沒有先後，進度頁各一欄打勾：交易明細（有這檔的交易明細）；商品條件（有，而且不缺必填欄，[ADR 0016](0016-partial-product-terms.md)；每個標的都已有進場價時，期初價格空白不算缺，#182）；股價（核對條件是「完成」）。資料準備中的「卡住的原因」寫出缺哪幾件、缺什麼。
+- 核對後一定會放回 PDF（通過放正式檔，沒通過放待確認檔），所以放回不再單獨當一個階段；寄信由其他人負責。準備、核對、放回、建草稿等各步日期照舊顯示，同一步有多筆紀錄取最新一筆，但不再決定階段。
 
 **步驟紀錄**：新增 `workflow.step_record`（TDCC、步驟、時間、Windows 使用者名稱、結果、關聯檔案），只新增、不修改。「3 準備」寫「已準備」、「5 放回」寫「已放回」（含放回待確認檔）、「6 寄信草稿」寫「草稿已建立」，各自在寫 Excel 清單的同時寫；Excel 清單照舊產出。「已寄出」由作業人員在進度頁手動標記，不讀 Outlook。
 
@@ -46,7 +46,7 @@
 - 人工事件只有「顧客贖回」（事件日、備註），登記後這檔停止比價。
 - 舊清單匯入的狀態轉成來源「舊清單」的事件（ADR 0020）；`status_event`、`status_date`、`status_underlying`、`status_raw` 不再寫入，之後另行移除。
 
-**進度頁**：「8 進度」分頁：篩選交易日區間、作業進度、存續狀態、上手；每列一檔，顯示各步日期、目前進度、距交易日天數；可匯出 Excel（整張篩選結果）；按鈕「登記已寄出」「登記顧客贖回」「提出異議」，登記的入口只在這一頁。落後以距交易日天數排序，不設門檻。
+**進度頁**：「8 進度」分頁：篩選交易日區間、作業進度、存續狀態、上手；每列一檔，顯示各步日期、目前進度、距交易日天數；可匯出 Excel（整張篩選結果）；按鈕「登記已寄出」「登記顧客贖回」「提出異議」，登記的入口只在這一頁。「批次登記已寄出」（#186）選一個交易日，把交易日在這天以前（含）、目前是待寄信的商品各寫一筆「已寄出」：先列出這批有幾檔、哪些 TDCC，確認後才寫；寫的時候已經登記過或已經解鎖的跳過；完成後提示同一個範圍裡還沒核對完、這次沒有登記的檔數。落後以距交易日天數排序，不設門檻。
 
 **實作順序**：先完成 #138（每個分頁一個 module）再加進度頁。寄信草稿的建立條件不變，仍以商品資料夾的標準檔名 PDF 為準。
 
@@ -61,7 +61,7 @@
 ### 後果
 
 - 新增三張表與一個分頁，更新程式後要跑 migration。
-- 作業人員每天多一個動作：寄出後到進度頁標記；忘了標會停在「待寄出」，進度頁看得到。
+- 作業人員每天多一個動作：寄出後到進度頁標記；忘了標會停在「待寄信」，進度頁看得到；寄信由其他人負責時，可以用「批次登記已寄出」一次補登某天以前的（#186）。
 - 進度只反映資料庫知道的事：以前只用 Excel 跑過的步驟沒有紀錄，會顯示在較早的進度，可用「登記已寄出」補到完成。2026-10-23 起（#184）已鎖住的舊商品沒有步驟紀錄時直接算完成。
 - 寄信草稿改成以「核對通過並回填」為準（ADR 0006 的過渡期）仍是另一個決定。
 - CONTEXT.md 名詞段新增上述名詞。
@@ -81,23 +81,23 @@ The user's goal: automate the whole path from start to finish, see every product
 **Terms**
 
 - "Check-term status" (核對條件狀態) stays: 完成／等股價／等交易明細／待確認.
-- "Workflow progress" (作業進度): which of the seven steps a product has reached.
+- "Workflow progress" (作業進度): which of the five stages a product is in (#186).
 - "Lifecycle status" (存續狀態): 在庫／KO／接股／到期還本／顧客贖回; it replaces the older "inventory status" (庫存狀態), since the inventory master is retired.
 - "Observation" (比價): the daily comparison of closes against KO and KI prices that produces lifecycle events (ADR 0020); 比價日 keeps its meaning, a date on which KO can occur.
 
-**Workflow progress is derived from database facts, never filled in by hand.** Each product has exactly one progress value; a product with 已寄出 is always 完成, the rest are evaluated in order, and the latest record of a step wins:
+**Workflow progress is derived from database facts, never filled in by hand.** Each product has exactly one progress value, evaluated in the order below; the first rule that applies is the current stage (cut from nine to five on 2026-10-23, #186):
 
 | Progress | Rule |
 |---|---|
-| 1 等商品條件 | trade rows exist, product terms missing or required fields blank ([ADR 0016](0016-partial-product-terms.md)); a blank 期初價格 does not count once every underlying has an initial price (#182) |
-| 2 等核對條件 | check terms are not 完成 |
-| 3 待準備 | no 已準備 record |
-| 4 待核對 | 已準備 exists, no check result |
-| 5 核對未通過 | check results exist but the product is not locked (the latest is not a pass or a manual release) |
-| 6 待放回 | locked, no 已放回 record |
-| 7 待寄信 | 已放回 exists, no 草稿已建立 record |
-| 8 待寄出 | 草稿已建立 exists, no 已寄出 |
-| 9 完成 | 已寄出 exists; or a locked legacy product created by 清單更新 (ADR 0020) with no step records yet (confirmed 2026-10-23, #184: finished in Excel) |
+| 完成 | 已寄出 exists; or a locked legacy product created by 清單更新 (ADR 0020) with no step records yet (confirmed 2026-10-23, #184: finished in Excel) |
+| 1 資料準備中 | any of the three items needed before checking is not ready |
+| 2 待核對 | all three are ready, no check result yet |
+| 3 待修正 | check results exist but the product is not locked (it failed and waits to be fixed and checked again) |
+| 4 待寄信 | locked (passed the check), no 已寄出 yet |
+| 5 完成 | see the first row |
+
+- The three items needed before checking run in parallel, with no order, and each has a tick column on the progress tab: trade rows (the product has trade rows); product terms (present with no required field blank, [ADR 0016](0016-partial-product-terms.md); a blank 期初價格 does not count once every underlying has an initial price, #182); prices (check terms are 完成). For 資料準備中, the reason column says which items are missing and what is missing.
+- After checking, the PDFs are always returned (the final file on a pass, the pending file otherwise), so returning is no longer a stage of its own; mailing is done by someone else. The dates of preparation, checking, return, draft creation, and the other steps are still shown, the latest record of a step winning, but no longer decide the stage.
 
 **Step records**: a new `workflow.step_record` (TDCC, step, time, Windows user name, result, related file), insert-only. "3 準備" writes 已準備, "5 放回" writes 已放回 (including pending files returned), and "6 寄信草稿" writes 草稿已建立, each at the moment it writes its Excel list; the Excel lists are still produced. 已寄出 is marked by the operator on the progress tab; Outlook is not read.
 
@@ -107,7 +107,7 @@ The user's goal: automate the whole path from start to finish, see every product
 - The only manual event is 顧客贖回 (event date, note); after it is recorded the product is no longer observed.
 - Statuses imported from the old 清單更新 become events with source 舊清單 (ADR 0020); `status_event`, `status_date`, `status_underlying`, and `status_raw` are no longer written and will be removed separately.
 
-**Progress tab**: an "8 進度" tab filtered by trade-date range, workflow progress, lifecycle status, and issuer; one row per product showing each step's date, the current progress, and days since the trade date; export to Excel (the whole filtered result); buttons 登記已寄出, 登記顧客贖回, and 提出異議, the only place these are entered. Laggards are sorted by days since the trade date, with no threshold.
+**Progress tab**: an "8 進度" tab filtered by trade-date range, workflow progress, lifecycle status, and issuer; one row per product showing each step's date, the current progress, and days since the trade date; export to Excel (the whole filtered result); buttons 登記已寄出, 登記顧客贖回, and 提出異議, the only place these are entered. 批次登記已寄出 (batch sent, #186) takes a trade date and writes one 已寄出 for every product traded on or before it that is currently 待寄信: it lists how many and which TDCCs first and writes only after confirmation, skips products already recorded or no longer locked at write time, and afterwards says how many products in the same range are not checked yet and were not recorded. Laggards are sorted by days since the trade date, with no threshold.
 
 **Order of work**: finish #138 (one module per tab) before adding the progress tab. The mail-draft criteria are unchanged and still rely on standard-named PDFs in the product folder.
 
@@ -122,7 +122,7 @@ The user's goal: automate the whole path from start to finish, see every product
 ### Consequences
 
 - Three new tables and one new tab; run the migration after updating.
-- Operators gain one daily action: marking 已寄出 after sending; a forgotten mark leaves the product at 待寄出, visible on the progress tab.
+- Operators gain one daily action: marking 已寄出 after sending; a forgotten mark leaves the product at 待寄信, visible on the progress tab; when someone else does the mailing, 批次登記已寄出 records everything up to a day at once (#186).
 - Progress reflects only what the database knows: steps run earlier through Excel alone have no records and show an earlier progress, which 登記已寄出 can bring to 完成. Since 2026-10-23 (#184), locked legacy products with no step records count as 完成 directly.
 - Switching mail drafts to "passed and backfilled" (ADR 0006's transition) remains a separate decision.
 - The CONTEXT.md glossary gains the terms above.

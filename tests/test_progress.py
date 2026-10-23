@@ -1,4 +1,5 @@
-"""作業進度（`sp_workflow.progress`，#156、ADR 0019）：九個進度的推導、篩選與排序、從資料庫讀、匯出 Excel。
+"""作業進度（`sp_workflow.progress`，#156、#186、ADR 0019）：五個階段的推導、篩選與排序、批次登記已寄出的範圍、
+從資料庫讀、匯出 Excel。
 
 商品、交易明細與紀錄全部虛構。
 """
@@ -16,37 +17,37 @@ from db_synth import inventory, seed_products
 from order_synth import CONFIG
 from sp_workflow.lifecycle import KO, record_redemption
 from sp_workflow.progress import (
-    CHECK_FAILED,
     CHECK_TERMS_DONE,
     CHECKED,
     DATE_COLUMNS,
     EXPORT_COLUMNS,
     FINISHED,
     LOCKED,
+    PREPARING,
     PRICING_COLUMNS,
     PROGRESS,
+    READY_COLUMNS,
     SENT_STEP,
     TERMS_IMPORTED,
     TO_CHECK,
+    TO_FIX,
     TO_MAIL,
-    TO_PREPARE,
-    TO_RETURN,
-    TO_SEND,
     TRADES_IMPORTED,
-    WAIT_CHECK_TERMS,
-    WAIT_TERMS,
     Facts,
     ProgressRow,
+    SentBatch,
     by_days,
     export_progress,
     filter_rows,
     load_progress,
     progress_of,
+    ready_of,
+    sent_batch,
 )
 from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP
 
 T = dt.datetime(2026, 10, 20, 9, 0, tzinfo=dt.UTC)
-READY = {"has_terms": True, "terms_status": "完成"}
+READY = {"has_trades": True, "has_terms": True, "terms_status": "完成"}
 
 
 # ---------------------------------------------------------------- 推導（不碰資料庫）
@@ -55,60 +56,73 @@ READY = {"has_terms": True, "terms_status": "完成"}
 @pytest.mark.parametrize(
     ("facts", "progress", "reason"),
     [
-        (Facts("1"), WAIT_TERMS, "還沒有商品條件"),
-        (Facts("1", has_terms=True, missing=("Strike date", "KO Type")), WAIT_TERMS, "缺：Strike date、KO Type"),
-        (Facts("1", has_terms=True), WAIT_CHECK_TERMS, "還沒算核對條件"),
+        (Facts("1"), PREPARING, "還沒有交易明細；還沒有商品條件；還沒算核對條件"),
+        (Facts("1", **{**READY, "has_trades": False}), PREPARING, "還沒有交易明細"),
+        (Facts("1", **READY, missing=("Strike date", "KO Type")), PREPARING, "缺：Strike date、KO Type"),
+        (Facts("1", **{**READY, "terms_status": None}), PREPARING, "還沒算核對條件"),
         (
-            Facts("1", has_terms=True, terms_status="待確認", terms_reason="UL_1 AAA UW：沒有股價"),
-            WAIT_CHECK_TERMS,
+            Facts("1", **{**READY, "terms_status": "待確認"}, terms_reason="UL_1 AAA UW：沒有股價"),
+            PREPARING,
             "核對條件待確認：UL_1 AAA UW：沒有股價",
         ),
-        (Facts("1", has_terms=True, terms_status="等股價"), WAIT_CHECK_TERMS, "核對條件等股價"),
-        (Facts("1", **READY), TO_PREPARE, ""),
-        (Facts("1", **READY, dates={PREPARED_STEP: T}), TO_CHECK, ""),
+        (Facts("1", **{**READY, "terms_status": "等股價"}), PREPARING, "核對條件等股價"),
+        (Facts("1", **READY), TO_CHECK, ""),
+        (Facts("1", **READY, dates={PREPARED_STEP: T, RETURNED_STEP: T}), TO_CHECK, ""),  # 步驟日期不決定階段
         (
-            Facts("1", **READY, checks={"說明書": "不一致", "投資人須知": "通過"}, dates={PREPARED_STEP: T}),
-            CHECK_FAILED,
+            Facts("1", **READY, checks={"說明書": "不一致", "投資人須知": "通過"}),
+            TO_FIX,
             "投資人須知：通過、說明書：不一致",
         ),
-        (Facts("1", **READY, checks={"說明書": "通過"}, dates={PREPARED_STEP: T, LOCKED: T}), TO_RETURN, ""),
-        (
-            Facts("1", **READY, checks={"說明書": "通過"}, dates={PREPARED_STEP: T, LOCKED: T, RETURNED_STEP: T}),
-            TO_MAIL,
-            "",
-        ),
-        (
-            Facts(
-                "1",
-                **READY,
-                checks={"說明書": "通過"},
-                dates={PREPARED_STEP: T, LOCKED: T, RETURNED_STEP: T, DRAFTED_STEP: T},
-            ),
-            TO_SEND,
-            "",
-        ),
+        (Facts("1", **READY, checks={"說明書": "通過"}, dates={LOCKED: T}), TO_MAIL, ""),
+        (Facts("1", **READY, checks={"說明書": "通過"}, dates={LOCKED: T, DRAFTED_STEP: T}), TO_MAIL, ""),
         (Facts("1", dates={SENT_STEP: T}), FINISHED, ""),  # 有已寄出一律完成
         (Facts("1", locked_inventory=True), FINISHED, ""),  # 以前在 Excel 走完的舊商品（#184）
         (Facts("1", locked_inventory=True, **READY, dates={PREPARED_STEP: T}), TO_CHECK, ""),  # 走過新流程的照順序
-        (Facts("1", locked_inventory=True, **READY, dates={RETURNED_STEP: T}), TO_PREPARE, ""),
+        (
+            Facts("1", locked_inventory=True, has_trades=True, dates={RETURNED_STEP: T}),
+            PREPARING,
+            "還沒有商品條件；還沒算核對條件",
+        ),
     ],
 )
-def test_progress_is_the_first_step_not_yet_done(facts: Facts, progress: str, reason: str) -> None:
+def test_progress_is_the_first_stage_that_applies(facts: Facts, progress: str, reason: str) -> None:
     assert progress_of(facts) == (progress, reason)
 
 
-def test_the_nine_steps_are_in_order() -> None:
-    assert PROGRESS == (
-        WAIT_TERMS,
-        WAIT_CHECK_TERMS,
-        TO_PREPARE,
-        TO_CHECK,
-        CHECK_FAILED,
-        TO_RETURN,
-        TO_MAIL,
-        TO_SEND,
-        FINISHED,
-    )
+@pytest.mark.parametrize(
+    ("facts", "ready"),
+    [
+        (Facts("1"), (False, False, False)),
+        (Facts("1", **READY), (True, True, True)),
+        (Facts("1", **READY, missing=("KO Type",)), (True, False, True)),
+        (Facts("1", **{**READY, "terms_status": "等股價", "has_trades": False}), (False, True, False)),
+    ],
+)
+def test_the_three_preparations_are_ticked_independently(facts: Facts, ready: tuple[bool, ...]) -> None:
+    assert READY_COLUMNS == ("交易明細", "商品條件", "股價")
+    assert ready_of(facts) == ready
+
+
+def test_the_five_stages_are_in_order() -> None:
+    assert PROGRESS == (PREPARING, TO_CHECK, TO_FIX, TO_MAIL, FINISHED)
+    assert PROGRESS == ("資料準備中", "待核對", "待修正", "待寄信", "完成")
+
+
+def test_a_batch_of_sent_takes_only_products_waiting_for_mail_up_to_the_day() -> None:
+    day = dt.date(2026, 10, 22)
+    rows = [
+        row("5", progress=TO_MAIL, trade_date=day),
+        row("1", progress=TO_MAIL, trade_date=dt.date(2026, 10, 1)),
+        row("2", progress=TO_MAIL, trade_date=dt.date(2026, 10, 23)),  # 選的日期之後
+        row("3", progress=TO_MAIL, trade_date=None, days=None),
+        row("4", progress=FINISHED, trade_date=day),
+        row("6", progress=TO_FIX, trade_date=day),
+        row("7", progress=TO_CHECK, trade_date=dt.date(2026, 9, 1)),
+        row("8", progress=PREPARING, trade_date=day),
+        row("9", progress=PREPARING, trade_date=dt.date(2026, 10, 23)),
+    ]
+
+    assert sent_batch(rows, day) == SentBatch(day, ("1", "5"), 3), "還沒核對完：資料準備中、待核對、待修正"
 
 
 def row(tdcc: str, **changes) -> ProgressRow:
@@ -117,7 +131,7 @@ def row(tdcc: str, **changes) -> ProgressRow:
         "issuer": "SG",
         "trade_date": dt.date(2026, 10, 15),
         "days": 7,
-        "progress": TO_PREPARE,
+        "progress": TO_CHECK,
         "lifecycle": "在庫",
         "dates": (None,) * len(DATE_COLUMNS),
         "reason": "",
@@ -142,7 +156,7 @@ def test_rows_are_filtered_by_trade_date_progress_lifecycle_and_issuer() -> None
     assert tdccs(first=dt.date(2026, 10, 1)) == ["1", "4", "5", "6"], "有區間時沒有交易日的不列"
     assert tdccs(last=dt.date(2026, 10, 1)) == ["2"]
     assert tdccs(first=dt.date(2026, 10, 15), last=dt.date(2026, 10, 15)) == ["1", "4", "5", "6"]
-    assert tdccs(progress={FINISHED, TO_PREPARE}) == ["1", "2", "3", "4", "5", "6"]
+    assert tdccs(progress={FINISHED, TO_CHECK}) == ["1", "2", "3", "4", "5", "6"]
     assert tdccs(progress={FINISHED}) == ["4"]
     assert tdccs(lifecycle={KO}) == ["5"]
     assert tdccs(issuer="BARC") == ["6"]
@@ -178,6 +192,7 @@ def test_export_writes_the_rows_as_shown(tmp_path: Path) -> None:
         "037199990002",
         dates=dates,
         reason="還沒有商品條件",
+        ready=(True, False, False),
         pricing="等股價",
         pricing_reason="UL_1 AAA UW：2026-10-21 沒有收盤價",
         observed_through=dt.date(2026, 10, 20),
@@ -189,7 +204,8 @@ def test_export_writes_the_rows_as_shown(tmp_path: Path) -> None:
     sheet = openpyxl.load_workbook(path).active
     rows = list(sheet.iter_rows(values_only=True))
     assert rows[0] == EXPORT_COLUMNS
-    assert rows[1][:6] == ("037199990002", "SG", dt.datetime(2026, 10, 15), 7, TO_PREPARE, "在庫")
+    assert rows[1][:9] == ("037199990002", "SG", dt.datetime(2026, 10, 15), 7, TO_CHECK, "✓", None, None, "在庫")
+    assert rows[0][5:8] == READY_COLUMNS, "三件打勾接在作業進度後面"
     pricing = rows[0].index(PRICING_COLUMNS[0])
     assert rows[0][pricing : pricing + 3] == PRICING_COLUMNS
     assert rows[1][pricing : pricing + 3] == (
@@ -283,15 +299,21 @@ def test_progress_is_read_from_the_database(pg) -> None:
     assert dates[PREPARED_STEP] == dates[CHECKED] == dates[LOCKED] == dates[RETURNED_STEP] == later, "同一步取最新"
     assert dates[TRADES_IMPORTED] is not None and dates[TERMS_IMPORTED] is not None
     assert dates[CHECK_TERMS_DONE] == T and dates[DRAFTED_STEP] is None and dates[SENT_STEP] is None
-    assert (rows[B].progress, rows[B].reason) == (WAIT_CHECK_TERMS, "核對條件待確認：UL_1 AAA UW：沒有股價")
-    assert (rows[C].progress, rows[C].reason) == (WAIT_TERMS, "缺：Strike date")
+    assert (rows[B].progress, rows[B].reason) == (PREPARING, "還沒有交易明細；核對條件待確認：UL_1 AAA UW：沒有股價")
+    assert (rows[C].progress, rows[C].reason) == (PREPARING, "還沒有交易明細；缺：Strike date；還沒算核對條件")
+    assert {t: r.ready for t, r in rows.items()} == {
+        A: (True, True, True),
+        B: (False, True, False),
+        C: (False, False, False),
+        D: (True, False, False),
+    }
     d = rows[D]
     assert (d.issuer, d.trade_date, d.days, d.progress, d.reason) == (
         "MS",
         dt.date(2026, 10, 1),
         21,
-        WAIT_TERMS,
-        "還沒有商品條件",
+        PREPARING,
+        "還沒有商品條件；還沒算核對條件",
     )
     assert d.lifecycle == "在庫"
     pricing = {t: (r.pricing_text, r.pricing_reason, r.observed_through) for t, r in rows.items()}
@@ -310,6 +332,8 @@ def test_blank_initial_pricing_counts_only_until_every_underlying_has_an_initial
     seed_products(pg, [inventory(t, [("台北", 10000)]) for t in (A, B, C, E)])
     pg.execute("UPDATE workflow.product SET strike_date = trade_date, initial_pricing = NULL")
     pg.execute("UPDATE workflow.product SET maturity_date = NULL WHERE tdcc = %s", (C,))
+    for tdcc in (A, B, C, E):
+        trade_row(pg, tdcc, dt.date(2026, 10, 15))
     for tdcc, prices in (
         (A, {1: "100", 2: "50"}),
         (B, {1: "100"}),  # UL_2 沒有進場價
@@ -326,10 +350,10 @@ def test_blank_initial_pricing_counts_only_until_every_underlying_has_an_initial
     rows = {r.tdcc: (r.progress, r.reason) for r in load_progress(pg, CONFIG, dt.date(2026, 10, 22))}
 
     assert rows == {
-        A: (TO_PREPARE, ""),
-        B: (WAIT_TERMS, "缺：期初價格"),
-        C: (WAIT_TERMS, "缺：Maturity date"),
-        E: (WAIT_TERMS, "缺：期初價格"),
+        A: (TO_CHECK, ""),
+        B: (PREPARING, "缺：期初價格"),
+        C: (PREPARING, "缺：Maturity date"),
+        E: (PREPARING, "缺：期初價格"),
     }, "進場價不齊（沒有或是 0）時照舊算缺；其他必填欄照舊"
 
 
@@ -342,6 +366,7 @@ def test_locked_legacy_products_without_step_records_are_finished(pg) -> None:
     pg.execute("UPDATE workflow.product SET source = '人工維護' WHERE tdcc = %s", (D,))
     for tdcc in (A, B, C, D):
         check_terms(pg, tdcc)
+        trade_row(pg, tdcc, dt.date(2026, 10, 15))
     step(pg, B, PREPARED_STEP, T)
 
     rows = {r.tdcc: r for r in load_progress(pg, CONFIG, dt.date(2026, 10, 22))}
@@ -349,8 +374,8 @@ def test_locked_legacy_products_without_step_records_are_finished(pg) -> None:
     assert {t: (r.progress, r.reason) for t, r in rows.items()} == {
         A: (FINISHED, ""),
         B: (TO_CHECK, ""),
-        C: (TO_PREPARE, ""),
-        D: (TO_PREPARE, ""),
+        C: (TO_CHECK, ""),
+        D: (TO_CHECK, ""),
     }
     assert dict(zip(DATE_COLUMNS, rows[A].dates, strict=True))[LOCKED] == T, "各步日期照實際有的顯示"
 

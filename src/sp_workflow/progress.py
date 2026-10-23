@@ -1,11 +1,13 @@
-"""作業進度（#156、ADR 0019）：每檔商品走到九個作業進度的哪一步，由資料庫事實推出，不另外手填。
+"""作業進度（#156、#186、ADR 0019）：每檔商品在五個階段的哪一個，由資料庫事實推出，不另外手填。
 
-一檔一個進度：有「已寄出」一律完成；以前清單更新建立、已鎖住的舊商品沒有步驟紀錄也算完成（以前在 Excel 走完，#184）；其餘依序判斷（`progress_of`），同一步有多筆紀錄取最新一筆：
-等商品條件（沒有商品條件或缺必填欄；每個標的都有進場價時期初價格空白不算缺，#182）→ 等核對條件（不是「完成」）→ 待準備（沒有「已準備」）→
-待核對（沒有核對結果）→ 核對未通過（有核對結果但還沒鎖住）→ 待放回（沒有「已放回」）→
-待寄信（沒有「草稿已建立」）→ 待寄出。
-商品的範圍是有交易明細或有商品條件的 TDCC。各步日期：交易明細匯入、商品條件匯入（Order 匯入、人工維護
-存檔或清單更新）、核對條件完成（最後一次計算）、已準備、核對、鎖住、已放回、草稿已建立、已寄出。
+核對前要齊三件，彼此平行、沒有先後（`ready_of`）：交易明細（有這檔的交易明細）、商品條件（有、而且不缺必填欄；
+每個標的都有進場價時期初價格空白不算缺，#182）、股價（核對條件是「完成」）。
+一檔一個階段（`progress_of`），照順序判斷、第一個符合的就是：有「已寄出」或以前清單更新建立、已鎖住、沒有步驟紀錄
+的舊商品（以前在 Excel 走完，#184）→ 完成；三件缺任一件 → 資料準備中；沒有核對結果 → 待核對；有核對結果、
+還沒鎖住 → 待修正；已鎖住 → 待寄信。
+商品的範圍是有交易明細或有商品條件的 TDCC。各步日期只顯示、不決定階段：交易明細匯入、商品條件匯入（Order 匯入、
+人工維護存檔或清單更新）、核對條件完成（最後一次計算）、已準備、核對、鎖住、已放回、草稿已建立、已寄出；同一步有多筆
+紀錄取最新一筆。批次登記已寄出（`sent_batch`）只登記交易日在選定日期以前（含）、目前是待寄信的商品。
 比價狀態（#170、ADR 0020）照 `workflow.pricing_status` 帶出：狀態、原因、已比到的日期；還沒比過的空白。
 只讀資料庫；匯出 Excel 的存檔方式同商品匯出（`product_export.save_rows`）。
 """
@@ -35,18 +37,16 @@ if TYPE_CHECKING:
 SENT_STEP = "已寄出"  # 進度頁登記（#157）
 _FLOW_STEPS = (PREPARED_STEP, RETURNED_STEP, DRAFTED_STEP, SENT_STEP)  # 新流程的步驟紀錄
 
-WAIT_TERMS = "等商品條件"
-WAIT_CHECK_TERMS = "等核對條件"
-TO_PREPARE = "待準備"
+PREPARING = "資料準備中"
 TO_CHECK = "待核對"
-CHECK_FAILED = "核對未通過"
-TO_RETURN = "待放回"
+TO_FIX = "待修正"
 TO_MAIL = "待寄信"
-TO_SEND = "待寄出"
 FINISHED = "完成"
+PROGRESS = (PREPARING, TO_CHECK, TO_FIX, TO_MAIL, FINISHED)
+_UNCHECKED = (PREPARING, TO_CHECK, TO_FIX)  # 還沒核對完（批次登記已寄出時提示）
+READY_COLUMNS = ("交易明細", "商品條件", "股價")  # 核對前要齊的三件（#186），畫面打勾
 # 每個標的都有進場價時的必填欄（#182）：期初價格（定價方式）只是用來取進場價，取到了就沒差
 _PRICED_REQUIRED = tuple(name for name in REQUIRED if name != PRICING_FIELD)
-PROGRESS = (WAIT_TERMS, WAIT_CHECK_TERMS, TO_PREPARE, TO_CHECK, CHECK_FAILED, TO_RETURN, TO_MAIL, TO_SEND, FINISHED)
 
 TRADES_IMPORTED = "交易明細匯入"
 TERMS_IMPORTED = "商品條件匯入"
@@ -59,8 +59,10 @@ DATE_COLUMNS = (
 )  # fmt: skip
 PRICING_COLUMNS = ("比價狀態", "已比到", "比價原因")  # #170
 EXPORT_COLUMNS = (
-    "TDCC", "上手", "交易日", "距今天數", "作業進度", "存續狀態", *PRICING_COLUMNS, "異議", *DATE_COLUMNS, "卡住的原因",
+    "TDCC", "上手", "交易日", "距今天數", "作業進度", *READY_COLUMNS, "存續狀態", *PRICING_COLUMNS, "異議", *DATE_COLUMNS,
+    "卡住的原因",
 )  # fmt: skip
+TICK = "✓"
 
 
 @dataclass(frozen=True)
@@ -68,6 +70,7 @@ class Facts:
     """一檔商品在資料庫裡的事實；`dates` 是 `DATE_COLUMNS` → 最新一筆的時間（沒有時不放）。"""
 
     tdcc: str
+    has_trades: bool = False  # 有交易明細
     has_terms: bool = False  # 有商品條件
     locked_inventory: bool = False  # 以前清單更新建立、已鎖住的舊商品（ADR 0020）
     missing: tuple[str, ...] = ()  # 缺的必填欄（畫面的欄名）
@@ -94,6 +97,12 @@ class ProgressRow:
     pricing_reason: str = ""  # 等股價的標的與日期、待確認的原因、出場的事件
     observed_through: dt.date | None = None  # 已比到的日期
     pricing_unlocked: bool = False  # 比價時還沒鎖住
+    ready: tuple[bool, ...] = (False,) * len(READY_COLUMNS)  # 依 `READY_COLUMNS`：三件齊了沒
+
+    @property
+    def ready_marks(self) -> tuple[str, ...]:
+        """畫面與匯出的三欄打勾：齊了打勾，沒齊空白。"""
+        return tuple(TICK if ready else "" for ready in self.ready)
 
     @property
     def pricing_text(self) -> str:
@@ -113,33 +122,43 @@ class ProgressExport:
 
 
 def progress_of(facts: Facts) -> tuple[str, str]:
-    """(作業進度, 卡住的原因)：照 ADR 0019 的表依序判斷，第一個不成立的就是目前的進度。"""
+    """(作業進度, 卡住的原因)：照 ADR 0019 的表依序判斷，第一個符合的就是目前的階段。"""
     dates = facts.dates
     if SENT_STEP in dates:
         return FINISHED, ""
     if facts.locked_inventory and not any(name in dates for name in _FLOW_STEPS):
         return FINISHED, ""  # 以前在 Excel 走完（#184）；走過新流程的照下面的順序
-    if not facts.has_terms:
-        return WAIT_TERMS, "還沒有商品條件"
-    if facts.missing:
-        return WAIT_TERMS, f"缺：{'、'.join(facts.missing)}"
-    if facts.terms_status != TERMS_DONE:
-        if facts.terms_status is None:
-            return WAIT_CHECK_TERMS, "還沒算核對條件"
-        return WAIT_CHECK_TERMS, f"核對條件{facts.terms_status}" + (
-            f"：{facts.terms_reason}" if facts.terms_reason else ""
-        )
-    if PREPARED_STEP not in dates:
-        return TO_PREPARE, ""
+    gaps = _gaps(facts)
+    if gaps:
+        return PREPARING, "；".join(gaps.values())
     if not facts.checks:
         return TO_CHECK, ""
     if LOCKED not in dates:
-        return CHECK_FAILED, "、".join(f"{kind}：{category}" for kind, category in sorted(facts.checks.items()))
-    if RETURNED_STEP not in dates:
-        return TO_RETURN, ""
-    if DRAFTED_STEP not in dates:
-        return TO_MAIL, ""
-    return TO_SEND, ""
+        return TO_FIX, "、".join(f"{kind}：{category}" for kind, category in sorted(facts.checks.items()))
+    return TO_MAIL, ""
+
+
+def ready_of(facts: Facts) -> tuple[bool, ...]:
+    """核對前的三件（依 `READY_COLUMNS`）齊了沒。"""
+    gaps = _gaps(facts)
+    return tuple(name not in gaps for name in READY_COLUMNS)
+
+
+def _gaps(facts: Facts) -> dict[str, str]:
+    """三件裡還沒齊的：件 → 缺什麼（依 `READY_COLUMNS` 的順序）；都齊了是空的。"""
+    trades, terms, prices = READY_COLUMNS
+    gaps = {}
+    if not facts.has_trades:
+        gaps[trades] = "還沒有交易明細"
+    if not facts.has_terms:
+        gaps[terms] = "還沒有商品條件"
+    elif facts.missing:
+        gaps[terms] = f"缺：{'、'.join(facts.missing)}"
+    if facts.terms_status is None:
+        gaps[prices] = "還沒算核對條件"
+    elif facts.terms_status != TERMS_DONE:
+        gaps[prices] = f"核對條件{facts.terms_status}" + (f"：{facts.terms_reason}" if facts.terms_reason else "")
+    return gaps
 
 
 def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date) -> tuple[ProgressRow, ...]:
@@ -156,7 +175,9 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
             "SELECT t.tdcc, min(t.trade_date), max(r.imported_at) FROM workflow.trade_row t"
             " JOIN workflow.import_run r ON r.run_id = t.first_run_id GROUP BY t.tdcc"
         ):
-            of(tdcc)["dates"][TRADES_IMPORTED] = imported
+            item = of(tdcc)
+            item["dates"][TRADES_IMPORTED] = imported
+            item["has_trades"] = True
             trade_dates[tdcc] = first_trade
         initial_prices: dict[str, dict[int, Decimal | None]] = {}
         for tdcc, seq, price in conn.execute("SELECT tdcc, seq, initial_price FROM workflow.underlying_price"):
@@ -230,6 +251,7 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
                 reason,
                 objection_text(objections.get(tdcc, ())),
                 **pricing.get(tdcc, {}),
+                ready=ready_of(found),
             )
         )
     return tuple(rows)
@@ -265,6 +287,25 @@ def filter_rows(
     ]
 
 
+@dataclass(frozen=True)
+class SentBatch:
+    """批次登記已寄出（#186）的範圍：交易日在 `through` 以前（含）的商品裡，要登記的與還沒核對完、這次不登記的。"""
+
+    through: dt.date
+    tdccs: tuple[str, ...]  # 目前是待寄信的，依 TDCC
+    unchecked: int  # 還沒核對完（資料準備中、待核對、待修正）的檔數
+
+
+def sent_batch(rows: Iterable[ProgressRow], through: dt.date) -> SentBatch:
+    """交易日在 `through` 以前（含）、目前是待寄信的商品；沒有交易日的（例如還沒有交易明細）兩邊都不算。"""
+    due = [row for row in rows if row.trade_date is not None and row.trade_date <= through]
+    return SentBatch(
+        through,
+        tuple(sorted(row.tdcc for row in due if row.progress == TO_MAIL)),
+        sum(row.progress in _UNCHECKED for row in due),
+    )
+
+
 def by_days(rows: Iterable[ProgressRow]) -> list[ProgressRow]:
     """預設排序：距交易日天數由大到小（落後的在上面），沒有交易日的放最後，同天數依 TDCC。"""
     return sorted(rows, key=lambda row: (row.days is None, -(row.days or 0), row.tdcc))
@@ -284,8 +325,8 @@ def export_progress(rows: Sequence[ProgressRow], path: Path) -> ProgressExport:
 def export_values(row: ProgressRow) -> tuple[object, ...]:
     """一列的值，依 `EXPORT_COLUMNS`。"""
     return (
-        row.tdcc, row.issuer, row.trade_date, row.days, row.progress, row.lifecycle, row.pricing_text,
-        row.observed_through, row.pricing_reason, row.objection, *row.dates, row.reason,
+        row.tdcc, row.issuer, row.trade_date, row.days, row.progress, *row.ready_marks, row.lifecycle,
+        row.pricing_text, row.observed_through, row.pricing_reason, row.objection, *row.dates, row.reason,
     )  # fmt: skip
 
 
