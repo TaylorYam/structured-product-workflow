@@ -28,7 +28,7 @@ from sp_workflow.database import require_in_transaction
 from sp_workflow.file_tools import save_rows
 from sp_workflow.lifecycle import Objection, lifecycle_status, open_objections
 from sp_workflow.product_record import PRICING_FIELD, REQUIRED, missing_fields
-from sp_workflow.product_terms import ImportConfig, issuer_code, read_many
+from sp_workflow.product_terms import ImportConfig, issuer_code, locked, read_many
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource, Progress
 from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP, SENT_STEP
 
@@ -207,8 +207,7 @@ def _read_facts(conn: psycopg.Connection) -> _AllFacts:
         required = _PRICED_REQUIRED if _has_initial_prices(product, initial_prices) else REQUIRED
         item.update(
             has_terms=True,
-            locked_inventory=stored.source == ProductSource.INVENTORY
-            and stored.locked_at is not None,  # 同 `product_terms.locked`
+            locked_inventory=stored.source == ProductSource.INVENTORY and locked(stored),
             missing=tuple(missing_fields(product, required)),
         )
         _put(item["dates"], TERMS_IMPORTED, terms_imported.get(tdcc))

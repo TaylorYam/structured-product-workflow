@@ -457,12 +457,15 @@ def recalculate_corrected(
 def _products(conn: psycopg.Connection, tdccs: Collection[str] | None, *, unlocked: bool = False) -> list[ProductTerms]:
     """這幾檔（None：全部）計算用的商品條件，依 TDCC 排、鎖住商品條件列（`product_terms.read_many`）。
 
-    `unlocked`：只要還沒鎖住的（鎖住＝`locked_at` 有值，同 `product_terms.locked`）。
+    `unlocked`：只要還沒鎖住的（`product_terms.locked`）。讀到的每一檔都鎖到 transaction 結束，包括已鎖住的。
     """
-    from sp_workflow.product_terms import read_many  # product_terms 也 import 這裡（寫入後重算），放這裡避免循環 import
+    from sp_workflow.product_terms import (  # product_terms 也 import 這裡（寫入後重算），避免循環 import
+        locked,
+        read_many,
+    )
 
     stored = read_many(conn, None if tdccs is None else list(tdccs), lock=True)
-    return [_product(s.tdcc, s.columns) for s in stored.values() if not (unlocked and s.locked_at is not None)]
+    return [_product(s.tdcc, s.columns) for s in stored.values() if not (unlocked and locked(s))]
 
 
 def _recalculate(

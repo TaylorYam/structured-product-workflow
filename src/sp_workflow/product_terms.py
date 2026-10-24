@@ -249,16 +249,16 @@ def read_many(conn: psycopg.Connection, tdccs: Sequence[str] | None = None, *, l
         columns = dict(zip(PRODUCT_COLUMNS, row[:n], strict=True))
         source, isin, locked_at = row[n:]
         found[tdcc] = Stored(
-            tdcc,
-            columns,
-            source,
-            isin,
-            locked_at,
-            _locked_reason(source, locked_at),
-            checks.get(tdcc),
-            tuple(prices.get(tdcc, ())),
-            autocall.get(tdcc),
-            tuple(branches.get(tdcc, ())),
+            tdcc=tdcc,
+            columns=columns,
+            source=source,
+            isin=isin,
+            locked_at=locked_at,
+            locked_reason=_locked_reason(source, locked_at),
+            check=checks.get(tdcc),
+            prices=tuple(prices.get(tdcc, ())),
+            autocall=autocall.get(tdcc),
+            branches=tuple(branches.get(tdcc, ())),
         )
     return found
 
