@@ -415,7 +415,10 @@ def _events_text(events: Sequence[StoredEvent]) -> str:
 def _load_terms(
     conn: psycopg.Connection,
 ) -> tuple[list[Terms], dict[str, bool], dict[str, tuple[str, str | None]]]:
-    """核對條件完成的商品的比價條件、每檔是否鎖住，以及核對條件不是完成的 {TDCC: (狀態, 原因)}。"""
+    """核對條件完成的商品的比價條件、每檔是否鎖住，以及核對條件不是完成的 {TDCC: (狀態, 原因)}。
+
+    商品條件還是自己讀；要改讀法時先看能不能用 `product_terms.read_many`（#204）。
+    """
     rows = conn.execute(  # 鎖住＝`locked_at` 有值（同 `product_terms.locked`）
         "SELECT p.tdcc, p.ko_type, p.barrier_type, p.strike_date, p.final_valuation_date,"
         " p.non_call_months, p.tenor_months, p.locked_at IS NOT NULL, c.status, c.reason"

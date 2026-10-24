@@ -35,12 +35,12 @@ from sp_workflow.mailbox import Mailbox, is_pb, load_mailbox
 from sp_workflow.preparation import find_product_folders, is_tdcc, parse_tdccs
 from sp_workflow.product_record import (
     PRICING_FIELD,
-    PRODUCT_COLUMNS,
     REQUIRED,
     STRIKE_FIELD,
     invert_upfront,
     missing_fields,
 )
+from sp_workflow.product_terms import read
 
 if TYPE_CHECKING:
     import psycopg
@@ -203,10 +203,9 @@ def _draft_one(
     template_path: Path | None,
 ) -> DraftOutcome:
     with conn.transaction():
-        product = _product(conn, tdcc)
-        branches = [b for (b,) in conn.execute(
-            "SELECT branch FROM workflow.branch_allocation WHERE tdcc = %s ORDER BY seq", (tdcc,)
-        )]  # fmt: skip
+        stored = read(conn, tdcc)
+        product = None if stored is None else stored.columns
+        branches = [] if stored is None else [branch for branch, _ in stored.branches]
         fc_names = [n for (n,) in conn.execute(
             "SELECT fc_name FROM workflow.trade_row WHERE tdcc = %s ORDER BY row_seq", (tdcc,)
         )]  # fmt: skip
@@ -274,11 +273,6 @@ def _order_fixed_cc(people: Sequence[Any]) -> tuple[Any, ...]:
 
 # 信裡要用、空白就不寄的必填欄（#114）：信裡沒有 Strike date；期初價格空白時信裡空白（以前清單更新的商品可能沒有）
 _MAIL_REQUIRED = tuple(name for name in REQUIRED if name not in (STRIKE_FIELD, PRICING_FIELD))
-
-
-def _product(conn: psycopg.Connection, tdcc: str) -> dict[str, Any] | None:
-    row = conn.execute(f"SELECT {', '.join(PRODUCT_COLUMNS)} FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
-    return None if row is None else dict(zip(PRODUCT_COLUMNS, row, strict=True))
 
 
 def _attachments(tdcc: str, folders: Sequence[Path], unreadable: Sequence[Path]) -> tuple[tuple[Path, ...], str]:
