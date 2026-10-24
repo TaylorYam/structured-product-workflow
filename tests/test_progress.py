@@ -370,14 +370,16 @@ def test_a_sent_record_finishes_the_product(pg) -> None:
 
 @pytest.mark.db
 def test_still_pending_mail_rereads_the_same_facts_as_the_progress(pg) -> None:
-    """#205：鎖住未寄的還是待寄信；鎖住已寄的、還沒鎖住的、更正解鎖的不是。依傳入的順序、不重複。"""
-    seed_waiting_for_mail(pg, [A, B, C, D])
+    """#205：鎖住未寄的還是待寄信；鎖住已寄的、還沒鎖住的、更正解鎖的、核對條件不再是完成的不是。依傳入的順序、不重複。"""
+    e = "147199990005"
+    seed_waiting_for_mail(pg, [A, B, C, D, e])
+    pg.execute("UPDATE workflow.check_terms SET status = '待確認' WHERE tdcc = %s", (e,))  # 鎖住的更正後重算不是完成
     step(pg, B, SENT_STEP, T)  # 鎖住、已寄出
     pg.execute("DELETE FROM workflow.check_result WHERE tdcc = %s", (C,))  # 還沒核對、還沒鎖住
     pg.execute("UPDATE workflow.product SET locked_at = NULL WHERE tdcc IN (%s, %s)", (C, D))  # D：核對過、被更正解鎖
     rows = {r.tdcc: r.progress for r in load_progress(pg, CONFIG, dt.date(2026, 10, 22))}
 
-    found = still_pending_mail(pg, [D, C, B, A, A, "999999999999"])
+    found = still_pending_mail(pg, [e, D, C, B, A, A, "999999999999"])
 
     assert found == (A,)
     assert [t for t, progress in rows.items() if progress == TO_MAIL] == [A], "和進度頁同一個判斷"

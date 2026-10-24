@@ -107,7 +107,7 @@ def test_connect_checks_the_schema_version_once(pg, pg_settings) -> None:
 def test_functions_in_the_callers_transaction_refuse_to_run_outside_one(pg_settings) -> None:
     """#205：沒有進行中的 transaction 時丟 `RuntimeError`（用 `if`，`python -O` 也照樣檢查）。"""
     with connect(pg_settings) as conn:
-        with pytest.raises(RuntimeError, match="transaction"):
+        with pytest.raises(RuntimeError, match="IDLE"):
             require_in_transaction(conn)
         with conn.transaction():
             require_in_transaction(conn)

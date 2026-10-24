@@ -193,8 +193,9 @@ def require_in_transaction(conn: psycopg.Connection) -> None:
     """
     from psycopg.pq import TransactionStatus
 
-    if conn.info.transaction_status != TransactionStatus.INTRANS:
-        raise RuntimeError("這個動作要在呼叫端的 transaction 裡執行")
+    status = conn.info.transaction_status
+    if status != TransactionStatus.INTRANS:
+        raise RuntimeError(f"這個動作要在呼叫端的 transaction 裡執行（目前是 {status.name}）")
 
 
 def require_current_schema(conn: psycopg.Connection) -> None:

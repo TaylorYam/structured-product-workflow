@@ -166,18 +166,18 @@ def _gaps(facts: Facts) -> dict[str, str]:
 
 
 @dataclass
-class _Read:
+class _AllFacts:
     """`_read_facts` 讀到的：每檔的事實（`Facts` 的欄）、資料庫的上手欄與交易日。"""
 
     facts: dict[str, dict] = field(default_factory=dict)
-    issuers: dict[str, object] = field(default_factory=dict)
+    issuers: dict[str, str | None] = field(default_factory=dict)
     trade_dates: dict[str, dt.date | None] = field(default_factory=dict)
 
 
-def _read_facts(conn: psycopg.Connection) -> _Read:
+def _read_facts(conn: psycopg.Connection) -> _AllFacts:
     """所有有交易明細或商品條件的商品的事實（判斷階段用的）；在呼叫端的 transaction 裡讀。"""
     require_in_transaction(conn)
-    found = _Read()
+    found = _AllFacts()
     facts, trade_dates = found.facts, found.trade_dates
 
     def of(tdcc: str) -> dict:

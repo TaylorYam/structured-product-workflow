@@ -88,7 +88,6 @@ from sp_workflow.product_terms import (
     write_batch,
 )
 from sp_workflow.progress import (
-    SENT_STEP,
     ProgressRow,
     SentBatch,
     load_progress,
@@ -97,6 +96,7 @@ from sp_workflow.progress import (
 )
 from sp_workflow.returning import ReturnReceipt, return_to_folders
 from sp_workflow.step_records import (
+    SENT_STEP,
     Recorded,
     StepRecord,
     already_sent,
@@ -593,10 +593,13 @@ def _mailbox_change(settings: ConnectionSettings, write: Callable[[psycopg.Conne
 def _each(conn: psycopg.Connection, tdccs: Sequence[str], write: Callable[[str], object]) -> Registered:
     """一檔一個 transaction（每檔明寫 `conn.transaction()`）：寫不進去的只影響那一檔、寫好的照樣保留，原因放在結果裡。
 
-    呼叫前不能有沒結束的 transaction，否則每檔只是其中的 savepoint、要等到連線關掉才一起 commit。
+    呼叫前不能有沒結束的 transaction，否則每檔只是其中的 savepoint、要等到連線關掉才一起 commit；有的話丟 `RuntimeError`。
     """
     import psycopg
+    from psycopg.pq import TransactionStatus
 
+    if conn.info.transaction_status != TransactionStatus.IDLE:
+        raise RuntimeError("一檔一個 transaction：呼叫前不能有沒結束的 transaction")
     done: list[str] = []
     failed: list[tuple[str, str]] = []
     for tdcc in tdccs:
