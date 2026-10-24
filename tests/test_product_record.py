@@ -114,3 +114,15 @@ def test_missing_fields_name_blank_required_fields_and_their_derived_codes() -> 
     assert missing_fields(columns_of(dict.fromkeys(FIELDS), None, DENOMINATIONS)) == [
         name for name in REQUIRED if name != "Product"
     ]
+
+
+@pytest.mark.parametrize("module", ["sp_workflow.product_record", "sp_workflow.mailbox"])
+def test_loading_does_not_pull_in_the_daily_import(module: str) -> None:
+    """`product_record`、`mailbox` 不依賴每日匯入（#201）：新的 Python 只 import 它，`daily_import` 不會被載入。"""
+    import subprocess
+    import sys
+
+    probe = f"import sys, {module}; print('sp_workflow.daily_import' in sys.modules)"
+    result = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True)
+
+    assert result.stdout.strip() == "False"

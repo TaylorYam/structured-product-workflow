@@ -8,14 +8,16 @@ from __future__ import annotations
 import pytest
 
 from db_synth import seed_mailbox
-from sp_workflow.daily_import import Person, load_mailbox
 from sp_workflow.mailbox import (
     Alias,
+    Mailbox,
     MailboxError,
     MailboxRows,
+    Person,
     alias_from,
     delete_alias,
     delete_person,
+    load_mailbox,
     load_rows,
     person_from,
     save_alias,
@@ -26,6 +28,24 @@ pytestmark = pytest.mark.db
 
 AMY = Person("Amy", "amy@example.com", "FC", False)
 BEN = Person("Ben", "ben@example.com", "FC", False)
+
+
+# ---------- 名字比對（#201：比對規則唯一的測試位置） ----------
+
+MAILBOX = Mailbox((AMY, BEN), {"amie": "Amy"})
+
+
+def test_match_goes_through_an_alias() -> None:
+    assert MAILBOX.match("Amie") == AMY
+    assert MAILBOX.match(" AMIE ") == AMY, "別名也不分大小寫、去頭尾空白"
+
+
+def test_match_ignores_case_and_surrounding_spaces() -> None:
+    assert MAILBOX.match("ben") == BEN and MAILBOX.match(" BEN ") == BEN
+
+
+def test_match_does_not_guess() -> None:
+    assert MAILBOX.match("Amyy") is None and MAILBOX.match("Bennie") is None, "不模糊比對"
 
 
 def log(pg) -> list[tuple]:

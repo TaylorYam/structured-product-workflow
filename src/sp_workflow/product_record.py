@@ -10,20 +10,21 @@
 
 `REQUIRED` 與欄位對照放在這裡、不放在 `order_import` 或 `product_write`：`check_terms` 也要用，
 而它被 `product_write` import，放在寫入那邊會循環 import（ADR 0016 當時因此搬到 `order_terms`，#126 再收到這裡）。
-這個 module 只 import `daily_import`（商品種類 FCN），不 import 上面那些 module。
+這個 module 不 import 任何 `sp_workflow` module；商品種類 `FCN` 與紀錄用的 `to_json` 也在這裡（#201）。
 
 畫面上的 Upfront / NotePrice (%) 是價格，資料庫存 UF = 100 − 價格（`invert_upfront`，兩個方向一樣）。
 """
 
 from __future__ import annotations
 
+import datetime as dt
+import json
 from collections.abc import Mapping, Sequence
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Any
 
-from sp_workflow.daily_import import FCN
-
+FCN = "FCN"  # 商品種類（#201 從 daily_import 搬來）
 UPFRONT_FIELD = "Upfront / NotePrice (%)"
 TRADE_FIELD = "Trade date"
 STRIKE_FIELD = "Strike date"
@@ -206,3 +207,18 @@ def _pct(value: object) -> Decimal | None:
         return Decimal(value).quantize(_PCT)  # type: ignore[arg-type]
     except InvalidOperation as exc:
         raise ValueError(f"「{value}」不是數字") from exc
+
+
+def to_json(value: Mapping[str, object] | list[Any] | None) -> str | None:
+    """紀錄用的 JSON：Decimal 寫成字串、日期寫成 ISO。"""
+    if value is None:
+        return None
+    return json.dumps(value, ensure_ascii=False, default=_json_value)
+
+
+def _json_value(value: object) -> object:
+    if isinstance(value, Decimal):
+        return format(plain(value), "f")
+    if isinstance(value, dt.date):
+        return value.isoformat()
+    raise TypeError(type(value).__name__)

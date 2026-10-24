@@ -5,24 +5,71 @@
 檢查失敗或帳號沒有寫入權限時轉成作業人員看得懂的 `MailboxError`。改名時資料庫讓別名跟著改、刪除人員時連帶刪掉
 他的別名，這兩種的紀錄另外寫出那些別名。
 畫面在 `sp_workflow.tabs.mailbox`。
+人員型別 `Person`、名字比對 `Mailbox.match`、PB 判斷 `is_pb` 與讀取 `load_mailbox` 也在這裡（#201）：
+每日匯入、寄信草稿與交易明細都從這裡拿，比對規則（不分大小寫、先查別名、不模糊比對）只有這一份。
 """
 
 from __future__ import annotations
 
 import getpass
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
-from sp_workflow.daily_import import Person  # 寄信、匯入比對用的同一個人員型別
-from sp_workflow.product_write import to_json
+from sp_workflow.product_record import to_json
 
 if TYPE_CHECKING:
     import psycopg
 
+PB = "PB"
 PERSON, ALIAS = "人員", "別名"
 ADD, EDIT, DELETE = "新增", "修改", "刪除"
+
+
+# ---------- 信箱的型別、名字比對與讀取（#201 從 daily_import 搬來；每日匯入、寄信草稿、交易明細共用） ----------
+
+
+@dataclass(frozen=True)
+class Person:
+    name: str
+    email: str
+    unit: str | None
+    fixed_cc: bool
+
+
+@dataclass(frozen=True)
+class Mailbox:
+    people: tuple[Person, ...]
+    aliases: Mapping[str, str]  # 別名（小寫）→ 使用者名稱
+
+    def match(self, name: str) -> Person | None:
+        """大小寫不同視為同一人；先查別名。不做模糊比對。"""
+        key = name_key(name)
+        target = name_key(self.aliases.get(key, name))
+        return next((p for p in self.people if name_key(p.name) == target), None)
+
+
+def name_key(name: str) -> str:
+    """比對名字用的鍵：去頭尾空白、不分大小寫。"""
+    return name.strip().lower()
+
+
+def is_pb(name: str) -> bool:
+    """交易列的 FC/PB 是 PB（私銀）：不寄信，但交易列照存。"""
+    return name.strip().upper() == PB
+
+
+def load_mailbox(conn: psycopg.Connection) -> Mailbox:
+    """讀資料庫裡的人員與別名（信箱由資料庫直接維護，#35）。"""
+    people = tuple(
+        Person(*row) for row in conn.execute("SELECT name, email, unit, fixed_cc FROM mailbox.person ORDER BY name")
+    )
+    aliases = dict(conn.execute("SELECT alias_key, person_name FROM mailbox.alias").fetchall())
+    return Mailbox(people, aliases)
+
+
+# ---------- 信箱維護（#158） ----------
 
 
 class MailboxError(Exception):

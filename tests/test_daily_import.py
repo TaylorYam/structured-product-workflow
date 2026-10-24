@@ -40,10 +40,10 @@ from sp_workflow.daily_import import (
     DailyImportError,
     import_daily,
     import_price_csv,
-    is_pb,
     latest_import,
 )
 from sp_workflow.database import DatabaseError, require_current_schema
+from sp_workflow.mailbox import is_pb
 
 pytestmark = pytest.mark.db
 
@@ -215,16 +215,11 @@ def test_no_fcn_trades_leaves_nothing_to_hand_over(pg, tmp_path: Path, mailbox) 
     assert (receipt.fcn_trade_rows, receipt.fcn_tdccs) == (0, ())
 
 
-def test_fc_names_match_ignoring_case_and_through_aliases(pg, tmp_path: Path) -> None:
-    seed_mailbox(pg, aliases=[("Amie", "Amy")])
+def test_unmatched_fc_names_are_listed_and_pb_is_not(pg, tmp_path: Path, mailbox) -> None:
+    """匯入只列出信箱對不到的名字；比對規則本身（大小寫、別名）在 test_mailbox 測（#201）。"""
     daily = write_daily(
         tmp_path / "d.xlsx",
-        [
-            trade(A, "AMY", "北區", 1),
-            trade(B, "Amie", "北區", 1),
-            trade(C, "Zoe", "北區", 1),
-            trade(D, "PB", "北區", 1),
-        ],
+        [trade(A, "Amy", "北區", 1), trade(C, "Zoe", "北區", 1), trade(D, "PB", "北區", 1)],
     )
 
     receipt = import_daily(daily, pg)

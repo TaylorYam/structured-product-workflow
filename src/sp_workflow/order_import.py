@@ -28,10 +28,10 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sp_workflow.check_terms import CalcReceipt, CheckTermsError, recalculate
-from sp_workflow.daily_import import FCN
 from sp_workflow.database import DatabaseError, require_current_schema
 from sp_workflow.order_terms import TDCC_FIELD, OrderRow
 from sp_workflow.product_record import (
+    FCN,
     FIELDS,
     PRODUCT_COLUMNS,
     REQUIRED,
@@ -39,6 +39,7 @@ from sp_workflow.product_record import (
     TRADE_FIELD,
     fields_of,
     missing_fields,
+    to_json,
 )
 from sp_workflow.product_write import (
     LOCKED,
@@ -64,7 +65,6 @@ from sp_workflow.product_write import (
     read_stored,
     same_value,
     save_terms,
-    to_json,
 )
 from sp_workflow.trade_rows import TradeRowsDraft
 
