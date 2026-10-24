@@ -27,8 +27,16 @@ SCHEMAS = ("mailbox", "workflow")
 _MIGRATION_NAME = re.compile(r"(\d{4})_[A-Za-z0-9_]+\.sql")
 
 
-class DatabaseError(Exception):
+class OperatorError(Exception):
+    """訊息本身是給作業人員看的中文；視窗直接顯示，不加「執行失敗」。"""
+
+
+class DatabaseError(OperatorError):
     """連線設定或資料表版本有問題；訊息是給作業人員看的中文。"""
+
+
+class SchemaOutdatedError(DatabaseError):
+    """資料表還沒建立、不是最新版本或版本檔有問題；不是登入問題，視窗不會因此忘掉密碼。"""
 
 
 @dataclass(frozen=True)
@@ -90,7 +98,21 @@ def settings_from_env(path: Path) -> ConnectionSettings:
 
 
 def connect(settings: ConnectionSettings) -> psycopg.Connection:
-    """連上資料庫；失敗時只回報主機、資料庫與帳號，不帶密碼。"""
+    """連上資料庫並確認資料表是最新版本（日常使用都經過這裡，module 不用再檢查）。
+
+    連不上時丟 `DatabaseError`（只回報主機、資料庫與帳號，不帶密碼）；版本不對時丟 `SchemaOutdatedError`。
+    """
+    conn = connect_raw(settings)
+    try:
+        require_current_schema(conn)
+    except BaseException:
+        conn.close()
+        raise
+    return conn
+
+
+def connect_raw(settings: ConnectionSettings) -> psycopg.Connection:
+    """只連上、不檢查資料表版本：給遷移工具用（schema 可能還不存在）。"""
     import psycopg
 
     try:
@@ -164,17 +186,20 @@ def apply_migrations(conn: psycopg.Connection, *, grant_to: str | None = None) -
 
 
 def require_current_schema(conn: psycopg.Connection) -> None:
-    """日常使用前確認資料表已經建到最新版本。"""
+    """確認資料表已經建到最新版本；只由 `connect` 呼叫。"""
     from psycopg import errors
 
-    latest = {v for v, _, _ in migration_files()}
+    try:
+        latest = {v for v, _, _ in migration_files()}
+    except DatabaseError as exc:  # 版本檔本身有問題（安裝壞了）也不是登入問題
+        raise SchemaOutdatedError(str(exc)) from exc
     try:
         with conn.transaction():
             done = {row[0] for row in conn.execute(f"SELECT version FROM public.{VERSION_TABLE}")}
     except errors.UndefinedTable:
         done = set()
     if not latest <= done:
-        raise DatabaseError("資料庫的資料表還沒建立或不是最新版本，請先執行 spw-db-migrate。")
+        raise SchemaOutdatedError("資料庫的資料表還沒建立或不是最新版本，請先執行 spw-db-migrate。")
 
 
 def migrate_main(argv: Sequence[str] | None = None) -> int:
@@ -194,7 +219,7 @@ def migrate_main(argv: Sequence[str] | None = None) -> int:
             admin = settings
         if admin.password is None:
             admin = admin.with_password(getpass(f"{admin.user}@{admin.host}:{admin.port} 的密碼（不顯示）："))
-        with connect(admin) as conn:
+        with connect_raw(admin) as conn:
             conn.autocommit = True
             applied = apply_migrations(conn, grant_to=None if args.no_grant or admin is settings else app_user)
     except (DatabaseError, psycopg.Error) as exc:

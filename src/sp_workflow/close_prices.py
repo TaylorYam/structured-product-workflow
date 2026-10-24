@@ -10,6 +10,7 @@
 不能確認是不是交易日（休市日常帶著前一天的價格），也不存、列出來，補了假日表再匯（`is_uncovered`）。
 交易所不在假日表的代碼照存，由比價標待確認。同一（收盤日、代碼）再匯入整筆取代，值改了的舊值留在
 `workflow.close_price_change`，每次匯入一筆 `workflow.close_price_import`。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ import openpyxl
 from openpyxl.cell.cell import Cell
 from openpyxl.utils import get_column_letter
 
+from sp_workflow.database import OperatorError
 from sp_workflow.file_tools import save_book, sha256_file, table_book
 
 if TYPE_CHECKING:
@@ -52,7 +54,7 @@ HOLIDAY_MARK = "#N/A N/A"  # 彭博在休市日填的值
 UNCOVERED_REASON = "日期超出交易所假日表的涵蓋範圍，不能確認是交易日，沒有存；補了假日表再匯"
 
 
-class ClosePriceError(Exception):
+class ClosePriceError(OperatorError):
     """整份不能匯入（格式不對、寫不出錯誤清單）；訊息是給作業人員看的中文。"""
 
 

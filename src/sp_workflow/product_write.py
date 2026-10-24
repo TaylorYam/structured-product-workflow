@@ -11,6 +11,7 @@ INSERT 或 UPDATE 改了的欄、重算核對條件、留紀錄、畫面換成�
 - `blocking_problems`：擋寫入的問題；畫面標紅（`order_import.check_draft`／`maintenance_problems`）也用同一套。
 規則式、不猜值：單位面額依幣別預設值（審查標準 `[denomination]`），發行機構寫法依參考條件表 `[issuer_values]`。
 畫面的欄 ↔ 資料庫的欄的轉換（KO／KI 代碼、UF 反轉、面額預設）在 `product_record`（#126）。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations
@@ -24,7 +25,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from sp_workflow.check_terms import CalcLine, recalculate, recalculate_corrected
-from sp_workflow.database import DatabaseError, require_current_schema
+from sp_workflow.database import OperatorError
 from sp_workflow.order_terms import TDCC_FIELD, unknown_issuer
 from sp_workflow.product_record import (
     CHOICES,
@@ -111,7 +112,7 @@ def maintenance_mode(draft: OrderDraft) -> Mode:
     return {MAINTAIN_LOCKED: Mode.CORRECT, MAINTAIN_NEW: Mode.CREATE}.get(draft.row.status, Mode.MAINTAIN)
 
 
-class CorrectionError(Exception):
+class CorrectionError(OperatorError):
     """這檔不能更正或存檔（不在資料庫、鎖住狀態不對、檢查沒過、打開後被改過）；訊息是給作業人員看的中文。"""
 
 
@@ -398,10 +399,6 @@ def save_terms(
     沒改任何欄時不寫入；打開之後這檔被改過時丟 `CorrectionError`、不寫入。寫入後 `draft`、`trades` 換成資料庫存的值
     （同重新打開）。
     """
-    try:
-        require_current_schema(conn)
-    except DatabaseError as exc:
-        raise CorrectionError(str(exc)) from exc
     tdcc, values = draft.tdcc, draft.values
     locked = mode is Mode.CORRECT
     with conn.transaction():

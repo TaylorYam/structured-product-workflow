@@ -40,7 +40,7 @@ from sp_workflow.daily_import import (
     import_price_csv,
     latest_import,
 )
-from sp_workflow.database import ConnectionSettings, DatabaseError, connect, require_current_schema
+from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdatedError, connect
 from sp_workflow.exits import ExitList, load_exits
 from sp_workflow.legacy_backfill import BackfillReceipt, LegacyBackfillError, backfill_legacy
 from sp_workflow.lifecycle import (
@@ -211,7 +211,7 @@ def _recalculate_after_import(conn: psycopg.Connection, holidays: Path) -> Recal
     try:
         calendar = load_calendar(holidays)
         return Recalc(recalculate(conn, calendar), calendar)
-    except (CheckTermsError, DatabaseError, psycopg.Error) as exc:
+    except (CheckTermsError, psycopg.Error) as exc:
         return Recalc(error=_first_line(exc))
 
 
@@ -223,7 +223,7 @@ def _observe_after_import(conn: psycopg.Connection, calendar: TradingCalendar | 
         return Observation(error="讀不到交易所假日表，這次沒有比價")
     try:
         return Observation(observe_all(conn, calendar))
-    except (LifecycleError, DatabaseError, psycopg.Error) as exc:
+    except (LifecycleError, psycopg.Error) as exc:
         return Observation(error=_first_line(exc))
     except Exception as exc:  # 程式錯誤也不能讓已經寫好的匯入跟著失敗
         return Observation(error=f"比價程式出錯（{type(exc).__name__}：{_first_line(exc)}）")
@@ -255,7 +255,6 @@ def import_close_history(settings: ConnectionSettings, source: Path, paths: Conf
     """匯入歷史收盤價（#153，維護選單），再比價（#155）：讀不到假日表、檔案格式不對或寫不出錯誤清單就整份不匯入。"""
     calendar = load_calendar(paths.exchange_holidays)
     with connect(settings) as conn:
-        require_current_schema(conn)
         receipt = import_history(source, conn, calendar)
         return HistoryResult(receipt, _observe_after_import(conn, calendar))
 
@@ -271,7 +270,6 @@ def import_legacy_products(settings: ConnectionSettings, source: Path, paths: Co
     except CheckTermsError:
         calendar = None  # 照樣匯入；比價寫「讀不到交易所假日表」
     with connect(settings) as conn:
-        require_current_schema(conn)
         receipt = backfill_legacy(conn, source, fmt)
         return LegacyResult(receipt, _observe_after_import(conn, calendar))
 
@@ -280,7 +278,6 @@ def observe_products(settings: ConnectionSettings, paths: ConfigPaths) -> Observ
     """重新比價全部（#155，維護選單）：讀不到假日表時丟 `CheckTermsError`。"""
     calendar = load_calendar(paths.exchange_holidays)
     with connect(settings) as conn:
-        require_current_schema(conn)
         return observe_all(conn, calendar)
 
 
@@ -303,6 +300,8 @@ def _record_steps(settings: ConnectionSettings | None, records: Sequence[StepRec
         return Recorded()
     try:
         conn = connect(settings)
+    except SchemaOutdatedError as exc:  # 不是登入問題，不用重問密碼
+        return Recorded(error=_first_line(exc))
     except DatabaseError as exc:
         return Recorded(error=_first_line(exc), database_error=exc)
     with conn:
@@ -313,9 +312,8 @@ def _record_with(conn: psycopg.Connection, records: Sequence[StepRecord]) -> Rec
     import psycopg
 
     try:
-        require_current_schema(conn)
         return Recorded(write_records(conn, records))
-    except (DatabaseError, psycopg.Error) as exc:
+    except psycopg.Error as exc:
         return Recorded(error=_first_line(exc))
 
 
@@ -333,7 +331,8 @@ def read_order_sheet(settings: ConnectionSettings | None, text: str, sheet: Path
             return ReadResult(rows, drafts_from(rows, conn), config)
     except DatabaseError as exc:
         note = f"資料庫沒有連上，沒有帶入資料庫的值（{exc}）"
-        return ReadResult(rows, drafts_from(rows), config, note, exc)
+        login = None if isinstance(exc, SchemaOutdatedError) else exc  # 版本不對不是登入問題
+        return ReadResult(rows, drafts_from(rows), config, note, login)
 
 
 def import_order_sheet(
@@ -432,21 +431,18 @@ def load_progress_rows(
     """所有商品的作業進度（#156）；上手代號照上手編號對照，距今天數以今天（或 `today`）算。"""
     config = load_import_config(paths)
     with connect(settings) as conn:
-        require_current_schema(conn)
         return load_progress(conn, config, today or dt.date.today())
 
 
 def sent_before(settings: ConnectionSettings, tdccs: Sequence[str]) -> tuple[str, ...]:
     """登記已寄出前查（#157）：這些 TDCC 裡已經有「已寄出」步驟紀錄的，依傳入的順序。"""
     with connect(settings) as conn:
-        require_current_schema(conn)
         return _sent(conn, tdccs)
 
 
 def mark_sent(settings: ConnectionSettings, tdccs: Sequence[str]) -> Registered:
     """登記已寄出（#157）：每檔寫一筆「已寄出」步驟紀錄（誰、何時）；寫不進去只影響那一檔。"""
     with connect(settings) as conn:
-        require_current_schema(conn)
         return _each(tdccs, lambda tdcc: write_records(conn, [StepRecord(tdcc, SENT_STEP, "進度頁登記已寄出")]))
 
 
@@ -460,7 +456,6 @@ def mark_sent_batch(settings: ConnectionSettings, batch: SentBatch) -> Registere
     被更正解鎖）的跳過，不重複寫、其他階段的不動。"""
     result = f"進度頁批次登記已寄出（交易日 {batch.through} 以前）"
     with connect(settings) as conn:
-        require_current_schema(conn)
         sent = set(_sent(conn, batch.tdccs))
         locked = {
             row[0]
@@ -487,14 +482,12 @@ def _sent(conn: psycopg.Connection, tdccs: Sequence[str]) -> tuple[str, ...]:
 def register_redemptions(settings: ConnectionSettings, tdccs: Sequence[str], day: dt.date, note: str) -> Registered:
     """登記顧客贖回（#157）：每檔寫一筆來源「人工」的事件；已有存續事件的那一檔寫不進去並寫出原因。"""
     with connect(settings) as conn:
-        require_current_schema(conn)
         return _each(tdccs, lambda tdcc: record_redemption(conn, tdcc, day, note))
 
 
 def event_choices(settings: ConnectionSettings, tdcc: str) -> EventChoices:
     """提出、解除異議前讀這檔的自動事件與還沒解除的異議（#157）。"""
     with connect(settings) as conn:
-        require_current_schema(conn)
         events = tuple(e for e in current_events(conn, tdcc) if e.source == OBSERVATION)
         return EventChoices(tdcc, events, tuple(open_objections(conn, [tdcc]).get(tdcc, ())))
 
@@ -502,14 +495,12 @@ def event_choices(settings: ConnectionSettings, tdcc: str) -> EventChoices:
 def object_to_event(settings: ConnectionSettings, event_id: int, note: str) -> int:
     """提出異議（#157）：異議不改事件；回傳異議編號。不能提出時丟 `LifecycleError`。"""
     with connect(settings) as conn:
-        require_current_schema(conn)
         return raise_objection(conn, event_id, note)
 
 
 def resolve_event_objection(settings: ConnectionSettings, objection_id: int) -> int:
     """解除異議（#157）：記下解除的人與時間；回傳解除的異議編號。"""
     with connect(settings) as conn:
-        require_current_schema(conn)
         resolve_objection(conn, objection_id)
         return objection_id
 
@@ -521,7 +512,6 @@ def load_exit_list(settings: ConnectionSettings, paths: ConfigPaths, day: dt.dat
     """那一天（沒有時用收盤價表最新的收盤日）還有效的出場事件，來源不限（#171、#188）；上手代號照上手編號對照。"""
     config = load_import_config(paths)
     with connect(settings) as conn:
-        require_current_schema(conn)
         return load_exits(conn, config, day)
 
 
@@ -531,7 +521,6 @@ def load_exit_list(settings: ConnectionSettings, paths: ConfigPaths, day: dt.dat
 def load_mailbox_rows(settings: ConnectionSettings) -> MailboxRows:
     """信箱維護（#158）：全部人員與別名。"""
     with connect(settings) as conn:
-        require_current_schema(conn)
         return load_rows(conn)
 
 
@@ -558,7 +547,6 @@ def delete_mailbox_alias(settings: ConnectionSettings, before: Alias) -> Mailbox
 def _mailbox_change(settings: ConnectionSettings, write: Callable[[psycopg.Connection], object]) -> MailboxRows:
     """寫一筆（自己一個 transaction），再重讀全部人員與別名。"""
     with connect(settings) as conn:
-        require_current_schema(conn)
         write(conn)
         return load_rows(conn)
 

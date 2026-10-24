@@ -9,6 +9,7 @@
   改了的 FC 名字對不到信箱（照每日匯入的規則），只提示、不擋存檔。沒改的格子照資料庫的值，不擋也不提示。
 - `read_rows`、`write_trade_rows`：存檔時鎖住這檔的列（確認打開之後沒變在 `product_write`）、寫入改了的格子。
 只改值，不新增、不刪除列；之後的每日匯入照舊以資料庫為準、不覆蓋，改到和 Excel 一樣時匯入結果是「已存在」。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations

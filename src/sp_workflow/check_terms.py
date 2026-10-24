@@ -19,6 +19,7 @@
   交易列之間不一樣也算不一致。放行過、兩邊的值都一樣的差異不再擋。
 - 商品條件缺起單資料的必填欄（#114、ADR 0016）：不算價格、不交叉比對，待確認並寫出缺哪幾欄；
   分公司配置照樣由交易明細算。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations
@@ -32,7 +33,7 @@ from dataclasses import dataclass, replace
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
 
-from sp_workflow.database import DatabaseError, require_current_schema
+from sp_workflow.database import OperatorError
 from sp_workflow.product_record import PRODUCT_COLUMNS, missing_fields, plain
 
 if TYPE_CHECKING:
@@ -59,7 +60,7 @@ _HUNDRED = Decimal(100)
 _BLANK = "空白"
 
 
-class CheckTermsError(Exception):
+class CheckTermsError(OperatorError):
     """核對條件算不了（設定檔有問題、商品已鎖住）；訊息是給作業人員看的中文。"""
 
 
@@ -410,7 +411,6 @@ def recalculate(
     conn: psycopg.Connection, calendar: TradingCalendar, *, tdccs: Collection[str] | None = None
 ) -> CalcReceipt:
     """重算還沒鎖住的商品（`tdccs` 有值時只算這幾檔），和上一次不同的寫入；整次在同一個 transaction 裡。"""
-    require_current_schema(conn)
     with conn.transaction():
         where = "locked_at IS NULL" + ("" if tdccs is None else " AND tdcc = ANY(%s)")
         products = _products(conn, where, () if tdccs is None else (list(tdccs),))
@@ -549,10 +549,6 @@ def release_differences(
 
     資料在這之間變了的話，放行的是舊的差異，新的差異照樣待確認。商品已鎖住或不在資料庫時丟 `CheckTermsError`。
     """
-    try:
-        require_current_schema(conn)
-    except DatabaseError as exc:
-        raise CheckTermsError(str(exc)) from exc
     with conn.transaction():
         found = conn.execute("SELECT locked_at FROM workflow.product WHERE tdcc = %s FOR UPDATE", (tdcc,)).fetchone()
         if found is None:

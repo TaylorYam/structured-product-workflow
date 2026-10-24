@@ -21,6 +21,7 @@
 - 結果另外列出交易明細的 FCN TDCC（依第一次出現的順序、不重複，不是剛好 12 碼與整檔都取消的不列），
   給視窗帶到起單資料頁（#90）。
 - 整次匯入在一個 transaction 內完成，任何錯誤都不留下部分寫入。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations
@@ -41,7 +42,7 @@ import openpyxl
 from openpyxl.utils import get_column_letter
 
 from sp_workflow.close_prices import CSV_SOURCE, CloseSummary, closes_from_csv, write_closes
-from sp_workflow.database import DatabaseError, require_current_schema
+from sp_workflow.database import OperatorError
 from sp_workflow.file_tools import save_book, sha256_file, table_book
 from sp_workflow.mailbox import Mailbox, is_pb, load_mailbox
 from sp_workflow.product_record import FCN
@@ -114,8 +115,8 @@ TRADE_REQUIRED = ("交易日期", "幣別", "金額", "FC/PB", "分公司")
 _TRADE_COLUMNS = ("product", *TRADE_FIELDS.values())  # 寫入、比對資料庫的交易列用的欄
 
 
-class DailyImportError(Exception):
-    """整份無法匯入（檔案或欄名有問題、資料表不是最新版本）；訊息是給作業人員看的中文。"""
+class DailyImportError(OperatorError):
+    """整份無法匯入（檔案或欄名有問題）；訊息是給作業人員看的中文。"""
 
 
 @dataclass(frozen=True)
@@ -205,7 +206,6 @@ def import_daily(daily_book: Path, conn: psycopg.Connection, *, prices: bool = T
 
     `prices=False`：只匯交易明細，不讀 BBG_Data、不動股價（回補時股價改用 `import_price_csv`）。
     """
-    _require_schema(conn)
     parsed = _read_daily(daily_book, prices=prices)
 
     with conn.transaction():
@@ -243,7 +243,6 @@ def import_price_csv(path: Path, conn: psycopg.Connection, calendar: TradingCale
     """回補股價（#112）：匯入一份 `MarketData_YYYYMMDD.csv`。整份有問題時丟 `DailyImportError`、不寫入任何資料。
 
     有 `calendar`（交易所假日表）時同時寫 CSV 那一天的收盤價（#153）；沒有時收盤價不存。"""
-    _require_schema(conn)
     close_date, prices = _read_price_csv(path)
     sha256 = sha256_file(path)
     with conn.transaction():
@@ -293,13 +292,6 @@ def import_price_csv(path: Path, conn: psycopg.Connection, calendar: TradingCale
         )
         _write_error_book(conn, error_book_path)
     return receipt
-
-
-def _require_schema(conn: psycopg.Connection) -> None:
-    try:
-        require_current_schema(conn)
-    except DatabaseError as exc:
-        raise DailyImportError(str(exc)) from exc
 
 
 @dataclass(frozen=True)

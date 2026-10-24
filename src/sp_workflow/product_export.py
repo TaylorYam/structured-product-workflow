@@ -3,6 +3,7 @@
 只讀資料庫，不改任何資料。第 1 列是資料庫的欄名，最後多一欄「存續狀態」（最新一筆存續事件，#152），依 TDCC 排序；值照資料庫的型別寫入（日期、數字、文字），
 有時區的時間換成本機時間（Excel 不收時區），Excel 不收的控制字元拿掉。先寫到同一個資料夾的暫存檔，
 寫好才換成選的檔名，寫不進去時不留半個檔、原本的同名檔不動。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING
 
 from openpyxl.cell.cell import ILLEGAL_CHARACTERS_RE, Cell
 
+from sp_workflow.database import OperatorError
 from sp_workflow.file_tools import save_book, table_book
 from sp_workflow.lifecycle import lifecycle_status
 
@@ -26,7 +28,7 @@ LIFECYCLE_COLUMN = "存續狀態"
 _MAX_WIDTH = 40
 
 
-class ProductExportError(Exception):
+class ProductExportError(OperatorError):
     """寫不進匯出檔；訊息是給作業人員看的中文。"""
 
 

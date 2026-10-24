@@ -7,6 +7,7 @@
 畫面在 `sp_workflow.tabs.mailbox`。
 人員型別 `Person`、名字比對 `Mailbox.match`、PB 判斷 `is_pb` 與讀取 `load_mailbox` 也在這裡（#201）：
 每日匯入、寄信草稿與交易明細都從這裡拿，比對規則（不分大小寫、先查別名、不模糊比對）只有這一份。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations
