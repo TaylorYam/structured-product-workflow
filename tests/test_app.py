@@ -24,6 +24,7 @@ from fcn_checker.ui import Background
 from sp_workflow import app
 from sp_workflow.app import PanelWindow
 from sp_workflow.check_source import EXPORT_FOLDER
+from sp_workflow.database import DatabaseError, SchemaOutdatedError
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.tabs.base import DatabaseLogin, RootFolder
 from window_synth import hint_change_button, new_window, prepared_receipt, prepared_result, texts
@@ -720,3 +721,26 @@ def test_database_source_uses_the_settings_the_shell_logged_in_with(master, tmp_
     source.on_failure()
 
     assert db.current() is None and db.password is None
+
+
+def test_outdated_schema_is_not_a_login_problem(master, tmp_path, monkeypatch) -> None:
+    """資料表版本不對（#200）：視窗與核對的資料庫來源都不忘掉密碼；連不上才忘掉。"""
+    no_password_env(tmp_path)
+    monkeypatch.setattr(simpledialog, "askstring", lambda *a, **k: "secret")
+    db = DatabaseLogin(master, tmp_path / ".env")
+    source = app._check_database(db, tmp_path)
+    assert db.log_in()
+
+    db.after_run(SchemaOutdatedError("資料庫的資料表還沒建立或不是最新版本，請先執行 spw-db-migrate。"))
+    assert db.password == "secret" and db.current() is not None
+
+    def outdated(settings):
+        raise SchemaOutdatedError("資料庫的資料表還沒建立或不是最新版本，請先執行 spw-db-migrate。")
+
+    monkeypatch.setattr("sp_workflow.check_source.connect", outdated)
+    with pytest.raises(SchemaOutdatedError):
+        source._connect()
+    assert db.password == "secret" and db.current() is not None
+
+    db.after_run(DatabaseError("連不上資料庫 spw_fake"))
+    assert db.password is None and db.current() is None

@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from sp_workflow.conversion import ConversionError, Converter, default_converter
+from sp_workflow.database import OperatorError
 from sp_workflow.documents import DocKind, content_key, read_pdf
 from sp_workflow.file_tools import save_book, sha256_file, table_book, tdcc_as_text
 from sp_workflow.trustee_code import fill_trustee_code, needs_fill
@@ -51,7 +52,7 @@ _PDF = ".pdf"
 _WORD = (".docx", ".doc")
 
 
-class PreparationError(Exception):
+class PreparationError(OperatorError):
     """整批無法開始（輸入或資料夾有問題）；訊息是給作業人員看的中文。"""
 
 

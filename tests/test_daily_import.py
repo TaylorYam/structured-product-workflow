@@ -43,7 +43,6 @@ from sp_workflow.daily_import import (
     is_pb,
     latest_import,
 )
-from sp_workflow.database import DatabaseError, require_current_schema
 
 pytestmark = pytest.mark.db
 
@@ -317,15 +316,6 @@ def test_failure_halfway_leaves_nothing_behind(pg, tmp_path: Path, mailbox, monk
 
     tables = ("workflow.trade_row", "workflow.import_run", "workflow.price_import", "workflow.daily_price")
     assert [count(pg, t) for t in tables] == [0, 0, 0, 0]
-
-
-def test_import_requires_the_latest_schema(pg, tmp_path: Path, mailbox) -> None:
-    pg.execute("DELETE FROM public.spw_schema_version")
-
-    with pytest.raises(DatabaseError):
-        require_current_schema(pg)
-    with pytest.raises(DailyImportError, match="spw-db-migrate"):
-        import_daily(write_daily(tmp_path / "d.xlsx", []), pg)
 
 
 # ---------------------------------------------------------------- 清單更新停用（#87）

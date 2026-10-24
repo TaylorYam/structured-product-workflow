@@ -27,6 +27,7 @@ from typing import NamedTuple
 import openpyxl
 from openpyxl.cell.cell import Cell
 
+from sp_workflow.database import OperatorError
 from sp_workflow.documents import DocKind, content_key
 from sp_workflow.file_tools import save_book, sha256_file, table_book, tdcc_as_text
 from sp_workflow.preparation import LIST_NAME, PENDING_SUFFIX, PREPARED
@@ -72,7 +73,7 @@ class _ErrorLine(NamedTuple):
         return f"{self.message}（第 {self.pages} 頁）" if self.pages else self.message
 
 
-class ReturnError(Exception):
+class ReturnError(OperatorError):
     """整批無法放回（核對結果檔或準備清單有問題）；訊息是給作業人員看的中文。"""
 
 

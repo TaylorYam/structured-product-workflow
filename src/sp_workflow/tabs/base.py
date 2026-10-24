@@ -26,38 +26,18 @@ from fcn_checker.ui import (
     PageHeader,
     TableCopy,
 )
-from sp_workflow.check_terms import CheckTermsError
-from sp_workflow.close_prices import ClosePriceError
-from sp_workflow.daily_import import DailyImportError
-from sp_workflow.database import ConnectionSettings, DatabaseError, settings_from_env
-from sp_workflow.legacy_backfill import LegacyBackfillError
-from sp_workflow.lifecycle import LifecycleError
+from sp_workflow.database import (
+    ConnectionSettings,
+    DatabaseError,
+    OperatorError,
+    SchemaOutdatedError,
+    settings_from_env,
+)
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.mail_drafts import MailDraftError
-from sp_workflow.order_import import OrderImportError
-from sp_workflow.order_terms import OrderTermsError
-from sp_workflow.preparation import PreparationError, parse_tdccs
-from sp_workflow.product_export import ProductExportError
-from sp_workflow.product_write import CorrectionError
-from sp_workflow.returning import ReturnError
+from sp_workflow.preparation import parse_tdccs
 from sp_workflow.step_records import Recorded
 
 TITLE = "FCN Workflow"
-_EXPECTED_ERRORS = (
-    ClosePriceError,
-    PreparationError,
-    ReturnError,
-    DailyImportError,
-    DatabaseError,
-    MailDraftError,
-    OrderTermsError,
-    OrderImportError,
-    CheckTermsError,
-    CorrectionError,
-    ProductExportError,
-    LegacyBackfillError,
-    LifecycleError,
-)  # 訊息本身就是給作業人員看的
 COPY_HINT = "按右鍵可以只複製一格或一列；Ctrl+A 全選、Ctrl+C 複製選取的列"  # 結果表上方（#121）
 CELL_COPY_HINT = "按右鍵可以只複製一格或一列"  # 人工維護的檢查結果表（Canvas，不能用 Ctrl+A／Ctrl+C）
 
@@ -221,7 +201,7 @@ class Tab:
     def _show_result(self, future: Future[object], on_done: Callable[[object], None]) -> None:
         error = future.exception()  # 背景執行緒的錯誤一律交回主執行緒顯示
         result = future.result() if error is None else error
-        if isinstance(result, _EXPECTED_ERRORS):
+        if isinstance(result, OperatorError):  # 訊息本身就是給作業人員看的
             self.status_var.set(str(result))
             messagebox.showerror(TITLE, str(result))
         elif isinstance(result, Exception):
@@ -311,7 +291,7 @@ class DatabaseLogin:
         return settings.with_password(self.password) if self.password else None
 
     def after_run(self, result: object) -> None:
-        if isinstance(result, DatabaseError):
+        if isinstance(result, DatabaseError) and not isinstance(result, SchemaOutdatedError):  # 版本不對不是密碼錯
             self.forget_password()
 
     def forget_password(self) -> None:

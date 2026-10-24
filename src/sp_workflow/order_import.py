@@ -16,6 +16,7 @@
 已鎖住（`locked_at` 有值：TS 核對通過，或 migration 0006 之前就在資料庫）的商品不能匯入，要改走更正（`apply_correction`）；
 migration 0006 之後、清單更新停用（#87）之前由清單更新建立的商品沒有鎖，Order 匯入可以接手
 （條件以 Order 為準，ISIN 與分公司配置保留）。承作金額以交易明細為準，Order 匯入不寫 `order_amount`（#97）。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from typing import TYPE_CHECKING
 
 from sp_workflow.check_terms import CalcReceipt, CheckTermsError, recalculate
 from sp_workflow.daily_import import FCN
-from sp_workflow.database import DatabaseError, require_current_schema
+from sp_workflow.database import OperatorError
 from sp_workflow.order_terms import TDCC_FIELD, OrderRow
 from sp_workflow.product_record import (
     FIELDS,
@@ -79,8 +80,8 @@ BLOCKED, TO_CHECK, READY = "待確認", "請確認", "可匯入"
 IMPORTABLE = frozenset((TO_CHECK, READY))
 
 
-class OrderImportError(Exception):
-    """整批無法匯入（資料表不是最新版本、設定檔有問題）；訊息是給作業人員看的中文。"""
+class OrderImportError(OperatorError):
+    """整批無法匯入（設定檔有問題）；訊息是給作業人員看的中文。"""
 
 
 @dataclass(frozen=True)
@@ -180,10 +181,7 @@ def drafts_from(rows: Iterable[OrderRow], conn: psycopg.Connection | None = None
 
     找不到的列（起單建檔沒有這檔、TDCC 不是 12 碼）沒有確認資料，畫面直接顯示 `OrderRow.notes`。
     好幾列不同、或起單建檔算不出來的欄（`OrderRow.must_fill`）不帶入資料庫的值，一定要作業人員填。
-    資料表不是最新版本時丟 `DatabaseError`。
     """
-    if conn is not None:
-        require_current_schema(conn)
     drafts = []
     for row in rows:
         if not row.found:
@@ -276,11 +274,11 @@ def import_orders(
     recalc, recalc_error = None, ""
     try:
         recalc = recalculate(conn, config.calendar)
-    except (CheckTermsError, DatabaseError, psycopg.Error) as exc:
+    except (CheckTermsError, psycopg.Error) as exc:
         recalc_error = _first_line(exc)
     try:
         reload_stored(drafts, conn)
-    except (DatabaseError, psycopg.Error) as exc:
+    except psycopg.Error as exc:
         return OrderImportResult(receipt, recalc, recalc_error, _first_line(exc))
     return OrderImportResult(receipt, recalc, recalc_error)
 
@@ -293,10 +291,6 @@ def import_drafts(
     匯入成功的檔，`values` 會補上匯入時保留的資料庫值（畫面跟資料庫一致）。
     `order_import_line.source_mail`（#40 時是 Order 原信檔名）寫起單建檔的檔名與列號。
     """
-    try:
-        require_current_schema(conn)
-    except DatabaseError as exc:
-        raise OrderImportError(str(exc)) from exc
     with conn.transaction():
         import_id = conn.execute(
             "INSERT INTO workflow.order_import (imported_by, summary) VALUES (%s, '{}') RETURNING import_id",
@@ -351,7 +345,6 @@ def _first_line(exc: Exception) -> str:
 
 def load_correction(conn: psycopg.Connection, tdcc: str, config: ImportConfig) -> OrderDraft:
     """已鎖住的商品 → 可以編輯的確認資料（值、打開時的值都是資料庫目前的條件）；不能更正時丟 `CorrectionError`。"""
-    _require_schema(conn)
     stored = read_stored(conn, tdcc)
     if refused := not_correctable(stored):
         raise CorrectionError(f"{tdcc}：{refused}")
@@ -388,13 +381,6 @@ def apply_correction(
     return save_terms(conn, draft, config, Mode.CORRECT, trades=trades, reason=reason, user=user)
 
 
-def _require_schema(conn: psycopg.Connection) -> None:
-    try:
-        require_current_schema(conn)
-    except DatabaseError as exc:
-        raise CorrectionError(str(exc)) from exc
-
-
 # ---------- 人工維護（#115） ----------
 
 MISSING_NOTE = "缺，可以先存、之後再補"  # 還沒鎖住的商品空著的必填欄：畫面標紅但不擋存檔
@@ -417,7 +403,6 @@ def missing_products(conn: psycopg.Connection, config: ImportConfig) -> tuple[Mi
     缺資料以起單資料的必填欄（`product_record.REQUIRED`）為準，ISIN、發行日這類由 TS 回填的不算；
     只有交易明細的，必填欄全部算缺。
     """
-    _require_schema(conn)
     found = []
     with conn.transaction():
         for tdcc, *row in conn.execute(
@@ -440,7 +425,6 @@ def missing_products(conn: psycopg.Connection, config: ImportConfig) -> tuple[Mi
 def open_maintenance(conn: psycopg.Connection, tdcc: str, config: ImportConfig) -> OrderDraft:
     """打開一檔來維護：資料庫有商品條件的帶出目前的值（已鎖住的同 `load_correction`）；只有交易明細的
     從空白開始（商品種類 FCN，上手依上手編號對照）。兩邊都沒有時丟 `CorrectionError`。"""
-    _require_schema(conn)
     stored = read_stored(conn, tdcc)
     if stored is not None and stored.locked:
         return load_correction(conn, tdcc, config)
