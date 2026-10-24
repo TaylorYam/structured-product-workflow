@@ -20,9 +20,6 @@ from sp_workflow.tabs.editor import OrderEditor
 from sp_workflow.tabs.recalc import Releaser, recalc_text, status_counts
 from sp_workflow.window_actions import ReadResult, Recalc, import_order_sheet, read_order_sheet
 
-# 起單建檔的資料夾（#97）；本機沒有選過時「選擇…」先打開這裡
-ORDER_SHEET_DIR = Path(r"G:\Bond Data\PM事項\0.常用工具\ELN每日起單建檔")
-
 
 class OrderTermsTab(Tab):
     READY_TEXT = "貼上 TDCC，選一份起單建檔，按「讀取」。只讀起單建檔，不會修改它。"
@@ -105,10 +102,10 @@ class OrderTermsTab(Tab):
     def _ask_sheet(self) -> str:
         """選起單建檔；有選就記住（沒按讀取就關視窗，下次也打開這個資料夾）。"""
         current = self.sheet_var.get().strip()
-        folder = Path(current).parent if current else ORDER_SHEET_DIR
+        folder = Path(current).parent if current else self.memory.default("order_sheet")  # 沒有記住時用預設資料夾
         chosen = filedialog.askopenfilename(
             title="選擇起單建檔",
-            initialdir=str(folder) if folder.is_dir() else None,
+            initialdir=str(folder) if folder is not None and folder.is_dir() else None,
             filetypes=[("Excel", "*.xlsm *.xlsx"), ("全部檔案", "*.*")],
         )
         if chosen:
