@@ -1,7 +1,8 @@
 """整個 FCN Workflow 視窗共用的外觀與背景作業（#129 從 `fcn_checker.panel` 搬出來）。
 
 配色與 `apply_style`（#83）、Windows DPI 與圖示、各分頁共用的頁首、提示條、下一步按鈕、重點數字、
-結果表的複製元件（#121）與自動欄寬（#192），以及全視窗唯一的背景作業寫法 `Background`。核對分頁（`fcn_checker.panel`）與
+結果表的複製元件（#121）與自動欄寬（#192），以及全視窗唯一的背景作業寫法 `Background`（測試用同步的
+`ImmediateBackground`，#206）。核對分頁（`fcn_checker.panel`）與
 視窗外殼（`sp_workflow.app`）都從這裡 import；這裡不 import 任何核對或流程的業務邏輯。
 """
 
@@ -542,3 +543,24 @@ class Background:
     def close(self) -> None:
         self.closed = True
         self._executor.shutdown(wait=False, cancel_futures=True)
+
+
+class ImmediateBackground:
+    """測試用、介面和 `Background` 相同（#206）：動作在同一個執行緒馬上做完，接著直接呼叫 done，不等 Tk 的事件迴圈。"""
+
+    def __init__(self, widget: tk.Misc):
+        self.widget = widget
+        self.closed = False
+
+    def run(self, action: Callable[[], T], done: Callable[[Future[T]], None] | None = None) -> Future[T]:
+        future: Future[T] = Future()
+        try:
+            future.set_result(action())
+        except Exception as exc:  # noqa: BLE001 - 和 Background 一樣放進 Future 交給 done
+            future.set_exception(exc)
+        if done is not None and not self.closed:
+            done(future)
+        return future
+
+    def close(self) -> None:
+        self.closed = True

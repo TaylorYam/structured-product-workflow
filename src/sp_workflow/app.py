@@ -53,6 +53,7 @@ from fcn_checker.ui import (
     NAVY,
     SURFACE,
     TEXT_SECONDARY,
+    Background,
     apply_style,
     apply_window_icon,
     enable_windows_dpi_awareness,
@@ -64,7 +65,7 @@ from sp_workflow.check_source import EXPORT_FOLDER, WorkflowDatabase
 from sp_workflow.database import default_env_path
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.preparation import LIST_NAME, PrepareReceipt
-from sp_workflow.tabs.base import TITLE, DatabaseLogin, RootFolder
+from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, RootFolder
 from sp_workflow.tabs.daily import DailyImportTab
 from sp_workflow.tabs.exits import ExitListTab
 from sp_workflow.tabs.mail import MailDraftTab
@@ -182,11 +183,16 @@ class PanelWindow:
         session: PanelSession,
         *,
         start_on_check: bool = False,
+        background: BackgroundFactory = Background,
     ) -> None:
-        """db 是各分頁共用的資料庫登入；session 是核對的工作階段，建好時已帶著資料庫來源（`build_window` 組好，#129）。"""
+        """db 是各分頁共用的資料庫登入；session 是核對的工作階段，建好時已帶著資料庫來源（`build_window` 組好，#129）。
+
+        `background` 建各分頁、信箱維護視窗的背景執行器（一個擁有者一個；測試傳 `ImmediateBackground`，#206）。
+        """
         self.master = master
         self.session = session
         self.db = db
+        self.background = background
         self.mailbox: MailboxWindow | None = None  # 「信箱維護…」開著時的視窗（#158）
         self.size = WindowSize(memory.path.with_name(WINDOW_FILE))
         master.title(TITLE)
@@ -211,8 +217,9 @@ class PanelWindow:
             on_next=lambda: self.notebook.select(self.orders.frame),
             on_observed=lambda day: self.exits.receive_day(day),
             on_exits=lambda: self.notebook.select(self.exits.frame),
+            background=background,
         )
-        self.orders = OrderTermsTab(self.notebook, memory, db, lambda: self.session.paths)
+        self.orders = OrderTermsTab(self.notebook, memory, db, lambda: self.session.paths, background=background)
         self.prepare = PrepareTab(
             self.notebook,
             memory,
@@ -220,15 +227,16 @@ class PanelWindow:
             self.root_folder,
             on_prepared=self._prepared,
             on_next=lambda: self.notebook.select(self.check),
+            background=background,
         )
         self.check = CheckTab(self.notebook, self.session, self.pixels, on_saved=self._check_saved, login=db.log_in)
         self.check.add_next_step("下一步：放回 →", lambda: self.notebook.select(self.returning.frame))
         self.notebook.add(self.check, text="核對")
-        self.returning = ReturnTab(self.notebook, memory, db)
-        self.mail = MailDraftTab(self.notebook, memory, db, self.root_folder)
-        self.manual = MaintenanceTab(self.notebook, memory, db, lambda: self.session.paths)
-        self.progress = ProgressTab(self.notebook, memory, db, lambda: self.session.paths)
-        self.exits = ExitListTab(self.notebook, memory, db, lambda: self.session.paths)
+        self.returning = ReturnTab(self.notebook, memory, db, background=background)
+        self.mail = MailDraftTab(self.notebook, memory, db, self.root_folder, background=background)
+        self.manual = MaintenanceTab(self.notebook, memory, db, lambda: self.session.paths, background=background)
+        self.progress = ProgressTab(self.notebook, memory, db, lambda: self.session.paths, background=background)
+        self.exits = ExitListTab(self.notebook, memory, db, lambda: self.session.paths, background=background)
         tabs = self.notebook.tabs()
         for number, tab in enumerate(tabs, 1):
             self.notebook.tab(tab, text=f"{number} {self.notebook.tab(tab, 'text')}")
@@ -319,7 +327,7 @@ class PanelWindow:
             self.mailbox.lift()
             self.mailbox.focus_set()
             return
-        self.mailbox = MailboxWindow(self.master, self.db)
+        self.mailbox = MailboxWindow(self.master, self.db, background=self.background)
         self.mailbox.refresh()
 
     def restore_size(self) -> None:
@@ -411,11 +419,14 @@ def _memory_under(install_root: Path | None) -> FolderMemory:
     return FolderMemory.under(install_root) if install_root else FolderMemory()
 
 
-def build_window(master: tk.Tk, args: argparse.Namespace, *, start_on_check: bool = False) -> PanelWindow:
+def build_window(
+    master: tk.Tk, args: argparse.Namespace, *, start_on_check: bool = False, background: BackgroundFactory = Background
+) -> PanelWindow:
     """依啟動參數組視窗（#129）：資料庫登入 → 核對的資料庫來源 → 建好就帶著它的核對工作階段 → 視窗。"""
     db = DatabaseLogin(master, default_env_path(args.install_root))
     session = session_from_args(args, _check_database(db, args.install_root))
-    return PanelWindow(master, _memory_under(args.install_root), db, session, start_on_check=start_on_check)
+    memory = _memory_under(args.install_root)
+    return PanelWindow(master, memory, db, session, start_on_check=start_on_check, background=background)
 
 
 def _check_database(db: DatabaseLogin, install_root: Path | None) -> WorkflowDatabase:

@@ -8,14 +8,14 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from fcn_checker.check_config import ConfigPaths
-from fcn_checker.ui import HintBar
+from fcn_checker.ui import Background, HintBar
 from sp_workflow.check_terms import CalcLine
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.order_terms import OrderRow, describe
 from sp_workflow.preparation import parse_tdccs
 from sp_workflow.product_terms import Draft, ImportConfig, ImportLine
 from sp_workflow.status import ImportResult, OrderReview
-from sp_workflow.tabs.base import TITLE, DatabaseLogin, Tab
+from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, Tab
 from sp_workflow.tabs.editor import OrderEditor
 from sp_workflow.tabs.recalc import Releaser, recalc_text, status_counts
 from sp_workflow.window_actions import OrderImportResult, ReadResult, Recalc, import_order_sheet, read_order_sheet
@@ -32,6 +32,8 @@ class OrderTermsTab(Tab):
         memory: FolderMemory,
         db: DatabaseLogin,
         config_paths: Callable[[], ConfigPaths],
+        *,
+        background: BackgroundFactory = Background,
     ) -> None:
         super().__init__(
             notebook,
@@ -43,14 +45,14 @@ class OrderTermsTab(Tab):
                 ("calc", "核對條件", 90),
                 ("reason", "原因", 260),
             ),
+            db,
+            background,
         )
         self.memory = memory
-        self.db = db
         self.config_paths = config_paths
         self.read: ReadResult | None = None  # 最近一次讀取的結果
         self.items: dict[str, tuple[OrderRow, Draft | None]] = {}  # 結果表的列 → (讀取結果, 確認資料)
         self.unsaved = False  # 有改過、還沒匯入資料庫
-        self.working = False  # 正在讀取或匯入
         self.sheet_var = tk.StringVar(value=memory.load().get("order_sheet", ""))
         self.status_var.set(self.READY_TEXT)
 
@@ -198,7 +200,6 @@ class OrderTermsTab(Tab):
 
     def _busy(self, busy: bool) -> None:
         """處理中：按鈕與編輯區都不能用，結果表點了也不換檔。"""
-        self.working = busy
         self.editor.set_frozen(busy)
         state = tk.DISABLED if busy else tk.NORMAL
         self.start_button.configure(state=state)
@@ -227,23 +228,17 @@ class OrderTermsTab(Tab):
         sheet = Path(sheet_text)
         self.memory.remember(order_sheet=str(sheet))
         self._clear_results()
-        settings = self.db.settings(quiet=True)  # 用來帶入資料庫的值；沒有連線設定或取消時照樣讀
         config_paths = self.config_paths()
-        self._busy(True)
+        self.runner.run_maybe(  # 用來帶入資料庫的值；沒有連線設定或取消時照樣讀
+            lambda settings: read_order_sheet(settings, text, sheet, config_paths),
+            f"讀取中…（{sheet.name}）",
+            self._done,
+            database_error=lambda read: read.database_error,
+        )
 
-        def run() -> ReadResult:
-            return read_order_sheet(settings, text, sheet, config_paths)
-
-        self.run_in_background(run, f"讀取中…（{sheet.name}）", self._done)
-
-    def _done(self, result: object) -> None:
-        if isinstance(result, ReadResult):
-            self.db.after_run(result.database_error)
-            self.read = result
-            self._fill_table(result)
-        self._busy(False)
-        if not isinstance(result, ReadResult):
-            return
+    def _done(self, result: ReadResult) -> None:
+        self.read = result
+        self._fill_table(result)
         statuses = [self.table.set(iid, "status") for iid in self.items]
         ready = sum(status in IMPORTABLE for status in statuses)
         locked = statuses.count(OrderReview.LOCKED)
@@ -297,24 +292,16 @@ class OrderTermsTab(Tab):
         if read is None or not read.drafts:
             return
         self.editor.commit()
-        settings = self.db.settings()
-        if settings is None:
-            return
-        self._busy(True)
-        self.mark_done(False)
+        self.runner.run_action(
+            lambda settings: import_order_sheet(settings, read.drafts, read.config),
+            "匯入資料庫中…",
+            self._saved,
+            clear=False,
+            before=lambda: self.mark_done(False),
+        )
 
-        def run() -> OrderImportResult:
-            return import_order_sheet(settings, read.drafts, read.config)
-
-        self.run_in_background(run, "匯入資料庫中…", self._saved, clear=False)
-
-    def _saved(self, result: object) -> None:
-        self.db.after_run(result)
-        if isinstance(result, OrderImportResult):
-            self.unsaved = False
-        self._busy(False)
-        if not isinstance(result, OrderImportResult):
-            return
+    def _saved(self, result: OrderImportResult) -> None:
+        self.unsaved = False
         receipt, calcs = result.receipt, result.recalc
         calendar = None if self.read is None else self.read.config.calendar  # 放行後重算要用
         recalc = Recalc(calcs, calendar, result.recalc_error)

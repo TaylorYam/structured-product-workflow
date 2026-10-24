@@ -18,7 +18,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.date_picker import DateEntry
-from sp_workflow.database import ConnectionSettings
+from fcn_checker.ui import Background
 from sp_workflow.lifecycle import DELIVERY, IN_STOCK, KO, MATURITY, REDEMPTION
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.observation import STATUSES as PRICING_STATUSES
@@ -35,7 +35,7 @@ from sp_workflow.progress import (
     export_progress,
     filter_rows,
 )
-from sp_workflow.tabs.base import TITLE, DatabaseLogin, Tab
+from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, Tab
 from sp_workflow.tabs.progress_dialogs import (
     ask_objection,
     ask_redemption,
@@ -82,13 +82,17 @@ COLUMNS = (
 
 class ProgressTab(Tab):
     def __init__(
-        self, notebook: ttk.Notebook, memory: FolderMemory, db: DatabaseLogin, config_paths: Callable[[], ConfigPaths]
+        self,
+        notebook: ttk.Notebook,
+        memory: FolderMemory,
+        db: DatabaseLogin,
+        config_paths: Callable[[], ConfigPaths],
+        *,
+        background: BackgroundFactory = Background,
     ) -> None:
-        super().__init__(notebook, "進度", COLUMNS)
+        super().__init__(notebook, "進度", COLUMNS, db, background)
         self.memory = memory
-        self.db = db
         self.config_paths = config_paths
-        self.working = False
         self.rows: tuple[ProgressRow, ...] | None = None  # 最近一次重新整理讀到的全部商品；還沒讀過是 None
         self.shown: list[ProgressRow] = []  # 篩選、排序後畫面上的列
         self.sort: tuple[str, bool] | None = None  # 點欄位排序：(欄, 由大到小)；None 是預設（距今天數由大到小）
@@ -156,11 +160,16 @@ class ProgressTab(Tab):
         return found
 
     def _busy(self, busy: bool) -> None:
-        self.working = busy
+        """處理中：按鈕不能按、狀態列恢復一般顏色；不在處理時，匯出與登記要畫面上有列才能按。"""
+        if busy:
+            self.mark_done(False)
         self.refresh_button.configure(state=tk.DISABLED if busy else tk.NORMAL)
         self.export_button.configure(state=tk.DISABLED if busy or not self.shown else tk.NORMAL)
         for button in self._actions():
             button.configure(state=tk.DISABLED if busy or not self.shown else tk.NORMAL)
+
+    def _reset(self, clear: bool) -> None:
+        """結果表由 `refilter` 重畫，開始動作時不清（重新整理在開始前 restart，登記與匯出留著上一次的表）。"""
 
     def _actions(self) -> tuple[ttk.Button, ...]:
         """登記用的按鈕：重新整理過、沒有在背景做事時才能按。"""
@@ -172,29 +181,23 @@ class ProgressTab(Tab):
         """重新讀資料庫；`notice` 是剛做完的登記，寫在狀態列最前面。"""
         if self.working:
             return
-        settings = self.db.settings()
-        if settings is None:
-            return
         paths = self.config_paths()
-        self.notice = notice
-        self._busy(True)
-        self.restart()
 
-        def run() -> tuple[ProgressRow, ...]:
-            return load_progress_rows(settings, paths)
+        def starting() -> None:
+            self.notice = notice
+            self.restart()
 
-        self.run_in_background(run, "讀取作業進度中…", self._loaded, clear=False)
+        self.runner.run_action(
+            lambda settings: load_progress_rows(settings, paths), "讀取作業進度中…", self._loaded, before=starting
+        )
 
-    def _loaded(self, result: object) -> None:
-        self.db.after_run(result)
-        if isinstance(result, tuple):
-            self.rows = result
-            issuers = sorted({row.issuer for row in result if row.issuer})
-            self.issuer_box.configure(values=(ALL_ISSUERS, *issuers))
-            if self.issuer_var.get() not in (ALL_ISSUERS, *issuers):
-                self.issuer_var.set(ALL_ISSUERS)
-            self.refilter()
-        self._busy(False)
+    def _loaded(self, result: tuple[ProgressRow, ...]) -> None:
+        self.rows = result
+        issuers = sorted({row.issuer for row in result if row.issuer})
+        self.issuer_box.configure(values=(ALL_ISSUERS, *issuers))
+        if self.issuer_var.get() not in (ALL_ISSUERS, *issuers):
+            self.issuer_var.set(ALL_ISSUERS)
+        self.refilter()
 
     # ---------- 篩選、排序 ----------
 
@@ -276,16 +279,6 @@ class ProgressTab(Tab):
             return []
         return tdccs
 
-    def _start(
-        self, action: Callable[[ConnectionSettings], object], busy: str, on_done: Callable[[object], None]
-    ) -> None:
-        settings = self.db.settings()
-        if settings is None:
-            return
-        self._busy(True)
-        self.mark_done(False)
-        self.run_in_background(lambda: action(settings), busy, on_done, clear=False)
-
     def record_sent(self) -> None:
         """登記已寄出：先在背景查選中的哪幾檔已經登記過，問過才寫；每檔寫一筆「已寄出」。"""
         if self.working:
@@ -293,17 +286,13 @@ class ProgressTab(Tab):
         tdccs = self._selected()
         if not tdccs:
             return
-        self._start(
+        self.runner.run_action(
             lambda settings: sent_before(settings, tdccs),
             "檢查是否登記過已寄出中…",
             lambda result: self._sent_checked(tdccs, result),
         )
 
-    def _sent_checked(self, tdccs: list[str], result: object) -> None:
-        self.db.after_run(result)
-        self._busy(False)
-        if not isinstance(result, tuple):
-            return
+    def _sent_checked(self, tdccs: list[str], result: tuple[str, ...]) -> None:
         again = [t for t in tdccs if t in result]
         if again:
             fresh = len(tdccs) - len(again)
@@ -325,7 +314,7 @@ class ProgressTab(Tab):
         elif not messagebox.askokcancel(TITLE, f"登記 {len(tdccs)} 檔已寄出：{tdcc_list(tdccs)}？", parent=self.master):
             self.refilter()
             return
-        self._start(lambda settings: mark_sent(settings, tdccs), "登記已寄出中…", self._registered("已寄出"))
+        self.runner.run_action(lambda settings: mark_sent(settings, tdccs), "登記已寄出中…", self._registered("已寄出"))
 
     def record_sent_batch(self) -> None:
         """批次登記已寄出（#186）：選交易日，在背景重新讀進度找出這批，列出來確認後才寫。"""
@@ -335,15 +324,11 @@ class ProgressTab(Tab):
         if through is None:
             return
         paths = self.config_paths()
-        self._start(
+        self.runner.run_action(
             lambda settings: find_sent_batch(settings, paths, through), "找出要登記已寄出的商品中…", self._batch_found
         )
 
-    def _batch_found(self, result: object) -> None:
-        self.db.after_run(result)
-        self._busy(False)
-        if not isinstance(result, SentBatch):
-            return
+    def _batch_found(self, result: SentBatch) -> None:
         skipped_note = f"交易日 {result.through} 以前還沒核對完、這次沒有登記的 {result.unchecked} 檔"
         if not result.tdccs:
             messagebox.showinfo(
@@ -361,7 +346,7 @@ class ProgressTab(Tab):
         ):
             self.refilter()
             return
-        self._start(
+        self.runner.run_action(
             lambda settings: mark_sent_batch(settings, result),
             "批次登記已寄出中…",
             self._registered("已寄出", f"；{skipped_note}"),
@@ -378,20 +363,16 @@ class ProgressTab(Tab):
         if found is None:
             return
         day, note = found
-        self._start(
+        self.runner.run_action(
             lambda settings: register_redemptions(settings, tdccs, day, note),
             "登記顧客贖回中…",
             self._registered("顧客贖回"),
         )
 
-    def _registered(self, what: str, note: str = "") -> Callable[[object], None]:
+    def _registered(self, what: str, note: str = "") -> Callable[[Registered], None]:
         """寫完的處理：有寫不進去的跳警告；重新整理，狀態列最前面寫登記結果（`note` 接在最後）。"""
 
-        def done(result: object) -> None:
-            self.db.after_run(result)
-            self._busy(False)
-            if not isinstance(result, Registered):
-                return
+        def done(result: Registered) -> None:
             text = f"登記{what}：寫了 {len(result.done)} 檔"
             if result.failed:
                 failed = result.failed[:10]
@@ -418,14 +399,7 @@ class ProgressTab(Tab):
         if not tdccs:
             return
         tdcc = tdccs[0]
-
-        def done(result: object) -> None:
-            self.db.after_run(result)
-            self._busy(False)
-            if isinstance(result, EventChoices):
-                on_choices(result)
-
-        self._start(lambda settings: event_choices(settings, tdcc), "讀取存續事件中…", done)
+        self.runner.run_action(lambda settings: event_choices(settings, tdcc), "讀取存續事件中…", on_choices)
 
     def _objection_chosen(self, choices: EventChoices) -> None:
         if not choices.events:
@@ -437,7 +411,7 @@ class ProgressTab(Tab):
             self.refilter()
             return
         event_id, note = found
-        self._start(
+        self.runner.run_action(
             lambda settings: object_to_event(settings, event_id, note),
             "提出異議中…",
             self._changed(f"{choices.tdcc} 已提出異議（待確認）。\n"),
@@ -452,20 +426,14 @@ class ProgressTab(Tab):
         if objection_id is None:
             self.refilter()
             return
-        self._start(
+        self.runner.run_action(
             lambda settings: resolve_event_objection(settings, objection_id),
             "解除異議中…",
             self._changed(f"{choices.tdcc} 已解除異議。\n"),
         )
 
-    def _changed(self, notice: str) -> Callable[[object], None]:
-        def done(result: object) -> None:
-            self.db.after_run(result)
-            self._busy(False)
-            if isinstance(result, int):
-                self.refresh(notice)
-
-        return done
+    def _changed(self, notice: str) -> Callable[[int], None]:
+        return lambda _count: self.refresh(notice)
 
     # ---------- 匯出 ----------
 
@@ -485,18 +453,9 @@ class ProgressTab(Tab):
         path = Path(chosen)
         self.memory.remember(progress_export=str(path.parent))
         rows = list(self.shown)
-        self._busy(True)
-        self.mark_done(False)
+        self.runner.run_local(lambda: export_progress(rows, path), "匯出作業進度中…", self._exported)
 
-        def run() -> ProgressExport:
-            return export_progress(rows, path)
-
-        self.run_in_background(run, "匯出作業進度中…", self._exported, clear=False)
-
-    def _exported(self, result: object) -> None:
-        self._busy(False)
-        if not isinstance(result, ProgressExport):
-            return
+    def _exported(self, result: ProgressExport) -> None:
         self.status_var.set(f"已匯出作業進度 {result.count} 檔（目前的篩選與排序）：{result.path}")
         self.mark_done(True)
 

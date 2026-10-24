@@ -27,7 +27,7 @@ from sp_workflow.check_source import EXPORT_FOLDER
 from sp_workflow.database import DatabaseError, SchemaOutdatedError
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.tabs.base import DatabaseLogin, RootFolder
-from window_synth import hint_change_button, new_window, prepared_receipt, prepared_result, texts
+from window_synth import HeldBackground, hint_change_button, new_window, prepared_receipt, prepared_result, texts
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -283,29 +283,26 @@ def test_root_remembered_before_the_upgrade_is_kept(master, tmp_path: Path) -> N
 
 @pytest.mark.parametrize("tab_name", ["prepare", "mail"])
 def test_starting_without_a_root_asks_to_set_it_first(master, tmp_path: Path, monkeypatch, tab_name) -> None:
-    window = new_window(master, tmp_path)
+    window = new_window(master, tmp_path, background=HeldBackground, logged_in=True)
     tab = getattr(window, tab_name)
     tab.out_var.set("D:/out")
     errors = []
     monkeypatch.setattr(messagebox, "showerror", lambda title, message, **kwargs: errors.append(message))
-    monkeypatch.setattr(tab, "run_in_background", lambda *args, **kwargs: pytest.fail("不該開始執行"))
 
     tab.start()
 
     assert errors == ["請先在視窗最上方按「變更…」設定根目錄。"]
+    assert tab.background.held == [], "不該開始執行"
 
 
 def test_each_tab_still_remembers_its_own_output(master, tmp_path: Path, monkeypatch) -> None:
     memory = FolderMemory.under(tmp_path)
     memory.remember(root="R:/FCN")
-    window = new_window(master, tmp_path)
-    monkeypatch.setattr(window.mail.db, "settings", lambda **kwargs: object())  # 寄信草稿先登入資料庫，這裡不連線
+    window = new_window(master, tmp_path, background=HeldBackground, logged_in=True)  # 動作留著不做，不連線
     monkeypatch.setattr(sp_workflow.tabs.mail, "mail_template_from_env", lambda env_path: None)
     for tab, out in ((window.prepare, "D:/out"), (window.mail, "D:/寄信")):
-        monkeypatch.setattr(tab, "run_in_background", lambda *args, **kwargs: None)
         tab.out_var.set(out)
         tab.start()
-    monkeypatch.setattr(window.orders, "run_in_background", lambda *args, **kwargs: None)
     window.orders.sheet_var.set("D:/ELN/起單建檔_20261015.xlsm")
     window.orders.start()
 

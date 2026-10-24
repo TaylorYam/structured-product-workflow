@@ -11,6 +11,7 @@ from tkinter import messagebox
 import pytest
 
 import sp_workflow.tabs.daily
+import sp_workflow.tabs.orders
 from order_synth import CONFIG, order_row
 from sp_workflow.check_terms import DONE, WAIT_PRICES, CalcLine, CalcReceipt, Difference
 from sp_workflow.close_prices import CloseSummary, HistoryProblem, HistoryReceipt
@@ -96,32 +97,26 @@ def test_trades_only_import_says_prices_were_left_alone(master, tmp_path: Path) 
     ]
 
 
-def test_the_trades_only_box_is_passed_to_the_import(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
-    actions = []
-    monkeypatch.setattr(window.daily.db, "settings", lambda: object())
-    monkeypatch.setattr(window.daily, "run_in_background", lambda action, *a, **k: actions.append(action))
+def test_the_trades_only_box_is_passed_to_the_import(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
     calls = []
     monkeypatch.setattr(
-        sp_workflow.tabs.daily, "run_daily_import", lambda settings, daily, paths, *, prices: calls.append(prices)
+        sp_workflow.tabs.daily,
+        "run_daily_import",
+        lambda settings, daily, paths, *, prices: calls.append(prices) or daily_receipt(tmp_path),
     )
     window.daily.daily_var.set(str(tmp_path / "每日更新.xlsx"))
 
     window.daily.trades_only_var.set(True)
     window.daily.start()
-    actions[-1]()
     window.daily.trades_only_var.set(False)
     window.daily.start()
-    actions[-1]()
 
     assert calls == [False, True]
 
 
-def test_price_csv_import_shows_the_stored_price_date(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
-    actions = []
-    monkeypatch.setattr(window.daily.db, "settings", lambda: object())
-    monkeypatch.setattr(window.daily, "run_in_background", lambda action, *a, **k: actions.append(action))
+def test_price_csv_import_shows_the_stored_price_date(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
     receipt = PriceCsvReceipt(
         run_id=9,
         close_date=dt.date(2026, 10, 16),
@@ -135,7 +130,6 @@ def test_price_csv_import_shows_the_stored_price_date(master, tmp_path: Path, mo
     window.daily.csv_var.set(str(source))
 
     window.daily.start_csv()
-    window.daily._csv_done(actions[-1]())
 
     status = window.daily.status_var.get()
     assert "回補股價）：2026-10-16 收盤，存成取價日 2026-10-17" in status
@@ -174,13 +168,10 @@ def test_price_csv_import_says_how_many_closes_were_stored(master, tmp_path: Pat
     assert ("收盤價（筆）", 500, False) in window.daily.kpis.values
 
 
-def test_close_history_runs_on_this_page_and_lists_problems(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
-    actions = []
+def test_close_history_runs_on_this_page_and_lists_problems(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
     source = tmp_path / "HP.xlsx"
     monkeypatch.setattr(sp_workflow.tabs.daily, "ask_excel", lambda *a: str(source))
-    monkeypatch.setattr(window.daily.db, "settings", lambda: object())
-    monkeypatch.setattr(window.daily, "run_in_background", lambda action, *a, **k: actions.append(action))
     day = dt.date(2026, 10, 15)
     receipt = HistoryReceipt(
         summary=CloseSummary(1, dt.date(2022, 7, 28), dt.date(2026, 10, 21), 507, 500000, 0, 0),
@@ -194,11 +185,16 @@ def test_close_history_runs_on_this_page_and_lists_problems(master, tmp_path: Pa
         error_book_path=tmp_path / "歷史收盤價錯誤.xlsx",
     )
     result = HistoryResult(receipt, Observation(error="讀不到交易所假日表，這次沒有比價"))
-    monkeypatch.setattr(sp_workflow.tabs.daily, "import_close_history", lambda settings, path, paths: result)
+    running = []
+    monkeypatch.setattr(
+        sp_workflow.tabs.daily,
+        "import_close_history",
+        lambda settings, path, paths: running.append(str(window.daily.start_button.cget("state"))) or result,
+    )
 
     window._import_close_history()
-    assert str(window.daily.start_button.cget("state")) == "disabled"
-    window.daily._history_done(actions[-1]())
+
+    assert running == ["disabled"], "匯入中不能再按"
 
     assert window.notebook.select() == str(window.daily.frame)
     status = window.daily.status_var.get()
@@ -275,36 +271,30 @@ def test_observation_hands_the_day_to_the_exit_list(master, tmp_path: Path) -> N
     window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar), Observation(error="x")))
     assert "出場清單" not in window.daily.status_var.get(), "比價沒有跑就不帶入"
 
-    window.exits.working = True
+    window.exits.runner.working = True
     window.daily.exits_button.withdraw()  # 開始回補股價時收起（start_csv）
     window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar), Observation(OBSERVED)))
     assert "「9 出場清單」正在處理，比到的那一天沒有帶入。" in window.daily.status_var.get()
     assert window.daily.exits_button.winfo_manager() == "", "沒帶入就沒有下一步"
 
 
-def test_reobserve_runs_on_this_page(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
-    actions = []
-    monkeypatch.setattr(window.daily.db, "settings", lambda: object())
-    monkeypatch.setattr(window.daily, "run_in_background", lambda action, *a, **k: actions.append((action, a[1])))
+def test_reobserve_runs_on_this_page(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
     monkeypatch.setattr(sp_workflow.tabs.daily, "observe_products", lambda settings, paths: OBSERVED)
 
     window._reobserve()
-    action, done = actions.pop()
-    done(action())
 
     assert window.notebook.select() == str(window.daily.frame)
     assert "完成（重新比價全部）。\n比價：比到 2026-10-21" in window.daily.status_var.get()
     assert len(window.daily.table.get_children()) == 2
 
 
-def test_legacy_backfill_runs_on_this_page_and_lists_what_changed(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
-    actions = []
+def test_legacy_backfill_runs_on_this_page_and_lists_what_changed(
+    master, tmp_path: Path, monkeypatch, immediate
+) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
     source = tmp_path / "庫存總表.xlsx"
     monkeypatch.setattr(sp_workflow.tabs.daily, "ask_excel", lambda *a: str(source))
-    monkeypatch.setattr(window.daily.db, "settings", lambda: object())
-    monkeypatch.setattr(window.daily, "run_in_background", lambda action, *a, **k: actions.append(action))
     receipt = BackfillReceipt(
         (
             BackfillLine("147199990001", FILLED, "補了價格、比價日 1～12；寫了KO事件（2026-10-01）", (2,)),
@@ -316,11 +306,16 @@ def test_legacy_backfill_runs_on_this_page_and_lists_what_changed(master, tmp_pa
         error_book_path=tmp_path / "舊商品補資料錯誤.xlsx",
     )
     result = LegacyResult(receipt, Observation(error="讀不到交易所假日表，這次沒有比價"))
-    monkeypatch.setattr(sp_workflow.tabs.daily, "import_legacy_products", lambda settings, path, paths: result)
+    running = []
+    monkeypatch.setattr(
+        sp_workflow.tabs.daily,
+        "import_legacy_products",
+        lambda settings, path, paths: running.append(str(window.daily.start_button.cget("state"))) or result,
+    )
 
     window._import_legacy()
-    assert str(window.daily.start_button.cget("state")) == "disabled"
-    window.daily._legacy_done(actions[-1]())
+
+    assert running == ["disabled"], "匯入中不能再按"
 
     assert window.notebook.select() == str(window.daily.frame)
     status = window.daily.status_var.get()
@@ -331,10 +326,10 @@ def test_legacy_backfill_runs_on_this_page_and_lists_what_changed(master, tmp_pa
     assert window.daily.memory.load()["legacy_backfill"] == str(source)
 
 
-def test_close_history_does_nothing_without_a_file(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
+def test_close_history_does_nothing_without_a_file(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
     monkeypatch.setattr(sp_workflow.tabs.daily, "ask_excel", lambda *a: "")
-    monkeypatch.setattr(window.daily, "run_in_background", lambda *a, **k: pytest.fail("沒選檔不匯入"))
+    monkeypatch.setattr(sp_workflow.tabs.daily, "import_close_history", lambda *a: pytest.fail("沒選檔不匯入"))
 
     window.daily.import_history()
 
@@ -357,9 +352,11 @@ def pasted(tab) -> str:
     return tab.tdcc_text.get("1.0", tk.END).strip()
 
 
-def test_daily_import_hands_fcn_tdccs_to_the_order_tab_without_switching(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
-    monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: pytest.fail("不該自動讀取"))
+def test_daily_import_hands_fcn_tdccs_to_the_order_tab_without_switching(
+    master, tmp_path: Path, monkeypatch, immediate
+) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
+    monkeypatch.setattr(sp_workflow.tabs.orders, "read_order_sheet", lambda *a: pytest.fail("不該自動讀取"))
 
     window.daily._done(daily_receipt(tmp_path, ("147000000002", "147000000001")))
     master.update()  # 帶入時改了 TDCC 欄位，處理完那次 <<Modified>> 提示條仍在
@@ -393,11 +390,21 @@ def test_nothing_is_handed_over_without_fcn_tdccs(master, tmp_path: Path, receip
     assert window.daily.next_button.winfo_manager() == ""
 
 
-def test_a_rejected_daily_file_hands_nothing_over(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
-    monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: None)
+def rejected(*args, **kwargs):
+    raise DailyImportError("「交易明細」的欄名和來源表不同，整份不匯入")
 
-    window.daily._done(DailyImportError("「交易明細」的欄名和來源表不同，整份不匯入"))
+
+def test_a_rejected_daily_file_hands_nothing_over(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
+    errors = []
+    monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: errors.append(a[1]))
+    monkeypatch.setattr(sp_workflow.tabs.daily, "run_daily_import", rejected)
+    window.daily.daily_var.set(str(tmp_path / "每日更新.xlsx"))
+
+    window.daily.start()
+
+    assert errors == ["「交易明細」的欄名和來源表不同，整份不匯入"]
+    assert window.daily.status_var.get() == errors[0], "給作業人員看的錯誤直接顯示"
 
     assert pasted(window.orders) == "" and not window.orders.hint.shown
     assert window.daily.next_button.winfo_manager() == ""
@@ -455,22 +462,27 @@ def test_editing_the_handed_over_tdccs_hides_the_hint(master, tmp_path: Path) ->
 
 
 @pytest.mark.parametrize("busy", ["reading", "importing"])
-def test_a_busy_order_tab_does_not_take_the_tdccs(master, tmp_path: Path, monkeypatch, busy) -> None:
+def test_a_busy_order_tab_does_not_take_the_tdccs(master, tmp_path: Path, monkeypatch, immediate, busy) -> None:
     """#93：正在讀取或匯入時不帶入，免得舊的結果蓋在新的 TDCC 底下。"""
-    window = new_window(master, tmp_path)
-    monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: None)
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
     window.orders.sheet_var.set(str(tmp_path / "起單建檔_20261015.xlsm"))
     window.orders.tdcc_text.insert("1.0", "147000000009")
+    told = []
+    monkeypatch.setattr(messagebox, "showinfo", lambda *a, **k: told.append(a[1]))
+    monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: None)
+
+    def meanwhile(*args):
+        """起單資料頁還在讀或匯入時，每日匯入做完了。"""
+        window.daily._done(daily_receipt(tmp_path, ("147000000001",)))
+        raise RuntimeError("測試：做到一半")
+
     if busy == "reading":
+        monkeypatch.setattr(sp_workflow.tabs.orders, "read_order_sheet", meanwhile)
         window.orders.start()
     else:
         window.orders._done(read_result(order_row("147000000009")))
-        monkeypatch.setattr(window.orders.db, "settings", lambda **k: object())
+        monkeypatch.setattr(sp_workflow.tabs.orders, "import_order_sheet", meanwhile)
         window.orders.import_now()
-    told = []
-    monkeypatch.setattr(messagebox, "showinfo", lambda *a, **k: told.append(a[1]))
-
-    window.daily._done(daily_receipt(tmp_path, ("147000000001",)))
 
     assert len(told) == 1 and "正在處理" in told[0]
     assert pasted(window.orders) == "147000000009" and not window.orders.hint.shown
@@ -500,18 +512,16 @@ def test_the_same_tdccs_in_another_order_are_handed_over_without_asking(master, 
     assert pasted(window.orders) == "147000000001\n147000000002" and window.orders.hint.shown
 
 
-def test_starting_another_daily_import_withdraws_the_next_step(master, tmp_path: Path, monkeypatch) -> None:
+def test_starting_another_daily_import_withdraws_the_next_step(master, tmp_path: Path, monkeypatch, immediate) -> None:
     """上一次成功、這次重新匯入：開始時先收起「下一步」，這次失敗就不會留著上一次的。"""
-    window = new_window(master, tmp_path)
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
     window.daily._done(daily_receipt(tmp_path, ("147000000001",)))
     assert window.daily.next_button.winfo_manager() == "pack"
-    monkeypatch.setattr(window.daily.db, "settings", lambda: object())
-    monkeypatch.setattr(window.daily, "run_in_background", lambda *a, **k: None)
     monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: None)
+    monkeypatch.setattr(sp_workflow.tabs.daily, "run_daily_import", rejected)
     window.daily.daily_var.set(str(tmp_path / "每日更新.xlsx"))
 
     window.daily.start()
-    window.daily._done(DailyImportError("每日更新缺少工作表「交易明細」"))
 
     assert window.daily.next_button.winfo_manager() == ""
 
@@ -519,8 +529,10 @@ def test_starting_another_daily_import_withdraws_the_next_step(master, tmp_path:
 # ---------------------------------------------------------------- 匯入後重算核對條件、放行差異（#88）
 
 
-def test_daily_import_lists_check_terms_and_releases_a_difference(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
+def test_daily_import_lists_check_terms_and_releases_a_difference(
+    master, tmp_path: Path, monkeypatch, immediate
+) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
     calcs = (
         NEEDS_RELEASE,
         CalcLine("029199990002", WAIT_PRICES, "還沒有取價日比 Strike date 2026-10-16 晚的股價檔", False),
@@ -547,7 +559,7 @@ def test_daily_import_lists_check_terms_and_releases_a_difference(master, tmp_pa
     assert str(button.cget("state")) == "normal"
 
     released = CalcLine("029199990001", DONE, "已放行的差異：UF（…）", True, (Difference(*UF_DIFF.key, released=True),))
-    asked = release_without_database(window.daily, monkeypatch, released)
+    asked = release_without_database(monkeypatch, released)
     button.invoke()
 
     assert len(asked) == 1 and "UF不一致：起單資料 1.99、交易明細 0.0215（換算 2.15）" in asked[0]

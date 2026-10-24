@@ -48,7 +48,7 @@ from sp_workflow.window_actions import (
     resolve_event_objection,
     sent_before,
 )
-from window_synth import new_window
+from window_synth import HeldBackground, new_window
 
 A, B = "147199990001", "147199990002"
 T = dt.datetime(2026, 10, 20, 9, 0, tzinfo=dt.UTC)
@@ -208,19 +208,17 @@ ROWS = (row(A), row(B, sent=True))
 
 
 def loaded(master, tmp_path: Path, monkeypatch, rows=ROWS):
-    window = new_window(master, tmp_path)
+    window = new_window(master, tmp_path, background=HeldBackground, logged_in=True)
     tab = window.progress
-    actions = []
-    monkeypatch.setattr(tab.db, "settings", lambda: object())
-    monkeypatch.setattr(tab, "run_in_background", lambda action, *a, **k: actions.append((action, a[1])))
+    actions = tab.background.held
     monkeypatch.setattr(sp_workflow.tabs.progress, "load_progress_rows", lambda settings, paths: rows)
     tab.refresh()
-    action, done = actions.pop()
-    done(action())
+    tab.background.run_all()
     return tab, actions
 
 
 def run_all(actions: list) -> None:
+    """依序做完 `HeldBackground` 留著的動作（做完時又開始的也算）。"""
     while actions:
         action, done = actions.pop(0)
         done(action())
@@ -449,7 +447,8 @@ def test_cancelling_the_objection_form_restores_the_status(master, tmp_path: Pat
 
 def test_a_refused_objection_writes_nothing_and_unlocks_the_buttons(master, tmp_path: Path, monkeypatch) -> None:
     tab, actions = loaded(master, tmp_path, monkeypatch)
-    refreshed = []
+    refreshed, errors = [], []
+    monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: errors.append(a[1]))
     monkeypatch.setattr(
         sp_workflow.tabs.progress, "event_choices", lambda settings, tdcc: EventChoices(tdcc, (EVENT,), ())
     )
@@ -461,8 +460,9 @@ def test_a_refused_objection_writes_nothing_and_unlocks_the_buttons(master, tmp_
     monkeypatch.setattr(tab, "refresh", lambda notice="": refreshed.append(notice))
 
     action, done = actions.pop(0)
-    done(LifecycleError("這筆事件已被重新比價取代"))  # 背景的錯誤由 `_show_result` 先顯示，再交給 on_done
+    done(LifecycleError("這筆事件已被重新比價取代"))  # 背景的錯誤由 `ActionRunner` 顯示，不交給 on_result
 
+    assert errors == ["這筆事件已被重新比價取代"]
     assert refreshed == [] and str(tab.object_button.cget("state")) == "normal"
 
 
