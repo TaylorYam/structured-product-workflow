@@ -17,6 +17,7 @@
 
 - 比價狀態、已比到、比價原因只講 KO：已比到在第一個比價日之前、不觀察 KO（Non-Call 等於天期）的在庫商品都空白；出場的照舊是事件日。第一個比價日之前的在庫原因寫「Non-call period（第一個比價日 …）」（#194），不觀察 KO 的寫「還沒到最終比價日（…）」。
 - KI 另寫一欄（`workflow.pricing_status.ki`，資料表版本 0022）：沒有 KI、到期觀察、未觸及、已觸及 日期 標的（第一次觸及）、每期觀察，需人工追蹤。出場後、核對條件後來不是完成時沿用上一次。
+- 2026-10-24 補充（[#198](https://github.com/TaylorYam/structured-product-workflow/issues/198)，資料表版本 0023）：KI 欄改用英文代碼 No KI、EKI、AKI、MKI (manual)，觸及時 `AKI hit 日期 標的`（EKI 在最終比價日跌破寫 `EKI hit …`）；已出場、沒存過 KI 的寫 KI 種類。
 - 每日觀察 KI 照樣每天比，缺它要的價格照樣等股價，原因加「（每日觀察 KI）」；KI 觸及照舊影響到期接股的判定。
 - MKI 比價狀態照 KO 算（在庫、等股價、出場…），KI 欄寫「每期觀察，需人工追蹤」；最終比價日沒有 KO 時照舊待確認，要人工判定接股或到期還本。
 
@@ -44,6 +45,7 @@ A periodic KI (MKI) made the whole product 待確認 although its KO is observed
 
 - 比價狀態, 已比到, and 比價原因 cover KO only: the observed-through date is blank before the first autocall date and for products that never observe KO (non-call equals tenor) while on book; exits keep their event date. Before the first autocall date the reason is "Non-call period（第一個比價日 …）" (#194); products that never observe KO show "還沒到最終比價日（…）".
 - KI gets its own column (`workflow.pricing_status.ki`, schema version 0022): 沒有 KI, 到期觀察, 未觸及, 已觸及 date underlying (first touch), or 每期觀察，需人工追蹤. Exited products and products whose check terms are no longer 完成 keep the previous value.
+- Amended on 2026-10-24 ([#198](https://github.com/TaylorYam/structured-product-workflow/issues/198), schema version 0023): the KI column uses English codes No KI, EKI, AKI, MKI (manual), and `AKI hit date underlying` when touched (`EKI hit …` when EKI breaks at the final valuation date); exited products without a stored KI show the KI type.
 - A daily KI is still checked every day; a missing price it needs still means 等股價, with "（每日觀察 KI）" in the reason, and a touch still decides delivery at maturity.
 - MKI follows KO for its status (在庫, 等股價, exits…) with "每期觀察，需人工追蹤" in the KI column; when the final valuation date has no KO it stays 待確認 for a person to decide delivery or redemption.
 

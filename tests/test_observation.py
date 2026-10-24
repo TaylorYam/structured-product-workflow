@@ -45,7 +45,7 @@ STRIKE = dt.date(2026, 11, 2)  # 週一
 START = dt.date(2026, 11, 16)  # 第一個比價日（週一）
 FINAL = dt.date(2026, 12, 15)  # 最終比價日（週二）
 NON_CALL = f"Non-call period（第一個比價日 {START}）"
-NO_KI_TEXT = "沒有 KI"
+NO_KI_TEXT = "No KI"
 D = Decimal
 
 
@@ -153,17 +153,17 @@ def test_no_autocall_products_never_knock_out() -> None:
     [
         (NO_KI, "79", {}, AutoEvent(DELIVERY, FINAL, "AAA UW"), NO_KI_TEXT),  # 沒有 KI：低於執行價就接股
         (NO_KI, "80", {}, AutoEvent(MATURITY, FINAL), NO_KI_TEXT),  # 等於執行價不接股
-        (EKI, "64", {}, AutoEvent(DELIVERY, FINAL, "AAA UW"), f"已觸及 {FINAL} UL_1 AAA UW"),  # 最終收盤價 < 下限價
-        (EKI, "70", {dt.date(2026, 11, 20): "50"}, AutoEvent(MATURITY, FINAL), "到期觀察"),  # 期間跌破不算
+        (EKI, "64", {}, AutoEvent(DELIVERY, FINAL, "AAA UW"), f"EKI hit {FINAL} UL_1 AAA UW"),  # 最終收盤價 < 下限價
+        (EKI, "70", {dt.date(2026, 11, 20): "50"}, AutoEvent(MATURITY, FINAL), "EKI"),  # 期間跌破不算
         (
             AKI,
             "70",
             {dt.date(2026, 11, 3): "60"},
             AutoEvent(DELIVERY, FINAL, "AAA UW"),
-            "已觸及 2026-11-03 UL_1 AAA UW",
+            "AKI hit 2026-11-03 UL_1 AAA UW",
         ),  # Strike date 隔天就觀察
-        (AKI, "70", {STRIKE: "60"}, AutoEvent(MATURITY, FINAL), "未觸及"),  # Strike date 當天不算
-        (AKI, "70", {}, AutoEvent(MATURITY, FINAL), "未觸及"),  # 沒觸及
+        (AKI, "70", {STRIKE: "60"}, AutoEvent(MATURITY, FINAL), "AKI"),  # Strike date 當天不算
+        (AKI, "70", {}, AutoEvent(MATURITY, FINAL), "AKI"),  # 沒觸及
     ],
 )
 def test_maturity(barrier: str, a_final: str, a_path: dict, event: AutoEvent, ki: str) -> None:
@@ -208,7 +208,7 @@ def test_mki_is_not_watched_but_ko_is() -> None:
     )
     through = dt.date(2026, 11, 20)
     assert run(terms("Daily", MKI), closes(), through) == Outcome(ON_BOOK, "", through, ki=MKI_KI)
-    assert MKI_KI == "每期觀察，需人工追蹤"
+    assert MKI_KI == "MKI (manual)"
     day = dt.date(2026, 11, 18)
     assert run(terms("Daily", MKI), closes(on({day: "100"}), on({day: "100"}))).events == (AutoEvent(KO, day),)
 
@@ -241,7 +241,7 @@ def test_aki_needs_prices_between_strike_and_the_first_autocall_date() -> None:
     del prices[A.code][gap]
 
     assert run(terms("Daily", AKI), prices) == Outcome(
-        WAIT_PRICES, f"UL_1 AAA UW：{gap} 沒有收盤價（每日觀察 KI）", ki="未觸及"
+        WAIT_PRICES, f"UL_1 AAA UW：{gap} 沒有收盤價（每日觀察 KI）", ki="AKI"
     ), "#196：Non-call 期間缺的是 KI 要的價格，已比到照樣只講 KO"
     assert run(terms("Daily", NO_KI), prices).status == EXITED, "沒有每日 KI 時保證期內的價格用不到"
 
@@ -258,11 +258,11 @@ def test_the_non_call_period_is_the_reason_until_the_first_autocall_date() -> No
     """#194：第一個比價日之前是 Non-call 期間；每日觀察 KI 已開始比的也寫。#196：已比到只講 KO，這段期間空白。"""
     through = dt.date(2026, 11, 10)
 
-    assert run(terms("Daily", EKI), closes(), through) == Outcome(ON_BOOK, NON_CALL, ki="到期觀察"), "還沒開始比"
+    assert run(terms("Daily", EKI), closes(), through) == Outcome(ON_BOOK, NON_CALL, ki="EKI"), "還沒開始比"
     assert run(terms("Period End", NO_KI), closes(), through) == Outcome(ON_BOOK, NON_CALL, ki=NO_KI_TEXT)
-    assert run(terms("Daily", AKI), closes(), through) == Outcome(ON_BOOK, NON_CALL, ki="未觸及"), "KI 照比、不顯示"
-    assert run(terms("Daily", AKI), closes(), START) == Outcome(ON_BOOK, "", START, ki="未觸及"), "到了第一個比價日"
-    assert run(terms("Daily", AKI), closes(), STRIKE) == Outcome(ON_BOOK, NON_CALL, ki="未觸及")
+    assert run(terms("Daily", AKI), closes(), through) == Outcome(ON_BOOK, NON_CALL, ki="AKI"), "KI 照比、不顯示"
+    assert run(terms("Daily", AKI), closes(), START) == Outcome(ON_BOOK, "", START, ki="AKI"), "到了第一個比價日"
+    assert run(terms("Daily", AKI), closes(), STRIKE) == Outcome(ON_BOOK, NON_CALL, ki="AKI")
     no_call = terms(autocall=(FINAL,), no_autocall=True)
     assert run(no_call, closes(), through) == Outcome(ON_BOOK, f"還沒到最終比價日（{FINAL}）", ki=NO_KI_TEXT)
     assert run(no_call, closes(), dt.date(2026, 12, 1)) == Outcome(
@@ -277,10 +277,10 @@ def test_aki_touch_shows_the_first_day_and_underlying() -> None:
     prices = closes(on({later: "60"}), on({first: "60", later: "60"}))
 
     assert run(terms("Daily", AKI), prices, dt.date(2026, 11, 10)) == Outcome(
-        ON_BOOK, NON_CALL, ki=f"已觸及 {first} UL_2 7203 JT"
+        ON_BOOK, NON_CALL, ki=f"AKI hit {first} UL_2 7203 JT"
     )
     assert run(terms("Daily", AKI), prices, dt.date(2026, 11, 20)) == Outcome(
-        ON_BOOK, "", dt.date(2026, 11, 20), ki=f"已觸及 {first} UL_2 7203 JT"
+        ON_BOOK, "", dt.date(2026, 11, 20), ki=f"AKI hit {first} UL_2 7203 JT"
     )
 
 
@@ -435,7 +435,7 @@ def test_ki_is_stored_and_kept_after_exit(pg) -> None:
     write_closes(pg, us_closes(dt.date(2026, 11, 10), {touched: "60"}))
     observe_all(pg, CALENDAR)
 
-    ki = f"已觸及 {touched} UL_1 AAA UW"
+    ki = f"AKI hit {touched} UL_1 AAA UW"
     assert with_ki(pg, T1) == (ON_BOOK, NON_CALL, None, ki)
 
     write_closes(pg, us_closes(dt.date(2026, 11, 20), {touched: "60", KO_DAY: "100"}))
@@ -443,6 +443,10 @@ def test_ki_is_stored_and_kept_after_exit(pg) -> None:
     assert with_ki(pg, T1) == (EXITED, f"KO {KO_DAY}", KO_DAY, ki)
 
     assert observe_all(pg, CALENDAR).written == 0, "出場後 KI 沿用，不重寫"
+
+    pg.execute("UPDATE workflow.pricing_status SET ki = NULL WHERE tdcc = %s", (T1,))
+    assert observe_all(pg, CALENDAR).written == 1
+    assert with_ki(pg, T1) == (EXITED, f"KO {KO_DAY}", KO_DAY, "AKI"), "#198：出場時沒存過 KI 的寫 KI 種類"
 
 
 @pytest.mark.db

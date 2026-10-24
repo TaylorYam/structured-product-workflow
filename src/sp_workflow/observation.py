@@ -8,9 +8,10 @@
   D 型的觀察日是第一個比價日（比價日_{Non-Call}）起到最終比價日止、所有標的市場都開市的日子；P 型只看各期比價日。
   Non-Call 等於天期的商品不會提前出場，不觀察 KO。
 - KI：EKI 只在最終比價日，收盤價 < 下限價；AKI 自 Strike date 之後、該標的市場的每個交易日；
-  MKI（每期觀察）不比，KI 欄寫「每期觀察，需人工追蹤」，KO 照比、比價狀態照 KO 算；最終比價日沒有 KO 時待確認（#196）。
+  MKI（每期觀察）不比，KI 欄寫「MKI (manual)」，KO 照比、比價狀態照 KO 算；最終比價日沒有 KO 時待確認（#196）。
 - 比價狀態、已比到、原因只講 KO（#196、ADR 0022）：已比到第一個比價日之前、不觀察 KO 的都空白；KI 另寫一欄
-  （沒有 KI、到期觀察、未觸及、已觸及 日期 標的、每期觀察），每日觀察 KI 照樣每天比，缺它要的價格照樣等股價。
+  （英文代碼 No KI、EKI、AKI、MKI (manual)，觸及時 `AKI hit 日期 標的`，#198），每日觀察 KI 照樣每天比，
+  缺它要的價格照樣等股價。
 - 到期（最終比價日，沒有 KO）：沒有 KI，或 KI 曾觸及，且最差表現的標的（最終收盤價 ÷ 進場價最低）收盤價 < 執行價
   → 接股（記最差標的）；否則到期還本。事件日一律是觸價或判定的那個觀察日。
 - 還在 Non-call 期間（第一個比價日之前）的在庫商品，原因寫「Non-call period（第一個比價日 …）」，每日觀察 KI 已開始比的
@@ -63,7 +64,8 @@ UNLOCKED = "未鎖住"
 MEMORY_TYPES = frozenset(("Daily Memory", "Period End Memory"))
 DAILY_TYPES = frozenset(("Daily", "Daily Memory"))
 EKI, AKI, MKI = "EKI", "AKI", "MKI"
-MKI_KI = "每期觀察，需人工追蹤"  # MKI 不比（比價日 1～12 不是每一期，ADR 0020），KI 欄提醒
+NO_KI_TEXT = "No KI"
+MKI_KI = "MKI (manual)"  # MKI 不比（比價日 1～12 不是每一期，ADR 0020），KI 欄提醒人工追蹤
 
 
 @dataclass(frozen=True)
@@ -209,15 +211,15 @@ def _waiting(ko_first: dt.date | None, final: dt.date) -> str:
     return f"Non-call period（第一個比價日 {ko_first}）"
 
 
-def _ki_text(terms: Terms, touch: tuple[dt.date, Underlying] | None) -> str:
-    """進度頁 KI 欄（#196）：KI 的觀察方式，觸及時寫第一次觸及的日期與標的。"""
+def _ki_text(terms: Terms, touch: tuple[dt.date, Underlying] | None = None) -> str:
+    """進度頁 KI 欄（#196）：KI 種類的英文代碼（#198），觸及時加第一次觸及的日期與標的。"""
     if terms.barrier_type == NO_KI:
-        return "沒有 KI"
+        return NO_KI_TEXT
     if terms.barrier_type == MKI:
         return MKI_KI
     if touch is not None:
-        return f"已觸及 {touch[0]} {touch[1].name}"
-    return "到期觀察" if terms.barrier_type == EKI else "未觸及"
+        return f"{terms.barrier_type} hit {touch[0]} {touch[1].name}"
+    return terms.barrier_type
 
 
 def _maturity(
@@ -340,7 +342,7 @@ def observe_all(conn: psycopg.Connection, calendar: TradingCalendar, *, user: st
         errors: list[tuple[str, str]] = []
         for t in terms:
             events = existing.get(t.tdcc, [])
-            if events:  # 已出場：不再比價（ADR 0020），已比到的日期與 KI 沿用上一次
+            if events:  # 已出場：不再比價（ADR 0020），已比到的日期與 KI 沿用上一次；沒存過 KI 的寫 KI 種類（#198）
                 before = stored.get(t.tdcc)
                 results.append(
                     Observed(
@@ -349,7 +351,7 @@ def observe_all(conn: psycopg.Connection, calendar: TradingCalendar, *, user: st
                         _exit_reason(events),
                         before[2] if before else None,
                         locked[t.tdcc],
-                        (before[4] or "") if before else "",
+                        before[4] if before and before[4] else _ki_text(t),
                     )
                 )
                 continue

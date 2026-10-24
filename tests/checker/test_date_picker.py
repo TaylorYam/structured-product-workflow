@@ -1,20 +1,21 @@
-"""日期欄位旁的小日曆（#192）：月曆的格子、開啟時停的月份、選了一天填入欄位並呼叫 on_pick。"""
+"""日期欄位的小日曆（#192、#198）：月曆的格子、開啟時停的月份、選了一天填入欄位並呼叫 on_pick。"""
 
 from __future__ import annotations
 
 import datetime as dt
 import tkinter as tk
 
-from fcn_checker.date_picker import DateEntry, DatePopup, month_weeks, parse_day, shift_month
+from fcn_checker.date_picker import DateEntry, DatePopup, month_grid, parse_day, shift_month
 
 TODAY = dt.date(2026, 10, 24)
 
 
-def test_month_weeks_start_on_sunday() -> None:
-    weeks = month_weeks(2026, 10)
-    assert weeks[0] == [None, None, None, None, dt.date(2026, 10, 1), dt.date(2026, 10, 2), dt.date(2026, 10, 3)]
-    assert weeks[-1][-1] is None or weeks[-1][-1] == dt.date(2026, 10, 31)
-    assert [day for week in weeks for day in week if day] == [dt.date(2026, 10, d) for d in range(1, 32)]
+def test_month_grid_is_six_weeks_from_sunday() -> None:
+    days = month_grid(2026, 10)
+    assert len(days) == 42 and days[0] == dt.date(2026, 9, 27) and days[0].weekday() == 6
+    assert days[4] == dt.date(2026, 10, 1) and days[-1] == dt.date(2026, 11, 7)
+    assert [d for d in days if d.month == 10] == [dt.date(2026, 10, d) for d in range(1, 32)]
+    assert month_grid(2026, 11)[0] == dt.date(2026, 11, 1), "1 號是星期日就從 1 號開始"
 
 
 def test_shift_month_crosses_years() -> None:
@@ -35,10 +36,15 @@ def test_popup_opens_on_the_field_month_and_picks_a_day(master) -> None:
     popup = DatePopup(entry, var, lambda: picked.append(var.get()), today=TODAY)
 
     assert (popup.year, popup.month) == (2026, 3) and popup.title_var.get() == "2026 年 3 月"
-    assert (
-        str(popup.cells[dt.date(2026, 3, 5)].cget("background")).upper()
-        != str(popup.cells[dt.date(2026, 3, 6)].cget("background")).upper()
-    ), "欄位裡的日期標出來"
+    fill = popup.canvas.itemcget
+    assert fill(popup.cells[dt.date(2026, 3, 5)], "fill") != fill(popup.cells[dt.date(2026, 3, 6)], "fill"), (
+        "欄位裡的日期標出來"
+    )
+    assert fill(popup.cells[dt.date(2026, 4, 2)], "fill") != fill(popup.cells[dt.date(2026, 3, 6)], "fill"), (
+        "下一個月的日子淡灰"
+    )
+    x, y = popup.canvas.coords(popup.cells[dt.date(2026, 3, 18)])
+    assert popup.day_at(x, y) == dt.date(2026, 3, 18) and popup.day_at(x, 1) is None, "星期列不是日子"
     popup.show_month(1)
     assert popup.title_var.get() == "2026 年 4 月" and dt.date(2026, 4, 30) in popup.cells
 
@@ -78,3 +84,13 @@ def test_date_entry_keeps_one_popup(master) -> None:
     assert not first.winfo_exists() and second.winfo_exists() and (second.year, second.month) == (2026, 1)
     second.pick(dt.date(2026, 1, 9))
     assert field.entry.get() == "2026-01-09"
+
+
+def test_date_entry_is_one_box_with_a_calendar_icon(master) -> None:
+    """#198：輸入框和月曆圖示同一格，點圖示跳出月曆。"""
+    field = DateEntry(master, tk.StringVar(master, "2026-02-03"))
+
+    assert field.entry.master is field.box and field.button.master is field.box
+    popup = field.open()
+    assert popup.winfo_exists() and (popup.year, popup.month) == (2026, 2)
+    popup.close()

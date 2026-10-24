@@ -197,7 +197,7 @@ def test_export_writes_the_rows_as_shown(tmp_path: Path) -> None:
         pricing_reason="UL_1 AAA UW：2026-10-21 沒有收盤價",
         observed_through=dt.date(2026, 10, 20),
         pricing_unlocked=True,
-        ki="未觸及",
+        ki="AKI",
     )
     receipt = export_progress([shown], path)
 
@@ -213,7 +213,7 @@ def test_export_writes_the_rows_as_shown(tmp_path: Path) -> None:
         "等股價（未鎖住）",
         dt.datetime(2026, 10, 20),
         "UL_1 AAA UW：2026-10-21 沒有收盤價",
-        "未觸及",
+        "AKI",
     )
     assert rows[1][-1] == "還沒有商品條件"
     assert list(tmp_path.iterdir()) == [path], "暫存檔換名後不留"
