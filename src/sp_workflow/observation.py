@@ -11,6 +11,8 @@
   MKI（每期觀察）不比，比價狀態待確認「每期觀察 KI 需人工追蹤」，KO 照比。
 - 到期（最終比價日，沒有 KO）：沒有 KI，或 KI 曾觸及，且最差表現的標的（最終收盤價 ÷ 進場價最低）收盤價 < 執行價
   → 接股（記最差標的）；否則到期還本。事件日一律是觸價或判定的那個觀察日。
+- 還在 Non-call 期間（第一個比價日之前）的在庫商品，原因寫「Non-call period（第一個比價日 …）」，每日觀察 KI 已開始比的
+  也一樣；Non-Call 等於天期的還沒到最終比價日時寫「還沒到最終比價日（…）」（#194）。
 - 缺價格就停住：某標的在它市場的交易日要用到價格、收盤價表沒有，這檔停在那一天（已比到的日期是前一天），
   比價狀態「等股價」寫出標的與日期。交易所不在假日表、日期超出假日表涵蓋範圍、要比價了收盤價表卻完全沒有這個代碼
   → 待確認並寫原因。
@@ -120,6 +122,7 @@ def observe(
     ko_days = frozenset() if terms.no_autocall or daily else frozenset(terms.autocall)
     ko_start = terms.autocall[0] if daily and not terms.no_autocall else None
     aki = terms.barrier_type == AKI
+    ko_first = None if terms.no_autocall else terms.autocall[0]  # 第一個比價日；之前是 Non-call 期間
     first = min(
         day
         for day in (
@@ -133,7 +136,9 @@ def observe(
     if through is None or through < first:
         if terms.barrier_type == MKI:
             return Outcome(TO_CONFIRM, MKI_REASON)
-        return Outcome(ON_BOOK, "還沒到第一個觀察日" if through is not None else "收盤價表還沒有資料")
+        if through is None:
+            return Outcome(ON_BOOK, "收盤價表還沒有資料")
+        return Outcome(ON_BOOK, _waiting(ko_first, final))
     unknown = [u.name for u in terms.underlyings if u.code not in closes]
     if unknown:
         return Outcome(TO_CONFIRM, "；".join(f"{name}：收盤價表沒有這個代碼" for name in unknown))
@@ -185,7 +190,14 @@ def observe(
         day += dt.timedelta(days=1)
     if terms.barrier_type == MKI:
         return Outcome(TO_CONFIRM, MKI_REASON, last)
-    return Outcome(ON_BOOK, "", last)
+    return Outcome(ON_BOOK, _waiting(ko_first, final) if ko_first is not None and last < ko_first else "", last)
+
+
+def _waiting(ko_first: dt.date | None, final: dt.date) -> str:
+    """還沒到第一個比價日的在庫原因：Non-call 期間；Non-Call 等於天期的沒有比價日可等，等的是最終比價日。"""
+    if ko_first is None:
+        return f"還沒到最終比價日（{final}）"
+    return f"Non-call period（第一個比價日 {ko_first}）"
 
 
 def _maturity(terms: Terms, prices: Mapping[str, Decimal], touched: bool, day: dt.date) -> Outcome:
