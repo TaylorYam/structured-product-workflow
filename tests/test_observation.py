@@ -44,6 +44,7 @@ CALENDAR = TradingCalendar(
 STRIKE = dt.date(2026, 11, 2)  # 週一
 START = dt.date(2026, 11, 16)  # 第一個比價日（週一）
 FINAL = dt.date(2026, 12, 15)  # 最終比價日（週二）
+NON_CALL = f"Non-call period（第一個比價日 {START}）"
 D = Decimal
 
 
@@ -236,7 +237,22 @@ def test_through_the_latest_close_stays_on_book() -> None:
     through = dt.date(2026, 11, 20)
 
     assert run(terms(), closes(), through) == Outcome(ON_BOOK, "", through)
-    assert run(terms(), closes(), dt.date(2026, 11, 10)) == Outcome(ON_BOOK, "還沒到第一個觀察日")
+    assert run(terms(), closes(), dt.date(2026, 11, 10)) == Outcome(ON_BOOK, NON_CALL)
+    assert run(terms(), closes(), None) == Outcome(ON_BOOK, "收盤價表還沒有資料")
+
+
+def test_the_non_call_period_is_the_reason_until_the_first_autocall_date() -> None:
+    """#194：第一個比價日之前是 Non-call 期間；每日觀察 KI 已開始比的也寫，已比到的日期照舊。"""
+    through = dt.date(2026, 11, 10)
+
+    assert run(terms("Daily", EKI), closes(), through) == Outcome(ON_BOOK, NON_CALL), "還沒開始比"
+    assert run(terms("Period End", NO_KI), closes(), through) == Outcome(ON_BOOK, NON_CALL)
+    assert run(terms("Daily", AKI), closes(), through) == Outcome(ON_BOOK, NON_CALL, through), "KI 照比"
+    assert run(terms("Daily", AKI), closes(), START) == Outcome(ON_BOOK, "", START), "到了第一個比價日就不是了"
+    assert run(terms("Daily", AKI), closes(), STRIKE) == Outcome(ON_BOOK, NON_CALL), "Strike date 當天還沒開始比"
+    no_call = terms(autocall=(FINAL,), no_autocall=True)
+    assert run(no_call, closes(), through) == Outcome(ON_BOOK, f"還沒到最終比價日（{FINAL}）")
+    assert run(terms(barrier=MKI), closes(), through) == Outcome(TO_CONFIRM, MKI_REASON), "每期觀察 KI 照舊"
 
 
 @pytest.mark.parametrize(
@@ -458,7 +474,7 @@ def test_products_whose_check_terms_are_no_longer_done(pg) -> None:
 def test_a_code_without_closes_waits_until_its_first_observation_day() -> None:
     prices = {A.code: closes()[A.code]}
 
-    assert run(terms(), prices, dt.date(2026, 11, 10)) == Outcome(ON_BOOK, "還沒到第一個觀察日")
+    assert run(terms(), prices, dt.date(2026, 11, 10)) == Outcome(ON_BOOK, NON_CALL)
     assert run(terms(), prices) == Outcome(TO_CONFIRM, "UL_2 7203 JT：收盤價表沒有這個代碼")
 
 
