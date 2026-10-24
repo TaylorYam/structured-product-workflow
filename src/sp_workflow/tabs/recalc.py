@@ -36,7 +36,7 @@ class Releaser:
         self.busy = busy
         self.lines: dict[str, CalcLine] = {}
         self.calendar: TradingCalendar | None = None
-        self.runner = ActionRunner(db, tab.background, tab.status_var, self._busy)
+        self.runner = ActionRunner(db, tab.background, tab.status_var, self._busy)  # 和分頁共用狀態列；按鈕由 idle 擋
         self.button = ttk.Button(tab.buttons, text="放行差異…", command=self.release, state=tk.DISABLED)
         self.button.pack(side=tk.LEFT, padx=(8, 0))
         tab.table.bind("<<TreeviewSelect>>", lambda _event: self.refresh(), add="+")

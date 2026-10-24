@@ -207,3 +207,16 @@ def test_only_one_action_runs_at_a_time(master, tmp_path: Path) -> None:
 
     assert results == [1] and busy == [True, False]
     assert runner.run_action(lambda settings: 3, "第三件…", results.append) is True, "做完後可以再開始"
+
+
+def test_a_failing_result_handler_does_not_leave_the_buttons_disabled(master, tmp_path: Path) -> None:
+    runner, busy = runner_with(master, tmp_path, HeldBackground)
+
+    def show(result) -> None:
+        raise RuntimeError("顯示結果時出錯")
+
+    runner.run_action(lambda settings: 1, "處理中…", show)
+    with pytest.raises(RuntimeError):
+        runner.background.run_all()
+
+    assert busy == [True, False] and runner.working is False, "可以再開始下一件"

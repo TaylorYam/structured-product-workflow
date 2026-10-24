@@ -217,17 +217,16 @@ class MaintenanceTab(Tab):
         if not chosen:
             return
         path = Path(chosen)
-        unsaved: list[bool] = []
+        unsaved = self.has_unsaved()
 
         def starting() -> None:
             self.memory.remember(product_export=str(path.parent))
-            unsaved.append(self.has_unsaved())
             self.mark_done(False)
 
         self.runner.run_action(
             lambda settings: export_product_terms(settings, path),
             "匯出商品條件中…",
-            lambda result: self._exported(result, unsaved[0]),
+            lambda result: self._exported(result, unsaved),
             clear=False,
             before=starting,
         )

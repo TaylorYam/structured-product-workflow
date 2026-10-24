@@ -227,10 +227,12 @@ class ActionRunner:
 
     1. 登入：`run_action` 要連線設定（沒有或取消就不做）；`run_maybe` 可以沒有（準備、放回、讀起單建檔：
        沒有連線設定檔或取消時 action 拿到 None，照樣做）；`run_local` 不連資料庫（匯出畫面上的表）。
-    2. 開始：`working`、擁有者的 `busy(True)`、`reset(clear)`、呼叫端的 `before`，狀態列寫處理中的說明，背景執行。
+    2. 開始：`working`、擁有者的 `set_busy(True)`、`reset(clear)`、呼叫端的 `before`，狀態列寫處理中的說明（`busy`），
+       背景執行。
     3. 做完（主執行緒）：`db.after_run`（連不上時忘記密碼；成功的結果裡記著的資料庫錯誤用 `database_error` 取出），
        `working` 結束；出錯時顯示原因（`OperatorError` 的訊息直接給作業人員看），成功才呼叫 `on_result`；
-       最後擁有者的 `busy(False)`，`on_result` 又開始下一件時不呼叫。
+       最後擁有者的 `set_busy(False)`，`on_result` 又開始下一件時不呼叫。中間任何一步丟出例外，`working` 與按鈕
+       照樣恢復，不會卡住。
     """
 
     def __init__(
@@ -238,7 +240,7 @@ class ActionRunner:
         db: DatabaseLogin,
         background: Background,
         status: tk.StringVar,
-        busy: Callable[[bool], None],
+        set_busy: Callable[[bool], None],
         *,
         reset: Callable[[bool], None] = lambda _clear: None,
         parent: tk.Misc | None = None,
@@ -246,7 +248,7 @@ class ActionRunner:
         self.db = db
         self.background = background
         self.status = status
-        self.busy = busy
+        self.set_busy = set_busy
         self.reset = reset
         self.parent = parent  # 錯誤訊息框掛在哪個視窗（None：主視窗）
         self.working = False
@@ -309,12 +311,17 @@ class ActionRunner:
         database_error: Callable[[R], DatabaseError | None] | None,
     ) -> bool:
         self.working = True
-        self.busy(True)
-        self.reset(clear)
-        if before is not None:
-            before()
-        self.status.set(busy)
-        self.background.run(call, lambda future: self._done(future, on_result, database_error))
+        self.set_busy(True)
+        try:
+            self.reset(clear)
+            if before is not None:
+                before()
+            self.status.set(busy)
+            self.background.run(call, lambda future: self._done(future, on_result, database_error))
+        except BaseException:
+            self.working = False
+            self.set_busy(False)
+            raise
         return True
 
     def _done(
@@ -324,18 +331,22 @@ class ActionRunner:
         database_error: Callable[[R], DatabaseError | None] | None,
     ) -> None:
         error = future.exception()  # 背景執行緒的錯誤一律交回主執行緒顯示
-        if error is None:
-            result = future.result()
-            self.db.after_run(None if database_error is None else database_error(result))
-        else:
-            self.db.after_run(error)
-        self.working = False
-        if error is None:
-            on_result(result)
-        else:
-            self._show_error(error)
-        if not self.working:  # on_result 接著開始下一件時，按鈕留給那一件恢復
-            self.busy(False)
+        try:
+            try:
+                if error is None:
+                    result = future.result()
+                    self.db.after_run(None if database_error is None else database_error(result))
+                else:
+                    self.db.after_run(error)
+            finally:
+                self.working = False
+            if error is None:
+                on_result(result)
+            else:
+                self._show_error(error)
+        finally:
+            if not self.working:  # on_result 接著開始下一件時，按鈕留給那一件恢復
+                self.set_busy(False)
 
     def _show_error(self, error: BaseException) -> None:
         if isinstance(error, OperatorError):  # 訊息本身就是給作業人員看的
