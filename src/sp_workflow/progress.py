@@ -8,7 +8,8 @@
 商品的範圍是有交易明細或有商品條件的 TDCC。各步日期只顯示、不決定階段：交易明細匯入、商品條件匯入（Order 匯入、
 人工維護存檔或清單更新）、核對條件完成（最後一次計算）、已準備、核對、鎖住、已放回、草稿已建立、已寄出；同一步有多筆
 紀錄取最新一筆。批次登記已寄出（`sent_batch`）只登記交易日在選定日期以前（含）、目前是待寄信的商品。
-比價狀態（#170、ADR 0020）照 `workflow.pricing_status` 帶出：狀態、原因、已比到的日期；還沒比過的空白。
+比價狀態（#170、ADR 0020）照 `workflow.pricing_status` 帶出：狀態、原因、已比到的日期（只講 KO）與 KI 欄（#196、ADR 0022）；
+還沒比過的空白。
 只讀資料庫；匯出 Excel 的存檔方式同商品匯出（`product_export.save_rows`）。
 """
 
@@ -57,7 +58,7 @@ DATE_COLUMNS = (
     TRADES_IMPORTED, TERMS_IMPORTED, CHECK_TERMS_DONE, PREPARED_STEP, CHECKED, LOCKED, RETURNED_STEP, DRAFTED_STEP,
     SENT_STEP,
 )  # fmt: skip
-PRICING_COLUMNS = ("比價狀態", "已比到", "比價原因")  # #170
+PRICING_COLUMNS = ("比價狀態", "已比到", "比價原因", "KI")  # #170；比價三欄只講 KO，KI 另一欄（#196）
 EXPORT_COLUMNS = (
     "TDCC", "上手", "交易日", "距今天數", "作業進度", *READY_COLUMNS, "存續狀態", *PRICING_COLUMNS, "異議", *DATE_COLUMNS,
     "卡住的原因",
@@ -97,6 +98,7 @@ class ProgressRow:
     pricing_reason: str = ""  # 等股價的標的與日期、待確認的原因、出場的事件
     observed_through: dt.date | None = None  # 已比到的日期
     pricing_unlocked: bool = False  # 比價時還沒鎖住
+    ki: str = ""  # KI 欄（#196）：沒有 KI、到期觀察、未觸及、已觸及 日期 標的、每期觀察；還沒比過空白
     ready: tuple[bool, ...] = (False,) * len(READY_COLUMNS)  # 依 `READY_COLUMNS`：三件齊了沒
 
     @property
@@ -226,9 +228,10 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
                 "pricing_reason": reason or "",
                 "observed_through": through,
                 "pricing_unlocked": not locked,
+                "ki": ki or "",
             }
-            for tdcc, status, reason, through, locked in conn.execute(
-                "SELECT tdcc, status, reason, observed_through, locked FROM workflow.pricing_status"
+            for tdcc, status, reason, through, locked, ki in conn.execute(
+                "SELECT tdcc, status, reason, observed_through, locked, ki FROM workflow.pricing_status"
             )
         }
         tdccs = sorted(facts)
@@ -326,7 +329,7 @@ def export_values(row: ProgressRow) -> tuple[object, ...]:
     """一列的值，依 `EXPORT_COLUMNS`。"""
     return (
         row.tdcc, row.issuer, row.trade_date, row.days, row.progress, *row.ready_marks, row.lifecycle,
-        row.pricing_text, row.observed_through, row.pricing_reason, row.objection, *row.dates, row.reason,
+        row.pricing_text, row.observed_through, row.pricing_reason, row.ki, row.objection, *row.dates, row.reason,
     )  # fmt: skip
 
 

@@ -378,7 +378,7 @@ def test_old_list_maturity_gets_the_final_valuation_date(pg) -> None:
     pg.execute(insert, (tdccs[3], "到期還本", dt.date(2027, 4, 20), "舊清單", None))  # 已有日期
     pg.execute(insert, (tdccs[4], "到期還本", dt.date(2027, 4, 22), "比價", None))
 
-    assert apply_migrations(pg) == ["0021_legacy_maturity_date.sql"]
+    assert apply_migrations(pg)[0] == "0021_legacy_maturity_date.sql"
 
     added = "事件日由資料表版本 0021 補成最終比價日（#189）"
     assert pg.execute("SELECT tdcc, event, event_date, note FROM workflow.product_event ORDER BY tdcc").fetchall() == [
@@ -390,3 +390,21 @@ def test_old_list_maturity_gets_the_final_valuation_date(pg) -> None:
     ]
     with pytest.raises(psycopg.errors.RaiseException, match="存續事件不能修改"):
         pg.execute("UPDATE workflow.product_event SET event_date = NULL WHERE tdcc = %s", (tdccs[0],))
+
+
+@pytest.mark.db
+def test_pricing_status_gets_a_blank_ki_column(pg) -> None:
+    """資料表版本 0022（#196）：比價狀態加 KI 欄，既有的比價狀態不動、KI 空白，下一次比價補上。"""
+    _database_before(pg, 22)
+    seed_products(pg, [inventory(A, [("台北", 100000)])])
+    pg.execute(
+        "INSERT INTO workflow.pricing_status (tdcc, status, reason, observed_through, locked)"
+        " VALUES (%s, '在庫', '還沒到第一個觀察日', NULL, true)",
+        (A,),
+    )
+
+    assert apply_migrations(pg) == ["0022_pricing_ki.sql"]
+
+    assert pg.execute("SELECT status, reason, ki FROM workflow.pricing_status").fetchall() == [
+        ("在庫", "還沒到第一個觀察日", None)
+    ]

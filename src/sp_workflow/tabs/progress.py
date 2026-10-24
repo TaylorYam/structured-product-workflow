@@ -73,6 +73,7 @@ COLUMNS = (
     ("pricing", "比價狀態", 110),
     ("observed_through", "已比到", 90),
     ("pricing_reason", "比價原因", 220),
+    ("ki", "KI", 160),  # #196
     ("objection", "異議", 160),
     *((key, name, 95) for key, name in zip(_DATE_KEYS, DATE_COLUMNS, strict=True)),
     ("reason", "卡住的原因", 320),
@@ -507,7 +508,7 @@ def _cells(row: ProgressRow) -> tuple[str, ...]:
     dates = tuple("" if value is None else f"{value.astimezone():%Y-%m-%d}" for value in row.dates)
     return (
         row.tdcc, row.issuer, trade_date, days, row.progress, *row.ready_marks, row.lifecycle, row.pricing_text,
-        through, row.pricing_reason, row.objection, *dates, row.reason,
+        through, row.pricing_reason, row.ki, row.objection, *dates, row.reason,
     )  # fmt: skip
 
 
@@ -524,6 +525,7 @@ def _sort_value(row: ProgressRow, index: int) -> object:
         PRICING_STATUSES.index(row.pricing) if row.pricing in PRICING_STATUSES else None,
         row.observed_through,
         row.pricing_reason or None,
+        row.ki or None,
         row.objection or None,
         *row.dates,
         row.reason or None,
