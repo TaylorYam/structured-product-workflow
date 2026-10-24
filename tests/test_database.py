@@ -403,8 +403,26 @@ def test_pricing_status_gets_a_blank_ki_column(pg) -> None:
         (A,),
     )
 
-    assert apply_migrations(pg) == ["0022_pricing_ki.sql"]
+    assert apply_migrations(pg)[0] == "0022_pricing_ki.sql"
 
     assert pg.execute("SELECT status, reason, ki FROM workflow.pricing_status").fetchall() == [
         ("在庫", "還沒到第一個觀察日", None)
+    ]
+
+
+@pytest.mark.db
+def test_chinese_ki_is_cleared_for_the_english_codes(pg) -> None:
+    """資料表版本 0023（#198）：清掉中文 KI，下一次比價改寫英文代碼；比價狀態其他欄不動。"""
+    _database_before(pg, 23)
+    seed_products(pg, [inventory(A, [("台北", 100000)])])
+    pg.execute(
+        "INSERT INTO workflow.pricing_status (tdcc, status, reason, observed_through, locked, ki)"
+        " VALUES (%s, '在庫', 'Non-call period', NULL, true, '未觸及')",
+        (A,),
+    )
+
+    assert apply_migrations(pg) == ["0023_pricing_ki_english.sql"]
+
+    assert pg.execute("SELECT status, reason, ki FROM workflow.pricing_status").fetchall() == [
+        ("在庫", "Non-call period", None)
     ]

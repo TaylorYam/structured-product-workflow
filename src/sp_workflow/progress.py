@@ -98,7 +98,7 @@ class ProgressRow:
     pricing_reason: str = ""  # 等股價的標的與日期、待確認的原因、出場的事件
     observed_through: dt.date | None = None  # 已比到的日期
     pricing_unlocked: bool = False  # 比價時還沒鎖住
-    ki: str = ""  # KI 欄（#196）：沒有 KI、到期觀察、未觸及、已觸及 日期 標的、每期觀察；還沒比過空白
+    ki: str = ""  # KI 欄（#196、#198）：No KI、EKI、AKI、MKI (manual)、`AKI hit 日期 標的`；還沒比過空白
     ready: tuple[bool, ...] = (False,) * len(READY_COLUMNS)  # 依 `READY_COLUMNS`：三件齊了沒
 
     @property
