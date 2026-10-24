@@ -24,7 +24,7 @@ from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Any
 
-FCN = "FCN"  # 商品種類（#201 從 daily_import 搬來）
+FCN = "FCN"  # 商品種類（#201）
 UPFRONT_FIELD = "Upfront / NotePrice (%)"
 TRADE_FIELD = "Trade date"
 STRIKE_FIELD = "Strike date"

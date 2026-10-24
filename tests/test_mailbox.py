@@ -24,8 +24,6 @@ from sp_workflow.mailbox import (
     save_person,
 )
 
-pytestmark = pytest.mark.db
-
 AMY = Person("Amy", "amy@example.com", "FC", False)
 BEN = Person("Ben", "ben@example.com", "FC", False)
 
