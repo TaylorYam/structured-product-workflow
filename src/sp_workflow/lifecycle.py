@@ -9,6 +9,7 @@
   舊清單的到期還本，事件日是最終比價日（資料表版本 0021 補既有的，#189）。
 - 對自動事件有意見只能提出異議（`raise_objection`／`resolve_objection`），異議不改事件。
 `workflow.product` 舊的 `status_event` 等四欄已由資料表版本 0020 移除（#172）。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations
@@ -19,6 +20,8 @@ import json
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+from sp_workflow.database import OperatorError
 
 if TYPE_CHECKING:
     import psycopg
@@ -39,7 +42,7 @@ SOURCES = (OBSERVATION, LEGACY, MANUAL)
 _EVENT_COLUMNS = "event_id, tdcc, event, event_date, underlying, source, note, recorded_by, recorded_at"
 
 
-class LifecycleError(Exception):
+class LifecycleError(OperatorError):
     """存續事件不能寫（例如已有存續事件、不是自動事件）；訊息是給作業人員看的中文。"""
 
 

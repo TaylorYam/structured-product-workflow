@@ -195,11 +195,23 @@ def test_unreachable_database_keeps_the_list_and_says_why(pg_settings, tmp_path:
 def test_write_failure_keeps_the_list_and_says_why(pg, pg_settings, tmp_path: Path, monkeypatch) -> None:
     pg.execute("DROP TABLE workflow.step_record")
     monkeypatch.setattr("sp_workflow.window_actions.prepare_batch", lambda text, root, out: prepare_receipt(tmp_path))
-    monkeypatch.setattr("sp_workflow.window_actions.require_current_schema", lambda conn: None)
 
     result = run_prepare(pg_settings, A, tmp_path, tmp_path)
 
     assert result.receipt == prepare_receipt(tmp_path)
     assert "step_record" in result.recorded.error and result.recorded.database_error is None, (
         "不是連線問題，不用重問密碼"
+    )
+
+
+@pytest.mark.db
+def test_outdated_schema_keeps_the_list_and_keeps_the_password(pg, pg_settings, tmp_path: Path, monkeypatch) -> None:
+    pg.execute("DELETE FROM public.spw_schema_version")
+    monkeypatch.setattr("sp_workflow.window_actions.prepare_batch", lambda text, root, out: prepare_receipt(tmp_path))
+
+    result = run_prepare(pg_settings, A, tmp_path, tmp_path)
+
+    assert result.receipt == prepare_receipt(tmp_path)
+    assert "spw-db-migrate" in result.recorded.error and result.recorded.database_error is None, (
+        "版本不對不是登入問題（#200）"
     )

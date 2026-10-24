@@ -13,6 +13,7 @@
 - 回填：ISIN、發行日、比價日_1～12（空值寫法存成空白）、期初定價 VWAP 時各標的四個價格；人工放行的說明書
   若單位面額和資料庫不同，改成 TS 的值。每個改變的原值記在 `workflow.backfill_log`。
 - 寫回在同一個 transaction 裡，失敗時什麼都不寫；核對結果檔已經存好，可以重新寫回（使用者 2026-10-21 確認）。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations
@@ -29,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 from openpyxl.cell.cell import Cell
 
 from sp_workflow.check_terms import DONE
-from sp_workflow.database import ConnectionSettings, DatabaseError, connect, require_current_schema
+from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdatedError, connect
 from sp_workflow.file_tools import save_book, table_book
 from sp_workflow.product_record import PRODUCT_COLUMNS, missing_fields
 from sp_workflow.product_write import lock_terms
@@ -79,10 +80,6 @@ def export_reference(
     conn: psycopg.Connection, tdccs: Sequence[str], fmt: ReferenceFormat, path: Path
 ) -> dict[str, str]:
     """依 TDCC 從資料庫產生參考條件表到 `path`（每檔一列，欄位照匯入格式），回傳沒有列的 TDCC → 原因。"""
-    try:
-        require_current_schema(conn)
-    except DatabaseError as exc:
-        raise CheckSourceError(str(exc)) from exc
     codes = list(dict.fromkeys(tdccs))
     with conn.transaction():
         stored = _load(conn, codes)
@@ -277,7 +274,6 @@ def write_back(
     """
     from fcn_checker.orders.reference import load_reference_sheet
 
-    require_current_schema(conn)
     checked_rows = {r.product_code.value: r for r in load_reference_sheet(batch.reference_sheet, fmt).rows}
     headers = _headers(fmt)
     user = user or getpass.getuser()
@@ -492,6 +488,8 @@ class WorkflowDatabase:
         """連上資料庫；連不上時呼叫 `on_failure`（可能是密碼錯）。資料表版本等其他錯誤不算登入問題。"""
         try:
             return connect(self._require())
+        except SchemaOutdatedError:
+            raise
         except DatabaseError:
             self.on_failure()
             raise

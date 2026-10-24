@@ -18,7 +18,7 @@ from fcn_checker.check_config import ConfigPaths
 from order_synth import CONFIG, SHEET, A, order_row, sheet_line, write_sheet
 from sp_workflow import window_actions
 from sp_workflow.check_terms import CheckTermsError
-from sp_workflow.database import DatabaseError
+from sp_workflow.database import DatabaseError, SchemaOutdatedError
 from sp_workflow.order_import import drafts_from, import_drafts
 from sp_workflow.product_write import NEW
 from sp_workflow.window_actions import (
@@ -203,6 +203,30 @@ def test_reading_when_the_database_is_unreachable_still_reads_the_sheet(pg, pg_s
     assert len(result.drafts) == 1 and result.drafts[0].stored is None
     assert isinstance(result.database_error, DatabaseError)
     assert result.database_note == f"資料庫沒有連上，沒有帶入資料庫的值（{result.database_error}）"
+
+
+@pytest.mark.db
+def test_reading_with_an_outdated_schema_still_reads_the_sheet_and_keeps_the_login(pg, pg_settings, tmp_path) -> None:
+    sheet = write_sheet(tmp_path / SHEET, [sheet_line()])
+    pg.execute("DELETE FROM public.spw_schema_version")
+
+    result = read_order_sheet(pg_settings, A, sheet, PATHS)
+
+    assert len(result.drafts) == 1 and result.drafts[0].stored is None
+    assert "spw-db-migrate" in result.database_note and result.database_error is None, "版本不對不是登入問題（#200）"
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("action", ["load_progress_rows", "observe_products", "load_exit_list", "check_missing"])
+def test_actions_refuse_an_outdated_schema_with_the_same_message(pg, pg_settings, action) -> None:
+    """版本只在 `connect` 檢查一次（#200）：每個要連資料庫的動作都丟同一句話。"""
+    pg.execute("DELETE FROM public.spw_schema_version")
+    run = getattr(window_actions, action)
+    args = {"load_exit_list": (pg_settings, PATHS, None)}.get(action, (pg_settings, PATHS))
+
+    with pytest.raises(SchemaOutdatedError) as info:
+        run(*args)
+    assert str(info.value) == "資料庫的資料表還沒建立或不是最新版本，請先執行 spw-db-migrate。"
 
 
 @pytest.mark.db

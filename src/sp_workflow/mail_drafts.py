@@ -8,6 +8,7 @@
 只有 PB 承作時「不需寄送」；每日匯入略過的非 FCN 商品標「不支援的商品類型」。符合的一檔建一封草稿：收件人是 FC，副本是信箱的固定副本（已在收件人的不重複）。
 只建草稿、不寄出；同一檔重跑會再建一封；某一檔出錯只影響那一檔。結果寫成 `寄信草稿清單_<日期時間>.xlsx`，
 並記錄用的是哪一次每日匯入。商品資料夾只讀。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 from openpyxl.utils import get_column_letter
 
 from sp_workflow.daily_import import ImportInfo, Mailbox, is_pb, latest_import, load_mailbox
-from sp_workflow.database import DatabaseError, load_env_file, require_current_schema
+from sp_workflow.database import OperatorError, load_env_file
 from sp_workflow.file_tools import save_book, table_book, tdcc_as_text
 from sp_workflow.preparation import find_product_folders, is_tdcc, parse_tdccs
 from sp_workflow.product_record import (
@@ -81,7 +82,7 @@ TEMPLATE_COLUMN_UNITS = (
 LIST_COLUMNS = (("TDCC", 15), ("狀態", 10), ("收件人", 40), ("副本", 50), ("原因", 80))
 
 
-class MailDraftError(Exception):
+class MailDraftError(OperatorError):
     """整批無法建立草稿（資料庫、信箱或路徑有問題）；訊息是給作業人員看的中文。"""
 
 
@@ -122,10 +123,7 @@ MAIL_TEMPLATE_ENV = "SPW_MAIL_TEMPLATE"
 
 
 def mail_template_from_env(env_path: Path) -> Path | None:
-    try:
-        values = load_env_file(env_path)
-    except DatabaseError as exc:
-        raise MailDraftError(str(exc)) from exc
+    values = load_env_file(env_path)  # 設定檔有問題時丟 `DatabaseError`
     raw = values.get(MAIL_TEMPLATE_ENV)
     if not raw:
         return None
@@ -156,10 +154,6 @@ def create_drafts(
         raise MailDraftError(f"根目錄不存在：{root}")
     if not out_parent.is_dir():
         raise MailDraftError(f"結果清單的位置不存在：{out_parent}")
-    try:
-        require_current_schema(conn)
-    except DatabaseError as exc:
-        raise MailDraftError(str(exc)) from exc
     with conn.transaction():
         mailbox = load_mailbox(conn)
     last_import = latest_import(conn)

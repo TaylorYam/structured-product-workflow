@@ -2,6 +2,7 @@
 
 只新增、不修改：同一檔重做多一筆。哪些檔要寫由各步驟的結果決定（`prepared_records`、`returned_records`、
 `drafted_records`），寫入一個 transaction（`write_records`）。Excel 清單照舊先產出，寫紀錄失敗不影響清單（`window_actions`）。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations
