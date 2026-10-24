@@ -11,7 +11,8 @@
   已鎖住的商品照資料庫的值產生（TS、IIS 打勾，回填過的欄位有值），可以再核對，但不再回填。
   商品條件缺起單資料的必填欄（#114）時不看核對條件，一律不產生列（核對條件可能還沒重算）。
 - 回填：ISIN、發行日、比價日_1～12（空值寫法存成空白）、期初定價 VWAP 時各標的四個價格；人工放行的說明書
-  若單位面額和資料庫不同，改成 TS 的值。每個改變的原值記在 `workflow.backfill_log`。
+  若單位面額和資料庫不同，改成 TS 的值。每個改變的原值記在 `workflow.backfill_log`。寫入、紀錄與鎖住都經過
+  `product_terms.backfill`／`lock_checked`（#203），和商品條件寫入共用同一把鎖（`product_terms.read(…, lock=True)`）。
 - 寫回在同一個 transaction 裡，失敗時什麼都不寫；核對結果檔已經存好，可以重新寫回（使用者 2026-10-21 確認）。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
@@ -32,8 +33,8 @@ from openpyxl.cell.cell import Cell
 from sp_workflow.check_terms import DONE
 from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdatedError, connect
 from sp_workflow.file_tools import save_book, table_book
-from sp_workflow.product_record import PRODUCT_COLUMNS, missing_fields
-from sp_workflow.product_terms import lock_terms
+from sp_workflow.product_record import PRICE_COLUMNS, PRODUCT_COLUMNS, missing_fields, same_value
+from sp_workflow.product_terms import backfill, lock_checked, locked, read
 
 if TYPE_CHECKING:
     import psycopg
@@ -48,7 +49,6 @@ DATE_FORMAT = "yyyy/m/d"
 SLOTS = 12
 UNDERLYINGS = 5
 BRANCHES = 7  # 匯入格式的分公司欄數
-PRICE_COLUMNS = {"initial": "initial_price", "strike": "strike_price", "ki": "ki_price", "ko": "ko_price"}
 CHECKED_FIELDS = ("checked_term_sheet", "checked_iis")
 DENOMINATION_RULE = "field.denomination"
 DENOMINATION_COLUMN = "單位面額"
@@ -100,13 +100,13 @@ def _absent_reason(found: _Stored | None) -> str:
     """不能從資料庫核對的原因；空字串表示可以。"""
     if found is None:
         return "資料庫沒有這檔商品（還沒匯入起單資料），不核對"
-    locked = found.product["locked_at"] is not None
-    if locked and found.status is None:
+    is_locked = found.product["locked_at"] is not None  # 同 `product_terms.locked`
+    if is_locked and found.status is None:
         return "以前清單更新匯入、已鎖住的商品，資料庫沒有核對條件；請用 Excel 參考條件表核對"
     missing = missing_fields(found.product)
     if missing:
         return f"商品條件缺 {'、'.join(missing)}；補齊後再核對"
-    if locked:
+    if is_locked:
         return ""
     if found.status is None:
         return "資料庫還沒算這檔的核對條件；請重新匯入起單資料或每日更新後再核對"
@@ -287,13 +287,13 @@ def write_back(
                 filled = any(receipt.filled(i) for i in (item, item.partner) if i is not None)  # 這檔商品有回填
                 _save_result(conn, item, filled, result_file, user)
                 saved += 1
-        locked, already, stale, changes = [], [], [], 0
+        done, already, stale, changes = [], [], [], 0
         for item in receipt.filled_items:
             tdcc = item.product_code
             if tdcc not in known:
                 continue
-            stored = lock_terms(conn, tdcc)  # 和商品條件寫入共用同一把鎖（#124）
-            if stored is not None and stored.locked:
+            stored = read(conn, tdcc, lock=True)  # 和商品條件寫入共用同一把鎖（#124）
+            if locked(stored):
                 already.append(tdcc)
                 continue
             current = _load(conn, [tdcc]).get(tdcc)
@@ -302,9 +302,9 @@ def write_back(
                 continue
             for column, new in [*_backfill_values(item, fmt), *_released_denomination(item)]:
                 changes += _write_value(conn, tdcc, column, new, fmt, result_file, user)
-            conn.execute("UPDATE workflow.product SET locked_at = now() WHERE tdcc = %s", (tdcc,))
-            locked.append(tdcc)
-    return WriteBackReceipt(tuple(locked), tuple(already), saved, changes, tuple(stale))
+            lock_checked(conn, tdcc)
+            done.append(tdcc)
+    return WriteBackReceipt(tuple(done), tuple(already), saved, changes, tuple(stale))
 
 
 def _changed(current: Mapping[str, Any], checked: Any, fmt: ReferenceFormat) -> bool:
@@ -317,7 +317,7 @@ def _changed(current: Mapping[str, Any], checked: Any, fmt: ReferenceFormat) -> 
         if std is None or std in skip or std.startswith("autocall_date_"):
             continue
         found = checked.get(std)
-        if not _same(None if value == "" else value, None if found is None else found.value):
+        if not same_value(None if value == "" else value, None if found is None else found.value):
             return True
     return False
 
@@ -379,65 +379,12 @@ def _released_denomination(item: BatchItem) -> list[tuple[str, Any]]:
 def _write_value(
     conn: psycopg.Connection, tdcc: str, column: str, new: Any, fmt: ReferenceFormat, result_file: str, user: str
 ) -> int:
-    """把一格寫進商品資料；值有改變時記原值，回傳改了幾個值（0 或 1）。"""
+    """把一格寫進商品資料（`product_terms.backfill`，值有改變時記原值）；回傳改了幾個值（0 或 1）。"""
     std = "denomination" if column == DENOMINATION_COLUMN else fmt.columns.get(column)
     if std is None:
         return 0
     value = None if new == fmt.empty_value else new
-    if std in ("isin", "issue_date", "denomination"):
-        (old,) = conn.execute(f"SELECT {std} FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
-        conn.execute(f"UPDATE workflow.product SET {std} = %s WHERE tdcc = %s", (value, tdcc))
-    elif std.startswith("autocall_date_"):
-        slot = int(std.rsplit("_", 1)[1])
-        found = conn.execute(
-            "SELECT value FROM workflow.autocall_date WHERE tdcc = %s AND slot = %s", (tdcc, slot)
-        ).fetchone()
-        old = None if found is None else found[0]
-        conn.execute(
-            "INSERT INTO workflow.autocall_date (tdcc, slot, value) VALUES (%s, %s, %s)"
-            " ON CONFLICT (tdcc, slot) DO UPDATE SET value = EXCLUDED.value",
-            (tdcc, slot, value),
-        )
-        if found is None and value is None:
-            return 0  # 不需要填的期別：記下來就好，不算改值
-    elif std.startswith("underlying_") and std.endswith("_price"):
-        _, i, *rest = std.split("_")
-        price = "_".join(rest)
-        if price not in PRICE_COLUMNS.values():  # 欄名放進 SQL 前只接受這四個
-            return 0
-        found = conn.execute(
-            f"SELECT {price} FROM workflow.underlying_price WHERE tdcc = %s AND seq = %s", (tdcc, int(i))
-        ).fetchone()
-        if found is None:
-            return 0  # 沒有這個標的（空值寫法的格子）
-        old = found[0]
-        conn.execute(
-            f"UPDATE workflow.underlying_price SET {price} = %s WHERE tdcc = %s AND seq = %s", (value, tdcc, int(i))
-        )
-    else:
-        return 0
-    if _same(old, value):
-        return 0
-    conn.execute(
-        "INSERT INTO workflow.backfill_log (tdcc, item, old_value, new_value, result_file, written_by)"
-        " VALUES (%s, %s, %s, %s, %s, %s)",
-        (tdcc, column, _text(old), _text(value), result_file, user),
-    )
-    return 1
-
-
-def _same(a: Any, b: Any) -> bool:
-    if isinstance(a, Decimal | int) and isinstance(b, Decimal | int):
-        return Decimal(a) == Decimal(b)
-    return a == b
-
-
-def _text(value: Any) -> str | None:
-    if value is None:
-        return None
-    if isinstance(value, dt.date):
-        return value.isoformat()
-    return str(value)
+    return int(backfill(conn, tdcc, std, value, item=column, result_file=result_file, user=user))
 
 
 # ---------- 核對分頁與 fcn-batch 用的資料庫來源 ----------

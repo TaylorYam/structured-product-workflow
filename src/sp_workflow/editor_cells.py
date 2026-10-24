@@ -19,7 +19,7 @@ from typing import Protocol, TypeVar
 from sp_workflow.daily_import import trade_value
 from sp_workflow.order_terms import format_field, parse_field
 from sp_workflow.product_record import FIELDS, STRIKE_FIELD
-from sp_workflow.product_terms import OrderDraft
+from sp_workflow.product_terms import Draft
 from sp_workflow.trade_rows import FIELDS as TRADE_FIELDS
 from sp_workflow.trade_rows import TradeRowsDraft, trade_notes, trade_problems
 
@@ -73,9 +73,9 @@ def _state(
 
 
 def order_cell_states(
-    draft: OrderDraft, problems: Mapping[str, str], *, fixed: Collection[str] = (), fixed_note: str = ""
+    draft: Draft, problems: Mapping[str, str], *, fixed: Collection[str] = (), fixed_note: str = ""
 ) -> dict[str, CellState]:
-    """商品條件每欄的狀態；`problems` 由呼叫端檢查（起單資料用匯入的檢查，人工維護用 `maintenance_problems`）。"""
+    """商品條件每欄的狀態；`problems` 由呼叫端檢查（`product_terms.problems`：起單資料用匯入的檢查，人工維護用存檔的檢查）。"""
     notes = {name: f"{_READING_PREFIX}{text}" for name, text in draft.notes.items()}
     return cell_states(
         FIELDS, problems=problems, notes=notes, differences=draft.differences(), fixed=fixed, fixed_note=fixed_note
@@ -96,12 +96,12 @@ _WRONG = object()  # 寫錯、沒解讀成值
 
 
 def commit_order(
-    draft: OrderDraft, typed: dict[str, str], texts: Mapping[str, str], names: Iterable[str] | None = None
+    draft: Draft, typed: dict[str, str], texts: Mapping[str, str], names: Iterable[str] | None = None
 ) -> bool:
     """畫面上打的字（{欄: 字}，不能改的欄不放）解讀進 `draft`，回傳有沒有改到。
 
     `names` 是要解讀的欄（離開一欄時只解讀那一欄）；None 是 `texts` 的每一欄（換檔、存檔、關閉前）。
-    Trade date 解讀後 Strike date 照 `OrderDraft.set_value` 跟著改；但 Strike date 打了還沒解讀、或寫錯的字
+    Trade date 解讀後 Strike date 照 `Draft.set_value` 跟著改；但 Strike date 打了還沒解讀、或寫錯的字
     （和目前的值不同）時不跟，以作業人員打的為準。
     """
     texts = dict(texts)
@@ -120,7 +120,7 @@ def commit_order(
     return changed
 
 
-def order_texts(draft: OrderDraft, typed: Mapping[str, str]) -> dict[str, str]:
+def order_texts(draft: Draft, typed: Mapping[str, str]) -> dict[str, str]:
     """商品條件每欄該顯示的字：寫錯的欄是打的字，其他是目前的值。"""
     return {name: typed.get(name, format_field(draft.values.get(name))) for name in FIELDS}
 
@@ -148,7 +148,7 @@ def trade_texts(trades: TradeRowsDraft, typed: Mapping[TradeKey, str]) -> dict[T
 
 
 class _Cells(Protocol):
-    """解讀進去的地方：`OrderDraft` 或一列交易明細（`TradeRowDraft`）。"""
+    """解讀進去的地方：`Draft` 或一列交易明細（`TradeRowDraft`）。"""
 
     values: dict[str, object]
     input_errors: dict[str, str]

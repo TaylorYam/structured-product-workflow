@@ -12,7 +12,8 @@ import openpyxl
 from fcn_checker.config import load_exchange_holidays
 from sp_workflow.mailbox import Mailbox, Person
 from sp_workflow.order_terms import NOT_FOUND, PENDING, READ, TDCC_FIELD, OrderRow
-from sp_workflow.product_terms import MAINTAIN_OPEN, ImportConfig, OrderDraft
+from sp_workflow.product_terms import Draft, ImportConfig, draft_from, read
+from sp_workflow.status import OrderReview
 from sp_workflow.trade_rows import TradeRowDraft, TradeRowsDraft
 
 A = "029199990001"  # BARC
@@ -71,11 +72,28 @@ def missing_row(tdcc: str) -> OrderRow:
     return OrderRow(tdcc, NOT_FOUND, PREFIXES.get(tdcc[:3], ""), notes={TDCC_FIELD: f"{SHEET.name} 裡沒有這檔"})
 
 
-def maintenance_draft(status: str = MAINTAIN_OPEN, tdcc: str = A, issuer: str = "BARC", **changes) -> OrderDraft:
-    """人工維護打開的一檔（`open_maintenance` 的結果，不連資料庫）：`changes` 改欄位的值。"""
+def maintenance_draft(status: str = OrderReview.UNLOCKED, tdcc: str = A, issuer: str = "BARC", **changes) -> Draft:
+    """人工維護打開的一檔（`draft_from(tdcc, …)` 的結果，不連資料庫）：`changes` 改欄位的值。"""
     values = {**VALUES, **changes}
     row = OrderRow(tdcc, status, issuer, dict(values))
-    return OrderDraft(row, dict(values), dict(values), dict(values), database_checked=True, correcting=True)
+    return Draft(row, dict(values), dict(values), dict(values), database_checked=True, correcting=True)
+
+
+MISSING_NOTE = "缺，可以先存、之後再補"  # 人工維護空著的必填欄：標紅、不擋存檔
+
+
+def drafts_of(rows: Sequence[OrderRow], conn=None, config: ImportConfig = CONFIG) -> list[Draft]:
+    """讀取結果 → 確認資料（同 `window_actions.read_order_sheet`）：有連線時帶入資料庫的值；找不到的列沒有。"""
+    return [
+        draft_from(row, None if conn is None else read(conn, row.tdcc), config, checked=conn is not None)
+        for row in rows
+        if row.found
+    ]
+
+
+def open_terms(conn, tdcc: str, config: ImportConfig = CONFIG) -> Draft:
+    """人工維護打開一檔（同 `window_actions.open_product`，不讀交易明細、不檢查兩邊都沒有）。"""
+    return draft_from(tdcc, read(conn, tdcc), config)
 
 
 # 資料庫裡一列交易明細（表頭 → 值），同 db_synth.trade 匯入後的樣子

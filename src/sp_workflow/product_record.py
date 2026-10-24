@@ -7,6 +7,8 @@
 - `COLUMN_FIELDS`：資料庫的欄 → 畫面的欄；`DERIVED_COLUMNS`：沒有對應畫面欄的資料庫欄 → 說明用的名稱。
 - `columns_of`／`fields_of`：畫面的值 ↔ 資料庫的欄（KO／KI 代碼、UF 反轉、單位面額預設）。
 - `missing_fields`：資料庫商品條件缺哪幾個必填欄（#114）。
+- `PRICE_COLUMNS`：標的價格（核對用的鍵 → `workflow.underlying_price` 的欄）；核對讀資料庫與核對寫回共用（#203）。
+- `same_value`：兩個值一樣嗎（數字不分 int 與 Decimal、不看小數位數）；商品條件寫入與核對寫回共用（#203）。
 
 `REQUIRED` 與欄位對照放在這裡、不放在 `product_terms`：`check_terms` 也要用，
 而它被 `product_terms` import，放在寫入那邊會循環 import（ADR 0016 當時因此搬到 `order_terms`，#126 再收到這裡）。
@@ -93,6 +95,8 @@ REQUIRED = (
 )
 
 # 資料庫商品欄位
+PRICE_COLUMNS = {"initial": "initial_price", "strike": "strike_price", "ki": "ki_price", "ko": "ko_price"}
+
 PRODUCT_COLUMNS = (
     "product", "issuer", "currency", "trade_date", "issue_date", "final_valuation_date", "maturity_date",
     "initial_pricing", "non_call_months", "underlying_1", "underlying_2", "underlying_3", "underlying_4",
@@ -191,6 +195,13 @@ def missing_fields(product: Mapping[str, object], names: Sequence[str] = REQUIRE
     換算的代碼欄空白也算那一欄缺（沒有存齊）。`product` 要有 `REQUIRED_COLUMNS`（讀 `PRODUCT_COLUMNS` 就有）。
     """
     return [name for name in names if any(product[column] is None for column in _REQUIRED_STORED[name])]
+
+
+def same_value(a: object, b: object) -> bool:
+    """同一個值；數字不分 int 與 Decimal、不看小數位數。"""
+    if isinstance(a, int | Decimal) and isinstance(b, int | Decimal) and not isinstance(a, bool):
+        return Decimal(a) == Decimal(b)
+    return a == b
 
 
 def plain(value: Decimal) -> Decimal:

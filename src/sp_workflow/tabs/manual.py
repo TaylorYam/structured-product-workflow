@@ -14,17 +14,8 @@ from sp_workflow.order_terms import format_field
 from sp_workflow.preparation import parse_tdccs
 from sp_workflow.product_export import ExportReceipt, export_name
 from sp_workflow.product_record import REQUIRED
-from sp_workflow.product_terms import (
-    FIXED_IN_CORRECTION,
-    MAINTAIN_LOCKED,
-    MAINTAIN_NEW,
-    MAINTAIN_OPEN,
-    CorrectionReceipt,
-    ImportConfig,
-    MissingProduct,
-    OrderDraft,
-    maintenance_problems,
-)
+from sp_workflow.product_terms import Draft, ImportConfig, MissingProduct, Receipt
+from sp_workflow.status import OrderReview
 from sp_workflow.tabs.base import CELL_COPY_HINT, TITLE, DatabaseLogin, Tab
 from sp_workflow.tabs.cell_table import CellTable
 from sp_workflow.tabs.editor import OrderEditor, TradeRowsEditor
@@ -42,15 +33,15 @@ class MaintenanceTab(Tab):
 
     READY_TEXT = "按「檢查」列出還沒鎖住、缺資料的商品；或輸入 TDCC 按「打開」，改任何一檔（包括已鎖住的）。"
     INTROS = {
-        MAINTAIN_LOCKED: (
+        OrderReview.LOCKED: (
             "已核對通過、條件已鎖住：存檔照更正的規則，商品維持鎖住、核對結果不動，算過核對條件的商品會重算價格。"
             "不能留空白；Issue date 由 TS 回填，不能改。"
         ),
-        MAINTAIN_OPEN: (
+        OrderReview.UNLOCKED: (
             "還沒鎖住：存檔寫進資料庫並重算核對條件。必填欄可以先空著（淺紅底），缺欄時核對條件停在待確認、不能核對；"
             "重新匯入起單資料時照舊整檔覆蓋。"
         ),
-        MAINTAIN_NEW: (
+        OrderReview.TRADES_ONLY: (
             "資料庫還沒有這檔的商品條件（只有交易明細）：存檔時新增，上手依上手編號對照。"
             "必填欄可以先空著，缺欄時核對條件停在待確認、不能核對。"
         ),
@@ -115,7 +106,6 @@ class MaintenanceTab(Tab):
             side,
             lambda: self.config,
             self._edited,
-            check=maintenance_problems,
             placeholder="點左邊的商品，或輸入 TDCC 打開",
         )
         self.editor.pack(fill=tk.BOTH, expand=True, pady=(6, 8))
@@ -193,7 +183,7 @@ class MaintenanceTab(Tab):
         self.checked = {product.tdcc: product for product in result.products}
         self._fill_cells()
         found = len(self.checked)
-        new = sum(product.status == MAINTAIN_NEW for product in self.checked.values())
+        new = sum(product.status == OrderReview.TRADES_ONLY for product in self.checked.values())
         if found:
             status = (
                 f"檢查完了：{found} 檔還沒鎖住而且缺資料（其中 {new} 檔只有交易明細）。"
@@ -303,19 +293,19 @@ class MaintenanceTab(Tab):
         if isinstance(result, Opened):
             self.config = result.config
             self._show(result.draft, result.trades)
-            self.status_var.set(f"已打開 {result.draft.tdcc}（{result.draft.row.status}），改好按「存檔」。")
+            self.status_var.set(f"已打開 {result.draft.tdcc}（{result.draft.review}），改好按「存檔」。")
         self._busy(False)
         self.cells.select(self._current_tdcc())
 
-    def _show(self, draft: OrderDraft, trades: TradeRowsDraft | None) -> None:
-        self.editor.fixed = frozenset(FIXED_IN_CORRECTION if draft.row.status == MAINTAIN_LOCKED else ())
+    def _show(self, draft: Draft, trades: TradeRowsDraft | None) -> None:
+        self.editor.fixed = draft.fixed
         self.editor.typed = {}
         self.editor.show(draft)
         self.trade_editor.show(trades)
-        self.intro_var.set(self.INTROS[draft.row.status])
+        self.intro_var.set(self.INTROS[draft.review])
         self.reason_var.set("")
 
-    def _edited(self, draft: OrderDraft) -> None:
+    def _edited(self, draft: Draft) -> None:
         self._edited_tdcc(draft.tdcc)
 
     def _edited_tdcc(self, tdcc: str) -> None:
@@ -337,7 +327,7 @@ class MaintenanceTab(Tab):
         self._busy(True)
         self.mark_done(False)
 
-        def run() -> CorrectionReceipt:
+        def run() -> Receipt:
             return save_product(settings, draft, config, trades=trades, reason=reason)
 
         self.run_in_background(run, f"存檔中…（{draft.tdcc}）", self._saved, clear=False)
@@ -345,7 +335,7 @@ class MaintenanceTab(Tab):
     def _saved(self, result: object) -> None:
         self.db.after_run(result)
         self._busy(False)
-        if not isinstance(result, CorrectionReceipt):
+        if not isinstance(result, Receipt):
             return  # 錯誤已顯示；畫面上的值不動，可以改好再存或重新載入
         draft = self.editor.draft
         if result.saved and draft is not None:
@@ -356,21 +346,21 @@ class MaintenanceTab(Tab):
         self.status_var.set(correction_text(result))
         self.mark_done(result.saved)
 
-    def _update_checked(self, receipt: CorrectionReceipt, draft: OrderDraft) -> None:
+    def _update_checked(self, receipt: Receipt, draft: Draft) -> None:
         """檢查結果裡有這檔時跟著更新：補齊了就拿掉，還缺的寫入後的值與缺的欄。"""
         if receipt.tdcc not in self.checked:
             return
         if receipt.missing:
             listed = self.checked[receipt.tdcc]
             self.checked[receipt.tdcc] = MissingProduct(
-                receipt.tdcc, listed.issuer, MAINTAIN_OPEN, dict(draft.values), receipt.missing
+                receipt.tdcc, listed.issuer, OrderReview.UNLOCKED, dict(draft.values), receipt.missing
             )
         else:
             del self.checked[receipt.tdcc]
         self._fill_cells()
 
 
-def correction_text(receipt: CorrectionReceipt) -> str:
+def correction_text(receipt: Receipt) -> str:
     """人工維護存檔（已鎖住的是更正）的結果：改了什麼（前 → 後）、重算後的核對條件、對不到信箱的 FC 名字。"""
     if not receipt.saved:
         return f"{receipt.tdcc} 沒有改任何欄位，沒有寫入。"

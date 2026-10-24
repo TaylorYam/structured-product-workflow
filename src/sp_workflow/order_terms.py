@@ -1,7 +1,7 @@
 """起單資料讀取：從作業人員每天填的「起單建檔」讀出條件（#97，取代 #40 讀 Order 原信）。
 
 對外是 `collect_orders`（讀選的那份起單建檔，依貼上的 TDCC 回傳逐檔結果）；`parse_field`／`format_field`
-給畫面輸入與顯示用，和讀起單建檔是同一套解讀。起單建檔只讀、不修改。
+給畫面輸入與顯示用，和讀起單建檔是同一套解讀；`describe` 把 {欄位: 問題} 寫成一行（畫面與匯入檢查共用）。起單建檔只讀、不修改。
 畫面的欄、型別、必填欄與資料庫的欄的對照在 `product_record`（#126）。
 
 起單建檔（`起單建檔_<日期>.xlsm`）只有一張工作表：表頭在前幾列（目前是第 2 列、從 B 欄開始），一檔一列。
@@ -78,7 +78,7 @@ class OrderRow:
     """一檔 TDCC 的讀取結果。`notes` 的整檔問題放在 TDCC；`lines` 是在起單建檔的第幾列（Excel 列號）。"""
 
     tdcc: str
-    status: str  # 已讀取／待確認／找不到
+    status: OrderReview  # 讀起單建檔：已讀取／待確認／找不到；人工維護打開時：已鎖住／未鎖住／只有交易明細
     issuer: str = ""
     values: dict[str, object] = field(default_factory=dict)  # 欄位 → 值；空白或讀不到的是 None
     notes: dict[str, str] = field(default_factory=dict)  # 欄位 → 讀檔時的問題
@@ -212,6 +212,11 @@ def _row_for(
 def unknown_issuer(tdcc: str) -> str:
     """TDCC 前三碼不在上手編號對照時的說明（讀取與匯入檢查共用）。"""
     return f"TDCC 前三碼 {tdcc[:3]} 不在上手編號對照"
+
+
+def describe(problems: Mapping[str, str]) -> str:
+    """{欄位: 問題} → 一行說明（讀取時的問題 `OrderRow.notes` 與 `product_terms.problems` 共用）。"""
+    return "；".join(f"{name}：{text}" for name, text in problems.items())
 
 
 def _compare_key(name: str, parsed: tuple[object, str], raw: object) -> object:

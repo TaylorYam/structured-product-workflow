@@ -413,6 +413,7 @@ def recalculate(
 ) -> CalcReceipt:
     """重算還沒鎖住的商品（`tdccs` 有值時只算這幾檔），和上一次不同的寫入；整次在同一個 transaction 裡。"""
     with conn.transaction():
+        # 還沒鎖住（鎖住＝`locked_at` 有值，同 `product_terms.locked`）
         where = "locked_at IS NULL" + ("" if tdccs is None else " AND tdcc = ANY(%s)")
         products = _products(conn, where, () if tdccs is None else (list(tdccs),))
         lines = [line for line, _, _ in _recalculate(conn, products, calendar)]
@@ -554,7 +555,7 @@ def release_differences(
         found = conn.execute("SELECT locked_at FROM workflow.product WHERE tdcc = %s FOR UPDATE", (tdcc,)).fetchone()
         if found is None:
             raise CheckTermsError(f"{tdcc}：資料庫沒有這檔商品")
-        if found[0] is not None:
+        if found[0] is not None:  # 已鎖住（同 `product_terms.locked`）
             raise CheckTermsError(f"{tdcc}：已鎖住，不重算，也不用放行")
         with conn.cursor() as cur:
             cur.executemany(

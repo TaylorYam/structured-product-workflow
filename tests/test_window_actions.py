@@ -15,11 +15,12 @@ import pytest
 
 from db_synth import csv_price, price, seed_mailbox, trade, write_daily, write_price_csv
 from fcn_checker.check_config import ConfigPaths
-from order_synth import CONFIG, SHEET, A, order_row, sheet_line, write_sheet
+from order_synth import CONFIG, SHEET, A, drafts_of, order_row, sheet_line, write_sheet
 from sp_workflow import window_actions
 from sp_workflow.check_terms import CheckTermsError
 from sp_workflow.database import DatabaseError, SchemaOutdatedError
-from sp_workflow.product_terms import NEW, drafts_from, import_drafts
+from sp_workflow.product_terms import write_batch
+from sp_workflow.status import ImportResult
 from sp_workflow.window_actions import (
     import_close_history,
     import_order_sheet,
@@ -230,7 +231,7 @@ def test_actions_refuse_an_outdated_schema_with_the_same_message(pg, pg_settings
 
 @pytest.mark.db
 def test_reading_brings_the_stored_values(pg, pg_settings, tmp_path: Path) -> None:
-    import_drafts(drafts_from([order_row()], pg), pg, CONFIG, user="tester")
+    write_batch(pg, drafts_of([order_row()], pg), CONFIG, user="tester")
     sheet = write_sheet(tmp_path / SHEET, [sheet_line(changes={"Coupon p.a. (%)": Decimal(11)})])
 
     result = read_order_sheet(pg_settings, A, sheet, PATHS)
@@ -244,11 +245,11 @@ def test_reading_brings_the_stored_values(pg, pg_settings, tmp_path: Path) -> No
 
 @pytest.mark.db
 def test_importing_the_sheet_commits_then_recalculates_and_reloads(pg, pg_settings) -> None:
-    (draft,) = drafts_from([order_row()], pg)
+    (draft,) = drafts_of([order_row()], pg)
 
     result = import_order_sheet(pg_settings, [draft], CONFIG)
 
-    assert result.receipt.lines[0].result == NEW and coupon(pg) == Decimal("12.5")
+    assert result.receipt.lines[0].result == ImportResult.NEW and coupon(pg) == Decimal("12.5")
     assert result.recalc is not None and result.recalc.line_of(A) is not None, "重算看得到剛匯入的那一檔"
     assert draft.stored is not None and draft.stored["Coupon p.a. (%)"] == Decimal("12.5"), "重讀是匯入後的值"
     assert (result.recalc_error, result.reload_error) == ("", "")
@@ -256,7 +257,7 @@ def test_importing_the_sheet_commits_then_recalculates_and_reloads(pg, pg_settin
 
 @pytest.mark.db
 def test_a_database_error_while_recalculating_keeps_the_sheet_import(pg, pg_settings, monkeypatch) -> None:
-    (draft,) = drafts_from([order_row()], pg)
+    (draft,) = drafts_of([order_row()], pg)
     broken_recalculation(monkeypatch)
 
     result = import_order_sheet(pg_settings, [draft], CONFIG)
@@ -267,13 +268,29 @@ def test_a_database_error_while_recalculating_keeps_the_sheet_import(pg, pg_sett
 
 
 @pytest.mark.db
+def test_a_recalculation_error_shows_its_first_line_and_keeps_the_sheet_import(pg, pg_settings, monkeypatch) -> None:
+    (draft,) = drafts_of([order_row()], pg)
+
+    def broken(*args, **kwargs):
+        raise CheckTermsError("找不到交易所假日表設定檔\n第二行")
+
+    monkeypatch.setattr("sp_workflow.window_actions.recalculate", broken)
+
+    result = import_order_sheet(pg_settings, [draft], CONFIG)
+
+    assert (result.recalc, result.recalc_error) == (None, "找不到交易所假日表設定檔")
+    assert result.receipt.lines[0].result == ImportResult.NEW and coupon(pg) == Decimal("12.5")
+    assert draft.stored is not None, "重算失敗之後照樣重讀"
+
+
+@pytest.mark.db
 def test_a_failed_reload_keeps_the_sheet_import_and_the_recalculation(pg, pg_settings, monkeypatch) -> None:
-    (draft,) = drafts_from([order_row()], pg)
+    (draft,) = drafts_of([order_row()], pg)
 
     def broken(conn, tdcc):
         conn.execute("SELECT * FROM workflow.no_such_table")
 
-    monkeypatch.setattr("sp_workflow.product_terms.read_stored", broken)
+    monkeypatch.setattr("sp_workflow.window_actions.read", broken)
 
     result = import_order_sheet(pg_settings, [draft], CONFIG)
 

@@ -1,7 +1,7 @@
 """視窗按鈕背後的動作（#125）：每個作業員動作一個 function，吃連線設定與輸入、回傳結果。
 
 連資料庫、transaction 的邊界與容錯都在這裡；視窗（`app.py`）只收輸入、在背景呼叫一個動作、顯示結果。
-匯入成功、之後的重算失敗時匯入保留（ADR 0012）：重算的錯誤不丟出，原因放在結果裡。
+匯入成功、之後的重算失敗時匯入保留（ADR 0012）：重算的錯誤不丟出，原因放在結果裡；起單資料匯入之後還重讀每檔資料庫的值。
 寄信草稿分兩個動作（讀最近一次匯入 → 建草稿），中間的確認對話框留在視窗。
 準備、放回、建草稿的步驟紀錄（#151）在清單產出之後另寫；寫入失敗不丟出（清單已經產出），原因放在結果裡。
 收盤價（#153）要用交易所假日表判斷休市日：回補股價讀不到假日表時照樣匯股價、收盤價不存；
@@ -71,17 +71,18 @@ from sp_workflow.order_terms import OrderRow, collect_orders
 from sp_workflow.preparation import PrepareReceipt, prepare_batch
 from sp_workflow.product_export import ExportReceipt, export_products
 from sp_workflow.product_terms import (
-    CorrectionReceipt,
+    BatchReceipt,
+    Draft,
     ImportConfig,
     MissingProduct,
-    OrderDraft,
-    OrderImportResult,
-    drafts_from,
-    import_orders,
+    Receipt,
+    TermsError,
+    draft_from,
     load_import_config,
     missing_products,
-    open_maintenance,
-    save_maintenance,
+    read,
+    write,
+    write_batch,
 )
 from sp_workflow.progress import SENT_STEP, ProgressRow, SentBatch, load_progress, sent_batch
 from sp_workflow.returning import ReturnReceipt, return_to_folders
@@ -164,10 +165,23 @@ class DraftResult:
 @dataclass(frozen=True)
 class ReadResult:
     rows: tuple[OrderRow, ...]
-    drafts: list[OrderDraft]
+    drafts: list[Draft]
     config: ImportConfig
     database_note: str = ""  # 沒有帶入資料庫的值時的說明
     database_error: DatabaseError | None = None
+
+
+@dataclass(frozen=True)
+class OrderImportResult:
+    """按一次「匯入資料庫」的結果：匯入、重算核對條件（#88）、重讀資料庫的值。
+
+    重算和匯入分開兩個 transaction（ADR 0012）：重算失敗時匯入照樣保留，`recalc` 是 None、`recalc_error` 寫原因。
+    """
+
+    receipt: BatchReceipt
+    recalc: CalcReceipt | None = None
+    recalc_error: str = ""
+    reload_error: str = ""  # 匯入成功但重讀資料庫狀態失敗
 
 
 @dataclass(frozen=True)
@@ -199,17 +213,24 @@ class Checked:
 class Opened:
     """人工維護打開的一檔（#115）與它的交易明細（#116）。"""
 
-    draft: OrderDraft
+    draft: Draft
     config: ImportConfig
     trades: TradeRowsDraft | None = None
 
 
 def _recalculate_after_import(conn: psycopg.Connection, holidays: Path) -> Recalc:
     """匯入之後重算；讀不到假日表或重算失敗時不丟錯誤（匯入已經完成），說明放在結果裡。"""
+    try:
+        calendar = load_calendar(holidays)
+    except CheckTermsError as exc:
+        return Recalc(error=_first_line(exc))
+    return _recalculate(conn, calendar)
+
+
+def _recalculate(conn: psycopg.Connection, calendar: TradingCalendar) -> Recalc:
     import psycopg
 
     try:
-        calendar = load_calendar(holidays)
         return Recalc(recalculate(conn, calendar), calendar)
     except (CheckTermsError, psycopg.Error) as exc:
         return Recalc(error=_first_line(exc))
@@ -325,22 +346,44 @@ def read_order_sheet(settings: ConnectionSettings | None, text: str, sheet: Path
     config = load_import_config(paths)
     rows = collect_orders(text, sheet, config.issuer_prefixes, config.calendar)
     if settings is None:
-        return ReadResult(rows, drafts_from(rows), config, "沒有登入資料庫，沒有帶入資料庫的值")
+        return ReadResult(rows, _drafts(rows, config), config, "沒有登入資料庫，沒有帶入資料庫的值")
     try:
         with connect(settings) as conn:
-            return ReadResult(rows, drafts_from(rows, conn), config)
+            return ReadResult(rows, _drafts(rows, config, conn), config)
     except DatabaseError as exc:
         note = f"資料庫沒有連上，沒有帶入資料庫的值（{exc}）"
         login = None if isinstance(exc, SchemaOutdatedError) else exc  # 版本不對不是登入問題
-        return ReadResult(rows, drafts_from(rows), config, note, login)
+        return ReadResult(rows, _drafts(rows, config), config, note, login)
+
+
+def _drafts(rows: Sequence[OrderRow], config: ImportConfig, conn: psycopg.Connection | None = None) -> list[Draft]:
+    """找到的每一檔轉成確認資料；有連線時帶入資料庫的值與鎖住狀態。找不到的列沒有確認資料，畫面直接顯示讀取的問題。"""
+    return [
+        draft_from(row, None if conn is None else read(conn, row.tdcc), config, checked=conn is not None)
+        for row in rows
+        if row.found
+    ]
 
 
 def import_order_sheet(
-    settings: ConnectionSettings, drafts: Sequence[OrderDraft], config: ImportConfig
+    settings: ConnectionSettings, drafts: Sequence[Draft], config: ImportConfig
 ) -> OrderImportResult:
-    """匯入確認過的起單資料（匯入、重算、重讀的容錯在 `import_orders`）。"""
+    """匯入確認過的起單資料（`write_batch`），再重算還沒鎖住的商品、重讀每檔資料庫的值與鎖住狀態。
+
+    匯入失敗時丟 `TermsError`（或資料庫的錯誤），什麼都不寫；匯入之後的重算、重讀失敗不丟錯誤，
+    匯入已經寫進資料庫，原因放在結果裡。
+    """
+    import psycopg
+
     with connect(settings) as conn:
-        return import_orders(drafts, conn, config)
+        receipt = write_batch(conn, drafts, config)
+        recalc = _recalculate(conn, config.calendar)
+        try:
+            for draft in drafts:
+                draft.reload(read(conn, draft.tdcc))
+        except psycopg.Error as exc:
+            return OrderImportResult(receipt, recalc.receipt, recalc.error, _first_line(exc))
+        return OrderImportResult(receipt, recalc.receipt, recalc.error)
 
 
 # ---------- 3 準備、5 放回 ----------
@@ -387,26 +430,30 @@ def check_missing(settings: ConnectionSettings, paths: ConfigPaths) -> Checked:
 
 
 def open_product(settings: ConnectionSettings, tdcc: str, paths: ConfigPaths) -> Opened:
-    """讀一檔目前的商品條件與交易明細。"""
+    """讀一檔目前的商品條件與交易明細；兩邊都沒有這檔時丟 `TermsError`。"""
     config = load_import_config(paths)
     with connect(settings) as conn:
-        return Opened(open_maintenance(conn, tdcc, config), config, load_trade_rows(conn, tdcc))
+        stored = read(conn, tdcc)
+        trades = load_trade_rows(conn, tdcc)
+    if stored is None and not trades.rows:
+        raise TermsError(f"{tdcc}：交易明細和商品條件都沒有這檔，不能在這裡新增")
+    return Opened(draft_from(tdcc, stored, config), config, trades)
 
 
 def save_product(
     settings: ConnectionSettings,
-    draft: OrderDraft,
+    draft: Draft,
     config: ImportConfig,
     *,
     trades: TradeRowsDraft | None,
     reason: str,
-) -> CorrectionReceipt:
+) -> Receipt:
     """人工維護存檔（已鎖住的照更正的規則），商品條件與交易明細一起。
 
     改了商品條件、這檔已出場時，結果另外寫出存續事件（#169）：已出場的不再比價，事件不會跟著改。
     """
     with connect(settings) as conn:
-        receipt = save_maintenance(conn, draft, config, trades=trades, reason=reason)
+        receipt = write(conn, draft, config, trades=trades, reason=reason)
         if receipt.correction_id is None:
             return receipt
         latest = lifecycle_status(conn, [receipt.tdcc])[receipt.tdcc].latest
@@ -459,7 +506,7 @@ def mark_sent_batch(settings: ConnectionSettings, batch: SentBatch) -> Registere
         sent = set(_sent(conn, batch.tdccs))
         locked = {
             row[0]
-            for row in conn.execute(
+            for row in conn.execute(  # 已鎖住（同 `product_terms.locked`）
                 "SELECT tdcc FROM workflow.product WHERE locked_at IS NOT NULL AND tdcc = ANY(%s)", (list(batch.tdccs),)
             )
         }

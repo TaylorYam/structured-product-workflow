@@ -17,15 +17,15 @@ from typing import TYPE_CHECKING
 
 from sp_workflow.close_prices import latest_close_date
 from sp_workflow.lifecycle import EXIT_EVENTS, exits_on
-from sp_workflow.observation import UNLOCKED
 from sp_workflow.product_export import save_rows
-from sp_workflow.product_terms import LOCKED, ImportConfig, issuer_code
+from sp_workflow.product_terms import ImportConfig, issuer_code
+from sp_workflow.status import OrderReview
 
 if TYPE_CHECKING:
     import psycopg
 
 EXPORT_COLUMNS = ("TDCC", "上手", "商品", "事件", "事件日", "標的", "來源", "鎖住", "記錄時間")
-LOCKED_TEXT = {True: LOCKED, False: UNLOCKED}
+LOCKED_TEXT = {True: OrderReview.LOCKED, False: OrderReview.UNLOCKED}
 
 
 @dataclass(frozen=True)
@@ -65,7 +65,7 @@ def load_exits(conn: psycopg.Connection, config: ImportConfig, day: dt.date | No
         events = exits_on(conn, day)
         products = {
             tdcc: (issuer, product, locked)
-            for tdcc, issuer, product, locked in conn.execute(
+            for tdcc, issuer, product, locked in conn.execute(  # 鎖住＝`locked_at` 有值（同 `product_terms.locked`）
                 "SELECT tdcc, issuer, product, locked_at IS NOT NULL FROM workflow.product WHERE tdcc = ANY(%s)",
                 ([e.tdcc for e in events],),
             )

@@ -1,9 +1,9 @@
-"""狀態字彙（`sp_workflow.status`，#202）：每個 enum 的值和各 module 的常數一樣，字串值不變。"""
+"""狀態字彙（`sp_workflow.status`，#202、#203）：每個 enum 的值和各 module 的常數一樣，字串值不變。"""
 
 from __future__ import annotations
 
-from sp_workflow import check_terms, lifecycle, observation, order_terms, product_terms, progress
-from sp_workflow.status import CheckTerms, Lifecycle, OrderReview, Pricing, Progress
+from sp_workflow import check_terms, lifecycle, observation, order_terms, progress
+from sp_workflow.status import CheckTerms, ImportResult, Lifecycle, OrderReview, Pricing, ProductSource, Progress
 
 
 def values(enum) -> set[str]:
@@ -34,19 +34,9 @@ def test_lifecycle_matches_the_module_constants() -> None:
 
 
 def test_order_review_matches_the_module_constants() -> None:
-    constants = {
-        order_terms.READ,
-        order_terms.PENDING,
-        order_terms.NOT_FOUND,
-        product_terms.BLOCKED,
-        product_terms.TO_CHECK,
-        product_terms.READY,
-        product_terms.LOCKED,
-        product_terms.MAINTAIN_OPEN,
-        product_terms.MAINTAIN_NEW,
-        observation.UNLOCKED,
-    }
-    assert values(OrderReview) == constants == {
+    constants = {order_terms.READ, order_terms.PENDING, order_terms.NOT_FOUND, observation.UNLOCKED}
+    assert constants < values(OrderReview), "`product_terms` 直接用 `OrderReview`（#203），沒有別名"
+    assert values(OrderReview) == {
         "已讀取", "待確認", "找不到", "請確認", "可匯入", "已鎖住", "未鎖住", "只有交易明細",
     }  # fmt: skip
     assert OrderReview.BLOCKED is OrderReview.PENDING, "同一個字是同一個成員"
@@ -55,3 +45,9 @@ def test_order_review_matches_the_module_constants() -> None:
 def test_values_are_plain_strings_for_the_database_and_the_screen() -> None:
     assert CheckTerms.DONE == "完成" and str(CheckTerms.DONE) == "完成" and f"{Pricing.EXITED}" == "已出場"
     assert {"完成": 1}[CheckTerms.DONE] == 1, "當 dict 的鍵和字串一樣"
+
+
+def test_import_results_and_product_sources_keep_the_stored_strings() -> None:
+    """存在資料庫的字（`workflow.order_import_line.result`、`workflow.product.source`）不變（#203）。"""
+    assert tuple(ImportResult) == ("新增", "覆蓋", "沒有變", "不匯入", "已鎖住"), "畫面列出各結果檔數的順序不變"
+    assert values(ProductSource) == {"清單更新", "Order", "人工維護"}

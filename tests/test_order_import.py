@@ -11,36 +11,22 @@ import pytest
 
 from db_synth import inventory, seed_mailbox, seed_products, trade, write_daily
 from fcn_checker.check_config import ConfigPaths
-from order_synth import CONFIG, PREFIXES, A, B, missing_row, order_row, sheet_line, write_sheet
+from order_synth import CONFIG, PREFIXES, A, B, drafts_of, missing_row, order_row, sheet_line, write_sheet
 from sp_workflow import database
 from sp_workflow.daily_import import import_daily
 from sp_workflow.mail_drafts import PENDING as MAIL_PENDING
 from sp_workflow.mail_drafts import create_drafts
-from sp_workflow.order_terms import TDCC_FIELD, OrderRow, collect_orders
+from sp_workflow.order_terms import TDCC_FIELD, OrderRow, collect_orders, describe
 from sp_workflow.product_record import FIELDS
-from sp_workflow.product_terms import (
-    BLOCKED,
-    LOCKED,
-    NEW,
-    OVERWRITTEN,
-    READY,
-    SAME,
-    SKIPPED,
-    TO_CHECK,
-    check_draft,
-    drafts_from,
-    import_drafts,
-    load_import_config,
-    reload_stored,
-    review_status,
-)
+from sp_workflow.product_terms import load_import_config, problems, read, write_batch
+from sp_workflow.status import ImportResult, OrderReview
 
 BUILTIN = ConfigPaths.with_fallback(Path(__file__).resolve().parents[1] / "config" / "review_standard.toml")
 CONFLICT = "起單建檔裡這檔有好幾列、這欄不同，要填正確的值（正確是空白的話請改起單建檔後重新讀取）"
 
 
 def draft_of(row: OrderRow, conn=None):
-    (draft,) = drafts_from([row], conn)
+    (draft,) = drafts_of([row], conn)
     return draft
 
 
@@ -54,23 +40,24 @@ def test_draft_holds_the_sheet_fields() -> None:
     assert draft.values["Upfront / NotePrice (%)"] == Decimal("98.5")
     assert draft.values["Barrier Type"] == "EKI"
     assert set(draft.values) == set(FIELDS)
-    assert check_draft(draft, CONFIG) == {}
+    assert problems(draft, CONFIG) == {}
     assert draft.edits() == []
-    assert review_status(draft.row, draft, CONFIG) == (READY, "", False)
+    assert draft.import_review(CONFIG) == (OrderReview.READY, "", False)
 
 
 def test_rows_not_in_the_sheet_have_no_draft() -> None:
     row = missing_row(A)
 
-    assert drafts_from([row]) == []
-    assert review_status(row, None, CONFIG) == ("找不到", "TDCC：起單建檔_20261015.xlsm 裡沒有這檔", True)
+    assert drafts_of([row]) == []
+    # 畫面照讀取狀態顯示（`tabs.orders`）
+    assert (row.status, describe(row.notes)) == ("找不到", "TDCC：起單建檔_20261015.xlsm 裡沒有這檔")
 
 
 def test_missing_final_valuation_and_maturity_dates_block_the_import() -> None:
     draft = draft_of(order_row(changes={"Final valuation date": None, "Maturity date": None, "Issue date": None}))
 
-    assert check_draft(draft, CONFIG) == {"Final valuation date": "必填", "Maturity date": "必填"}
-    assert review_status(draft.row, draft, CONFIG)[0] == BLOCKED
+    assert problems(draft, CONFIG) == {"Final valuation date": "必填", "Maturity date": "必填"}
+    assert draft.import_review(CONFIG)[0] == OrderReview.BLOCKED
 
 
 def test_filling_the_red_cells_makes_the_product_importable() -> None:
@@ -78,7 +65,7 @@ def test_filling_the_red_cells_makes_the_product_importable() -> None:
     draft.values["Final valuation date"] = dt.date(2027, 4, 15)
     draft.values["Maturity date"] = dt.date(2027, 4, 22)
 
-    assert check_draft(draft, CONFIG) == {}
+    assert problems(draft, CONFIG) == {}
     assert draft.edits() == [
         ("Final valuation date", None, dt.date(2027, 4, 15)),
         ("Maturity date", None, dt.date(2027, 4, 22)),
@@ -90,16 +77,16 @@ def test_sheet_notes_are_shown_but_do_not_block_on_their_own() -> None:
     draft = draft_of(order_row(changes={"Issue date": None}, notes=notes))
 
     assert draft.notes == notes
-    assert check_draft(draft, CONFIG) == {}
-    assert review_status(draft.row, draft, CONFIG) == (
-        TO_CHECK,
+    assert problems(draft, CONFIG) == {}
+    assert draft.import_review(CONFIG) == (
+        OrderReview.TO_CHECK,
         "Issue date：讀到「10/22」，日期要寫成 2026-10-21",
         False,
     )
 
 
 @pytest.mark.parametrize(
-    ("changes", "problems"),
+    ("changes", "expected"),
     [
         ({"Barrier Type": "NONE"}, {"KI Barrier (%)": "Barrier Type 是 NONE 時要空白"}),
         ({"KI Barrier (%)": None}, {"KI Barrier (%)": "有 KI 時必填"}),
@@ -113,20 +100,20 @@ def test_sheet_notes_are_shown_but_do_not_block_on_their_own() -> None:
         ({"Strike date": None}, {"Strike date": "必填"}),
     ],
 )
-def test_field_checks(changes, problems) -> None:
+def test_field_checks(changes, expected) -> None:
     draft = draft_of(order_row())
     draft.values.update(changes)
 
-    assert check_draft(draft, CONFIG) == problems
+    assert problems(draft, CONFIG) == expected
 
 
 def test_conflicting_duplicate_fields_must_be_filled() -> None:
     changes = {"Coupon p.a. (%)": None, "BBG Code 3": None}
     draft = draft_of(order_row(changes=changes, conflicts=("Coupon p.a. (%)", "BBG Code 3")))
 
-    assert check_draft(draft, CONFIG) == {"BBG Code 3": CONFLICT, "Coupon p.a. (%)": CONFLICT}
+    assert problems(draft, CONFIG) == {"BBG Code 3": CONFLICT, "Coupon p.a. (%)": CONFLICT}
     draft.values.update({"Coupon p.a. (%)": Decimal(13), "BBG Code 3": "CCC UQ"})
-    assert check_draft(draft, CONFIG) == {}
+    assert problems(draft, CONFIG) == {}
 
 
 def test_unresolved_strike_date_must_be_filled() -> None:
@@ -134,7 +121,7 @@ def test_unresolved_strike_date_must_be_filled() -> None:
     row = dataclasses.replace(row, unresolved=frozenset({"Strike date"}))
     draft = draft_of(row)
 
-    assert check_draft(draft, CONFIG) == {"Strike date": "起單建檔算不出來，要填"}
+    assert problems(draft, CONFIG) == {"Strike date": "起單建檔算不出來，要填"}
 
 
 def test_strike_date_follows_an_edited_trade_date_when_they_were_equal() -> None:
@@ -152,26 +139,26 @@ def test_a_next_day_strike_date_stays_when_the_trade_date_changes() -> None:
     assert draft.set_value("Trade date", dt.date(2026, 10, 14)) == []
     assert draft.values["Strike date"] == dt.date(2026, 10, 16)
     draft.set_value("Trade date", dt.date(2026, 10, 19))
-    assert check_draft(draft, CONFIG) == {"Strike date": "不能早於 Trade date"}
+    assert problems(draft, CONFIG) == {"Strike date": "不能早於 Trade date"}
 
 
 def test_mistyped_fields_block_only_that_product() -> None:
     draft = draft_of(order_row())
     draft.input_errors["Trade date"] = "日期要寫成 2026-10-21"
 
-    assert check_draft(draft, CONFIG) == {"Trade date": "日期要寫成 2026-10-21"}
+    assert problems(draft, CONFIG) == {"Trade date": "日期要寫成 2026-10-21"}
 
 
 def test_issuer_without_a_configured_name_cannot_be_imported() -> None:
     draft = draft_of(order_row("092199990001"))
 
-    assert check_draft(draft, CONFIG) == {"TDCC": "上手 UBS 在參考條件表設定沒有發行機構寫法"}
+    assert problems(draft, CONFIG) == {"TDCC": "上手 UBS 在參考條件表設定沒有發行機構寫法"}
 
 
 def test_unknown_issuer_prefix_cannot_be_imported() -> None:
     draft = draft_of(order_row("999199990001", notes={TDCC_FIELD: "TDCC 前三碼 999 不在上手編號對照"}))
 
-    assert check_draft(draft, CONFIG) == {"TDCC": "TDCC 前三碼 999 不在上手編號對照"}
+    assert problems(draft, CONFIG) == {"TDCC": "TDCC 前三碼 999 不在上手編號對照"}
 
 
 def test_builtin_config_has_denominations_issuer_names_and_prefixes() -> None:
@@ -200,9 +187,9 @@ def test_import_writes_a_new_product_from_the_confirmed_values(pg) -> None:
     draft = draft_of(order_row(changes={"Maturity date": None}), pg)
     draft.values["Maturity date"] = dt.date(2027, 4, 22)
 
-    receipt = import_drafts([draft], pg, CONFIG, user="tester")
+    receipt = write_batch(pg, [draft], CONFIG, user="tester")
 
-    assert [(line.tdcc, line.result) for line in receipt.lines] == [(A, NEW)]
+    assert [(line.tdcc, line.result) for line in receipt.lines] == [(A, ImportResult.NEW)]
     p = product(pg, A)
     assert p["source"] == "Order" and p["order_import_id"] == receipt.import_id and p["first_run_id"] is None
     assert (p["product"], p["issuer"], p["currency"], p["isin"]) == ("FCN", "Barclays", "USD", None)
@@ -217,12 +204,12 @@ def test_import_writes_a_new_product_from_the_confirmed_values(pg) -> None:
         "SELECT imported_by, summary -> 'counts' FROM workflow.order_import WHERE import_id = %s",
         (receipt.import_id,),
     ).fetchone()
-    assert imported_by == "tester" and counts[NEW] == 1
+    assert imported_by == "tester" and counts[ImportResult.NEW] == 1
     result, source, confirmed, edits = pg.execute(
         "SELECT result, source_mail, confirmed, edits FROM workflow.order_import_line WHERE import_id = %s",
         (receipt.import_id,),
     ).fetchone()
-    assert (result, source) == (NEW, "起單建檔_20261015.xlsm 第 3 列")
+    assert (result, source) == (ImportResult.NEW, "起單建檔_20261015.xlsm 第 3 列")
     assert confirmed["Maturity date"] == "2027-04-22" and confirmed["Coupon p.a. (%)"] == "12.5"
     assert edits == [["Maturity date", None, "2027-04-22"]]
 
@@ -236,9 +223,9 @@ def test_a_sheet_read_from_disk_imports_end_to_end(pg, tmp_path: Path) -> None:
     path = write_sheet(tmp_path / "起單建檔_20261015.xlsx", lines)
     rows = collect_orders(f"{A}\n{B}", path, PREFIXES, CONFIG.calendar)
 
-    receipt = import_drafts(drafts_from(rows, pg), pg, CONFIG, user="tester")
+    receipt = write_batch(pg, drafts_of(rows, pg), CONFIG, user="tester")
 
-    assert [(line.tdcc, line.result) for line in receipt.lines] == [(A, NEW), (B, NEW)]
+    assert [(line.tdcc, line.result) for line in receipt.lines] == [(A, ImportResult.NEW), (B, ImportResult.NEW)]
     assert product(pg, A)["coupon_pct"] == Decimal("12.5") and product(pg, A)["upfront_pct"] == Decimal("1.5")
     assert (product(pg, B)["issuer"], product(pg, B)["ki_freq"], product(pg, B)["ki_pct"]) == ("SG", "-", None)
 
@@ -248,7 +235,7 @@ def test_a_sheet_read_from_disk_imports_end_to_end(pg, tmp_path: Path) -> None:
 def test_denomination_is_the_currency_default(pg, currency) -> None:
     config = load_import_config(BUILTIN)
 
-    import_drafts([draft_of(order_row(changes={"Currency": currency}), pg)], pg, config, user="tester")
+    write_batch(pg, [draft_of(order_row(changes={"Currency": currency}), pg)], config, user="tester")
 
     assert product(pg, A)["denomination"] == config.denominations[currency]
 
@@ -259,27 +246,30 @@ def test_products_with_problems_are_skipped_and_the_rest_imported(pg) -> None:
     good = draft_of(order_row(B), pg)
     unknown = draft_of(order_row("029199990009", {"Currency": "TWD"}), pg)
 
-    receipt = import_drafts([bad, good, unknown], pg, CONFIG, user="tester")
+    receipt = write_batch(pg, [bad, good, unknown], CONFIG, user="tester")
 
     assert [(line.tdcc, line.result, line.detail) for line in receipt.lines] == [
-        (A, SKIPPED, "Maturity date：必填"),
-        (B, NEW, ""),
-        ("029199990009", SKIPPED, "Currency：這個幣別沒有單位面額預設值"),
+        (A, ImportResult.SKIPPED, "Maturity date：必填"),
+        (B, ImportResult.NEW, ""),
+        ("029199990009", ImportResult.SKIPPED, "Currency：這個幣別沒有單位面額預設值"),
     ]
     assert product(pg, A) is None and product(pg, B)["issuer"] == "SG"
 
 
 @pytest.mark.db
 def test_reimport_overwrites_until_locked_and_keeps_the_previous_values(pg) -> None:
-    import_drafts([draft_of(order_row(), pg)], pg, CONFIG, user="tester")
+    write_batch(pg, [draft_of(order_row(), pg)], CONFIG, user="tester")
 
-    same = import_drafts([draft_of(order_row(), pg)], pg, CONFIG, user="tester")
+    same = write_batch(pg, [draft_of(order_row(), pg)], CONFIG, user="tester")
     changed = draft_of(order_row(), pg)
     changed.values["Coupon p.a. (%)"] = Decimal("11.25")
-    overwritten = import_drafts([changed], pg, CONFIG, user="tester")
+    overwritten = write_batch(pg, [changed], CONFIG, user="tester")
 
-    assert same.lines[0].result == SAME
-    assert (overwritten.lines[0].result, overwritten.lines[0].detail) == (OVERWRITTEN, "改了：Coupon p.a. (%)")
+    assert same.lines[0].result == ImportResult.SAME
+    assert (overwritten.lines[0].result, overwritten.lines[0].detail) == (
+        ImportResult.OVERWRITTEN,
+        "改了：Coupon p.a. (%)",
+    )
     assert product(pg, A)["coupon_pct"] == Decimal("11.25")
     assert product(pg, A)["order_import_id"] == overwritten.import_id
     previous = pg.execute(
@@ -289,10 +279,10 @@ def test_reimport_overwrites_until_locked_and_keeps_the_previous_values(pg) -> N
 
     pg.execute("UPDATE workflow.product SET locked_at = now() WHERE tdcc = %s", (A,))
     locked = draft_of(order_row(changes={"Coupon p.a. (%)": Decimal(10)}), pg)
-    receipt = import_drafts([locked], pg, CONFIG, user="tester")
+    receipt = write_batch(pg, [locked], CONFIG, user="tester")
 
-    assert locked.locked.startswith("已核對通過")
-    assert receipt.lines[0].result == LOCKED
+    assert locked.locked_reason.startswith("已核對通過")
+    assert receipt.lines[0].result == ImportResult.LOCKED
     assert product(pg, A)["coupon_pct"] == Decimal("11.25")
 
 
@@ -324,11 +314,11 @@ def test_products_already_in_the_database_are_locked_by_the_migration(pg) -> Non
     assert database.apply_migrations(pg)[0] == "0006_order_term_import.sql"
     assert product(pg, A)["strike_date"] == dt.date(2026, 1, 15), "migration 0008 補成交易日"
     draft = draft_of(order_row(), pg)
-    receipt = import_drafts([draft], pg, CONFIG, user="tester")
+    receipt = write_batch(pg, [draft], CONFIG, user="tester")
 
-    assert draft.locked.startswith("以前清單更新匯入的商品")
-    assert check_draft(draft, CONFIG) == {"TDCC": draft.locked}
-    assert receipt.lines[0].result == LOCKED
+    assert draft.locked_reason.startswith("以前清單更新匯入的商品")
+    assert problems(draft, CONFIG) == {"TDCC": draft.locked_reason}
+    assert receipt.lines[0].result == ImportResult.LOCKED
     assert product(pg, A)["source"] == "清單更新" and product(pg, A)["locked_at"] is not None
 
 
@@ -338,11 +328,13 @@ def test_order_import_takes_over_a_product_the_inventory_created_later(pg) -> No
     seed_products(pg, [inventory(A, [("北區", 300000)])])
 
     draft = draft_of(order_row(), pg)
-    receipt = import_drafts([draft], pg, CONFIG, user="tester")
+    receipt = write_batch(pg, [draft], CONFIG, user="tester")
 
-    assert draft.locked == ""
+    assert draft.locked_reason == ""
     line = receipt.lines[0]
-    assert line.result == OVERWRITTEN and line.detail.startswith("清單更新建立的商品改由起單資料匯入接手；改了：")
+    assert line.result == ImportResult.OVERWRITTEN and line.detail.startswith(
+        "清單更新建立的商品改由起單資料匯入接手；改了："
+    )
     p = product(pg, A)
     assert (p["source"], p["order_import_id"], p["issuer"]) == ("Order", receipt.import_id, "Barclays")
     assert p["coupon_pct"] == Decimal("12.5") and p["denomination"] == Decimal(10000)
@@ -354,7 +346,7 @@ def test_order_import_takes_over_a_product_the_inventory_created_later(pg) -> No
 def test_rereading_keeps_manual_fills_and_shows_database_differences(pg) -> None:
     first = draft_of(order_row(changes={"Maturity date": None}), pg)
     first.values["Maturity date"] = dt.date(2027, 4, 22)
-    import_drafts([first], pg, CONFIG, user="tester")
+    write_batch(pg, [first], CONFIG, user="tester")
 
     again = draft_of(order_row(changes={"Maturity date": None, "Coupon p.a. (%)": Decimal(13)}), pg)
 
@@ -368,21 +360,21 @@ def test_rereading_keeps_manual_fills_and_shows_database_differences(pg) -> None
 def test_reimporting_over_partial_database_terms(pg) -> None:
     """#114：資料庫的商品條件只有一部分（人工維護先存的）：只比兩邊都有值的欄，起單建檔也空白的必填欄照舊擋下，
     補齊後照常覆蓋。"""
-    import_drafts([draft_of(order_row(), pg)], pg, CONFIG, user="tester")
+    write_batch(pg, [draft_of(order_row(), pg)], CONFIG, user="tester")
     pg.execute(
         "UPDATE workflow.product SET maturity_date = NULL, coupon_pct = NULL, strike_pct = 85 WHERE tdcc = %s", (A,)
     )
 
     blank = draft_of(order_row(changes={"Maturity date": None}), pg)
-    skipped = import_drafts([blank], pg, CONFIG, user="tester")
+    skipped = write_batch(pg, [blank], CONFIG, user="tester")
     full = draft_of(order_row(), pg)
-    filled = import_drafts([full], pg, CONFIG, user="tester")
+    filled = write_batch(pg, [full], CONFIG, user="tester")
 
     assert blank.differences() == {"Strike (%)": Decimal(85)}
-    assert (skipped.lines[0].result, skipped.lines[0].detail) == (SKIPPED, "Maturity date：必填")
+    assert (skipped.lines[0].result, skipped.lines[0].detail) == (ImportResult.SKIPPED, "Maturity date：必填")
     assert full.differences() == {"Strike (%)": Decimal(85)}
     assert (filled.lines[0].result, filled.lines[0].detail) == (
-        OVERWRITTEN,
+        ImportResult.OVERWRITTEN,
         "改了：Maturity date、Strike (%)、Coupon p.a. (%)",
     )
     p = product(pg, A)
@@ -391,89 +383,92 @@ def test_reimporting_over_partial_database_terms(pg) -> None:
 
 @pytest.mark.db
 def test_conflicting_fields_are_not_filled_from_the_database(pg) -> None:
-    import_drafts([draft_of(order_row(), pg)], pg, CONFIG, user="tester")
+    write_batch(pg, [draft_of(order_row(), pg)], CONFIG, user="tester")
 
     draft = draft_of(order_row(changes={"Coupon p.a. (%)": None}, conflicts=("Coupon p.a. (%)",)), pg)
 
     assert draft.values["Coupon p.a. (%)"] is None
-    assert check_draft(draft, CONFIG) == {"Coupon p.a. (%)": CONFLICT}
+    assert problems(draft, CONFIG) == {"Coupon p.a. (%)": CONFLICT}
 
 
 @pytest.mark.db
 def test_an_unresolved_strike_date_is_not_filled_from_the_database(pg) -> None:
-    import_drafts([draft_of(order_row(), pg)], pg, CONFIG, user="tester")
+    write_batch(pg, [draft_of(order_row(), pg)], CONFIG, user="tester")
     row = dataclasses.replace(order_row(changes={"Strike date": None}), unresolved=frozenset({"Strike date"}))
 
     draft = draft_of(row, pg)
-    receipt = import_drafts([draft], pg, CONFIG, user="tester")
+    receipt = write_batch(pg, [draft], CONFIG, user="tester")
 
     assert draft.values["Strike date"] is None
-    assert (receipt.lines[0].result, receipt.lines[0].detail) == (SKIPPED, "Strike date：起單建檔算不出來，要填")
+    assert (receipt.lines[0].result, receipt.lines[0].detail) == (
+        ImportResult.SKIPPED,
+        "Strike date：起單建檔算不出來，要填",
+    )
 
 
 @pytest.mark.db
 def test_conflicting_fields_stay_blocked_when_the_product_appears_after_reading(pg) -> None:
     draft = draft_of(order_row(changes={"Coupon p.a. (%)": None}, conflicts=("Coupon p.a. (%)",)), pg)
-    import_drafts([draft_of(order_row(), pg)], pg, CONFIG, user="tester")  # 讀取之後才有人匯入同一檔
+    write_batch(pg, [draft_of(order_row(), pg)], CONFIG, user="tester")  # 讀取之後才有人匯入同一檔
 
-    receipt = import_drafts([draft], pg, CONFIG, user="tester")
+    receipt = write_batch(pg, [draft], CONFIG, user="tester")
 
-    assert (receipt.lines[0].result, receipt.lines[0].detail) == (SKIPPED, f"Coupon p.a. (%)：{CONFLICT}")
+    assert (receipt.lines[0].result, receipt.lines[0].detail) == (ImportResult.SKIPPED, f"Coupon p.a. (%)：{CONFLICT}")
 
 
 @pytest.mark.db
 def test_blank_fields_do_not_wipe_values_the_operator_never_saw(pg) -> None:
     seed_mailbox(pg)
-    import_drafts([draft_of(order_row(changes={"Issue date": None}), pg)], pg, CONFIG, user="tester")
+    write_batch(pg, [draft_of(order_row(changes={"Issue date": None}), pg)], CONFIG, user="tester")
     stale = draft_of(order_row(changes={"Issue date": None}), pg)  # 畫面打開時資料庫還沒有發行日
     pg.execute(
         "UPDATE workflow.product SET issue_date = '2026-10-22' WHERE tdcc = %s", (A,)
     )  # 之後才補上（例如核對回填）
 
-    receipt = import_drafts([stale], pg, CONFIG, user="tester")
+    receipt = write_batch(pg, [stale], CONFIG, user="tester")
 
-    assert receipt.lines[0].result == SAME
+    assert receipt.lines[0].result == ImportResult.SAME
     assert product(pg, A)["issue_date"] == dt.date(2026, 10, 22)  # 之後補上的發行日沒被清掉
 
     seen = draft_of(order_row(changes={"Issue date": None}), pg)  # 這次畫面上看得到發行日，作業人員刻意清空
     seen.values["Issue date"] = None
-    cleared = import_drafts([seen], pg, CONFIG, user="tester")
+    cleared = write_batch(pg, [seen], CONFIG, user="tester")
 
-    assert (cleared.lines[0].result, cleared.lines[0].detail) == (OVERWRITTEN, "改了：Issue date")
+    assert (cleared.lines[0].result, cleared.lines[0].detail) == (ImportResult.OVERWRITTEN, "改了：Issue date")
     assert product(pg, A)["issue_date"] is None
 
 
 @pytest.mark.db
 def test_a_draft_read_without_the_database_cannot_overwrite_it(pg) -> None:
-    import_drafts([draft_of(order_row(), pg)], pg, CONFIG, user="tester")
+    write_batch(pg, [draft_of(order_row(), pg)], CONFIG, user="tester")
     offline = draft_of(order_row(changes={"Coupon p.a. (%)": Decimal(10)}))  # 讀取時沒連上資料庫
 
-    receipt = import_drafts([offline], pg, CONFIG, user="tester")
+    receipt = write_batch(pg, [offline], CONFIG, user="tester")
 
-    assert receipt.lines[0].result == SKIPPED
+    assert receipt.lines[0].result == ImportResult.SKIPPED
     assert receipt.lines[0].detail.startswith("讀取時沒有連上資料庫")
     assert product(pg, A)["coupon_pct"] == Decimal("12.5")
 
 
 @pytest.mark.db
 def test_kept_database_values_survive_a_second_import(pg) -> None:
-    import_drafts([draft_of(order_row(changes={"Issue date": None}), pg)], pg, CONFIG, user="tester")
+    write_batch(pg, [draft_of(order_row(changes={"Issue date": None}), pg)], CONFIG, user="tester")
     stale = draft_of(order_row(changes={"Issue date": None}), pg)  # 畫面打開時資料庫還沒有發行日
     pg.execute("UPDATE workflow.product SET issue_date = '2026-10-22' WHERE tdcc = %s", (A,))  # 之後才補上
 
-    import_drafts([stale], pg, CONFIG, user="tester")  # 保留之後補上的發行日
-    reload_stored([stale], pg)
-    again = import_drafts([stale], pg, CONFIG, user="tester")  # 同一批再按一次匯入
+    write_batch(pg, [stale], CONFIG, user="tester")  # 保留之後補上的發行日
+    stale.reload(read(pg, A))
+    again = write_batch(pg, [stale], CONFIG, user="tester")  # 同一批再按一次匯入
 
     assert stale.values["Issue date"] == dt.date(2026, 10, 22), "畫面也跟著資料庫"
-    assert again.lines[0].result == SAME
+    assert again.lines[0].result == ImportResult.SAME
     assert product(pg, A)["issue_date"] == dt.date(2026, 10, 22)
 
 
 @pytest.mark.db
 def test_mail_draft_waits_for_the_issue_date(pg, tmp_path: Path) -> None:
     seed_mailbox(pg)
-    import_drafts([draft_of(order_row(changes={"Issue date": None}), pg)], pg, CONFIG, user="tester")
+    write_batch(pg, [draft_of(order_row(changes={"Issue date": None}), pg)], CONFIG, user="tester")
     import_daily(write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)]), pg)
     root, out = tmp_path / "FCN", tmp_path / "out"
     folder = root / A
