@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import datetime as dt
 import getpass
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
@@ -26,13 +25,13 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any
 
 from sp_workflow.check_terms import CalcLine, recalculate, recalculate_corrected
-from sp_workflow.daily_import import FCN
 from sp_workflow.database import OperatorError
 from sp_workflow.order_terms import TDCC_FIELD, unknown_issuer
 from sp_workflow.product_record import (
     CHOICES,
     COLUMN_FIELDS,
     DERIVED_COLUMNS,
+    FCN,
     FIELDS,
     KINDS,
     PRODUCT_COLUMNS,
@@ -44,7 +43,7 @@ from sp_workflow.product_record import (
     columns_of,
     fields_of,
     missing_fields,
-    plain,
+    to_json,
 )
 from sp_workflow.trade_rows import (
     CHECK_TERM_FIELDS,
@@ -636,18 +635,3 @@ def same_value(a: object, b: object) -> bool:
     if isinstance(a, int | Decimal) and isinstance(b, int | Decimal) and not isinstance(a, bool):
         return Decimal(a) == Decimal(b)
     return a == b
-
-
-def to_json(value: Mapping[str, object] | list[Any] | None) -> str | None:
-    """紀錄用的 JSON：Decimal 寫成字串、日期寫成 ISO。"""
-    if value is None:
-        return None
-    return json.dumps(value, ensure_ascii=False, default=_json_value)
-
-
-def _json_value(value: object) -> object:
-    if isinstance(value, Decimal):
-        return format(plain(value), "f")
-    if isinstance(value, dt.date):
-        return value.isoformat()
-    raise TypeError(type(value).__name__)

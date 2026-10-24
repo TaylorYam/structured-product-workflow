@@ -12,8 +12,7 @@ from tkinter import messagebox
 import pytest
 
 import sp_workflow.tabs.mailbox as screen
-from sp_workflow.daily_import import Person
-from sp_workflow.mailbox import Alias, MailboxError, MailboxRows
+from sp_workflow.mailbox import Alias, MailboxError, MailboxRows, Person
 from sp_workflow.tabs.mailbox import AliasForm, PersonForm
 from window_synth import new_window
 

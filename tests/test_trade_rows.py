@@ -10,7 +10,8 @@ import pytest
 from db_synth import price, seed_mailbox, trade, write_daily
 from order_synth import CONFIG, MAILBOX, TRADE, A, maintenance_trades, order_row
 from sp_workflow.check_terms import DONE, recalculate
-from sp_workflow.daily_import import DIFFERENT, UNCHANGED, Mailbox, import_daily, trade_value
+from sp_workflow.daily_import import DIFFERENT, UNCHANGED, import_daily, trade_value
+from sp_workflow.mailbox import Mailbox
 from sp_workflow.order_import import (
     drafts_from,
     import_drafts,

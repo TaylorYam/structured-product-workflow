@@ -10,7 +10,7 @@ from pathlib import Path
 import openpyxl
 
 from fcn_checker.config import load_exchange_holidays
-from sp_workflow.daily_import import Mailbox, Person
+from sp_workflow.mailbox import Mailbox, Person
 from sp_workflow.order_import import ImportConfig, OrderDraft
 from sp_workflow.order_terms import NOT_FOUND, PENDING, READ, TDCC_FIELD, OrderRow
 from sp_workflow.product_write import MAINTAIN_OPEN

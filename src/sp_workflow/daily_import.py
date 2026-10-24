@@ -44,6 +44,8 @@ from openpyxl.utils import get_column_letter
 from sp_workflow.close_prices import CSV_SOURCE, CloseSummary, closes_from_csv, write_closes
 from sp_workflow.database import OperatorError
 from sp_workflow.file_tools import save_book, sha256_file, table_book
+from sp_workflow.mailbox import Mailbox, is_pb, load_mailbox
+from sp_workflow.product_record import FCN
 
 if TYPE_CHECKING:
     import psycopg
@@ -53,8 +55,6 @@ if TYPE_CHECKING:
 TRADE_SHEET = "交易明細"
 PRICE_SHEET = "BBG_Data"
 TDCC_DIGITS = 12
-FCN = "FCN"
-PB = "PB"
 
 TRADE_HEADERS = (
     "編號", "交易日期", "Product", "TDCC", "幣別", "金額", "FC/PB", "分公司", "前台主管/投專",
@@ -169,26 +169,6 @@ class PriceCsvReceipt:
     closed: tuple[str, ...] = ()  # 那一天休市、收盤價沒有存的代碼
     close_uncovered: tuple[str, ...] = ()  # 那一天超出假日表涵蓋範圍、收盤價沒有存的代碼
     close_conflicts: tuple[str, ...] = ()  # 去掉類別字後才重複、值不同、收盤價沒有存的代碼
-
-
-@dataclass(frozen=True)
-class Person:
-    name: str
-    email: str
-    unit: str | None
-    fixed_cc: bool
-
-
-@dataclass(frozen=True)
-class Mailbox:
-    people: tuple[Person, ...]
-    aliases: Mapping[str, str]  # 別名（小寫）→ 使用者名稱
-
-    def match(self, name: str) -> Person | None:
-        """大小寫不同視為同一人；先查別名。不做模糊比對。"""
-        key = _name_key(name)
-        target = _name_key(self.aliases.get(key, name))
-        return next((p for p in self.people if _name_key(p.name) == target), None)
 
 
 @dataclass(frozen=True)
@@ -332,23 +312,6 @@ def latest_import(conn: psycopg.Connection) -> ImportInfo | None:
             " WHERE NOT summary ? 'close_date' ORDER BY run_id DESC LIMIT 1"
         ).fetchone()
     return None if row is None else ImportInfo(*row)
-
-
-def is_pb(name: str) -> bool:
-    """交易列的 FC/PB 是 PB（私銀）：不寄信，但交易列照存。"""
-    return name.strip().upper() == PB
-
-
-# ---------- 信箱（資料庫直接維護，#35） ----------
-
-
-def load_mailbox(conn: psycopg.Connection) -> Mailbox:
-    """讀資料庫裡的人員與別名。"""
-    people = tuple(
-        Person(*row) for row in conn.execute("SELECT name, email, unit, fixed_cc FROM mailbox.person ORDER BY name")
-    )
-    aliases = dict(conn.execute("SELECT alias_key, person_name FROM mailbox.alias").fetchall())
-    return Mailbox(people, aliases)
 
 
 # ---------- 每日更新 ----------
@@ -730,10 +693,6 @@ def _open(path: Path) -> Any:
         return openpyxl.load_workbook(path, read_only=True, data_only=True)
     except (OSError, ValueError, KeyError) as exc:
         raise DailyImportError(f"打不開 Excel：{path}（{exc}）") from exc
-
-
-def _name_key(name: str) -> str:
-    return name.strip().lower()
 
 
 def _text(value: Any, *, dash_is_none: bool = True) -> str | None:

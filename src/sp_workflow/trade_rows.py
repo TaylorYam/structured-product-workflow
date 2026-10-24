@@ -19,7 +19,8 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
 from sp_workflow.check_terms import CHECK_TRADE_COLUMNS
-from sp_workflow.daily_import import TRADE_FIELDS, TRADE_REQUIRED, Mailbox, is_cancel_note, is_pb, load_mailbox
+from sp_workflow.daily_import import TRADE_FIELDS, TRADE_REQUIRED, is_cancel_note
+from sp_workflow.mailbox import Mailbox, is_pb, load_mailbox
 
 if TYPE_CHECKING:
     import psycopg
