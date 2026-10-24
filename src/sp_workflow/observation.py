@@ -351,9 +351,9 @@ def observe_all(conn: psycopg.Connection, calendar: TradingCalendar, *, user: st
                         t.tdcc,
                         EXITED,
                         _exit_reason(events),
-                        before[2] if before else None,
+                        before.observed_through if before else None,
                         locked[t.tdcc],
-                        before[4] if before and before[4] else _ki_text(t),
+                        before.ki if before and before.ki else _ki_text(t),
                     )
                 )
                 continue
@@ -373,14 +373,19 @@ def observe_all(conn: psycopg.Connection, calendar: TradingCalendar, *, user: st
             if exited.get(tdcc):  # 已出場的商品，核對條件後來不是完成也不影響
                 before = stored[tdcc]
                 results.append(
-                    Observed(tdcc, EXITED, _exit_reason(exited[tdcc]), before[2], locked[tdcc], before[4] or "")
+                    Observed(
+                        tdcc, EXITED, _exit_reason(exited[tdcc]), before.observed_through, locked[tdcc], before.ki or ""
+                    )
                 )
             elif tdcc in stored:
                 text = f"核對條件{status}，這次沒有比價" + (f"：{reason}" if reason else "")
-                results.append(Observed(tdcc, TO_CONFIRM, text, stored[tdcc][2], locked[tdcc], stored[tdcc][4] or ""))
+                before = stored[tdcc]
+                results.append(Observed(tdcc, TO_CONFIRM, text, before.observed_through, locked[tdcc], before.ki or ""))
         written = 0
         for r in results:
-            if stored.get(r.tdcc) != (r.status, r.reason or None, r.observed_through, r.locked, r.ki or None):
+            if stored.get(r.tdcc) != StoredStatus(
+                r.status, r.reason or None, r.observed_through, r.locked, r.ki or None
+            ):
                 _write_status(conn, r)
                 written += 1
     return ObservationReceipt(through, tuple(results), tuple(changes), written, tuple(errors))
@@ -465,10 +470,21 @@ def _load_closes(conn: psycopg.Connection, terms: Collection[Terms]) -> dict[str
     return closes
 
 
-def _stored_status(conn: psycopg.Connection) -> dict[str, tuple[str, str | None, dt.date | None, bool, str | None]]:
+@dataclass(frozen=True)
+class StoredStatus:
+    """`workflow.pricing_status` 裡一檔上一次的比價狀態（#209：欄位命名，不用索引取值）。"""
+
+    status: str
+    reason: str | None
+    observed_through: dt.date | None
+    locked: bool
+    ki: str | None
+
+
+def _stored_status(conn: psycopg.Connection) -> dict[str, StoredStatus]:
     return {
-        tdcc: (status, reason, through, locked, ki)
-        for tdcc, status, reason, through, locked, ki in conn.execute(
+        tdcc: StoredStatus(*row)
+        for tdcc, *row in conn.execute(
             "SELECT tdcc, status, reason, observed_through, locked, ki FROM workflow.pricing_status"
         )
     }

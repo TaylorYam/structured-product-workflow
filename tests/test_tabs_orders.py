@@ -7,7 +7,6 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import pytest
 
-import sp_workflow.tabs.orders
 from order_synth import missing_row, order_row
 from sp_workflow.app import PanelWindow
 from sp_workflow.check_terms import DONE, TO_CONFIRM, WAIT_PRICES, CalcLine, CalcReceipt, Difference
@@ -37,7 +36,7 @@ def test_choosing_a_sheet_opens_the_last_folder_or_the_daily_sheet_folder(master
     window = new_window(master, tmp_path)
     opened = []
     monkeypatch.setattr(filedialog, "askopenfilename", lambda **kwargs: opened.append(kwargs["initialdir"]) or "")
-    monkeypatch.setattr(sp_workflow.tabs.orders, "ORDER_SHEET_DIR", tmp_path)
+    window.orders.memory.defaults["order_sheet"] = str(tmp_path)  # 起單建檔的預設資料夾（#209）
 
     window.orders._ask_sheet()
     (tmp_path / "202609").mkdir()

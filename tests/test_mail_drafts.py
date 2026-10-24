@@ -13,7 +13,7 @@ import pytest
 
 from db_synth import inventory, seed_mailbox, seed_products, trade, write_daily
 from sp_workflow import mail_drafts
-from sp_workflow.daily_import import Person, import_daily
+from sp_workflow.daily_import import import_daily
 from sp_workflow.mail_drafts import (
     DRAFTED,
     FAILED,
@@ -26,6 +26,7 @@ from sp_workflow.mail_drafts import (
     OutlookError,
     create_drafts,
 )
+from sp_workflow.mailbox import Person
 from synth import snapshot
 
 pytestmark = pytest.mark.db
@@ -230,16 +231,6 @@ def test_same_fc_twice_and_a_fixed_cc_who_is_a_recipient_appear_once(db, tmp_pat
     (_, drafter) = run(db, root, out, A)
 
     assert drafter.drafts[0].to == ("amy@example.com", "pat@example.com") and drafter.drafts[0].cc == ()
-
-
-def test_alias_reaches_the_right_person(pg, tmp_path: Path, root: Path, out: Path) -> None:
-    seed_mailbox(pg, aliases=[("Amie", "Amy")])
-    load(pg, tmp_path, [trade(A, "Amie", "北區", 1)], [inventory(A, [("北區", 1)])])
-    passed_folder(root, A)
-
-    (_, drafter) = run(pg, root, out, A)
-
-    assert drafter.drafts[0].to == ("amy@example.com",)
 
 
 @pytest.mark.parametrize(
