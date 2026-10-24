@@ -36,7 +36,7 @@ class DatabaseError(OperatorError):
 
 
 class SchemaOutdatedError(DatabaseError):
-    """資料表還沒建立或不是最新版本；不是登入問題，視窗不會因此忘掉密碼。"""
+    """資料表還沒建立、不是最新版本或版本檔有問題；不是登入問題，視窗不會因此忘掉密碼。"""
 
 
 @dataclass(frozen=True)
@@ -189,7 +189,10 @@ def require_current_schema(conn: psycopg.Connection) -> None:
     """確認資料表已經建到最新版本；只由 `connect` 呼叫。"""
     from psycopg import errors
 
-    latest = {v for v, _, _ in migration_files()}
+    try:
+        latest = {v for v, _, _ in migration_files()}
+    except DatabaseError as exc:  # 版本檔本身有問題（安裝壞了）也不是登入問題
+        raise SchemaOutdatedError(str(exc)) from exc
     try:
         with conn.transaction():
             done = {row[0] for row in conn.execute(f"SELECT version FROM public.{VERSION_TABLE}")}

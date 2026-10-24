@@ -103,6 +103,17 @@ def test_connect_checks_the_schema_version_once(pg, pg_settings) -> None:
 
 
 @pytest.mark.db
+def test_broken_migration_files_are_not_a_login_problem(pg, pg_settings, monkeypatch) -> None:
+    def duplicated():
+        raise DatabaseError("資料表版本檔的編號重複")
+
+    monkeypatch.setattr(database, "migration_files", duplicated)
+
+    with pytest.raises(SchemaOutdatedError, match="編號重複"):
+        connect(pg_settings)
+
+
+@pytest.mark.db
 def test_connect_without_any_schema_is_outdated(pg, pg_settings) -> None:
     pg.execute("DROP SCHEMA mailbox, workflow CASCADE")
     pg.execute(f"DROP TABLE public.{VERSION_TABLE}")

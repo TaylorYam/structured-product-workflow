@@ -58,7 +58,7 @@ _SELECTED_COLUMNS = ("tdcc", *PRODUCT_COLUMNS, "isin", "locked_at")
 
 
 class CheckSourceError(Exception):
-    """資料庫來源用不了（沒有登入、資料表不是最新版本）；訊息是給作業人員看的中文。"""
+    """資料庫來源用不了（沒有登入、寫不出參考條件表）；訊息是給作業人員看的中文。"""
 
 
 # ---------- 產生參考條件表 ----------

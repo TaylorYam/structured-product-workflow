@@ -116,7 +116,7 @@ _TRADE_COLUMNS = ("product", *TRADE_FIELDS.values())  # 寫入、比對資料庫
 
 
 class DailyImportError(OperatorError):
-    """整份無法匯入（檔案或欄名有問題、資料表不是最新版本）；訊息是給作業人員看的中文。"""
+    """整份無法匯入（檔案或欄名有問題）；訊息是給作業人員看的中文。"""
 
 
 @dataclass(frozen=True)

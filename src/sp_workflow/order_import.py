@@ -81,7 +81,7 @@ IMPORTABLE = frozenset((TO_CHECK, READY))
 
 
 class OrderImportError(OperatorError):
-    """整批無法匯入（資料表不是最新版本、設定檔有問題）；訊息是給作業人員看的中文。"""
+    """整批無法匯入（設定檔有問題）；訊息是給作業人員看的中文。"""
 
 
 @dataclass(frozen=True)
