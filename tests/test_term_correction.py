@@ -65,7 +65,7 @@ def test_a_locked_product_opens_with_the_database_values(pg) -> None:
     assert draft.values["Coupon p.a. (%)"] == Decimal("12.5")
     assert draft.values["Upfront / NotePrice (%)"] == Decimal("97.85")
     assert draft.values == draft.stored and draft.edits() == []
-    assert not draft.locked, "更正畫面可以改"
+    assert not draft.locked_reason, "更正畫面可以改"
     assert problems(draft, CONFIG) == {}
 
 

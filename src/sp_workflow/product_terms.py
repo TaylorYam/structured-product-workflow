@@ -46,6 +46,7 @@ from sp_workflow.product_record import (
     FCN,
     FIELDS,
     KINDS,
+    PRICE_COLUMNS,
     PRODUCT_COLUMNS,
     REQUIRED,
     STRIKE_FIELD,
@@ -91,8 +92,6 @@ _CONFLICT = "起單建檔裡這檔有好幾列、這欄不同，要填正確的�
 _BLANK_ALLOWED = frozenset(REQUIRED) - {"Product"}
 _ALREADY_CREATED = "打開之後資料庫已經有這檔的商品條件，請重新載入"
 _MISSING_NOTE = "缺，可以先存、之後再補"  # 還沒鎖住的商品空著的必填欄：畫面標紅但不擋存檔
-# 價格欄名放進 SQL 前只接受這四個（核對寫回）
-_PRICE_COLUMNS = frozenset(("initial_price", "strike_price", "ki_price", "ko_price"))
 
 
 class Mode(Enum):
@@ -225,7 +224,7 @@ class Draft:
     original: Mapping[str, object]
     values: dict[str, object]
     stored: Mapping[str, object] | None = None  # 打開時資料庫的值（同一套欄名）；資料庫沒有這檔時 None
-    locked: str = ""  # 起單資料：已鎖住的原因；空字串＝可以改
+    locked_reason: str = ""  # 起單資料：已鎖住的原因；空字串＝可以改
     database_checked: bool = False  # 打開時有沒有連資料庫看過（沒看過就不能覆蓋資料庫裡的這檔）
     correcting: bool = False  # 更正與人工維護（#55）：空白會寫進資料庫，所以清空、補上的欄也算不同
     input_errors: dict[str, str] = field(default_factory=dict)  # 畫面上寫錯、還沒解讀成值的欄 → 說明
@@ -260,7 +259,7 @@ class Draft:
 
     def differences(self) -> dict[str, object]:
         """兩邊都有值但不同的欄 → 資料庫的值（畫面標黃）；更正時清空、補上的欄也算。"""
-        if self.stored is None or self.locked:
+        if self.stored is None or self.locked_reason:
             return {}
         return {
             name: stored
@@ -292,8 +291,8 @@ class Draft:
 
     def import_review(self, config: ImportConfig) -> tuple[OrderReview, str, bool]:
         """匯入前這檔的 (狀態, 原因, 是否要處理)：待確認、請確認、可匯入、已鎖住。"""
-        if self.locked:
-            return OrderReview.LOCKED, self.locked, False
+        if self.locked_reason:
+            return OrderReview.LOCKED, self.locked_reason, False
         found = problems(self, config)
         if found:
             return OrderReview.BLOCKED, describe(found), True
@@ -304,7 +303,7 @@ class Draft:
     def reload(self, stored: Stored | None) -> None:
         """換成重讀的資料庫值與鎖住狀態（例如匯入後）；`values` 不動。"""
         self.stored = None if stored is None else stored.fields
-        self.locked = stored.locked_reason if stored is not None else ""
+        self.locked_reason = stored.locked_reason if stored is not None else ""
         self.database_checked = True
 
 
@@ -352,8 +351,8 @@ def problems(draft: Draft, config: ImportConfig) -> dict[str, str]:
     擋存檔的問題，加上空著的必填欄（只標紅、不擋存檔）。資料庫已有的商品上手不改，上手的問題不擋。
     """
     mode = draft.mode
-    if mode is Mode.IMPORT and draft.locked:
-        return {TDCC_FIELD: draft.locked}
+    if mode is Mode.IMPORT and draft.locked_reason:
+        return {TDCC_FIELD: draft.locked_reason}
     found = _blocking(draft, config, mode)
     if not mode.allow_blank:
         return found
@@ -921,7 +920,7 @@ def backfill(
     elif column.startswith("underlying_") and column.endswith("_price"):
         _, i, *rest = column.split("_")
         price = "_".join(rest)
-        if price not in _PRICE_COLUMNS:
+        if price not in PRICE_COLUMNS.values():  # 欄名放進 SQL 前只接受這四個
             return False
         found = conn.execute(
             f"SELECT {price} FROM workflow.underlying_price WHERE tdcc = %s AND seq = %s", (tdcc, int(i))

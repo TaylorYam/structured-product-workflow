@@ -281,7 +281,7 @@ def test_reimport_overwrites_until_locked_and_keeps_the_previous_values(pg) -> N
     locked = draft_of(order_row(changes={"Coupon p.a. (%)": Decimal(10)}), pg)
     receipt = write_batch(pg, [locked], CONFIG, user="tester")
 
-    assert locked.locked.startswith("已核對通過")
+    assert locked.locked_reason.startswith("已核對通過")
     assert receipt.lines[0].result == ImportResult.LOCKED
     assert product(pg, A)["coupon_pct"] == Decimal("11.25")
 
@@ -316,8 +316,8 @@ def test_products_already_in_the_database_are_locked_by_the_migration(pg) -> Non
     draft = draft_of(order_row(), pg)
     receipt = write_batch(pg, [draft], CONFIG, user="tester")
 
-    assert draft.locked.startswith("以前清單更新匯入的商品")
-    assert problems(draft, CONFIG) == {"TDCC": draft.locked}
+    assert draft.locked_reason.startswith("以前清單更新匯入的商品")
+    assert problems(draft, CONFIG) == {"TDCC": draft.locked_reason}
     assert receipt.lines[0].result == ImportResult.LOCKED
     assert product(pg, A)["source"] == "清單更新" and product(pg, A)["locked_at"] is not None
 
@@ -330,7 +330,7 @@ def test_order_import_takes_over_a_product_the_inventory_created_later(pg) -> No
     draft = draft_of(order_row(), pg)
     receipt = write_batch(pg, [draft], CONFIG, user="tester")
 
-    assert draft.locked == ""
+    assert draft.locked_reason == ""
     line = receipt.lines[0]
     assert line.result == ImportResult.OVERWRITTEN and line.detail.startswith(
         "清單更新建立的商品改由起單資料匯入接手；改了："

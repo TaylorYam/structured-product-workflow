@@ -147,7 +147,7 @@ def test_a_trade_only_tdcc_opens_blank_with_its_issuer(pg, tmp_path) -> None:
 
     assert (draft.tdcc, draft.issuer, draft.row.status) == (C, "BARC", OrderReview.TRADES_ONLY)
     assert draft.values == {**dict.fromkeys(FIELDS), "Product": "FCN"}
-    assert draft.edits() == [] and draft.differences() == {} and not draft.locked
+    assert draft.edits() == [] and draft.differences() == {} and not draft.locked_reason
 
 
 @pytest.mark.db
@@ -164,7 +164,7 @@ def test_any_product_opens_including_complete_and_locked_ones(pg) -> None:
     lock(pg, A)
     draft = open_terms(pg, A, CONFIG)
 
-    assert draft.row.status == OrderReview.LOCKED and not draft.locked, "已鎖住的也可以改（照更正規則）"
+    assert draft.row.status == OrderReview.LOCKED and not draft.locked_reason, "已鎖住的也可以改（照更正規則）"
     assert draft.values["Coupon p.a. (%)"] == Decimal("12.5") and draft.values == draft.stored
 
 

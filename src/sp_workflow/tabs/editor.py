@@ -144,7 +144,7 @@ class OrderEditor(ttk.Frame):
 
     @property
     def editable(self) -> bool:
-        return self.draft is not None and not self.draft.locked and not self.frozen
+        return self.draft is not None and not self.draft.locked_reason and not self.frozen
 
     def show(self, draft: Draft | None, row: OrderRow | None = None) -> None:
         """顯示一檔；`draft` 是 None 時（起單建檔裡沒有這檔）只顯示 `row` 的原因，欄位不能改。"""

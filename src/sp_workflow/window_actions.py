@@ -220,10 +220,17 @@ class Opened:
 
 def _recalculate_after_import(conn: psycopg.Connection, holidays: Path) -> Recalc:
     """匯入之後重算；讀不到假日表或重算失敗時不丟錯誤（匯入已經完成），說明放在結果裡。"""
+    try:
+        calendar = load_calendar(holidays)
+    except CheckTermsError as exc:
+        return Recalc(error=_first_line(exc))
+    return _recalculate(conn, calendar)
+
+
+def _recalculate(conn: psycopg.Connection, calendar: TradingCalendar) -> Recalc:
     import psycopg
 
     try:
-        calendar = load_calendar(holidays)
         return Recalc(recalculate(conn, calendar), calendar)
     except (CheckTermsError, psycopg.Error) as exc:
         return Recalc(error=_first_line(exc))
@@ -370,17 +377,13 @@ def import_order_sheet(
 
     with connect(settings) as conn:
         receipt = write_batch(conn, drafts, config)
-        recalc, recalc_error = None, ""
-        try:
-            recalc = recalculate(conn, config.calendar)
-        except (CheckTermsError, psycopg.Error) as exc:
-            recalc_error = _first_line(exc)
+        recalc = _recalculate(conn, config.calendar)
         try:
             for draft in drafts:
                 draft.reload(read(conn, draft.tdcc))
         except psycopg.Error as exc:
-            return OrderImportResult(receipt, recalc, recalc_error, _first_line(exc))
-        return OrderImportResult(receipt, recalc, recalc_error)
+            return OrderImportResult(receipt, recalc.receipt, recalc.error, _first_line(exc))
+        return OrderImportResult(receipt, recalc.receipt, recalc.error)
 
 
 # ---------- 3 準備、5 放回 ----------

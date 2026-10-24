@@ -33,7 +33,7 @@ from openpyxl.cell.cell import Cell
 from sp_workflow.check_terms import DONE
 from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdatedError, connect
 from sp_workflow.file_tools import save_book, table_book
-from sp_workflow.product_record import PRODUCT_COLUMNS, missing_fields, same_value
+from sp_workflow.product_record import PRICE_COLUMNS, PRODUCT_COLUMNS, missing_fields, same_value
 from sp_workflow.product_terms import backfill, lock_checked, locked, read
 
 if TYPE_CHECKING:
@@ -49,7 +49,6 @@ DATE_FORMAT = "yyyy/m/d"
 SLOTS = 12
 UNDERLYINGS = 5
 BRANCHES = 7  # 匯入格式的分公司欄數
-PRICE_COLUMNS = {"initial": "initial_price", "strike": "strike_price", "ki": "ki_price", "ko": "ko_price"}
 CHECKED_FIELDS = ("checked_term_sheet", "checked_iis")
 DENOMINATION_RULE = "field.denomination"
 DENOMINATION_COLUMN = "單位面額"

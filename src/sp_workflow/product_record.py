@@ -7,6 +7,7 @@
 - `COLUMN_FIELDS`：資料庫的欄 → 畫面的欄；`DERIVED_COLUMNS`：沒有對應畫面欄的資料庫欄 → 說明用的名稱。
 - `columns_of`／`fields_of`：畫面的值 ↔ 資料庫的欄（KO／KI 代碼、UF 反轉、單位面額預設）。
 - `missing_fields`：資料庫商品條件缺哪幾個必填欄（#114）。
+- `PRICE_COLUMNS`：標的價格（核對用的鍵 → `workflow.underlying_price` 的欄）；核對讀資料庫與核對寫回共用（#203）。
 - `same_value`：兩個值一樣嗎（數字不分 int 與 Decimal、不看小數位數）；商品條件寫入與核對寫回共用（#203）。
 
 `REQUIRED` 與欄位對照放在這裡、不放在 `product_terms`：`check_terms` 也要用，
@@ -94,6 +95,8 @@ REQUIRED = (
 )
 
 # 資料庫商品欄位
+PRICE_COLUMNS = {"initial": "initial_price", "strike": "strike_price", "ki": "ki_price", "ko": "ko_price"}
+
 PRODUCT_COLUMNS = (
     "product", "issuer", "currency", "trade_date", "issue_date", "final_valuation_date", "maturity_date",
     "initial_pricing", "non_call_months", "underlying_1", "underlying_2", "underlying_3", "underlying_4",
