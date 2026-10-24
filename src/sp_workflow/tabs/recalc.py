@@ -8,7 +8,7 @@ from tkinter import messagebox, ttk
 
 from fcn_checker.trading_calendar import TradingCalendar
 from sp_workflow.check_terms import DONE, STATUSES, CalcLine
-from sp_workflow.tabs.base import TITLE, DatabaseLogin, Tab
+from sp_workflow.tabs.base import TITLE, ActionRunner, DatabaseLogin, Tab
 from sp_workflow.window_actions import Recalc, release_line
 
 
@@ -16,6 +16,7 @@ class Releaser:
     """「放行差異…」（#88）：選到的商品有還沒放行的交叉比對差異時可以按；確認後記下放行人與時間，再重算那一檔。
 
     `idle` 是分頁現在能不能做別的事；`busy` 在放行前後通知分頁停用、恢復自己的按鈕（同一分頁一次只跑一件背景工作）。
+    放行用自己的 `ActionRunner`，在分頁的背景執行器上跑，處理中的說明與錯誤寫在分頁的狀態列（#206）。
     """
 
     def __init__(
@@ -29,14 +30,13 @@ class Releaser:
         busy: Callable[[bool], None] = lambda _busy: None,
     ) -> None:
         self.tab = tab
-        self.db = db
         self.selected = selected
         self.on_released = on_released
         self.idle = idle
         self.busy = busy
         self.lines: dict[str, CalcLine] = {}
         self.calendar: TradingCalendar | None = None
-        self.running = False
+        self.runner = ActionRunner(db, tab.background, tab.status_var, self._busy)  # 和分頁共用狀態列；按鈕由 idle 擋
         self.button = ttk.Button(tab.buttons, text="放行差異…", command=self.release, state=tk.DISABLED)
         self.button.pack(side=tk.LEFT, padx=(8, 0))
         tab.table.bind("<<TreeviewSelect>>", lambda _event: self.refresh(), add="+")
@@ -54,7 +54,7 @@ class Releaser:
     def refresh(self) -> None:
         line = self.line()
         ready = line is not None and bool(line.unreleased) and self.calendar is not None
-        self.button.configure(state=tk.NORMAL if ready and not self.running and self.idle() else tk.DISABLED)
+        self.button.configure(state=tk.NORMAL if ready and not self.runner.working and self.idle() else tk.DISABLED)
 
     def release(self) -> None:
         line, calendar = self.line(), self.calendar
@@ -70,28 +70,19 @@ class Releaser:
             parent=self.tab.master,
         ):
             return
-        settings = self.db.settings()
-        if settings is None:
-            return
         tdcc, differences = line.tdcc, line.unreleased
-        self.running = True
-        self.busy(True)
+        self.runner.run_action(
+            lambda settings: release_line(settings, tdcc, differences, calendar), f"放行中…（{tdcc}）", self._done
+        )
+
+    def _busy(self, busy: bool) -> None:
+        self.busy(busy)
         self.refresh()
 
-        def run() -> CalcLine:
-            return release_line(settings, tdcc, differences, calendar)
-
-        self.tab.run_in_background(run, f"放行中…（{tdcc}）", self._done, clear=False)
-
-    def _done(self, result: object) -> None:
-        self.running = False
-        self.busy(False)
-        self.db.after_run(result)
-        if isinstance(result, CalcLine):
-            self.lines[result.tdcc] = result
-            self.on_released(result)
-            self.tab.status_var.set(f"已放行 {result.tdcc} 的差異，重算後：{calc_status(result)}。")
-        self.refresh()
+    def _done(self, result: CalcLine) -> None:
+        self.lines[result.tdcc] = result
+        self.on_released(result)
+        self.tab.status_var.set(f"已放行 {result.tdcc} 的差異，重算後：{calc_status(result)}。")
 
 
 def calc_status(line: CalcLine) -> str:

@@ -15,7 +15,7 @@ from pathlib import Path
 from tkinter import messagebox, ttk
 
 from fcn_checker.check_config import ConfigPaths
-from fcn_checker.ui import NextButton
+from fcn_checker.ui import Background, NextButton
 from sp_workflow.check_terms import TO_CONFIRM, CalcLine
 from sp_workflow.close_prices import CloseSummary
 from sp_workflow.daily_import import ImportReceipt, PriceCsvReceipt, PriceSummary
@@ -23,7 +23,7 @@ from sp_workflow.legacy_backfill import EXISTING, FILLED, SKIPPED
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.observation import EXITED, ON_BOOK, UNLOCKED, WAIT_PRICES, ObservationReceipt, Observed
 from sp_workflow.status import Pricing
-from sp_workflow.tabs.base import TITLE, DatabaseLogin, Tab, ask_csv, ask_excel
+from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, Tab, ask_csv, ask_excel
 from sp_workflow.tabs.recalc import Releaser, recalc_text
 from sp_workflow.window_actions import (
     DailyResult,
@@ -51,10 +51,12 @@ class DailyImportTab(Tab):
         on_next: Callable[[], None],
         on_observed: Callable[[dt.date], bool],
         on_exits: Callable[[], None],
+        *,
+        background: BackgroundFactory = Background,
     ) -> None:
-        super().__init__(notebook, "每日匯入", (("tdcc", "TDCC", 130), ("kind", "結果", 150), ("detail", "說明", 440)))
+        columns = (("tdcc", "TDCC", 130), ("kind", "結果", 150), ("detail", "說明", 440))
+        super().__init__(notebook, "每日匯入", columns, db, background)
         self.memory = memory
-        self.db = db
         self.config_paths = config_paths
         self.on_imported = on_imported
         self.on_observed = on_observed
@@ -100,6 +102,14 @@ class DailyImportTab(Tab):
         for button in (self.start_button, self.csv_button):
             button.configure(state=tk.DISABLED if busy else tk.NORMAL)
 
+    def _starting(self, **remember: str) -> None:
+        """開始匯入（登入之後）：記住選的檔，收起下一步與上一次的放行差異。"""
+        if remember:
+            self.memory.remember(**remember)
+        self.next_button.withdraw()
+        self.exits_button.withdraw()
+        self.releaser.show(Recalc())
+
     def _selected_tdcc(self) -> str | None:
         item = self.selected_item()
         return None if item is None else self.table.set(item, "tdcc")
@@ -114,23 +124,15 @@ class DailyImportTab(Tab):
         if not daily_text:
             messagebox.showerror(TITLE, "請先選擇每日更新。")
             return
-        settings = self.db.settings()
-        if settings is None:
-            return
         daily = Path(daily_text)
         prices = not self.trades_only_var.get()
-        self.memory.remember(daily=str(daily))
-        self._busy(True)
-        self.next_button.withdraw()
-        self.exits_button.withdraw()
-        self.releaser.show(Recalc())
-        self.restart()
         paths = self.config_paths()
-
-        def run() -> DailyResult:
-            return run_daily_import(settings, daily, paths, prices=prices)
-
-        self.run_in_background(run, "匯入中…", self._done)
+        self.runner.run_action(
+            lambda settings: run_daily_import(settings, daily, paths, prices=prices),
+            "匯入中…",
+            self._done,
+            before=lambda: self._starting(daily=str(daily)),
+        )
 
     def start_csv(self) -> None:
         """回補股價（#112）：匯入一個 MarketData CSV，再重算核對條件；交易明細不動。"""
@@ -138,28 +140,16 @@ class DailyImportTab(Tab):
         if not csv_text:
             messagebox.showerror(TITLE, "請先選擇股價 CSV。")
             return
-        settings = self.db.settings()
-        if settings is None:
-            return
         source = Path(csv_text)
-        self.memory.remember(price_csv=str(source))
-        self._busy(True)
-        self.next_button.withdraw()
-        self.exits_button.withdraw()
-        self.releaser.show(Recalc())
-        self.restart()
         paths = self.config_paths()
+        self.runner.run_action(
+            lambda settings: run_price_csv(settings, source, paths),
+            "回補股價中…",
+            self._csv_done,
+            before=lambda: self._starting(price_csv=str(source)),
+        )
 
-        def run() -> PriceCsvResult:
-            return run_price_csv(settings, source, paths)
-
-        self.run_in_background(run, "回補股價中…", self._csv_done)
-
-    def _csv_done(self, result: object) -> None:
-        self._busy(False)
-        self.db.after_run(result)
-        if not isinstance(result, PriceCsvResult):
-            return
+    def _csv_done(self, result: PriceCsvResult) -> None:
         receipt, recalc = result.receipt, result.recalc
         for line in receipt.lines:
             self.add_row((line.tdcc, line.kind, line.detail), problem=line.problem)
@@ -188,29 +178,21 @@ class DailyImportTab(Tab):
         chosen = ask_excel("選擇歷史收盤價", self.history_var)
         if not chosen:
             return
-        settings = self.db.settings()
-        if settings is None:
-            return
         source = Path(chosen)
-        self.history_var.set(str(source))
-        self.memory.remember(close_history=str(source))
-        self._busy(True)
-        self.next_button.withdraw()
-        self.exits_button.withdraw()
-        self.releaser.show(Recalc())
-        self.restart()
         paths = self.config_paths()
 
-        def run() -> HistoryResult:
-            return import_close_history(settings, source, paths)
+        def starting() -> None:
+            self.history_var.set(str(source))
+            self._starting(close_history=str(source))
 
-        self.run_in_background(run, "匯入歷史收盤價中…（整份檢查完才寫入）", self._history_done)
+        self.runner.run_action(
+            lambda settings: import_close_history(settings, source, paths),
+            "匯入歷史收盤價中…（整份檢查完才寫入）",
+            self._history_done,
+            before=starting,
+        )
 
-    def _history_done(self, result: object) -> None:
-        self._busy(False)
-        self.db.after_run(result)
-        if not isinstance(result, HistoryResult):
-            return
+    def _history_done(self, result: HistoryResult) -> None:
         observation, result = result.observation, result.receipt
         for p in result.problems:
             if p.first is None or p.last is None:
@@ -243,29 +225,21 @@ class DailyImportTab(Tab):
         chosen = ask_excel("選擇舊商品的參考條件表（例如回填後的庫存總表）", self.legacy_var)
         if not chosen:
             return
-        settings = self.db.settings()
-        if settings is None:
-            return
         source = Path(chosen)
-        self.legacy_var.set(str(source))
-        self.memory.remember(legacy_backfill=str(source))
-        self._busy(True)
-        self.next_button.withdraw()
-        self.exits_button.withdraw()
-        self.releaser.show(Recalc())
-        self.restart()
         paths = self.config_paths()
 
-        def run() -> LegacyResult:
-            return import_legacy_products(settings, source, paths)
+        def starting() -> None:
+            self.legacy_var.set(str(source))
+            self._starting(legacy_backfill=str(source))
 
-        self.run_in_background(run, "匯入舊商品的價格與比價日中…", self._legacy_done)
+        self.runner.run_action(
+            lambda settings: import_legacy_products(settings, source, paths),
+            "匯入舊商品的價格與比價日中…",
+            self._legacy_done,
+            before=starting,
+        )
 
-    def _legacy_done(self, result: object) -> None:
-        self._busy(False)
-        self.db.after_run(result)
-        if not isinstance(result, LegacyResult):
-            return
+    def _legacy_done(self, result: LegacyResult) -> None:
         observation, receipt = result.observation, result.receipt
         for line in receipt.lines:
             if line.result != EXISTING:  # 已存在的不列，數字在上面
@@ -289,26 +263,15 @@ class DailyImportTab(Tab):
 
     def reobserve(self) -> None:
         """重新比價全部（#155，維護選單）：不匯入，直接用收盤價表現有的價格比一次。"""
-        settings = self.db.settings()
-        if settings is None:
-            return
-        self._busy(True)
-        self.next_button.withdraw()
-        self.exits_button.withdraw()
-        self.releaser.show(Recalc())
-        self.restart()
         paths = self.config_paths()
+        self.runner.run_action(
+            lambda settings: observe_products(settings, paths),
+            "重新比價全部中…",
+            self._reobserved,
+            before=self._starting,
+        )
 
-        def run() -> ObservationReceipt:
-            return observe_products(settings, paths)
-
-        self.run_in_background(run, "重新比價全部中…", self._reobserved)
-
-    def _reobserved(self, result: object) -> None:
-        self._busy(False)
-        self.db.after_run(result)
-        if not isinstance(result, ObservationReceipt):
-            return
+    def _reobserved(self, result: ObservationReceipt) -> None:
         observation = Observation(result)
         self._show_observation(result)
         self.finish(_observation_kpis(observation), f"完成（重新比價全部）。\n{observation_text(observation)}")
@@ -347,11 +310,7 @@ class DailyImportTab(Tab):
         to_confirm = recalc.receipt.count(TO_CONFIRM)
         return [("核對條件待確認（檔）", to_confirm, to_confirm > 0)]
 
-    def _done(self, result: object) -> None:
-        self._busy(False)
-        self.db.after_run(result)
-        if not isinstance(result, DailyResult):
-            return
+    def _done(self, result: DailyResult) -> None:
         receipt, recalc = result.receipt, result.recalc
         for line in receipt.lines:
             self.add_row((line.tdcc, line.kind, line.detail), problem=line.problem)

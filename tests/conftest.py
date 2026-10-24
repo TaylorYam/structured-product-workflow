@@ -3,6 +3,7 @@
 - `pg`：測試用 PostgreSQL（設定 SPW_TEST_DSN 才執行，CI 由 PostgreSQL 服務提供）。
 - `pg_settings`：同一個測試資料庫的連線設定（自己開連線的視窗動作用）。
 - `tk_root`、`master`：開視窗的測試用的 Tk（整個測試程序一個）與每個測試自己的 Toplevel；沒有顯示器（CI）時略過（#138）。
+- `immediate`：建視窗時注入的同步背景執行器（#206），`new_window(..., background=immediate)`。
 - `--shard=i/n`：只跑第 i 份（依測試檔分組，見 shard.py；CI 用來把核對測試分給幾台機器同時跑，#69）。
 """
 
@@ -38,6 +39,14 @@ def master(tk_root):
     yield window
     if window.winfo_exists():  # 關閉的測試已經關掉視窗
         window.destroy()
+
+
+@pytest.fixture
+def immediate():
+    """`fcn_checker.ui.ImmediateBackground`：分頁的背景動作在同一個執行緒馬上做完、直接回呼（#206）。"""
+    from fcn_checker.ui import ImmediateBackground
+
+    return ImmediateBackground
 
 
 @pytest.fixture

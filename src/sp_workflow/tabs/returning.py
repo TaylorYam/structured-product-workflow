@@ -6,22 +6,25 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from fcn_checker.ui import HintBar
+from fcn_checker.ui import Background, HintBar
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.returning import PENDING_SUFFIX
-from sp_workflow.tabs.base import TITLE, DatabaseLogin, Tab, ask_dir, record_note, set_if_chosen
+from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, Tab, ask_dir, record_note, set_if_chosen
 from sp_workflow.window_actions import ReturnResult, run_return
 
 
 class ReturnTab(Tab):
-    def __init__(self, notebook: ttk.Notebook, memory: FolderMemory, db: DatabaseLogin) -> None:
-        super().__init__(
-            notebook,
-            "放回",
-            (("tdcc", "TDCC", 130), ("ts", "TS", 70), ("iis", "IIS", 70), ("reason", "原因", 450)),
-        )
+    def __init__(
+        self,
+        notebook: ttk.Notebook,
+        memory: FolderMemory,
+        db: DatabaseLogin,
+        *,
+        background: BackgroundFactory = Background,
+    ) -> None:
+        columns = (("tdcc", "TDCC", 130), ("ts", "TS", 70), ("iis", "IIS", 70), ("reason", "原因", 450))
+        super().__init__(notebook, "放回", columns, db, background)
         self.memory = memory
-        self.db = db
         self.batch_var = tk.StringVar(value=memory.load().get("batch", ""))
         self.result_var = tk.StringVar()
         self.handed_off: tuple[str, str] | None = None  # 從核對帶入的（批次資料夾, 核對結果檔）
@@ -80,17 +83,18 @@ class ReturnTab(Tab):
             messagebox.showerror(TITLE, "請先選擇批次資料夾與核對結果檔。")
             return
         batch, result = Path(batch_text), Path(result_text)
-        settings = self.db.settings(quiet=True)  # 沒有連線設定或取消登入：照樣放回，不留步驟紀錄
-        self.memory.remember(batch=str(batch))
-        self.start_button.configure(state=tk.DISABLED)
-        self.restart()
-        self.run_in_background(lambda: run_return(settings, batch, result), "放回中…", self._done)
+        self.runner.run_maybe(  # 沒有連線設定或取消登入：照樣放回，不留步驟紀錄
+            lambda settings: run_return(settings, batch, result),
+            "放回中…",
+            self._done,
+            before=lambda: self.memory.remember(batch=str(batch)),
+            database_error=lambda returned: returned.recorded.database_error,
+        )
 
-    def _done(self, result: object) -> None:
-        self.start_button.configure(state=tk.NORMAL)
-        if not isinstance(result, ReturnResult):
-            return
-        self.db.after_run(result.recorded.database_error)
+    def _busy(self, busy: bool) -> None:
+        self.start_button.configure(state=tk.DISABLED if busy else tk.NORMAL)
+
+    def _done(self, result: ReturnResult) -> None:
         recorded, receipt = result.recorded, result.receipt
         for o in receipt.outcomes:
             self.add_row((o.tdcc, o.ts, o.iis, o.reason), problem=o.blocked or o.pending or bool(o.reason))

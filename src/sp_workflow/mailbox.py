@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
+from sp_workflow.database import OperatorError
 from sp_workflow.product_record import to_json
 
 if TYPE_CHECKING:
@@ -73,7 +74,7 @@ def load_mailbox(conn: psycopg.Connection) -> Mailbox:
 # ---------- 信箱維護（#158） ----------
 
 
-class MailboxError(Exception):
+class MailboxError(OperatorError):
     """信箱維護寫不進去；訊息直接給作業人員看。"""
 
 

@@ -8,7 +8,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from fcn_checker.check_config import ConfigPaths
-from fcn_checker.ui import NUMBER_FONT, CopyArea
+from fcn_checker.ui import NUMBER_FONT, Background, CopyArea
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.order_terms import format_field
 from sp_workflow.preparation import parse_tdccs
@@ -16,7 +16,7 @@ from sp_workflow.product_export import ExportReceipt, export_name
 from sp_workflow.product_record import REQUIRED
 from sp_workflow.product_terms import Draft, ImportConfig, MissingProduct, Receipt
 from sp_workflow.status import OrderReview
-from sp_workflow.tabs.base import CELL_COPY_HINT, TITLE, DatabaseLogin, Tab
+from sp_workflow.tabs.base import CELL_COPY_HINT, TITLE, BackgroundFactory, DatabaseLogin, Tab
 from sp_workflow.tabs.cell_table import CellTable
 from sp_workflow.tabs.editor import OrderEditor, TradeRowsEditor
 from sp_workflow.tabs.recalc import calc_status
@@ -54,13 +54,13 @@ class MaintenanceTab(Tab):
         memory: FolderMemory,
         db: DatabaseLogin,
         config_paths: Callable[[], ConfigPaths],
+        *,
+        background: BackgroundFactory = Background,
     ) -> None:
-        super().__init__(notebook, "人工維護", ())
+        super().__init__(notebook, "人工維護", (), db, background)
         self.memory = memory
-        self.db = db
         self.config_paths = config_paths
         self.config: ImportConfig | None = None  # 最近一次檢查或打開時讀的設定
-        self.working = False  # 正在檢查、讀取或存檔
         self.checked: dict[str, MissingProduct] = {}  # 最近一次檢查的結果（依 TDCC 排）
         self.status_var.set(self.READY_TEXT)
 
@@ -126,8 +126,12 @@ class MaintenanceTab(Tab):
         self._busy(False)
 
     def _busy(self, busy: bool) -> None:
-        """處理中：按鈕與編輯區都不能用；還沒打開任何一檔時不能存檔、重新載入。"""
-        self.working = busy
+        """處理中：按鈕與編輯區都不能用；還沒打開任何一檔時不能存檔、重新載入。
+
+        做完時檢查結果選回打開的那一檔（處理中點了別列、讀不到要打開的那一檔時都選回來）。
+        """
+        if not busy:
+            self.cells.select(self._current_tdcc())
         self.editor.set_frozen(busy)
         self.trade_editor.set_frozen(busy)
         state = tk.DISABLED if busy else tk.NORMAL
@@ -160,25 +164,12 @@ class MaintenanceTab(Tab):
     # ---------- 檢查 ----------
 
     def check(self) -> None:
-        if self.working:
-            return
-        settings = self.db.settings()
-        if settings is None:
-            return
         paths = self.config_paths()
-        self._busy(True)
-        self.restart()
+        self.runner.run_action(
+            lambda settings: check_missing(settings, paths), "檢查中…", self._checked, clear=False, before=self.restart
+        )
 
-        def run() -> Checked:
-            return check_missing(settings, paths)
-
-        self.run_in_background(run, "檢查中…", self._checked, clear=False)
-
-    def _checked(self, result: object) -> None:
-        self.db.after_run(result)
-        self._busy(False)
-        if not isinstance(result, Checked):
-            return
+    def _checked(self, result: Checked) -> None:
         self.config = result.config
         self.checked = {product.tdcc: product for product in result.products}
         self._fill_cells()
@@ -226,24 +217,21 @@ class MaintenanceTab(Tab):
         if not chosen:
             return
         path = Path(chosen)
-        settings = self.db.settings()
-        if settings is None:
-            return
-        self.memory.remember(product_export=str(path.parent))
         unsaved = self.has_unsaved()
-        self._busy(True)
-        self.mark_done(False)
 
-        def run() -> ExportReceipt:
-            return export_product_terms(settings, path)
+        def starting() -> None:
+            self.memory.remember(product_export=str(path.parent))
+            self.mark_done(False)
 
-        self.run_in_background(run, "匯出商品條件中…", lambda result: self._exported(result, unsaved), clear=False)
+        self.runner.run_action(
+            lambda settings: export_product_terms(settings, path),
+            "匯出商品條件中…",
+            lambda result: self._exported(result, unsaved),
+            clear=False,
+            before=starting,
+        )
 
-    def _exported(self, result: object, unsaved: bool) -> None:
-        self.db.after_run(result)
-        self._busy(False)
-        if not isinstance(result, ExportReceipt):
-            return
+    def _exported(self, result: ExportReceipt, unsaved: bool) -> None:
         status = f"已匯出資料庫的商品條件（workflow.product）{result.count} 檔：{result.path}"
         if unsaved:
             status += "\n注意：畫面上還沒存檔的修改不在匯出檔裡。"
@@ -276,26 +264,16 @@ class MaintenanceTab(Tab):
         if self.working or not self._may_discard(action or f"打開 {tdcc}"):
             self.cells.select(self._current_tdcc())
             return
-        settings = self.db.settings()
-        if settings is None:
-            self.cells.select(self._current_tdcc())
-            return
         paths = self.config_paths()
-        self._busy(True)
+        if not self.runner.run_action(
+            lambda settings: open_product(settings, tdcc, paths), f"讀取 {tdcc} 的條件中…", self._opened, clear=False
+        ):
+            self.cells.select(self._current_tdcc())
 
-        def run() -> Opened:
-            return open_product(settings, tdcc, paths)
-
-        self.run_in_background(run, f"讀取 {tdcc} 的條件中…", self._opened, clear=False)
-
-    def _opened(self, result: object) -> None:
-        self.db.after_run(result)
-        if isinstance(result, Opened):
-            self.config = result.config
-            self._show(result.draft, result.trades)
-            self.status_var.set(f"已打開 {result.draft.tdcc}（{result.draft.review}），改好按「存檔」。")
-        self._busy(False)
-        self.cells.select(self._current_tdcc())
+    def _opened(self, result: Opened) -> None:
+        self.config = result.config
+        self._show(result.draft, result.trades)
+        self.status_var.set(f"已打開 {result.draft.tdcc}（{result.draft.review}），改好按「存檔」。")
 
     def _show(self, draft: Draft, trades: TradeRowsDraft | None) -> None:
         self.editor.fixed = draft.fixed
@@ -320,23 +298,16 @@ class MaintenanceTab(Tab):
             return
         self.editor.commit()
         self.trade_editor.commit()
-        settings = self.db.settings()
-        if settings is None:
-            return
         reason = self.reason_var.get()
-        self._busy(True)
-        self.mark_done(False)
+        self.runner.run_action(  # 出錯時畫面上的值不動，可以改好再存或重新載入
+            lambda settings: save_product(settings, draft, config, trades=trades, reason=reason),
+            f"存檔中…（{draft.tdcc}）",
+            self._saved,
+            clear=False,
+            before=lambda: self.mark_done(False),
+        )
 
-        def run() -> Receipt:
-            return save_product(settings, draft, config, trades=trades, reason=reason)
-
-        self.run_in_background(run, f"存檔中…（{draft.tdcc}）", self._saved, clear=False)
-
-    def _saved(self, result: object) -> None:
-        self.db.after_run(result)
-        self._busy(False)
-        if not isinstance(result, Receipt):
-            return  # 錯誤已顯示；畫面上的值不動，可以改好再存或重新載入
+    def _saved(self, result: Receipt) -> None:
         draft = self.editor.draft
         if result.saved and draft is not None:
             # 已換成資料庫存的值：黃色的差異清掉，只有交易明細的新增了商品條件時變成未鎖住

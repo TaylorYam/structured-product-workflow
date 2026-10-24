@@ -1,11 +1,10 @@
 """「維護」選單的「信箱維護…」（`sp_workflow.tabs.mailbox`，#158）：列出、新增、修改、刪除人員與別名。
 
-背景執行改成馬上做完；資料庫動作換成記下呼叫、回傳虛構的人員與別名。
+背景執行改成馬上做完（`immediate`）；資料庫動作換成記下呼叫、回傳虛構的人員與別名。
 """
 
 from __future__ import annotations
 
-from concurrent.futures import Future
 from pathlib import Path
 from tkinter import messagebox
 
@@ -21,31 +20,13 @@ PAT = Person("Pat", "pat@example.com", "PM", True)
 ROWS = MailboxRows((AMY, PAT), (Alias("Amie", "Amy"), Alias("A. Lin", "Amy")))
 
 
-class Now:
-    """馬上在同一個執行緒做完的 `Background`。"""
-
-    def run(self, action, done):
-        future: Future = Future()
-        try:
-            future.set_result(action())
-        except Exception as exc:  # noqa: BLE001 - 和 Background 一樣交給 done
-            future.set_exception(exc)
-        done(future)
-        return future
-
-    def close(self) -> None:
-        pass
-
-
 @pytest.fixture
-def opened(master, tmp_path: Path, monkeypatch):
+def opened(master, tmp_path: Path, monkeypatch, immediate):
     calls: list[tuple] = []
     for name in ("save_mailbox_person", "delete_mailbox_person", "save_mailbox_alias", "delete_mailbox_alias"):
         monkeypatch.setattr(screen, name, lambda settings, *args, name=name: calls.append((name, *args)) or ROWS)
     monkeypatch.setattr(screen, "load_mailbox_rows", lambda settings: ROWS)
-    monkeypatch.setattr(screen.Background, "run", lambda self, action, done: Now().run(action, done))
-    window = new_window(master, tmp_path)
-    monkeypatch.setattr(window.db, "settings", lambda: object())
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
     window.open_mailbox()
     return window, window.mailbox, calls
 

@@ -1,12 +1,16 @@
-"""分頁共用的版面（`sp_workflow.tabs.base.Tab`）：直的 TDCC 欄位的計數（#83、#85）與結果表的複製（#121）。"""
+"""分頁共用的版面（`sp_workflow.tabs.base.Tab`）：直的 TDCC 欄位的計數（#83、#85）、結果表的複製（#121）與背景動作（`ActionRunner`，#206）。"""
 
 from __future__ import annotations
 
+import tkinter as tk
 from pathlib import Path
+from tkinter import messagebox, simpledialog
 
 import pytest
 
-from window_synth import new_window
+from sp_workflow.database import DatabaseError
+from sp_workflow.tabs.base import ActionRunner, DatabaseLogin
+from window_synth import HeldBackground, new_window
 
 
 def test_pasted_tdccs_are_counted_once_each(master, tmp_path: Path) -> None:
@@ -143,3 +147,76 @@ def test_ctrl_a_and_ctrl_c_work_on_the_table(master, tmp_path: Path) -> None:
 
     assert len(tab.table.selection()) == 2
     assert master.clipboard_get() == "029199990001\t新增交易\t\n029199990002\t新增交易\t"
+
+
+# ---------------------------------------------------------------- 背景動作（`ActionRunner`，#206）
+
+
+def runner_with(master, tmp_path: Path, background, *, password: bool = True) -> tuple[ActionRunner, list]:
+    """虛構帳號的 `ActionRunner`；回傳它和 busy 被呼叫的紀錄。`password=False`：連線設定檔沒有密碼，要問。"""
+    env = tmp_path / ".env"
+    env.write_text("PGDATABASE=spw_fake\nPGUSER=operator1\n" + ("PGPASSWORD=fake\n" if password else ""), "utf-8")
+    busy: list[bool] = []
+    runner = ActionRunner(DatabaseLogin(master, env), background(master), tk.StringVar(master), busy.append)
+    return runner, busy
+
+
+def test_run_action_does_nothing_without_a_login(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    runner, busy = runner_with(master, tmp_path, immediate, password=False)
+    monkeypatch.setattr(simpledialog, "askstring", lambda *a, **k: None)  # 取消登入
+
+    started = runner.run_action(lambda settings: pytest.fail("沒登入不做"), "處理中…", lambda r: pytest.fail("不交回"))
+
+    assert started is False and busy == [] and runner.status.get() == ""
+
+
+def test_run_action_hands_the_result_back_and_restores_the_buttons(master, tmp_path: Path, immediate) -> None:
+    runner, busy = runner_with(master, tmp_path, immediate)
+    results = []
+
+    started = runner.run_action(lambda settings: settings.user, "處理中…", results.append)
+
+    assert started is True and results == ["operator1"]
+    assert busy == [True, False] and runner.working is False
+
+
+def test_a_database_error_forgets_the_password_and_is_shown(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    runner, busy = runner_with(master, tmp_path, immediate)
+    errors = []
+    monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: errors.append(a[1]))
+
+    def fail(settings):
+        raise DatabaseError("連不上資料庫")
+
+    runner.run_action(fail, "處理中…", lambda r: pytest.fail("出錯不交回"))
+
+    assert errors == ["連不上資料庫"] and runner.status.get() == "連不上資料庫"
+    assert runner.db.password is None, "下次重新詢問密碼"
+    assert busy == [True, False]
+
+
+def test_only_one_action_runs_at_a_time(master, tmp_path: Path) -> None:
+    runner, busy = runner_with(master, tmp_path, HeldBackground)
+    results = []
+
+    assert runner.run_action(lambda settings: 1, "第一件…", results.append) is True
+    assert runner.run_action(lambda settings: 2, "第二件…", results.append) is False, "做完前不再開始"
+    assert runner.status.get() == "第一件…" and len(runner.background.held) == 1
+
+    runner.background.run_all()
+
+    assert results == [1] and busy == [True, False]
+    assert runner.run_action(lambda settings: 3, "第三件…", results.append) is True, "做完後可以再開始"
+
+
+def test_a_failing_result_handler_does_not_leave_the_buttons_disabled(master, tmp_path: Path) -> None:
+    runner, busy = runner_with(master, tmp_path, HeldBackground)
+
+    def show(result) -> None:
+        raise RuntimeError("顯示結果時出錯")
+
+    runner.run_action(lambda settings: 1, "處理中…", show)
+    with pytest.raises(RuntimeError):
+        runner.background.run_all()
+
+    assert busy == [True, False] and runner.working is False, "可以再開始下一件"

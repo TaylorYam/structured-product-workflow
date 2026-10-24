@@ -8,13 +8,12 @@ from __future__ import annotations
 
 import tkinter as tk
 from collections.abc import Callable, Sequence
-from concurrent.futures import Future
 from tkinter import messagebox, ttk
 
 from fcn_checker.ui import DANGER, Background, FitTreeview
-from sp_workflow.database import ConnectionSettings, DatabaseError
+from sp_workflow.database import ConnectionSettings
 from sp_workflow.mailbox import Alias, MailboxError, MailboxRows, Person, alias_from, person_from
-from sp_workflow.tabs.base import TITLE, DatabaseLogin
+from sp_workflow.tabs.base import TITLE, ActionRunner, BackgroundFactory, DatabaseLogin
 from sp_workflow.window_actions import (
     delete_mailbox_alias,
     delete_mailbox_person,
@@ -30,13 +29,11 @@ ALIAS_COLUMNS = (("alias", "別名", 160), ("person", "人員", 140))
 class MailboxWindow(tk.Toplevel):
     """信箱維護視窗：打開時讀一次，之後每次存檔後重讀；處理中按鈕不能按。"""
 
-    def __init__(self, parent: tk.Misc, db: DatabaseLogin) -> None:
+    def __init__(self, parent: tk.Misc, db: DatabaseLogin, *, background: BackgroundFactory = Background) -> None:
         super().__init__(parent)
         self.title(f"{TITLE} — 信箱維護")
-        self.db = db
-        self.background = Background(self)
+        self.background = background(self)
         self.rows = MailboxRows((), ())
-        self.working = False
         frame = ttk.Frame(self, padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
         frame.columnconfigure(0, weight=3)
@@ -70,6 +67,7 @@ class MailboxWindow(tk.Toplevel):
         self.people.bind("<Double-1>", lambda _: self.edit_person())
         self.aliases.bind("<Double-1>", lambda _: self.edit_alias())
         self.status_var = tk.StringVar()
+        self.runner = ActionRunner(db, self.background, self.status_var, self._busy, parent=self)
         ttk.Label(frame, textvariable=self.status_var, wraplength=900, justify="left").grid(
             row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0)
         )
@@ -97,9 +95,13 @@ class MailboxWindow(tk.Toplevel):
 
     # ---------- 讀與顯示 ----------
 
+    @property
+    def working(self) -> bool:
+        return self.runner.working
+
     def refresh(self, notice: str = "") -> None:
         """重新讀資料庫；`notice` 是剛存好的那一筆，寫在狀態列。"""
-        self._run(load_mailbox_rows, "讀取信箱中…", lambda rows: self._show(rows, notice))
+        self.runner.run_action(load_mailbox_rows, "讀取信箱中…", lambda rows: self._show(rows, notice))
 
     def _show(self, rows: MailboxRows, notice: str = "") -> None:
         self.rows = rows
@@ -211,31 +213,10 @@ class MailboxWindow(tk.Toplevel):
     # ---------- 背景執行 ----------
 
     def _save(self, action: Callable[[ConnectionSettings], MailboxRows], done: str) -> None:
-        self._run(action, "存檔中…", lambda rows: self._show(rows, f"已存：{done}。"))
-
-    def _run(
-        self, action: Callable[[ConnectionSettings], MailboxRows], busy: str, on_done: Callable[[MailboxRows], None]
-    ) -> None:
-        settings = self.db.settings()
-        if settings is None:
-            return
-        self._busy(True)
-        self.status_var.set(busy)
-        self.background.run(lambda: action(settings), lambda future: self._finish(future, on_done))
-
-    def _finish(self, future: Future[MailboxRows], on_done: Callable[[MailboxRows], None]) -> None:
-        self._busy(False)
-        error = future.exception()
-        self.db.after_run(error)
-        if error is None:
-            on_done(future.result())
-            return
-        message = str(error) if isinstance(error, (MailboxError, DatabaseError)) else f"執行失敗：{error!r}"
-        self.status_var.set(message)
-        messagebox.showerror(TITLE, message, parent=self)
+        """存檔後重讀；寫不進去（`MailboxError`）時原因寫在狀態列並跳出來。"""
+        self.runner.run_action(action, "存檔中…", lambda rows: self._show(rows, f"已存：{done}。"))
 
     def _busy(self, busy: bool) -> None:
-        self.working = busy
         for button in self.buttons:
             button.configure(state=tk.DISABLED if busy else tk.NORMAL)
 

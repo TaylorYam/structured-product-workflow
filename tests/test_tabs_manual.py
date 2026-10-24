@@ -6,7 +6,9 @@ import datetime as dt
 import tkinter as tk
 from decimal import Decimal
 from pathlib import Path
-from tkinter import filedialog, messagebox
+from tkinter import filedialog, messagebox, simpledialog
+
+import pytest
 
 import sp_workflow.tabs.manual
 from fcn_checker.ui import SURFACE
@@ -22,7 +24,7 @@ from sp_workflow.tabs.editor import DIFFERENT_BG, PROBLEM_BG
 from sp_workflow.tabs.manual import correction_text
 from sp_workflow.trade_rows import CANCEL_NOTE, UNMATCHED_NOTE, TradeRowsDraft
 from sp_workflow.window_actions import Checked, Opened
-from window_synth import new_window, type_into
+from window_synth import HeldBackground, new_window, started, type_into
 
 A_TDCC, B_TDCC, NEW_TDCC = "029199990001", "029199990002", "029199990003"
 
@@ -40,23 +42,22 @@ def missing(tdcc: str, status: str = OrderReview.UNLOCKED, **changes) -> Missing
     return MissingProduct(tdcc, "BARC", status, values, tuple(n for n in REQUIRED if values.get(n) is None))
 
 
+def maintenance_window(master, tmp_path: Path) -> PanelWindow:
+    """背景動作先留著不做（`HeldBackground`）、登入不問密碼的視窗：看處理中的畫面，`finish` 交回結果。"""
+    return new_window(master, tmp_path, background=HeldBackground, logged_in=True)
+
+
 def checked_window(master, tmp_path: Path, *products: MissingProduct) -> PanelWindow:
-    window = new_window(master, tmp_path)
+    window = maintenance_window(master, tmp_path)
     window.manual._checked(Checked(products, CONFIG))
     return window
 
 
 def opened(window: PanelWindow, draft: Draft):
+    """打開了 draft：結果交給 `_opened`，再和 `ActionRunner` 做完時一樣恢復按鈕。"""
     window.manual._opened(Opened(draft, CONFIG))
+    window.manual._busy(False)
     return window.manual.editor
-
-
-def without_database(tab, monkeypatch) -> list[str]:
-    """不連資料庫：記下背景工作的說明。"""
-    started: list[str] = []
-    monkeypatch.setattr(tab.db, "settings", lambda **k: object())
-    monkeypatch.setattr(tab, "run_in_background", lambda *a, **k: started.append(a[1]))
-    return started
 
 
 def test_check_lists_products_with_red_cells_where_data_is_missing(master, tmp_path: Path) -> None:
@@ -101,18 +102,15 @@ def test_clicking_a_row_opens_that_product(master, tmp_path: Path, monkeypatch) 
     window = checked_window(
         master, tmp_path, missing(B_TDCC, **{"Maturity date": None}), missing(NEW_TDCC, OrderReview.TRADES_ONLY)
     )
-    started = without_database(window.manual, monkeypatch)
-
     window.manual.cells._choose(NEW_TDCC)
 
-    assert started == [f"讀取 {NEW_TDCC} 的條件中…"]
+    assert started(window.manual) == [f"讀取 {NEW_TDCC} 的條件中…"]
     assert window.manual.cells.selected == NEW_TDCC
     assert str(window.manual.check_button.cget("state")) == "disabled", "讀取中不能再按"
 
 
 def test_any_tdcc_can_be_typed_in_to_open(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
-    started = without_database(window.manual, monkeypatch)
+    window = maintenance_window(master, tmp_path)
     errors: list[str] = []
     monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: errors.append(a[1]))
 
@@ -122,7 +120,7 @@ def test_any_tdcc_can_be_typed_in_to_open(master, tmp_path: Path, monkeypatch) -
     window.manual.open_typed()
 
     assert errors == ["請輸入一筆 TDCC。"]
-    assert started == [f"讀取 {A_TDCC} 的條件中…"]
+    assert started(window.manual) == [f"讀取 {A_TDCC} 的條件中…"]
 
 
 def test_an_unlocked_product_marks_blank_fields_red_but_can_be_saved(master, tmp_path: Path) -> None:
@@ -173,16 +171,15 @@ def test_saving_reports_the_changes_and_updates_the_check_table(master, tmp_path
         missing(B_TDCC, **{"Maturity date": None, "Coupon p.a. (%)": None}),
     )
     tab = window.manual
-    started = without_database(tab, monkeypatch)
     editor = opened(window, maintenance_draft(**{"Maturity date": None}))
     type_into(editor, "Maturity date", "2027-04-22")
     tab.reason_var.set("起單建檔漏了")
 
     tab.save()
-    assert started == [f"存檔中…（{A_TDCC}）"]
+    assert started(tab) == [f"存檔中…（{A_TDCC}）"]
     assert str(tab.save_button.cget("state")) == "disabled", "存檔中不能改"
     calc = CalcLine(A_TDCC, DONE, "", True)
-    tab._saved(Receipt(A_TDCC, 7, (("Maturity date", None, dt.date(2027, 4, 22)),), calc, locked=False))
+    tab.background.finish(Receipt(A_TDCC, 7, (("Maturity date", None, dt.date(2027, 4, 22)),), calc, locked=False))
 
     assert tab.status_var.get() == (
         f"已存檔 {A_TDCC} 的商品條件（第 7 筆紀錄）：Maturity date 空白 → 2027-04-22。\n核對條件重算後：完成。"
@@ -231,14 +228,17 @@ def test_save_messages_for_new_and_locked_products() -> None:
 
 
 def test_a_rejected_save_keeps_the_edits(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
+    window = maintenance_window(master, tmp_path)
     tab = window.manual
-    without_database(tab, monkeypatch)
+    errors = []
+    monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: errors.append(a[1]))
     editor = opened(window, maintenance_draft())
     type_into(editor, "Coupon p.a. (%)", "11")
     tab.save()
 
-    tab._saved(TermsError(f"{A_TDCC}：資料庫裡這檔的條件在打開之後改過了，請重新載入"))
+    tab.background.finish(TermsError(f"{A_TDCC}：資料庫裡這檔的條件在打開之後改過了，請重新載入"))
+
+    assert errors == [f"{A_TDCC}：資料庫裡這檔的條件在打開之後改過了，請重新載入"]
 
     assert editor.draft.values["Coupon p.a. (%)"] == Decimal(11) and tab.has_unsaved()
     assert str(tab.save_button.cget("state")) == "normal" and str(tab.reload_button.cget("state")) == "normal"
@@ -249,27 +249,25 @@ def test_switching_products_with_unsaved_edits_asks_first(master, tmp_path: Path
         master, tmp_path, missing(A_TDCC, **{"Maturity date": None}), missing(B_TDCC, **{"Maturity date": None})
     )
     tab = window.manual
-    started = without_database(tab, monkeypatch)
     editor = opened(window, maintenance_draft(**{"Maturity date": None}))
     type_into(editor, "Coupon p.a. (%)", "11")
     answers = [False, True]
     monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: answers.pop(0))
 
     tab.cells._choose(B_TDCC)
-    assert started == [] and tab.cells.selected == A_TDCC, "不換檔，選取回到原本那一檔"
+    assert started(tab) == [] and tab.cells.selected == A_TDCC, "不換檔，選取回到原本那一檔"
 
     tab.cells._choose(B_TDCC)
-    assert started == [f"讀取 {B_TDCC} 的條件中…"]
+    assert started(tab) == [f"讀取 {B_TDCC} 的條件中…"]
 
 
-def test_reload_reopens_the_current_product(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
-    started = without_database(window.manual, monkeypatch)
+def test_reload_reopens_the_current_product(master, tmp_path: Path) -> None:
+    window = maintenance_window(master, tmp_path)
     opened(window, maintenance_draft())
 
     window.manual.reload()
 
-    assert started == [f"讀取 {A_TDCC} 的條件中…"]
+    assert started(window.manual) == [f"讀取 {A_TDCC} 的條件中…"]
 
 
 def test_closing_with_unsaved_maintenance_asks_and_stays_on_the_tab(master, tmp_path: Path, monkeypatch) -> None:
@@ -297,6 +295,7 @@ def opened_trades(*rows: dict) -> TradeRowsDraft:
 
 def opened_with(window: PanelWindow, draft: Draft, trades: TradeRowsDraft):
     window.manual._opened(Opened(draft, CONFIG, trades))
+    window.manual._busy(False)
     return window.manual.trade_editor
 
 
@@ -376,9 +375,8 @@ def test_opening_another_product_replaces_the_trade_rows(master, tmp_path: Path)
     assert not old.winfo_exists(), "上一檔的欄拿掉"
 
 
-def test_trade_rows_cannot_be_edited_while_saving(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
-    without_database(window.manual, monkeypatch)
+def test_trade_rows_cannot_be_edited_while_saving(master, tmp_path: Path) -> None:
+    window = maintenance_window(master, tmp_path)
     editor = opened_with(window, maintenance_draft(), opened_trades({}))
     type_trade(editor, (1, "募集"), "Y")
 
@@ -387,10 +385,9 @@ def test_trade_rows_cannot_be_edited_while_saving(master, tmp_path: Path, monkey
     assert str(editor.rows[(1, "金額")].input.cget("state")) == "disabled"
 
 
-def test_saving_sends_the_trade_rows_with_the_terms(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
+def test_saving_sends_the_trade_rows_with_the_terms(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
     tab = window.manual
-    monkeypatch.setattr(tab.db, "settings", lambda **k: object())
     saved = []
 
     def save(settings, draft, config, *, trades, reason):
@@ -399,7 +396,6 @@ def test_saving_sends_the_trade_rows_with_the_terms(master, tmp_path: Path, monk
         return Receipt(draft.tdcc, None, locked=False, trade_correction_id=4, trade_changes=((1, "募集", "N", "Y"),))
 
     monkeypatch.setattr(sp_workflow.tabs.manual, "save_product", save)
-    monkeypatch.setattr(tab, "run_in_background", lambda action, busy, on_done, **k: on_done(action()))
     editor = opened_with(window, maintenance_draft(), opened_trades({}))
     editor.rows[(1, "募集")].var.set("Y")  # 還沒離開欄位就按存檔
 
@@ -516,20 +512,19 @@ def test_right_click_finds_the_cell_under_the_pointer(master, tmp_path: Path, mo
 # ---------------------------------------------------------------- 匯出商品條件（#122）
 
 
-def test_export_asks_where_to_save_before_connecting(master, tmp_path: Path, monkeypatch) -> None:
-    tab = new_window(master, tmp_path).manual
-    asked_settings = []
-    monkeypatch.setattr(tab.db, "settings", lambda **k: asked_settings.append(1))
+def test_export_asks_where_to_save_before_connecting(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    tab = new_window(master, tmp_path, background=immediate).manual  # 沒有連線設定檔：登入的話會跳錯誤
+    monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: pytest.fail("按取消時不連資料庫"))
     monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **k: "")
 
     tab.export()
 
-    assert asked_settings == [], "按取消時不連資料庫"
 
-
-def test_cancelling_the_login_does_not_remember_the_folder(master, tmp_path: Path, monkeypatch) -> None:
-    tab = new_window(master, tmp_path).manual
-    monkeypatch.setattr(tab.db, "settings", lambda **k: None)
+def test_cancelling_the_login_does_not_remember_the_folder(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    (tmp_path / ".env").write_text("PGDATABASE=spw_fake\nPGUSER=operator1\n", encoding="utf-8")  # 沒有密碼：要問
+    tab = new_window(master, tmp_path, background=immediate).manual
+    monkeypatch.setattr(simpledialog, "askstring", lambda *a, **k: None)  # 取消登入
+    monkeypatch.setattr(sp_workflow.tabs.manual, "export_product_terms", lambda *a: pytest.fail("取消登入不匯出"))
     monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **k: str(tmp_path / "out" / "x.xlsx"))
 
     tab.export()
@@ -538,9 +533,8 @@ def test_cancelling_the_login_does_not_remember_the_folder(master, tmp_path: Pat
 
 
 def test_export_remembers_the_folder_and_runs_in_the_background(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
+    window = maintenance_window(master, tmp_path)
     tab = window.manual
-    started = without_database(tab, monkeypatch)
     asked = []
     target = tmp_path / "out" / "products.xlsx"
 
@@ -551,11 +545,11 @@ def test_export_remembers_the_folder_and_runs_in_the_background(master, tmp_path
     monkeypatch.setattr(filedialog, "asksaveasfilename", ask)
 
     tab.export()
-    assert started == ["匯出商品條件中…"]
+    assert started(tab) == ["匯出商品條件中…"]
     assert str(tab.export_button.cget("state")) == "disabled", "匯出中不能再按"
     tab.export()
     assert len(asked) == 1
-    tab._exported(ExportReceipt(target, 1), unsaved=False)
+    tab.background.finish(ExportReceipt(target, 1))
     tab.export()
 
     assert asked[0]["initialfile"].startswith("workflow_product_") and asked[0]["initialfile"].endswith(".xlsx")
