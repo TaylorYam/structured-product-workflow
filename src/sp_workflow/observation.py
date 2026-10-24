@@ -23,6 +23,7 @@
   `workflow.pricing_status`，和上一次不同才寫。
 
 `observe` 只算一檔、不碰資料庫；`observe_all` 讀資料庫、算全部、寫回。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations

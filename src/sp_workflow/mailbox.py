@@ -5,6 +5,7 @@
 檢查失敗或帳號沒有寫入權限時轉成作業人員看得懂的 `MailboxError`。改名時資料庫讓別名跟著改、刪除人員時連帶刪掉
 他的別名，這兩種的紀錄另外寫出那些別名。
 畫面在 `sp_workflow.tabs.mailbox`。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations

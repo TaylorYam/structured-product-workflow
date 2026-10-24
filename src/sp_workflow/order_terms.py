@@ -32,6 +32,7 @@ from typing import TYPE_CHECKING
 
 import openpyxl
 
+from sp_workflow.database import OperatorError
 from sp_workflow.preparation import is_tdcc, parse_tdccs
 from sp_workflow.product_record import (
     CHOICES,
@@ -67,7 +68,7 @@ _MONTHS = {
 }
 
 
-class OrderTermsError(Exception):
+class OrderTermsError(OperatorError):
     """整批無法開始（沒有 TDCC、起單建檔打不開或格式不對）；訊息是給作業人員看的中文。"""
 
 

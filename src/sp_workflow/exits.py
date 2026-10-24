@@ -4,6 +4,7 @@
 「來源」欄寫出是哪一種，和進度頁的存續狀態對得起來；沒有事件日的事件不在任何一天。
 沒有指定日期時用收盤價表最新的收盤日（早上匯入昨日收盤價後就是昨天）。依事件（KO、接股、到期還本、顧客贖回）、TDCC 排序。
 只讀資料庫；匯出 Excel 的存檔方式同商品匯出（`product_export.save_rows`）。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations

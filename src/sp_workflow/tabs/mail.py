@@ -6,8 +6,9 @@ import tkinter as tk
 from tkinter import messagebox, ttk
 
 from sp_workflow.daily_import import ImportInfo
+from sp_workflow.database import OperatorError
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.mail_drafts import DRAFTED, NOT_NEEDED, MailDraftError, mail_template_from_env
+from sp_workflow.mail_drafts import DRAFTED, NOT_NEEDED, mail_template_from_env
 from sp_workflow.tabs.base import TITLE, DatabaseLogin, RootFolder, Tab, ask_dir, record_note
 from sp_workflow.window_actions import DraftResult, make_mail_drafts, read_latest_import
 
@@ -60,7 +61,7 @@ class MailDraftTab(Tab):
             return
         try:
             template_path = mail_template_from_env(self.db.env_path)
-        except MailDraftError as exc:
+        except OperatorError as exc:  # 連線設定檔或範本有問題
             messagebox.showerror(TITLE, str(exc), parent=self.master)
             return
         self.memory.remember(mail_out=str(out))

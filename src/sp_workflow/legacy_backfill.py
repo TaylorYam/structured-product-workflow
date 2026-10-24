@@ -11,6 +11,7 @@
 - 表上沒有、資料庫沒有、還沒鎖住、表上有兩列、代碼和資料庫不同、價格不是數字、比價日不是日期的：那一檔不匯入並
   寫出原因，其他照常；不匯入的另外寫一份錯誤清單放在來源檔旁邊。
 - 整次匯入一個 transaction；重跑同一份，補過的都是「已存在」，不重寫。
+傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
 from __future__ import annotations
@@ -35,6 +36,7 @@ from fcn_checker.orders.reference import (
     underlying_key,
 )
 from sp_workflow.check_terms import DONE
+from sp_workflow.database import OperatorError
 from sp_workflow.file_tools import save_book, table_book
 from sp_workflow.lifecycle import KO, MATURITY, LifecycleError, current_events_of, record_legacy
 
@@ -56,7 +58,7 @@ ERROR_BOOK_COLUMNS = (("TDCC", 16), ("原因", 80), ("表上的列", 10))
 _KO = re.compile(r"已於\s*(\d{4})\s*/\s*(\d{1,2})\s*/\s*(\d{1,2})\s*KO")
 
 
-class LegacyBackfillError(Exception):
+class LegacyBackfillError(OperatorError):
     """整份不匯入（檔案讀不了、缺必要欄、錯誤清單寫不出來）；訊息是給作業人員看的中文。"""
 
 

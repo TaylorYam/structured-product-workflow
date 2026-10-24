@@ -17,7 +17,6 @@ from db_synth import price, trade, write_daily
 from order_synth import CONFIG, A, order_row
 from sp_workflow.check_terms import CheckTermsError
 from sp_workflow.daily_import import import_daily
-from sp_workflow.database import DatabaseError
 from sp_workflow.order_import import OrderDraft, drafts_from, import_drafts, import_orders, open_maintenance
 from sp_workflow.product_write import LOCKED, NEW, OVERWRITTEN, SAME, SKIPPED, Mode, save_terms
 
@@ -216,10 +215,12 @@ def test_a_failed_recalculation_keeps_the_import(pg, monkeypatch) -> None:
 
 @pytest.mark.db
 def test_a_failed_reload_keeps_the_import(pg, monkeypatch) -> None:
+    import psycopg
+
     (draft,) = drafts_from([order_row()], pg)
 
     def broken(*args, **kwargs):
-        raise DatabaseError("connection lost")
+        raise psycopg.OperationalError("connection lost")  # 重讀時連線斷了
 
     monkeypatch.setattr("sp_workflow.order_import.read_stored", broken)
 

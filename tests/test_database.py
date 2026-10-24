@@ -3,13 +3,25 @@
 from __future__ import annotations
 
 import datetime as dt
+import os
 from pathlib import Path
 
 import pytest
 
 from db_synth import inventory, seed_products
 from sp_workflow import database
-from sp_workflow.database import DatabaseError, apply_migrations, load_env_file, settings_from_env
+from sp_workflow.database import (
+    VERSION_TABLE,
+    DatabaseError,
+    OperatorError,
+    SchemaOutdatedError,
+    apply_migrations,
+    connect,
+    connect_raw,
+    load_env_file,
+    migrate_main,
+    settings_from_env,
+)
 from sp_workflow.product_record import REQUIRED_COLUMNS
 
 A = "029199990001"
@@ -67,6 +79,64 @@ def test_migration_files_are_packaged_in_order() -> None:
 
     assert files[0][:2] == (1, "0001_minimal_fcn.sql")
     assert [v for v, _, _ in files] == sorted(v for v, _, _ in files)
+
+
+OUTDATED = "資料庫的資料表還沒建立或不是最新版本，請先執行 spw-db-migrate。"
+
+
+def test_operator_errors_share_one_base() -> None:
+    assert issubclass(SchemaOutdatedError, DatabaseError) and issubclass(DatabaseError, OperatorError)
+
+
+@pytest.mark.db
+def test_connect_checks_the_schema_version_once(pg, pg_settings) -> None:
+    with connect(pg_settings) as conn:
+        assert conn.execute("SELECT 1").fetchone() == (1,), "最新版本：連得上、可以直接用"
+
+    pg.execute(f"DELETE FROM public.{VERSION_TABLE} WHERE version = (SELECT max(version) FROM public.{VERSION_TABLE})")
+
+    with pytest.raises(SchemaOutdatedError) as info:
+        connect(pg_settings)
+    assert str(info.value) == OUTDATED
+    with connect_raw(pg_settings) as conn:
+        assert conn.execute("SELECT 1").fetchone() == (1,), "遷移工具用的連線不檢查版本"
+
+
+@pytest.mark.db
+def test_broken_migration_files_are_not_a_login_problem(pg, pg_settings, monkeypatch) -> None:
+    def duplicated():
+        raise DatabaseError("資料表版本檔的編號重複")
+
+    monkeypatch.setattr(database, "migration_files", duplicated)
+
+    with pytest.raises(SchemaOutdatedError, match="編號重複"):
+        connect(pg_settings)
+
+
+@pytest.mark.db
+def test_connect_without_any_schema_is_outdated(pg, pg_settings) -> None:
+    pg.execute("DROP SCHEMA mailbox, workflow CASCADE")
+    pg.execute(f"DROP TABLE public.{VERSION_TABLE}")
+
+    with pytest.raises(SchemaOutdatedError, match="spw-db-migrate"):
+        connect(pg_settings)
+
+
+@pytest.mark.db
+def test_migrate_builds_the_schema_on_an_empty_database(pg, pg_settings, tmp_path: Path, capsys, monkeypatch) -> None:
+    pg.execute("DROP SCHEMA mailbox, workflow CASCADE")
+    pg.execute(f"DROP TABLE public.{VERSION_TABLE}")
+    env = tmp_path / ".env"
+    env.write_text(
+        f"PGHOST={pg_settings.host}\nPGPORT={pg_settings.port}\nPGDATABASE={pg_settings.dbname}\nPGUSER={pg_settings.user}\n",
+        encoding="utf-8",
+    )
+    password = os.environ.get("PGPASSWORD") or pg_settings.password or "trust"  # CI 的 PostgreSQL 不驗密碼
+    monkeypatch.setattr(database, "getpass", lambda prompt: password)
+
+    assert migrate_main(["--env-file", str(env), "--admin-user", pg_settings.user]) == 0
+    assert "已套用" in capsys.readouterr().out
+    connect(pg_settings).close()  # 套用後日常連線通過版本檢查
 
 
 @pytest.mark.db
