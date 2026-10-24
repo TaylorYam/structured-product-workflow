@@ -21,7 +21,7 @@
 - 結果另外列出交易明細的 FCN TDCC（依第一次出現的順序、不重複，不是剛好 12 碼與整檔都取消的不列），
   給視窗帶到起單資料頁（#90）。
 - 整次匯入在一個 transaction 內完成，任何錯誤都不留下部分寫入。錯誤清單（`每日匯入錯誤.xlsx`，每次重建全部歷史）
-  在 transaction 的最後寫：寫不進去時丟 `file_tools.FileWriteError`、整次不匯入；寫好之後 commit 失敗就刪掉（#207）。
+  在 transaction 的最後寫：寫不進去時丟 `file_tools.FileWriteError`、整次不匯入；寫好之後 commit 失敗就放回上一份（#207）。
 - 格子的解讀在 `sheet_cells`，run 紀錄與錯誤清單的寫法在 `import_run`，和其他匯入共用（#207）。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
@@ -208,6 +208,7 @@ def import_daily(daily_book: Path, conn: psycopg.Connection, *, prices: bool = T
     """
     parsed = _read_daily(daily_book, prices=prices)
 
+    previous: bytes | None = None
     written = False
     try:
         with conn.transaction():
@@ -233,11 +234,11 @@ def import_daily(daily_book: Path, conn: psycopg.Connection, *, prices: bool = T
                 fcn_tdccs=tuple(tdcc for tdcc, live in parsed.fcn_tdccs.items() if live),
             )
             import_run.finish_run(conn, "import_run", run_id, _summary(receipt))
-            _save_error_book(conn, error_book_path)
+            previous = _save_error_book(conn, error_book_path)
             written = True
     except BaseException:
-        if written:  # 錯誤清單寫好之後 commit 失敗：不留下沒有匯入的清單
-            error_book_path.unlink(missing_ok=True)
+        if written:
+            _put_back(error_book_path, previous)
         raise
     return receipt
 
@@ -248,6 +249,7 @@ def import_price_csv(path: Path, conn: psycopg.Connection, calendar: TradingCale
     有 `calendar`（交易所假日表）時同時寫 CSV 那一天的收盤價（#153）；沒有時收盤價不存。"""
     close_date, prices = _read_price_csv(path)
     sha256 = sha256_file(path)
+    previous: bytes | None = None
     written = False
     try:
         with conn.transaction():
@@ -292,11 +294,11 @@ def import_price_csv(path: Path, conn: psycopg.Connection, calendar: TradingCale
                 "lines": [[line.tdcc, line.kind, line.detail] for line in receipt.lines],
             }
             import_run.finish_run(conn, "import_run", run_id, record)
-            _save_error_book(conn, error_book_path)
+            previous = _save_error_book(conn, error_book_path)
             written = True
     except BaseException:
-        if written:  # 錯誤清單寫好之後 commit 失敗：不留下沒有匯入的清單
-            error_book_path.unlink(missing_ok=True)
+        if written:
+            _put_back(error_book_path, previous)
         raise
     return receipt
 
@@ -683,8 +685,15 @@ def _error_rows(conn: psycopg.Connection) -> list[tuple[object, ...]]:
     return rows
 
 
-def _save_error_book(conn: psycopg.Connection, path: Path) -> None:
-    """每日匯入的錯誤清單（同一個檔、每次重建全部歷史）；寫不進去時丟 `FileWriteError`，整次不匯入。"""
+def _save_error_book(conn: psycopg.Connection, path: Path) -> bytes | None:
+    """每日匯入的錯誤清單（同一個檔、每次重建全部歷史）；寫不進去時丟 `FileWriteError`，整次不匯入。
+
+    回傳寫之前那一份的內容（沒有或讀不到時 None），commit 失敗時交給 `_put_back` 放回。
+    """
+    try:
+        previous = path.read_bytes()
+    except OSError:
+        previous = None
     import_run.error_book(
         path,
         "匯入錯誤",
@@ -693,6 +702,15 @@ def _save_error_book(conn: psycopg.Connection, path: Path) -> None:
         widths=(22, 10, 30, 16, 24, 80),
         auto_filter=True,
     )
+    return previous
+
+
+def _put_back(path: Path, previous: bytes | None) -> None:
+    """錯誤清單寫好之後 commit 失敗（#207）：放回上一次的清單（沒有就刪掉），和資料庫一致。"""
+    if previous is None:
+        path.unlink(missing_ok=True)
+    else:
+        path.write_bytes(previous)
 
 
 # ---------- 值的轉換 ----------

@@ -54,7 +54,6 @@ ERROR_PDF_COLUMN = "PDF 檔名"
 ERROR_MESSAGE_COLUMN = "錯訊"
 ERROR_PAGES_COLUMN = "PDF 頁碼"  # 核對工具 acb5dbd（#350）起才有；舊格式沒有這欄也能讀（#25）
 
-
 NOT_CHECKED_REASON = "核對結果檔沒有這個商品（還沒核對）"
 _TEMP_SUFFIX = ".spw-tmp"  # 放回時先寫成暫存名，確認指紋後才改成正式檔名
 
