@@ -13,17 +13,19 @@ from pathlib import Path
 
 import pytest
 
-from db_synth import csv_price, price, seed_mailbox, trade, write_daily, write_price_csv
+from db_synth import csv_price, price, seed_mailbox, seed_waiting_for_mail, trade, write_daily, write_price_csv
 from fcn_checker.check_config import ConfigPaths
 from order_synth import CONFIG, SHEET, A, drafts_of, order_row, sheet_line, write_sheet
 from sp_workflow import window_actions
 from sp_workflow.check_terms import CheckTermsError
 from sp_workflow.database import DatabaseError, SchemaOutdatedError
 from sp_workflow.product_terms import write_batch
+from sp_workflow.progress import SentBatch
 from sp_workflow.status import ImportResult
 from sp_workflow.window_actions import (
     import_close_history,
     import_order_sheet,
+    mark_sent_batch,
     observe_products,
     read_order_sheet,
     run_daily_import,
@@ -297,3 +299,34 @@ def test_a_failed_reload_keeps_the_sheet_import_and_the_recalculation(pg, pg_set
     assert result.recalc is not None and "no_such_table" in result.reload_error
     assert coupon(pg) == Decimal("12.5")
     assert pg.execute("SELECT count(*) FROM workflow.check_terms WHERE tdcc = %s", (A,)).fetchone()[0] == 1
+
+
+@pytest.mark.db
+def test_a_batch_of_sent_commits_each_product_on_its_own(pg, pg_settings, monkeypatch) -> None:
+    """#205：批次登記已寄出一檔一個 transaction；第 2 檔寫不進去時，第 1 檔已經 commit（另一條連線看得到），第 3 檔照寫。"""
+    import psycopg
+
+    first, second, third = "029199990001", "037199990002", "092199990003"
+    seed_waiting_for_mail(pg, [first, second, third])
+    write = window_actions.write_records
+    seen = []
+
+    def failing_second(conn, records):
+        if records[0].tdcc == second:
+            seen.append(sent(pg, first))  # `pg` 是另一條連線：只看得到已經 commit 的
+            raise psycopg.OperationalError("連線中斷")
+        return write(conn, records)
+
+    monkeypatch.setattr(window_actions, "write_records", failing_second)
+
+    result = mark_sent_batch(pg_settings, SentBatch(dt.date(2026, 10, 22), (first, second, third), 0))
+
+    assert seen == [1], "寫第 2 檔時第 1 檔已經 commit"
+    assert result.done == (first, third) and result.failed == ((second, "資料庫錯誤：連線中斷"),)
+    assert (sent(pg, first), sent(pg, second), sent(pg, third)) == (1, 0, 1)
+
+
+def sent(pg, tdcc: str) -> int:
+    return pg.execute(
+        "SELECT count(*) FROM workflow.step_record WHERE tdcc = %s AND step = '已寄出'", (tdcc,)
+    ).fetchone()[0]

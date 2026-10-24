@@ -8,6 +8,9 @@
 歷史收盤價讀不到假日表就整份不匯入。
 比價（#155）在回補股價與歷史收盤價匯入之後跑；比價失敗時匯入保留，原因放在結果裡。
 信箱維護（#158）每次存檔一個動作，寫完重讀全部人員與別名給畫面重新顯示。
+transaction 的範圍（#205）：每日匯入、回補股價、歷史收盤價、起單資料匯入、舊商品補資料與準備、放回、建草稿的步驟紀錄
+整批一個；進度頁的登記已寄出（含批次）、顧客贖回一檔一個（`_each`），寫不進去只影響那一檔、之前寫好的保留。
+這裡不自己寫 SQL：要判斷進度、查已寄出過的，問 `progress`、`step_records`。
 """
 
 from __future__ import annotations
@@ -84,11 +87,19 @@ from sp_workflow.product_terms import (
     write,
     write_batch,
 )
-from sp_workflow.progress import SENT_STEP, ProgressRow, SentBatch, load_progress, sent_batch
+from sp_workflow.progress import (
+    SENT_STEP,
+    ProgressRow,
+    SentBatch,
+    load_progress,
+    sent_batch,
+    still_pending_mail,
+)
 from sp_workflow.returning import ReturnReceipt, return_to_folders
 from sp_workflow.step_records import (
     Recorded,
     StepRecord,
+    already_sent,
     drafted_records,
     prepared_records,
     returned_records,
@@ -464,7 +475,7 @@ def save_product(
 
 
 def export_product_terms(settings: ConnectionSettings, path: Path) -> ExportReceipt:
-    """把資料庫目前的 `workflow.product` 整張匯出成 Excel（#122）。"""
+    """把資料庫目前的商品條件整張匯出成 Excel（#122）。"""
     with connect(settings) as conn:
         return export_products(conn, path)
 
@@ -484,13 +495,13 @@ def load_progress_rows(
 def sent_before(settings: ConnectionSettings, tdccs: Sequence[str]) -> tuple[str, ...]:
     """登記已寄出前查（#157）：這些 TDCC 裡已經有「已寄出」步驟紀錄的，依傳入的順序。"""
     with connect(settings) as conn:
-        return _sent(conn, tdccs)
+        return already_sent(conn, tdccs)
 
 
 def mark_sent(settings: ConnectionSettings, tdccs: Sequence[str]) -> Registered:
-    """登記已寄出（#157）：每檔寫一筆「已寄出」步驟紀錄（誰、何時）；寫不進去只影響那一檔。"""
+    """登記已寄出（#157）：每檔寫一筆「已寄出」步驟紀錄（誰、何時），一檔一個 transaction；寫不進去只影響那一檔。"""
     with connect(settings) as conn:
-        return _each(tdccs, lambda tdcc: write_records(conn, [StepRecord(tdcc, SENT_STEP, "進度頁登記已寄出")]))
+        return _each(conn, tdccs, lambda tdcc: write_records(conn, [StepRecord(tdcc, SENT_STEP, "進度頁登記已寄出")]))
 
 
 def find_sent_batch(settings: ConnectionSettings, paths: ConfigPaths, through: dt.date) -> SentBatch:
@@ -499,37 +510,18 @@ def find_sent_batch(settings: ConnectionSettings, paths: ConfigPaths, through: d
 
 
 def mark_sent_batch(settings: ConnectionSettings, batch: SentBatch) -> Registered:
-    """批次登記已寄出（#186）：`batch` 的每檔寫一筆「已寄出」；寫的時候已經有「已寄出」或已經不是鎖住（確認期間
-    被更正解鎖）的跳過，不重複寫、其他階段的不動。"""
+    """批次登記已寄出（#186）：`batch` 的每檔寫一筆「已寄出」，一檔一個 transaction（#205）；寫的時候已經不是待寄信
+    （已經有「已寄出」、確認期間被更正解鎖）的跳過，不重複寫、其他階段的不動。中途寫不進去的只影響那一檔，之前寫好的保留。"""
     result = f"進度頁批次登記已寄出（交易日 {batch.through} 以前）"
     with connect(settings) as conn:
-        sent = set(_sent(conn, batch.tdccs))
-        locked = {
-            row[0]
-            for row in conn.execute(  # 已鎖住（同 `product_terms.locked`）
-                "SELECT tdcc FROM workflow.product WHERE locked_at IS NOT NULL AND tdcc = ANY(%s)", (list(batch.tdccs),)
-            )
-        }
-        fresh = [tdcc for tdcc in batch.tdccs if tdcc in locked and tdcc not in sent]
-        return _each(fresh, lambda tdcc: write_records(conn, [StepRecord(tdcc, SENT_STEP, result)]))
-
-
-def _sent(conn: psycopg.Connection, tdccs: Sequence[str]) -> tuple[str, ...]:
-    """這些 TDCC 裡已經有「已寄出」步驟紀錄的，依傳入的順序、不重複。"""
-    found = {
-        row[0]
-        for row in conn.execute(
-            "SELECT DISTINCT tdcc FROM workflow.step_record WHERE step = %s AND tdcc = ANY(%s)",
-            (SENT_STEP, list(tdccs)),
-        )
-    }
-    return tuple(t for t in dict.fromkeys(tdccs) if t in found)
+        fresh = still_pending_mail(conn, batch.tdccs)  # 自己一個 transaction，讀完就結束
+        return _each(conn, fresh, lambda tdcc: write_records(conn, [StepRecord(tdcc, SENT_STEP, result)]))
 
 
 def register_redemptions(settings: ConnectionSettings, tdccs: Sequence[str], day: dt.date, note: str) -> Registered:
-    """登記顧客贖回（#157）：每檔寫一筆來源「人工」的事件；已有存續事件的那一檔寫不進去並寫出原因。"""
+    """登記顧客贖回（#157）：每檔寫一筆來源「人工」的事件，一檔一個 transaction；已有存續事件的那一檔寫不進去並寫出原因。"""
     with connect(settings) as conn:
-        return _each(tdccs, lambda tdcc: record_redemption(conn, tdcc, day, note))
+        return _each(conn, tdccs, lambda tdcc: record_redemption(conn, tdcc, day, note))
 
 
 def event_choices(settings: ConnectionSettings, tdcc: str) -> EventChoices:
@@ -598,15 +590,19 @@ def _mailbox_change(settings: ConnectionSettings, write: Callable[[psycopg.Conne
         return load_rows(conn)
 
 
-def _each(tdccs: Sequence[str], write: Callable[[str], object]) -> Registered:
-    """一檔一個 transaction：寫不進去的只影響那一檔，原因放在結果裡。"""
+def _each(conn: psycopg.Connection, tdccs: Sequence[str], write: Callable[[str], object]) -> Registered:
+    """一檔一個 transaction（每檔明寫 `conn.transaction()`）：寫不進去的只影響那一檔、寫好的照樣保留，原因放在結果裡。
+
+    呼叫前不能有沒結束的 transaction，否則每檔只是其中的 savepoint、要等到連線關掉才一起 commit。
+    """
     import psycopg
 
     done: list[str] = []
     failed: list[tuple[str, str]] = []
     for tdcc in tdccs:
         try:
-            write(tdcc)
+            with conn.transaction():
+                write(tdcc)
         except LifecycleError as exc:
             failed.append((tdcc, _first_line(exc)))
         except psycopg.Error as exc:

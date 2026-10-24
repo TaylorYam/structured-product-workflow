@@ -7,7 +7,8 @@
 還沒鎖住 → 待修正；已鎖住 → 待寄信。
 商品的範圍是有交易明細或有商品條件的 TDCC。各步日期只顯示、不決定階段：交易明細匯入、商品條件匯入（Order 匯入、
 人工維護存檔或清單更新）、核對條件完成（最後一次計算）、已準備、核對、鎖住、已放回、草稿已建立、已寄出；同一步有多筆
-紀錄取最新一筆。批次登記已寄出（`sent_batch`）只登記交易日在選定日期以前（含）、目前是待寄信的商品。
+紀錄取最新一筆。批次登記已寄出（`sent_batch`）只登記交易日在選定日期以前（含）、目前是待寄信的商品；寫入前再用
+同一套事實確認一次還是待寄信（`still_pending_mail`，#205）。
 比價狀態（#170、ADR 0020）照 `workflow.pricing_status` 帶出：狀態、原因、已比到的日期（只講 KO）與 KI 欄（#196、ADR 0022）；
 還沒比過的空白。
 只讀資料庫；匯出 Excel 的存檔方式同商品匯出（`product_export.save_rows`）。
@@ -23,17 +24,17 @@ from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from sp_workflow.database import require_in_transaction
 from sp_workflow.lifecycle import Objection, lifecycle_status, open_objections
 from sp_workflow.product_export import save_rows
 from sp_workflow.product_record import PRICING_FIELD, PRODUCT_COLUMNS, REQUIRED, missing_fields
 from sp_workflow.product_terms import ImportConfig, issuer_code
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource, Progress
-from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP
+from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP, SENT_STEP
 
 if TYPE_CHECKING:
     import psycopg
 
-SENT_STEP = "已寄出"  # 進度頁登記（#157）
 _FLOW_STEPS = (PREPARED_STEP, RETURNED_STEP, DRAFTED_STEP, SENT_STEP)  # 新流程的步驟紀錄
 
 PREPARING = Progress.PREPARING
@@ -164,66 +165,91 @@ def _gaps(facts: Facts) -> dict[str, str]:
     return gaps
 
 
+@dataclass
+class _Read:
+    """`_read_facts` 讀到的：每檔的事實（`Facts` 的欄）、資料庫的上手欄與交易日。"""
+
+    facts: dict[str, dict] = field(default_factory=dict)
+    issuers: dict[str, object] = field(default_factory=dict)
+    trade_dates: dict[str, dt.date | None] = field(default_factory=dict)
+
+
+def _read_facts(conn: psycopg.Connection) -> _Read:
+    """所有有交易明細或商品條件的商品的事實（判斷階段用的）；在呼叫端的 transaction 裡讀。"""
+    require_in_transaction(conn)
+    found = _Read()
+    facts, trade_dates = found.facts, found.trade_dates
+
+    def of(tdcc: str) -> dict:
+        return facts.setdefault(tdcc, {"tdcc": tdcc, "dates": {}, "checks": {}})
+
+    for tdcc, first_trade, imported in conn.execute(
+        "SELECT t.tdcc, min(t.trade_date), max(r.imported_at) FROM workflow.trade_row t"
+        " JOIN workflow.import_run r ON r.run_id = t.first_run_id GROUP BY t.tdcc"
+    ):
+        item = of(tdcc)
+        item["dates"][TRADES_IMPORTED] = imported
+        item["has_trades"] = True
+        trade_dates[tdcc] = first_trade
+    initial_prices: dict[str, dict[int, Decimal | None]] = {}
+    for tdcc, seq, price in conn.execute("SELECT tdcc, seq, initial_price FROM workflow.underlying_price"):
+        initial_prices.setdefault(tdcc, {})[seq] = price
+    columns = ", ".join(f"p.{c}" for c in PRODUCT_COLUMNS)
+    for tdcc, locked_at, source, terms_imported, *row in conn.execute(
+        f"SELECT p.tdcc, p.locked_at, p.source, CASE p.source WHEN 'Order' THEN o.imported_at WHEN '清單更新' THEN r.imported_at"
+        " ELSE (SELECT max(c.corrected_at) FROM workflow.term_correction c WHERE c.tdcc = p.tdcc) END,"
+        f" {columns} FROM workflow.product p"
+        " LEFT JOIN workflow.order_import o ON o.import_id = p.order_import_id"
+        " LEFT JOIN workflow.import_run r ON r.run_id = p.first_run_id"
+    ):
+        product = dict(zip(PRODUCT_COLUMNS, row, strict=True))
+        item = of(tdcc)
+        required = _PRICED_REQUIRED if _has_initial_prices(product, initial_prices.get(tdcc, {})) else REQUIRED
+        item.update(
+            has_terms=True,
+            locked_inventory=source == ProductSource.INVENTORY and locked_at is not None,  # 同 `product_terms.locked`
+            missing=tuple(missing_fields(product, required)),
+        )
+        _put(item["dates"], TERMS_IMPORTED, terms_imported)
+        _put(item["dates"], LOCKED, locked_at)
+        found.issuers[tdcc] = product["issuer"]
+        trade_dates[tdcc] = product["trade_date"] or trade_dates.get(tdcc)
+    for tdcc, status, reason, calculated_at in conn.execute(
+        "SELECT tdcc, status, reason, calculated_at FROM workflow.check_terms"
+    ):
+        item = of(tdcc)
+        item.update(terms_status=status, terms_reason=reason)
+        if status == CheckTerms.DONE:
+            item["dates"][CHECK_TERMS_DONE] = calculated_at
+    for tdcc, kind, category, checked_at in conn.execute(
+        "SELECT tdcc, kind, category, checked_at FROM workflow.check_result"
+    ):
+        item = of(tdcc)
+        item["checks"][kind] = category
+        _latest(item["dates"], CHECKED, checked_at)
+    for tdcc, step, recorded_at in conn.execute(
+        "SELECT tdcc, step, max(recorded_at) FROM workflow.step_record GROUP BY tdcc, step"
+    ):
+        if tdcc in facts:  # 步驟紀錄沒有外鍵：交易明細與商品條件都沒有的 TDCC 不列
+            facts[tdcc]["dates"][step] = recorded_at
+    return found
+
+
+def still_pending_mail(conn: psycopg.Connection, tdccs: Sequence[str]) -> tuple[str, ...]:
+    """這些 TDCC 裡目前還是待寄信的（和 `load_progress` 同一套事實與 `progress_of`），依傳入的順序、不重複。
+
+    批次登記已寄出寫入前用（#205）：找出這批之後才寄出、被更正解鎖或條件變了的檔不再是待寄信，跳過。在同一個 transaction 裡讀。
+    """
+    with conn.transaction():
+        facts = _read_facts(conn).facts
+    return tuple(t for t in dict.fromkeys(tdccs) if t in facts and progress_of(Facts(**facts[t]))[0] == TO_MAIL)
+
+
 def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date) -> tuple[ProgressRow, ...]:
     """所有有交易明細或商品條件的商品的進度，依 TDCC 排（畫面再依天數排）。在同一個 transaction 裡讀。"""
     with conn.transaction():
-        facts: dict[str, dict] = {}
-        issuers: dict[str, str] = {}
-        trade_dates: dict[str, dt.date | None] = {}
-
-        def of(tdcc: str) -> dict:
-            return facts.setdefault(tdcc, {"tdcc": tdcc, "dates": {}, "checks": {}})
-
-        for tdcc, first_trade, imported in conn.execute(
-            "SELECT t.tdcc, min(t.trade_date), max(r.imported_at) FROM workflow.trade_row t"
-            " JOIN workflow.import_run r ON r.run_id = t.first_run_id GROUP BY t.tdcc"
-        ):
-            item = of(tdcc)
-            item["dates"][TRADES_IMPORTED] = imported
-            item["has_trades"] = True
-            trade_dates[tdcc] = first_trade
-        initial_prices: dict[str, dict[int, Decimal | None]] = {}
-        for tdcc, seq, price in conn.execute("SELECT tdcc, seq, initial_price FROM workflow.underlying_price"):
-            initial_prices.setdefault(tdcc, {})[seq] = price
-        columns = ", ".join(f"p.{c}" for c in PRODUCT_COLUMNS)
-        for tdcc, locked_at, source, terms_imported, *row in conn.execute(
-            f"SELECT p.tdcc, p.locked_at, p.source, CASE p.source WHEN 'Order' THEN o.imported_at WHEN '清單更新' THEN r.imported_at"
-            " ELSE (SELECT max(c.corrected_at) FROM workflow.term_correction c WHERE c.tdcc = p.tdcc) END,"
-            f" {columns} FROM workflow.product p"
-            " LEFT JOIN workflow.order_import o ON o.import_id = p.order_import_id"
-            " LEFT JOIN workflow.import_run r ON r.run_id = p.first_run_id"
-        ):
-            product = dict(zip(PRODUCT_COLUMNS, row, strict=True))
-            item = of(tdcc)
-            required = _PRICED_REQUIRED if _has_initial_prices(product, initial_prices.get(tdcc, {})) else REQUIRED
-            item.update(
-                has_terms=True,
-                locked_inventory=source == ProductSource.INVENTORY
-                and locked_at is not None,  # 同 `product_terms.locked`
-                missing=tuple(missing_fields(product, required)),
-            )
-            _put(item["dates"], TERMS_IMPORTED, terms_imported)
-            _put(item["dates"], LOCKED, locked_at)
-            issuers[tdcc] = issuer_code(tdcc, product["issuer"], config)
-            trade_dates[tdcc] = product["trade_date"] or trade_dates.get(tdcc)
-        for tdcc, status, reason, calculated_at in conn.execute(
-            "SELECT tdcc, status, reason, calculated_at FROM workflow.check_terms"
-        ):
-            item = of(tdcc)
-            item.update(terms_status=status, terms_reason=reason)
-            if status == CheckTerms.DONE:
-                item["dates"][CHECK_TERMS_DONE] = calculated_at
-        for tdcc, kind, category, checked_at in conn.execute(
-            "SELECT tdcc, kind, category, checked_at FROM workflow.check_result"
-        ):
-            item = of(tdcc)
-            item["checks"][kind] = category
-            _latest(item["dates"], CHECKED, checked_at)
-        for tdcc, step, recorded_at in conn.execute(
-            "SELECT tdcc, step, max(recorded_at) FROM workflow.step_record GROUP BY tdcc, step"
-        ):
-            if tdcc in facts:  # 步驟紀錄沒有外鍵：交易明細與商品條件都沒有的 TDCC 不列
-                facts[tdcc]["dates"][step] = recorded_at
+        known = _read_facts(conn)
+        facts, trade_dates = known.facts, known.trade_dates
         pricing = {
             tdcc: {
                 "pricing": status,
@@ -239,6 +265,7 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
         tdccs = sorted(facts)
         statuses = lifecycle_status(conn, tdccs)
         objections = open_objections(conn, tdccs)
+    issuers = {tdcc: issuer_code(tdcc, issuer, config) for tdcc, issuer in known.issuers.items()}
     rows = []
     for tdcc in tdccs:
         found = Facts(**facts[tdcc])
