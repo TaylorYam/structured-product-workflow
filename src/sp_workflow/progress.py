@@ -11,7 +11,7 @@
 同一套事實確認一次還是待寄信（`still_pending_mail`，#205）。
 比價狀態（#170、ADR 0020）照 `workflow.pricing_status` 帶出：狀態、原因、已比到的日期（只講 KO）與 KI 欄（#196、ADR 0022）；
 還沒比過的空白。
-只讀資料庫；匯出 Excel 的存檔方式同商品匯出（`product_export.save_rows`）。
+只讀資料庫；商品條件與標的價格經 `product_terms.read_many` 讀（#204），匯出 Excel 用 `file_tools.save_rows`。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
@@ -25,10 +25,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sp_workflow.database import require_in_transaction
+from sp_workflow.file_tools import save_rows
 from sp_workflow.lifecycle import Objection, lifecycle_status, open_objections
-from sp_workflow.product_export import save_rows
-from sp_workflow.product_record import PRICING_FIELD, PRODUCT_COLUMNS, REQUIRED, missing_fields
-from sp_workflow.product_terms import ImportConfig, issuer_code
+from sp_workflow.product_record import PRICING_FIELD, REQUIRED, missing_fields
+from sp_workflow.product_terms import ImportConfig, issuer_code, locked, read_many
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource, Progress
 from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP, SENT_STEP
 
@@ -191,27 +191,27 @@ def _read_facts(conn: psycopg.Connection) -> _AllFacts:
         item["dates"][TRADES_IMPORTED] = imported
         item["has_trades"] = True
         trade_dates[tdcc] = first_trade
-    initial_prices: dict[str, dict[int, Decimal | None]] = {}
-    for tdcc, seq, price in conn.execute("SELECT tdcc, seq, initial_price FROM workflow.underlying_price"):
-        initial_prices.setdefault(tdcc, {})[seq] = price
-    columns = ", ".join(f"p.{c}" for c in PRODUCT_COLUMNS)
-    for tdcc, locked_at, source, terms_imported, *row in conn.execute(
-        f"SELECT p.tdcc, p.locked_at, p.source, CASE p.source WHEN 'Order' THEN o.imported_at WHEN '清單更新' THEN r.imported_at"
-        " ELSE (SELECT max(c.corrected_at) FROM workflow.term_correction c WHERE c.tdcc = p.tdcc) END,"
-        f" {columns} FROM workflow.product p"
-        " LEFT JOIN workflow.order_import o ON o.import_id = p.order_import_id"
-        " LEFT JOIN workflow.import_run r ON r.run_id = p.first_run_id"
-    ):
-        product = dict(zip(PRODUCT_COLUMNS, row, strict=True))
+    terms_imported = dict(
+        conn.execute(  # 商品條件匯入的日期：Order 匯入、清單更新或最後一次人工維護存檔
+            "SELECT p.tdcc, CASE p.source WHEN 'Order' THEN o.imported_at WHEN '清單更新' THEN r.imported_at"
+            " ELSE (SELECT max(c.corrected_at) FROM workflow.term_correction c WHERE c.tdcc = p.tdcc) END"
+            " FROM workflow.product p"
+            " LEFT JOIN workflow.order_import o ON o.import_id = p.order_import_id"
+            " LEFT JOIN workflow.import_run r ON r.run_id = p.first_run_id"
+        ).fetchall()
+    )
+    for tdcc, stored in read_many(conn).items():
+        product = stored.columns
         item = of(tdcc)
-        required = _PRICED_REQUIRED if _has_initial_prices(product, initial_prices.get(tdcc, {})) else REQUIRED
+        initial_prices = {price.seq: price.initial for price in stored.prices}
+        required = _PRICED_REQUIRED if _has_initial_prices(product, initial_prices) else REQUIRED
         item.update(
             has_terms=True,
-            locked_inventory=source == ProductSource.INVENTORY and locked_at is not None,  # 同 `product_terms.locked`
+            locked_inventory=stored.source == ProductSource.INVENTORY and locked(stored),
             missing=tuple(missing_fields(product, required)),
         )
-        _put(item["dates"], TERMS_IMPORTED, terms_imported)
-        _put(item["dates"], LOCKED, locked_at)
+        _put(item["dates"], TERMS_IMPORTED, terms_imported.get(tdcc))
+        _put(item["dates"], LOCKED, stored.locked_at)
         found.issuers[tdcc] = product["issuer"]
         trade_dates[tdcc] = product["trade_date"] or trade_dates.get(tdcc)
     for tdcc, status, reason, calculated_at in conn.execute(
@@ -349,7 +349,7 @@ def export_name(now: dt.datetime | None = None) -> str:
 
 
 def export_progress(rows: Sequence[ProgressRow], path: Path) -> ProgressExport:
-    """把（篩選後的）進度寫成 Excel，欄位同畫面；寫不進去時丟 `ProductExportError`、原本的同名檔不動。"""
+    """把（篩選後的）進度寫成 Excel，欄位同畫面；寫不進去時丟 `FileWriteError`、原本的同名檔不動。"""
     save_rows(path, "作業進度", EXPORT_COLUMNS, [export_values(row) for row in rows])
     return ProgressExport(path, len(rows))
 

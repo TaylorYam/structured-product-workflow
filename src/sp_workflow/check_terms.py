@@ -34,7 +34,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
 
 from sp_workflow.database import OperatorError, require_in_transaction
-from sp_workflow.product_record import PRODUCT_COLUMNS, missing_fields, plain
+from sp_workflow.product_record import missing_fields, plain
 from sp_workflow.status import CheckTerms
 
 if TYPE_CHECKING:
@@ -402,8 +402,6 @@ class CalcReceipt:
         return tuple(line for line in self.lines if line.changed or line.status != DONE)
 
 
-# 計算用不到的欄只用來看缺哪幾欄（#114），值不放進 `ProductTerms`：更正只改 Coupon、到期日時照舊不重算
-_SELECTED_COLUMNS = ("tdcc", *PRODUCT_COLUMNS)
 # 計算要用的交易明細欄（`TradeRow`）：人工維護改了這幾欄才算影響核對條件（#116）
 CHECK_TRADE_COLUMNS = ("trade_date", "currency", "amount", "branch", "uf")
 
@@ -413,9 +411,7 @@ def recalculate(
 ) -> CalcReceipt:
     """重算還沒鎖住的商品（`tdccs` 有值時只算這幾檔），和上一次不同的寫入；整次在同一個 transaction 裡。"""
     with conn.transaction():
-        # 還沒鎖住（鎖住＝`locked_at` 有值，同 `product_terms.locked`）
-        where = "locked_at IS NULL" + ("" if tdccs is None else " AND tdcc = ANY(%s)")
-        products = _products(conn, where, () if tdccs is None else (list(tdccs),))
+        products = _products(conn, tdccs, unlocked=True)
         lines = [line for line, _, _ in _recalculate(conn, products, calendar)]
     return CalcReceipt(tuple(lines))
 
@@ -442,8 +438,8 @@ def recalculate_corrected(
     require_in_transaction(conn)
     if conn.execute("SELECT 1 FROM workflow.check_terms WHERE tdcc = %s", (tdcc,)).fetchone() is None:
         return None
-    before = _product(tuple({**previous, "tdcc": tdcc}[c] for c in _SELECTED_COLUMNS))
-    products = _products(conn, "tdcc = %s", (tdcc,))
+    before = _product(tdcc, previous)
+    products = _products(conn, [tdcc])
     if products == [before] and not trades_changed:
         return None
     ((line, stored, calc),) = _recalculate(conn, products, calendar, vwap_from=before)
@@ -458,14 +454,18 @@ def recalculate_corrected(
     return line, tuple(changes)
 
 
-def _products(conn: psycopg.Connection, where: str, params: Sequence[Any]) -> list[ProductTerms]:
-    return [
-        _product(row)
-        for row in conn.execute(
-            f"SELECT {', '.join(_SELECTED_COLUMNS)} FROM workflow.product WHERE {where} ORDER BY tdcc FOR UPDATE",
-            params,
-        )
-    ]
+def _products(conn: psycopg.Connection, tdccs: Collection[str] | None, *, unlocked: bool = False) -> list[ProductTerms]:
+    """這幾檔（None：全部）計算用的商品條件，依 TDCC 排、鎖住商品條件列（`product_terms.read_many`）。
+
+    `unlocked`：只要還沒鎖住的（`product_terms.locked`）。讀到的每一檔都鎖到 transaction 結束，包括已鎖住的。
+    """
+    from sp_workflow.product_terms import (  # product_terms 也 import 這裡（寫入後重算），避免循環 import
+        locked,
+        read_many,
+    )
+
+    stored = read_many(conn, None if tdccs is None else list(tdccs), lock=True)
+    return [_product(s.tdcc, s.columns) for s in stored.values() if not (unlocked and locked(s))]
 
 
 def _recalculate(
@@ -552,11 +552,13 @@ def release_differences(
 
     資料在這之間變了的話，放行的是舊的差異，新的差異照樣待確認。商品已鎖住或不在資料庫時丟 `CheckTermsError`。
     """
+    from sp_workflow.product_terms import locked, read  # 同 `_products`，避免循環 import
+
     with conn.transaction():
-        found = conn.execute("SELECT locked_at FROM workflow.product WHERE tdcc = %s FOR UPDATE", (tdcc,)).fetchone()
+        found = read(conn, tdcc, lock=True)
         if found is None:
             raise CheckTermsError(f"{tdcc}：資料庫沒有這檔商品")
-        if found[0] is not None:  # 已鎖住（同 `product_terms.locked`）
+        if locked(found):
             raise CheckTermsError(f"{tdcc}：已鎖住，不重算，也不用放行")
         with conn.cursor() as cur:
             cur.executemany(
@@ -568,10 +570,11 @@ def release_differences(
     return line
 
 
-def _product(row: Sequence[Any]) -> ProductTerms:
-    values = dict(zip(_SELECTED_COLUMNS, row, strict=True))
+def _product(tdcc: str, values: Mapping[str, Any]) -> ProductTerms:
+    """商品條件的欄（`PRODUCT_COLUMNS` → 值）→ 計算用的欄位；用不到的欄只用來看缺哪幾欄（#114），值不放進來：
+    更正只改 Coupon、到期日時照舊不重算。"""
     return ProductTerms(
-        tdcc=values["tdcc"],
+        tdcc=tdcc,
         currency=values["currency"],
         trade_date=values["trade_date"],
         strike_date=values["strike_date"],

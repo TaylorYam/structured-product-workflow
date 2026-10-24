@@ -228,7 +228,10 @@ def _read(path: Path, fmt: ReferenceFormat) -> tuple[list[OrderRecord], dict[int
 
 
 def _products(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, _Product]:
-    """表上的商品與資料庫裡所有已鎖住、還缺價格或比價日的商品；鎖住列，避免同時有人改。"""
+    """表上的商品與資料庫裡所有已鎖住、還缺價格或比價日的商品；鎖住列，避免同時有人改。
+
+    商品條件還是自己讀；要改讀法時先看能不能用 `product_terms.read_many`（#204）。
+    """
     codes = ", ".join(f"p.underlying_{i}" for i in range(1, UNDERLYINGS + 1))
     rows = conn.execute(  # 鎖住＝`locked_at` 有值（同 `product_terms.locked`）
         f"SELECT p.tdcc, p.locked_at IS NOT NULL, {codes},"
