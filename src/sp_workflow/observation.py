@@ -34,7 +34,6 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from sp_workflow.check_terms import DONE as TERMS_DONE
 from sp_workflow.check_terms import NO_BARRIER as NO_KI
 from sp_workflow.lifecycle import (
     DELIVERY,
@@ -49,7 +48,7 @@ from sp_workflow.lifecycle import (
     replace_auto_events,
 )
 from sp_workflow.product_record import KO_TYPES
-from sp_workflow.status import OrderReview, Pricing
+from sp_workflow.status import CheckTerms, OrderReview, Pricing
 
 if TYPE_CHECKING:
     import psycopg
@@ -423,8 +422,8 @@ def _load_terms(
         " FROM workflow.product p JOIN workflow.check_terms c ON c.tdcc = p.tdcc ORDER BY p.tdcc"
     ).fetchall()
     locked = {row[0]: row[7] for row in rows}
-    not_done = {row[0]: (row[8], row[9]) for row in rows if row[8] != TERMS_DONE}
-    done = [row for row in rows if row[8] == TERMS_DONE]
+    not_done = {row[0]: (row[8], row[9]) for row in rows if row[8] != CheckTerms.DONE}
+    done = [row for row in rows if row[8] == CheckTerms.DONE]
     tdccs = [row[0] for row in done]
     underlyings: dict[str, list[Underlying]] = {}
     for tdcc, seq, code, initial, strike, ki, ko in conn.execute(

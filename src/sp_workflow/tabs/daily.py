@@ -22,7 +22,7 @@ from sp_workflow.daily_import import ImportReceipt, PriceCsvReceipt, PriceSummar
 from sp_workflow.legacy_backfill import EXISTING, FILLED, SKIPPED
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.observation import EXITED, ON_BOOK, UNLOCKED, WAIT_PRICES, ObservationReceipt, Observed
-from sp_workflow.observation import TO_CONFIRM as OBSERVE_TO_CONFIRM
+from sp_workflow.status import Pricing
 from sp_workflow.tabs.base import TITLE, DatabaseLogin, Tab, ask_csv, ask_excel
 from sp_workflow.tabs.recalc import Releaser, recalc_text
 from sp_workflow.window_actions import (
@@ -435,7 +435,7 @@ def observation_text(observation: Observation) -> str:
         return f"比價：沒有跑，{observation.error}。匯入已經完成，修好後按「維護 → 重新比價全部」。"
     through = "收盤價表還沒有資料" if receipt.through is None else f"比到 {receipt.through:%Y-%m-%d}"
     counts = "、".join(
-        f"{status} {receipt.count(status)}" for status in (ON_BOOK, EXITED, WAIT_PRICES, OBSERVE_TO_CONFIRM)
+        f"{status} {receipt.count(status)}" for status in (ON_BOOK, EXITED, WAIT_PRICES, Pricing.TO_CONFIRM)
     )
     text = f"比價：{through}，共 {len(receipt.results)} 檔（{counts}）；存續事件有變 {len(receipt.changes)} 檔"
     if receipt.errors:
