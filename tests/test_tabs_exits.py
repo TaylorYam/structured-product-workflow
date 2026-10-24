@@ -24,12 +24,10 @@ ROWS = (
 FOUND = ExitList(DAY, ROWS)
 
 
-def loaded(master, tmp_path: Path, monkeypatch, found=FOUND):
-    window = new_window(master, tmp_path)
+def loaded(master, tmp_path: Path, monkeypatch, immediate, found=FOUND):
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
     tab = window.exits
     asked = []
-    monkeypatch.setattr(tab.db, "settings", lambda: object())
-    monkeypatch.setattr(tab, "run_in_background", lambda action, *a, **k: a[1](action()))
 
     def load(settings, paths, day):
         asked.append(day)
@@ -51,8 +49,8 @@ def test_exit_list_is_the_last_tab(master, tmp_path: Path) -> None:
     assert window.exits.header.step.get() == "步驟 9／9"
 
 
-def test_a_blank_day_reads_the_latest_close_day(master, tmp_path: Path, monkeypatch) -> None:
-    _, tab, asked = loaded(master, tmp_path, monkeypatch)
+def test_a_blank_day_reads_the_latest_close_day(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    _, tab, asked = loaded(master, tmp_path, monkeypatch, immediate)
 
     assert asked == [None] and tab.day_var.get() == "2026-10-21", "讀到後把日期填回去"
     at = f"{T.astimezone():%Y-%m-%d %H:%M}"
@@ -70,9 +68,9 @@ def test_a_blank_day_reads_the_latest_close_day(master, tmp_path: Path, monkeypa
     assert tab.status_var.get() == "收盤日 2026-10-21：出場 3 檔（比價 1、舊清單 2）。", "寫出各來源的檔數"
 
 
-def test_two_events_of_one_product_count_as_one(master, tmp_path: Path, monkeypatch) -> None:
+def test_two_events_of_one_product_count_as_one(master, tmp_path: Path, monkeypatch, immediate) -> None:
     rows = (*ROWS, ExitRow("037199990003", "SG", "FCN", "顧客贖回", DAY, "", "人工", True, T))
-    _, tab, _ = loaded(master, tmp_path, monkeypatch, ExitList(DAY, rows))
+    _, tab, _ = loaded(master, tmp_path, monkeypatch, immediate, ExitList(DAY, rows))
 
     assert len(cells(tab)) == 4, "一筆一列"
     assert tab.kpis.values[0] == ("KO（檔）", 2, False) and tab.kpis.values[3] == ("顧客贖回（檔）", 1, False)
@@ -80,8 +78,8 @@ def test_two_events_of_one_product_count_as_one(master, tmp_path: Path, monkeypa
     assert str(tab.export_button.cget("state")) == "normal"
 
 
-def test_another_day_without_exits(master, tmp_path: Path, monkeypatch) -> None:
-    _, tab, asked = loaded(master, tmp_path, monkeypatch, ExitList(dt.date(2026, 10, 15), ()))
+def test_another_day_without_exits(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    _, tab, asked = loaded(master, tmp_path, monkeypatch, immediate, ExitList(dt.date(2026, 10, 15), ()))
     tab.day_var.set("2026-10-15")
     tab.refresh()
 
@@ -90,8 +88,8 @@ def test_another_day_without_exits(master, tmp_path: Path, monkeypatch) -> None:
     assert str(tab.export_button.cget("state")) == "disabled"
 
 
-def test_a_bad_day_is_explained_without_reading(master, tmp_path: Path, monkeypatch) -> None:
-    _, tab, asked = loaded(master, tmp_path, monkeypatch)
+def test_a_bad_day_is_explained_without_reading(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    _, tab, asked = loaded(master, tmp_path, monkeypatch, immediate)
     tab.day_var.set("10/15")
     tab.refresh()
 
@@ -99,14 +97,14 @@ def test_a_bad_day_is_explained_without_reading(master, tmp_path: Path, monkeypa
     assert "收盤日「10/15」不是 YYYY-MM-DD" in tab.status_var.get()
 
 
-def test_an_empty_close_table_is_explained(master, tmp_path: Path, monkeypatch) -> None:
-    _, tab, _ = loaded(master, tmp_path, monkeypatch, ExitList(None, ()))
+def test_an_empty_close_table_is_explained(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    _, tab, _ = loaded(master, tmp_path, monkeypatch, immediate, ExitList(None, ()))
 
     assert tab.day_var.get() == "" and "收盤價表還沒有資料" in tab.status_var.get()
 
 
-def test_received_day_shows_a_hint_until_refreshed(master, tmp_path: Path, monkeypatch) -> None:
-    window, tab, asked = loaded(master, tmp_path, monkeypatch)
+def test_received_day_shows_a_hint_until_refreshed(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    window, tab, asked = loaded(master, tmp_path, monkeypatch, immediate)
     tab.day_var.set("")
 
     assert tab.receive_day(DAY)
@@ -117,12 +115,12 @@ def test_received_day_shows_a_hint_until_refreshed(master, tmp_path: Path, monke
     assert asked == [None], "帶入時不自動讀"
     tab.refresh()
     assert not tab.hint.shown and asked[-1] == DAY
-    tab.working = True
+    tab.runner.working = True
     assert not tab.receive_day(DAY), "正在讀或匯出時不帶入"
 
 
-def test_export_writes_what_is_shown(master, tmp_path: Path, monkeypatch) -> None:
-    _, tab, _ = loaded(master, tmp_path, monkeypatch)
+def test_export_writes_what_is_shown(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    _, tab, _ = loaded(master, tmp_path, monkeypatch, immediate)
     path = tmp_path / "出場.xlsx"
     offered = {}
 

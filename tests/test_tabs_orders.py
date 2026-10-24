@@ -7,6 +7,8 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import pytest
 
+import sp_workflow.tabs.orders
+from fcn_checker.ui import Background
 from order_synth import missing_row, order_row
 from sp_workflow.app import PanelWindow
 from sp_workflow.check_terms import DONE, TO_CONFIRM, WAIT_PRICES, CalcLine, CalcReceipt, Difference
@@ -52,12 +54,12 @@ def test_choosing_a_sheet_opens_the_last_folder_or_the_daily_sheet_folder(master
     assert window.orders.memory.load()["order_sheet"] == chosen, "選了就記，不用等按讀取"
 
 
-def test_reading_without_a_sheet_asks_to_choose_it_first(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
+def test_reading_without_a_sheet_asks_to_choose_it_first(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
     window.orders.tdcc_text.insert("1.0", "029199990001")
     errors = []
     monkeypatch.setattr(messagebox, "showerror", lambda title, message, **kwargs: errors.append(message))
-    monkeypatch.setattr(window.orders, "run_in_background", lambda *args, **kwargs: pytest.fail("不該開始執行"))
+    monkeypatch.setattr(sp_workflow.tabs.orders, "read_order_sheet", lambda *a: pytest.fail("不該開始執行"))
 
     window.orders.start()
 
@@ -76,9 +78,11 @@ def test_order_page_shows_key_figures_when_done(master, tmp_path: Path) -> None:
 # ---------------------------------------------------------------- 起單資料在視窗裡確認（#86、#97、ADR 0009、0010）
 
 
-def order_window(master, tmp_path: Path, *rows: OrderRow) -> PanelWindow:
-    window = new_window(master, tmp_path)
+def order_window(master, tmp_path: Path, *rows: OrderRow, background=Background, logged_in=False) -> PanelWindow:
+    """讀完 rows 的起單資料頁：結果交給 `_done`，再和 `ActionRunner` 做完時一樣恢復按鈕。"""
+    window = new_window(master, tmp_path, background=background, logged_in=logged_in)
     window.orders._done(read_result(*rows))
+    window.orders._busy(False)
     return window
 
 
@@ -108,11 +112,20 @@ def test_filling_a_red_field_makes_the_product_importable(master, tmp_path: Path
     assert window.orders.unsaved
 
 
-def test_a_mistyped_field_stays_red_and_keeps_only_that_product_out(master, tmp_path: Path, monkeypatch) -> None:
-    window = order_window(master, tmp_path, order_row("029199990001"), order_row("029199990002"))
+def test_a_mistyped_field_stays_red_and_keeps_only_that_product_out(
+    master, tmp_path: Path, monkeypatch, immediate
+) -> None:
+    rows = (order_row("029199990001"), order_row("029199990002"))
+    window = order_window(master, tmp_path, *rows, background=immediate, logged_in=True)
     started = []
-    monkeypatch.setattr(window.orders.db, "settings", lambda **k: object())
-    monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: started.append(a[1]))
+
+    def importing(settings, drafts, config):
+        coupon = window.orders.editor.rows["Coupon p.a. (%)"].input
+        started.append((window.orders.status_var.get(), str(coupon.cget("state"))))
+        raise RuntimeError("測試：不真的匯入")
+
+    monkeypatch.setattr(sp_workflow.tabs.orders, "import_order_sheet", importing)
+    monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: None)
 
     type_into(window.orders.editor, "Trade date", "10/15")
     window.orders.import_now()
@@ -123,8 +136,7 @@ def test_a_mistyped_field_stays_red_and_keeps_only_that_product_out(master, tmp_
     assert draft.input_errors == {"Trade date": "日期要寫成 2026-10-21"}, "匯入時這一檔會判不匯入"
     assert dict(table_rows(window.orders))["029199990001"] == OrderReview.BLOCKED
     assert dict(table_rows(window.orders))["029199990002"] == OrderReview.READY
-    assert started == ["匯入資料庫中…"], "其他檔照常匯入"
-    assert str(window.orders.editor.rows["Coupon p.a. (%)"].input.cget("state")) == "disabled", "存檔中不能改"
+    assert started == [("匯入資料庫中…", "disabled")], "其他檔照常匯入；存檔中不能改"
 
 
 def test_just_browsing_does_not_count_as_unsaved(master, tmp_path: Path) -> None:
@@ -252,13 +264,14 @@ def test_closing_with_unsaved_order_edits_asks_and_stays_on_the_order_tab(master
     assert master.winfo_exists() and window.notebook.select() == str(window.orders.frame)
 
 
-def test_reading_again_asks_before_dropping_unsaved_edits(master, tmp_path: Path, monkeypatch) -> None:
-    window = order_window(master, tmp_path, order_row("029199990002", {"Maturity date": None}))
+def test_reading_again_asks_before_dropping_unsaved_edits(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    rows = (order_row("029199990002", {"Maturity date": None}),)
+    window = order_window(master, tmp_path, *rows, background=immediate, logged_in=True)
     window.orders.sheet_var.set(str(tmp_path / "起單建檔_20261015.xlsm"))
     type_into(window.orders.editor, "Maturity date", "2027-04-22")
     asked = []
     monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or False)
-    monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: pytest.fail("沒同意就不該重讀"))
+    monkeypatch.setattr(sp_workflow.tabs.orders, "read_order_sheet", lambda *a: pytest.fail("沒同意就不該重讀"))
 
     window.orders.start()
 
@@ -266,25 +279,33 @@ def test_reading_again_asks_before_dropping_unsaved_edits(master, tmp_path: Path
     assert window.orders.editor.draft.values["Maturity date"].isoformat() == "2027-04-22"
 
 
-def test_reading_without_a_database_setup_does_not_ask_for_a_password(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
+def test_reading_without_a_database_setup_does_not_ask_for_a_password(
+    master, tmp_path: Path, monkeypatch, immediate
+) -> None:
+    window = new_window(master, tmp_path, background=immediate)
     window.orders.sheet_var.set(str(tmp_path / "起單建檔_20261015.xlsm"))
     window.orders.tdcc_text.insert("1.0", "029199990001")
     monkeypatch.setattr(simpledialog, "askstring", lambda *a, **k: pytest.fail("沒有連線設定就不問密碼"))
     monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: pytest.fail("不該跳錯誤"))
     started = []
-    monkeypatch.setattr(window.orders, "run_in_background", lambda *a, **k: started.append(a[1]))
+
+    def reading(settings, text, sheet, config_paths):
+        started.append((settings, window.orders.status_var.get()))
+        return read_result(order_row("029199990001"))
+
+    monkeypatch.setattr(sp_workflow.tabs.orders, "read_order_sheet", reading)
 
     window.orders.start()
 
-    assert started and started[0].startswith("讀取中")
+    assert started == [(None, "讀取中…（起單建檔_20261015.xlsm）")], "沒有連線設定時照樣讀，不帶資料庫的值"
 
 
 # ---------------------------------------------------------------- 匯入後重算核對條件、放行差異（#88）
 
 
-def test_order_import_shows_the_check_terms_of_the_batch(master, tmp_path: Path, monkeypatch) -> None:
-    window = order_window(master, tmp_path, order_row("029199990001"), order_row("029199990002"))
+def test_order_import_shows_the_check_terms_of_the_batch(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    rows = (order_row("029199990001"), order_row("029199990002"))
+    window = order_window(master, tmp_path, *rows, background=immediate, logged_in=True)
     lines = (ImportLine("029199990001", ImportResult.NEW), ImportLine("029199990002", ImportResult.NEW))
     calcs = (NEEDS_RELEASE, CalcLine("029199990002", DONE, "", True), CalcLine("029199990009", WAIT_PRICES, "", True))
     window.orders._saved(OrderImportResult(BatchReceipt(7, lines), CalcReceipt(calcs)))
@@ -301,7 +322,7 @@ def test_order_import_shows_the_check_terms_of_the_batch(master, tmp_path: Path,
     window.orders.table.selection_set(iid)
     master.update()
     released = CalcLine("029199990001", DONE, "已放行的差異：UF（…）", True, (Difference(*UF_DIFF.key, released=True),))
-    release_without_database(window.orders, monkeypatch, released)
+    release_without_database(monkeypatch, released)
     window.orders.releaser.button.invoke()
 
     assert window.orders.table.item(iid, "values")[3:] == (DONE, "核對條件：已放行的差異：UF（…）")

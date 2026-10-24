@@ -7,10 +7,10 @@ from collections.abc import Callable
 from pathlib import Path
 from tkinter import ttk
 
-from fcn_checker.ui import NextButton
+from fcn_checker.ui import Background, NextButton
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.preparation import PREPARED, PrepareReceipt
-from sp_workflow.tabs.base import DatabaseLogin, RootFolder, Tab, ask_dir, open_folder, record_note
+from sp_workflow.tabs.base import BackgroundFactory, DatabaseLogin, RootFolder, Tab, ask_dir, open_folder, record_note
 from sp_workflow.window_actions import PrepareResult, run_prepare
 
 
@@ -23,11 +23,13 @@ class PrepareTab(Tab):
         root_folder: RootFolder,
         on_prepared: Callable[[PrepareReceipt], bool],
         on_next: Callable[[], None],
+        *,
+        background: BackgroundFactory = Background,
     ) -> None:
-        super().__init__(notebook, "準備", (("tdcc", "TDCC", 130), ("status", "狀態", 70), ("reason", "原因", 520)))
+        columns = (("tdcc", "TDCC", 130), ("status", "狀態", 70), ("reason", "原因", 520))
+        super().__init__(notebook, "準備", columns, db, background)
         self.on_prepared = on_prepared
         self.memory = memory
-        self.db = db
         self.root_folder = root_folder
         self.batch_dir: Path | None = None
         self.out_var = tk.StringVar(value=memory.load().get("out", ""))
@@ -56,29 +58,32 @@ class PrepareTab(Tab):
         self.next_button = NextButton(self.buttons, "下一步：核對 →", on_next)
         self.place_table(2)
 
+    def _busy(self, busy: bool) -> None:
+        """處理中不能再按；打開批次資料夾要等準備好了才能按。"""
+        self.start_button.configure(state=tk.DISABLED if busy else tk.NORMAL)
+        if busy:
+            self.open_button.configure(state=tk.DISABLED)
+
     def start(self) -> None:
         text = self.tdcc_text.get("1.0", tk.END)
         paths = self.root_folder.with_output(self.out_var, "輸出位置")
         if paths is None:
             return
         root, out = paths
-        settings = self.db.settings(quiet=True)  # 沒有連線設定或取消登入：照樣準備，不留步驟紀錄
-        self.memory.remember(out=str(out))
-        self.start_button.configure(state=tk.DISABLED)
-        self.open_button.configure(state=tk.DISABLED)
-        self.next_button.withdraw()
-        self.restart()
-        self.run_in_background(
-            lambda: run_prepare(settings, text, root, out),
+
+        def starting() -> None:
+            self.memory.remember(out=str(out))
+            self.next_button.withdraw()
+
+        self.runner.run_maybe(  # 沒有連線設定或取消登入：照樣準備，不留步驟紀錄
+            lambda settings: run_prepare(settings, text, root, out),
             "處理中…（在根目錄底下搜尋商品資料夾，公槽上可能要一點時間）",
             self._done,
+            before=starting,
+            database_error=lambda result: result.recorded.database_error,
         )
 
-    def _done(self, result: object) -> None:
-        self.start_button.configure(state=tk.NORMAL)
-        if not isinstance(result, PrepareResult):
-            return
-        self.db.after_run(result.recorded.database_error)
+    def _done(self, result: PrepareResult) -> None:
         recorded, receipt = result.recorded, result.receipt
         for o in receipt.outcomes:
             self.add_row((o.tdcc, o.status, o.reason), problem=o.status != PREPARED)

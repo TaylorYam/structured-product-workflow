@@ -16,11 +16,11 @@ from tkinter import filedialog, ttk
 
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.date_picker import DateEntry
-from fcn_checker.ui import HintBar
+from fcn_checker.ui import Background, HintBar
 from sp_workflow.exits import LOCKED_TEXT, ExitExport, ExitList, ExitRow, export_exits, export_name
 from sp_workflow.lifecycle import EXIT_EVENTS, SOURCES
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.tabs.base import DatabaseLogin, Tab
+from sp_workflow.tabs.base import BackgroundFactory, DatabaseLogin, Tab
 from sp_workflow.window_actions import load_exit_list
 
 COLUMNS = (
@@ -38,13 +38,17 @@ COLUMNS = (
 
 class ExitListTab(Tab):
     def __init__(
-        self, notebook: ttk.Notebook, memory: FolderMemory, db: DatabaseLogin, config_paths: Callable[[], ConfigPaths]
+        self,
+        notebook: ttk.Notebook,
+        memory: FolderMemory,
+        db: DatabaseLogin,
+        config_paths: Callable[[], ConfigPaths],
+        *,
+        background: BackgroundFactory = Background,
     ) -> None:
-        super().__init__(notebook, "出場清單", COLUMNS)
+        super().__init__(notebook, "出場清單", COLUMNS, db, background)
         self.memory = memory
-        self.db = db
         self.config_paths = config_paths
-        self.working = False
         self.shown: ExitList | None = None  # 最近一次讀到的那一天；還沒讀過是 None
         self.status_var.set(
             "按「重新整理」列出那一天出場的商品（比價、舊清單、顧客贖回）；收盤日空白是收盤價表最新的一天。"
@@ -77,7 +81,6 @@ class ExitListTab(Tab):
         self._busy(False)
 
     def _busy(self, busy: bool) -> None:
-        self.working = busy
         self.refresh_button.configure(state=tk.DISABLED if busy else tk.NORMAL)
         has_rows = self.shown is not None and bool(self.shown.rows)
         self.export_button.configure(state=tk.DISABLED if busy or not has_rows else tk.NORMAL)
@@ -114,37 +117,21 @@ class ExitListTab(Tab):
             self.status_var.set(f"收盤日「{text}」不是 YYYY-MM-DD；改好再按「重新整理」，空白是收盤價表最新的一天。")
             self.mark_done(False)
             return
-        settings = self.db.settings()
-        if settings is None:
-            return
         paths = self.config_paths()
-        self._busy(True)
-        self.restart()
+        self.runner.run_action(lambda settings: load_exit_list(settings, paths, day), "讀取出場清單中…", self._loaded)
 
-        def run() -> ExitList:
-            return load_exit_list(settings, paths, day)
-
-        self.run_in_background(run, "讀取出場清單中…", self._loaded)
-
-    def _loaded(self, result: object) -> None:
-        self.db.after_run(result)
-        if isinstance(result, ExitList):
-            self.shown = result
-            self.hint.hide()
-            for row in result.rows:
-                self.add_row(_cells(row), problem=False)
-            if result.day is None:
-                self.status_var.set("收盤價表還沒有資料；先匯入收盤價，或填一個收盤日。")
-            else:
-                self.day_var.set(f"{result.day:%Y-%m-%d}")
-                counts = [(f"{event}（檔）", _products(result.rows, event=event), False) for event in EXIT_EVENTS]
-                text = (
-                    f"出場 {_products(result.rows)} 檔（{_by_source(result.rows)}）。"
-                    if result.rows
-                    else "沒有出場的商品。"
-                )
-                self.finish(counts, f"收盤日 {result.day:%Y-%m-%d}：{text}")
-        self._busy(False)
+    def _loaded(self, result: ExitList) -> None:
+        self.shown = result
+        self.hint.hide()
+        for row in result.rows:
+            self.add_row(_cells(row), problem=False)
+        if result.day is None:
+            self.status_var.set("收盤價表還沒有資料；先匯入收盤價，或填一個收盤日。")
+            return
+        self.day_var.set(f"{result.day:%Y-%m-%d}")
+        counts = [(f"{event}（檔）", _products(result.rows, event=event), False) for event in EXIT_EVENTS]
+        text = f"出場 {_products(result.rows)} 檔（{_by_source(result.rows)}）。" if result.rows else "沒有出場的商品。"
+        self.finish(counts, f"收盤日 {result.day:%Y-%m-%d}：{text}")
 
     # ---------- 匯出 ----------
 
@@ -164,18 +151,15 @@ class ExitListTab(Tab):
         path = Path(chosen)
         self.memory.remember(exit_export=str(path.parent))
         rows = self.shown.rows
-        self._busy(True)
-        self.mark_done(False)
+        self.runner.run_local(
+            lambda: export_exits(rows, path),
+            "匯出出場清單中…",
+            self._exported,
+            clear=False,
+            before=lambda: self.mark_done(False),
+        )
 
-        def run() -> ExitExport:
-            return export_exits(rows, path)
-
-        self.run_in_background(run, "匯出出場清單中…", self._exported, clear=False)
-
-    def _exported(self, result: object) -> None:
-        self._busy(False)
-        if not isinstance(result, ExitExport):
-            return
+    def _exported(self, result: ExitExport) -> None:
         self.status_var.set(f"已匯出出場清單 {result.count} 檔：{result.path}")
         self.mark_done(True)
 

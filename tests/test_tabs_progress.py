@@ -12,7 +12,7 @@ import sp_workflow.tabs.progress
 from sp_workflow.lifecycle import KO
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.progress import DATE_COLUMNS, FINISHED, PREPARING, TO_CHECK, ProgressRow
-from window_synth import new_window
+from window_synth import HeldBackground, new_window
 
 T = dt.datetime(2026, 10, 20, 9, 0, tzinfo=dt.UTC)
 
@@ -41,15 +41,12 @@ ROWS = (
 
 
 def loaded(master, tmp_path: Path, monkeypatch, rows=ROWS):
-    window = new_window(master, tmp_path)
+    window = new_window(master, tmp_path, background=HeldBackground, logged_in=True)
     tab = window.progress
-    actions = []
-    monkeypatch.setattr(tab.db, "settings", lambda: object())
-    monkeypatch.setattr(tab, "run_in_background", lambda action, *a, **k: actions.append((action, a[1])))
+    actions = tab.background.held
     monkeypatch.setattr(sp_workflow.tabs.progress, "load_progress_rows", lambda settings, paths: rows)
     tab.refresh()
-    action, done = actions.pop()
-    done(action())
+    tab.background.run_all()
     return window, tab, actions
 
 
