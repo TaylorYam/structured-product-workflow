@@ -37,7 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 from sp_workflow import import_run
 from sp_workflow.check_terms import CalcLine, recalculate, recalculate_corrected
-from sp_workflow.database import OperatorError
+from sp_workflow.database import OperatorError, require_in_transaction
 from sp_workflow.order_terms import TDCC_FIELD, OrderRow, describe, unknown_issuer
 from sp_workflow.product_record import (
     CHOICES,
@@ -182,6 +182,8 @@ def read(conn: psycopg.Connection, tdcc: str, *, lock: bool = False) -> Stored |
     `lock`：鎖住這檔的商品條件列（`FOR UPDATE`）再讀，在呼叫端的 transaction 裡執行，鎖到它結束。寫入商品條件、
     核對寫回鎖住前都先這樣讀：兩邊同時處理同一檔時，後到的等先到的寫完，讀到的是寫完的狀態。
     """
+    if lock:
+        require_in_transaction(conn)
     with conn.transaction():
         found = conn.execute(
             f"SELECT {', '.join(PRODUCT_COLUMNS)}, source, locked_at FROM workflow.product WHERE tdcc = %s"
@@ -895,6 +897,7 @@ def backfill(
     `underlying_<序>_<價格>`）。值有改變時在 `workflow.backfill_log` 記原值（`item` 是參考條件表的欄名），
     回傳有沒有改；不認得的欄、沒有這個標的不寫。在呼叫端的 transaction 裡執行，這檔先用 `read(…, lock=True)` 鎖住。
     """
+    require_in_transaction(conn)
     if column in ("isin", "issue_date", "denomination"):
         (old,) = conn.execute(f"SELECT {column} FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
         conn.execute(f"UPDATE workflow.product SET {column} = %s WHERE tdcc = %s", (value, tdcc))
@@ -939,6 +942,7 @@ def backfill(
 
 def lock_checked(conn: psycopg.Connection, tdcc: str) -> None:
     """核對通過，鎖住這檔的商品條件（`locked_at`）；在呼叫端的 transaction 裡執行。"""
+    require_in_transaction(conn)
     conn.execute("UPDATE workflow.product SET locked_at = now() WHERE tdcc = %s", (tdcc,))
 
 

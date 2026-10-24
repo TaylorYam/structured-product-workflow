@@ -4,6 +4,7 @@
 - 資料表版本是套件裡 `migrations/NNNN_*.sql`，`apply_migrations` 依序套用沒套過的版本，
   記在 `public.spw_schema_version`。建立 schema 需要有權限的帳號（`spw-db-migrate --admin-user`），
   套用後把讀寫權限給日常使用的帳號（`PGUSER`）。
+- 「在呼叫端的 transaction 裡執行」的 function 開頭呼叫 `require_in_transaction`，沒有進行中的 transaction 就丟錯誤（#205）。
 """
 
 from __future__ import annotations
@@ -183,6 +184,18 @@ def apply_migrations(conn: psycopg.Connection, *, grant_to: str | None = None) -
                 conn.execute(sql.SQL("GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA {} TO {}").format(ident, role))
             conn.execute(sql.SQL("GRANT SELECT ON public.{} TO {}").format(sql.Identifier(VERSION_TABLE), role))
     return applied
+
+
+def require_in_transaction(conn: psycopg.Connection) -> None:
+    """呼叫端要先開好 transaction（`with conn.transaction():`）；沒有時丟 `RuntimeError`（程式寫錯，不是作業人員的錯）。
+
+    用 `if` 不用 `assert`：`python -O` 會略過 `assert`。
+    """
+    from psycopg.pq import TransactionStatus
+
+    status = conn.info.transaction_status
+    if status != TransactionStatus.INTRANS:
+        raise RuntimeError(f"這個動作要在呼叫端的 transaction 裡執行（目前是 {status.name}）")
 
 
 def require_current_schema(conn: psycopg.Connection) -> None:

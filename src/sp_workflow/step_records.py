@@ -2,6 +2,8 @@
 
 只新增、不修改：同一檔重做多一筆。哪些檔要寫由各步驟的結果決定（`prepared_records`、`returned_records`、
 `drafted_records`），寫入一個 transaction（`write_records`）。Excel 清單照舊先產出，寫紀錄失敗不影響清單（`window_actions`）。
+transaction 的範圍由呼叫端決定（`window_actions`）：準備、放回、建草稿的紀錄整批一個；進度頁登記已寄出一檔一個。
+登記已寄出前查哪些檔已經有「已寄出」：`already_sent`（#205）。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
@@ -23,6 +25,7 @@ if TYPE_CHECKING:
 PREPARED_STEP = "已準備"
 RETURNED_STEP = "已放回"
 DRAFTED_STEP = "草稿已建立"
+SENT_STEP = "已寄出"  # 進度頁登記（#157）
 
 
 @dataclass(frozen=True)
@@ -87,3 +90,15 @@ def write_records(conn: psycopg.Connection, records: Sequence[StepRecord], *, us
             [(r.tdcc, r.step, by, r.result, r.related_file) for r in records],
         )
     return len(records)
+
+
+def already_sent(conn: psycopg.Connection, tdccs: Sequence[str]) -> tuple[str, ...]:
+    """這些 TDCC 裡已經有「已寄出」步驟紀錄的，依傳入的順序、不重複。"""
+    found = {
+        row[0]
+        for row in conn.execute(
+            "SELECT DISTINCT tdcc FROM workflow.step_record WHERE step = %s AND tdcc = ANY(%s)",
+            (SENT_STEP, list(tdccs)),
+        )
+    }
+    return tuple(t for t in dict.fromkeys(tdccs) if t in found)

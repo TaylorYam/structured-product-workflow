@@ -29,7 +29,7 @@ from openpyxl.cell.cell import Cell
 from openpyxl.utils import get_column_letter
 
 from sp_workflow import import_run, sheet_cells
-from sp_workflow.database import OperatorError
+from sp_workflow.database import OperatorError, require_in_transaction
 from sp_workflow.file_tools import sha256_file
 
 if TYPE_CHECKING:
@@ -176,6 +176,7 @@ def write_closes(
     user: str | None = None,
 ) -> CloseSummary:
     """在呼叫端的 transaction 裡寫入一次收盤價：記一筆匯入、值改了的留舊值、整筆取代。"""
+    require_in_transaction(conn)
     days = [day for day, _ in closes]
     first, last = (min(days), max(days)) if days else (None, None)
     codes = len({code for _, code in closes})

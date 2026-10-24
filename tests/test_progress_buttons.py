@@ -13,7 +13,7 @@ import pytest
 
 import sp_workflow.tabs.progress
 import sp_workflow.window_actions
-from db_synth import inventory, seed_products
+from db_synth import inventory, seed_products, seed_waiting_for_mail
 from order_synth import CONFIG
 from sp_workflow.lifecycle import (
     KO,
@@ -82,17 +82,19 @@ def test_marking_sent_finishes_the_product_and_a_bad_tdcc_only_fails_itself(pg, 
 
 @pytest.mark.db
 def test_a_batch_of_sent_skips_products_already_sent(pg, pg_settings) -> None:
-    """#186：寫的時候已經有「已寄出」或已經解鎖的跳過，不重複寫、不動其他階段；結果寫出選的交易日。"""
+    """#186、#205：寫的時候已經不是待寄信（已經有「已寄出」、已經解鎖）的跳過，不重複寫、不動其他階段；結果寫出選的交易日。"""
     c = "147199990003"
-    seed_products(pg, [inventory(t, [("台北", 10000)]) for t in (A, B, c)])
-    pg.execute("UPDATE workflow.product SET locked_at = %s WHERE tdcc IN (%s, %s)", (T, A, B))  # c 確認期間被解鎖
+    seed_waiting_for_mail(pg, [A, B, c])
+    pg.execute("UPDATE workflow.product SET locked_at = NULL WHERE tdcc = %s", (c,))  # c 確認期間被解鎖
     mark_sent(pg_settings, [B])  # 找出這批之後別人剛登記過
 
     result = mark_sent_batch(pg_settings, SentBatch(dt.date(2026, 10, 22), (A, B, c), 0))
 
     assert result.done == (A,) and result.failed == ()
     assert (step_count(pg, A), step_count(pg, B), step_count(pg, c)) == (1, 1, 0)
-    (note,) = pg.execute("SELECT result FROM workflow.step_record WHERE tdcc = %s", (A,)).fetchone()
+    (note,) = pg.execute(
+        "SELECT result FROM workflow.step_record WHERE tdcc = %s AND step = %s", (A, SENT_STEP)
+    ).fetchone()
     assert note == "進度頁批次登記已寄出（交易日 2026-10-22 以前）"
 
 
