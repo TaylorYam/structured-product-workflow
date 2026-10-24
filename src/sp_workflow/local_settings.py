@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from pathlib import Path
 
 FILE_NAME = "prepare_folders.json"
-# 本機還沒記住時選擇對話框先打開的資料夾（#209）；記住的路徑優先
+# 本機還沒記住時選擇對話框先打開的資料夾（#209）；畫面先看記住的路徑，沒有才用這裡
 DEFAULT_FOLDERS = {"order_sheet": r"G:\Bond Data\PM事項\0.常用工具\ELN每日起單建檔"}  # 起單建檔（#97）
 
 
@@ -57,7 +57,7 @@ class FolderMemory:
         return load_folders(self.path)
 
     def default(self, name: str) -> Path | None:
-        """還沒記住 `name` 時選擇對話框先打開的資料夾；沒有預設值時 None。"""
+        """還沒記住 `name` 時選擇對話框先打開的資料夾（不看記住的值，由呼叫端先看）；沒有預設值時 None。"""
         folder = self.defaults.get(name)
         return Path(folder) if folder else None
 
