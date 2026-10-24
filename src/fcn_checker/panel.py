@@ -15,10 +15,11 @@ from tkinter import filedialog, messagebox, ttk
 from typing import Any
 
 from .approval_dates import parse_input_date
+from .date_picker import DateEntry
 from .ingestion import IngestionError, SourceSnapshot
 from .panel_workflow import PanelOutcome, PanelSession, ReleasePlan, ReleaseState
 from .saving import SaveReceipt
-from .ui import Background, HintBar, KpiRow, NextButton, PageHeader, TableCopy
+from .ui import Background, FitTreeview, HintBar, KpiRow, NextButton, PageHeader, TableCopy
 
 FOLDERS_RECORD = Path(".local") / "panel_folders.json"  # 兩個選檔按鈕各自記住的上次資料夾（根目錄下）
 
@@ -58,12 +59,13 @@ def _table(
     frame = ttk.Frame(parent)
     frame.columnconfigure(0, weight=1)
     frame.rowconfigure(0, weight=1)
-    table = ttk.Treeview(
+    table = FitTreeview(
         frame, columns=[c for c, _, _ in columns], show="headings", selectmode=selectmode, height=height
     )
     for column, label, width in columns:
         table.heading(column, text=label)
-        table.column(column, width=pixels(width), minwidth=pixels(80), anchor="w")
+        last = column == columns[-1][0]  # 欄寬依內容（#192），只有最後一欄跟著視窗變寬
+        table.column(column, width=pixels(width), minwidth=pixels(80) if last else 20, anchor="w", stretch=last)
     table.grid(row=0, column=0, sticky="nsew")
     scroll = ttk.Scrollbar(frame, command=table.yview)
     scroll.grid(row=0, column=1, sticky="ns")
@@ -310,8 +312,10 @@ class ApprovalDatesDialog(tk.Toplevel):
         self.listbox = tk.Listbox(frame, height=8, font=("Microsoft JhengHei UI", 11), activestyle="none")
         self.listbox.grid(row=1, column=0, columnspan=4, sticky="ew", pady=pixels(10))
         ttk.Label(frame, text="日期（YYYY-MM-DD）").grid(row=2, column=0, sticky="w")
-        self.entry = ttk.Entry(frame, width=14, font=("Microsoft JhengHei UI", 11))
-        self.entry.grid(row=2, column=1, sticky="w", padx=(pixels(8), 0))
+        field = DateEntry(frame, tk.StringVar(self), width=14)  # 小日曆（#192）
+        field.entry.configure(font=("Microsoft JhengHei UI", 11))
+        field.grid(row=2, column=1, sticky="w", padx=(pixels(8), 0))
+        self.entry = field.entry
         buttons = ttk.Frame(frame)
         buttons.grid(row=3, column=0, columnspan=4, sticky="w", pady=(pixels(12), 0))
         for text, command in (

@@ -15,6 +15,7 @@ from pathlib import Path
 from tkinter import filedialog, ttk
 
 from fcn_checker.check_config import ConfigPaths
+from fcn_checker.date_picker import DateEntry
 from fcn_checker.ui import HintBar
 from sp_workflow.exits import LOCKED_TEXT, ExitExport, ExitList, ExitRow, export_exits, export_name
 from sp_workflow.lifecycle import EXIT_EVENTS, SOURCES
@@ -61,9 +62,9 @@ class ExitListTab(Tab):
         line.grid(row=0, column=0, columnspan=2, sticky="w")
         ttk.Label(line, text="收盤日", style="Card.TLabel").pack(side=tk.LEFT)
         self.day_var = tk.StringVar()
-        entry = ttk.Entry(line, textvariable=self.day_var, width=12)
-        entry.pack(side=tk.LEFT, padx=(8, 0))
-        entry.bind("<Return>", lambda _event: self.refresh())
+        field = DateEntry(line, self.day_var, on_pick=self.refresh, style="CardBody.TFrame")  # 小日曆（#192）
+        field.pack(side=tk.LEFT, padx=(8, 0))
+        field.entry.bind("<Return>", lambda _event: self.refresh())
         ttk.Label(line, text="YYYY-MM-DD，空白是收盤價表最新的一天", style="CardMuted.TLabel").pack(
             side=tk.LEFT, padx=(8, 0)
         )
