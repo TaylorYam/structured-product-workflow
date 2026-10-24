@@ -35,9 +35,9 @@ from fcn_checker.orders.reference import (
     price_key,
     underlying_key,
 )
+from sp_workflow import import_run
 from sp_workflow.check_terms import DONE
 from sp_workflow.database import OperatorError
-from sp_workflow.file_tools import save_book, table_book
 from sp_workflow.lifecycle import KO, MATURITY, LifecycleError, current_events_of, record_legacy
 
 if TYPE_CHECKING:
@@ -191,7 +191,13 @@ def backfill_legacy(
             problems = [line for line in lines if line.result == SKIPPED]
             if problems:
                 error_book = path.parent / ERROR_BOOK.format(stamp=f"{(now or dt.datetime.now()):%Y%m%d-%H%M%S}")
-                _write_error_book(error_book, problems)
+                import_run.error_book(
+                    error_book,
+                    "舊商品補資料錯誤",
+                    [name for name, _ in ERROR_BOOK_COLUMNS],
+                    ([line.tdcc, line.detail, "、".join(map(str, line.rows))] for line in problems),
+                    widths=[width for _, width in ERROR_BOOK_COLUMNS],
+                )
     except BaseException:
         if error_book is not None:  # 沒有匯入就不留錯誤清單
             error_book.unlink(missing_ok=True)
@@ -308,7 +314,10 @@ def _status_event(status: str | None, final_date: dt.date | None) -> tuple[_Lega
 
 
 def _code(code: str) -> str:
-    """比對代碼用：不分大小寫、空白，結尾的「Equity」不算。"""
+    """比對代碼用：不分大小寫、空白，結尾的「Equity」不算。
+
+    和 `sheet_cells.bbg_code` 不同（#207）：這裡只比對、不存，所以轉大寫、合併空白，只去掉 Equity。
+    """
     text = " ".join(code.upper().split())
     return text.removesuffix(" EQUITY")
 
@@ -336,16 +345,3 @@ def _write_dates(conn: psycopg.Connection, tdcc: str, record: OrderRecord, fmt: 
             "INSERT INTO workflow.autocall_date (tdcc, slot, value) VALUES (%s, %s, %s)",
             [(tdcc, n, _value(record, autocall_date_key(n), fmt)) for n in range(1, SLOTS + 1)],
         )
-
-
-def _write_error_book(path: Path, lines: Sequence[BackfillLine]) -> None:
-    book = table_book(
-        "舊商品補資料錯誤",
-        [name for name, _ in ERROR_BOOK_COLUMNS],
-        ([line.tdcc, line.detail, "、".join(map(str, line.rows))] for line in lines),
-        widths=[width for _, width in ERROR_BOOK_COLUMNS],
-    )
-    try:
-        save_book(book, path)
-    except OSError as exc:
-        raise LegacyBackfillError(f"錯誤清單寫不進去，整份不匯入：{path}（{exc.strerror or exc}）") from exc

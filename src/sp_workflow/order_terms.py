@@ -278,7 +278,11 @@ def _shown(raw: object) -> str:
 
 
 def parse_field(name: str, raw: object) -> object:
-    """起單建檔的格子或畫面打的字 → 欄位的值；空白（含 `-`）回傳 None，不認得時丟 ValueError（中文說明）。"""
+    """起單建檔的格子或畫面打的字 → 欄位的值；空白（含 `-`）回傳 None，不認得時丟 ValueError（中文說明）。
+
+    和 `sheet_cells` 不同（#207）：百分比可以帶 `%`、不取位數，日期多收 `15-Oct-26` 這類寫法、不收有時間的，
+    選項不分大小寫。
+    """
     kind = KINDS[name]
     if raw is None or isinstance(raw, str) and raw.strip() in _EMPTY:
         return None

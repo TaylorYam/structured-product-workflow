@@ -5,7 +5,7 @@
   用 `closes_from_csv` 挑出 CSV 那一天的收盤價、`write_closes` 寫入；BBG_Data 的日期不明確，不寫。
 - 歷史收盤價（HP 格式）：「維護」選單一次匯入（`import_history`）。橫向日期、每列一檔、代碼帶類別字；
   整份讀完、檢查完才寫，有問題的格子不存，依代碼與原因整理成錯誤清單放在來源檔同一個資料夾。
-代碼去掉彭博最後的類別字（`normalize_code`），其餘一字不差，和 `workflow.product.underlying_n` 一致。
+代碼去掉彭博最後的類別字（`sheet_cells.bbg_code`），其餘一字不差，和 `workflow.product.underlying_n` 一致。
 只存該代碼市場的交易日：週末、假日表上的休市日不存（`is_closed`）；交易所在假日表、但日期超出涵蓋範圍的
 不能確認是不是交易日（休市日常帶著前一天的價格），也不存、列出來，補了假日表再匯（`is_uncovered`）。
 交易所不在假日表的代碼照存，由比價標待確認。同一（收盤日、代碼）再匯入整筆取代，值改了的舊值留在
@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import datetime as dt
 import getpass
-import json
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -29,8 +28,9 @@ import openpyxl
 from openpyxl.cell.cell import Cell
 from openpyxl.utils import get_column_letter
 
+from sp_workflow import import_run, sheet_cells
 from sp_workflow.database import OperatorError
-from sp_workflow.file_tools import save_book, sha256_file, table_book
+from sp_workflow.file_tools import sha256_file
 
 if TYPE_CHECKING:
     import psycopg
@@ -39,7 +39,6 @@ if TYPE_CHECKING:
 
 CSV_SOURCE = "MarketData CSV"
 HISTORY_SOURCE = "歷史收盤價"
-CLASS_WORDS = frozenset(("EQUITY", "CURNCY", "INDEX", "COMDTY"))  # 彭博代碼最後的類別字
 
 # 歷史收盤價（HP 格式）：第 3 列從 E 欄起是收盤日，第 4 列起每列一檔，C 欄是帶類別字的彭博代碼（B 欄是簡碼）
 HISTORY_DATE_ROW = 3
@@ -111,13 +110,6 @@ def latest_close_date(conn: psycopg.Connection) -> dt.date | None:
     return day
 
 
-def normalize_code(raw: str) -> str:
-    """去掉彭博代碼最後的類別字（例：`AA UN Equity` → `AA UN`），其餘一字不差；只去頭尾空白。"""
-    code = raw.strip()
-    head, _, last = code.rpartition(" ")
-    return head.rstrip() if head.strip() and last.upper() in CLASS_WORDS else code
-
-
 def is_closed(calendar: TradingCalendar, code: str, day: dt.date) -> bool:
     """這個代碼的市場在這一天確定休市：週末，或交易所在假日表、日期在涵蓋範圍內且是休市日。"""
     if day.weekday() >= 5:
@@ -153,8 +145,8 @@ def closes_from_csv(
     found: dict[str, set[Decimal]] = defaultdict(set)
     for raw, close in closes.items():
         if close is not None and close > 0:
-            found[normalize_code(raw)].add(close)
-    bad = {normalize_code(raw) for raw in conflicted}
+            found[sheet_cells.bbg_code(raw)].add(close)
+    bad = {sheet_cells.bbg_code(raw) for raw in conflicted}
     conflicts = tuple(sorted(code for code, values in found.items() if len(values) > 1 and code not in bad))
     kept, closed, uncovered = {}, [], []
     for code, values in sorted(found.items()):
@@ -187,11 +179,17 @@ def write_closes(
     days = [day for day, _ in closes]
     first, last = (min(days), max(days)) if days else (None, None)
     codes = len({code for _, code in closes})
-    (import_id,) = conn.execute(
-        "INSERT INTO workflow.close_price_import (source, file_name, file_sha256, run_id, imported_by, summary)"
-        " VALUES (%s, %s, %s, %s, %s, '{}') RETURNING import_id",
-        (source, file_name, sha256, run_id, user or getpass.getuser()),
-    ).fetchone()
+    import_id = import_run.open_run(
+        conn,
+        "close_price_import",
+        {
+            "source": source,
+            "file_name": file_name,
+            "file_sha256": sha256,
+            "run_id": run_id,
+            "imported_by": user or getpass.getuser(),
+        },
+    )
     conn.execute(
         "CREATE TEMP TABLE incoming_close (close_date date, code text, close numeric,"
         " PRIMARY KEY (close_date, code)) ON COMMIT DROP"
@@ -225,10 +223,7 @@ def write_closes(
         "changed": changed,
         **details,
     }
-    conn.execute(
-        "UPDATE workflow.close_price_import SET summary = %s::jsonb WHERE import_id = %s",
-        (json.dumps(record, ensure_ascii=False), import_id),
-    )
+    import_run.finish_run(conn, "close_price_import", import_id, record)
     return summary
 
 
@@ -271,7 +266,14 @@ def import_history(
     error_book = None
     if problems:
         error_book = path.parent / HISTORY_ERROR_BOOK.format(stamp=f"{(now or dt.datetime.now()):%Y%m%d-%H%M%S}")
-        _write_error_book(error_book, problems)
+        import_run.error_book(
+            error_book,
+            "歷史收盤價錯誤",
+            [name for name, _ in ERROR_BOOK_COLUMNS],
+            ([p.code, p.reason, p.first, p.last, p.cells] for p in problems),
+            widths=[width for _, width in ERROR_BOOK_COLUMNS],
+            style=_error_cell,
+        )
     details = {
         "file_first": history.dates[0].isoformat(),
         "file_last": history.dates[-1].isoformat(),
@@ -324,7 +326,7 @@ def _read_history(path: Path, calendar: TradingCalendar) -> _History:
     no_price: dict[tuple[dt.date, str], str] = {}
     for number, row in enumerate(rows[HISTORY_FIRST_ROW - 1 :], HISTORY_FIRST_ROW):
         raw = _cell(row, HISTORY_CODE_COLUMN)
-        code = normalize_code(raw) if isinstance(raw, str) else ""
+        code = sheet_cells.bbg_code(raw) if isinstance(raw, str) else ""
         if not any(ch.isalnum() for ch in code):  # 空白、「-」這類不是代碼
             short = _cell(row, HISTORY_SHORT_CODE_COLUMN)
             filled = sum(_cell(row, c) not in (None, "") for c in columns)
@@ -388,7 +390,10 @@ def _cell(row: tuple[Any, ...], column: int) -> Any:
 
 
 def _price(value: Any) -> tuple[Decimal | None, str]:
-    """一格的收盤價；不是正數時回傳 (None, 原因)。錯誤值（#N/A…）、`-`、亂碼、失效公式一律沒有價格。"""
+    """一格的收盤價；不是正數時回傳 (None, 原因)。錯誤值（#N/A…）、`-`、亂碼、失效公式一律沒有價格。
+
+    和 `sheet_cells.decimal` 不同（#207）：只收正數，看不懂的不丟錯誤、回傳原因給錯誤清單整理。
+    """
     if isinstance(value, bool):
         return None, str(value)
     if isinstance(value, int | float | Decimal):
@@ -418,20 +423,6 @@ def _reason_text(value: str) -> str:
     if value.startswith("#"):
         return f"錯誤值或失效公式（{value[:30]}）"
     return "亂碼或不是數字"
-
-
-def _write_error_book(path: Path, problems: tuple[HistoryProblem, ...]) -> None:
-    book = table_book(
-        "歷史收盤價錯誤",
-        [name for name, _ in ERROR_BOOK_COLUMNS],
-        ([p.code, p.reason, p.first, p.last, p.cells] for p in problems),
-        widths=[width for _, width in ERROR_BOOK_COLUMNS],
-        style=_error_cell,
-    )
-    try:
-        save_book(book, path)
-    except OSError as exc:
-        raise ClosePriceError(f"錯誤清單寫不進去，整份不匯入：{path}（{exc.strerror or exc}）") from exc
 
 
 def _error_cell(cell: Cell) -> None:

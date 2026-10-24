@@ -29,13 +29,13 @@ from __future__ import annotations
 
 import datetime as dt
 import getpass
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from sp_workflow import import_run
 from sp_workflow.check_terms import CalcLine, recalculate, recalculate_corrected
 from sp_workflow.database import OperatorError
 from sp_workflow.order_terms import TDCC_FIELD, OrderRow, describe, unknown_issuer
@@ -507,10 +507,7 @@ def write_batch(
     `order_import_line.source_mail`（#40 時是 Order 原信檔名）寫起單建檔的檔名與列號。
     """
     with conn.transaction():
-        import_id = conn.execute(
-            "INSERT INTO workflow.order_import (imported_by, summary) VALUES (%s, '{}') RETURNING import_id",
-            (user or getpass.getuser(),),
-        ).fetchone()[0]
+        import_id = import_run.open_run(conn, "order_import", {"imported_by": user or getpass.getuser()})
         lines = []
         seen: set[str] = set()
         for seq, draft in enumerate(drafts, 1):
@@ -538,10 +535,7 @@ def write_batch(
             )
         receipt = BatchReceipt(import_id, tuple(lines))
         counts = {result: receipt.count(result) for result in ImportResult}
-        conn.execute(
-            "UPDATE workflow.order_import SET summary = %s::jsonb WHERE import_id = %s",
-            (json.dumps({"counts": counts}, ensure_ascii=False), import_id),
-        )
+        import_run.finish_run(conn, "order_import", import_id, {"counts": counts})
     return receipt
 
 

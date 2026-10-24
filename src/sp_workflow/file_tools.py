@@ -2,6 +2,7 @@
 
 簡單的表：第 1 列粗體表頭、凍結第一列，欄寬與格子格式由呼叫端決定；存檔時先寫暫存檔再換名，
 寫不進去時丟 `OSError`、暫存檔刪掉、原本的同名檔不動。核對結果檔與回報包的 Excel 有自己的版面，不用這裡。
+給作業人員看的「檔案寫不進去」是 `FileWriteError`（#207，例：`import_run.error_book`）。
 """
 
 from __future__ import annotations
@@ -15,6 +16,17 @@ import openpyxl
 from openpyxl.cell.cell import Cell
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
+
+from sp_workflow.database import OperatorError
+
+
+class FileWriteError(OperatorError):
+    """檔案寫不進去（#207）；訊息是給作業人員看的中文，`path` 是那個檔，`error` 是原本的 `OSError`。"""
+
+    def __init__(self, message: str, path: Path, error: OSError) -> None:
+        super().__init__(message)
+        self.path = path
+        self.error = error
 
 
 def sha256_bytes(data: bytes) -> str:

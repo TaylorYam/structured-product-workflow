@@ -212,6 +212,7 @@ def plain(value: Decimal) -> Decimal:
 
 
 def _pct(value: object) -> Decimal | None:
+    # 和 `sheet_cells.pct` 不同（#207）：值已經是畫面解讀過的數字，不處理空白字、`-` 與千分位
     if value is None:
         return None
     try:

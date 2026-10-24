@@ -27,10 +27,12 @@ from typing import NamedTuple
 import openpyxl
 from openpyxl.cell.cell import Cell
 
+from sp_workflow import import_run
 from sp_workflow.database import OperatorError
 from sp_workflow.documents import DocKind, content_key
-from sp_workflow.file_tools import save_book, sha256_file, table_book, tdcc_as_text
+from sp_workflow.file_tools import FileWriteError, save_book, sha256_file, table_book, tdcc_as_text
 from sp_workflow.preparation import LIST_NAME, PENDING_SUFFIX, PREPARED
+from sp_workflow.sheet_cells import TDCC_DIGITS
 
 RETURNED = "已放回"
 ALREADY_THERE = "已在"
@@ -51,7 +53,7 @@ ERROR_TDCC_COLUMN = "TDCC Code"
 ERROR_PDF_COLUMN = "PDF 檔名"
 ERROR_MESSAGE_COLUMN = "錯訊"
 ERROR_PAGES_COLUMN = "PDF 頁碼"  # 核對工具 acb5dbd（#350）起才有；舊格式沒有這欄也能讀（#25）
-TDCC_DIGITS = 12
+
 
 NOT_CHECKED_REASON = "核對結果檔沒有這個商品（還沒核對）"
 _TEMP_SUFFIX = ".spw-tmp"  # 放回時先寫成暫存名，確認指紋後才改成正式檔名
@@ -267,7 +269,10 @@ def _read_sheets(path: Path, sheets: tuple[str | None, ...], label: str) -> list
 
 
 def _normalize_tdcc(value: object) -> str:
-    """TDCC 以文字處理；Excel 存成數字、掉了前導零時補回 12 碼。"""
+    """TDCC 以文字處理；Excel 存成數字、掉了前導零時補回 12 碼。
+
+    和 `sheet_cells.tdcc` 不同（#207）：不檢查是不是數字、空白回傳空字串，對不到的由呼叫端列出來。
+    """
     if isinstance(value, bool) or value is None:
         return ""
     if isinstance(value, int | float):
@@ -351,7 +356,7 @@ def _return_product(
         any(copy_needed[kind] for kind in pending) or _error_rows(_latest_error_book(folder, tdcc)) != rows
     )
     if wrote_new:
-        notes.append(_write_error_book(folder / f"{tdcc}{ERROR_BOOK_MARK}{stamp}.xlsx", rows))
+        notes.append(_error_book_note(folder / f"{tdcc}{ERROR_BOOK_MARK}{stamp}.xlsx", rows))
     for kind in DocKind:
         standard, old_pending = docs[kind].output_name, _pending_name(docs[kind].output_name)
         if kind in pending and (folder / standard).exists():  # 例：UBS 上手本來就給標準檔名
@@ -393,21 +398,22 @@ def _error_rows(path: Path | None) -> list[tuple] | None:
     return [tuple("" if v is None else str(v) for v in row[: len(ERROR_BOOK_COLUMNS)]) for row in rows[1:]]
 
 
-def _write_error_book(path: Path, rows: list[tuple[str, str, str, str, str]]) -> str:
+def _error_book_note(path: Path, rows: list[tuple[str, str, str, str, str]]) -> str:
     """在商品資料夾寫錯訊檔（不覆蓋）；回傳要寫進原因欄的說明。寫不進去不影響已放回的檔。"""
     if path.exists():
         return f"錯訊檔已存在，沒有覆蓋：{path.name}"
-    book = table_book(
-        "錯誤訊息",
-        [name for name, _ in ERROR_BOOK_COLUMNS],
-        rows,
-        widths=[width for _, width in ERROR_BOOK_COLUMNS],
-        style=_error_cell,
-    )
     try:
-        save_book(book, path, overwrite=False)
-    except OSError as exc:
-        return f"錯訊檔寫不進去：{path.name}（{exc}）"
+        import_run.error_book(
+            path,
+            "錯誤訊息",
+            [name for name, _ in ERROR_BOOK_COLUMNS],
+            rows,
+            widths=[width for _, width in ERROR_BOOK_COLUMNS],
+            style=_error_cell,
+            overwrite=False,
+        )
+    except FileWriteError as exc:
+        return f"錯訊檔寫不進去：{path.name}（{exc.error}）"
     return f"錯訊寫在 {path.name}"
 
 
