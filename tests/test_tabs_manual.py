@@ -13,11 +13,19 @@ from fcn_checker.ui import SURFACE
 from order_synth import CONFIG, VALUES, maintenance_draft, maintenance_trades
 from sp_workflow.app import PanelWindow
 from sp_workflow.check_terms import DONE, TO_CONFIRM, CalcLine
-from sp_workflow.order_import import MISSING_NOTE, MissingProduct, OrderDraft
 from sp_workflow.order_terms import OrderRow
 from sp_workflow.product_export import ExportReceipt
 from sp_workflow.product_record import FIELDS, REQUIRED
-from sp_workflow.product_write import LOCKED, MAINTAIN_NEW, MAINTAIN_OPEN, CorrectionError, CorrectionReceipt
+from sp_workflow.product_terms import (
+    LOCKED,
+    MAINTAIN_NEW,
+    MAINTAIN_OPEN,
+    MISSING_NOTE,
+    CorrectionError,
+    CorrectionReceipt,
+    MissingProduct,
+    OrderDraft,
+)
 from sp_workflow.tabs.editor import DIFFERENT_BG, PROBLEM_BG
 from sp_workflow.tabs.manual import correction_text
 from sp_workflow.trade_rows import CANCEL_NOTE, UNMATCHED_NOTE, TradeRowsDraft

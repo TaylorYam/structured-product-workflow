@@ -11,9 +11,8 @@ import openpyxl
 
 from fcn_checker.config import load_exchange_holidays
 from sp_workflow.mailbox import Mailbox, Person
-from sp_workflow.order_import import ImportConfig, OrderDraft
 from sp_workflow.order_terms import NOT_FOUND, PENDING, READ, TDCC_FIELD, OrderRow
-from sp_workflow.product_write import MAINTAIN_OPEN
+from sp_workflow.product_terms import MAINTAIN_OPEN, ImportConfig, OrderDraft
 from sp_workflow.trade_rows import TradeRowDraft, TradeRowsDraft
 
 A = "029199990001"  # BARC

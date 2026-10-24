@@ -18,9 +18,8 @@ from typing import TYPE_CHECKING
 from sp_workflow.close_prices import latest_close_date
 from sp_workflow.lifecycle import EXIT_EVENTS, exits_on
 from sp_workflow.observation import UNLOCKED
-from sp_workflow.order_import import ImportConfig, issuer_code
 from sp_workflow.product_export import save_rows
-from sp_workflow.product_write import LOCKED
+from sp_workflow.product_terms import LOCKED, ImportConfig, issuer_code
 
 if TYPE_CHECKING:
     import psycopg

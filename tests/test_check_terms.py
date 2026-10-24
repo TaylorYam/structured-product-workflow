@@ -26,7 +26,7 @@ from sp_workflow.check_terms import (
     release_differences,
 )
 from sp_workflow.daily_import import import_daily
-from sp_workflow.order_import import drafts_from, import_drafts
+from sp_workflow.product_terms import drafts_from, import_drafts
 
 CALENDAR = CONFIG.calendar
 THU, FRI, MON, TUE = dt.date(2026, 10, 15), dt.date(2026, 10, 16), dt.date(2026, 10, 19), dt.date(2026, 10, 20)

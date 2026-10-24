@@ -24,10 +24,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from sp_workflow.lifecycle import Objection, lifecycle_status, open_objections
-from sp_workflow.order_import import ImportConfig, issuer_code
 from sp_workflow.product_export import save_rows
 from sp_workflow.product_record import PRICING_FIELD, PRODUCT_COLUMNS, REQUIRED, missing_fields
-from sp_workflow.product_write import INVENTORY_SOURCE
+from sp_workflow.product_terms import INVENTORY_SOURCE, ImportConfig, issuer_code
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, Progress
 from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP
 

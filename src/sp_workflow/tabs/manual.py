@@ -10,17 +10,20 @@ from tkinter import filedialog, messagebox, ttk
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import NUMBER_FONT, CopyArea
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.order_import import ImportConfig, MissingProduct, OrderDraft, maintenance_problems
 from sp_workflow.order_terms import format_field
 from sp_workflow.preparation import parse_tdccs
 from sp_workflow.product_export import ExportReceipt, export_name
 from sp_workflow.product_record import REQUIRED
-from sp_workflow.product_write import (
+from sp_workflow.product_terms import (
     FIXED_IN_CORRECTION,
     MAINTAIN_LOCKED,
     MAINTAIN_NEW,
     MAINTAIN_OPEN,
     CorrectionReceipt,
+    ImportConfig,
+    MissingProduct,
+    OrderDraft,
+    maintenance_problems,
 )
 from sp_workflow.tabs.base import CELL_COPY_HINT, TITLE, DatabaseLogin, Tab
 from sp_workflow.tabs.cell_table import CellTable

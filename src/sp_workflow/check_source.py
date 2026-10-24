@@ -33,7 +33,7 @@ from sp_workflow.check_terms import DONE
 from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdatedError, connect
 from sp_workflow.file_tools import save_book, table_book
 from sp_workflow.product_record import PRODUCT_COLUMNS, missing_fields
-from sp_workflow.product_write import lock_terms
+from sp_workflow.product_terms import lock_terms
 
 if TYPE_CHECKING:
     import psycopg

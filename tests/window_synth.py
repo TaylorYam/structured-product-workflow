@@ -13,9 +13,9 @@ from sp_workflow.app import PanelWindow
 from sp_workflow.check_terms import TO_CONFIRM, CalcLine, Difference
 from sp_workflow.documents import DocKind
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.order_import import drafts_from
 from sp_workflow.order_terms import OrderRow
 from sp_workflow.preparation import PREPARED, SKIPPED, PreparedDocument, PrepareReceipt, ProductOutcome
+from sp_workflow.product_terms import drafts_from
 from sp_workflow.tabs.base import DatabaseLogin
 from sp_workflow.window_actions import PrepareResult, ReadResult
 

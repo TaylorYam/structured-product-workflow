@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from sp_workflow import check_terms, lifecycle, observation, order_import, order_terms, product_write, progress
+from sp_workflow import check_terms, lifecycle, observation, order_terms, product_terms, progress
 from sp_workflow.status import CheckTerms, Lifecycle, OrderReview, Pricing, Progress
 
 
@@ -38,12 +38,12 @@ def test_order_review_matches_the_module_constants() -> None:
         order_terms.READ,
         order_terms.PENDING,
         order_terms.NOT_FOUND,
-        order_import.BLOCKED,
-        order_import.TO_CHECK,
-        order_import.READY,
-        product_write.LOCKED,
-        product_write.MAINTAIN_OPEN,
-        product_write.MAINTAIN_NEW,
+        product_terms.BLOCKED,
+        product_terms.TO_CHECK,
+        product_terms.READY,
+        product_terms.LOCKED,
+        product_terms.MAINTAIN_OPEN,
+        product_terms.MAINTAIN_NEW,
         observation.UNLOCKED,
     }
     assert values(OrderReview) == constants == {

@@ -11,10 +11,23 @@ from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import HintBar
 from sp_workflow.check_terms import CalcLine
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.order_import import BLOCKED, IMPORTABLE, READY, TO_CHECK, OrderDraft, OrderImportResult, review_status
 from sp_workflow.order_terms import OrderRow
 from sp_workflow.preparation import parse_tdccs
-from sp_workflow.product_write import LOCKED, NEW, OVERWRITTEN, SAME, SKIPPED, OrderImportLine
+from sp_workflow.product_terms import (
+    BLOCKED,
+    IMPORTABLE,
+    LOCKED,
+    NEW,
+    OVERWRITTEN,
+    READY,
+    SAME,
+    SKIPPED,
+    TO_CHECK,
+    OrderDraft,
+    OrderImportLine,
+    OrderImportResult,
+    review_status,
+)
 from sp_workflow.tabs.base import TITLE, DatabaseLogin, Tab
 from sp_workflow.tabs.editor import OrderEditor
 from sp_workflow.tabs.recalc import Releaser, recalc_text, status_counts

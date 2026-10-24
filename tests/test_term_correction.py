@@ -11,16 +11,14 @@ from db_synth import price, trade, write_daily
 from order_synth import CONFIG, A, B, order_row
 from sp_workflow.check_terms import DONE, TO_CONFIRM, recalculate
 from sp_workflow.daily_import import import_daily
-from sp_workflow.order_import import (
+from sp_workflow.product_terms import (
+    LOCKED,
+    CorrectionError,
     apply_correction,
     check_draft,
     drafts_from,
     import_drafts,
     load_correction,
-)
-from sp_workflow.product_write import (
-    LOCKED,
-    CorrectionError,
 )
 
 pytestmark = pytest.mark.db
