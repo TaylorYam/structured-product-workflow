@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 from sp_workflow.database import OperatorError
 from sp_workflow.product_record import PRODUCT_COLUMNS, missing_fields, plain
+from sp_workflow.status import CheckTerms
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -44,11 +45,11 @@ if TYPE_CHECKING:
     from fcn_checker.trading_calendar import Market, TradingCalendar
 
 # 狀態
-DONE = "完成"
-WAIT_PRICES = "等股價"
-WAIT_TRADES = "等交易明細"
-TO_CONFIRM = "待確認"
-STATUSES = (DONE, WAIT_PRICES, WAIT_TRADES, TO_CONFIRM)  # 畫面列出各狀態檔數的順序
+DONE = CheckTerms.DONE
+WAIT_PRICES = CheckTerms.WAIT_PRICES
+WAIT_TRADES = CheckTerms.WAIT_TRADES
+TO_CONFIRM = CheckTerms.TO_CONFIRM
+STATUSES = tuple(CheckTerms)  # 畫面列出各狀態檔數的順序
 
 # 交叉比對的項目
 CURRENCY, TRADE_DATE, UF = "幣別", "交易日", "UF"

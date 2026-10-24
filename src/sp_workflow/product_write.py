@@ -45,6 +45,7 @@ from sp_workflow.product_record import (
     missing_fields,
     to_json,
 )
+from sp_workflow.status import OrderReview
 from sp_workflow.trade_rows import (
     CHECK_TERM_FIELDS,
     TradeEdit,
@@ -70,13 +71,13 @@ NEW = "新增"
 OVERWRITTEN = "覆蓋"
 SAME = "沒有變"
 SKIPPED = "不匯入"
-LOCKED = "已鎖住"
+LOCKED = OrderReview.LOCKED
 IMPORTED = frozenset((NEW, OVERWRITTEN, SAME))
 
 # 人工維護打開時這檔的狀態（`OrderDraft.row.status`）：已鎖住的存檔照更正（ADR 0014）
 MAINTAIN_LOCKED = LOCKED
-MAINTAIN_OPEN = "未鎖住"
-MAINTAIN_NEW = "只有交易明細"
+MAINTAIN_OPEN = OrderReview.UNLOCKED
+MAINTAIN_NEW = OrderReview.TRADES_ONLY
 
 FIXED_IN_CORRECTION = ("Issue date",)  # TS 回填的欄，不在更正範圍
 

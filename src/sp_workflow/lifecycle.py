@@ -22,15 +22,16 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from sp_workflow.database import OperatorError
+from sp_workflow.status import Lifecycle
 
 if TYPE_CHECKING:
     import psycopg
 
-IN_STOCK = "在庫"
-KO = "KO"
-DELIVERY = "接股"
-MATURITY = "到期還本"
-REDEMPTION = "顧客贖回"
+IN_STOCK = Lifecycle.IN_STOCK
+KO = Lifecycle.KO
+DELIVERY = Lifecycle.DELIVERY
+MATURITY = Lifecycle.MATURITY
+REDEMPTION = Lifecycle.REDEMPTION
 AUTO_EVENTS = (KO, DELIVERY, MATURITY)
 EXIT_EVENTS = (*AUTO_EVENTS, REDEMPTION)  # 會讓商品出場的事件：自動事件加顧客贖回（#188）
 

@@ -47,13 +47,14 @@ from sp_workflow.product_record import (
     FieldKind,
     plain,
 )
+from sp_workflow.status import OrderReview
 
 if TYPE_CHECKING:
     from fcn_checker.trading_calendar import TradingCalendar
 
-READ = "已讀取"
-PENDING = "待確認"
-NOT_FOUND = "找不到"
+READ = OrderReview.READ
+PENDING = OrderReview.PENDING
+NOT_FOUND = OrderReview.NOT_FOUND
 
 TDCC_FIELD = "TDCC"
 NEXT_OPEN = "明日開盤價"  # 交易日隔一個營業日的開盤價（#101）
