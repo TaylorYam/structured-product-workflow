@@ -5,7 +5,7 @@
   （有備註時維持紅色、兩個說明都寫）＞ 備註（讀起單建檔時的提醒、FC 名字對不到信箱）＞ 固定欄的說明。
   `order_cell_states`／`trade_cell_states` 是兩個編輯區各自的組法。
 - `commit_order`／`commit_trade_rows`：畫面上打的字解讀進 draft（規則同 `order_terms.parse_field`／
-  `daily_import.trade_value`），回傳有沒有改到。寫錯的格子保留打的字（`typed`）並記在 `input_errors`，值不動。
+  `daily_import.trade_value`，格子的解讀在 `sheet_cells`），回傳有沒有改到。寫錯的格子保留打的字（`typed`）並記在 `input_errors`，值不動。
   `order_texts`／`trade_texts` 是解讀後每格該顯示的字。
 """
 

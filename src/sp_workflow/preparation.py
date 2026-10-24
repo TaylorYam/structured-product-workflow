@@ -155,7 +155,7 @@ def prepare_batch(
 
 
 def is_tdcc(text: str) -> bool:
-    """剛好 12 個半形數字（全形數字不算）。"""
+    """剛好 12 個半形數字（全形數字不算）。和 `sheet_cells.tdcc` 不同（#207）：打的字不補前導零。"""
     return _TDCC.fullmatch(text) is not None
 
 

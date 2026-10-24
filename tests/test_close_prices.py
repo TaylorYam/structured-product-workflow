@@ -23,9 +23,9 @@ from sp_workflow.close_prices import (
     import_history,
     is_closed,
     is_uncovered,
-    normalize_code,
 )
 from sp_workflow.daily_import import import_daily, import_price_csv
+from sp_workflow.sheet_cells import bbg_code
 
 YEAR = (dt.date(2026, 1, 1), dt.date(2026, 12, 31))
 US_HOLIDAY = dt.date(2026, 10, 14)  # 虛構的休市日（週三）
@@ -66,7 +66,7 @@ def closes_in(pg) -> list[tuple]:
     ],
 )
 def test_codes_drop_only_the_trailing_class_word(raw: str, code: str) -> None:
-    assert normalize_code(raw) == code
+    assert bbg_code(raw) == code
 
 
 @pytest.mark.parametrize(

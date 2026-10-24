@@ -6,10 +6,12 @@ from __future__ import annotations
 import datetime as dt
 import json
 import re
+from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
 
 import openpyxl
+import psycopg
 import pytest
 
 from db_synth import (
@@ -42,6 +44,7 @@ from sp_workflow.daily_import import (
     import_price_csv,
     latest_import,
 )
+from sp_workflow.file_tools import FileWriteError
 from sp_workflow.mailbox import is_pb
 
 pytestmark = pytest.mark.db
@@ -351,6 +354,60 @@ def test_old_inventory_results_are_not_listed_as_errors(pg, tmp_path: Path, mail
 
     error_book = openpyxl.load_workbook(tmp_path / "每日匯入錯誤.xlsx", read_only=True, data_only=True)
     assert [row[3:5] for row in list(error_book.active.values)[1:]] == [(B, "庫存尚未更新")]
+
+
+def test_an_error_book_that_cannot_be_written_stops_the_import_and_leaves_no_file(pg, tmp_path: Path, mailbox) -> None:
+    """#207：錯誤清單寫不進去時整次不匯入（同以前），也不留下暫存檔。"""
+    (tmp_path / "每日匯入錯誤.xlsx").mkdir()  # 同名的資料夾：換名換不過去
+
+    with pytest.raises(FileWriteError, match="錯誤清單寫不進去，整份不匯入"):
+        import_daily(write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)]), pg)
+
+    assert count(pg, "workflow.import_run") == 0 and count(pg, "workflow.trade_row") == 0
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["d.xlsx", "每日匯入錯誤.xlsx"]
+    assert (tmp_path / "每日匯入錯誤.xlsx").is_dir(), "原本的同名檔（這裡是資料夾）不動"
+
+
+def failing_commit(conn, monkeypatch) -> None:
+    """最外層的 transaction 在本體做完之後才失敗，像 commit 失敗一樣整個 rollback。"""
+    real, depth = conn.transaction, [0]
+
+    @contextmanager
+    def transaction(*args, **kwargs):
+        depth[0] += 1
+        try:
+            with real(*args, **kwargs) as tx:
+                yield tx
+                if depth[0] == 1:
+                    raise psycopg.OperationalError("commit 失敗（測試）")
+        finally:
+            depth[0] -= 1
+
+    monkeypatch.setattr(conn, "transaction", transaction)
+
+
+def test_a_failed_commit_puts_the_previous_error_book_back(pg, tmp_path: Path, mailbox, monkeypatch) -> None:
+    """#207：錯誤清單寫好之後 commit 失敗，放回上一次的清單，和資料庫一致。"""
+    import_daily(write_daily(tmp_path / "d1.xlsx", [trade(A, "Amy", "北區", 1)]), pg)
+    book = tmp_path / "每日匯入錯誤.xlsx"
+    before = book.read_bytes()
+
+    failing_commit(pg, monkeypatch)
+    with pytest.raises(psycopg.OperationalError, match="commit 失敗"):
+        import_daily(write_daily(tmp_path / "d2.xlsx", [trade(B, "Amy", "北區", 1)]), pg)
+
+    assert count(pg, "workflow.import_run") == 1
+    assert book.read_bytes() == before
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["d1.xlsx", "d2.xlsx", "每日匯入錯誤.xlsx"]
+
+
+def test_a_failed_first_commit_leaves_no_error_book(pg, tmp_path: Path, mailbox, monkeypatch) -> None:
+    failing_commit(pg, monkeypatch)
+    with pytest.raises(psycopg.OperationalError, match="commit 失敗"):
+        import_price_csv(write_price_csv(tmp_path / "MarketData_20261015.csv", [csv_price("AAA UW", "101.25")]), pg)
+
+    assert count(pg, "workflow.import_run") == 0
+    assert not (tmp_path / "每日匯入錯誤.xlsx").exists()
 
 
 # ---------------------------------------------------------------- 每日股價 BBG_Data（#87）
