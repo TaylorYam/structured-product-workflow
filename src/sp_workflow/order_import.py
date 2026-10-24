@@ -67,6 +67,7 @@ from sp_workflow.product_write import (
     save_terms,
     to_json,
 )
+from sp_workflow.status import OrderReview
 from sp_workflow.trade_rows import TradeRowsDraft
 
 if TYPE_CHECKING:
@@ -76,7 +77,7 @@ if TYPE_CHECKING:
     from fcn_checker.trading_calendar import TradingCalendar
 
 # 匯入前每檔的狀態（`review_status`）：擋匯入、讀取時有提醒但可以匯入、可以匯入；另有已鎖住（LOCKED）
-BLOCKED, TO_CHECK, READY = "待確認", "請確認", "可匯入"
+BLOCKED, TO_CHECK, READY = OrderReview.BLOCKED, OrderReview.TO_CHECK, OrderReview.READY
 IMPORTABLE = frozenset((TO_CHECK, READY))
 
 

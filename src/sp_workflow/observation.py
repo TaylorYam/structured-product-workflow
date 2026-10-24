@@ -49,18 +49,19 @@ from sp_workflow.lifecycle import (
     replace_auto_events,
 )
 from sp_workflow.product_record import KO_TYPES
+from sp_workflow.status import OrderReview, Pricing
 
 if TYPE_CHECKING:
     import psycopg
 
     from fcn_checker.trading_calendar import Market, TradingCalendar
 
-ON_BOOK = "在庫"
-WAIT_PRICES = "等股價"
-TO_CONFIRM = "待確認"
-EXITED = "已出場"
-STATUSES = (ON_BOOK, WAIT_PRICES, TO_CONFIRM, EXITED)
-UNLOCKED = "未鎖住"
+ON_BOOK = Pricing.ON_BOOK
+WAIT_PRICES = Pricing.WAIT_PRICES
+TO_CONFIRM = Pricing.TO_CONFIRM
+EXITED = Pricing.EXITED
+STATUSES = tuple(Pricing)
+UNLOCKED = OrderReview.UNLOCKED
 
 MEMORY_TYPES = frozenset(("Daily Memory", "Period End Memory"))
 DAILY_TYPES = frozenset(("Daily", "Daily Memory"))

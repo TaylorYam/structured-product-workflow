@@ -23,14 +23,12 @@ from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from sp_workflow.check_terms import DONE as TERMS_DONE
 from sp_workflow.lifecycle import Objection, lifecycle_status, open_objections
-from sp_workflow.observation import TO_CONFIRM as PRICING_TO_CONFIRM
-from sp_workflow.observation import UNLOCKED, WAIT_PRICES
 from sp_workflow.order_import import ImportConfig, issuer_code
 from sp_workflow.product_export import save_rows
 from sp_workflow.product_record import PRICING_FIELD, PRODUCT_COLUMNS, REQUIRED, missing_fields
 from sp_workflow.product_write import INVENTORY_SOURCE
+from sp_workflow.status import CheckTerms, OrderReview, Pricing, Progress
 from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP
 
 if TYPE_CHECKING:
@@ -39,12 +37,12 @@ if TYPE_CHECKING:
 SENT_STEP = "已寄出"  # 進度頁登記（#157）
 _FLOW_STEPS = (PREPARED_STEP, RETURNED_STEP, DRAFTED_STEP, SENT_STEP)  # 新流程的步驟紀錄
 
-PREPARING = "資料準備中"
-TO_CHECK = "待核對"
-TO_FIX = "待修正"
-TO_MAIL = "待寄信"
-FINISHED = "完成"
-PROGRESS = (PREPARING, TO_CHECK, TO_FIX, TO_MAIL, FINISHED)
+PREPARING = Progress.PREPARING
+TO_CHECK = Progress.TO_CHECK
+TO_FIX = Progress.TO_FIX
+TO_MAIL = Progress.TO_MAIL
+FINISHED = Progress.FINISHED
+PROGRESS = tuple(Progress)
 _UNCHECKED = (PREPARING, TO_CHECK, TO_FIX)  # 還沒核對完（批次登記已寄出時提示）
 READY_COLUMNS = ("交易明細", "商品條件", "股價")  # 核對前要齊的三件（#186），畫面打勾
 # 每個標的都有進場價時的必填欄（#182）：期初價格（定價方式）只是用來取進場價，取到了就沒差
@@ -110,12 +108,15 @@ class ProgressRow:
     @property
     def pricing_text(self) -> str:
         """畫面與匯出的比價狀態：比價時還沒鎖住的後面標「（未鎖住）」。"""
-        return f"{self.pricing}（{UNLOCKED}）" if self.pricing and self.pricing_unlocked else self.pricing
+        return f"{self.pricing}（{OrderReview.UNLOCKED}）" if self.pricing and self.pricing_unlocked else self.pricing
 
     @property
     def problem(self) -> bool:
         """畫面用問題色：還沒完成又有卡住的原因，或比價狀態是等股價、待確認。"""
-        return (self.progress != FINISHED and bool(self.reason)) or self.pricing in (WAIT_PRICES, PRICING_TO_CONFIRM)
+        return (self.progress != FINISHED and bool(self.reason)) or self.pricing in (
+            Pricing.WAIT_PRICES,
+            Pricing.TO_CONFIRM,
+        )
 
 
 @dataclass(frozen=True)
@@ -159,7 +160,7 @@ def _gaps(facts: Facts) -> dict[str, str]:
         gaps[terms] = f"缺：{'、'.join(facts.missing)}"
     if facts.terms_status is None:
         gaps[prices] = "還沒算核對條件"
-    elif facts.terms_status != TERMS_DONE:
+    elif facts.terms_status != CheckTerms.DONE:
         gaps[prices] = f"核對條件{facts.terms_status}" + (f"：{facts.terms_reason}" if facts.terms_reason else "")
     return gaps
 
@@ -210,7 +211,7 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
         ):
             item = of(tdcc)
             item.update(terms_status=status, terms_reason=reason)
-            if status == TERMS_DONE:
+            if status == CheckTerms.DONE:
                 item["dates"][CHECK_TERMS_DONE] = calculated_at
         for tdcc, kind, category, checked_at in conn.execute(
             "SELECT tdcc, kind, category, checked_at FROM workflow.check_result"
