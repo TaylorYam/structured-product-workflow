@@ -12,10 +12,10 @@ from sp_workflow.app import PanelWindow
 from sp_workflow.check_terms import DONE, TO_CONFIRM, WAIT_PRICES, CalcLine, CalcReceipt, Difference
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.order_terms import OrderRow
-from sp_workflow.product_terms import BLOCKED, READY, TO_CHECK, OrderImportLine, OrderImportReceipt, OrderImportResult
-from sp_workflow.product_terms import NEW as ORDER_NEW
-from sp_workflow.product_terms import SKIPPED as ORDER_SKIPPED
+from sp_workflow.product_terms import BatchReceipt, ImportLine
+from sp_workflow.status import ImportResult, OrderReview
 from sp_workflow.tabs.editor import PROBLEM_BG
+from sp_workflow.window_actions import OrderImportResult
 from window_synth import NEEDS_RELEASE, UF_DIFF, new_window, read_result, release_without_database, texts, type_into
 
 
@@ -90,7 +90,7 @@ def test_products_needing_work_come_first_and_the_first_one_opens(master, tmp_pa
     ready, missing = order_row("029199990001"), order_row("029199990002", {"Maturity date": None})
     window = order_window(master, tmp_path, ready, missing)
 
-    assert table_rows(window.orders) == [("029199990002", BLOCKED), ("029199990001", READY)]
+    assert table_rows(window.orders) == [("029199990002", OrderReview.BLOCKED), ("029199990001", OrderReview.READY)]
     editor = window.orders.editor
     assert editor.draft.tdcc == "029199990002"
     assert editor.rows["Maturity date"].note.cget("text").startswith("必填")
@@ -103,7 +103,7 @@ def test_filling_a_red_field_makes_the_product_importable(master, tmp_path: Path
 
     type_into(window.orders.editor, "Maturity date", "2027-04-22")
 
-    assert table_rows(window.orders) == [("029199990002", READY)]
+    assert table_rows(window.orders) == [("029199990002", OrderReview.READY)]
     assert window.orders.editor.draft.values["Maturity date"].isoformat() == "2027-04-22"
     assert window.orders.unsaved
 
@@ -121,8 +121,8 @@ def test_a_mistyped_field_stays_red_and_keeps_only_that_product_out(master, tmp_
     assert window.orders.editor.rows["Trade date"].note.cget("text") == "日期要寫成 2026-10-21"
     assert window.orders.editor.rows["Trade date"].var.get() == "10/15", "保留打的字"
     assert draft.input_errors == {"Trade date": "日期要寫成 2026-10-21"}, "匯入時這一檔會判不匯入"
-    assert dict(table_rows(window.orders))["029199990001"] == BLOCKED
-    assert dict(table_rows(window.orders))["029199990002"] == READY
+    assert dict(table_rows(window.orders))["029199990001"] == OrderReview.BLOCKED
+    assert dict(table_rows(window.orders))["029199990002"] == OrderReview.READY
     assert started == ["匯入資料庫中…"], "其他檔照常匯入"
     assert str(window.orders.editor.rows["Coupon p.a. (%)"].input.cget("state")) == "disabled", "存檔中不能改"
 
@@ -161,12 +161,12 @@ def test_conflicting_duplicate_fields_are_red_until_filled(master, tmp_path: Pat
     window = order_window(master, tmp_path, row)
     field = window.orders.editor.rows["Coupon p.a. (%)"]
 
-    assert table_rows(window.orders) == [("029199990001", BLOCKED)]
+    assert table_rows(window.orders) == [("029199990001", OrderReview.BLOCKED)]
     assert field.label.cget("background") == PROBLEM_BG and "好幾列" in field.note.cget("text")
 
     type_into(window.orders.editor, "Coupon p.a. (%)", "13")
 
-    assert table_rows(window.orders) == [("029199990001", TO_CHECK)]
+    assert table_rows(window.orders) == [("029199990001", OrderReview.TO_CHECK)]
 
 
 def test_leaving_another_field_keeps_a_cleared_strike_date(master, tmp_path: Path) -> None:
@@ -214,26 +214,26 @@ def test_import_results_replace_the_status_column(master, tmp_path: Path) -> Non
     )
     type_into(window.orders.editor, "Maturity date", "2027-04-22")
     lines = (
-        OrderImportLine("029199990002", ORDER_NEW),
-        OrderImportLine("029199990001", ORDER_SKIPPED, "Currency：問題"),
+        ImportLine("029199990002", ImportResult.NEW),
+        ImportLine("029199990001", ImportResult.SKIPPED, "Currency：問題"),
     )
 
-    window.orders._saved(OrderImportResult(OrderImportReceipt(7, lines)))
+    window.orders._saved(OrderImportResult(BatchReceipt(7, lines)))
 
-    assert table_rows(window.orders) == [("029199990002", ORDER_NEW), ("029199990001", ORDER_SKIPPED)]
+    assert table_rows(window.orders) == [("029199990002", ImportResult.NEW), ("029199990001", ImportResult.SKIPPED)]
     assert window.orders.kpis.values == (("已匯入（檔）", 1, False), ("沒匯入（檔）", 1, True))
     assert window.orders.status_var.get().startswith("完成（第 7 次起單資料匯入）：新增 1、覆蓋 0、沒有變 0、不匯入 1")
     assert not window.orders.unsaved
     for iid in ("1", "0"):  # 匯入後點來點去，結果不會被洗掉
         window.orders.table.selection_set(iid)
         window.orders._selected()
-    assert table_rows(window.orders) == [("029199990002", ORDER_NEW), ("029199990001", ORDER_SKIPPED)]
+    assert table_rows(window.orders) == [("029199990002", ImportResult.NEW), ("029199990001", ImportResult.SKIPPED)]
     assert not window.orders.has_unsaved()
 
 
 def test_reload_failure_after_import_says_the_database_was_written(master, tmp_path: Path) -> None:
     window = order_window(master, tmp_path, order_row("029199990001"))
-    receipt = OrderImportReceipt(8, (OrderImportLine("029199990001", ORDER_NEW),))
+    receipt = BatchReceipt(8, (ImportLine("029199990001", ImportResult.NEW),))
 
     window.orders._saved(OrderImportResult(receipt, reload_error="connection lost"))
 
@@ -285,15 +285,15 @@ def test_reading_without_a_database_setup_does_not_ask_for_a_password(master, tm
 
 def test_order_import_shows_the_check_terms_of_the_batch(master, tmp_path: Path, monkeypatch) -> None:
     window = order_window(master, tmp_path, order_row("029199990001"), order_row("029199990002"))
-    lines = (OrderImportLine("029199990001", ORDER_NEW), OrderImportLine("029199990002", ORDER_NEW))
+    lines = (ImportLine("029199990001", ImportResult.NEW), ImportLine("029199990002", ImportResult.NEW))
     calcs = (NEEDS_RELEASE, CalcLine("029199990002", DONE, "", True), CalcLine("029199990009", WAIT_PRICES, "", True))
-    window.orders._saved(OrderImportResult(OrderImportReceipt(7, lines), CalcReceipt(calcs)))
+    window.orders._saved(OrderImportResult(BatchReceipt(7, lines), CalcReceipt(calcs)))
 
     values = {
         window.orders.table.set(iid, "tdcc"): window.orders.table.item(iid, "values") for iid in window.orders.items
     }
-    assert values["029199990001"][1:] == (ORDER_NEW, "BARC", TO_CONFIRM, "核對條件：" + NEEDS_RELEASE.reason)
-    assert values["029199990002"][1:] == (ORDER_NEW, "BARC", DONE, "")
+    assert values["029199990001"][1:] == (ImportResult.NEW, "BARC", TO_CONFIRM, "核對條件：" + NEEDS_RELEASE.reason)
+    assert values["029199990002"][1:] == (ImportResult.NEW, "BARC", DONE, "")
     assert window.orders.kpis.values[-1] == ("核對條件待確認（檔）", 1, True)
     assert "核對條件（這批匯入的 2 檔）：完成 1、等股價 0、等交易明細 0、待確認 1。" in window.orders.status_var.get()
 

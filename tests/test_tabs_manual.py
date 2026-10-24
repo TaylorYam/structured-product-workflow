@@ -10,22 +10,14 @@ from tkinter import filedialog, messagebox
 
 import sp_workflow.tabs.manual
 from fcn_checker.ui import SURFACE
-from order_synth import CONFIG, VALUES, maintenance_draft, maintenance_trades
+from order_synth import CONFIG, MISSING_NOTE, VALUES, maintenance_draft, maintenance_trades
 from sp_workflow.app import PanelWindow
 from sp_workflow.check_terms import DONE, TO_CONFIRM, CalcLine
 from sp_workflow.order_terms import OrderRow
 from sp_workflow.product_export import ExportReceipt
 from sp_workflow.product_record import FIELDS, REQUIRED
-from sp_workflow.product_terms import (
-    LOCKED,
-    MAINTAIN_NEW,
-    MAINTAIN_OPEN,
-    MISSING_NOTE,
-    CorrectionError,
-    CorrectionReceipt,
-    MissingProduct,
-    OrderDraft,
-)
+from sp_workflow.product_terms import Draft, MissingProduct, Receipt, TermsError
+from sp_workflow.status import OrderReview
 from sp_workflow.tabs.editor import DIFFERENT_BG, PROBLEM_BG
 from sp_workflow.tabs.manual import correction_text
 from sp_workflow.trade_rows import CANCEL_NOTE, UNMATCHED_NOTE, TradeRowsDraft
@@ -35,16 +27,16 @@ from window_synth import new_window, type_into
 A_TDCC, B_TDCC, NEW_TDCC = "029199990001", "029199990002", "029199990003"
 
 
-def new_product_draft(tdcc: str = NEW_TDCC) -> OrderDraft:
+def new_product_draft(tdcc: str = NEW_TDCC) -> Draft:
     """只有交易明細的 TDCC：從空白開始，商品種類 FCN。"""
     values = {**dict.fromkeys(FIELDS), "Product": "FCN"}
-    row = OrderRow(tdcc, MAINTAIN_NEW, "BARC", dict(values))
-    return OrderDraft(row, dict(values), dict(values), dict(values), database_checked=True, correcting=True)
+    row = OrderRow(tdcc, OrderReview.TRADES_ONLY, "BARC", dict(values))
+    return Draft(row, dict(values), dict(values), dict(values), database_checked=True, correcting=True)
 
 
-def missing(tdcc: str, status: str = MAINTAIN_OPEN, **changes) -> MissingProduct:
+def missing(tdcc: str, status: str = OrderReview.UNLOCKED, **changes) -> MissingProduct:
     """「檢查」列出的一檔：只有交易明細的全部空白。"""
-    values = {**VALUES, **changes} if status == MAINTAIN_OPEN else dict.fromkeys(FIELDS)
+    values = {**VALUES, **changes} if status == OrderReview.UNLOCKED else dict.fromkeys(FIELDS)
     return MissingProduct(tdcc, "BARC", status, values, tuple(n for n in REQUIRED if values.get(n) is None))
 
 
@@ -54,7 +46,7 @@ def checked_window(master, tmp_path: Path, *products: MissingProduct) -> PanelWi
     return window
 
 
-def opened(window: PanelWindow, draft: OrderDraft):
+def opened(window: PanelWindow, draft: Draft):
     window.manual._opened(Opened(draft, CONFIG))
     return window.manual.editor
 
@@ -72,7 +64,7 @@ def test_check_lists_products_with_red_cells_where_data_is_missing(master, tmp_p
         master,
         tmp_path,
         missing(B_TDCC, **{"Strike (%)": None, "Maturity date": None}),
-        missing(NEW_TDCC, MAINTAIN_NEW),
+        missing(NEW_TDCC, OrderReview.TRADES_ONLY),
     )
     cells = window.manual.cells
 
@@ -80,7 +72,7 @@ def test_check_lists_products_with_red_cells_where_data_is_missing(master, tmp_p
     assert cells.background(B_TDCC, "Maturity date") == PROBLEM_BG
     assert cells.background(B_TDCC, "Coupon p.a. (%)") == SURFACE
     assert (cells.text(B_TDCC, "Coupon p.a. (%)"), cells.text(B_TDCC, "Maturity date")) == ("12.5", "")
-    assert cells.text(NEW_TDCC, "status") == MAINTAIN_NEW and cells.text(NEW_TDCC, "tdcc") == NEW_TDCC
+    assert cells.text(NEW_TDCC, "status") == OrderReview.TRADES_ONLY and cells.text(NEW_TDCC, "tdcc") == NEW_TDCC
     assert all(cells.background(NEW_TDCC, name) == PROBLEM_BG for name in REQUIRED)
     assert window.manual.kpis.values == (("缺資料（檔）", 2, True), ("只有交易明細（檔）", 1, False))
     assert window.manual.editor.draft is None, "檢查完不自動打開"
@@ -107,7 +99,7 @@ def test_the_tdcc_column_stays_left_while_the_fields_scroll(master, tmp_path: Pa
 
 def test_clicking_a_row_opens_that_product(master, tmp_path: Path, monkeypatch) -> None:
     window = checked_window(
-        master, tmp_path, missing(B_TDCC, **{"Maturity date": None}), missing(NEW_TDCC, MAINTAIN_NEW)
+        master, tmp_path, missing(B_TDCC, **{"Maturity date": None}), missing(NEW_TDCC, OrderReview.TRADES_ONLY)
     )
     started = without_database(window.manual, monkeypatch)
 
@@ -151,7 +143,7 @@ def test_an_unlocked_product_marks_blank_fields_red_but_can_be_saved(master, tmp
 def test_a_locked_product_follows_the_correction_rules(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
 
-    editor = opened(window, maintenance_draft(LOCKED))
+    editor = opened(window, maintenance_draft(OrderReview.LOCKED))
     type_into(editor, "BBG Code 3", "CCC UN")
     type_into(editor, "Maturity date", "")
 
@@ -190,7 +182,7 @@ def test_saving_reports_the_changes_and_updates_the_check_table(master, tmp_path
     assert started == [f"存檔中…（{A_TDCC}）"]
     assert str(tab.save_button.cget("state")) == "disabled", "存檔中不能改"
     calc = CalcLine(A_TDCC, DONE, "", True)
-    tab._saved(CorrectionReceipt(A_TDCC, 7, (("Maturity date", None, dt.date(2027, 4, 22)),), calc, locked=False))
+    tab._saved(Receipt(A_TDCC, 7, (("Maturity date", None, dt.date(2027, 4, 22)),), calc, locked=False))
 
     assert tab.status_var.get() == (
         f"已存檔 {A_TDCC} 的商品條件（第 7 筆紀錄）：Maturity date 空白 → 2027-04-22。\n核對條件重算後：完成。"
@@ -200,7 +192,7 @@ def test_saving_reports_the_changes_and_updates_the_check_table(master, tmp_path
 
     editor = opened(window, maintenance_draft(tdcc=B_TDCC, **{"Maturity date": None, "Coupon p.a. (%)": None}))
     type_into(editor, "Maturity date", "2027-04-22")
-    tab._saved(CorrectionReceipt(B_TDCC, 8, (), calc, locked=False, missing=("Coupon p.a. (%)",)))
+    tab._saved(Receipt(B_TDCC, 8, (), calc, locked=False, missing=("Coupon p.a. (%)",)))
 
     assert tab.cells.keys == [B_TDCC], "還缺的照樣列出"
     assert tab.cells.background(B_TDCC, "Maturity date") != PROBLEM_BG
@@ -208,7 +200,7 @@ def test_saving_reports_the_changes_and_updates_the_check_table(master, tmp_path
 
 
 def test_save_messages_for_new_and_locked_products() -> None:
-    created = CorrectionReceipt(
+    created = Receipt(
         NEW_TDCC,
         8,
         (("Coupon p.a. (%)", None, Decimal(11)),),
@@ -217,7 +209,7 @@ def test_save_messages_for_new_and_locked_products() -> None:
         created=True,
         missing=("Currency",),
     )
-    corrected = CorrectionReceipt(
+    corrected = Receipt(
         A_TDCC,
         3,
         (("Coupon p.a. (%)", Decimal("12.5"), Decimal(11)), ("UL_2_下限價", Decimal("32.5"), None)),
@@ -231,8 +223,8 @@ def test_save_messages_for_new_and_locked_products() -> None:
         f"已更正 {A_TDCC}（第 3 次更正）：Coupon p.a. (%) 12.5 → 11、UL_2_下限價 32.5 → 空白。"
         "商品維持鎖住，核對結果沒有變。\n核對條件重算後：待確認（UF：起單資料 2、交易明細 0.0215）。"
     )
-    assert correction_text(CorrectionReceipt(A_TDCC, None, locked=False)) == (f"{A_TDCC} 沒有改任何欄位，沒有寫入。")
-    exited = CorrectionReceipt(A_TDCC, 4, (("Coupon p.a. (%)", Decimal("12.5"), Decimal(11)),), exited="KO 2026-11-18")
+    assert correction_text(Receipt(A_TDCC, None, locked=False)) == (f"{A_TDCC} 沒有改任何欄位，沒有寫入。")
+    exited = Receipt(A_TDCC, 4, (("Coupon p.a. (%)", Decimal("12.5"), Decimal(11)),), exited="KO 2026-11-18")
     assert correction_text(exited).endswith(
         "\n注意：這檔已出場（KO 2026-11-18），不再比價，存續事件不會跟著改；結果和上手通知不同時，到「8 進度」提出異議。"
     )
@@ -246,7 +238,7 @@ def test_a_rejected_save_keeps_the_edits(master, tmp_path: Path, monkeypatch) ->
     type_into(editor, "Coupon p.a. (%)", "11")
     tab.save()
 
-    tab._saved(CorrectionError(f"{A_TDCC}：資料庫裡這檔的條件在打開之後改過了，請重新載入"))
+    tab._saved(TermsError(f"{A_TDCC}：資料庫裡這檔的條件在打開之後改過了，請重新載入"))
 
     assert editor.draft.values["Coupon p.a. (%)"] == Decimal(11) and tab.has_unsaved()
     assert str(tab.save_button.cget("state")) == "normal" and str(tab.reload_button.cget("state")) == "normal"
@@ -303,7 +295,7 @@ def opened_trades(*rows: dict) -> TradeRowsDraft:
     return trades
 
 
-def opened_with(window: PanelWindow, draft: OrderDraft, trades: TradeRowsDraft):
+def opened_with(window: PanelWindow, draft: Draft, trades: TradeRowsDraft):
     window.manual._opened(Opened(draft, CONFIG, trades))
     return window.manual.trade_editor
 
@@ -404,9 +396,7 @@ def test_saving_sends_the_trade_rows_with_the_terms(master, tmp_path: Path, monk
     def save(settings, draft, config, *, trades, reason):
         saved.append(trades)
         trades.reopen({row.seq: row.values for row in trades.rows})
-        return CorrectionReceipt(
-            draft.tdcc, None, locked=False, trade_correction_id=4, trade_changes=((1, "募集", "N", "Y"),)
-        )
+        return Receipt(draft.tdcc, None, locked=False, trade_correction_id=4, trade_changes=((1, "募集", "N", "Y"),))
 
     monkeypatch.setattr(sp_workflow.tabs.manual, "save_product", save)
     monkeypatch.setattr(tab, "run_in_background", lambda action, busy, on_done, **k: on_done(action()))
@@ -422,7 +412,7 @@ def test_saving_sends_the_trade_rows_with_the_terms(master, tmp_path: Path, monk
 
 
 def test_save_messages_for_trade_rows() -> None:
-    both = CorrectionReceipt(
+    both = Receipt(
         A_TDCC,
         5,
         (("Coupon p.a. (%)", Decimal("12.5"), Decimal(11)),),
@@ -432,7 +422,7 @@ def test_save_messages_for_trade_rows() -> None:
         trade_changes=((2, "金額", Decimal("50000.0000"), Decimal(70000)), (2, "分公司", "台中", "台北")),
         unmatched=("Zed",),
     )
-    locked = CorrectionReceipt(
+    locked = Receipt(
         A_TDCC,
         None,
         (("UL_1_進場價", Decimal("100.5"), Decimal("100.6")),),
@@ -458,7 +448,7 @@ def test_save_messages_for_trade_rows() -> None:
 
 def test_maintenance_check_table_copies_cells_rows_and_everything(master, tmp_path: Path) -> None:
     window = checked_window(
-        master, tmp_path, missing(B_TDCC, **{"Maturity date": None}), missing(NEW_TDCC, MAINTAIN_NEW)
+        master, tmp_path, missing(B_TDCC, **{"Maturity date": None}), missing(NEW_TDCC, OrderReview.TRADES_ONLY)
     )
     tab = window.manual
     cells = tab.cells
@@ -468,7 +458,7 @@ def test_maintenance_check_table_copies_cells_rows_and_everything(master, tmp_pa
 
     lines = master.clipboard_get().split("\n")
     assert lines[0].split("\t") == ["TDCC", "上手", "狀態", *REQUIRED]
-    assert lines[1].split("\t")[:3] == [B_TDCC, "BARC", MAINTAIN_OPEN]
+    assert lines[1].split("\t")[:3] == [B_TDCC, "BARC", OrderReview.UNLOCKED]
     assert lines[1].split("\t")[3 + REQUIRED.index("Maturity date")] == ""
     assert len(lines) == 3 and tab.cell_area.button.cget("text") == "已複製 2 列"
 
@@ -477,7 +467,7 @@ def test_maintenance_check_table_copies_cells_rows_and_everything(master, tmp_pa
     cells.menu.invoke(0)
     assert master.clipboard_get() == NEW_TDCC
     cells.menu.invoke(1)
-    assert master.clipboard_get().split("\t")[:3] == [NEW_TDCC, "BARC", MAINTAIN_NEW]
+    assert master.clipboard_get().split("\t")[:3] == [NEW_TDCC, "BARC", OrderReview.TRADES_ONLY]
     cells.fill_menu(B_TDCC, "issuer")
     cells.menu.invoke(0)
     assert master.clipboard_get() == "BARC"
@@ -505,7 +495,7 @@ class FakeClick:
 
 def test_right_click_finds_the_cell_under_the_pointer(master, tmp_path: Path, monkeypatch) -> None:
     cells = checked_window(
-        master, tmp_path, missing(B_TDCC, **{"Maturity date": None}), missing(NEW_TDCC, MAINTAIN_NEW)
+        master, tmp_path, missing(B_TDCC, **{"Maturity date": None}), missing(NEW_TDCC, OrderReview.TRADES_ONLY)
     ).manual.cells
     monkeypatch.setattr(cells.menu, "tk_popup", lambda *a: None)
     issuer_right = cells._edges[0][0]
@@ -518,7 +508,7 @@ def test_right_click_finds_the_cell_under_the_pointer(master, tmp_path: Path, mo
     cells._popup(FakeClick(cells.body, 3, cells.row_height * 5))
     below = cells.menu.labels()
 
-    assert status[0] == f"複製「{MAINTAIN_NEW}」", "第二列的「狀態」欄"
+    assert status[0] == f"複製「{OrderReview.TRADES_ONLY}」", "第二列的「狀態」欄"
     assert tdcc[0] == f"複製「{B_TDCC}」", "左邊固定的 TDCC 欄"
     assert below == ["全部複製（含表頭）"], "點在最後一列底下"
 

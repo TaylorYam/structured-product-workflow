@@ -30,6 +30,7 @@ ADR 0006 決定：TS 核對通過前，重新匯入起單資料就覆蓋；通�
 - 新增 `workflow.term_correction`（資料表版本 0011），更新程式後請執行一次 `spw-db-migrate`。
 - 更正後的核對條件可能變成待確認（例如 UF 改了和交易明細不同）；已鎖住的商品不能放行差異，狀態只是提示。
 - 核對結果不會因更正失效；需要重新核對時，作業人員自己再核對一次（已鎖住的商品可以再核對，但不再回填）。
+- 位置（#203）：更正的規則在 `sp_workflow.product_terms`：已鎖住的草稿（`Draft.mode` 是 `Mode.CORRECT`）用 `write` 存檔。
 
 ## English
 
@@ -56,3 +57,4 @@ ADR 0006 decided that re-importing order terms overwrites them until the TS chec
 - New table `workflow.term_correction` (schema version 0011); run `spw-db-migrate` once after updating.
 - Corrected check terms may become 待確認 (for example a UF that now differs from the trade rows); locked products cannot release differences, so the status is informational.
 - Corrections do not invalidate check results; when a recheck is needed the operator runs it (locked products can be checked again but are not backfilled again).
+- Location (#203): the correction rules live in `sp_workflow.product_terms`; a locked draft (`Draft.mode` is `Mode.CORRECT`) is saved with `write`.

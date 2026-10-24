@@ -70,3 +70,21 @@ class OrderReview(StrEnum):
     LOCKED = "已鎖住"
     UNLOCKED = "未鎖住"
     TRADES_ONLY = "只有交易明細"
+
+
+class ImportResult(StrEnum):
+    """起單資料匯入一檔的結果（#86、ADR 0009）：存在 `workflow.order_import_line.result`。成員的順序是畫面列出各結果檔數的順序。"""
+
+    NEW = "新增"
+    OVERWRITTEN = "覆蓋"
+    SAME = "沒有變"
+    SKIPPED = "不匯入"
+    LOCKED = "已鎖住"
+
+
+class ProductSource(StrEnum):
+    """商品條件由哪裡建立（#86、#115）：存在 `workflow.product.source`。清單更新已停用（#87），只剩以前建立的商品。"""
+
+    INVENTORY = "清單更新"
+    ORDER = "Order"  # 「匯入起單資料」（#97 起從起單建檔讀）
+    MANUAL = "人工維護"  # 只有交易明細的 TDCC 在人工維護建立（#115）

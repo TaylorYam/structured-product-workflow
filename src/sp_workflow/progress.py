@@ -26,8 +26,8 @@ from typing import TYPE_CHECKING
 from sp_workflow.lifecycle import Objection, lifecycle_status, open_objections
 from sp_workflow.product_export import save_rows
 from sp_workflow.product_record import PRICING_FIELD, PRODUCT_COLUMNS, REQUIRED, missing_fields
-from sp_workflow.product_terms import INVENTORY_SOURCE, ImportConfig, issuer_code
-from sp_workflow.status import CheckTerms, OrderReview, Pricing, Progress
+from sp_workflow.product_terms import ImportConfig, issuer_code
+from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource, Progress
 from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP
 
 if TYPE_CHECKING:
@@ -198,7 +198,8 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
             required = _PRICED_REQUIRED if _has_initial_prices(product, initial_prices.get(tdcc, {})) else REQUIRED
             item.update(
                 has_terms=True,
-                locked_inventory=source == INVENTORY_SOURCE and locked_at is not None,
+                locked_inventory=source == ProductSource.INVENTORY
+                and locked_at is not None,  # 同 `product_terms.locked`
                 missing=tuple(missing_fields(product, required)),
             )
             _put(item["dates"], TERMS_IMPORTED, terms_imported)

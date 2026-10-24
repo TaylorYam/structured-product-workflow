@@ -11,27 +11,16 @@ from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import HintBar
 from sp_workflow.check_terms import CalcLine
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.order_terms import OrderRow
+from sp_workflow.order_terms import OrderRow, describe
 from sp_workflow.preparation import parse_tdccs
-from sp_workflow.product_terms import (
-    BLOCKED,
-    IMPORTABLE,
-    LOCKED,
-    NEW,
-    OVERWRITTEN,
-    READY,
-    SAME,
-    SKIPPED,
-    TO_CHECK,
-    OrderDraft,
-    OrderImportLine,
-    OrderImportResult,
-    review_status,
-)
+from sp_workflow.product_terms import Draft, ImportConfig, ImportLine
+from sp_workflow.status import ImportResult, OrderReview
 from sp_workflow.tabs.base import TITLE, DatabaseLogin, Tab
 from sp_workflow.tabs.editor import OrderEditor
 from sp_workflow.tabs.recalc import Releaser, recalc_text, status_counts
-from sp_workflow.window_actions import ReadResult, Recalc, import_order_sheet, read_order_sheet
+from sp_workflow.window_actions import OrderImportResult, ReadResult, Recalc, import_order_sheet, read_order_sheet
+
+IMPORTABLE = frozenset((OrderReview.TO_CHECK, OrderReview.READY))  # 讀取時有提醒但可以匯入、可以匯入
 
 
 class OrderTermsTab(Tab):
@@ -59,7 +48,7 @@ class OrderTermsTab(Tab):
         self.db = db
         self.config_paths = config_paths
         self.read: ReadResult | None = None  # 最近一次讀取的結果
-        self.items: dict[str, tuple[OrderRow, OrderDraft | None]] = {}  # 結果表的列 → (讀取結果, 確認資料)
+        self.items: dict[str, tuple[OrderRow, Draft | None]] = {}  # 結果表的列 → (讀取結果, 確認資料)
         self.unsaved = False  # 有改過、還沒匯入資料庫
         self.working = False  # 正在讀取或匯入
         self.sheet_var = tk.StringVar(value=memory.load().get("order_sheet", ""))
@@ -89,7 +78,7 @@ class OrderTermsTab(Tab):
         self.editor = OrderEditor(self.frame, lambda: self.read.config if self.read else None, self._edited)
         self.editor.grid(row=2, rowspan=2, column=2, sticky="nsew", padx=(16, 0))  # 從卡片那一列拉到底
         self.table.bind("<<TreeviewSelect>>", self._selected)
-        self.imported: dict[str, OrderImportLine] = {}  # 最近一次匯入每檔的結果（放行後重寫那一列）
+        self.imported: dict[str, ImportLine] = {}  # 最近一次匯入每檔的結果（放行後重寫那一列）
         self.releaser = Releaser(
             self, db, self._selected_tdcc, self._released, idle=lambda: not self.working, busy=self._busy
         )
@@ -105,10 +94,10 @@ class OrderTermsTab(Tab):
             if draft is not None and line is not None and row.tdcc == calc.tdcc:
                 self._show_imported(iid, row, line, calc)
 
-    def _show_imported(self, iid: str, row: OrderRow, line: OrderImportLine, calc: CalcLine | None) -> None:
+    def _show_imported(self, iid: str, row: OrderRow, line: ImportLine, calc: CalcLine | None) -> None:
         """匯入後的一列：狀態是匯入結果，核對條件是重算後的狀態，原因寫兩邊的說明。"""
         calc_reason = f"核對條件：{calc.reason}" if calc is not None and calc.reason else ""
-        problem = line.result == SKIPPED or (calc is not None and calc.problem)
+        problem = line.result == ImportResult.SKIPPED or (calc is not None and calc.problem)
         reason = "；".join(filter(None, (line.detail, calc_reason)))
         self._show_row(iid, row, line.result, reason, problem, calc.status if calc is not None else "")
 
@@ -257,7 +246,7 @@ class OrderTermsTab(Tab):
             return
         statuses = [self.table.set(iid, "status") for iid in self.items]
         ready = sum(status in IMPORTABLE for status in statuses)
-        locked = statuses.count(LOCKED)
+        locked = statuses.count(OrderReview.LOCKED)
         todo = len(statuses) - ready - locked
         status = (
             f"讀完了：{ready} 檔可以匯入、{todo} 檔要處理、{locked} 檔已鎖住。點商品就能在右邊確認、修改，"
@@ -270,11 +259,11 @@ class OrderTermsTab(Tab):
     def _fill_table(self, result: ReadResult) -> None:
         """有問題的排前面：待確認（含找不到）、請確認、可匯入、已鎖住。"""
         by_tdcc = {draft.tdcc: draft for draft in result.drafts}
-        order = {BLOCKED: 0, TO_CHECK: 1, READY: 2, LOCKED: 3}
+        order = {OrderReview.BLOCKED: 0, OrderReview.TO_CHECK: 1, OrderReview.READY: 2, OrderReview.LOCKED: 3}
         listed = []
         for row in result.rows:
             draft = by_tdcc.get(row.tdcc) if row.found else None
-            listed.append((row, draft, review_status(row, draft, result.config)))
+            listed.append((row, draft, _review(row, draft, result.config)))
         listed.sort(key=lambda item: order.get(item[2][0], 0))
         for i, (row, draft, (status, reason, problem)) in enumerate(listed):
             self.items[str(i)] = (row, draft)
@@ -293,17 +282,17 @@ class OrderTermsTab(Tab):
         self.editor.commit()  # 換檔前把上一檔還沒解讀的輸入解讀掉
         self.editor.show(draft, row)
 
-    def _edited(self, draft: OrderDraft) -> None:
+    def _edited(self, draft: Draft) -> None:
         """編輯區改了一檔：標成還沒匯入，結果表那一列改回匯入前的狀態。"""
         self.unsaved = True
         for iid, (row, item) in self.items.items():
             if item is draft and self.read is not None:
-                self._show_row(iid, row, *review_status(row, draft, self.read.config))
+                self._show_row(iid, row, *_review(row, draft, self.read.config))
 
     # ---------- 匯入 ----------
 
     def import_now(self) -> None:
-        """寫錯的欄不擋整批：那一檔不匯入（OrderDraft.input_errors），其他照常匯入。"""
+        """寫錯的欄不擋整批：那一檔不匯入（Draft.input_errors），其他照常匯入。"""
         read = self.read
         if read is None or not read.drafts:
             return
@@ -342,7 +331,7 @@ class OrderTermsTab(Tab):
             self.editor.show(self.editor.draft)  # 資料庫的值更新了，黃色的差異與帶入的值跟著重算
         imported = sum(line.imported for line in receipt.lines)
         not_imported = len(receipt.lines) - imported
-        counts = "、".join(f"{kind} {receipt.count(kind)}" for kind in (NEW, OVERWRITTEN, SAME, SKIPPED, LOCKED))
+        counts = "、".join(f"{kind} {receipt.count(kind)}" for kind in ImportResult)
         status = f"完成（第 {receipt.import_id} 次起單資料匯入）：{counts}。"
         if calcs is not None:
             status += f"\n核對條件（這批匯入的 {len(batch)} 檔）：{status_counts(batch.values())}。"
@@ -350,9 +339,19 @@ class OrderTermsTab(Tab):
             status += f"\n{recalc_text(recalc)}"
         if result.reload_error:
             status += f"\n注意：已寫進資料庫，但重新讀取資料庫的值失敗（{result.reload_error}）；再匯入前請重新讀取。"
-        kpis = [("已匯入（檔）", imported, False), ("沒匯入（檔）", not_imported, receipt.count(SKIPPED) > 0)]
+        kpis = [
+            ("已匯入（檔）", imported, False),
+            ("沒匯入（檔）", not_imported, receipt.count(ImportResult.SKIPPED) > 0),
+        ]
         if calcs is not None:
             to_confirm = sum(calc.problem for calc in batch.values())
             kpis.append(("核對條件待確認（檔）", to_confirm, to_confirm > 0))
         self.finish(kpis, status)
         self.releaser.show(recalc)
+
+
+def _review(row: OrderRow, draft: Draft | None, config: ImportConfig) -> tuple[str, str, bool]:
+    """匯入前這檔的 (狀態, 原因, 是否要處理)；找不到的（沒有確認資料）照讀取狀態。"""
+    if draft is None:
+        return row.status, describe(row.notes), True
+    return draft.import_review(config)

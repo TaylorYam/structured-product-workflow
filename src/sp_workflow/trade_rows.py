@@ -1,7 +1,7 @@
 """人工維護修改交易明細（#116、ADR 0018）。
 
 「7 人工維護」打開一檔時一起讀這個 TDCC 的交易明細列，放在編輯區的商品條件底下逐列修改；存檔由
-`product_terms.save_terms` 和商品條件在同一個 transaction 裡寫入、重算核對條件、留紀錄。對外：
+`product_terms.write` 和商品條件在同一個 transaction 裡寫入、重算核對條件、留紀錄。對外：
 - `load_trade_rows`：讀這檔的交易明細列（依 row_seq）與信箱；畫面打的字由 `editor_cells.commit_trade_rows` 解讀進
   `TradeRowsDraft` 每列的值（用 `daily_import.trade_value`，同每日匯入），存進去的值才會和之後匯入的一樣。
   `TradeRowsDraft.differences`：改了的格子 → 資料庫的值（畫面標黃）。
@@ -66,7 +66,7 @@ class TradeRowsDraft:
         return [(row.seq, *edit) for row in self.rows for edit in row.edits()]
 
     def differences(self) -> dict[tuple[int, str], object]:
-        """和打開時不同的格子 (row_seq, 欄) → 資料庫的值（畫面標黃）；同 `OrderDraft.differences`。"""
+        """和打開時不同的格子 (row_seq, 欄) → 資料庫的值（畫面標黃）；同 `product_terms.Draft.differences`。"""
         return {(seq, name): stored for seq, name, stored, _ in self.edits()}
 
     def has_input_errors(self) -> bool:

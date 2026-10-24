@@ -39,6 +39,7 @@ ADR 0016 讓資料庫的商品條件可以部分空白，缺欄的商品停在�
 - 讀 `workflow.term_correction` 的程式要處理 `previous` 空白，並用 `locked` 分辨更正和人工維護。
 - 「2 起單資料」不再有更正按鈕；README 與步驟欄改成七步。
 - 來源「人工維護」的商品沒有匯入批次（`first_run_id`、`order_import_id` 都空白）。
+- 位置（#203）：人工維護的規則在 `sp_workflow.product_terms`：`draft_from(TDCC, …)` 打開一檔、`missing_products` 給「檢查」、`write` 存檔；兩邊都沒有這檔時由 `window_actions.open_product` 擋下。
 
 ## English
 
@@ -73,3 +74,4 @@ ADR 0016 lets database product terms be partially blank; products with blank fie
 - Code reading `workflow.term_correction` must handle a blank `previous` and use `locked` to tell corrections from manual maintenance.
 - "2 起單資料" no longer has a correction button; the README and the step bar now have seven steps.
 - Products with source 人工維護 have no import batch (`first_run_id` and `order_import_id` are blank).
+- Location (#203): the maintenance rules live in `sp_workflow.product_terms`: `draft_from(TDCC, …)` opens a product, `missing_products` serves 檢查, and `write` saves; `window_actions.open_product` refuses a TDCC found in neither table.

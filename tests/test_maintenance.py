@@ -4,33 +4,24 @@ from __future__ import annotations
 
 import datetime as dt
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
 from db_synth import price, trade, write_daily
-from order_synth import CONFIG, A, B, maintenance_draft, order_row
+from fcn_checker.check_config import ConfigPaths
+from order_synth import CONFIG, MISSING_NOTE, A, B, drafts_of, maintenance_draft, open_terms, order_row
 from sp_workflow.check_terms import DONE, TO_CONFIRM, recalculate
 from sp_workflow.daily_import import import_daily
 from sp_workflow.order_terms import TDCC_FIELD
 from sp_workflow.product_record import FIELDS, REQUIRED
-from sp_workflow.product_terms import (
-    LOCKED,
-    MAINTAIN_NEW,
-    MAINTAIN_OPEN,
-    MANUAL_SOURCE,
-    MISSING_NOTE,
-    OVERWRITTEN,
-    CorrectionError,
-    drafts_from,
-    import_drafts,
-    maintenance_problems,
-    missing_products,
-    open_maintenance,
-    save_maintenance,
-)
+from sp_workflow.product_terms import TermsError, missing_products, problems, write, write_batch
+from sp_workflow.status import ImportResult, OrderReview, ProductSource
+from sp_workflow.window_actions import open_product
 
 UF_215 = {"Upfront / NotePrice (%)": Decimal("97.85")}  # UF 2.15，和 db_synth 的交易列一樣
 C = "029199990003"  # 只有交易明細（BARC）
+PATHS = ConfigPaths.with_fallback(Path(__file__).resolve().parents[1] / "config" / "review_standard.toml")
 
 
 # ---------- 檢查（不連資料庫） ----------
@@ -39,13 +30,13 @@ C = "029199990003"  # 只有交易明細（BARC）
 def test_blank_required_fields_are_marked_missing_but_do_not_block() -> None:
     draft = maintenance_draft(**{"Maturity date": None, "Strike (%)": None})
 
-    problems = maintenance_problems(draft, CONFIG)
+    found = problems(draft, CONFIG)
 
-    assert problems == {"Strike (%)": MISSING_NOTE, "Maturity date": MISSING_NOTE}
+    assert found == {"Strike (%)": MISSING_NOTE, "Maturity date": MISSING_NOTE}
 
 
 @pytest.mark.parametrize(
-    ("changes", "problems"),
+    ("changes", "expected"),
     [
         ({"Product": None}, {"Product": "必填"}),  # 商品種類在資料庫不能空白
         ({"Strike date": dt.date(2026, 10, 14)}, {"Strike date": "不能早於 Trade date"}),
@@ -54,8 +45,8 @@ def test_blank_required_fields_are_marked_missing_but_do_not_block() -> None:
         ({"Tenor (m)": 0}, {"Tenor (m)": "至少 1"}),
     ],
 )
-def test_format_problems_still_block(changes, problems) -> None:
-    assert maintenance_problems(maintenance_draft(**changes), CONFIG) == problems
+def test_format_problems_still_block(changes, expected) -> None:
+    assert problems(maintenance_draft(**changes), CONFIG) == expected
 
 
 def test_cross_field_checks_skip_blank_fields() -> None:
@@ -63,7 +54,7 @@ def test_cross_field_checks_skip_blank_fields() -> None:
         **{"Trade date": None, "Barrier Type": None, "Currency": None, "Tenor (m)": None, "Strike date": None}
     )
 
-    assert maintenance_problems(draft, CONFIG) == {
+    assert problems(draft, CONFIG) == {
         name: MISSING_NOTE for name in ("Currency", "Tenor (m)", "Barrier Type", "Trade date", "Strike date")
     }
 
@@ -72,35 +63,35 @@ def test_a_blank_ki_with_a_barrier_still_blocks() -> None:
     """KI(%) 不在必填欄：有 KI 卻空著存進去，「檢查」找不到、寄信寫成「-」，所以照匯入的規則擋。"""
     draft = maintenance_draft(**{"KI Barrier (%)": None})
 
-    assert maintenance_problems(draft, CONFIG) == {"KI Barrier (%)": "有 KI 時必填；還不確定就把 Barrier Type 也先空著"}
+    assert problems(draft, CONFIG) == {"KI Barrier (%)": "有 KI 時必填；還不確定就把 Barrier Type 也先空著"}
     both = maintenance_draft(**{"KI Barrier (%)": None, "Barrier Type": None})
-    assert maintenance_problems(both, CONFIG) == {"Barrier Type": MISSING_NOTE}
+    assert problems(both, CONFIG) == {"Barrier Type": MISSING_NOTE}
 
 
 def test_mistyped_fields_block() -> None:
     draft = maintenance_draft()
     draft.input_errors["Tenor (m)"] = "要填整數"
 
-    assert maintenance_problems(draft, CONFIG) == {"Tenor (m)": "要填整數"}
+    assert problems(draft, CONFIG) == {"Tenor (m)": "要填整數"}
 
 
 def test_locked_products_follow_the_correction_rules() -> None:
-    draft = maintenance_draft(LOCKED, **{"Maturity date": None})
+    draft = maintenance_draft(OrderReview.LOCKED, **{"Maturity date": None})
 
-    assert maintenance_problems(draft, CONFIG) == {"Maturity date": "必填"}
+    assert problems(draft, CONFIG) == {"Maturity date": "必填"}
 
 
 def test_a_new_product_needs_a_known_issuer() -> None:
-    draft = maintenance_draft(MAINTAIN_NEW, tdcc="999199990001", issuer="")
+    draft = maintenance_draft(OrderReview.TRADES_ONLY, tdcc="999199990001", issuer="")
 
-    assert maintenance_problems(draft, CONFIG) == {TDCC_FIELD: "TDCC 前三碼 999 不在上手編號對照"}
+    assert problems(draft, CONFIG) == {TDCC_FIELD: "TDCC 前三碼 999 不在上手編號對照"}
 
 
 # ---------- 資料庫 ----------
 
 
 def import_order(pg, tdcc: str = A, **changes) -> None:
-    receipt = import_drafts(drafts_from([order_row(tdcc, {**UF_215, **changes})], pg), pg, CONFIG, user="tester")
+    receipt = write_batch(pg, drafts_of([order_row(tdcc, {**UF_215, **changes})], pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
 
 
@@ -141,8 +132,8 @@ def test_check_lists_unlocked_products_missing_data_and_trade_only_tdccs(pg, tmp
     found = missing_products(pg, CONFIG)
 
     assert [(p.tdcc, p.issuer, p.status, p.missing) for p in found] == [
-        (C, "BARC", MAINTAIN_NEW, REQUIRED),
-        (B, "SG", MAINTAIN_OPEN, ("Strike (%)", "Maturity date")),
+        (C, "BARC", OrderReview.TRADES_ONLY, REQUIRED),
+        (B, "SG", OrderReview.UNLOCKED, ("Strike (%)", "Maturity date")),
     ]
     assert found[1].values["Coupon p.a. (%)"] == Decimal("12.5") and found[1].values["Maturity date"] is None
     assert set(found[0].values) == set(FIELDS) and not any(found[0].values.values())
@@ -152,42 +143,42 @@ def test_check_lists_unlocked_products_missing_data_and_trade_only_tdccs(pg, tmp
 def test_a_trade_only_tdcc_opens_blank_with_its_issuer(pg, tmp_path) -> None:
     import_trades(pg, tmp_path, C)
 
-    draft = open_maintenance(pg, C, CONFIG)
+    draft = open_terms(pg, C, CONFIG)
 
-    assert (draft.tdcc, draft.issuer, draft.row.status) == (C, "BARC", MAINTAIN_NEW)
+    assert (draft.tdcc, draft.issuer, draft.row.status) == (C, "BARC", OrderReview.TRADES_ONLY)
     assert draft.values == {**dict.fromkeys(FIELDS), "Product": "FCN"}
     assert draft.edits() == [] and draft.differences() == {} and not draft.locked
 
 
 @pytest.mark.db
-def test_a_tdcc_in_neither_table_cannot_be_opened(pg) -> None:
-    with pytest.raises(CorrectionError, match="交易明細和商品條件都沒有這檔"):
-        open_maintenance(pg, C, CONFIG)
+def test_a_tdcc_in_neither_table_cannot_be_opened(pg, pg_settings) -> None:
+    with pytest.raises(TermsError, match="交易明細和商品條件都沒有這檔"):
+        open_product(pg_settings, C, PATHS)
 
 
 @pytest.mark.db
 def test_any_product_opens_including_complete_and_locked_ones(pg) -> None:
     import_order(pg, A)
-    assert open_maintenance(pg, A, CONFIG).row.status == MAINTAIN_OPEN
+    assert open_terms(pg, A, CONFIG).row.status == OrderReview.UNLOCKED
 
     lock(pg, A)
-    draft = open_maintenance(pg, A, CONFIG)
+    draft = open_terms(pg, A, CONFIG)
 
-    assert draft.row.status == LOCKED and not draft.locked, "已鎖住的也可以改（照更正規則）"
+    assert draft.row.status == OrderReview.LOCKED and not draft.locked, "已鎖住的也可以改（照更正規則）"
     assert draft.values["Coupon p.a. (%)"] == Decimal("12.5") and draft.values == draft.stored
 
 
 @pytest.mark.db
 def test_a_trade_only_tdcc_gets_partial_terms(pg, tmp_path) -> None:
     import_trades(pg, tmp_path, C)
-    draft = open_maintenance(pg, C, CONFIG)
+    draft = open_terms(pg, C, CONFIG)
     draft.values.update({"Currency": "USD", "Coupon p.a. (%)": Decimal(11), "Trade date": dt.date(2026, 10, 15)})
 
-    receipt = save_maintenance(pg, draft, CONFIG, reason="起單建檔漏了", user="operator1")
+    receipt = write(pg, draft, CONFIG, reason="起單建檔漏了", user="operator1")
 
     assert receipt.correction_id is not None and not receipt.locked and receipt.created
     assert (column(pg, "source", C), column(pg, "issuer", C), column(pg, "denomination", C)) == (
-        MANUAL_SOURCE,
+        ProductSource.MANUAL,
         "Barclays",
         Decimal(10000),
     )
@@ -200,9 +191,9 @@ def test_a_trade_only_tdcc_gets_partial_terms(pg, tmp_path) -> None:
     ((tdcc, by, reason, changes, previous, locked),) = records(pg)
     assert (tdcc, by, reason, previous, locked) == (C, "operator1", "起單建檔漏了", None, False)
     assert ["Coupon p.a. (%)", None, "11"] in changes and ["上手", None, "Barclays"] in changes
-    assert draft.row.status == MAINTAIN_OPEN and draft.stored == draft.values, "存檔後再存就是改這檔"
+    assert draft.row.status == OrderReview.UNLOCKED and draft.stored == draft.values, "存檔後再存就是改這檔"
     (listed,) = missing_products(pg, CONFIG)
-    assert (listed.tdcc, listed.status, listed.missing) == (C, MAINTAIN_OPEN, receipt.missing)
+    assert (listed.tdcc, listed.status, listed.missing) == (C, OrderReview.UNLOCKED, receipt.missing)
 
 
 @pytest.mark.db
@@ -212,10 +203,10 @@ def test_filling_every_required_field_takes_the_product_off_the_check(pg, tmp_pa
     blank(pg, A, "maturity_date")
     recalculate(pg, CONFIG.calendar)
     assert [p.tdcc for p in missing_products(pg, CONFIG)] == [A]
-    draft = open_maintenance(pg, A, CONFIG)
+    draft = open_terms(pg, A, CONFIG)
     draft.values["Maturity date"] = dt.date(2027, 4, 22)
 
-    receipt = save_maintenance(pg, draft, CONFIG, user="operator1")
+    receipt = write(pg, draft, CONFIG, user="operator1")
 
     assert receipt.missing == () and receipt.calc is not None and receipt.calc.status == DONE
     assert missing_products(pg, CONFIG) == ()
@@ -227,11 +218,11 @@ def test_filling_every_required_field_takes_the_product_off_the_check(pg, tmp_pa
 def test_an_unlocked_product_can_be_left_with_blanks(pg, tmp_path) -> None:
     import_trades(pg, tmp_path, A)
     import_order(pg, A)
-    draft = open_maintenance(pg, A, CONFIG)
+    draft = open_terms(pg, A, CONFIG)
     draft.values["Maturity date"] = None
     draft.values["Coupon p.a. (%)"] = Decimal(11)
 
-    receipt = save_maintenance(pg, draft, CONFIG, user="operator1")
+    receipt = write(pg, draft, CONFIG, user="operator1")
 
     assert receipt.missing == ("Maturity date",)
     assert receipt.calc is not None and (receipt.calc.status, receipt.calc.reason) == (TO_CONFIRM, "缺 Maturity date")
@@ -245,7 +236,7 @@ def test_nothing_changed_writes_nothing(pg, tmp_path) -> None:
     import_order(pg, A)
 
     for tdcc in (A, C):
-        receipt = save_maintenance(pg, open_maintenance(pg, tdcc, CONFIG), CONFIG, user="operator1")
+        receipt = write(pg, open_terms(pg, tdcc, CONFIG), CONFIG, user="operator1")
         assert receipt.correction_id is None and receipt.changes == ()
 
     assert records(pg) == []
@@ -255,11 +246,11 @@ def test_nothing_changed_writes_nothing(pg, tmp_path) -> None:
 @pytest.mark.db
 def test_format_problems_block_the_save(pg) -> None:
     import_order(pg, A)
-    draft = open_maintenance(pg, A, CONFIG)
+    draft = open_terms(pg, A, CONFIG)
     draft.values["Strike date"] = dt.date(2026, 10, 14)
 
-    with pytest.raises(CorrectionError, match="沒有存檔：Strike date：不能早於 Trade date"):
-        save_maintenance(pg, draft, CONFIG, user="operator1")
+    with pytest.raises(TermsError, match="沒有存檔：Strike date：不能早於 Trade date"):
+        write(pg, draft, CONFIG, user="operator1")
 
     assert records(pg) == []
 
@@ -267,11 +258,11 @@ def test_format_problems_block_the_save(pg) -> None:
 @pytest.mark.db
 def test_a_new_product_with_an_unknown_issuer_is_not_saved(pg, tmp_path) -> None:
     import_trades(pg, tmp_path, "999199990001")
-    draft = open_maintenance(pg, "999199990001", CONFIG)
+    draft = open_terms(pg, "999199990001", CONFIG)
     draft.values["Coupon p.a. (%)"] = Decimal(11)
 
-    with pytest.raises(CorrectionError, match="不在上手編號對照"):
-        save_maintenance(pg, draft, CONFIG, user="operator1")
+    with pytest.raises(TermsError, match="不在上手編號對照"):
+        write(pg, draft, CONFIG, user="operator1")
 
 
 @pytest.mark.db
@@ -279,20 +270,20 @@ def test_a_locked_product_is_saved_like_a_correction(pg) -> None:
     import_order(pg, A)
     lock(pg, A)
     locked_at = column(pg, "locked_at")
-    draft = open_maintenance(pg, A, CONFIG)
+    draft = open_terms(pg, A, CONFIG)
     draft.values["Coupon p.a. (%)"] = Decimal(11)
 
-    receipt = save_maintenance(pg, draft, CONFIG, reason="Order 抄錯", user="operator1")
+    receipt = write(pg, draft, CONFIG, reason="Order 抄錯", user="operator1")
 
     assert receipt.locked and receipt.correction_id is not None
     assert column(pg, "locked_at") == locked_at and column(pg, "coupon_pct") == Decimal(11)
     ((_, by, reason, changes, _, locked),) = records(pg)
     assert (by, reason, changes, locked) == ("operator1", "Order 抄錯", [["Coupon p.a. (%)", "12.5", "11"]], True)
 
-    blanked = open_maintenance(pg, A, CONFIG)
+    blanked = open_terms(pg, A, CONFIG)
     blanked.values["Maturity date"] = None
-    with pytest.raises(CorrectionError, match="Maturity date：必填"):
-        save_maintenance(pg, blanked, CONFIG, user="operator1")
+    with pytest.raises(TermsError, match="Maturity date：必填"):
+        write(pg, blanked, CONFIG, user="operator1")
 
 
 @pytest.mark.db
@@ -307,13 +298,13 @@ def test_correcting_an_exited_product_points_out_the_event_stays(pg, pg_settings
         " VALUES (%s, 'KO', '2026-11-18', '比價', 'tester')",
         (A,),
     )
-    draft = open_maintenance(pg, A, CONFIG)
+    draft = open_terms(pg, A, CONFIG)
     draft.values["Coupon p.a. (%)"] = Decimal(11)
 
     receipt = save_product(pg_settings, draft, CONFIG, trades=None, reason="Order 抄錯")
 
     assert receipt.correction_id is not None and receipt.exited == "KO 2026-11-18"
-    unchanged = save_product(pg_settings, open_maintenance(pg, A, CONFIG), CONFIG, trades=None, reason="")
+    unchanged = save_product(pg_settings, open_terms(pg, A, CONFIG), CONFIG, trades=None, reason="")
     assert unchanged.exited == "", "沒有改商品條件時不提醒"
 
 
@@ -338,12 +329,12 @@ def created_by_import(pg) -> None:
 def test_changes_after_opening_block_the_save(pg, tmp_path, tdcc, meanwhile, message) -> None:
     import_trades(pg, tmp_path, C)
     import_order(pg, A)
-    draft = open_maintenance(pg, tdcc, CONFIG)
+    draft = open_terms(pg, tdcc, CONFIG)
     draft.values["Coupon p.a. (%)"] = Decimal(11)
     meanwhile(pg)
 
-    with pytest.raises(CorrectionError, match=message):
-        save_maintenance(pg, draft, CONFIG, user="operator1")
+    with pytest.raises(TermsError, match=message):
+        write(pg, draft, CONFIG, user="operator1")
 
     assert records(pg) == []
 
@@ -352,13 +343,13 @@ def test_changes_after_opening_block_the_save(pg, tmp_path, tdcc, meanwhile, mes
 def test_a_product_created_by_someone_else_at_the_same_time_asks_for_a_reload(pg, tmp_path, monkeypatch) -> None:
     """還不存在的列 FOR UPDATE 鎖不到：別人在確認之後、寫入之前新增了同一檔，請重新載入，不是資料庫錯誤。"""
     import_trades(pg, tmp_path, C)
-    draft = open_maintenance(pg, C, CONFIG)
+    draft = open_terms(pg, C, CONFIG)
     draft.values["Coupon p.a. (%)"] = Decimal(11)
     import_order(pg, C)
-    monkeypatch.setattr("sp_workflow.product_terms.lock_terms", lambda conn, tdcc: None)  # 確認時還看不到
+    monkeypatch.setattr("sp_workflow.product_terms.read", lambda conn, tdcc, *, lock=False: None)  # 確認時還看不到
 
-    with pytest.raises(CorrectionError, match="打開之後資料庫已經有這檔的商品條件"):
-        save_maintenance(pg, draft, CONFIG, user="operator1")
+    with pytest.raises(TermsError, match="打開之後資料庫已經有這檔的商品條件"):
+        write(pg, draft, CONFIG, user="operator1")
 
     assert records(pg) == [] and column(pg, "coupon_pct", C) == Decimal("12.5")
 
@@ -370,13 +361,13 @@ def test_saving_again_after_rounding_is_not_taken_for_a_change_by_someone_else(p
     import_order(pg, A)
     if locked:
         lock(pg, A)
-    draft = open_maintenance(pg, A, CONFIG)
+    draft = open_terms(pg, A, CONFIG)
     draft.values["Coupon p.a. (%)"] = Decimal("11.1234567")
-    save_maintenance(pg, draft, CONFIG, user="operator1")
+    write(pg, draft, CONFIG, user="operator1")
     assert draft.values["Coupon p.a. (%)"] == Decimal("11.123457") == column(pg, "coupon_pct")
 
     draft.values["Tenor (m)"] = 12
-    receipt = save_maintenance(pg, draft, CONFIG, user="operator1")
+    receipt = write(pg, draft, CONFIG, user="operator1")
 
     assert receipt.correction_id is not None and column(pg, "tenor_months") == 12
     assert [changes for _, _, _, changes, _, _ in records(pg)][1] == [["Tenor (m)", 6, 12]]
@@ -385,12 +376,12 @@ def test_saving_again_after_rounding_is_not_taken_for_a_change_by_someone_else(p
 @pytest.mark.db
 def test_the_order_sheet_import_takes_over_a_manual_product(pg, tmp_path) -> None:
     import_trades(pg, tmp_path, C)
-    draft = open_maintenance(pg, C, CONFIG)
+    draft = open_terms(pg, C, CONFIG)
     draft.values["Coupon p.a. (%)"] = Decimal(11)
-    save_maintenance(pg, draft, CONFIG, user="operator1")
+    write(pg, draft, CONFIG, user="operator1")
 
-    receipt = import_drafts(drafts_from([order_row(C, UF_215)], pg), pg, CONFIG, user="tester")
+    receipt = write_batch(pg, drafts_of([order_row(C, UF_215)], pg), CONFIG, user="tester")
 
-    assert receipt.lines[0].result == OVERWRITTEN
+    assert receipt.lines[0].result == ImportResult.OVERWRITTEN
     assert receipt.lines[0].detail.startswith("人工維護建立的商品改由起單資料匯入接手")
     assert (column(pg, "source", C), column(pg, "coupon_pct", C)) == ("Order", Decimal("12.5"))

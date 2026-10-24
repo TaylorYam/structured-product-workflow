@@ -31,6 +31,7 @@
 - 更新程式後要跑 `spw-db-migrate`（資料表版本 0012）。已有的資料不變。
 - 必填欄齊全的商品行為不變。以前清單更新建立、還沒鎖住、期初定價空白的商品，原因從「期初定價「空白」…」變成「缺 期初價格」，狀態一樣是待確認。
 - 讀 `workflow.product` 的新程式要能處理必填欄空白，或先用 `missing_fields` 擋下。
+- 位置（#203）：`REQUIRED` 與 `missing_fields` 現在在 `sp_workflow.product_record`（#126）；人工維護標紅不擋的空白必填欄由 `product_terms.problems` 給。
 
 ## English
 
@@ -58,3 +59,4 @@ The required columns of `workflow.product` (underlyings, strike, KO, coupon, ten
 - Run `spw-db-migrate` after updating (schema version 0012). Existing data is unchanged.
 - Products with all required fields behave as before. Unlocked 清單更新 products with a blank initial pricing change their reason from "期初定價「空白」…" to "缺 期初價格"; their status stays 待確認.
 - New code reading `workflow.product` must handle blank required fields or block them first with `missing_fields`.
+- Location (#203): `REQUIRED` and `missing_fields` now live in `sp_workflow.product_record` (#126); `product_terms.problems` marks the blank required fields that maintenance does not block.

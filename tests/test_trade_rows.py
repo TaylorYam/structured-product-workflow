@@ -8,19 +8,12 @@ from decimal import Decimal
 import pytest
 
 from db_synth import price, seed_mailbox, trade, write_daily
-from order_synth import CONFIG, MAILBOX, TRADE, A, maintenance_trades, order_row
+from order_synth import CONFIG, MAILBOX, TRADE, A, drafts_of, maintenance_trades, open_terms, order_row
 from sp_workflow.check_terms import DONE, recalculate
 from sp_workflow.daily_import import DIFFERENT, UNCHANGED, import_daily, trade_value
 from sp_workflow.mailbox import Mailbox
-from sp_workflow.product_terms import (
-    LOCKED,
-    MAINTAIN_NEW,
-    CorrectionError,
-    drafts_from,
-    import_drafts,
-    open_maintenance,
-    save_maintenance,
-)
+from sp_workflow.product_terms import TermsError, write, write_batch
+from sp_workflow.status import OrderReview
 from sp_workflow.trade_rows import (
     CANCEL_NOTE,
     UNMATCHED_NOTE,
@@ -151,7 +144,7 @@ def import_product(pg, tmp_path, *, locked: bool = False) -> None:
     """A 有兩列交易明細、股價與起單資料，核對條件算完；`locked` 時再鎖住（核對通過）。"""
     seed_mailbox(pg)
     import_trades(pg, tmp_path, daily_rows())
-    receipt = import_drafts(drafts_from([order_row(A, UF_215)], pg), pg, CONFIG, user="tester")
+    receipt = write_batch(pg, drafts_of([order_row(A, UF_215)], pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
     assert recalculate(pg, CONFIG.calendar).line_of(A).status == DONE
     if locked:
@@ -159,7 +152,7 @@ def import_product(pg, tmp_path, *, locked: bool = False) -> None:
 
 
 def opened(pg, tdcc: str = A):
-    return open_maintenance(pg, tdcc, CONFIG), load_trade_rows(pg, tdcc)
+    return open_terms(pg, tdcc, CONFIG), load_trade_rows(pg, tdcc)
 
 
 def allocation(pg, tdcc: str = A):
@@ -215,7 +208,7 @@ def test_saving_trade_rows_updates_them_records_and_recalculates_the_allocation(
     draft, trades = opened(pg)
     trades.rows[1].values.update({"金額": Decimal(70000), "分公司": "台北", "募集": "Y"})
 
-    receipt = save_maintenance(pg, draft, CONFIG, trades=trades, reason="Excel 後來改了", user="operator1")
+    receipt = write(pg, draft, CONFIG, trades=trades, reason="Excel 後來改了", user="operator1")
 
     assert receipt.correction_id is None, "商品條件沒改，不寫商品條件的紀錄"
     assert receipt.trade_correction_id is not None and receipt.saved and not receipt.locked
@@ -242,7 +235,7 @@ def test_terms_and_trade_rows_are_saved_together(pg, tmp_path) -> None:
     draft.values["Coupon p.a. (%)"] = Decimal(11)
     trades.rows[0].values["募集"] = "Y"
 
-    receipt = save_maintenance(pg, draft, CONFIG, trades=trades, user="operator1")
+    receipt = write(pg, draft, CONFIG, trades=trades, user="operator1")
 
     assert receipt.correction_id is not None and receipt.trade_correction_id is not None
     assert [changes for _, changes, _ in term_records(pg)] == [[["Coupon p.a. (%)", "12.5", "11"]]]
@@ -263,8 +256,8 @@ def test_trade_problems_block_the_whole_save(pg, tmp_path, changes, message) -> 
     draft.values["Coupon p.a. (%)"] = Decimal(11)
     trades.rows[1].values.update(changes)
 
-    with pytest.raises(CorrectionError, match=f"沒有存檔：{message}"):
-        save_maintenance(pg, draft, CONFIG, trades=trades, user="operator1")
+    with pytest.raises(TermsError, match=f"沒有存檔：{message}"):
+        write(pg, draft, CONFIG, trades=trades, user="operator1")
 
     assert records(pg) == [] and term_records(pg) == []
     assert stored_trades(pg)[1] == (2, Decimal(50000), "台中", "N")
@@ -277,8 +270,8 @@ def test_a_mistyped_cell_blocks_the_save(pg, tmp_path) -> None:
     draft, trades = opened(pg)
     trades.rows[0].input_errors["金額"] = "「abc」不是數字"
 
-    with pytest.raises(CorrectionError, match="交易明細第 1 列 金額：「abc」不是數字"):
-        save_maintenance(pg, draft, CONFIG, trades=trades, user="operator1")
+    with pytest.raises(TermsError, match="交易明細第 1 列 金額：「abc」不是數字"):
+        write(pg, draft, CONFIG, trades=trades, user="operator1")
 
 
 @pytest.mark.db
@@ -286,7 +279,7 @@ def test_nothing_changed_writes_nothing(pg, tmp_path) -> None:
     import_product(pg, tmp_path)
     draft, trades = opened(pg)
 
-    receipt = save_maintenance(pg, draft, CONFIG, trades=trades, user="operator1")
+    receipt = write(pg, draft, CONFIG, trades=trades, user="operator1")
 
     assert not receipt.saved and receipt.trade_changes == ()
     assert records(pg) == [] and term_records(pg) == []
@@ -299,8 +292,8 @@ def test_trade_rows_changed_after_opening_block_the_save(pg, tmp_path) -> None:
     trades.rows[0].values["募集"] = "Y"
     pg.execute("UPDATE workflow.trade_row SET checker = 'Pat' WHERE tdcc = %s AND row_seq = 2", (A,))
 
-    with pytest.raises(CorrectionError, match="交易明細在打開之後改過了"):
-        save_maintenance(pg, draft, CONFIG, trades=trades, user="operator1")
+    with pytest.raises(TermsError, match="交易明細在打開之後改過了"):
+        write(pg, draft, CONFIG, trades=trades, user="operator1")
 
     assert records(pg) == []
 
@@ -319,8 +312,8 @@ def test_a_trade_row_added_after_opening_blocks_the_save(pg, tmp_path) -> None:
         (A,),
     )
 
-    with pytest.raises(CorrectionError, match="交易明細在打開之後改過了"):
-        save_maintenance(pg, draft, CONFIG, trades=trades, user="operator1")
+    with pytest.raises(TermsError, match="交易明細在打開之後改過了"):
+        write(pg, draft, CONFIG, trades=trades, user="operator1")
 
     assert records(pg) == [] and stored_trades(pg)[0] == (1, Decimal(100000), "台北", "N")
 
@@ -331,11 +324,11 @@ def test_a_trade_only_tdcc_can_have_its_rows_fixed_without_creating_terms(pg, tm
     draft, trades = opened(pg, B)
     trades.rows[0].values["金額"] = Decimal(90000)
 
-    receipt = save_maintenance(pg, draft, CONFIG, trades=trades, user="operator1")
+    receipt = write(pg, draft, CONFIG, trades=trades, user="operator1")
 
     assert receipt.trade_correction_id is not None and receipt.correction_id is None and receipt.calc is None
     assert pg.execute("SELECT count(*) FROM workflow.product").fetchone()[0] == 0, "商品條件沒填，不新增"
-    assert draft.row.status == MAINTAIN_NEW
+    assert draft.row.status == OrderReview.TRADES_ONLY
     assert [(tdcc, locked) for tdcc, _, _, _, _, _, locked in records(pg)] == [(B, False)]
 
 
@@ -350,15 +343,15 @@ def test_a_locked_product_stays_locked_and_recalculates_only_for_check_term_fiel
     locked_at = pg.execute("SELECT locked_at FROM workflow.product").fetchone()[0]
     before = calculated_at(pg)
     draft, trades = opened(pg)
-    assert draft.row.status == LOCKED
+    assert draft.row.status == OrderReview.LOCKED
     trades.rows[0].values["募集"] = "Y"
 
-    receipt = save_maintenance(pg, draft, CONFIG, trades=trades, user="operator1")
+    receipt = write(pg, draft, CONFIG, trades=trades, user="operator1")
 
     assert receipt.locked and receipt.calc is None and calculated_at(pg) == before, "募集不影響核對條件，不重算"
 
     trades.rows[1].values["金額"] = Decimal(70000)
-    receipt = save_maintenance(pg, draft, CONFIG, trades=trades, user="operator1")
+    receipt = write(pg, draft, CONFIG, trades=trades, user="operator1")
 
     assert receipt.calc is not None and calculated_at(pg) > before
     assert allocation(pg) == [("台北", Decimal(100000)), ("台中", Decimal(70000))]
@@ -373,8 +366,8 @@ def test_trade_problems_block_a_locked_product_too(pg, tmp_path) -> None:
     draft, trades = opened(pg)
     trades.rows[1].values["分公司"] = None
 
-    with pytest.raises(CorrectionError, match="沒有更正：交易明細第 2 列 分公司：必填"):
-        save_maintenance(pg, draft, CONFIG, trades=trades, user="operator1")
+    with pytest.raises(TermsError, match="沒有更正：交易明細第 2 列 分公司：必填"):
+        write(pg, draft, CONFIG, trades=trades, user="operator1")
 
     assert records(pg) == [] and stored_trades(pg)[1] == (2, Decimal(50000), "台中", "N")
 
@@ -385,7 +378,7 @@ def test_an_unmatched_fc_name_is_saved_and_reported(pg, tmp_path) -> None:
     draft, trades = opened(pg)
     trades.rows[1].values["FC/PB"] = "Zed"
 
-    receipt = save_maintenance(pg, draft, CONFIG, trades=trades, user="operator1")
+    receipt = write(pg, draft, CONFIG, trades=trades, user="operator1")
 
     assert receipt.trade_correction_id is not None and receipt.unmatched == ("Zed",)
 
@@ -401,6 +394,6 @@ def test_the_daily_import_shows_existing_once_the_database_matches_excel(pg, tmp
     draft, trades = opened(pg)
     typed = {"募集": "Y", "TS/IIS 核對": "V", "核對TS/IIS人員": "Pat", "金額": "50,000.50"}
     trades.rows[1].values.update({name: trade_value(name, text) for name, text in typed.items()})
-    save_maintenance(pg, draft, CONFIG, trades=trades, user="operator1")
+    write(pg, draft, CONFIG, trades=trades, user="operator1")
 
     assert [line.kind for line in import_trades(pg, tmp_path, later, "again.xlsx").lines] == [UNCHANGED]

@@ -416,7 +416,7 @@ def _load_terms(
     conn: psycopg.Connection,
 ) -> tuple[list[Terms], dict[str, bool], dict[str, tuple[str, str | None]]]:
     """核對條件完成的商品的比價條件、每檔是否鎖住，以及核對條件不是完成的 {TDCC: (狀態, 原因)}。"""
-    rows = conn.execute(
+    rows = conn.execute(  # 鎖住＝`locked_at` 有值（同 `product_terms.locked`）
         "SELECT p.tdcc, p.ko_type, p.barrier_type, p.strike_date, p.final_valuation_date,"
         " p.non_call_months, p.tenor_months, p.locked_at IS NOT NULL, c.status, c.reason"
         " FROM workflow.product p JOIN workflow.check_terms c ON c.tdcc = p.tdcc ORDER BY p.tdcc"

@@ -18,9 +18,9 @@ from sp_workflow.editor_cells import (
     trade_cell_states,
     trade_texts,
 )
-from sp_workflow.order_terms import OrderRow, format_field
+from sp_workflow.order_terms import TDCC_FIELD, OrderRow, describe, format_field
 from sp_workflow.product_record import CHOICES, FIELDS
-from sp_workflow.product_terms import TDCC_FIELD, ImportConfig, OrderDraft, check_draft, describe
+from sp_workflow.product_terms import Draft, ImportConfig, problems
 from sp_workflow.trade_rows import FIELDS as TRADE_ROW_FIELDS
 from sp_workflow.trade_rows import TradeRowsDraft
 
@@ -93,9 +93,9 @@ class OrderEditor(ttk.Frame):
     """起單資料頁右邊的編輯區：一次一檔，欄位是 `product_record.FIELDS`（#86、#97、ADR 0009、0010）。
 
     擋匯入的欄與讀起單建檔時有提醒的欄淺紅底並寫原因；和資料庫不同的欄淺黃底，寫出資料庫的值，可以一鍵改回。
-    離開欄位、按 Enter 或選了下拉時才解讀；寫錯的欄保留打的字並標紅（說明記在 `OrderDraft.input_errors`，
+    離開欄位、按 Enter 或選了下拉時才解讀；寫錯的欄保留打的字並標紅（說明記在 `Draft.input_errors`，
     匯入時那一檔不匯入）。值真的變了才通知 `on_change`。`fixed` 的欄只顯示、不能改（已鎖住時的 Issue date，#55）。
-    `check` 決定哪些欄標紅（起單資料用匯入的檢查，人工維護用 `maintenance_problems`，#115）。
+    標紅的欄是 `product_terms.problems`：起單資料用匯入的檢查，人工維護用存檔的檢查（依 `Draft.mode`，#115）。
     """
 
     PLACEHOLDER = "點左邊的商品來確認、修改"
@@ -105,19 +105,17 @@ class OrderEditor(ttk.Frame):
         self,
         parent: tk.Misc,
         config: Callable[[], ImportConfig | None],
-        on_change: Callable[[OrderDraft], None],
+        on_change: Callable[[Draft], None],
         *,
         fixed: Collection[str] = (),
-        check: Callable[[OrderDraft, ImportConfig], dict[str, str]] = check_draft,
         placeholder: str = PLACEHOLDER,
     ) -> None:
         super().__init__(parent, style="Card.TFrame", padding=(14, 12))
         self.config = config
         self.on_change = on_change
         self.fixed = frozenset(fixed)
-        self.check = check
         self.placeholder = placeholder
-        self.draft: OrderDraft | None = None
+        self.draft: Draft | None = None
         self.typed: dict[str, dict[str, str]] = {}  # TDCC → {欄位: 寫錯時打的字}
         self.frozen = False  # 存檔中整個編輯區不能改
         self.title_var = tk.StringVar(value=placeholder)
@@ -148,7 +146,7 @@ class OrderEditor(ttk.Frame):
     def editable(self) -> bool:
         return self.draft is not None and not self.draft.locked and not self.frozen
 
-    def show(self, draft: OrderDraft | None, row: OrderRow | None = None) -> None:
+    def show(self, draft: Draft | None, row: OrderRow | None = None) -> None:
         """顯示一檔；`draft` 是 None 時（起單建檔裡沒有這檔）只顯示 `row` 的原因，欄位不能改。"""
         self.draft = draft
         texts = order_texts(draft, self.typed.get(draft.tdcc, {})) if draft else {}
@@ -179,12 +177,12 @@ class OrderEditor(ttk.Frame):
         if draft is None:
             return
         config = self.config()
-        problems = self.check(draft, config) if config else dict(draft.input_errors)
-        states = order_cell_states(draft, problems, fixed=self.fixed, fixed_note=self.FIXED_NOTE)
+        found = problems(draft, config) if config else dict(draft.input_errors)
+        states = order_cell_states(draft, found, fixed=self.fixed, fixed_note=self.FIXED_NOTE)
         for name, field_row in self.rows.items():
             field_row.mark(states[name])
         self.title_var.set(f"{draft.tdcc}　{draft.issuer}")
-        row_notes = [problems.get(TDCC_FIELD, ""), draft.notes.get(TDCC_FIELD, "")]
+        row_notes = [found.get(TDCC_FIELD, ""), draft.notes.get(TDCC_FIELD, "")]
         self.note_var.set("；".join(filter(None, dict.fromkeys(row_notes))))
 
     def commit(self) -> bool:
