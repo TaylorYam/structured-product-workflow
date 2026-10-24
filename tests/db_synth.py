@@ -178,6 +178,58 @@ def seed_products(pg, inventories: Sequence[dict]) -> None:
             )
 
 
+# ---------------------------------------------------------------- 進度的事實（#156、#205）
+
+STEP_AT = dt.datetime(2026, 10, 20, 9, 0, tzinfo=dt.UTC)
+
+
+def trade_row(pg, tdcc: str, day: dt.date) -> None:
+    (run_id,) = pg.execute(
+        "INSERT INTO workflow.import_run (daily_file_name, daily_sha256, summary) VALUES ('每日更新.xlsx', 'x', '{}')"
+        " RETURNING run_id"
+    ).fetchone()
+    pg.execute(
+        "INSERT INTO workflow.trade_row (tdcc, row_seq, trade_date, product, currency, amount, fc_name, branch,"
+        " first_run_id) VALUES (%s, 1, %s, 'FCN', 'USD', 10000, 'Amy', '台北', %s)",
+        (tdcc, day, run_id),
+    )
+
+
+def check_terms(pg, tdcc: str, status: str = "完成", reason: str | None = None) -> None:
+    pg.execute(
+        "INSERT INTO workflow.check_terms (tdcc, status, reason, calculated_at) VALUES (%s, %s, %s, %s)",
+        (tdcc, status, reason, STEP_AT),
+    )
+
+
+def check_result(pg, tdcc: str, kind: str, category: str, at: dt.datetime = STEP_AT) -> None:
+    pg.execute(
+        "INSERT INTO workflow.check_result (tdcc, kind, file_name, category, status, released, filled, result_file,"
+        " checked_by, checked_at) VALUES (%s, %s, 'x.pdf', %s, 'PASS', false, false, '核對結果.xlsx', 'tester', %s)",
+        (tdcc, kind, category, at),
+    )
+
+
+def step(pg, tdcc: str, name: str, at: dt.datetime) -> None:
+    pg.execute(
+        "INSERT INTO workflow.step_record (tdcc, step, recorded_at, recorded_by, result) VALUES (%s, %s, %s, 'tester', '')",
+        (tdcc, name, at),
+    )
+
+
+def seed_waiting_for_mail(pg, tdccs: Sequence[str]) -> None:
+    """建幾檔「待寄信」的商品：交易明細、商品條件、核對條件完成、核對通過、已準備、已鎖住。"""
+    seed_products(pg, [inventory(t, [("台北", 10000)]) for t in tdccs])
+    for tdcc in tdccs:
+        pg.execute(
+            "UPDATE workflow.product SET strike_date = trade_date, locked_at = %s WHERE tdcc = %s", (STEP_AT, tdcc)
+        )
+        trade_row(pg, tdcc, dt.date(2026, 10, 15))
+        check_terms(pg, tdcc)
+        check_result(pg, tdcc, "說明書", "通過")
+        step(pg, tdcc, "已準備", STEP_AT)
+
+
 def seed_mailbox(pg, people=None, aliases=()) -> None:
     """像使用者用 SQL 維護信箱一樣直接寫入；比對鍵由資料庫產生。"""
     people = people or [

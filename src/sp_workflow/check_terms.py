@@ -33,7 +33,7 @@ from dataclasses import dataclass, replace
 from decimal import ROUND_HALF_UP, Decimal
 from typing import TYPE_CHECKING, Any
 
-from sp_workflow.database import OperatorError
+from sp_workflow.database import OperatorError, require_in_transaction
 from sp_workflow.product_record import PRODUCT_COLUMNS, missing_fields, plain
 from sp_workflow.status import CheckTerms
 
@@ -439,6 +439,7 @@ def recalculate_corrected(
     改了的價格由保留的進場價重算；其他位置的價格空白。`trades_changed`：同一次也改了交易明細裡核對條件會用到的欄
     （`CHECK_TRADE_COLUMNS`，#116），條件沒改也重算（分公司配置、交叉比對）。在呼叫端的 transaction 裡執行。
     """
+    require_in_transaction(conn)
     if conn.execute("SELECT 1 FROM workflow.check_terms WHERE tdcc = %s", (tdcc,)).fetchone() is None:
         return None
     before = _product(tuple({**previous, "tdcc": tdcc}[c] for c in _SELECTED_COLUMNS))

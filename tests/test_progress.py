@@ -13,7 +13,16 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from db_synth import inventory, seed_products
+from db_synth import (
+    STEP_AT,
+    check_result,
+    check_terms,
+    inventory,
+    seed_products,
+    seed_waiting_for_mail,
+    step,
+    trade_row,
+)
 from order_synth import CONFIG
 from sp_workflow.lifecycle import KO, record_redemption
 from sp_workflow.progress import (
@@ -43,10 +52,11 @@ from sp_workflow.progress import (
     progress_of,
     ready_of,
     sent_batch,
+    still_pending_mail,
 )
 from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP
 
-T = dt.datetime(2026, 10, 20, 9, 0, tzinfo=dt.UTC)
+T = STEP_AT
 READY = {"has_trades": True, "has_terms": True, "terms_status": "完成"}
 
 
@@ -222,40 +232,6 @@ def test_export_writes_the_rows_as_shown(tmp_path: Path) -> None:
 # ---------------------------------------------------------------- 從資料庫讀
 
 
-def trade_row(pg, tdcc: str, day: dt.date) -> None:
-    (run_id,) = pg.execute(
-        "INSERT INTO workflow.import_run (daily_file_name, daily_sha256, summary) VALUES ('每日更新.xlsx', 'x', '{}')"
-        " RETURNING run_id"
-    ).fetchone()
-    pg.execute(
-        "INSERT INTO workflow.trade_row (tdcc, row_seq, trade_date, product, currency, amount, fc_name, branch,"
-        " first_run_id) VALUES (%s, 1, %s, 'FCN', 'USD', 10000, 'Amy', '台北', %s)",
-        (tdcc, day, run_id),
-    )
-
-
-def check_terms(pg, tdcc: str, status: str = "完成", reason: str | None = None) -> None:
-    pg.execute(
-        "INSERT INTO workflow.check_terms (tdcc, status, reason, calculated_at) VALUES (%s, %s, %s, %s)",
-        (tdcc, status, reason, T),
-    )
-
-
-def check_result(pg, tdcc: str, kind: str, category: str, at: dt.datetime = T) -> None:
-    pg.execute(
-        "INSERT INTO workflow.check_result (tdcc, kind, file_name, category, status, released, filled, result_file,"
-        " checked_by, checked_at) VALUES (%s, %s, 'x.pdf', %s, 'PASS', false, false, '核對結果.xlsx', 'tester', %s)",
-        (tdcc, kind, category, at),
-    )
-
-
-def step(pg, tdcc: str, name: str, at: dt.datetime) -> None:
-    pg.execute(
-        "INSERT INTO workflow.step_record (tdcc, step, recorded_at, recorded_by, result) VALUES (%s, %s, %s, 'tester', '')",
-        (tdcc, name, at),
-    )
-
-
 A, B, C, D = "029199990001", "037199990002", "092199990003", "147199990004"
 
 
@@ -390,3 +366,20 @@ def test_a_sent_record_finishes_the_product(pg) -> None:
     (only,) = load_progress(pg, CONFIG, dt.date(2026, 10, 22))
 
     assert only.progress == FINISHED and only.reason == ""
+
+
+@pytest.mark.db
+def test_still_pending_mail_rereads_the_same_facts_as_the_progress(pg) -> None:
+    """#205：鎖住未寄的還是待寄信；鎖住已寄的、還沒鎖住的、更正解鎖的、核對條件不再是完成的不是。依傳入的順序、不重複。"""
+    e = "147199990005"
+    seed_waiting_for_mail(pg, [A, B, C, D, e])
+    pg.execute("UPDATE workflow.check_terms SET status = '待確認' WHERE tdcc = %s", (e,))  # 鎖住的更正後重算不是完成
+    step(pg, B, SENT_STEP, T)  # 鎖住、已寄出
+    pg.execute("DELETE FROM workflow.check_result WHERE tdcc = %s", (C,))  # 還沒核對、還沒鎖住
+    pg.execute("UPDATE workflow.product SET locked_at = NULL WHERE tdcc IN (%s, %s)", (C, D))  # D：核對過、被更正解鎖
+    rows = {r.tdcc: r.progress for r in load_progress(pg, CONFIG, dt.date(2026, 10, 22))}
+
+    found = still_pending_mail(pg, [e, D, C, B, A, A, "999999999999"])
+
+    assert found == (A,)
+    assert [t for t, progress in rows.items() if progress == TO_MAIL] == [A], "和進度頁同一個判斷"
