@@ -19,8 +19,7 @@ from order_synth import CONFIG, SHEET, A, order_row, sheet_line, write_sheet
 from sp_workflow import window_actions
 from sp_workflow.check_terms import CheckTermsError
 from sp_workflow.database import DatabaseError, SchemaOutdatedError
-from sp_workflow.order_import import drafts_from, import_drafts
-from sp_workflow.product_write import NEW
+from sp_workflow.product_terms import NEW, drafts_from, import_drafts
 from sp_workflow.window_actions import (
     import_close_history,
     import_order_sheet,
@@ -274,7 +273,7 @@ def test_a_failed_reload_keeps_the_sheet_import_and_the_recalculation(pg, pg_set
     def broken(conn, tdcc):
         conn.execute("SELECT * FROM workflow.no_such_table")
 
-    monkeypatch.setattr("sp_workflow.order_import.read_stored", broken)
+    monkeypatch.setattr("sp_workflow.product_terms.read_stored", broken)
 
     result = import_order_sheet(pg_settings, [draft], CONFIG)
 

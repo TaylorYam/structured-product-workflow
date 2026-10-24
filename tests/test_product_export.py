@@ -12,8 +12,8 @@ import pytest
 from order_synth import CONFIG, A, B, order_row
 from sp_workflow import product_export
 from sp_workflow.lifecycle import KO, AutoEvent, replace_auto_events
-from sp_workflow.order_import import drafts_from, import_drafts
 from sp_workflow.product_export import ProductExportError, export_name, export_products
+from sp_workflow.product_terms import drafts_from, import_drafts
 
 UF_215 = {"Upfront / NotePrice (%)": Decimal("97.85")}
 

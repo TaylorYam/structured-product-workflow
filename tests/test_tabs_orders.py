@@ -11,11 +11,10 @@ from order_synth import missing_row, order_row
 from sp_workflow.app import PanelWindow
 from sp_workflow.check_terms import DONE, TO_CONFIRM, WAIT_PRICES, CalcLine, CalcReceipt, Difference
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.order_import import BLOCKED, READY, TO_CHECK, OrderImportReceipt, OrderImportResult
 from sp_workflow.order_terms import OrderRow
-from sp_workflow.product_write import NEW as ORDER_NEW
-from sp_workflow.product_write import SKIPPED as ORDER_SKIPPED
-from sp_workflow.product_write import OrderImportLine
+from sp_workflow.product_terms import BLOCKED, READY, TO_CHECK, OrderImportLine, OrderImportReceipt, OrderImportResult
+from sp_workflow.product_terms import NEW as ORDER_NEW
+from sp_workflow.product_terms import SKIPPED as ORDER_SKIPPED
 from sp_workflow.tabs.editor import PROBLEM_BG
 from window_synth import NEEDS_RELEASE, UF_DIFF, new_window, read_result, release_without_database, texts, type_into
 

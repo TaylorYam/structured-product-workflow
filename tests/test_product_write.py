@@ -17,8 +17,20 @@ from db_synth import price, trade, write_daily
 from order_synth import CONFIG, A, order_row
 from sp_workflow.check_terms import CheckTermsError
 from sp_workflow.daily_import import import_daily
-from sp_workflow.order_import import OrderDraft, drafts_from, import_drafts, import_orders, open_maintenance
-from sp_workflow.product_write import LOCKED, NEW, OVERWRITTEN, SAME, SKIPPED, Mode, save_terms
+from sp_workflow.product_terms import (
+    LOCKED,
+    NEW,
+    OVERWRITTEN,
+    SAME,
+    SKIPPED,
+    Mode,
+    OrderDraft,
+    drafts_from,
+    import_drafts,
+    import_orders,
+    open_maintenance,
+    save_terms,
+)
 
 EDITING = (Mode.CORRECT, Mode.MAINTAIN)  # 資料庫已有這檔、打開來改
 
@@ -204,7 +216,7 @@ def test_a_failed_recalculation_keeps_the_import(pg, monkeypatch) -> None:
     def broken(*args, **kwargs):
         raise CheckTermsError("找不到交易所假日表設定檔\n第二行")
 
-    monkeypatch.setattr("sp_workflow.order_import.recalculate", broken)
+    monkeypatch.setattr("sp_workflow.product_terms.recalculate", broken)
 
     result = import_orders([draft], pg, CONFIG, user="tester")
 
@@ -222,7 +234,7 @@ def test_a_failed_reload_keeps_the_import(pg, monkeypatch) -> None:
     def broken(*args, **kwargs):
         raise psycopg.OperationalError("connection lost")  # 重讀時連線斷了
 
-    monkeypatch.setattr("sp_workflow.order_import.read_stored", broken)
+    monkeypatch.setattr("sp_workflow.product_terms.read_stored", broken)
 
     result = import_orders([draft], pg, CONFIG, user="tester")
 
@@ -235,7 +247,7 @@ def test_a_product_created_while_importing_is_skipped_not_a_database_error(pg, m
     """還不存在的列 FOR UPDATE 鎖不到：讀取之後別人新增了同一檔，這檔不匯入、其他照常，不是整批出錯。"""
     (draft,) = drafts_from([order_row(changes={"Coupon p.a. (%)": Decimal(10)})], pg)
     import_drafts(drafts_from([order_row()], pg), pg, CONFIG, user="other")
-    monkeypatch.setattr("sp_workflow.product_write.lock_terms", lambda conn, tdcc: None)  # 匯入時還看不到
+    monkeypatch.setattr("sp_workflow.product_terms.lock_terms", lambda conn, tdcc: None)  # 匯入時還看不到
 
     receipt = import_drafts([draft], pg, CONFIG, user="tester")
 

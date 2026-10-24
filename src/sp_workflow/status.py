@@ -55,8 +55,8 @@ class Lifecycle(StrEnum):
 class OrderReview(StrEnum):
     """起單資料頁與人工維護一檔的確認狀態（`OrderRow.status`，ADR 0009、0014、0017）：只在畫面上，不存。
 
-    讀起單建檔（`order_terms`）：已讀取、待確認、找不到；確認後（`order_import`）：待確認（擋下）、請確認、可匯入；
-    人工維護打開時與鎖住狀態（`product_write`）：已鎖住、未鎖住、只有交易明細。`BLOCKED` 和 `PENDING` 是同一個字，
+    讀起單建檔（`order_terms`）：已讀取、待確認、找不到；確認後（`product_terms`）：待確認（擋下）、請確認、可匯入；
+    人工維護打開時與鎖住狀態（`product_terms`）：已鎖住、未鎖住、只有交易明細。`BLOCKED` 和 `PENDING` 是同一個字，
     `Enum` 把它當成 `PENDING` 的別名（逐一列出成員時只出現一次）。比價狀態後面的「（未鎖住）」註記（ADR 0020）
     說的是同一個鎖住狀態，也用 `UNLOCKED`。
     """

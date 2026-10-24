@@ -1,6 +1,6 @@
 """商品紀錄：`workflow.product` 的欄與畫面欄位的對照（#126）。
 
-讀寫 `workflow.product` 的地方（起單資料讀取 `order_terms`、寫入 `product_write`、人工維護 `order_import`、
+讀寫 `workflow.product` 的地方（起單資料讀取 `order_terms`、確認、寫入與人工維護 `product_terms`、
 核對條件 `check_terms`、核對讀資料庫 `check_source`、寄信草稿 `mail_drafts`）都從這裡拿欄位與轉換，不各自維護。對外：
 - `PRODUCT_COLUMNS`：資料庫的商品欄（TDCC、ISIN、來源、鎖住時間這類不是商品條件的欄不在內）。
 - `FIELDS`／`KINDS`／`CHOICES`：畫面的欄（依起單建檔的順序）、型別與選項；`REQUIRED`：必填欄。
@@ -8,8 +8,8 @@
 - `columns_of`／`fields_of`：畫面的值 ↔ 資料庫的欄（KO／KI 代碼、UF 反轉、單位面額預設）。
 - `missing_fields`：資料庫商品條件缺哪幾個必填欄（#114）。
 
-`REQUIRED` 與欄位對照放在這裡、不放在 `order_import` 或 `product_write`：`check_terms` 也要用，
-而它被 `product_write` import，放在寫入那邊會循環 import（ADR 0016 當時因此搬到 `order_terms`，#126 再收到這裡）。
+`REQUIRED` 與欄位對照放在這裡、不放在 `product_terms`：`check_terms` 也要用，
+而它被 `product_terms` import，放在寫入那邊會循環 import（ADR 0016 當時因此搬到 `order_terms`，#126 再收到這裡）。
 這個 module 不 import 任何 `sp_workflow` module；商品種類 `FCN` 與紀錄用的 `to_json` 也在這裡（#201）。
 
 畫面上的 Upfront / NotePrice (%) 是價格，資料庫存 UF = 100 − 價格（`invert_upfront`，兩個方向一樣）。

@@ -16,9 +16,16 @@ from sp_workflow import database
 from sp_workflow.daily_import import import_daily
 from sp_workflow.mail_drafts import PENDING as MAIL_PENDING
 from sp_workflow.mail_drafts import create_drafts
-from sp_workflow.order_import import (
+from sp_workflow.order_terms import TDCC_FIELD, OrderRow, collect_orders
+from sp_workflow.product_record import FIELDS
+from sp_workflow.product_terms import (
     BLOCKED,
+    LOCKED,
+    NEW,
+    OVERWRITTEN,
     READY,
+    SAME,
+    SKIPPED,
     TO_CHECK,
     check_draft,
     drafts_from,
@@ -26,15 +33,6 @@ from sp_workflow.order_import import (
     load_import_config,
     reload_stored,
     review_status,
-)
-from sp_workflow.order_terms import TDCC_FIELD, OrderRow, collect_orders
-from sp_workflow.product_record import FIELDS
-from sp_workflow.product_write import (
-    LOCKED,
-    NEW,
-    OVERWRITTEN,
-    SAME,
-    SKIPPED,
 )
 
 BUILTIN = ConfigPaths.with_fallback(Path(__file__).resolve().parents[1] / "config" / "review_standard.toml")

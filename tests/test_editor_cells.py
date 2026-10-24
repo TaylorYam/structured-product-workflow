@@ -20,7 +20,7 @@ from sp_workflow.editor_cells import (
     trade_cell_states,
     trade_texts,
 )
-from sp_workflow.order_import import drafts_from
+from sp_workflow.product_terms import drafts_from
 from sp_workflow.trade_rows import CANCEL_NOTE, UNMATCHED_NOTE
 
 # ---------- 格子狀態：擋存檔 ＞ 和資料庫不同＋備註 ＞ 和資料庫不同 ＞ 備註 ＞ 固定 ----------
