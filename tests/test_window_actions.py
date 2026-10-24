@@ -51,7 +51,7 @@ def no_holidays(tmp_path: Path) -> ConfigPaths:
 def broken_recalculation(monkeypatch) -> None:
     """重算時資料庫出錯（查不存在的表），錯誤發生在重算自己的 transaction 裡。"""
 
-    def broken(conn, where, params):
+    def broken(conn, tdccs, **kwargs):
         conn.execute("SELECT * FROM workflow.no_such_table")
 
     monkeypatch.setattr("sp_workflow.check_terms._products", broken)

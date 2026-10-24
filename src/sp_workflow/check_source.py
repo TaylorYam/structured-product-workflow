@@ -33,8 +33,8 @@ from openpyxl.cell.cell import Cell
 from sp_workflow.check_terms import DONE
 from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdatedError, connect
 from sp_workflow.file_tools import save_book, table_book
-from sp_workflow.product_record import PRICE_COLUMNS, PRODUCT_COLUMNS, missing_fields, same_value
-from sp_workflow.product_terms import backfill, lock_checked, locked, read
+from sp_workflow.product_record import PRICE_COLUMNS, missing_fields, same_value
+from sp_workflow.product_terms import Stored, backfill, lock_checked, locked, read, read_many
 
 if TYPE_CHECKING:
     import psycopg
@@ -53,9 +53,6 @@ CHECKED_FIELDS = ("checked_term_sheet", "checked_iis")
 DENOMINATION_RULE = "field.denomination"
 DENOMINATION_COLUMN = "單位面額"
 
-# 參考條件表沒有的商品欄只用來看有沒有缺欄（#114）
-_SELECTED_COLUMNS = ("tdcc", *PRODUCT_COLUMNS, "isin", "locked_at")
-
 
 class CheckSourceError(Exception):
     """資料庫來源用不了（沒有登入、寫不出參考條件表）；訊息是給作業人員看的中文。"""
@@ -64,25 +61,12 @@ class CheckSourceError(Exception):
 # ---------- 產生參考條件表 ----------
 
 
-@dataclass(frozen=True)
-class _Stored:
-    """一檔商品在資料庫裡的資料。"""
-
-    product: dict[str, Any]
-    status: str | None  # 核對條件的狀態（#88）；沒算過時 None
-    reason: str
-    prices: dict[int, dict[str, Any]]  # 第幾檔 → {code, initial_price, …}
-    branches: list[tuple[str, Decimal]]
-    autocall: dict[int, dt.date | None] | None  # 回填過的比價日；沒回填過時 None
-
-
 def export_reference(
     conn: psycopg.Connection, tdccs: Sequence[str], fmt: ReferenceFormat, path: Path
 ) -> dict[str, str]:
     """依 TDCC 從資料庫產生參考條件表到 `path`（每檔一列，欄位照匯入格式），回傳沒有列的 TDCC → 原因。"""
     codes = list(dict.fromkeys(tdccs))
-    with conn.transaction():
-        stored = _load(conn, codes)
+    stored = read_many(conn, codes)
     headers, rows, absent = _headers(fmt), [], {}
     for tdcc in codes:
         found = stored.get(tdcc)
@@ -96,68 +80,24 @@ def export_reference(
     return absent
 
 
-def _absent_reason(found: _Stored | None) -> str:
+def _absent_reason(found: Stored | None) -> str:
     """不能從資料庫核對的原因；空字串表示可以。"""
     if found is None:
         return "資料庫沒有這檔商品（還沒匯入起單資料），不核對"
-    is_locked = found.product["locked_at"] is not None  # 同 `product_terms.locked`
-    if is_locked and found.status is None:
+    check, is_locked = found.check, locked(found)
+    if is_locked and check is None:
         return "以前清單更新匯入、已鎖住的商品，資料庫沒有核對條件；請用 Excel 參考條件表核對"
-    missing = missing_fields(found.product)
+    missing = missing_fields(found.columns)
     if missing:
         return f"商品條件缺 {'、'.join(missing)}；補齊後再核對"
     if is_locked:
         return ""
-    if found.status is None:
+    if check is None:
         return "資料庫還沒算這檔的核對條件；請重新匯入起單資料或每日更新後再核對"
-    if found.status != DONE:
-        why = f"（{found.reason}）" if found.reason else ""
-        return f"資料庫的核對條件還沒完成：{found.status}{why}；等資料齊了再核對"
+    if check.status != DONE:
+        why = f"（{check.reason}）" if check.reason else ""
+        return f"資料庫的核對條件還沒完成：{check.status}{why}；等資料齊了再核對"
     return ""
-
-
-def _load(conn: psycopg.Connection, tdccs: list[str]) -> dict[str, _Stored]:
-    products = {
-        row[0]: dict(zip(_SELECTED_COLUMNS, row, strict=True))
-        for row in conn.execute(
-            f"SELECT {', '.join(_SELECTED_COLUMNS)} FROM workflow.product WHERE tdcc = ANY(%s)", (tdccs,)
-        )
-    }
-    terms = {
-        tdcc: (status, reason or "")
-        for tdcc, status, reason in conn.execute(
-            "SELECT tdcc, status, reason FROM workflow.check_terms WHERE tdcc = ANY(%s)", (tdccs,)
-        )
-    }
-    prices: dict[str, dict[int, dict[str, Any]]] = {}
-    for tdcc, seq, code, *values in conn.execute(
-        "SELECT tdcc, seq, code, initial_price, strike_price, ki_price, ko_price FROM workflow.underlying_price"
-        " WHERE tdcc = ANY(%s)",
-        (tdccs,),
-    ):
-        prices.setdefault(tdcc, {})[seq] = {"code": code, **dict(zip(PRICE_COLUMNS.values(), values, strict=True))}
-    branches: dict[str, list[tuple[str, Decimal]]] = {}
-    for tdcc, branch, amount in conn.execute(
-        "SELECT tdcc, branch, amount FROM workflow.branch_allocation WHERE tdcc = ANY(%s) ORDER BY tdcc, seq",
-        (tdccs,),
-    ):
-        branches.setdefault(tdcc, []).append((branch, amount))
-    autocall: dict[str, dict[int, dt.date | None]] = {}
-    for tdcc, slot, value in conn.execute(
-        "SELECT tdcc, slot, value FROM workflow.autocall_date WHERE tdcc = ANY(%s)", (tdccs,)
-    ):
-        autocall.setdefault(tdcc, {})[slot] = value
-    return {
-        tdcc: _Stored(
-            product=product,
-            status=terms[tdcc][0] if tdcc in terms else None,
-            reason=terms[tdcc][1] if tdcc in terms else "",
-            prices=prices.get(tdcc, {}),
-            branches=branches.get(tdcc, []),
-            autocall=autocall.get(tdcc),
-        )
-        for tdcc, product in products.items()
-    }
 
 
 def _headers(fmt: ReferenceFormat) -> list[str]:
@@ -171,13 +111,14 @@ def _headers(fmt: ReferenceFormat) -> list[str]:
     ]
 
 
-def _row(found: _Stored, fmt: ReferenceFormat, headers: Sequence[str]) -> dict[str, Any]:
+def _row(found: Stored, fmt: ReferenceFormat, headers: Sequence[str]) -> dict[str, Any]:
     """一檔商品 → {欄名: 值}。標準欄位依格式設定對到欄名；空值寫法用在 KI NONE、沒有的標的與不需要填的比價日。"""
-    p, empty = found.product, fmt.empty_value
+    p, empty = found.columns, fmt.empty_value
     no_ki = p["barrier_type"] == "NONE"
+    prices = {price.seq: price for price in found.prices}
     values: dict[str, Any] = {
-        "product_code": p["tdcc"],
-        "isin": p["isin"],
+        "product_code": found.tdcc,
+        "isin": found.isin,
         "denomination": p["denomination"],
         "currency": p["currency"],
         "trade_date": p["trade_date"],
@@ -195,7 +136,7 @@ def _row(found: _Stored, fmt: ReferenceFormat, headers: Sequence[str]) -> dict[s
         "tenor_months": p["tenor_months"],
         "first_callable_period": p["non_call_months"],
     }
-    if p["locked_at"] is not None:
+    if locked(found):
         values.update(dict.fromkeys(CHECKED_FIELDS, fmt.checked_value))
     for slot in range(1, SLOTS + 1):
         if found.autocall is not None:
@@ -203,13 +144,13 @@ def _row(found: _Stored, fmt: ReferenceFormat, headers: Sequence[str]) -> dict[s
     for i in range(1, UNDERLYINGS + 1):
         code = p[f"underlying_{i}"]
         values[f"underlying_{i}"] = code or empty
-        stored = found.prices.get(i, {})
+        price = prices.get(i)
         for col, column in PRICE_COLUMNS.items():
             key = f"underlying_{i}_{column}"
             if not code or (col == "ki" and no_ki):
                 values[key] = empty
             else:
-                values[key] = stored.get(column)  # VWAP 還沒回填時空白，核對通過後回填
+                values[key] = None if price is None else getattr(price, col)  # VWAP 還沒回填時空白，核對通過後回填
     extra: dict[str, Any] = {fmt.issuer_column: p["issuer"], "Product": p["product"], "UF": p["upfront_pct"]}
     extra["交易日期"] = p["trade_date"]
     for n, (branch, amount) in enumerate(found.branches[:BRANCHES], 1):
@@ -280,7 +221,7 @@ def write_back(
     result_file = str(receipt.output)
     codes = list(dict.fromkeys(i.product_code for i in batch.items if i.product_code))
     with conn.transaction():
-        known = {t for (t,) in conn.execute("SELECT tdcc FROM workflow.product WHERE tdcc = ANY(%s)", (codes,))}
+        known = set(read_many(conn, codes))
         saved = 0
         for item in batch.items:
             if item.product_code in known and item.kind is not None:
@@ -292,11 +233,10 @@ def write_back(
             tdcc = item.product_code
             if tdcc not in known:
                 continue
-            stored = read(conn, tdcc, lock=True)  # 和商品條件寫入共用同一把鎖（#124）
-            if locked(stored):
+            current = read(conn, tdcc, lock=True)  # 和商品條件寫入共用同一把鎖（#124）
+            if locked(current):
                 already.append(tdcc)
                 continue
-            current = _load(conn, [tdcc]).get(tdcc)
             if _absent_reason(current) or _changed(_row(current, fmt, headers), checked_rows.get(tdcc), fmt):
                 stale.append(tdcc)
                 continue
