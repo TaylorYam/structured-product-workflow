@@ -574,6 +574,7 @@ def _article16(d: _Doc, s: Spec) -> None:
         f"{strike:,.4f} {quote} = {Decimal(s.denom) / strike:.3f} 股(進位到小數點後第三位)",
     )
     d.text(36, f"(2) 每一單位可交付連結標的整數= {shares} 股")
+    d.text(36, "(4) 如以現金結算來計算報酬率：平均年化報酬率為-278.71%")  # 實物交割情境（虧損）不核對
     d.text(36, "• 實物交割之換算：")
     d.text(
         36,

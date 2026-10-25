@@ -47,6 +47,9 @@ def test_supported_types_pass(tmp_path, spec):
     assert own and all(x.document_evidence for x in own if x.status == S.PASS)
     assert {x["rule_id"] for x in r.not_covered} == {x["rule_id"] for x in CITI.not_covered}
     assert {x.status for x in rule(r, "derive.monthly_coupon")} == {S.PASS}
+    # 極佳、一般情況（拿回本金）的平均年化報酬率 = 年利率；較差情況虧損不核對（Issue #228）
+    annualized = [x for x in rule(r, "scenario.params") if x.field.startswith("scenario_annualized_return")]
+    assert len(annualized) == (2 if spec.autocall else 1)
     assert len(rule(r, "standard.guarantor_name")) == 3
     assert len(rule(r, "standard.agent_name")) == 2
     assert rule(r, "standard.fixed_warning")[0].actual == 3
@@ -170,6 +173,7 @@ def test_blank_sheet_pricing_with_an_unknown_header_requires_review(tmp_path):
         ),
         (Edit("m/M × 0.8233%", "m/M × 0.8333%", "ts.art15"), "scenario.params"),
         (Edit("0.8233% (等同年息為9.88%)", "0.8233% (等同年息為9.89%)", "ts.art15"), "scenario.params"),
+        (Edit("(平均年化報酬率：9.88%)", "(平均年化報酬率：9.98%)", "ts.art15"), "scenario.params"),
         (
             Edit("界限 (期初股價的95.00%)(假設) 最終", "界限 (期初股價的96.00%)(假設) 最終", "ts.art15"),
             "doc.scenario_header_pct",

@@ -102,6 +102,11 @@ REDEMPTION = rf"每單位面額(?:（{AMOUNT}{CCY}）)?×{PCT}"  # 到期買回�
 SCENARIO_COUPON = rf"=({AMOUNT})({CCY})×{PCT}/12×\d+/\d+="  # 情境配息金額算式：面額 × 年利率 / 12 × n / N
 SCENARIO_RETURN = rf"×(\d+)/({AMOUNT}){CCY}\]"  # 情境總報酬率：× 申購單位數 / 初始投資金額
 SCENARIO_PAR = rf"=\[\(({AMOUNT}){CCY}\+"  # 情境 1～3 總報酬率：(每單位面額 + 配息總額)
+# 情境 1～3（拿回 100% 本金）總報酬率後的「（平均年化報酬率:x%）」：x = 年利率。x 由進位到分的配息金額算出、寫到 5 位，
+# 和年利率差一點（例：13.90% 寫 13.89996%、16.46% 寫 16.46040%），差距在 `ANNUALIZED_WITHIN` 個百分點以內算一致。
+# 情境 4（實物交割）是負數，不符合（不核對）
+SCENARIO_ANNUALIZED = r"（平均年化報酬率[:：]" + PCT + "）"
+ANNUALIZED_WITHIN = Decimal("0.001")
 SCENARIO_PRINCIPAL = rf"假設期初本金金額為({AMOUNT}){CCY}"
 SCENARIO_INITIAL = rf"最低申購單位數（\d+單位）=({AMOUNT}){CCY}"
 REDEMPTION_PCT = 100  # 到期買回「每單位面額 × X%」的 X
@@ -253,12 +258,14 @@ def read(lines: Sequence[Line]) -> GsTermSheet:
     ch4_art = {n: doc.span_lines(ch4.get(n)) for n in (2, 5, 9)}
     ch3 = doc.chapter_lines(3)
     repeated, scenario_coupons, scenario_denoms = _repeated(article, ch4_art, ch3)
+    annualized = _scenario_mentions(article(17), SCENARIO_ANNUALIZED, "平均年化報酬率", Decimal, (1, 2, 3))
     fields["scenario_params"] = standard_fields.occurrences(  # 共用情境規則（Issue #294）
         "scenario_params",
         [
             ScenarioParam("scenario_coupon_pa", "第一章第 17 項情境假設配息率的", scenario_coupon),
             *_params("scenario_coupon_pa", "年利率", scenario_coupons),
             *_params("scenario_denomination", "每單位面額", scenario_denoms),
+            *_params("scenario_annualized_return", "年化報酬率", annualized, within=ANNUALIZED_WITHIN),
             ScenarioParam("scenario_strike_pct", "第一章第 17 項情境 4 第 1 檔", strike_pct),
         ],
     )
@@ -753,9 +760,9 @@ def _repeated(
     return repeated, coupons, scenario_denoms
 
 
-def _params(code: str, name: str, mentions: list[Mention]) -> list[ScenarioParam]:
+def _params(code: str, name: str, mentions: list[Mention], within: Decimal | None = None) -> list[ScenarioParam]:
     """GS 的出處（位置含名稱）→ 共用情境規則的出處：名稱由共用表給，位置去掉名稱。"""
-    return [ScenarioParam(code, m.where.replace(name, "", 1), m.parsed(code)) for m in mentions]
+    return [ScenarioParam(code, m.where.replace(name, "", 1), m.parsed(code), within=within) for m in mentions]
 
 
 def _currency_mentions(

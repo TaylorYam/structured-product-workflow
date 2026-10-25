@@ -123,6 +123,8 @@ WORST_DEFINITION = "最差表現連結標的："  # 多標的才有的定義句
 SCENARIOS = (("(i)最佳情境", "情境 (i)"), ("(ii)一般情境", "情境 (ii)"), ("(iii)最差情境", "情境 (iii)"))
 SCENARIO_END = "請注意：情境分析結果不保證"
 SCENARIO_COUPON = r"每次配息金額=" + money.NUMBER + CCY + "x" + PCT + "x1/12="  # 年利率 Y
+# 情境 (i)、(ii)（拿回 100% 本金）的平均年化報酬率 = 年利率；情境 (iii)（實物交割）虧損，不核對（Issue #228）
+SCENARIO_ANNUALIZED = r"平均年化報酬率\(以簡單平均年化報酬率之方式計算\)=" + PCT
 SCENARIO_PRINCIPAL = {  # 情境裡重複寫出的本金（= 每單位面額）：寫法 → （出處代號, 位置, 樣式）；出現在哪些情境見 PRINCIPAL_CASES
     "每次配息金額的本金": ("scenario_principal", "每次配息金額的", r"每次配息金額=(" + money.NUMBER + ")" + CCY),
     "到期贖回金額": ("scenario_principal", "到期贖回金額的", r"到期贖回金額=(" + money.NUMBER + ")" + CCY),
@@ -634,8 +636,9 @@ def _scenario_spans(ti: TextIndex) -> list[tuple[str, int, int]]:
 
 def _scenarios(fields: dict[str, ParsedField], art15: list[Line]) -> list[Occurrence]:
     """第 15 項情境 (i)～(iii) 重複寫出的值交成共用情境規則的出處（Issue #294）：假設原計價幣別本金、各情境的本金與
-    每次配息金額算式的年利率（`scenario_params`）、情境 (iii) 交割股數算式的執行價（`scenario_prices`）；回傳各情境
-    金額旁的幣別出處（併入 `currency_others`）。報酬率、配息金額、收盤價、適用匯率與股數不重算。"""
+    每次配息金額算式的年利率、情境 (i)、(ii) 的平均年化報酬率（`scenario_params`）、情境 (iii) 交割股數算式的執行價
+    （`scenario_prices`）；回傳各情境金額旁的幣別出處（併入 `currency_others`）。情境 (iii) 的報酬率、配息金額、收盤價、
+    適用匯率與股數不重算。"""
     ti = TextIndex(art15)
     spans = _scenario_spans(ti)
     params = [ScenarioParam("scenario_principal", "第 15 項假設原計價幣別", fields["scenario_principal"])]
@@ -646,6 +649,11 @@ def _scenarios(fields: dict[str, ParsedField], art15: list[Line]) -> list[Occurr
                 "scenario_coupon_pa", "第 15 項情境每次配息金額的", ParsedField.missing("scenario_coupon_pa", note)
             ),
             ScenarioParam("scenario_principal", "第 15 項情境的", ParsedField.missing("scenario_principal", note)),
+            ScenarioParam(
+                "scenario_annualized_return",
+                "第 15 項情境 (i)、(ii) 平均",
+                ParsedField.missing("scenario_annualized_return", note),
+            ),
         ]
         fields["scenario_params"] = standard_fields.occurrences("scenario_params", params)
         fields["scenario_prices"] = ParsedField.missing("scenario_prices", note)
@@ -663,6 +671,15 @@ def _scenarios(fields: dict[str, ParsedField], art15: list[Line]) -> list[Occurr
         for m in coupons:
             pf = ParsedField.present("scenario_coupon_pa", Decimal(m[1]), ti.lines_for(m.start(), m.end()))
             params.append(ScenarioParam("scenario_coupon_pa", where, pf))
+    for case, a, b in spans[:2]:
+        code, where = "scenario_annualized_return", f"第 15 項{case}平均"
+        annualized = [m for m in ti.finditer(SCENARIO_ANNUALIZED) if a <= m.start() < b]
+        if not annualized:
+            missing = ParsedField.missing(code, f"第 15 項{case}找不到平均年化報酬率")
+            params.append(ScenarioParam(code, where, replace(missing, evidence=_ev(ti, a, a + 1))))
+        for m in annualized:
+            pf = ParsedField.present(code, Decimal(m[1]), ti.lines_for(m.start(), m.end()))
+            params.append(ScenarioParam(code, where, pf))
     for i, (case, a, b) in enumerate(spans, start=1):
         hits = sorted(
             (m.start(), label, m)

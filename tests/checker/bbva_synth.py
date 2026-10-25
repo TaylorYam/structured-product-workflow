@@ -497,6 +497,7 @@ def _article16(d: _Doc, s: Spec) -> None:
             29,
             f"第1 個配息日之配息金額＝10 單位面額X 配息率X 計息天數慣例＝10X{s.denom * s.monthly / 100:,.2f} {s.currency_zh}",
         )
+    d.text(29, f"平均年化報酬率：{s.annual}%")
     barrier = f"期初價格的{s.ki_pct}%（下限值）" if s.ki != "none" else f"期初價格的{s.strike}%"
     no_ko = (
         f"，且籃子中任一連結標的於{s.date(s.ko_start)}（含）至贖回評價日（含）的所有預定交易日之最佳表現值小於"
@@ -517,7 +518,11 @@ def _article16(d: _Doc, s: Spec) -> None:
     )
     d.text(29, coupons)
     d.text(29, f"到期贖回金額＝10 單位面額X 100%＝10 x {s.money(s.denom)} X 100%＝{s.money(10 * s.denom)}")
-    for case, close in (("情境三：較差情況", "50.0000"), ("情境四：最差情況", "0.0000")):
+    d.text(29, f"平均年化報酬率：{s.annual}%")
+    for case, close, annualized in (
+        ("情境三：較差情況", "50.0000", "-63.48"),
+        ("情境四：最差情況", "0.0000", "-180.00"),
+    ):
         d.text(29, case)
         d.text(
             29,
@@ -527,6 +532,7 @@ def _article16(d: _Doc, s: Spec) -> None:
         d.text(29, coupons)
         d.text(29, f"剩餘金額＝0.5000 X {close} 美元 = 25.00 {s.currency_zh}")
         d.text(29, f"總投資金額＝10 單位面額，因此到期日將獲得100 股的表現最差連結標的加上現金{s.money(250)}。")
+        d.text(29, f"平均年化報酬率：{annualized}%")  # 虧損情境不核對
     d.text(29, "免責聲明：以上情境分析之解說僅供投資人參考之用。")
 
 

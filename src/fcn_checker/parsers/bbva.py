@@ -119,6 +119,7 @@ SCENARIO_COUPON = r"配息金額＝\d+單位面額X配息率＝\d+X[\d,.]+" + CC
 SCENARIO_BARRIER = r"期初價格的" + PCT  # 有 KI 時接「（下限值）」= KI %；無 KI 時 = 轉換比例
 SCENARIO_KO = PCT + r"（出場值）"
 SCENARIO_START = r"於" + D + r"（含）至贖回評價日"
+SCENARIO_ANNUALIZED = r"平均年化報酬率[:：]" + PCT  # 情境一、二（拿回 100% 本金）= 年利率
 # 情境金額旁的幣別字：只收配息、累積配息、贖回金額與現金；股價、期初價格、剩餘金額（股價 × 零股）、
 # 除法算式（權益數額、以現金結算的報酬率）的金額跟著標的走（日圓商品連結美股時寫美元），不算承作幣別的出處
 SCENARIO_PRICE_WORDS = ("收盤價", "期初價格", "剩餘金額", "轉換匯率", "／")
@@ -616,10 +617,17 @@ def _mentions(
     return standard_fields.occurrences(name, items)
 
 
+def _params(code: str, where: str, suffix: str, found: ParsedField) -> list[ScenarioParam]:
+    """`_mentions` 的出處 → 共用情境規則的情境假設；讀不到時一筆讀不到（位置 `where`）。"""
+    if not found.ok:
+        return [ScenarioParam(code, f"{where}{suffix}", found)]
+    return [ScenarioParam(code, f"{o.where}{suffix}", o.value) for o in found.value]
+
+
 def _scenarios(fields: dict[str, ParsedField], art16: list[Line], assumed: list[ScenarioParam]) -> list[Occurrence]:
     """第 16 項情境一～四重複寫出的值（Issue #305）：下限值／門檻 %、出場值 %、觀察起算日；KO 每日型情境二～四的第 1 期
-    配息率併入情境假設 `assumed` 交成共用情境規則的 `scenario_params`（= 月配息率，即情境一第 1 期配息率；Issue #294）。
-    回傳各情境金額旁的幣別出處（併入 `currency_others`）。"""
+    配息率（= 月配息率，即情境一第 1 期配息率；Issue #294）與情境一、二的平均年化報酬率（拿回 100% 本金，= 年利率）併入
+    情境假設 `assumed` 交成共用情境規則的 `scenario_params`。回傳各情境金額旁的幣別出處（併入 `currency_others`）。"""
     ti = TextIndex(art16)
     spans = _scenario_spans(ti)
     names = ("scenario_barrier_mentions", "scenario_ko_mentions", "scenario_start_mentions")
@@ -627,10 +635,14 @@ def _scenarios(fields: dict[str, ParsedField], art16: list[Line], assumed: list[
         note = "第 16 項找不到情境一～四（到「免責聲明」為止）"
         for name in names:
             fields[name] = ParsedField.missing(name, note)
-        coupons = ScenarioParam(
-            "scenario_monthly_coupon", "第 16 項情境第 1 期", ParsedField.missing("scenario_monthly_coupon", note)
-        )
-        fields["scenario_params"] = standard_fields.occurrences("scenario_params", [*assumed, coupons])
+        unread = [
+            ScenarioParam(code, where, ParsedField.missing(code, note))
+            for code, where in (
+                ("scenario_monthly_coupon", "第 16 項情境第 1 期"),
+                ("scenario_annualized_return", "第 16 項情境一、二平均"),
+            )
+        ]
+        fields["scenario_params"] = standard_fields.occurrences("scenario_params", [*assumed, *unread])
         return [
             Occurrence(
                 "scenario_currency",
@@ -649,15 +661,21 @@ def _scenarios(fields: dict[str, ParsedField], art16: list[Line], assumed: list[
         "first_coupon_pct",
         required=True,
     )
+    annualized = _mentions(
+        "scenario_annualized_mentions",
+        ti,
+        spans[:2],
+        SCENARIO_ANNUALIZED,
+        Decimal,
+        "scenario_annualized_return",
+        required=True,
+    )
     fields["scenario_params"] = standard_fields.occurrences(
         "scenario_params",
         [
             *assumed,
-            *(
-                [ScenarioParam("scenario_monthly_coupon", f"{o.where}第 1 期", o.value) for o in coupons.value]
-                if coupons.ok
-                else [ScenarioParam("scenario_monthly_coupon", "第 16 項情境第 1 期", coupons)]
-            ),
+            *_params("scenario_monthly_coupon", "第 16 項情境", "第 1 期", coupons),
+            *_params("scenario_annualized_return", "第 16 項情境一、二", "平均", annualized),
         ],
     )
     fields["scenario_barrier_mentions"] = _mentions(

@@ -293,6 +293,8 @@ class ScenarioParam:
     where: str  # 項目名稱的開頭（例：第 16 項基本假設、第 15 項情境 (i) 到期贖回金額的）
     value: ParsedField
     times: ParsedField | None = None  # 倍數：值 = 正式值 × 倍數（例：總投資金額 = 單位數 × 面額，倍數是同一處的單位數）
+    # 容許差距（百分點）：值由先進位的金額算出、比正式值多寫位數時（例：GS 年化報酬率寫到 5 位，和年利率差 0.0004）
+    within: Decimal | None = None
 
     @property
     def name(self) -> str:
