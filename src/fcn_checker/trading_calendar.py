@@ -15,6 +15,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 
+def exchange_code(ticker: str) -> str | None:
+    """彭博代號（例：GOOGL UW、ABC UN Equity）最後的交易所碼（大寫）；只有代號、沒有交易所碼時為 None。"""
+    parts = [p for p in ticker.upper().split() if p != "EQUITY"]
+    return parts[-1] if len(parts) >= 2 else None
+
+
 @dataclass(frozen=True)
 class Market:
     """一個市場（例：美國）：彭博交易所碼、全天休市日與假日表涵蓋範圍。"""
@@ -47,8 +53,7 @@ class TradingCalendar:
 
     def market_of(self, ticker: str) -> Market | None:
         """彭博代號（例：GOOGL UW、ABC UN Equity）最後的交易所碼對到的市場；對不到為 None。"""
-        parts = [p for p in ticker.upper().split() if p != "EQUITY"]
-        code = parts[-1] if len(parts) >= 2 else None
+        code = exchange_code(ticker)
         return next((m for m in self.markets if code in m.bloomberg_codes), None)
 
     def market(self, code: str) -> Market | None:

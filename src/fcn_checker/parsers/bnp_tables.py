@@ -14,6 +14,7 @@ from ..schema import Line, ParsedField
 from ..text import squash
 from .common import dec
 from .layout import DATE_RE, TextIndex, capture, parse_date
+from .money import CURRENCY_WORD
 
 # 標的表的列標籤（去空白；冒號全半形皆有），依出現順序；下限價格列只在有 KI 時出現
 PRICE_LABELS = (
@@ -47,8 +48,9 @@ FEE_PATTERNS = {  # 第四章第 2 項費用表（去空白）：費用項目名
 def price_table(name: str, lines: list[Line], *, with_tickers: bool) -> ParsedField:
     """標的表：列標籤依序為期初價格、執行價格、自動提前贖回價格、（下限價格）、貨幣；每列每檔一格。
 
-    值：{"columns": [...], "pcts": {欄: [各檔百分比]}, "rows": [{"prices": {欄: Decimal}}], "row_lines": [...],
-    "tickers": [...]（`with_tickers` 時，第 11 項「彭博代碼」列）}。列數（標的數）由期初價格列決定，其他列須相同。
+    值：{"columns": [...], "pcts": {欄: [各檔百分比]}, "rows": [{"prices": {欄: Decimal}, "currency": 幣別字或 None}],
+    "row_lines": [...], "tickers": [...]（`with_tickers` 時，第 11 項「彭博代碼」列）}。列數（標的數）由期初價格列決定，
+    其他列須相同。貨幣列（標的交易幣別，Issue #227）緊接在標籤後、每檔一個幣別字；不是剛好 N 個時各檔幣別為 None。
     """
     if not lines:
         return ParsedField.missing(name, "找不到標的表")
@@ -87,6 +89,8 @@ def price_table(name: str, lines: list[Line], *, with_tickers: bool) -> ParsedFi
     rows: list[dict] = []
     row_lines: list[list[Line]] = []
     pcts: dict[str, list[Decimal]] = {col: [] for col in columns if col != "initial"}
+    held = re.match(rf"(?:{CURRENCY_WORD}){{{n}}}(?!{CURRENCY_WORD})", ti.text[found["currency"].end() :])
+    currencies = re.findall(CURRENCY_WORD, held[0]) if held else [None] * n
     for i in range(n):
         prices: dict[str, Decimal] = {}
         lns: list[Line] = []
@@ -99,7 +103,7 @@ def price_table(name: str, lines: list[Line], *, with_tickers: bool) -> ParsedFi
             for ln in ti.lines_for(offset + m.start(), offset + m.end()):
                 if ln not in lns:
                     lns.append(ln)
-        rows.append({"prices": prices})
+        rows.append({"prices": prices, "currency": currencies[i]})
         row_lines.append(lns)
     value = {"columns": columns, "pcts": pcts, "rows": rows, "row_lines": row_lines, "tickers": None}
     evidence = ti.lines_for(found["initial"].start(), found["currency"].start())

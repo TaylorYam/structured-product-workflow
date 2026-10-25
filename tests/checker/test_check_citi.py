@@ -214,7 +214,8 @@ def test_internal_rules_find_the_wrong_repeat(tmp_path, edit, broken):
         assert not bad, problems(r)
         return
     assert broken in bad, problems(r)
-    assert bad <= {broken, "field.final_valuation_date", "doc.coupon_periods"}, problems(r)
+    also = {"standard.currency_code"} if broken == "doc.currency_consistency" else set()  # 共用規則也比代碼（#227）
+    assert bad <= {broken, *also, "field.final_valuation_date", "doc.coupon_periods"}, problems(r)
     assert {st for rid, _, st in problems(r) if rid == broken} == {S.MISMATCH}, problems(r)
 
 

@@ -149,6 +149,7 @@ def test_internal_rules_find_the_wrong_repeat(tmp_path, edit, broken):
     assert broken in bad, problems(r)
     # 連結標的表表頭 % 改了，情境價格表的表頭 % 就和連結標的表不同（同一處錯誤的兩種表現）
     also = {"scenario.reprint"} if broken == "doc.table_header_pct" else set()
+    also |= {"standard.currency_code"} if broken == "doc.currency_consistency" else set()  # 共用規則也比代碼（#227）
     assert bad <= {broken, "standard.product_name", *also}, problems(r)
 
 

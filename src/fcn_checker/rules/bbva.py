@@ -29,7 +29,7 @@ NOT_COVERED = [
     },
     {
         "rule_id": "doc.underlying_names",
-        "description": "連結標的公司名稱、股票幣別、股票 ISIN、交易所不核對；以彭博代碼為準",
+        "description": "連結標的公司名稱、股票幣別欄、股票 ISIN、交易所不核對；以彭博代碼為準（價格表的幣別由共用規則核對 = 標的交易所幣別，Issue #227）",
     },
     {"rule_id": "doc.initial_prices", "description": "期初價格本身的外部正確性（沒有權威來源）"},
     {
@@ -50,8 +50,7 @@ NOT_COVERED = [
     },
     {
         "rule_id": "doc.coupon_accrual",
-        "description": "KO 每日型配息依期內預定交易日數累計（n/N），每期金額不重算；日圓商品的轉換匯率與價格表幣別字"
-        "（標的報價幣別）不核對（2026-10-15 確認）",
+        "description": "KO 每日型配息依期內預定交易日數累計（n/N），每期金額不重算；日圓商品的轉換匯率不核對（2026-10-15 確認）",
     },
     {
         "rule_id": "doc.agents_and_addresses",

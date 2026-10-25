@@ -142,7 +142,8 @@ def test_internal_rules_find_the_wrong_repeat(tmp_path, edit, broken):
     r = check(tmp_path, edits=[edit])
     bad = {rid for rid, _, _ in problems(r)}
     assert broken in bad, problems(r)
-    assert bad <= {broken, "standard.product_name"}, problems(r)
+    also = {"standard.currency_code"} if broken == "doc.currency_consistency" else set()  # 共用規則也比代碼（#227）
+    assert bad <= {broken, *also, "standard.product_name"}, problems(r)
 
 
 def test_coupon_rate_must_be_annual_over_twelve(tmp_path):

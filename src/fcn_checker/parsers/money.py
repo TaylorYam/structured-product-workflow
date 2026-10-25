@@ -42,7 +42,8 @@ CURRENCY_WORDS = (
 NUMBER = r"\d[\d,]*(?:\.\d+)?"  # 至少一個數字（單獨一個逗號不是金額）
 # 幣別字：長的中文寫法先比（人民幣不會被當成「民幣」），或前面不接英文字母的 3 碼 ISO 代碼（交易所名稱的尾巴不算）。
 # 全文索引去掉了換行，幣別字後面可能直接接下一行的字，所以不看後面。
-CURRENCY = "(?:" + "|".join(sorted(CURRENCY_WORDS, key=len, reverse=True)) + "|(?<![A-Za-z])[A-Z]{3})"
+CURRENCY_WORD = "|".join(sorted(CURRENCY_WORDS, key=len, reverse=True))  # 中文幣別字，長的先比
+CURRENCY = "(?:" + CURRENCY_WORD + "|(?<![A-Za-z])[A-Z]{3})"
 AMOUNT_THEN_CURRENCY = rf"({NUMBER})\s*({CURRENCY})"  # BARC：10,000 美元
 CURRENCY_THEN_AMOUNT = rf"({CURRENCY})\s*({NUMBER})"  # MS、HSBC：美元10,000
 

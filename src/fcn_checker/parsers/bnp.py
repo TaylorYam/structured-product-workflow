@@ -619,7 +619,9 @@ def price_fields(fields: dict[str, ParsedField], table: ParsedField, art11: list
         "underlying_prices",
         FieldStatus.PRESENT,
         tuple(
-            standard_fields.PriceRow(ticker, dict(row["prices"]), tuple(Evidence.of(ln) for ln in lns), name=nm)
+            standard_fields.PriceRow(
+                ticker, dict(row["prices"]), tuple(Evidence.of(ln) for ln in lns), name=nm, currency=row["currency"]
+            )
             for ticker, row, lns, nm in zip(tickers, table.value["rows"], table.value["row_lines"], names, strict=True)
         ),
         list(table.evidence),
