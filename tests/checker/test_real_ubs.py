@@ -3,7 +3,8 @@
 斷言與探勘結論一致（docs/checker/rules/ubs-check-rules.md §5）：新版 5 份說明書與 5 份投資人須知都辨識為 UBS 範本；舊版 1 組
 （「股權結構型債券」）辨識失敗、轉人工覆核。新版中 KO 每日卻寫「定期觀察」的 2 份說明書名稱判不一致，其中 1 份的
 參考條件表計價幣別填錯（表上 USD、文件是日圓），說明書計價幣別與金額旁的幣別字、投資人須知幣別都判不一致；其餘
-3 份說明書與投資人須知都通過並回填。參考條件表用 data/orders/核對表格式..xlsx（含 6 列 UBS）。
+3 份投資人須知都通過；說明書其中 1 份「即現預計為」的開始受理贖回日期落在教師節（Issue #227）判不一致，
+其他 2 份通過並回填。參考條件表用 data/orders/核對表格式..xlsx（含 6 列 UBS）。
 """
 
 from collections import Counter
@@ -46,9 +47,12 @@ def test_only_the_confirmed_differences_are_reported(items):
             ("standard.product_name", S.MISMATCH): 4,  # 2 份 KO 每日寫「定期觀察」：中英文名稱
             # 表上幣別填錯：說明書計價幣別與金額旁幣別字 13 處、說明文字與情境幣別 6 處（Issue #320）、投資人須知 1 處
             ("field.currency", S.MISMATCH): 20,
+            # 1 份「即現預計為」寫中秋節後的週一，但那天是 2025 年修法新增的教師節（孔子誕辰紀念日），次一臺北營業日
+            # 是再隔一天：文件問題（Issue #227，2026-10-25 使用者決定判不一致）
+            ("doc.redemption_start_date", S.MISMATCH): 1,
         }
     ), bad
-    assert sum(i.fills_sheet for i in term_sheets) == 3
+    assert sum(i.fills_sheet for i in term_sheets) == 2  # 開始受理贖回日期不一致的那份不回填
 
 
 def test_template_variants_match_the_sample_table(items):

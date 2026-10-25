@@ -3,15 +3,16 @@
 1. 接收批量入口的配對結果（上手、讀出的說明書、對到的參考條件表列；配對失敗時只有辨識結果）
 2. 參考條件表欄位規則（rules/reference.py；表頭缺必要欄或重複時讀檔就整批錯誤，Issue #199）
 3. 各上手共用的說明書推算規則（rules/derivation.py：價格推算）
-4. 日期表結構檢查（rules/schedule.py，各上手共用，Issue #289）、情境分析的共用檢查（rules/scenario.py，Issue #294）與
-   上手說明書內部規則（Issuer.rules；只拿到讀出結果、審查標準與上手宣告的參考條件表欄位）
+4. 日期表結構檢查（rules/schedule.py，各上手共用，Issue #289）、情境分析的共用檢查（rules/scenario.py，Issue #294）、
+   開始受理贖回日期（rules/redemption.py，Issue #227）與上手說明書內部規則（Issuer.rules；只拿到讀出結果、審查標準與上手宣告的參考條件表欄位）
 5. 審查標準規則（rules/review_standard.py）
 6. Non-Call(月)、TS、IIS、ISIN、發行日、比價日、VWAP 商品的各標的價格
 7. 回填決策（backfill.py）
 8. 整體狀態
 
 投資人須知（ADR 0007）另有 `check_investor_sheet`：配對結果 → 投資人須知規則（rules/iis.py：頁數、文件本身、
-參考條件表、同商品說明書）→ 範本專屬規則（IisTemplate.rules，例：MS）→ 審查標準規則（只核對範本有的項目）→ 整體狀態；
+參考條件表、同商品說明書）→ 範本專屬規則（IisTemplate.rules，例：MS）→ 審查標準規則（只核對範本有的項目）→
+開始受理贖回日期的寫法（rules/redemption.py）→ 整體狀態；
 不回填。
 """
 
@@ -26,7 +27,7 @@ from .identification import Identification
 from .investor_sheet import IisSheet
 from .issuers import Issuer
 from .orders.reference import OrderRecord
-from .rules import derivation, iis, reference, scenario, schedule
+from .rules import derivation, iis, redemption, reference, scenario, schedule
 from .rules.kit import Context, IssuerContext
 from .rules.review_standard import iis_review_standard_rules, review_standard_rules
 from .schema import CheckReport, CheckResult, CheckStatus, DocKind, overall_status
@@ -80,6 +81,7 @@ def check_document(pairing: Sequence[CheckResult], paired: Paired | None, config
         issuer_ctx = _issuer_context(paired, config)
         results.extend(schedule.run(issuer_ctx))
         results.extend(scenario.run(issuer_ctx))
+        results.extend(redemption.term_sheet(issuer_ctx))
         results.extend(paired.issuer.rules(issuer_ctx))
         results.extend(review_standard_rules(ctx, reference_trade=iis.trade_date(ctx)))
         results.append(reference.first_callable_period(ctx))
@@ -153,6 +155,7 @@ def check_investor_sheet(pairing: Sequence[CheckResult], paired: PairedIis | Non
         if template is not None and template.rules is not None:
             results.extend(template.rules(iis.IisIssuerContext(paired.sheet, paired.term_sheet, trade_date=trade)))
         results.extend(iis_review_standard_rules(ctx, trade=trade))
+        results.extend(redemption.investor_sheet(ctx))
         report.not_covered = [dict(n) for n in template.not_covered] if template is not None else []
     for r in results:  # 這份 PDF 的結果（含辨識與配對）都屬於投資人須知，錯訊的文件那一邊依此稱呼
         r.document = DocKind.IIS

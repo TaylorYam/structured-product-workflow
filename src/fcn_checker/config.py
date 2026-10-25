@@ -118,6 +118,8 @@ class IssuerStandard:
     minimum_issue_size: str | None = None  # 第四章發行不成立門檻的金額寫法
     # 最低金額出處欄位 → 單位面額的倍數（沒列為 1）；依幣別不同時為 {ISO 代碼: 倍數}（SG 最低申購金額）
     min_amount_multiples: dict[str, int | dict[str, int]] = field(default_factory=dict)
+    # 開始受理贖回日期寫文字的上手：允許的寫法（文字須以其中之一開頭）；沒有 → 寫文字時轉人工覆核（Issue #227）
+    redemption_start_wordings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -182,6 +184,7 @@ class ReviewStandard:
             product_type=v.get("product_type"),
             minimum_issue_size=v.get("minimum_issue_size"),
             min_amount_multiples=dict(v.get("min_amount_multiples", {})),
+            redemption_start_wordings=v.get("redemption_start_wordings", ()),
         )
 
 
@@ -388,6 +391,7 @@ ISSUER_FIELDS: dict[str, Callable[[Any, str], Any]] = {
     "product_type": _text_value,  # 封面商品種類固定值；沒有 → 不核對
     "minimum_issue_size": _text_value,  # 發行不成立門檻的金額寫法；沒有 → 不核對
     "guarantor_name_equivalents": _texts,  # 投資人須知相關機構的保證機構名稱其他寫法
+    "redemption_start_wordings": _texts,  # 開始受理贖回日期允許的文字寫法；沒有 → 寫文字時轉人工覆核
     "product_name": _product_name,  # 子表 [issuer.<上手>.product_name]：商品名稱樣板；沒有 → 轉人工覆核
     "guarantor_name": _place_texts(GUARANTOR_PLACES),  # 子表：出處 → 保證機構名稱；沒有 → 不核對
     "agent_name": _place_texts(AGENT_PLACES),  # 子表：出處 → 總代理人名稱；沒有 → 不核對

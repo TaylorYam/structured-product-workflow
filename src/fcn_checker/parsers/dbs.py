@@ -247,6 +247,7 @@ def _basic(fields: dict[str, ParsedField], basic: list[Line], put: Callable) -> 
     put("tenor_months", basic, r"商品年期：(\d+)個月。", int)
     put("issue_date", basic, r"發行日：" + D, parse_date)
     put("trade_date", basic, r"(?<!劃)(?<!定)交易日：" + D, parse_date)
+    put("observation_start", basic, r"觀察起始日：" + D, parse_date)
     put("maturity_date", basic, r"到期日：如未依下載之強制贖回條款發生自動提前出場事件之情形，為" + D, parse_date)
     put("final_valuation_date", basic, r"(?<!規劃)定價日：" + D + r"，如該日並非", parse_date)
     fields["coupon_table"] = table_a(ti)

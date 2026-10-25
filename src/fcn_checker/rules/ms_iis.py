@@ -15,7 +15,8 @@ from .ms import product_type_for
 
 
 def redemption_start(ctx: IisIssuerContext) -> CheckResult:
-    """開始受理贖回日期 = 同商品說明書第四章開始受理贖回日期（說明書另核對 = 發行日下一個平日）。"""
+    """開始受理贖回日期 = 同商品說明書第四章開始受理贖回日期（說明書另由共用規則核對 = 發行日的次一臺北營業日，
+    rules/redemption.py）。"""
     rid, name = "iis.redemption_start", "開始受理贖回日期"
     pf = read_iis(ctx.sheet, "redemption_start")
     check = Check(rid, "redemption_start", Item.term_sheet(name), ctx.document).needs(pf)

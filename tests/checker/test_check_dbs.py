@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from decimal import Decimal
 
 import pytest
@@ -217,6 +218,22 @@ def test_worst_price_wording_must_follow_the_ki_type(tmp_path):
     r = check(tmp_path, edits=[Edit("執行價格(70.3150)", "下限觸發價格(70.3150)", "ts.scenario")])
     assert [x.status for x in rule(r, "doc.scenario_table", "scenario3_worst")] == [S.MISMATCH]
     assert rule(r, "scenario.strike")[-1].status == S.REVIEW_REQUIRED
+
+
+def test_observation_start_is_the_next_trading_day_after_the_trade_date(tmp_path):
+    """觀察起始日 = 交易日的次一營業日；不符時轉人工覆核並寫出預期日期，不判不一致（Issue #227）。"""
+    spec = Spec()
+    ok, bad = tmp_path / "ok", tmp_path / "bad"
+    ok.mkdir(), bad.mkdir()
+    assert [x.status for x in rule(check(ok, spec), "doc.observation_start")] == [S.PASS]
+    next_day = spec.date(spec.trade_date + dt.timedelta(days=1))
+    edit = Edit(f"觀察起始日：{next_day}", f"觀察起始日：{spec.date(spec.trade_date)}", "ts.basic.dates")
+    [x] = rule(check(bad, spec, edits=[edit]), "doc.observation_start")
+    assert (x.status, x.expected, x.actual) == (
+        S.REVIEW_REQUIRED,
+        spec.trade_date + dt.timedelta(days=1),
+        spec.trade_date,
+    )
 
 
 def test_annual_coupon_must_match_the_max_rate(tmp_path):

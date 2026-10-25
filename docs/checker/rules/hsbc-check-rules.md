@@ -81,7 +81,7 @@
 | 項目 | 規則 |
 |---|---|
 | 受託機構審查通過日期 | = 審查標準 `approval_dates` 中交易日當天或之前最近一次的日期 |
-| 刊印日期 | 參考性審閱版與最終版刊印日期都在交易日當天到交易日 + 1 之內（共用 `doc.print_date`） |
+| 刊印日期 | 參考性審閱版與最終版刊印日期都在交易日（含）至發行日（不含）之間；第三章警語 (9) 重寫的兩個刊印日期另須等於封面（Issue #227）（共用 `doc.print_date`） |
 | 風險等級 | = 審查標準（RR4） |
 | 固定風險警語 | 審查標準 `issuer.hsbc.fixed_warning`，忽略空白後逐字比對，出現 3 次 |
 | 「受託投資」 | 只能出現在允許片語內（含 HSBC 的「受託投資、受託買賣或為投資型保單」） |
@@ -192,7 +192,7 @@
 | `doc.coupon_periods` | 第 11 條(1)「配息期數」= 天期 |
 | `schedule.period_count`、`schedule.payment_order`、`schedule.observation_order`、`schedule.last_observation`、`schedule.last_payment`、`schedule.period_start` | 日期表結構（各上手共用 `rules/schedule.py`，Issue #289；日期表與排程在擷取端 `parsers/hsbc.py` 的 `schedule_table`，排程由共用推導 `parsers/schedule.py` 推得，D 型比價日只放第 k 期與末期） |
 | `schedule.autocall_dates` | D 型 Nt 欄；P 型定期 KO 表付款日對到第 k～n 期 |
-| `doc.denomination`、`field.min_amounts`、`doc.subscription_start_date`、`doc.print_date` | 面額預設值、最低金額 = 參考條件表單位面額、受理申購開始／結束日 ≤ 交易日、兩個刊印日期在交易日（含）至發行日（不含）之間（#254）（各上手共用，BARC 語意，Issue #55；每處出處各一筆結果） |
+| `doc.denomination`、`field.min_amounts`、`doc.subscription_start_date`、`doc.print_date` | 面額預設值、最低金額 = 參考條件表單位面額、受理申購開始／結束日 ≤ 交易日、封面與第三章的刊印日期在交易日（含）至發行日（不含）之間（#254）、第三章 = 封面（Issue #227）（各上手共用，BARC 語意，Issue #55；每處出處各一筆結果） |
 | `doc.currency_consistency`、`doc.name_consistency` | 文件重複欄位 |
 | `field.currency`（其他出處） | 面額與最低金額、情境假設與各情境金額前的幣別字 = 參考條件表承作幣別（共用，Issue #170；欄位 `denomination_currency`、`minimum_trade_currency`、`minimum_subscription_currency`、`minimum_additional_currency`、`scenario_assumption_currency`、`scenario_n_currency`） |
 | 共用 `scenario.reprint`、`scenario.params`、`scenario.strike`（Issue #294） | 情境價格表的價格、代號、欄頭 % = §12(1)；情境假設與各情境的天期、面額、固定配息率（年利率 ÷ 12 四捨五入 4 位）、配息期數、發行價格、非較差情境的平均年化報酬率 = 正式條款；情境文字的執行價、觸及不保本價格 = §12(1) 該檔的值，或 = 期初股價 × % 依文件位數四捨五入／無條件捨去（兩種進位都接受；2026-10-15，#259） |

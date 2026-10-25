@@ -217,18 +217,6 @@ def autocall_dates(ctx: IssuerContext) -> CheckResult:
     return kit.structure_check(ctx, "schedule.autocall_dates", "autocall_dates", "提前出場觀察日", deps, issues)
 
 
-def redemption_start(ctx: IssuerContext) -> CheckResult:
-    """第四章開始受理贖回日期 = 發行日的下一個平日（只排除週末；遇假日不同時由作業人員人工放行）。"""
-    issue, start = ctx.ts.f("issue_date"), ctx.ts.f("redemption_start")
-    return kit.doc_check(
-        ctx, "doc.redemption_start_date", "redemption_start", "開始受理贖回日期", issue, start
-    ).compare(
-        kit.next_weekday(issue.value) if issue.ok else None,
-        start.value,
-        fail_message="第四章開始受理贖回日期須為發行日的下一個平日（只排除週末）",
-    )
-
-
 def run_all(ctx: IssuerContext) -> list[CheckResult]:
     """說明書內部規則：只用讀出結果、審查標準與宣告的參考條件表欄位（年利率）。"""
     return [
@@ -237,6 +225,5 @@ def run_all(ctx: IssuerContext) -> list[CheckResult]:
         *periods(ctx),
         *ko_terms(ctx),
         autocall_dates(ctx),
-        redemption_start(ctx),
         *ms_scenario.run(ctx),
     ]

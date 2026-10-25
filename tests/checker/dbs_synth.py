@@ -369,7 +369,7 @@ def _basic(d: _Doc, s: Spec) -> None:
         d.centered_row([(227, str(j + 1)), (340, s.date(s.ends[j])), (453, s.date(s.payments[j]))], gap=13)
     d.section = "basic.dates"
     d.text(170, "#為避免疑問，觀察期間結束日不會因干擾日而被順延。")
-    d.text(170, f"觀察起始日：{s.date(s.print_date)}")
+    d.text(170, f"觀察起始日：{s.date(weekday_on_or_after(s.trade_date + dt.timedelta(days=1)))}")
     d.text(170, "觀察日：就一觀察期間而言，指該觀察期間內所有連結標的的所有交易所的每一個規劃交易日。")
     d.section = "basic.coupon"
     d.cell(

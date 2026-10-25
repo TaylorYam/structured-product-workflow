@@ -710,6 +710,7 @@ def build_iis_pdf(
         w.line(20.5, f"11.商品年期：{s.tenor} 個月。")
         w.line(20.5, f"12.發行日：{zh_date(s.issue_date)}。")
         w.line(20.5, f"13.到期日或最終實物贖回日：{zh_date(s.maturity_date)}。")
+        w.line(20.5, "14.開始受理投資人提前贖回日期：於發行日後的次一個營業日。")
         w.line(20.0, "收益分配事項：")
         para(
             f"(1) 配息金額：每單位商品面額乘以每月之配息率（為{s.monthly_value}%(顯示至小數點後第4位)，"
