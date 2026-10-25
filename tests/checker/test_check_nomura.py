@@ -16,7 +16,7 @@ import ms_synth
 import sg_synth
 from fcn_checker.issuers import NOMURA
 from fcn_checker.schema import CheckStatus as S
-from harness import check_all
+from harness import also_flagged, check_all
 from harness import field_problems as problems
 from harness import results as rule
 from nomura_synth import ISIN, PHONE, WARNING, Spec, check, check_item
@@ -180,7 +180,8 @@ def test_internal_rules_find_the_wrong_repeat(tmp_path, edit, broken):
     r = check(tmp_path, edits=[edit])
     bad = {rid for rid, _, _ in problems(r)}
     assert broken in bad, problems(r)
-    assert bad <= {broken, "standard.issue_price", "standard.product_name"}, problems(r)
+    also = also_flagged(broken)
+    assert bad <= {broken, *also, "standard.issue_price", "standard.product_name"}, problems(r)
 
 
 def test_daily_ko_start_must_be_an_observation_period_end(tmp_path):

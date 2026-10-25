@@ -102,6 +102,7 @@ PRICE_TABLE = price_table.TableSpec(
     pct=r"之(\d+(?:\.\d+)?)%",
     pct_label="(期初進場價格之X%)",
     code="彭博代碼",
+    texts=(price_table.Column("currency", "貨幣"),),  # 標的交易幣別（Issue #227）
 )
 SCENARIO_TABLE = replace(PRICE_TABLE, where="第 16 項情境價格表", anchor="price", code=None)
 # 重複寫出處（Issue #318，比照 BBVA #305）

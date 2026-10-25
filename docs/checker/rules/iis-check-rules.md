@@ -172,3 +172,4 @@ MS 投資人須知另外寫出交易日、期末定價日與提前出場、觸�
 | 2026-10-25 | 所有上手（Issue #224）：受託對象與能否承作 OSU 客戶一致（`standard.osu_clients`）：不能承作的上手（BBVA、Citi、GS、DBS）全文不得出現 OSU，可以承作的上手受託對象欄要寫 OSU 客戶；交易日 2026-11-30（含）以前特例通過（DBS 舊範本、JPM 受託對象沒寫 OSU 客戶） |
 | 2026-10-25 | 所有上手（Issue #226）：商品簡介的保本率與達成保本率之各項條件要寫不保本（`standard.principal_protection`，允許寫法在 `principal_protection.non_protected`）；全文受託機構名稱（`standard.distributor_names`） |
 | 2026-10-25 | 開始受理贖回日期（Issue #227）：寫文字的 11 家上手也核對（D36），須以審查標準 `issuer.<上手>.redemption_start_wordings` 列出的寫法開頭（共用規則 `standard.redemption_start`），取代「只有文字，不核對」 |
+| 2026-10-25 | 幣別代碼與價格表的標的交易幣別（Issue #227，見[共用核對規則](shared-check-rules.md) §9）：投資人須知「中文幣別(代碼)」每處核對；有價格表幣別的範本（BNP、DBS、GS、JPM、SG）每列 = 標的交易所幣別 |

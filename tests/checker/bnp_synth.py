@@ -139,7 +139,7 @@ class Spec(ProductSpec):
 
     @property
     def underlying_ccy(self) -> str:
-        return "美元" if self.fx is not None else self.currency_zh
+        return "美元"  # 標的都是美股（ZBn UW）
 
     @property
     def name_zh(self) -> str:

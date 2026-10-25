@@ -515,8 +515,8 @@ def test_spec_requires_a_code_column_for_ticker_anchors():
 def test_price_rows_takes_tickers_names_and_currency_from_the_adapter():
     table = read("t", [*header(), *row(1, 150, 1, "甲公司", "AAA UW", ROW1)], SPEC)
     rows = price_rows(table).value
-    assert (rows[0].ticker, rows[0].name, rows[0].currency) == ("AAA UW", "甲公司", None)
-    rows = price_rows(table, ["XYZ UN"], names=["第 1 檔"], currency=True).value
+    assert (rows[0].ticker, rows[0].name, rows[0].currency) == ("AAA UW", "甲公司", "美元")
+    rows = price_rows(table, ["XYZ UN"], names=["第 1 檔"]).value
     assert (rows[0].ticker, rows[0].name, rows[0].currency) == ("XYZ UN", "第 1 檔", "美元")
     assert rows[0].prices["ki"] == Decimal("60.0000")
     broken = read("t", header(), SPEC)

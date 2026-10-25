@@ -27,6 +27,7 @@ from reference_synth import (
     ProductSpec,
     build_reference_sheet,
     price,
+    quote_currency,
     reference_row,
     weekday_on_or_after,
     write_notes,
@@ -211,7 +212,9 @@ def _price_table(d: _Doc, s: Spec, *, iis: bool = False) -> None:
         cells.append((x["exchange"], u.exchange[:6]))
         cells += [(x[key], f"{u.initial if pct is None else price(u.initial, pct):,.4f}") for key, _, pct in cols]
         d.w.row(cells, gap=11, size=8)
-        tail = [(x[key] + 8, s.currency_zh) for key, _, _ in cols] + ([(x["code"], exchange)] if wrap else [])
+        tail = [(x[key] + 8, quote_currency(u.ticker)) for key, _, _ in cols] + (
+            [(x["code"], exchange)] if wrap else []
+        )
         d.w.row(tail, gap=16, size=8)
 
 
@@ -315,7 +318,7 @@ def _scenario(d: _Doc, s: Spec) -> None:
     d.w.row([(x[key], label) for key, label, _ in cols], gap=15, size=9)
     for i, u in enumerate(s.underlyings, 1):
         values = [
-            (x[key], f"{u.initial if pct is None else price(u.initial, pct):,.4f}{s.currency_zh}")
+            (x[key], f"{u.initial if pct is None else price(u.initial, pct):,.4f}{quote_currency(u.ticker)}")
             for key, _, pct in cols
         ]
         d.w.row([(x["label"], f"連結標的{i}"), *values], gap=15, size=9)

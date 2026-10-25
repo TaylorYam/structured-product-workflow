@@ -30,7 +30,7 @@
 | TDCC Code | `product_code` | 配對＋字串相等 |
 | ISIN Code | `isin` | 回填欄位：空白 → 通過後回填；有值 → 比對（`backfill.isin`） |
 | 單位面額 | `denomination` | 整數相等；另有審查標準的面額預設值檢查（`doc.denomination`） |
-| 承作幣別（或 `計價幣別`） | `currency_zh`、`currency_others` | 依審查標準幣別對照；不在表內轉人工覆核。金額旁的幣別字每處各一筆，= 承作幣別（`field.currency`）。商品幣別不必等於標的幣別（Issue #170） |
+| 承作幣別（或 `計價幣別`） | `currency_zh`、`currency_others` | 依審查標準幣別對照；不在表內轉人工覆核。金額旁的幣別字每處各一筆，= 承作幣別（`field.currency`）。商品幣別不必等於標的幣別（Issue #170）。「中文幣別(代碼)」的代碼另見 §9 |
 | 發行日 | `issue_date` | 回填欄位：空白 → 通過後回填；有值 → 比對（`backfill.issue_date`，Issue #64） |
 | 交易日、最終比價日、到期日 | `trade_date`、`final_valuation_date`、`maturity_date` | 日期相等 |
 | KO(%)、K(%)、KI(%)、Coupon p.a. (%) | `ko_pct`、`strike_pct`、`ki_pct`、`coupon_pa_pct` | 依說明書顯示位數四捨五入後比對；無 KI 時 KI(%) 必須是 `-` |
@@ -58,6 +58,7 @@
 - 代號含交易所尾碼，逐字比對；尾碼代表交易所，例如 `XXX UW` 與 `XXX UQ` 視為不同標的。
 - 標的中文名稱與交易所不核對：上手以代號索引自動帶入名稱，確認代號即可（2026-10-02 使用者確認）。
 - 上手可宣告標的不看順序（`config/reference_sheet.toml` 的 `[underlyings] any_order_issuers`），此時依代號配對各標的價格（Issue #265）。
+- 價格表每一列的幣別 = 標的交易所的交易幣別，見 §9。
 
 ### 5.1 連結標的公司介紹（`rules/underlying_notes.py`，Issue #225）
 
@@ -185,3 +186,15 @@
 - **日期表**：表的位置、每列各欄取自原表哪一欄、期始日的定義（規則、第 1 期怎麼比發行日、開頭空白的期數），由上手隨標準欄位 `schedule_table` 交出（§6.1）。
 - **沒有 KO 欄但仍有自動提前出場機制**（例：MS Non-Call = 天期、SG 無自動提前出場）：adapter 交出 `ko_pct` = 100、各標的 KO 價 = 期初價格，共用規則照常比對（Issue #194、#202）。
 - **審查標準的上手差異**：放在 `config/review_standard.toml` 的上手分節，見[審查標準](review-standard.md)。
+
+## 9. 幣別代碼與標的交易幣別（`rules/currency.py`，Issue #227）
+
+說明書與投資人須知都核對，每份文件各一筆結果（有問題時預期值與實際值只列有問題的那幾處）；文件沒有這種寫法時不報。
+
+| 項目 | 規則 |
+|---|---|
+| 幣別代碼（`standard.currency_code`） | 全文每一處「中文幣別(代碼)」（例：`日圓(JPY)`、`10,000美元(USD)`；括號全形半形都收）：代碼 = 審查標準 `[currency]` 對到的 ISO 代碼，或 `[currency_code_aliases]` 列的其他寫法（人民幣寫 `CNY`、`RMB`）。不一致判不一致；括號內是這兩張表裡的代碼、前面卻不是認得的中文幣別（例：`日元(JPY)`）轉人工覆核，結果顯示括號前幾個字。括號內不是幣別代碼的縮寫（例：`(ETF)`）不看。各上手規則另比封面與條文的幣別代碼 = 封面幣別（`doc.currency_consistency`）：同一處代碼錯時兩條都報（一條比封面、一條比旁邊的中文幣別），這裡整份只報一筆 |
+| 價格表的標的交易幣別（`standard.underlying_currency`） | `underlying_prices` 每一列有幣別時（價格旁的幣別字，或價格表的幣別欄：HSBC `幣別`、NOMURA `計價幣別`、GS `參考幣別`、NATIXIS `貨幣`，BNP 標的表的 `貨幣(Currency)` 列），幣別（中文依 `[currency]` 換成 ISO 代碼）= 交易所假日表（`config/exchange_holidays.toml`）依彭博交易所碼對到的市場 `currency`（美國 USD、日本 JPY、港股 HKD）。不一致判不一致；交易所不在假日表或該市場沒寫 `currency`、幣別字對照不到、或只有部分列讀不到幣別轉人工覆核。表上沒有代碼時依 `underlyings` 同順序的代碼 |
+
+- 價格表沒有幣別的上手（BARC、MS）不報；BNP 貨幣列的幣別字數不等於標的數時，各檔都帶讀到的原文、轉人工覆核。標的幣別本來就可以和承作幣別不同（Issue #170），這裡比的是交易所，不是承作幣別。
+- 樣本（2026-10-25）：幣別代碼 81 份、價格表交易幣別 97 份都成立；GS 寫 `人民幣（CNY）`、SG 風險揭露寫 `以人民幣(RMB)計值的債券`。
