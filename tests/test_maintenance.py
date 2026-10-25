@@ -10,14 +10,14 @@ import pytest
 
 from db_synth import price, trade, write_daily
 from fcn_checker.check_config import ConfigPaths
-from order_synth import CONFIG, MISSING_NOTE, A, B, drafts_of, maintenance_draft, open_terms, order_row
+from order_synth import CONFIG, A, B, maintenance_draft, open_terms, order_row
 from sp_workflow.check_terms import DONE, TO_CONFIRM, recalculate
 from sp_workflow.daily_import import import_daily
 from sp_workflow.order_terms import TDCC_FIELD
 from sp_workflow.product_record import FIELDS, REQUIRED
-from sp_workflow.product_terms import TermsError, missing_products, problems, write, write_batch
+from sp_workflow.product_terms import _MISSING_NOTE, TermsError, missing_products, problems, write, write_batch
 from sp_workflow.status import ImportResult, OrderReview, ProductSource
-from sp_workflow.window_actions import open_product
+from sp_workflow.window_actions import _drafts, open_product
 
 UF_215 = {"Upfront / NotePrice (%)": Decimal("97.85")}  # UF 2.15，和 db_synth 的交易列一樣
 C = "029199990003"  # 只有交易明細（BARC）
@@ -32,7 +32,7 @@ def test_blank_required_fields_are_marked_missing_but_do_not_block() -> None:
 
     found = problems(draft, CONFIG)
 
-    assert found == {"Strike (%)": MISSING_NOTE, "Maturity date": MISSING_NOTE}
+    assert found == {"Strike (%)": _MISSING_NOTE, "Maturity date": _MISSING_NOTE}
 
 
 @pytest.mark.parametrize(
@@ -55,7 +55,7 @@ def test_cross_field_checks_skip_blank_fields() -> None:
     )
 
     assert problems(draft, CONFIG) == {
-        name: MISSING_NOTE for name in ("Currency", "Tenor (m)", "Barrier Type", "Trade date", "Strike date")
+        name: _MISSING_NOTE for name in ("Currency", "Tenor (m)", "Barrier Type", "Trade date", "Strike date")
     }
 
 
@@ -65,7 +65,7 @@ def test_a_blank_ki_with_a_barrier_still_blocks() -> None:
 
     assert problems(draft, CONFIG) == {"KI Barrier (%)": "有 KI 時必填；還不確定就把 Barrier Type 也先空著"}
     both = maintenance_draft(**{"KI Barrier (%)": None, "Barrier Type": None})
-    assert problems(both, CONFIG) == {"Barrier Type": MISSING_NOTE}
+    assert problems(both, CONFIG) == {"Barrier Type": _MISSING_NOTE}
 
 
 def test_mistyped_fields_block() -> None:
@@ -91,7 +91,7 @@ def test_a_new_product_needs_a_known_issuer() -> None:
 
 
 def import_order(pg, tdcc: str = A, **changes) -> None:
-    receipt = write_batch(pg, drafts_of([order_row(tdcc, {**UF_215, **changes})], pg), CONFIG, user="tester")
+    receipt = write_batch(pg, _drafts([order_row(tdcc, {**UF_215, **changes})], CONFIG, pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
 
 
@@ -380,7 +380,7 @@ def test_the_order_sheet_import_takes_over_a_manual_product(pg, tmp_path) -> Non
     draft.values["Coupon p.a. (%)"] = Decimal(11)
     write(pg, draft, CONFIG, user="operator1")
 
-    receipt = write_batch(pg, drafts_of([order_row(C, UF_215)], pg), CONFIG, user="tester")
+    receipt = write_batch(pg, _drafts([order_row(C, UF_215)], CONFIG, pg), CONFIG, user="tester")
 
     assert receipt.lines[0].result == ImportResult.OVERWRITTEN
     assert receipt.lines[0].detail.startswith("人工維護建立的商品改由起單資料匯入接手")

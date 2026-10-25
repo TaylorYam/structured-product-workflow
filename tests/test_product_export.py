@@ -9,16 +9,17 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from order_synth import CONFIG, A, B, drafts_of, order_row
+from order_synth import CONFIG, A, B, order_row
 from sp_workflow.lifecycle import KO, AutoEvent, replace_auto_events
 from sp_workflow.product_export import export_name, export_products
 from sp_workflow.product_terms import write_batch
+from sp_workflow.window_actions import _drafts
 
 UF_215 = {"Upfront / NotePrice (%)": Decimal("97.85")}
 
 
 def import_order(pg, tdcc: str) -> None:
-    receipt = write_batch(pg, drafts_of([order_row(tdcc, UF_215)], pg), CONFIG, user="tester")
+    receipt = write_batch(pg, _drafts([order_row(tdcc, UF_215)], CONFIG, pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
 
 

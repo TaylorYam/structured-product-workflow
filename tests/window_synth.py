@@ -10,7 +10,7 @@ from tkinter import messagebox, ttk
 
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.ui import Background
-from order_synth import CONFIG, drafts_of
+from order_synth import CONFIG
 from sp_workflow import app
 from sp_workflow.app import PanelWindow
 from sp_workflow.check_terms import TO_CONFIRM, CalcLine, Difference
@@ -20,7 +20,7 @@ from sp_workflow.order_terms import OrderRow
 from sp_workflow.preparation import PREPARED, SKIPPED, PreparedDocument, PrepareReceipt, ProductOutcome
 from sp_workflow.tabs import recalc
 from sp_workflow.tabs.base import DatabaseLogin
-from sp_workflow.window_actions import PrepareResult, ReadResult
+from sp_workflow.window_actions import PrepareResult, ReadResult, _drafts
 
 
 def texts(widget: tk.Misc, kind: type[tk.Misc]) -> list[str]:
@@ -126,7 +126,7 @@ def prepared_result(batch: Path) -> PrepareResult:
 
 def read_result(*rows: OrderRow) -> ReadResult:
     """讀完起單建檔的結果（沒有連資料庫）。"""
-    return ReadResult(rows, drafts_of(rows), CONFIG)
+    return ReadResult(rows, _drafts(rows, CONFIG), CONFIG)
 
 
 def type_into(editor, name: str, text: str) -> None:

@@ -8,11 +8,12 @@ from decimal import Decimal
 import pytest
 
 from db_synth import price, trade, write_daily
-from order_synth import CONFIG, A, B, drafts_of, open_terms, order_row
+from order_synth import CONFIG, A, B, open_terms, order_row
 from sp_workflow.check_terms import DONE, TO_CONFIRM, recalculate
 from sp_workflow.daily_import import import_daily
 from sp_workflow.product_terms import Mode, TermsError, problems, write, write_batch
 from sp_workflow.status import ImportResult
+from sp_workflow.window_actions import _drafts
 
 pytestmark = pytest.mark.db
 
@@ -20,7 +21,7 @@ UF_215 = {"Upfront / NotePrice (%)": Decimal("97.85")}  # UF 2.15，和 db_synth
 
 
 def import_locked(pg, tdcc=A, **changes):
-    receipt = write_batch(pg, drafts_of([order_row(tdcc, {**UF_215, **changes})], pg), CONFIG, user="tester")
+    receipt = write_batch(pg, _drafts([order_row(tdcc, {**UF_215, **changes})], CONFIG, pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
     pg.execute("UPDATE workflow.product SET locked_at = now() WHERE tdcc = %s", (tdcc,))
 
@@ -29,7 +30,7 @@ def import_with_prices(pg, tmp_path, **changes):
     """有交易明細與股價、算過核對條件之後才鎖住。"""
     path = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "台北", 100000)], [price("AAA UW"), price("BBB UN")])
     import_daily(path, pg)
-    receipt = write_batch(pg, drafts_of([order_row(A, {**UF_215, **changes})], pg), CONFIG, user="tester")
+    receipt = write_batch(pg, _drafts([order_row(A, {**UF_215, **changes})], CONFIG, pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
     assert recalculate(pg, CONFIG.calendar).line_of(A).status == DONE
     pg.execute("UPDATE workflow.product SET locked_at = now() WHERE tdcc = %s", (A,))
@@ -73,7 +74,7 @@ def test_a_locked_product_opens_with_the_database_values(pg) -> None:
     ("setup", "mode"),
     [
         (lambda pg: None, Mode.CREATE),  # 資料庫沒有這檔：人工維護新建
-        (lambda pg: write_batch(pg, drafts_of([order_row()], pg), CONFIG, user="t"), Mode.MAINTAIN),
+        (lambda pg: write_batch(pg, _drafts([order_row()], CONFIG, pg), CONFIG, user="t"), Mode.MAINTAIN),
         (lambda pg: import_locked(pg), Mode.CORRECT),
     ],
 )
@@ -112,7 +113,7 @@ def test_a_correction_updates_the_terms_keeps_the_lock_and_records_who_and_why(p
     assert previous["coupon_pct"] == "12.5" and previous["ko_freq"] == "D"
     assert draft.stored == draft.values, "寫入後畫面和資料庫一致"
 
-    again = write_batch(pg, drafts_of([order_row(changes=UF_215)], pg), CONFIG, user="tester")
+    again = write_batch(pg, _drafts([order_row(changes=UF_215)], CONFIG, pg), CONFIG, user="tester")
     assert again.lines[0].result == ImportResult.LOCKED, "更正後重新匯入照樣不覆蓋"
     assert column(pg, "coupon_pct") == Decimal(11)
 

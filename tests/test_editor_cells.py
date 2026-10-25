@@ -8,7 +8,7 @@ from itertools import product
 
 import pytest
 
-from order_synth import drafts_of, maintenance_draft, maintenance_trades, order_row
+from order_synth import CONFIG, maintenance_draft, maintenance_trades, order_row
 from sp_workflow.editor_cells import (
     CellState,
     Tone,
@@ -20,7 +20,9 @@ from sp_workflow.editor_cells import (
     trade_cell_states,
     trade_texts,
 )
+from sp_workflow.status import OrderReview
 from sp_workflow.trade_rows import CANCEL_NOTE, UNMATCHED_NOTE
+from sp_workflow.window_actions import _drafts
 
 # ---------- 格子狀態：擋存檔 ＞ 和資料庫不同＋備註 ＞ 和資料庫不同 ＞ 備註 ＞ 固定 ----------
 
@@ -79,7 +81,7 @@ def test_an_untouched_cell_is_plain_and_a_fixed_one_says_so(fixed: bool, note: s
 
 def test_order_cells_prefix_reading_notes_and_use_the_given_problems() -> None:
     notes = {"Coupon p.a. (%)": "讀到「abc」，不是數字"}
-    [draft] = drafts_of([order_row(notes=notes)])
+    [draft] = _drafts([order_row(notes=notes)], CONFIG)
     draft.stored = {**draft.values, "Coupon p.a. (%)": 12}
 
     states = order_cell_states(draft, {"Maturity date": "必填"})
@@ -91,10 +93,11 @@ def test_order_cells_prefix_reading_notes_and_use_the_given_problems() -> None:
     assert states["Currency"] == CellState()
 
 
-@pytest.mark.parametrize(("correcting", "tone"), [(True, Tone.DIFFERENT), (False, Tone.PLAIN)])
-def test_clearing_a_field_only_counts_as_different_when_correcting(correcting: bool, tone: Tone) -> None:
-    draft = maintenance_draft()
-    draft.correcting = correcting
+@pytest.mark.parametrize(("status", "tone"), [(OrderReview.UNLOCKED, Tone.DIFFERENT), (OrderReview.READ, Tone.PLAIN)])
+def test_clearing_a_field_only_counts_as_different_when_correcting(status: OrderReview, tone: Tone) -> None:
+    draft = maintenance_draft(
+        status
+    )  # 同一份資料庫的值，只換確認狀態：人工維護打開的（未鎖住）才是更正，起單資料讀到的不是
     draft.values["Coupon p.a. (%)"] = None
 
     assert order_cell_states(draft, {})["Coupon p.a. (%)"].tone is tone

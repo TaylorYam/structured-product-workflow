@@ -76,19 +76,7 @@ def maintenance_draft(status: str = OrderReview.UNLOCKED, tdcc: str = A, issuer:
     """人工維護打開的一檔（`draft_from(tdcc, …)` 的結果，不連資料庫）：`changes` 改欄位的值。"""
     values = {**VALUES, **changes}
     row = OrderRow(tdcc, status, issuer, dict(values))
-    return Draft(row, dict(values), dict(values), dict(values), database_checked=True, correcting=True)
-
-
-MISSING_NOTE = "缺，可以先存、之後再補"  # 人工維護空著的必填欄：標紅、不擋存檔
-
-
-def drafts_of(rows: Sequence[OrderRow], conn=None, config: ImportConfig = CONFIG) -> list[Draft]:
-    """讀取結果 → 確認資料（同 `window_actions.read_order_sheet`）：有連線時帶入資料庫的值；找不到的列沒有。"""
-    return [
-        draft_from(row, None if conn is None else read(conn, row.tdcc), config, checked=conn is not None)
-        for row in rows
-        if row.found
-    ]
+    return Draft(row, dict(values), dict(values), dict(values), database_checked=True)
 
 
 def open_terms(conn, tdcc: str, config: ImportConfig = CONFIG) -> Draft:

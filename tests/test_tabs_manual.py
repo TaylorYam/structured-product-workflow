@@ -12,13 +12,12 @@ import pytest
 
 import sp_workflow.tabs.manual
 from fcn_checker.ui import SURFACE
-from order_synth import CONFIG, MISSING_NOTE, VALUES, maintenance_draft, maintenance_trades
+from order_synth import CONFIG, VALUES, maintenance_draft, maintenance_trades
 from sp_workflow.app import PanelWindow
 from sp_workflow.check_terms import DONE, TO_CONFIRM, CalcLine
-from sp_workflow.order_terms import OrderRow
 from sp_workflow.product_export import ExportReceipt
 from sp_workflow.product_record import FIELDS, REQUIRED
-from sp_workflow.product_terms import Draft, MissingProduct, Receipt, TermsError
+from sp_workflow.product_terms import _MISSING_NOTE, Draft, MissingProduct, Receipt, TermsError, draft_from
 from sp_workflow.status import OrderReview
 from sp_workflow.tabs.editor import DIFFERENT_BG, PROBLEM_BG
 from sp_workflow.tabs.manual import correction_text
@@ -30,10 +29,8 @@ A_TDCC, B_TDCC, NEW_TDCC = "029199990001", "029199990002", "029199990003"
 
 
 def new_product_draft(tdcc: str = NEW_TDCC) -> Draft:
-    """只有交易明細的 TDCC：從空白開始，商品種類 FCN。"""
-    values = {**dict.fromkeys(FIELDS), "Product": "FCN"}
-    row = OrderRow(tdcc, OrderReview.TRADES_ONLY, "BARC", dict(values))
-    return Draft(row, dict(values), dict(values), dict(values), database_checked=True, correcting=True)
+    """只有交易明細的 TDCC：從空白開始，商品種類 FCN（人工維護打開資料庫沒有的一檔）。"""
+    return draft_from(tdcc, None, CONFIG)
 
 
 def missing(tdcc: str, status: str = OrderReview.UNLOCKED, **changes) -> MissingProduct:
@@ -129,7 +126,7 @@ def test_an_unlocked_product_marks_blank_fields_red_but_can_be_saved(master, tmp
     editor = opened(window, maintenance_draft(**{"Maturity date": None}))
 
     maturity = editor.rows["Maturity date"]
-    assert maturity.label.cget("background") == PROBLEM_BG and maturity.note.cget("text") == MISSING_NOTE
+    assert maturity.label.cget("background") == PROBLEM_BG and maturity.note.cget("text") == _MISSING_NOTE
     assert window.manual.intro_var.get().startswith("還沒鎖住")
     assert str(window.manual.save_button.cget("state")) == "normal"
     assert str(editor.rows["Issue date"].input.cget("state")) == "normal", "還沒鎖住的 Issue date 同起單資料可以改"
@@ -158,7 +155,7 @@ def test_a_trade_only_product_starts_blank(master, tmp_path: Path) -> None:
     editor = opened(window, new_product_draft())
 
     assert window.manual.intro_var.get().startswith("資料庫還沒有這檔的商品條件")
-    assert editor.rows["Currency"].note.cget("text") == MISSING_NOTE
+    assert editor.rows["Currency"].note.cget("text") == _MISSING_NOTE
     assert editor.rows["Product"].var.get() == "FCN"
     assert editor.title_var.get() == f"{NEW_TDCC}　BARC"
 
