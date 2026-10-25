@@ -64,14 +64,14 @@ def test_add_edit_and_delete_ratings_of_the_picked_entity(opened, monkeypatch) -
 
     ratings.entities.selection_set("e0")
     added = Rating("ABC", ISSUER, dt.date(2031, 1, 1), "A-", None, None)
-    monkeypatch.setattr(screen, "ask_rating", lambda parent, entity, before: added)
+    monkeypatch.setattr(screen, "ask_rating", lambda parent, entity, before, latest=None: added)
     ratings.add_rating()
     assert calls[-1] == ("add_credit_rating", ABC_NOW, added), "帶著打開時看到的最新一筆"
     assert ratings.status_var.get().startswith("已存：新增 ABC 的發行機構評等（生效日 2031-01-01）。")
     assert ratings.entities.selection() == ("e0",), "存檔後停在同一個機構"
 
     edited = Rating("ABC", ISSUER, dt.date(2030, 6, 1), "A", "A3", None)
-    monkeypatch.setattr(screen, "ask_rating", lambda parent, entity, before: edited)
+    monkeypatch.setattr(screen, "ask_rating", lambda parent, entity, before, latest=None: edited)
     ratings.edit_latest()
     assert calls[-1] == ("edit_credit_rating", ABC_NOW, edited)
 
@@ -89,7 +89,7 @@ def test_the_only_rating_cannot_be_deleted_and_unchanged_edits_are_not_saved(ope
     ratings.entities.selection_set("e1")
 
     ratings.delete_latest()
-    monkeypatch.setattr(screen, "ask_rating", lambda parent, entity, before: before)
+    monkeypatch.setattr(screen, "ask_rating", lambda parent, entity, before, latest=None: before)
     ratings.edit_latest()
 
     assert calls == [] and "至少要留一筆" in infos[0]
@@ -147,3 +147,12 @@ def test_entity_form_blank_date_means_initial(master) -> None:
         Entity("NEW", GUARANTOR, "New Holdings"),
         Rating("NEW", GUARANTOR, INITIAL, None, "Baa2", None),
     )
+
+
+def test_a_new_rating_starts_from_the_latest_one(master) -> None:
+    form = RatingForm(master, ABC, None, ABC_NOW)
+    assert form.day_var.get() == "" and [v.get() for v in form.agency_vars] == ["A", "A2", ""]
+    form.day_var.set("2031-01-01")
+    form.agency_vars[0].set("A-")
+    form.confirm()
+    assert form.result == Rating("ABC", ISSUER, dt.date(2031, 1, 1), "A-", "A2", None), "只改變了的那家"

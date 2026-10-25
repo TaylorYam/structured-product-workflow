@@ -505,7 +505,7 @@ def test_chinese_ki_is_cleared_for_the_english_codes(pg) -> None:
         (A,),
     )
 
-    assert apply_migrations(pg)[0] == "0023_pricing_ki_english.sql"
+    assert apply_migrations(pg) == [name for version, name, _ in database.migration_files() if version >= 23]
 
     assert pg.execute("SELECT status, reason, ki FROM workflow.pricing_status").fetchall() == [
         ("在庫", "Non-call period", None)

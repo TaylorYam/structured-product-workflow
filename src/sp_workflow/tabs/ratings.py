@@ -188,7 +188,7 @@ class RatingsWindow(tk.Toplevel):
         if entity is None:
             return
         latest = self.rows.latest(*entity.key)
-        after = ask_rating(self, entity, None)
+        after = ask_rating(self, entity, None, latest)
         if after is not None:
             label = f"新增 {entity.issuer} 的{entity.role}評等（生效日 {effective_label(after.effective_date)}）"
             self._save(lambda s: add_credit_rating(s, latest, after), label, entity)
@@ -333,9 +333,12 @@ def read_day(text: str, *, blank: dt.date | None = None) -> dt.date:
 
 
 class RatingForm(_Form):
-    """新增（before 是 None）或修改最新一筆評等。第一批評等（最初）的生效日不能改。"""
+    """新增（before 是 None）或修改最新一筆評等。第一批評等（最初）的生效日不能改。
 
-    def __init__(self, parent: tk.Misc, entity: Entity, before: Rating | None) -> None:
+    新增時三家評等先帶入 `latest`（打開時看到的最新一筆），只改變了的那家就好；空白是「沒有該家評等」，不是「沒變」。
+    """
+
+    def __init__(self, parent: tk.Misc, entity: Entity, before: Rating | None, latest: Rating | None = None) -> None:
         super().__init__(parent, f"{'修改最新一筆' if before else '新增'}評等：{entity.issuer} {entity.role}")
         self.entity = entity
         self.before = before
@@ -351,7 +354,7 @@ class RatingForm(_Form):
             self.row += 1
         else:
             self.day_var = self.day_field("生效日", before.effective_date.isoformat() if before else "")
-        self.agency_vars = self.rating_fields(before)
+        self.agency_vars = self.rating_fields(before or latest)
         self.note("沒有該家評等就留空，三家至少填一家；格式像 AA-、A+（標普、惠譽）或 Aa2、A1（穆迪）。")
         self.finish_layout()
 
@@ -390,9 +393,9 @@ def _ask(form: _Form) -> object:
     return form.result
 
 
-def ask_rating(parent: tk.Misc, entity: Entity, before: Rating | None) -> Rating | None:
-    """新增（before 是 None）或修改最新一筆評等的輸入；取消時 None。"""
-    found = _ask(RatingForm(parent, entity, before))
+def ask_rating(parent: tk.Misc, entity: Entity, before: Rating | None, latest: Rating | None = None) -> Rating | None:
+    """新增（before 是 None，三家評等先帶入 `latest`）或修改最新一筆評等的輸入；取消時 None。"""
+    found = _ask(RatingForm(parent, entity, before, latest))
     return found if isinstance(found, Rating) else None
 
 
