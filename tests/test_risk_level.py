@@ -1,4 +1,4 @@
-"""自算風險等級（#238、ADR 0025）：計算本身不需要資料庫；跟著核對條件重算、鎖住後不變對真的 PostgreSQL。資料全部虛構。"""
+"""自算風險等級（#238、ADR 0023）：計算本身不需要資料庫；跟著核對條件重算、鎖住後不變對真的 PostgreSQL。資料全部虛構。"""
 
 from __future__ import annotations
 
@@ -15,7 +15,7 @@ from order_synth import CONFIG, A, open_terms, order_row
 from sp_workflow.check_terms import WAIT_TRADES, recalculate
 from sp_workflow.credit_ratings import FITCH, GUARANTOR, ISSUER, MOODYS, SP, Entity, Rating, RatingRows
 from sp_workflow.daily_import import import_daily
-from sp_workflow.product_terms import write, write_batch
+from sp_workflow.product_terms import load_index_underlyings, write, write_batch
 from sp_workflow.risk_level import (
     BACKFILLED,
     DONE,
@@ -25,7 +25,6 @@ from sp_workflow.risk_level import (
     assess,
     count_score,
     level_of,
-    load_index_underlyings,
     rating_score,
     risk_level_of,
     tenor_score,
@@ -197,21 +196,27 @@ def test_a_total_of_exactly_3_4_is_rr4() -> None:
 
 
 def test_one_quiet_index_with_a_good_rating_is_rr3() -> None:
-    """UL_1 在指數清單上（不分大小寫、去空白）3 分；單一低波動標的、AA → 2 + 0.2 + 0.8 + 0.18 = 3.18 → RR3。"""
-    rated = RatingRows((Entity("BARC", ISSUER, "x"),), (Rating("BARC", ISSUER, FIRST, "AA", None, None),))
-    product = terms(underlyings=("SPX Index", None, None, None, None), tenor_months=6)
+    """UL_1 在指數清單上 3 分；單一低波動標的、AA → 2 + 0.2 + 0.8 + 0.18 = 3.18 → RR3。
 
-    risk = assess_with(product, vols(SPX_Index="12.5"), ratings=rated, indices=[" spx index "])
+    清單照彭博寫 `SPX Index`，資料庫存的代碼已去掉類別字（`SPX`）：比對時兩邊都去掉、不分大小寫。
+    """
+    rated = RatingRows((Entity("BARC", ISSUER, "x"),), (Rating("BARC", ISSUER, FIRST, "AA", None, None),))
+    product = terms(underlyings=("SPX", None, None, None, None), tenor_months=6)
+
+    risk = assess_with(product, vols(SPX="12.5"), ratings=rated, indices=["SPX Index"])
 
     assert risk.detail is not None and risk.detail.underlying_type_score == 3
     assert (risk.total, risk.level) == (Decimal("3.18"), "RR3")
     assert "UL_1 是指數，3 分" in risk.describe()
+    for listed in (" spx index ", "SPX", "spx"):
+        same = assess_with(product, vols(SPX="12.5"), ratings=rated, indices=[listed])
+        assert same.detail is not None and same.detail.underlying_type_score == 3, listed
 
 
 def test_only_the_first_underlying_decides_index_or_stock() -> None:
-    product = terms(underlyings=("LITE UW", "SPX Index", None, None, None))
+    product = terms(underlyings=("LITE UW", "SPX", None, None, None))
 
-    risk = assess_with(product, vols(LITE_UW="20", SPX_Index="12"), indices=["SPX Index"])
+    risk = assess_with(product, vols(LITE_UW="20", SPX="12"), indices=["SPX Index"])
 
     assert risk.detail is not None and risk.detail.underlying_type_score == 4
 
@@ -288,6 +293,17 @@ def test_conflicting_prices_unknown_issuers_and_missing_ratings_are_named() -> N
     assert (unknown.status, unknown.reason) == (BACKFILLED, "認不出上手，查不到評等")
 
 
+def test_a_blank_first_underlying_is_missing_data() -> None:
+    """標的種類照試算表只看 UL_1：空白時算缺資料，不改看下一檔。"""
+    product = terms(underlyings=(None, "LITE UW", "NBIS UW", "MRVL UW", None))
+
+    risk = assess_with(product, indices=["LITE UW"])
+    pending = assess_with(dataclasses.replace(product, trade_date=LATER), vols(LATER, **_SHEET), dates=(LATER,))
+
+    assert (risk.status, risk.level, risk.reason) == (BACKFILLED, "RR4", "缺 UL_1（標的種類看第一檔標的）")
+    assert (pending.status, pending.reason) == (PENDING, "缺 UL_1（標的種類看第一檔標的）")
+
+
 def test_no_trade_date_or_underlyings_is_pending() -> None:
     risk = assess_with(terms(trade_date=None, underlyings=(None,) * 5))
 
@@ -302,7 +318,7 @@ def test_the_index_list_is_read_from_the_config(tmp_path: Path) -> None:
     path.write_text('index_underlyings = ["SPX Index", " nky index "]\n', encoding="utf-8")
     builtin = Path(__file__).resolve().parents[1] / "config" / "risk_level.toml"
 
-    assert load_index_underlyings(path) == frozenset({"SPX INDEX", "NKY INDEX"})
+    assert load_index_underlyings(path) == frozenset({"SPX Index", "nky index"}), "照寫法，比對時才去類別字"
     assert load_index_underlyings(builtin) == frozenset(), "使用者提供清單前是空的"
 
     path.write_text('index_underlyings = "SPX Index"\n', encoding="utf-8")
@@ -346,7 +362,7 @@ def test_recalculation_stores_the_risk_level_and_rewrites_only_changes(pg, tmp_p
 
     (line,) = recalculate(pg, CONFIG).lines
 
-    assert line.risk is not None and line.risk_changed
+    assert line.risk is not None
     assert (line.risk.status, line.risk.level, line.risk.total) == (DONE, "RR4", Decimal("3.56"))
     assert stored_row(pg) == (DONE, "RR4", Decimal("3.56"), None, OCT_15)
     assert risk_level_of(pg, A) == line.risk, "讀回來的明細和算的一樣（#239 讀這個）"
@@ -354,7 +370,7 @@ def test_recalculation_stores_the_risk_level_and_rewrites_only_changes(pg, tmp_p
 
     (again,) = recalculate(pg, CONFIG).lines
 
-    assert not again.risk_changed and again.risk == line.risk
+    assert again.risk == line.risk
     assert pg.execute("SELECT calculated_at FROM workflow.risk_level").fetchone() == before
 
 
@@ -369,7 +385,7 @@ def test_pending_products_are_calculated_once_the_prices_arrive(pg, tmp_path) ->
 
     assert first.risk is not None and (first.risk.status, first.risk.level) == (PENDING, None)
     assert first.risk.reason == "沒有取價日在交易日 2026-11-02 以前（含）的股價檔"
-    assert second.risk is not None and second.risk_changed and second.risk.total == Decimal("3.56")
+    assert second.risk is not None and second.risk.total == Decimal("3.56")
     assert stored_row(pg)[:2] == (DONE, "RR4")
 
 
@@ -398,6 +414,37 @@ def test_locked_products_keep_their_risk_level(pg, tmp_path) -> None:
 
 
 @pytest.mark.db
+def test_locked_products_without_a_risk_level_get_one_once_then_freeze(pg, tmp_path) -> None:
+    """本功能上線前就鎖住的商品：下一次重算補算一次（不在核對條件的結果裡），之後資料變了也不再改。"""
+    import_prices(pg, tmp_path, OCT_15, [vol_price("AAA UW", 20), vol_price("BBB UN", 40)])
+    import_order(pg)
+    pg.execute("UPDATE workflow.product SET locked_at = now() WHERE tdcc = %s", (A,))
+
+    first = recalculate(pg, CONFIG)
+    assert first.lines == ()
+    assert stored_row(pg) == (DONE, "RR4", Decimal("3.56"), None, OCT_15)
+    before = pg.execute("SELECT calculated_at FROM workflow.risk_level").fetchone()
+
+    import_prices(pg, tmp_path, OCT_15, [vol_price("AAA UW", 5), vol_price("BBB UN", 5)])  # 同一天整份取代
+    recalculate(pg, CONFIG)
+    recalculate(pg, CONFIG, tdccs=[A])
+
+    assert stored_row(pg) == (DONE, "RR4", Decimal("3.56"), None, OCT_15), "有了之後凍結"
+    assert pg.execute("SELECT calculated_at FROM workflow.risk_level").fetchone() == before
+
+
+@pytest.mark.db
+def test_only_the_named_locked_products_are_filled_when_recalculating_some(pg, tmp_path) -> None:
+    import_order(pg)
+    import_order(pg, "029199990005")
+    pg.execute("UPDATE workflow.product SET locked_at = now()")
+
+    recalculate(pg, CONFIG, tdccs=["029199990005"])
+
+    assert stored_row(pg) is None and stored_row(pg, "029199990005")[:2] == (BACKFILLED, "RR4")
+
+
+@pytest.mark.db
 def test_maintenance_edits_to_underlyings_recalculate_the_risk_level(pg, tmp_path) -> None:
     import_prices(pg, tmp_path, OCT_15, [vol_price("AAA UW", 20), vol_price("BBB UN", 40), vol_price("CCC UN", 90)])
     import_order(pg)
@@ -407,7 +454,7 @@ def test_maintenance_edits_to_underlyings_recalculate_the_risk_level(pg, tmp_pat
 
     receipt = write(pg, draft, CONFIG, user="operator1")
 
-    assert receipt.calc is not None and receipt.calc.risk is not None and receipt.calc.risk_changed
+    assert receipt.calc is not None and receipt.calc.risk is not None
     # 平均 50（4 分）、3 檔（3 分）：2 + 0.2 + 1.4 + 0.26 = 3.86 → RR4
     assert stored_row(pg)[:3] == (DONE, "RR4", Decimal("3.86"))
 

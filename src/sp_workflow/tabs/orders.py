@@ -1,10 +1,11 @@
 """「2 起單資料」分頁：貼 TDCC、讀一份起單建檔（#97），在右邊逐檔確認、修改後匯入資料庫（#86）；匯入後顯示重算的核對條件（#88）
-與風險等級（#238），「風險等級明細…」看選到那一檔的計算明細。"""
+與風險等級（#238）。風險等級欄是資料庫存的值：讀取時（有連資料庫）與匯入後重讀，已鎖住的也顯示；
+「風險等級明細…」看選到那一檔的計算明細。"""
 
 from __future__ import annotations
 
 import tkinter as tk
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -84,13 +85,12 @@ class OrderTermsTab(Tab):
         self.editor.grid(row=2, rowspan=2, column=2, sticky="nsew", padx=(16, 0))  # 從卡片那一列拉到底
         self.table.bind("<<TreeviewSelect>>", self._selected)
         self.imported: dict[str, ImportLine] = {}  # 最近一次匯入每檔的結果（放行後重寫那一列）
-        self.risks: dict[str, RiskLevel] = {}  # 最近一次匯入後重算的風險等級（TDCC → 結果）
+        self.risks: dict[str, RiskLevel] = {}  # 資料庫存的風險等級（讀取、匯入後重讀、放行後重算；TDCC → 結果）
         self.releaser = Releaser(
             self, db, self._selected_tdcc, self._released, idle=lambda: not self.working, busy=self._busy
         )
         self.risk_button = ttk.Button(self.buttons, text="風險等級明細…", command=self.show_risk, state=tk.DISABLED)
         self.risk_button.pack(side=tk.LEFT, padx=(8, 0))
-        self.table.bind("<<TreeviewSelect>>", lambda _event: self._refresh_risk_button(), add="+")
 
     def _selected_tdcc(self) -> str | None:
         item = self.selected_item()
@@ -109,13 +109,13 @@ class OrderTermsTab(Tab):
         """匯入後的一列：狀態是匯入結果，核對條件、風險等級是重算後的結果；原因寫匯入、核對條件與風險等級（回填、待算時）
         的說明。風險等級待算的也標紅。"""
         calc_reason = f"核對條件：{calc.reason}" if calc is not None and calc.reason else ""
-        risk = None if calc is None else calc.risk
+        risk = self.risks.get(row.tdcc)
         risk_reason = f"風險等級：{risk.reason}" if risk is not None and risk.reason else ""
         pending = risk is not None and risk.status == Risk.PENDING
         problem = line.result == ImportResult.SKIPPED or (calc is not None and calc.problem) or pending
         reason = "；".join(filter(None, (line.detail, calc_reason, risk_reason)))
         status = calc.status if calc is not None else ""
-        self._show_row(iid, row, line.result, reason, problem, status, "" if risk is None else risk.label)
+        self._show_row(iid, row, line.result, reason, problem, status)
 
     def _ask_sheet(self) -> str:
         """選起單建檔；有選就記住（沒按讀取就關視窗，下次也打開這個資料夾）。"""
@@ -242,10 +242,10 @@ class OrderTermsTab(Tab):
         tdcc, risk = found
         messagebox.showinfo(TITLE, f"{tdcc} 的風險等級\n\n{risk.describe()}", parent=self.master)
 
-    def _show_row(
-        self, iid: str, row: OrderRow, status: str, reason: str, problem: bool, calc: str = "", risk: str = ""
-    ) -> None:
-        values = (row.tdcc, status, row.issuer, calc, risk, reason)
+    def _show_row(self, iid: str, row: OrderRow, status: str, reason: str, problem: bool, calc: str = "") -> None:
+        """一列；風險等級欄是 `self.risks` 裡這檔存的值（沒有就空白）。"""
+        risk = self.risks.get(row.tdcc)
+        values = (row.tdcc, status, row.issuer, calc, "" if risk is None else risk.label, reason)
         tags = ("problem",) if problem else ()
         if self.table.exists(iid):
             self.table.item(iid, values=values, tags=tags)
@@ -289,7 +289,8 @@ class OrderTermsTab(Tab):
         self.finish((("可匯入（檔）", ready, False), ("要處理（檔）", todo, todo > 0)), status)
 
     def _fill_table(self, result: ReadResult) -> None:
-        """有問題的排前面：待確認（含找不到）、請確認、可匯入、已鎖住。"""
+        """有問題的排前面：待確認（含找不到）、請確認、可匯入、已鎖住。風險等級欄是讀取時資料庫存的值。"""
+        self.risks = dict(result.risks)
         by_tdcc = {draft.tdcc: draft for draft in result.drafts}
         order = {OrderReview.BLOCKED: 0, OrderReview.TO_CHECK: 1, OrderReview.READY: 2, OrderReview.LOCKED: 3}
         listed = []
@@ -305,6 +306,7 @@ class OrderTermsTab(Tab):
             self._selected()
 
     def _selected(self, _event: object = None) -> None:
+        self._refresh_risk_button()  # 換了選取就重新判斷能不能看明細（下面同一檔、處理中會提早返回）
         item = self.selected_item()
         if self.working or item not in self.items:
             return
@@ -343,6 +345,10 @@ class OrderTermsTab(Tab):
         config = None if self.read is None else self.read.config  # 放行後重算要用
         recalc = Recalc(calcs, config, result.recalc_error)
         self.imported = {line.tdcc: line for line in receipt.lines}
+        for line in () if calcs is None else calcs.lines:
+            if line.risk is not None:
+                self.risks[line.tdcc] = line.risk
+        self.risks.update(result.risks)  # 重讀的值（含已鎖住、這次補算的）；重讀失敗時只有這次重算的
         batch: dict[str, CalcLine] = {}
         for iid, (row, draft) in self.items.items():
             line = self.imported.get(row.tdcc) if draft is not None else None
@@ -350,8 +356,6 @@ class OrderTermsTab(Tab):
                 calc = None if calcs is None or not line.imported else calcs.line_of(row.tdcc)
                 if calc is not None:
                     batch[row.tdcc] = calc
-                    if calc.risk is not None:
-                        self.risks[row.tdcc] = calc.risk
                 self._show_imported(iid, row, line, calc)
         if self.editor.draft is not None:
             self.editor.show(self.editor.draft)  # 資料庫的值更新了，黃色的差異與帶入的值跟著重算
@@ -361,7 +365,8 @@ class OrderTermsTab(Tab):
         status = f"完成（第 {receipt.import_id} 次起單資料匯入）：{counts}。"
         if calcs is not None:
             status += f"\n核對條件（這批匯入的 {len(batch)} 檔）：{status_counts(batch.values())}。"
-            status += f"\n風險等級：{_risk_counts(batch.values())}。選一檔按「風險等級明細…」看計算明細。"
+            risks = [self.risks[tdcc] for tdcc in self.imported if tdcc in self.risks]
+            status += f"\n風險等級：{_risk_counts(risks)}。選一檔按「風險等級明細…」看計算明細。"
         elif recalc.error:
             status += f"\n{recalc_text(recalc)}"
         if result.reload_error:
@@ -378,9 +383,8 @@ class OrderTermsTab(Tab):
         self._refresh_risk_button()
 
 
-def _risk_counts(lines: Iterable[CalcLine]) -> str:
+def _risk_counts(risks: Sequence[RiskLevel]) -> str:
     """各等級（RR1～RR5）與回填、待算的檔數；沒有的不列。"""
-    risks = [line.risk for line in lines if line.risk is not None]
     done = [risk.level for risk in risks if risk.status == Risk.DONE]
     counts = [f"{level} {done.count(level)}" for level in RISK_LEVELS if level in done]
     counts += [f"{s} {n}" for s in (Risk.BACKFILLED, Risk.PENDING) if (n := sum(r.status == s for r in risks))]

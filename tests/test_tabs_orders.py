@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
@@ -85,7 +86,7 @@ def test_order_page_shows_key_figures_when_done(master, tmp_path: Path) -> None:
 
 
 # 一檔指數、低波動、AA：2 + 0.2 + 0.8 + 0.18 = 3.18 → RR3（虛構）
-_DETAIL = RiskDetail(6, 1, 3, 1, 1, (("SPX Index", Decimal("12.5")),), Decimal("12.5"), 1, ISSUER, ((SP, "AA"),), 2)
+_DETAIL = RiskDetail(6, 1, 3, 1, 1, (("SPX", Decimal("12.5")),), Decimal("12.5"), 1, ISSUER, ((SP, "AA"),), 2)
 COMPUTED = RiskLevel(Risk.DONE, "RR3", "", dt.date(2026, 10, 15), _DETAIL.total, _DETAIL)
 
 
@@ -349,9 +350,9 @@ def test_order_import_shows_the_risk_level_and_its_detail(master, tmp_path: Path
     backfilled = RiskLevel(Risk.BACKFILLED, "RR4", "缺天期（Tenor (m)）")
     pending = RiskLevel(Risk.PENDING, None, "UL_1 AAA UW：股價檔（取價日 2026-11-02）沒有 200 日波動率")
     calcs = (
-        CalcLine("029199990001", DONE, "", True, risk=COMPUTED, risk_changed=True),
-        CalcLine("029199990002", DONE, "", True, risk=backfilled, risk_changed=True),
-        CalcLine("029199990003", DONE, "", True, risk=pending, risk_changed=True),
+        CalcLine("029199990001", DONE, "", True, risk=COMPUTED),
+        CalcLine("029199990002", DONE, "", True, risk=backfilled),
+        CalcLine("029199990003", DONE, "", True, risk=pending),
     )
 
     window.orders._saved(OrderImportResult(BatchReceipt(7, lines), CalcReceipt(calcs)))
@@ -375,6 +376,52 @@ def test_order_import_shows_the_risk_level_and_its_detail(master, tmp_path: Path
     (text,) = shown
     assert text.startswith("029199990001 的風險等級\n\n風險等級：RR3（完成）\n總分 3.18")
     assert "UL_1 是指數，3 分" in text and "取最好的一家 2 分" in text
+
+
+def test_reading_shows_stored_risk_levels_including_locked_products(master, tmp_path: Path, monkeypatch) -> None:
+    """讀取時帶出資料庫存的風險等級（已鎖住、這次沒有重算的也有），可以看明細；沒有存的空白。"""
+    window = new_window(master, tmp_path)
+    locked = order_row("029199990002")
+    risks = {"029199990001": COMPUTED, "029199990002": RiskLevel(Risk.BACKFILLED, "RR4", "缺天期（Tenor (m)）")}
+
+    window.orders._done(replace(read_result(order_row("029199990001"), locked, order_row("029199990003")), risks=risks))
+    window.orders._busy(False)
+
+    table = window.orders.table
+    by_tdcc = {table.set(iid, "tdcc"): iid for iid in window.orders.items}
+    assert [table.set(by_tdcc[t], "risk") for t in ("029199990001", "029199990002", "029199990003")] == [
+        "RR3",
+        "RR4（回填）",
+        "",
+    ]
+    shown = []
+    monkeypatch.setattr(messagebox, "showinfo", lambda title, message, **kwargs: shown.append(message))
+    table.selection_set(by_tdcc["029199990002"])
+    master.update()
+    window.orders.risk_button.invoke()
+    assert shown and "原因：缺天期（Tenor (m)）" in shown[0]
+
+    table.selection_set(by_tdcc["029199990003"])
+    master.update()
+    assert str(window.orders.risk_button.cget("state")) == "disabled"
+
+
+def test_import_shows_the_reloaded_risk_level_of_every_product(master, tmp_path: Path) -> None:
+    """匯入後用重讀的值：已鎖住、沒有重算的商品也顯示（例如這次補算的）。"""
+    rows = (order_row("029199990001"), order_row("029199990002"))
+    window = order_window(master, tmp_path, *rows)
+    lines = (ImportLine("029199990001", ImportResult.NEW), ImportLine("029199990002", ImportResult.LOCKED))
+    calcs = CalcReceipt((CalcLine("029199990001", DONE, "", True, risk=COMPUTED),))
+    reloaded = {"029199990001": COMPUTED, "029199990002": RiskLevel(Risk.DONE, "RR4", "", None, Decimal("3.9"))}
+
+    window.orders._saved(OrderImportResult(BatchReceipt(7, lines), calcs, risks=reloaded))
+
+    table = window.orders.table
+    assert {table.set(iid, "tdcc"): table.set(iid, "risk") for iid in window.orders.items} == {
+        "029199990001": "RR3",
+        "029199990002": "RR4",
+    }
+    assert "風險等級：RR3 1、RR4 1。" in window.orders.status_var.get()
 
 
 def test_the_risk_detail_button_needs_a_product_with_a_risk_level(master, tmp_path: Path) -> None:

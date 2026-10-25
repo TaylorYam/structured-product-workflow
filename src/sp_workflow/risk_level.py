@@ -1,17 +1,19 @@
-"""自算風險等級（#238、ADR 0025）：照承辦的 Generator 試算表（「境外結構型商品承作檢核表」工作表）的公式算 FCN 的 RR。
+"""自算風險等級（#238、ADR 0023）：照承辦的 Generator 試算表（「境外結構型商品承作檢核表」工作表）的公式算 FCN 的 RR。
 
 算核對條件時一起算（`check_terms.recalculate`）：還沒鎖住的商品每次都算，和上一次不同才寫入 `workflow.risk_level`；
-已鎖住的不再重算（更正已鎖住的商品也不重算），留下承作當時的判斷。對外：
+已鎖住的商品只在還沒有風險等級時算一次（本功能上線前就鎖住的），之後凍結、不再重算（更正已鎖住的商品也不重算），
+留下承作當時的判斷。對外：
 - `assess`：一檔的計算本身（不碰資料庫）。
-- `recalculate_risk`：在核對條件重算的 transaction 裡算這幾檔，寫入有變的。
-- `risk_levels`／`risk_level_of`：讀存好的結果（說明書／投資人須知的 RR 核對與寄信草稿用，#239）。
-- `load_index_underlyings`：設定檔 `config/risk_level.toml` 的指數清單。
+- `recalculate_risk`：在核對條件重算的 transaction 裡算這幾檔，寫入有變的；`fill_missing_locked`：替還沒有風險等級的已鎖住商品算一次。
+- `risk_levels`／`risk_level_of`：讀存好的結果（起單資料頁顯示；說明書／投資人須知的 RR 核對與寄信草稿用，#239）。
+指數清單由 `product_terms.load_import_config` 讀設定檔 `config/risk_level.toml`（`ImportConfig.index_underlyings`）。
 
 公式：總分 = 0.4×保本率分 + 0.2×年期分 + 0.3×結構複雜度分 + 0.1×流動性分，十進位計算。
 - 保本率分：FCN 一律不保本（資料庫沒有保本率欄），固定 5。
 - 年期分（`tenor_months`）：<=12 → 1、<=36 → 2、<=60 → 3、<=120 → 4、更長 5。
 - 結構複雜度分 = 平均（標的種類分, 標的數量分, 波動度分）+ 提前贖回 1（FCN 一律可提前出場）。
-  - 標的種類：照試算表只看 UL_1，在指數清單上是指數 3 分，否則是個股 4 分。
+  - 標的種類：照試算表只看 UL_1（空白算缺資料），在指數清單上是指數 3 分，否則是個股 4 分。清單與 UL_1 都去掉
+    彭博最後的類別字（`sheet_cells.bbg_code`，例：`SPX Index` → `SPX`，同存進資料庫的代碼）、不分大小寫比對。
   - 標的數量（非空的 UL_1～UL_5）：1～4 檔各 1～4 分、5 檔 4 分、6 檔以上 5 分。
   - 波動度：各標的 200 日波動率的平均，<=15 → 1、<=30 → 2、<=45 → 3、<60 → 4、>=60 → 5。
 - 流動性分 = 0.8×評等分 + 0.2×1（可贖回頻率一律 Daily）。評等取保證機構（評等表沒有這家上手的保證機構時取發行機構）
@@ -20,7 +22,7 @@
 - 轉等級（下限含）：<1.8 → RR1、<2.6 → RR2、<3.4 → RR3、<4.2 → RR4、其餘 RR5。總分剛好 3.4 是 RR4（試算表的浮點誤差不重現）。
 資料時間點：股價檔取取價日＝交易日那一份（內容是交易日前一個交易日收盤的彭博 VOLATILITY_200D，和試算表一致），
 沒有就取交易日以前最近的一份；評等用交易日查（`credit_ratings.RatingRows.on`）。標的代碼和股價檔逐字比對（同核對條件）。
-算不出來（缺交易日、天期、標的或股價檔，標的不在股價檔、股價衝突或沒有 200 日波動率，上手認不出來或評等表查不到）：
+算不出來（缺交易日、天期、標的、UL_1 或股價檔，標的不在股價檔、股價衝突或沒有 200 日波動率，上手認不出來或評等表查不到）：
 交易日在 2026-10-30 以前填 RR4、狀態「回填」；之後（或沒有交易日）狀態「待算」，資料補齊後下一次重算時算出。原因都寫出缺什麼。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
@@ -38,11 +40,10 @@ from typing import TYPE_CHECKING, Any
 from sp_workflow.credit_ratings import GUARANTOR, ISSUER, MOODYS, RatingRows, load_rows
 from sp_workflow.database import require_in_transaction
 from sp_workflow.product_record import plain
+from sp_workflow.sheet_cells import bbg_code
 from sp_workflow.status import Risk
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import psycopg
 
     from sp_workflow.product_terms import ImportConfig
@@ -69,26 +70,12 @@ _LEVELS = ((Decimal("1.8"), "RR1"), (Decimal("2.6"), "RR2"), (Decimal("3.4"), "R
 _LETTER_SCORES = {"AAA": 1, "AA+": 2, "AA": 2, "AA-": 3, "A+": 3, "A": 4, "A-": 4}  # 標準普爾、惠譽；其餘 5
 _MOODYS_SCORES = {"Aaa": 1, "Aa1": 2, "Aa2": 2, "Aa3": 3, "A1": 3, "A2": 4, "A3": 4}  # 穆迪；其餘 5
 _WORST = 5
-_AVERAGE = Decimal("0.000001")  # 存的平均波動度（分數用沒有四捨五入的平均）
+_AVERAGE_QUANTUM = Decimal("0.000001")  # 存的平均波動度四捨五入到小數第 6 位（分數用沒有四捨五入的平均）
 
 
-def load_index_underlyings(path: Path) -> frozenset[str]:
-    """指數清單（`config/risk_level.toml` 的 `index_underlyings`）：彭博代碼，去頭尾空白、轉大寫。
-
-    缺檔或格式錯誤時丟 `fcn_checker.ingestion.IngestionError`（同其他設定檔）。
-    """
-    from fcn_checker.config import load_toml
-    from fcn_checker.ingestion import IngestionError
-
-    d = load_toml(path, "風險等級")
-    codes = d.get("index_underlyings")
-    if not isinstance(codes, list) or not all(isinstance(c, str) and c.strip() for c in codes):
-        raise IngestionError("config_invalid", "風險等級設定檔的 index_underlyings 要是彭博代碼的清單（可以空白）")
-    return frozenset(_code_key(c) for c in codes)
-
-
-def _code_key(code: str) -> str:
-    return code.strip().upper()
+def index_key(code: str) -> str:
+    """指數清單比對用的代碼：去掉彭博最後的類別字（`SPX Index` → `SPX`）、轉大寫。"""
+    return bbg_code(code).upper()
 
 
 # ---------- 計算（不碰資料庫） ----------
@@ -219,8 +206,11 @@ def assess(
         problems.append("缺交易日")
     if terms.tenor_months is None:
         problems.append("缺天期（Tenor (m)）")
+    first = terms.underlyings[0] if terms.underlyings else None
     if not underlyings:
         problems.append("缺標的")
+    elif not first:
+        problems.append("缺 UL_1（標的種類看第一檔標的）")
     price_date = None if trade_date is None else price_file_on(trade_date, price_dates)
     if trade_date is not None and price_date is None:
         problems.append(f"沒有取價日在交易日 {trade_date} 以前（含）的股價檔")
@@ -245,17 +235,17 @@ def assess(
         if trade_date is not None and trade_date < BACKFILL_BEFORE:
             return RiskLevel(BACKFILLED, BACKFILL_LEVEL, reason, price_date)
         return RiskLevel(PENDING, None, reason, price_date)
-    assert terms.tenor_months is not None and rating is not None
+    assert terms.tenor_months is not None and rating is not None and first
     average = sum(value for _, value in found) / len(found)
     by_agency = tuple(rating.items())
     detail = RiskDetail(
         tenor_months=terms.tenor_months,
         tenor_score=tenor_score(terms.tenor_months),
-        underlying_type_score=INDEX_SCORE if _is_index(underlyings[0][1], indices) else STOCK_SCORE,
+        underlying_type_score=INDEX_SCORE if _is_index(first, indices) else STOCK_SCORE,
         underlying_count=len(underlyings),
         underlying_count_score=count_score(len(underlyings)),
         volatilities=tuple(found),
-        average_volatility=average.quantize(_AVERAGE, rounding=ROUND_HALF_UP),
+        average_volatility=average.quantize(_AVERAGE_QUANTUM, rounding=ROUND_HALF_UP),
         volatility_score=volatility_score(average),
         rating_role=role,
         ratings=by_agency,
@@ -297,7 +287,7 @@ def level_of(total: Decimal) -> str:
 
 
 def _is_index(code: str, indices: Collection[str]) -> bool:
-    return _code_key(code) in {_code_key(c) for c in indices}
+    return index_key(code) in {index_key(c) for c in indices}
 
 
 def _rating(terms: RiskTerms, ratings: RatingRows) -> tuple[str, dict[str, str] | None, str]:
@@ -325,23 +315,47 @@ def _number(value: Decimal) -> str:
 # ---------- 資料庫 ----------
 
 
-@dataclass(frozen=True)
-class RiskLine:
-    """一檔這次算的結果；`changed` 是和上一次不同（有寫入）。"""
-
-    tdcc: str
-    risk: RiskLevel
-    changed: bool
-
-
-def recalculate_risk(conn: psycopg.Connection, tdccs: Sequence[str], config: ImportConfig) -> dict[str, RiskLine]:
-    """算這幾檔，和上一次不同的寫入；在呼叫端的 transaction 裡（商品條件列已由核對條件重算鎖住）。
+def recalculate_risk(conn: psycopg.Connection, tdccs: Sequence[str], config: ImportConfig) -> dict[str, RiskLevel]:
+    """算這幾檔（還沒鎖住的），和上一次不同的寫入；在呼叫端的 transaction 裡（商品條件列已由核對條件重算鎖住）。
 
     上手代碼用 `product_terms.issuer_code`（TDCC 前三碼，查不到時用發行機構的寫法反查），指數清單用 `config.index_underlyings`。
     """
-    from sp_workflow.product_terms import issuer_code  # product_terms → check_terms → 這裡，避免循環 import
-
     require_in_transaction(conn)
+    stored = risk_levels(conn, list(tdccs))
+    found = _assess_all(conn, tdccs, config)
+    for tdcc, risk in found.items():
+        if stored.get(tdcc) != risk:
+            _write(conn, tdcc, risk)
+    return found
+
+
+def fill_missing_locked(conn: psycopg.Connection, config: ImportConfig, tdccs: Sequence[str] | None = None) -> int:
+    """替還沒有風險等級的已鎖住商品（`tdccs` 有值時只看這幾檔）算一次，回傳寫了幾檔；在呼叫端的 transaction 裡。
+
+    本功能上線前就鎖住的商品用這個補；寫了之後凍結，之後不再重算。不鎖商品條件列（已鎖住的條件只有更正會改，
+    更正不重算風險等級），寫入用 `ON CONFLICT DO NOTHING`：別的連線同時補了同一檔時以先寫的為準。
+    """
+    require_in_transaction(conn)
+    where, params = ("", ()) if tdccs is None else (" AND p.tdcc = ANY(%s)", (list(tdccs),))
+    missing = [
+        tdcc
+        for (tdcc,) in conn.execute(
+            "SELECT p.tdcc FROM workflow.product p LEFT JOIN workflow.risk_level r USING (tdcc)"
+            " WHERE p.locked_at IS NOT NULL AND r.tdcc IS NULL" + where + " ORDER BY p.tdcc",
+            params,
+        )
+    ]
+    for tdcc, risk in _assess_all(conn, missing, config).items():
+        _write(conn, tdcc, risk, overwrite=False)
+    return len(missing)
+
+
+def _assess_all(conn: psycopg.Connection, tdccs: Sequence[str], config: ImportConfig) -> dict[str, RiskLevel]:
+    """這幾檔的風險等級（依 TDCC），不寫入。"""
+    from sp_workflow.product_terms import issuer_code  # product_terms 會 import check_terms，那邊再 import 這裡
+
+    if not tdccs:
+        return {}
     terms = [
         RiskTerms(tdcc, issuer_code(tdcc, issuer, config), trade_date, tenor, tuple(underlyings))
         for tdcc, issuer, trade_date, tenor, *underlyings in conn.execute(
@@ -353,15 +367,7 @@ def recalculate_risk(conn: psycopg.Connection, tdccs: Sequence[str], config: Imp
     price_dates = [d for (d,) in conn.execute("SELECT DISTINCT price_date FROM workflow.price_import ORDER BY 1")]
     volatilities = _volatilities(conn, terms, price_dates)
     ratings = load_rows(conn)
-    stored = risk_levels(conn, [t.tdcc for t in terms])
-    lines = {}
-    for t in terms:
-        risk = assess(t, price_dates, volatilities, ratings, config.index_underlyings)
-        changed = stored.get(t.tdcc) != risk
-        if changed:
-            _write(conn, t.tdcc, risk)
-        lines[t.tdcc] = RiskLine(t.tdcc, risk, changed)
-    return lines
+    return {t.tdcc: assess(t, price_dates, volatilities, ratings, config.index_underlyings) for t in terms}
 
 
 def risk_levels(conn: psycopg.Connection, tdccs: Sequence[str] | None = None) -> dict[str, RiskLevel]:
@@ -404,14 +410,19 @@ def _volatilities(
     }
 
 
-def _write(conn: psycopg.Connection, tdcc: str, risk: RiskLevel) -> None:
+def _write(conn: psycopg.Connection, tdcc: str, risk: RiskLevel, *, overwrite: bool = True) -> None:
+    """寫一檔；`overwrite` 是 False 時已經有的不動（補已鎖住的商品）。"""
     detail = None if risk.detail is None else json.dumps(_detail_json(risk.detail), ensure_ascii=False)
-    conn.execute(
-        "INSERT INTO workflow.risk_level (tdcc, status, risk_level, total_score, reason, price_date, detail)"
-        " VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)"
+    conflict = (
         " ON CONFLICT (tdcc) DO UPDATE SET status = EXCLUDED.status, risk_level = EXCLUDED.risk_level,"
         " total_score = EXCLUDED.total_score, reason = EXCLUDED.reason, price_date = EXCLUDED.price_date,"
-        " detail = EXCLUDED.detail, calculated_at = now()",
+        " detail = EXCLUDED.detail, calculated_at = now()"
+        if overwrite
+        else " ON CONFLICT (tdcc) DO NOTHING"
+    )
+    conn.execute(
+        "INSERT INTO workflow.risk_level (tdcc, status, risk_level, total_score, reason, price_date, detail)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)" + conflict,
         (tdcc, risk.status, risk.level, risk.total, risk.reason or None, risk.price_date, detail),
     )
 

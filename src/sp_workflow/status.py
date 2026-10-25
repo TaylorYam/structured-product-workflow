@@ -24,7 +24,7 @@ class CheckTerms(StrEnum):
 
 
 class Risk(StrEnum):
-    """自算風險等級的狀態（#238、ADR 0025）：存在 `workflow.risk_level.status`。
+    """自算風險等級的狀態（#238、ADR 0023）：存在 `workflow.risk_level.status`。
 
     「回填」是 2026-10-30 以前交易、缺資料算不出來而填 RR4；「待算」是之後交易、缺資料，等資料補齊後重算。
     """

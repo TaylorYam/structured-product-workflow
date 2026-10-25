@@ -16,8 +16,8 @@ transaction 的範圍（#205）：每日匯入、回補股價、歷史收盤價�
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -97,6 +97,7 @@ from sp_workflow.progress import (
     still_pending_mail,
 )
 from sp_workflow.returning import ReturnReceipt, return_to_folders
+from sp_workflow.risk_level import RiskLevel, risk_levels
 from sp_workflow.step_records import (
     SENT_STEP,
     Recorded,
@@ -182,6 +183,7 @@ class ReadResult:
     config: ImportConfig
     database_note: str = ""  # 沒有帶入資料庫的值時的說明
     database_error: DatabaseError | None = None
+    risks: Mapping[str, RiskLevel] = field(default_factory=dict)  # 資料庫存的風險等級（#238；沒連資料庫時空的）
 
 
 @dataclass(frozen=True)
@@ -195,6 +197,7 @@ class OrderImportResult:
     recalc: CalcReceipt | None = None
     recalc_error: str = ""
     reload_error: str = ""  # 匯入成功但重讀資料庫狀態失敗
+    risks: Mapping[str, RiskLevel] = field(default_factory=dict)  # 重讀的風險等級（#238；重讀失敗時空的）
 
 
 @dataclass(frozen=True)
@@ -363,7 +366,8 @@ def read_order_sheet(settings: ConnectionSettings | None, text: str, sheet: Path
         return ReadResult(rows, _drafts(rows, config), config, "沒有登入資料庫，沒有帶入資料庫的值")
     try:
         with connect(settings) as conn:
-            return ReadResult(rows, _drafts(rows, config, conn), config)
+            risks = risk_levels(conn, [row.tdcc for row in rows if row.found])
+            return ReadResult(rows, _drafts(rows, config, conn), config, risks=risks)
     except DatabaseError as exc:
         note = f"資料庫沒有連上，沒有帶入資料庫的值（{exc}）"
         login = None if isinstance(exc, SchemaOutdatedError) else exc  # 版本不對不是登入問題
@@ -395,9 +399,10 @@ def import_order_sheet(
         try:
             for draft in drafts:
                 draft.reload(read(conn, draft.tdcc))
+            risks = risk_levels(conn, [draft.tdcc for draft in drafts])
         except psycopg.Error as exc:
             return OrderImportResult(receipt, recalc.receipt, recalc.error, _first_line(exc))
-        return OrderImportResult(receipt, recalc.receipt, recalc.error)
+        return OrderImportResult(receipt, recalc.receipt, recalc.error, risks=risks)
 
 
 # ---------- 3 準備、5 放回 ----------

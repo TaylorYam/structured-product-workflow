@@ -74,6 +74,8 @@ from sp_workflow.trade_rows import (
 )
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     import psycopg
 
     from fcn_checker.check_config import ConfigPaths
@@ -131,7 +133,7 @@ class ImportConfig:
     issuer_names: Mapping[str, str]  # 上手代號 → 發行機構的寫法（同清單更新）
     issuer_prefixes: Mapping[str, str]  # TDCC 前三碼 → 上手代號（上手編號對照）
     calendar: TradingCalendar  # 交易所假日表（明日開盤價的 Strike date，#101）
-    index_underlyings: frozenset[str] = frozenset()  # 風險等級的指數清單（彭博代碼，大寫；#238）
+    index_underlyings: frozenset[str] = frozenset()  # 風險等級的指數清單（設定檔的寫法；比對規則在 `risk_level`，#238）
 
 
 def load_import_config(paths: ConfigPaths) -> ImportConfig:
@@ -144,7 +146,6 @@ def load_import_config(paths: ConfigPaths) -> ImportConfig:
         load_review_standard,
     )
     from fcn_checker.ingestion import IngestionError
-    from sp_workflow.risk_level import load_index_underlyings
 
     try:
         review = load_review_standard(paths.review_standard)
@@ -161,6 +162,20 @@ def load_import_config(paths: ConfigPaths) -> ImportConfig:
         calendar,
         indices,
     )
+
+
+def load_index_underlyings(path: Path) -> frozenset[str]:
+    """風險等級的指數清單（`config/risk_level.toml` 的 `index_underlyings`，#238）：彭博代碼，只去頭尾空白；
+    去類別字、不分大小寫的比對在 `risk_level.index_key`。缺檔或格式錯誤時丟 `fcn_checker.ingestion.IngestionError`。
+    """
+    from fcn_checker.config import load_toml
+    from fcn_checker.ingestion import IngestionError
+
+    d = load_toml(path, "風險等級")
+    codes = d.get("index_underlyings")
+    if not isinstance(codes, list) or not all(isinstance(c, str) and c.strip() for c in codes):
+        raise IngestionError("config_invalid", "風險等級設定檔的 index_underlyings 要是彭博代碼的清單（可以空白）")
+    return frozenset(c.strip() for c in codes)
 
 
 def issuer_code(tdcc: str, issuer: str, config: ImportConfig) -> str:
@@ -738,7 +753,7 @@ def write(
         if locked_product:
             assert stored is not None
             affected = any(name in CHECK_TERM_FIELDS for _, name, _, _ in trade_changes)
-            recalc = recalculate_corrected(conn, config.calendar, tdcc, stored.columns, trades_changed=affected)
+            recalc = recalculate_corrected(conn, config, tdcc, stored.columns, trades_changed=affected)
             calc, price_changes = (None, ()) if recalc is None else recalc
         elif exists:
             calc = recalculate(conn, config, tdccs=[tdcc]).lines[0]

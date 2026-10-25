@@ -13,7 +13,7 @@
 - EXPRESS FCN／BEN 規則歸屬與驗證範圍。CLI 跨專案契約已不需要：核對專案決定併入本專案（[ADR 0005](adr/0005-merge-checker-into-workflow.md)）。
 - 新商品資料流程（[ADR 0006](adr/0006-new-product-data-from-order.md)）：股價範本、單位面額、Order 缺最終比價日／到期日已決定（[ADR 0008](adr/0008-daily-prices-denomination-and-order-dates.md)）。仍待定：股價範本改成指定日期後怎麼對交易日。港股補進交易所假日表已決定（[ADR 0020](adr/0020-close-prices-and-observation-rules.md)）。核對完寫回資料庫失敗時的處理已決定（[ADR 0013](adr/0013-check-from-database.md)）。
 - 正式 Order 歸一化第一版採規則式、不用 AI（#40）；範本中的 AI 指輔助開發，並不代表 runtime 必須使用 AI。
-- 自算風險等級的指數清單（[ADR 0025](adr/0025-self-calculated-risk-level.md)、#238）：由作業人員提供彭博代碼，填進 `config/risk_level.toml`；提供前是空清單，UL_1 一律當個股。
+- 自算風險等級的指數清單（[ADR 0023](adr/0023-self-calculated-risk-level.md)、#238）：由作業人員提供彭博代碼，填進 `config/risk_level.toml`；提供前是空清單，UL_1 一律當個股。
 
 新增最小切片建議：本機 PostgreSQL＋虛構案件／版本資料＋一次核對結果入庫：已實作（[ADR 0003](adr/0003-minimal-fcn-database.md)、[ADR 0013](adr/0013-check-from-database.md)）。歷史分析資料盤點另待確認；庫存 Excel 已不再是資料來源（ADR 0006）。
 
@@ -32,7 +32,7 @@ Unresolved items, not established requirements:
 - Ownership/validation of EXPRESS FCN and BEN rules. A cross-project CLI contract is no longer needed: the checker will be merged into this repository ([ADR 0005](adr/0005-merge-checker-into-workflow.md)).
 - New product data flow ([ADR 0006](adr/0006-new-product-data-from-order.md)): the price template, denomination, and Orders missing the final valuation or maturity date are decided ([ADR 0008](adr/0008-daily-prices-denomination-and-order-dates.md)). Still open: trade-date matching once the price template names the date. Adding Hong Kong to the exchange holiday calendar is decided ([ADR 0020](adr/0020-close-prices-and-observation-rules.md)). Handling a failed database write-back after checking is decided ([ADR 0013](adr/0013-check-from-database.md)).
 - The first Order normalization is rule-based without AI (#40). AI in the template means development assistance, not a runtime requirement.
-- The index list for the self-calculated risk level ([ADR 0025](adr/0025-self-calculated-risk-level.md), #238): the operators will supply Bloomberg codes for `config/risk_level.toml`; until then the list is empty and UL_1 always counts as a single stock.
+- The index list for the self-calculated risk level ([ADR 0023](adr/0023-self-calculated-risk-level.md), #238): the operators will supply Bloomberg codes for `config/risk_level.toml`; until then the list is empty and UL_1 always counts as a single stock.
 
 Additional recommended slice: local PostgreSQL, synthetic cases/version records, and one persisted check run: implemented ([ADR 0003](adr/0003-minimal-fcn-database.md), [ADR 0013](adr/0013-check-from-database.md)). The historical-source inventory still needs a separate decision; the inventory Excel is no longer a data source (ADR 0006).
 
