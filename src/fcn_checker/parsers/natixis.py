@@ -21,12 +21,14 @@ from ..text import squash
 from . import money, price_table, schedule
 from .common import RawText, by_value, capture_group, derived, fee_rates, number
 from .layout import Document, LayoutSpec, Span, TextIndex, capture, parse_date
+from .underlying_notes import NameColumn, underlying_notes
 
 TEMPLATE_ID = "natixis-zh-pd"
 # 2：第一章條號中途重編、新版受託機構標籤（Issue #270）；3：價格表改由 parsers/price_table.py 讀（Issue #287）；
 # 4：無 KI 要有到期贖回情況二只有實物交割的寫法（Issue #297）；5：重複寫出處（Issue #318）；6：日期表標準欄位與共用排程推導（Issue #289）；
 # 7：情境價格表、假設值與實物交割執行價格交成共用情境規則的標準欄位（Issue #294）
-PARSER_VERSION = "7"
+# 8：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
+PARSER_VERSION = "8"
 CHAPTER_NAMES = {
     1: ("一", "商品基本資料"),
     2: ("二", "相關機構事業概況"),
@@ -405,6 +407,9 @@ def read(lines: Sequence[Line]) -> NatixisTermSheet:
     fields["initial_pricing"] = standard_fields.absent(
         "initial_pricing", "說明書沒有寫期初定價方式（開盤價／收盤價／VWAP）"
     )
+    fields["underlying_notes"] = underlying_notes(
+        doc.lines, NameColumn()
+    )  # 連結標的公司介紹：左欄名稱、右欄介紹（Issue #225）
     return NatixisTermSheet(fields, TextIndex(doc.lines), doc)
 
 

@@ -19,11 +19,13 @@ from ..text import squash
 from . import money, price_table, schedule
 from .common import NO_AUTOCALL_KO_PCT, NUM, Mention, derived, ko_at_initial, number, zh_number
 from .layout import DATE_RE, Document, LayoutSpec, TextIndex, capture, join_text, parse_date
+from .underlying_notes import Markers, underlying_notes
 
 TEMPLATE_ID = "citi-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：重複寫出的值（Issue #314）；4：日期表標準欄位與共用排程推導（Issue #289）；
 # 5：假設價格表與情境配息率、年息交成共用情境規則的標準欄位（Issue #294）
-PARSER_VERSION = "5"
+# 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
+PARSER_VERSION = "6"
 CHAPTER_NAMES = {
     1: ("一", "商品基本資料"),
     2: ("二", "相關機構事業概況"),
@@ -576,6 +578,9 @@ def read(lines: Sequence[Line]) -> CitiTermSheet:
         *scenarios.redemptions,
         *_repeats(t17, (CALL_100,), "redemption_art17", "第 17 項(C) 強制提前買回金額", required=has_autocall),
     ]
+    fields["underlying_notes"] = underlying_notes(
+        doc.lines, Markers(r"連結標的\d+：")
+    )  # 連結標的公司介紹：連結標的k：名稱（Issue #225）
     return CitiTermSheet(fields, TextIndex(doc.lines), doc, coupons, annual, redemptions, scenarios.headers)
 
 

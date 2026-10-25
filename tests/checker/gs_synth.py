@@ -24,7 +24,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["gs"]["product_name"]
 WARNING = STANDARD["issuer"]["gs"]["fixed_warning"]
@@ -554,6 +562,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         6: f"每單位面額:{s.money(s.denom, space=True)}",
         9: "主要給付項目及其計算方式:",
         10: "連結標的資產及其相對權重與投資績效的關連情形:",
+        11: "連結標的資產之連結標的股份發行人之相關說明:",
         13: "本商品年期、發行日、到期日及其他依本商品性質而定之日期:",
         14: "配息資料及其計算公式:",
         15: "到期買回計算公式，包含最低到期保證收益率及參與率:",
@@ -566,6 +575,10 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             _article9(d, s)
         elif n == 10:
             _article10(d, s)
+        elif n == 11:
+            write_notes(
+                d.w, s.underlyings, "column", x=86, note_x=242, label="連結標的資產 {k}", heading=None, width=30
+            )
         elif n == 13:
             _article13(d, s)
         elif n == 14:

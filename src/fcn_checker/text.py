@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 
+CJK = re.compile(r"[\u4e00-\u9fff]")  # 中日韓統一表意文字（中文字）
 _FULL_BRACKETS = str.maketrans({"(": "（", ")": "）"})
 
 

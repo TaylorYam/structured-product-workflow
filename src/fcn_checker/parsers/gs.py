@@ -20,11 +20,13 @@ from ..text import squash
 from . import money, price_table, schedule
 from .common import Mention, RawText, capture_group, dec, derived, fee_rates, number
 from .layout import Document, LayoutSpec, TextIndex, capture, parse_date
+from .underlying_notes import NameColumn, underlying_notes
 
 TEMPLATE_ID = "gs-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：重複寫出的值（Issue #317）；4：日期表標準欄位與共用排程推導（Issue #289）；
 # 5：情境價格與假設值交成共用情境規則的標準欄位（Issue #294）
-PARSER_VERSION = "5"
+# 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
+PARSER_VERSION = "6"
 CHAPTER_NAMES = {
     1: ("一", "商品基本資料"),
     2: ("二", "相關機構事業概況"),
@@ -265,6 +267,9 @@ def read(lines: Sequence[Line]) -> GsTermSheet:
         "currency_others", [*fields["currency_others"].value, *_currency_mentions(article, ch4_art, ch3)]
     )
     coupons = [Mention.of_field("第一章第 15 項(2) 最低保證收益率", fields["minimum_return_pct"])]
+    fields["underlying_notes"] = underlying_notes(
+        doc.lines, NameColumn()
+    )  # 連結標的公司介紹：左欄「連結標的資產 k」（單一標的寫名稱）、右欄介紹（Issue #225）
     return GsTermSheet(fields, TextIndex(doc.lines), doc, coupons, repeated)
 
 

@@ -17,9 +17,10 @@ from ..text import squash
 from . import bnp_scenario, bnp_tables, money, price_table, schedule
 from .common import NUM, Hit, Mention, derived, number
 from .layout import Document, LayoutSpec, Span, TextIndex, capture, join_text, parse_date
+from .underlying_notes import Markers, underlying_notes
 
 TEMPLATE_ID = "bnp-zh-pd"
-PARSER_VERSION = "4"  # 2：日期表標準欄位與共用排程推導（Issue #289）；3：情境交成共用情境規則的標準欄位（Issue #294）
+PARSER_VERSION = "5"  # 2：日期表標準欄位與共用排程推導（Issue #289）；3：情境交成共用情境規則的標準欄位（Issue #294）；5：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 # 4：第一章依項目名稱對應條號、境外人民幣版（Issue #345）
 CHAPTER_NAMES = {
     1: ("一", "商品相關基本資料"),
@@ -528,6 +529,9 @@ def read(lines: Sequence[Line]) -> BnpTermSheet:
         Mention.of_field(f"{art_label('coupon')}月配息率", fields["monthly_coupon_pct"]),
         Mention.of_field(f"{art_label('coupon')}固定配息金額算式", fields["coupon_formula_pct"]),
     ]
+    fields["underlying_notes"] = underlying_notes(
+        lines, Markers(r"\(\d+\)")
+    )  # 連結標的公司介紹：行首 (k)（Issue #225）
     return BnpTermSheet(fields, full, doc, scenarios, coupons, page_headers(lines), ch1)
 
 

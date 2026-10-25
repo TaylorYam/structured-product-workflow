@@ -26,7 +26,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["ca"]["product_name"]
 WARNING = STANDARD["issuer"]["ca"]["fixed_warning"]
@@ -444,6 +452,7 @@ ARTICLE_TITLES = {
     6: "商品面額：",
     9: "本商品主要給付項目及其計算方式：",
     10: "連結標的資產及其相對權重、與投資績效之關連情形：",
+    11: "連結標的之相關說明：",
     13: "商品年期、發行日、交易日、到期日、付息日、贖回日及其他依商品性質而定之日期：",
     15: "到期贖回計算公式，包含保證配息率及參與率：",
     16: "投資收益計算方法，包含本金虧損之機率及以情境分析解說最大可能獲利、損失及其他狀況之年化平均報酬率：",
@@ -483,6 +492,10 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         elif n == 10:
             d.article(n, title)
             _article10(d, s)
+        elif n == 11:
+            d.article(n, title)
+            d.w.row([(79, "連結標的"), (361, "簡介")], gap=16)
+            write_notes(d.w, s.underlyings, "column", x=45, note_x=200, heading=None, width=34)
         elif n == 13:
             d.article(n, title)
             for t in (

@@ -19,12 +19,14 @@ from ..text import squash
 from . import money, price_table, schedule, sg_scenario, sg_tables
 from .common import NO_AUTOCALL_KO_PCT, NUM, Hit, Mention, derived, ko_at_initial, number
 from .layout import Document, LayoutSpec, TextIndex, capture, join_text, parse_date
+from .underlying_notes import Markers, underlying_notes
 
 TEMPLATE_ID = "sg-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #288）；3：日期表標準欄位與共用排程推導（Issue #289）；
 # 4：重印價格表、情境假設值與較差情境執行價交成共用情境規則的標準欄位（Issue #294）；
 # 5：無自動提前出場的單一評價日寫法（只有配息日欄的日期表、§12「評價日：」，Issue #130）
-PARSER_VERSION = "5"
+# 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
+PARSER_VERSION = "6"
 CHAPTER_NAMES = {
     1: ("一", "商品基本資料"),
     2: ("二", "相關機構事業概況"),
@@ -426,6 +428,9 @@ def read(lines: Sequence[Line]) -> SgTermSheet:
     fields["currency_others"] = standard_fields.occurrences("currency_others", _currency_occurrences(fields, scenarios))
     _scenario_standard(fields, scenarios)
     coupons = [Mention.of_field("第 8 項配息率", fields["monthly_coupon_pct"])]
+    fields["underlying_notes"] = underlying_notes(
+        doc.lines, Markers(r"\(\d+\)")
+    )  # 連結標的公司介紹：行首 (k)（Issue #225）
     return SgTermSheet(fields, TextIndex(doc.lines), doc, scenarios, coupons)
 
 

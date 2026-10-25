@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import datetime as dt
 import tomllib
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
@@ -18,6 +19,7 @@ from typing import Any, Self
 import openpyxl
 
 from harness import CURRENCY_ISO, REFERENCE_FORMAT, STANDARD
+from pdf_writer import PdfWriter
 
 _FORMAT = tomllib.loads(REFERENCE_FORMAT.read_text(encoding="utf-8"))
 # Excel 欄名 → 標準欄位
@@ -64,6 +66,59 @@ DEFAULT_ULS = (
     UL("Zeta Quantum Holdings Inc", "那斯達克證券交易所", "ZQH UW", Decimal("87.2000")),
     UL("丁戊電子公司", "那斯達克證券交易所", "DWE UW", Decimal("1234.5600")),
 )
+
+
+def ul_note(u: UL) -> str:
+    """標的的虛構公司介紹（說明書「連結標的之相關說明」，Issue #225）。"""
+    return f"{u.name}為虛構公司，從事虛構產品之研發、製造與銷售，並提供相關服務。該公司服務全球客戶。"
+
+
+NOTE_SOURCE = "(資料來源：虛構資料)"  # 公司介紹段落結尾（parser 以資料來源行結束段落）
+
+
+def write_notes(
+    w: PdfWriter,
+    uls: Sequence[UL],
+    layout: str,
+    *,
+    x: float,
+    note_x: float | None = None,
+    label: str = "{name}",
+    heading: str | None = "連結標的之相關說明或評等資料：",
+    heading_x: float | None = None,
+    width: int = 30,
+    size: float = 10,
+) -> None:
+    """說明書「連結標的之相關說明」（Issue #225，parsers/underlying_notes.py 的切段方式）；段落代號 `<文件>.notes`。
+
+    `layout`：`label` 標籤一行（`label`，例 `標的資產{k}：{name}`）、介紹從下一行起（`note_x`，省略同 `x`）；`inline` 標籤
+    與介紹接在同一段；`column` 兩欄表（左欄 `x` 寫標籤、右欄 `note_x` 寫介紹，同一列開始）；`paragraph` 沒有標籤，介紹欄
+    依段落（最後一行明顯短）。標題（`heading`，None 不寫）寫在 `heading_x`（省略同 `x`）。每段介紹先整段改字再分行（`Edit` 以整段 `ul_note` 比對）。
+    """
+    before, w.section = w.section, "notes"
+    if heading:
+        w.line(x if heading_x is None else heading_x, heading, size=size)
+    nx = x if note_x is None else note_x
+    for k, u in enumerate(uls, 1):
+        tag, note = w.edit(label.format(k=k, name=u.name)), w.edit(ul_note(u))
+        with w.verbatim():
+            if layout == "inline":
+                w.para(x, tag + note, width, size)
+            elif layout == "label":
+                w.line(x, tag, size=size)
+                w.para(nx, note, width, size)
+            elif layout == "column":
+                w.need(size + 4)
+                w.put(x, w.y, tag, size)
+                w.para(nx, note, width, size)
+            elif layout == "paragraph":
+                if note:  # 最後 6 字獨立一行：段落最後一行明顯短
+                    w.para(nx, note[:-6], width, size)
+                    w.line(nx, note[-6:], size=size)
+            else:
+                raise ValueError(f"未知的公司介紹版面：{layout}")
+    w.line(x, NOTE_SOURCE, size=size)
+    w.section = before
 
 
 @dataclass

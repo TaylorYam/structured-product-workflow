@@ -5,6 +5,7 @@
 - 會隨時間改變的基準見[審查標準](review-standard.md) §2.10（設定檔 `config/review_standard.toml`）
 - 狀態：核對範圍與規則已與作業人員確認（2026-10-15，Issue #233）；說明書與投資人須知都已實作（投資人須知見[投資人須知核對規則](iis-check-rules.md) §3 JPM 欄）。rule_id 對照：§3.1 共用 `field.*`（標的不看順序：`field.underlyings`、`field.underlying_prices` 依代號配對）、`backfill.underlying_prices`（依代號覆寫）；§3.3 `derive.coupon_pa_mentions`（D 型自動提前出場配息金額）；§3.4 `derive.prices`（共用）；§3.7 共用情境規則 `scenario.reprint`（假設價格表）、`scenario.params`（假設本金、情境重複寫出的本金與每次配息金額的年利率）、`scenario.strike`（情境 (iii) 執行價）（Issue #315、#294）；§3.5 `doc.trustee_product_code`、`doc.name_consistency`、`doc.currency_consistency`、`doc.coupon_periods`、`doc.underlying_count`、`doc.ki_consistency`、`doc.redemption_pct`、共用 `schedule.period_count`／`payment_order`／`observation_order`／`last_observation`／`last_payment`／`period_start`（Issue #289）、`schedule.autocall_dates`（D 3 欄的 N.A 期別）；§3.6 共用 `standard.*`（JPM 分節）。第 8 項 KO 評價日寫法、日期表排法與 D 型按日計息條款不一致時 parser 判讀不到，KO 觀察方式與 Non-Call 轉人工覆核
 - 本文件只寫與 [BARC](barc-check-rules.md)、[HSBC](hsbc-check-rules.md)、[MS](ms-check-rules.md)、[BNP](bnp-check-rules.md)、[SG](sg-check-rules.md)、[Citi 核對規則](citi-check-rules.md)不同或 JPM 特有的部分；未提到的原則（判定原則、數值處理、期初價格本身不核對等）見[共用核對規則](shared-check-rules.md)
+- 連結標的公司介紹每檔都有、不是亂碼：共用規則（[共用核對規則](shared-check-rules.md) §5.1，Issue #225）；第 10 項兩欄表（左欄標的名稱、右欄介紹）。
 
 ## 1. 範圍
 

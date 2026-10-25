@@ -22,12 +22,14 @@ from ..text import squash
 from . import money, price_table, schedule
 from .common import RawText, by_value, capture_group, derived, fee_rates, number, zh_number
 from .layout import TextIndex, capture, join_wrapped_tickers, parse_date
+from .underlying_notes import NameColumn, underlying_notes
 
 TEMPLATE_ID = "ubs-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：非記憶式要有明確的提前出場事件句（Issue #297）；
 # 4：補讀發行價格金額、申購價金、十五設定參數的變動配息（Issue #303）；5：說明文字與十五情境重複寫出的值（Issue #320）；
 # 6：日期表標準欄位與共用排程推導（Issue #289）；7：情境價格表與設定參數交成共用情境規則的標準欄位（Issue #294）
-PARSER_VERSION = "7"
+# 8：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
+PARSER_VERSION = "8"
 SECTIONS = ("商品基本資料", "相關機構事業概況", "商品風險揭露", "投資風險警語", "一般交易事項", "特別記載事項")
 PRODUCT_TYPE = "股權結構型商品"
 OLD_PRODUCT_TYPE = "股權結構型債券"
@@ -280,6 +282,9 @@ def read(lines: Sequence[Line]) -> UbsTermSheet:
     fields["initial_pricing"] = standard_fields.absent(
         "initial_pricing", "說明書沒有寫期初定價方式（開盤價／收盤價／VWAP）"
     )
+    fields["underlying_notes"] = underlying_notes(
+        doc.lines, NameColumn()
+    )  # 連結標的公司介紹：兩欄表：左欄名稱、右欄簡介（Issue #225）
     return UbsTermSheet(fields, TextIndex(doc.lines), doc)
 
 

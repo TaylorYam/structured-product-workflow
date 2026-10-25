@@ -5,6 +5,7 @@
 - 會隨時間改變的基準見[審查標準](review-standard.md)（設定檔 `config/review_standard.toml`）
 - 狀態：核對範圍與規則已與作業人員確認（2026-10-08，Issue #132）；已實作（Issue #135，`src/fcn_checker/parsers/ms*.py`、`src/fcn_checker/rules/ms*.py`），rule_id 對照見 §9
 - 本文件只寫與 [BARC 核對規則](barc-check-rules.md)、[HSBC 核對規則](hsbc-check-rules.md)不同或 MS 特有的部分；未提到的原則（判定原則、數值處理、標的只核對彭博代號、期初價格本身不核對等）見[共用核對規則](shared-check-rules.md)
+- 連結標的公司介紹每檔都有、不是亂碼：共用規則（[共用核對規則](shared-check-rules.md) §5.1，Issue #225）；第 12 項每段以 `(k)連結標的k：` 開始。
 
 ## 1. 範圍
 

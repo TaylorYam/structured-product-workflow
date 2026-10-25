@@ -27,7 +27,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["bbva"]["product_name"]
 WARNING = STANDARD["issuer"]["bbva"]["fixed_warning"]
@@ -538,6 +546,7 @@ ARTICLE_TITLES = {
     5: "計價幣別：",
     8: "主要給付項目及其計算方式",
     9: "連結標的資產(例如:指數或個股名稱等)，及其相對權重、與投資績效之關連情形",
+    10: "連結標的之相關說明或評等資料",
     12: "商品年期、發行日、到期日及其他依個別商品性質而定之日期",
     13: "配息資料及其計算公式",
     14: "到期贖回計算公式，包含最低保證收益率及參與率",
@@ -585,6 +594,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             _underlying_table(d, s)
             d.section = "art9"
             d.text(57, "(3) 相對權重：不適用。")
+        elif n == 10:
+            write_notes(d.w, s.underlyings, "label", x=37, note_x=56, label="{k}", heading=None, width=48)
         elif n == 12:
             _article12(d, s)
         elif n == 13:

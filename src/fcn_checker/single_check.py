@@ -26,7 +26,7 @@ from .identification import Identification
 from .investor_sheet import IisSheet
 from .issuers import Issuer
 from .orders.reference import OrderRecord
-from .rules import derivation, iis, reference, scenario, schedule
+from .rules import derivation, iis, reference, scenario, schedule, underlying_notes
 from .rules.kit import Context, IssuerContext
 from .rules.review_standard import iis_review_standard_rules, review_standard_rules
 from .schema import CheckReport, CheckResult, CheckStatus, DocKind, overall_status
@@ -78,6 +78,7 @@ def check_document(pairing: Sequence[CheckResult], paired: Paired | None, config
         results.extend(reference.field_rules(ctx))
         results.extend(derivation.prices(ctx))
         issuer_ctx = _issuer_context(paired, config)
+        results.extend(underlying_notes.run(issuer_ctx))
         results.extend(schedule.run(issuer_ctx))
         results.extend(scenario.run(issuer_ctx))
         results.extend(paired.issuer.rules(issuer_ctx))

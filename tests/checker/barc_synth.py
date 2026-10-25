@@ -29,7 +29,7 @@ from fcn_checker.issuers import BARC, Issuer
 from fcn_checker.schema import CheckReport
 from harness import STANDARD, check_sheet, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
-from reference_synth import Q4, ProductSpec, build_reference_sheet, price, reference_row
+from reference_synth import Q4, ProductSpec, build_reference_sheet, price, reference_row, write_notes
 
 FIXED_WARNING = STANDARD["risk"]["fixed_warning"]
 DISTRIBUTOR = STANDARD["distributor"]
@@ -275,7 +275,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     w.line(56.0, "(2) 相對權重：不適用。", gap=19)
     w.line(56.0, "(3) 投資績效之關連情形：請參閱本章第15 條之說明。", gap=19)
     article(11, "連結標的資產之相關說明：")
-    w.line(81.0, "標的資產之相關資訊請參閱發行機構網站。")
+    write_notes(w, s.underlyings, "label", x=81.0, label="標的資產{k}：{name}", heading=None)
     article(12, "標的資產調整：")
     w.line(81.0, "計算代理機構得依相關規定調整標的資產。")
 

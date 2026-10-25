@@ -5,6 +5,7 @@
 - 會隨時間改變的基準見[審查標準](review-standard.md) §2.9（設定檔 `config/review_standard.toml`）
 - 狀態：核對範圍與規則已與作業人員確認（2026-10-14，Issue #220）；說明書與投資人須知都已實作（投資人須知見[投資人須知核對規則](iis-check-rules.md) §3 Citi 欄）。rule_id 對照：§3.1 共用 `field.*`（標的不看順序：`field.underlyings`、`field.underlying_prices` 依代號配對；期初定價 `field.initial_pricing`）、`backfill.underlying_prices`（依代號覆寫）；§3.3 `derive.monthly_coupon`（第 13 項各處、第 14 項(2)、第 13 項末段舉例）、`derive.coupon_pa_mentions`（第 13 項其他處、第 14 項(2)、第 13 項末段舉例的年化配息率）；§3.4 `derive.prices`（共用）、`doc.table_header_pct`、`doc.scenario_header_pct`（情境小表表頭）；§3.7 共用情境規則 `scenario.reprint`（假設價格表）、`scenario.params`（第 15 項假設 d) 與各情境的配息率、假設 d) 的年息）（Issue #294）；§3.5 `doc.trustee_product_code`、`doc.name_consistency`、`doc.currency_consistency`（含 ISO 代碼）、`doc.initial_valuation_date`、`doc.date_mentions`、`doc.denomination_mentions`、`doc.coupon_periods`、`doc.autocall_wording`、`doc.ko_memory`、`doc.memory_wording`、`doc.ki_consistency`（含 KI 每期觀察 t=1-n）、`doc.redemption_pct`、共用 `schedule.period_count`／`payment_order`／`observation_order`／`last_observation`／`last_payment`／`period_start`（Issue #289）、`schedule.autocall_dates`；§3.6 共用 `standard.*`（Citi 分節）。第 12 項(9)、第 13 項與日期表的 KO 觀察寫法不一致時 parser 判讀不到，KO 觀察方式與 Non-Call 轉人工覆核
 - 本文件只寫與 [BARC](barc-check-rules.md)、[HSBC](hsbc-check-rules.md)、[MS](ms-check-rules.md)、[BNP](bnp-check-rules.md)、[SG 核對規則](sg-check-rules.md)不同或 Citi 特有的部分；未提到的原則（判定原則、數值處理、期初價格本身不核對等）見[共用核對規則](shared-check-rules.md)
+- 連結標的公司介紹每檔都有、不是亂碼：共用規則（[共用核對規則](shared-check-rules.md) §5.1，Issue #225）；第 10 項每段以 `連結標的k：` 開始。
 
 ## 1. 範圍
 

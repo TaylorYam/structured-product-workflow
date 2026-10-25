@@ -25,7 +25,7 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, ul_note, weekday_on_or_after
 
 NAME = STANDARD["issuer"]["nomura"]["product_name"]
 WARNING = STANDARD["issuer"]["nomura"]["fixed_warning"]
@@ -428,7 +428,7 @@ def _article8_9(d: _Doc, s: Spec, n: int) -> None:
         return
     for i, u in enumerate(s.underlyings, 1):
         d.text(70, f"({i}) 連結標的{i if s.basket else ''}：{u.name}")
-        d.text(70, "虛構公司主要從事虛構業務。")
+        d.text(70, ul_note(u))
         d.text(70, f"彭博代碼：{u.ticker} Equity/交易所：{u.exchange}/相關交易所：所有交易所")
 
 
