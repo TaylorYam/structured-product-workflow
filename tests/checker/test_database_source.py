@@ -11,13 +11,16 @@ import datetime as dt
 from decimal import Decimal
 from pathlib import Path
 
+import openpyxl
 import pytest
 
+import hsbc_synth
 from barc_synth import SYNTH_ISIN, Spec, build_pdf
 from fcn_checker.batch import Category, check_batch, preview_batch
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.orders.reference import load_reference_sheet
 from fcn_checker.panel_workflow import PanelSession
+from fcn_checker.rating_formats import RATING_FIELDS
 from fcn_checker.saving import run_batch, save_batch
 from harness import CONFIG, cli_root, with_iis
 from reference_synth import Ratings, build_reference_sheet, issuer_value, price, reference_row
@@ -26,6 +29,7 @@ from sp_workflow.check_source import WorkflowDatabase, export_reference, write_b
 NOW = dt.datetime(2030, 2, 3, 4, 5, 6)
 FMT = CONFIG.reference_format
 OTHER = "029199990002"
+PREFIXES = CONFIG.issuer_prefixes
 BARC_RATINGS = Ratings(sp="A+", moodys="A1", fitch="AA-")  # 初始評等表（migration 0024）的 Barclays 發行機構評等
 
 
@@ -92,7 +96,7 @@ def export(pg, tmp_path: Path, pdfs, name="資料庫.xlsx") -> tuple[Path, dict[
     from fcn_checker.identification import file_code
 
     path = tmp_path / name
-    return path, export_reference(pg, [file_code(p) for p in pdfs], FMT, path)
+    return path, export_reference(pg, [file_code(p) for p in pdfs], FMT, path, prefixes=PREFIXES)
 
 
 def run_from_database(pg, tmp_path: Path, pdfs, *, name="資料庫.xlsx"):
@@ -140,13 +144,13 @@ def test_database_rows_read_the_same_as_the_excel_reference_sheet(pg, tmp_path, 
     assert {c for _, c, _ in verdicts(from_db)} == {Category.PASSED}
 
 
-RATING_KEYS = tuple(f"{role}_rating_{a}" for role in ("issuer", "guarantor") for a in ("sp", "moodys", "fitch"))
+RATING_KEYS = tuple(RATING_FIELDS)  # 發行機構三家、保證機構三家
 
 
 @pytest.mark.db
 def test_exported_ratings_are_the_ones_in_effect_on_the_trade_date(pg, tmp_path) -> None:
     """#240：評等欄帶出交易日當時的評等（生效日 ≤ 交易日的最新一筆）；有保證機構的上手另帶保證機構評等。"""
-    before, after, guaranteed = Spec(), Spec(product_code=OTHER), Spec(product_code="029199990003")
+    before, after, guaranteed = Spec(), Spec(product_code=OTHER), Spec(product_code="159199990003")  # 159：Citi
     for spec in (before, after, guaranteed):
         seed(pg, spec)
     pg.execute(  # 交易日（2030-01-07）之後才生效的新評等：只有交易日在那之後的商品帶出
@@ -154,7 +158,6 @@ def test_exported_ratings_are_the_ones_in_effect_on_the_trade_date(pg, tmp_path)
         " VALUES ('BARC', '發行機構', '2030-01-08', 'AA-', NULL, 'AA')"
     )
     pg.execute("UPDATE workflow.product SET trade_date = '2030-01-08' WHERE tdcc = %s", (after.product_code,))
-    pg.execute("UPDATE workflow.product SET issuer = 'Citi' WHERE tdcc = %s", (guaranteed.product_code,))
 
     sheet, absent = export(pg, tmp_path, pdfs_of(tmp_path, before, after, guaranteed))
 
@@ -166,6 +169,64 @@ def test_exported_ratings_are_the_ones_in_effect_on_the_trade_date(pg, tmp_path)
         after.product_code: ("AA-", None, "AA", None, None, None),  # 新評等沒有穆迪：照評等表空白
         guaranteed.product_code: ("A", "A2", "AA-", "BBB+", "A3", "A"),
     }
+
+
+# ---------- 評等在核對後改了（#240） ----------
+
+HSBC_RATINGS = Ratings(sp="AA-", moodys="Aa3", fitch="AA")  # 初始評等表的 HSBC 發行機構評等
+
+
+def new_rating(pg, issuer: str, spec) -> None:
+    """核對後才新增的評等（生效日在交易日當天，交易日當時的評等因此改了）。"""
+    pg.execute(
+        "INSERT INTO workflow.credit_rating (issuer, role, effective_date, sp, moodys, fitch)"
+        " VALUES (%s, '發行機構', %s, 'BBB', 'Baa2', 'BBB')",
+        (issuer, spec.trade_date),
+    )
+
+
+def checked_hsbc(pg, tmp_path):
+    spec = hsbc_synth.Spec(ki="none").with_(ratings=HSBC_RATINGS)  # seed 寫的是無 KI
+    seed(pg, spec)
+    pdfs = with_iis([hsbc_synth.build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", spec)])
+    outcome, receipt = run_from_database(pg, tmp_path, pdfs)
+    assert {i.category for i in outcome.items} == {Category.PASSED}, verdicts(outcome)
+    return spec, outcome, receipt
+
+
+@pytest.mark.db
+def test_a_rating_changed_after_checking_is_stale_only_for_issuers_with_rating_checks(pg, tmp_path) -> None:
+    """有做評等核對的上手（HSBC）：評等在核對後改了 → 不回填、不鎖住；沒做的上手（BARC）照常回填。"""
+    spec, outcome, receipt = checked_hsbc(pg, tmp_path)
+    new_rating(pg, "HSBC", spec)
+
+    result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
+    assert (result.locked, result.stale) == ((), (spec.product_code,))
+
+    barc = Spec()
+    seed(pg, barc)
+    (tmp_path / "barc").mkdir()
+    outcome, receipt = run_from_database(pg, tmp_path / "barc", pdfs_of(tmp_path / "barc", barc))
+    new_rating(pg, "BARC", barc)
+
+    result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
+    assert (result.locked, result.stale) == ((barc.product_code,), ())
+
+
+@pytest.mark.db
+def test_a_checked_sheet_without_rating_columns_is_not_stale(pg, tmp_path) -> None:
+    """核對時的參考條件表沒有評等欄（v18 以前產生的）：評等欄不算改了，照常回填、鎖住。"""
+    spec, outcome, receipt = checked_hsbc(pg, tmp_path)
+    book = openpyxl.load_workbook(outcome.reference_sheet)
+    sheet = book.worksheets[0]
+    rating_headers = {h for h, std in FMT.columns.items() if std in RATING_FIELDS}
+    for col in sorted((c.column for c in sheet[1] if c.value in rating_headers), reverse=True):
+        sheet.delete_cols(col)
+    book.save(outcome.reference_sheet)
+    new_rating(pg, "HSBC", spec)
+
+    result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
+    assert (result.locked, result.stale) == ((spec.product_code,), ())
 
 
 # ---------- 查不到、條件未完成 ----------
@@ -220,7 +281,7 @@ def test_passing_products_are_backfilled_and_locked(pg, tmp_path) -> None:
     pdfs = pdfs_of(tmp_path, spec)
     outcome, receipt = run_from_database(pg, tmp_path, pdfs)
 
-    result = write_back(pg, outcome, receipt, FMT, user="operator1")
+    result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
 
     assert (result.locked, result.results) == ((spec.product_code,), 2)
     isin, issue_date, locked_at = pg.execute(
@@ -239,7 +300,7 @@ def test_passing_products_are_backfilled_and_locked(pg, tmp_path) -> None:
     (ts,) = [i for i in again.items if i.term_sheet.name.endswith("_TS.pdf")]
     assert ts.category == Category.PASSED
     assert not [d for d in ts.report.backfill if d.action.value in ("fill", "overwrite")]
-    second = write_back(pg, again, again_receipt, FMT, user="operator1")
+    second = write_back(pg, again, again_receipt, FMT, prefixes=PREFIXES, user="operator1")
     assert (second.locked, second.already_locked) == ((), (spec.product_code,))
 
 
@@ -251,7 +312,7 @@ def test_terms_changed_after_checking_are_not_backfilled_or_locked(pg, tmp_path)
     outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
     pg.execute("UPDATE workflow.product SET coupon_pct = coupon_pct + 1 WHERE tdcc = %s", (spec.product_code,))
 
-    result = write_back(pg, outcome, receipt, FMT, user="operator1")
+    result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
 
     assert (result.locked, result.stale, result.results) == ((), (spec.product_code,), 2)
     assert "條件在核對後改了" in result.summary
@@ -269,7 +330,7 @@ def test_terms_blanked_after_checking_are_not_backfilled_or_locked(pg, tmp_path)
     outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
     pg.execute("UPDATE workflow.product SET strike_pct = NULL WHERE tdcc = %s", (spec.product_code,))
 
-    result = write_back(pg, outcome, receipt, FMT, user="operator1")
+    result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
 
     assert (result.locked, result.stale) == ((), (spec.product_code,))
     isin, locked_at = pg.execute(
@@ -289,7 +350,7 @@ def test_released_denomination_takes_the_term_sheet_value_and_keeps_the_old_one(
     outcome.release(*[i for i in outcome.items if i.category != Category.PASSED])
     receipt = save_batch(outcome, tmp_path / "reports", root=tmp_path, now=NOW)
 
-    write_back(pg, outcome, receipt, FMT, user="operator1")
+    write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
 
     (denomination,) = pg.execute(
         "SELECT denomination FROM workflow.product WHERE tdcc = %s", (spec.product_code,)
@@ -308,7 +369,7 @@ def test_vwap_prices_from_the_term_sheet_are_written_back(pg, tmp_path) -> None:
     outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
     assert {i.category for i in outcome.items} == {Category.PASSED}
 
-    write_back(pg, outcome, receipt, FMT, user="operator1")
+    write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
 
     stored = pg.execute(
         "SELECT seq, initial_price, strike_price, ki_price, ko_price FROM workflow.underlying_price"

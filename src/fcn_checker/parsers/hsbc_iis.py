@@ -14,9 +14,13 @@ from . import iis, money, ratings
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "hsbc-zh-iis"
-PARSER_VERSION = "1"
+PARSER_VERSION = "2"  # 2：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 發行機構信用評等（#240）：第一商品簡介第 4 點，寫法同說明書第一章第 3 項（沒有 `[`）
-RATINGS = (ratings.RatingPlace("第一商品簡介第 4 點", r"其長期債務信用評等為(?P<body>.+?)。"),)
+RATINGS = (
+    ratings.RatingPlace(
+        "第一商品簡介第 4 點", r"發行機構為[^，。]+，截至[^，。]+，其長期債務信用評等為(?P<body>.+?)。"
+    ),
+)
 SECTIONS = ("本商品之投資風險警語", "相關機構", "第一商品簡介", "第六商品相關費用")
 PAGE_HEADER = re.compile(r"-?\s*第\s*\d+\s*頁，共\s*\d+\s*頁")
 

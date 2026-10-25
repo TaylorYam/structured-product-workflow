@@ -17,7 +17,7 @@ from . import iis, ms_wording, ratings
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "ms-zh-iis"
-PARSER_VERSION = "1"
+PARSER_VERSION = "2"  # 2：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 發行機構信用評等（#240）：商品簡介 4) `發行機構之長期債務信用評等穆迪(Moody’s)Aa3、…。`
 RATINGS = (ratings.RatingPlace("商品簡介 4)", r"發行機構之長期債務信用評等(?P<body>(?:穆迪|標準普爾|惠譽).+?)。"),)
 SECTIONS = (

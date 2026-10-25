@@ -107,7 +107,7 @@ def _database_source(args: argparse.Namespace):
     settings = settings_from_env(args.env_file or default_env_path())
     if settings.password is None:
         settings = settings.with_password(getpass(f"{settings.user}@{settings.host} 的資料庫密碼（不顯示）："))
-    return WorkflowDatabase(lambda: settings, args.out)
+    return WorkflowDatabase(lambda: settings, args.out, issuer_prefixes=args.issuer_prefixes)
 
 
 def main(argv: list[str] | None = None) -> int:

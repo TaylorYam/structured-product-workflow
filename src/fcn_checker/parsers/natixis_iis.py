@@ -21,7 +21,9 @@ from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "natixis-zh-iis"
 # 2：計價幣別「● 」（Issue #270）；3：KO 定義沒寫 % 視為參照說明書（Issue #272）；4：無 KI 要有明確寫法（Issue #297）
-PARSER_VERSION = "6"  # 5：警語的受託機構名稱（Issue #306）；6：說明文字幣別（Issue #318）
+# 5：警語的受託機構名稱（Issue #306）；6：說明文字幣別（Issue #318）
+# 7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
+PARSER_VERSION = "7"
 # 發行機構信用評等（#240）：商品簡介 `發行機構之長期債務信用評等(截至本中文投資人須知刊印日期)：長期債務信用評等標準普爾評等A+/…。`
 RATINGS = (
     ratings.RatingPlace(

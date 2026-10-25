@@ -28,7 +28,8 @@ TEMPLATE_ID = "natixis-zh-pd"
 # 4：無 KI 要有到期贖回情況二只有實物交割的寫法（Issue #297）；5：重複寫出處（Issue #318）；6：日期表標準欄位與共用排程推導（Issue #289）；
 # 7：情境價格表、假設值與實物交割執行價格交成共用情境規則的標準欄位（Issue #294）
 # 8：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
-PARSER_VERSION = "8"
+# 9：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
+PARSER_VERSION = "9"
 # 發行機構信用評等（#240）：封面「發行機構名稱」下一行 `(長期債務信用評等標準普爾評等A+/穆迪評等A2/惠譽評等A+ (高級優先債務))(截至…)`、第一章第 3 項 `發行機構長期債務信用評等(截至…)：長期債務信用評等…。`、第二章 (7) `信用評等：長期債務信用評等…(截至…)`
 RATINGS = (
     ratings.RatingPlace("封面", r"法國外貿銀行（長期債務信用評等(?P<body>.+?)）（截至"),

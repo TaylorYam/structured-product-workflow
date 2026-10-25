@@ -21,18 +21,17 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+from ..rating_formats import DASHES, FITCH, FORMATS, MOODYS, SP
 from ..schema import Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import absent
 from .layout import TextIndex
 
 FIELDS = ("issuer_ratings", "guarantor_ratings")  # 標準欄位：發行機構評等、保證機構評等
-SP, MOODYS, FITCH = "標準普爾", "穆迪", "惠譽"  # 追蹤的評等機構（同評等表）
-AGENCIES = (SP, MOODYS, FITCH)
 
 # 評等機構名稱的寫法（去空白後）；None 是不追蹤的評等機構，只用來把段落切開
 _NAMES: tuple[tuple[str | None, str], ...] = (
-    (SP, r"標準普爾|標普|S&P|Standard(?:&|and)Poor['’]?s"),
-    (MOODYS, r"穆迪|Moody['’]?s"),
+    (SP, r"標準普爾|標普|S&P|Standard(?:&|and)Poor['’＇]?s"),
+    (MOODYS, r"穆迪|Moody['’＇]?s"),
     (FITCH, r"惠譽|Fitch"),
     (None, r"DBRS|R&I|日本格付研究所|Morningstar"),
 )
@@ -42,11 +41,6 @@ _TOKEN = re.compile(
     r"(?<![A-Za-z0-9])(Aaa|Aa[1-3]|Baa[1-3]|Ba[1-3]|Caa[1-3]|Ca|A[1-3]|B[1-3]"
     r"|AAA|AA[+-]?|BBB[+-]?|BB[+-]?|CCC[+-]?|CC|A[+-]?|B[+-]?|C|RD|D)(?![A-Za-z0-9+-])"
 )
-_SP_FORMAT = re.compile(r"AAA|AA[+-]?|A[+-]?|BBB[+-]?|BB[+-]?|B[+-]?|CCC[+-]?|CC|C|D")
-_FITCH_FORMAT = re.compile(r"AAA|AA[+-]?|A[+-]?|BBB[+-]?|BB[+-]?|B[+-]?|CCC[+-]?|CC|C|RD|D")
-_MOODYS_FORMAT = re.compile(r"Aaa|Aa[123]|A[123]|Baa[123]|Ba[123]|B[123]|Caa[123]|Ca|C")
-FORMATS = {SP: _SP_FORMAT, MOODYS: _MOODYS_FORMAT, FITCH: _FITCH_FORMAT}
-_DASHES = str.maketrans({"－": "-", "–": "-", "‐": "-", "−": "-", "＋": "+"})  # 一對一換字，位置不變
 
 
 @dataclass(frozen=True)
@@ -72,7 +66,7 @@ class StatedRatings:
 
 def parse(body: str) -> tuple[tuple[tuple[str, str], ...], str]:
     """一段評等文字（已去空白）→（（評等機構, 評等）…, 讀不出來的原因）；原因空白表示讀得出來。"""
-    body = body.translate(_DASHES)
+    body = body.translate(DASHES)
     mentions: list[tuple[str | None, int, int]] = []  # （評等機構, 名稱起點, 名稱終點）；同一家連續寫的合併
     for m in _NAME.finditer(body):
         agency = _NAMES[int(m.lastgroup[1:])][0]

@@ -23,7 +23,8 @@ TEMPLATE_ID = "ms-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #288）；3：日期表標準欄位與共用排程推導（Issue #289）；
 # 4：重印價格表、情境假設值與較差情境執行價交成共用情境規則的標準欄位（Issue #294）
 # 5：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
-PARSER_VERSION = "5"
+# 6：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
+PARSER_VERSION = "6"
 # 發行機構信用評等（#240）：第一章第 3 項 `發行機構之長期債務信用評等經穆迪(Moody’s)評定為Aa3、…。`、第二章 (7) `信用評等：長期債務信用評等：穆迪(Moody’s)Aa3、…`（句尾沒有 `。`，到 (8) 為止）
 RATINGS = (
     ratings.RatingPlace("第一章第 3 項", r"發行機構之長期債務信用評等(?P<body>經.+?)。"),

@@ -17,6 +17,7 @@ import ms_synth
 import natixis_synth
 import ubs_synth
 from fcn_checker.parsers.ratings import parse
+from fcn_checker.rating_formats import FITCH, MOODYS, SP, canonical
 from fcn_checker.rules.ratings import RULE_ID
 from fcn_checker.schema import CheckReport
 from fcn_checker.schema import CheckStatus as S
@@ -117,6 +118,23 @@ def test_untracked_agencies_are_ignored(tmp_path) -> None:
     assert len(found) == 6 and {r.status for r in found} == {S.PASS}
 
 
+def test_ratings_typed_by_hand_in_the_reference_sheet_are_normalised(tmp_path) -> None:
+    """作業人員在 Excel 手打的評等（全形加減號、小寫、空白）和文件那邊一樣統一寫法後再比（文件 A+／Aa3／AA）。"""
+    typed = {"發行機構評等_標準普爾": "a ＋", "發行機構評等_穆迪": " AA3", "發行機構評等_惠譽": "aa"}
+    reports = check(tmp_path, "MS", **typed)
+    for kind in ("TS", "IIS"):
+        found = rating_results(reports[kind])
+        assert found and {r.status for r in found} == {S.PASS}, (kind, problems(reports[kind]))
+
+
+@pytest.mark.parametrize(
+    ("agency", "typed", "expected"),
+    [(SP, "A－", "A-"), (SP, "a+", "A+"), (FITCH, " bbb ＋", "BBB+"), (MOODYS, "aa3", "Aa3"), (MOODYS, "BAA1", "Baa1")],
+)
+def test_canonical_rating_spelling(agency, typed, expected) -> None:
+    assert canonical(agency, typed) == expected
+
+
 def test_a_stated_agency_blank_in_the_reference_sheet_is_a_mismatch(tmp_path) -> None:
     """評等表沒有這家評等（參考條件表空白）、文件卻寫了：判不一致（文件值和「沒有」不同）。"""
     reports = check(tmp_path, "DBS", **{"發行機構評等_穆迪": None})
@@ -183,6 +201,7 @@ def test_issuers_not_yet_supported_get_no_rating_results(tmp_path) -> None:
         ("穆迪（Moody's）Aa2，標準普爾（Standard&Poor's）為A+，惠譽（FitchRatings）AA", None),
         ("標準普爾評等A+、DBRS評等AA（high）、R&I評等A+", {"標準普爾": "A+"}),  # 不追蹤的評等機構不交出
         ("標準普爾評等A－", {"標準普爾": "A-"}),  # 全形減號
+        ("Moody＇s評等Aa2/Standard&Poor＇s評等A+", {"穆迪": "Aa2", "標準普爾": "A+"}),  # 只寫英文、全形撇號
     ],
 )
 def test_parse_reads_agency_and_rating_pairs(body, expected) -> None:

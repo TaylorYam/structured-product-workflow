@@ -21,7 +21,8 @@ from .common import RawText, capture_group, derived, fee_rates, number
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "dbs-zh-iis"
-PARSER_VERSION = "2"  # 2：價格表改由 parsers/price_table.py 讀（Issue #287）
+# 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
+PARSER_VERSION = "3"
 # 發行機構信用評等（#240）：商品簡介 `發行機構長期債務信用評等：截至本中文投資人須知刊印日，發行機構之長期債務信用評等經穆迪(Moody’s)評定為Aa1、…。`
 RATINGS = (
     ratings.RatingPlace(

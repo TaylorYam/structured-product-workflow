@@ -15,25 +15,15 @@
 
 from __future__ import annotations
 
-from ..parsers.ratings import AGENCIES, FIELDS, StatedRatings
+from ..parsers.ratings import FIELDS, StatedRatings
+from ..rating_formats import AGENCIES, GUARANTOR, ISSUER, canonical, rating_key
 from ..schema import CheckResult, FieldStatus, Item, OrderValue
 from ..schema import CheckStatus as S
 from . import kit
 from .kit import Check, Context
 
 RULE_ID = "standard.credit_rating"
-ISSUER, GUARANTOR = "發行機構", "保證機構"
 ROLES = dict(zip(FIELDS, (ISSUER, GUARANTOR), strict=True))  # 標準欄位 → 機構
-_PREFIX = {ISSUER: "issuer_rating", GUARANTOR: "guarantor_rating"}
-_AGENCY_KEY = dict(zip(AGENCIES, ("sp", "moodys", "fitch"), strict=True))
-
-
-def rating_key(role: str, agency: str) -> str:
-    """參考條件表評等欄的標準欄位（例：發行機構、標準普爾 → issuer_rating_sp）。"""
-    return f"{_PREFIX[role]}_{_AGENCY_KEY[agency]}"
-
-
-RATING_KEYS = tuple(rating_key(role, agency) for role in (ISSUER, GUARANTOR) for agency in AGENCIES)
 
 
 def run(ctx: Context) -> list[CheckResult]:
@@ -65,7 +55,7 @@ def _role(ctx: Context, field: str, role: str, places: tuple[StatedRatings, ...]
                 message=f"{ctx.sheet_source}沒有{role}評等欄（舊版參考條件表），{who}的信用評等請人工核對",
             )
         ]
-    table = {agency: _rating(ov, ctx.fmt.empty_value) for agency, ov in ovs.items()}
+    table = {agency: _rating(agency, ov, ctx.fmt.empty_value) for agency, ov in ovs.items()}
     if not any(table.values()):
         check = Check(
             RULE_ID, field, Item.sheet(f"{role}信用評等", list(ovs.values())), ctx.document, ov=tuple(ovs.values())
@@ -100,9 +90,9 @@ def _role(ctx: Context, field: str, role: str, places: tuple[StatedRatings, ...]
     return out
 
 
-def _rating(ov: OrderValue | None, empty: str) -> str | None:
-    """參考條件表一格評等：空白或空值寫法是沒有評等。"""
+def _rating(agency: str, ov: OrderValue | None, empty: str) -> str | None:
+    """參考條件表一格評等：空白或空值寫法是沒有評等；手打的寫法和文件那邊一樣統一（`A－`、`a+` → `A+`）。"""
     if ov is None or ov.value is None:
         return None
-    text = str(ov.value).strip()
+    text = canonical(agency, str(ov.value))
     return None if text in ("", empty) else text

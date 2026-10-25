@@ -36,7 +36,7 @@ from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from enum import Enum
 from functools import cached_property
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from sp_workflow import import_run
 from sp_workflow.check_terms import CalcLine, UnderlyingPrice, recalculate, recalculate_corrected
@@ -178,8 +178,21 @@ def load_index_underlyings(path: Path) -> frozenset[str]:
     return frozenset(c.strip() for c in codes)
 
 
-def issuer_code(tdcc: str, issuer: str, config: ImportConfig) -> str:
-    """上手代號：TDCC 前三碼；對照沒有時用資料庫的發行機構寫法反查（上手不改，只用來檢查與顯示）。"""
+class IssuerLookup(Protocol):
+    """`issuer_code` 用到的兩張對照；`ImportConfig` 就是一份（核對讀資料庫另組一份，`check_source`）。"""
+
+    @property
+    def issuer_prefixes(self) -> Mapping[str, str]: ...  # TDCC 前三碼 → 上手代號
+
+    @property
+    def issuer_names(self) -> Mapping[str, str]: ...  # 上手代號 → 發行機構的寫法
+
+
+def issuer_code(tdcc: str, issuer: str, config: IssuerLookup) -> str:
+    """上手代號：TDCC 前三碼；對照沒有時用資料庫的發行機構寫法反查（上手不改，只用來檢查與顯示）。
+
+    風險等級（`risk_level`）與核對讀資料庫的評等欄（`check_source`）都用這一個。
+    """
     code = config.issuer_prefixes.get(tdcc[:3], "")
     if code in config.issuer_names:
         return code
