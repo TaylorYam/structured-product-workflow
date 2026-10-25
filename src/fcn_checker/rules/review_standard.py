@@ -1,8 +1,10 @@
 """審查標準規則：各上手共用，依上手代號取得已解析的審查標準（docs/checker/rules/review-standard.md）。
 
-只用說明書標準欄位、全文索引與審查標準；參考條件表只有禁用語特例要看的交易日，由呼叫端傳入。對外只有兩個進入點：說明書的 `review_standard_rules`，
-與投資人須知的 `iis_review_standard_rules`（只核對範本有的項目，ADR 0007）。
-項目：standard.* 的預期值出自審查標準；面額、受理申購日、刊印日期（doc.*）的錯訊沿用「預期」。
+只用說明書標準欄位、全文索引與審查標準；參考條件表只讀兩處：禁用語特例要看的交易日（由呼叫端傳入），與 RR 核對
+（全文風險等級、固定警語裡的 RR、投資人須知商品簡介的 RR）的期望值「風險等級」欄（#239）。對外只有兩個進入點：說明書的
+`review_standard_rules`，與投資人須知的 `iis_review_standard_rules`（只核對範本有的項目，ADR 0007）。
+項目：standard.* 的預期值出自審查標準（RR 核對有「風險等級」欄時出自參考條件表）；面額、受理申購日、刊印日期（doc.*）
+的錯訊沿用「預期」。
 """
 
 from __future__ import annotations
@@ -10,11 +12,12 @@ from __future__ import annotations
 import datetime as dt
 import re
 from collections.abc import Callable
+from dataclasses import dataclass
 from decimal import Decimal
 
-from ..config import ISSUER_NAME_IGNORES, NAME_FLAGS, RISK_LEVEL
+from ..config import ISSUER_NAME_IGNORES, NAME_FLAGS, RISK_LEVEL, RISK_LEVEL_PENDING
 from ..investor_sheet import read_iis
-from ..schema import CheckResult, DocKind, Evidence, FieldStatus, Item, ParsedField
+from ..schema import CheckResult, DocKind, Evidence, FieldStatus, Item, OrderValue, ParsedField
 from ..schema import CheckStatus as S
 from ..standard_fields import AGENT_PLACES, GUARANTOR_PLACES, Occurrence, fee_field
 from ..text import compat_standard, full_brackets, squash
@@ -179,48 +182,114 @@ def _chairman(ctx: Context, field: str, pf: ParsedField, name: str) -> CheckResu
     )
 
 
+# ---------------------------------------------------------------- RR 核對的期望值（#239）
+
+_RR = r"RR[1-5]"  # 風險等級的寫法：參考條件表的值、文件裡的 RR、遮蔽固定警語都用這一個
+
+
+@dataclass(frozen=True)
+class _ExpectedLevel:
+    """RR 核對（全文風險等級、固定警語裡的 RR、投資人須知商品簡介的 RR）的期望值與出處。
+
+    參考條件表有「風險等級」欄時以它為準（資料庫匯出的是自算風險等級，ADR 0023），結果記下那一格；沒有這一欄
+    （舊 Excel）時用審查標準 `risk.level`，行為同 #239 以前。`value` 是 None 時（待算、空白、不是 RR1～RR5）RR 相關
+    項目一律轉人工覆核，原因與說明在 `reason`、`message`。
+    """
+
+    value: str | None
+    ov: OrderValue | None = None  # 參考條件表的風險等級；用審查標準時 None
+    reason: str = ""
+    message: str = ""
+
+    def check(self, rule_id: str, field: str, name: str, document: DocKind) -> Check:
+        """RR 值核對的結果身分：項目的預期值出處是審查標準或參考條件表（記下那一格）。"""
+        item = Item.standard(name) if self.ov is None else Item.sheet(name, [self.ov])
+        return Check(rule_id, field, item, document, ov=(self.ov,), expected=self.value)
+
+    def unavailable(self, check: Check, **values) -> CheckResult:
+        """沒有期望值：轉人工覆核並寫出原因（`values` 為 expected、actual、evidence）。"""
+        return check.result(S.REVIEW_REQUIRED, reason=self.reason, message=self.message, **values)
+
+
+def _expected_level(ctx: Context) -> _ExpectedLevel:
+    """RR 核對的期望值：參考條件表「風險等級」欄（沒有這欄時審查標準 risk.level）；待算、空白或寫錯時沒有期望值。"""
+    ov = ctx.sheet_field("risk_level")
+    if ov is None:
+        return _ExpectedLevel(ctx.std.risk_level)
+    where, value = f"{ctx.sheet_source}的風險等級", ov.value
+    if value == RISK_LEVEL_PENDING:
+        return _ExpectedLevel(
+            None, ov, "risk_level_pending", f"{where}待算（自算風險等級缺資料算不出來），資料補齊重算後再核對 RR"
+        )
+    if value is None:
+        return _ExpectedLevel(None, ov, "order_missing", f"{where}空白，無法核對 RR")
+    if not (isinstance(value, str) and re.fullmatch(_RR, value)):
+        return _ExpectedLevel(None, ov, "order_invalid", f"{where}「{value}」不是 RR1～RR5，無法核對 RR")
+    return _ExpectedLevel(value, ov)
+
+
+def _level_pattern(text: str, level: str | None, *, capture: bool = False) -> str:
+    """含 {level} 的寫法（固定警語、風險等級寫法；忽略空白）的 regex：{level} 代入 `level`；`level` 是 None 時任何
+    RR1～RR5 都算，`capture` 時抓成第 1 組。"""
+    rr = _RR if level is None else re.escape(level)
+    return re.escape(squash(text)).replace(re.escape(RISK_LEVEL), f"({rr})" if capture else rr)
+
+
 def _fixed_warning(ctx: Context, expected: int | None = None) -> CheckResult:
     """該上手適用的固定風險警語（有上手版本就用，否則用預設）逐字出現的次數 = 審查標準（`expected` 另給時用它）。
 
-    上手另有允許的開頭句寫法（risk.fixed_warning_openings）時，只換開頭句的版本也算一次。
+    上手另有允許的開頭句寫法（risk.fixed_warning_openings）時，只換開頭句的版本也算一次。警語裡的 {level} 代入
+    RR 核對的期望值（`_expected_level`，#239）；沒有期望值（待算等）時轉人工覆核。
     """
     rid, std = "standard.fixed_warning", ctx.issuer_std
-    ti = ctx.ts.full_text
-    targets = [squash(w) for w in std.fixed_warnings]
-    hits = sorted((m for t in targets for m in re.finditer(re.escape(t), ti.text)), key=lambda m: m.start())
-    evidence = [Evidence.of(ti.lines_for(m.start(), m.end())[0]) for m in hits]
+    level = _expected_level(ctx)
+    check = Check(rid, "fixed_warning", Item.standard("固定風險警語"), ctx.document, ov=(level.ov,))
     expected = std.fixed_warning_occurrences if expected is None else expected
-    return Check(rid, "fixed_warning", Item.standard("固定風險警語"), ctx.document).compare(
+    if level.value is None:
+        return level.unavailable(check, expected=expected)
+    ti = ctx.ts.full_text
+    targets = [_level_pattern(w, level.value) for w in std.fixed_warnings]
+    hits = sorted((m for t in targets for m in re.finditer(t, ti.text)), key=lambda m: m.start())
+    evidence = [Evidence.of(ti.lines_for(m.start(), m.end())[0]) for m in hits]
+    source = "審查標準 risk.level" if level.ov is None else ctx.sheet_source
+    return check.compare(
         expected,
         len(hits),
         evidence=evidence,
         reason="occurrence_count",
-        tolerance="忽略空白與換行後逐字相等" + ("（另接受審查標準列出的開頭句寫法）" if len(targets) > 1 else ""),
+        tolerance="忽略空白與換行後逐字相等"
+        + ("（另接受審查標準列出的開頭句寫法）" if len(targets) > 1 else "")
+        + f"；警語裡的風險等級為 {level.value}（{source}）",
         message=f"固定風險警語逐字相符 {len(hits)} 次，應為 {expected} 次",
         fail_message="（可能被改字、缺漏或多出）",
     )
 
 
 def _risk_level(ctx: Context) -> CheckResult:
-    """全文每一處風險等級 = 審查標準；寫法依上手（risk.level_formats，沒列出的上手為【RRn】）。"""
-    check = Check("standard.risk_level", "risk_level", Item.standard("風險等級"), ctx.document)
+    """全文每一處風險等級 = RR 核對的期望值（參考條件表「風險等級」，沒有這欄時審查標準；#239）；寫法依上手
+    （risk.level_formats，沒列出的上手為【RRn】）。沒有期望值（待算等）時轉人工覆核。"""
+    level = _expected_level(ctx)
+    check = level.check("standard.risk_level", "risk_level", "風險等級", ctx.document)
     ti = ctx.ts.full_text
     formats = ctx.issuer_std.risk_level_formats
-    patterns = [re.escape(squash(f)).replace(re.escape(RISK_LEVEL), r"(RR\d)") for f in formats]
+    patterns = [_level_pattern(f, None, capture=True) for f in formats]
     found = sorted(((m.group(1), m) for p in patterns for m in re.finditer(p, ti.text)), key=lambda x: x[1].start())
     shown_formats = "、".join(f.replace(RISK_LEVEL, "RRn") for f in formats)
+    if level.value is None:
+        evidence = [Evidence.of(ti.lines_for(m.start(), m.end())[0]) for _, m in found[:1]]
+        return level.unavailable(check, actual=sorted({lv for lv, _ in found}) or None, evidence=evidence)
     if not found:
         return check.result(
             S.REVIEW_REQUIRED,
-            expected=ctx.std.risk_level,
+            expected=level.value,
             reason="document_missing",
             message=f"{ctx.document}找不到{shown_formats}風險等級",
         )
-    bad = [(lv, m) for lv, m in found if lv != ctx.std.risk_level]
+    bad = [(lv, m) for lv, m in found if lv != level.value]
     shown = bad or found[:1]
     evidence = [Evidence.of(ti.lines_for(m.start(), m.end())[0]) for _, m in shown]
     return check.compare(
-        ctx.std.risk_level,
+        level.value,
         sorted({lv for lv, _ in found}),
         ok=not bad,
         evidence=evidence,
@@ -293,7 +362,8 @@ def _no_osu(ctx: Context, check: Check, trade: ParsedField) -> CheckResult:
     text = full_brackets(ti.text)
     masks = (*std.fixed_warnings, std.distributor_name, *std.distributor_name_equivalents)
     for w in sorted((full_brackets(squash(m)) for m in masks), key=len, reverse=True):  # 長的先遮（名稱等價寫法含全名）
-        text = text.replace(w, "□" * len(w))  # 遮蔽固定警語與受託機構名稱，保留字元位置
+        # 遮蔽固定警語（風險等級任何 RRn 都算，#239）與受託機構名稱，保留字元位置
+        text = re.sub(_level_pattern(w, None), lambda m: "□" * len(m.group()), text)
     hits = sorted((m for w in OSU_WORDS for m in re.finditer(re.escape(w), text)), key=lambda m: m.start())
     evidence = [Evidence.of(ti.lines_for(m.start(), m.end())[0]) for m in hits]
     found = f"{ctx.issuer} 不能承作 OSU 客戶，{ctx.document}出現 OSU {len(hits)} 處"
@@ -926,14 +996,13 @@ def _iis_warning(ctx: Context) -> CheckResult:
 
 
 def _iis_risk_summary(ctx: Context) -> CheckResult:
-    """商品簡介「本商品風險程度：RRn」（沒有【】，全文【RRn】規則抓不到）= 審查標準風險等級。"""
-    rid, pf, item = (
-        "standard.risk_level",
-        read_iis(ctx.iis, "risk_level_summary"),
-        Item.standard("風險等級（商品簡介）"),
-    )
-    check = Check(rid, "risk_level_summary", item, ctx.document, expected=ctx.std.risk_level).needs(pf)
-    return check.compare(ctx.std.risk_level, pf.value)
+    """商品簡介「本商品風險程度：RRn」（沒有【】，全文【RRn】規則抓不到）= RR 核對的期望值（同全文風險等級，#239）；
+    沒有期望值（待算等）時轉人工覆核。"""
+    level, pf = _expected_level(ctx), read_iis(ctx.iis, "risk_level_summary")
+    check = level.check("standard.risk_level", "risk_level_summary", "風險等級（商品簡介）", ctx.document).needs(pf)
+    if level.value is None:
+        return level.unavailable(check, actual=pf.value if pf.ok else None)
+    return check.compare(level.value, pf.value)
 
 
 def _iis_occurrences(

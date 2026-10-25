@@ -30,12 +30,12 @@
 | `issuer.<上手>.issuer_name_ignore` | MS：`brackets`、`trailing_period` | 同上 | 該上手比對時另外忽略括號（全形／半形）、英文名結尾的句點；沒列出的上手不忽略 |
 | `fees` | 申購費用、提前贖回費用、分銷費用皆為 0%~5% | 第四章「投資人應負擔的各項費用」表的費率欄 | 忽略空白後逐字相等；只核對列出的費用項目 |
 | `issue_price.pct` | 100 | 第一章 §6「發行價格為商品面額之N%」；範本另有出處時每處一筆（MS 第四章 §5 申購價金） | 相等；不相等時**轉人工覆核**（不直接判錯） |
-| `risk.level` | RR4 | 全文所有【RRn】（寫法不同的上手見 `issuer.<上手>.risk_level_formats`） | 全部等於設定值 |
+| `risk.level` | RR4 | 全文所有【RRn】（寫法不同的上手見 `issuer.<上手>.risk_level_formats`） | 全部等於 RR 的期望值：參考條件表「風險等級」欄（資料庫匯出的是自算風險等級，ADR 0023）；參考條件表沒有這一欄（舊 Excel）時才用 `risk.level`。風險等級待算、空白或不是 RR1～RR5 時轉人工覆核（見 §2.21，2026-10-26，workflow Issue #239） |
 | `issuer.<上手>.risk_level_formats` | MS：`風險程度等級為{level}`、`風險程度為{level}`、`歸類為{level}` | 全文 | 該上手的風險等級寫法（`{level}` 為 RRn）；沒列出的上手為【RRn】 |
-| `risk.fixed_warning` | 固定風險警語全文（我方提供給上手） | 全文 | 忽略空白與換行後逐字相等，且出現次數 = `fixed_warning_occurrences`（BARC 為 3 次：封面警語 1、第一章 §2、第三章投資風險警語） |
+| `risk.fixed_warning` | 固定風險警語全文（我方提供給上手；這檔商品的風險等級寫 `{level}`） | 全文 | `{level}` 代入 RR 的期望值（同 `risk.level` 列）後，忽略空白與換行逐字相等，且出現次數 = `fixed_warning_occurrences`（BARC 為 3 次：封面警語 1、第一章 §2、第三章投資風險警語）；沒有期望值時轉人工覆核（§2.21） |
 | `issuer.<上手>.fixed_warning_occurrences` | Nomura 2（封面(一)、第三章 6.(1)；2026-10-15，Issue #239） | 說明書全文 | 該上手說明書的固定警語次數；沒列出的上手用 `fixed_warning_occurrences`（3） |
 | `issuer.<上手>.fixed_warning` | 依上手不同的固定警語版本（`hsbc`、`ms`） | 同上 | 有該上手版本時改用該版本比對；沒有時用 `risk.fixed_warning` |
-| `issuer.<上手>.fixed_warning_openings` | MS：`本商品風險程度為RR4。` | 同上 | 開頭句（到第一個「。」）的其他允許寫法；只換開頭句、其餘逐字相同的版本也算一次 |
+| `issuer.<上手>.fixed_warning_openings` | MS：`本商品風險程度為{level}。` | 同上 | 開頭句（到第一個「。」）的其他允許寫法；只換開頭句、其餘逐字相同的版本也算一次（`{level}` 同 `risk.fixed_warning`） |
 | `wording.forbidden` ／ `allowed_phrases` | 禁用「受託投資」；允許「受託投資或受託買賣」「受託投資、受託買賣或為投資型保單」（HSBC）、「受託投資、受託買賣之投資標的」「受託投資或銷售本商品」（Citi，2026-10-14 確認，Issue #220） | 全文 | 片語以外出現「受託投資」即為錯誤（SOP：須改為「受託買賣」）；`wording.exempt_until` 特例見 §2.12 |
 | `issuer.<上手>.osu_clients` ／ `osu.exempt_until` | 不能承作 OSU 客戶：BBVA、Citi、GS、DBS（`false`）；其他上手沒寫為可以。特例日期 2026-11-30 | 全文；受託對象 | 不能承作：遮掉固定警語與受託機構名稱後全文不得出現 `OSU`、`國際證券業務`；可以承作：每處受託對象要寫到 OSU 客戶。見 §2.19 |
 | `distributor.established` | 2000-11-20 | 說明書第二章「受託或銷售機構」→「設立日期」（範本另有受託機構明細時每處都核對，例：BBVA 第 1 頁 (ii)） | 日期相等；`西元` 前綴、冒號全半形、空白不計。日期不同判不一致，寫成其他格式（例：民國年）轉人工覆核，找不到轉人工覆核。見 §2.20 |
@@ -373,6 +373,15 @@ OOS 多家上手的舊範本寫「受託投資」（SG 投資人須知警語七�
 - **受託機構設立日期**（`standard.distributor_established`，只核對說明書；投資人須知沒有設立日期）：每個 `設立日期`（標題「設立日期及簡介」不算）屬於哪家機構，看它和前一個 `設立日期` 之間最後一個 `名稱` 之後有沒有 `玉山`；屬於受託機構的每處各一筆結果，日期要等於 `distributor.established`。少數 DBS 說明書寫成 `2000年8月2日`，判不一致。
 - **全文受託機構名稱**（`standard.distributor_names`，說明書與投資人須知）：每個 `玉山` 開頭的寫法依最長者優先比對 `name` 與 `name_equivalents`；比對到的名稱後面若又接 `綜合`、`證券`、`股份`、`有限`、`公司`（例：`玉山證券股份有限公司`），視為另一個寫法。該上手 `issuer.<上手>.distributor_name_exempt` 列出的寫法特例放行（目前只有 CA 第三章 6.(4) 的 `玉山綜合證券綜合股份有限公司`，§2.15），說明註明放行處數。結果一筆，預期 0 處錯誤；說明列出每處 `第 N 頁「原文」`，證據附該處文字。
 - **保本率敘述**（`standard.principal_protection`，說明書第一章與投資人須知商品簡介）：「計價貨幣本金保本率」（含「原計價幣別本金保本率」）與「投資本金達成保本率之各項條件」（含「…保本之各項條件」、MS 的「…之各項事件」）每處一筆，文件沒有某一項時轉人工覆核。值以 `principal_protection.non_protected` 的寫法開頭、後面不是中文字（可接標點、說明句或下一項編號）為通過；`％` 視同 `%`。寫成非 0 的百分比判不一致（`principal_protected`），其他寫法轉人工覆核（`wording_not_listed`）；要接受新的寫法時在清單加一筆，不改程式。
+
+### 2.21 風險等級改用自算等級（2026-10-26，workflow Issue #239）
+
+風險等級以前寫死 RR4（`risk.level`）。流程程式自己照承辦的 Generator 試算表算出每檔商品的風險等級（workflow ADR 0023），經資料庫匯出的參考條件表帶進核對（核對仍只讀參考條件表，ADR 0013）。RR 相關的三項都用同一個期望值，說明書與投資人須知都適用：
+
+- **期望值**：參考條件表「風險等級」欄（`reference_sheet.toml` 的 `風險等級` → `risk_level`，不是必要欄）。資料庫匯出寫 RR1～RR5（缺資料、2026-10-30 以前交易的「回填」是 RR4，照常比對），算不出來的寫「待算」，還沒算過的空白。參考條件表**沒有這一欄**（舊 Excel）時用 `risk.level`（RR4），行為同以前；結果的項目出處分別記「參考條件表」（附儲存格）或「審查標準」。
+- **全文風險等級**（`standard.risk_level`）、**投資人須知商品簡介的 RR**（`standard.risk_level`／`risk_level_summary`）：文件寫的和期望值不同判不一致，訊息寫出兩邊的值（例：`風險等級對不起來：參考條件表 RR3／說明書 RR4`）。
+- **固定警語裡的 RR**（`standard.fixed_warning`）：共用與各上手的固定警語（含 `fixed_warning_openings`、`fixed_warning_variants`）把這檔商品的風險等級寫成佔位符 `{level}`，比對時代入期望值；RR3 商品的警語寫 RR3 才算一次。警語裡「RR1~RR5，RR1、RR2為保守型，RR3、RR4為穩健型…」是分類說明，不是佔位符。不能承作 OSU 客戶的規則遮蔽固定警語時，任何 RRn 都算警語。
+- **沒有期望值**：風險等級是「待算」（`risk_level_pending`）、空白（`order_missing`）或不是 RR1～RR5（`order_invalid`）時，上面三項都轉人工覆核並寫出原因；資料補齊、流程重算出等級後重新核對。
 
 ## 3. 對 14 份 BARC 樣本的驗證結果（2026-10-01，本機探勘）
 

@@ -1,4 +1,4 @@
-"""審查標準依上手解析：固定警語、商品名稱樣板、發行機構名稱、受託機構電話等價寫法。
+"""審查標準依上手解析：固定警語、風險等級的期望值（#239）、商品名稱樣板、發行機構名稱、受託機構電話等價寫法。
 
 測試切點是批量核對入口（預覽＋核對）；設定檔問題在載入核對設定時回報；BARC 與 HSBC 都用合成說明書。
 """
@@ -6,16 +6,32 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import ModuleType
 
 import pytest
+from openpyxl.utils import get_column_letter
 
+import barc_synth
+import bnp_synth
 import hsbc_synth
 import ms_synth
+import sg_synth
 from barc_synth import Spec, build_pdf, check
 from fcn_checker.ingestion import IngestionError
-from harness import MISMATCH, PASS, REVIEW, REVIEW_STANDARD, STANDARD, check_sheet, load_config, results
+from fcn_checker.schema import ItemSource
+from harness import (
+    MISMATCH,
+    PASS,
+    REVIEW,
+    REVIEW_STANDARD,
+    STANDARD,
+    check_all,
+    check_sheet,
+    load_config,
+    results,
+)
 from pdf_writer import Edit
-from reference_synth import build_reference_sheet, reference_row
+from reference_synth import REFERENCE_HEADERS, build_reference_sheet, reference_row
 
 BARC_WARNING = STANDARD["risk"]["fixed_warning"]
 HSBC_WARNING = STANDARD["issuer"]["hsbc"]["fixed_warning"]
@@ -23,7 +39,7 @@ PHONE = STANDARD["distributor"]["phone"]
 # 設定檢查用的上手表寫法：每家上手一張表後同一個欄位名稱各家都有，取只有該上手才有的寫法（Issue #128）
 MS_LEVELS = 'risk_level_formats = ["風險程度等級為{level}", "風險程度為'
 MS_IGNORE = 'issuer_name_ignore = ["brackets", "'
-MS_OPENING = 'fixed_warning_openings = ["本商品風險程度為RR4'
+MS_OPENING = 'fixed_warning_openings = ["本商品風險程度為{level}'
 NOMURA_COUNT = "Issue #239）。\nfixed_warning_occurrences = "
 
 
@@ -82,6 +98,88 @@ def test_hsbc_document_with_barc_warning_is_mismatch(tmp_path):
 def test_barc_document_with_hsbc_warning_is_mismatch(tmp_path):
     r = results(check(tmp_path, edits=[Edit(BARC_WARNING, HSBC_WARNING, "ts")]), "standard.fixed_warning")[0]
     assert (r.status, r.actual) == (MISMATCH, 0)
+
+
+# ---------------------------------------------------------------- 風險等級的期望值（#239）
+
+RR_RULES = ("standard.risk_level", "standard.fixed_warning")
+WITH_LEVEL = [*REFERENCE_HEADERS, "風險等級"]  # 資料庫匯出的參考條件表多一欄風險等級
+# 合成文件（預設 RR4）改成 RR3：只換這檔商品的等級，警語裡「RR3、RR4為穩健型」的分類說明不動
+RR3_EDITS = {
+    "BARC": [Edit("為【RR4】", "為【RR3】"), Edit("程度：RR4", "程度：RR3")],  # 警語【】、投資人須知商品簡介
+    "MS": [Edit("為RR4", "為RR3"), Edit("程度： RR4", "程度： RR3")],  # 無【】、開頭句「風險程度為」
+    "BNP": [Edit("為[RR4]", "為[RR3]")],  # 半形方括號
+    "SG": [Edit("為RR4", "為RR3"), Edit("為[RR4]", "為[RR3]")],  # 無【】，第一章第 2 項半形方括號（另一種警語寫法）
+}
+SYNTHS: dict[str, ModuleType] = {"BARC": barc_synth, "MS": ms_synth, "BNP": bnp_synth, "SG": sg_synth}
+
+
+def rr_pair(tmp_path: Path, issuer: str = "BARC", *, level: str | None = None, edits=(), headers=WITH_LEVEL):
+    """合成說明書與投資人須知（`edits` 改字）＋參考條件表一列（`level` 寫進風險等級欄；`headers` 不含那欄時是舊 Excel）；
+    回傳兩份的 RR 相關結果 {(文件, rule_id, 欄位): 結果}。"""
+    synth = SYNTHS[issuer]
+    spec = synth.Spec()
+    pdf = synth.build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", spec, edits=edits)
+    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [reference_row(spec, **{"風險等級": level})], headers)
+    outcome = check_all(sheet, [pdf])  # 旁邊的投資人須知一起核對
+    return {
+        (r.document.value, r.rule_id, r.field): r
+        for i in outcome.items
+        for r in i.report.results
+        if r.rule_id in RR_RULES
+    }
+
+
+@pytest.mark.parametrize("issuer", sorted(RR3_EDITS))
+def test_rr3_documents_pass_against_an_rr3_reference_level_including_the_warnings(tmp_path, issuer):
+    """自算 RR3 的商品：文件全文、固定警語（共用與各家版本、其他寫法）與投資人須知都寫 RR3 才通過。"""
+    found = rr_pair(tmp_path, issuer, level="RR3", edits=RR3_EDITS[issuer])
+
+    assert {
+        ("說明書", "standard.risk_level", "risk_level"),
+        ("說明書", "standard.fixed_warning", "fixed_warning"),
+    } <= set(found)
+    assert {k: r.status for k, r in found.items()} == dict.fromkeys(found, PASS)
+    level = found[("說明書", "standard.risk_level", "risk_level")]
+    cell = f"樣本清單!{get_column_letter(len(WITH_LEVEL))}4"
+    assert (level.expected, level.item.source, level.order_source) == ("RR3", ItemSource.REFERENCE, [cell])
+
+
+def test_a_reference_level_different_from_the_documents_is_a_mismatch(tmp_path):
+    """文件寫 RR4、參考條件表（自算）是 RR3：全文風險等級、固定警語、商品簡介都不一致。"""
+    found = rr_pair(tmp_path, level="RR3")
+
+    assert {k: r.status for k, r in found.items()} == dict.fromkeys(found, MISMATCH)
+    assert {k[0] for k in found} == {"說明書", "投資人須知"}
+    level = found[("說明書", "standard.risk_level", "risk_level")]
+    assert (level.expected, level.actual) == ("RR3", ["RR4"])
+
+
+def test_a_pending_risk_level_requires_review_with_the_reason(tmp_path):
+    found = rr_pair(tmp_path, level="待算")
+
+    assert {k: (r.status, r.reason_code) for k, r in found.items()} == dict.fromkeys(
+        found, (REVIEW, "risk_level_pending")
+    )
+    assert all("風險等級待算" in r.message for r in found.values())
+    assert len(found) == 5  # 說明書：風險等級、固定警語；投資人須知：風險等級、商品簡介、固定警語
+
+
+@pytest.mark.parametrize(("level", "reason"), [(None, "order_missing"), ("RR6", "order_invalid")])
+def test_a_blank_or_unknown_risk_level_requires_review(tmp_path, level, reason):
+    found = rr_pair(tmp_path, level=level)
+
+    assert {(r.status, r.reason_code) for r in found.values()} == {(REVIEW, reason)}
+
+
+@pytest.mark.parametrize(("edits", "status"), [((), PASS), (RR3_EDITS["BARC"], MISMATCH)])
+def test_an_old_reference_sheet_without_the_column_uses_the_review_standard(tmp_path, edits, status):
+    """舊 Excel 沒有風險等級欄：照審查標準 risk.level（RR4），同 #239 以前。"""
+    found = rr_pair(tmp_path, edits=edits, headers=REFERENCE_HEADERS)
+
+    assert {r.status for r in found.values()} == {status}
+    level = found[("說明書", "standard.risk_level", "risk_level")]
+    assert (level.expected, level.item.source, level.order_source) == ("RR4", ItemSource.STANDARD, [])
 
 
 # ---------------------------------------------------------------- 商品名稱樣板
@@ -194,7 +292,7 @@ def test_phone_form_not_listed_in_standard_is_mismatch(tmp_path):
         (f'{MS_OPENING}。"]', f'{MS_OPENING}"]', "issuer.ms.fixed_warning_openings"),
         (
             f'{MS_OPENING}。"]',
-            'fixed_warning_openings = ["本商品風險程度等級為RR4。"]',
+            'fixed_warning_openings = ["本商品風險程度等級為{level}。"]',
             "issuer.ms.fixed_warning_openings",
         ),
         # SG 分節（Issue #194）：依幣別的倍數、固定警語其他寫法、英文名稱幣別代碼對照

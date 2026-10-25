@@ -10,6 +10,9 @@
 - 還沒鎖住的商品，核對條件（#88）要是「完成」才產生列；否則那一份不核對、需人工覆核、不能放行。
   已鎖住的商品照資料庫的值產生（TS、IIS 打勾，回填過的欄位有值），可以再核對，但不再回填。
   商品條件缺起單資料的必填欄（#114）時不看核對條件，一律不產生列（核對條件可能還沒重算）。
+- 風險等級欄（#239）：自算風險等級（ADR 0023，`workflow.risk_level`）的 RR1～RR5（回填是 RR4）；待算寫「待算」，
+  還沒算過的空白。核對規則拿它當 RR 核對的期望值（待算、空白轉人工覆核）。寫回前一樣比對，核對後重算改了等級也不回填
+  （核對時的表沒有風險等級欄（v19 以前產生的）不算改了）。
 - 回填：ISIN、發行日、比價日_1～12（空值寫法存成空白）、期初定價 VWAP 時各標的四個價格；人工放行的說明書
   若單位面額和資料庫不同，改成 TS 的值。每個改變的原值記在 `workflow.backfill_log`。寫入、紀錄與鎖住都經過
   `product_terms.backfill`／`lock_checked`（#203），和商品條件寫入共用同一把鎖（`product_terms.read(…, lock=True)`）。
@@ -35,6 +38,7 @@ from typing import TYPE_CHECKING, Any
 
 from openpyxl.cell.cell import Cell
 
+from fcn_checker.config import RISK_LEVEL_PENDING
 from fcn_checker.rating_formats import AGENCY_KEYS, RATING_FIELDS
 from sp_workflow.check_terms import DONE
 from sp_workflow.credit_ratings import RatingRows, load_rows
@@ -42,6 +46,7 @@ from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdat
 from sp_workflow.file_tools import save_book, table_book
 from sp_workflow.product_record import PRICE_COLUMNS, missing_fields, same_value
 from sp_workflow.product_terms import Stored, backfill, lock_checked, locked, read, read_many
+from sp_workflow.risk_level import PENDING, RiskLevel, risk_level_of, risk_levels
 
 if TYPE_CHECKING:
     import psycopg
@@ -57,6 +62,7 @@ SLOTS = 12
 UNDERLYINGS = 5
 BRANCHES = 7  # 匯入格式的分公司欄數
 CHECKED_FIELDS = ("checked_term_sheet", "checked_iis")
+RISK_FIELD = "risk_level"  # 參考條件表的風險等級（#239；不在匯入格式裡，排在最後）
 DENOMINATION_RULE = "field.denomination"
 DENOMINATION_COLUMN = "單位面額"
 
@@ -98,7 +104,7 @@ def export_reference(
     `prefixes`：上手編號對照（TDCC 前三碼 → 上手代號），評等欄依上手代號查評等表。
     """
     codes = list(dict.fromkeys(tdccs))
-    stored = read_many(conn, codes)
+    stored, risks = read_many(conn, codes), risk_levels(conn, codes)
     ratings = _Ratings(load_rows(conn), IssuerCodes.of(prefixes, fmt))
     headers, rows, absent = _headers(fmt), [], {}
     for tdcc in codes:
@@ -108,7 +114,7 @@ def export_reference(
             absent[tdcc] = reason
         else:
             assert found is not None
-            rows.append(_row(found, fmt, headers, ratings))
+            rows.append(_row(found, fmt, headers, ratings, risks.get(tdcc)))
     _write_sheet(path, headers, rows)
     return absent
 
@@ -134,19 +140,24 @@ def _absent_reason(found: Stored | None) -> str:
 
 
 def _headers(fmt: ReferenceFormat) -> list[str]:
-    """TS、IIS、發行機構，加上匯入格式的欄（「TS/IIS完成檢核」除外）與信用評等欄：讀檔需要的欄都在，核對結果檔也帶得出其他欄。"""
+    """TS、IIS、發行機構，加上匯入格式的欄（「TS/IIS完成檢核」除外）、風險等級與信用評等欄：讀檔需要的欄都在，
+    核對結果檔也帶得出其他欄。"""
     names = {std: header for header, std in reversed(list(fmt.columns.items()))}
     checked = [names[key] for key in CHECKED_FIELDS]
     return [
         *checked,
         fmt.issuer_column,
         *(c for c in fmt.import_format.columns if c != fmt.import_format.checked_column),
+        names[RISK_FIELD],
         *(names[key] for key in RATING_FIELDS if key in names),
     ]
 
 
-def _row(found: Stored, fmt: ReferenceFormat, headers: Sequence[str], ratings: _Ratings) -> dict[str, Any]:
-    """一檔商品 → {欄名: 值}。標準欄位依格式設定對到欄名；空值寫法用在 KI NONE、沒有的標的與不需要填的比價日。"""
+def _row(
+    found: Stored, fmt: ReferenceFormat, headers: Sequence[str], ratings: _Ratings, risk: RiskLevel | None
+) -> dict[str, Any]:
+    """一檔商品 → {欄名: 值}。標準欄位依格式設定對到欄名；空值寫法用在 KI NONE、沒有的標的與不需要填的比價日。
+    `risk` 是存好的風險等級（還沒算過是 None，風險等級欄空白）。"""
     p, empty = found.columns, fmt.empty_value
     no_ki = p["barrier_type"] == "NONE"
     prices = {price.seq: price for price in found.prices}
@@ -169,6 +180,7 @@ def _row(found: Stored, fmt: ReferenceFormat, headers: Sequence[str], ratings: _
         "coupon_pa_pct": p["coupon_pct"],
         "tenor_months": p["tenor_months"],
         "first_callable_period": p["non_call_months"],
+        RISK_FIELD: _risk_cell(risk),
     }
     values.update(ratings.columns(found.tdcc, p["issuer"], p["trade_date"]))
     if locked(found):
@@ -221,6 +233,15 @@ class _Ratings:
 
         found = by_code(self.issuers.code(tdcc, issuer))
         return found is not None and found.ratings
+
+
+def _risk_cell(risk: RiskLevel | None) -> str | None:
+    """風險等級欄的值：完成、回填寫等級，待算寫核對規則認得的待算寫法，還沒算過空白。"""
+    if risk is None:
+        return None
+    if risk.status == PENDING:
+        return RISK_LEVEL_PENDING
+    return risk.level
 
 
 def _write_sheet(path: Path, headers: Sequence[str], rows: Iterable[Mapping[str, Any]]) -> None:
@@ -301,9 +322,8 @@ def write_back(
                 already.append(tdcc)
                 continue
             rated = ratings.checked(tdcc, current.columns["issuer"])
-            if _absent_reason(current) or _changed(
-                _row(current, fmt, headers, ratings), checked_rows.get(tdcc), fmt, rated=rated
-            ):
+            now = _row(current, fmt, headers, ratings, risk_level_of(conn, tdcc))
+            if _absent_reason(current) or _changed(now, checked_rows.get(tdcc), fmt, rated=rated):
                 stale.append(tdcc)
                 continue
             for column, new in [*_backfill_values(item, fmt), *_released_denomination(item)]:
@@ -317,6 +337,7 @@ def _changed(current: Mapping[str, Any], checked: Any, fmt: ReferenceFormat, *, 
     """資料庫現在的值和核對時那一列（`OrderRecord`）不同；回填欄位（ISIN、發行日、比價日、TS、IIS）不算。
 
     評等欄只在 `rated`（這家上手有做評等核對）時才比；核對時的表沒有評等欄（v18 以前產生的）也不算改了。
+    風險等級欄同樣：核對時的表沒有這欄（v19 以前產生的）不算改了。
     """
     if checked is None:
         return True
@@ -326,6 +347,8 @@ def _changed(current: Mapping[str, Any], checked: Any, fmt: ReferenceFormat, *, 
         if std is None or std in skip or std.startswith("autocall_date_"):
             continue
         if std in RATING_FIELDS and not (rated and checked.has(std)):
+            continue
+        if std == RISK_FIELD and not checked.has(std):
             continue
         found = checked.get(std)
         if not same_value(None if value == "" else value, None if found is None else found.value):

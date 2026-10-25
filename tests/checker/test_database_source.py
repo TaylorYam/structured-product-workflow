@@ -1,5 +1,5 @@
 """核對讀資料庫（#68、ADR 0013）：資料庫產生的參考條件表與 Excel 核對結果相同、查不到或條件未完成的 TDCC、
-回填寫回並鎖住、人工放行改單位面額、VWAP 價格、寫回失敗可以重寫、交易日當時的信用評等（#240）。
+回填寫回並鎖住、人工放行改單位面額、VWAP 價格、寫回失敗可以重寫、交易日當時的信用評等（#240）、帶出自算風險等級（#239）。
 
 資料庫測試對真的 PostgreSQL（`pg`，沒有設定 SPW_TEST_DSN 時略過）；PANEL 工作階段的寫回失敗用假的資料庫來源，不需要資料庫。
 只用合成資料（tests/checker/barc_synth.py）。
@@ -17,14 +17,17 @@ import pytest
 import hsbc_synth
 from barc_synth import SYNTH_ISIN, Spec, build_pdf
 from fcn_checker.batch import Category, check_batch, preview_batch
+from fcn_checker.config import RISK_LEVEL_PENDING
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.orders.reference import load_reference_sheet
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.rating_formats import RATING_FIELDS
 from fcn_checker.saving import run_batch, save_batch
 from harness import CONFIG, cli_root, with_iis
-from reference_synth import Ratings, build_reference_sheet, issuer_value, price, reference_row
+from reference_synth import REFERENCE_HEADERS, Ratings, build_reference_sheet, issuer_value, price, reference_row
 from sp_workflow.check_source import WorkflowDatabase, export_reference, write_back
+from sp_workflow.risk_level import BACKFILLED, DONE, PENDING, RiskDetail, RiskLevel
+from sp_workflow.risk_level import _write as write_risk  # 直接寫存好的風險等級（算法另有 tests/test_risk_level.py）
 
 NOW = dt.datetime(2030, 2, 3, 4, 5, 6)
 FMT = CONFIG.reference_format
@@ -33,8 +36,27 @@ PREFIXES = CONFIG.issuer_prefixes
 BARC_RATINGS = Ratings(sp="A+", moodys="A1", fitch="AA-")  # 初始評等表（migration 0024）的 Barclays 發行機構評等
 
 
-def seed(pg, spec: Spec, *, pricing="收盤價", denomination=None, status="完成", reason=None) -> None:
-    """像起單資料匯入＋算出核對條件（#86、#88）那樣寫一檔商品，條件和合成說明書一致。"""
+RISK_DETAIL = RiskDetail(
+    6, 1, 4, 3, 3, (("ZZA UN", Decimal("20")),), Decimal("20"), 2, "發行機構", (("穆迪", "A1"),), 3
+)
+
+
+def seed_risk(pg, tdcc: str, risk: str | None) -> None:
+    """存好的自算風險等級（#238）：RRn 是完成（明細虛構）、「回填」是 RR4、「待算」沒有等級；None 不寫（還沒算過）。"""
+    if risk is None:
+        return
+    if risk == PENDING:
+        found = RiskLevel(PENDING, None, "缺 ZZA UN 的 200 日波動率")
+    elif risk == BACKFILLED:
+        found = RiskLevel(BACKFILLED, "RR4", "缺 ZZA UN 的 200 日波動率")
+    else:
+        found = RiskLevel(DONE, risk, total=RISK_DETAIL.total, detail=RISK_DETAIL)
+    write_risk(pg, tdcc, found)
+
+
+def seed(pg, spec: Spec, *, pricing="收盤價", denomination=None, status="完成", reason=None, risk="RR4") -> None:
+    """像起單資料匯入＋算出核對條件與風險等級（#86、#88、#238）那樣寫一檔商品，條件和合成說明書一致（風險等級預設
+    RR4，同合成文件）。"""
     (import_id,) = pg.execute(
         "INSERT INTO workflow.order_import (imported_by, summary) VALUES ('tester', '{}') RETURNING import_id"
     ).fetchone()
@@ -86,6 +108,7 @@ def seed(pg, spec: Spec, *, pricing="收盤價", denomination=None, status="完�
         "INSERT INTO workflow.branch_allocation (tdcc, seq, branch, amount) VALUES (%s, 1, '台北', 1000000)",
         (spec.product_code,),
     )
+    seed_risk(pg, spec.product_code, risk)
 
 
 def pdfs_of(tmp_path: Path, *specs: Spec) -> list[Path]:
@@ -126,9 +149,9 @@ def test_database_rows_read_the_same_as_the_excel_reference_sheet(pg, tmp_path, 
     seed(pg, spec, pricing=pricing)
     pdfs = pdfs_of(tmp_path, spec)
     db_sheet, absent = export(pg, tmp_path, pdfs)
-    overrides = {"期初定價": pricing, **(VWAP_BLANK if pricing == "VWAP" else {})}
+    overrides = {"期初定價": pricing, "風險等級": "RR4", **(VWAP_BLANK if pricing == "VWAP" else {})}
     excel_row = reference_row(spec.with_(ratings=BARC_RATINGS), **overrides)
-    excel_sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [excel_row])
+    excel_sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [excel_row], [*REFERENCE_HEADERS, "風險等級"])
 
     (db_row,) = load_reference_sheet(db_sheet, FMT).rows
     (xl_row,) = load_reference_sheet(excel_sheet, FMT).rows
@@ -226,6 +249,80 @@ def test_a_checked_sheet_without_rating_columns_is_not_stale(pg, tmp_path) -> No
     new_rating(pg, "HSBC", spec)
 
     result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
+    assert (result.locked, result.stale) == ((spec.product_code,), ())
+
+
+# ---------- 風險等級（#239） ----------
+
+
+def rr_results(item) -> list[tuple[str, str, object, object]]:
+    """RR 相關的結果：(rule_id, 狀態, 期望值, 原因)。"""
+    rules = ("standard.risk_level", "standard.fixed_warning")
+    return sorted(
+        (r.rule_id, r.status.value, r.expected, r.reason_code) for r in item.report.results if r.rule_id in rules
+    )
+
+
+@pytest.mark.db
+def test_the_export_carries_the_self_calculated_risk_level(pg, tmp_path) -> None:
+    """完成、回填寫等級，待算寫「待算」，還沒算過空白；核對拿它當 RR 的期望值。"""
+    specs = {risk: Spec(product_code=f"02919999000{n}") for n, risk in enumerate(("RR3", BACKFILLED, PENDING, None), 1)}
+    for risk, spec in specs.items():
+        seed(pg, spec, risk=risk)
+    pdfs = pdfs_of(tmp_path, *specs.values())
+
+    sheet, absent = export(pg, tmp_path, pdfs)
+
+    rows = {r.product_code.value: r.get("risk_level").value for r in load_reference_sheet(sheet, FMT).rows}
+    assert absent == {}
+    assert rows == {
+        specs["RR3"].product_code: "RR3",
+        specs[BACKFILLED].product_code: "RR4",
+        specs[PENDING].product_code: RISK_LEVEL_PENDING,
+        specs[None].product_code: None,
+    }
+    outcome = check_batch(preview_batch(CONFIG, sheet, pdfs, absent=absent))
+    ts = {i.product_code: i for i in outcome.items if i.term_sheet.name.endswith("_TS.pdf")}
+    assert ts[specs[BACKFILLED].product_code].category == Category.PASSED, "回填的 RR4 照常比對"
+    assert rr_results(ts[specs["RR3"].product_code]) == [
+        ("standard.fixed_warning", "MISMATCH", 3, "occurrence_count"),  # 文件的警語寫 RR4
+        ("standard.risk_level", "MISMATCH", "RR3", "value_mismatch"),
+    ]
+    assert {r[1] for r in rr_results(ts[specs[PENDING].product_code])} == {"REVIEW_REQUIRED"}
+    assert {r[3] for r in rr_results(ts[specs[PENDING].product_code])} == {"risk_level_pending"}
+    assert {r[3] for r in rr_results(ts[specs[None].product_code])} == {"order_missing"}
+
+
+@pytest.mark.db
+def test_a_risk_level_changed_after_checking_is_not_backfilled_or_locked(pg, tmp_path) -> None:
+    """核對後重算改了風險等級：核對的不是現在的等級，不回填、不鎖住（同其他條件）。"""
+    spec = Spec()
+    seed(pg, spec)
+    outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
+    assert {i.category for i in outcome.items} == {Category.PASSED}
+    seed_risk(pg, spec.product_code, "RR3")
+
+    result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
+
+    assert (result.locked, result.stale) == ((), (spec.product_code,))
+
+
+@pytest.mark.db
+def test_a_checked_sheet_without_the_risk_level_column_is_not_stale(pg, tmp_path) -> None:
+    """核對時的參考條件表沒有風險等級欄（v19 以前產生的）：風險等級不算改了，照常回填、鎖住。"""
+    spec = Spec()
+    seed(pg, spec)
+    outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
+    assert {i.category for i in outcome.items} == {Category.PASSED}
+    book = openpyxl.load_workbook(outcome.reference_sheet)
+    sheet = book.worksheets[0]
+    (col,) = (c.column for c in sheet[1] if c.value == "風險等級")
+    sheet.delete_cols(col)
+    book.save(outcome.reference_sheet)
+    seed_risk(pg, spec.product_code, "RR3")
+
+    result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
+
     assert (result.locked, result.stale) == ((spec.product_code,), ())
 
 

@@ -68,7 +68,7 @@
 - 新增設定檔 `config/risk_level.toml`；設定資料夾沒有這個檔時用程式內建的（`ConfigPaths.with_fallback`）。
 - 匯入後的重算現在也要讀審查標準與參考條件表格式；這兩個設定檔壞掉時，每日匯入的重算也會失敗（匯入保留、寫出原因）。
 - 指數清單還是空的：在使用者提供前，UL_1 是指數的商品會多算 1 分（4 分而不是 3 分）。
-- 說明書／投資人須知的 RR 核對、固定警語與寄信草稿仍是 RR4，到 #239 才改用自算等級。
+- 說明書／投資人須知的 RR 核對、固定警語與寄信草稿已改用自算等級（#239）：資料庫產生的參考條件表帶出「風險等級」欄，待算轉人工覆核、寄信草稿寫「待確認」；沒有這欄的舊 Excel 參考條件表照舊用審查標準的 RR4。
 
 ## English
 
@@ -133,4 +133,4 @@ Bloomberg VOLATILITY_200D algorithm (documentation only, not implemented now; ke
 - New settings file `config/risk_level.toml`; when the settings folder lacks it, the built-in one is used (`ConfigPaths.with_fallback`).
 - The post-import recalculation now also reads the review standard and the reference-sheet format; if either file is broken, the daily import's recalculation fails too (the import is kept and the reason shown).
 - The index list is still empty: until the operators supply it, products whose UL_1 is an index score one point more (4 instead of 3).
-- The term-sheet / investor-information RR checks, fixed warnings, and mail drafts still say RR4 until #239 switches them to the calculated level.
+- The term-sheet / investor-information RR checks, fixed warnings, and mail drafts now use the calculated level (#239): the reference workbook generated from the database carries a 風險等級 column, a pending level goes to manual review, and the mail draft says 待確認; an old Excel reference workbook without that column still uses the review standard's RR4.

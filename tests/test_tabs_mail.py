@@ -27,3 +27,19 @@ def test_mail_page_says_when_step_records_were_not_written(master, tmp_path: Pat
     window.mail._done(DraftResult(receipt, Recorded(error="寫入失敗")))
 
     assert "步驟紀錄沒有寫進資料庫：寫入失敗（清單照常產出）" in window.mail.status_var.get()
+
+
+def test_drafts_whose_risk_level_needs_confirming_are_marked(master, tmp_path: Path) -> None:
+    """#239：建了草稿、但風險等級待確認的那一列標出來；不算「沒有建立」。"""
+    window = new_window(master, tmp_path)
+    note = "資料庫還沒有風險等級，草稿寫「待確認」，寄出前請補上風險等級"
+    outcomes = (
+        DraftOutcome("147000000001", DRAFTED),
+        DraftOutcome("147000000002", DRAFTED, reason=note, to_confirm=True),
+    )
+
+    window.mail._done(DraftResult(DraftReceipt(tmp_path / "寄信草稿清單.xlsx", outcomes, last_import=None)))
+
+    table = window.mail.table
+    assert [table.item(iid, "tags") for iid in table.get_children()] == ["", ("problem",)]
+    assert window.mail.kpis.values == (("已建草稿（檔）", 2, False), ("沒有建立（檔）", 0, False))
