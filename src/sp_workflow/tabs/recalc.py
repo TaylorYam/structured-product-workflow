@@ -6,8 +6,8 @@ import tkinter as tk
 from collections.abc import Callable, Iterable
 from tkinter import messagebox, ttk
 
-from fcn_checker.trading_calendar import TradingCalendar
 from sp_workflow.check_terms import DONE, STATUSES, CalcLine
+from sp_workflow.product_terms import ImportConfig
 from sp_workflow.tabs.base import TITLE, ActionRunner, DatabaseLogin, Tab
 from sp_workflow.window_actions import Recalc, release_line
 
@@ -35,7 +35,7 @@ class Releaser:
         self.idle = idle
         self.busy = busy
         self.lines: dict[str, CalcLine] = {}
-        self.calendar: TradingCalendar | None = None
+        self.config: ImportConfig | None = None
         self.runner = ActionRunner(db, tab.background, tab.status_var, self._busy)  # 和分頁共用狀態列；按鈕由 idle 擋
         self.button = ttk.Button(tab.buttons, text="放行差異…", command=self.release, state=tk.DISABLED)
         self.button.pack(side=tk.LEFT, padx=(8, 0))
@@ -44,7 +44,7 @@ class Releaser:
     def show(self, recalc: Recalc) -> None:
         """換成這次重算的結果（空的 `Recalc` 是清掉）。"""
         self.lines = {} if recalc.receipt is None else {line.tdcc: line for line in recalc.receipt.lines}
-        self.calendar = recalc.calendar
+        self.config = recalc.config
         self.refresh()
 
     def line(self) -> CalcLine | None:
@@ -53,12 +53,12 @@ class Releaser:
 
     def refresh(self) -> None:
         line = self.line()
-        ready = line is not None and bool(line.unreleased) and self.calendar is not None
+        ready = line is not None and bool(line.unreleased) and self.config is not None
         self.button.configure(state=tk.NORMAL if ready and not self.runner.working and self.idle() else tk.DISABLED)
 
     def release(self) -> None:
-        line, calendar = self.line(), self.calendar
-        if line is None or not line.unreleased or calendar is None:
+        line, config = self.line(), self.config
+        if line is None or not line.unreleased or config is None:
             return
         listing = "\n".join(f"・{difference.describe()}" for difference in line.unreleased)
         if not messagebox.askyesno(
@@ -72,7 +72,7 @@ class Releaser:
             return
         tdcc, differences = line.tdcc, line.unreleased
         self.runner.run_action(
-            lambda settings: release_line(settings, tdcc, differences, calendar), f"放行中…（{tdcc}）", self._done
+            lambda settings: release_line(settings, tdcc, differences, config), f"放行中…（{tdcc}）", self._done
         )
 
     def _busy(self, busy: bool) -> None:

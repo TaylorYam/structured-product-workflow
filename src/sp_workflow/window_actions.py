@@ -16,8 +16,8 @@ transaction 的範圍（#205）：每日匯入、回補股價、歷史收盤價�
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -97,6 +97,7 @@ from sp_workflow.progress import (
     still_pending_mail,
 )
 from sp_workflow.returning import ReturnReceipt, return_to_folders
+from sp_workflow.risk_level import RiskLevel, risk_levels
 from sp_workflow.step_records import (
     SENT_STEP,
     Recorded,
@@ -115,10 +116,10 @@ if TYPE_CHECKING:
 
 @dataclass(frozen=True)
 class Recalc:
-    """匯入後重算核對條件（#88）的結果；重算失敗時只有 error（匯入已經寫進資料庫）。"""
+    """匯入後重算核對條件（#88）與風險等級（#238）的結果；重算失敗時只有 error（匯入已經寫進資料庫）。"""
 
     receipt: CalcReceipt | None = None
-    calendar: TradingCalendar | None = None  # 放行後重算要用
+    config: ImportConfig | None = None  # 放行後重算要用
     error: str = ""
 
 
@@ -182,6 +183,7 @@ class ReadResult:
     config: ImportConfig
     database_note: str = ""  # 沒有帶入資料庫的值時的說明
     database_error: DatabaseError | None = None
+    risks: Mapping[str, RiskLevel] = field(default_factory=dict)  # 資料庫存的風險等級（#238；沒連資料庫時空的）
 
 
 @dataclass(frozen=True)
@@ -195,6 +197,7 @@ class OrderImportResult:
     recalc: CalcReceipt | None = None
     recalc_error: str = ""
     reload_error: str = ""  # 匯入成功但重讀資料庫狀態失敗
+    risks: Mapping[str, RiskLevel] = field(default_factory=dict)  # 重讀的風險等級（#238；重讀失敗時空的）
 
 
 @dataclass(frozen=True)
@@ -231,20 +234,21 @@ class Opened:
     trades: TradeRowsDraft | None = None
 
 
-def _recalculate_after_import(conn: psycopg.Connection, holidays: Path) -> Recalc:
-    """匯入之後重算；讀不到假日表或重算失敗時不丟錯誤（匯入已經完成），說明放在結果裡。"""
+def _recalculate_after_import(conn: psycopg.Connection, paths: ConfigPaths) -> Recalc:
+    """匯入之後重算；讀不到設定檔（假日表、上手編號對照、風險等級設定等）或重算失敗時不丟錯誤（匯入已經完成），
+    說明放在結果裡。"""
     try:
-        calendar = load_calendar(holidays)
-    except CheckTermsError as exc:
+        config = load_import_config(paths)
+    except TermsError as exc:
         return Recalc(error=_first_line(exc))
-    return _recalculate(conn, calendar)
+    return _recalculate(conn, config)
 
 
-def _recalculate(conn: psycopg.Connection, calendar: TradingCalendar) -> Recalc:
+def _recalculate(conn: psycopg.Connection, config: ImportConfig) -> Recalc:
     import psycopg
 
     try:
-        return Recalc(recalculate(conn, calendar), calendar)
+        return Recalc(recalculate(conn, config), config)
     except (CheckTermsError, psycopg.Error) as exc:
         return Recalc(error=_first_line(exc))
 
@@ -270,7 +274,7 @@ def run_daily_import(settings: ConnectionSettings, daily: Path, paths: ConfigPat
     """匯入每日更新（`prices` 為 False 時只匯交易明細），再重算核對條件。"""
     with connect(settings) as conn:
         receipt = import_daily(daily, conn, prices=prices)
-        return DailyResult(receipt, _recalculate_after_import(conn, paths.exchange_holidays))
+        return DailyResult(receipt, _recalculate_after_import(conn, paths))
 
 
 def run_price_csv(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> PriceCsvResult:
@@ -281,7 +285,7 @@ def run_price_csv(settings: ConnectionSettings, source: Path, paths: ConfigPaths
         calendar = None  # 收盤價這次不存；讀不到的原因由重算寫在結果裡
     with connect(settings) as conn:
         receipt = import_price_csv(source, conn, calendar)
-        recalc = _recalculate_after_import(conn, paths.exchange_holidays)
+        recalc = _recalculate_after_import(conn, paths)
         return PriceCsvResult(receipt, recalc, _observe_after_import(conn, calendar))
 
 
@@ -316,11 +320,11 @@ def observe_products(settings: ConnectionSettings, paths: ConfigPaths) -> Observ
 
 
 def release_line(
-    settings: ConnectionSettings, tdcc: str, differences: Sequence[Difference], calendar: TradingCalendar
+    settings: ConnectionSettings, tdcc: str, differences: Sequence[Difference], config: ImportConfig
 ) -> CalcLine:
-    """放行差異（#88）：記下放行人與時間，再重算那一檔。"""
+    """放行差異（#88）：記下放行人與時間，再重算那一檔（核對條件與風險等級）。"""
     with connect(settings) as conn:
-        return release_differences(conn, tdcc, differences, calendar)
+        return release_differences(conn, tdcc, differences, config)
 
 
 def _record_steps(settings: ConnectionSettings | None, records: Sequence[StepRecord]) -> Recorded:
@@ -362,7 +366,8 @@ def read_order_sheet(settings: ConnectionSettings | None, text: str, sheet: Path
         return ReadResult(rows, _drafts(rows, config), config, "沒有登入資料庫，沒有帶入資料庫的值")
     try:
         with connect(settings) as conn:
-            return ReadResult(rows, _drafts(rows, config, conn), config)
+            risks = risk_levels(conn, [row.tdcc for row in rows if row.found])
+            return ReadResult(rows, _drafts(rows, config, conn), config, risks=risks)
     except DatabaseError as exc:
         note = f"資料庫沒有連上，沒有帶入資料庫的值（{exc}）"
         login = None if isinstance(exc, SchemaOutdatedError) else exc  # 版本不對不是登入問題
@@ -390,13 +395,14 @@ def import_order_sheet(
 
     with connect(settings) as conn:
         receipt = write_batch(conn, drafts, config)
-        recalc = _recalculate(conn, config.calendar)
+        recalc = _recalculate(conn, config)
         try:
             for draft in drafts:
                 draft.reload(read(conn, draft.tdcc))
+            risks = risk_levels(conn, [draft.tdcc for draft in drafts])
         except psycopg.Error as exc:
             return OrderImportResult(receipt, recalc.receipt, recalc.error, _first_line(exc))
-        return OrderImportResult(receipt, recalc.receipt, recalc.error)
+        return OrderImportResult(receipt, recalc.receipt, recalc.error, risks=risks)
 
 
 # ---------- 3 準備、5 放回 ----------

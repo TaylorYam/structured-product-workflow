@@ -69,7 +69,7 @@ def test_daily_import_is_committed_then_recalculated(pg, pg_settings, tmp_path: 
     result = run_daily_import(pg_settings, daily, PATHS, prices=True)
 
     assert result.receipt.fcn_tdccs == (A,)
-    assert result.recalc.receipt is not None and result.recalc.calendar is not None and not result.recalc.error
+    assert result.recalc.receipt is not None and result.recalc.config is not None and not result.recalc.error
     assert count(pg, "workflow.trade_row") == 1
 
 
@@ -90,7 +90,7 @@ def test_a_missing_holiday_file_keeps_the_daily_import(pg, pg_settings, tmp_path
 
     result = run_daily_import(pg_settings, daily, no_holidays(tmp_path), prices=True)
 
-    assert result.recalc.receipt is None and result.recalc.calendar is None
+    assert result.recalc.receipt is None and result.recalc.config is None
     assert "沒有這個檔.toml" in result.recalc.error and "\n" not in result.recalc.error
     assert count(pg, "workflow.trade_row") == 1
 

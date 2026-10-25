@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import datetime as dt
+from dataclasses import replace
+from decimal import Decimal
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
 
@@ -12,10 +15,12 @@ from fcn_checker.ui import Background
 from order_synth import missing_row, order_row
 from sp_workflow.app import PanelWindow
 from sp_workflow.check_terms import DONE, TO_CONFIRM, WAIT_PRICES, CalcLine, CalcReceipt, Difference
+from sp_workflow.credit_ratings import ISSUER, SP
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.order_terms import OrderRow
 from sp_workflow.product_terms import BatchReceipt, ImportLine
-from sp_workflow.status import ImportResult, OrderReview
+from sp_workflow.risk_level import RiskDetail, RiskLevel
+from sp_workflow.status import ImportResult, OrderReview, Risk
 from sp_workflow.tabs.editor import PROBLEM_BG
 from sp_workflow.window_actions import OrderImportResult
 from window_synth import NEEDS_RELEASE, UF_DIFF, new_window, read_result, release_without_database, texts, type_into
@@ -29,7 +34,9 @@ def test_order_terms_tab_remembers_its_sheet(master, tmp_path: Path) -> None:
 
     assert window.orders.sheet_var.get() == "D:/ELN/起單建檔_20261015.xlsm"
     assert not hasattr(window.orders, "root_folder"), "起單資料頁不用根目錄（#97）"
-    assert texts(window.orders.buttons, ttk.Button) == ["讀取", "匯入資料庫", "放行差異…"], "更正搬到人工維護（#115）"
+    assert texts(window.orders.buttons, ttk.Button) == ["讀取", "匯入資料庫", "放行差異…", "風險等級明細…"], (
+        "更正搬到人工維護（#115）"
+    )
     assert str(window.orders.import_button.cget("state")) == "disabled"
 
 
@@ -76,6 +83,11 @@ def test_order_page_shows_key_figures_when_done(master, tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------- 起單資料在視窗裡確認（#86、#97、ADR 0009、0010）
+
+
+# 一檔指數、低波動、AA：2 + 0.2 + 0.8 + 0.18 = 3.18 → RR3（虛構）
+_DETAIL = RiskDetail(6, 1, 3, 1, 1, (("SPX", Decimal("12.5")),), Decimal("12.5"), 1, ISSUER, ((SP, "AA"),), 2)
+COMPUTED = RiskLevel(Risk.DONE, "RR3", "", dt.date(2026, 10, 15), _DETAIL.total, _DETAIL)
 
 
 def order_window(master, tmp_path: Path, *rows: OrderRow, background=Background, logged_in=False) -> PanelWindow:
@@ -313,8 +325,8 @@ def test_order_import_shows_the_check_terms_of_the_batch(master, tmp_path: Path,
     values = {
         window.orders.table.set(iid, "tdcc"): window.orders.table.item(iid, "values") for iid in window.orders.items
     }
-    assert values["029199990001"][1:] == (ImportResult.NEW, "BARC", TO_CONFIRM, "核對條件：" + NEEDS_RELEASE.reason)
-    assert values["029199990002"][1:] == (ImportResult.NEW, "BARC", DONE, "")
+    assert values["029199990001"][1:] == (ImportResult.NEW, "BARC", TO_CONFIRM, "", "核對條件：" + NEEDS_RELEASE.reason)
+    assert values["029199990002"][1:] == (ImportResult.NEW, "BARC", DONE, "", "")
     assert window.orders.kpis.values[-1] == ("核對條件待確認（檔）", 1, True)
     assert "核對條件（這批匯入的 2 檔）：完成 1、等股價 0、等交易明細 0、待確認 1。" in window.orders.status_var.get()
 
@@ -325,7 +337,106 @@ def test_order_import_shows_the_check_terms_of_the_batch(master, tmp_path: Path,
     release_without_database(monkeypatch, released)
     window.orders.releaser.button.invoke()
 
-    assert window.orders.table.item(iid, "values")[3:] == (DONE, "核對條件：已放行的差異：UF（…）")
+    assert window.orders.table.item(iid, "values")[3:] == (DONE, "", "核對條件：已放行的差異：UF（…）")
+
+
+# ---------------------------------------------------------------- 匯入後的風險等級（#238）
+
+
+def test_order_import_shows_the_risk_level_and_its_detail(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    rows = (order_row("029199990001"), order_row("029199990002"), order_row("029199990003"))
+    window = order_window(master, tmp_path, *rows, background=immediate, logged_in=True)
+    lines = tuple(ImportLine(row.tdcc, ImportResult.NEW) for row in rows)
+    backfilled = RiskLevel(Risk.BACKFILLED, "RR4", "缺天期（Tenor (m)）")
+    pending = RiskLevel(Risk.PENDING, None, "UL_1 AAA UW：股價檔（取價日 2026-11-02）沒有 200 日波動率")
+    calcs = (
+        CalcLine("029199990001", DONE, "", True, risk=COMPUTED),
+        CalcLine("029199990002", DONE, "", True, risk=backfilled),
+        CalcLine("029199990003", DONE, "", True, risk=pending),
+    )
+
+    window.orders._saved(OrderImportResult(BatchReceipt(7, lines), CalcReceipt(calcs)))
+
+    table = window.orders.table
+    by_tdcc = {table.set(iid, "tdcc"): iid for iid in window.orders.items}
+    assert table.item(by_tdcc["029199990001"], "values")[3:] == (DONE, "RR3", "")
+    assert table.item(by_tdcc["029199990002"], "values")[3:] == (DONE, "RR4（回填）", "風險等級：缺天期（Tenor (m)）")
+    assert table.item(by_tdcc["029199990003"], "values")[3:] == (DONE, "待算", "風險等級：" + pending.reason)
+    assert table.item(by_tdcc["029199990003"], "tags") == ("problem",), "待算要處理"
+    assert table.item(by_tdcc["029199990002"], "tags") == ""
+    assert "風險等級：RR3 1、回填 1、待算 1。" in window.orders.status_var.get()
+
+    shown = []
+    monkeypatch.setattr(messagebox, "showinfo", lambda title, message, **kwargs: shown.append(message))
+    table.selection_set(by_tdcc["029199990001"])
+    master.update()
+    assert str(window.orders.risk_button.cget("state")) == "normal"
+    window.orders.risk_button.invoke()
+
+    (text,) = shown
+    assert text.startswith("029199990001 的風險等級\n\n風險等級：RR3（完成）\n總分 3.18")
+    assert "UL_1 是指數，3 分" in text and "取最好的一家 2 分" in text
+
+
+def test_reading_shows_stored_risk_levels_including_locked_products(master, tmp_path: Path, monkeypatch) -> None:
+    """讀取時帶出資料庫存的風險等級（已鎖住、這次沒有重算的也有），可以看明細；沒有存的空白。"""
+    window = new_window(master, tmp_path)
+    locked = order_row("029199990002")
+    risks = {"029199990001": COMPUTED, "029199990002": RiskLevel(Risk.BACKFILLED, "RR4", "缺天期（Tenor (m)）")}
+
+    window.orders._done(replace(read_result(order_row("029199990001"), locked, order_row("029199990003")), risks=risks))
+    window.orders._busy(False)
+
+    table = window.orders.table
+    by_tdcc = {table.set(iid, "tdcc"): iid for iid in window.orders.items}
+    assert [table.set(by_tdcc[t], "risk") for t in ("029199990001", "029199990002", "029199990003")] == [
+        "RR3",
+        "RR4（回填）",
+        "",
+    ]
+    shown = []
+    monkeypatch.setattr(messagebox, "showinfo", lambda title, message, **kwargs: shown.append(message))
+    table.selection_set(by_tdcc["029199990002"])
+    master.update()
+    window.orders.risk_button.invoke()
+    assert shown and "原因：缺天期（Tenor (m)）" in shown[0]
+
+    table.selection_set(by_tdcc["029199990003"])
+    master.update()
+    assert str(window.orders.risk_button.cget("state")) == "disabled"
+
+
+def test_import_shows_the_reloaded_risk_level_of_every_product(master, tmp_path: Path) -> None:
+    """匯入後用重讀的值：已鎖住、沒有重算的商品也顯示（例如這次補算的）。"""
+    rows = (order_row("029199990001"), order_row("029199990002"))
+    window = order_window(master, tmp_path, *rows)
+    lines = (ImportLine("029199990001", ImportResult.NEW), ImportLine("029199990002", ImportResult.LOCKED))
+    calcs = CalcReceipt((CalcLine("029199990001", DONE, "", True, risk=COMPUTED),))
+    reloaded = {"029199990001": COMPUTED, "029199990002": RiskLevel(Risk.DONE, "RR4", "", None, Decimal("3.9"))}
+
+    window.orders._saved(OrderImportResult(BatchReceipt(7, lines), calcs, risks=reloaded))
+
+    table = window.orders.table
+    assert {table.set(iid, "tdcc"): table.set(iid, "risk") for iid in window.orders.items} == {
+        "029199990001": "RR3",
+        "029199990002": "RR4",
+    }
+    assert "風險等級：RR3 1、RR4 1。" in window.orders.status_var.get()
+
+
+def test_the_risk_detail_button_needs_a_product_with_a_risk_level(master, tmp_path: Path) -> None:
+    window = order_window(master, tmp_path, order_row("029199990001"))
+
+    assert str(window.orders.risk_button.cget("state")) == "disabled", "還沒匯入，沒有風險等級"
+
+    lines = (ImportLine("029199990001", ImportResult.NEW),)
+    window.orders._saved(
+        OrderImportResult(BatchReceipt(7, lines), CalcReceipt((CalcLine("029199990001", DONE, "", True),)))
+    )
+    window.orders.table.selection_set("0")
+    master.update()
+
+    assert str(window.orders.risk_button.cget("state")) == "disabled", "匯入結果沒有風險等級（例如重算失敗）"
 
 
 # ---------------------------------------------------------------- 結果表複製（#121）

@@ -32,7 +32,7 @@ def import_with_prices(pg, tmp_path, **changes):
     import_daily(path, pg)
     receipt = write_batch(pg, _drafts([order_row(A, {**UF_215, **changes})], CONFIG, pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
-    assert recalculate(pg, CONFIG.calendar).line_of(A).status == DONE
+    assert recalculate(pg, CONFIG).line_of(A).status == DONE
     pg.execute("UPDATE workflow.product SET locked_at = now() WHERE tdcc = %s", (A,))
 
 
