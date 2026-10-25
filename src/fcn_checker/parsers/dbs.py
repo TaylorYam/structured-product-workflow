@@ -252,6 +252,7 @@ def _basic(fields: dict[str, ParsedField], basic: list[Line], put: Callable) -> 
     put("tenor_months", basic, r"商品年期：(\d+)個月。", int)
     put("issue_date", basic, r"發行日：" + D, parse_date)
     put("trade_date", basic, r"(?<!劃)(?<!定)交易日：" + D, parse_date)
+    put("observation_start", basic, r"觀察起始日：" + D, parse_date)
     put("maturity_date", basic, r"到期日：如未依下載之強制贖回條款發生自動提前出場事件之情形，為" + D, parse_date)
     put("final_valuation_date", basic, r"(?<!規劃)定價日：" + D + r"，如該日並非", parse_date)
     fields["coupon_table"] = table_a(ti)
@@ -350,11 +351,6 @@ def ki_type(ti: TextIndex, table: ParsedField) -> ParsedField:
     return ParsedField.invalid("ki_type", [], "到期贖回 (a) 與下限觸發事件的寫法不一致或不在範本規格內")
 
 
-def price_rows(table: ParsedField) -> ParsedField:
-    """價格表 → 標準欄位 `underlying_prices`（代碼、各價格、證據、價格旁的幣別字）；價格表有問題時沿用它的狀態。"""
-    return price_table.price_rows(table, currency=True)
-
-
 def table_region(lns: list[Line], start_marker: str, end_marker: str) -> list[Line]:
     """價格表的範圍：開頭是 `start_marker` 的那一行之後、開頭是 `end_marker` 的那一行之前（去空白比對）。"""
     a = next((i for i, ln in enumerate(lns) if squash(ln.text).startswith(start_marker)), None)
@@ -371,7 +367,7 @@ def _table_fields(fields: dict[str, ParsedField]) -> None:
         fields["underlyings"] = ParsedField(
             "underlyings", FieldStatus.PRESENT, list(tickers.value), list(tickers.evidence)
         )
-        fields["underlying_prices"] = price_rows(table)
+        fields["underlying_prices"] = price_table.price_rows(table)
     elif table.ok and tickers.ok:
         note = f"表1 的彭博代碼 {table.value.tickers} 和連結標的資產表 {tickers.value} 不同（代碼、順序或檔數）"
         ev = list(table.evidence) + list(tickers.evidence)

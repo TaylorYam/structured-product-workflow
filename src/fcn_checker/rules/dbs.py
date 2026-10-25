@@ -14,6 +14,7 @@ import re
 from decimal import ROUND_CEILING, Decimal
 
 from ..schema import CheckResult, ParsedField
+from ..schema import CheckStatus as S
 from ..text import full_brackets, squash
 from . import kit
 from .kit import Q4, IssuerContext
@@ -27,7 +28,7 @@ NOT_COVERED = [
     },
     {
         "rule_id": "doc.underlying_names",
-        "description": "連結標的中文名稱、交易所、價格表幣別字不核對；以彭博代碼與表1 價格為準",
+        "description": "連結標的中文名稱、交易所不核對；以彭博代碼與表1 價格為準（價格表的幣別由共用規則核對 = 標的交易所幣別，Issue #227）",
     },
     {"rule_id": "doc.initial_prices", "description": "期初價格本身的外部正確性（沒有權威來源）"},
     {
@@ -47,8 +48,7 @@ NOT_COVERED = [
     },
     {
         "rule_id": "doc.agents_and_addresses",
-        "description": "發行機構註冊地、信用評等、計算代理人、保管機構、結算機構、準據法、Quanto 匯率條款、支付日城市、"
-        "觀察起始日不核對",
+        "description": "發行機構註冊地、信用評等、計算代理人、保管機構、結算機構、準據法、Quanto 匯率條款、支付日城市不核對",
     },
     {
         "rule_id": "doc.template_variants",
@@ -157,6 +157,23 @@ def document_info(ctx: IssuerContext) -> list[CheckResult]:
     return out
 
 
+def observation_start(ctx: IssuerContext) -> CheckResult:
+    """觀察起始日 = 交易日後的下一個一籃子預定交易日（交易所假日表）。條文沒有規定這個關係（沒有 AKI 時也沒有意義，但 DBS
+    都會寫），所以不符時轉人工覆核並寫出預期日期，不判不一致（Issue #227，2026-10-25 使用者同意）。"""
+    trade, start = ctx.ts.f("trade_date"), ctx.ts.f("observation_start")
+    tickers = kit.field_value(ctx.ts, "underlyings")
+    following = ctx.calendar.next_trading_day(trade.value, tickers) if trade.ok else None
+    note = f"（{following.uncertain}）" if following is not None and following.uncertain else ""
+    return kit.doc_check(ctx, "doc.observation_start", "observation_start", "觀察起始日", trade, start).compare(
+        following.day if following is not None else None,
+        start.value,
+        fail=S.REVIEW_REQUIRED,
+        reason="observation_start_unexpected",
+        tolerance=kit.TRADING_DAY_TOLERANCE,
+        fail_message=f"觀察起始日通常是交易日的次一預定交易日，請人工確認{note}",
+    )
+
+
 def periods(ctx: IssuerContext) -> list[CheckResult]:
     """天期 = 中英文名稱月數 = 情境基本假設商品年期（日期表期數由共用規則 `schedule.period_count` 檢查）。"""
     f = ctx.ts.f
@@ -236,6 +253,7 @@ def run_all(ctx: IssuerContext) -> list[CheckResult]:
         *coupon(ctx),
         *autocall_terms(ctx),
         *document_info(ctx),
+        observation_start(ctx),
         *periods(ctx),
         *scenario_investment(ctx),
         *scenario3(ctx),

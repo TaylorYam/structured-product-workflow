@@ -122,7 +122,10 @@ def test_fixed_warning_appears_once(tmp_path):
         (
             Spec(),
             Edit("發行日之次一營業日起", "發行日之第二個營業日起", "iis.summary"),
-            {("iis.redemption_start", "redemption_start_text", MISMATCH)},
+            {
+                ("iis.redemption_start", "redemption_start_text", MISMATCH),
+                ("standard.redemption_start", "redemption_start_wording", MISMATCH),  # 不是審查標準列出的寫法
+            },
         ),
         (
             Spec(),

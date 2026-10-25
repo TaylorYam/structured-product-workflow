@@ -30,7 +30,7 @@ NOT_COVERED = [
     },
     {
         "rule_id": "doc.underlying_names",
-        "description": "連結標的發行公司名稱、本交易所、貨幣欄不核對；以第 9 項價格表彭博代碼為準",
+        "description": "連結標的發行公司名稱、本交易所不核對；以第 9 項價格表彭博代碼為準（貨幣欄由共用規則核對 = 標的交易所幣別，Issue #227）",
     },
     {"rule_id": "doc.initial_prices", "description": "期初進場價格本身的外部正確性（沒有權威來源）"},
     {

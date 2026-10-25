@@ -2,7 +2,7 @@
 
 依 5 份真實樣本建立（同說明書 JP1–JP5）。每頁頁碼「N/4」。KO／KI 寫法只在「二、境外結構型商品事項」到「三、投資風險」之間
 判斷，句型同說明書第 8 項（parsers/jpm.py 的 `ko_wording`、`ko_memory`、`ki_type`）；價格表同說明書第 9 項（`jpm.PRICE_TABLE`）。
-開始受理贖回日期只有文字，不核對（2026-10-15 確認，同 BNP、SG）。
+開始受理贖回日期只有文字，由共用規則核對寫法（rules/redemption.py，Issue #227）。
 """
 
 from __future__ import annotations

@@ -13,7 +13,7 @@
 
 核對開始時先載入審查標準；報告要記錄本次使用的審查標準版本。
 
-**版面**（Issue #128）：所有上手共用的基準放在頂層各表（`[distributor]`、`[risk]`、`[fees]`、`[issue_price]`、`[wording]`、`[currency]`、`[denomination]`、`[iis]`）；上手不同的基準**每家上手一張表** `[issuer.<上手代號小寫>]`（例 `[issuer.bnp]`，商品名稱樣板等子表為 `[issuer.bnp.product_name]`）。上手表可用的欄位與檢查只定義在 `src/fcn_checker/config.py` 的 `ISSUER_FIELDS`，下表 `issuer.<上手>.*` 各列即這些欄位；寫錯欄位名稱或值時載入設定就回報。沒寫的欄位：`fixed_warning`、`fixed_warning_occurrences` 用 `[risk]` 的共用值，`risk_level_formats` 為【{level}】，其他視為該上手沒有這項基準（依各列說明轉人工覆核或不核對）。規則一律讀已解析的上手審查標準，沒有依上手代號的分支，所以新上手只加一張表、不改程式。
+**版面**（Issue #128）：所有上手共用的基準放在頂層各表（`[distributor]`、`[risk]`、`[fees]`、`[issue_price]`、`[wording]`、`[currency]`、`[currency_code_aliases]`、`[denomination]`、`[iis]`）；上手不同的基準**每家上手一張表** `[issuer.<上手代號小寫>]`（例 `[issuer.bnp]`，商品名稱樣板等子表為 `[issuer.bnp.product_name]`）。上手表可用的欄位與檢查只定義在 `src/fcn_checker/config.py` 的 `ISSUER_FIELDS`，下表 `issuer.<上手>.*` 各列即這些欄位；寫錯欄位名稱或值時載入設定就回報。沒寫的欄位：`fixed_warning`、`fixed_warning_occurrences` 用 `[risk]` 的共用值，`risk_level_formats` 為【{level}】，其他視為該上手沒有這項基準（依各列說明轉人工覆核或不核對）。規則一律讀已解析的上手審查標準，沒有依上手代號的分支，所以新上手只加一張表、不改程式。
 
 舊版面（每種基準一個表、底下分上手，例如 `[product_name.<上手>]`、`[risk.level_formats]`）載入時會停止並提示轉換指令。一次性轉換：在專案資料夾執行 `fcn-config-migrate config/review_standard.toml`（沒有這個指令時用 `python -m fcn_checker.config_migrate config/review_standard.toml`）；舊表裡每個上手的值連同註解搬到該上手的表，舊表開頭的說明收在上手表前，原檔另存 `review_standard.toml.bak`。轉換前後的值完全相同才會寫入。
 
@@ -49,6 +49,7 @@
 | `issuer.<上手>.minimum_issue_size` | BNP：`(等值)300,000 美元` | 第四章「發行不成立之情形」的最低有效申購金額 | 忽略空白後逐字相等；沒有設定的上手不核對 |
 | `issuer.<上手>.min_amount_multiples` | BNP：最低申購、最低贖回 5，最低加購、增加贖回單位 1 | 第四章各最低金額（`field.min_amounts`） | 各出處 = 參考條件表單位面額 × 倍數；沒列的出處倍數為 1（BARC、HSBC、MS 不變） |
 | `currency` | 美元→USD、日幣／日圓→JPY、人民幣／境外人民幣→CNH、港幣／港元→HKD、澳幣→AUD、歐元→EUR、英鎊→GBP、南非幣→ZAR（樣本看過的寫法，加上使用者同意的同義寫法）。表裡沒有的寫法（例：澳元、南非蘭特）未確認前不放：封面幣別轉人工覆核一次，其他出處寫同一個字時不重複報（2026-10-10 使用者決定；AUD、EUR、GBP、ZAR 有樣本後於 2026-10-13 加入，Issue #185） | 封面計價幣別；金額旁的幣別字（§2.4 `field.currency` 其他出處） | 不在表內的幣別轉人工覆核；金額旁的幣別字 parser 認得的寫法在 `src/fcn_checker/parsers/money.py`，新幣別兩邊都要加 |
+| `currency_code_aliases` | CNH：`CNY`、`RMB`（GS `人民幣（CNY）`、DBS `人民幣(RMB)`、SG 風險揭露 `以人民幣(RMB)計值的債券`；2026-10-25，Issue #227） | 說明書與投資人須知全文「中文幣別(代碼)」 | 括號內代碼也接受的其他寫法（`standard.currency_code`，見[共用核對規則](shared-check-rules.md) §9） |
 | `denomination` | USD／AUD／EUR／GBP 10,000；JPY 1,000,000；CNH／HKD／ZAR 100,000（2026-10-10 使用者提供的承作幣別表） | §6 商品面額 | 等於該幣別預設值；不等於時**轉人工審查**（客戶可要求不同面額，不直接判錯） |
 | `iis.pages` | 4 | 投資人須知（Issue #124） | 頁數剛好等於設定值（比外規「不超過 5 頁」嚴格） |
 | `issuer.<上手>.iis_fixed_warning_occurrences` | BARC 1、HSBC 2、MS 1（警語 1)，2026-10-09，Issue #137）、BNP 2（警語 1 與商品簡介「商品風險程度」，2026-10-14，Issue #197）、SG 1（警語一，2026-10-14，Issue #213）、Citi 1（警語 1.，2026-10-14，Issue #220）、Nomura 1（警語(一)，2026-10-15，Issue #239） | 投資人須知全文 | 固定警語（依上手版本）出現次數；沒列出的上手轉人工覆核 |
@@ -107,7 +108,10 @@
 | `field.min_amounts` | 各最低金額 = 參考條件表「單位面額」× 該出處的倍數（`issuer.<上手>.min_amount_multiples`，沒設定為 1；讀參考條件表，所以放在 `rules/reference.py`；2026-10-02 使用者決定、2026-10-13 加倍數） | `min_amounts`：BARC 最低申購、最低贖回；HSBC 最低交易、最低申購、最低加購；MS 第四章四個；BNP 第四章四個（申購、贖回 5 倍） |
 | `field.currency`（其他出處） | 金額旁的幣別字與承作幣別的其他出處 = 參考條件表「承作幣別」（中文幣別依 `currency` 對照；寫法不在對照表時只由封面那筆報，和封面寫同一個字的出處不重複）；表上承作幣別空白或格式不對時只由封面那筆報。**商品幣別不必等於標的幣別**（FCN 高度客製化，例：連結日股、美元計價；連結美股、人民幣計價，2026-10-10 使用者決定，Issue #170）：承作幣別只影響面額、配息、本金這類金額，執行價、收盤價、觸及不保本價格等股價跟著標的走，股價與含「股」的實物交割算式所在的行整行不列入出處（同一行的商品幣別金額也不核對）。關鍵字落在上一行（算式說明在上一行、數字在下一行）或被換行拆開（`收盤價`／`格小於…`）時，看同一句裡金額前面的文字（到上一個「。，；：」或上一個算式結束為止），同樣不列入，但算式的結果（`=` 後面、後面不再接運算，例：以承作幣別支付的剩餘金額、到期贖回價值）仍列入，同一句裡不在 `=` 後面的金額不列入（已知限制：一句跨多行都沒有標點、前面又出現股價字眼時，後面的配息、本金也不列入；現有樣本都有標點，2026-10-12 使用者決定暫不收緊）；匯率寫法（`1 日圓 = 美元 0.006`）是兩種幣別的換算，不列入（2026-10-12，Issue #179）；情境試算每個情境一筆，列出該情境裡幣別不符的金額。parser 只認得 `parsers/money.py` 列的幣別寫法，寫法不在清單時那一處是「抓不到」轉人工覆核 | `currency_others`：BARC §6 面額、第四章最低申購／最低贖回金額、§16 情境假設面額、§16 (i)～(iii) 各情境；MS 第一章 §6 面額、第四章 §4、§8 四個最低金額、§18 假設總投資金額、§18 各情境（較差情境的收盤價、執行價不算）；HSBC §6 面額、§7 最低交易金額、第四章最低申購／加購金額、§18 情境假設與各情境（執行價、觸及不保本價格不算；§12 價格表幣別格跟著標的走，不核對，取代 Issue #167）；投資人須知：BARC 每單位商品面額、最低申購金額，HSBC 每單位面額，BNP 商品面額、最低申購金額 |
 | `doc.subscription_start_date` | 受理申購日 ≤ 交易日（2026-10-15，#254） | `subscription_dates`：BARC 開始受理日；HSBC 開始受理日、申購結束受理日 |
-| `doc.print_date` | 交易日（含）≤ 刊印日期 < 發行日（不含）；發行日取同一份文件（2026-10-15，#254） | `print_dates`：BARC 一個；HSBC 參考性審閱版、最終版 |
+| `doc.print_date` | 交易日（含）≤ 刊印日期 < 發行日（不含）；發行日取同一份文件（2026-10-15，#254）。說明書同一種刊印日期寫了好幾處時，第 2 處起另須等於第一處（封面或第 1 頁；Issue #227） | `print_dates`：BARC 一個；HSBC 封面與第三章警語 (9) 的參考性審閱版、最終版各兩處 |
+| `standard.redemption_start` | 開始受理贖回日期寫文字時，須以 `issuer.<上手>.redemption_start_wordings` 列出的寫法之一開頭（說明書與投資人須知；Issue #227，見[共用核對規則](shared-check-rules.md) §6.2）；寫日期的上手（MS、Citi、BBVA）不設，日期另由 `doc.redemption_start_date` 核對 = 發行日的次一臺北營業日 | 全文的「開始受理贖回日期：」標籤（不經出處清單） |
+| `standard.currency_code` | 全文每一處「中文幣別(代碼)」的代碼 = `currency` 對到的 ISO 代碼或 `currency_code_aliases`；說明書與投資人須知各一筆（Issue #227） | 全文（不經上手交出） |
+| `standard.underlying_currency` | 價格表每一列的幣別 = 交易所假日表（`config/exchange_holidays.toml`）依彭博交易所碼對到的市場 `currency`；說明書與投資人須知各一筆（Issue #227） | `underlying_prices`（`PriceRow.currency`） |
 
 **刊印日期與受理申購日（2026-10-15 確認，Issue #254）**：
 
@@ -349,7 +353,8 @@ OOS 多家上手的舊範本寫「受託投資」（SG 投資人須知警語七�
 - **受託機構電話**：只有封面（相關機構事業概況、一般交易事項沒有；`distributor_phone_ch4` 交 `absent`）。
 - **受理申購日期**：只有開始受理申購日期 1 處（= 交易日）。
 - **配息率**：`最大利率值：…為a%（即y%/12），無條件進位至小數點後第四位`：y = 年利率，a = y ÷ 12 **無條件進位**到 4 位（其他上手是四捨五入；DBS 專屬規則 `derive.monthly_coupon` 與投資人須知範本專屬規則 `iis.monthly_coupon` 依此核對）。
-- 封面 `(請參閱第a-b頁)` 頁碼、觀察起始日、利息金額位數、Quanto 匯率條款、支付日城市、情境分析算式（只核對基本假設、情境價格表、情境一期別、情境二年化報酬率）不核對。
+- **觀察起始日**：= 交易日的次一預定交易日（交易所假日表），不符轉人工覆核並寫出預期日期（DBS 專屬規則 `doc.observation_start`，Issue #227）。
+- 封面 `(請參閱第a-b頁)` 頁碼、利息金額位數、Quanto 匯率條款、支付日城市、情境分析算式（只核對基本假設、情境價格表、情境一期別、情境二年化報酬率）不核對。
 
 ### 2.19 受託對象與 OSU 客戶（2026-10-25 確認，Issue #224）
 

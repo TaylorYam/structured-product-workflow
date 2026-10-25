@@ -16,7 +16,7 @@ from ..config import ISSUER_NAME_IGNORES, NAME_FLAGS, RISK_LEVEL
 from ..investor_sheet import read_iis
 from ..schema import CheckResult, DocKind, Evidence, FieldStatus, Item, ParsedField
 from ..schema import CheckStatus as S
-from ..standard_fields import AGENT_PLACES, GUARANTOR_PLACES, fee_field
+from ..standard_fields import AGENT_PLACES, GUARANTOR_PLACES, Occurrence, fee_field
 from ..text import compat_standard, full_brackets, squash
 from .kit import Check, Context, occurrences_of, standard_field
 
@@ -105,28 +105,48 @@ def _subscription_dates(ctx: Context, trade: ParsedField | None = None) -> list[
     return out
 
 
-def _print_dates(ctx: Context, trade: ParsedField | None = None) -> list[CheckResult]:
+def _print_dates(ctx: Context, trade: ParsedField | None = None, *, repeated: bool = False) -> list[CheckResult]:
     """各刊印日期出處在交易日（含）至發行日（不含）之間（2026-10-15，#254）。交易日預設取說明書（投資人須知由呼叫端給
-    參考條件表的交易日）；發行日取同一份文件的發行日。"""
+    參考條件表的交易日）；發行日取同一份文件的發行日。
+
+    `repeated`（說明書）：同一種刊印日期（出處代號相同，例：HSBC 參考性審閱版、最終版預定日）寫了好幾處時，第 2 處起
+    另須等於第一處（封面或第 1 頁；Issue #227）。投資人須知每頁頁首的刊印日期由 DBS 範本規則核對。"""
     rid, trade = "doc.print_date", trade or standard_field(ctx, "trade_date")
     items, problem = occurrences_of(ctx, rid, "print_dates", Item.expected("刊印日期"))
     if problem:
         return [problem]
     issue = standard_field(ctx, "issue_date")
+    first: dict[str, Occurrence] = {}
     out = []
     for occ in items:
         pf = occ.value
+        head = first.setdefault(occ.code, occ) if repeated else occ
         check = Check(rid, occ.field, Item.expected(occ.name), ctx.document).needs(pf, trade, issue)
         if (problem := check.blocked) is not None:
             out.append(problem)
             continue
+        between = trade.value <= pf.value < issue.value
+        if head is occ or not head.value.ok:  # 第一處讀不到時已轉人工覆核，這處只比日期區間
+            out.append(
+                check.compare(
+                    f"{trade.value}（含）～ {issue.value}（不含）",
+                    pf.value,
+                    ok=between,
+                    tolerance="交易日（含）至發行日（不含）之間",
+                    fail_message="刊印日期須在交易日（含）至發行日（不含）之間",
+                )
+            )
+            continue
+        same = pf.value == head.value.value
         out.append(
             check.compare(
-                f"{trade.value}（含）～ {issue.value}（不含）",
+                head.value.value,
                 pf.value,
-                ok=trade.value <= pf.value < issue.value,
-                tolerance="交易日（含）至發行日（不含）之間",
-                fail_message="刊印日期須在交易日（含）至發行日（不含）之間",
+                ok=between and same,
+                tolerance=f"= {head.where}，且在交易日（含）至發行日（不含）之間",
+                fail_message=f"{occ.where}須等於{head.where}"
+                if not same
+                else "刊印日期須在交易日（含）至發行日（不含）之間",
             )
         )
     return out
@@ -1042,7 +1062,7 @@ def review_standard_rules(ctx: Context, *, reference_trade: ParsedField) -> list
     return [
         _denomination(ctx),
         *_subscription_dates(ctx),
-        *_print_dates(ctx),
+        *_print_dates(ctx, repeated=True),
         _approval_date(ctx),
         *_chairmen(ctx),
         _fixed_warning(ctx),

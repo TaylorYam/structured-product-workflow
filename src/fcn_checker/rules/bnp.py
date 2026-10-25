@@ -23,7 +23,10 @@ NOT_COVERED = [
         "rule_id": "doc.fixed_warnings_2_to_9",
         "description": "固定警語 (2)～(9) 的全文不核對（只保留 (7)(8) 的禁用語檢查與 (5) 名稱的結構檢查，2026-10-13 確認）",
     },
-    {"rule_id": "doc.underlying_names", "description": "連結標的中文名稱、交易所與貨幣列不核對；以彭博代碼為準"},
+    {
+        "rule_id": "doc.underlying_names",
+        "description": "連結標的中文名稱、交易所不核對；以彭博代碼為準（貨幣列由共用規則核對 = 標的交易所幣別，Issue #227）",
+    },
     {"rule_id": "doc.initial_prices", "description": "期初價格本身的外部正確性（沒有權威來源）"},
     {
         "rule_id": "doc.scenario_worse_details",

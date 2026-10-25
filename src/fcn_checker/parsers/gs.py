@@ -92,6 +92,7 @@ PRICE_TABLE = price_table.TableSpec(
     pct=r"\(初始參考價格(?:\(i\))?之(\d+(?:\.\d+)?)%\)",
     pct_label="(初始參考價格之X%)",
     code="彭博代碼",
+    texts=(price_table.Column("currency", "參考幣別", required=False),),  # 標的交易幣別（Issue #227）
 )
 # 第 14 項（投資人須知二. 2.）配息率：第 1 組年利率、第 2 組每月配息率
 COUPON = r"「配息率」就每個觀察期間而言，指年利率" + PCT + r"/12（約為" + PCT + r"）"

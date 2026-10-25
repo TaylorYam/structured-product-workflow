@@ -118,6 +118,8 @@ class IssuerStandard:
     minimum_issue_size: str | None = None  # 第四章發行不成立門檻的金額寫法
     # 最低金額出處欄位 → 單位面額的倍數（沒列為 1）；依幣別不同時為 {ISO 代碼: 倍數}（SG 最低申購金額）
     min_amount_multiples: dict[str, int | dict[str, int]] = field(default_factory=dict)
+    # 開始受理贖回日期寫文字的上手：允許的寫法（文字須以其中之一開頭）；沒有 → 寫文字時轉人工覆核（Issue #227）
+    redemption_start_wordings: tuple[str, ...] = ()
     osu_clients: bool = True  # 可否承作 OSU 客戶（issuer.<上手>.osu_clients；沒寫為可以，Issue #224）
     distributor_name_exempt: tuple[str, ...] = ()  # 全文受託機構名稱特例放行的寫法（CA，Issue #226）
 
@@ -153,6 +155,8 @@ class ReviewStandard:
     forbidden_exempt_until: dt.date | None = None
     # 交易日（參考條件表）在這天（含）以前的文件，受託對象與 OSU 客戶不一致時特例通過（上手改版前的舊範本，Issue #224）
     osu_exempt_until: dt.date | None = None
+    # 「中文幣別(代碼)」括號內也接受的代碼：ISO 代碼 → 其他寫法（例：CNH → CNY、RMB；Issue #227）
+    currency_code_aliases: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     def approval_date_on(self, trade_date: dt.date) -> dt.date | None:
         """交易日當天或之前最近一次的審查通過日期；交易日早於最早的日期時為 None。"""
@@ -189,6 +193,7 @@ class ReviewStandard:
             product_type=v.get("product_type"),
             minimum_issue_size=v.get("minimum_issue_size"),
             min_amount_multiples=dict(v.get("min_amount_multiples", {})),
+            redemption_start_wordings=v.get("redemption_start_wordings", ()),
             osu_clients=v.get("osu_clients", True),
             distributor_name_exempt=v.get("distributor_name_exempt", ()),
         )
@@ -403,6 +408,7 @@ ISSUER_FIELDS: dict[str, Callable[[Any, str], Any]] = {
     "product_type": _text_value,  # 封面商品種類固定值；沒有 → 不核對
     "minimum_issue_size": _text_value,  # 發行不成立門檻的金額寫法；沒有 → 不核對
     "guarantor_name_equivalents": _texts,  # 投資人須知相關機構的保證機構名稱其他寫法
+    "redemption_start_wordings": _texts,  # 開始受理贖回日期允許的文字寫法；沒有 → 寫文字時轉人工覆核
     "product_name": _product_name,  # 子表 [issuer.<上手>.product_name]：商品名稱樣板；沒有 → 轉人工覆核
     "guarantor_name": _place_texts(GUARANTOR_PLACES),  # 子表：出處 → 保證機構名稱；沒有 → 不核對
     "agent_name": _place_texts(AGENT_PLACES),  # 子表：出處 → 總代理人名稱；沒有 → 不核對
@@ -518,6 +524,20 @@ def _non_protected(value: Any) -> tuple[str, ...]:
     return tuple(value)
 
 
+def _iso_code(value: Any, where: str) -> str:
+    """3 碼大寫英文代碼（例：USD）。"""
+    if not (isinstance(value, str) and re.fullmatch(r"[A-Z]{3}", value)):
+        raise IngestionError("config_invalid", f"{where} 須是 3 碼大寫英文代碼（例：USD），不能是：{value!r}")
+    return value
+
+
+def _iso_codes(value: Any, where: str) -> tuple[str, ...]:
+    """一串 3 碼大寫英文代碼（例：["CNY", "RMB"]）。"""
+    if not isinstance(value, list):
+        raise IngestionError("config_invalid", f'{where} 須是代碼的清單（例：["CNY"]），不能是：{value!r}')
+    return tuple(_iso_code(c, where) for c in value)
+
+
 def load_review_standard(path: Path) -> ReviewStandard:
     d = load_toml(path, "審查標準")
     legacy = legacy_tables(d)
@@ -552,6 +572,10 @@ def load_review_standard(path: Path) -> ReviewStandard:
             forbidden_exempt_until=_optional_date(d["wording"].get("exempt_until"), "wording.exempt_until"),
             osu_exempt_until=_optional_date(d.get("osu", {}).get("exempt_until"), "osu.exempt_until"),
             currency_zh_to_iso=dict(d["currency"]),
+            currency_code_aliases={
+                k: _iso_codes(v, f"審查標準 currency_code_aliases.{k}")
+                for k, v in d.get("currency_code_aliases", {}).items()
+            },
             denomination={k: int(v) for k, v in d["denomination"].items()},
             iis_pages=int(d["iis"]["pages"]),
             issuers=_issuers(d.get("issuer", {}), d["risk"]["fixed_warning"]),
@@ -660,6 +684,7 @@ def load_exchange_holidays(path: Path) -> TradingCalendar:
                 covered_from=_holiday_date(m["covered_from"], f"{code} 涵蓋起日"),
                 covered_through=_holiday_date(m["covered_through"], f"{code} 涵蓋迄日"),
                 holidays=_holiday_dates(m["holidays"], f"{code} 休市日"),
+                currency=_iso_code(m["currency"], f"交易所假日表 {code}.currency") if "currency" in m else None,
             )
             for code, m in d["markets"].items()
         )

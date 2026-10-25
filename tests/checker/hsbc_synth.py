@@ -18,7 +18,7 @@ from pathlib import Path
 
 from harness import STANDARD, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
-from reference_synth import UL, ProductSpec, price, write_notes
+from reference_synth import UL, ProductSpec, price, quote_iso, write_notes
 
 CENT = Decimal("0.01")
 # 人民幣商品第一章第 5 條在幣別後面接的說明段落（真實樣本寫法節錄，Issue #180）
@@ -173,8 +173,9 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         heads += [(x[key], [label, f"(即期初股價的{pct(p)}%)"]) for key, label, p in cols]
         rows = []
         for u in s.underlyings:
-            # 幣別格是商品的承作幣別（不是標的自己的交易幣別，Issue #167）
-            cells = [(x["code"], [u.ticker]), (x["name"], [u.name]), (x["ccy"], [s.ccy]), (x["exchange"], [u.exchange])]
+            # 幣別格是標的交易所的交易幣別（Issue #227）
+            ccy = quote_iso(u.ticker)
+            cells = [(x["code"], [u.ticker]), (x["name"], [u.name]), (x["ccy"], [ccy]), (x["exchange"], [u.exchange])]
             cells.append((x["initial"], [f"{u.initial:.4f}"]))
             cells += [(x[key], [f"{price(u.initial, p):.4f}"]) for key, _, p in cols]
             rows.append(cells)
@@ -337,11 +338,17 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     line("結算機構")
     chapter("三", "商品風險揭露")
     line(warning)
+    # 警語 (9) 重寫一次封面的兩個刊印日期（真實樣本第三章的寫法）
+    line(
+        f"(9)投資人應詳閱本產品說明書(參考性審閱版)內容，刊印日期：{zh_date_tight(s.trade_date)}，並應注意本商品之風險事項。"
+    )
+    line(f"本產品說明書(最終版)刊印日期：{zh_date_tight(s.trade_date)}。")
     chapter("四", "一般交易事項")
     line(f"商品開始受理申購日：{zh_date_tight(s.trade_date)}")
     line(f"商品申購結束受理日：{zh_date_tight(s.trade_date)}")
     line(f"最低申購金額：{ccy}{denom}元")
     line(f"最低加購金額：{ccy}{denom}元")
+    line("開始受理贖回日期:發行日後的次一個預定交易日(並須為台北營業日)(「受理投資人提前贖回開始日」)")
     for t in ["申購費用", "提前贖回費用", "分銷費用"]:
         w.row([(60, t), (180, "0%~5%")])
     chapter("五", "特別記載事項")
@@ -408,7 +415,7 @@ def build_iis_pdf(
         line(f"11. 本商品年期: 如未發生自動提前到期事件，且投資人持有本商品至到期日，為{s.tenor} 個月")
         line(f"12. 發行日：預定為{zh_date(s.issue_date)}")
         line(f"13. 到期日：如未發生提前贖回之條件，目前表定為{zh_date(s.payments[-1])}。")
-        line("14. 開始受理贖回日期：發行日後的次一個預定交易日")
+        line("14. 開始受理贖回日期：發行日後的次一個預定交易日(並須為台北營業日)")
 
     def page3() -> None:
         line("第五　商品風險揭露")

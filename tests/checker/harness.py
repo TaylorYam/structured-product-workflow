@@ -113,6 +113,16 @@ def check_sheet(pdf: Path, sheet: Path, config: CheckConfig = CONFIG) -> CheckRe
     return check_all(sheet, [pdf], config).items[0].report
 
 
+# 上手規則判錯的那一處，共用規則也會報（例：括號內幣別代碼錯，`doc.currency_consistency` 和
+# `standard.currency_code` 都不一致，Issue #227）：只改一處重複出現處的測試允許它們一起出現
+ALSO_FLAGGED = {"doc.currency_consistency": frozenset({"standard.currency_code"})}
+
+
+def also_flagged(rule_id: str) -> frozenset[str]:
+    """`rule_id` 判錯時共用規則也會報的 rule_id。"""
+    return ALSO_FLAGGED.get(rule_id, frozenset())
+
+
 def problems(report: CheckReport) -> set[tuple[str, CheckStatus]]:
     return {(r.rule_id, r.status) for r in report.results if r.status not in (PASS, NA)}
 

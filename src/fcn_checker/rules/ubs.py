@@ -26,7 +26,7 @@ NOT_COVERED = [
     },
     {
         "rule_id": "doc.underlying_names",
-        "description": "連結標的中文名稱本身、交易所、價格表幣別字不核對；價格表名稱只用來對到第九項的彭博代碼",
+        "description": "連結標的中文名稱本身、交易所不核對；價格表名稱只用來對到第九項的彭博代碼（價格表的幣別由共用規則核對 = 標的交易所幣別，Issue #227）",
     },
     {"rule_id": "doc.initial_prices", "description": "期初價格本身的外部正確性（沒有權威來源）"},
     {

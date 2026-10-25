@@ -177,14 +177,6 @@ def uncertain_start(check: Check, notes: Sequence[str], **detail: Any) -> CheckR
     )
 
 
-def next_weekday(d: dt.date) -> dt.date:
-    """後 1 個平日（只排除週末；沒有假日曆）。交易所交易日用 `next_trading_day`。"""
-    d += dt.timedelta(days=1)
-    while d.weekday() >= 5:
-        d += dt.timedelta(days=1)
-    return d
-
-
 def shown(value: Decimal, like: Decimal) -> Decimal:
     """依說明書顯示位數（`like` 的小數位數）四捨五入（half-up）。"""
     exp = like.as_tuple().exponent

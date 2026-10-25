@@ -218,12 +218,12 @@ def test_spec_value_differing_from_the_reference_row_is_reported(tmp_path):
     assert only(r, "field.strike_pct").status == S.MISMATCH
 
 
-def test_price_table_currency_follows_the_underlying_and_is_not_checked(tmp_path):
-    """第 12 條價格表每列的幣別格跟著標的走（例：連結日股、美元計價寫 JPY），不和承作幣別比；
-    只核對情境價格表和正式價格表逐列一致（2026-10-10 使用者決定，取代 Issue #167）。"""
+def test_price_table_currency_is_the_exchange_currency(tmp_path):
+    """第 12 條價格表每列的幣別格 = 標的交易所的交易幣別（Issue #227；不和承作幣別比，Issue #170、取代 Issue #167）；
+    情境價格表和正式價格表逐列一致。"""
     r = check(tmp_path, edits=[Edit("USD", "JPY", "ts.art12.table"), Edit("USD", "JPY", "ts.art18.table")])
-    assert r.status == S.PASS, [(x.rule_id, x.field) for x in r.results if x.status not in (S.PASS, S.NOT_APPLICABLE)]
-    assert not [x for x in r.results if x.field.startswith("price_table_currency")]
+    bad = {(x.rule_id, x.status) for x in r.results if x.status not in (S.PASS, S.NOT_APPLICABLE)}
+    assert bad == {("standard.underlying_currency", S.MISMATCH)}, bad
     r = check(tmp_path, edits=[Edit("USD", "JPY", "ts.art12.table")])
     assert only(r, "doc.scenario_table").status == S.MISMATCH, "情境表與正式表的幣別格仍要一致"
 
@@ -472,7 +472,10 @@ def test_percentages_are_rounded_to_the_displayed_digits(tmp_path, field, value,
     [
         ("field.min_amounts", {"minimum_trade", "minimum_subscription", "minimum_additional"}),
         ("doc.subscription_start_date", {"subscription_start", "subscription_end"}),
-        ("doc.print_date", {"print_date_review", "print_date_final"}),
+        (
+            "doc.print_date",
+            {"print_date_review", "print_date_final", "print_date_review_ch3", "print_date_final_ch3"},
+        ),
     ],
 )
 def test_each_review_standard_occurrence_is_checked_with_the_shared_rule(tmp_path, rule, fields):
@@ -504,9 +507,21 @@ def test_each_review_standard_occurrence_is_checked_with_the_shared_rule(tmp_pat
     ],
 )
 def test_only_the_differing_occurrence_mismatches(tmp_path, old, new, rule, field):
-    r = check(tmp_path, edits=[Edit(old, new, "ts")])
+    r = check(tmp_path, edits=[Edit(old, new, "ts.cover" if rule == "doc.print_date" else "ts")])
     bad = {x.field for x in r.results if x.rule_id == rule and x.status == S.MISMATCH}
-    assert bad == {field}
+    # 封面刊印日期改了，第三章同一種刊印日期也和封面不同
+    assert bad == ({field, field + "_ch3"} if rule == "doc.print_date" else {field})
+
+
+@pytest.mark.parametrize("kind", ["參考性審閱版", "最終版"])
+def test_chapter_3_print_date_must_equal_the_cover(tmp_path, kind):
+    """第三章重寫的刊印日期改一天（仍在交易日至發行日之間）→ 和封面不一致（Issue #227）。"""
+    old = "(參考性審閱版)內容，刊印日期：2030年1月7日" if kind == "參考性審閱版" else "(最終版)刊印日期：2030年1月7日"
+    r = check(tmp_path, edits=[Edit(old, old.replace("1月7日", "1月8日"), "ts.ch三")])
+    field = "print_date_review_ch3" if kind == "參考性審閱版" else "print_date_final_ch3"
+    x = only(r, "doc.print_date", field)
+    assert x.status == S.MISMATCH and "須等於封面刊印日期" in x.message
+    assert {y.field for y in r.results if y.rule_id == "doc.print_date" and y.status != S.PASS} == {field}
 
 
 def test_non_default_denomination_requires_review_like_barc(tmp_path):

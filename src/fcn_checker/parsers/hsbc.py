@@ -28,7 +28,7 @@ LAYOUT = LayoutSpec(
 )
 N = r"([\d,]+(?:\.\d+)?)"
 D = r"(\d{4}年\d{1,2}月\d{1,2}日)"
-CURRENCY_WORD = "|".join(sorted(money.CURRENCY_WORDS, key=len, reverse=True))  # 中文幣別字，長的先比
+CURRENCY_WORD = money.CURRENCY_WORD
 # 第 12 條(1) 價格表：彭博代號、中文名稱、幣別、交易所、期初股價、執行價、自動提前到期價格、（觸及不保本價格），
 # 期初股價以外各帶「(即期初股價的X%)」；第 18 條情境價格表同一張表、沒有中文名稱欄
 PRICE_TABLE = price_table.TableSpec(
@@ -400,6 +400,9 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
         put(name, sub(15, n), pattern, parse_date)
     put("isin", article(27), r"ISIN[:：]([A-Z]{2}[A-Z0-9]{10})")
     ch2 = doc.chapter_lines(2)
+    # 第三章警語 (9) 重寫一次封面警語 9 的兩個刊印日期（每處 = 封面，doc.print_date）
+    put("print_date_review_ch3", doc.chapter_lines(3), r"\(參考性審閱版\)內容，刊印日期[:：]" + D, parse_date)
+    put("print_date_final_ch3", doc.chapter_lines(3), r"\(最終版\)刊印日期(?:預定為|為)?[:：]" + D, parse_date)
     put("issuer_name_ch2", ch2, r"發行機構[:：]\(1\)事業名稱[:：](.+?\))", legal_name)
     fields["issuer_name_ch1"] = standard_fields.absent("issuer_name_ch1", "第一章只寫中文的發行機構名稱")
     fields["distributor_phone_ch4"] = standard_fields.absent("distributor_phone_ch4", "第四章受託機構電話")
@@ -469,6 +472,13 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
                 fields["print_date_review"],
             ),
             occ("print_date_final", "print_date_final", "封面刊印日期（最終版）", fields["print_date_final"]),
+            occ(
+                "print_date_review_ch3",
+                "print_date_review",
+                "第三章刊印日期（參考性審閱版）",
+                fields["print_date_review_ch3"],
+            ),
+            occ("print_date_final_ch3", "print_date_final", "第三章刊印日期（最終版）", fields["print_date_final_ch3"]),
         ],
     )
     scenarios = article(18)
