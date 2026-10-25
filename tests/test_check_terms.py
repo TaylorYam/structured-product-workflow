@@ -341,7 +341,7 @@ def test_recalculation_writes_prices_and_branches_from_trade_rows(pg, tmp_path) 
     import_trades_and_prices(pg, tmp_path, trades, [price("AAA UW", 100.5), price("BBB UN", 50.00005)])
     import_order(pg)
 
-    receipt = recalculate(pg, CALENDAR)
+    receipt = recalculate(pg, CONFIG)
 
     (line,) = receipt.lines
     assert (line.tdcc, line.status, line.changed) == (A, DONE, True)
@@ -360,10 +360,10 @@ def test_recalculation_writes_prices_and_branches_from_trade_rows(pg, tmp_path) 
 def test_unchanged_products_are_not_rewritten(pg, tmp_path) -> None:
     import_trades_and_prices(pg, tmp_path, [trade(A, "Amy", "台北", 100000)], [price("AAA UW"), price("BBB UN")])
     import_order(pg)
-    recalculate(pg, CALENDAR)
+    recalculate(pg, CONFIG)
     before = pg.execute("SELECT calculated_at FROM workflow.check_terms").fetchone()
 
-    again = recalculate(pg, CALENDAR)
+    again = recalculate(pg, CONFIG)
 
     assert [line.changed for line in again.lines] == [False]
     assert again.to_show() == ()
@@ -375,7 +375,7 @@ def test_waiting_products_finish_when_the_data_arrives(pg, tmp_path) -> None:
     import_trades_and_prices(pg, tmp_path, [trade(B, "Amy", "台北", 1)], [price("AAA UW")])  # 只有別檔的交易
     import_order(pg, **{"Trade date": FRI, "Strike date": FRI})
 
-    first = recalculate(pg, CALENDAR).line_of(A)
+    first = recalculate(pg, CONFIG).line_of(A)
     import_trades_and_prices(
         pg,
         tmp_path,
@@ -384,7 +384,7 @@ def test_waiting_products_finish_when_the_data_arrives(pg, tmp_path) -> None:
         price_date=dt.datetime(2026, 10, 19),
         name="e",
     )
-    second = recalculate(pg, CALENDAR).line_of(A)
+    second = recalculate(pg, CONFIG).line_of(A)
 
     assert first is not None and second is not None
     assert (first.status, first.reason) == (
@@ -399,20 +399,20 @@ def test_waiting_products_finish_when_the_data_arrives(pg, tmp_path) -> None:
 def test_a_release_records_who_and_lasts_until_the_difference_changes(pg, tmp_path) -> None:
     import_trades_and_prices(pg, tmp_path, [trade(A, "Amy", "台北", 100000)], [price("AAA UW"), price("BBB UN")])
     import_order(pg, Currency="USD", **{"Upfront / NotePrice (%)": Decimal("98.01")})
-    line = recalculate(pg, CALENDAR).line_of(A)
+    line = recalculate(pg, CONFIG).line_of(A)
     assert line is not None and line.status == TO_CONFIRM
     assert line.unreleased == (Difference("UF", "1.99", "0.0215"),)
 
-    released = release_differences(pg, A, line.unreleased, CALENDAR, user="operator1")
+    released = release_differences(pg, A, line.unreleased, CONFIG, user="operator1")
 
     assert released.status == DONE and released.changed
     assert pg.execute(
         "SELECT item, order_value, trade_value, released_by FROM workflow.cross_check_release"
     ).fetchall() == [("UF", "1.99", "0.0215", "operator1")]
-    assert recalculate(pg, CALENDAR).line_of(A).status == DONE, "同樣的差異不再擋"
+    assert recalculate(pg, CONFIG).line_of(A).status == DONE, "同樣的差異不再擋"
 
     import_order(pg, **{"Upfront / NotePrice (%)": Decimal("98.1")})
-    again = recalculate(pg, CALENDAR).line_of(A)
+    again = recalculate(pg, CONFIG).line_of(A)
     assert again is not None and again.status == TO_CONFIRM
     assert again.unreleased == (Difference("UF", "1.9", "0.0215"),), "差異變了要重新放行"
 
@@ -430,7 +430,7 @@ def test_products_with_blank_required_terms_stay_to_confirm_until_filled(pg, tmp
         (B, import_id),
     )
 
-    receipt = recalculate(pg, CALENDAR)
+    receipt = recalculate(pg, CONFIG)
 
     partial, bare = receipt.line_of(A), receipt.line_of(B)
     assert partial is not None and bare is not None
@@ -446,7 +446,7 @@ def test_products_with_blank_required_terms_stay_to_confirm_until_filled(pg, tmp
     assert "Product" not in bare.reason
 
     pg.execute("UPDATE workflow.product SET maturity_date = '2027-04-22', strike_pct = 80 WHERE tdcc = %s", (A,))
-    filled = recalculate(pg, CALENDAR).line_of(A)
+    filled = recalculate(pg, CONFIG).line_of(A)
     assert filled is not None and (filled.status, filled.changed) == (DONE, True)
 
 
@@ -457,9 +457,9 @@ def test_locked_products_are_not_recalculated(pg, tmp_path) -> None:
     pg.execute("INSERT INTO workflow.branch_allocation (tdcc, seq, branch, amount) VALUES (%s, 1, '原本', 1)", (A,))
     pg.execute("UPDATE workflow.product SET locked_at = now() WHERE tdcc = %s", (A,))
 
-    receipt = recalculate(pg, CALENDAR)
+    receipt = recalculate(pg, CONFIG)
 
     assert receipt.lines == ()
     assert stored(pg) == (None, [], [(1, "原本", Decimal("1.0000"))])
     with pytest.raises(CheckTermsError, match="已鎖住"):
-        release_differences(pg, A, [Difference("UF", "1", "2")], CALENDAR, user="operator1")
+        release_differences(pg, A, [Difference("UF", "1", "2")], CONFIG, user="operator1")

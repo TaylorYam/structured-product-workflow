@@ -147,7 +147,7 @@ def import_product(pg, tmp_path, *, locked: bool = False) -> None:
     import_trades(pg, tmp_path, daily_rows())
     receipt = write_batch(pg, _drafts([order_row(A, UF_215)], CONFIG, pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
-    assert recalculate(pg, CONFIG.calendar).line_of(A).status == DONE
+    assert recalculate(pg, CONFIG).line_of(A).status == DONE
     if locked:
         pg.execute("UPDATE workflow.product SET locked_at = now() WHERE tdcc = %s", (A,))
 

@@ -184,6 +184,7 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
         "workflow.product_event",
         "workflow.product_event_change",
         "workflow.rated_entity",
+        "workflow.risk_level",
         "workflow.step_record",
         "workflow.term_correction",
         "workflow.trade_row",

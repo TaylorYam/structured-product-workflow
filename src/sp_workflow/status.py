@@ -23,6 +23,17 @@ class CheckTerms(StrEnum):
     TO_CONFIRM = "待確認"
 
 
+class Risk(StrEnum):
+    """自算風險等級的狀態（#238、ADR 0025）：存在 `workflow.risk_level.status`。
+
+    「回填」是 2026-10-30 以前交易、缺資料算不出來而填 RR4；「待算」是之後交易、缺資料，等資料補齊後重算。
+    """
+
+    DONE = "完成"
+    BACKFILLED = "回填"
+    PENDING = "待算"
+
+
 class Pricing(StrEnum):
     """比價狀態（#155、#170、ADR 0020）：存在 `workflow.pricing_status.status`。成員的順序是進度頁篩選的順序。"""
 

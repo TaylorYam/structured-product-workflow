@@ -29,6 +29,7 @@ REVIEW_STANDARD_FILE = "review_standard.toml"
 REFERENCE_FORMAT_FILE = "reference_sheet.toml"
 ISSUER_PREFIXES_FILE = "issuer_prefixes.toml"
 EXCHANGE_HOLIDAYS_FILE = "exchange_holidays.toml"
+RISK_LEVEL_FILE = "risk_level.toml"  # 自算風險等級的指數清單（流程用，核對不讀；#238）
 # 開發環境（editable 安裝）的 repo config；PANEL 安裝是非 editable，內建設定由雙擊入口另外指定（專案的 config）
 BUILTIN_CONFIG = Path(__file__).resolve().parents[2] / "config"
 
@@ -42,12 +43,16 @@ def _with_fallback(name: str, config_dir: Path | None, builtin_dir: Path | None)
 
 @dataclass(frozen=True)
 class ConfigPaths:
-    """四個設定檔的位置；預設為執行目錄的 config/（CLI 的預設值）。"""
+    """設定檔的位置；預設為執行目錄的 config/（CLI 的預設值）。
+
+    核對用前四個；`risk_level` 只有流程算風險等級時讀（`sp_workflow.risk_level`，#238）。
+    """
 
     review_standard: Path = CONFIG_DIR / REVIEW_STANDARD_FILE
     reference_format: Path = CONFIG_DIR / REFERENCE_FORMAT_FILE
     issuer_prefixes: Path = CONFIG_DIR / ISSUER_PREFIXES_FILE
     exchange_holidays: Path = CONFIG_DIR / EXCHANGE_HOLIDAYS_FILE
+    risk_level: Path = CONFIG_DIR / RISK_LEVEL_FILE
 
     @classmethod
     def with_fallback(
@@ -56,12 +61,13 @@ class ConfigPaths:
         config_dir: Path | None = CONFIG_DIR,
         builtin_dir: Path | None = None,
     ) -> ConfigPaths:
-        """PANEL：config_dir 有參考條件表格式、上手編號對照與交易所假日表就用它的，沒有就用 builtin_dir（未指定時為開發環境的 repo config）。"""
+        """PANEL：config_dir 有參考條件表格式、上手編號對照、交易所假日表與風險等級設定就用它的，沒有就用 builtin_dir（未指定時為開發環境的 repo config）。"""
         return cls(
             Path(review_standard).resolve(),
             _with_fallback(REFERENCE_FORMAT_FILE, config_dir, builtin_dir),
             _with_fallback(ISSUER_PREFIXES_FILE, config_dir, builtin_dir),
             _with_fallback(EXCHANGE_HOLIDAYS_FILE, config_dir, builtin_dir),
+            _with_fallback(RISK_LEVEL_FILE, config_dir, builtin_dir),
         )
 
     @property
@@ -87,7 +93,7 @@ class ConfigPaths:
             unsupported_variants=load_unsupported_variants(paths[2], prefixes.values()),
             exchange_calendar=load_exchange_holidays(paths[3]),
             registry=tuple(registry),
-            paths=ConfigPaths(*paths),
+            paths=ConfigPaths(*paths, risk_level=Path(self.risk_level)),
             files=files,
         )
 

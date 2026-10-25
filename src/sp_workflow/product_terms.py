@@ -131,10 +131,12 @@ class ImportConfig:
     issuer_names: Mapping[str, str]  # 上手代號 → 發行機構的寫法（同清單更新）
     issuer_prefixes: Mapping[str, str]  # TDCC 前三碼 → 上手代號（上手編號對照）
     calendar: TradingCalendar  # 交易所假日表（明日開盤價的 Strike date，#101）
+    index_underlyings: frozenset[str] = frozenset()  # 風險等級的指數清單（彭博代碼，大寫；#238）
 
 
 def load_import_config(paths: ConfigPaths) -> ImportConfig:
-    """從審查標準、參考條件表格式、上手編號對照與交易所假日表設定檔讀面額預設值、發行機構寫法、上手編號與假日。"""
+    """從審查標準、參考條件表格式、上手編號對照、交易所假日表與風險等級設定檔讀面額預設值、發行機構寫法、上手編號、
+    假日與指數清單。核對條件與風險等級的重算（`check_terms.recalculate`）也用這一份。"""
     from fcn_checker.config import (
         load_exchange_holidays,
         load_issuer_prefixes,
@@ -142,12 +144,14 @@ def load_import_config(paths: ConfigPaths) -> ImportConfig:
         load_review_standard,
     )
     from fcn_checker.ingestion import IngestionError
+    from sp_workflow.risk_level import load_index_underlyings
 
     try:
         review = load_review_standard(paths.review_standard)
         reference = load_reference_format(paths.reference_format)
         prefixes = load_issuer_prefixes(paths.issuer_prefixes)
         calendar = load_exchange_holidays(paths.exchange_holidays)
+        indices = load_index_underlyings(paths.risk_level)
     except IngestionError as exc:
         raise TermsError(str(exc)) from exc
     return ImportConfig(
@@ -155,6 +159,7 @@ def load_import_config(paths: ConfigPaths) -> ImportConfig:
         dict(reference.issuer_values),
         prefixes,
         calendar,
+        indices,
     )
 
 
@@ -736,7 +741,7 @@ def write(
             recalc = recalculate_corrected(conn, config.calendar, tdcc, stored.columns, trades_changed=affected)
             calc, price_changes = (None, ()) if recalc is None else recalc
         elif exists:
-            calc = recalculate(conn, config.calendar, tdccs=[tdcc]).lines[0]
+            calc = recalculate(conn, config, tdccs=[tdcc]).lines[0]
         changes = (_changes(values, stored, product, changed) if changed else []) + list(price_changes)
         user = user or getpass.getuser()
         correction_id = None

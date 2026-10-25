@@ -201,7 +201,7 @@ def test_filling_every_required_field_takes_the_product_off_the_check(pg, tmp_pa
     import_trades(pg, tmp_path, A)
     import_order(pg, A)
     blank(pg, A, "maturity_date")
-    recalculate(pg, CONFIG.calendar)
+    recalculate(pg, CONFIG)
     assert [p.tdcc for p in missing_products(pg, CONFIG)] == [A]
     draft = open_terms(pg, A, CONFIG)
     draft.values["Maturity date"] = dt.date(2027, 4, 22)

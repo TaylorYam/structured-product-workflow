@@ -1,8 +1,9 @@
 """算出核對條件（#88、ADR 0006、0008、0010、0011、0012）。
 
 起單資料匯入或每日匯入完成後呼叫 `recalculate`：替每檔還沒鎖住的商品算出核對需要、但起單資料沒有的資料，
-和上一次算的不同才寫入；已鎖住（`locked_at` 有值）的商品不重算。對外：
-- `recalculate`：重算還沒鎖住的商品，回傳每檔的狀態（完成／等股價／等交易明細／待確認）。
+和上一次算的不同才寫入；已鎖住（`locked_at` 有值）的商品不重算。風險等級（#238、ADR 0025，`risk_level`）跟著一起算、
+另外比較與寫入；`recalculate_corrected`（已鎖住的更正）不算風險等級，鎖住後就不再改變。對外：
+- `recalculate`：重算還沒鎖住的商品，回傳每檔的狀態（完成／等股價／等交易明細／待確認）與風險等級。
 - `release_differences`：作業人員放行交叉比對的差異（記 Windows 使用者名稱與時間），再重算那一檔。
 - `recalculate_corrected`：更正商品條件（#55、ADR 0014）或交易明細（#116、ADR 0018）後重算那一檔，已鎖住也算；VWAP 保留 TS 回填的價格。
 - `calculate`：一檔商品的計算本身（不碰資料庫）。
@@ -43,6 +44,8 @@ if TYPE_CHECKING:
     import psycopg
 
     from fcn_checker.trading_calendar import Market, TradingCalendar
+    from sp_workflow.product_terms import ImportConfig
+    from sp_workflow.risk_level import RiskLevel
 
 # 狀態
 DONE = CheckTerms.DONE
@@ -365,13 +368,18 @@ def _uf_points(trade_value: str) -> str:
 
 @dataclass(frozen=True)
 class CalcLine:
-    """一檔的結果；`changed` 是這次重算和上一次不同（有寫入）。"""
+    """一檔的結果；`changed` 是這次重算的核對條件和上一次不同（有寫入）。
+
+    `risk` 是同一次算的風險等級（#238），`risk_changed` 是它和上一次不同（有寫入）；更正已鎖住的商品不算，是 None。
+    """
 
     tdcc: str
     status: str
     reason: str
     changed: bool
     differences: tuple[Difference, ...] = ()
+    risk: RiskLevel | None = None
+    risk_changed: bool = False
 
     @property
     def problem(self) -> bool:
@@ -406,14 +414,20 @@ class CalcReceipt:
 CHECK_TRADE_COLUMNS = ("trade_date", "currency", "amount", "branch", "uf")
 
 
-def recalculate(
-    conn: psycopg.Connection, calendar: TradingCalendar, *, tdccs: Collection[str] | None = None
-) -> CalcReceipt:
-    """重算還沒鎖住的商品（`tdccs` 有值時只算這幾檔），和上一次不同的寫入；整次在同一個 transaction 裡。"""
+def recalculate(conn: psycopg.Connection, config: ImportConfig, *, tdccs: Collection[str] | None = None) -> CalcReceipt:
+    """重算還沒鎖住的商品（`tdccs` 有值時只算這幾檔）的核對條件與風險等級，和上一次不同的寫入；整次在同一個 transaction 裡。
+
+    `config` 用到交易所假日表（價格）、上手編號對照與發行機構寫法（評等查哪家上手）和指數清單（風險等級）。
+    """
+    from sp_workflow.risk_level import recalculate_risk
+
     with conn.transaction():
         products = _products(conn, tdccs, unlocked=True)
-        lines = [line for line, _, _ in _recalculate(conn, products, calendar)]
-    return CalcReceipt(tuple(lines))
+        lines = [line for line, _, _ in _recalculate(conn, products, config.calendar)]
+        risks = recalculate_risk(conn, [p.tdcc for p in products], config)
+    return CalcReceipt(
+        tuple(replace(line, risk=risks[line.tdcc].risk, risk_changed=risks[line.tdcc].changed) for line in lines)
+    )
 
 
 _PRICE_NAMES = (("進場價", "initial"), ("執行價", "strike"), ("下限價", "ki"), ("KO價", "ko"))  # 更正紀錄的項目名
@@ -544,7 +558,7 @@ def release_differences(
     conn: psycopg.Connection,
     tdcc: str,
     differences: Iterable[Difference],
-    calendar: TradingCalendar,
+    config: ImportConfig,
     *,
     user: str | None = None,
 ) -> CalcLine:
@@ -566,7 +580,7 @@ def release_differences(
                 " VALUES (%s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
                 [(tdcc, *d.key, user or getpass.getuser()) for d in differences],
             )
-        (line,) = recalculate(conn, calendar, tdccs=[tdcc]).lines
+        (line,) = recalculate(conn, config, tdccs=[tdcc]).lines
     return line
 
 

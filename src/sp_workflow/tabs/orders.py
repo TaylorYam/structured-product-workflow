@@ -1,9 +1,10 @@
-"""「2 起單資料」分頁：貼 TDCC、讀一份起單建檔（#97），在右邊逐檔確認、修改後匯入資料庫（#86）；匯入後顯示重算的核對條件（#88）。"""
+"""「2 起單資料」分頁：貼 TDCC、讀一份起單建檔（#97），在右邊逐檔確認、修改後匯入資料庫（#86）；匯入後顯示重算的核對條件（#88）
+與風險等級（#238），「風險等級明細…」看選到那一檔的計算明細。"""
 
 from __future__ import annotations
 
 import tkinter as tk
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -14,7 +15,8 @@ from sp_workflow.local_settings import FolderMemory
 from sp_workflow.order_terms import OrderRow, describe
 from sp_workflow.preparation import parse_tdccs
 from sp_workflow.product_terms import Draft, ImportConfig, ImportLine
-from sp_workflow.status import ImportResult, OrderReview
+from sp_workflow.risk_level import RISK_LEVELS, RiskLevel
+from sp_workflow.status import ImportResult, OrderReview, Risk
 from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, Tab
 from sp_workflow.tabs.editor import OrderEditor
 from sp_workflow.tabs.recalc import Releaser, recalc_text, status_counts
@@ -43,6 +45,7 @@ class OrderTermsTab(Tab):
                 ("status", "狀態", 110),
                 ("issuer", "上手", 85),
                 ("calc", "核對條件", 90),
+                ("risk", "風險等級", 90),
                 ("reason", "原因", 260),
             ),
             db,
@@ -81,9 +84,13 @@ class OrderTermsTab(Tab):
         self.editor.grid(row=2, rowspan=2, column=2, sticky="nsew", padx=(16, 0))  # 從卡片那一列拉到底
         self.table.bind("<<TreeviewSelect>>", self._selected)
         self.imported: dict[str, ImportLine] = {}  # 最近一次匯入每檔的結果（放行後重寫那一列）
+        self.risks: dict[str, RiskLevel] = {}  # 最近一次匯入後重算的風險等級（TDCC → 結果）
         self.releaser = Releaser(
             self, db, self._selected_tdcc, self._released, idle=lambda: not self.working, busy=self._busy
         )
+        self.risk_button = ttk.Button(self.buttons, text="風險等級明細…", command=self.show_risk, state=tk.DISABLED)
+        self.risk_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.table.bind("<<TreeviewSelect>>", lambda _event: self._refresh_risk_button(), add="+")
 
     def _selected_tdcc(self) -> str | None:
         item = self.selected_item()
@@ -91,17 +98,24 @@ class OrderTermsTab(Tab):
         return None if found is None else found[0].tdcc
 
     def _released(self, calc: CalcLine) -> None:
+        if calc.risk is not None:
+            self.risks[calc.tdcc] = calc.risk
         for iid, (row, draft) in self.items.items():
             line = self.imported.get(row.tdcc)
             if draft is not None and line is not None and row.tdcc == calc.tdcc:
                 self._show_imported(iid, row, line, calc)
 
     def _show_imported(self, iid: str, row: OrderRow, line: ImportLine, calc: CalcLine | None) -> None:
-        """匯入後的一列：狀態是匯入結果，核對條件是重算後的狀態，原因寫兩邊的說明。"""
+        """匯入後的一列：狀態是匯入結果，核對條件、風險等級是重算後的結果；原因寫匯入、核對條件與風險等級（回填、待算時）
+        的說明。風險等級待算的也標紅。"""
         calc_reason = f"核對條件：{calc.reason}" if calc is not None and calc.reason else ""
-        problem = line.result == ImportResult.SKIPPED or (calc is not None and calc.problem)
-        reason = "；".join(filter(None, (line.detail, calc_reason)))
-        self._show_row(iid, row, line.result, reason, problem, calc.status if calc is not None else "")
+        risk = None if calc is None else calc.risk
+        risk_reason = f"風險等級：{risk.reason}" if risk is not None and risk.reason else ""
+        pending = risk is not None and risk.status == Risk.PENDING
+        problem = line.result == ImportResult.SKIPPED or (calc is not None and calc.problem) or pending
+        reason = "；".join(filter(None, (line.detail, calc_reason, risk_reason)))
+        status = calc.status if calc is not None else ""
+        self._show_row(iid, row, line.result, reason, problem, status, "" if risk is None else risk.label)
 
     def _ask_sheet(self) -> str:
         """選起單建檔；有選就記住（沒按讀取就關視窗，下次也打開這個資料夾）。"""
@@ -192,6 +206,7 @@ class OrderTermsTab(Tab):
         self.read = None
         self.items = {}
         self.imported = {}
+        self.risks = {}
         self.releaser.show(Recalc())
         self.unsaved = False
         self.editor.typed = {}
@@ -206,9 +221,31 @@ class OrderTermsTab(Tab):
         has_drafts = self.read is not None and bool(self.read.drafts)
         self.import_button.configure(state=state if has_drafts else tk.DISABLED)
         self.releaser.refresh()
+        self._refresh_risk_button()
 
-    def _show_row(self, iid: str, row: OrderRow, status: str, reason: str, problem: bool, calc: str = "") -> None:
-        values = (row.tdcc, status, row.issuer, calc, reason)
+    def _selected_risk(self) -> tuple[str, RiskLevel] | None:
+        tdcc = self._selected_tdcc()
+        risk = None if tdcc is None else self.risks.get(tdcc)
+        return None if tdcc is None or risk is None else (tdcc, risk)
+
+    def _refresh_risk_button(self) -> None:
+        """選到匯入後有風險等級的商品才能看明細；處理中（含放行中）不能按。"""
+        working = self.working or self.releaser.runner.working
+        ready = self._selected_risk() is not None and not working
+        self.risk_button.configure(state=tk.NORMAL if ready else tk.DISABLED)
+
+    def show_risk(self) -> None:
+        """「風險等級明細…」：各項分數、平均波動度、用的評等與取價日，或回填、待算的原因（#238）。"""
+        found = self._selected_risk()
+        if found is None:
+            return
+        tdcc, risk = found
+        messagebox.showinfo(TITLE, f"{tdcc} 的風險等級\n\n{risk.describe()}", parent=self.master)
+
+    def _show_row(
+        self, iid: str, row: OrderRow, status: str, reason: str, problem: bool, calc: str = "", risk: str = ""
+    ) -> None:
+        values = (row.tdcc, status, row.issuer, calc, risk, reason)
         tags = ("problem",) if problem else ()
         if self.table.exists(iid):
             self.table.item(iid, values=values, tags=tags)
@@ -303,8 +340,8 @@ class OrderTermsTab(Tab):
     def _saved(self, result: OrderImportResult) -> None:
         self.unsaved = False
         receipt, calcs = result.receipt, result.recalc
-        calendar = None if self.read is None else self.read.config.calendar  # 放行後重算要用
-        recalc = Recalc(calcs, calendar, result.recalc_error)
+        config = None if self.read is None else self.read.config  # 放行後重算要用
+        recalc = Recalc(calcs, config, result.recalc_error)
         self.imported = {line.tdcc: line for line in receipt.lines}
         batch: dict[str, CalcLine] = {}
         for iid, (row, draft) in self.items.items():
@@ -313,6 +350,8 @@ class OrderTermsTab(Tab):
                 calc = None if calcs is None or not line.imported else calcs.line_of(row.tdcc)
                 if calc is not None:
                     batch[row.tdcc] = calc
+                    if calc.risk is not None:
+                        self.risks[row.tdcc] = calc.risk
                 self._show_imported(iid, row, line, calc)
         if self.editor.draft is not None:
             self.editor.show(self.editor.draft)  # 資料庫的值更新了，黃色的差異與帶入的值跟著重算
@@ -322,6 +361,7 @@ class OrderTermsTab(Tab):
         status = f"完成（第 {receipt.import_id} 次起單資料匯入）：{counts}。"
         if calcs is not None:
             status += f"\n核對條件（這批匯入的 {len(batch)} 檔）：{status_counts(batch.values())}。"
+            status += f"\n風險等級：{_risk_counts(batch.values())}。選一檔按「風險等級明細…」看計算明細。"
         elif recalc.error:
             status += f"\n{recalc_text(recalc)}"
         if result.reload_error:
@@ -335,6 +375,16 @@ class OrderTermsTab(Tab):
             kpis.append(("核對條件待確認（檔）", to_confirm, to_confirm > 0))
         self.finish(kpis, status)
         self.releaser.show(recalc)
+        self._refresh_risk_button()
+
+
+def _risk_counts(lines: Iterable[CalcLine]) -> str:
+    """各等級（RR1～RR5）與回填、待算的檔數；沒有的不列。"""
+    risks = [line.risk for line in lines if line.risk is not None]
+    done = [risk.level for risk in risks if risk.status == Risk.DONE]
+    counts = [f"{level} {done.count(level)}" for level in RISK_LEVELS if level in done]
+    counts += [f"{s} {n}" for s in (Risk.BACKFILLED, Risk.PENDING) if (n := sum(r.status == s for r in risks))]
+    return "、".join(counts) or "沒有算"
 
 
 def _review(row: OrderRow, draft: Draft | None, config: ImportConfig) -> tuple[str, str, bool]:

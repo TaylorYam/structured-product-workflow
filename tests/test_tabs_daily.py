@@ -48,7 +48,7 @@ def daily_receipt(
         fcn_trade_rows=len(tdccs) if fcn_rows is None else fcn_rows,
         fcn_tdccs=tdccs,
     )
-    return DailyResult(receipt, Recalc(CalcReceipt(tuple(calcs or ())), CONFIG.calendar))
+    return DailyResult(receipt, Recalc(CalcReceipt(tuple(calcs or ())), CONFIG))
 
 
 def test_daily_import_page_shows_key_figures_and_restarts_clean(master, tmp_path: Path) -> None:
@@ -124,7 +124,7 @@ def test_price_csv_import_shows_the_stored_price_date(master, tmp_path: Path, mo
         lines=(ImportLine("", PRICE_CONFLICT, "AAA UW：同一個代碼有 2 列、值不同，價格沒有存，算價格時不能用"),),
         error_book_path=tmp_path / "每日匯入錯誤.xlsx",
     )
-    result = PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar))
+    result = PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG))
     monkeypatch.setattr(sp_workflow.tabs.daily, "run_price_csv", lambda settings, source, paths: result)
     source = tmp_path / "MarketData_20261016.csv"
     window.daily.csv_var.set(str(source))
@@ -158,7 +158,7 @@ def test_price_csv_import_says_how_many_closes_were_stored(master, tmp_path: Pat
         close_conflicts=("AAA UW",),
     )
 
-    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar)))
+    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG)))
 
     status = window.daily.status_var.get()
     assert (
@@ -234,7 +234,7 @@ def test_price_csv_import_lists_changed_events_and_unfinished_observation(master
         error_book_path=tmp_path / "錯誤.xlsx",
     )
 
-    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar), Observation(OBSERVED)))
+    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG), Observation(OBSERVED)))
 
     rows = [window.daily.table.item(i, "values") for i in window.daily.table.get_children()]
     assert [tuple(r) for r in rows] == [
@@ -259,7 +259,7 @@ def test_observation_hands_the_day_to_the_exit_list(master, tmp_path: Path) -> N
         error_book_path=tmp_path / "錯誤.xlsx",
     )
 
-    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar), Observation(OBSERVED)))
+    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG), Observation(OBSERVED)))
 
     assert window.exits.day_var.get() == "2026-10-21" and window.exits.hint.shown
     assert "已把 2026-10-21 帶到「9 出場清單」。" in window.daily.status_var.get()
@@ -268,12 +268,12 @@ def test_observation_hands_the_day_to_the_exit_list(master, tmp_path: Path) -> N
     window.daily.exits_button.invoke()
     assert window.notebook.select() == str(window.exits.frame)
 
-    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar), Observation(error="x")))
+    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG), Observation(error="x")))
     assert "出場清單" not in window.daily.status_var.get(), "比價沒有跑就不帶入"
 
     window.exits.runner.working = True
     window.daily.exits_button.withdraw()  # 開始回補股價時收起（start_csv）
-    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG.calendar), Observation(OBSERVED)))
+    window.daily._csv_done(PriceCsvResult(receipt, Recalc(CalcReceipt(()), CONFIG), Observation(OBSERVED)))
     assert "「9 出場清單」正在處理，比到的那一天沒有帶入。" in window.daily.status_var.get()
     assert window.daily.exits_button.winfo_manager() == "", "沒帶入就沒有下一步"
 
