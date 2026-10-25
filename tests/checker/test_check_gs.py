@@ -17,7 +17,7 @@ import sg_synth
 from fcn_checker.issuers import GS
 from fcn_checker.schema import CheckStatus as S
 from gs_synth import ADDRESS, ISIN, WARNING, Spec, build_pdf, check, check_item, row
-from harness import check_all
+from harness import also_flagged, check_all
 from harness import field_problems as problems
 from harness import results as rule
 from pdf_writer import Edit
@@ -203,7 +203,7 @@ def test_internal_rules_find_the_wrong_repeat(tmp_path, edit, broken):
     r = check(tmp_path, edits=[edit])
     bad = {rid for rid, _, _ in problems(r)}
     assert broken in bad, problems(r)
-    also = {"standard.currency_code"} if broken == "doc.currency_consistency" else set()  # 共用規則也比代碼（#227）
+    also = also_flagged(broken)
     assert bad <= {broken, *also, "standard.product_name"}, problems(r)
 
 

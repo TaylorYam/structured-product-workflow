@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import jpm_synth
 from fcn_checker.config import load_review_standard
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.schema import CheckStatus as S
@@ -45,6 +46,14 @@ def test_price_table_currency_must_be_the_exchange_currency(tmp_path):
     [x] = rule(ts.report, EXCHANGE)
     ticker = spec.underlyings[0].ticker
     assert (x.status, x.expected, x.actual) == (S.MISMATCH, f"{ticker}：JPY", f"{ticker}：美元")
+
+
+def test_only_the_wrong_row_is_listed(tmp_path):
+    """JPM 價格旁的幣別字：多檔標的只有日股那一列改成「美元」→ 不一致，預期與實際只列那一列。"""
+    spec = jpm_synth.Spec()
+    assert [u.ticker for u in spec.underlyings] == ["ZJA UW", "ZJB UN", "1234 JT"]
+    [x] = rule(jpm_synth.check(tmp_path, spec, edits=[Edit("日圓", "美元", "ts.art9.table")]), EXCHANGE)
+    assert (x.status, x.expected, x.actual) == (S.MISMATCH, "1234 JT：JPY", "1234 JT：美元")
 
 
 def test_unknown_exchange_code_goes_to_manual_review(tmp_path):

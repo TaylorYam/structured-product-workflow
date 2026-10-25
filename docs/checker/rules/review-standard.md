@@ -46,7 +46,7 @@
 | `issuer.<上手>.min_amount_multiples` | BNP：最低申購、最低贖回 5，最低加購、增加贖回單位 1 | 第四章各最低金額（`field.min_amounts`） | 各出處 = 參考條件表單位面額 × 倍數；沒列的出處倍數為 1（BARC、HSBC、MS 不變） |
 | `currency` | 美元→USD、日幣／日圓→JPY、人民幣／境外人民幣→CNH、港幣／港元→HKD、澳幣→AUD、歐元→EUR、英鎊→GBP、南非幣→ZAR（樣本看過的寫法，加上使用者同意的同義寫法）。表裡沒有的寫法（例：澳元、南非蘭特）未確認前不放：封面幣別轉人工覆核一次，其他出處寫同一個字時不重複報（2026-10-10 使用者決定；AUD、EUR、GBP、ZAR 有樣本後於 2026-10-13 加入，Issue #185） | 封面計價幣別；金額旁的幣別字（§2.4 `field.currency` 其他出處） | 不在表內的幣別轉人工覆核；金額旁的幣別字 parser 認得的寫法在 `src/fcn_checker/parsers/money.py`，新幣別兩邊都要加 |
 | `currency_code_aliases` | CNH：`CNY`、`RMB`（GS `人民幣（CNY）`、DBS `人民幣(RMB)`、SG 風險揭露 `以人民幣(RMB)計值的債券`；2026-10-25，Issue #227） | 說明書與投資人須知全文「中文幣別(代碼)」 | 括號內代碼也接受的其他寫法（`standard.currency_code`，見[共用核對規則](shared-check-rules.md) §9） |
-| `exchange_currency` | `UN`／`UW`／`UQ`／`UF` → USD、`JT` → JPY、`HK` → HKD（樣本看過的交易所碼；2026-10-25，Issue #227） | 價格表每一列的幣別 | = 該標的彭博交易所碼對到的幣別；沒列的交易所碼轉人工覆核（`standard.underlying_currency`，見[共用核對規則](shared-check-rules.md) §9） |
+| `exchange_currency` | `UN`／`UW`／`UQ` → USD、`JT` → JPY、`HK` → HKD（樣本看過的交易所碼；2026-10-25，Issue #227） | 價格表每一列的幣別 | = 該標的彭博交易所碼對到的幣別；沒列的交易所碼轉人工覆核（`standard.underlying_currency`，見[共用核對規則](shared-check-rules.md) §9） |
 | `denomination` | USD／AUD／EUR／GBP 10,000；JPY 1,000,000；CNH／HKD／ZAR 100,000（2026-10-10 使用者提供的承作幣別表） | §6 商品面額 | 等於該幣別預設值；不等於時**轉人工審查**（客戶可要求不同面額，不直接判錯） |
 | `iis.pages` | 4 | 投資人須知（Issue #124） | 頁數剛好等於設定值（比外規「不超過 5 頁」嚴格） |
 | `issuer.<上手>.iis_fixed_warning_occurrences` | BARC 1、HSBC 2、MS 1（警語 1)，2026-10-09，Issue #137）、BNP 2（警語 1 與商品簡介「商品風險程度」，2026-10-14，Issue #197）、SG 1（警語一，2026-10-14，Issue #213）、Citi 1（警語 1.，2026-10-14，Issue #220）、Nomura 1（警語(一)，2026-10-15，Issue #239） | 投資人須知全文 | 固定警語（依上手版本）出現次數；沒列出的上手轉人工覆核 |
