@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from collections.abc import Callable
 
@@ -206,6 +207,23 @@ def _risk_level(ctx: Context) -> CheckResult:
     )
 
 
+def _exempt_until(
+    check: Check, trade: ParsedField, until: dt.date | None, expected, actual, *, evidence, found: str, why: str
+) -> CheckResult | None:
+    """不一致、但 `trade`（參考條件表交易日）在審查標準的特例日期 `until`（含）以前：狀態通過，說明寫出不一致處與 `why`。
+    沒有特例日期、讀不到交易日或交易日在之後時回傳 None，照原規則判。"""
+    if until is None or not trade.ok or trade.value > until:
+        return None
+    return check.compare(
+        expected,
+        actual,
+        ok=True,
+        message=f"{found}；交易日 {trade.value} 在 {until}（含）以前，{why}，特例通過",
+        tolerance=f"交易日（參考條件表）在 {until}（含）以前的文件特例通過",
+        evidence=evidence,
+    )
+
+
 def _forbidden_wording(ctx: Context, trade: ParsedField) -> CheckResult:
     """片語以外出現禁用語即不一致；`trade`（參考條件表交易日）在審查標準 `wording.exempt_until`（含）以前時
     特例通過並註明（已通知上手改版，Issue #247）。讀不到交易日時照原規則判。"""
@@ -219,15 +237,10 @@ def _forbidden_wording(ctx: Context, trade: ParsedField) -> CheckResult:
     evidence = [Evidence.of(ti.lines_for(m.start(), m.end())[0]) for m in hits]
     found = f"允許片語以外出現「{'、'.join(ctx.std.forbidden)}」{len(hits)} 處"
     until = ctx.std.forbidden_exempt_until
-    if hits and until is not None and trade.ok and trade.value <= until:
-        return check.compare(
-            0,
-            len(hits),
-            ok=True,
-            message=f"{found}；交易日 {trade.value} 在 {until}（含）以前，已通知上手改版，特例通過",
-            tolerance=f"交易日（參考條件表）在 {until}（含）以前的文件特例通過",
-            evidence=evidence,
-        )
+    if hits and (
+        exempt := _exempt_until(check, trade, until, 0, len(hits), evidence=evidence, found=found, why="已通知上手改版")
+    ):
+        return exempt
     return check.compare(
         0,
         len(hits),
@@ -238,54 +251,58 @@ def _forbidden_wording(ctx: Context, trade: ParsedField) -> CheckResult:
 
 
 OSU_WORDS = ("OSU", "國際證券業務")  # 文件提到 OSU 客戶的寫法（BARC 投資人須知寫「國際證券業務分公司」）
-# 受託對象欄：受託對象／受託或銷售對象／受託及銷售對象（SG、MS）／銷售對象（BNP、UBS）；固定警語的「受託對象僅限」沒有冒號
-_CLIENTS_LABEL = re.compile(r"(?:受託(?:[或及]銷售)?|銷售)對象[:：]")
-_CLIENTS_END = re.compile(r"[。；;●•․]|\(\d+\)|\d+[.)、]|本商品")  # 受託對象欄的值到下一項為止
+# 受託對象的寫法：欄位（受託對象／受託或銷售對象／受託及銷售對象（SG、MS）／銷售對象（BNP、UBS）＋冒號），或敘述
+# （「受託對象僅限於…」「受託或銷售對象以…為限」「受託對象為…」）；固定警語的「受託對象僅限依據…」不算（固定警語規則核對）
+_CLIENTS = re.compile(r"(?:受託(?:[或及]銷售)?|銷售)對象(?:[:：]|僅限於|限於|以|為)")
+_CLIENTS_END = re.compile(r"[。；;●•․]|\(\d+\)|\d+[.)、]|本商品|為限")  # 受託對象的值到下一項為止
+_OLD_TEMPLATE = "上手改版前的舊範本"
 
 
 def _osu_clients(ctx: Context, trade: ParsedField) -> list[CheckResult]:
-    """受託對象與上手能否承作 OSU 客戶（`issuer.<上手>.osu_clients`）一致（Issue #224）。
+    """受託對象與上手能否承作 OSU 客戶（`issuer.<上手>.osu_clients`）一致（Issue #224）。`trade`（參考條件表交易日）在
+    審查標準 `osu.exempt_until`（含）以前時，不一致特例通過並註明（上手改版前的舊範本）。"""
+    check = Check("standard.osu_clients", "osu_clients", Item.standard("受託對象（OSU 客戶）"), ctx.document)
+    return [_no_osu(ctx, check, trade)] if not ctx.issuer_std.osu_clients else _clients_with_osu(ctx, check, trade)
 
-    不能承作：全文（遮掉該上手的固定警語，警語由固定警語規則核對；也遮掉受託機構名稱的等價寫法，例：DBS
-    「玉山綜合證券股份有限公司(含國際證券業務分公司)」是機構名稱，不是受託對象）不得出現 OSU。
-    可以承作：每個受託對象欄（`_CLIENTS_LABEL`）的值要提到 OSU 客戶，文件沒有這種欄時不產生結果。`trade`（參考條件表交易日）在審查標準 `osu.exempt_until`（含）
-    以前時，不一致特例通過並註明（上手改版前的舊範本）。
-    """
-    rid, ti = "standard.osu_clients", ctx.ts.full_text
-    item = Item.standard("受託對象（OSU 客戶）")
-    until = ctx.std.osu_exempt_until
-    exempt = until is not None and trade.ok and trade.value <= until
 
-    def verdict(check: Check, ok: bool, actual, evidence: list[Evidence], found: str, rule: str) -> CheckResult:
-        if not ok and exempt:
-            return check.compare(
-                rule,
-                actual,
-                ok=True,
-                evidence=evidence,
-                message=f"{found}；交易日 {trade.value} 在 {until}（含）以前，上手改版前的舊範本，特例通過",
-                tolerance=f"交易日（參考條件表）在 {until}（含）以前的文件特例通過",
-            )
-        return check.compare(rule, actual, ok=ok, evidence=evidence, reason="osu_clients", fail_message=found)
+def _no_osu(ctx: Context, check: Check, trade: ParsedField) -> CheckResult:
+    """不能承作 OSU 客戶：全文不得出現 OSU。遮掉該上手的固定警語（由固定警語規則核對）與受託機構名稱的等價寫法（例：DBS
+    「玉山綜合證券股份有限公司(含國際證券業務分公司)」是機構名稱，不是受託對象）；括號全半形不計。"""
+    ti, std = ctx.ts.full_text, ctx.issuer_std
+    text = full_brackets(ti.text)
+    masks = (*std.fixed_warnings, std.distributor_name, *std.distributor_name_equivalents)
+    for w in sorted((full_brackets(squash(m)) for m in masks), key=len, reverse=True):  # 長的先遮（名稱等價寫法含全名）
+        text = text.replace(w, "□" * len(w))  # 遮蔽固定警語與受託機構名稱，保留字元位置
+    hits = sorted((m for w in OSU_WORDS for m in re.finditer(re.escape(w), text)), key=lambda m: m.start())
+    evidence = [Evidence.of(ti.lines_for(m.start(), m.end())[0]) for m in hits]
+    found = f"{ctx.issuer} 不能承作 OSU 客戶，{ctx.document}出現 OSU {len(hits)} 處"
+    if hits and (
+        exempt := _exempt_until(
+            check, trade, ctx.std.osu_exempt_until, 0, len(hits), evidence=evidence, found=found, why=_OLD_TEMPLATE
+        )
+    ):
+        return exempt
+    return check.compare(0, len(hits), evidence=evidence, reason="osu_clients", fail_message=found)
 
-    if not ctx.issuer_std.osu_clients:
-        text, std = ti.text, ctx.issuer_std
-        masks = (*std.fixed_warnings, std.distributor_name, *std.distributor_name_equivalents)
-        for w in sorted(map(squash, masks), key=len, reverse=True):  # 長的先遮（名稱等價寫法含全名）
-            text = text.replace(w, "□" * len(w))  # 遮蔽固定警語與受託機構名稱，保留字元位置
-        hits = sorted((m for w in OSU_WORDS for m in re.finditer(re.escape(w), text)), key=lambda m: m.start())
-        evidence = [Evidence.of(ti.lines_for(m.start(), m.end())[0]) for m in hits]
-        found = f"{ctx.issuer} 不能承作 OSU 客戶，{ctx.document}出現 OSU {len(hits)} 處"
-        return [verdict(Check(rid, "osu_clients", item, ctx.document), not hits, len(hits), evidence, found, 0)]
-    out = []
-    for m in _CLIENTS_LABEL.finditer(ti.text):
+
+def _clients_with_osu(ctx: Context, check: Check, trade: ParsedField) -> list[CheckResult]:
+    """可以承作 OSU 客戶：每處受託對象（`_CLIENTS`）的值要提到 OSU 客戶；文件沒有寫受託對象時不產生結果。"""
+    ti, expected, out = ctx.ts.full_text, "提到 OSU 客戶", []
+    for m in _CLIENTS.finditer(ti.text):
         rest = ti.text[m.end() : m.end() + 40]
         value = rest[: (end.start() if (end := _CLIENTS_END.search(rest)) else len(rest))]
-        lines = ti.lines_for(m.start(), m.end() + len(value))
+        evidence = [Evidence.of(ln) for ln in ti.lines_for(m.start(), m.end() + len(value))]
+        if any(w in value for w in OSU_WORDS):
+            out.append(check.compare(expected, value, ok=True, evidence=evidence))
+            continue
         found = f"{ctx.issuer} 可以承作 OSU 客戶，受託對象「{value}」沒有寫到 OSU 客戶"
-        ok = any(w in value for w in OSU_WORDS)
-        check = Check(rid, "osu_clients", item, ctx.document)
-        out.append(verdict(check, ok, value, [Evidence.of(lines[0])], found, "提到 OSU 客戶"))
+        exempt = _exempt_until(
+            check, trade, ctx.std.osu_exempt_until, expected, value, evidence=evidence, found=found, why=_OLD_TEMPLATE
+        )
+        out.append(
+            exempt
+            or check.compare(expected, value, ok=False, evidence=evidence, reason="osu_clients", fail_message=found)
+        )
     return out
 
 

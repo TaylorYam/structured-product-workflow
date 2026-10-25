@@ -527,7 +527,7 @@ def load_review_standard(path: Path) -> ReviewStandard:
             fixed_warning_occurrences=int(d["risk"]["fixed_warning_occurrences"]),
             forbidden=tuple(d["wording"]["forbidden"]),
             allowed_phrases=tuple(d["wording"]["allowed_phrases"]),
-            forbidden_exempt_until=d["wording"].get("exempt_until"),
+            forbidden_exempt_until=_optional_date(d["wording"].get("exempt_until"), "wording.exempt_until"),
             osu_exempt_until=_optional_date(d.get("osu", {}).get("exempt_until"), "osu.exempt_until"),
             currency_zh_to_iso=dict(d["currency"]),
             denomination={k: int(v) for k, v in d["denomination"].items()},

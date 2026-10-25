@@ -234,7 +234,7 @@
 |---|---|---|
 | §3.1 參考條件表欄位、回填、VWAP | `field.*`、`backfill.*` | 共用 `rules/reference.py`、`backfill.py` |
 | §3.1 最低金額倍數 | `field.min_amounts`（倍數 `issuer.bnp.min_amount_multiples`） | 共用 `rules/reference.py` |
-| §3.2 審查標準共用項目 | `standard.approval_date`、`standard.chairman`、`standard.distributor`（含第四章 §16 電話：標準欄位 `distributor_phone_ch4`，由共用規則核對，Issue #196）、`standard.issuer_name`、`standard.fixed_warning`、`standard.risk_level`、`standard.forbidden_wording`、`standard.product_name`、`standard.fees`、`standard.issue_price`（三處重印）、`doc.denomination`、`doc.print_date`、`doc.subscription_start_date` | 共用 `rules/review_standard.py` |
+| §3.2 審查標準共用項目 | `standard.approval_date`、`standard.chairman`、`standard.distributor`（含第四章 §16 電話：標準欄位 `distributor_phone_ch4`，由共用規則核對，Issue #196）、`standard.issuer_name`、`standard.fixed_warning`、`standard.risk_level`、`standard.forbidden_wording`、`standard.osu_clients`（Issue #224）、`standard.product_name`、`standard.fees`、`standard.issue_price`（三處重印）、`doc.denomination`、`doc.print_date`、`doc.subscription_start_date` | 共用 `rules/review_standard.py` |
 | §3.2 商品種類、發行不成立門檻 | `standard.product_type`、`standard.minimum_issue_size` | 共用 `rules/review_standard.py`（有該上手分節才核對） |
 | §3.3 年利率與月配息率 | `field.coupon_pa_pct`、`derive.monthly_coupon`（第 15 項兩處）、`doc.min_coupon_rate` | `rules/bnp.py` |
 | §3.3 第 18 項假設與各情境算式的月配息率（= 第 15 項）、獲利情境年化報酬率（= 第 15 項年利率，依說明書位數四捨五入；Issue #294 決定 4 起不再和參考條件表比） | 共用 `scenario.params` | `rules/scenario.py` |
