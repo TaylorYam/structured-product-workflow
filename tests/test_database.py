@@ -169,6 +169,8 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
         "workflow.close_price",
         "workflow.close_price_change",
         "workflow.close_price_import",
+        "workflow.credit_rating",
+        "workflow.credit_rating_log",
         "workflow.cross_check_release",
         "workflow.daily_price",
         "workflow.event_objection",
@@ -181,6 +183,7 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
         "workflow.product",
         "workflow.product_event",
         "workflow.product_event_change",
+        "workflow.rated_entity",
         "workflow.step_record",
         "workflow.term_correction",
         "workflow.trade_row",
@@ -502,7 +505,7 @@ def test_chinese_ki_is_cleared_for_the_english_codes(pg) -> None:
         (A,),
     )
 
-    assert apply_migrations(pg) == ["0023_pricing_ki_english.sql"]
+    assert apply_migrations(pg) == [name for version, name, _ in database.migration_files() if version >= 23]
 
     assert pg.execute("SELECT status, reason, ki FROM workflow.pricing_status").fetchall() == [
         ("在庫", "Non-call period", None)

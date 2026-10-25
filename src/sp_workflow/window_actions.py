@@ -7,7 +7,7 @@
 收盤價（#153）要用交易所假日表判斷休市日：回補股價讀不到假日表時照樣匯股價、收盤價不存；
 歷史收盤價讀不到假日表就整份不匯入。
 比價（#155）在回補股價與歷史收盤價匯入之後跑；比價失敗時匯入保留，原因放在結果裡。
-信箱維護（#158）每次存檔一個動作，寫完重讀全部人員與別名給畫面重新顯示。
+信箱維護（#158）每次存檔一個動作，寫完重讀全部人員與別名給畫面重新顯示；發行機構評等（#237）也一樣。
 transaction 的範圍（#205）：每日匯入、回補股價、歷史收盤價、起單資料匯入、舊商品補資料與準備、放回、建草稿的步驟紀錄
 整批一個；進度頁的登記已寄出（含批次）、顧客贖回一檔一個（`_each`），寫不進去只影響那一檔、之前寫好的保留。
 這裡不自己寫 SQL：要判斷進度、查已寄出過的，問 `progress`、`step_records`。
@@ -35,6 +35,8 @@ from sp_workflow.check_terms import (
     release_differences,
 )
 from sp_workflow.close_prices import HistoryReceipt, import_history
+from sp_workflow.credit_ratings import Entity, Rating, RatingRows, add_entity, add_rating, delete_latest, edit_latest
+from sp_workflow.credit_ratings import load_rows as load_ratings
 from sp_workflow.daily_import import (
     ImportInfo,
     ImportReceipt,
@@ -588,6 +590,39 @@ def _mailbox_change(settings: ConnectionSettings, write: Callable[[psycopg.Conne
     with connect(settings) as conn:
         write(conn)
         return load_rows(conn)
+
+
+def load_rating_rows(settings: ConnectionSettings) -> RatingRows:
+    """發行機構評等（#237）：全部機構與評等。"""
+    with connect(settings) as conn:
+        return load_ratings(conn)
+
+
+def add_rated_entity(settings: ConnectionSettings, entity: Entity, first: Rating) -> RatingRows:
+    """新增一個機構和它的第一筆評等；寫不進去時丟 `CreditRatingError`。"""
+    return _rating_change(settings, lambda conn: add_entity(conn, entity, first))
+
+
+def add_credit_rating(settings: ConnectionSettings, latest: Rating | None, after: Rating) -> RatingRows:
+    """新增一筆評等（生效日要比 `latest` 晚）。"""
+    return _rating_change(settings, lambda conn: add_rating(conn, latest, after))
+
+
+def edit_credit_rating(settings: ConnectionSettings, before: Rating, after: Rating) -> RatingRows:
+    """修改最新一筆評等。"""
+    return _rating_change(settings, lambda conn: edit_latest(conn, before, after))
+
+
+def delete_credit_rating(settings: ConnectionSettings, before: Rating) -> RatingRows:
+    """刪除最新一筆評等（至少留一筆）。"""
+    return _rating_change(settings, lambda conn: delete_latest(conn, before))
+
+
+def _rating_change(settings: ConnectionSettings, write: Callable[[psycopg.Connection], object]) -> RatingRows:
+    """寫一筆（自己一個 transaction），再重讀全部機構與評等。"""
+    with connect(settings) as conn:
+        write(conn)
+        return load_ratings(conn)
 
 
 def _each(conn: psycopg.Connection, tdccs: Sequence[str], write: Callable[[str], object]) -> Registered:
