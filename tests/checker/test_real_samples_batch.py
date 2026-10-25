@@ -102,8 +102,8 @@ def vwap_codes(path: Path) -> set[str]:
 def test_vwap_rows_skip_price_comparison_and_take_the_document_prices(outcome):
     vwap = [i for i in term_sheets(outcome) if i.product_code in vwap_codes(CHECK_FORMAT)]
     assert len(vwap) == 12, "表上有 12 列期初定價 VWAP"
-    # 1 份 Nomura 另有其他差異（見 test_real_nomura.py），其餘都通過
-    assert Counter(i.report.status for i in vwap) == Counter({CheckStatus.PASS: 11, CheckStatus.MISMATCH: 1})
+    # 1 份 Nomura 另有其他差異（見 test_real_nomura.py）、1 份 CA 受託機構名稱多「綜合」（test_real_ca.py，Issue #226），其餘都通過
+    assert Counter(i.report.status for i in vwap) == Counter({CheckStatus.PASS: 10, CheckStatus.MISMATCH: 2})
     for item in vwap:
         assert not [r for r in item.report.results if r.rule_id == "field.underlying_prices"]
         prices = [d for d in item.report.backfill if d.column.startswith("UL_")]

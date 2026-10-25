@@ -25,6 +25,7 @@ chairman = "林晋輝"
 name = "玉山綜合證券股份有限公司"
 phone = "02-5556-1313"
 address = "台北市松山區民生東路三段158號6樓"
+established = 2000-11-20
 
 [risk]
 level = "RR4"
@@ -64,6 +65,9 @@ bbb = ["brackets"]
 
 [issue_price]
 pct = 100
+
+[principal_protection]
+non_protected = ["不保本"]
 
 [wording]
 forbidden = ["受託投資"]
@@ -155,6 +159,7 @@ def test_each_issuer_gets_one_table_with_the_same_values():
     assert shared["risk"] == {"level": "RR4", "fixed_warning": "共用警語。後半段", "fixed_warning_occurrences": 3}
     assert shared["iis"] == {"pages": 4}
     assert set(shared) == {"version", "effective_date", "distributor", "risk", "fees", "issue_price", "wording"} | {
+        "principal_protection",
         "currency",
         "denomination",
         "iis",

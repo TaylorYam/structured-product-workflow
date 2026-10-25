@@ -352,6 +352,8 @@ def _basic(d: _Doc, s: Spec) -> None:
     d.cell("計價幣別：", [s.currency_text + ("。" if s.ccy == "CNH" else "")])
     d.cell("商品面額：", [f"每單位{s.currency_zh}{s.denom:,}"])
     d.cell("發行價格：", ["商品面額的100.00%"])
+    d.cell("計價貨幣本金保本率：", ["不適用，本商品為不保障投資本金之境外結構型商品。"])
+    d.cell("計價幣別投資本金達成保本之各項條件：", ["不適用，本商品為不保障投資本金之境外結構型商品。"])
     w = d.w
     top = w.y
     for k, p in enumerate(("連結標的資產及其相對", "權重與投資績效之關連", "情形：")):
@@ -663,6 +665,7 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         "受託對象：專業投資人。",
         "本商品風險程度：RR4",
         f"計價幣別：{s.currency_text}；計價貨幣本金保本率：不適用，本商品為不保障投資本金之境外結構型商品。",
+        "計價幣別投資本金達成保本率之各項條件：不適用，本商品為不保障投資本金之境外結構型商品。",
         f"連結標的資產：{uls}。",
     ):
         d.text(16, t, size=9)

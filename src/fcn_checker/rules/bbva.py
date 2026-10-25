@@ -34,8 +34,8 @@ NOT_COVERED = [
     {"rule_id": "doc.initial_prices", "description": "期初價格本身的外部正確性（沒有權威來源）"},
     {
         "rule_id": "doc.guarantor_and_agent",
-        "description": "保證機構（西班牙對外銀行）與總代理人（臺北分公司）的名稱、地址電話，第 1 頁受託機構明細 (ii) 設立日期"
-        "不核對（2026-10-15 作業人員決定；(i)、(iii)、(iv) 依 Issue #305 有就由共用審查標準規則核對）",
+        "description": "保證機構（西班牙對外銀行）與總代理人（臺北分公司）的名稱、地址電話不核對（2026-10-15 作業人員決定）；"
+        "第 1 頁受託機構明細 (i)、(iii)、(iv) 依 Issue #305、(ii) 設立日期依 Issue #226 有就由共用審查標準規則核對",
     },
     {
         "rule_id": "doc.initial_pricing",

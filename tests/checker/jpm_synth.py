@@ -429,6 +429,7 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
     d.bullet("受託對象：專業投資人及OSU客戶")
     d.bullet(f"計價幣別：{s.currency_zh}")
     d.bullet("原計價幣別本金保本率：不保本")
+    d.bullet("原計價幣別本金達成100%保本之各項條件：不適用，本商品不保本。")
     d.bullet("連結標的資產：")
     _price_table(d, s, iis=True)
     d.bullet(
@@ -506,6 +507,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         3: f"保證機構名稱及其長期債務信用評等：{GUARANTOR['ch1']}，長期債務信用評等為虛構",
         4: "商品之發行評等：專業投資人不適用",
         5: "發行價格：每單位面額之100%",
+        6: "原計價幣別本金保本率：不保本，本商品於到期日的贖回金額可能低於投資本金。",
+        7: "原計價幣別投資本金達成100%保本之各項條件：不適用，本商品不保本。",
         8: "主要給付項目及其計算方式：",
         9: "連結標的資產、相對權重及與投資績效之關連情形：",
         12: "商品期間、發行日、到期日及其他依個別商品性質而定之日期",
@@ -541,16 +544,16 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     d.text(25, f"(2) 事業名稱：{GUARANTOR['ch2']}")
     d.w.line(15, "3.")
     d.text(32, "總代理人、計算代理機構、受託機構：設立日期及簡介")
-    for n, (title, name, place, head) in enumerate(
+    for n, (title, name, since, place, head) in enumerate(
         (
-            ("總代理人", AGENT, "臺北市信義區虛構路1號", "虛構甲"),
-            ("計算代理機構", "Fictional Securities plc", "1 Fictional Street, London", "虛構乙"),
-            ("受託機構", DIST["name"], f"{DIST['address']}(營業活動所在地)", DIST["chairman"]),
+            ("總代理人", AGENT, "2000年1月1日", "臺北市信義區虛構路1號", "虛構甲"),
+            ("計算代理機構", "Fictional Securities plc", "2000年1月1日", "1 Fictional Street, London", "虛構乙"),
+            ("受託機構", DIST["name"], "2000年11月20日", f"{DIST['address']}(營業活動所在地)", DIST["chairman"]),
         ),
         1,
     ):
         d.text(25, f"({n}) {title}")
-        for t in (f"事業名稱：{name}", "設立日期：2000年1月1日", f"營業所在地：{place}", f"負責人姓名：{head}"):
+        for t in (f"事業名稱：{name}", f"設立日期：{since}", f"營業所在地：{place}", f"負責人姓名：{head}"):
             d.bullet(t)
     d.w.line(15, "4.")
     d.text(32, "交易架構說明：不核對。")

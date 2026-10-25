@@ -1,6 +1,6 @@
 """本機 DBS 真實樣本（Issue #280）；交易資料不進 Git，CI 自動略過。測試碼不含真實商品代號或數值。
 
-斷言與探勘結論一致（docs/checker/rules/dbs-check-rules.md §5）：4 份說明書與 4 份投資人須知都辨識為 DBS 範本，全部通過並回填
+斷言與探勘結論一致（docs/checker/rules/dbs-check-rules.md §5）：4 份說明書與 4 份投資人須知都辨識為 DBS 範本；1 份說明書受託機構設立日期寫成 2000年8月2日判不一致（Issue #226），其餘都通過並回填
 （受託機構「(含國際證券業務分公司)」與「(02)5556-1313」是等價寫法、「受託投資」都是允許片語、投資人須知價格表表頭與費用表列
 跨頁照讀）。參考條件表用 data/orders/核對表格式..xlsx（含 4 列 DBS）。
 """
@@ -33,7 +33,7 @@ def test_every_sample_is_recognised_as_dbs(items):
     assert all(i.report.template == DBS.iis.template_id for i in investor_sheets)
 
 
-def test_every_sample_passes_and_is_filled(items):
+def test_every_sample_passes_except_one_established_date(items):
     term_sheets, investor_sheets = items
     bad = Counter(
         (r.rule_id, r.reason_code)
@@ -41,8 +41,15 @@ def test_every_sample_passes_and_is_filled(items):
         for r in i.report.results
         if r.status in PROBLEMS
     )
-    assert not bad, bad
-    assert all(i.fills_sheet for i in term_sheets)
+    assert bad == Counter({("standard.distributor_established", "value_mismatch"): 1}), bad
+    [wrong] = [
+        r
+        for i in term_sheets
+        for r in i.report.results
+        if r.rule_id == "standard.distributor_established" and r.status in PROBLEMS
+    ]
+    assert wrong.actual.isoformat() == "2000-08-02"
+    assert sum(i.fills_sheet for i in term_sheets) == len(term_sheets) - 1
 
 
 def test_template_variants_match_the_sample_table(items):
