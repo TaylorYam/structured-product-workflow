@@ -237,6 +237,58 @@ def _forbidden_wording(ctx: Context, trade: ParsedField) -> CheckResult:
     )
 
 
+OSU_WORDS = ("OSU", "國際證券業務")  # 文件提到 OSU 客戶的寫法（BARC 投資人須知寫「國際證券業務分公司」）
+# 受託對象欄：受託對象／受託或銷售對象／受託及銷售對象（SG、MS）／銷售對象（BNP、UBS）；固定警語的「受託對象僅限」沒有冒號
+_CLIENTS_LABEL = re.compile(r"(?:受託(?:[或及]銷售)?|銷售)對象[:：]")
+_CLIENTS_END = re.compile(r"[。；;●•․]|\(\d+\)|\d+[.)、]|本商品")  # 受託對象欄的值到下一項為止
+
+
+def _osu_clients(ctx: Context, trade: ParsedField) -> list[CheckResult]:
+    """受託對象與上手能否承作 OSU 客戶（`issuer.<上手>.osu_clients`）一致（Issue #224）。
+
+    不能承作：全文（遮掉該上手的固定警語，警語由固定警語規則核對；也遮掉受託機構名稱的等價寫法，例：DBS
+    「玉山綜合證券股份有限公司(含國際證券業務分公司)」是機構名稱，不是受託對象）不得出現 OSU。
+    可以承作：每個受託對象欄（`_CLIENTS_LABEL`）的值要提到 OSU 客戶，文件沒有這種欄時不產生結果。`trade`（參考條件表交易日）在審查標準 `osu.exempt_until`（含）
+    以前時，不一致特例通過並註明（上手改版前的舊範本）。
+    """
+    rid, ti = "standard.osu_clients", ctx.ts.full_text
+    item = Item.standard("受託對象（OSU 客戶）")
+    until = ctx.std.osu_exempt_until
+    exempt = until is not None and trade.ok and trade.value <= until
+
+    def verdict(check: Check, ok: bool, actual, evidence: list[Evidence], found: str, rule: str) -> CheckResult:
+        if not ok and exempt:
+            return check.compare(
+                rule,
+                actual,
+                ok=True,
+                evidence=evidence,
+                message=f"{found}；交易日 {trade.value} 在 {until}（含）以前，上手改版前的舊範本，特例通過",
+                tolerance=f"交易日（參考條件表）在 {until}（含）以前的文件特例通過",
+            )
+        return check.compare(rule, actual, ok=ok, evidence=evidence, reason="osu_clients", fail_message=found)
+
+    if not ctx.issuer_std.osu_clients:
+        text, std = ti.text, ctx.issuer_std
+        masks = (*std.fixed_warnings, std.distributor_name, *std.distributor_name_equivalents)
+        for w in sorted(map(squash, masks), key=len, reverse=True):  # 長的先遮（名稱等價寫法含全名）
+            text = text.replace(w, "□" * len(w))  # 遮蔽固定警語與受託機構名稱，保留字元位置
+        hits = sorted((m for w in OSU_WORDS for m in re.finditer(re.escape(w), text)), key=lambda m: m.start())
+        evidence = [Evidence.of(ti.lines_for(m.start(), m.end())[0]) for m in hits]
+        found = f"{ctx.issuer} 不能承作 OSU 客戶，{ctx.document}出現 OSU {len(hits)} 處"
+        return [verdict(Check(rid, "osu_clients", item, ctx.document), not hits, len(hits), evidence, found, 0)]
+    out = []
+    for m in _CLIENTS_LABEL.finditer(ti.text):
+        rest = ti.text[m.end() : m.end() + 40]
+        value = rest[: (end.start() if (end := _CLIENTS_END.search(rest)) else len(rest))]
+        lines = ti.lines_for(m.start(), m.end() + len(value))
+        found = f"{ctx.issuer} 可以承作 OSU 客戶，受託對象「{value}」沒有寫到 OSU 客戶"
+        ok = any(w in value for w in OSU_WORDS)
+        check = Check(rid, "osu_clients", item, ctx.document)
+        out.append(verdict(check, ok, value, [Evidence.of(lines[0])], found, "提到 OSU 客戶"))
+    return out
+
+
 def _fixed_text(
     rid: str,
     field: str,
@@ -752,7 +804,7 @@ def iis_review_standard_rules(ctx: Context, *, trade: ParsedField) -> list[Check
     std, provides = ctx.issuer_std, ctx.provides
     issuer_name = std.issuer_name
     issuer_name_zh = re.split(r"[（(]", issuer_name, maxsplit=1)[0] if issuer_name is not None else None
-    out = [_risk_level(ctx), _iis_warning(ctx), _forbidden_wording(ctx, trade)]
+    out = [_risk_level(ctx), _iis_warning(ctx), _forbidden_wording(ctx, trade), *_osu_clients(ctx, trade)]
     if provides("risk_level_summary"):
         out.append(_iis_risk_summary(ctx))
     if provides("print_dates"):
@@ -799,6 +851,7 @@ def review_standard_rules(ctx: Context, *, reference_trade: ParsedField) -> list
         _fixed_warning(ctx),
         _risk_level(ctx),
         _forbidden_wording(ctx, reference_trade),
+        *_osu_clients(ctx, reference_trade),
         *_product_name(ctx),
         *_issuer_name(ctx),
         *_distributor_info(ctx),

@@ -426,7 +426,7 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
     d.section = "summary"
     w.line(15, "二、境外結構型商品事項(詳細內容及名詞定義請見中文產品說明書)")
     w.line(15, "1. 商品簡介：")
-    d.bullet("受託對象：專業投資人")
+    d.bullet("受託對象：專業投資人及OSU客戶")
     d.bullet(f"計價幣別：{s.currency_zh}")
     d.bullet("原計價幣別本金保本率：不保本")
     d.bullet("連結標的資產：")
