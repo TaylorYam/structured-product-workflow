@@ -25,7 +25,7 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, ul_note, weekday_on_or_after
 
 NAME = STANDARD["issuer"]["nomura"]["product_name"]
 WARNING = STANDARD["issuer"]["nomura"]["fixed_warning"]
@@ -428,7 +428,7 @@ def _article8_9(d: _Doc, s: Spec, n: int) -> None:
         return
     for i, u in enumerate(s.underlyings, 1):
         d.text(70, f"({i}) 連結標的{i if s.basket else ''}：{u.name}")
-        d.text(70, "虛構公司主要從事虛構業務。")
+        d.text(70, ul_note(u))
         d.text(70, f"彭博代碼：{u.ticker} Equity/交易所：{u.exchange}/相關交易所：所有交易所")
 
 
@@ -538,7 +538,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         3: "發行機構或保證機構名稱及其長期債務信用評等：",
         4: "商品之發行評等：不適用",
         5: f"計價幣別：{s.currency_zh}({s.ccy})",
-        6: "計價貨幣本金保本率：不適用。本商品不保本。",
+        6: "計價貨幣本金保本率：不適用。本商品不保本。投資本金達成保本率之各項條件：不適用。",
         7: "主要給付項目及其計算方式：",
         8: "連結標的資產及其相對權重、與投資績效之關聯情形：",
         9: "連結標的之相關說明或評等資料：",

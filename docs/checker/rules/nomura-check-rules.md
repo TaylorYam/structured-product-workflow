@@ -5,6 +5,7 @@
 - 會隨時間改變的基準見[審查標準](review-standard.md) §2.11（設定檔 `config/review_standard.toml`）
 - 狀態：核對範圍與規則已與作業人員確認（2026-10-15，Issue #239）；已實作（`parsers/nomura.py`、`rules/nomura.py`，投資人須知見[投資人須知核對規則](iis-check-rules.md)）
 - 本文件只寫與 [BARC](barc-check-rules.md)、[HSBC](hsbc-check-rules.md)、[MS](ms-check-rules.md)、[BNP](bnp-check-rules.md)、[SG](sg-check-rules.md)、[Citi](citi-check-rules.md)、[JPM 核對規則](jpm-check-rules.md)不同或 Nomura 特有的部分；未提到的原則（判定原則、數值處理、期初價格本身不核對等）見[共用核對規則](shared-check-rules.md)
+- 連結標的公司介紹每檔都有、不是亂碼：共用規則（[共用核對規則](shared-check-rules.md) §5.1，Issue #225）；第 9 項每段以 `(k) 連結標的k：` 開始。
 
 ## 1. 範圍
 

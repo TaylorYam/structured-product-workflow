@@ -24,7 +24,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["gs"]["product_name"]
 WARNING = STANDARD["issuer"]["gs"]["fixed_warning"]
@@ -504,9 +512,12 @@ def _article17(d: _Doc, s: Spec) -> None:
     total = s.denom * s.units
     cpn = (Decimal(s.denom) * s.annual / 1200).quantize(Decimal("0.01"), ROUND_HALF_UP)
     coupon = [f"= {par} × {s.annual}% / 12 × 20 / 20", f"= {cpn} {zh}"]
+    # 平均年化報酬率由進位到分的配息金額算出、寫到 5 位，和年利率差一點（真實樣本：13.90% 寫 13.89996%）
+    annualized = f"{s.annual - Decimal('0.00004'):.5f}"
     ret = [
         f"= [(每單位面額 × 100.00% + {cpn} {zh}) × {s.units} / {total:,.2f} {zh}] - 1",
         f"= [({par} + {cpn} {zh}) × {s.units} / {total:,.2f} {zh}] - 1",
+        f"= 1.00000%（平均年化報酬率:{annualized}%）",
     ]
     for t in (
         "(1) 投資收益計算方法:請參見本章第14項及第15項。",
@@ -531,6 +542,7 @@ def _article17(d: _Doc, s: Spec) -> None:
         f"最終參考價格{one}: {final:,.4f} {ccy}（初始參考價格{one}之10.00%）",
         f"執行價格{one}: {price(u.initial, s.strike):,.4f} {ccy}（初始參考價格{one}之{s.strike}%）",
         f"= [(17 股 × {final:,.4f} {ccy} + 33.06 {zh} + {cpn} {zh}) × {s.units} / {total:,.2f} {zh}] – 1",
+        "= -70.71542%（平均年化報酬率:-70.71542%）",
         "情境5:發行機構或保證機構無法履約",
     ):
         d.text(86, t, 100)
@@ -552,8 +564,11 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         4: "本商品之發行評等:本商品未經評等。",
         5: f"計價幣別:{s.currency_zh}（{s.iso_text}）",
         6: f"每單位面額:{s.money(s.denom, space=True)}",
+        7: "到期日時計價幣別本金保本率:0%。本商品為非保本型之境外結構型商品。",
+        8: "本商品投資本金達成100%保本率之各項條件:不適用。本商品為非保本型之境外結構型商品。",
         9: "主要給付項目及其計算方式:",
         10: "連結標的資產及其相對權重與投資績效的關連情形:",
+        11: "連結標的資產之連結標的股份發行人之相關說明:",
         13: "本商品年期、發行日、到期日及其他依本商品性質而定之日期:",
         14: "配息資料及其計算公式:",
         15: "到期買回計算公式，包含最低到期保證收益率及參與率:",
@@ -566,6 +581,10 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             _article9(d, s)
         elif n == 10:
             _article10(d, s)
+        elif n == 11:
+            write_notes(
+                d.w, s.underlyings, "column", x=86, note_x=242, label="連結標的資產 {k}", heading=None, width=30
+            )
         elif n == 13:
             _article13(d, s)
         elif n == 14:

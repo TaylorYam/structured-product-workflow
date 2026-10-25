@@ -20,11 +20,13 @@ from . import barc_schedule as schedule
 from . import money, price_table
 from .common import by_value, derived
 from .layout import Document, LayoutSpec, Span, TextIndex, capture, join_text, parse_date
+from .underlying_notes import Markers, underlying_notes
 
 TEMPLATE_ID = "barc-zh-pd"
 # 3：價格表改由 parsers/price_table.py 讀（Issue #288）；4：日期表標準欄位與共用排程推導（Issue #289）；
 # 5：情境重印價格表與假設值交成共用情境規則的標準欄位（Issue #294）
-PARSER_VERSION = "5"
+# 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
+PARSER_VERSION = "6"
 
 # 章名「第一章 商品基本資料」、條號「1.」、子項「(1)」（範本規格 §3）
 LAYOUT = LayoutSpec(
@@ -865,6 +867,9 @@ def read(lines: Sequence[Line]) -> BarcTermSheet:
         "annual": _mentions(doc, arts, _ANNUAL_PATTERNS),
         "repeat": [m for m in repeats if m.article != ARTICLE_16],
     }
+    flds["underlying_notes"] = underlying_notes(
+        all_lines, Markers(r"標的資產\d+：")
+    )  # 連結標的公司介紹：標的資產k：（Issue #225）
     return BarcTermSheet(flds, mentions, TextIndex(all_lines), doc, header_pcts)
 
 

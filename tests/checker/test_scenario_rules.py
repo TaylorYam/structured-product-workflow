@@ -186,6 +186,17 @@ def test_annualized_return_is_compared_after_rounding_the_annual_rate_to_its_dig
     assert r.status == MISMATCH
 
 
+def test_annualized_return_with_a_tolerance_compares_the_difference():
+    """GS 的年化報酬率由進位到分的配息金額算出、寫到 5 位：差距在容許範圍內算一致（Issue #228）。"""
+    within = D("0.001")
+    item = ScenarioParam("scenario_annualized_return", "情境 1 平均", present(D("13.89996")), within=within)
+    [r] = params(item, coupon_pa_pct=D("13.90"))
+    assert r.status == PASS and r.expected == D("13.90") and "0.001" in r.tolerance
+    item = ScenarioParam("scenario_annualized_return", "情境 1 平均", present(D("13.89896")), within=within)
+    [r] = params(item, coupon_pa_pct=D("13.90"))
+    assert r.status == MISMATCH
+
+
 def test_template_without_the_official_value_compares_with_the_reference_sheet():
     item = ScenarioParam("scenario_annualized_return", "第 18 項情境一", present(D("9.00")))
     no_rate = absent("coupon_pa_pct", "年利率")

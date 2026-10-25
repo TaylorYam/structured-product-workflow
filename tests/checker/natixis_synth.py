@@ -24,7 +24,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["natixis"]["product_name"]
 WARNING = STANDARD["issuer"]["natixis"]["fixed_warning"]
@@ -566,6 +574,7 @@ def _article16(d: _Doc, s: Spec) -> None:
         f"{strike:,.4f} {quote} = {Decimal(s.denom) / strike:.3f} 股(進位到小數點後第三位)",
     )
     d.text(36, f"(2) 每一單位可交付連結標的整數= {shares} 股")
+    d.text(36, "(4) 如以現金結算來計算報酬率：平均年化報酬率為-278.71%")  # 實物交割情境（虧損）不核對
     d.text(36, "• 實物交割之換算：")
     d.text(
         36,
@@ -580,7 +589,10 @@ ARTICLE_TITLES = {
     2: "商品風險程度：",
     3: "發行機構/保證機構名稱及其長期債務信用評等：",
     5: "計價幣別、商品面額及發行價格：",
+    6: "計價貨幣本金保本率：",
+    7: "投資本金達成原計價幣別100%保本率之各項條件：不適用，本商品不保本。",
     9: "連結標的資產、相對權重與投資績效之關聯情形：",
+    10: "連結標的之相關說明或評等資料：",
     12: "本商品年期、交易日、期初進場日、發行日、到期日、配息日、最終評價日及其他期日(依本商品性質決定之)：",
     13: "配息資料及其計算公式：",
     14: "自動提前到期事件之贖回計算公式：",
@@ -639,6 +651,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             _table(d, s, codes=True)
             d.section = "art9"
             d.text(72, "相對權重：不適用")
+        elif n == 10:
+            write_notes(d.w, s.underlyings, "column", x=72, note_x=218, heading=None, width=30)
         elif n == 12:
             _article12(d, s)
         elif n == 13:
@@ -810,6 +824,7 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         f"• 計價幣別：{s.currency_zh}({s.ccy}) ●每單位商品面額：{m}●最低申購金額：1單位商品面額，即{s.denom:,}{s.currency_zh}",
         "• 發行價格：100%",
         f"• 計價貨幣本金保本率：不保本。若投資人在到期日前贖回本商品，將可能導致可領回的金額低於100%{s.currency_zh}投資本金。",
+        "• 投資本金達成原計價幣別100%保本之各項條件：不適用，本商品不保本。",
         "• 連結標的資產：" + "、".join(u.name for u in s.underlyings) + "。●相對權重：不適用。",
         f"• 商品年期：{s.tenor}個月(惟受中文產品說明書所述事件之限制)",
         f"• 交易日/期初進場日：{dt_(s.trade_date)}，並依「中斷日」進行調整●發行日：{dt_(s.issue_date)}●到期日：最終評價日後的第三個營業日，即{dt_(s.maturity_date)}，並依營業日慣例調整",

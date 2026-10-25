@@ -18,7 +18,7 @@ from pathlib import Path
 
 from harness import STANDARD, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
-from reference_synth import UL, ProductSpec, price
+from reference_synth import UL, ProductSpec, price, write_notes
 
 CENT = Decimal("0.01")
 # 人民幣商品第一章第 5 條在幣別後面接的說明段落（真實樣本寫法節錄，Issue #180）
@@ -210,9 +210,12 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                 5: f"計價幣別：{ccy}" + (CNH_NOTE if ccy == "人民幣" else ""),
                 6: f"每單位面額：{ccy}{denom}元",
                 7: f"最低交易金額：{ccy}{denom}元",
+                8: "計價貨幣本金保本率：本商品不保本。",
+                9: "投資本金達成保本之各項條件：不適用，因本商品不保本",
                 10: "發行價格：100%",
                 11: "主要給付項目",
                 12: "連結標的資產",
+                13: "連結標的之相關說明或評等資料：",
                 15: "本商品年期",
                 18: "情境分析",
                 27: "ISIN：XS1999900001",
@@ -261,6 +264,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             w.section = "art12"
             sub(2)
             line("標的說明")
+        if k == 13:
+            write_notes(w, s.underlyings, "paragraph", x=233.6, heading=None, width=30)
         if k == 15:
             vals = [
                 f"本商品年期為{n}個月",
@@ -325,7 +330,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                         line(f"平均年化報酬率(以簡單平均年化報酬率之方式計算)為{s.annual:.2f}%")
     chapter("二", "相關機構事業概況")
     line("發行機構：(1)事業名稱：" + STANDARD["issuer"]["hsbc"]["issuer_name"].replace("（", "(").replace("）", ")"))
-    line("受託或銷售機構：(a)事業名稱：" + STANDARD["distributor"]["name"] + "(b)電話：02-5556-1313")
+    line("受託或銷售機構：(a)事業名稱：" + STANDARD["distributor"]["name"] + "(b)設立日期：2000年11月20日")
     line(
         "(c)營業所在地：" + STANDARD["distributor"]["address"] + "(d)負責人姓名：" + STANDARD["distributor"]["chairman"]
     )
@@ -402,6 +407,8 @@ def build_iis_pdf(
     def page2() -> None:
         line(f"6. 計價幣別：{s.currency_zh}")
         line(f"7. 每單位面額：{s.denom:,} {s.currency_zh}")
+        line("8. 計價貨幣本金保本率：不保本。詳細解釋，請參考產品說明書第一章第八項")
+        line("9. 投資本金達成保本率之各項條件：不適用，因本商品不保證保本")
         line(f"10. 連結標的資產: {', '.join(names)}")
         line(f"(彭博代碼: {', '.join(tickers)})。")
         line(f"11. 本商品年期: 如未發生自動提前到期事件，且投資人持有本商品至到期日，為{s.tenor} 個月")

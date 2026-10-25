@@ -29,7 +29,7 @@ from fcn_checker.issuers import BARC, Issuer
 from fcn_checker.schema import CheckReport
 from harness import STANDARD, check_sheet, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
-from reference_synth import Q4, ProductSpec, build_reference_sheet, price, reference_row
+from reference_synth import Q4, ProductSpec, build_reference_sheet, price, reference_row, write_notes
 
 FIXED_WARNING = STANDARD["risk"]["fixed_warning"]
 DISTRIBUTOR = STANDARD["distributor"]
@@ -275,7 +275,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     w.line(56.0, "(2) 相對權重：不適用。", gap=19)
     w.line(56.0, "(3) 投資績效之關連情形：請參閱本章第15 條之說明。", gap=19)
     article(11, "連結標的資產之相關說明：")
-    w.line(81.0, "標的資產之相關資訊請參閱發行機構網站。")
+    write_notes(w, s.underlyings, "label", x=81.0, label="標的資產{k}：{name}", heading=None)
     article(12, "標的資產調整：")
     w.line(81.0, "計算代理機構得依相關規定調整標的資產。")
 
@@ -487,7 +487,10 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     ]:
         article(n, title)
         sub(1, f"事業名稱：{corp}", x_num=67.7, x_body=96.0)
-        sub(2, "設立日期：2000 年1 月1 日", x_num=67.7, x_body=96.0)
+        established = (
+            "2000 年11 月20 日" if n == 5 else "2000 年1 月1 日"
+        )  # 受託機構 = 審查標準 distributor.established
+        sub(2, f"設立日期：{established}", x_num=67.7, x_body=96.0)
         sub(3, f"營業所在地：{addr}", x_num=67.7, x_body=96.0)
         sub(4, f"負責人姓名：{boss}", x_num=67.7, x_body=96.0)
 
@@ -706,6 +709,8 @@ def build_iis_pdf(
             f"7.商品面額與發行價格：每單位商品面額為{s.denom:,} {s.currency_zh}，最低申購金額為"
             f"{s.denom:,} {s.currency_zh}。發行價格為商品面額之100%。"
         )
+        w.line(20.5, "8.計價貨幣本金保本率：無，本商品為不保障本金之境外結構型商品。")
+        w.line(20.5, "9.投資本金達成100％保本率之各項條件：不適用，本商品為不保障本金之境外結構型商品。")
         w.line(20.5, "10.連結標的資產：" + "、".join(f"{u.ticker} Equity" for u in s.underlyings) + ".")
         w.line(20.5, f"11.商品年期：{s.tenor} 個月。")
         w.line(20.5, f"12.發行日：{zh_date(s.issue_date)}。")

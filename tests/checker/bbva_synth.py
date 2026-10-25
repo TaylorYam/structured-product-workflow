@@ -27,7 +27,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["bbva"]["product_name"]
 WARNING = STANDARD["issuer"]["bbva"]["fixed_warning"]
@@ -489,6 +497,7 @@ def _article16(d: _Doc, s: Spec) -> None:
             29,
             f"第1 個配息日之配息金額＝10 單位面額X 配息率X 計息天數慣例＝10X{s.denom * s.monthly / 100:,.2f} {s.currency_zh}",
         )
+    d.text(29, f"平均年化報酬率：{s.annual}%")
     barrier = f"期初價格的{s.ki_pct}%（下限值）" if s.ki != "none" else f"期初價格的{s.strike}%"
     no_ko = (
         f"，且籃子中任一連結標的於{s.date(s.ko_start)}（含）至贖回評價日（含）的所有預定交易日之最佳表現值小於"
@@ -509,7 +518,11 @@ def _article16(d: _Doc, s: Spec) -> None:
     )
     d.text(29, coupons)
     d.text(29, f"到期贖回金額＝10 單位面額X 100%＝10 x {s.money(s.denom)} X 100%＝{s.money(10 * s.denom)}")
-    for case, close in (("情境三：較差情況", "50.0000"), ("情境四：最差情況", "0.0000")):
+    d.text(29, f"平均年化報酬率：{s.annual}%")
+    for case, close, annualized in (
+        ("情境三：較差情況", "50.0000", "-63.48"),
+        ("情境四：最差情況", "0.0000", "-180.00"),
+    ):
         d.text(29, case)
         d.text(
             29,
@@ -519,6 +532,7 @@ def _article16(d: _Doc, s: Spec) -> None:
         d.text(29, coupons)
         d.text(29, f"剩餘金額＝0.5000 X {close} 美元 = 25.00 {s.currency_zh}")
         d.text(29, f"總投資金額＝10 單位面額，因此到期日將獲得100 股的表現最差連結標的加上現金{s.money(250)}。")
+        d.text(29, f"平均年化報酬率：{annualized}%")  # 虧損情境不核對
     d.text(29, "免責聲明：以上情境分析之解說僅供投資人參考之用。")
 
 
@@ -536,8 +550,11 @@ ARTICLE_TITLES = {
     2: "商品風險程度：",
     3: "發行機構或保證機構名稱及其長期債務信用評等：",
     5: "計價幣別：",
+    6: "計價貨幣本金保本率：不適用。在無發行機構或保證機構違約的情況下，本商品仍不保本。",
+    7: "投資本金達成100%保本之各項條件：不適用",
     8: "主要給付項目及其計算方式",
     9: "連結標的資產(例如:指數或個股名稱等)，及其相對權重、與投資績效之關連情形",
+    10: "連結標的之相關說明或評等資料",
     12: "商品年期、發行日、到期日及其他依個別商品性質而定之日期",
     13: "配息資料及其計算公式",
     14: "到期贖回計算公式，包含最低保證收益率及參與率",
@@ -585,6 +602,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             _underlying_table(d, s)
             d.section = "art9"
             d.text(57, "(3) 相對權重：不適用。")
+        elif n == 10:
+            write_notes(d.w, s.underlyings, "label", x=37, note_x=56, label="{k}", heading=None, width=48)
         elif n == 12:
             _article12(d, s)
         elif n == 13:

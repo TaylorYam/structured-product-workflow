@@ -23,7 +23,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["citi"]["product_name"]
 WARNING = STANDARD["issuer"]["citi"]["fixed_warning"]
@@ -438,6 +446,8 @@ def _scenarios(d: _Doc, s: Spec) -> None:
             d.text(67, "(二)到期日給付說明")
             d.text(67, "將以實物交付表現最差連結標的之股數如下：每單位商品面額的100% ÷ 表現最差連結標的之執行價")
             d.text(67, f"發行機構應支付投資人總股數與零股換算之現金金額406.80{unit}")
+        annualized = f"{s.annual:.2f}" if kind != "delivery" else "-56.17"  # 較差情況（虧損）不核對
+        d.text(67, f"總報酬率 = 0.8750% (平均年化報酬率：{annualized}%)")
 
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
@@ -481,6 +491,7 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         "本商品之風險程度：RR4",
         f"計價幣別：{unit}",
         "原計價幣別本金保本率：不保本。",
+        "原計價幣別投資本金達成100%保本率之各項條件：不適用。本商品不保本。",
         f"連結標的資產：{names}",
         tenor,
         f"交易日：{zh_date(s.trade_date)}；期初評價日：{zh_date(s.trade_date)}；發行日：{zh_date(s.issue_date)}",
@@ -652,8 +663,11 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         3: f"發行機構名稱及其長期債務信用評等：{ISSUER}；長期債務信用評等為虛構",
         4: "商品之發行評等：無",
         5: f"計價幣別：{unit}({s.ccy})",
+        6: "原計價幣別投資本金保本率：不保本。本商品到期可能視連結標的之表現而有損失。",
+        7: "原計價幣別投資本金達成100％保本之各項條件：不適用。本商品不保本。",
         8: "主要給付項目及其計算方式：",
         9: "連結標的資產：",
+        10: "連結標的之相關說明或評等資料：",
         12: "商品年期、發行日、到期日及其他依個別商品性質而定之日期：",
         13: "配息資料及其計算公式（本商品項下之所有計算及判定將由計算代理機構以其單獨絕對裁量權為之）：",
         14: "發行機構提前贖回/提前買回及到期給付計算公式，包含最低保證配息率及參與率：",
@@ -681,6 +695,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             d.section = "art9"
             d.text(67, "（每一連結標的下稱「連結標的」或「連結標的資產」）")
             d.text(67, "相對權重： 不適用")
+        elif n == 10:
+            write_notes(d.w, s.underlyings, "label", x=67, label="連結標的{k}：{name}", heading=None, width=46)
         elif n == 12:
             _dates(d, s)
         elif n == 13:
@@ -730,7 +746,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         1,
     ):
         d.numbered(f"({n})", title, legacy=s.legacy, x=66, body_x=90)
-        for t in (f"公司名稱：{name}", f"營業所在地：{place}", f"負責人姓名：{head}"):
+        since = "2000年11月20日" if name == DIST["name"] else "2000年1月1日"  # 受託機構 = 審查標準設立日期
+        for t in (f"公司名稱：{name}", f"設立日期：{since}", f"營業所在地：{place}", f"負責人姓名：{head}"):
             d.w.line(92, "•", gap=0)
             d.text(110, t)
 

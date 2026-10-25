@@ -26,7 +26,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["ca"]["product_name"]
 WARNING = STANDARD["issuer"]["ca"]["fixed_warning"]
@@ -414,11 +422,13 @@ def _article16(d: _Doc, s: Spec) -> None:
     d.text(36, "假設於第1 個自動提前出場觀察日發生自動提前出場事件。")
     coupons(months, s.first_callable)
     d.text(36, f"• 自動提前出場贖回金額＝每單位面額 × 100% ＝{denom} × 100% ＝{denom} {ccy}")
-    d.text(36, "• 總報酬率 ＝[(自動提前出場贖回金額+累積配息金額) / 總投資金額] - 100% ＝0.75%")
+    total = "• 總報酬率 ＝[({}+累積配息金額) / 總投資金額] - 100% ＝{}%（平均年化報酬率：" + f"{s.annual}%）"
+    d.text(36, total.format("自動提前出場贖回金額", "0.75"))
     d.text(36, "情境分析二：一般情況")
     d.text(36, "假設不曾發生任何自動提前出場事件，於到期日以現金結算收益。")
     coupons(f"1~{s.tenor}", s.tenor)
     d.text(36, f"• 到期贖回金額＝每單位面額 × 100% ＝{denom} × 100% ＝{denom} {ccy}")
+    d.text(36, total.format("到期贖回金額", "4.50"))
     d.text(36, "情境分析三：較差情況")
     worst = s.underlyings[0]
     d.text(
@@ -432,6 +442,7 @@ def _article16(d: _Doc, s: Spec) -> None:
         f"• 到期給付最差表現之連結標的單位數為：每單位面額/表現最差連結標的的執行價* = {denom} / 70.3150 = 142.217 股",
     )
     d.text(36, f"整數股數＝142 股，畸零股數＝0.217 股，剩餘金額＝50.00 x 0.217＝10.85 {s.quote}")
+    d.text(36, "• 總報酬率 ＝-39.90% (平均年化報酬率:-79.81%)")  # 虧損情境不核對
     d.text(36, "*在必要時，依期末匯率轉換為計價貨幣。")
     d.text(36, "※ 請注意：情境分析之結果不保證未來績效，亦不代表連結標的未來表現。")
 
@@ -442,8 +453,11 @@ ARTICLE_TITLES = {
     3: "發行機構：",
     5: "計價幣別：",
     6: "商品面額：",
+    7: "計價貨幣本金保本率：不保本。本商品於到期的贖回價值可能低於投資本金。",
+    8: "投資本金達成100%保本之各項條件：不適用。本商品為不保障本金之結構型商品。",
     9: "本商品主要給付項目及其計算方式：",
     10: "連結標的資產及其相對權重、與投資績效之關連情形：",
+    11: "連結標的之相關說明：",
     13: "商品年期、發行日、交易日、到期日、付息日、贖回日及其他依商品性質而定之日期：",
     15: "到期贖回計算公式，包含保證配息率及參與率：",
     16: "投資收益計算方法，包含本金虧損之機率及以情境分析解說最大可能獲利、損失及其他狀況之年化平均報酬率：",
@@ -483,6 +497,10 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         elif n == 10:
             d.article(n, title)
             _article10(d, s)
+        elif n == 11:
+            d.article(n, title)
+            d.w.row([(79, "連結標的"), (361, "簡介")], gap=16)
+            write_notes(d.w, s.underlyings, "column", x=45, note_x=200, heading=None, width=34)
         elif n == 13:
             d.article(n, title)
             for t in (
@@ -666,6 +684,8 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         "(1) 受託對象：專業投資人及OSU 客戶。",
         "(3) 本商品之風險程度：本商品風險等級為RR4，適合客戶投資風險承受度RR4(穩健型)等級(含)以上之專業投資人。",
         f"(6) 計價幣別：{s.currency_zh}({s.ccy})。",
+        "(7) 計價貨幣本金保本率：不保本。本商品於到期的贖回價值可能低於投資本金。",
+        "(8) 投資本金達成100%保本之各項條件：不適用。本商品為不保障本金之結構型商品。",
         "(9) 連結標的：",
     ):
         d.text(30, t)

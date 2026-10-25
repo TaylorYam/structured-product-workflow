@@ -190,7 +190,8 @@ def test_scenario_return_unreadable_requires_review(tmp_path):
 )
 def test_fixed_value_differs_from_review_standard(tmp_path, edits, rule_id, field):
     report = check(tmp_path, edits=edits)
-    assert problems(report) == {(rule_id, MISMATCH)}
+    names_in_text = {("standard.distributor_names", MISMATCH)} if field == "distributor_name_cover" else set()
+    assert problems(report) == {(rule_id, MISMATCH)} | names_in_text  # 名稱寫錯全文名稱規則也報（Issue #226）
     assert [r.field for r in results(report, rule_id) if r.status == MISMATCH] == [field]
 
 

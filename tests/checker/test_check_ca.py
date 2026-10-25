@@ -52,9 +52,10 @@ def test_supported_types_pass_and_are_filled(tmp_path, spec):
     assert len(rule(r, "doc.coupon_mentions")) == 2  # 最低保證配息率、第 9 項 (a) 舉例的月配息率（Issue #319）
     assert len(rule(r, "doc.redemption_pct")) == 6  # 第 9 項 (b)、(c)；情境一、二贖回金額行各 2 處
     # 共用情境規則（Issue #294）：基本假設天期、面額、配息率；情境一～三配息金額行的配息率各 2 處；配息金額行 3 處、
-    # 贖回金額行 2 處代入的面額；情境二／三配息月數
+    # 贖回金額行 2 處代入的面額；情境二／三配息月數；情境一、二平均年化報酬率（Issue #228，情境三虧損不核對）
     params = [x.field for x in rule(r, "scenario.params")]
-    assert len(params) == 16 and params.count("scenario_monthly_coupon_7") == 1
+    assert len(params) == 18 and params.count("scenario_monthly_coupon_7") == 1
+    assert params.count("scenario_annualized_return_2") == 1 and "scenario_annualized_return_3" not in params
     assert len(rule(r, "scenario.reprint")) == 1
     assert len(rule(r, "doc.coupon_periods")) == 2  # 名稱 2 處（日期表期數是共用檢查）
     assert len(rule(r, "doc.autocall_terms")) == 2  # 最低保證配息率月數、情境一配息月數
@@ -126,6 +127,7 @@ def test_ki_type_is_compared_with_the_sheet(tmp_path):
         (Edit("出場贖回金額＝每單位面額 × 100%", "出場贖回金額＝每單位面額 × 99%", "ts.art16"), "doc.redemption_pct"),
         (Edit("到期贖回金額＝每單位面額 × 100%", "到期贖回金額＝每單位面額 × 99%", "ts.art16"), "doc.redemption_pct"),
         (Edit("天期：6 個月", "天期：7 個月", "ts.art16"), "scenario.params"),
+        (Edit("（平均年化報酬率：9.00%）", "（平均年化報酬率：9.10%）", "ts.art16"), "scenario.params"),
         (Edit("70.3150 美元", "70.3151 美元", "ts.art16.table"), "scenario.reprint"),
         (Edit("70.00% )", "75.00% )", "ts.art16.table"), "scenario.reprint"),
         (Edit("每單位面額：10,000 美元", "每單位面額：1,000 美元", "ts.art16"), "scenario.params"),

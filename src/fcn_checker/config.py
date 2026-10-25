@@ -120,6 +120,8 @@ class IssuerStandard:
     min_amount_multiples: dict[str, int | dict[str, int]] = field(default_factory=dict)
     # 開始受理贖回日期寫文字的上手：允許的寫法（文字須以其中之一開頭）；沒有 → 寫文字時轉人工覆核（Issue #227）
     redemption_start_wordings: tuple[str, ...] = ()
+    osu_clients: bool = True  # 可否承作 OSU 客戶（issuer.<上手>.osu_clients；沒寫為可以，Issue #224）
+    distributor_name_exempt: tuple[str, ...] = ()  # 全文受託機構名稱特例放行的寫法（CA，Issue #226）
 
 
 @dataclass(frozen=True)
@@ -131,6 +133,9 @@ class ReviewStandard:
     distributor_name: str
     distributor_phone: str
     distributor_address: str
+    distributor_established: dt.date  # 受託或銷售機構設立日期（Issue #226）
+    # 保本率敘述表示不保本的寫法（值以其中之一開頭，後面可接說明句；Issue #226）
+    non_protected: tuple[str, ...]
     fees: dict[str, str]  # 第四章費用項目 → 費率區間
     issue_price_pct: Decimal
     risk_level: str
@@ -148,6 +153,8 @@ class ReviewStandard:
     distributor_name_equivalents: tuple[str, ...] = ()
     # 交易日（參考條件表）在這天（含）以前的文件出現禁用語時特例通過（已通知上手改版，Issue #247）；None 不特例
     forbidden_exempt_until: dt.date | None = None
+    # 交易日（參考條件表）在這天（含）以前的文件，受託對象與 OSU 客戶不一致時特例通過（上手改版前的舊範本，Issue #224）
+    osu_exempt_until: dt.date | None = None
 
     def approval_date_on(self, trade_date: dt.date) -> dt.date | None:
         """交易日當天或之前最近一次的審查通過日期；交易日早於最早的日期時為 None。"""
@@ -185,6 +192,8 @@ class ReviewStandard:
             minimum_issue_size=v.get("minimum_issue_size"),
             min_amount_multiples=dict(v.get("min_amount_multiples", {})),
             redemption_start_wordings=v.get("redemption_start_wordings", ()),
+            osu_clients=v.get("osu_clients", True),
+            distributor_name_exempt=v.get("distributor_name_exempt", ()),
         )
 
 
@@ -251,6 +260,12 @@ def _texts(v: Any, where: str) -> tuple[str, ...]:
     if not isinstance(v, list) or not v or not all(isinstance(x, str) and x for x in v):
         raise _fail(f"審查標準 {where} 須是一串不空白的文字")
     return tuple(v)
+
+
+def _bool(v: Any, where: str) -> bool:
+    if type(v) is not bool:
+        raise _fail(f"審查標準 {where} 須是 true 或 false")
+    return v
 
 
 def _positive_int(v: Any, where: str) -> int:
@@ -396,6 +411,8 @@ ISSUER_FIELDS: dict[str, Callable[[Any, str], Any]] = {
     "guarantor_name": _place_texts(GUARANTOR_PLACES),  # 子表：出處 → 保證機構名稱；沒有 → 不核對
     "agent_name": _place_texts(AGENT_PLACES),  # 子表：出處 → 總代理人名稱；沒有 → 不核對
     "min_amount_multiples": _min_amount_multiples,  # 子表：最低金額出處 → 單位面額的倍數；沒列為 1
+    "osu_clients": _bool,  # 可否承作 OSU 客戶；沒有 → 可以（Issue #224）
+    "distributor_name_exempt": _texts,  # 全文受託機構名稱特例放行的寫法；沒有 → 不放行（Issue #226）
 }
 
 # 舊版面（每種基準一個表、底下分上手）的表 → [issuer.<上手>] 的欄位（Issue #128）；讀到舊版面時停止並提示轉換指令
@@ -484,6 +501,27 @@ def _approval_dates(value: Any) -> tuple[dt.date, ...]:
     return tuple(sorted(value))
 
 
+def _optional_date(value: Any, where: str) -> dt.date | None:
+    """可不寫的日期；寫了就要是日期（YYYY-MM-DD）。"""
+    if value is not None and (type(value) is not dt.date):
+        raise _fail(f"審查標準 {where} 須是日期（YYYY-MM-DD）")
+    return value
+
+
+def _date(value: Any, where: str) -> dt.date:
+    """必填的日期（YYYY-MM-DD）。"""
+    if value is None:
+        raise _fail(f"審查標準 {where} 須是日期（YYYY-MM-DD）")
+    return _optional_date(value, where)
+
+
+def _non_protected(value: Any) -> tuple[str, ...]:
+    """principal_protection.non_protected：至少一個寫法、都是非空字串。"""
+    if not isinstance(value, list) or not value or not all(isinstance(v, str) and v.strip() for v in value):
+        raise _fail('審查標準 principal_protection.non_protected 須列出至少一個表示不保本的寫法，例如 ["不保本"]')
+    return tuple(value)
+
+
 def load_review_standard(path: Path) -> ReviewStandard:
     d = load_toml(path, "審查標準")
     legacy = legacy_tables(d)
@@ -506,6 +544,8 @@ def load_review_standard(path: Path) -> ReviewStandard:
             distributor_address_equivalents=tuple(d["distributor"].get("address_equivalents", ())),
             distributor_name_equivalents=tuple(d["distributor"].get("name_equivalents", ())),
             distributor_address=d["distributor"]["address"],
+            distributor_established=_date(d["distributor"]["established"], "distributor.established"),
+            non_protected=_non_protected(d["principal_protection"]["non_protected"]),
             fees=dict(d["fees"]),
             issue_price_pct=Decimal(str(d["issue_price"]["pct"])),
             risk_level=d["risk"]["level"],
@@ -513,7 +553,8 @@ def load_review_standard(path: Path) -> ReviewStandard:
             fixed_warning_occurrences=int(d["risk"]["fixed_warning_occurrences"]),
             forbidden=tuple(d["wording"]["forbidden"]),
             allowed_phrases=tuple(d["wording"]["allowed_phrases"]),
-            forbidden_exempt_until=d["wording"].get("exempt_until"),
+            forbidden_exempt_until=_optional_date(d["wording"].get("exempt_until"), "wording.exempt_until"),
+            osu_exempt_until=_optional_date(d.get("osu", {}).get("exempt_until"), "osu.exempt_until"),
             currency_zh_to_iso=dict(d["currency"]),
             denomination={k: int(v) for k, v in d["denomination"].items()},
             iis_pages=int(d["iis"]["pages"]),

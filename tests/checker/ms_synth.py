@@ -20,7 +20,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["ms"]["product_name"]
 WARNING = STANDARD["issuer"]["ms"]["fixed_warning"]
@@ -317,7 +325,10 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         5: f"計價幣別：{s.currency_zh} ({s.ccy})",
         6: f"每單位商品面額：{s.currency_zh} {money(s.denom)} 元",
         7: "發行價格：商品面額之100%",
+        8: "計價貨幣本金保本率：無，本商品為不保障本金之結構型商品。",
+        9: "原計價幣別投資本金達成保本之各項事件：不適用。本商品為不保障本金之結構型商品。",
         11: "連結標的資產，及其相對權重、與投資績效之關連情形：",
+        12: "連結標的資產之相關說明",
         14: "商品年期、發行日、到期日及其他依個別商品性質而定之日期：",
         15: "配息資料及其計算公式：",
         16: "到期贖回計算公式、最低保證贖回率及參與率：",
@@ -340,6 +351,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                 d.cell(283, ticker)
                 d.cell(419, "那斯達克證交所")
             d.text(72, "相對權重：不適用。")
+        elif n == 12:
+            write_notes(d.w, s.underlyings, "inline", x=72, label="({k})連結標的{k}：", heading=None, width=44)
         elif n == 14:
             d.sub(1, f"商品年期：{s.tenor} 個月期")
             d.sub(2, f"交易日：{zh_date(s.trade_date)}")

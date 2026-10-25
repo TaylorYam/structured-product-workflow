@@ -26,7 +26,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["dbs"]["product_name"]
 WARNING = STANDARD["issuer"]["dbs"]["fixed_warning"]
@@ -222,7 +230,8 @@ class _Doc:
 
 
 def _warnings(doc: str = "本中文產品說明書") -> list[str]:
-    """封面警語 1.～11.：1. 為固定警語；7. 是允許片語「受託投資或受託買賣」。"""
+    """封面警語 1.～11.：1. 為固定警語；7. 是允許片語「受託投資或受託買賣」。DBS 不能承作 OSU 客戶，改版後的範本
+    除固定警語外不寫 OSU（Issue #224；改版前的寫法見 `OLD_OSU_EDITS`）。"""
     return [
         WARNING,
         "本商品係複雜的金融商品，必須經過符合資格的人員解說後再進行投資。",
@@ -233,9 +242,21 @@ def _warnings(doc: str = "本中文產品說明書") -> list[str]:
         "本商品係依境外結構型商品管理規則於中華民國境內受託投資或受託買賣，投資人申購前應詳閱本中文產品說明書。",
         "投資人未清楚瞭解中文產品說明書前，請勿於相關文件簽名或蓋章。",
         "受託或銷售機構應提供專業投資人相關契約審閱期間，其審閱期間不得低於三日。",
-        "對於依OSU相關規範為OSU客戶受託買賣之特別風險警語：本商品僅得於OSU對OSU客戶為推介及交易對象。",
-        "專業投資人及OSU客戶不適用「金融消費者保護法」之金融消費爭議處理機制。",
+        "本商品僅限專業投資人投資，受託或銷售機構不得向非專業投資人推介。",
+        "專業投資人不適用「金融消費者保護法」之金融消費爭議處理機制。",
     ]
+
+
+# 改版前的範本（Issue #224）：警語 10.、11.、封面「僅限於專業投資人及OSU客戶」與投資人須知受託對象都寫 OSU 客戶（兩份文件都套用）
+OLD_OSU_EDITS = (
+    Edit(
+        "本商品僅限專業投資人投資，受託或銷售機構不得向非專業投資人推介。",
+        "對於依OSU相關規範為OSU客戶受託買賣之特別風險警語：本商品僅得於OSU對OSU客戶為推介及交易對象。",
+    ),
+    Edit("專業投資人不適用「金融消費者保護法」", "專業投資人及OSU客戶不適用「金融消費者保護法」"),
+    Edit("僅限於專業投資人)", "僅限於專業投資人及OSU客戶)"),
+    Edit("受託對象：專業投資人。", "受託對象：專業投資人及OSU 客戶。"),
+)
 
 
 # ---------------------------------------------------------------- 說明書
@@ -254,14 +275,14 @@ def _cover(d: _Doc, s: Spec) -> None:
         ("計價幣別", s.currency_text + ("。" if s.ccy == "CNH" else "")),
         ("發行機構之名稱", ISSUER),
         ("發行機構註冊地", "新加坡"),
-        ("商品註冊地", "無(本商品之受託對象僅限於專業投資人及OSU客戶)"),
+        ("商品註冊地", "無(本商品之受託對象僅限於專業投資人)"),
         (
             "發行人之名稱、電話及地址",
             "虛構銀行台北分公司(Fictional Bank, Taipei Branch)，電話：(02) 0000-0000，地址：台北市虛構路1號。",
         ),
         ("保證機構之名稱及地址", "本商品無保證機構。"),
         ("受託或銷售機構之名稱、電話及地址", f"{DIST_NAME}、電話：{DIST_PHONE}、地址：{DIST_ADDRESS}。"),
-        ("公會審查通過之日期及文號", "不適用(本商品之受託對象僅限於專業投資人及OSU客戶)。"),
+        ("公會審查通過之日期及文號", "不適用(本商品之受託對象僅限於專業投資人)。"),
         ("受託或銷售機構審查通過之日期及文號", f"{s.approval.year}年{s.approval.month}月{s.approval.day}日；"),
     ):
         w.need(16)
@@ -339,6 +360,8 @@ def _basic(d: _Doc, s: Spec) -> None:
     d.cell("計價幣別：", [s.currency_text + ("。" if s.ccy == "CNH" else "")])
     d.cell("商品面額：", [f"每單位{s.currency_zh}{s.denom:,}"])
     d.cell("發行價格：", ["商品面額的100.00%"])
+    d.cell("計價貨幣本金保本率：", ["不適用，本商品為不保障投資本金之境外結構型商品。"])
+    d.cell("計價幣別投資本金達成保本之各項條件：", ["不適用，本商品為不保障投資本金之境外結構型商品。"])
     w = d.w
     top = w.y
     for k, p in enumerate(("連結標的資產及其相對", "權重與投資績效之關連", "情形：")):
@@ -348,6 +371,7 @@ def _basic(d: _Doc, s: Spec) -> None:
         w.row([(176, str(n), ""), (192, u.name), (309, u.ticker), (392, u.exchange)], gap=14, size=9)
     d.text(170, "相關交易所：所有交易所。")
     d.text(170, "相對權重：不適用。")
+    write_notes(w, s.underlyings, "inline", x=170, label="{k}.", heading_x=56, size=9, width=40)
     w.y = max(w.y, top + 39) + 5
     d.section = "basic.dates"
     d.cell(
@@ -647,9 +671,10 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
     d.title("商品簡介", size=9)
     uls = "、".join(f"{u.name} (Fictional {i} Inc)，彭博代碼為{u.ticker}" for i, u in enumerate(s.underlyings, 1))
     for t in (
-        "受託對象：專業投資人及OSU 客戶。",
+        "受託對象：專業投資人。",
         "本商品風險程度：RR4",
         f"計價幣別：{s.currency_text}；計價貨幣本金保本率：不適用，本商品為不保障投資本金之境外結構型商品。",
+        "計價幣別投資本金達成保本率之各項條件：不適用，本商品為不保障投資本金之境外結構型商品。",
         f"連結標的資產：{uls}。",
     ):
         d.text(16, t, size=9)

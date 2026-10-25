@@ -7,15 +7,17 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from collections.abc import Callable
+from decimal import Decimal
 
 from ..config import ISSUER_NAME_IGNORES, NAME_FLAGS, RISK_LEVEL
 from ..investor_sheet import read_iis
 from ..schema import CheckResult, DocKind, Evidence, FieldStatus, Item, ParsedField
 from ..schema import CheckStatus as S
 from ..standard_fields import AGENT_PLACES, GUARANTOR_PLACES, Occurrence, fee_field
-from ..text import full_brackets, squash
+from ..text import compat_standard, full_brackets, squash
 from .kit import Check, Context, occurrences_of, standard_field
 
 __all__ = ["iis_review_standard_rules", "review_standard_rules"]
@@ -226,6 +228,23 @@ def _risk_level(ctx: Context) -> CheckResult:
     )
 
 
+def _exempt_until(
+    check: Check, trade: ParsedField, until: dt.date | None, expected, actual, *, evidence, found: str, why: str
+) -> CheckResult | None:
+    """不一致、但 `trade`（參考條件表交易日）在審查標準的特例日期 `until`（含）以前：狀態通過，說明寫出不一致處與 `why`。
+    沒有特例日期、讀不到交易日或交易日在之後時回傳 None，照原規則判。"""
+    if until is None or not trade.ok or trade.value > until:
+        return None
+    return check.compare(
+        expected,
+        actual,
+        ok=True,
+        message=f"{found}；交易日 {trade.value} 在 {until}（含）以前，{why}，特例通過",
+        tolerance=f"交易日（參考條件表）在 {until}（含）以前的文件特例通過",
+        evidence=evidence,
+    )
+
+
 def _forbidden_wording(ctx: Context, trade: ParsedField) -> CheckResult:
     """片語以外出現禁用語即不一致；`trade`（參考條件表交易日）在審查標準 `wording.exempt_until`（含）以前時
     特例通過並註明（已通知上手改版，Issue #247）。讀不到交易日時照原規則判。"""
@@ -239,15 +258,10 @@ def _forbidden_wording(ctx: Context, trade: ParsedField) -> CheckResult:
     evidence = [Evidence.of(ti.lines_for(m.start(), m.end())[0]) for m in hits]
     found = f"允許片語以外出現「{'、'.join(ctx.std.forbidden)}」{len(hits)} 處"
     until = ctx.std.forbidden_exempt_until
-    if hits and until is not None and trade.ok and trade.value <= until:
-        return check.compare(
-            0,
-            len(hits),
-            ok=True,
-            message=f"{found}；交易日 {trade.value} 在 {until}（含）以前，已通知上手改版，特例通過",
-            tolerance=f"交易日（參考條件表）在 {until}（含）以前的文件特例通過",
-            evidence=evidence,
-        )
+    if hits and (
+        exempt := _exempt_until(check, trade, until, 0, len(hits), evidence=evidence, found=found, why="已通知上手改版")
+    ):
+        return exempt
     return check.compare(
         0,
         len(hits),
@@ -255,6 +269,234 @@ def _forbidden_wording(ctx: Context, trade: ParsedField) -> CheckResult:
         reason="forbidden_wording",
         fail_message=f"{found}（SOP：須改為「受託買賣」）",
     )
+
+
+OSU_WORDS = ("OSU", "國際證券業務")  # 文件提到 OSU 客戶的寫法（BARC 投資人須知寫「國際證券業務分公司」）
+# 受託對象的寫法：欄位（受託對象／受託或銷售對象／受託及銷售對象（SG、MS）／銷售對象（BNP、UBS）＋冒號），或敘述
+# （「受託對象僅限於…」「受託或銷售對象以…為限」「受託對象為…」）；固定警語的「受託對象僅限依據…」不算（固定警語規則核對）
+_CLIENTS = re.compile(r"(?:受託(?:[或及]銷售)?|銷售)對象(?:[:：]|僅限於|限於|以|為)")
+_CLIENTS_END = re.compile(r"[。；;●•․]|\(\d+\)|\d+[.)、]|本商品|為限")  # 受託對象的值到下一項為止
+_OLD_TEMPLATE = "上手改版前的舊範本"
+
+
+def _osu_clients(ctx: Context, trade: ParsedField) -> list[CheckResult]:
+    """受託對象與上手能否承作 OSU 客戶（`issuer.<上手>.osu_clients`）一致（Issue #224）。`trade`（參考條件表交易日）在
+    審查標準 `osu.exempt_until`（含）以前時，不一致特例通過並註明（上手改版前的舊範本）。"""
+    check = Check("standard.osu_clients", "osu_clients", Item.standard("受託對象（OSU 客戶）"), ctx.document)
+    return [_no_osu(ctx, check, trade)] if not ctx.issuer_std.osu_clients else _clients_with_osu(ctx, check, trade)
+
+
+def _no_osu(ctx: Context, check: Check, trade: ParsedField) -> CheckResult:
+    """不能承作 OSU 客戶：全文不得出現 OSU。遮掉該上手的固定警語（由固定警語規則核對）與受託機構名稱的等價寫法（例：DBS
+    「玉山綜合證券股份有限公司(含國際證券業務分公司)」是機構名稱，不是受託對象）；括號全半形不計。"""
+    ti, std = ctx.ts.full_text, ctx.issuer_std
+    text = full_brackets(ti.text)
+    masks = (*std.fixed_warnings, std.distributor_name, *std.distributor_name_equivalents)
+    for w in sorted((full_brackets(squash(m)) for m in masks), key=len, reverse=True):  # 長的先遮（名稱等價寫法含全名）
+        text = text.replace(w, "□" * len(w))  # 遮蔽固定警語與受託機構名稱，保留字元位置
+    hits = sorted((m for w in OSU_WORDS for m in re.finditer(re.escape(w), text)), key=lambda m: m.start())
+    evidence = [Evidence.of(ti.lines_for(m.start(), m.end())[0]) for m in hits]
+    found = f"{ctx.issuer} 不能承作 OSU 客戶，{ctx.document}出現 OSU {len(hits)} 處"
+    if hits and (
+        exempt := _exempt_until(
+            check, trade, ctx.std.osu_exempt_until, 0, len(hits), evidence=evidence, found=found, why=_OLD_TEMPLATE
+        )
+    ):
+        return exempt
+    return check.compare(0, len(hits), evidence=evidence, reason="osu_clients", fail_message=found)
+
+
+def _clients_with_osu(ctx: Context, check: Check, trade: ParsedField) -> list[CheckResult]:
+    """可以承作 OSU 客戶：每處受託對象（`_CLIENTS`）的值要提到 OSU 客戶；文件沒有寫受託對象時不產生結果。"""
+    ti, expected, out = ctx.ts.full_text, "提到 OSU 客戶", []
+    for m in _CLIENTS.finditer(ti.text):
+        rest = ti.text[m.end() : m.end() + 40]
+        value = rest[: (end.start() if (end := _CLIENTS_END.search(rest)) else len(rest))]
+        evidence = [Evidence.of(ln) for ln in ti.lines_for(m.start(), m.end() + len(value))]
+        if any(w in value for w in OSU_WORDS):
+            out.append(check.compare(expected, value, ok=True, evidence=evidence))
+            continue
+        found = f"{ctx.issuer} 可以承作 OSU 客戶，受託對象「{value}」沒有寫到 OSU 客戶"
+        exempt = _exempt_until(
+            check, trade, ctx.std.osu_exempt_until, expected, value, evidence=evidence, found=found, why=_OLD_TEMPLATE
+        )
+        out.append(
+            exempt
+            or check.compare(expected, value, ok=False, evidence=evidence, reason="osu_clients", fail_message=found)
+        )
+    return out
+
+
+_DISTRIBUTOR = "玉山"  # 受託機構名稱的開頭：全文每一處都核對寫法（Issue #226）
+_ESTABLISHED = re.compile(r"設立日期(?!及)")  # 「設立日期及簡介」是段落標題，不是值
+_ESTABLISHED_DATE = re.compile(r"[:：]?(?:西元)?(\d{4})年(\d{1,2})月(\d{1,2})日")
+_NAME_GOES_ON = re.compile(r"綜合|證券|股份|有限|公司")  # 審查標準的寫法後面還接著公司名稱用字：不是那個寫法
+_NAME_SHOWN_END = re.compile(r"[，,。、；;：:（）「」]")
+
+
+def _normalized(text: str) -> str:
+    """全文比對用：CJK 相容字轉成標準字、括號統一全形；一對一換字，位置不變，證據照原位置找行。"""
+    return full_brackets(compat_standard(text))
+
+
+def _distributor_established(ctx: Context) -> list[CheckResult]:
+    """說明書受託機構段的設立日期 = 審查標準 `distributor.established`（Issue #226）；每處一筆。
+
+    全文每個「設立日期」往前到上一個「設立日期」是那家機構的段落，只看段內最後一個「名稱」（事業名稱）以後：寫到受託機構
+    （「玉山」）的才是受託機構的設立日期（第二章；BBVA 第 1 頁受託機構明細有寫時也算）。「西元」前綴、冒號全半形不計；
+    日期寫法認不出時轉人工覆核，整份找不到時轉人工覆核。
+    """
+    ti, exp = ctx.ts.full_text, ctx.std.distributor_established
+    text = _normalized(ti.text)
+    item = Item.standard("受託機構設立日期")
+    check = Check("standard.distributor_established", "distributor_established", item, ctx.document, expected=exp)
+    out, prev = [], 0
+    for m in _ESTABLISHED.finditer(text):
+        segment = text[prev : m.start()]
+        prev = m.end()
+        if _DISTRIBUTOR not in segment[max(segment.rfind("名稱"), 0) :]:
+            continue
+        d = _ESTABLISHED_DATE.match(text, m.end())
+        evidence = [Evidence.of(ln) for ln in ti.lines_for(m.start(), (d or m).end())]
+        if d is None:
+            shown = text[m.end() : m.end() + 15]
+            out.append(
+                check.result(
+                    S.REVIEW_REQUIRED,
+                    expected=exp,
+                    actual=shown,
+                    evidence=evidence,
+                    reason="document_invalid",
+                    message=f"{ctx.document}受託機構設立日期的寫法認不出",
+                )
+            )
+            continue
+        try:
+            actual: dt.date | str = dt.date(*(int(g) for g in d.groups()))
+        except ValueError:  # 不存在的日期（例：13 月）照原文顯示
+            actual = d.group(0).lstrip(":：")
+        out.append(
+            check.compare(
+                exp,
+                actual,
+                evidence=evidence,
+                tolerance="「西元」前綴、冒號全半形不計",
+                fail_message="受託機構設立日期與審查標準不同",
+            )
+        )
+    if not out:
+        return [
+            check.result(S.REVIEW_REQUIRED, reason="document_missing", message=f"{ctx.document}找不到受託機構設立日期")
+        ]
+    return out
+
+
+def _distributor_names_in_text(ctx: Context) -> CheckResult:
+    """全文每一處「玉山…」都是審查標準的受託機構名稱 `distributor.name` 或等價寫法 `name_equivalents`（Issue #226）。
+
+    名稱後面可接「（受託機構）」這類角色括號；寫錯字、其他簡稱，或審查標準的寫法後面還接著公司名稱用字（例：「玉山證券
+    股份有限公司」）判不一致，每處附一筆出處。該上手的特例寫法（`issuer.<上手>.distributor_name_exempt`，CA）放行。
+    括號全半形、CJK 相容字不計。
+    """
+    ti, std = ctx.ts.full_text, ctx.issuer_std
+    text = _normalized(ti.text)
+    names = sorted(
+        {full_brackets(squash(n)) for n in (std.distributor_name, *std.distributor_name_equivalents)},
+        key=len,
+        reverse=True,  # 長的先比（等價寫法含全名）
+    )
+    exempt = {full_brackets(squash(n)) for n in std.distributor_name_exempt}
+    total, exempted, bad = 0, 0, []
+    for m in re.finditer(_DISTRIBUTOR, text):
+        total += 1
+        name = next((n for n in names if text.startswith(n, m.start())), None)
+        if name is not None and not _NAME_GOES_ON.match(text, m.start() + len(name)):
+            continue
+        if any(text.startswith(n, m.start()) for n in exempt):
+            exempted += 1
+            continue
+        rest = text[m.start() : m.start() + 20]
+        shown = rest[: (end.start() if (end := _NAME_SHOWN_END.search(rest)) else len(rest))]
+        shown = shown[: shown.index("公司") + 2] if "公司" in shown else shown
+        bad.append((ti.lines_for(m.start(), m.start() + len(shown)), shown))
+    found = f"全文「{_DISTRIBUTOR}…」共 {total} 處"
+    if exempted:
+        found += f"（{exempted} 處是該上手特例放行的寫法 distributor_name_exempt）"
+    places = "、".join(f"第 {lines[0].page} 頁「{shown}」" for lines, shown in bad if lines)
+    return Check(
+        "standard.distributor_names", "distributor_names", Item.standard("受託機構名稱（全文）"), ctx.document
+    ).compare(
+        0,
+        len(bad),
+        evidence=[Evidence.of(ln) for lines, _ in bad for ln in lines],
+        reason="distributor_name_text",
+        tolerance="名稱後可接角色括號；括號全半形不計",
+        message=found + ("，都是審查標準的名稱寫法" if not bad else ""),
+        fail_message=f"，{len(bad)} 處不是審查標準的名稱寫法（distributor.name、name_equivalents）：{places}",
+    )
+
+
+# 保本率敘述的兩種項目（說明書第一章、投資人須知商品簡介）：標籤 → (欄位, 項目名稱)。冒號可省略（JPM 投資人須知）；
+# MS 說明書寫「之各項事件」；「之各項條件」重複一次的文字層（Citi 投資人須知 1 份）也認得
+_PROTECTION_LABELS = (
+    (re.compile(r"本金保本率[:：]?"), "principal_protection_rate", "計價貨幣本金保本率"),
+    (
+        re.compile(r"保本率?(?:之各項(?:條件|事件))+[:：]?"),
+        "principal_protection_conditions",
+        "投資本金達成保本率之各項條件",
+    ),
+)
+_PCT = re.compile(r"(\d+(?:\.\d+)?)%")
+_CJK = re.compile(r"[一-鿿]")
+
+
+def _principal_protection(ctx: Context) -> list[CheckResult]:
+    """「計價貨幣本金保本率」「投資本金達成保本率之各項條件」每一處都表示不保本（Issue #226）：值以審查標準
+    `principal_protection.non_protected` 的寫法之一開頭，後面接的不是中文字（可接說明句）。寫成非 0 的保本率（例：100%）
+    判不一致；其他沒看過的寫法轉人工覆核。文件沒有某一項時轉人工覆核。說明書與投資人須知都核對。"""
+    ti, allowed = ctx.ts.full_text, ctx.std.non_protected
+    text = _normalized(ti.text).replace("％", "%")
+    expected = "表示不保本（" + "、".join(allowed) + "）"
+    out = []
+    for label, field, name in _PROTECTION_LABELS:
+        check = Check("standard.principal_protection", field, Item.standard(name), ctx.document, expected=expected)
+        found = list(label.finditer(text))
+        if not found:
+            out.append(
+                check.result(S.REVIEW_REQUIRED, reason="document_missing", message=f"{ctx.document}找不到「{name}」")
+            )
+        for m in found:
+            rest = text[m.end() : m.end() + 30]
+            value = rest[: (end.end() if (end := re.search(r"[。；;]", rest)) else 20)]
+            evidence = [Evidence.of(ln) for ln in ti.lines_for(m.start(), m.end() + len(value))]
+            word = next((w for w in allowed if rest.startswith(w) and not _CJK.match(rest, len(w))), None)
+            if word is not None:
+                out.append(check.compare(expected, value, ok=True, evidence=evidence, tolerance=f"以「{word}」開頭"))
+                continue
+            pct = _PCT.match(rest)
+            if pct is not None and Decimal(pct.group(1)) != 0:
+                out.append(
+                    check.compare(
+                        expected,
+                        value,
+                        ok=False,
+                        evidence=evidence,
+                        reason="principal_protected",
+                        fail_message=f"{name}寫 {pct.group(0)}，不是不保本",
+                    )
+                )
+                continue
+            out.append(
+                check.result(
+                    S.REVIEW_REQUIRED,
+                    expected=expected,
+                    actual=value,
+                    evidence=evidence,
+                    reason="wording_not_listed",
+                    message=f"{name}的寫法不在審查標準列出的不保本寫法（principal_protection.non_protected），請人工確認",
+                )
+            )
+    return out
 
 
 def _fixed_text(
@@ -772,7 +1014,14 @@ def iis_review_standard_rules(ctx: Context, *, trade: ParsedField) -> list[Check
     std, provides = ctx.issuer_std, ctx.provides
     issuer_name = std.issuer_name
     issuer_name_zh = re.split(r"[（(]", issuer_name, maxsplit=1)[0] if issuer_name is not None else None
-    out = [_risk_level(ctx), _iis_warning(ctx), _forbidden_wording(ctx, trade)]
+    out = [
+        _risk_level(ctx),
+        _iis_warning(ctx),
+        _forbidden_wording(ctx, trade),
+        *_osu_clients(ctx, trade),
+        _distributor_names_in_text(ctx),
+        *_principal_protection(ctx),
+    ]
     if provides("risk_level_summary"):
         out.append(_iis_risk_summary(ctx))
     if provides("print_dates"):
@@ -819,9 +1068,13 @@ def review_standard_rules(ctx: Context, *, reference_trade: ParsedField) -> list
         _fixed_warning(ctx),
         _risk_level(ctx),
         _forbidden_wording(ctx, reference_trade),
+        *_osu_clients(ctx, reference_trade),
         *_product_name(ctx),
         *_issuer_name(ctx),
         *_distributor_info(ctx),
+        _distributor_names_in_text(ctx),
+        *_distributor_established(ctx),
+        *_principal_protection(ctx),
         *_fees(ctx),
         *_issue_price(ctx),
         *_guarantor_name(ctx),

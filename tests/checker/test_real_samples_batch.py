@@ -157,3 +157,11 @@ def test_every_local_investor_sheet_has_an_iis_template(outcome):
     # 只支援新版範本的上手，舊版辨識失敗、轉人工覆核：UBS 舊版 1 份（test_real_ubs.py）
     unknown = [i for i in sheets if not i.report.template]
     assert [i.issuer for i in unknown] == ["UBS"]
+
+
+def test_osu_clients_pass_and_only_old_dbs_and_jpm_templates_are_exempted(outcome):
+    """受託對象與能否承作 OSU 客戶（Issue #224）：樣本交易日都在審查標準 osu.exempt_until 以前，全部通過；
+    特例只有 DBS 舊範本（各處寫 OSU 客戶）與 JPM 投資人須知受託對象沒寫 OSU 客戶。"""
+    results = [(i.issuer, r) for i in outcome.items for r in i.report.results if r.rule_id == "standard.osu_clients"]
+    assert results and all(r.status == CheckStatus.PASS for _, r in results)
+    assert {issuer for issuer, r in results if "特例通過" in (r.message or "")} == {"DBS", "JPM"}

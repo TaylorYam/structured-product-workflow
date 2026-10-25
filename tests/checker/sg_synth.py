@@ -22,7 +22,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["sg"]["product_name"]
 WARNING = STANDARD["issuer"]["sg"]["fixed_warning"]
@@ -665,8 +673,11 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         3: f"保證機構名稱及其長期債務信用評等：{GUARANTOR['ch1']}，截至本中文產品說明書刊印日期，長期債務信用評等不核對。",
         4: "商品之發行評等：無",
         5: "計價幣別：",
+        6: "計價貨幣投資本金保本率：不保本。本商品於到期的贖回可能顯著低於本商品的本金金額或等於零。",
+        7: "原計價幣別投資本金達成100%保本之各項條件：不適用。本商品不保本。",
         8: "主要給付項目及其計算方式：",
         9: "連結標的資產／及其相對權重、與投資績效之關連事情：",
+        10: "連結標的之相關說明或評等資料：",
         12: "商品年期、發行日、到期日及其他依個別商品性質而定之日期：",
         15: "投資收益計算方法，包含本金虧損之機率及以情境分析解說最大可能獲利、損失及其他狀況之平均年化報酬率：",
         26: "ISIN 代碼：XS1999900001",
@@ -695,6 +706,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                 if s.count > 1
                 else "（下稱「連結標的」）",
             )
+        elif n == 10:
+            write_notes(d.w, s.underlyings, "inline", x=50, label="({k})", heading=None, width=48)
         elif n == 12:
             _dates(d, s, ends, payments)
         elif n == 15:

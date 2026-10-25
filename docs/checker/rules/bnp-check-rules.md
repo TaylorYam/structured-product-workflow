@@ -5,6 +5,7 @@
 - 會隨時間改變的基準見[審查標準](review-standard.md) §2.7（設定檔 `config/review_standard.toml`）
 - 狀態：核對範圍與規則已與作業人員確認（2026-10-13，Issue #189）；已實作（Issue #191；rule_id 對照見 §9），本機 7 份真實樣本結果與 §5 一致；境外人民幣版（Issue #345）見 §1.1
 - 本文件只寫與 [BARC 核對規則](barc-check-rules.md)、[HSBC 核對規則](hsbc-check-rules.md)、[MS 核對規則](ms-check-rules.md)不同或 BNP 特有的部分；未提到的原則（判定原則、數值處理、標的只核對彭博代號、期初價格本身不核對等）見[共用核對規則](shared-check-rules.md)
+- 連結標的公司介紹每檔都有、不是亂碼：共用規則（[共用核對規則](shared-check-rules.md) §5.1，Issue #225）；第 12 項每段以行首 `(k)` 開始。
 
 ## 1. 範圍
 
@@ -28,7 +29,6 @@
 - 連結標的中文名稱、交易所、`貨幣(Currency)` 列（§11、§18；只核對彭博代碼，2026-10-13 確認）。
 - 總代理人（法國巴黎銀行台北分行）名稱、電話、地址、負責人（2026-10-13 確認）。
 - 保證機構地址（名稱要核對，§3.6）。
-- 受託機構設立日期（2026-10-13 確認）。
 - 固定警語 (2)～(9) 的全文（只保留 (7)(8) 的禁用語檢查與 (5) 名稱的結構檢查，2026-10-13 確認）。
 - 封面 6–8（註冊地、發行機構地址、商品註冊地）、第一章 §4、§8–§10、§12、§13、§19、§21–§27、境外人民幣版的「人民幣付款中斷事件」與計價幣別後的人民幣定義句（§1.1）、第二章 §3(1)(2)(3)(5)(6)、§4、§5、第三章 §1–§5、§7、§8、第四章 §3、§6、§9–§15、§17、第五章 §1、§2(2)、附件一。
 - 基本公開說明書「年度更新」段（舊樣本才有）；基本公開說明書日期只做文件內一致。
@@ -160,7 +160,7 @@
 | 部分涵蓋：§18 假設、§14(5) 到期日定義 | 作業人員只標月配息率／日期 | 結構檢查保留 |
 | 只有作業人員：§11／§18 標的中文名稱、交易所 | — | 不核對（決定 C） |
 | 只有作業人員：§17 到期贖回金額 100% | — | 納入（§3.5） |
-| 只有作業人員：第二章受託機構設立日期 | — | 不核對（決定 D） |
+| 只有作業人員：第二章受託機構設立日期 | — | 原不核對（決定 D）；2026-10-25 起由共用審查標準規則核對（Issue #226） |
 | 只有開發者：總代理人 | — | 不核對（決定 E） |
 | 只有開發者：保證機構名稱／地址、計算代理機構 | — | 名稱納入審查標準固定值、地址與計算代理機構不核對（決定 F） |
 | 只有開發者：基本公開說明書日期 | — | 文件內三處一致（決定 G） |
@@ -213,11 +213,12 @@
 | 2026-10-13 | 固定警語 = 警語 (1) 段；(2)～(9) 不核對，只留禁用語與名稱結構檢查 |
 | 2026-10-13 | 情境算式納入：配息、累積、贖回金額、總報酬率、股數、剩餘金額，算法同 MS |
 | 2026-10-13 | 連結標的中文名稱、交易所不核對（只核對彭博代碼） |
-| 2026-10-13 | 受託機構設立日期不核對 |
+| 2026-10-13 | 受託機構設立日期不核對（2026-10-25 改由共用審查標準規則核對，Issue #226） |
 | 2026-10-13 | 總代理人不核對 |
 | 2026-10-13 | 保證機構名稱納入審查標準固定值（三處各自寫法），地址不核對 |
 | 2026-10-13 | 基本公開說明書日期只做文件內三處一致 |
 | 2026-10-13 | 發行不成立門檻（等值 300,000 美元）納入固定值 |
+| 2026-10-25 | 受託機構設立日期改由共用審查標準規則核對（= 2000-11-20，所有上手；Issue #226） |
 | 2026-10-13 | 最低申購、最低贖回 = 5 × 面額；最低加購、增加贖回單位 = 面額（BNP 專屬規則） |
 | 2026-10-13 | 期初定價 VWAP 沿用 Issue #122 作法 |
 | 2026-10-13 | 月配息率 = 年利率 ÷ 12，四捨五入到說明書顯示位數（JPY 6 位）；JPY 配息金額取整數 |
@@ -234,7 +235,7 @@
 |---|---|---|
 | §3.1 參考條件表欄位、回填、VWAP | `field.*`、`backfill.*` | 共用 `rules/reference.py`、`backfill.py` |
 | §3.1 最低金額倍數 | `field.min_amounts`（倍數 `issuer.bnp.min_amount_multiples`） | 共用 `rules/reference.py` |
-| §3.2 審查標準共用項目 | `standard.approval_date`、`standard.chairman`、`standard.distributor`（含第四章 §16 電話：標準欄位 `distributor_phone_ch4`，由共用規則核對，Issue #196）、`standard.issuer_name`、`standard.fixed_warning`、`standard.risk_level`、`standard.forbidden_wording`、`standard.product_name`、`standard.fees`、`standard.issue_price`（三處重印）、`doc.denomination`、`doc.print_date`、`doc.subscription_start_date` | 共用 `rules/review_standard.py` |
+| §3.2 審查標準共用項目 | `standard.approval_date`、`standard.chairman`、`standard.distributor`（含第四章 §16 電話：標準欄位 `distributor_phone_ch4`，由共用規則核對，Issue #196）、`standard.issuer_name`、`standard.fixed_warning`、`standard.risk_level`、`standard.forbidden_wording`、`standard.osu_clients`（Issue #224）、`standard.product_name`、`standard.fees`、`standard.issue_price`（三處重印）、`doc.denomination`、`doc.print_date`、`doc.subscription_start_date` | 共用 `rules/review_standard.py` |
 | §3.2 商品種類、發行不成立門檻 | `standard.product_type`、`standard.minimum_issue_size` | 共用 `rules/review_standard.py`（有該上手分節才核對） |
 | §3.3 年利率與月配息率 | `field.coupon_pa_pct`、`derive.monthly_coupon`（第 15 項兩處）、`doc.min_coupon_rate` | `rules/bnp.py` |
 | §3.3 第 18 項假設與各情境算式的月配息率（= 第 15 項）、獲利情境年化報酬率（= 第 15 項年利率，依說明書位數四捨五入；Issue #294 決定 4 起不再和參考條件表比） | 共用 `scenario.params` | `rules/scenario.py` |

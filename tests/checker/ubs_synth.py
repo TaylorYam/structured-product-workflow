@@ -27,7 +27,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["ubs"]["product_name"]
 WARNING = STANDARD["issuer"]["ubs"]["fixed_warning"]
@@ -513,16 +521,19 @@ def _scenarios(d: _Doc, s: Spec) -> None:
         f"• 提前出場金額為每單位面額X100%={money}X100%={money}。",
         f"• 配息金額為：每單位面額X固定配息率X1={money}X{s.monthly}%X1={s.amount(one)}。",
         f"• 每單位面額結算收益：={money}+{s.amount(one)}-{money}={s.amount(one)}。",
+        f"• 平均年化報酬率（以簡單平均年化報酬率之方式計算）為{s.annual}%（四捨五入至百分位後第二位）",
         "情境分析二：提前出場事件從未發生；期末訂價日最差表現的連結標的股票收盤價高於或等於其轉換價。",
         f"• 總配息金額為：每單位面額X固定配息率X配息次數={money}X{s.monthly}%X{s.tenor}={s.amount(total)}。",
         f"• 到期贖回收益為每單位面額X100%={money}X100%={money}。",
+        f"以長期投資計算報酬率之平均年化報酬率為{s.annual}%（四捨五入至百分位後第二位）",
         "情境分析三：提前出場事件從未發生；期末訂價日最差表現的連結標的股票收盤價低於其轉換價。",
         f"• 總配息金額為：每單位面額X固定配息率X配息次數={money}X{s.monthly}%X{s.tenor}={s.amount(total)}。",
-        f"• 最差表現的連結標的股票於期末訂價日的收盤價為{close}（低於轉換價{strike:,.4f} {s.quote}）。",
+        f"• 最差表現的連結標的股票於期末訂價日的收盤價為{close}（低於轉換價{strike:,.4f} {s.quote}），以股票實物交割予投資人。",
         f"• 交割股數計算方式為：每單位面額/轉換價=（{money}{fx}/{strike:,.4f} {s.quote}）=71.1111股。",
         f"• 畸零股數（即0.1111股）則以{s.currency_zh}支付（“剩餘金額”），計算方式為：收盤價X畸零股數={s.amount(Decimal('3.91'))}。",
         f"• 到期贖回收益：收盤價X股數+以{s.currency_zh}支付的剩餘金額={s.amount(denom / 2)}。",
         f"• 每單位面額結算收益：={s.amount(total)}+{s.amount(denom / 2)}-{money}={s.amount(total - denom / 2)}。",
+        "• 平均年化報酬率（以簡單平均年化報酬率之方式計算）為-88.00%（四捨五入至百分位後第二位）",  # 虧損情境不核對
         f"• 在最差情況下，每單位面額到期贖回價值為0{s.currency_zh}。",
         "以上情境分析相關之免責聲明",
     ]
@@ -534,8 +545,11 @@ ARTICLE_TITLES = {
     1: "商品名稱：",
     3: "發行機構為",
     5: "計價幣別：",
+    6: "計價貨幣本金保本率：不保本。本商品於到期的贖回可能低於投資本金。",
+    7: "投資本金達成保本率之各項條件：不適用。本商品不保本。",
     8: "本商品重要條件、主要給付項目及其計算方式：",
     9: "連結標的資產（例如：指數或個股名稱等），及其相對權重、與投資績效之關連情形。",
+    10: "連結標的之相關說明。",
     12: "商品相關日期",
     15: "投資收益計算方法–包含本金虧損之機率及以情境分析之解說最大可能獲利、損失及其他狀況之年化報酬率。",
     25: "ISIN 代碼：",
@@ -568,6 +582,10 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         elif n == 9:
             d.item(n, title)
             _article9(d, s)
+        elif n == 10:
+            d.item(n, title)
+            d.w.row([(75, "籃子中連結標的股票名稱"), (374, "簡介")], gap=16)
+            write_notes(d.w, s.underlyings, "column", x=100, note_x=208, heading=None, width=34)
         elif n == 12:
             d.item(n, title)
             _article12(d, s)
@@ -676,6 +694,8 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         "1. 本商品銷售對象：專業投資人及OSU 客戶。",
         "3. 本商品風險等級：參考列載於本投資人須知封面的「警語」部份第一項。",
         f"6. 計價幣別：{s.currency_zh}。",
+        "7. 計價貨幣本金保本率：不保本。詳細解釋，請參考產品說明書第六項。",
+        "8. 投資本金達成保本率之各項條件：不適用。本商品不保本。",
         f"9. 連結標的資產：{uls}。",
         f"10. 天期/年期：{s.tenor} 個月。",
         f"11. 發行日/交割日：{s.date(s.issue_date)}。",

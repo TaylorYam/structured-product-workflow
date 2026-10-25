@@ -22,12 +22,14 @@ from ..text import squash
 from . import money, price_table, schedule
 from .common import RawText, capture_group, compat_normalized, derived, fee_rates, number
 from .layout import Document, LayoutSpec, TextIndex, capture, join_wrapped_tickers, parse_date
+from .underlying_notes import NameColumn, underlying_notes
 
 TEMPLATE_ID = "ca-zh-pd"
 # 2：價格表幣別字換行的那格仍歸到同一列（Issue #278）；3：價格表改由 parsers/price_table.py 讀（Issue #287）；
 # 4：重複寫出處（情境、贖回 %、說明文字幣別、警語的受託機構名稱；Issue #319）；5：日期表標準欄位與共用排程推導（Issue #289）；
 # 6：情境價格表與假設值交成共用情境規則的標準欄位（Issue #294）；7：多標的非記憶式句型（Issue #344）
-PARSER_VERSION = "7"
+# 8：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
+PARSER_VERSION = "8"
 # 第七章章名在部分文件拆成兩行（「第七章、股權連結商」／「品的額外條款及條件」），只用前六章定位；辨識另查第七章全文
 CHAPTER_NAMES = {
     1: ("一", "商品基本資料"),
@@ -217,6 +219,9 @@ def read(lines: Sequence[Line]) -> CaTermSheet:
     fields["initial_pricing"] = standard_fields.absent(
         "initial_pricing", "說明書沒有寫期初定價方式（開盤價／收盤價／VWAP）"
     )
+    fields["underlying_notes"] = underlying_notes(
+        doc.lines, NameColumn()
+    )  # 連結標的公司介紹：兩欄表：左欄名稱、右欄簡介（Issue #225）
     return CaTermSheet(fields, TextIndex(doc.lines), doc)
 
 
@@ -594,6 +599,8 @@ EQ = "[=＝]"
 # 情境的配息金額、贖回金額行：「每單位面額 × x% ＝ 面額 × x% ＝ 金額」（Issue #319：x 兩處與面額是重複寫出的值）
 SCENARIO_COUPON = rf"第1(?:~(\d+))?個月配息金額{EQ}每單位面額×{PCT}{EQ}([\d,]+)×{PCT}{EQ}"
 SCENARIO_REDEMPTION = rf"{{}}{EQ}每單位面額×{PCT}{EQ}([\d,]+)×{PCT}{EQ}"
+# 情境一、二（拿回 100% 本金）總報酬率後的「（平均年化報酬率：x%）」：x = 年利率（Issue #228）
+SCENARIO_ANNUALIZED = r"平均年化報酬率[:：]" + PCT
 # 情境一自動提前出場、情境二到期的贖回金額行 → (情境序號, 句首, 出處清單)；% 對應第 9 項 (b)／(c)
 SCENARIO_REDEMPTIONS = (
     (1, "自動提前出場贖回金額", "scenario_ko_redemption_mentions"),
@@ -606,11 +613,12 @@ def _scenarios(fields: dict[str, ParsedField], ti: TextIndex, assumed: list[Scen
 
     - 共用情境規則的 `scenario_params`（Issue #294）：基本假設 `assumed`，加上配息金額行的配息率兩處（= 配息表配息率）、
       配息金額與贖回金額行代入的面額（= 第 6 項面額）、情境二、三「第 1~n 個月」的 n（= 天期；情境一的月數另由
-      `scenario_first_months` 核對）
+      `scenario_first_months` 核對）、情境一、二（拿回 100% 本金）的平均年化報酬率（= 年利率）
     - `scenario_ko_redemption_mentions`／`scenario_maturity_redemption_mentions`：贖回金額行的 % 兩處（= 第 9 項 (b)／(c)）
     - `scenario_currencies`：各情境金額旁的幣別（股價、股數與剩餘金額算式所在的行不列入）與情境三「以X支付剩餘金額」
 
-    配息金額、累積配息、股數、剩餘金額、報酬率不重算；情境三的執行價、收盤價跟著標的走，不列入。
+    配息金額、累積配息、股數、剩餘金額、總報酬率與情境三（虧損）的平均年化報酬率不重算；情境三的執行價、收盤價跟著標的走，
+    不列入。
     """
     starts = [ti.text.find(f"情境分析{k}：") for k in SCENARIOS]
     bounds = [*starts, ti.text.find(SCENARIO_END, max(starts))]
@@ -621,6 +629,7 @@ def _scenarios(fields: dict[str, ParsedField], ti: TextIndex, assumed: list[Scen
             "scenario_coupon_mentions",
             "scenario_denomination_mentions",
             "scenario_months_mentions",
+            "scenario_annualized_mentions",
             "scenario_ko_redemption_mentions",
             "scenario_maturity_redemption_mentions",
             "scenario_currencies",
@@ -669,6 +678,11 @@ def _scenarios(fields: dict[str, ParsedField], ti: TextIndex, assumed: list[Scen
             )
         for container, field, code, place, group, convert in mentions:
             lists[container].append(Occurrence(field, code, f"{where}{place}", coupon(field, group, convert)))
+        if n <= 2:
+            annualized = _one_match(ti, lo, hi, SCENARIO_ANNUALIZED, f"{where}平均年化報酬率")
+            field = f"scenario{n}_annualized_pct"
+            occ = Occurrence(field, "scenario_annualized_return", where, annualized(field, 1, Decimal))
+            lists["scenario_annualized_mentions"].append(occ)
         for m, label, container in SCENARIO_REDEMPTIONS:
             if m != n:
                 continue
@@ -714,6 +728,7 @@ SCENARIO_PARAMS = {
     "scenario_coupon_mentions": "scenario_monthly_coupon",
     "scenario_denomination_mentions": "scenario_denomination",
     "scenario_months_mentions": "scenario_coupon_months",
+    "scenario_annualized_mentions": "scenario_annualized_return",
 }
 
 

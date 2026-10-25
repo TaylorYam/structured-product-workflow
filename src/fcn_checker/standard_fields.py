@@ -259,6 +259,14 @@ class TableAt:
     table: PriceTable
 
 
+@dataclass(frozen=True)
+class UnderlyingNote:
+    """「連結標的之相關說明」裡一檔標的的公司介紹（Issue #225）：去空白後的整段文字（含編號或名稱）與各行證據。"""
+
+    text: str
+    evidence: tuple[Evidence, ...]
+
+
 # 情境假設值的出處代號 → 要等於的正式值標準欄位（Issue #294 決定 2b；名稱在 `OCCURRENCE_NAMES`）
 SCENARIO_TARGETS: dict[str, str] = {
     "scenario_denomination": "denomination",
@@ -285,6 +293,8 @@ class ScenarioParam:
     where: str  # 項目名稱的開頭（例：第 16 項基本假設、第 15 項情境 (i) 到期贖回金額的）
     value: ParsedField
     times: ParsedField | None = None  # 倍數：值 = 正式值 × 倍數（例：總投資金額 = 單位數 × 面額，倍數是同一處的單位數）
+    # 容許差距（百分點）：值由先進位的金額算出、比正式值多寫位數時（例：GS 年化報酬率寫到 5 位，和年利率差 0.0004）
+    within: Decimal | None = None
 
     @property
     def name(self) -> str:
@@ -323,6 +333,8 @@ STANDARD_FIELDS: dict[str, str] = {
     "面額、配息、本金，股價（執行價等）與實物交割算式不列入；範本沒有時交出 absent",
     "underlyings": "list[str]：標的彭博代號，依說明書順序",
     "underlying_prices": "tuple[PriceRow, ...]：各標的價格列（代號、進場／執行／KO／下限價、證據、標的名稱、價格旁的幣別字）",
+    "underlying_notes": "tuple[UnderlyingNote, ...]：「連結標的之相關說明」每檔標的的公司介紹（parsers/underlying_notes.py），"
+    "依說明書順序",
     "strike_pct": "Decimal：執行價為最初價格的 N%，保留說明書顯示位數",
     "ko_pct": "Decimal：KO 價為最初價格的 N%，保留說明書顯示位數；說明書沒有 KO 價（Non-Call = 天期）時為 100",
     "ki_pct": "Decimal：下限價為最初價格的 N%，保留說明書顯示位數；無 KI 時不讀",
