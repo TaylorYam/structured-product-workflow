@@ -17,6 +17,7 @@ from ..text import full_brackets, squash
 from . import money, ms_scenario, ms_tables, ms_wording, price_table, schedule
 from .common import NO_AUTOCALL_KO_PCT, NUM, Hit, Mention, derived, ko_at_initial, number
 from .layout import Document, LayoutSpec, TextIndex, capture, join_text, parse_date
+from .underlying_notes import Markers, underlying_notes
 
 TEMPLATE_ID = "ms-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #288）；3：日期表標準欄位與共用排程推導（Issue #289）；
@@ -328,6 +329,9 @@ def read(lines: Sequence[Line]) -> MsTermSheet:
     fields["initial_pricing"] = standard_fields.absent("initial_pricing", "期初定價（收盤價／VWAP）字樣")
 
     _scenario_standard(fields, scenarios)
+    fields["underlying_notes"] = underlying_notes(
+        doc.lines, Markers(r"\(\d+\)連結標的\d+：")
+    )  # 連結標的公司介紹：(k)連結標的k：名稱＋介紹（Issue #225）
     return MsTermSheet(fields, TextIndex(doc.lines), doc, scenarios, _mentions(fields))
 
 

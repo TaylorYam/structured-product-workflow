@@ -21,6 +21,7 @@ from ..text import squash
 from . import money, price_table, schedule
 from .common import RawText, by_value, capture_group, derived, fee_rates, number
 from .layout import Document, LayoutSpec, Span, TextIndex, capture, parse_date
+from .underlying_notes import NameColumn, underlying_notes
 
 TEMPLATE_ID = "natixis-zh-pd"
 # 2：第一章條號中途重編、新版受託機構標籤（Issue #270）；3：價格表改由 parsers/price_table.py 讀（Issue #287）；
@@ -405,6 +406,9 @@ def read(lines: Sequence[Line]) -> NatixisTermSheet:
     fields["initial_pricing"] = standard_fields.absent(
         "initial_pricing", "說明書沒有寫期初定價方式（開盤價／收盤價／VWAP）"
     )
+    fields["underlying_notes"] = underlying_notes(
+        doc.lines, NameColumn()
+    )  # 連結標的公司介紹：左欄名稱、右欄介紹（Issue #225）
     return NatixisTermSheet(fields, TextIndex(doc.lines), doc)
 
 

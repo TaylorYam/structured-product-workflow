@@ -20,6 +20,7 @@ from ..text import squash
 from . import money, price_table, schedule
 from .common import RawText, capture_group, compat_normalized, derived, fee_rates, number
 from .layout import Document, LayoutSpec, TextIndex, capture, parse_date
+from .underlying_notes import Markers, underlying_notes
 
 TEMPLATE_ID = "bbva-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：重複寫出的值（Issue #305）；4：日期表標準欄位與共用排程推導（Issue #289）；
@@ -266,6 +267,9 @@ def read(lines: Sequence[Line]) -> BbvaTermSheet:
     fields["initial_pricing"] = standard_fields.absent(
         "initial_pricing", "說明書沒有寫期初定價方式（開盤價／收盤價／VWAP）"
     )
+    fields["underlying_notes"] = underlying_notes(
+        doc.lines, Markers(r"\d+$")
+    )  # 連結標的公司介紹：左欄單獨一行 k（Issue #225）
     return BbvaTermSheet(fields, TextIndex(doc.lines), doc)
 
 

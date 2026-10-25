@@ -18,7 +18,7 @@ from pathlib import Path
 
 from harness import STANDARD, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
-from reference_synth import UL, ProductSpec, price
+from reference_synth import UL, ProductSpec, price, write_notes
 
 CENT = Decimal("0.01")
 # 人民幣商品第一章第 5 條在幣別後面接的說明段落（真實樣本寫法節錄，Issue #180）
@@ -213,6 +213,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                 10: "發行價格：100%",
                 11: "主要給付項目",
                 12: "連結標的資產",
+                13: "連結標的之相關說明或評等資料：",
                 15: "本商品年期",
                 18: "情境分析",
                 27: "ISIN：XS1999900001",
@@ -261,6 +262,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             w.section = "art12"
             sub(2)
             line("標的說明")
+        if k == 13:
+            write_notes(w, s.underlyings, "paragraph", x=233.6, heading=None, width=30)
         if k == 15:
             vals = [
                 f"本商品年期為{n}個月",

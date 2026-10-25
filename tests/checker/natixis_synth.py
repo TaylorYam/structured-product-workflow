@@ -24,7 +24,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["natixis"]["product_name"]
 WARNING = STANDARD["issuer"]["natixis"]["fixed_warning"]
@@ -581,6 +589,7 @@ ARTICLE_TITLES = {
     3: "發行機構/保證機構名稱及其長期債務信用評等：",
     5: "計價幣別、商品面額及發行價格：",
     9: "連結標的資產、相對權重與投資績效之關聯情形：",
+    10: "連結標的之相關說明或評等資料：",
     12: "本商品年期、交易日、期初進場日、發行日、到期日、配息日、最終評價日及其他期日(依本商品性質決定之)：",
     13: "配息資料及其計算公式：",
     14: "自動提前到期事件之贖回計算公式：",
@@ -639,6 +648,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             _table(d, s, codes=True)
             d.section = "art9"
             d.text(72, "相對權重：不適用")
+        elif n == 10:
+            write_notes(d.w, s.underlyings, "column", x=72, note_x=218, heading=None, width=30)
         elif n == 12:
             _article12(d, s)
         elif n == 13:

@@ -23,7 +23,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["citi"]["product_name"]
 WARNING = STANDARD["issuer"]["citi"]["fixed_warning"]
@@ -654,6 +662,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         5: f"計價幣別：{unit}({s.ccy})",
         8: "主要給付項目及其計算方式：",
         9: "連結標的資產：",
+        10: "連結標的之相關說明或評等資料：",
         12: "商品年期、發行日、到期日及其他依個別商品性質而定之日期：",
         13: "配息資料及其計算公式（本商品項下之所有計算及判定將由計算代理機構以其單獨絕對裁量權為之）：",
         14: "發行機構提前贖回/提前買回及到期給付計算公式，包含最低保證配息率及參與率：",
@@ -681,6 +690,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             d.section = "art9"
             d.text(67, "（每一連結標的下稱「連結標的」或「連結標的資產」）")
             d.text(67, "相對權重： 不適用")
+        elif n == 10:
+            write_notes(d.w, s.underlyings, "label", x=67, label="連結標的{k}：{name}", heading=None, width=46)
         elif n == 12:
             _dates(d, s)
         elif n == 13:

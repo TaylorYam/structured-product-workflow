@@ -19,6 +19,7 @@ from ..text import squash
 from . import iis, money, price_table, schedule
 from .common import Hit, Mention, RawText, capture_group, derived, hits, number, one
 from .layout import Document, LayoutSpec, TextIndex, capture, parse_date
+from .underlying_notes import Markers, underlying_notes
 
 TEMPLATE_ID = "nomura-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：年利率取自情境、無 KI 要有明確到期贖回款（Issue #297）；
@@ -357,6 +358,9 @@ def read(lines: Sequence[Line]) -> NomuraTermSheet:
         "currency_others", [*fields["currency_others"].value, *wording, _scenario3_currency(article(14))]
     )
     coupons = [Mention.of_field("第 15 項(1) 固定配息率", fields["coupon_art15"])]
+    fields["underlying_notes"] = underlying_notes(
+        doc.lines, Markers(r"\(\d+\)連結標的\d*：")
+    )  # 連結標的公司介紹：(k) 連結標的k：名稱（Issue #225）
     return NomuraTermSheet(fields, TextIndex(doc.lines), doc, coupons)
 
 

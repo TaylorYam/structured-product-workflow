@@ -22,6 +22,7 @@ from ..text import squash
 from . import money, price_table, schedule
 from .common import RawText, by_value, capture_group, derived, fee_rates, number, zh_number
 from .layout import TextIndex, capture, join_wrapped_tickers, parse_date
+from .underlying_notes import NameColumn, underlying_notes
 
 TEMPLATE_ID = "ubs-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：非記憶式要有明確的提前出場事件句（Issue #297）；
@@ -280,6 +281,9 @@ def read(lines: Sequence[Line]) -> UbsTermSheet:
     fields["initial_pricing"] = standard_fields.absent(
         "initial_pricing", "說明書沒有寫期初定價方式（開盤價／收盤價／VWAP）"
     )
+    fields["underlying_notes"] = underlying_notes(
+        doc.lines, NameColumn()
+    )  # 連結標的公司介紹：兩欄表：左欄名稱、右欄簡介（Issue #225）
     return UbsTermSheet(fields, TextIndex(doc.lines), doc)
 
 

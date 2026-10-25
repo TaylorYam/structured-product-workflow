@@ -323,6 +323,8 @@ STANDARD_FIELDS: dict[str, str] = {
     "面額、配息、本金，股價（執行價等）與實物交割算式不列入；範本沒有時交出 absent",
     "underlyings": "list[str]：標的彭博代號，依說明書順序",
     "underlying_prices": "tuple[PriceRow, ...]：各標的價格列（代號、進場／執行／KO／下限價、證據、標的名稱、價格旁的幣別字）",
+    "underlying_notes": "tuple[UnderlyingNote, ...]：「連結標的之相關說明」每檔標的的公司介紹（parsers/underlying_notes.py），"
+    "依說明書順序",
     "strike_pct": "Decimal：執行價為最初價格的 N%，保留說明書顯示位數",
     "ko_pct": "Decimal：KO 價為最初價格的 N%，保留說明書顯示位數；說明書沒有 KO 價（Non-Call = 天期）時為 100",
     "ki_pct": "Decimal：下限價為最初價格的 N%，保留說明書顯示位數；無 KI 時不讀",

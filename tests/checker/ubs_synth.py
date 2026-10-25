@@ -27,7 +27,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["ubs"]["product_name"]
 WARNING = STANDARD["issuer"]["ubs"]["fixed_warning"]
@@ -536,6 +544,7 @@ ARTICLE_TITLES = {
     5: "計價幣別：",
     8: "本商品重要條件、主要給付項目及其計算方式：",
     9: "連結標的資產（例如：指數或個股名稱等），及其相對權重、與投資績效之關連情形。",
+    10: "連結標的之相關說明。",
     12: "商品相關日期",
     15: "投資收益計算方法–包含本金虧損之機率及以情境分析之解說最大可能獲利、損失及其他狀況之年化報酬率。",
     25: "ISIN 代碼：",
@@ -568,6 +577,10 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         elif n == 9:
             d.item(n, title)
             _article9(d, s)
+        elif n == 10:
+            d.item(n, title)
+            d.w.row([(75, "籃子中連結標的股票名稱"), (374, "簡介")], gap=16)
+            write_notes(d.w, s.underlyings, "column", x=100, note_x=208, heading=None, width=34)
         elif n == 12:
             d.item(n, title)
             _article12(d, s)

@@ -24,7 +24,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["bnp"]["product_name"]
 WARNING = STANDARD["issuer"]["bnp"]["fixed_warning"]
@@ -625,6 +633,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             if basket:
                 d.text(80, "「籃子」指由上表列示的連結標的組成的一籃子。")
             d.text(80, "相對權重：不適用。")
+        elif n == 12:
+            write_notes(d.w, s.underlyings, "label", x=87, label="({k})", heading=None)
         elif n == 14:
             _dates(d, s, ends, payments, starts)
         elif n == 15:

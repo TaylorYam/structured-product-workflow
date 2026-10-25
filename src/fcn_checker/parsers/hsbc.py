@@ -15,6 +15,7 @@ from . import hsbc_tables as tables
 from . import money, price_table, schedule
 from .common import derived
 from .layout import Document, LayoutSpec, TextIndex, capture, parse_date
+from .underlying_notes import Paragraphs, underlying_notes
 
 TEMPLATE_ID = "hsbc-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #288）；3：日期表標準欄位與共用排程推導（Issue #289）；
@@ -516,6 +517,9 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
     fields["autocall_schedule"] = schedule.autocall_schedule(
         fields["ko_observation"], fields["first_callable_period"], fields["schedule_table"]
     )["autocall_schedule"]
+    fields["underlying_notes"] = underlying_notes(
+        doc.lines, Paragraphs()
+    )  # 連結標的公司介紹：沒有編號與名稱，依段落（Issue #225）
     return HsbcTermSheet(fields, TextIndex(doc.lines), doc, scenarios, ScenarioIndex(scenarios))
 
 

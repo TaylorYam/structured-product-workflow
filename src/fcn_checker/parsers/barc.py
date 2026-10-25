@@ -20,6 +20,7 @@ from . import barc_schedule as schedule
 from . import money, price_table
 from .common import by_value, derived
 from .layout import Document, LayoutSpec, Span, TextIndex, capture, join_text, parse_date
+from .underlying_notes import Markers, underlying_notes
 
 TEMPLATE_ID = "barc-zh-pd"
 # 3：價格表改由 parsers/price_table.py 讀（Issue #288）；4：日期表標準欄位與共用排程推導（Issue #289）；
@@ -865,6 +866,9 @@ def read(lines: Sequence[Line]) -> BarcTermSheet:
         "annual": _mentions(doc, arts, _ANNUAL_PATTERNS),
         "repeat": [m for m in repeats if m.article != ARTICLE_16],
     }
+    flds["underlying_notes"] = underlying_notes(
+        all_lines, Markers(r"標的資產\d+：")
+    )  # 連結標的公司介紹：標的資產k：（Issue #225）
     return BarcTermSheet(flds, mentions, TextIndex(all_lines), doc, header_pcts)
 
 

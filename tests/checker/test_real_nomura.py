@@ -39,14 +39,16 @@ def test_samples_only_differ_where_the_exploration_said(items):
     term_sheets, investor_sheets = items
     # 表上到期日少算一個美國假日（表填錯）；日股標的的觀察期間開始日跳過日本假日，交易所假日表有日本後通過（structured-product-workflow#67）
     maturity = {("field.maturity_date", "value_mismatch"): 1}
-    for docs in (term_sheets, investor_sheets):
+    # 1 份 ETF 說明書「連結標的之相關說明」兩檔都只有名稱與彭博代碼、沒有公司介紹（Issue #225，作業人員紅標補標的項目）
+    notes = {("doc.underlying_note", "note_empty"): 2}
+    for docs, expected in ((term_sheets, maturity | notes), (investor_sheets, maturity)):
         bad = Counter((r.rule_id, r.reason_code) for i in docs for r in i.report.results if r.status in PROBLEMS)
-        assert bad == Counter(maturity)
+        assert bad == Counter(expected)
 
 
 def test_products_whose_two_documents_pass_are_filled(items):
     term_sheets, _ = items
-    assert sum(i.fills_sheet for i in term_sheets) == 7  # 到期日不一致的那份不回填
+    assert sum(i.fills_sheet for i in term_sheets) == 6  # 到期日不一致與沒有公司介紹的兩份不回填
 
 
 def test_template_variants_match_the_sample_table(items):

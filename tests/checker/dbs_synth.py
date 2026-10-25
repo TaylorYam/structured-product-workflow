@@ -26,7 +26,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    reference_row,
+    weekday_on_or_after,
+    write_notes,
+)
 
 NAME = STANDARD["issuer"]["dbs"]["product_name"]
 WARNING = STANDARD["issuer"]["dbs"]["fixed_warning"]
@@ -361,6 +369,7 @@ def _basic(d: _Doc, s: Spec) -> None:
         w.row([(176, str(n), ""), (192, u.name), (309, u.ticker), (392, u.exchange)], gap=14, size=9)
     d.text(170, "相關交易所：所有交易所。")
     d.text(170, "相對權重：不適用。")
+    write_notes(w, s.underlyings, "inline", x=170, label="{k}.", heading_x=56, size=9, width=40)
     w.y = max(w.y, top + 39) + 5
     d.section = "basic.dates"
     d.cell(
