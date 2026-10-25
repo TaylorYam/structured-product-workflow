@@ -24,14 +24,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from ..schema import Evidence, Line, ParsedField
-from ..text import squash
+from ..standard_fields import UnderlyingNote
+from ..text import CJK, squash
 
 HEADING = re.compile(r"^(?:\d+[.、]|[一二三四五六七八九十]+、)?連結標的(?:資產)?之(?:連結標的股份發行人之)?相關說明")
 END = re.compile(
     r"調整(?:及更正)?之條件|^\d+\.$|^「[^」]{1,12}」係指|^[（(]?(?:資料)?來源[:：]"
     r"|^投資人請注意，以上提供|^本產品說明書包含之某些資訊"
 )
-_CJK = re.compile(r"[一-鿿]")
 _LEFT_GAP = 15.0  # 名稱欄：左緣比介紹欄左 15pt 以上
 _SHORT = 15.0  # 段落最後一行：右緣比欄寬短 15pt 以上
 
@@ -52,14 +52,6 @@ class Paragraphs:
 
 
 NoteStyle = Markers | NameColumn | Paragraphs
-
-
-@dataclass(frozen=True)
-class UnderlyingNote:
-    """一檔標的的介紹：去空白後的整段文字（含編號或名稱）與各行證據。"""
-
-    text: str
-    evidence: tuple[Evidence, ...]
 
 
 def section(lines: Sequence[Line]) -> list[Line] | None:
@@ -116,7 +108,7 @@ def _by_name_column(body: Sequence[Line]) -> list[list[Line]]:
     has_note, prev_left = False, False
     for ln in body:
         left = ln.x0 < col - _LEFT_GAP
-        if left and not prev_left and _CJK.search(ln.text) and not squash(ln.text).startswith(("(", "（")):
+        if left and not prev_left and CJK.search(ln.text) and not squash(ln.text).startswith(("(", "（")):
             if groups and not has_note:
                 groups.pop()  # 上一段沒有介紹：表頭
             groups.append([ln])

@@ -20,7 +20,7 @@ from .layout import Document, LayoutSpec, Span, TextIndex, capture, join_text, p
 from .underlying_notes import Markers, underlying_notes
 
 TEMPLATE_ID = "bnp-zh-pd"
-PARSER_VERSION = "4"  # 2：日期表標準欄位與共用排程推導（Issue #289）；3：情境交成共用情境規則的標準欄位（Issue #294）
+PARSER_VERSION = "5"  # 2：日期表標準欄位與共用排程推導（Issue #289）；3：情境交成共用情境規則的標準欄位（Issue #294）；5：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 # 4：第一章依項目名稱對應條號、境外人民幣版（Issue #345）
 CHAPTER_NAMES = {
     1: ("一", "商品相關基本資料"),

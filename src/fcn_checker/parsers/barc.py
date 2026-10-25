@@ -25,7 +25,8 @@ from .underlying_notes import Markers, underlying_notes
 TEMPLATE_ID = "barc-zh-pd"
 # 3：價格表改由 parsers/price_table.py 讀（Issue #288）；4：日期表標準欄位與共用排程推導（Issue #289）；
 # 5：情境重印價格表與假設值交成共用情境規則的標準欄位（Issue #294）
-PARSER_VERSION = "5"
+# 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
+PARSER_VERSION = "6"
 
 # 章名「第一章 商品基本資料」、條號「1.」、子項「(1)」（範本規格 §3）
 LAYOUT = LayoutSpec(

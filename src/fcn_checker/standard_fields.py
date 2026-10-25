@@ -259,6 +259,14 @@ class TableAt:
     table: PriceTable
 
 
+@dataclass(frozen=True)
+class UnderlyingNote:
+    """「連結標的之相關說明」裡一檔標的的公司介紹（Issue #225）：去空白後的整段文字（含編號或名稱）與各行證據。"""
+
+    text: str
+    evidence: tuple[Evidence, ...]
+
+
 # 情境假設值的出處代號 → 要等於的正式值標準欄位（Issue #294 決定 2b；名稱在 `OCCURRENCE_NAMES`）
 SCENARIO_TARGETS: dict[str, str] = {
     "scenario_denomination": "denomination",

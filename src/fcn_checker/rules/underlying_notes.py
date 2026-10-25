@@ -10,13 +10,13 @@ from __future__ import annotations
 
 import re
 
-from ..parsers.underlying_notes import UnderlyingNote
-from ..schema import CheckResult, Item
+from ..schema import CheckResult
 from ..schema import CheckStatus as S
-from .kit import Check, Context, standard_field
+from ..standard_fields import UnderlyingNote
+from ..text import CJK, squash
+from .kit import Check, IssuerContext, doc_check, standard_field
 
-_CJK = re.compile(r"[一-鿿]")
-_BROKEN = re.compile(r"[�-]|\(cid:")
+_BROKEN = re.compile(r"[\ufffd\ue000-\uf8ff]|\(cid:")  # U+FFFD、私用區字元、pdfminer 認不出的字
 MIN_SENTENCE = 8  # 一句敘述至少的中文字數
 MIN_CJK_RATIO = 0.3  # 中文字占全段（去空白）的最低比例，低於此疑似亂碼
 
@@ -26,18 +26,17 @@ def _head(note: UnderlyingNote) -> str:
 
 
 def garbled(text: str) -> bool:
-    return bool(_BROKEN.search(text)) or len(_CJK.findall(text)) < MIN_CJK_RATIO * len(text)
+    return bool(_BROKEN.search(text)) or len(CJK.findall(text)) < MIN_CJK_RATIO * len(text)
 
 
 def has_sentence(text: str) -> bool:
     """至少一句以「。」結尾、中文字 ≥ `MIN_SENTENCE` 的敘述。"""
-    return any(len(_CJK.findall(s)) >= MIN_SENTENCE for s in text.split("。")[:-1])
+    return any(len(CJK.findall(s)) >= MIN_SENTENCE for s in text.split("。")[:-1])
 
 
-def run(ctx: Context) -> list[CheckResult]:
+def run(ctx: IssuerContext) -> list[CheckResult]:
     pf, uls = standard_field(ctx, "underlying_notes"), standard_field(ctx, "underlyings")
-    count = Check("doc.underlying_notes", "underlying_notes", Item.expected("連結標的公司介紹段數"), ctx.document)
-    count = count.needs(pf, uls)
+    count = doc_check(ctx, "doc.underlying_notes", "underlying_notes", "連結標的公司介紹段數", pf, uls)
     if not pf.ok:
         return [count.review(pf)]
     notes: tuple[UnderlyingNote, ...] = pf.value
@@ -45,11 +44,11 @@ def run(ctx: Context) -> list[CheckResult]:
 
 
 def _missing(notes: tuple[UnderlyingNote, ...], uls: list[str]) -> list[str] | None:
-    """沒有介紹的標的：每段都寫了某檔的代碼（不含交易所尾碼）才對得出來，否則 None。"""
-    roots = {u: u.split()[0] for u in uls}
-    if not all(any(r in x.text for r in roots.values()) for x in notes):
+    """沒有介紹的標的：每段都寫了某檔的彭博代碼（段落已去空白：`ABCUW`，前面不接英數字）才對得出來，否則 None。"""
+    codes = {u: re.compile(rf"(?<![A-Za-z0-9]){re.escape(squash(u))}") for u in uls}
+    if not all(any(c.search(x.text) for c in codes.values()) for x in notes):
         return None
-    missing = [u for u, r in roots.items() if not any(r in x.text for x in notes)]
+    missing = [u for u, c in codes.items() if not any(c.search(x.text) for x in notes)]
     return missing if len(missing) == len(uls) - len(notes) else None
 
 
@@ -69,10 +68,10 @@ def _count(count: Check, notes: tuple[UnderlyingNote, ...], uls: list[str]) -> C
     return count.compare(n, k, reason="note_count", fail_message=f"標的 {n} 檔、公司介紹只有 {k} 段：{fail}")
 
 
-def _contents(ctx: Context, notes: tuple[UnderlyingNote, ...]) -> list[CheckResult]:
+def _contents(ctx: IssuerContext, notes: tuple[UnderlyingNote, ...]) -> list[CheckResult]:
     out = []
     for i, note in enumerate(notes, 1):
-        check = Check("doc.underlying_note", "underlying_notes", Item.expected(f"第 {i} 段標的公司介紹"), ctx.document)
+        check = doc_check(ctx, "doc.underlying_note", "underlying_notes", f"第 {i} 段標的公司介紹")
         if garbled(note.text):
             out.append(
                 check.result(

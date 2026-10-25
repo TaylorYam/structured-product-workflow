@@ -25,7 +25,8 @@ from .underlying_notes import NameColumn, underlying_notes
 TEMPLATE_ID = "jpm-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：情境重複寫出的值（Issue #315）；4：日期表標準欄位與共用排程推導（Issue #289）；
 # 5：情境價格表、假設值與執行價交成共用情境規則的標準欄位（Issue #294）
-PARSER_VERSION = "5"
+# 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
+PARSER_VERSION = "6"
 CHAPTER_NAMES = {
     1: ("I", "商品基本資料"),
     2: ("II", "相關機構事業概況"),

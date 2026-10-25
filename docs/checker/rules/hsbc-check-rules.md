@@ -5,6 +5,7 @@
 - 會隨時間改變的基準見[審查標準](review-standard.md)（設定檔 `config/review_standard.toml`）
 - 狀態：已實作（Issue #34）；採 §3.7 的 H02 單份作業標記及後續確認範圍。
 - 本文件只寫與 [BARC 核對規則](barc-check-rules.md) 不同或 HSBC 特有的部分；未提到的原則（判定原則、數值處理、標的只核對彭博代號等）見[共用核對規則](shared-check-rules.md)
+- 連結標的公司介紹每檔都有、不是亂碼：共用規則（[共用核對規則](shared-check-rules.md) §5.1，Issue #225）；第 13 項沒有編號也沒有名稱欄，依段落切。
 
 ## 1. 下單資料來源
 

@@ -27,7 +27,8 @@ from .underlying_notes import Markers, underlying_notes
 TEMPLATE_ID = "dbs-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：情境重複寫出的值（Issue #321）；4：日期表標準欄位與共用排程推導（Issue #289）；
 # 5：情境價格表、基本假設與情境三的價格交成共用情境規則的標準欄位（Issue #294）
-PARSER_VERSION = "5"
+# 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
+PARSER_VERSION = "6"
 TITLE = "中文產品說明書(最終版本)"
 SECTIONS = (
     "商品基本資料",
