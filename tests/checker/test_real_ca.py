@@ -1,8 +1,7 @@
 """本機 CA 真實樣本（Issue #274）；交易資料不進 Git，CI 自動略過。測試碼不含真實商品代號或數值。
 
-斷言與探勘結論一致（docs/checker/rules/ca-check-rules.md §5）：5 份說明書與 5 份投資人須知都辨識為 CA 範本
-（「受託投資」寫法在允許片語內、投資人須知的相容字「年」正規化後照讀）；說明書第三章受託機構多「綜合」的錯字由全文名稱規則
-判不一致（Issue #226），其餘都通過。
+斷言與探勘結論一致（docs/checker/rules/ca-check-rules.md §5）：5 份說明書與 5 份投資人須知都辨識為 CA 範本，全部通過並回填
+（「受託投資」寫法在允許片語內、第三章受託機構多「綜合」不核對、投資人須知的相容字「年」正規化後照讀）。
 參考條件表用 data/orders/核對表格式..xlsx（含 5 列 CA）。
 """
 
@@ -34,7 +33,7 @@ def test_every_sample_is_recognised_as_ca(items):
     assert all(i.report.template == CA.iis.template_id for i in investor_sheets)
 
 
-def test_only_the_extra_word_in_the_distributor_name_is_a_mismatch(items):
+def test_every_sample_passes_and_is_filled(items):
     term_sheets, investor_sheets = items
     bad = Counter(
         (r.rule_id, r.reason_code)
@@ -42,10 +41,8 @@ def test_only_the_extra_word_in_the_distributor_name_is_a_mismatch(items):
         for r in i.report.results
         if r.status in PROBLEMS
     )
-    assert bad == Counter({("standard.distributor_names", "distributor_name_text"): 5}), bad
-    names = [r for i in term_sheets for r in i.report.results if r.rule_id == "standard.distributor_names"]
-    assert all(r.actual == 1 and "綜合證券綜合" in r.message for r in names)
-    assert not any(i.fills_sheet for i in term_sheets)
+    assert not bad, bad
+    assert all(i.fills_sheet for i in term_sheets)
 
 
 def test_template_variants_match_the_sample_table(items):

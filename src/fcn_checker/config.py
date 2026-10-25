@@ -119,6 +119,7 @@ class IssuerStandard:
     # 最低金額出處欄位 → 單位面額的倍數（沒列為 1）；依幣別不同時為 {ISO 代碼: 倍數}（SG 最低申購金額）
     min_amount_multiples: dict[str, int | dict[str, int]] = field(default_factory=dict)
     osu_clients: bool = True  # 可否承作 OSU 客戶（issuer.<上手>.osu_clients；沒寫為可以，Issue #224）
+    distributor_name_exempt: tuple[str, ...] = ()  # 全文受託機構名稱特例放行的寫法（CA，Issue #226）
 
 
 @dataclass(frozen=True)
@@ -189,6 +190,7 @@ class ReviewStandard:
             minimum_issue_size=v.get("minimum_issue_size"),
             min_amount_multiples=dict(v.get("min_amount_multiples", {})),
             osu_clients=v.get("osu_clients", True),
+            distributor_name_exempt=v.get("distributor_name_exempt", ()),
         )
 
 
@@ -406,6 +408,7 @@ ISSUER_FIELDS: dict[str, Callable[[Any, str], Any]] = {
     "agent_name": _place_texts(AGENT_PLACES),  # 子表：出處 → 總代理人名稱；沒有 → 不核對
     "min_amount_multiples": _min_amount_multiples,  # 子表：最低金額出處 → 單位面額的倍數；沒列為 1
     "osu_clients": _bool,  # 可否承作 OSU 客戶；沒有 → 可以（Issue #224）
+    "distributor_name_exempt": _texts,  # 全文受託機構名稱特例放行的寫法；沒有 → 不放行（Issue #226）
 }
 
 # 舊版面（每種基準一個表、底下分上手）的表 → [issuer.<上手>] 的欄位（Issue #128）；讀到舊版面時停止並提示轉換指令

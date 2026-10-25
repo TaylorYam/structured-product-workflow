@@ -29,10 +29,10 @@ def of(report, rule_id: str) -> list:
     return [r for r in report.results if r.rule_id == rule_id]
 
 
-def rules(*texts: str) -> list:
+def rules(*texts: str, issuer: str = "BARC") -> list:
     """只有全文（每行一頁）的說明書跑一次審查標準規則。"""
     trade = ParsedField.missing("trade_date", "")
-    return review_standard_rules(context(with_text(term_sheet(), *texts)), reference_trade=trade)
+    return review_standard_rules(context(with_text(term_sheet(), *texts), issuer), reference_trade=trade)
 
 
 # ---------------------------------------------------------------- 驗收：合成文件
@@ -119,8 +119,8 @@ def test_established_date_written_another_way_or_missing_requires_review():
 # ---------------------------------------------------------------- 全文受託機構名稱
 
 
-def _names(*texts: str):
-    [res] = [r for r in rules(*texts) if r.rule_id == NAMES]
+def _names(*texts: str, issuer: str = "BARC"):
+    [res] = [r for r in rules(*texts, issuer=issuer) if r.rule_id == NAMES]
     return res
 
 
@@ -148,6 +148,16 @@ def test_other_spellings_are_mismatches_listing_page_and_text(text, shown):
     assert res.status == MISMATCH and res.actual == 1
     assert f"第 2 頁「{shown}」" in res.message
     assert [e.page for e in res.document_evidence] == [2]
+
+
+def test_the_extra_word_in_ca_chapter_three_is_exempted_for_ca_only():
+    """CA 第三章 6.(4) 多「綜合」：審查標準 issuer.ca.distributor_name_exempt 特例放行（2026-10-15 確認）；其他上手照判。"""
+    text = "玉山綜合證券綜合股份有限公司依法不得承諾擔保投資本金"
+    ca = _names(f"{NAME}審查", text, issuer="CA")
+    assert ca.status == PASS and ca.actual == 0 and "1 處是該上手特例放行的寫法" in ca.message
+    assert _names(f"{NAME}審查", text).status == MISMATCH
+    typo = _names(f"{NAME}審查", "玉山綜合証券股份有限公司", issuer="CA")
+    assert typo.status == MISMATCH, "特例只放行列出的寫法"
 
 
 # ---------------------------------------------------------------- 保本率敘述

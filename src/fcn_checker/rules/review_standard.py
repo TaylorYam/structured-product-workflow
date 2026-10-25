@@ -375,7 +375,8 @@ def _distributor_names_in_text(ctx: Context) -> CheckResult:
     """全文每一處「玉山…」都是審查標準的受託機構名稱 `distributor.name` 或等價寫法 `name_equivalents`（Issue #226）。
 
     名稱後面可接「（受託機構）」這類角色括號；寫錯字、其他簡稱，或審查標準的寫法後面還接著公司名稱用字（例：「玉山證券
-    股份有限公司」）判不一致，每處附一筆出處。括號全半形、CJK 相容字不計。
+    股份有限公司」）判不一致，每處附一筆出處。該上手的特例寫法（`issuer.<上手>.distributor_name_exempt`，CA）放行。
+    括號全半形、CJK 相容字不計。
     """
     ti, std = ctx.ts.full_text, ctx.issuer_std
     text = _normalized(ti.text)
@@ -384,17 +385,23 @@ def _distributor_names_in_text(ctx: Context) -> CheckResult:
         key=len,
         reverse=True,  # 長的先比（等價寫法含全名）
     )
-    total, bad = 0, []
+    exempt = {full_brackets(squash(n)) for n in std.distributor_name_exempt}
+    total, exempted, bad = 0, 0, []
     for m in re.finditer(_DISTRIBUTOR, text):
         total += 1
         name = next((n for n in names if text.startswith(n, m.start())), None)
         if name is not None and not _NAME_GOES_ON.match(text, m.start() + len(name)):
+            continue
+        if any(text.startswith(n, m.start()) for n in exempt):
+            exempted += 1
             continue
         rest = text[m.start() : m.start() + 20]
         shown = rest[: (end.start() if (end := _NAME_SHOWN_END.search(rest)) else len(rest))]
         shown = shown[: shown.index("公司") + 2] if "公司" in shown else shown
         bad.append((ti.lines_for(m.start(), m.start() + len(shown)), shown))
     found = f"全文「{_DISTRIBUTOR}…」共 {total} 處"
+    if exempted:
+        found += f"（{exempted} 處是該上手特例放行的寫法 distributor_name_exempt）"
     places = "、".join(f"第 {lines[0].page} 頁「{shown}」" for lines, shown in bad if lines)
     return Check(
         "standard.distributor_names", "distributor_names", Item.standard("受託機構名稱（全文）"), ctx.document

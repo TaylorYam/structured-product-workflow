@@ -546,6 +546,8 @@ risk_level_formats = ["【{level}】", "風險程度等級為{level}", "歸類�
 iis_fixed_warning_occurrences = 1  # 警語 1.（2026-10-15 確認，Issue #274）
 # CA：同 BNP、JPM、Natixis 寫法，不隨標的數改變（2026-10-15 確認，Issue #274）。
 product_type = "股權連結結構型商品"
+# CA：說明書第三章 6.(4) 的受託機構名稱多「綜合」（5 份都有），特例放行（2026-10-15 確認；全文名稱規則沿用，Issue #226）。
+distributor_name_exempt = ["玉山綜合證券綜合股份有限公司"]
 
 [issuer.ca.product_name]
 # 商品名稱格式（依 5 份 CA 說明書推得，2026-10-15 確認，Issue #274）：只依天期、幣別；不分標的數、記憶式、KI、Non-Call。
