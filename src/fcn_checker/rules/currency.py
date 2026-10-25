@@ -2,9 +2,10 @@
 
 - 幣別代碼：全文每一處「中文幣別(代碼)」（例：`日圓(JPY)`、`10,000美元(USD)`），代碼須 = 審查標準 `[currency]` 對到的
   ISO 代碼，或 `[currency_code_aliases]` 列的其他寫法。整份文件一筆結果；各上手規則另比封面與條文的代碼 = 封面幣別
-  （`doc.currency_consistency`），同一處代碼錯時兩條都報。
-- 價格表的標的交易幣別：`underlying_prices` 每一列有幣別（價格旁的幣別字或幣別欄）時，須 = 審查標準 `[exchange_currency]`
-  依彭博交易所碼對到的幣別；對照表沒有的交易所碼轉人工覆核。整份文件一筆結果。
+  （`doc.currency_consistency`），同一處代碼錯時兩條都報。括號內是對照表裡的 ISO 代碼、前面卻不是認得的中文幣別
+  （例：`日元(JPY)`）時轉人工覆核。
+- 價格表的標的交易幣別：`underlying_prices` 每一列有幣別（價格旁的幣別字或幣別欄）時，須 = 交易所假日表
+  （`config/exchange_holidays.toml`）依彭博交易所碼對到的市場 `currency`；對不到的轉人工覆核。整份文件一筆結果。
 """
 
 from __future__ import annotations
@@ -15,14 +16,16 @@ from dataclasses import dataclass
 from ..parsers.money import CURRENCY_WORD
 from ..schema import CheckResult, Evidence, Item
 from ..schema import CheckStatus as S
-from ..trading_calendar import exchange_code
+from ..trading_calendar import TradingCalendar
 from . import kit
 from .kit import Check, Context
 from .reference import currency_iso
 
 RULE_CODE = "standard.currency_code"
 RULE_EXCHANGE = "standard.underlying_currency"
-CODE_PAIR = re.compile(rf"({CURRENCY_WORD})\s*[(（]\s*([A-Z]{{3}})\s*[)）]")
+# 括號內 3 碼代碼，前面可接中文幣別字（沒接時只看代碼是不是幣別代碼，排除 ETF、ADR 這類縮寫）
+CODE_PAIR = re.compile(rf"({CURRENCY_WORD})?\s*[(（]\s*([A-Z]{{3}})\s*[)）]")
+_LEAD = 4  # 沒有認得的中文幣別時，結果上顯示括號前的幾個字
 
 
 @dataclass(frozen=True)
@@ -69,17 +72,20 @@ def _summary(
 
 def codes(ctx: Context) -> list[CheckResult]:
     """全文每一處「中文幣別(代碼)」的代碼 = 審查標準對照；文件沒有這種寫法時不報。"""
-    ti = ctx.ts.full_text
+    ti, std = ctx.ts.full_text, ctx.std
+    known = set(std.currency_zh_to_iso.values()) | {c for codes in std.currency_code_aliases.values() for c in codes}
     marks = []
     for m in CODE_PAIR.finditer(ti.text):
         word, code = m[1], m[2]
-        iso = ctx.std.currency_zh_to_iso.get(word)
-        allowed = (iso, *ctx.std.currency_code_aliases.get(iso, ())) if iso else ()
-        evidence = tuple(Evidence.of(ln) for ln in ti.lines_for(m.start(), m.end()))
+        if word is None and code not in known:
+            continue
+        iso = std.currency_zh_to_iso.get(word) if word else None
+        allowed = (iso, *std.currency_code_aliases.get(iso, ())) if iso else ()
+        shown = f"{word}({code})" if word else ti.text[max(0, m.start() - _LEAD) : m.end()]
+        start = m.start() if word else max(0, m.start() - _LEAD)
+        evidence = tuple(Evidence.of(ln) for ln in ti.lines_for(start, m.end()))
         marks.append(
-            CurrencyMention(
-                f"{word}({code})", f"{word}({iso})" if iso else None, code in allowed if iso else None, evidence
-            )
+            CurrencyMention(shown, f"{word}({iso})" if iso else None, code in allowed if iso else None, evidence)
         )
     if not marks:
         return []
@@ -89,14 +95,14 @@ def codes(ctx: Context) -> list[CheckResult]:
             check,
             marks,
             unknown_reason="currency_unknown",
-            unknown=f"{ctx.document}的幣別不在審查標準的幣別對照表（[currency]），無法核對括號內的代碼",
+            unknown=f"{ctx.document}括號內幣別代碼前的中文幣別不在審查標準的幣別對照表（[currency]），無法核對",
             wrong=f"{ctx.document}「中文幣別(代碼)」的代碼須對應中文幣別（審查標準幣別對照）",
             tolerance="代碼也接受審查標準 [currency_code_aliases] 列的寫法（例：人民幣寫 CNY、RMB）",
         )
     ]
 
 
-def underlying_currency(ctx: Context) -> list[CheckResult]:
+def underlying_currency(ctx: Context, calendar: TradingCalendar) -> list[CheckResult]:
     """價格表每一列的幣別 = 標的交易所的交易幣別；價格表讀不到（由價格規則報）或各列都沒有幣別（範本沒有）時不報，
     只有部分列讀不到幣別時轉人工覆核。"""
     rows = kit.standard_field(ctx, "underlying_prices")
@@ -106,8 +112,7 @@ def underlying_currency(ctx: Context) -> list[CheckResult]:
     marks = []
     for i, r in enumerate(rows.value):
         ticker = r.ticker or (tickers[i] if i < len(tickers) else None)
-        suffix = exchange_code(ticker) if ticker else None
-        expected = ctx.std.exchange_currency.get(suffix) if suffix else None
+        expected = calendar.currency_of(ticker) if ticker else None
         actual = currency_iso(ctx, r.currency) if r.currency else None  # 這一列讀不到幣別 → 人工覆核
         label = ticker or f"第 {i + 1} 檔"
         ok = None if expected is None or actual is None else actual == expected
@@ -119,13 +124,13 @@ def underlying_currency(ctx: Context) -> list[CheckResult]:
             check,
             marks,
             unknown_reason="exchange_unknown",
-            unknown="價格表有一列讀不到幣別、標的的交易所碼不在審查標準的交易所幣別對照表（[exchange_currency]），"
-            "或幣別字不在幣別對照表（[currency]），請人工確認交易幣別",
-            wrong="價格表每一列的幣別須 = 標的交易所的交易幣別（審查標準 [exchange_currency]，依彭博交易所碼）",
+            unknown="價格表有一列讀不到幣別、標的的交易所不在交易所假日表或沒寫交易幣別（currency），"
+            "或幣別字不在審查標準幣別對照表（[currency]），請人工確認交易幣別",
+            wrong="價格表每一列的幣別須 = 標的交易所的交易幣別（交易所假日表的 currency，依彭博交易所碼）",
             tolerance="幣別字依審查標準幣別對照換成 ISO 代碼後比",
         )
     ]
 
 
-def run(ctx: Context) -> list[CheckResult]:
-    return [*codes(ctx), *underlying_currency(ctx)]
+def run(ctx: Context, calendar: TradingCalendar) -> list[CheckResult]:
+    return [*codes(ctx), *underlying_currency(ctx, calendar)]

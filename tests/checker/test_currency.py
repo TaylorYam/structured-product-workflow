@@ -7,11 +7,12 @@ from pathlib import Path
 
 import pytest
 
+import bnp_synth
 import jpm_synth
-from fcn_checker.config import load_review_standard
+from fcn_checker.config import load_exchange_holidays, load_review_standard
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.schema import CheckStatus as S
-from harness import CONFIG, REVIEW_STANDARD
+from harness import CONFIG, EXCHANGE_HOLIDAYS, REVIEW_STANDARD, with_markets
 from harness import results as rule
 from nomura_synth import Spec, check_item
 from pdf_writer import Edit
@@ -39,6 +40,15 @@ def test_investor_sheet_code_must_match_the_chinese_currency(tmp_path):
     assert statuses(ts.report, CODE) == [S.PASS]
 
 
+def test_unlisted_chinese_currency_before_a_known_code_goes_to_manual_review(tmp_path):
+    """「日元(JPY)」：日元不在幣別對照，括號內卻是幣別代碼 → 轉人工覆核，不是略過。"""
+    spec = Spec(currency_zh="日圓")
+    ts = check_item(tmp_path, spec, edits=[Edit("日圓(JPY)", "日元(JPY)", "iis")])
+    [x] = rule(ts.partner.report, CODE)
+    assert (x.status, x.reason_code) == (S.REVIEW_REQUIRED, "currency_unknown")
+    assert "日元(JPY)" in x.actual
+
+
 def test_price_table_currency_must_be_the_exchange_currency(tmp_path):
     """NOMURA 日股標的表一列改成「美元」→ 不一致（驗收條件）。"""
     spec = Spec(market="JT", count=1)
@@ -56,9 +66,17 @@ def test_only_the_wrong_row_is_listed(tmp_path):
     assert (x.status, x.expected, x.actual) == (S.MISMATCH, "1234 JT：JPY", "1234 JT：美元")
 
 
-def test_unknown_exchange_code_goes_to_manual_review(tmp_path):
-    std = CONFIG.review_standard
-    config = replace(CONFIG, review_standard=replace(std, exchange_currency={"UN": "USD"}))
+@pytest.mark.parametrize("cell", ["美元美元", ""])
+def test_bnp_currency_row_with_wrong_word_count_goes_to_manual_review(tmp_path, cell):
+    """BNP 貨幣列的幣別字數不等於標的數（多一個字、整列空白）→ 轉人工覆核，不是不報。"""
+    report = bnp_synth.check(tmp_path, edits=[Edit("美元", cell, "ts.art11.table")])
+    [x] = rule(report, EXCHANGE)
+    assert (x.status, x.reason_code) == (S.REVIEW_REQUIRED, "exchange_unknown")
+
+
+def test_market_without_currency_goes_to_manual_review(tmp_path):
+    """交易所假日表的美國市場沒寫 currency → 美股標的的價格表幣別轉人工覆核。"""
+    config = with_markets(CONFIG, lambda m: replace(m, currency=None) if m.code == "US" else m)
     ts = check_item(tmp_path, Spec(), config=config)
     [x] = rule(ts.report, EXCHANGE)
     assert (x.status, x.reason_code) == (S.REVIEW_REQUIRED, "exchange_unknown")
@@ -74,11 +92,14 @@ def test_listed_code_aliases_pass(tmp_path):
     assert statuses(ts.report, CODE) == [S.MISMATCH]
 
 
-@pytest.mark.parametrize("table, line", [("exchange_currency", 'UN = "usd"'), ("currency_code_aliases", 'CNH = "CNY"')])
-def test_config_codes_must_be_iso_shaped(tmp_path: Path, table, line):
-    text = REVIEW_STANDARD.read_text(encoding="utf-8").replace(f"[{table}]\n", f"[{table}]\n{line}\n", 1)
-    text = text.replace('UN = "USD"', "", 1) if table == "exchange_currency" else text.replace("CNH = [", "XXX = [", 1)
+def test_config_codes_must_be_iso_shaped(tmp_path: Path):
+    text = REVIEW_STANDARD.read_text(encoding="utf-8").replace("CNH = [", 'CNH = "CNY"\nXXX = [', 1)
     path = tmp_path / "review_standard.toml"
     path.write_text(text, encoding="utf-8")
-    with pytest.raises(IngestionError, match=table):
+    with pytest.raises(IngestionError, match="currency_code_aliases"):
         load_review_standard(path)
+    text = EXCHANGE_HOLIDAYS.read_text(encoding="utf-8").replace('currency = "USD"', 'currency = "usd"', 1)
+    path = tmp_path / "exchange_holidays.toml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(IngestionError, match="US.currency"):
+        load_exchange_holidays(path)

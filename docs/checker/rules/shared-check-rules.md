@@ -179,8 +179,8 @@
 
 | 項目 | 規則 |
 |---|---|
-| 幣別代碼（`standard.currency_code`） | 全文每一處「中文幣別(代碼)」（例：`日圓(JPY)`、`10,000美元(USD)`；括號全形半形都收）：代碼 = 審查標準 `[currency]` 對到的 ISO 代碼，或 `[currency_code_aliases]` 列的其他寫法（人民幣寫 `CNY`、`RMB`）。不一致判不一致；中文幣別不在 `[currency]` 轉人工覆核。各上手規則另比封面與條文的幣別代碼 = 封面幣別（`doc.currency_consistency`）：同一處代碼錯時兩條都報（一條比封面、一條比旁邊的中文幣別），這裡整份只報一筆 |
-| 價格表的標的交易幣別（`standard.underlying_currency`） | `underlying_prices` 每一列有幣別時（價格旁的幣別字，或價格表的幣別欄：HSBC `幣別`、NOMURA `計價幣別`、GS `參考幣別`、NATIXIS `貨幣`，BNP 標的表的 `貨幣(Currency)` 列），幣別（中文依 `[currency]` 換成 ISO 代碼）= 審查標準 `[exchange_currency]` 依彭博交易所碼對到的幣別（例：`JT` → JPY、`UN`／`UW`／`UQ` → USD、`HK` → HKD）。不一致判不一致；交易所碼或幣別字對照不到、或只有部分列讀不到幣別轉人工覆核。表上沒有代碼時依 `underlyings` 同順序的代碼 |
+| 幣別代碼（`standard.currency_code`） | 全文每一處「中文幣別(代碼)」（例：`日圓(JPY)`、`10,000美元(USD)`；括號全形半形都收）：代碼 = 審查標準 `[currency]` 對到的 ISO 代碼，或 `[currency_code_aliases]` 列的其他寫法（人民幣寫 `CNY`、`RMB`）。不一致判不一致；括號內是這兩張表裡的代碼、前面卻不是認得的中文幣別（例：`日元(JPY)`）轉人工覆核，結果顯示括號前幾個字。括號內不是幣別代碼的縮寫（例：`(ETF)`）不看。各上手規則另比封面與條文的幣別代碼 = 封面幣別（`doc.currency_consistency`）：同一處代碼錯時兩條都報（一條比封面、一條比旁邊的中文幣別），這裡整份只報一筆 |
+| 價格表的標的交易幣別（`standard.underlying_currency`） | `underlying_prices` 每一列有幣別時（價格旁的幣別字，或價格表的幣別欄：HSBC `幣別`、NOMURA `計價幣別`、GS `參考幣別`、NATIXIS `貨幣`，BNP 標的表的 `貨幣(Currency)` 列），幣別（中文依 `[currency]` 換成 ISO 代碼）= 交易所假日表（`config/exchange_holidays.toml`）依彭博交易所碼對到的市場 `currency`（美國 USD、日本 JPY、港股 HKD）。不一致判不一致；交易所不在假日表或該市場沒寫 `currency`、幣別字對照不到、或只有部分列讀不到幣別轉人工覆核。表上沒有代碼時依 `underlyings` 同順序的代碼 |
 
-- 價格表沒有幣別的上手（BARC、MS）不報；BNP 貨幣列的幣別字數不等於標的數時整列當作讀不到，也不報（限制）。標的幣別本來就可以和承作幣別不同（Issue #170），這裡比的是交易所，不是承作幣別。
+- 價格表沒有幣別的上手（BARC、MS）不報；BNP 貨幣列的幣別字數不等於標的數時，各檔都帶讀到的原文、轉人工覆核。標的幣別本來就可以和承作幣別不同（Issue #170），這裡比的是交易所，不是承作幣別。
 - 樣本（2026-10-25）：幣別代碼 81 份、價格表交易幣別 97 份都成立；GS 寫 `人民幣（CNY）`、SG 風險揭露寫 `以人民幣(RMB)計值的債券`。

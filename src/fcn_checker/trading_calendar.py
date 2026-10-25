@@ -23,7 +23,7 @@ def exchange_code(ticker: str) -> str | None:
 
 @dataclass(frozen=True)
 class Market:
-    """一個市場（例：美國）：彭博交易所碼、全天休市日與假日表涵蓋範圍。"""
+    """一個市場（例：美國）：彭博交易所碼、全天休市日、假日表涵蓋範圍與交易幣別（ISO 代碼；沒寫時為 None）。"""
 
     code: str
     name: str
@@ -31,6 +31,7 @@ class Market:
     covered_from: dt.date
     covered_through: dt.date
     holidays: frozenset[dt.date]
+    currency: str | None = None
 
     def covers(self, first: dt.date, last: dt.date) -> bool:
         return self.covered_from <= first and last <= self.covered_through
@@ -55,6 +56,11 @@ class TradingCalendar:
         """彭博代號（例：GOOGL UW、ABC UN Equity）最後的交易所碼對到的市場；對不到為 None。"""
         code = exchange_code(ticker)
         return next((m for m in self.markets if code in m.bloomberg_codes), None)
+
+    def currency_of(self, ticker: str) -> str | None:
+        """彭博代號的交易所交易幣別（價格表的標的交易幣別，Issue #227）；交易所不在假日表或沒寫幣別時為 None。"""
+        m = self.market_of(ticker)
+        return m.currency if m is not None else None
 
     def market(self, code: str) -> Market | None:
         """市場代號（假日表 [markets.<代號>]，例：TW 臺北營業日）對到的市場；假日表沒有時為 None。"""

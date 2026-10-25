@@ -83,7 +83,7 @@ def check_document(pairing: Sequence[CheckResult], paired: Paired | None, config
         results.extend(schedule.run(issuer_ctx))
         results.extend(scenario.run(issuer_ctx))
         results.extend(redemption.term_sheet(issuer_ctx))
-        results.extend(currency.run(ctx))
+        results.extend(currency.run(ctx, config.exchange_calendar))
         results.extend(paired.issuer.rules(issuer_ctx))
         results.extend(review_standard_rules(ctx, reference_trade=iis.trade_date(ctx)))
         results.append(reference.first_callable_period(ctx))
@@ -158,7 +158,7 @@ def check_investor_sheet(pairing: Sequence[CheckResult], paired: PairedIis | Non
             results.extend(template.rules(iis.IisIssuerContext(paired.sheet, paired.term_sheet, trade_date=trade)))
         results.extend(iis_review_standard_rules(ctx, trade=trade))
         results.extend(redemption.investor_sheet(ctx))
-        results.extend(currency.run(ctx))
+        results.extend(currency.run(ctx, config.exchange_calendar))
         report.not_covered = [dict(n) for n in template.not_covered] if template is not None else []
     for r in results:  # 這份 PDF 的結果（含辨識與配對）都屬於投資人須知，錯訊的文件那一邊依此稱呼
         r.document = DocKind.IIS
