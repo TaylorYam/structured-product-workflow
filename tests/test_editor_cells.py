@@ -95,7 +95,9 @@ def test_order_cells_prefix_reading_notes_and_use_the_given_problems() -> None:
 
 @pytest.mark.parametrize(("status", "tone"), [(OrderReview.UNLOCKED, Tone.DIFFERENT), (OrderReview.READ, Tone.PLAIN)])
 def test_clearing_a_field_only_counts_as_different_when_correcting(status: OrderReview, tone: Tone) -> None:
-    draft = maintenance_draft(status)  # 人工維護打開的才是更正；起單資料的草稿不是
+    draft = maintenance_draft(
+        status
+    )  # 同一份資料庫的值，只換確認狀態：人工維護打開的（未鎖住）才是更正，起單資料讀到的不是
     draft.values["Coupon p.a. (%)"] = None
 
     assert order_cell_states(draft, {})["Coupon p.a. (%)"].tone is tone

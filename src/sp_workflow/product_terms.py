@@ -708,29 +708,29 @@ def write(
     if mode is Mode.IMPORT:
         raise ValueError("起單資料的草稿用 write_batch 整批匯入")
     tdcc, values = draft.tdcc, draft.values
-    correction = mode is Mode.CORRECT
+    locked_product = mode is Mode.CORRECT  # 已鎖住的商品：存檔照更正（ADR 0014）
     with conn.transaction():
         stored, refused = _guard(conn, draft, trades, mode)
         if refused:
             raise TermsError(f"{tdcc}：{refused}")
         found = _blocking(draft, config, mode)
-        if correction:
+        if locked_product:
             assert stored is not None
             for name in _FIXED_IN_CORRECTION:
                 if not same_value(values.get(name), stored.fields.get(name)):
                     found[name] = "TS 回填的欄位，不能更正"
-        _raise_problems(f"{tdcc} {'沒有更正' if correction else '沒有存檔'}", found, trades)
+        _raise_problems(f"{tdcc} {'沒有更正' if locked_product else '沒有存檔'}", found, trades)
         product = _product_for(values, draft, stored, config, mode)
         changed = _changed(draft, values, stored, product, mode)
         trade_changes = [] if trades is None else write_trade_rows(conn, trades)
         if not changed and not trade_changes:
-            return Receipt(tdcc, None, locked=correction)
+            return Receipt(tdcc, None, locked=locked_product)
         source = {"source": ProductSource.MANUAL} if mode is Mode.CREATE else {}
         if changed and not _write(conn, tdcc, product, changed, stored, source):
             raise TermsError(f"{tdcc}：{_ALREADY_CREATED}")  # 別人同時新增了這檔：還不存在的列鎖不到
         exists = stored is not None or bool(changed)  # 只改了交易明細、還沒有商品條件的不重算
         calc, price_changes = None, ()
-        if correction:
+        if locked_product:
             assert stored is not None
             affected = any(name in CHECK_TERM_FIELDS for _, name, _, _ in trade_changes)
             recalc = recalculate_corrected(conn, config.calendar, tdcc, stored.columns, trades_changed=affected)
@@ -742,18 +742,22 @@ def write(
         correction_id = None
         if changed:
             previous = None if stored is None else stored.columns
-            correction_id = _record_terms(conn, tdcc, changes, previous, locked=correction, reason=reason, user=user)
+            correction_id = _record_terms(
+                conn, tdcc, changes, previous, locked=locked_product, reason=reason, user=user
+            )
         trade_id = None
         if trades is not None and trade_changes:
             prices = () if changed else price_changes  # 商品條件也改了時，價格記在商品條件的紀錄
-            trade_id = _record_trades(conn, trades, trade_changes, prices, locked=correction, reason=reason, user=user)
+            trade_id = _record_trades(
+                conn, trades, trade_changes, prices, locked=locked_product, reason=reason, user=user
+            )
         saved = read(conn, tdcc) if exists else None
         saved_trades = None if trades is None else read_rows(conn, tdcc)
     if saved is not None:
         # 存檔後當成重新打開：畫面與打開時的值都換成資料庫存的值（百分比存成小數 6 位），
         # 同一檔接著改、再存時才不會誤判成打開之後有別人改過
         draft.values, draft.original, draft.stored = dict(saved.fields), dict(saved.fields), dict(saved.fields)
-        if not correction:
+        if not locked_product:
             draft.row = replace(draft.row, status=OrderReview.UNLOCKED)
     if trades is not None and saved_trades is not None:
         trades.reopen(saved_trades)
@@ -762,9 +766,9 @@ def write(
         correction_id,
         tuple(changes),
         calc,
-        locked=correction,
+        locked=locked_product,
         created=stored is None and bool(changed),
-        missing=() if correction else tuple(missing_fields(product)) if exists else REQUIRED,
+        missing=() if locked_product else tuple(missing_fields(product)) if exists else REQUIRED,
         **_trade_receipt(trades, trade_changes, trade_id),
     )
 

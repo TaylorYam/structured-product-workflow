@@ -1,7 +1,8 @@
 """商品條件（`sp_workflow.product_terms`，#203）：起單資料確認與匯入、寫入共用的規則與併發、讀資料庫。
 
 - 起單資料確認與匯入（#86、#97、ADR 0009、0010）：讀取結果用 `order_row` 組出。
-- 寫入（#124）：起單資料匯入、已鎖住更正、人工維護共用的規則（面額、上手、有沒有改、紀錄）各用 `Mode` 參數化測一次；
+- 寫入（#124）：起單資料匯入、已鎖住更正、人工維護共用的規則（面額、上手、有沒有改、紀錄）各用 `Mode` 參數化測一次，
+  另有和核對寫回同時寫的併發；
   各模式自己的規則在本檔的「起單資料匯入資料庫」、test_term_correction、test_maintenance、test_trade_rows。
   按一次「匯入資料庫」之後重算、重讀的容錯（ADR 0012）在 test_window_actions。
 - 讀資料庫（`read_many`，#204）：指定 TDCC 與全部、鎖與不鎖、關聯表沒有資料時的預設值。
@@ -651,8 +652,6 @@ def _wait_until_blocked(pg, pid: int) -> None:
 @pytest.mark.db
 def test_import_waits_for_a_concurrent_lock_and_reports_locked(pg) -> None:
     """核對寫回鎖住這檔的同時匯入：匯入等鎖放開後看到已鎖住，不蓋掉剛鎖住的條件。"""
-    import psycopg
-
     write_batch(pg, _drafts([order_row()], CONFIG, pg), CONFIG, user="tester")
     (draft,) = _drafts([order_row(changes={"Coupon p.a. (%)": Decimal(10)})], CONFIG, pg)
     dsn = os.environ["SPW_TEST_DSN"]
