@@ -72,6 +72,7 @@ def test_maintenance_actions_live_in_the_menu_only(master, tmp_path: Path) -> No
         "重新比價全部",
         "匯入舊商品的價格與比價日…",
         "信箱維護…",
+        "發行機構評等…",
         "使用的設定檔…",
     ]
     assert not {"審查通過日期…", "匯出回報包…"} & set(texts(window.check, ttk.Button)), "核對頁畫面上不再有維護功能"
