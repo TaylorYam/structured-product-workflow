@@ -44,7 +44,7 @@ def test_citi_date_must_be_the_next_business_day_after_issue(tmp_path):
 
 
 def test_taipei_holidays_are_skipped_but_exchange_holidays_are_not(tmp_path):
-    """「營業日」是臺北營業日：臺北休假順延；只有美股休市不順延（真實樣本 Citi 2026-07-03）。"""
+    """「營業日」是臺北營業日：臺北休假順延；只有美股休市不順延（真實樣本 Citi 有這種情形）。"""
     spec, day = citi_synth.Spec(), dt.date(2030, 1, 15)
     [x] = rule(citi_synth.check(tmp_path, spec, config=closed_on(day, "TW")), DATE)
     assert (x.status, x.expected) == (S.MISMATCH, dt.date(2030, 1, 16))

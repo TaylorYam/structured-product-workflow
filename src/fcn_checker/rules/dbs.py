@@ -161,8 +161,8 @@ def observation_start(ctx: IssuerContext) -> CheckResult:
     """觀察起始日 = 交易日後的下一個一籃子預定交易日（交易所假日表）。條文沒有規定這個關係（沒有 AKI 時也沒有意義，但 DBS
     都會寫），所以不符時轉人工覆核並寫出預期日期，不判不一致（Issue #227，2026-10-25 使用者同意）。"""
     trade, start = ctx.ts.f("trade_date"), ctx.ts.f("observation_start")
-    u = kit.read_standard(ctx.ts, "underlyings")
-    following = ctx.calendar.next_trading_day(trade.value, u.value if u.ok else None) if trade.ok else None
+    tickers = kit.field_value(ctx.ts, "underlyings")
+    following = ctx.calendar.next_trading_day(trade.value, tickers) if trade.ok else None
     note = f"（{following.uncertain}）" if following is not None and following.uncertain else ""
     return kit.doc_check(ctx, "doc.observation_start", "observation_start", "觀察起始日", trade, start).compare(
         following.day if following is not None else None,
@@ -170,7 +170,7 @@ def observation_start(ctx: IssuerContext) -> CheckResult:
         fail=S.REVIEW_REQUIRED,
         reason="observation_start_unexpected",
         tolerance=kit.TRADING_DAY_TOLERANCE,
-        fail_message=f"觀察起始日通常是交易日的次一營業日，請人工確認{note}",
+        fail_message=f"觀察起始日通常是交易日的次一預定交易日，請人工確認{note}",
     )
 
 

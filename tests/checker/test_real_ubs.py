@@ -47,7 +47,7 @@ def test_only_the_confirmed_differences_are_reported(items):
             ("standard.product_name", S.MISMATCH): 4,  # 2 份 KO 每日寫「定期觀察」：中英文名稱
             # 表上幣別填錯：說明書計價幣別與金額旁幣別字 13 處、說明文字與情境幣別 6 處（Issue #320）、投資人須知 1 處
             ("field.currency", S.MISMATCH): 20,
-            # 1 份「即現預計為」寫中秋節後的週一，但那天是 2025 年修法新增的教師節（孔子誕辰紀念日），次一臺北營業日
+            # 1 份「即現預計為」的日期是 2025 年修法新增的教師節（孔子誕辰紀念日），次一臺北營業日
             # 是再隔一天：文件問題（Issue #227，2026-10-25 使用者決定判不一致）
             ("doc.redemption_start_date", S.MISMATCH): 1,
         }

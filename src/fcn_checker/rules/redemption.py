@@ -99,10 +99,10 @@ def _date(ctx: IssuerContext, m: Mention) -> CheckResult:
             reason="calendar_missing",
             message=f"交易所假日表沒有臺北營業日（markets.{TAIPEI}），無法推算{NAME}",
         )
-    tickers = kit.field_value(ctx.ts, "underlyings") if "交易日" in m.text else None
+    trading_day = "交易日" in m.text  # 「預定交易日（並須為臺北營業日）」：標的交易所也要開市
     following = (
-        ctx.calendar.next_trading_day(issue.value, tickers, also=[taipei])
-        if "交易日" in m.text
+        ctx.calendar.next_trading_day(issue.value, kit.field_value(ctx.ts, "underlyings"), also=[taipei])
+        if trading_day
         else ctx.calendar.next_business_day(issue.value, taipei)
     )
     if m.date == following.day:
@@ -117,7 +117,7 @@ def _date(ctx: IssuerContext, m: Mention) -> CheckResult:
         actual=m.date,
         evidence=[*m.evidence, *issue.evidence],
         reason=reason,
-        tolerance="發行日後的下一個臺北營業日" + ("（標的交易所也開市）" if tickers is not None else ""),
+        tolerance="發行日後的下一個臺北營業日" + ("（標的交易所也開市）" if trading_day else ""),
         message="" if status == S.PASS else f"{NAME}須為發行日的次一營業日：應為 {following.day}{note}",
     )
 
