@@ -26,14 +26,20 @@ _FORMAT = tomllib.loads(REFERENCE_FORMAT.read_text(encoding="utf-8"))
 REFERENCE_COLUMNS: dict[str, str] = dict(_FORMAT["columns"])
 _COLUMN_OF = {f: h for h, f in reversed(REFERENCE_COLUMNS.items())}  # 標準欄位 → Excel 欄名（先宣告的；計價幣別是別名）
 
-# 舊 FCN參考條件 `樣本清單` 第 3 列的具名欄（Issue #203 前的參考條件表欄位順序）
+# 信用評等欄（#240）：資料庫來源才有；`OLD_REFERENCE_HEADERS` 是沒有這些欄的舊 Excel
+RATING_HEADERS: list[str] = [
+    h for h, f in REFERENCE_COLUMNS.items() if f.startswith(("issuer_rating_", "guarantor_rating_"))
+]
+# 舊 FCN參考條件 `樣本清單` 第 3 列的具名欄（Issue #203 前的參考條件表欄位順序），加上信用評等欄
 REFERENCE_HEADERS: list[str] = [
     "TS", "IIS", "庫存狀態", "當日比價", "Product", "發行機構", "TDCC Code", "ISIN Code", "私銀註記",
     "單位面額", "承作幣別", "交易日", "發行日", *(f"比價日_{n}" for n in range(1, 13)),
     "最終比價日", "到期日", "期初定價", "KO(%)", "KO(Freq)", "KO(memo)", "K(%)", "KI(%)", "KI(Freq)", "UF",
     "Coupon p.a. (%)", "天期(月)", "Non-Call(月)",
     *(h for n in range(1, 6) for h in (f"UL_{n}", f"UL_{n}_進場價", f"UL_{n}_執行價", f"UL_{n}_下限價", f"UL_{n}_KO價", f"UL_{n}_Memo")),
+    *RATING_HEADERS,
 ]  # fmt: skip
+OLD_REFERENCE_HEADERS: list[str] = [h for h in REFERENCE_HEADERS if h not in RATING_HEADERS]
 DATE_FORMAT = "mm-dd-yy"
 Q4 = Decimal("0.0001")
 DEFAULT_DENOMINATION = {k: int(v) for k, v in STANDARD["denomination"].items()}  # 幣別預設面額（審查標準）
@@ -134,6 +140,24 @@ def write_notes(
     w.section = before
 
 
+SP, MOODYS, FITCH = "標準普爾", "穆迪", "惠譽"
+
+
+@dataclass(frozen=True)
+class Ratings:
+    """發行機構的長期債務信用評等（虛構值）：說明書、投資人須知與參考條件表評等欄都照它寫；None 表示文件沒寫這家，
+    參考條件表那一欄也空白。"""
+
+    sp: str | None = "A+"
+    moodys: str | None = "Aa3"
+    fitch: str | None = "AA"
+
+    def stated(self, *order: str) -> list[tuple[str, str]]:
+        """依 `order`（評等機構）列出文件有寫的（評等機構, 評等）；沒給 `order` 時依標準普爾、穆迪、惠譽。"""
+        values = {SP: self.sp, MOODYS: self.moodys, FITCH: self.fitch}
+        return [(a, values[a]) for a in order or values if values[a] is not None]
+
+
 @dataclass
 class ProductSpec:
     """一檔 FCN 商品的規格（上手中立）：參考條件表一列的內容，也是各上手合成說明書與投資人須知的依據。
@@ -162,6 +186,7 @@ class ProductSpec:
     denomination: int | None = None  # None → 幣別預設面額
     currency_iso: str | None = None  # 承作幣別 ISO 代碼；None → 依審查標準對照 `currency_zh`（對照表沒有的幣別要給）
     underlyings: tuple[UL, ...] = DEFAULT_ULS
+    ratings: Ratings = Ratings()  # 發行機構評等（#240；HSBC、MS、DBS、Natixis、UBS 的合成文件寫出評等段落）
 
     def with_(self, **kw: Any) -> Self:
         return replace(self, **kw)
@@ -228,6 +253,9 @@ def reference_row(spec: ProductSpec, **overrides: Any) -> dict[str, Any]:
         "coupon_pa_pct": float(spec.annual),
         "tenor_months": spec.tenor,
         "first_callable_period": spec.first_callable,
+        "issuer_rating_sp": spec.ratings.sp,
+        "issuer_rating_moodys": spec.ratings.moodys,
+        "issuer_rating_fitch": spec.ratings.fitch,
     }
     for i in range(1, 6):
         u = spec.underlyings[i - 1] if i <= len(spec.underlyings) else None

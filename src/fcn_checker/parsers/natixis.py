@@ -18,7 +18,7 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import OCCURRENCE_NAMES, Occurrence, ScenarioParam, ScenarioPrice
 from ..text import squash
-from . import money, price_table, schedule
+from . import money, price_table, ratings, schedule
 from .common import RawText, by_value, capture_group, derived, fee_rates, number
 from .layout import Document, LayoutSpec, Span, TextIndex, capture, parse_date
 from .underlying_notes import NameColumn, underlying_notes
@@ -29,6 +29,14 @@ TEMPLATE_ID = "natixis-zh-pd"
 # 7：情境價格表、假設值與實物交割執行價格交成共用情境規則的標準欄位（Issue #294）
 # 8：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 PARSER_VERSION = "8"
+# 發行機構信用評等（#240）：封面「發行機構名稱」下一行 `(長期債務信用評等標準普爾評等A+/穆迪評等A2/惠譽評等A+ (高級優先債務))(截至…)`、第一章第 3 項 `發行機構長期債務信用評等(截至…)：長期債務信用評等…。`、第二章 (7) `信用評等：長期債務信用評等…(截至…)`
+RATINGS = (
+    ratings.RatingPlace("封面", r"法國外貿銀行（長期債務信用評等(?P<body>.+?)）（截至"),
+    ratings.RatingPlace(
+        "第一章第 3 項", r"發行機構長期債務信用評等（截至本中文產品說明書刊印日期）：長期債務信用評等(?P<body>.+?)。"
+    ),
+    ratings.RatingPlace("第二章 (7) 信用評等", r"信用評等：長期債務信用評等(?P<body>.+?)（截至"),
+)
 CHAPTER_NAMES = {
     1: ("一", "商品基本資料"),
     2: ("二", "相關機構事業概況"),
@@ -414,6 +422,7 @@ def read(lines: Sequence[Line]) -> NatixisTermSheet:
     fields["underlying_notes"] = underlying_notes(
         doc.lines, NameColumn()
     )  # 連結標的公司介紹：左欄名稱、右欄介紹（Issue #225）
+    fields.update(ratings.fields(doc.lines, RATINGS))
     return NatixisTermSheet(fields, TextIndex(doc.lines), doc)
 
 

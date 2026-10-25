@@ -15,13 +15,19 @@ from decimal import Decimal
 from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..text import squash
-from . import iis, money, natixis
+from . import iis, money, natixis, ratings
 from .common import RawText, fee_rates, number
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "natixis-zh-iis"
 # 2：計價幣別「● 」（Issue #270）；3：KO 定義沒寫 % 視為參照說明書（Issue #272）；4：無 KI 要有明確寫法（Issue #297）
 PARSER_VERSION = "6"  # 5：警語的受託機構名稱（Issue #306）；6：說明文字幣別（Issue #318）
+# 發行機構信用評等（#240）：商品簡介 `發行機構之長期債務信用評等(截至本中文投資人須知刊印日期)：長期債務信用評等標準普爾評等A+/…。`
+RATINGS = (
+    ratings.RatingPlace(
+        "商品簡介", r"發行機構之長期債務信用評等（截至本中文投資人須知刊印日期）：長期債務信用評等(?P<body>.+?)。"
+    ),
+)
 # 貳 2. KO 定義的兩種寫法：寫出 %，或沒寫 %（參照說明書第一章第 14 項，投資人須知不核對 KO %）
 KO_DEF_PCT = r"期初進場價格之(\d+(?:\.\d+)?)%"
 KO_DEF_INITIAL = "中文產品說明書第一章第14項所列之期初進場價格"
@@ -78,6 +84,7 @@ PROVIDED = frozenset(
         "distributor_code",
         "ko_definition",
         *(f"fee_{label}" for label in iis.FEES),
+        *ratings.FIELDS,
     }
 )
 
@@ -308,4 +315,5 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         )
     else:
         fields.update(fee_rates(fees))
+    fields.update(ratings.fields(text_lines, RATINGS))
     return iis.IisSheet(fields, ti, frozenset(provided))

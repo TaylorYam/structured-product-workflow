@@ -13,15 +13,16 @@ import pytest
 from fcn_checker.issuers import NATIXIS
 from fcn_checker.schema import CheckStatus as S
 from harness import check_all
-from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, requires
+from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, rated_check_format, requires
 
 pytestmark = [pytest.mark.real_samples, requires(TERM_SHEETS / "328*_TS.pdf", CHECK_FORMAT)]
 PROBLEMS = (S.MISMATCH, S.REVIEW_REQUIRED, S.ERROR)
 
 
 @pytest.fixture(scope="module")
-def items():
-    outcome = check_all(CHECK_FORMAT, pdfs("328*.pdf"))
+def items(tmp_path_factory):
+    sheet = rated_check_format(tmp_path_factory.mktemp("rated"))  # 加評等欄（#240）
+    outcome = check_all(sheet, pdfs("328*.pdf"))
     return [i for i in outcome.items if i.term_sheet.name.endswith("_TS.pdf")], [
         i for i in outcome.items if i.term_sheet.name.endswith("_IIS.pdf")
     ]
@@ -40,21 +41,29 @@ def test_samples_only_differ_where_the_exploration_said(items):
     def bad(docs):
         return Counter((r.rule_id, r.reason_code) for i in docs for r in i.report.results if r.status in PROBLEMS)
 
+    # 較舊的樣本寫評等調整前的評等，初始評等表只有現在的評等（#240）：每處評等段落各判不一致
+    # （3 份的穆迪評等：說明書封面、第一章第 3 項、第二章 (7) 與投資人須知商品簡介）
     assert bad(term_sheets) == Counter(
-        {("doc.distributor_product_code", "blank_field"): 1, ("batch.pairing", "reference_row_missing"): 1}
+        {
+            ("doc.distributor_product_code", "blank_field"): 1,
+            ("batch.pairing", "reference_row_missing"): 1,
+            ("standard.credit_rating", "value_mismatch"): 9,
+        }
     )
     assert bad(investor_sheets) == Counter(
         {
             ("doc.distributor_product_code", "blank_field"): 1,
             ("iis.pages", "value_mismatch"): 1,
             ("batch.pairing", "reference_row_missing"): 1,
+            ("standard.credit_rating", "value_mismatch"): 3,
         }
     )
 
 
 def test_products_whose_two_documents_pass_are_filled(items):
     term_sheets, _ = items
-    assert sum(i.fills_sheet for i in term_sheets) == 5  # NX7 KO 定義是參照說明書、不核對 KO %（Issue #272）
+    # NX7 KO 定義是參照說明書、不核對 KO %（Issue #272）；穆迪評等和評等表不同的 2 檔不回填（#240）
+    assert sum(i.fills_sheet for i in term_sheets) == 3
 
 
 def test_template_variants_match_the_sample_table(items):

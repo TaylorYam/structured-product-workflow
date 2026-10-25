@@ -25,8 +25,12 @@ import fitz
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
 from reference_synth import (
+    FITCH,
+    MOODYS,
+    SP,
     UL,
     ProductSpec,
+    Ratings,
     build_reference_sheet,
     price,
     reference_row,
@@ -38,6 +42,13 @@ NAME = STANDARD["issuer"]["natixis"]["product_name"]
 WARNING = STANDARD["issuer"]["natixis"]["fixed_warning"]
 ISSUER = STANDARD["issuer"]["natixis"]["issuer_name"]
 PRODUCT_TYPE = STANDARD["issuer"]["natixis"]["product_type"]
+
+
+def ratings_text(r: Ratings) -> str:
+    """發行機構評等（#240）：`標準普爾評等A+/穆迪評等A2/惠譽評等A+ (高級優先債務)`（封面、第一章第 3 項、第二章、投資人須知）。"""
+    return "/".join(f"{a}評等{v}" for a, v in r.stated(SP, MOODYS, FITCH)) + " (高級優先債務)"
+
+
 DIST = STANDARD["distributor"]
 PHONE = "+886 2 5556 1313"  # 審查標準 phone_equivalents 的寫法
 ADDRESS = "台北市民生東路三段158號6樓"  # 審查標準 address_equivalents（沒有「松山區」）
@@ -292,7 +303,7 @@ def _cover(d: _Doc, s: Spec) -> None:
         (["商品中文名稱："], [f"{s.name_zh}(下稱「本商品」)"]),
         (["商品英文名稱："], [s.name_en]),
         (["商品種類："], [PRODUCT_TYPE]),
-        (["發行機構名稱："], [ISSUER, "(長期債務信用評等虛構評等)(截至本中文產品說明書刊印日期)"]),
+        (["發行機構名稱："], [ISSUER, f"(長期債務信用評等{ratings_text(s.ratings)})(截至本中文產品說明書刊印日期)"]),
         (["發行機構註冊地："], ["法國"]),
         (["發行機構地址及電話："], ["電話：+33 1 00 00 00 00", "地址：1 Fictional Avenue, Paris, France"]),
         (["商品註冊地："], ["專業投資人及OSU 客戶不適用"]),
@@ -624,7 +635,11 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             d.text(72, WARNING)
         elif n == 3:
             d.text(72, f"發行機構：{ISSUER}")
-            d.text(72, "發行機構長期債務信用評等(截至本中文產品說明書刊印日期)：虛構評等。")
+            d.text(
+                72,
+                f"發行機構長期債務信用評等(截至本中文產品說明書刊印日期)：長期債務信用評等{ratings_text(s.ratings)}。"
+                "為避免疑慮，此為發行機構之長期債務信用評等，並不代表本商品之評等。",
+            )
             d.text(72, "保證機構名稱及其長期債務信用評等：無保證機構")
         elif n == 5:
             d.text(90, f"(1) 計價幣別：{s.currency_zh} ({s.ccy})")
@@ -688,6 +703,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         f"(1) 事業名稱：{ISSUER}",
         "(2) 設立日期：2006 年11 月17 日",
         "(3) 營業所在地：1 Fictional Avenue, Paris",
+        f"(7) 信用評等：長期債務信用評等{ratings_text(s.ratings)}(截至本中文產品說明書刊印日期)。",
     ):
         d.text(63, t, 90)
     d.text(36, "2. 保證機構：無保證機構")
@@ -820,6 +836,8 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
     )
     lines = [
         "• 受託或銷售對象：專業投資人及OSU客戶",
+        f"• 發行機構之長期債務信用評等(截至本中文投資人須知刊印日期)：長期債務信用評等{ratings_text(s.ratings)}。"
+        "為避免疑慮，此為發行機構之長期債務信用評等，並不代表本商品之評等。",
         f"• {WARNING}",
         f"• 計價幣別：{s.currency_zh}({s.ccy}) ●每單位商品面額：{m}●最低申購金額：1單位商品面額，即{s.denom:,}{s.currency_zh}",
         "• 發行價格：100%",

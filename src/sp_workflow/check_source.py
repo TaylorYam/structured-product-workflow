@@ -14,6 +14,9 @@
   若單位面額和資料庫不同，改成 TS 的值。每個改變的原值記在 `workflow.backfill_log`。寫入、紀錄與鎖住都經過
   `product_terms.backfill`／`lock_checked`（#203），和商品條件寫入共用同一把鎖（`product_terms.read(…, lock=True)`）。
 - 寫回在同一個 transaction 裡，失敗時什麼都不寫；核對結果檔已經存好，可以重新寫回（使用者 2026-10-21 確認）。
+- 信用評等（#240）：每列帶出交易日當時的發行機構、保證機構評等（三家評等機構各一欄，評等表 `credit_ratings` 依生效日查），
+  核對規則從參考條件表讀，不直接讀資料庫（ADR 0013）。上手代號由發行機構欄寫法反查參考條件表格式 `[issuer_values]`。
+  評等表沒有這個機構（或沒有該家評等）時那幾欄空白。評等在核對後改了也算條件改了（不回填、不鎖住）。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
@@ -31,6 +34,7 @@ from typing import TYPE_CHECKING, Any
 from openpyxl.cell.cell import Cell
 
 from sp_workflow.check_terms import DONE
+from sp_workflow.credit_ratings import GUARANTOR, ISSUER, RatingRows, load_rows
 from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdatedError, connect
 from sp_workflow.file_tools import save_book, table_book
 from sp_workflow.product_record import PRICE_COLUMNS, missing_fields, same_value
@@ -52,6 +56,15 @@ BRANCHES = 7  # 匯入格式的分公司欄數
 CHECKED_FIELDS = ("checked_term_sheet", "checked_iis")
 DENOMINATION_RULE = "field.denomination"
 DENOMINATION_COLUMN = "單位面額"
+# 信用評等欄（#240）：標準欄位 → （機構角色, `Rating` 的評等機構欄位）；欄名在參考條件表格式 [columns]
+RATING_FIELDS = {
+    "issuer_rating_sp": (ISSUER, "sp"),
+    "issuer_rating_moodys": (ISSUER, "moodys"),
+    "issuer_rating_fitch": (ISSUER, "fitch"),
+    "guarantor_rating_sp": (GUARANTOR, "sp"),
+    "guarantor_rating_moodys": (GUARANTOR, "moodys"),
+    "guarantor_rating_fitch": (GUARANTOR, "fitch"),
+}
 
 
 class CheckSourceError(Exception):
@@ -67,6 +80,7 @@ def export_reference(
     """依 TDCC 從資料庫產生參考條件表到 `path`（每檔一列，欄位照匯入格式），回傳沒有列的 TDCC → 原因。"""
     codes = list(dict.fromkeys(tdccs))
     stored = read_many(conn, codes)
+    ratings = load_rows(conn)
     headers, rows, absent = _headers(fmt), [], {}
     for tdcc in codes:
         found = stored.get(tdcc)
@@ -75,7 +89,7 @@ def export_reference(
             absent[tdcc] = reason
         else:
             assert found is not None
-            rows.append(_row(found, fmt, headers))
+            rows.append(_row(found, fmt, headers, ratings))
     _write_sheet(path, headers, rows)
     return absent
 
@@ -101,17 +115,18 @@ def _absent_reason(found: Stored | None) -> str:
 
 
 def _headers(fmt: ReferenceFormat) -> list[str]:
-    """TS、IIS、發行機構，加上匯入格式的欄（「TS/IIS完成檢核」除外）：讀檔需要的欄都在，核對結果檔也帶得出其他欄。"""
+    """TS、IIS、發行機構，加上匯入格式的欄（「TS/IIS完成檢核」除外）與信用評等欄：讀檔需要的欄都在，核對結果檔也帶得出其他欄。"""
     names = {std: header for header, std in reversed(list(fmt.columns.items()))}
     checked = [names[key] for key in CHECKED_FIELDS]
     return [
         *checked,
         fmt.issuer_column,
         *(c for c in fmt.import_format.columns if c != fmt.import_format.checked_column),
+        *(names[key] for key in RATING_FIELDS if key in names),
     ]
 
 
-def _row(found: Stored, fmt: ReferenceFormat, headers: Sequence[str]) -> dict[str, Any]:
+def _row(found: Stored, fmt: ReferenceFormat, headers: Sequence[str], ratings: RatingRows) -> dict[str, Any]:
     """一檔商品 → {欄名: 值}。標準欄位依格式設定對到欄名；空值寫法用在 KI NONE、沒有的標的與不需要填的比價日。"""
     p, empty = found.columns, fmt.empty_value
     no_ki = p["barrier_type"] == "NONE"
@@ -136,6 +151,7 @@ def _row(found: Stored, fmt: ReferenceFormat, headers: Sequence[str]) -> dict[st
         "tenor_months": p["tenor_months"],
         "first_callable_period": p["non_call_months"],
     }
+    values.update(_ratings(p["issuer"], p["trade_date"], fmt, ratings))
     if locked(found):
         values.update(dict.fromkeys(CHECKED_FIELDS, fmt.checked_value))
     for slot in range(1, SLOTS + 1):
@@ -160,6 +176,18 @@ def _row(found: Stored, fmt: ReferenceFormat, headers: Sequence[str]) -> dict[st
         std = fmt.columns.get(header)
         row[header] = values.get(std) if std is not None else extra.get(header)
     return row
+
+
+def _ratings(issuer: str, trade_date: dt.date | None, fmt: ReferenceFormat, ratings: RatingRows) -> dict[str, Any]:
+    """交易日當時的發行機構、保證機構評等（標準欄位 → 評等）；評等表沒有這個機構或沒有該家評等時空白（None）。"""
+    code = next((c for c, name in fmt.issuer_values.items() if name == issuer), None)
+    out: dict[str, Any] = dict.fromkeys(RATING_FIELDS)
+    if code is None or trade_date is None:
+        return out
+    for key, (role, agency) in RATING_FIELDS.items():
+        rating = ratings.on(code, role, trade_date)
+        out[key] = None if rating is None else getattr(rating, agency)
+    return out
 
 
 def _write_sheet(path: Path, headers: Sequence[str], rows: Iterable[Mapping[str, Any]]) -> None:
@@ -222,6 +250,7 @@ def write_back(
     codes = list(dict.fromkeys(i.product_code for i in batch.items if i.product_code))
     with conn.transaction():
         known = set(read_many(conn, codes))
+        ratings = load_rows(conn)
         saved = 0
         for item in batch.items:
             if item.product_code in known and item.kind is not None:
@@ -237,7 +266,7 @@ def write_back(
             if locked(current):
                 already.append(tdcc)
                 continue
-            if _absent_reason(current) or _changed(_row(current, fmt, headers), checked_rows.get(tdcc), fmt):
+            if _absent_reason(current) or _changed(_row(current, fmt, headers, ratings), checked_rows.get(tdcc), fmt):
                 stale.append(tdcc)
                 continue
             for column, new in [*_backfill_values(item, fmt), *_released_denomination(item)]:

@@ -19,7 +19,7 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence, ScenarioParam
 from ..text import squash
-from . import money, price_table, schedule
+from . import money, price_table, ratings, schedule
 from .common import RawText, by_value, capture_group, derived, fee_rates, number, zh_number
 from .layout import TextIndex, capture, join_wrapped_tickers, parse_date
 from .underlying_notes import NameColumn, underlying_notes
@@ -30,6 +30,11 @@ TEMPLATE_ID = "ubs-zh-pd"
 # 6：日期表標準欄位與共用排程推導（Issue #289）；7：情境價格表與設定參數交成共用情境規則的標準欄位（Issue #294）
 # 8：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 PARSER_VERSION = "8"
+# 發行機構信用評等（#240）：商品基本資料三 `…其長期債務信用評等為穆迪（Moody's）Aa2/…。`、相關機構事業概況一 `發行機構長期債務信用評等為穆迪（Moody's）Aa2/…。`
+RATINGS = (
+    ratings.RatingPlace("商品基本資料三", r"其長期債務信用評等為(?P<body>.+?)。"),
+    ratings.RatingPlace("相關機構事業概況一", r"發行機構長期債務信用評等為(?P<body>.+?)。"),
+)
 SECTIONS = ("商品基本資料", "相關機構事業概況", "商品風險揭露", "投資風險警語", "一般交易事項", "特別記載事項")
 PRODUCT_TYPE = "股權結構型商品"
 OLD_PRODUCT_TYPE = "股權結構型債券"
@@ -288,6 +293,7 @@ def read(lines: Sequence[Line]) -> UbsTermSheet:
     fields["underlying_notes"] = underlying_notes(
         doc.lines, NameColumn()
     )  # 連結標的公司介紹：兩欄表：左欄名稱、右欄簡介（Issue #225）
+    fields.update(ratings.fields(doc.lines, RATINGS))
     return UbsTermSheet(fields, TextIndex(doc.lines), doc)
 
 

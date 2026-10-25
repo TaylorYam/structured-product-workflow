@@ -13,11 +13,13 @@ from collections.abc import Sequence
 
 from ..schema import DetectionResult, Evidence, Line, ParsedField
 from ..text import squash
-from . import iis, ms_wording
+from . import iis, ms_wording, ratings
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "ms-zh-iis"
 PARSER_VERSION = "1"
+# 發行機構信用評等（#240）：商品簡介 4) `發行機構之長期債務信用評等穆迪(Moody’s)Aa3、…。`
+RATINGS = (ratings.RatingPlace("商品簡介 4)", r"發行機構之長期債務信用評等(?P<body>(?:穆迪|標準普爾|惠譽).+?)。"),)
 SECTIONS = (
     "本商品之投資風險警語：",
     "相關機構：",
@@ -60,6 +62,7 @@ PROVIDED = frozenset(
         "distributor_names",
         "distributor_addresses",
         *(f"fee_{label}" for label in iis.FEES),
+        *ratings.FIELDS,
     }
 )
 
@@ -269,4 +272,5 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         ("分銷費用", r"分銷費用[^%]{0,60}?"),  # 列首另有「（如屬發行機構或發行人給予…應單獨列示）」
     ):
         put(f"fee_{label}", pattern + iis.RATE)
+    fields.update(ratings.fields(full.lines, RATINGS))
     return iis.IisSheet(fields, full, frozenset(provided))

@@ -1,5 +1,5 @@
 """核對讀資料庫（#68、ADR 0013）：資料庫產生的參考條件表與 Excel 核對結果相同、查不到或條件未完成的 TDCC、
-回填寫回並鎖住、人工放行改單位面額、VWAP 價格、寫回失敗可以重寫。
+回填寫回並鎖住、人工放行改單位面額、VWAP 價格、寫回失敗可以重寫、交易日當時的信用評等（#240）。
 
 資料庫測試對真的 PostgreSQL（`pg`，沒有設定 SPW_TEST_DSN 時略過）；PANEL 工作階段的寫回失敗用假的資料庫來源，不需要資料庫。
 只用合成資料（tests/checker/barc_synth.py）。
@@ -20,12 +20,13 @@ from fcn_checker.orders.reference import load_reference_sheet
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.saving import run_batch, save_batch
 from harness import CONFIG, cli_root, with_iis
-from reference_synth import build_reference_sheet, issuer_value, price, reference_row
+from reference_synth import Ratings, build_reference_sheet, issuer_value, price, reference_row
 from sp_workflow.check_source import WorkflowDatabase, export_reference, write_back
 
 NOW = dt.datetime(2030, 2, 3, 4, 5, 6)
 FMT = CONFIG.reference_format
 OTHER = "029199990002"
+BARC_RATINGS = Ratings(sp="A+", moodys="A1", fitch="AA-")  # 初始評等表（migration 0024）的 Barclays 發行機構評等
 
 
 def seed(pg, spec: Spec, *, pricing="收盤價", denomination=None, status="完成", reason=None) -> None:
@@ -122,7 +123,8 @@ def test_database_rows_read_the_same_as_the_excel_reference_sheet(pg, tmp_path, 
     pdfs = pdfs_of(tmp_path, spec)
     db_sheet, absent = export(pg, tmp_path, pdfs)
     overrides = {"期初定價": pricing, **(VWAP_BLANK if pricing == "VWAP" else {})}
-    excel_sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [reference_row(spec, **overrides)])
+    excel_row = reference_row(spec.with_(ratings=BARC_RATINGS), **overrides)
+    excel_sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [excel_row])
 
     (db_row,) = load_reference_sheet(db_sheet, FMT).rows
     (xl_row,) = load_reference_sheet(excel_sheet, FMT).rows
@@ -136,6 +138,34 @@ def test_database_rows_read_the_same_as_the_excel_reference_sheet(pg, tmp_path, 
     from_excel = check_batch(preview_batch(CONFIG, excel_sheet, pdfs))
     assert verdicts(from_db) == verdicts(from_excel)
     assert {c for _, c, _ in verdicts(from_db)} == {Category.PASSED}
+
+
+RATING_KEYS = tuple(f"{role}_rating_{a}" for role in ("issuer", "guarantor") for a in ("sp", "moodys", "fitch"))
+
+
+@pytest.mark.db
+def test_exported_ratings_are_the_ones_in_effect_on_the_trade_date(pg, tmp_path) -> None:
+    """#240：評等欄帶出交易日當時的評等（生效日 ≤ 交易日的最新一筆）；有保證機構的上手另帶保證機構評等。"""
+    before, after, guaranteed = Spec(), Spec(product_code=OTHER), Spec(product_code="029199990003")
+    for spec in (before, after, guaranteed):
+        seed(pg, spec)
+    pg.execute(  # 交易日（2030-01-07）之後才生效的新評等：只有交易日在那之後的商品帶出
+        "INSERT INTO workflow.credit_rating (issuer, role, effective_date, sp, moodys, fitch)"
+        " VALUES ('BARC', '發行機構', '2030-01-08', 'AA-', NULL, 'AA')"
+    )
+    pg.execute("UPDATE workflow.product SET trade_date = '2030-01-08' WHERE tdcc = %s", (after.product_code,))
+    pg.execute("UPDATE workflow.product SET issuer = 'Citi' WHERE tdcc = %s", (guaranteed.product_code,))
+
+    sheet, absent = export(pg, tmp_path, pdfs_of(tmp_path, before, after, guaranteed))
+
+    rows = {r.product_code.value: r for r in load_reference_sheet(sheet, FMT).rows}
+    assert absent == {}
+    got = {code: tuple(row.get(k).value for k in RATING_KEYS) for code, row in rows.items()}
+    assert got == {
+        before.product_code: ("A+", "A1", "AA-", None, None, None),
+        after.product_code: ("AA-", None, "AA", None, None, None),  # 新評等沒有穆迪：照評等表空白
+        guaranteed.product_code: ("A", "A2", "AA-", "BBB+", "A3", "A"),
+    }
 
 
 # ---------- 查不到、條件未完成 ----------

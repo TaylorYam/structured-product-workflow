@@ -27,8 +27,12 @@ import fitz
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
 from reference_synth import (
+    FITCH,
+    MOODYS,
+    SP,
     UL,
     ProductSpec,
+    Ratings,
     build_reference_sheet,
     price,
     reference_row,
@@ -37,6 +41,14 @@ from reference_synth import (
 )
 
 NAME = STANDARD["issuer"]["dbs"]["product_name"]
+RATING_NAMES = {MOODYS: "穆迪(Moody's)", SP: "標準普爾(S&P) ", FITCH: "惠譽(Fitch) "}
+
+
+def ratings_text(r: Ratings) -> str:
+    """發行機構評等（#240）：`經穆迪(Moody's)評定為Aa1、經標準普爾(S&P) 評定為AA-、…`（說明書兩處與投資人須知同一句）。"""
+    return "、".join(f"經{RATING_NAMES[a]}評定為{v}" for a, v in r.stated(MOODYS, SP, FITCH))
+
+
 WARNING = STANDARD["issuer"]["dbs"]["fixed_warning"]
 ISSUER = STANDARD["issuer"]["dbs"]["issuer_name"]
 PRODUCT_TYPE = STANDARD["issuer"]["dbs"]["product_type"]
@@ -355,7 +367,11 @@ def _basic(d: _Doc, s: Spec) -> None:
     d.cell("商品名稱：", [s.name_zh.replace("(無擔保及無保證機構)(不保本)", "（無擔保及無保證機構)（不保本）")])
     d.cell("商品風險程度：", ["RR4"])
     d.cell(
-        "發行機構名稱及長期債務信用評等：", ["本商品發行機構為新加坡商星展銀行股份有限公司 (DBS Bank Ltd)。虛構評等。"]
+        "發行機構名稱及長期債務信用評等：",
+        [
+            "本商品發行機構為新加坡商星展銀行股份有限公司 (DBS Bank Ltd)。截至本中文產品說明書刊印日，"
+            f"發行機構之長期債務信用評等{ratings_text(s.ratings)}。"
+        ],
     )
     d.cell("計價幣別：", [s.currency_text + ("。" if s.ccy == "CNH" else "")])
     d.cell("商品面額：", [f"每單位{s.currency_zh}{s.denom:,}"])
@@ -556,6 +572,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         "1. 發行機構：",
         f"(1) 事業名稱：{ISSUER}",
         "(2) 設立日期：1968年07月16日。",
+        f"(7) 信用評等：截至本中文產品說明書刊印日，發行機構之長期債務信用評等{ratings_text(s.ratings)}。",
         "2. 保證機構：本商品無保證機構。",
         "3. 發行人：",
         "(1) 事業名稱：虛構銀行台北分公司(Fictional Bank, Taipei Branch)",
@@ -673,6 +690,8 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
     for t in (
         "受託對象：專業投資人。",
         "本商品風險程度：RR4",
+        f"發行機構長期債務信用評等：截至本中文投資人須知刊印日，發行機構之長期債務信用評等{ratings_text(s.ratings)}。",
+        "本商品之發行評等：無(本商品之受託對象僅限於專業投資人，無商品之發行評等)。",
         f"計價幣別：{s.currency_text}；計價貨幣本金保本率：不適用，本商品為不保障投資本金之境外結構型商品。",
         "計價幣別投資本金達成保本率之各項條件：不適用，本商品為不保障投資本金之境外結構型商品。",
         f"連結標的資產：{uls}。",

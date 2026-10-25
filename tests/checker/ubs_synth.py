@@ -28,8 +28,12 @@ import fitz
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
 from reference_synth import (
+    FITCH,
+    MOODYS,
+    SP,
     UL,
     ProductSpec,
+    Ratings,
     build_reference_sheet,
     price,
     reference_row,
@@ -40,6 +44,15 @@ from reference_synth import (
 NAME = STANDARD["issuer"]["ubs"]["product_name"]
 WARNING = STANDARD["issuer"]["ubs"]["fixed_warning"]
 ISSUER = STANDARD["issuer"]["ubs"]["issuer_name"]
+RATING_NAMES = {MOODYS: "穆迪（Moody's）", SP: "標準普爾（Standard & Poor's）", FITCH: "惠譽（Fitch Ratings）"}
+
+
+def ratings_text(r: Ratings, *, iis: bool = False) -> str:
+    """發行機構評等（#240）：說明書 `穆迪（Moody's）Aa2/標準普爾（…）A+/惠譽（…）AA`；投資人須知以「，」分隔、標普寫「為A+」。"""
+    parts = [f"{RATING_NAMES[a]}{'為' if iis and a == SP else ''}{v}" for a, v in r.stated(MOODYS, SP, FITCH)]
+    return ("，" if iis else "/").join(parts)
+
+
 PRODUCT_TYPE = STANDARD["issuer"]["ubs"]["product_type"]
 DIST = STANDARD["distributor"]
 PHONE = "+886-2-5556-1313"  # 受託機構電話的國際寫法（審查標準 phone_equivalents）
@@ -573,7 +586,11 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         elif n == 2:
             d.item(n, WARNING)
         elif n == 3:
-            d.item(n, f"{title}{ISSUER}，經由倫敦分行發行。截至本產品說明書刋印日期，其長期債務信用評等為虛構評等。")
+            d.item(
+                n,
+                f"{title}{ISSUER}，經由倫敦分行發行。截至本產品說明書刋印日期，其長期債務信用評等為"
+                f"{ratings_text(s.ratings)}。為避免疑慮，此為發行機構之長期債務信用評等，並不代表本商品之評等。",
+            )
         elif n == 5:
             d.item(n, f"{title}{s.currency_zh}。")
         elif n == 8:
@@ -603,6 +620,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         "（一）發行機構簡介：",
         f"• 事業名稱：{ISSUER}（UBS AG），透過其倫敦分行發行。",
         "• 發行機構（之發行分行）的主要營業地點的地址：1 Fictional Street, London。",
+        f"• 截至本產品說明書刋印日期，發行機構長期債務信用評等為{ratings_text(s.ratings)}。為避免疑慮，"
+        "此為發行機構之長期債務信用評等，並不代表本商品之評等。",
         "二、發行人（即依「境外結構型商品管理規則」所定義之發行機構在台分行）簡介：",
         "• 事業名稱/設立日期/營業所在地址：虛構商虛構銀行台北分行，於1998 年06 月25 日設立，地址：台北市虛構路1 號。",
         "• 負責人姓名：虛構人。",
@@ -693,6 +712,10 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         "• 商品簡介：",
         "1. 本商品銷售對象：專業投資人及OSU 客戶。",
         "3. 本商品風險等級：參考列載於本投資人須知封面的「警語」部份第一項。",
+        f"4. 發行機構長期債務信用評等：發行機構為{ISSUER}，經由倫敦分行發行。截至本投資人須知刋印日期，"
+        f"其長期債務信用評等為{ratings_text(s.ratings, iis=True)}。為避免疑慮，此為發行機構之長期債務信用評等，"
+        "並不代表本商品之評等。",
+        "5. 商品之發行評等：專業投資人及OSU 客戶不適用。",
         f"6. 計價幣別：{s.currency_zh}。",
         "7. 計價貨幣本金保本率：不保本。詳細解釋，請參考產品說明書第六項。",
         "8. 投資本金達成保本率之各項條件：不適用。本商品不保本。",

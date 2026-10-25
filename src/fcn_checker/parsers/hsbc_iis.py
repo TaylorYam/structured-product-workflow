@@ -10,11 +10,13 @@ import re
 from collections.abc import Sequence
 
 from ..schema import DetectionResult, Evidence, Line, ParsedField
-from . import iis, money
+from . import iis, money, ratings
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "hsbc-zh-iis"
 PARSER_VERSION = "1"
+# 發行機構信用評等（#240）：第一商品簡介第 4 點，寫法同說明書第一章第 3 項（沒有 `[`）
+RATINGS = (ratings.RatingPlace("第一商品簡介第 4 點", r"其長期債務信用評等為(?P<body>.+?)。"),)
 SECTIONS = ("本商品之投資風險警語", "相關機構", "第一商品簡介", "第六商品相關費用")
 PAGE_HEADER = re.compile(r"-?\s*第\s*\d+\s*頁，共\s*\d+\s*頁")
 
@@ -37,6 +39,7 @@ PROVIDED = frozenset(
         "distributor_addresses",
         "distributor_phones",
         *(f"fee_{label}" for label in iis.FEES),
+        *ratings.FIELDS,
     }
 )
 
@@ -158,4 +161,5 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         ("分銷費用", r"報酬無[^%]{0,30}?"),  # 分銷費用列拆成報酬／費用／折讓三個子列，費率在「費用」子列
     ):
         put(f"fee_{label}", pattern + iis.RATE)
+    fields.update(ratings.fields(ti.lines, RATINGS))
     return iis.IisSheet(fields, ti, PROVIDED)

@@ -109,6 +109,9 @@ class Issuer:
     reference_fields: tuple[str, ...] = ()
     # 投資人須知範本；None → 這家上手的投資人須知是未支援上手
     iis: IisTemplate | None = None
+    # 說明書與投資人須知的信用評等核對（rules/ratings.py，#240）：parser 交出 `issuer_ratings`／`guarantor_ratings` 的上手才標；
+    # 還沒做的上手（#241～#243）不跑這條規則，不產生結果
+    ratings: bool = False
 
 
 _IIS_SAMPLES = {
@@ -146,6 +149,7 @@ HSBC = Issuer(
     detect=hsbc_parser.detect,
     read=hsbc_parser.read,
     rules=hsbc_rules.run_all,
+    ratings=True,
     iis=IisTemplate(
         template_id=hsbc_iis.TEMPLATE_ID,
         label="HSBC 中文投資人須知",
@@ -166,6 +170,7 @@ MS = Issuer(
     read=ms_parser.read,
     rules=ms_rules.run_all,
     reference_fields=ms_rules.REFERENCE_FIELDS,
+    ratings=True,
     iis=IisTemplate(
         template_id=ms_iis.TEMPLATE_ID,
         label="MS 中文投資人須知",
@@ -311,6 +316,7 @@ NATIXIS = Issuer(
     read=natixis_parser.read,
     rules=natixis_rules.run_all,
     reference_fields=natixis_rules.REFERENCE_FIELDS,
+    ratings=True,
     iis=IisTemplate(
         template_id=natixis_iis.TEMPLATE_ID,
         label="Natixis 中文投資人須知",
@@ -374,6 +380,7 @@ DBS = Issuer(
     read=dbs_parser.read,
     rules=dbs_rules.run_all,
     reference_fields=dbs_rules.REFERENCE_FIELDS,
+    ratings=True,
     iis=IisTemplate(
         template_id=dbs_iis.TEMPLATE_ID,
         label="DBS 中文投資人須知",
@@ -395,6 +402,7 @@ UBS = Issuer(
     read=ubs_parser.read,
     rules=ubs_rules.run_all,
     reference_fields=ubs_rules.REFERENCE_FIELDS,
+    ratings=True,
     iis=IisTemplate(
         template_id=ubs_iis.TEMPLATE_ID,
         label="UBS 中文投資人須知",
