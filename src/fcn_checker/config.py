@@ -503,9 +503,9 @@ def _optional_date(value: Any, where: str) -> dt.date | None:
 
 def _date(value: Any, where: str) -> dt.date:
     """必填的日期（YYYY-MM-DD）。"""
-    if type(value) is not dt.date:
+    if value is None:
         raise _fail(f"審查標準 {where} 須是日期（YYYY-MM-DD）")
-    return value
+    return _optional_date(value, where)
 
 
 def _non_protected(value: Any) -> tuple[str, ...]:
