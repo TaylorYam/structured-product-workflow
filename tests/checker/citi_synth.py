@@ -23,7 +23,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    quote_currency,
+    reference_row,
+    weekday_on_or_after,
+)
 
 NAME = STANDARD["issuer"]["citi"]["product_name"]
 WARNING = STANDARD["issuer"]["citi"]["fixed_warning"]
@@ -135,9 +143,6 @@ class Spec(ProductSpec):
             text = f"{x:,.4f}" if self.legacy else f"{x.normalize():,f}"
         return f"{text} {ccy or self.currency_zh}"
 
-    def price_text(self, x: Decimal) -> str:
-        return self.money(x, self.currency_zh)
-
 
 class _Doc:
     """逐行排版；文字依目前段落代號（`section`）套用改字，超過寬度時換行（數字不拆開）。"""
@@ -237,7 +242,7 @@ def _price_table(d: _Doc, s: Spec, *, reprint: bool) -> None:
         if not reprint:
             cells += [(x["class"], "股份"), (x["exchange"], u.exchange[:4])]  # 交易所名稱拆兩行（真實樣本）
         for px, (_, pct) in zip(x["prices"], cols, strict=False):
-            cells.append((px, s.price_text(u.initial if pct is None else price(u.initial, pct))))
+            cells.append((px, s.money(u.initial if pct is None else price(u.initial, pct), quote_currency(u.ticker))))
         d.w.row(cells, gap=11, size=8)
         d.w.row([(x["code"], "Equity"), *([] if reprint else [(x["exchange"], u.exchange[4:])])], gap=15, size=8)
 

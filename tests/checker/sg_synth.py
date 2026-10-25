@@ -22,7 +22,15 @@ import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
-from reference_synth import UL, ProductSpec, build_reference_sheet, price, reference_row, weekday_on_or_after
+from reference_synth import (
+    UL,
+    ProductSpec,
+    build_reference_sheet,
+    price,
+    quote_currency,
+    reference_row,
+    weekday_on_or_after,
+)
 
 NAME = STANDARD["issuer"]["sg"]["product_name"]
 WARNING = STANDARD["issuer"]["sg"]["fixed_warning"]
@@ -45,11 +53,10 @@ NUMERIC = set("0123456789,.")
 Q2, Q4 = Decimal("0.01"), Decimal("0.0001")
 
 
-def underlyings(count: int) -> tuple[UL, ...]:
-    """SG 合成文件的標的：ZSn UW、期初價 100n。"""
-    return tuple(
-        UL(f"虛構標的{i}公司", "那斯達克證券交易所", f"ZS{i} UW", Decimal(100 * i)) for i in range(1, count + 1)
-    )
+def underlyings(count: int, market: str = "UW") -> tuple[UL, ...]:
+    """SG 合成文件的標的：ZSn UW（quanto 為日股 ZSn JT）、期初價 100n。"""
+    exchange = "東京證券交易所" if market == "JT" else "那斯達克證券交易所"
+    return tuple(UL(f"虛構標的{i}公司", exchange, f"ZS{i} {market}", Decimal(100 * i)) for i in range(1, count + 1))
 
 
 @dataclass
@@ -88,7 +95,7 @@ class Spec(ProductSpec):
     single_valuation: bool = False
 
     def __post_init__(self) -> None:
-        self.underlyings = underlyings(self.count)
+        self.underlyings = underlyings(self.count, "JT" if self.fx is not None else "UW")
         if self.single_valuation and self.autocall:
             raise ValueError("單一評價日寫法只用在無自動提前出場")
         if not self.autocall:
@@ -138,7 +145,7 @@ class Spec(ProductSpec):
 
     @property
     def underlying_ccy(self) -> str:
-        return "日圓" if self.fx is not None else self.currency_zh
+        return quote_currency(self.underlyings[0].ticker)  # 標的交易所的幣別（quanto 為日股）
 
     @property
     def name_zh(self) -> str:

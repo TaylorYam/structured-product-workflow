@@ -19,7 +19,7 @@ import nomura_synth
 import sg_synth
 from fcn_checker.issuers import NATIXIS
 from fcn_checker.schema import CheckStatus as S
-from harness import check_all
+from harness import also_flagged, check_all
 from harness import field_problems as problems
 from harness import results as rule
 from natixis_synth import ADDRESS, DIST, PRODUCT_TYPE, WARNING, Spec, article_title, build_pdf, check, check_item, row
@@ -149,6 +149,7 @@ def test_internal_rules_find_the_wrong_repeat(tmp_path, edit, broken):
     assert broken in bad, problems(r)
     # 連結標的表表頭 % 改了，情境價格表的表頭 % 就和連結標的表不同（同一處錯誤的兩種表現）
     also = {"scenario.reprint"} if broken == "doc.table_header_pct" else set()
+    also |= also_flagged(broken)
     assert bad <= {broken, "standard.product_name", *also}, problems(r)
 
 

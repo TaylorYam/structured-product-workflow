@@ -83,6 +83,7 @@ PRICE_TABLE = price_table.TableSpec(
     pct=r"\(期初價格之(\d+(?:\.\d+)?)%\)",
     pct_label="(期初價格之X% )",
     code="彭博代碼",
+    texts=(price_table.Column("currency", "計價幣別"),),  # 標的交易幣別（Issue #227）
 )
 # 第 7 項 KO 觀察方式（範本規格 §4.1）：每日觀察的起日；每期觀察看第 11 項(6) 日期表
 KO_DAILY = r"自動提前出場決定日：自" + D + r"起（含）至最終評價日止（含）之各預定交易日。"

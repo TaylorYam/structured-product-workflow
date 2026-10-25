@@ -175,12 +175,12 @@ def price_rows(
     tickers: Sequence[str] | None = None,
     *,
     names: Sequence[str | None] | None = None,
-    currency: bool = False,
 ) -> ParsedField:
     """價格表 → 標準欄位 `underlying_prices`（順序同表上的列）；表有問題時沿用它的狀態。
 
     tickers：代碼不在表內時由上手依列序交出（例：另一張標的表）；預設用表上的代碼。names：列名（預設表上的名稱）。
-    currency：`PriceRow.currency` 是否帶價格旁的幣別字。列數須相同，由上手先檢查。"""
+    `PriceRow.currency` 是價格旁的幣別字，價格旁沒有時用 `TableSpec.texts` 宣告的 `currency` 欄（例：HSBC `幣別`、
+    NOMURA `計價幣別`）；都沒有時為 None。列數須相同，由上手先檢查。"""
     name = "underlying_prices"
     if not table.ok:
         return derived(name, table)
@@ -193,7 +193,7 @@ def price_rows(
             dict(r.prices),
             tuple(Evidence.of(ln) for ln in r.lines),
             name=label,
-            currency=r.currency if currency else None,
+            currency=r.currency or r.texts.get("currency") or None,
         )
         for r, code, label in zip(t.rows, codes, labels, strict=True)
     )

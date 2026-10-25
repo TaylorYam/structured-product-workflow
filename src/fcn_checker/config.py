@@ -148,6 +148,8 @@ class ReviewStandard:
     distributor_name_equivalents: tuple[str, ...] = ()
     # 交易日（參考條件表）在這天（含）以前的文件出現禁用語時特例通過（已通知上手改版，Issue #247）；None 不特例
     forbidden_exempt_until: dt.date | None = None
+    # 「中文幣別(代碼)」括號內也接受的代碼：ISO 代碼 → 其他寫法（例：CNH → CNY、RMB；Issue #227）
+    currency_code_aliases: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
     def approval_date_on(self, trade_date: dt.date) -> dt.date | None:
         """交易日當天或之前最近一次的審查通過日期；交易日早於最早的日期時為 None。"""
@@ -484,6 +486,20 @@ def _approval_dates(value: Any) -> tuple[dt.date, ...]:
     return tuple(sorted(value))
 
 
+def _iso_code(value: Any, where: str) -> str:
+    """3 碼大寫英文代碼（例：USD）。"""
+    if not (isinstance(value, str) and re.fullmatch(r"[A-Z]{3}", value)):
+        raise IngestionError("config_invalid", f"{where} 須是 3 碼大寫英文代碼（例：USD），不能是：{value!r}")
+    return value
+
+
+def _iso_codes(value: Any, where: str) -> tuple[str, ...]:
+    """一串 3 碼大寫英文代碼（例：["CNY", "RMB"]）。"""
+    if not isinstance(value, list):
+        raise IngestionError("config_invalid", f'{where} 須是代碼的清單（例：["CNY"]），不能是：{value!r}')
+    return tuple(_iso_code(c, where) for c in value)
+
+
 def load_review_standard(path: Path) -> ReviewStandard:
     d = load_toml(path, "審查標準")
     legacy = legacy_tables(d)
@@ -515,6 +531,10 @@ def load_review_standard(path: Path) -> ReviewStandard:
             allowed_phrases=tuple(d["wording"]["allowed_phrases"]),
             forbidden_exempt_until=d["wording"].get("exempt_until"),
             currency_zh_to_iso=dict(d["currency"]),
+            currency_code_aliases={
+                k: _iso_codes(v, f"審查標準 currency_code_aliases.{k}")
+                for k, v in d.get("currency_code_aliases", {}).items()
+            },
             denomination={k: int(v) for k, v in d["denomination"].items()},
             iis_pages=int(d["iis"]["pages"]),
             issuers=_issuers(d.get("issuer", {}), d["risk"]["fixed_warning"]),
@@ -623,6 +643,7 @@ def load_exchange_holidays(path: Path) -> TradingCalendar:
                 covered_from=_holiday_date(m["covered_from"], f"{code} 涵蓋起日"),
                 covered_through=_holiday_date(m["covered_through"], f"{code} 涵蓋迄日"),
                 holidays=_holiday_dates(m["holidays"], f"{code} 休市日"),
+                currency=_iso_code(m["currency"], f"交易所假日表 {code}.currency") if "currency" in m else None,
             )
             for code, m in d["markets"].items()
         )

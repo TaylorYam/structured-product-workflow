@@ -26,7 +26,7 @@ LAYOUT = LayoutSpec(
 )
 N = r"([\d,]+(?:\.\d+)?)"
 D = r"(\d{4}年\d{1,2}月\d{1,2}日)"
-CURRENCY_WORD = "|".join(sorted(money.CURRENCY_WORDS, key=len, reverse=True))  # 中文幣別字，長的先比
+CURRENCY_WORD = money.CURRENCY_WORD
 # 第 12 條(1) 價格表：彭博代號、中文名稱、幣別、交易所、期初股價、執行價、自動提前到期價格、（觸及不保本價格），
 # 期初股價以外各帶「(即期初股價的X%)」；第 18 條情境價格表同一張表、沒有中文名稱欄
 PRICE_TABLE = price_table.TableSpec(

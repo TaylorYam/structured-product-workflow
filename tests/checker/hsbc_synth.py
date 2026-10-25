@@ -18,7 +18,7 @@ from pathlib import Path
 
 from harness import STANDARD, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
-from reference_synth import UL, ProductSpec, price
+from reference_synth import UL, ProductSpec, price, quote_iso
 
 CENT = Decimal("0.01")
 # 人民幣商品第一章第 5 條在幣別後面接的說明段落（真實樣本寫法節錄，Issue #180）
@@ -173,8 +173,9 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         heads += [(x[key], [label, f"(即期初股價的{pct(p)}%)"]) for key, label, p in cols]
         rows = []
         for u in s.underlyings:
-            # 幣別格是商品的承作幣別（不是標的自己的交易幣別，Issue #167）
-            cells = [(x["code"], [u.ticker]), (x["name"], [u.name]), (x["ccy"], [s.ccy]), (x["exchange"], [u.exchange])]
+            # 幣別格是標的交易所的交易幣別（Issue #227）
+            ccy = quote_iso(u.ticker)
+            cells = [(x["code"], [u.ticker]), (x["name"], [u.name]), (x["ccy"], [ccy]), (x["exchange"], [u.exchange])]
             cells.append((x["initial"], [f"{u.initial:.4f}"]))
             cells += [(x[key], [f"{price(u.initial, p):.4f}"]) for key, _, p in cols]
             rows.append(cells)

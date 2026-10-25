@@ -7,7 +7,7 @@
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
 # 規則說明見 docs/checker/rules/review-standard.md。
 
-version = 26
+version = 27
 effective_date = 2026-10-25
 
 [distributor]
@@ -116,6 +116,12 @@ exempt_until = 2026-10-30
 "歐元" = "EUR"  # HSBC 樣本的寫法
 "英鎊" = "GBP"  # HSBC 樣本的寫法
 "南非幣" = "ZAR"  # MS 樣本的寫法
+
+[currency_code_aliases]
+# 「中文幣別(代碼)」括號內代碼的其他寫法（Issue #227）：ISO 代碼 → 也接受的代碼。中文幣別依 [currency] 對到 ISO 代碼，
+# 括號內須是那個代碼或這裡列的寫法。只收樣本看過的：GS「人民幣（CNY）」、DBS「人民幣(RMB)」（OOS 樣本，Issue #296）、
+# SG 風險揭露「以人民幣(RMB)計值的債券」。
+CNH = ["CNY", "RMB"]
 
 [denomination]
 # 每單位商品面額預設值（依計價幣別；可承作的八種幣別，2026-10-10 使用者提供的承作幣別表）。客戶可要求不同面額，

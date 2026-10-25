@@ -49,6 +49,19 @@ def price(initial: Decimal, pct: Decimal) -> Decimal:
     return (initial * pct / 100).quantize(Q4, ROUND_HALF_UP)
 
 
+QUOTE_CURRENCY = {"JT": "日圓", "HK": "港幣"}  # 彭博交易所碼 → 價格旁的幣別字；其他（美股）寫美元
+
+
+def quote_currency(ticker: str) -> str:
+    """標的交易所的交易幣別字（價格表每一列的幣別 = 交易所幣別，Issue #227）。"""
+    return QUOTE_CURRENCY.get(ticker.split()[-1], "美元")
+
+
+def quote_iso(ticker: str) -> str:
+    """標的交易所的交易幣別 ISO 代碼（HSBC 價格表幣別欄的寫法）。"""
+    return CURRENCY_ISO[quote_currency(ticker)]
+
+
 @dataclass(frozen=True)
 class UL:
     """一檔連結標的：名稱、交易所、彭博代碼、期初價。"""

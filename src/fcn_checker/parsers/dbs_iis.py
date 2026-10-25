@@ -177,7 +177,7 @@ def _prices(fields: dict[str, ParsedField], lines: list[Line]) -> set[str]:
         note = f"價格表的彭博代碼 {table.value.tickers} 和「連結標的資產：」{uls.value} 不同"
         table = ParsedField(table.name, FieldStatus.INVALID, evidence=list(table.evidence), note=note)
     fields["price_table"] = table
-    fields["underlying_prices"] = dbs.price_rows(table)
+    fields["underlying_prices"] = price_table.price_rows(table)
     for key, col in (("strike_pct", "strike"), ("ko_pct", "ko")):
         fields[key] = derived(key, table, table.value.pcts[col] if table.ok else None)
     if table.ok and "ki" in table.value.pcts:
