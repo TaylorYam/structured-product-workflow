@@ -58,8 +58,10 @@ def test_supported_types_pass(tmp_path, spec):
     assert not [x for x in r.results if x.rule_id == "standard.minimum_issue_size"]  # 範本沒有發行不成立門檻
     mentions = [x for x in r.results if x.rule_id == "derive.coupon_pa_mentions"]
     assert len(mentions) == (spec.ko_obs == "D")  # D 型自動提前出場配息金額；情境的年利率由共用情境規則核對
-    params = [x.field for x in rule(r, "scenario.params")]  # 假設本金、情境本金 6 處、年利率 3 處（Issue #315、#294）
-    assert params.count("scenario_coupon_pa_3") == 1 and len(params) == 10
+    # 假設本金、情境本金 6 處、年利率 3 處（Issue #315、#294）、情境 (i)、(ii) 平均年化報酬率（Issue #228）
+    params = [x.field for x in rule(r, "scenario.params")]
+    assert params.count("scenario_coupon_pa_3") == 1 and len(params) == 12
+    assert params.count("scenario_annualized_return_2") == 1 and "scenario_annualized_return_3" not in params
     assert len(rule(r, "scenario.reprint")) == len(rule(r, "scenario.strike")) == 1
     assert {f"scenario{n}_currency" for n in (1, 2, 3)} <= {x.field for x in rule(r, "field.currency")}
 
@@ -127,6 +129,7 @@ def test_compare_dates_are_backfilled_from_the_date_table(tmp_path, spec, dates)
         (Spec(), Edit("假設原計價幣別本金為10,000美元", "假設原計價幣別本金為20,000美元", "ts.art15"), "scenario.params"),
         (Spec(), Edit("x 12.34% x 1/12 x n/N", "x 12.43% x 1/12 x n/N", "ts.art8"), "derive.coupon_pa_mentions"),
         (Spec(), Edit("x 12.34% x 1/12 =", "x 12.43% x 1/12 =", "ts.art15"), "scenario.params"),
+        (Spec(), Edit("計算) = 12.34% (不含", "計算) = 12.43% (不含", "ts.art15"), "scenario.params"),
         (Spec(ko_obs="P"), Edit("x 12.34% x 1/12 =", "x 12.43% x 1/12 =", "ts.art15"), "scenario.params"),
         (Spec(), Edit("每次配息金額 = 10,000美元", "每次配息金額 = 20,000美元", "ts.art15"), "scenario.params"),
         (Spec(), Edit("到期贖回金額 = 10,000美元", "到期贖回金額 = 20,000美元", "ts.art15"), "scenario.params"),
@@ -140,7 +143,7 @@ def test_compare_dates_are_backfilled_from_the_date_table(tmp_path, spec, dates)
         (Spec(), Edit("最差表現連結標的：", "表現最差之標的說明：", "ts.art8"), "doc.underlying_count"),
         (Spec(), Edit("(1) 若於最後評價日時最差表現連結標的之股票收盤價大於或等於其執行價：每單位面額 x 100%", "(1) 若於最後評價日時最差表現連結標的之股票收盤價大於或等於其執行價：每單位面額 x 99%", "ts.art8"), "doc.redemption_pct"),
     ],
-    ids=["scenario-price", "scenario-principal", "pro-rata-rate", "scenario-rate", "scenario-rate-P", "scenario-coupon-principal", "scenario-redemption", "scenario-shares-principal", "scenario-strike", "scenario-strike-1UL", "scenario-currency", "name", "currency", "trustee-code", "worst-of", "redemption"],
+    ids=["scenario-price", "scenario-principal", "pro-rata-rate", "scenario-rate", "scenario-annualized", "scenario-rate-P", "scenario-coupon-principal", "scenario-redemption", "scenario-shares-principal", "scenario-strike", "scenario-strike-1UL", "scenario-currency", "name", "currency", "trustee-code", "worst-of", "redemption"],
 )  # fmt: skip
 def test_internal_rules_find_the_wrong_repeat(tmp_path, spec, edit, broken):
     """正式條款正確、但重複出現處錯誤：只有該規則不通過。"""

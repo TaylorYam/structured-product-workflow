@@ -71,6 +71,8 @@ def test_supported_types_pass_and_are_filled(tmp_path, spec):
     # 情境裡的每單位面額、情境 4 第 1 檔的 K %；情境 4 第 1 檔的初始參考價格與執行價格
     params = [x.field for x in rule(r, "scenario.params")]
     assert params.count("scenario_coupon_pa_5") == 1 and "scenario_coupon_pa_6" not in params
+    # 情境 1～3（拿回本金）平均年化報酬率 = 年利率，差距 ≤ 0.001 個百分點；情境 4 虧損不核對（Issue #228）
+    assert params.count("scenario_annualized_return_3") == 1 and "scenario_annualized_return_4" not in params
     assert params.count("scenario_strike_pct_1") == 1
     assert [x.item.name for x in rule(r, "scenario.strike")] == [
         "第一章第 17 項情境 4 第 1 檔期初價格",
@@ -148,6 +150,7 @@ def test_unknown_initial_pricing_wording_needs_review(tmp_path):
         (Edit("（約為1.0000%）", "（約為1.0100%）", "ts.art14"), "derive.monthly_coupon"),
         (Edit("觀察期間年利率12.00%", "觀察期間年利率12.50%", "ts.art15"), "doc.coupon_mentions"),
         (Edit("配息率:年利率12.00%", "配息率:年利率12.50%", "ts.art17"), "scenario.params"),
+        (Edit("（平均年化報酬率:11.99996%）", "（平均年化報酬率:11.98996%）", "ts.art17"), "scenario.params"),
         (Edit("首3個觀察期間", "首2個觀察期間", "ts.art15"), "doc.autocall_terms"),
         (Edit("（且落在第3個觀察期間結束日）", "（且落在第2個觀察期間結束日）", "ts.art17"), "doc.autocall_terms"),
         (Edit("初始參考價格(1): 100.4500", "初始參考價格(1): 100.5500", "ts.art17"), "scenario.strike"),

@@ -14,7 +14,7 @@ from typing import NamedTuple
 
 from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
-from ..standard_fields import Occurrence, ScenarioParam
+from ..standard_fields import OCCURRENCE_NAMES, Occurrence, ScenarioParam
 from ..text import squash
 from . import money, price_table, schedule
 from .common import NO_AUTOCALL_KO_PCT, NUM, Mention, derived, ko_at_initial, number, zh_number
@@ -95,6 +95,9 @@ MEMORY_CLAUSE = "其將被視為已在"  # 逐檔記憶條款「…其將被視�
 # 重複寫出的值（Issue #314，比照 BBVA #305）：§15 各情境以「情境：」起頭，「本金全部損失之最差情況」沒有算式
 SCENARIO_HEAD = r"情境[：:]"
 SCENARIO_NAME = r"情境[：:](.{1,10}?情況\d?)"
+# 情境總報酬率後的「(平均年化報酬率：x%)」：拿回 100% 本金的情境 x = 年利率；較差、最差情況（實物交割、虧損）不核對
+SCENARIO_ANNUALIZED = r"\(平均年化報酬率[：:]" + PCT + r"\)"
+LOSS_SCENARIOS = ("較差", "最差")
 SCENARIO_COUPON = rf"(?:固定配息金額=每單位商品面額{X}|自動提前出場配息=每單位商品面額{X}m[÷/]M{X}){PCT}"
 HEADER_PCT = {"執行價": "strike_pct", "下限價": "ki_pct", "自動提前出場界限": "ko_pct"}  # 情境小表表頭欄名 → %
 # 到期、提前出場給付「每單位商品面額的100%」的其他出處（§8(3)(a) 是主來源，不在這裡）
@@ -566,6 +569,7 @@ def read(lines: Sequence[Line]) -> CitiTermSheet:
             ScenarioParam("scenario_monthly_coupon", "第 15 項假設 d) 固定配息金額的", fields["scenario_coupon"]),
             ScenarioParam("scenario_coupon_pa", "第 15 項假設 d) 的", fields["coupon_pa_scenario"]),
             *scenarios.coupons,
+            *scenarios.annualized,
         ],
     )
     t17 = TextIndex(article(17))
@@ -704,18 +708,20 @@ class _Scenarios:
     coupons: list[
         ScenarioParam
     ]  # 「每單位固定配息金額 = 每單位商品面額 × X%」與「m/M × X%」（共用情境規則的月配息率出處）
+    annualized: list[ScenarioParam]  # 拿回 100% 本金的情境的平均年化報酬率（共用情境規則的年化報酬率出處，Issue #228）
     redemptions: list[Repeat]  # 到期、提前出場給付的 100%
     headers: list[Repeat]  # 小表表頭「欄名(期初股價的X%)」，`source` 為欄名對應的 % 欄位
     currencies: list[Occurrence]  # 每個情境 (一) 之後金額旁的幣別
 
 
 def _scenarios(t15: TextIndex, assumptions_at: int) -> _Scenarios:
-    """第 15 項「假設：」之後各「情境：」段落重複寫出的值。「本金全部損失之最差情況」只有文字，沒有可核對的值。
+    """第 15 項「假設：」之後各「情境：」段落重複寫出的值。「本金全部損失之最差情況」只有文字，沒有可核對的值；
+    較差、最差情況（實物交割、虧損）的平均年化報酬率不核對。
 
     小表表頭 % 依前面緊接的欄名（執行價／下限價／自動提前出場界限）對應正式條款，認不出欄名時轉人工覆核；
     小表的期初股價、門檻價與假設收盤價不讀（表頭換行交錯，讀不穩）。金額幣別從「(一)」起算（小表的股價跟著標的走，
     不列入），股價與實物交割算式那幾行也不列入（`money.stock_price_line`；quanto 商品寫標的報價幣別）。"""
-    out = _Scenarios([], [], [], [])
+    out = _Scenarios([], [], [], [], [])
     text = t15.text
     heads = [m.start() for m in t15.finditer(SCENARIO_HEAD) if assumptions_at >= 0 and m.start() > assumptions_at]
     spans = []
@@ -730,9 +736,15 @@ def _scenarios(t15: TextIndex, assumptions_at: int) -> _Scenarios:
     for k, name, a, b in spans:
         where = f"第 15 項情境「{name}」"
         out.coupons += [
-            ScenarioParam("scenario_monthly_coupon", r.mention.where, _coupon(r.mention))
+            ScenarioParam("scenario_monthly_coupon", r.mention.where, _value(r.mention, "scenario_monthly_coupon"))
             for r in _repeats(t15, (SCENARIO_COUPON,), "", where, start=a, end=b)
         ]
+        if not name.startswith(LOSS_SCENARIOS):
+            code = "scenario_annualized_return"
+            out.annualized += [
+                ScenarioParam(code, r.mention.where, _value(r.mention, code))
+                for r in _repeats(t15, (SCENARIO_ANNUALIZED,), "", f"{where}平均", start=a, end=b)
+            ]
         out.redemptions += _repeats(t15, SCENARIO_100, f"redemption_scenario_{k}", f"{where}給付 100%", start=a, end=b)
         pcts = [p for p in t15.finditer(r"期初股價的" + PCT) if a <= p.start() < b]
         if not pcts:
@@ -756,13 +768,12 @@ def _scenarios(t15: TextIndex, assumptions_at: int) -> _Scenarios:
     return out
 
 
-def _coupon(m: Mention) -> ParsedField:
-    """情境配息率的一處 → 共用情境規則的值；讀不到時寫出位置。"""
+def _value(m: Mention, code: str) -> ParsedField:
+    """情境配息率、年化報酬率的一處 → 共用情境規則的值；讀不到時寫出位置。"""
     if m.value is None:
-        return ParsedField(
-            "scenario_monthly_coupon", FieldStatus.MISSING, evidence=list(m.evidence), note=f"{m.where}找不到配息率"
-        )
-    return m.parsed("scenario_monthly_coupon")
+        note = f"{m.where}找不到{OCCURRENCE_NAMES[code]}"
+        return ParsedField(code, FieldStatus.MISSING, evidence=list(m.evidence), note=note)
+    return m.parsed(code)
 
 
 def _memory_wording(doc: Document) -> ParsedField:

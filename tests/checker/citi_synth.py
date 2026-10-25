@@ -438,6 +438,8 @@ def _scenarios(d: _Doc, s: Spec) -> None:
             d.text(67, "(二)到期日給付說明")
             d.text(67, "將以實物交付表現最差連結標的之股數如下：每單位商品面額的100% ÷ 表現最差連結標的之執行價")
             d.text(67, f"發行機構應支付投資人總股數與零股換算之現金金額406.80{unit}")
+        annualized = f"{s.annual:.2f}" if kind != "delivery" else "-56.17"  # 較差情況（虧損）不核對
+        d.text(67, f"總報酬率 = 0.8750% (平均年化報酬率：{annualized}%)")
 
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:

@@ -125,6 +125,9 @@ PHYSICAL_CALC = "實物交割之計算"  # 之後是實物交割算式：股價�
 SCENARIO_COUPON_ROW = re.compile(rf"(?:^|\s)({NUMBER})\s*{CCY}\s*x\s*\(\s*\d+(?:\.\d+)?%\s*/\s*12\s*\)")
 SCENARIO_PRINCIPAL = rf"收到({NUMBER})({CCY})的原始投資本金"
 SCENARIO_AUTOCALL_PCT = r"自動提前到期贖回金額為原始投資本金乘以" + PCT
+# 拿回 100% 本金的情境（沒有實物交割算式）的「平均年化報酬率為Y%，即[…] x n=Y%」：兩個 Y 都 = 年利率（Issue #228）；
+# 實物交割情境（虧損）的報酬率不核對
+SCENARIO_ANNUALIZED = r"平均年化報酬率為" + PCT + r"，即\[[^\]]*\]x[\d.]+=" + PCT
 SCENARIO_MATURITY_PCT = r"(?<!提前)到期贖回金額為原始投資本金乘以" + PCT
 # 實物交割之計算 (1)：「…=每單位商品面額(x 匯率)/績效表現最差之連結標的(名稱)執行價格 = 面額(x 匯率)/ 執行價格」
 WORST_STRIKE = rf"每單位商品面額(?:x匯率)?/績效表現最差之連結標的\(([^()]+)\)執行價格=({NUMBER})({CCY})(?:x{NUMBER})?/({NUMBER}){CCY}"
@@ -801,8 +804,9 @@ def _scenarios(
     fields: dict[str, ParsedField], art16: list[Line], art15: list[Line], assumed: list[ScenarioParam]
 ) -> list[Occurrence]:
     """第 16 項情境與第 15 項重複寫出的值（Issue #318，比照 BBVA #305）：各情境配息列數、自動提前到期與到期贖回的 %；
-    配息算式／原始投資本金／實物交割算式的面額併入情境假設 `assumed` 交成共用情境規則的 `scenario_params`，實物交割算式的
-    執行價格交成 `scenario_prices`（Issue #294）；回傳各情境金額旁的幣別出處（併入 `currency_others`）。"""
+    配息算式／原始投資本金／實物交割算式的面額與拿回本金情境的平均年化報酬率（Issue #228）併入情境假設 `assumed` 交成
+    共用情境規則的 `scenario_params`，實物交割算式的執行價格交成 `scenario_prices`（Issue #294）；回傳各情境金額旁的
+    幣別出處（併入 `currency_others`）。"""
     ti, t15 = TextIndex(art16), TextIndex(art15)
     repeats = []  # 情況一公式、2.a（有 KI 才有）：每處一筆（欄位 `<field>_<第幾處>`）
     for field, places, pattern, required in MATURITY_REPEATS:
@@ -818,10 +822,14 @@ def _scenarios(
         missing = "第 16 項找不到情境一～三（或四）到「關於上述情境分析之警語」的段落"
         for name in ("scenario_row_counts", "autocall_redemption_mentions", "maturity_redemption_mentions"):
             fields[name] = ParsedField.missing(name, missing)
-        denomination = ScenarioParam(
-            "scenario_denomination", "第 16 項情境的", ParsedField.missing("scenario_denomination", missing)
-        )
-        fields["scenario_params"] = standard_fields.occurrences("scenario_params", [*assumed, denomination])
+        unread = [
+            ScenarioParam(code, where, ParsedField.missing(code, missing))
+            for code, where in (
+                ("scenario_denomination", "第 16 項情境的"),
+                ("scenario_annualized_return", "第 16 項情境平均"),
+            )
+        ]
+        fields["scenario_params"] = standard_fields.occurrences("scenario_params", [*assumed, *unread])
         fields["scenario_prices"] = _worst_strike(fields, ParsedField.missing("scenario_worst_strike", missing))
         pf = ParsedField.missing("scenario_currency", missing)
         return [Occurrence("scenario_currency", "scenario_currency", "第 16 項情境", pf)]
@@ -860,7 +868,8 @@ def _scenarios(
         ),  # 讀不到時由 `scenario_worst_strike` 轉人工覆核
     ]
     fields["scenario_params"] = standard_fields.occurrences(
-        "scenario_params", [*assumed, *(p for occ in denominations for p in _denomination_params(occ))]
+        "scenario_params",
+        [*assumed, *(p for occ in denominations for p in _denomination_params(occ)), *_annualized(ti, spans)],
     )
     fields["autocall_redemption_mentions"] = standard_fields.occurrences(
         "autocall_redemption_mentions",
@@ -901,6 +910,25 @@ def _scenarios(
                 f"scenario{n}_currency", "scenario_currency", f"第 16 項{case}", found, ti.lines_for(a, a + 1), case
             )
         )
+    return out
+
+
+def _annualized(ti: TextIndex, spans: list[tuple[str, int, int]]) -> list[ScenarioParam]:
+    """沒有實物交割算式的情境（拿回 100% 本金）每一處「平均年化報酬率為Y%，即[…] x n=Y%」的兩個 Y；讀不到時一筆讀不到。"""
+    code, out = "scenario_annualized_return", []
+    for case, a, b in spans:
+        if ti.text.find(PHYSICAL_CALC, a, b) >= 0:
+            continue
+        hits = [m for m in ti.finditer(SCENARIO_ANNUALIZED) if a <= m.start() < b]
+        if not hits:
+            note = f"第 16 項{case}找不到「平均年化報酬率為Y%，即[…] x n=Y%」"
+            out.append(ScenarioParam(code, f"第 16 項{case}平均", ParsedField.missing(code, note)))
+        for m in hits:
+            lines = ti.lines_for(m.start(), m.end())
+            out += [
+                ScenarioParam(code, f"第 16 項{case}平均", ParsedField.present(code, Decimal(m[1]), lines)),
+                ScenarioParam(code, f"第 16 項{case}算式結果的", ParsedField.present(code, Decimal(m[2]), lines)),
+            ]
     return out
 
 

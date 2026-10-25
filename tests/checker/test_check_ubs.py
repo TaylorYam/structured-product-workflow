@@ -86,6 +86,11 @@ def test_supported_types_pass_and_are_filled(tmp_path, spec):
     params = {x.field for x in rule(r, "scenario.params")}
     assert {"scenario_tenor_1", "scenario_coupon_periods_1", "scenario_initial_investment_1"} <= params
     assert len([x for x in params if x.startswith("scenario_monthly_coupon")]) == (3 if variable else 2)
+    # 情境分析一、二（拿回本金）平均年化報酬率 = 年利率；情境分析三實物交割不核對（Issue #228）
+    assert {x for x in params if x.startswith("scenario_annualized_return")} == {
+        "scenario_annualized_return_1",
+        "scenario_annualized_return_2",
+    }
     assert rule(r, "schedule.period_count")[0].status == S.PASS  # 配息表期數是共用檢查（Issue #289）
     currency = {x.field for x in rule(r, "field.currency")}  # 說明文字與情境的幣別字（Issue #320）
     words = {"residual_conversion_currency", "scenario_residual_currency", "scenario_residual_paid_currency"}
@@ -187,6 +192,10 @@ def test_name_without_memory_wording_is_a_mismatch(tmp_path):
         (Edit("（nt/Nt）（年化配息率為12.00%）", "（nt/Nt）（年化配息率為12.50%）", "ts.art8"), "doc.coupon_mentions"),
         (Edit("固定配息率：1.0000%。", "固定配息率：1.0100%。", "ts.art15"), "scenario.params"),
         (Edit("天期：6 個月", "天期：7 個月", "ts.art15"), "scenario.params"),
+        (
+            Edit("計算報酬率之平均年化報酬率為12.00%", "計算報酬率之平均年化報酬率為12.10%", "ts.art15"),
+            "scenario.params",
+        ),
         (Edit("70.3150 美元", "70.3151 美元", "ts.art15.table"), "scenario.reprint"),
         (Edit("70.00%）", "75.00%）", "ts.art15.table"), "scenario.reprint"),
         (Edit("每單位面額：10,000.00 美元 /", "每單位面額：1,000.00 美元 /", "ts.art15"), "scenario.params"),

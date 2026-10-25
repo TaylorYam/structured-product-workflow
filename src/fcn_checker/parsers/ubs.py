@@ -46,6 +46,9 @@ PCT = r"(\d+(?:\.\d+)?)%"
 CCY = money.CURRENCY
 ZH_CCY = "(?:" + "|".join(sorted(money.CURRENCY_WORDS, key=len, reverse=True)) + ")"
 AMOUNT = rf"([\d,]+\.\d{{2}})({CCY})"
+# 拿回 100% 本金的情境（沒有實物交割）的平均年化報酬率 = 年利率；實物交割情境（虧損）不核對（Issue #228）
+SCENARIO_ANNUALIZED = r"平均年化報酬率(?:（以簡單平均年化報酬率之方式計算）)?為" + PCT
+SCENARIO_PHYSICAL = "實物交割予投資人"
 SCENARIO_AMOUNT = rf"(?<![\d.,])(\d[\d,]*\.\d{{2}}|0)({CCY})"  # 情境的金額（小數 2 位；股價小數 4 位不算）
 TICKER = re.compile(r"^([A-Z0-9][A-Z0-9./-]*)\s+([A-Z]{2})$")
 # 提前出場觀察日（範本規格 §4.1）
@@ -716,10 +719,11 @@ SCENARIO_MENTIONS = {
 def _scenarios(fields: dict[str, ParsedField], art15: list[Line]) -> list[Occurrence]:
     """十五重複寫出的值（Issue #320）：設定參數「配息觀察日／期間：每月（共N個）」、「提前出場觀察日」（有這句才核）、
     情境分析一～四算式代入的每單位面額與配息率；設定參數與算式代入的值交成共用情境規則的 `scenario_params`（同一個值
-    一筆，Issue #294）。回傳各情境金額旁的幣別出處（併入 `currency_others`）。
+    一筆，Issue #294），另交拿回本金情境的平均年化報酬率（每處一筆，Issue #228）。回傳各情境金額旁的幣別出處（併入
+    `currency_others`）。
 
     情境的金額寫到小數 2 位（或「價值為0X」），股價寫到小數 4 位：小數 4 位的股價跟著標的走（UB3 澳幣連日股、UB6 日圓
-    連美股），不列入；期末匯率、股數、報酬率不讀。"""
+    連美股），不列入；期末匯率、股數、結算收益與實物交割情境的報酬率不讀。"""
     ti = TextIndex(art15)
     fields["scenario_coupon_count"] = capture(
         "scenario_coupon_count", ti, r"配息觀察(?:日|期間)[:：]每月（共(\d+)個）", int, whole_match=True
@@ -738,6 +742,11 @@ def _scenarios(fields: dict[str, ParsedField], art15: list[Line]) -> list[Occurr
             [
                 *_assumed(fields),
                 *(ScenarioParam(c, where, ParsedField.missing(c, note)) for c in SCENARIO_MENTIONS.values()),
+                ScenarioParam(
+                    "scenario_annualized_return",
+                    "商品基本資料十五情境分析平均",
+                    ParsedField.missing("scenario_annualized_return", note),
+                ),
             ],
         )
         return [
@@ -774,6 +783,18 @@ def _scenarios(fields: dict[str, ParsedField], art15: list[Line]) -> list[Occurr
             params.append(ScenarioParam(code, where, ParsedField.missing(code, "商品基本資料十五情境分析的算式讀不到")))
         values = by_value((v, lns) for _, v, lns in hits)  # 同一個值一筆（證據為每一處）
         params += [ScenarioParam(code, where, ParsedField.present(code, v, lns)) for v, lns in values.items()]
+    code = "scenario_annualized_return"
+    for k, (start, zh) in enumerate(marks):
+        stop = marks[k + 1][0] if k + 1 < len(marks) else end
+        if ti.text.find(SCENARIO_PHYSICAL, start, stop) >= 0:
+            continue
+        place = f"商品基本資料十五情境分析{zh}平均"
+        hits = [m for m in ti.finditer(SCENARIO_ANNUALIZED) if start <= m.start() < stop]
+        if not hits:
+            params.append(ScenarioParam(code, place, ParsedField.missing(code, f"{place}找不到年化報酬率")))
+        for m in hits:
+            pf = ParsedField.present(code, Decimal(m[1]), ti.lines_for(m.start(), m.end()))
+            params.append(ScenarioParam(code, place, pf))
     fields["scenario_params"] = standard_fields.occurrences("scenario_params", params)
     out = []
     for k, (start, zh) in enumerate(marks):

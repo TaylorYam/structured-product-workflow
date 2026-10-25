@@ -61,6 +61,9 @@ def test_supported_types_pass_and_are_filled(tmp_path, spec):
     assert {"scenario_coupon_pa_1", "scenario_coupon_pa_2"} <= {
         x.field for x in rule(r, "scenario.params")
     }  # 情境假設年利率、各期配息年利率
+    # 拿回本金的情境（情境一～三，無 KI 為一、二）平均年化報酬率兩處 = 年利率；實物交割情境不核對（Issue #228）
+    annualized = [x for x in rule(r, "scenario.params") if x.field.startswith("scenario_annualized_return")]
+    assert len(annualized) == 2 * (3 if spec.ki != "none" else 2)
     assert rule(r, "standard.fixed_warning")[0].actual == 3
     assert len(rule(r, "standard.issuer_name")) == 3  # 封面、第一章第 3 項、第二章
     skipped = ("standard.guarantor_name", "standard.agent_name", "standard.minimum_issue_size")  # 決定不核對
@@ -125,6 +128,8 @@ def test_periodic_ki_is_read_from_the_judgement_day(tmp_path):
         (Edit("月配息率：1.5000%", "月配息率：1.5100%", "ts.art13"), "derive.monthly_coupon"),
         (Edit("f. 年利率：每年18.00%", "f. 年利率：每年18.50%", "ts.art16"), "scenario.params"),
         (Edit("x (18.00%/12)", "x (18.50%/12)", "ts.art16"), "scenario.params"),
+        (Edit("平均年化報酬率為18.00%", "平均年化報酬率為18.10%", "ts.art16"), "scenario.params"),
+        (Edit("x 12.00=18.00%", "x 12.00=18.10%", "ts.art16"), "scenario.params"),
         (Edit("自動提前到期事件於第二個", "自動提前到期事件於第三個", "ts.art16"), "doc.autocall_terms"),
         (Edit("e. 自動提前到期觀察日：從第二個", "e. 自動提前到期觀察日：從第三個", "ts.art16"), "doc.autocall_terms"),
         (Edit("c. 天期：6 個月", "c. 天期：7 個月", "ts.art16"), "scenario.params"),

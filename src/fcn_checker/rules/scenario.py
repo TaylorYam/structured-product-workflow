@@ -155,10 +155,8 @@ def _param(ctx: IssuerContext, p: ScenarioParam, field: str) -> CheckResult:
     suffix = f" × {p.times.value}" if p.times is not None else ""
     fail_message = f"須等於說明書{OFFICIAL[p.target].name}{suffix}"
     if p.code in ROUNDED:
-        ok, expected = kit.cmp_pct(official.value, p.value.value)
-        return check.compare(
-            expected, p.value.value, ok=ok, tolerance="依說明書顯示位數四捨五入後比對", fail_message=fail_message
-        )
+        ok, expected, tolerance = _shown_pct(official.value, p)
+        return check.compare(expected, p.value.value, ok=ok, tolerance=tolerance, fail_message=fail_message)
     return check.compare(_times(official.value, p.times), p.value.value, fail_message=fail_message)
 
 
@@ -189,8 +187,7 @@ def _against_sheet(ctx: IssuerContext, p: ScenarioParam, field: str, name: str, 
         expected, tolerance = spec.of_sheet(v), f"{sheet_name} ÷ 12 四捨五入（half-up）到 4 位後比數值"
         ok = expected == actual
     elif spec.shown_digits:
-        ok, expected = kit.cmp_pct(v, actual)
-        tolerance = "依說明書顯示位數四捨五入後比對"
+        ok, expected, tolerance = _shown_pct(v, p)
     else:
         expected = _times(v, p.times)
         ok = expected == actual
@@ -202,6 +199,14 @@ def _against_sheet(ctx: IssuerContext, p: ScenarioParam, field: str, name: str, 
         message=f"範本沒有{spec.name}，和參考條件表比",
         fail_message=f"；須等於{sheet_name + ' ÷ 12' if spec.of_sheet else spec.name}",
     )
+
+
+def _shown_pct(official: Decimal, p: ScenarioParam) -> tuple[bool, Decimal, str]:
+    """百分比出處：正式值依說明書顯示位數四捨五入後相等；出處帶容許差距（`within`）時改看差距。"""
+    if p.within is not None:
+        return abs(p.value.value - official) <= p.within, official, f"差距在 {p.within} 個百分點以內"
+    ok, expected = kit.cmp_pct(official, p.value.value)
+    return ok, expected, "依說明書顯示位數四捨五入後比對"
 
 
 def _times(value: Any, times: ParsedField | None) -> Any:

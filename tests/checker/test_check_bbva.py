@@ -68,6 +68,8 @@ def test_supported_types_pass_and_are_filled(tmp_path, spec):
     assert ("scenario_ko_mentions_3_1" in fields) == spec.memory
     coupons = [x for x in rule(r, "scenario.params") if x.field.startswith("scenario_monthly_coupon")]
     assert len(coupons) == (3 if spec.ko_obs == "D" else 1)  # 情境二～四第 1 期配息率；KO 每期型為情境假設每月利率
+    annualized = [x for x in rule(r, "scenario.params") if x.field.startswith("scenario_annualized_return")]
+    assert len(annualized) == 2  # 情境一、二（拿回本金）= 年利率；情境三、四虧損不核對（Issue #228）
     assert "scenario_barrier_mentions_2_1" in fields and "art18_ko_pct" in fields
     assert rule(r, "scenario.reprint")[0].actual  # 情境價格表各格放進實際值，看得出逐格比了哪些價格
 
@@ -165,6 +167,12 @@ def test_forbidden_wording_in_chapter_four_follows_the_trade_date_exemption(tmp_
             Edit("年利率：18.00%", "年利率：17.00%", "ts.art16"),
             ("scenario.params", "scenario_coupon_pa_1"),
             id="情境年利率",
+        ),
+        pytest.param(
+            Spec(),
+            Edit("平均年化報酬率：18.00%", "平均年化報酬率：18.10%", "ts.art16"),
+            ("scenario.params", "scenario_annualized_return_2"),
+            id="情境年化報酬率",
         ),
         pytest.param(
             Spec(),
