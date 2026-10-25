@@ -419,6 +419,7 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         f"商品之發行評等：無 ●計價幣別：{unit}",
         f"商品面額：每單位商品{s.denom:,} {unit} ●最低申購金額：{s.denom * MULTIPLES['minimum_subscription']:,}{unit}",
         "計價貨幣本金保本率：不保本。",
+        "原計價幣別投資本金達成100%保本之各項條件：不適用。",
         "連結標的資產價格：",
     ):
         d.text(18, f"● {t}", 34)

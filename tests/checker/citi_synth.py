@@ -491,6 +491,7 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         "本商品之風險程度：RR4",
         f"計價幣別：{unit}",
         "原計價幣別本金保本率：不保本。",
+        "原計價幣別投資本金達成100%保本率之各項條件：不適用。本商品不保本。",
         f"連結標的資產：{names}",
         tenor,
         f"交易日：{zh_date(s.trade_date)}；期初評價日：{zh_date(s.trade_date)}；發行日：{zh_date(s.issue_date)}",
@@ -662,6 +663,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         3: f"發行機構名稱及其長期債務信用評等：{ISSUER}；長期債務信用評等為虛構",
         4: "商品之發行評等：無",
         5: f"計價幣別：{unit}({s.ccy})",
+        6: "原計價幣別投資本金保本率：不保本。本商品到期可能視連結標的之表現而有損失。",
+        7: "原計價幣別投資本金達成100％保本之各項條件：不適用。本商品不保本。",
         8: "主要給付項目及其計算方式：",
         9: "連結標的資產：",
         10: "連結標的之相關說明或評等資料：",
@@ -743,7 +746,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         1,
     ):
         d.numbered(f"({n})", title, legacy=s.legacy, x=66, body_x=90)
-        for t in (f"公司名稱：{name}", f"營業所在地：{place}", f"負責人姓名：{head}"):
+        since = "2000年11月20日" if name == DIST["name"] else "2000年1月1日"  # 受託機構 = 審查標準設立日期
+        for t in (f"公司名稱：{name}", f"設立日期：{since}", f"營業所在地：{place}", f"負責人姓名：{head}"):
             d.w.line(92, "•", gap=0)
             d.text(110, t)
 

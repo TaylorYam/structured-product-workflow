@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import bisect
 import re
-import unicodedata
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
@@ -17,7 +16,7 @@ from typing import Generic, NamedTuple, TypeVar
 
 from .. import standard_fields
 from ..schema import Evidence, FieldStatus, Line, ParsedField
-from ..text import squash
+from ..text import compat_standard, squash
 from .layout import TextIndex
 
 NUM = r"([\d,]+(?:\.\d+)?)"  # 數字（可有千分位與小數）
@@ -174,11 +173,6 @@ def zh_number(s: str) -> int | None:
     if not m:
         return None
     return (ZH_DIGITS.get(m[1], 1) if m[1] else 1) * 10 + (ZH_DIGITS[m[2]] if m[2] else 0)
-
-
-def compat_standard(text: str) -> str:
-    """CJK 相容字（U+F900–U+FAFF）轉成標準字（例：U+F9DD → 利、U+F98E → 年）；其他字元不動，字數不變。"""
-    return "".join(unicodedata.normalize("NFKC", c) if 0xF900 <= ord(c) <= 0xFAFF else c for c in text)
 
 
 def compat_normalized(lines: Sequence[Line]) -> list[Line]:

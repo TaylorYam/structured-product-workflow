@@ -120,6 +120,8 @@ MS 投資人須知另外寫出交易日、期末定價日與提前出場、觸�
 
 上列各上手的「受託對象」「受託或銷售對象」「受託及銷售對象」2026-10-25 起改由審查標準規則 `standard.osu_clients` 核對是否寫到 OSU 客戶（所有上手；BBVA、Citi、GS、DBS 不能承作，全文不得出現 OSU；見[審查標準](review-standard.md) §2.19，Issue #224）。
 
+上列各上手的「保本率」（計價貨幣本金保本率、投資本金達成保本率之各項條件）2026-10-25 起改由審查標準規則 `standard.principal_protection` 核對是否寫不保本；全文每個「玉山…」也由 `standard.distributor_names` 核對要是受託機構名稱或等價寫法（所有上手，說明書同；見[審查標準](review-standard.md) §2.20，Issue #226）。投資人須知沒有受託機構設立日期，不核對。
+
 未涵蓋（列入「待處理」）：範本規格樣本總表以外的型態（例：HSBC 有 KI 的投資人須知；MS、SG、Citi、JPM、Nomura、GS、Natixis、CA、BBVA、UBS、DBS 同各自說明書未涵蓋的型態）。遇到時範本未涵蓋的段落、欄頭或寫法轉人工覆核。
 
 ## 5. 決策紀錄
@@ -168,3 +170,4 @@ MS 投資人須知另外寫出交易日、期末定價日與提前出場、觸�
 | 2026-10-16 | CA 投資人須知（Issue #319，比照 #305）：二、3.(4) `可能低於100%X投資本金` 與三、利率風險 `X利率` 3 處的幣別字 = 承作幣別（B7）；二、2.(b)、(c) 贖回 % = 同商品說明書第 9 項（範本專屬規則 `iis.redemption_pct`） |
 | 2026-10-16 | GS、Natixis、CA、UBS 投資人須知（Issue #306）：警語裡的受託機構名稱每處都算名稱出處（C22，作業人員 2026-10-16 在 Issue #305 決定所有上手都納入）；GS 警語只寫簡稱「玉山證券」（已在 `distributor.name_equivalents`）；GS 一. 末段「玉山證券不保證本商品本金或利息之給付」、UBS 末頁 `受託機構聯絡方式：` 後的全名不算名稱出處 |
 | 2026-10-25 | 所有上手（Issue #224）：受託對象與能否承作 OSU 客戶一致（`standard.osu_clients`）：不能承作的上手（BBVA、Citi、GS、DBS）全文不得出現 OSU，可以承作的上手受託對象欄要寫 OSU 客戶；交易日 2026-11-30（含）以前特例通過（DBS 舊範本、JPM 受託對象沒寫 OSU 客戶） |
+| 2026-10-25 | 所有上手（Issue #226）：商品簡介的保本率與達成保本率之各項條件要寫不保本（`standard.principal_protection`，允許寫法在 `principal_protection.non_protected`）；全文受託機構名稱（`standard.distributor_names`） |

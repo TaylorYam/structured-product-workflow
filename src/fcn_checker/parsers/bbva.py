@@ -88,7 +88,7 @@ STRIKE_DEF = r"轉換比例\(PutStrikePercentage\)：" + PCT
 # 重複寫出的值（Issue #305）：第 14 項最佳表現值的觀察起算日、第 18 項 (1) 自動提前贖回事件的 %
 BEST_VALUE_START = r"最佳表現值\(HighestRIValue\)：[^*]*?為自" + D + "（含）"
 ART18_KO = r"\(1\)自動提前贖回事件：.*?大於或等於" + PCT + r"，則視為發生自動提前贖回事件"
-# 第 1 頁 13. 後的受託機構明細（有些商品沒有這段；(ii) 設立日期不核對）→ (出處清單, 欄位, 出處代號, 位置, pattern)
+# 第 1 頁 13. 後的受託機構明細（有些商品沒有這段；(ii) 設立日期由共用審查標準規則從全文核對）→ (出處清單, 欄位, 出處代號, 位置, pattern)
 COVER_DETAILS = (
     (
         "distributor_names_others",

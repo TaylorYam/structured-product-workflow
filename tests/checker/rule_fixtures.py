@@ -10,7 +10,7 @@ from typing import Any
 from fcn_checker.orders.reference import OrderRecord
 from fcn_checker.parsers.layout import TextIndex
 from fcn_checker.rules.kit import Context, IssuerContext
-from fcn_checker.schema import DocKind, OrderValue, ParsedField
+from fcn_checker.schema import DocKind, Line, OrderValue, ParsedField
 from fcn_checker.standard_fields import lookup
 from harness import CONFIG
 
@@ -32,6 +32,12 @@ def term_sheet(**values: Any) -> TermSheetOf:
     return TermSheetOf(
         {name: v if isinstance(v, ParsedField) else ParsedField.present(name, v, []) for name, v in values.items()}
     )
+
+
+def with_text(ts: TermSheetOf, *texts: str) -> TermSheetOf:
+    """全文索引換成這幾行：第 n 行在第 n 頁（證據的頁碼即行序）。"""
+    ts.full_text = TextIndex([Line(page, 0, 0, 100, 10, text) for page, text in enumerate(texts, 1)])
+    return ts
 
 
 def context(ts: TermSheetOf, issuer: str = "BARC", *, document: DocKind = DocKind.TERM_SHEET, **row: Any) -> Context:

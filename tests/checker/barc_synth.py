@@ -487,7 +487,10 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     ]:
         article(n, title)
         sub(1, f"事業名稱：{corp}", x_num=67.7, x_body=96.0)
-        sub(2, "設立日期：2000 年1 月1 日", x_num=67.7, x_body=96.0)
+        established = (
+            "2000 年11 月20 日" if n == 5 else "2000 年1 月1 日"
+        )  # 受託機構 = 審查標準 distributor.established
+        sub(2, f"設立日期：{established}", x_num=67.7, x_body=96.0)
         sub(3, f"營業所在地：{addr}", x_num=67.7, x_body=96.0)
         sub(4, f"負責人姓名：{boss}", x_num=67.7, x_body=96.0)
 
@@ -706,6 +709,8 @@ def build_iis_pdf(
             f"7.商品面額與發行價格：每單位商品面額為{s.denom:,} {s.currency_zh}，最低申購金額為"
             f"{s.denom:,} {s.currency_zh}。發行價格為商品面額之100%。"
         )
+        w.line(20.5, "8.計價貨幣本金保本率：無，本商品為不保障本金之境外結構型商品。")
+        w.line(20.5, "9.投資本金達成100％保本率之各項條件：不適用，本商品為不保障本金之境外結構型商品。")
         w.line(20.5, "10.連結標的資產：" + "、".join(f"{u.ticker} Equity" for u in s.underlyings) + ".")
         w.line(20.5, f"11.商品年期：{s.tenor} 個月。")
         w.line(20.5, f"12.發行日：{zh_date(s.issue_date)}。")
