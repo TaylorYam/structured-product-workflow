@@ -16,7 +16,8 @@
 - 文件沒寫的評等機構不交出（規則只比文件有寫的）。
 
 14 家上手都已宣告（#240～#243）。新上手：在該上手說明書與投資人須知 parser 宣告 `RatingPlace`，用 `read` 交出 `issuer_ratings`
-與 `guarantor_ratings`（沒有保證機構的範本保證機構評等交 `absent`；只寫保證機構評等的範本，例：CA、JPM、Nomura、SG
+與 `guarantor_ratings`（沒有保證機構的範本宣告文件寫明沒有保證機構的地方，例：商品名稱 `NAME_NO_GUARANTOR`，用 `no_guarantor`
+確認後保證機構評等交不適用，#243；只寫保證機構評等的範本，例：CA、JPM、Nomura、SG
 的發行機構是工具公司、寫「無單獨信用評等」或「未獲評等」，宣告這些寫法的位置，用 `unrated` 確認後發行機構評等交不適用，
 找不到或寫了評等就轉人工覆核，#241），並在上手註冊表標 `Issuer.ratings`。
 """
@@ -27,9 +28,8 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from ..rating_formats import DASHES, FITCH, FORMATS, MOODYS, SP
+from ..rating_formats import DASHES, FITCH, FORMATS, GUARANTOR, ISSUER, MOODYS, SP
 from ..schema import Evidence, FieldStatus, Line, ParsedField
-from ..standard_fields import absent
 from .layout import TextIndex
 
 FIELDS = ("issuer_ratings", "guarantor_ratings")  # 標準欄位：發行機構評等、保證機構評等
@@ -60,6 +60,11 @@ class RatingPlace:
     where: str
     pattern: str
     rating_first: bool = False
+
+
+# 商品名稱寫明沒有保證機構（#243）：BARC、HSBC、MS、DBS、Natixis、UBS 的說明書與投資人須知都在名稱的括號裡寫
+# （例：`（無擔保及無保證機構）`、`（無保證機構無擔保）`、`（不保本、無擔保及無保證機構）`），給 `no_guarantor` 用
+NAME_NO_GUARANTOR = RatingPlace("商品名稱", r"（[^（）]*無保證機構[^（）]*）")
 
 
 @dataclass(frozen=True)
@@ -134,6 +139,19 @@ def unrated(name: str, lines: Sequence[Line], places: Sequence[RatingPlace]) -> 
     只寫名稱、評等項目只寫保證機構的寫法；每處都找到、且找到的文字裡沒有評等機構名稱 → 不適用（不核對，note 寫出依據）。
     任一處找不到 → 缺漏、寫了評等機構 → 不合法；規則都轉人工覆核，note 寫出位置與原因，不當成沒有評等放過。
     """
+    return _stated_none(name, lines, places, ISSUER, "發行機構沒有評等")
+
+
+def no_guarantor(name: str, lines: Sequence[Line], places: Sequence[RatingPlace]) -> ParsedField:
+    """沒有保證機構的範本（#243）：確認文件自己寫了沒有保證機構（例：`2.保證機構：不適用，本商品無保證機構`、
+    商品名稱的 `（無擔保及無保證機構）`），規則同 `unrated`：每處都找到、且沒寫評等機構 → 保證機構評等不適用；
+    找不到 → 缺漏、寫了評等機構 → 不合法，規則都轉人工覆核，不當成沒有保證機構放過。
+    """
+    return _stated_none(name, lines, places, GUARANTOR, "沒有保證機構")
+
+
+def _stated_none(name: str, lines: Sequence[Line], places: Sequence[RatingPlace], role: str, what: str) -> ParsedField:
+    """文件寫明 `what`（發行機構沒有評等／沒有保證機構）的每一處都找到、且沒寫評等機構 → 不適用；否則缺漏或不合法。"""
     ti = TextIndex(lines, unify_brackets=True)
     evidence: list[Evidence] = []
     missing: list[str] = []
@@ -147,15 +165,13 @@ def unrated(name: str, lines: Sequence[Line], places: Sequence[RatingPlace]) -> 
             if _NAME.search(m[0]):
                 stated.append(place.where)
     if stated:
-        note = f"{'、'.join(stated)}寫了發行機構的評等機構，範本應寫發行機構沒有評等，請人工核對發行機構評等"
+        note = f"{'、'.join(stated)}寫了{role}的評等機構，範本應寫{what}，請人工核對{role}評等"
         return ParsedField(name, FieldStatus.INVALID, None, evidence, note=note)
     if missing:
-        note = f"{'、'.join(missing)}找不到「發行機構沒有評等」的寫法，請人工核對發行機構評等"
+        note = f"{'、'.join(missing)}找不到「{what}」的寫法，請人工核對{role}評等"
         return ParsedField(name, FieldStatus.MISSING, None, evidence, note=note)
     where = "、".join(p.where for p in places)
-    return ParsedField(
-        name, FieldStatus.NOT_APPLICABLE, None, evidence, note=f"文件寫明發行機構沒有評等（{where}），不核對"
-    )
+    return ParsedField(name, FieldStatus.NOT_APPLICABLE, None, evidence, note=f"文件寫明{what}（{where}），不核對")
 
 
 def fields(
@@ -164,16 +180,22 @@ def fields(
     guarantor: Sequence[RatingPlace] = (),
     *,
     issuer_unrated: Sequence[RatingPlace] = (),
+    no_guarantor_places: Sequence[RatingPlace] = (),
 ) -> dict[str, ParsedField]:
     """上手 parser 交出的兩個評等欄位（`FIELDS`）。
 
     發行機構：有評等的範本給 `issuer`（評等段落）；發行機構沒有評等、只寫保證機構評等的範本（#241）給 `issuer_unrated`
-    （文件說發行機構沒有評等的地方，見 `unrated`），兩者擇一。保證機構：範本沒有保證機構（`guarantor` 沒給）時交 absent。
+    （文件說發行機構沒有評等的地方，見 `unrated`），兩者擇一。保證機構：有保證機構的範本給 `guarantor`；沒有保證機構的範本
+    給 `no_guarantor_places`（文件說沒有保證機構的地方，見 `no_guarantor`，#243），兩者擇一。
     """
     if bool(issuer) == bool(issuer_unrated):
         raise ValueError("issuer 與 issuer_unrated 要剛好給一個")
+    if bool(guarantor) == bool(no_guarantor_places):
+        raise ValueError("guarantor 與 no_guarantor_places 要剛好給一個")
     issuer_field, guarantor_field = FIELDS
     return {
         issuer_field: read(issuer_field, lines, issuer) if issuer else unrated(issuer_field, lines, issuer_unrated),
-        guarantor_field: read(guarantor_field, lines, guarantor) if guarantor else absent(guarantor_field, "保證機構"),
+        guarantor_field: read(guarantor_field, lines, guarantor)
+        if guarantor
+        else no_guarantor(guarantor_field, lines, no_guarantor_places),
     }

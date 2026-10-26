@@ -26,10 +26,10 @@ TEMPLATE_ID = "barc-zh-pd"
 # 3：價格表改由 parsers/price_table.py 讀（Issue #288）；4：日期表標準欄位與共用排程推導（Issue #289）；
 # 5：情境重印價格表與假設值交成共用情境規則的標準欄位（Issue #294）
 # 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
-# 7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #243）
+# 7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings，並確認文件寫明沒有保證機構（Issue #243）
 PARSER_VERSION = "7"
 # 發行機構信用評等（#243）：評等寫在評等機構前面 `A+（標準普爾長期債務信用評等）/A1（穆迪長期債務信用評等）/AA-（惠譽…）`。
-# 第一章第 3 項在發行機構名稱後面（`；` 之後，接第 4 項商品之發行評等）；第二章 (7) 信用評等接 (8) 財務報告。沒有保證機構
+# 第一章第 3 項在發行機構名稱後面（`；` 之後，接第 4 項商品之發行評等）；第二章 (7) 信用評等接 (8) 財務報告
 RATINGS = (
     ratings.RatingPlace(
         "第一章第 3 項",
@@ -37,6 +37,11 @@ RATINGS = (
         rating_first=True,
     ),
     ratings.RatingPlace("第二章 (7) 信用評等", r"（7）信用評等：(?P<body>.+?)(?=（8）)", rating_first=True),
+)
+# 沒有保證機構（#243）：文件自己寫明的地方，找不到或寫了評等機構時保證機構評等轉人工覆核
+NO_GUARANTOR = (
+    ratings.RatingPlace("第二章 2. 保證機構", r"2\.保證機構：不適用，本商品無保證機構。"),
+    ratings.NAME_NO_GUARANTOR,
 )
 
 # 章名「第一章 商品基本資料」、條號「1.」、子項「(1)」（範本規格 §3）
@@ -881,7 +886,7 @@ def read(lines: Sequence[Line]) -> BarcTermSheet:
     flds["underlying_notes"] = underlying_notes(
         all_lines, Markers(r"標的資產\d+：")
     )  # 連結標的公司介紹：標的資產k：（Issue #225）
-    flds.update(ratings.fields(all_lines, RATINGS))
+    flds.update(ratings.fields(all_lines, RATINGS, no_guarantor_places=NO_GUARANTOR))
     return BarcTermSheet(flds, mentions, TextIndex(all_lines), doc, header_pcts)
 
 

@@ -14,7 +14,6 @@ import openpyxl
 import pytest
 
 from fcn_checker.batch import DocKind
-from fcn_checker.issuers import REGISTRY
 from fcn_checker.saving import run_batch
 from fcn_checker.schema import CheckStatus
 from harness import CONFIG
@@ -78,6 +77,23 @@ def test_barc_rows_match_every_prefilled_field(outcome):
 
 # 信用評等（#240～#243）：樣本內較舊的文件寫評等調整前的值，初始評等表只有現在的評等、不補歷史（使用者決定），
 # 說明書與投資人須知都判不一致。上手 → 這樣的商品數（各上手的 test_real_*.py 另有逐處的筆數）
+# 目前上線的 14 家（#243 起都核對評等）；之後的新上手可以先上線、評等核對另做，不在這裡
+CURRENT_ISSUERS = {
+    "BARC",
+    "HSBC",
+    "MS",
+    "DBS",
+    "NATIXIS",
+    "UBS",
+    "CA",
+    "JPM",
+    "NOMURA",
+    "SG",
+    "CITI",
+    "GS",
+    "BNP",
+    "BBVA",
+}
 RATING_CHANGES = {"BARC": 1, "HSBC": 2, "MS": 3, "NATIXIS": 3, "UBS": 2, "SG": 2, "CITI": 3, "GS": 1}
 
 
@@ -93,9 +109,8 @@ def test_all_14_issuers_check_ratings_and_only_old_ratings_differ(outcome):
         assert {r.status for r in found} <= {CheckStatus.PASS, CheckStatus.MISMATCH}, item.term_sheet.name
         if any(r.status == CheckStatus.MISMATCH for r in found):
             changed.setdefault(item.issuer, {}).setdefault(item.kind, set()).add(item.product_code)
-    assert {i.issuer for i in rated if any(r.rule_id == "standard.credit_rating" for r in i.report.results)} == {
-        i.code for i in REGISTRY
-    }
+    checked = {i.issuer for i in rated if any(r.rule_id == "standard.credit_rating" for r in i.report.results)}
+    assert checked == CURRENT_ISSUERS
     assert {issuer: len(kinds[DocKind.TERM_SHEET]) for issuer, kinds in changed.items()} == RATING_CHANGES
     assert all(kinds[DocKind.TERM_SHEET] == kinds[DocKind.IIS] for kinds in changed.values())
 

@@ -22,7 +22,8 @@ from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "dbs-zh-iis"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
-PARSER_VERSION = "3"
+# 4：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
+PARSER_VERSION = "4"
 # 發行機構信用評等（#240）：商品簡介 `發行機構長期債務信用評等：截至本中文投資人須知刊印日，發行機構之長期債務信用評等經穆迪(Moody’s)評定為Aa1、…。`
 RATINGS = (
     ratings.RatingPlace(
@@ -300,5 +301,5 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         )
     else:
         fields.update(fee_rates(fees))
-    fields.update(ratings.fields(text_lines, RATINGS))
+    fields.update(ratings.fields(text_lines, RATINGS, no_guarantor_places=(ratings.NAME_NO_GUARANTOR,)))
     return iis.IisSheet(fields, ti, frozenset(provided))

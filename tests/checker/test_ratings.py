@@ -240,13 +240,75 @@ def test_issuer_paragraph_naming_an_agency_needs_review() -> None:
     text = "3.發行機構：虛構公司（穆迪A2）。保證機構名稱及其長期債務信用評等：虛構銀行。"
     lines = [Line(1, 0, 0, 100, 10, text)]
     place = RatingPlace("第一章第 3 項", r"3\.發行機構：[^。]+。保證機構名稱及其長期債務信用評等：")
-    pf = fields(lines, issuer_unrated=[place])["issuer_ratings"]
+    guarantor = [RatingPlace("第一章第 3 項", r"保證機構名稱及其長期債務信用評等：(?P<body>.+?)。")]
+    pf = fields(lines, issuer_unrated=[place], guarantor=guarantor)["issuer_ratings"]
     assert pf.status == FieldStatus.INVALID
     assert pf.note.startswith("第一章第 3 項寫了發行機構的評等機構") and pf.evidence
-    ok = fields([Line(1, 0, 0, 100, 10, text.replace("（穆迪A2）", ""))], issuer_unrated=[place])["issuer_ratings"]
+    ok_lines = [Line(1, 0, 0, 100, 10, text.replace("（穆迪A2）", ""))]
+    ok = fields(ok_lines, issuer_unrated=[place], guarantor=guarantor)["issuer_ratings"]
     assert ok.status == FieldStatus.NOT_APPLICABLE and "第一章第 3 項" in ok.note
     with pytest.raises(ValueError):
-        fields(lines)  # 發行機構評等段落與「沒有評等」的寫法要剛好給一個
+        fields(lines, guarantor=guarantor)  # 發行機構評等段落與「沒有評等」的寫法要剛好給一個
+    with pytest.raises(ValueError):
+        fields(lines, issuer_unrated=[place])  # 保證機構評等段落與「沒有保證機構」的寫法也要剛好給一個
+
+
+NO_GUARANTOR_ISSUERS = [code for code, (*_, role) in ISSUERS.items() if role == ISSUER]  # 沒有保證機構（#243）
+
+
+@pytest.mark.parametrize("code", NO_GUARANTOR_ISSUERS)
+def test_document_stating_no_guarantor_does_not_check_guarantor_ratings(tmp_path, code) -> None:
+    """文件寫明沒有保證機構（商品名稱「無保證機構」，BARC 說明書另有第二章「保證機構：不適用」）：不核對保證機構評等；
+    參考條件表保證機構評等欄有值（例：手動填錯）也不比、不轉人工覆核。"""
+    reports = check(tmp_path, code, **{f"{GUARANTOR}評等_{a}": "BBB" for a in AGENCIES})
+    for kind in ("TS", "IIS"):
+        report = reports[kind]
+        assert report.status == S.PASS, (kind, problems(report))
+        assert rating_results(report) and all(r.item.name.startswith(ISSUER) for r in rating_results(report))
+
+
+@pytest.mark.parametrize("code", NO_GUARANTOR_ISSUERS)
+def test_document_not_stating_no_guarantor_needs_review(tmp_path, code) -> None:
+    """名稱不再寫「無保證機構」（範本改版、或改成有保證機構）：保證機構評等轉人工覆核、寫出位置，不當成沒有保證機構放過；
+    發行機構評等照常比。"""
+    reports = check(tmp_path, code, edits=[Edit("無保證機構", "有保證機構")])
+    for kind in ("TS", "IIS"):
+        if code in {"DBS", "NATIXIS"}:  # 這兩家的範本辨識要看名稱：名稱改了認不出範本，整份已轉人工覆核
+            assert (reports[kind].template, reports[kind].status) == (None, S.REVIEW_REQUIRED)
+            continue
+        review = [r for r in rating_results(reports[kind]) if r.status != S.PASS]
+        assert [(r.status, r.item.name) for r in review] == [(S.REVIEW_REQUIRED, f"{GUARANTOR}信用評等")], kind
+        assert "找不到「沒有保證機構」的寫法" in review[0].message and "商品名稱" in review[0].message
+        assert any(r.status == S.PASS and r.item.name.startswith(ISSUER) for r in rating_results(reports[kind]))
+
+
+def test_barc_guarantor_article_stating_a_guarantor_needs_review(tmp_path) -> None:
+    """BARC 說明書第二章第 2 項改寫保證機構與評等（不再寫「不適用，本商品無保證機構」）：即使名稱仍寫無保證機構，也轉人工覆核。"""
+    edit = Edit("不適用，本商品無保證機構。", "虛構銀行（穆迪A2）。", "ts.ch二.2")
+    reports = check(tmp_path, "BARC", edits=[edit])
+    [review] = [r for r in rating_results(reports["TS"]) if r.status != S.PASS]
+    assert (review.status, review.item.name) == (S.REVIEW_REQUIRED, f"{GUARANTOR}信用評等")
+    assert "第二章 2. 保證機構找不到「沒有保證機構」的寫法" in review.message
+    assert reports["IIS"].status == S.PASS, problems(reports["IIS"])
+
+
+def test_no_guarantor_wording_naming_an_agency_needs_review() -> None:
+    """「沒有保證機構」的寫法：找到 → 不適用；找不到 → 缺漏；那段文字寫了評等機構 → 不合法（都轉人工覆核，不猜）。"""
+    from fcn_checker.parsers.ratings import NAME_NO_GUARANTOR, RatingPlace, fields
+    from fcn_checker.schema import FieldStatus, Line
+
+    issuer = [RatingPlace("第一章第 3 項", r"信用評等：(?P<body>.+?)。")]
+
+    def guarantor_field(text: str):
+        lines = [Line(1, 0, 0, 100, 10, text)]
+        return fields(lines, issuer, no_guarantor_places=[NAME_NO_GUARANTOR])["guarantor_ratings"]
+
+    ok = guarantor_field("虛構結構型商品(不保本)(無保證機構)。信用評等：A1（穆迪）。")
+    assert ok.status == FieldStatus.NOT_APPLICABLE and "商品名稱" in ok.note and ok.evidence
+    missing = guarantor_field("虛構結構型商品(不保本)。信用評等：A1（穆迪）。")
+    assert missing.status == FieldStatus.MISSING and "找不到「沒有保證機構」的寫法" in missing.note
+    stated = guarantor_field("虛構結構型商品(無保證機構，惠譽AA)。信用評等：A1（穆迪）。")
+    assert stated.status == FieldStatus.INVALID and stated.note.startswith("商品名稱寫了保證機構的評等機構")
 
 
 def test_unreadable_rating_needs_review(tmp_path) -> None:
@@ -259,9 +321,17 @@ def test_unreadable_rating_needs_review(tmp_path) -> None:
     assert {r.status for r in found if r not in review} == {S.PASS}  # 其他兩處照常比
 
 
-def test_all_registered_issuers_check_ratings() -> None:
-    """14 家上手都做評等核對（#243），這裡的合成測試也都登記了。"""
-    assert {i.code for i in REGISTRY if i.ratings} == {i.code for i in REGISTRY} == set(ISSUERS) | set(BOTH)
+# 目前上線的 14 家（#243 起都核對評等）；之後的新上手可以先上線、評等核對另做（`Issuer.ratings` 不標），不在這裡
+CURRENT_ISSUERS = frozenset(
+    {"BARC", "HSBC", "MS", "DBS", "NATIXIS", "UBS", "CA", "JPM", "NOMURA", "SG", "CITI", "GS", "BNP", "BBVA"}
+)
+
+
+def test_current_issuers_check_ratings() -> None:
+    """目前的 14 家都做評等核對（#243）；有標 `ratings` 的上手這裡的合成測試都登記了。"""
+    rated = {i.code for i in REGISTRY if i.ratings}
+    assert CURRENT_ISSUERS <= rated
+    assert rated == set(ISSUERS) | set(BOTH)
 
 
 def test_issuers_without_the_rating_check_get_no_rating_results(tmp_path) -> None:

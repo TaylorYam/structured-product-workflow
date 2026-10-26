@@ -163,7 +163,7 @@ def test_page_count_and_footer_total(tmp_path, spec, rule, message):
         ),
         # 同商品說明書
         (("cover", "XS1999900001", "XS1999900002"), ("iis.isin", "isin"), None),
-        (("cover", "(無保證機構)", "(無保證)"), ("iis.name_zh", "name_zh"), None),
+        (("cover", "(無擔保)", "(有擔保)"), ("iis.name_zh", "name_zh"), None),
         (("cover", "Fixed Coupon Notes", "Fixed Coupon Note"), ("iis.name_en", "name_en"), None),
         (
             ("summary", "虛構標的2公司", "虛構標的9公司"),

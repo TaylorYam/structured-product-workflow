@@ -21,7 +21,8 @@ from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "ubs-zh-iis"
 # 2：警語的受託機構名稱（Issue #306）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
-PARSER_VERSION = "3"
+# 4：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
+PARSER_VERSION = "4"
 # 發行機構信用評等（#240）：商品簡介 4. `…其長期債務信用評等為穆迪（Moody's）Aa2，標準普爾（Standard & Poor's）為A+，…。`
 RATINGS = (
     ratings.RatingPlace(
@@ -208,5 +209,5 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         fees = text_lines[ti.line_at(a) :]
         cut = next((i for i, ln in enumerate(fees) if squash(ln.text).startswith("附註")), None)
         fields.update(fee_rates(fees[:cut]))
-    fields.update(ratings.fields(text_lines, RATINGS))
+    fields.update(ratings.fields(text_lines, RATINGS, no_guarantor_places=(ratings.NAME_NO_GUARANTOR,)))
     return iis.IisSheet(fields, ti, PROVIDED)

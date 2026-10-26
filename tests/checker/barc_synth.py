@@ -11,7 +11,7 @@ docs/checker/templates/barc-zh-product-description.md 觀察值設定。PDF 排�
   `ts.art13.ko.{t}.{欄}`（start、end、trigger、payment、ko_valuation、early_redemption；定日記憶式表頭
   `ts.art13.ko.header`）；第 15／16 條價格表 `ts.art15.price`／`ts.art16.price`（格子 `.{標的序}.{欄}`：name、
   initial、strike、ko、ki）；第 16 條情境 `ts.art16.i`／`.ii`／`.iii`。
-- 說明書其他各章：第二章各條 `ts.ch二.{n}`（5 = 受託或銷售機構）、第三章 `ts.ch三`、第四章 `ts.ch四`（費用表各列
+- 說明書其他各章：第二章各條 `ts.ch二.{n}`（2 = 保證機構、5 = 受託或銷售機構）、第三章 `ts.ch三`、第四章 `ts.ch四`（費用表各列
   `ts.ch四.fees.{費用項目}`）、第五章 `ts.ch五`。
 - 投資人須知：`iis.p1`～`iis.p4`（依頁；費用表各列 `iis.p3.fees.{費用項目}`）。
 """
@@ -486,13 +486,15 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     distributor = (DISTRIBUTOR["name"], DISTRIBUTOR["address"])
     for n, title, boss, (corp, addr) in [
         (1, "發行機構：", "Alex Example（CFO）", (ISSUER_NAME, "1 Example Place, London")),
-        (2, "總代理人：", "王小明（董事長）", example),
-        (3, "保證機構：", "無", example),
+        (2, "保證機構：不適用，本商品無保證機構。", None, example),  # 同真實樣本（#243：確認沒有保證機構）
+        (3, "總代理人：", "王小明（董事長）", example),
         (4, "計算代理機構：", "Casey Sample（CFO）", example),
         (5, "受託或銷售機構：", DISTRIBUTOR["chairman"], distributor),
         (6, "報價機構：", "Robin Test", example),
     ]:
         article(n, title)
+        if boss is None:
+            continue
         sub(1, f"事業名稱：{corp}", x_num=67.7, x_body=96.0)
         established = (
             "2000 年11 月20 日" if n == 5 else "2000 年1 月1 日"

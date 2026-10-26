@@ -22,7 +22,8 @@ TEMPLATE_ID = "hsbc-zh-pd"
 # 4：情境價格表、情境假設值與情境的執行價、觸及不保本價格交成共用情境規則的標準欄位（Issue #294）
 # 5：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 # 6：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
-PARSER_VERSION = "6"
+# 7：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
+PARSER_VERSION = "7"
 # 發行機構信用評等（#240）：第一章第 3 項 `其長期債務信用評等為[穆迪（Moody’s）信評Aa3/…]。`、第二章 (7) `信用評等(長期債務信用評等)：穆迪…給予…Aa3；…`
 RATINGS = (
     ratings.RatingPlace("第一章第 3 項", r"發行機構為[^，。]+，截至[^，。]+，其長期債務信用評等為(?P<body>.+?)。"),
@@ -537,7 +538,7 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
     fields["underlying_notes"] = underlying_notes(
         doc.lines, Paragraphs()
     )  # 連結標的公司介紹：沒有編號與名稱，依段落（Issue #225）
-    fields.update(ratings.fields(doc.lines, RATINGS))
+    fields.update(ratings.fields(doc.lines, RATINGS, no_guarantor_places=(ratings.NAME_NO_GUARANTOR,)))
     return HsbcTermSheet(fields, TextIndex(doc.lines), doc, scenarios, ScenarioIndex(scenarios))
 
 
