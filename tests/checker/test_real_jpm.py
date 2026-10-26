@@ -2,7 +2,8 @@
 
 斷言與探勘結論一致（docs/checker/rules/jpm-check-rules.md §5）：5 份說明書與 5 份投資人須知都辨識為 JPM 範本，全部通過、
 全部回填。表上標的排序和說明書不同的多標的商品依代號配對後通過（說明書依英文公司名稱字母順序排列；期初定價 VWAP 的
-那份價格不比對）。參考條件表用含 JPM 列的公司原始待建檔表 data/orders/核對表格式..xlsx。
+那份價格不比對）。參考條件表用含 JPM 列的公司原始待建檔表 data/orders/核對表格式..xlsx，加上初始評等表的評等欄；
+保證機構評等全部相符（#241）。
 """
 
 from collections import Counter
@@ -12,15 +13,16 @@ import pytest
 from fcn_checker.issuers import JPM
 from fcn_checker.schema import CheckStatus as S
 from harness import check_all
-from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, requires
+from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, rated_check_format, requires
 
 pytestmark = [pytest.mark.real_samples, requires(TERM_SHEETS / "076*_TS.pdf", CHECK_FORMAT)]
 PROBLEMS = (S.MISMATCH, S.REVIEW_REQUIRED, S.ERROR)
 
 
 @pytest.fixture(scope="module")
-def items():
-    outcome = check_all(CHECK_FORMAT, pdfs("076*.pdf"))
+def items(tmp_path_factory):
+    sheet = rated_check_format(tmp_path_factory.mktemp("rated"))  # 加評等欄（#241）
+    outcome = check_all(sheet, pdfs("076*.pdf"))
     return [i for i in outcome.items if i.term_sheet.name.endswith("_TS.pdf")], [
         i for i in outcome.items if i.term_sheet.name.endswith("_IIS.pdf")
     ]
@@ -49,6 +51,9 @@ def test_samples_pass_as_the_exploration_said(items):
     )
     assert bad == Counter()
     assert all(i.report.status == S.PASS for i in term_sheets + investor_sheets)
+    # 保證機構評等（#241）：說明書 2 處、投資人須知 1 處，三家評等機構都和初始評等表相同
+    for docs, n in ((term_sheets, 6), (investor_sheets, 3)):
+        assert [sum(r.rule_id == "standard.credit_rating" for r in i.report.results) for i in docs] == [n] * 5
 
 
 def test_underlyings_in_a_different_order_pass_by_ticker(items):

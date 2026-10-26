@@ -17,7 +17,7 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence, ScenarioParam, ScenarioPrice
 from ..text import squash
-from . import money, price_table, schedule
+from . import money, price_table, ratings, schedule
 from .common import NUM, Mention, dec, derived, number
 from .layout import DATE_RE, Document, LayoutSpec, TextIndex, capture, join_text, parse_date
 from .underlying_notes import NameColumn, underlying_notes
@@ -25,8 +25,24 @@ from .underlying_notes import NameColumn, underlying_notes
 TEMPLATE_ID = "jpm-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：情境重複寫出的值（Issue #315）；4：日期表標準欄位與共用排程推導（Issue #289）；
 # 5：情境價格表、假設值與執行價交成共用情境規則的標準欄位（Issue #294）
-# 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
-PARSER_VERSION = "6"
+# 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）；7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
+PARSER_VERSION = "7"
+# 保證機構信用評等（#241）：第 I 部分第 3 項 `保證機構名稱及其長期債務信用評等：…，長期債務信用評等為標準普爾（Standard&Poor's）AA-、
+# 穆迪（Moody’s）Aa2、惠譽（Fitch）AA`（後面直接接第 4 項）、第 II 部分保證機構 (7) `信用評等：長期債務信用評等為…`（接 (8) 保證條件）。
+GUARANTOR_RATINGS = (
+    ratings.RatingPlace(
+        "第 I 部分第 3 項",
+        r"保證機構名稱及其長期債務信用評等：[^，。]+，長期債務信用評等為(?P<body>.+?)。?(?=4\.商品之發行評等)",
+    ),
+    ratings.RatingPlace(  # 段落不跨到別的款次（發行機構 (7) 寫了評等時不會一路撿到保證機構 (8)）
+        "第 II 部分保證機構 (7) 信用評等",
+        r"（7）信用評等：長期債務信用評等為(?P<body>(?:(?!（\d+）).)+?)。?(?=（8）保證條件)",
+    ),
+)
+# 發行機構（工具公司）沒有評等：第 II 部分發行機構 (7) 寫「發行機構並無獨立之信用評等」（第 I 部分第 3 項標題只寫保證機構）
+ISSUER_UNRATED = (
+    ratings.RatingPlace("第 II 部分發行機構 (7) 信用評等", r"（7）信用評等：發行機構並無獨立之信用評等。"),
+)
 CHAPTER_NAMES = {
     1: ("I", "商品基本資料"),
     2: ("II", "相關機構事業概況"),
@@ -528,6 +544,7 @@ def read(lines: Sequence[Line]) -> JpmTermSheet:
     fields["underlying_notes"] = underlying_notes(
         doc.lines, NameColumn()
     )  # 連結標的公司介紹：左欄名稱、右欄介紹（Issue #225）
+    fields.update(ratings.fields(doc.lines, guarantor=GUARANTOR_RATINGS, issuer_unrated=ISSUER_UNRATED))
     return JpmTermSheet(fields, TextIndex(doc.lines), doc, annual)
 
 

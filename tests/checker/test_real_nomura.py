@@ -3,7 +3,7 @@
 斷言與探勘結論一致（docs/checker/rules/nomura-check-rules.md §5）：8 份說明書與 8 份投資人須知都辨識為 Nomura 範本；只有一份的
 參考條件表到期日比說明書早 1 天（說明書跳過美國假日，表填錯，2026-10-15 確認），說明書與投資人須知都判不一致；其餘 7 組
 通過並回填。2025 年文件 2 份的審查通過日期 2025-06-24 依交易日通過（Issue #239 加入審查標準）。參考條件表用
-data/orders/核對表格式..xlsx（含 8 列 Nomura）。
+data/orders/核對表格式..xlsx（含 8 列 Nomura），加上初始評等表的評等欄；保證機構評等全部相符（#241）。
 """
 
 import datetime as dt
@@ -14,15 +14,16 @@ import pytest
 from fcn_checker.issuers import NOMURA
 from fcn_checker.schema import CheckStatus as S
 from harness import check_all
-from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, requires
+from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, rated_check_format, requires
 
 pytestmark = [pytest.mark.real_samples, requires(TERM_SHEETS / "156*_TS.pdf", CHECK_FORMAT)]
 PROBLEMS = (S.MISMATCH, S.REVIEW_REQUIRED, S.ERROR)
 
 
 @pytest.fixture(scope="module")
-def items():
-    outcome = check_all(CHECK_FORMAT, pdfs("156*.pdf"))
+def items(tmp_path_factory):
+    sheet = rated_check_format(tmp_path_factory.mktemp("rated"))  # 加評等欄（#241）
+    outcome = check_all(sheet, pdfs("156*.pdf"))
     return [i for i in outcome.items if i.term_sheet.name.endswith("_TS.pdf")], [
         i for i in outcome.items if i.term_sheet.name.endswith("_IIS.pdf")
     ]
@@ -44,6 +45,9 @@ def test_samples_only_differ_where_the_exploration_said(items):
     for docs, expected in ((term_sheets, maturity | notes), (investor_sheets, maturity)):
         bad = Counter((r.rule_id, r.reason_code) for i in docs for r in i.report.results if r.status in PROBLEMS)
         assert bad == Counter(expected)
+    # 保證機構評等（#241）：說明書 2 處、投資人須知 1 處，三家評等機構都和初始評等表相同（英文名稱寫在評等後面）
+    for docs, n in ((term_sheets, 6), (investor_sheets, 3)):
+        assert [sum(r.rule_id == "standard.credit_rating" for r in i.report.results) for i in docs] == [n] * 8
 
 
 def test_products_whose_two_documents_pass_are_filled(items):

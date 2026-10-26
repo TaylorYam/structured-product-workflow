@@ -15,12 +15,22 @@ from decimal import Decimal
 from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..text import squash
-from . import iis, jpm, money, price_table
+from . import iis, jpm, money, price_table, ratings
 from .common import derived
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "jpm-zh-iis"
-PARSER_VERSION = "2"  # 2：價格表改由 parsers/price_table.py 讀（Issue #287）
+# 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
+PARSER_VERSION = "3"
+# 保證機構信用評等（#241）：商品簡介 `●保證機構之長期債務信用評等：標準普爾（Standard&Poor's）AA-、穆迪（Moody’s）Aa2、惠譽（Fitch）AA`
+# （後面直接接 `●本商品之發行評等`）
+GUARANTOR_RATINGS = (
+    ratings.RatingPlace("商品簡介", r"●保證機構之長期債務信用評等：(?P<body>.+?)(?=●本商品之發行評等)"),
+)
+# 發行機構沒有評等：評等項目只寫保證機構，緊接在「本商品風險程度」後面（中間沒有發行機構評等項目）
+ISSUER_UNRATED = (
+    ratings.RatingPlace("商品簡介（風險程度～保證機構評等）", r"●本商品風險程度：[^●]+●保證機構之長期債務信用評等："),
+)
 TITLE = "中文投資人須知"
 SECTIONS = (
     "本商品之投資風險警語",
@@ -73,6 +83,7 @@ PROVIDED = frozenset(
         "distributor_names",
         "distributor_addresses",
         *(f"fee_{label}" for label in iis.FEES),
+        "guarantor_ratings",  # 只寫保證機構評等（#241）；發行機構沒有評等，確認後交不適用，不列在這裡
     }
 )
 
@@ -270,4 +281,5 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
             if fees is not None
             else ParsedField.missing(name, "找不到「四、費用」段落")
         )
+    fields.update(ratings.fields(text_lines, guarantor=GUARANTOR_RATINGS, issuer_unrated=ISSUER_UNRATED))
     return iis.IisSheet(fields, ti, frozenset(provided))

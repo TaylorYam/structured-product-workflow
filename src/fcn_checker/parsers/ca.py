@@ -19,7 +19,7 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence, ScenarioParam
 from ..text import squash
-from . import money, price_table, schedule
+from . import money, price_table, ratings, schedule
 from .common import RawText, capture_group, compat_normalized, derived, fee_rates, number
 from .layout import Document, LayoutSpec, TextIndex, capture, join_wrapped_tickers, parse_date
 from .underlying_notes import NameColumn, underlying_notes
@@ -28,8 +28,22 @@ TEMPLATE_ID = "ca-zh-pd"
 # 2：價格表幣別字換行的那格仍歸到同一列（Issue #278）；3：價格表改由 parsers/price_table.py 讀（Issue #287）；
 # 4：重複寫出處（情境、贖回 %、說明文字幣別、警語的受託機構名稱；Issue #319）；5：日期表標準欄位與共用排程推導（Issue #289）；
 # 6：情境價格表與假設值交成共用情境規則的標準欄位（Issue #294）；7：多標的非記憶式句型（Issue #344）
-# 8：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
-PARSER_VERSION = "8"
+# 8：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）；9：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
+PARSER_VERSION = "9"
+# 保證機構信用評等（#241）：第一章第 3 項 `保證機構名稱及其長期債務信用評等：…。截至…，其長期債務信用評等為穆迪A1/標準普爾A+/惠譽AA-`
+# （後面直接接第 4 項，沒有句號）、第二章 2. 保證機構 (7) `信用評等：穆迪A1/…。`（接 (8) 保證條件）。
+GUARANTOR_RATINGS = (
+    ratings.RatingPlace(
+        "第一章第 3 項",
+        r"保證機構名稱及其長期債務信用評等：[^，。]+。截至[^，。]+，其長期債務信用評等為(?P<body>.+?)。?(?=4\.商品之發行評等)",
+    ),
+    ratings.RatingPlace("第二章保證機構 (7) 信用評等", r"（7）信用評等：(?P<body>[^。]+)。（8）保證條件"),
+)
+# 發行機構（工具公司）沒有評等：第一章第 3 項 `3.發行機構：…。` 只寫名稱，第二章發行機構 (7) 寫「發行機構無單獨信用評等」
+ISSUER_UNRATED = (
+    ratings.RatingPlace("第一章第 3 項", r"3\.發行機構：[^。]+。保證機構名稱及其長期債務信用評等："),
+    ratings.RatingPlace("第二章發行機構 (7) 信用評等", r"（7）信用評等：發行機構無單獨信用評等[^。]*。"),
+)
 # 第七章章名在部分文件拆成兩行（「第七章、股權連結商」／「品的額外條款及條件」），只用前六章定位；辨識另查第七章全文
 CHAPTER_NAMES = {
     1: ("一", "商品基本資料"),
@@ -222,6 +236,7 @@ def read(lines: Sequence[Line]) -> CaTermSheet:
     fields["underlying_notes"] = underlying_notes(
         doc.lines, NameColumn()
     )  # 連結標的公司介紹：兩欄表：左欄名稱、右欄簡介（Issue #225）
+    fields.update(ratings.fields(doc.lines, guarantor=GUARANTOR_RATINGS, issuer_unrated=ISSUER_UNRATED))
     return CaTermSheet(fields, TextIndex(doc.lines), doc)
 
 

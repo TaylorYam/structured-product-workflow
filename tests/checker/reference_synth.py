@@ -158,6 +158,9 @@ class Ratings:
         return [(a, values[a]) for a in order or values if values[a] is not None]
 
 
+NO_RATINGS = Ratings(None, None, None)  # 評等表沒有這個機構（參考條件表三欄都空白）
+
+
 @dataclass
 class ProductSpec:
     """一檔 FCN 商品的規格（上手中立）：參考條件表一列的內容，也是各上手合成說明書與投資人須知的依據。
@@ -187,7 +190,8 @@ class ProductSpec:
     currency_iso: str | None = None  # 承作幣別 ISO 代碼；None → 依審查標準對照 `currency_zh`（對照表沒有的幣別要給）
     underlyings: tuple[UL, ...] = DEFAULT_ULS
     ratings: Ratings = Ratings()  # 發行機構評等（#240；HSBC、MS、DBS、Natixis、UBS 的合成文件寫出評等段落）
-    # 保證機構評等（#242；Citi、GS、BNP、BBVA 的合成文件寫出評等段落）；None → 參考條件表保證機構評等欄空白
+    # 保證機構評等（#241 CA、JPM、Nomura、SG，#242 Citi、GS、BNP、BBVA 的合成文件寫出評等段落）；
+    # None → 參考條件表保證機構評等欄空白
     guarantor_ratings: Ratings | None = None
 
     def with_(self, **kw: Any) -> Self:

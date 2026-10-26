@@ -367,7 +367,8 @@ STANDARD_FIELDS: dict[str, str] = {
     "scenario_params": "tuple[ScenarioParam, ...]：情境假設值的各出處（出處代號、位置、值、倍數），每處 = 對應的正式值",
     "scenario_prices": "tuple[ScenarioPrice, ...]：較差情境寫出的價格（對到 `underlying_prices` 第幾檔的哪一欄）",
     # 信用評等（parsers/ratings.py，#240）：各處評等段落，每處 = 參考條件表交易日當時的評等；範本沒有保證機構時交出 absent
-    "issuer_ratings": "tuple[StatedRatings, ...]：發行機構長期債務信用評等的各處段落（位置、（評等機構, 評等）、證據）",
+    "issuer_ratings": "tuple[StatedRatings, ...]：發行機構長期債務信用評等的各處段落（位置、（評等機構, 評等）、證據）；"
+    "只寫保證機構評等的範本（#241）文件寫明發行機構沒有評等時交不適用",
     "guarantor_ratings": "tuple[StatedRatings, ...]：保證機構長期債務信用評等的各處段落；範本沒有保證機構時交出 absent",
     # 審查標準規則（docs/checker/rules/review-standard.md）
     "name_zh": "str：商品中文名稱",

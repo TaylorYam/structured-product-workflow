@@ -413,7 +413,7 @@ OOS 多家上手的舊範本寫「受託投資」（SG 投資人須知警語七�
 ## 4. 不在審查標準內（使用者確認不核對）
 
 - 銷售說明書（Offering Circular）版本日期
-- 發行機構財報年度、發行總值、信用評等（信用評等 2026-10-26 起 HSBC、MS、DBS、Natixis、UBS、Citi、GS、BNP、BBVA 改為核對，見[共用規則](shared-check-rules.md) §10；BARC 與其他上手待 #241、#243）
+- 發行機構財報年度、發行總值、信用評等（信用評等 2026-10-26 起 HSBC、MS、DBS、Natixis、UBS、Citi、GS、BNP、BBVA 改為核對，CA、JPM、Nomura、SG 核對保證機構評等（#241），見[共用規則](shared-check-rules.md) §10；BARC 與其他上手待 #243）
 - 發行機構、總代理人、計算代理機構等巴克萊方的負責人
 - 情境分析中取決於假設持有期間與價格的試算（有利情況年化率、最差情況報酬率）；其餘情境項目見 [BARC 核對規則](barc-check-rules.md) §3.7
 - 投資人須知（IIS）另見[投資人須知核對規則](iis-check-rules.md) §3 C 類（2026-10-08）：沿用本檔基準，固定警語次數另訂

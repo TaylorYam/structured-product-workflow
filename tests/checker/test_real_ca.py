@@ -2,7 +2,7 @@
 
 斷言與探勘結論一致（docs/checker/rules/ca-check-rules.md §5）：5 份說明書與 5 份投資人須知都辨識為 CA 範本，全部通過並回填
 （「受託投資」寫法在允許片語內、第三章受託機構多「綜合」不核對、投資人須知的相容字「年」正規化後照讀）。
-參考條件表用 data/orders/核對表格式..xlsx（含 5 列 CA）。
+參考條件表用 data/orders/核對表格式..xlsx（含 5 列 CA），加上初始評等表的評等欄；保證機構評等全部相符（#241）。
 """
 
 from collections import Counter
@@ -12,15 +12,16 @@ import pytest
 from fcn_checker.issuers import CA
 from fcn_checker.schema import CheckStatus as S
 from harness import check_all
-from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, requires
+from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, rated_check_format, requires
 
 pytestmark = [pytest.mark.real_samples, requires(TERM_SHEETS / "086*_TS.pdf", CHECK_FORMAT)]
 PROBLEMS = (S.MISMATCH, S.REVIEW_REQUIRED, S.ERROR)
 
 
 @pytest.fixture(scope="module")
-def items():
-    outcome = check_all(CHECK_FORMAT, pdfs("086*.pdf"))
+def items(tmp_path_factory):
+    sheet = rated_check_format(tmp_path_factory.mktemp("rated"))  # 加評等欄（#241）
+    outcome = check_all(sheet, pdfs("086*.pdf"))
     return [i for i in outcome.items if i.term_sheet.name.endswith("_TS.pdf")], [
         i for i in outcome.items if i.term_sheet.name.endswith("_IIS.pdf")
     ]
@@ -43,6 +44,9 @@ def test_every_sample_passes_and_is_filled(items):
     )
     assert not bad, bad
     assert all(i.fills_sheet for i in term_sheets)
+    # 保證機構評等（#241）：說明書 2 處、投資人須知 1 處，三家評等機構都和初始評等表相同
+    for docs, n in ((term_sheets, 6), (investor_sheets, 3)):
+        assert [sum(r.rule_id == "standard.credit_rating" for r in i.report.results) for i in docs] == [n] * 5
 
 
 def test_template_variants_match_the_sample_table(items):
