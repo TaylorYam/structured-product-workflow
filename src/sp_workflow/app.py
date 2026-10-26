@@ -132,7 +132,7 @@ STEP_GROUPS = (
 
 def _style_shell(master: tk.Tk, pixels: Callable[[float], int]) -> None:
     """視窗外殼的樣式（#83）：頂端列與左側步驟欄和視窗底同色、用細線和內容分開（macOS 的側邊欄）；
-    配色沿用 `fcn_checker.ui.apply_style` 的那一套，圓角的步驟按鈕也在那裡建。"""
+    配色沿用 `fcn_checker.ui.apply_style` 的那一套，平面的步驟按鈕也在那裡建（#266）。"""
     style = ttk.Style(master)
     style.configure("Header.TFrame", background=BACKGROUND)
     style.configure("Header.TLabel", background=BACKGROUND, foreground=TEXT_SECONDARY)
@@ -143,14 +143,14 @@ def _style_shell(master: tk.Tk, pixels: Callable[[float], int]) -> None:
     step = {"anchor": "w", "padding": (pixels(10), pixels(7)), "width": 0, "compound": "right"}
     style.configure("Step.TButton", foreground=TEXT, background=BACKGROUND, **step)
     style.map("Step.TButton", foreground=[])
-    style.configure("CurrentStep.TButton", foreground=ACCENT, font=SECTION_FONT, background=BACKGROUND, **step)
+    style.configure("CurrentStep.TButton", foreground=ACCENT, font=SECTION_FONT, **step)
     style.layout("Workflow.TNotebook.Tab", [])  # 用左側步驟欄切頁，不顯示分頁標籤
     style.configure("Workflow.TNotebook", background=BACKGROUND, borderwidth=0, tabmargins=0)
 
 
 class StepSidebar(ttk.Frame):
     """左側步驟欄（#83）：照每天的順序列出 1～9，分成「每日流程」與「查詢與維護」兩組，按了切到那一步；
-    目前所在的那一步用淺藍圓角底標出，這次開視窗後做完的步驟（狀態列變成綠色結果條）名稱後面打綠勾。
+    目前所在的那一步用淺藍底標出，這次開視窗後做完的步驟（狀態列變成綠色結果條）名稱後面打綠勾。
 
     分頁標籤已藏起來，切頁一律經過 notebook.select（「下一步 →」也是），步驟欄跟著 <<NotebookTabChanged>> 更新。
     """
