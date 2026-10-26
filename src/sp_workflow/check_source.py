@@ -53,6 +53,7 @@ if TYPE_CHECKING:
 
     from fcn_checker.batch import BatchItem, BatchOutcome
     from fcn_checker.config import ReferenceFormat
+    from fcn_checker.issuers import Issuer
     from fcn_checker.saving import SaveReceipt
 
 EXPORT_FOLDER = "資料庫參考條件表"  # 安裝資料夾 runtime/ 底下，放每次產生的參考條件表
@@ -211,10 +212,11 @@ def _row(
 
 @dataclass(frozen=True)
 class _Ratings:
-    """評等表＋上手代號對照：產生參考條件表的評等欄。"""
+    """評等表＋上手代號對照：產生參考條件表的評等欄。`registry` 是核對用的上手清單（None：預設的 `REGISTRY`）。"""
 
     rows: RatingRows
     issuers: IssuerCodes
+    registry: Sequence[Issuer] | None = None
 
     def columns(self, tdcc: str, issuer: str, trade_date: dt.date | None) -> dict[str, Any]:
         """交易日當時的發行機構、保證機構評等（標準欄位 → 評等）；評等表沒有這個機構或沒有該家評等時空白（None）。"""
@@ -229,9 +231,9 @@ class _Ratings:
 
     def checked(self, tdcc: str, issuer: str) -> bool:
         """這家上手有做評等核對（`Issuer.ratings`）：評等欄改了才算條件改了。"""
-        from fcn_checker.issuers import by_code
+        from fcn_checker.issuers import REGISTRY, by_code
 
-        found = by_code(self.issuers.code(tdcc, issuer))
+        found = by_code(self.issuers.code(tdcc, issuer), REGISTRY if self.registry is None else self.registry)
         return found is not None and found.ratings
 
 
@@ -290,11 +292,13 @@ def write_back(
     *,
     prefixes: Mapping[str, str],
     user: str | None = None,
+    registry: Sequence[Issuer] | None = None,
 ) -> WriteBackReceipt:
     """核對結果檔存好之後寫回資料庫；整次在同一個 transaction 裡，失敗時什麼都不寫。
 
     回填前確認資料庫現在的條件和核對時用的參考條件表（`batch.reference_sheet`）相同、核對條件仍是完成：
     預覽之後重新匯入起單資料或重算過的商品不回填、不鎖住（鎖住的一定是核對過的條件）。
+    `registry` 是核對用的上手清單（看哪家有做評等核對；None：預設的 `REGISTRY`）。
     """
     from fcn_checker.orders.reference import load_reference_sheet
 
@@ -305,7 +309,7 @@ def write_back(
     codes = list(dict.fromkeys(i.product_code for i in batch.items if i.product_code))
     with conn.transaction():
         known = set(read_many(conn, codes))
-        ratings = _Ratings(load_rows(conn), IssuerCodes.of(prefixes, fmt))
+        ratings = _Ratings(load_rows(conn), IssuerCodes.of(prefixes, fmt), registry)
         saved = 0
         for item in batch.items:
             if item.product_code in known and item.kind is not None:

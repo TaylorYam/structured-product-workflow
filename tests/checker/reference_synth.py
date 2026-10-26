@@ -189,7 +189,9 @@ class ProductSpec:
     denomination: int | None = None  # None → 幣別預設面額
     currency_iso: str | None = None  # 承作幣別 ISO 代碼；None → 依審查標準對照 `currency_zh`（對照表沒有的幣別要給）
     underlyings: tuple[UL, ...] = DEFAULT_ULS
-    ratings: Ratings = Ratings()  # 發行機構評等（#240；HSBC、MS、DBS、Natixis、UBS 的合成文件寫出評等段落）
+    ratings: Ratings = (
+        Ratings()
+    )  # 發行機構評等（#240 HSBC、MS、DBS、Natixis、UBS，#242 Citi、GS、BNP、BBVA，#243 BARC 的合成文件寫出評等段落）
     # 保證機構評等（#241 CA、JPM、Nomura、SG，#242 Citi、GS、BNP、BBVA 的合成文件寫出評等段落）；
     # None → 參考條件表保證機構評等欄空白
     guarantor_ratings: Ratings | None = None

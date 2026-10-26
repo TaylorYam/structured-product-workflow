@@ -24,7 +24,8 @@ TEMPLATE_ID = "ms-zh-pd"
 # 4：重印價格表、情境假設值與較差情境執行價交成共用情境規則的標準欄位（Issue #294）
 # 5：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 # 6：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
-PARSER_VERSION = "6"
+# 7：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
+PARSER_VERSION = "7"
 # 發行機構信用評等（#240）：第一章第 3 項 `發行機構之長期債務信用評等經穆迪(Moody’s)評定為Aa3、…。`、第二章 (7) `信用評等：長期債務信用評等：穆迪(Moody’s)Aa3、…`（句尾沒有 `。`，到 (8) 為止）
 RATINGS = (
     ratings.RatingPlace("第一章第 3 項", r"發行機構之長期債務信用評等(?P<body>經.+?)。"),
@@ -339,7 +340,7 @@ def read(lines: Sequence[Line]) -> MsTermSheet:
     fields["underlying_notes"] = underlying_notes(
         doc.lines, Markers(r"\(\d+\)連結標的\d+：")
     )  # 連結標的公司介紹：(k)連結標的k：名稱＋介紹（Issue #225）
-    fields.update(ratings.fields(doc.lines, RATINGS))
+    fields.update(ratings.fields(doc.lines, RATINGS, no_guarantor_places=(ratings.NAME_NO_GUARANTOR,)))
     return MsTermSheet(fields, TextIndex(doc.lines), doc, scenarios, _mentions(fields))
 
 

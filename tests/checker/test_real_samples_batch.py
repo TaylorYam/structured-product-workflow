@@ -69,9 +69,50 @@ def test_barc_rows_match_every_prefilled_field(outcome):
     assert len(paired) == 6, "參考條件表有 6 列 BARC"
     allowed = {
         ("standard.product_name", "value_mismatch"),  # 較早的中文名稱沒有「（不保本）」
+        ("standard.credit_rating", "value_mismatch"),  # 1 份較早的寫惠譽評等調升前的 A+（#243，見 RATING_CHANGES）
     }
     for item in paired:
         assert set(problems(item)) <= allowed, item.term_sheet.name
+
+
+# 信用評等（#240～#243）：樣本內較舊的文件寫評等調整前的值，初始評等表只有現在的評等、不補歷史（使用者決定），
+# 說明書與投資人須知都判不一致。上手 → 這樣的商品數（各上手的 test_real_*.py 另有逐處的筆數）
+# 目前上線的 14 家（#243 起都核對評等）；之後的新上手可以先上線、評等核對另做，不在這裡
+CURRENT_ISSUERS = {
+    "BARC",
+    "HSBC",
+    "MS",
+    "DBS",
+    "NATIXIS",
+    "UBS",
+    "CA",
+    "JPM",
+    "NOMURA",
+    "SG",
+    "CITI",
+    "GS",
+    "BNP",
+    "BBVA",
+}
+RATING_CHANGES = {"BARC": 1, "HSBC": 2, "MS": 3, "NATIXIS": 3, "UBS": 2, "SG": 2, "CITI": 3, "GS": 1}
+
+
+def test_all_14_issuers_check_ratings_and_only_old_ratings_differ(outcome):
+    """14 家的說明書與投資人須知都核對信用評等，以初始評等表比對：有參考條件表列、認得範本的每份都有評等結果，
+    沒有讀不出來（人工覆核）的；不一致的只有上面那些寫評等調整前的值的商品，說明書與投資人須知同一批。"""
+    rated = [i for i in outcome.items if i.report.template and not i.unsupported]
+    changed: dict[str, dict[DocKind, set[str]]] = {}
+    for item in rated:
+        found = [r for r in item.report.results if r.rule_id == "standard.credit_rating"]
+        paired = not any(r.rule_id == "batch.pairing" and r.status != CheckStatus.PASS for r in item.report.results)
+        assert bool(found) == paired, item.term_sheet.name  # 沒有參考條件表列的不核對
+        assert {r.status for r in found} <= {CheckStatus.PASS, CheckStatus.MISMATCH}, item.term_sheet.name
+        if any(r.status == CheckStatus.MISMATCH for r in found):
+            changed.setdefault(item.issuer, {}).setdefault(item.kind, set()).add(item.product_code)
+    checked = {i.issuer for i in rated if any(r.rule_id == "standard.credit_rating" for r in i.report.results)}
+    assert checked == CURRENT_ISSUERS
+    assert {issuer: len(kinds[DocKind.TERM_SHEET]) for issuer, kinds in changed.items()} == RATING_CHANGES
+    assert all(kinds[DocKind.TERM_SHEET] == kinds[DocKind.IIS] for kinds in changed.values())
 
 
 def test_every_compare_date_on_the_sheet_matches_the_fill_rule(outcome):
@@ -131,12 +172,13 @@ def investor_sheets(outcome, prefix: str = ""):
     return [i for i in outcome.items if i.kind == DocKind.IIS and i.term_sheet.name.startswith(prefix)]
 
 
-def test_barc_investor_sheets_all_pass_with_their_term_sheets(outcome):
+def test_barc_investor_sheets_pass_with_their_term_sheets(outcome):
     sheets = investor_sheets(outcome, "029")
     assert len(sheets) == 6
     for item in sheets:
-        assert item.report.status == CheckStatus.PASS, (item.term_sheet.name, problems(item))
         assert item.partner is not None and item.report.metadata["inputs"]["term_sheet"]["pages"] == 4
+    # 1 份較早的寫惠譽評等調升前的 A+，同說明書（#243）；其餘都通過
+    assert sum((problems(i) for i in sheets), Counter()) == Counter({("standard.credit_rating", "value_mismatch"): 1})
 
 
 def test_hsbc_investor_sheets_only_differ_where_their_term_sheets_do(outcome):

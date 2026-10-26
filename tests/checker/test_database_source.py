@@ -8,17 +8,20 @@
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
 import openpyxl
 import pytest
 
+import barc_synth
 import hsbc_synth
-from barc_synth import SYNTH_ISIN, Spec, build_pdf
+from barc_synth import SYNTH_ISIN, build_pdf
 from fcn_checker.batch import Category, check_batch, preview_batch
 from fcn_checker.config import RISK_LEVEL_PENDING
 from fcn_checker.ingestion import IngestionError
+from fcn_checker.issuers import REGISTRY
 from fcn_checker.orders.reference import load_reference_sheet
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.rating_formats import RATING_FIELDS
@@ -34,6 +37,11 @@ FMT = CONFIG.reference_format
 OTHER = "029199990002"
 PREFIXES = CONFIG.issuer_prefixes
 BARC_RATINGS = Ratings(sp="A+", moodys="A1", fitch="AA-")  # 初始評等表（migration 0024）的 Barclays 發行機構評等
+
+
+def barc_spec(**changes) -> barc_synth.Spec:
+    """BARC 合成商品，發行機構評等同初始評等表：資料庫帶出的是評等表的值，BARC 也核對評等（#243）。"""
+    return barc_synth.Spec(**changes).with_(ratings=BARC_RATINGS)
 
 
 RISK_DETAIL = RiskDetail(
@@ -54,7 +62,9 @@ def seed_risk(pg, tdcc: str, risk: str | None) -> None:
     write_risk(pg, tdcc, found)
 
 
-def seed(pg, spec: Spec, *, pricing="收盤價", denomination=None, status="完成", reason=None, risk="RR4") -> None:
+def seed(
+    pg, spec: barc_synth.Spec, *, pricing="收盤價", denomination=None, status="完成", reason=None, risk="RR4"
+) -> None:
     """像起單資料匯入＋算出核對條件與風險等級（#86、#88、#238）那樣寫一檔商品，條件和合成說明書一致（風險等級預設
     RR4，同合成文件）。"""
     (import_id,) = pg.execute(
@@ -111,7 +121,7 @@ def seed(pg, spec: Spec, *, pricing="收盤價", denomination=None, status="完�
     seed_risk(pg, spec.product_code, risk)
 
 
-def pdfs_of(tmp_path: Path, *specs: Spec) -> list[Path]:
+def pdfs_of(tmp_path: Path, *specs: barc_synth.Spec) -> list[Path]:
     return with_iis([build_pdf(tmp_path / f"{s.product_code}_TS.pdf", s) for s in specs])
 
 
@@ -145,7 +155,7 @@ VWAP_BLANK = {f"UL_{i}_{p}": None for i in range(1, 4) for p in ("進場價", "�
 @pytest.mark.db
 @pytest.mark.parametrize("pricing", ["收盤價", "VWAP"])
 def test_database_rows_read_the_same_as_the_excel_reference_sheet(pg, tmp_path, pricing) -> None:
-    spec = Spec()
+    spec = barc_spec()
     seed(pg, spec, pricing=pricing)
     pdfs = pdfs_of(tmp_path, spec)
     db_sheet, absent = export(pg, tmp_path, pdfs)
@@ -173,7 +183,11 @@ RATING_KEYS = tuple(RATING_FIELDS)  # 發行機構三家、保證機構三家
 @pytest.mark.db
 def test_exported_ratings_are_the_ones_in_effect_on_the_trade_date(pg, tmp_path) -> None:
     """#240：評等欄帶出交易日當時的評等（生效日 ≤ 交易日的最新一筆）；有保證機構的上手另帶保證機構評等。"""
-    before, after, guaranteed = Spec(), Spec(product_code=OTHER), Spec(product_code="159199990003")  # 159：Citi
+    before, after, guaranteed = (
+        barc_spec(),
+        barc_spec(product_code=OTHER),
+        barc_spec(product_code="159199990003"),
+    )  # 159：Citi
     for spec in (before, after, guaranteed):
         seed(pg, spec)
     pg.execute(  # 交易日（2030-01-07）之後才生效的新評等：只有交易日在那之後的商品帶出
@@ -219,20 +233,22 @@ def checked_hsbc(pg, tmp_path):
 
 @pytest.mark.db
 def test_a_rating_changed_after_checking_is_stale_only_for_issuers_with_rating_checks(pg, tmp_path) -> None:
-    """有做評等核對的上手（HSBC）：評等在核對後改了 → 不回填、不鎖住；沒做的上手（BARC）照常回填。"""
+    """有做評等核對的上手（HSBC）：評等在核對後改了 → 不回填、不鎖住；評等核對還沒做的上手（14 家都做了，
+    以 BARC 假裝是上線時還沒做評等的新上手）照常回填。"""
     spec, outcome, receipt = checked_hsbc(pg, tmp_path)
     new_rating(pg, "HSBC", spec)
 
     result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
     assert (result.locked, result.stale) == ((), (spec.product_code,))
 
-    barc = Spec()
+    barc = barc_spec()
     seed(pg, barc)
     (tmp_path / "barc").mkdir()
     outcome, receipt = run_from_database(pg, tmp_path / "barc", pdfs_of(tmp_path / "barc", barc))
     new_rating(pg, "BARC", barc)
+    registry = tuple(replace(i, ratings=False) if i.code == "BARC" else i for i in REGISTRY)
 
-    result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
+    result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1", registry=registry)
     assert (result.locked, result.stale) == ((barc.product_code,), ())
 
 
@@ -266,7 +282,9 @@ def rr_results(item) -> list[tuple[str, str, object, object]]:
 @pytest.mark.db
 def test_the_export_carries_the_self_calculated_risk_level(pg, tmp_path) -> None:
     """完成、回填寫等級，待算寫「待算」，還沒算過空白；核對拿它當 RR 的期望值。"""
-    specs = {risk: Spec(product_code=f"02919999000{n}") for n, risk in enumerate(("RR3", BACKFILLED, PENDING, None), 1)}
+    specs = {
+        risk: barc_spec(product_code=f"02919999000{n}") for n, risk in enumerate(("RR3", BACKFILLED, PENDING, None), 1)
+    }
     for risk, spec in specs.items():
         seed(pg, spec, risk=risk)
     pdfs = pdfs_of(tmp_path, *specs.values())
@@ -296,7 +314,7 @@ def test_the_export_carries_the_self_calculated_risk_level(pg, tmp_path) -> None
 @pytest.mark.db
 def test_a_risk_level_changed_after_checking_is_not_backfilled_or_locked(pg, tmp_path) -> None:
     """核對後重算改了風險等級：核對的不是現在的等級，不回填、不鎖住（同其他條件）。"""
-    spec = Spec()
+    spec = barc_spec()
     seed(pg, spec)
     outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
     assert {i.category for i in outcome.items} == {Category.PASSED}
@@ -310,7 +328,7 @@ def test_a_risk_level_changed_after_checking_is_not_backfilled_or_locked(pg, tmp
 @pytest.mark.db
 def test_a_checked_sheet_without_the_risk_level_column_is_not_stale(pg, tmp_path) -> None:
     """核對時的參考條件表沒有風險等級欄（v19 以前產生的）：風險等級不算改了，照常回填、鎖住。"""
-    spec = Spec()
+    spec = barc_spec()
     seed(pg, spec)
     outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
     assert {i.category for i in outcome.items} == {Category.PASSED}
@@ -331,7 +349,7 @@ def test_a_checked_sheet_without_the_risk_level_column_is_not_stale(pg, tmp_path
 
 @pytest.mark.db
 def test_missing_or_unfinished_products_need_review_and_cannot_be_released(pg, tmp_path) -> None:
-    ready, waiting, missing = Spec(), Spec(product_code=OTHER), Spec(product_code="029199990003")
+    ready, waiting, missing = barc_spec(), barc_spec(product_code=OTHER), barc_spec(product_code="029199990003")
     seed(pg, ready)
     seed(pg, waiting, status="等股價", reason="還沒有取價日比 Strike date 2030-01-07 晚的股價檔")
 
@@ -353,7 +371,7 @@ def test_missing_or_unfinished_products_need_review_and_cannot_be_released(pg, t
 @pytest.mark.db
 def test_products_with_blank_required_terms_are_not_checked(pg, tmp_path) -> None:
     """#114：商品條件缺必填欄時不產生列，那一份需人工覆核、不能放行；核對條件還寫著完成（還沒重算）也一樣擋。"""
-    spec = Spec()
+    spec = barc_spec()
     seed(pg, spec)
     pg.execute(
         "UPDATE workflow.product SET maturity_date = NULL, coupon_pct = NULL WHERE tdcc = %s", (spec.product_code,)
@@ -373,7 +391,7 @@ def test_products_with_blank_required_terms_are_not_checked(pg, tmp_path) -> Non
 
 @pytest.mark.db
 def test_passing_products_are_backfilled_and_locked(pg, tmp_path) -> None:
-    spec = Spec()
+    spec = barc_spec()
     seed(pg, spec)
     pdfs = pdfs_of(tmp_path, spec)
     outcome, receipt = run_from_database(pg, tmp_path, pdfs)
@@ -404,7 +422,7 @@ def test_passing_products_are_backfilled_and_locked(pg, tmp_path) -> None:
 @pytest.mark.db
 def test_terms_changed_after_checking_are_not_backfilled_or_locked(pg, tmp_path) -> None:
     """預覽之後重新匯入起單資料（例：改了年利率）：核對的不是現在的條件，不回填、不鎖住。"""
-    spec = Spec()
+    spec = barc_spec()
     seed(pg, spec)
     outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
     pg.execute("UPDATE workflow.product SET coupon_pct = coupon_pct + 1 WHERE tdcc = %s", (spec.product_code,))
@@ -422,7 +440,7 @@ def test_terms_changed_after_checking_are_not_backfilled_or_locked(pg, tmp_path)
 @pytest.mark.db
 def test_terms_blanked_after_checking_are_not_backfilled_or_locked(pg, tmp_path) -> None:
     """#114：核對後在人工維護清掉必填欄（核對條件還沒重算）：寫回時擋下，不回填、不鎖住。"""
-    spec = Spec()
+    spec = barc_spec()
     seed(pg, spec)
     outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
     pg.execute("UPDATE workflow.product SET strike_pct = NULL WHERE tdcc = %s", (spec.product_code,))
@@ -439,7 +457,7 @@ def test_terms_blanked_after_checking_are_not_backfilled_or_locked(pg, tmp_path)
 
 @pytest.mark.db
 def test_released_denomination_takes_the_term_sheet_value_and_keeps_the_old_one(pg, tmp_path) -> None:
-    spec = Spec()
+    spec = barc_spec()
     seed(pg, spec, denomination=spec.denom * 2)
     sheet, absent = export(pg, tmp_path, pdfs_of(tmp_path, spec))
     outcome = check_batch(preview_batch(CONFIG, sheet, pdfs_of(tmp_path, spec), absent=absent))
@@ -461,7 +479,7 @@ def test_released_denomination_takes_the_term_sheet_value_and_keeps_the_old_one(
 
 @pytest.mark.db
 def test_vwap_prices_from_the_term_sheet_are_written_back(pg, tmp_path) -> None:
-    spec = Spec()
+    spec = barc_spec()
     seed(pg, spec, pricing="VWAP")
     outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
     assert {i.category for i in outcome.items} == {Category.PASSED}
@@ -500,7 +518,7 @@ class FakeDatabase:
 
 
 def test_a_failed_write_back_keeps_the_result_file_and_can_be_retried(tmp_path) -> None:
-    spec = Spec()
+    spec = barc_spec()
     pdfs = pdfs_of(tmp_path, spec)
     database = FakeDatabase(build_reference_sheet(tmp_path / "資料庫.xlsx", [reference_row(spec)]))
     session = PanelSession(install_root=tmp_path, database=database)
@@ -519,7 +537,7 @@ def test_a_failed_write_back_keeps_the_result_file_and_can_be_retried(tmp_path) 
 
 
 def test_excel_source_never_touches_the_database(tmp_path) -> None:
-    spec = Spec()
+    spec = barc_spec()
     database = FakeDatabase(tmp_path / "不該用.xlsx")
     session = PanelSession(install_root=tmp_path, database=database)
     session.select(build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [reference_row(spec)]), pdfs_of(tmp_path, spec))
@@ -554,7 +572,7 @@ def test_new_export_files_never_overwrite_earlier_ones(tmp_path) -> None:
 def test_cli_database_source_checks_pdfs_and_writes_back(tmp_path, monkeypatch, capsys) -> None:
     from fcn_checker import cli
 
-    spec = Spec()
+    spec = barc_spec()
     pdfs = pdfs_of(tmp_path, spec)
     database = FakeDatabase(build_reference_sheet(tmp_path / "資料庫.xlsx", [reference_row(spec)]))
     database.attempts = 1  # 寫回直接成功

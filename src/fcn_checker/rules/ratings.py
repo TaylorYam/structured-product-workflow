@@ -10,12 +10,13 @@
 - 評等表只有現在的評等、不保存歷史（使用者決定）：舊文件寫的是後來調整前的評等時判不一致，由作業人員判斷。
 - 參考條件表三家都空白（評等表沒有這個機構，或交易日當時還沒有評等）→ 需人工覆核，寫出上手與機構。
 - 參考條件表沒有評等欄（舊版 Excel）→ 需人工覆核（每個機構一筆），不讓整批出錯，也不算通過。
-- 段落找不到或讀不出來 → 需人工覆核（parser 寫出原因）。範本沒有保證機構（`absent`）→ 不核對；
+- 段落找不到或讀不出來 → 需人工覆核（parser 寫出原因）。沒有保證機構的範本（BARC、HSBC、MS、DBS、Natixis、UBS，#243）：
+  文件寫明沒有保證機構時保證機構評等不適用 → 不核對；沒寫明或寫了評等時 parser 交缺漏／不合法 → 需人工覆核（`no_guarantor`）。
   只寫保證機構評等的範本（CA、JPM、Nomura、SG：發行機構是工具公司，#241）：文件寫明發行機構沒有評等時發行機構評等
   不適用 → 不核對；沒寫明或寫了評等時 parser 交缺漏／不合法 → 需人工覆核（parsers/ratings.py 的 `unrated`）。
 
-只有上手註冊表標了 `Issuer.ratings` 的上手才跑（#240 先做 HSBC、MS、DBS、Natixis、UBS，#241 CA、JPM、Nomura、SG，
-其他上手 #242、#243）。
+只有上手註冊表標了 `Issuer.ratings` 的上手才跑：14 家都標了（#240 HSBC、MS、DBS、Natixis、UBS，#241 CA、JPM、Nomura、SG，
+#242 Citi、GS、BNP、BBVA，#243 BARC）；新上手上線時評等還沒做的先不標，不產生結果（docs/checker/issuer-onboarding.md §6.2a）。
 """
 
 from __future__ import annotations
@@ -35,7 +36,7 @@ def run(ctx: Context) -> list[CheckResult]:
     out: list[CheckResult] = []
     for field, role in ROLES.items():
         pf = kit.standard_field(ctx, field)
-        if pf.status == FieldStatus.NOT_APPLICABLE:  # 範本沒有保證機構
+        if pf.status == FieldStatus.NOT_APPLICABLE:  # 文件寫明沒有保證機構，或發行機構沒有評等
             continue
         if not pf.ok:
             out.append(kit.doc_review(RULE_ID, field, pf, item=Item.sheet(f"{role}信用評等"), document=ctx.document))

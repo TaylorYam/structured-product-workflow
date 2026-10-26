@@ -17,7 +17,7 @@ from barc_synth import SYNTH_ISIN, Spec, build_pdf
 from fcn_checker.saving import run_batch
 from fcn_checker.schema import CheckStatus
 from harness import CONFIG, with_iis
-from reference_synth import DATE_FORMAT, REFERENCE_HEADERS, build_reference_sheet, reference_row
+from reference_synth import DATE_FORMAT, RATING_HEADERS, REFERENCE_HEADERS, build_reference_sheet, reference_row
 
 NOW = dt.datetime(2030, 2, 3, 4, 5, 6)
 IMPORT_HEADERS = [
@@ -60,7 +60,9 @@ def test_company_original_sheet_gives_a_clean_import_format(tmp_path):
             "下一比價日": "-",
         }
     )
-    sheet = build_reference_sheet(tmp_path / "待建檔.xlsx", [row], IMPORT_HEADERS, title="ELN待建檔_一般", header_row=2)
+    # 後面加評等欄（BARC 做評等核對，#243；沒有評等欄會轉人工覆核）：評等欄不在匯入格式內，「回填後」不帶入
+    headers = [*IMPORT_HEADERS, *RATING_HEADERS]
+    sheet = build_reference_sheet(tmp_path / "待建檔.xlsx", [row], headers, title="ELN待建檔_一般", header_row=2)
     wb = openpyxl.load_workbook(sheet)
     ws = wb.active
     ws["A1"], ws["B1"], ws["F1"] = "最新交易日", "=MAX(B3:B20)", '=IF(D1=1,"V","-")'

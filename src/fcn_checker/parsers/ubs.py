@@ -30,7 +30,8 @@ TEMPLATE_ID = "ubs-zh-pd"
 # 6：日期表標準欄位與共用排程推導（Issue #289）；7：情境價格表與設定參數交成共用情境規則的標準欄位（Issue #294）
 # 8：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 # 9：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
-PARSER_VERSION = "9"
+# 10：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
+PARSER_VERSION = "10"
 # 發行機構信用評等（#240）：商品基本資料三 `…其長期債務信用評等為穆迪（Moody's）Aa2/…。`、相關機構事業概況一 `發行機構長期債務信用評等為穆迪（Moody's）Aa2/…。`
 RATINGS = (
     ratings.RatingPlace(
@@ -296,7 +297,7 @@ def read(lines: Sequence[Line]) -> UbsTermSheet:
     fields["underlying_notes"] = underlying_notes(
         doc.lines, NameColumn()
     )  # 連結標的公司介紹：兩欄表：左欄名稱、右欄簡介（Issue #225）
-    fields.update(ratings.fields(doc.lines, RATINGS))
+    fields.update(ratings.fields(doc.lines, RATINGS, no_guarantor_places=(ratings.NAME_NO_GUARANTOR,)))
     return UbsTermSheet(fields, TextIndex(doc.lines), doc)
 
 

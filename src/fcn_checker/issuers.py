@@ -109,8 +109,8 @@ class Issuer:
     reference_fields: tuple[str, ...] = ()
     # 投資人須知範本；None → 這家上手的投資人須知是未支援上手
     iis: IisTemplate | None = None
-    # 說明書與投資人須知的信用評等核對（rules/ratings.py，#240）：parser 交出 `issuer_ratings`／`guarantor_ratings` 的上手才標；
-    # 還沒做的上手（#241～#243）不跑這條規則，不產生結果
+    # 說明書與投資人須知的信用評等核對（rules/ratings.py，#240～#243）：parser 交出 `issuer_ratings`／`guarantor_ratings` 的上手才標。
+    # 現有 14 家都標了；留著給新上手：上線時評等還沒做的不跑這條規則、不產生結果（docs/checker/issuer-onboarding.md §6.2a）
     ratings: bool = False
 
 
@@ -130,6 +130,7 @@ BARC = Issuer(
     read=barc_parser.read,
     rules=barc_rules.run_all,
     reference_fields=barc_rules.REFERENCE_FIELDS,
+    ratings=True,
     iis=IisTemplate(
         template_id=barc_iis.TEMPLATE_ID,
         label="BARC 中文投資人須知",
