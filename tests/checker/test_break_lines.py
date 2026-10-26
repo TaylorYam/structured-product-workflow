@@ -44,6 +44,21 @@ def test_a_word_wider_than_the_line_is_split_by_character() -> None:
     assert lines("Supercalifragilistic", 8) == ["Supercal", "ifragili", "stic"]
 
 
+def test_punctuation_after_a_space_stays_with_the_word_before() -> None:
+    assert lines("word ，中文", 7) == ["word ，", "中文"]
+
+
+def test_a_very_long_word_is_split_with_few_measurements() -> None:
+    calls = []
+
+    def counting(text: str) -> int:
+        calls.append(text)
+        return len(text)
+
+    assert break_lines("x" * 3000, 600, counting).split("\n") == ["x" * 600] * 5
+    assert len(calls) < 200, "二分搜尋，不是一格一格量"
+
+
 def test_existing_line_breaks_and_blank_lines_are_kept() -> None:
     assert lines("第一行\n\n第二段", 40) == ["第一行", "", "第二段"]
 
@@ -69,12 +84,30 @@ def test_wrap_label_follows_its_variable_and_width(styled) -> None:
     assert label.cget("text") == SENTENCE and label.cget("wraplength") == 120, "cget 回傳原文與設定的寬度"
     assert label["textvariable"] == str(var)
     assert int(label.tk.call(label, "cget", "-wraplength")) == 0, "不交給 Tk 斷行"
+    assert str(label.tk.call(label, "cget", "-textvariable")) == "", "Tk 顯示斷好行的字，不直接顯示變數"
+    assert label.configure("text")[-1] == SENTENCE and label.configure("wraplength")[0] == "wraplength"
 
     var.set("完成")
     assert str(label.tk.call(label, "cget", "-text")) == "完成", "變數改了就重新斷行"
 
     label.destroy()
     var.set(SENTENCE)  # 標籤關掉後改變數不會出錯
+
+
+def test_a_label_destroyed_by_tk_stops_following_its_variable(styled) -> None:
+    var = tk.StringVar(styled, value="開始")
+    label = WrapLabel(styled, textvariable=var, wraplength=200)
+
+    styled.tk.call("destroy", str(label))  # 例如視窗直接被關掉，沒經過 Python 的 destroy
+
+    assert not var.trace_info()
+    var.set(SENTENCE)
+
+
+def test_wraplength_accepts_tk_distances(styled) -> None:
+    label = WrapLabel(styled, text=SENTENCE, wraplength="1i")
+
+    assert "\n" in str(label.tk.call(label, "cget", "-text"))
 
 
 def test_wrap_label_rewraps_when_its_font_changes(styled) -> None:

@@ -640,7 +640,10 @@ def _break_units(paragraph: str) -> list[str]:
     units: list[str] = []
     for char in paragraph:
         last = units[-1] if units and units[-1] != " " else ""
-        if char == " ":
+        if char in NO_LINE_START and len(units) > 1 and units[-1] == " ":
+            units.pop()
+            units[-1] += " " + char  # 空白後面的句號也跟著前一個字
+        elif char == " ":
             units.append(" ")
         elif last and (char in NO_LINE_START or last[-1] in NO_LINE_END or not (_wide(char) or _wide(last[-1]))):
             units[-1] += char
@@ -668,41 +671,58 @@ def break_lines(text: str, width: int, measure: Callable[[str], int]) -> str:
                 line = ""
             line += unit
             while len(line) > 1 and measure(line) > width:
-                fit = max((n for n in range(1, len(line)) if measure(line[:n]) <= width), default=1)
+                fit = _fit(line, width, measure)
                 lines.append(line[:fit])
                 line = line[fit:]
         lines.append(line.rstrip())
     return "\n".join(lines)
 
 
+def _fit(line: str, width: int, measure: Callable[[str], int]) -> int:
+    """line 開頭最多幾個字放得進 width（至少 1 個）；line 整個放不進。二分搜尋：很長的字詞也只量幾次。"""
+    low, high = 1, len(line) - 1
+    while low < high:
+        middle = (low + high + 1) // 2
+        if measure(line[:middle]) <= width:
+            low = middle
+        else:
+            high = middle - 1
+    return low
+
+
 class _Wrapping:
     """`WrapLabel`／`WrapTkLabel` 共用：wraplength 不交給 Tk，改用 `break_lines` 斷好行再顯示（#255）。
 
-    寫法和原本的標籤一樣（text、textvariable、wraplength 照用，之後 configure 也可以改）；cget("text")
-    回傳沒斷行的原文。字型改變（例如換樣式變粗體）、文字或寬度改變時重新斷行。
+    text、textvariable（要給 `tk.Variable`）、wraplength（像素或 Tk 的長度寫法）照原本的標籤用，之後 configure
+    也可以改；cget("text") 回傳沒斷行的原文。字型（例如換樣式變粗體）、文字或寬度改變時重新斷行。
     """
+
+    OWN = ("text", "textvariable", "wraplength")  # 由這裡管、不交給 Tk 的選項
 
     def __init__(self, master: tk.Misc | None = None, **kw: object) -> None:
         self._source = str(kw.pop("text", ""))
-        self._variable: tk.Variable | None = kw.pop("textvariable", None)
-        self._width = kw.pop("wraplength", 0)
+        self._width: object = kw.pop("wraplength", 0)
+        variable = kw.pop("textvariable", None)
+        self._variable: tk.Variable | None = None
+        self._trace: str | None = None
         self._shown: tuple[str, int, str] | None = None
         super().__init__(master, **kw)
-        self._trace = self._variable.trace_add("write", lambda *_: self._wrap()) if self._variable else None
+        self._follow(variable)
+        self.bind("<Destroy>", lambda _event: self._follow(None), add="+")  # 視窗被關掉時也停止跟著變數
         self._wrap()
 
-    def configure(self, cnf: dict | str | None = None, **kw: object):
-        if isinstance(cnf, str):
-            return self.cget(cnf) if cnf in ("text", "textvariable", "wraplength") else super().configure(cnf)
+    def configure(self, cnf: dict | str | None = None, **kw: object) -> object:
+        if isinstance(cnf, str):  # 查一個選項：照 Tk 回傳 (名稱, 資料庫名稱, 類別, 預設值, 目前的值)
+            if cnf in self.OWN:
+                return (cnf, *super().configure(cnf)[1:4], self.cget(cnf))
+            return super().configure(cnf)
         kw = {**(cnf or {}), **kw}
         if not kw:
             return super().configure()
         if "text" in kw:
             self._source = str(kw.pop("text"))
         if "textvariable" in kw:
-            self._untrace()
-            self._variable = kw.pop("textvariable") or None
-            self._trace = self._variable.trace_add("write", lambda *_: self._wrap()) if self._variable else None
+            self._follow(kw.pop("textvariable") or None)
         if "wraplength" in kw:
             self._width = kw.pop("wraplength")
         result = super().configure(**kw) if kw else None
@@ -711,7 +731,7 @@ class _Wrapping:
 
     config = configure
 
-    def cget(self, key: str):
+    def cget(self, key: str) -> object:
         if key == "text":
             return self._text()
         if key == "textvariable":
@@ -720,17 +740,15 @@ class _Wrapping:
             return self._width
         return super().cget(key)
 
-    def __getitem__(self, key: str):
+    def __getitem__(self, key: str) -> object:
         return self.cget(key)
 
-    def destroy(self) -> None:
-        self._untrace()
-        super().destroy()
-
-    def _untrace(self) -> None:
+    def _follow(self, variable: tk.Variable | None) -> None:
+        """改跟著這個變數（None：不跟任何變數）。"""
         if self._variable is not None and self._trace is not None:
             self._variable.trace_remove("write", self._trace)
-        self._trace = None
+        self._variable = variable
+        self._trace = variable.trace_add("write", lambda *_: self._wrap()) if variable is not None else None
 
     def _text(self) -> str:
         return str(self._variable.get()) if self._variable is not None else self._source
@@ -742,7 +760,7 @@ class _Wrapping:
         return font or "TkDefaultFont"
 
     def _wrap(self) -> None:
-        text, width, font = self._text(), round(float(self._width or 0)), self._font()
+        text, width, font = self._text(), round(self.winfo_fpixels(self._width or 0)), self._font()
         if self._shown == (text, width, font):
             return  # 沒變就不重設：重設會讓版面重算、又觸發 <Configure>
         self._shown = (text, width, font)

@@ -250,3 +250,22 @@ def test_scrollbar_hides_its_thumb_when_nothing_to_scroll(master) -> None:
     assert bar.instate(["disabled"]), "全部看得到：把手藏起來"
     bar.set(0.2, 0.6)
     assert not bar.instate(["disabled"])
+
+
+def test_status_line_rewraps_when_the_card_is_resized(master, tmp_path: Path) -> None:
+    """中英夾雜的狀態列依卡片寬度斷行，視窗縮放時重新斷行（#255）。"""
+    tab = new_window(master, tmp_path).orders
+    label = tab.status_label
+    tab.status_var.set("貼上 TDCC，選一份起單建檔，按「讀取」。只讀起單建檔，不會修改它。" * 2)
+
+    def shown_lines() -> list[str]:
+        return str(label.tk.call(label, "cget", "-text")).split("\n")
+
+    label.master.event_generate("<Configure>", width=340, when="now")
+    narrow = shown_lines()
+    assert label.cget("wraplength") == 320, "卡片寬度減左右留白"
+    label.master.event_generate("<Configure>", width=1400, when="now")
+    wide = shown_lines()
+
+    assert len(narrow) > len(wide) >= 1, "變寬後行數變少"
+    assert narrow[0] != "貼上", "不會只在第一個空白斷出很短的一行"
