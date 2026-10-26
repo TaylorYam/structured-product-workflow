@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, simpledialog
+from tkinter import messagebox, simpledialog, ttk
 
 import pytest
 
@@ -241,6 +241,17 @@ def test_result_table_headings_align_left(master, tmp_path: Path) -> None:
     tab = new_window(master, tmp_path).daily
 
     assert {str(tab.table.heading(column, "anchor")) for column, _, _ in tab.columns} == {"w"}, "和欄裡的字對齊"
+
+
+def test_scrollbar_thumb_is_one_ttk_can_move(master, tmp_path: Path) -> None:
+    """ttk 捲軸只認名稱以 `.thumb` 結尾的元件當把手；認不得時把手撐滿整條、拖不動也點不動。"""
+    new_window(master, tmp_path)  # 套上視窗的樣式
+    style = ttk.Style(master)
+
+    for orient in ("Vertical", "Horizontal"):
+        (trough, options), *_ = style.layout(f"{orient}.TScrollbar")
+        assert trough.endswith(".trough")
+        assert [str(name).rsplit(".", 1)[-1] for name, _ in options["children"]] == ["thumb"], orient
 
 
 def test_scrollbar_hides_its_thumb_when_nothing_to_scroll(master) -> None:

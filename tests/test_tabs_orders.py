@@ -114,6 +114,19 @@ def test_products_needing_work_come_first_and_the_first_one_opens(master, tmp_pa
     assert str(window.orders.import_button.cget("state")) == "normal"
 
 
+def test_the_wheel_scrolls_the_fields_without_changing_a_drop_down(master, tmp_path: Path) -> None:
+    editor = order_window(master, tmp_path, order_row("029199990001")).orders.editor
+    editor.place(x=0, y=0, width=500, height=200)
+    editor.update_idletasks()
+    canvas = editor.fields.master
+    drop_down = next(row for row in editor.rows.values() if isinstance(row.input, ttk.Combobox))
+    before = drop_down.var.get()
+
+    drop_down.input.event_generate("<MouseWheel>", delta=-120)
+    assert canvas.yview()[0] > 0, "滾輪往下轉，欄位清單往下捲"
+    assert drop_down.var.get() == before, "停在下拉選單上也不會改到值"
+
+
 def test_filling_a_red_field_makes_the_product_importable(master, tmp_path: Path) -> None:
     window = order_window(master, tmp_path, order_row("029199990002", {"Maturity date": None}))
 
