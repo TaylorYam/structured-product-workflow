@@ -10,7 +10,7 @@ import tkinter as tk
 from collections.abc import Callable, Sequence
 from tkinter import messagebox, ttk
 
-from fcn_checker.ui import DANGER, Background, FitTreeview, Scrollbar
+from fcn_checker.ui import DANGER, Background, FitTreeview, Scrollbar, WrapLabel
 from sp_workflow.database import ConnectionSettings
 from sp_workflow.mailbox import Alias, MailboxError, MailboxRows, Person, alias_from, person_from
 from sp_workflow.tabs.base import TITLE, ActionRunner, BackgroundFactory, DatabaseLogin
@@ -41,7 +41,7 @@ class MailboxWindow(tk.Toplevel):
         frame.rowconfigure(1, weight=1)
         top = ttk.Frame(frame)
         top.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
-        ttk.Label(
+        WrapLabel(
             top,
             text="交易明細的 FC 名字用這裡比對信箱（不分大小寫，先查別名）；寄信草稿的副本是勾了固定副本的人。"
             "每次按確定就存進資料庫，並記下誰、何時、改前改後。",
@@ -68,7 +68,7 @@ class MailboxWindow(tk.Toplevel):
         self.aliases.bind("<Double-1>", lambda _: self.edit_alias())
         self.status_var = tk.StringVar()
         self.runner = ActionRunner(db, self.background, self.status_var, self._busy, parent=self)
-        ttk.Label(frame, textvariable=self.status_var, wraplength=900, justify="left").grid(
+        WrapLabel(frame, textvariable=self.status_var, wraplength=900, justify="left").grid(
             row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0)
         )
         self.protocol("WM_DELETE_WINDOW", self.close)
@@ -290,7 +290,7 @@ class PersonForm(_Form):
             note = "改名時他的別名會跟著改。名字不分大小寫不能和別人重複。"
         else:
             note = "名字要和交易明細上的 FC 名字一樣（不分大小寫）；寫法不同時另加別名。"
-        ttk.Label(self.body, text=note, wraplength=380, justify="left").grid(
+        WrapLabel(self.body, text=note, wraplength=380, justify="left").grid(
             row=4, column=0, columnspan=2, sticky="w", pady=(0, 4)
         )
         self.finish_layout(5)
@@ -307,7 +307,7 @@ class AliasForm(_Form):
         self.person_var = tk.StringVar(value=before.person_name if before else "")
         self.person_box = ttk.Combobox(self.body, textvariable=self.person_var, values=list(names), state="readonly")
         self.person_box.grid(row=1, column=1, sticky="ew", pady=(0, 8))
-        ttk.Label(
+        WrapLabel(
             self.body,
             text="別名是交易明細上的另一種寫法（不分大小寫），比對時先查別名。",
             wraplength=380,

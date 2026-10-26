@@ -8,7 +8,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from fcn_checker.check_config import ConfigPaths
-from fcn_checker.ui import NUMBER_FONT, Background, CopyArea
+from fcn_checker.ui import NUMBER_FONT, Background, CopyArea, WrapLabel
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.order_terms import format_field
 from sp_workflow.preparation import parse_tdccs
@@ -99,7 +99,7 @@ class MaintenanceTab(Tab):
         side = ttk.Frame(self.frame)
         side.grid(row=1, rowspan=2, column=2, sticky="nsew", padx=(16, 0))  # 從卡片那一列拉到底
         self.intro_var = tk.StringVar()
-        intro = ttk.Label(side, textvariable=self.intro_var, style="Muted.TLabel", justify=tk.LEFT)
+        intro = WrapLabel(side, textvariable=self.intro_var, style="Muted.TLabel", justify=tk.LEFT)
         intro.pack(anchor="w", fill=tk.X)
         side.bind("<Configure>", lambda event: intro.configure(wraplength=max(240, event.width - 20)))
         self.editor = OrderEditor(

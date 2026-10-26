@@ -6,7 +6,18 @@ import tkinter as tk
 from collections.abc import Callable, Collection, Iterable, Mapping
 from tkinter import ttk
 
-from fcn_checker.ui import BODY_FONT, CAPTION_FONT, DANGER, SECTION_FONT, SURFACE, TEXT, TEXT_SECONDARY, Scrollbar
+from fcn_checker.ui import (
+    BODY_FONT,
+    CAPTION_FONT,
+    DANGER,
+    SECTION_FONT,
+    SURFACE,
+    TEXT,
+    TEXT_SECONDARY,
+    Scrollbar,
+    WrapLabel,
+    WrapTkLabel,
+)
 from sp_workflow.editor_cells import (
     CellState,
     K,
@@ -60,7 +71,7 @@ class _FieldRow:
         self.database = ttk.Button(parent, text="用資料庫的值", command=lambda: on_database(name))
         self.database.grid(row=row, column=2, sticky="w", padx=(6, 0), pady=(1, 0))
         self.database.grid_remove()
-        self.note = tk.Label(parent, anchor="w", justify=tk.LEFT, background=SURFACE, font=CAPTION_FONT, padx=6)
+        self.note = WrapTkLabel(parent, anchor="w", justify=tk.LEFT, background=SURFACE, font=CAPTION_FONT, padx=6)
         self.note.grid(row=row + 1, column=0, columnspan=3, sticky="ew", pady=(0, 2))
         self.note.grid_remove()
         if follow_width:
@@ -121,7 +132,7 @@ class OrderEditor(ttk.Frame):
         self.title_var = tk.StringVar(value=placeholder)
         self.note_var = tk.StringVar()
         ttk.Label(self, textvariable=self.title_var, style="CardSection.TLabel").pack(anchor="w")
-        self.note = ttk.Label(self, textvariable=self.note_var, style="CardMuted.TLabel", justify=tk.LEFT)
+        self.note = WrapLabel(self, textvariable=self.note_var, style="CardMuted.TLabel", justify=tk.LEFT)
         self.note.pack(anchor="w", fill=tk.X, pady=(4, 8))
         self.bind("<Configure>", lambda event: self.note.configure(wraplength=max(240, event.width - 40)))
         area = ttk.Frame(self, style="CardBody.TFrame")
@@ -348,7 +359,7 @@ class TradeRowsEditor:
         pady: tuple[int, int] = (0, 0),
     ) -> tk.Label:
         """這一段的標題或說明，佔一整行（`_FieldRow` 的列號；`second` 放在那一列的第二行）。"""
-        label = tk.Label(
+        label = WrapTkLabel(
             self.parent, text=text, anchor="w", justify=tk.LEFT, background=SURFACE, foreground=foreground, font=font
         )
         label.grid(row=row * 2 + second, column=0, columnspan=3, sticky="ew", padx=6, pady=pady)

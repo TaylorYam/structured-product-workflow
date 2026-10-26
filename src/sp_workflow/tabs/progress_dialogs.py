@@ -12,6 +12,7 @@ from collections.abc import Callable, Sequence
 from tkinter import ttk
 
 from fcn_checker.date_picker import DateEntry
+from fcn_checker.ui import WrapLabel
 from sp_workflow.lifecycle import Objection, StoredEvent
 
 
@@ -81,7 +82,7 @@ class FormDialog(tk.Toplevel):
         frame = ttk.Frame(self, padding=16)
         frame.pack(fill="both", expand=True)
         frame.columnconfigure(1, weight=1)
-        ttk.Label(frame, text=intro, wraplength=460, justify="left").grid(row=0, column=0, columnspan=2, sticky="w")
+        WrapLabel(frame, text=intro, wraplength=460, justify="left").grid(row=0, column=0, columnspan=2, sticky="w")
         row = 1
         fields: list[tk.Widget] = []
         self.choice_list = tk.Listbox(frame, height=min(max(len(choices), 1), 8), width=60, exportselection=False)

@@ -30,6 +30,7 @@ from fcn_checker.ui import (
     PageHeader,
     Scrollbar,
     TableCopy,
+    WrapLabel,
     show_done,
 )
 from sp_workflow.database import (
@@ -169,7 +170,7 @@ class Tab:
         self.kpis = KpiRow(body)
         self.kpis.grid(row=row + 1, column=0, columnspan=2, sticky="w", pady=(16, 0))
         self.kpis.hide()
-        self.status_label = ttk.Label(body, textvariable=self.status_var, style="Card.TLabel", wraplength=600)
+        self.status_label = WrapLabel(body, textvariable=self.status_var, style="Card.TLabel", wraplength=600)
         self.status_label.grid(row=row + 2, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         body.bind("<Configure>", lambda event: self.status_label.configure(wraplength=max(300, event.width - 20)))
 
