@@ -14,14 +14,33 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence, ScenarioParam, ScenarioPrice
 from ..text import squash
-from . import bnp_scenario, bnp_tables, money, price_table, schedule
+from . import bnp_scenario, bnp_tables, money, price_table, ratings, schedule
 from .common import NUM, Hit, Mention, derived, number
 from .layout import Document, LayoutSpec, Span, TextIndex, capture, join_text, parse_date
 from .underlying_notes import Markers, underlying_notes
 
 TEMPLATE_ID = "bnp-zh-pd"
-PARSER_VERSION = "5"  # 2：日期表標準欄位與共用排程推導（Issue #289）；3：情境交成共用情境規則的標準欄位（Issue #294）；5：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
+PARSER_VERSION = "6"  # 2：日期表標準欄位與共用排程推導（Issue #289）；3：情境交成共用情境規則的標準欄位（Issue #294）；5：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 # 4：第一章依項目名稱對應條號、境外人民幣版（Issue #345）
+# 6：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #242）
+# 信用評等（#242）：第一章第 3 項發行機構與保證機構接著寫（發行機構只寫標普 `信用評等為標準普爾（S&P）A+保證機構：…`），
+# 第二章發行機構、保證機構 (7) 信用評等（以前一項 (6) 財務狀況分辨是哪個機構）
+RATINGS = (
+    ratings.RatingPlace(
+        "第一章第 3 項", r"發行機構長期債務信用評等（截至本產品說明書刊印日期）：(?P<body>.+?)保證機構："
+    ),
+    ratings.RatingPlace(
+        "第二章 (7) 信用評等", r"（6）財務狀況：請參閱本章第1\.（8）項之說明。（7）信用評等：(?P<body>.+?)（8）"
+    ),
+)
+GUARANTOR_RATINGS = (
+    ratings.RatingPlace(
+        "第一章第 3 項", r"保證機構長期債務信用評等（截至本產品說明書刊印日期）：(?P<body>.+?)計算代理機構："
+    ),
+    ratings.RatingPlace(
+        "第二章 (7) 信用評等", r"（6）財務狀況：有關保證機構財務狀況的資料[^。]+。（7）信用評等：(?P<body>.+?)（8）"
+    ),
+)
 CHAPTER_NAMES = {
     1: ("一", "商品相關基本資料"),
     2: ("二", "相關機構事業概況"),
@@ -532,6 +551,7 @@ def read(lines: Sequence[Line]) -> BnpTermSheet:
     fields["underlying_notes"] = underlying_notes(
         lines, Markers(r"\(\d+\)")
     )  # 連結標的公司介紹：行首 (k)（Issue #225）
+    fields.update(ratings.fields(doc.lines, RATINGS, GUARANTOR_RATINGS))
     return BnpTermSheet(fields, full, doc, scenarios, coupons, page_headers(lines), ch1)
 
 

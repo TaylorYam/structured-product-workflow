@@ -25,8 +25,12 @@ import fitz
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
 from reference_synth import (
+    FITCH,
+    MOODYS,
+    SP,
     UL,
     ProductSpec,
+    Ratings,
     build_reference_sheet,
     price,
     reference_row,
@@ -44,6 +48,27 @@ DIST = STANDARD["distributor"]
 PHONE = "+886 2 5556 1313"  # 審查標準 phone_equivalents 的 GS 寫法
 ADDRESS = DIST["address"]
 ISIN = "XS1999900048"
+GSG = "高盛集團有限公司"  # 保證機構（評等段落用真實寫法，#242）
+GS_ASIA = "美商高盛亞洲證券有限公司"  # 第二個保證機構，無信用評等
+R_AND_I = "（Rating and Investment Information, Inc.（“R&I”））"  # 投資人須知不寫（“R&I”）
+
+
+def ratings_first(r: Ratings, *, others: str = "") -> str:
+    """評等寫在評等機構前面（#242）：`「A+」（標準普爾）、「A1」（穆迪）及「AA-」（惠譽）`；`others` 給 R&I 的寫法時
+    另寫 DBRS、R&I（保證機構，核對時忽略）。"""
+    parts = [f"「{v}」（{a}）" for a, v in r.stated(SP, MOODYS, FITCH)]
+    if others:
+        parts += ["「A（high）」（DBRS）", f"「A」{others}"]
+    return "、".join(parts[:-1]) + "及" + parts[-1] if len(parts) > 1 else parts[0]
+
+
+def ratings_after(r: Ratings) -> str:
+    """第二章 (vii) 評等寫在評等機構後面（#242）：`經標準普爾（Standard & Poor’s）評為「BBB+」，…`，另寫 DBRS、R&I。"""
+    names = {SP: "標準普爾（Standard & Poor’s）", MOODYS: "穆迪（Moody’s）", FITCH: "惠譽（Fitch）"}
+    parts = [f"經{names[a]}評為「{v}」" for a, v in r.stated(SP, MOODYS, FITCH)]
+    return "，".join(parts) + "，經DBRS評定為「A（high）」及經R&I評為「A」"
+
+
 APPROVAL = dt.date(2026, 6, 11)
 Q4 = Decimal("0.0001")
 TICKERS = {  # 依代號排序（GS 說明書的順序）
@@ -94,6 +119,7 @@ class Spec(ProductSpec):
     split_initial: bool = False  # 價格表初始參考價格從小數點後拆行（`1,100.450` / `0`）
     approval: dt.date = APPROVAL
     iis_pages: int = 4
+    guarantor_ratings: Ratings = Ratings("BBB", "A2", "A")  # 保證機構高盛集團的評等（#242）
 
     def __post_init__(self) -> None:
         self.underlyings = underlyings(self.count, self.market)
@@ -560,7 +586,10 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     titles = {
         1: f"本商品名稱:{s.name_zh}（TDCC商品代號為{s.product_code}，ISIN:{ISIN})",
         2: f"本商品風險程度:{WARNING}",
-        3: f"本商品發行機構及保證機構名稱及長期債務信用評等:本商品發行機構為{ISSUER}。截至本中文產品說明書刊印日期，發行機構之長期信用評等為虛構評等。",
+        3: f"本商品發行機構及保證機構名稱及長期債務信用評等:本商品發行機構為{ISSUER}。截至本中文產品說明書刊印日期，"
+        f"發行機構之長期信用評等為{ratings_first(s.ratings)}。本商品發行機構之付款義務保證機構為{GSG}"
+        f"（The Goldman Sachs Group, Inc.）與{GS_ASIA}（Goldman Sachs (Asia) L.L.C.）。截至本中文產品說明書刊印日期，"
+        f"{GSG}之長期信用評等為{ratings_first(s.guarantor_ratings, others=R_AND_I)}。{GS_ASIA}無信用評等。",
         4: "本商品之發行評等:本商品未經評等。",
         5: f"計價幣別:{s.currency_zh}（{s.iso_text}）",
         6: f"每單位面額:{s.money(s.denom, space=True)}",
@@ -600,10 +629,19 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
     d.chapter("二", "相關機構事業概況")
     d.text(72, "1. 發行機構")
-    for t in (f"(1) 事業名稱: {ISSUER}", "(2) 設立日期:西元1988年6月2日", "(3) 營業所在地: 1 Fictional Court, London"):
+    for t in (
+        f"(1) 事業名稱: {ISSUER}",
+        "(2) 設立日期:西元1988年6月2日",
+        "(3) 營業所在地: 1 Fictional Court, London",
+        f"(7) 信用評等:於本中文產品說明書刊印之日，發行機構之長期信用評等為{ratings_first(s.ratings)}。為免疑義，"
+        f"保證機構{GSG}之長期信用評等並不代表發行機構之評等。",
+    ):
         d.text(86, t, 100)
     d.text(72, "2. 保證機構")
-    d.text(86, "(1) (i) 事業名稱:虛構集團有限公司（下稱「虛構集團」）")
+    d.text(86, f"(1) (i) 事業名稱:{GSG}（下稱「GSG」）")
+    d.text(
+        86, f"(vii) 信用評等:於本中文產品說明書刊印之日，GSG之長期信用評等{ratings_after(s.guarantor_ratings)}。", 100
+    )
     d.text(72, "3. 總代理人、計算機構、受託機構、結算系統及其他相關機構")
     for t in (
         "(1) 總代理人",
@@ -739,7 +777,9 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         "(1) 受託對象:專業投資人",
         "(2) 本商品與國外相當之交易條件:專業投資人不適用",
         "(3) 本商品風險程度:RR4",
-        "(4) 發行機構及各保證機構之長期債務信用評等:截至本中文投資人須知刊印日期，虛構評等。",
+        f"(4) 發行機構及各保證機構之長期債務信用評等:截至本中文投資人須知刊印日期，{ISSUER_ZH}:{ratings_first(s.ratings)}。"
+        f"{GSG}:{ratings_first(s.guarantor_ratings, others='（Rating and Investment Information, Inc.）')}。"
+        f"{GS_ASIA}無信用評等。",
         "(5) 本商品之發行評等:本商品未經評等。",
         f"(6) 計價幣別:{s.currency_zh}（{s.iso_text}）",
         f"(7) 每單位面額:{s.money(s.denom)}",

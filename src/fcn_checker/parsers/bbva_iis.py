@@ -17,12 +17,17 @@ from decimal import Decimal
 from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..text import squash
-from . import bbva, iis, money
+from . import bbva, iis, money, ratings
 from .common import RawText, compat_normalized, fee_rates
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "bbva-zh-iis"
-PARSER_VERSION = "2"  # 2：警語裡的受託機構全名、說明文字幣別字（Issue #305）
+# 2：警語裡的受託機構全名、說明文字幣別字（Issue #305）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #242）
+PARSER_VERSION = "3"
+# 信用評等（#242）：商品簡介 (4) 分 a. 發行機構、b. 保證機構 `a.發行機構（BBVAGLOBALMARKETS,B.V.）：標準普爾信用評等A+、穆迪信用評等A2b.保證機構（…）：…`；
+# 段落後面直接接下一項編號（`A2b.`、`A（5）`），要切在編號前
+RATINGS = (ratings.RatingPlace("商品簡介 (4)", r"a\.發行機構（[^）]+）：(?P<body>.+?)b\.保證機構"),)
+GUARANTOR_RATINGS = (ratings.RatingPlace("商品簡介 (4)", r"b\.保證機構.+?）：(?P<body>.+?)（5）本商品之發行評等"),)
 SECTIONS = (
     "商品之投資風險警語：",
     "一、相關機構事業概況",
@@ -82,6 +87,7 @@ PROVIDED = frozenset(
         "distributor_addresses",
         "distributor_phones",
         *(f"fee_{label}" for label in iis.FEES),
+        *ratings.FIELDS,
     }
 )
 
@@ -302,4 +308,5 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         )
     else:
         fields.update(fee_rates(bbva.fee_table(fees)))
+    fields.update(ratings.fields(text_lines, RATINGS, GUARANTOR_RATINGS))
     return iis.IisSheet(fields, ti, frozenset(provided))

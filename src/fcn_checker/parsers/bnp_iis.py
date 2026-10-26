@@ -16,11 +16,18 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence
 from ..text import squash
-from . import bnp, bnp_tables, iis, money
+from . import bnp, bnp_tables, iis, money, ratings
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "bnp-zh-iis"
-PARSER_VERSION = "1"
+PARSER_VERSION = "2"  # 2：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #242）
+# 信用評等（#242）：商品簡介發行機構、保證機構各一句 `發行機構之長期債務信用評等（截至本中文投資人須知刊印日期）：標準普爾（S&P）為A+。`
+RATINGS = (
+    ratings.RatingPlace("商品簡介", r"發行機構之長期債務信用評等（截至本中文投資人須知刊印日期）：(?P<body>.+?)。"),
+)
+GUARANTOR_RATINGS = (
+    ratings.RatingPlace("商品簡介", r"保證機構之長期債務信用評等（截至本中文投資人須知刊印日期）：(?P<body>.+?)。"),
+)
 TITLE = "中文投資人須知(適用於專業投資人及OSU客戶)"
 NAME_EN = "issuedbyBNPParibasIssuanceB.V."
 SECTIONS = (
@@ -80,6 +87,7 @@ PROVIDED = frozenset(
         "distributor_addresses",
         "distributor_phones",
         *(f"fee_{label}" for label in iis.FEES),
+        *ratings.FIELDS,
     }
 )
 
@@ -320,4 +328,5 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         ],
     )
     fields.update(_fees(text_lines))
+    fields.update(ratings.fields(text_lines, RATINGS, GUARANTOR_RATINGS))
     return iis.IisSheet(fields, ti, frozenset(provided))

@@ -24,8 +24,12 @@ import fitz
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
 from reference_synth import (
+    FITCH,
+    MOODYS,
+    SP,
     UL,
     ProductSpec,
+    Ratings,
     build_reference_sheet,
     price,
     quote_currency,
@@ -48,6 +52,13 @@ APPROVAL = dt.date(2026, 6, 11)
 ZH_NUM = "一二三四五六七八九十"
 Q4 = Decimal("0.0001")
 TICKERS = ("ZCA UW", "ZCB UN", "1234 JT", "ZCD UW", "ZCE UW")
+AS_OF = "（截至本中文產品說明書刊印日期）"
+
+
+def ratings_text(r: Ratings, *, iis: bool = False) -> str:
+    """評等寫法（#242）：說明書 `穆迪（Moody’s）A2/標準普爾（S&P）A/惠譽（Fitch）AA-`，投資人須知只寫中文 `穆迪A2/…`。"""
+    names = {MOODYS: "穆迪（Moody’s）", SP: "標準普爾（S&P）", FITCH: "惠譽（Fitch）"}
+    return "/".join(f"{a if iis else names[a]}{v}" for a, v in r.stated(MOODYS, SP, FITCH))
 
 
 def zh_number(n: int) -> str:
@@ -96,6 +107,7 @@ class Spec(ProductSpec):
     iis_ticker_break: int | None = (
         None  # 投資人須知第 n 檔（從 1 起）的彭博代碼在代號與交易所碼之間換行（OOS 實際寫法）
     )
+    guarantor_ratings: Ratings = Ratings("BBB", "A3", "A")  # 保證機構評等（#242）
 
     def __post_init__(self) -> None:
         self.underlyings = underlyings(self.count)
@@ -487,6 +499,8 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
     lines = [
         "受託或銷售對象：專業投資人",
         "本商品之風險程度：RR4",
+        f"發行機構及保證機構之長期債務信用評等：發行機構：{ratings_text(s.ratings, iis=True)}；"
+        f"保證機構：{ratings_text(s.guarantor_ratings, iis=True)}（截至刊印日期）",
         f"計價幣別：{unit}",
         "原計價幣別本金保本率：不保本。",
         "原計價幣別投資本金達成100%保本率之各項條件：不適用。本商品不保本。",
@@ -658,7 +672,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     titles = {
         1: f"商品名稱：{s.name_zh}（下稱「本商品」）",
         2: f"商品風險程度：{WARNING}",
-        3: f"發行機構名稱及其長期債務信用評等：{ISSUER}；長期債務信用評等為虛構",
+        3: f"發行機構名稱及其長期債務信用評等：{ISSUER}；長期債務信用評等為{ratings_text(s.ratings)}{AS_OF}",
         4: "商品之發行評等：無",
         5: f"計價幣別：{unit}({s.ccy})",
         6: "原計價幣別投資本金保本率：不保本。本商品到期可能視連結標的之表現而有損失。",
@@ -674,7 +688,10 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     for n in range(1, 25):
         d.article(n, titles.get(n, f"第{n}項說明（不核對）"), s)
         if n == 3:
-            d.text(67, f"保證機構名稱及其長期債務信用評等：{GUARANTOR['ch1']}；長期債務信用評等為虛構")
+            d.text(
+                67,
+                f"保證機構名稱及其長期債務信用評等：{GUARANTOR['ch1']}；長期債務信用評等為{ratings_text(s.guarantor_ratings)}{AS_OF}",
+            )
         elif n == 7:
             d.text(
                 67,
@@ -730,8 +747,20 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     d.chapter("二", "相關機構事業概況")
     d.article(1, "發行機構", s)
     d.numbered("(1)", f"公司名稱：{ISSUER}", legacy=s.legacy, x=66, body_x=90)
+    d.numbered("(6)", "財務狀況：請參閱下述第(8)項之說明。", legacy=s.legacy, x=66, body_x=90)
+    d.numbered("(7)", f"信用評等：長期債務信用評等為{ratings_text(s.ratings)}{AS_OF}", legacy=s.legacy, x=66, body_x=90)
     d.article(2, "保證機構：", s)
     d.numbered("(1)", f"公司名稱：{GUARANTOR['ch2']}", legacy=s.legacy, x=66, body_x=90)
+    d.numbered(
+        "(6)", "財務狀況：有關保證機構財務狀況的資料可於http://www.example.com取得。", legacy=s.legacy, x=66, body_x=90
+    )
+    d.numbered(
+        "(7)",
+        f"信用評等：長期債務信用評等為{ratings_text(s.guarantor_ratings)}{AS_OF}",
+        legacy=s.legacy,
+        x=66,
+        body_x=90,
+    )
     d.article(3, "總代理人、計算代理機構、付款代理機構、受託或銷售機構及結算機構：", s)
     for n, (title, name, place, head) in enumerate(
         (

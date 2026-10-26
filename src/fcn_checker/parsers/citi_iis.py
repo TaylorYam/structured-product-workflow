@@ -15,11 +15,16 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence
 from ..text import squash
-from . import citi, iis, money
+from . import citi, iis, money, ratings
 from .layout import TextIndex, join_text, parse_date
 
 TEMPLATE_ID = "citi-zh-iis"
-PARSER_VERSION = "2"  # 2：KI 商品讀不到 KI % 時轉人工覆核，不再略過（Issue #297）
+# 2：KI 商品讀不到 KI % 時轉人工覆核，不再略過（Issue #297）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #242）
+PARSER_VERSION = "3"
+# 信用評等（#242）：商品簡介一句寫兩個機構 `發行機構及保證機構之長期債務信用評等：發行機構：穆迪A2/標準普爾A/惠譽AA-；保證機構：穆迪A3/…（截至刊印日期）`
+_RATINGS_HEAD = r"發行機構及保證機構之長期債務信用評等：發行機構："
+RATINGS = (ratings.RatingPlace("商品簡介", _RATINGS_HEAD + r"(?P<body>[^；]+)；保證機構："),)
+GUARANTOR_RATINGS = (ratings.RatingPlace("商品簡介", _RATINGS_HEAD + r"[^；]+；保證機構：(?P<body>.+?)（截至"),)
 TITLE = "中文投資人須知"
 NAME_EN_ISSUER = squash(citi.NAME_EN_ISSUER)
 SECTIONS = (
@@ -80,6 +85,7 @@ PROVIDED = frozenset(
         "distributor_addresses",
         "minimum_issue_size",
         *(f"fee_{label}" for label in iis.FEES),
+        *ratings.FIELDS,
     }
 )
 
@@ -336,4 +342,5 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
             if fees is not None
             else ParsedField.missing(name, "找不到「四、投資人應負擔的各項費用」段落")
         )
+    fields.update(ratings.fields(text_lines, RATINGS, GUARANTOR_RATINGS))
     return iis.IisSheet(fields, ti, frozenset(provided))

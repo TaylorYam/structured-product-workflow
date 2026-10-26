@@ -17,13 +17,22 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence
 from ..text import squash
-from . import gs, iis, money, price_table
+from . import gs, iis, money, price_table, ratings
 from .common import Mention, RawText, compat_normalized, derived, number
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "gs-zh-iis"
-PARSER_VERSION = "4"  # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：警語的受託機構名稱（Issue #306）；
-# 4：重複寫出的幣別、天期、買回 %（Issue #317）
+PARSER_VERSION = "5"  # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：警語的受託機構名稱（Issue #306）；
+# 4：重複寫出的幣別、天期、買回 %（Issue #317）；5：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #242）
+# 信用評等（#242）：商品簡介 (4) 依序寫發行機構英商高盛國際公司、保證機構高盛集團有限公司（評等寫在評等機構前面，
+# 同說明書；另有 DBRS、R&I，忽略），第二個保證機構美商高盛亞洲證券「無信用評等」，不讀
+_RATINGS_HEAD = r"發行機構及各保證機構之長期債務信用評等[:：]截至本中文投資人須知刊印日期，英商高盛國際公司[:：]"
+RATINGS = (ratings.RatingPlace("商品簡介 (4)", _RATINGS_HEAD + r"(?P<body>[^。]+)。", rating_first=True),)
+GUARANTOR_RATINGS = (
+    ratings.RatingPlace(
+        "商品簡介 (4)", _RATINGS_HEAD + r"[^。]+。高盛集團有限公司[:：](?P<body>.+?)。", rating_first=True
+    ),
+)
 SECTIONS = (
     "本商品之投資風險警語",
     "一.相關機構",
@@ -87,6 +96,7 @@ PROVIDED = frozenset(
         "distributor_names",
         "distributor_addresses",
         *(f"fee_{label}" for label in iis.FEES),
+        *ratings.FIELDS,
     }
 )
 
@@ -331,4 +341,5 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         )
     else:
         fields.update(gs.fee_rates(fees))
+    fields.update(ratings.fields(text_lines, RATINGS, GUARANTOR_RATINGS))
     return iis.IisSheet(fields, ti, frozenset(provided))
