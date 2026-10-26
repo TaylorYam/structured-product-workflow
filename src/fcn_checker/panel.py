@@ -68,7 +68,7 @@ class LastFolders:
 def _table(
     parent, columns: tuple[tuple[str, str, int], ...], pixels, height: int = 6, selectmode: str = "browse"
 ) -> ttk.Treeview:
-    frame = ttk.Frame(parent, style="Card.TFrame", padding=4)  # 白色圓角卡片裡的表
+    frame = ttk.Frame(parent, style="TableCard.TFrame", padding=1)  # 白色平面卡片裡的表（#264）
     frame.columnconfigure(0, weight=1)
     frame.rowconfigure(0, weight=1)
     table = FitTreeview(

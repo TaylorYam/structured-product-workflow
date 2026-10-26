@@ -228,19 +228,6 @@ class _Shapes:
                 layers.append(shapes.Layer(tick, mark))
         return self.image(side + 2 * margin + gap, side + 2 * margin, layers)
 
-    def thumb(self, vertical: bool, color: str | None) -> tk.PhotoImage:
-        """細的膠囊形捲軸把手：左右（或上下）各留 2 像素空白，看起來像 macOS 的捲軸；color 是 None 時全透明（同尺寸，
-        九宮格才不會因為圖比邊框小而畫不完）。"""
-        thick, long, margin = self.px(11), self.px(28), self.px(2.5)
-        width, height = (thick, long) if vertical else (long, thick)
-        if vertical:
-            pill = shapes.rounded_box(margin, 1, width - margin, height - 1, (width - 2 * margin) / 2)
-        else:
-            pill = shapes.rounded_box(1, margin, width - 1, height - margin, (height - 2 * margin) / 2)
-        small = self.image(width, height, [shapes.Layer(pill, color)] if color else [])
-        edge = self.px(7)
-        return self.stretch(small, 0, edge) if vertical else self.stretch(small, edge, 0)
-
     def chevron(self, color: str) -> tk.PhotoImage:
         """下拉選單右邊的向下箭頭。"""
         width, height, u = self.px(18), self.px(10), self.scale
@@ -252,21 +239,6 @@ class _Shapes:
         side, u = self.px(14), self.scale
         tick = shapes.polyline([(3 * u, 7.4 * u), (5.9 * u, 10.2 * u), (11 * u, 4 * u)], 1.8 * u)
         return self.image(side, side, [shapes.Layer(tick, color)])
-
-    def heading(self) -> tk.PhotoImage:
-        """表頭的一格：白底、下面一條細線、右邊淡淡的欄分隔。也要平鋪放大：表頭每捲一次就重畫，
-        中間只有 4 像素時幾十欄的表頭要貼上萬塊，捲一格卡半秒以上（#262）。"""
-        side = 6
-        small = self.image(
-            side,
-            side,
-            [
-                shapes.Layer(shapes.rounded_box(0, 0, side, side, 0), SURFACE),
-                shapes.Layer(shapes.rounded_box(side - 1, 0, side, side, 0), HOVER),
-                shapes.Layer(shapes.rounded_box(0, side - 1, side, side, 0), BORDER),
-            ],
-        )
-        return self.stretch(small, 1, 1)
 
 
 def _create_elements(style: ttk.Style, shape: _Shapes) -> None:
@@ -333,7 +305,6 @@ def _create_elements(style: ttk.Style, shape: _Shapes) -> None:
         ("active", shape.box(control, HOVER)),
         border=edge,
     )
-    element("heading", shape.heading(), border=1)
     element("chevron", shape.chevron(TEXT_SECONDARY), ("disabled", shape.chevron(TEXT_DISABLED)), border=0)
     for name, round_ in (("check", False), ("radio", True)):
         element(
@@ -348,16 +319,6 @@ def _create_elements(style: ttk.Style, shape: _Shapes) -> None:
             ("active", shape.indicator(round_=round_, fill=SURFACE, border=TEXT_SECONDARY, mark=None)),
             border=0,
             padding=0,
-        )
-    # 把手的名稱要以 .thumb 結尾：ttk 捲軸靠這個找把手，找不到時把手撐滿整條、拖不動也點不動
-    for orient, vertical in (("Vertical.thumb", True), ("Horizontal.thumb", False)):
-        element(
-            orient,
-            shape.thumb(vertical, SCROLL_THUMB),
-            ("disabled", shape.thumb(vertical, None)),
-            ("pressed", shape.thumb(vertical, SCROLL_THUMB_ACTIVE)),
-            ("active", shape.thumb(vertical, SCROLL_THUMB_ACTIVE)),
-            border=(0, px(7), 0, px(7)) if vertical else (px(7), 0, px(7), 0),  # 只拉長邊；圖要比兩端的邊框加起來大
         )
 
 
@@ -407,6 +368,8 @@ def _layouts(style: ttk.Style) -> None:
             )
         ],
     )
+    # 表格那一塊（表頭、捲軸、外框）用平面樣式：每捲一次都重畫，圖片元件比平面的慢一倍，捲動要順（#264）。
+    # 捲軸把手照 clam 的 thumb（名稱以 .thumb 結尾，ttk 才認得把手、拖得動），不要兩端的箭頭。
     for orient in ("Vertical", "Horizontal"):
         sticky = "ns" if orient == "Vertical" else "we"
         style.layout(
@@ -414,7 +377,7 @@ def _layouts(style: ttk.Style) -> None:
             [
                 (
                     f"{orient}.Scrollbar.trough",
-                    {"sticky": sticky, "children": [(f"Mac.{orient}.thumb", {"sticky": "nswe"})]},
+                    {"sticky": sticky, "children": [(f"{orient}.Scrollbar.thumb", {"sticky": "nswe"})]},
                 )
             ],
         )
@@ -424,19 +387,28 @@ def _layouts(style: ttk.Style) -> None:
     style.layout(
         "Heading",
         [
-            ("Mac.heading", {"sticky": "nswe"}),
+            ("Treeheading.cell", {"sticky": "nswe"}),
             (
-                "Treeheading.padding",
+                "Treeheading.border",
                 {
                     "sticky": "nswe",
                     "children": [
-                        ("Treeheading.image", {"side": "right", "sticky": ""}),
-                        ("Treeheading.text", {"sticky": "we"}),
+                        (
+                            "Treeheading.padding",
+                            {
+                                "sticky": "nswe",
+                                "children": [
+                                    ("Treeheading.image", {"side": "right", "sticky": ""}),
+                                    ("Treeheading.text", {"sticky": "we"}),
+                                ],
+                            },
+                        )
                     ],
                 },
             ),
         ],
     )
+    style.layout("TableCard.TFrame", [("Frame.border", {"sticky": "nswe"})])
     tab = [
         (
             "Notebook.padding",
@@ -522,14 +494,39 @@ def apply_style(root: tk.Tk) -> Callable[[float], int]:
     style.configure(
         "Treeview", background=SURFACE, fieldbackground=SURFACE, rowheight=pixels(28), borderwidth=0, font=BODY_FONT
     )
-    style.configure("Treeview.Heading", foreground=TEXT_SECONDARY, font=HEADING_FONT, padding=(pixels(8), pixels(5)))
+    style.configure(
+        "Treeview.Heading",
+        foreground=TEXT_SECONDARY,
+        font=HEADING_FONT,
+        padding=(pixels(8), pixels(5)),
+        background=SURFACE,
+        bordercolor=SURFACE,
+        lightcolor=SURFACE,
+        darkcolor=BORDER,  # 平面格子：只有下面與右邊一條細線（欄的分隔）
+        relief="raised",
+        borderwidth=1,
+    )
+    style.map("Treeview.Heading", background=[("active", SURFACE), ("pressed", SURFACE)])
     style.map("Treeview", background=[("selected", ACCENT_SOFT)], foreground=[("selected", TEXT)])
     style.configure(
         "TNotebook", borderwidth=0, tabmargins=(0, 0, 0, pixels(8)), bordercolor=BACKGROUND, **flat(BACKGROUND)
     )
     style.configure("TNotebook.Tab", foreground=TEXT_SECONDARY, padding=(pixels(16), pixels(5)))
     style.map("TNotebook.Tab", foreground=[("selected", TEXT), ("active", TEXT)])
-    style.configure("TScrollbar", troughcolor=SURFACE, bordercolor=SURFACE, **flat(SURFACE))
+    style.configure(
+        "TScrollbar",
+        troughcolor=SURFACE,
+        background=SCROLL_THUMB,
+        bordercolor=SURFACE,  # 把手四周留一圈白，看起來細一點
+        lightcolor=SCROLL_THUMB,
+        darkcolor=SCROLL_THUMB,
+        arrowsize=pixels(11),
+        gripcount=0,
+    )
+    hidden = [("disabled", SURFACE)]  # 不用捲時把手藏起來（`Scrollbar`）
+    active = [("pressed", SCROLL_THUMB_ACTIVE), ("active", SCROLL_THUMB_ACTIVE)]
+    style.map("TScrollbar", background=hidden + active, lightcolor=hidden + active, darkcolor=hidden + active)
+    style.configure("TableCard.TFrame", background=SURFACE, bordercolor=BORDER, relief="solid", borderwidth=1)
     style.configure("Hint.TFrame", background=BACKGROUND)
     style.configure("Hint.TLabel", background=ACCENT_SOFT, foreground=NAVY)
     # 這一步做完時，狀態列變成綠色結果條（#83）
@@ -1142,7 +1139,7 @@ class CopyButton(ttk.Button):
 
 
 class CopyArea(ttk.Frame):
-    """結果表那一塊（#121）：第 0 列左邊寫怎麼複製、右邊「全部複製」；第 1 列是白色圓角卡片 `card`，
+    """結果表那一塊（#121）：第 0 列左邊寫怎麼複製、右邊「全部複製」；第 1 列是白色平面卡片 `card`，
     表與捲軸由呼叫端建在 `card` 裡面（表在第 0 列第 0 欄，直捲軸在它右邊、橫捲軸在它下面）。"""
 
     def __init__(self, parent: tk.Misc, hint: str, copy_all: Callable[[], int]):
@@ -1154,7 +1151,7 @@ class CopyArea(ttk.Frame):
         ttk.Label(bar, text=hint, style="Caption.TLabel").pack(side="left")
         self.button = CopyButton(bar, copy_all)
         self.button.pack(side="right")
-        self.card = ttk.Frame(self, style="Card.TFrame", padding=4)
+        self.card = ttk.Frame(self, style="TableCard.TFrame", padding=1)  # 平面、直角的白卡片（#264）
         self.card.grid(row=1, column=0, columnspan=2, sticky="nsew")
         self.card.columnconfigure(0, weight=1)
         self.card.rowconfigure(0, weight=1)
