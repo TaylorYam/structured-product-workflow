@@ -151,6 +151,14 @@ class OrderEditor(ttk.Frame):
             name: _FieldRow(self.fields, i, name, lambda name: self._commit([name]), self._use_database)
             for i, name in enumerate(FIELDS)
         }
+
+        def wheel(event: tk.Event) -> str:
+            """滾輪捲欄位清單；停在下拉選單上也是捲清單，不會改到欄位的值。"""
+            canvas.yview_scroll(-1 if event.delta > 0 else 1, "units")
+            return "break"
+
+        for widget in (canvas, self.fields, *self.fields.winfo_children()):
+            widget.bind("<MouseWheel>", wheel)
         self.show(None)
 
     @property

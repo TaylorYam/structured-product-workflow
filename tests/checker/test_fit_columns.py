@@ -59,3 +59,16 @@ def test_changing_a_value_refits(master) -> None:
     found.item(item, values=("1", "SG", ""))
     found.update_idletasks()
     assert widths(found)["issuer"] == narrow
+
+
+def test_shift_wheel_scrolls_sideways_a_useful_distance(master) -> None:
+    found = table(master)
+    scrolled: list[tuple[int, str]] = []
+    found.xview_scroll = lambda number, what: scrolled.append((number, what))  # 沒顯示的表不算捲動位置，只記捲多少
+
+    found.event_generate("<Shift-MouseWheel>", delta=-120)
+    found.event_generate("<Shift-MouseWheel>", delta=120)
+
+    assert scrolled == [(FitTreeview.SIDEWAYS, "units"), (-FitTreeview.SIDEWAYS, "units")], (
+        "往下轉往右捲；一格不只 1 像素"
+    )

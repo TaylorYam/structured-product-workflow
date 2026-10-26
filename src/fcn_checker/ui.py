@@ -347,7 +347,8 @@ def _create_elements(style: ttk.Style, shape: _Shapes) -> None:
             border=0,
             padding=0,
         )
-    for orient, vertical in (("vthumb", True), ("hthumb", False)):
+    # 把手的名稱要以 .thumb 結尾：ttk 捲軸靠這個找把手，找不到時把手撐滿整條、拖不動也點不動
+    for orient, vertical in (("Vertical.thumb", True), ("Horizontal.thumb", False)):
         element(
             orient,
             shape.thumb(vertical, SCROLL_THUMB),
@@ -404,11 +405,16 @@ def _layouts(style: ttk.Style) -> None:
             )
         ],
     )
-    for orient, element in (("Vertical", "vthumb"), ("Horizontal", "hthumb")):
+    for orient in ("Vertical", "Horizontal"):
         sticky = "ns" if orient == "Vertical" else "we"
         style.layout(
             f"{orient}.TScrollbar",
-            [(f"{orient}.Scrollbar.trough", {"sticky": sticky, "children": [(f"Mac.{element}", {"sticky": "nswe"})]})],
+            [
+                (
+                    f"{orient}.Scrollbar.trough",
+                    {"sticky": sticky, "children": [(f"Mac.{orient}.thumb", {"sticky": "nswe"})]},
+                )
+            ],
         )
     style.layout(
         "Treeview", [("Treeview.padding", {"sticky": "nswe", "children": [("Treeview.treearea", {"sticky": "nswe"})]})]
@@ -1013,12 +1019,14 @@ class FitTreeview(ttk.Treeview):
     EMPTY = "沒有資料"
     MAX_WIDTH = 420
     SAMPLES = 8  # 每欄只量估起來最長的幾格，表很長時不用每格都量
+    SIDEWAYS = 60  # Shift＋滾輪轉一格左右捲幾像素；Treeview 自己只捲 1 像素
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._fit_job: str | None = None
         self._fonts: tuple[tkfont.Font, tkfont.Font] | None = None
         self.placeholder = ttk.Label(self, text=self.EMPTY, style="Placeholder.TLabel")
+        self.bind("<Shift-MouseWheel>", self._scroll_sideways)
         self._schedule_fit()  # 表頭設好、還沒有列時也照表頭寬度
 
     def heading(self, column: str, option: str | None = None, **kw: object):
@@ -1047,6 +1055,11 @@ class FitTreeview(ttk.Treeview):
         if value is not None:
             self._schedule_fit()
         return result
+
+    def _scroll_sideways(self, event: tk.Event) -> str:
+        """Shift＋滾輪左右捲；方向和 Windows 一樣，往下轉是往右捲。"""
+        self.xview_scroll((-1 if event.delta > 0 else 1) * self.SIDEWAYS, "units")
+        return "break"
 
     def destroy(self) -> None:
         if self._fit_job is not None:
