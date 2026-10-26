@@ -17,7 +17,7 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import OCCURRENCE_NAMES, Occurrence, ScenarioParam
 from ..text import squash
-from . import money, price_table, schedule
+from . import money, price_table, ratings, schedule
 from .common import RawText, capture_group, compat_normalized, derived, fee_rates, number
 from .layout import Document, LayoutSpec, TextIndex, capture, parse_date
 from .underlying_notes import Markers, underlying_notes
@@ -26,7 +26,19 @@ TEMPLATE_ID = "bbva-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：重複寫出的值（Issue #305）；4：日期表標準欄位與共用排程推導（Issue #289）；
 # 5：情境價格表與假設值交成共用情境規則的標準欄位（Issue #294）
 # 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
-PARSER_VERSION = "6"
+# 7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #242）
+PARSER_VERSION = "7"
+# 信用評等（#242）：第一章第 3 項分 (1) 發行機構、(2) 保證機構 `…信用評等：標準普爾信用評等A+、穆迪信用評等A2`，
+# 第二章 (1) 發行機構、(2) 保證機構各自的 (g) 信用評等（以後面接的段落分辨）。段落後面直接接下一項編號（`A4.`），要切在編號前：
+# 編號只取一位數字 `\d\.`，`.+?` 取最短，穆迪的 `A34.` 仍切成 `A3`／`4.`
+RATINGS = (
+    ratings.RatingPlace("第一章第 3 項", r"（1）發行機構：[^（]+?發行機構信用評等：(?P<body>.+?)（2）保證機構："),
+    ratings.RatingPlace("第二章 (g) 信用評等", r"（g）信用評等：(?P<body>[^（）]+)（2）最近期經會計師查核簽證財務報告"),
+)
+GUARANTOR_RATINGS = (
+    ratings.RatingPlace("第一章第 3 項", r"（2）保證機構：.+?保證機構信用評等：(?P<body>.+?)\d\.商品之發行評等"),
+    ratings.RatingPlace("第二章 (g) 信用評等", r"（g）信用評等：(?P<body>[^（）]+)（h）保證條件"),
+)
 CHAPTER_NAMES = {
     1: ("一", "商品基本資料"),
     2: ("二", "相關機構事業概況"),
@@ -272,6 +284,7 @@ def read(lines: Sequence[Line]) -> BbvaTermSheet:
     fields["underlying_notes"] = underlying_notes(
         doc.lines, Markers(r"\d+$")
     )  # 連結標的公司介紹：左欄單獨一行 k（Issue #225）
+    fields.update(ratings.fields(doc.lines, RATINGS, GUARANTOR_RATINGS))
     return BbvaTermSheet(fields, TextIndex(doc.lines), doc)
 
 

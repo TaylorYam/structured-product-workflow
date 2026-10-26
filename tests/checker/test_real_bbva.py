@@ -13,15 +13,16 @@ import pytest
 from fcn_checker.issuers import BBVA
 from fcn_checker.schema import CheckStatus as S
 from harness import check_all
-from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, requires
+from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, rated_check_format, requires
 
 pytestmark = [pytest.mark.real_samples, requires(TERM_SHEETS / "326*_TS.pdf", CHECK_FORMAT)]
 PROBLEMS = (S.MISMATCH, S.REVIEW_REQUIRED, S.ERROR)
 
 
 @pytest.fixture(scope="module")
-def items():
-    outcome = check_all(CHECK_FORMAT, pdfs("326*.pdf"))
+def items(tmp_path_factory):
+    sheet = rated_check_format(tmp_path_factory.mktemp("rated"))  # 加評等欄（#242）
+    outcome = check_all(sheet, pdfs("326*.pdf"))
     return [i for i in outcome.items if i.term_sheet.name.endswith("_TS.pdf")], [
         i for i in outcome.items if i.term_sheet.name.endswith("_IIS.pdf")
     ]

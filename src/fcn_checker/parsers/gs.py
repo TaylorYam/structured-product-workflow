@@ -17,7 +17,7 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence, ScenarioParam, ScenarioPrice
 from ..text import squash
-from . import money, price_table, schedule
+from . import money, price_table, ratings, schedule
 from .common import Mention, RawText, capture_group, dec, derived, fee_rates, number
 from .layout import Document, LayoutSpec, TextIndex, capture, parse_date
 from .underlying_notes import NameColumn, underlying_notes
@@ -26,7 +26,33 @@ TEMPLATE_ID = "gs-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：重複寫出的值（Issue #317）；4：日期表標準欄位與共用排程推導（Issue #289）；
 # 5：情境價格與假設值交成共用情境規則的標準欄位（Issue #294）
 # 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
-PARSER_VERSION = "6"
+# 7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #242）
+PARSER_VERSION = "7"
+# 信用評等（#242）：發行機構 GSI 在第一章第 3 項與第二章 (7)，評等寫在評等機構前面 `「A+」（標準普爾）、「A1」（穆迪）及「AA-」（惠譽）`；
+# 保證機構只比高盛集團（GSG）：第一章第 3 項同樣寫法（另有 DBRS、R&I，忽略），第二章 (vii) 評等在後面 `經標準普爾（…）評為「BBB+」`。
+# 第二個保證機構美商高盛亞洲證券「無信用評等」，評等表沒有這個機構，不讀
+RATINGS = (
+    ratings.RatingPlace(
+        "第一章第 3 項",
+        r"本商品發行機構為[^。]+。截至本中文產品說明書刊印日期，發行機構之長期信用評等為(?P<body>.+?)。",
+        rating_first=True,
+    ),
+    ratings.RatingPlace(
+        "第二章 (7) 信用評等",
+        r"（7）信用評等[:：]於本中文產品說明書刊印之日，發行機構之長期信用評等為(?P<body>.+?)。",
+        rating_first=True,
+    ),
+)
+GUARANTOR_RATINGS = (
+    ratings.RatingPlace(
+        "第一章第 3 項",
+        r"截至本中文產品說明書刊印日期，高盛集團有限公司之長期信用評等為(?P<body>.+?)。",
+        rating_first=True,
+    ),
+    ratings.RatingPlace(
+        "第二章 (vii) 信用評等", r"（vii）信用評等[:：]於本中文產品說明書刊印之日，GSG之長期信用評等(?P<body>.+?)。"
+    ),
+)
 CHAPTER_NAMES = {
     1: ("一", "商品基本資料"),
     2: ("二", "相關機構事業概況"),
@@ -278,6 +304,7 @@ def read(lines: Sequence[Line]) -> GsTermSheet:
     fields["underlying_notes"] = underlying_notes(
         doc.lines, NameColumn()
     )  # 連結標的公司介紹：左欄「連結標的資產 k」（單一標的寫名稱）、右欄介紹（Issue #225）
+    fields.update(ratings.fields(doc.lines, RATINGS, GUARANTOR_RATINGS))
     return GsTermSheet(fields, TextIndex(doc.lines), doc, coupons, repeated)
 
 

@@ -25,8 +25,12 @@ import fitz
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
 from reference_synth import (
+    FITCH,
+    MOODYS,
+    SP,
     UL,
     ProductSpec,
+    Ratings,
     build_reference_sheet,
     price,
     reference_row,
@@ -44,6 +48,14 @@ MULTIPLES = STANDARD["issuer"]["bnp"]["min_amount_multiples"]
 DIST = STANDARD["distributor"]
 PHONE = "+886 (2) 5556 1313"  # 審查標準 phone_equivalents 的 BNP 寫法
 ADDRESS = "臺北市105 民生東路三段158 號6 樓"  # 審查標準 address_equivalents 的 BNP 寫法
+
+
+def ratings_text(r: Ratings, *, is_: bool = False) -> str:
+    """評等寫法（#242）：`穆迪(Moody’s)A1/標準普爾(S&P)A+`；`is_` 時名稱後面接「為」（投資人須知、第二章發行機構）。"""
+    names = {MOODYS: "穆迪(Moody’s)", SP: "標準普爾(S&P)", FITCH: "惠譽(Fitch)"}
+    return "/".join(f"{names[a]}{'為' if is_ else ''}{v}" for a, v in r.stated(MOODYS, SP, FITCH))
+
+
 APPROVAL = dt.date(2026, 6, 11)
 PROSPECTUS = dt.date(2026, 5, 21)
 ZH = "一二三四五六七八九十"
@@ -83,6 +95,9 @@ class Spec(ProductSpec):
     iis_page_total: int | None = None  # 投資人須知頁首「共M頁」的 M；None 同實際頁數
     blank_pages: int = 0  # 文末沒有文字層的附件頁數（真實樣本的附件是圖）
     cumulative: str = "rounded"  # 累積配息：rounded 每期四捨五入後 × 期數；exact 面額 × 月配息率 × 期數再四捨五入
+    # 評等（#242）：發行機構只寫標普；保證機構寫穆迪、標普，不寫惠譽（參考條件表惠譽欄空白）
+    ratings: Ratings = Ratings(sp="A+", moodys=None, fitch=None)
+    guarantor_ratings: Ratings = Ratings(sp="A", moodys="A1", fitch=None)
 
     def __post_init__(self) -> None:
         self.underlyings = underlyings(self.count)
@@ -414,7 +429,8 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
     w.line(18, "1 商品簡介")
     for t in (
         "銷售對象：專業投資人及OSU 客戶",
-        "發行機構之長期債務信用評等(截至本中文投資人須知刊印日期)：虛構評等。",
+        f"發行機構之長期債務信用評等(截至本中文投資人須知刊印日期)：{ratings_text(s.ratings, is_=True)}。"
+        f"保證機構之長期債務信用評等(截至本中文投資人須知刊印日期)：{ratings_text(s.guarantor_ratings, is_=True)}。",
         f"商品風險程度：{WARNING}",
         f"商品之發行評等：無 ●計價幣別：{unit}",
         f"商品面額：每單位商品{s.denom:,} {unit} ●最低申購金額：{s.denom * MULTIPLES['minimum_subscription']:,}{unit}",
@@ -625,8 +641,11 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             continue
         d.article(printed, titles[n], f"art{n}")
         if n == 3:
-            d.text(80, "發行機構長期債務信用評等(截至本產品說明書刊印日期)：不核對")
+            d.text(80, f"發行機構長期債務信用評等(截至本產品說明書刊印日期)：信用評等為{ratings_text(s.ratings)}")
             d.text(80, f"保證機構：{GUARANTOR['ch1']}")
+            d.text(
+                80, f"保證機構長期債務信用評等(截至本產品說明書刊印日期)：信用評等為{ratings_text(s.guarantor_ratings)}"
+            )
             d.text(80, "計算代理機構：BNP Paribas Financial Markets S.N.C.")
         elif n == 11:
             _underlying_table(d, s, "art11.table", reprint=False)
@@ -718,11 +737,17 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     d.sub(1, f"事業名稱：{ISSUER}")
     d.sub(2, "設立日期：1995 年3 月15 日")
     d.sub(3, "營業所在地：荷蘭 (1 Fictional Street, Amsterdam)")
+    d.sub(6, "財務狀況：請參閱本章第1.(8)項之說明。")
+    d.sub(7, f"信用評等：長期債務信用評等{ratings_text(s.ratings, is_=True)}")
+    d.sub(8, f"{ISSUER}之經審計財務報表（不核對）")
     d.number(2)
     d.text(80, "保證機構")
     d.sub(1, f"事業名稱：{GUARANTOR['ch2']}")
     d.sub(2, "設立日期：1972 年8 月8 日")
     d.sub(3, "營業所在地：1 Fictional Boulevard, Paris, France")
+    d.sub(6, "財務狀況：有關保證機構財務狀況的資料可於www.example.com取得。")
+    d.sub(7, f"信用評等：長期債務信用評等為{ratings_text(s.guarantor_ratings)}")
+    d.sub(8, "保證條件、範圍：本商品由保證機構依保證契約之條款提供保證（不核對）")
     d.number(3)
     d.text(80, "總代理人、計算代理機構、商品主事務代理機構、受託機構、保管機構及其他相關機構")
     for n, (who, name, addr, boss) in enumerate(

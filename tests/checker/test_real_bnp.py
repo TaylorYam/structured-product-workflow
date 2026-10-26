@@ -8,7 +8,6 @@
 """
 
 import datetime as dt
-import shutil
 from collections import Counter
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
@@ -25,7 +24,7 @@ from fcn_checker.schema import CheckStatus as S
 from fcn_checker.standard_fields import Occurrence
 from fcn_checker.text import squash
 from harness import CONFIG
-from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, requires
+from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, rated_check_format, requires
 
 pytestmark = [
     pytest.mark.real_samples,
@@ -41,7 +40,7 @@ SPLIT = Counter({("iis.underlying_prices", "split_suspected"): 3})  # 一檔標�
 def saved(tmp_path_factory):
     """BNP 說明書與投資人須知整批核對並儲存一次：(批量核對結果, 儲存收據)。"""
     tmp = tmp_path_factory.mktemp("real_bnp")
-    sheet = shutil.copy(CHECK_FORMAT, tmp / CHECK_FORMAT.name)  # 不在 data/ 產生檔案
+    sheet = rated_check_format(tmp)  # 不在 data/ 產生檔案；加評等欄（#242）
     return run_batch(CONFIG, Path(sheet), pdfs("082*.pdf"), tmp / "reports", root=tmp)
 
 

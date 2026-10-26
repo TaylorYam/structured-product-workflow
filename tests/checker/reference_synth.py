@@ -145,7 +145,7 @@ SP, MOODYS, FITCH = "標準普爾", "穆迪", "惠譽"
 
 @dataclass(frozen=True)
 class Ratings:
-    """發行機構的長期債務信用評等（虛構值）：說明書、投資人須知與參考條件表評等欄都照它寫；None 表示文件沒寫這家，
+    """發行機構或保證機構的長期債務信用評等（虛構值）：說明書、投資人須知與參考條件表評等欄都照它寫；None 表示文件沒寫這家，
     參考條件表那一欄也空白。"""
 
     sp: str | None = "A+"
@@ -187,6 +187,8 @@ class ProductSpec:
     currency_iso: str | None = None  # 承作幣別 ISO 代碼；None → 依審查標準對照 `currency_zh`（對照表沒有的幣別要給）
     underlyings: tuple[UL, ...] = DEFAULT_ULS
     ratings: Ratings = Ratings()  # 發行機構評等（#240；HSBC、MS、DBS、Natixis、UBS 的合成文件寫出評等段落）
+    # 保證機構評等（#242；Citi、GS、BNP、BBVA 的合成文件寫出評等段落）；None → 參考條件表保證機構評等欄空白
+    guarantor_ratings: Ratings | None = None
 
     def with_(self, **kw: Any) -> Self:
         return replace(self, **kw)
@@ -257,6 +259,9 @@ def reference_row(spec: ProductSpec, **overrides: Any) -> dict[str, Any]:
         "issuer_rating_moodys": spec.ratings.moodys,
         "issuer_rating_fitch": spec.ratings.fitch,
     }
+    if spec.guarantor_ratings is not None:
+        g = spec.guarantor_ratings
+        fields.update(guarantor_rating_sp=g.sp, guarantor_rating_moodys=g.moodys, guarantor_rating_fitch=g.fitch)
     for i in range(1, 6):
         u = spec.underlyings[i - 1] if i <= len(spec.underlyings) else None
         fields[f"underlying_{i}"] = u.ticker if u else "-"

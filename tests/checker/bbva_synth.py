@@ -28,8 +28,12 @@ import fitz
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import Edit, PdfWriter, require_used
 from reference_synth import (
+    FITCH,
+    MOODYS,
+    SP,
     UL,
     ProductSpec,
+    Ratings,
     build_reference_sheet,
     price,
     reference_row,
@@ -50,6 +54,13 @@ ISIN = "XS1999900071"
 APPROVAL = dt.date(2026, 6, 11)
 Q4 = Decimal("0.0001")
 TICKERS = ("ZBA UW", "ZBB UN", "ZBC UW", "ZBD UW")
+
+
+def ratings_text(r: Ratings, rated: str = "信用評等") -> str:
+    """評等寫法（#242）：`標準普爾信用評等A+、穆迪信用評等A2`；第二章發行機構只寫名稱（`rated=""`）。"""
+    return "、".join(f"{a}{rated}{v}" for a, v in r.stated(SP, MOODYS, FITCH))
+
+
 PRICING = {"close": "收盤價", "open": "開盤價", "vwap": "VWAP"}  # 參考條件表「期初定價」
 
 
@@ -89,6 +100,9 @@ class Spec(ProductSpec):
     count: int = 3  # 標的數
     pricing: str = "close"  # 參考條件表期初定價（說明書沒寫）
     trustee_detail: bool = True  # 第 1 頁 13. 審查日期後的受託機構明細 (i)～(iv)
+    # 評等（#242）：發行機構寫標普、穆迪（參考條件表惠譽欄空白），保證機構三家都寫
+    ratings: Ratings = Ratings(sp="A+", moodys="A2", fitch=None)
+    guarantor_ratings: Ratings = Ratings(sp="A", moodys="A3", fitch="A")
     approval: dt.date = APPROVAL
     iis_pages: int = 4
 
@@ -549,6 +563,7 @@ ARTICLE_TITLES = {
     1: "商品名稱：",
     2: "商品風險程度：",
     3: "發行機構或保證機構名稱及其長期債務信用評等：",
+    4: "商品之發行評等：不適用",
     5: "計價幣別：",
     6: "計價貨幣本金保本率：不適用。在無發行機構或保證機構違約的情況下，本商品仍不保本。",
     7: "投資本金達成100%保本之各項條件：不適用",
@@ -584,8 +599,9 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         d.article(n, title)
         if n == 3:
             d.text(50, f"(1) 發行機構：{ISSUER_EN}")
-            d.text(50, "發行機構信用評等：虛構評等")
+            d.text(50, f"發行機構信用評等：{ratings_text(s.ratings)}")
             d.text(50, f"(2) 保證機構：{GUARANTOR}")
+            d.text(50, f"保證機構信用評等：{ratings_text(s.guarantor_ratings)}")
         elif n == 8:
             for k, (label, what) in enumerate(
                 (
@@ -623,10 +639,15 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         "(1) 設立日期及簡介(包括但不限於事業名稱、營業所在地、負責人姓名)",
         f"(a) 事業名稱：{ISSUER}",
         "(b) 設立日期：西元2009 年10 月29 日",
+        "(f) 財務狀況：請參閱以下第(2)點之說明",
+        f"(g) 信用評等：{ratings_text(s.ratings, '')}",
+        "(2) 最近期經會計師查核簽證財務報告中譯本之查核報告書（不核對）",
     ):
         d.text(50, t)
     d.text(28, "2. 保證機構")
     d.text(50, f"(a) 事業名稱：{GUARANTOR}")
+    d.text(50, f"(g) 信用評等：{ratings_text(s.guarantor_ratings)}")
+    d.text(50, "(h) 保證條件及範圍：保證機構作為唯一主債務人（不核對）")
     d.text(28, "3. 總代理人、計算代理機構、受託機構、保管機構及其他相關機構:設立日期及簡介")
     for t in (
         "(1) 總代理人：",
@@ -735,7 +756,8 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         "(1) 受託或銷售對象：專業投資人",
         "(2) 與國外相當之交易條件：專業投資人不適用",
         f"(3) 本商品風險程度：{WARNING}",
-        "(4) 發行機構或保證機構之長期債務信用評等：虛構評等",
+        f"(4) 發行機構或保證機構之長期債務信用評等：a.發行機構({ISSUER_EN})：{ratings_text(s.ratings)}"
+        f"b.保證機構({GUARANTOR})：{ratings_text(s.guarantor_ratings)}",
         "(5) 本商品之發行評等：不適用",
         f"(6) 計價幣別：{s.currency_zh}",
         "(7) 計價貨幣本金保本率：不適用。",

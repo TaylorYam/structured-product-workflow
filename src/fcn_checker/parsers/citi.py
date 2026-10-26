@@ -16,7 +16,7 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import OCCURRENCE_NAMES, Occurrence, ScenarioParam
 from ..text import squash
-from . import money, price_table, schedule
+from . import money, price_table, ratings, schedule
 from .common import NO_AUTOCALL_KO_PCT, NUM, Mention, derived, ko_at_initial, number, zh_number
 from .layout import DATE_RE, Document, LayoutSpec, TextIndex, capture, join_text, parse_date
 from .underlying_notes import Markers, underlying_notes
@@ -25,7 +25,28 @@ TEMPLATE_ID = "citi-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：重複寫出的值（Issue #314）；4：日期表標準欄位與共用排程推導（Issue #289）；
 # 5：假設價格表與情境配息率、年息交成共用情境規則的標準欄位（Issue #294）
 # 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
-PARSER_VERSION = "6"
+# 7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #242）
+PARSER_VERSION = "7"
+# 信用評等（#242）：第一章第 3 項發行機構、保證機構各一句 `…；長期債務信用評等為穆迪（Moody’s）A2/標準普爾（S&P）A/惠譽（Fitch）AA-（截至…）`，
+# 第二章發行機構、保證機構 (7) 信用評等同樣寫法（以前一項 (6) 財務狀況分辨是哪個機構）
+RATINGS = (
+    ratings.RatingPlace(
+        "第一章第 3 項", r"發行機構名稱及其長期債務信用評等：[^；]+；長期債務信用評等為(?P<body>.+?)（截至"
+    ),
+    ratings.RatingPlace(
+        "第二章 (7) 信用評等",
+        r"（6）財務狀況：請參閱下述第（8）項之說明。（7）信用評等：長期債務信用評等為(?P<body>.+?)（截至",
+    ),
+)
+GUARANTOR_RATINGS = (
+    ratings.RatingPlace(
+        "第一章第 3 項", r"保證機構名稱及其長期債務信用評等：[^；]+；長期債務信用評等為(?P<body>.+?)（截至"
+    ),
+    ratings.RatingPlace(
+        "第二章 (7) 信用評等",
+        r"（6）財務狀況：有關保證機構財務狀況的資料[^。]+。（7）信用評等：長期債務信用評等為(?P<body>.+?)（截至",
+    ),
+)
 CHAPTER_NAMES = {
     1: ("一", "商品基本資料"),
     2: ("二", "相關機構事業概況"),
@@ -585,6 +606,7 @@ def read(lines: Sequence[Line]) -> CitiTermSheet:
     fields["underlying_notes"] = underlying_notes(
         doc.lines, Markers(r"連結標的\d+：")
     )  # 連結標的公司介紹：連結標的k：名稱（Issue #225）
+    fields.update(ratings.fields(doc.lines, RATINGS, GUARANTOR_RATINGS))
     return CitiTermSheet(fields, TextIndex(doc.lines), doc, coupons, annual, redemptions, scenarios.headers)
 
 
