@@ -61,17 +61,17 @@ def test_progress_comes_before_the_exit_list(master, tmp_path: Path) -> None:
     assert window.progress.header.step.get() == "步驟 8／9"
 
 
-def test_refresh_lists_the_most_behind_first(master, tmp_path: Path, monkeypatch) -> None:
+def test_refresh_lists_the_newest_trade_first(master, tmp_path: Path, monkeypatch) -> None:
     _, tab, _ = loaded(master, tmp_path, monkeypatch)
 
-    assert shown(tab) == ["037199990002", "029199990003", "037199990001", "037199990004"]
-    first = tab.table.get_children()[0]
-    assert tab.table.set(first, "reason") == "還沒有商品條件" and tab.table.item(first, "tags") == ("problem",)
-    assert tab.table.set(first, "date_0") == f"{T.astimezone():%Y-%m-%d}"
-    assert [tab.table.set(first, f"ready_{i}") for i in range(3)] == ["✓", "", "✓"], "交易明細、商品條件、股價"
+    assert shown(tab) == ["037199990001", "029199990003", "037199990002", "037199990004"]
+    stuck = tab.table.get_children()[2]
+    assert tab.table.set(stuck, "reason") == "還沒有商品條件" and tab.table.item(stuck, "tags") == ("problem",)
+    assert tab.table.set(stuck, "date_0") == f"{T.astimezone():%Y-%m-%d}"
+    assert [tab.table.set(stuck, f"ready_{i}") for i in range(3)] == ["✓", "", "✓"], "交易明細、商品條件、股價"
     assert [tab.table.heading(f"ready_{i}", "text") for i in range(3)] == ["交易明細", "商品條件", "股價"]
     assert tab.kpis.values == (("顯示（檔）", 4, False), ("還沒完成（檔）", 3, False))
-    assert "共 4 檔，篩選後 4 檔；依距今天數由大到小排序。" in tab.status_var.get()
+    assert "共 4 檔，篩選後 4 檔；依交易日由新至舊排序。" in tab.status_var.get()
     assert tuple(tab.issuer_box.cget("values")) == ("全部", "BARC", "SG")
     assert str(tab.export_button.cget("state")) == "normal"
 
@@ -82,7 +82,7 @@ def test_filters_apply_without_reading_the_database_again(master, tmp_path: Path
     tab.progress_vars[FINISHED].set(True)
     tab.progress_vars[TO_CHECK].set(True)
     tab.refilter()
-    assert shown(tab) == ["029199990003", "037199990001", "037199990004"]
+    assert shown(tab) == ["037199990001", "029199990003", "037199990004"]
 
     tab.issuer_var.set("SG")
     tab.refilter()
@@ -98,7 +98,7 @@ def test_filters_apply_without_reading_the_database_again(master, tmp_path: Path
     tab.first_var.set("2026-10-01")
     tab.last_var.set("2026-10-20")
     tab.refilter()
-    assert shown(tab) == ["029199990003", "037199990001"], "交易日 10/12、10/19 在區間內；沒有交易日的不列"
+    assert shown(tab) == ["037199990001", "029199990003"], "交易日 10/19、10/12 在區間內；沒有交易日的不列"
     assert actions == [], "篩選不再讀資料庫"
 
 
@@ -145,9 +145,12 @@ def test_a_bad_date_filter_is_ignored_and_explained(master, tmp_path: Path, monk
 def test_clicking_a_heading_sorts_and_clicking_again_reverses(master, tmp_path: Path, monkeypatch) -> None:
     _, tab, _ = loaded(master, tmp_path, monkeypatch)
 
+    tab.sort_by("trade_date")
+    assert shown(tab) == ["037199990002", "029199990003", "037199990001", "037199990004"], "空白一律放最後"
+    assert "依交易日由小到大排序" in tab.status_var.get()
+
     tab.sort_by("days")
-    assert shown(tab) == ["037199990001", "029199990003", "037199990002", "037199990004"], "空白一律放最後"
-    assert "依距今天數由小到大排序" in tab.status_var.get()
+    assert shown(tab) == ["037199990002", "029199990003", "037199990001", "037199990004"], "換欄第一次由大到小"
 
     tab.sort_by("tdcc")
     assert shown(tab) == ["029199990003", "037199990001", "037199990002", "037199990004"]

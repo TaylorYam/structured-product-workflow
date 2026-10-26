@@ -10,7 +10,7 @@
 - KI：EKI 只在最終比價日，收盤價 < 下限價；AKI 自 Strike date 之後、該標的市場的每個交易日；
   MKI（每期觀察）不比，KI 欄寫「MKI (manual)」，KO 照比、比價狀態照 KO 算；最終比價日沒有 KO 時待確認（#196）。
 - 比價狀態、已比到、原因只講 KO（#196、ADR 0022）：已比到第一個比價日之前、不觀察 KO 的都空白；KI 另寫一欄
-  （英文代碼 No KI、EKI、AKI、MKI (manual)，觸及時 `AKI hit 日期 標的`，#198），每日觀察 KI 照樣每天比，
+  （沒有 KI 寫 `-`，其他是英文代碼 EKI、AKI、MKI (manual)，觸及時 `AKI hit 日期 標的`，#198），每日觀察 KI 照樣每天比，
   缺它要的價格照樣等股價。
 - 到期（最終比價日，沒有 KO）：沒有 KI，或 KI 曾觸及，且最差表現的標的（最終收盤價 ÷ 進場價最低）收盤價 < 執行價
   → 接股（記最差標的）；否則到期還本。事件日一律是觸價或判定的那個觀察日。
@@ -65,7 +65,7 @@ UNLOCKED = OrderReview.UNLOCKED
 MEMORY_TYPES = frozenset(("Daily Memory", "Period End Memory"))
 DAILY_TYPES = frozenset(("Daily", "Daily Memory"))
 EKI, AKI, MKI = "EKI", "AKI", "MKI"
-NO_KI_TEXT = "No KI"
+NO_KI_TEXT = "-"  # 沒有 KI 寫一槓，和有 KI 的代碼一眼分開
 MKI_KI = "MKI (manual)"  # MKI 不比（比價日 1～12 不是每一期，ADR 0020），KI 欄提醒人工追蹤
 
 

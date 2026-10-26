@@ -57,7 +57,7 @@ DATE_COLUMNS = (
     TRADES_IMPORTED, TERMS_IMPORTED, CHECK_TERMS_DONE, PREPARED_STEP, CHECKED, LOCKED, RETURNED_STEP, DRAFTED_STEP,
     SENT_STEP,
 )  # fmt: skip
-PRICING_COLUMNS = ("比價狀態", "已比到", "比價原因", "KI")  # #170；比價三欄只講 KO，KI 另一欄（#196）
+PRICING_COLUMNS = ("比價狀態", "KO比價", "比價原因", "KI")  # #170；比價三欄只講 KO，KI 另一欄（#196）
 EXPORT_COLUMNS = (
     "TDCC", "上手", "交易日", "距今天數", "作業進度", *READY_COLUMNS, "存續狀態", *PRICING_COLUMNS, "異議", *DATE_COLUMNS,
     "卡住的原因",
@@ -97,7 +97,7 @@ class ProgressRow:
     pricing_reason: str = ""  # 等股價的標的與日期、待確認的原因、出場的事件
     observed_through: dt.date | None = None  # 已比到的日期
     pricing_unlocked: bool = False  # 比價時還沒鎖住
-    ki: str = ""  # KI 欄（#196、#198）：No KI、EKI、AKI、MKI (manual)、`AKI hit 日期 標的`；還沒比過空白
+    ki: str = ""  # KI 欄（#196、#198）：-（沒有 KI）、EKI、AKI、MKI (manual)、`AKI hit 日期 標的`；還沒比過空白
     ready: tuple[bool, ...] = (False,) * len(READY_COLUMNS)  # 依 `READY_COLUMNS`：三件齊了沒
 
     @property
@@ -338,9 +338,11 @@ def sent_batch(rows: Iterable[ProgressRow], through: dt.date) -> SentBatch:
     )
 
 
-def by_days(rows: Iterable[ProgressRow]) -> list[ProgressRow]:
-    """預設排序：距交易日天數由大到小（落後的在上面），沒有交易日的放最後，同天數依 TDCC。"""
-    return sorted(rows, key=lambda row: (row.days is None, -(row.days or 0), row.tdcc))
+def by_trade_date(rows: Iterable[ProgressRow]) -> list[ProgressRow]:
+    """預設排序：交易日由新至舊（最近的交易在上面），沒有交易日的放最後，同一天依 TDCC。"""
+    return sorted(
+        rows, key=lambda row: (row.trade_date is None, -(row.trade_date or dt.date.min).toordinal(), row.tdcc)
+    )
 
 
 def export_name(now: dt.datetime | None = None) -> str:

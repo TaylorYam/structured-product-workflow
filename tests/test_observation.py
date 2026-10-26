@@ -45,7 +45,7 @@ STRIKE = dt.date(2026, 11, 2)  # 週一
 START = dt.date(2026, 11, 16)  # 第一個比價日（週一）
 FINAL = dt.date(2026, 12, 15)  # 最終比價日（週二）
 NON_CALL = f"Non-call period（第一個比價日 {START}）"
-NO_KI_TEXT = "No KI"
+NO_KI_TEXT = "-"
 D = Decimal
 
 
