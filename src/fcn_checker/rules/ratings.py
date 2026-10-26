@@ -14,8 +14,8 @@
   只寫保證機構評等的範本（CA、JPM、Nomura、SG：發行機構是工具公司，#241）：文件寫明發行機構沒有評等時發行機構評等
   不適用 → 不核對；沒寫明或寫了評等時 parser 交缺漏／不合法 → 需人工覆核（parsers/ratings.py 的 `unrated`）。
 
-只有上手註冊表標了 `Issuer.ratings` 的上手才跑（#240 先做 HSBC、MS、DBS、Natixis、UBS，#241 CA、JPM、Nomura、SG，
-其他上手 #242、#243）。
+只有上手註冊表標了 `Issuer.ratings` 的上手才跑：14 家都標了（#240 HSBC、MS、DBS、Natixis、UBS，#241 CA、JPM、Nomura、SG，
+#242 Citi、GS、BNP、BBVA，#243 BARC）；新上手上線時評等還沒做的先不標，不產生結果（docs/checker/issuer-onboarding.md §6.2a）。
 """
 
 from __future__ import annotations

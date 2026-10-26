@@ -14,12 +14,16 @@ from decimal import Decimal
 
 from ..schema import DetectionResult, Evidence, Line, ParsedField
 from ..text import squash
-from . import barc, iis, money, price_table
+from . import barc, iis, money, price_table, ratings
 from .common import derived
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "barc-zh-iis"
-PARSER_VERSION = "2"  # 2：價格表改由 parsers/price_table.py 讀（Issue #288）
+# 2：價格表改由 parsers/price_table.py 讀（Issue #288）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #243）
+PARSER_VERSION = "3"
+# 發行機構信用評等（#243）：商品簡介第 4 點 `發行機構之長期債務信用評等：A+（標準普爾長期債務信用評等）/…。`，
+# 寫法同說明書（評等在評等機構前面）
+RATINGS = (ratings.RatingPlace("商品簡介第 4 點", r"發行機構之長期債務信用評等：(?P<body>.+?)。", rating_first=True),)
 SECTIONS = ("警語：", "相關機構事業概況：", "商品簡介：", "收益分配事項：", "本商品之費用明細表：")
 PRICE_TABLE = replace(barc.PRICE_TABLE, where="收益分配事項價格表")  # 同說明書第 15 條價格表
 PCT_FIELDS = (("strike", "strike_pct"), ("ko", "ko_pct"), ("ki", "ki_pct"))
@@ -52,6 +56,7 @@ PROVIDED = frozenset(
         "distributor_names",
         "distributor_addresses",
         *(f"fee_{label}" for label in iis.FEES),
+        *ratings.FIELDS,
     }
 )
 
@@ -240,4 +245,5 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         ("分銷費用", r"分銷費用[^%]{0,60}?"),
     ):
         put(f"fee_{label}", pattern + iis.RATE)
+    fields.update(ratings.fields(ti.lines, RATINGS))
     return iis.IisSheet(fields, ti, frozenset(provided))

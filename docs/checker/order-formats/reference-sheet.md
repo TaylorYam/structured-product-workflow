@@ -70,7 +70,7 @@
 | UL_n_進場價／執行價／下限價／KO價 | `underlying_n_initial_price` 等 | 表上值四捨五入（half-up）到 4 位後與說明書價格表相等；沒有 KI 時下限價必須是 `-`；說明書沒有 KO 價（SG、MS Non-Call = 天期）時 KO 價 = 期初價格，照常比對。期初定價為 `VWAP` 時不比對，改為**回填欄位**（§5） |
 | 風險等級 | `risk_level` | RR 核對（全文風險等級、固定警語裡的 RR、投資人須知商品簡介的 RR）的期望值：`RR1`～`RR5`；`待算`、空白或其他值 → RR 相關項目轉人工覆核。資料庫匯出的是自算風險等級（workflow ADR 0023）。不是必要欄，表上沒有時用審查標準 `risk.level`（見[審查標準](../rules/review-standard.md) §2.21）。不在匯入格式裡，「回填後」不帶 |
 | 發行機構 | — | 不是必要欄；表上有才確認該列屬於此上手（§2） |
-| 發行機構評等_標準普爾／_穆迪／_惠譽、保證機構評等_標準普爾／_穆迪／_惠譽 | `issuer_rating_sp`、`issuer_rating_moodys`、`issuer_rating_fitch`、`guarantor_rating_*` | 交易日當時的長期債務信用評等（Issue #240）。不是必要欄：資料庫來源從評等表（`workflow.credit_rating`，生效日 ≤ 交易日的最新一筆）帶出，沒有保證機構或評等表沒有那家時空白；舊版 Excel 沒有這些欄時，已做評等核對的上手（HSBC、MS、DBS、Natixis、UBS、Citi、GS、BNP、BBVA；CA、JPM、Nomura、SG 只看保證機構評等欄，#241）評等轉人工覆核。說明書與投資人須知的評等依[共用規則](../rules/shared-check-rules.md) §10 比對。不在匯入格式內（不回填） |
+| 發行機構評等_標準普爾／_穆迪／_惠譽、保證機構評等_標準普爾／_穆迪／_惠譽 | `issuer_rating_sp`、`issuer_rating_moodys`、`issuer_rating_fitch`、`guarantor_rating_*` | 交易日當時的長期債務信用評等（Issue #240）。不是必要欄：資料庫來源從評等表（`workflow.credit_rating`，生效日 ≤ 交易日的最新一筆）帶出，沒有保證機構或評等表沒有那家時空白；舊版 Excel 沒有這些欄時，做評等核對的上手（14 家都做，#240～#243；CA、JPM、Nomura、SG 只看保證機構評等欄，#241）評等轉人工覆核。說明書與投資人須知的評等依[共用規則](../rules/shared-check-rules.md) §10 比對。不在匯入格式內（不回填） |
 | 庫存狀態、當日比價、Product、私銀註記、UF、UL_n_Memo | — | 存續或內部資訊，不核對 |
 | 其他欄（分公司_n、交易日期、下一比價日、TS/IIS完成檢核等） | — | 略過 |
 

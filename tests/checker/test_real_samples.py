@@ -1,6 +1,6 @@
 """本機真實樣本測試（說明書內部規則）：只在本機 data/ 有真實說明書時執行，CI 自動略過。
 
-所有 BARC 樣本配一份只有商品代號與發行機構的合成參考條件表，讓說明書內部規則與審查標準對每份樣本都跑過；
+所有 BARC 樣本配一份只有商品代號、發行機構與發行機構評等（初始評等表，#243）的合成參考條件表，讓說明書內部規則與審查標準對每份樣本都跑過；
 表上事先填好的欄位比對見 test_real_samples_batch.py。測試碼不含任何真實商品代號或數值。
 """
 
@@ -29,7 +29,9 @@ DOC_ONLY_PREFIXES = ("standard.", "doc.", "derive.prices", "template.", "schedul
 @pytest.fixture(scope="module")
 def reports(tmp_path_factory):
     tmp = tmp_path_factory.mktemp("real_doc_rules")
-    rows = [{"TDCC Code": p.name[:12], "發行機構": "Barclays"} for p in PDFS if p.name.startswith("029")]
+    # 發行機構評等：初始評等表（#243）
+    ratings = {"發行機構評等_標準普爾": "A+", "發行機構評等_穆迪": "A1", "發行機構評等_惠譽": "AA-"}
+    rows = [{"TDCC Code": p.name[:12], "發行機構": "Barclays", **ratings} for p in PDFS if p.name.startswith("029")]
     sheet = build_reference_sheet(tmp / "codes_only.xlsx", rows)
     outcome = check_all(sheet, PDFS)
     return {i.term_sheet.name: i for i in outcome.items}
@@ -97,7 +99,10 @@ def test_document_rules_only_flag_old_format_documents(reports):
             ):
                 flagged[(x.rule_id, x.field)] += 1
     # 探勘結論：較早 3 份中文名稱尚未加「（不保本）」；寫交易日當時審查通過日期的依交易日核對成立（#120）
-    assert flagged == Counter({("standard.product_name", "name_zh"): 3})
+    # 其中 1 份寫惠譽評等調升前的 A+（第一章第 3 項、第二章 (7)），初始評等表不補歷史（#243）
+    assert flagged == Counter(
+        {("standard.product_name", "name_zh"): 3, ("standard.credit_rating", "issuer_ratings"): 2}
+    )
 
 
 def test_every_barc_sample_yields_isin_and_compare_dates_or_explicit_review(reports):

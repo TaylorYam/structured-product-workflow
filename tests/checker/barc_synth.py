@@ -29,7 +29,7 @@ from fcn_checker.issuers import BARC, Issuer
 from fcn_checker.schema import CheckReport
 from harness import STANDARD, check_sheet, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
-from reference_synth import Q4, ProductSpec, build_reference_sheet, price, reference_row, write_notes
+from reference_synth import Q4, ProductSpec, Ratings, build_reference_sheet, price, reference_row, write_notes
 
 FIXED_WARNING = STANDARD["risk"]["fixed_warning"]
 DISTRIBUTOR = STANDARD["distributor"]
@@ -99,6 +99,12 @@ class Spec(ProductSpec):
 
 def fmt_price(v: Decimal) -> str:
     return f"{v:,.4f}"
+
+
+def ratings_text(r: Ratings) -> str:
+    """發行機構評等（#243）：評等寫在評等機構前面，依標準普爾、穆迪、惠譽以 `/` 分隔
+    （`A+（標準普爾長期債務信用評等）/A1（穆迪長期債務信用評等）/…`）；說明書第一章第 3 項、第二章 (7) 與投資人須知同寫法。"""
+    return "/".join(f"{v}（{a}長期債務信用評等）" for a, v in r.stated())
 
 
 def _finish(w: PdfWriter, path: Path) -> Path:
@@ -246,7 +252,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     with w.verbatim():
         article(2, first)
         w.para(69.4, rest, width=44)
-    article(3, "發行機構名稱及其長期債務信用評等：英商巴克萊銀行股份有限公司（Barclays Bank PLC）")
+    article(3, "發行機構名稱及其長期債務信用評等：英商巴克萊銀行股份有限公司（Barclays Bank PLC）；")
+    w.para(69.4, ratings_text(s.ratings), width=44)  # 真實樣本沒有句號，直接接第 4 項
     article(4, "商品之發行評等：不適用。")
     article(5, f"計價幣別：{s.currency_zh}")
     article(6, f"商品面額與發行價格：每單位商品面額為{s.denom:,} {s.currency_zh}。發行價格為商品面額之100%。")
@@ -493,6 +500,11 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         sub(2, f"設立日期：{established}", x_num=67.7, x_body=96.0)
         sub(3, f"營業所在地：{addr}", x_num=67.7, x_body=96.0)
         sub(4, f"負責人姓名：{boss}", x_num=67.7, x_body=96.0)
+        if n == 1:  # 發行機構 (6)～(8)：(7) 信用評等沒有句號，直接接 (8)（#243）
+            sub(6, "財務狀況：請參閱以下第(8)點。", x_num=67.7, x_body=96.0)
+            sub(7, "信用評等：", x_num=67.7, x_body=96.0)
+            w.para(96.0, ratings_text(s.ratings), width=40)
+            sub(8, "經會計師查核簽證最近期財務報告中譯本之查核報告書：請參閱第二章。", x_num=67.7, x_body=96.0)
 
     # ---- 第三章 ----
     w.new_page()
@@ -704,6 +716,8 @@ def build_iis_pdf(
 
     def page2() -> None:
         w.line(20.5, "3.本商品風險程度：RR4")
+        para(f"4.發行機構之長期債務信用評等：{ratings_text(s.ratings)}。")  # #243
+        para("5.本商品之發行評等：不適用（本商品之受託或銷售對象僅限於專業投資人及OSU 客戶）。")
         w.line(20.5, f"6.計價幣別：{s.currency_zh}。")
         para(
             f"7.商品面額與發行價格：每單位商品面額為{s.denom:,} {s.currency_zh}，最低申購金額為"

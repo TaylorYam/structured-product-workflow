@@ -8,14 +8,17 @@
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 
 import openpyxl
 import pytest
 
+import barc_synth
 import hsbc_synth
-from barc_synth import SYNTH_ISIN, Spec, build_pdf
+from barc_synth import SYNTH_ISIN, build_pdf
+from fcn_checker import issuers
 from fcn_checker.batch import Category, check_batch, preview_batch
 from fcn_checker.config import RISK_LEVEL_PENDING
 from fcn_checker.ingestion import IngestionError
@@ -34,6 +37,13 @@ FMT = CONFIG.reference_format
 OTHER = "029199990002"
 PREFIXES = CONFIG.issuer_prefixes
 BARC_RATINGS = Ratings(sp="A+", moodys="A1", fitch="AA-")  # 初始評等表（migration 0024）的 Barclays 發行機構評等
+
+
+@dataclass
+class Spec(barc_synth.Spec):
+    """BARC 合成商品，發行機構評等同初始評等表：資料庫帶出的是評等表的值，BARC 也核對評等（#243）。"""
+
+    ratings: Ratings = BARC_RATINGS
 
 
 RISK_DETAIL = RiskDetail(
@@ -218,8 +228,11 @@ def checked_hsbc(pg, tmp_path):
 
 
 @pytest.mark.db
-def test_a_rating_changed_after_checking_is_stale_only_for_issuers_with_rating_checks(pg, tmp_path) -> None:
-    """有做評等核對的上手（HSBC）：評等在核對後改了 → 不回填、不鎖住；沒做的上手（BARC）照常回填。"""
+def test_a_rating_changed_after_checking_is_stale_only_for_issuers_with_rating_checks(
+    pg, tmp_path, monkeypatch
+) -> None:
+    """有做評等核對的上手（HSBC）：評等在核對後改了 → 不回填、不鎖住；評等核對還沒做的上手（14 家都做了，
+    以 BARC 假裝是上線時還沒做評等的新上手）照常回填。"""
     spec, outcome, receipt = checked_hsbc(pg, tmp_path)
     new_rating(pg, "HSBC", spec)
 
@@ -231,6 +244,10 @@ def test_a_rating_changed_after_checking_is_stale_only_for_issuers_with_rating_c
     (tmp_path / "barc").mkdir()
     outcome, receipt = run_from_database(pg, tmp_path / "barc", pdfs_of(tmp_path / "barc", barc))
     new_rating(pg, "BARC", barc)
+    by_code = issuers.by_code
+    monkeypatch.setattr(
+        issuers, "by_code", lambda code: replace(by_code(code), ratings=False) if code == "BARC" else by_code(code)
+    )
 
     result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
     assert (result.locked, result.stale) == ((barc.product_code,), ())
