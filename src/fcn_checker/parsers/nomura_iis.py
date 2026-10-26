@@ -14,11 +14,21 @@ from decimal import Decimal
 from .. import standard_fields
 from ..schema import DetectionResult, Evidence, Line, ParsedField
 from ..text import squash
-from . import iis, money, nomura
+from . import iis, money, nomura, ratings
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "nomura-zh-iis"
-PARSER_VERSION = "2"  # 2：無 KI 要有第四的明確到期贖回款（Issue #297）
+# 2：無 KI 要有第四的明確到期贖回款（Issue #297）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
+PARSER_VERSION = "3"
+# 保證機構信用評等（#241）：第二商品簡介 4. `…截至本中文投資人須知刊印日期，發行機構未獲評等，保證機構Nomura Holdings, Inc.之
+# 長期債務評等為穆迪Baa1（Moody's）、…。`
+GUARANTOR_RATINGS = (
+    ratings.RatingPlace(
+        "商品簡介 4.", r"長期債務信用評等：截至[^。]+?，保證機構[^，。]+?之長期債務評等為(?P<body>.+?)。"
+    ),
+)
+# 發行機構（工具公司）沒有評等：同一句寫「發行機構未獲評等」
+ISSUER_UNRATED = (ratings.RatingPlace("商品簡介 4.", r"長期債務信用評等：截至[^，。]+，發行機構未獲評等，"),)
 TITLE = "中文投資人須知"
 SECTIONS = (
     "本商品之投資風險警語",
@@ -68,6 +78,7 @@ PROVIDED = frozenset(
         "distributor_phones",
         "minimum_issue_size",
         *(f"fee_{label}" for label in iis.FEES),
+        "guarantor_ratings",  # 只寫保證機構評等（#241）；發行機構沒有評等，確認後交不適用，不列在這裡
     }
 )
 
@@ -272,4 +283,5 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         )
     else:
         fields.update(nomura.fee_rates(fees))
+    fields.update(ratings.fields(text_lines, guarantor=GUARANTOR_RATINGS, issuer_unrated=ISSUER_UNRATED))
     return iis.IisSheet(fields, ti, PROVIDED)

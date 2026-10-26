@@ -27,8 +27,13 @@ import fitz
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
 from reference_synth import (
+    FITCH,
+    MOODYS,
+    NO_RATINGS,
+    SP,
     UL,
     ProductSpec,
+    Ratings,
     build_reference_sheet,
     price,
     reference_row,
@@ -53,6 +58,11 @@ EXCHANGE = {"UN": "紐約證券交易所", "UW": "那斯達克交易所", "JT": 
 QUOTE = {"US": "美元", "JT": "日圓"}  # 標的報價幣別
 PRICING = {"close": "收盤價", "open": "開盤價", "vwap": "VWAP"}  # 參考條件表「期初定價」
 CN = ("一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二")
+
+
+def ratings_text(r: Ratings) -> str:
+    """評等（#241）：依穆迪、標準普爾、惠譽，`/` 分隔（`穆迪A1/標準普爾A+/惠譽AA-`）。"""
+    return "/".join(f"{a}{v}" for a, v in r.stated(MOODYS, SP, FITCH))
 
 
 def underlyings(count: int, market: str) -> tuple[UL, ...]:
@@ -93,6 +103,8 @@ class Spec(ProductSpec):
     iis_pages: int = 4
     wrap_initial: bool = False  # 說明書第 9 項、第 16 項價格表第 1 檔期初訂價的幣別字換到下一行（真實樣本，Issue #278）
     wrap_currency: bool = False  # 說明書價格表每格的幣別字都換到下一行（`1,234.0000 日` / `圓`，範本規格 §5）
+    ratings: Ratings = NO_RATINGS  # 發行機構評等：預設文件寫發行機構沒有評等、評等表也沒有；給值時說明書第二章發行機構那段改寫評等（#241）
+    guarantor_ratings: Ratings = Ratings()  # 保證機構評等（#241）
 
     def __post_init__(self) -> None:
         self.underlyings = underlyings(self.count, self.market)
@@ -451,6 +463,7 @@ ARTICLE_TITLES = {
     1: "商品名稱：",
     2: "商品風險程度：",
     3: "發行機構：",
+    4: "商品之發行評等：專業投資人及OSU 客戶不適用。",
     5: "計價幣別：",
     6: "商品面額：",
     7: "計價貨幣本金保本率：不保本。本商品於到期的贖回價值可能低於投資本金。",
@@ -484,7 +497,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             d.article(n, f"{title}{ISSUER}。")
             d.text(
                 36,
-                "保證機構名稱及其長期債務信用評等：虛構銀行。截至本中文產品說明書刊印日期，其長期債務信用評等為虛構評等",
+                "保證機構名稱及其長期債務信用評等：虛構銀行。截至本中文產品說明書刊印日期，其長期債務信用評等為"
+                + ratings_text(s.guarantor_ratings),  # 真實樣本沒有句號，直接接第 4 項
             )
         elif n == 5:
             d.article(n, f"{title}{s.currency_zh}({s.ccy}) 。")
@@ -529,10 +543,16 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         f"(1) 事業名稱：{ISSUER}",
         "(2) 設立日期：西元2003 年12 月30 日",
         "(3) 營業所在地：法國 (1 Fictional Avenue)",
+        "(7) 信用評等："
+        + ("發行機構無單獨信用評等，詳見下述保證機構之信用評等" if s.ratings == NO_RATINGS else ratings_text(s.ratings))
+        + "。",
+        "(8) 經會計師查核簽證最近期財務報告中譯本之查核報告書：不核對。",
     ):
         d.text(36, t)
     d.text(36, "2. 保證機構：")
     d.text(36, "(1) 事業名稱：虛構銀行(Fictional Bank)")
+    d.text(36, f"(7) 信用評等：{ratings_text(s.guarantor_ratings)}。")
+    d.text(36, "(8) 保證條件、範圍：本商品由保證機構無條件及不可撤銷，依保證書之條款保證。")
     d.text(36, "3. 總代理人、計算代理機構、受託或銷售機構、保管機構及其他相關機構：")
     for t in (
         "(1) 總代理人：",
@@ -683,6 +703,8 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
     for t in (
         "(1) 受託對象：專業投資人及OSU 客戶。",
         "(3) 本商品之風險程度：本商品風險等級為RR4，適合客戶投資風險承受度RR4(穩健型)等級(含)以上之專業投資人。",
+        "(4) 保證機構之長期債務信用評等：虛構銀行，長期債務信用評等為" + ratings_text(s.guarantor_ratings) + "。",
+        "(5) 本商品之發行評等：專業投資人及OSU 客戶不適用。",
         f"(6) 計價幣別：{s.currency_zh}({s.ccy})。",
         "(7) 計價貨幣本金保本率：不保本。本商品於到期的贖回價值可能低於投資本金。",
         "(8) 投資本金達成100%保本之各項條件：不適用。本商品為不保障本金之結構型商品。",

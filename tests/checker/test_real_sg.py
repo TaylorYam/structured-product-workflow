@@ -2,7 +2,8 @@
 
 斷言與探勘結論一致（docs/checker/rules/sg-check-rules.md §5）：6 份（含 2 份舊版面）都辨識為 SG 範本；只有 §5 列出的差異
 （舊範本的「受託投資」、舊負責人、交易日早於審查標準最早日期的審查通過日期、一檔標的除權息同比例轉人工覆核；
-沿用舊字的 2026 年文件也有「受託投資」，交易日在 2026-10-15 以前特例通過，#247）。參考條件表用含 SG 列的 data/orders/核對表格式..xlsx。
+沿用舊字的 2026 年文件也有「受託投資」，交易日在 2026-10-15 以前特例通過，#247）。參考條件表用含 SG 列的 data/orders/核對表格式..xlsx，
+加上初始評等表的評等欄（#241）：2023、2025 年各 1 份寫保證機構惠譽評等調升前的 A，評等表不補歷史，說明書與投資人須知都判不一致。
 投資人須知（Issue #213，docs/checker/templates/sg-zh-iis.md）：6 份都辨識為 SG 投資人須知、每個範本欄位都讀得到，和同商品說明書
 讀出的值一致；只有探勘結論的差異（舊範本固定警語 0 次、舊範本一檔標的除權息的 4 個價格；6 份警語七「受託投資」特例通過）。
 說明書通過的 4 份連同投資人須知都通過，回填並打 V。
@@ -22,7 +23,7 @@ from fcn_checker.schema import CheckStatus as S
 from fcn_checker.standard_fields import Occurrence
 from fcn_checker.text import squash
 from harness import REVIEW_STANDARD, ROOT, STANDARD, check_all
-from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, requires
+from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, rated_check_format, requires
 
 pytestmark = [
     pytest.mark.real_samples,
@@ -33,8 +34,9 @@ WARNING = squash(STANDARD["issuer"]["sg"]["fixed_warning"])
 
 
 @pytest.fixture(scope="module")
-def items():
-    outcome = check_all(CHECK_FORMAT, pdfs("037*.pdf"))
+def items(tmp_path_factory):
+    sheet = rated_check_format(tmp_path_factory.mktemp("rated"))  # 加評等欄（#241）
+    outcome = check_all(sheet, pdfs("037*.pdf"))
     return [i for i in outcome.items if i.term_sheet.name.endswith("_TS.pdf")], [
         i for i in outcome.items if i.term_sheet.name.endswith("_IIS.pdf")
     ]
@@ -60,12 +62,15 @@ def test_samples_only_differ_where_the_exploration_said(items):
             ("standard.chairman", "value_mismatch"): 1,  # 舊範本的前任負責人
             ("standard.fixed_warning", "occurrence_count"): 1,  # 舊範本的警語用「受託投資」
             # 「受託投資」（舊範本 4 處；沿用舊字的 2026 年舊版面文件 1 處）：交易日在 2026-10-15 以前，特例通過（#247）
+            # 2023 與 2025 年各 1 份寫保證機構惠譽評等調升前的 A（第一章第 3 項、第二章 (7) 各一處）；
+            # 初始評等表只有現在的評等、不補歷史（#240、#241），每處各判不一致
+            ("standard.credit_rating", "value_mismatch"): 4,
         }
     )
     passed = [i for i in term_sheets if i.report.status == S.PASS]
-    # 新版面 2026 年的 3 份（含單一標的、VWAP）、寫 2025-06-24 的 2025 年那份（Issue #239），
-    # 以及只差「受託投資」的 2026 年舊版面那份（#247）
-    assert len(passed) == 5
+    # 新版面 2026 年的 3 份（含單一標的、VWAP），以及只差「受託投資」的 2026 年舊版面那份（#247）；
+    # 寫 2025-06-24 的 2025 年那份審查通過日期通過（Issue #239），但惠譽評等是調升前的（#241）
+    assert len(passed) == 4
     # 封面受託機構地址「3段」與第二章簡稱「玉山證券」都是審查標準的等價寫法
     for field in ("distributor_address_cover", "distributor_name_ch2"):
         found = [r for i in term_sheets for r in i.report.results if r.field == field]
@@ -99,20 +104,21 @@ def test_sg_investor_sheets_are_recognised(items):
             # 警語七「為於中華民國境內受託投資」6 份：交易日在 2026-10-15 以前，特例通過（#247）
             ("standard.fixed_warning", S.MISMATCH): 1,  # 2023 舊範本警語一用「受託投資」，固定警語 0 次
             ("iis.underlying_prices", S.REVIEW_REQUIRED): 4,  # 同說明書：一檔標的四個價格是除權息後的同一比例（#222）
+            ("standard.credit_rating", S.MISMATCH): 2,  # 同說明書：2023、2025 年各 1 份寫調升前的惠譽評等（#241）
         }
     )
 
 
 def test_term_sheets_that_pass_are_filled_with_their_investor_sheets(tmp_path, items):
-    """說明書通過的 5 份：投資人須知的「受託投資」特例通過（#247）後也都通過，直接回填並打 V；
-    另 1 檔（舊範本，分割調整等）的說明書與投資人須知進錯誤清單。"""
+    """說明書通過的 4 份：投資人須知的「受託投資」特例通過（#247）後也都通過，直接回填並打 V；
+    另 2 檔（舊範本，分割調整等；2025 年那份惠譽評等是調升前的，#241）的說明書與投資人須知進錯誤清單。"""
     session = PanelSession(REVIEW_STANDARD, ROOT / "config", install_root=tmp_path)
-    session.select(CHECK_FORMAT, pdfs("037*.pdf"))
+    session.select(rated_check_format(tmp_path), pdfs("037*.pdf"))  # 加評等欄（#241）
     session.load_preview()
     batch = session.start_check().batch.items
     pairs = {i.term_sheet.name[:12]: i for i in batch if i.term_sheet.name.endswith("_IIS.pdf")}
     passed = [i for i in batch if i.term_sheet.name.endswith("_TS.pdf") and i.report.status == S.PASS]
-    assert len(passed) == 5  # 2025 年那份寫 2025-06-24（Issue #239）；2026 年舊版面那份「受託投資」特例通過（#247）
+    assert len(passed) == 4  # 2026 年舊版面那份「受託投資」特例通過（#247）；2025 年那份惠譽評等不一致（#241）
     assert all(pairs[ts.term_sheet.name[:12]].report.status == S.PASS for ts in passed)
     assert all(ts.fills_sheet for ts in passed)
     receipt = session.save(tmp_path / "reports", now=dt.datetime(2030, 1, 1, 9, 0))
@@ -127,7 +133,7 @@ def test_term_sheets_that_pass_are_filled_with_their_investor_sheets(tmp_path, i
         assert row[head["ISIN Code"]] == sheet.f("isin").value  # 回填的 ISIN 也等於投資人須知
         assert row[head["發行日"]].date() == sheet.f("issue_date").value
     errors = {r[1] for r in wb["錯誤清單"].iter_rows(min_row=2, values_only=True) if str(r[1]).startswith("037")}
-    assert len(errors) == 2  # 舊範本那 1 檔的說明書與投資人須知（一條錯訊一列，依 PDF 檔名算）
+    assert len(errors) == 4  # 舊範本與 2025 年那 2 檔的說明書與投資人須知（一條錯訊一列，依 PDF 檔名算）
 
 
 def _lines(path):

@@ -1,6 +1,8 @@
-"""信用評等核對（#240、#242）：說明書與投資人須知寫的發行機構評等 = 參考條件表交易日當時的評等（rules/ratings.py）。
+"""信用評等核對（#240～#242）：說明書與投資人須知寫的發行機構／保證機構評等 = 參考條件表交易日當時的評等（rules/ratings.py）。
 
 黑箱：各上手合成說明書＋投資人須知（評等段落照真實寫法，值虛構）＋參考條件表一列，經批量入口核對。
+只寫保證機構評等的上手（CA、JPM、Nomura、SG，#241）發行機構是工具公司，文件寫「無單獨信用評等」等，不核對發行機構評等；
+沒寫明或發行機構那段寫了評等時轉人工覆核。
 發行機構與保證機構都寫的上手（Citi、GS、BNP、BBVA，#242）兩個都比，各自對應參考條件表的發行機構、保證機構評等欄。
 另有評等段落讀法（parsers/ratings.py 的 `parse`）的直接測試，涵蓋真實文件的全形／半形括號、彎引號與換行。
 """
@@ -15,15 +17,19 @@ import pytest
 import barc_synth
 import bbva_synth
 import bnp_synth
+import ca_synth
 import citi_synth
 import dbs_synth
 import gs_synth
 import hsbc_synth
+import jpm_synth
 import ms_synth
 import natixis_synth
+import nomura_synth
+import sg_synth
 import ubs_synth
 from fcn_checker.parsers.ratings import parse
-from fcn_checker.rating_formats import FITCH, MOODYS, SP, canonical
+from fcn_checker.rating_formats import FITCH, GUARANTOR, ISSUER, MOODYS, SP, canonical
 from fcn_checker.rules.ratings import RULE_ID
 from fcn_checker.schema import CheckReport
 from fcn_checker.schema import CheckStatus as S
@@ -32,13 +38,18 @@ from harness import field_problems as problems
 from pdf_writer import Edit
 from reference_synth import OLD_REFERENCE_HEADERS, REFERENCE_HEADERS, Ratings, build_reference_sheet, reference_row
 
-# 上手 → （合成器, 參考條件表列, 說明書幾處評等段落）
-ISSUERS: dict[str, tuple[Any, Any, int]] = {
-    "HSBC": (hsbc_synth, reference_row, 2),  # 第一章第 3 項、第二章 (7)
-    "MS": (ms_synth, reference_row, 2),  # 第一章第 3 項、第二章 (7)
-    "DBS": (dbs_synth, dbs_synth.row, 2),  # 商品基本資料、相關機構事業概況 (7)
-    "NATIXIS": (natixis_synth, natixis_synth.row, 3),  # 封面、第一章第 3 項、第二章 (7)
-    "UBS": (ubs_synth, ubs_synth.row, 2),  # 商品基本資料三、相關機構事業概況一
+# 上手 → （合成器, 參考條件表列, 說明書幾處評等段落, 核對的機構）
+ISSUERS: dict[str, tuple[Any, Any, int, str]] = {
+    "HSBC": (hsbc_synth, reference_row, 2, ISSUER),  # 第一章第 3 項、第二章 (7)
+    "MS": (ms_synth, reference_row, 2, ISSUER),  # 第一章第 3 項、第二章 (7)
+    "DBS": (dbs_synth, dbs_synth.row, 2, ISSUER),  # 商品基本資料、相關機構事業概況 (7)
+    "NATIXIS": (natixis_synth, natixis_synth.row, 3, ISSUER),  # 封面、第一章第 3 項、第二章 (7)
+    "UBS": (ubs_synth, ubs_synth.row, 2, ISSUER),  # 商品基本資料三、相關機構事業概況一
+    # 只寫保證機構評等（#241）：第一章第 3 項、第二章保證機構 (7)
+    "CA": (ca_synth, ca_synth.row, 2, GUARANTOR),
+    "JPM": (jpm_synth, jpm_synth.row, 2, GUARANTOR),
+    "NOMURA": (nomura_synth, nomura_synth.row, 2, GUARANTOR),
+    "SG": (sg_synth, reference_row, 2, GUARANTOR),
 }
 # 發行機構與保證機構都寫的上手（#242）→ （合成器, 參考條件表列, 說明書發行機構幾處, 說明書保證機構幾處）；投資人須知各一處
 BOTH: dict[str, tuple[Any, Any, int, int]] = {
@@ -48,6 +59,10 @@ BOTH: dict[str, tuple[Any, Any, int, int]] = {
     "BBVA": (bbva_synth, bbva_synth.row, 2, 2),  # 第一章第 3 項、第二章 (g)
 }
 AGENCIES = ("標準普爾", "穆迪", "惠譽")
+
+
+def role_of(code: str) -> str:
+    return ISSUERS[code][3]
 
 
 def check(
@@ -60,7 +75,8 @@ def check(
     headers=REFERENCE_HEADERS,
     **overrides: Any,
 ) -> dict[str, CheckReport]:
-    """合成說明書＋投資人須知＋參考條件表一列（`overrides` 以 Excel 欄名覆寫），回傳 {"TS"/"IIS": CheckReport}。"""
+    """合成說明書＋投資人須知＋參考條件表一列（`overrides` 以 Excel 欄名覆寫），回傳 {"TS"/"IIS": CheckReport}。
+    `ratings` 是發行機構評等（只寫保證機構評等的上手給值時，說明書改寫發行機構評等），`guarantor_ratings` 是保證機構評等。"""
     synth, row, *_ = ISSUERS[code] if code in ISSUERS else BOTH[code]
     spec = synth.Spec()
     if ratings is not None:
@@ -86,20 +102,21 @@ def test_stated_ratings_equal_to_the_reference_sheet_pass(tmp_path, code) -> Non
         report = reports[kind]
         assert report.status == S.PASS, (kind, problems(report))
         found = rating_results(report)
-        assert len(found) == count * 3, kind  # 每處三家評等機構各一筆
+        assert len(found) == count * 3, kind  # 每處三家評等機構各一筆；只寫保證機構的上手沒有發行機構的結果
         assert {r.status for r in found} == {S.PASS}
-        assert {r.item.name.split("（")[0] for r in found} == {f"發行機構{a}評等" for a in AGENCIES}
+        assert {r.item.name.split("（")[0] for r in found} == {f"{role_of(code)}{a}評等" for a in AGENCIES}
         assert all(r.document_evidence for r in found)
 
 
 @pytest.mark.parametrize("code", ISSUERS)
 def test_one_agency_different_from_the_reference_sheet_is_a_mismatch(tmp_path, code) -> None:
-    reports = check(tmp_path, code, **{"發行機構評等_惠譽": "A-"})  # 文件寫 AA
+    role = role_of(code)
+    reports = check(tmp_path, code, **{f"{role}評等_惠譽": "A-"})  # 文件寫 AA
     for kind in ("TS", "IIS"):
         found = rating_results(reports[kind])
         bad = [r for r in found if r.status != S.PASS]
         assert bad and all(r.status == S.MISMATCH for r in bad), kind
-        assert {r.item.name.split("（")[0] for r in bad} == {"發行機構惠譽評等"}
+        assert {r.item.name.split("（")[0] for r in bad} == {f"{role}惠譽評等"}
         assert len(bad) == (ISSUERS[code][2] if kind == "TS" else 1), "每處都報"
         assert all((r.expected, r.actual) == ("A-", "AA") for r in bad)
         assert {(rid, st) for rid, _, st in problems(reports[kind])} == {(RULE_ID, S.MISMATCH)}
@@ -162,14 +179,15 @@ def test_a_stated_agency_blank_in_the_reference_sheet_needs_review(tmp_path) -> 
     assert {(rid, st) for rid, _, st in problems(reports["TS"])} == {(RULE_ID, S.REVIEW_REQUIRED)}
 
 
-@pytest.mark.parametrize("code", ["UBS", "HSBC"])
+@pytest.mark.parametrize("code", ["UBS", "HSBC", "SG"])
 def test_entity_missing_from_the_rating_table_needs_review(tmp_path, code) -> None:
-    blank = {f"發行機構評等_{a}": None for a in AGENCIES}
+    role = role_of(code)
+    blank = {f"{role}評等_{a}": None for a in AGENCIES}
     reports = check(tmp_path, code, **blank)
     for kind in ("TS", "IIS"):
         [result] = rating_results(reports[kind])
         assert result.status == S.REVIEW_REQUIRED
-        assert f"評等表沒有 {code} 發行機構" in result.message
+        assert f"評等表沒有 {code} {role}" in result.message
         assert {(rid, st) for rid, _, st in problems(reports[kind])} == {(RULE_ID, S.REVIEW_REQUIRED)}
 
 
@@ -180,8 +198,53 @@ def test_old_reference_sheet_without_rating_columns_needs_review(tmp_path, code)
     for kind in ("TS", "IIS"):
         [result] = rating_results(reports[kind])
         assert result.status == S.REVIEW_REQUIRED
-        assert "沒有發行機構評等欄（舊版參考條件表）" in result.message
+        assert f"沒有{role_of(code)}評等欄（舊版參考條件表）" in result.message
         assert {(rid, st) for rid, _, st in problems(reports[kind])} == {(RULE_ID, S.REVIEW_REQUIRED)}
+
+
+UNRATED_ISSUERS = ("CA", "JPM", "NOMURA", "SG")  # 發行機構沒有評等、只寫保證機構評等（#241）
+
+
+@pytest.mark.parametrize("code", UNRATED_ISSUERS)
+def test_issuer_stated_as_unrated_is_not_checked(tmp_path, code) -> None:
+    """文件寫明發行機構（工具公司）沒有評等（「無單獨信用評等」「未獲評等」「不適用」「無」，評等項目只寫保證機構）：
+    不核對發行機構評等；參考條件表發行機構評等欄有值（例：手動填錯）也不比、不轉人工覆核。"""
+    issuer_columns = {f"{ISSUER}評等_{a}": "BBB" for a in AGENCIES}
+    reports = check(tmp_path, code, **issuer_columns)
+    for kind in ("TS", "IIS"):
+        report = reports[kind]
+        assert report.status == S.PASS, (kind, problems(report))
+        assert all(r.item.name.startswith(GUARANTOR) for r in rating_results(report))
+
+
+@pytest.mark.parametrize("code", UNRATED_ISSUERS)
+def test_issuer_stating_a_rating_needs_review(tmp_path, code) -> None:
+    """說明書第二章發行機構那段改寫評等（不再寫發行機構沒有評等）：發行機構評等轉人工覆核、寫出位置，不當成沒有評等放過；
+    保證機構評等照常比。"""
+    reports = check(tmp_path, code, ratings=Ratings())
+    found = rating_results(reports["TS"])
+    [review] = [r for r in found if r.status != S.PASS]
+    assert (review.status, review.item.name) == (S.REVIEW_REQUIRED, f"{ISSUER}信用評等")
+    assert "發行機構 (" in review.message and "找不到「發行機構沒有評等」的寫法" in review.message
+    assert len(found) == 1 + 2 * 3 and all(r.item.name.startswith(GUARANTOR) for r in found if r is not review)
+    assert reports["IIS"].status == S.PASS, problems(reports["IIS"])
+
+
+def test_issuer_paragraph_naming_an_agency_needs_review() -> None:
+    """找到「發行機構沒有評等」的寫法、但那段文字裡有評等機構名稱：不合法，轉人工覆核（不猜是不是有評等）。"""
+    from fcn_checker.parsers.ratings import RatingPlace, fields
+    from fcn_checker.schema import FieldStatus, Line
+
+    text = "3.發行機構：虛構公司（穆迪A2）。保證機構名稱及其長期債務信用評等：虛構銀行。"
+    lines = [Line(1, 0, 0, 100, 10, text)]
+    place = RatingPlace("第一章第 3 項", r"3\.發行機構：[^。]+。保證機構名稱及其長期債務信用評等：")
+    pf = fields(lines, issuer_unrated=[place])["issuer_ratings"]
+    assert pf.status == FieldStatus.INVALID
+    assert pf.note.startswith("第一章第 3 項寫了發行機構的評等機構") and pf.evidence
+    ok = fields([Line(1, 0, 0, 100, 10, text.replace("（穆迪A2）", ""))], issuer_unrated=[place])["issuer_ratings"]
+    assert ok.status == FieldStatus.NOT_APPLICABLE and "第一章第 3 項" in ok.note
+    with pytest.raises(ValueError):
+        fields(lines)  # 發行機構評等段落與「沒有評等」的寫法要剛好給一個
 
 
 def test_unreadable_rating_needs_review(tmp_path) -> None:
@@ -343,6 +406,16 @@ def test_parse_reads_the_issuer_and_guarantor_wordings(body, expected) -> None:
         ("標準普爾評等A+、DBRS評等AA（high）、R&I評等A+", {"標準普爾": "A+"}),  # 不追蹤的評等機構不交出
         ("標準普爾評等A－", {"標準普爾": "A-"}),  # 全形減號
         ("Moody＇s評等Aa2/Standard&Poor＇s評等A+", {"穆迪": "Aa2", "標準普爾": "A+"}),  # 只寫英文、全形撇號
+        ("穆迪A1/標準普爾A+/惠譽AA-", {"穆迪": "A1", "標準普爾": "A+", "惠譽": "AA-"}),  # CA：名稱直接接評等
+        (  # JPM：英文名稱在括號裡、評等在後面
+            "標準普爾（Standard&Poor's）AA-、穆迪（Moody’s）Aa2、惠譽（Fitch）AA",
+            {"標準普爾": "AA-", "穆迪": "Aa2", "惠譽": "AA"},
+        ),
+        (  # Nomura：英文名稱寫在評等後面（#241）
+            "穆迪Baa1（Moody's）、標準普爾BBB+（Standard&Poor's）、惠譽A-（Fitch）",
+            {"穆迪": "Baa1", "標準普爾": "BBB+", "惠譽": "A-"},
+        ),
+        ("標準普爾A，穆迪A1，惠譽A+", {"標準普爾": "A", "穆迪": "A1", "惠譽": "A+"}),  # SG 第二章
     ],
 )
 def test_parse_reads_agency_and_rating_pairs(body, expected) -> None:
@@ -361,6 +434,7 @@ def test_parse_reads_agency_and_rating_pairs(body, expected) -> None:
         ("穆迪評等A1或A2", "穆迪有多個評等（A1、A2）"),
         ("標準普爾評等Aa2", "標準普爾評等「Aa2」不是標準普爾的評等寫法"),
         ("惠譽評等AA，Fitch評等AA-，標準普爾評等A", "惠譽寫了兩個不同的評等（AA、AA-）"),
+        ("穆迪Baa1（Moody's）A1", "穆迪寫了兩個不同的評等（Baa1、A1）"),  # 評等後面的英文名稱後面又有評等
         ("長期債務信用評等為虛構評等", "段落裡找不到標準普爾、穆迪或惠譽"),
     ],
 )

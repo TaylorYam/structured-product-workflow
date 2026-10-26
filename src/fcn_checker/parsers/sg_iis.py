@@ -15,12 +15,22 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, Line, ParsedField
 from ..standard_fields import Occurrence
 from ..text import squash
-from . import iis, money, price_table, sg, sg_tables
+from . import iis, money, price_table, ratings, sg, sg_tables
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "sg-zh-iis"
-# 2：價格表改由 parsers/price_table.py 讀（Issue #288）；3：單一評價日寫法「評價日：」（Issue #130）
-PARSER_VERSION = "3"
+# 2：價格表改由 parsers/price_table.py 讀（Issue #288）；3：單一評價日寫法「評價日：」（Issue #130）；
+# 4：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
+PARSER_VERSION = "4"
+# 保證機構信用評等（#241）：商品簡介 `保證機構之長期債務信用評等：截至本中文投資人須知刋印日期，標準普爾A、穆迪A1、惠譽A+`
+# （後面直接接「本商品之發行評等」）
+GUARANTOR_RATINGS = (
+    ratings.RatingPlace("商品簡介", r"保證機構之長期債務信用評等：截至[^，。]+，(?P<body>.+?)。?(?=本商品之發行評等)"),
+)
+# 發行機構沒有評等：評等項目只寫保證機構，緊接在「本商品風險程度」後面（中間沒有發行機構評等項目）
+ISSUER_UNRATED = (
+    ratings.RatingPlace("商品簡介（風險程度～保證機構評等）", r"本商品風險程度：[^：]+保證機構之長期債務信用評等："),
+)
 TITLE = "中文投資人須知"
 NAME_ZH_TAIL = "（不保本及無擔保）"
 NAME_EN_TAIL = squash(sg.NAME_EN_TAIL)
@@ -91,6 +101,7 @@ PROVIDED = frozenset(
         "distributor_names",
         "distributor_addresses",
         *(f"fee_{label}" for label in iis.FEES),
+        "guarantor_ratings",  # 只寫保證機構評等（#241）；發行機構沒有評等，確認後交不適用，不列在這裡
     }
 )
 
@@ -339,4 +350,5 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
             if fees is not None
             else ParsedField.missing(name, "找不到「肆、費用」段落")
         )
+    fields.update(ratings.fields(text_lines, guarantor=GUARANTOR_RATINGS, issuer_unrated=ISSUER_UNRATED))
     return iis.IisSheet(fields, ti, frozenset(provided))
