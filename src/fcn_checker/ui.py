@@ -132,7 +132,7 @@ def flat(color: str) -> dict[str, str]:
 
 
 class _Shapes:
-    """步驟欄、完成條的綠勾（`fcn_checker.shapes` 畫的 PNG），依螢幕縮放畫一次。
+    """步驟欄、完成條的綠勾與勾選框（`fcn_checker.shapes` 畫的 PNG），依螢幕縮放畫一次。
 
     圖要留著參照，不然 Tk 的圖會被回收；同一個 Tk 只畫一次（測試一個 Tk 開很多視窗）。
     """
@@ -160,6 +160,38 @@ class _Shapes:
         tick = shapes.polyline([(3 * u, 7.4 * u), (5.9 * u, 10.2 * u), (11 * u, 4 * u)], 1.8 * u)
         return self.image(side, side, [shapes.Layer(tick, color)])
 
+    def checkbox(self, fill: str, border: str | None, mark: str | None, *, focus: bool = False) -> tk.PhotoImage:
+        """勾選框（#268）：方框，勾起來是勾勾——clam 的勾選框勾起來畫 X，看起來像「不要」。fill 底色、border 外框色
+        （None 是沒有外框）、mark 勾勾的顏色（None 是沒勾）；focus 時外框加粗。右邊留和文字之間的空白。"""
+        side, gap, u = self.px(14), self.px(6), self.scale
+        box = shapes.rounded_box(0, 0, side, side, 0)
+        layers = [shapes.Layer(box, border or fill)]
+        if border is not None:
+            ring = self.px(2) if focus else self.px(1)
+            layers.append(shapes.Layer(shapes.rounded_box(ring, ring, side - ring, side - ring, 0), fill))
+        if mark is not None:
+            tick = shapes.polyline([(3.2 * u, 7.2 * u), (5.9 * u, 9.9 * u), (10.9 * u, 4.2 * u)], 1.9 * u)
+            layers.append(shapes.Layer(tick, mark))
+        return self.image(side + gap, side, layers)
+
+
+def _checkbox_element(style: ttk.Style, shape: _Shapes) -> None:
+    """勾選框的圖片元件 `Check.indicator`（#268）：圖小、大小固定、不拉伸，每個勾選框只貼一次，不會拖慢重畫；
+    每個 Tk 只建一次。"""
+    box = shape.checkbox
+    style.element_create(
+        "Check.indicator",
+        "image",
+        box(SURFACE, CONTROL_BORDER, None),
+        ("disabled selected", box(ACCENT_DISABLED, None, SURFACE)),
+        ("disabled", box(FIELD_READONLY, BORDER, None)),
+        ("pressed selected", box(ACCENT_PRESSED, None, SURFACE)),
+        ("selected", box(ACCENT, None, SURFACE)),
+        ("focus", box(SURFACE, ACCENT, None, focus=True)),
+        ("active", box(SURFACE, TEXT_SECONDARY, None)),
+        sticky="",
+    )
+
 
 def _layouts(style: ttk.Style) -> None:
     """平面版面（#266）：全部用 clam 自己畫的元件，不用圖片元件——圖片要半透明混色，重畫慢，視窗從工具列打開時
@@ -184,6 +216,13 @@ def _layouts(style: ttk.Style) -> None:
         "CurrentStep.TButton",
     ):
         style.layout(name, button)  # 拿到焦點時外框變藍，不要 clam 的虛線框
+    label = [("Checkbutton.label", {"sticky": "nswe"})]
+    check = [
+        ("Check.indicator", {"side": "left", "sticky": ""}),
+        ("Checkbutton.focus", {"side": "left", "sticky": "w", "children": label}),
+    ]
+    for name in ("TCheckbutton", "Card.TCheckbutton"):
+        style.layout(name, [("Checkbutton.padding", {"sticky": "nswe", "children": check})])
     # 捲軸把手照 clam 的 thumb（名稱以 .thumb 結尾，ttk 才認得把手、拖得動），不要兩端的箭頭。
     for orient in ("Vertical", "Horizontal"):
         sticky = "ns" if orient == "Vertical" else "we"
@@ -242,6 +281,7 @@ def apply_style(root: tk.Tk) -> Callable[[float], int]:
     tk_root = root.nametowidget(".")
     if getattr(tk_root, "_mac_shapes", None) is None:
         tk_root._mac_shapes = _Shapes(tk_root, scale)  # 留著圖的參照
+        _checkbox_element(style, tk_root._mac_shapes)
         for name in PARENT_FILLED_CLASSES:  # 綁在整個 Tk 上，綁一次就好
             root.bind_class(name, "<Map>", lambda event: match_parent_background(event.widget), add="+")
     _layouts(style)
@@ -270,30 +310,31 @@ def apply_style(root: tk.Tk) -> Callable[[float], int]:
     style.map("Field.TFrame", bordercolor=[("focus", ACCENT)])  # 裡面的文字框拿到游標（`FieldBox`）
     style.configure("Card.TRadiobutton", background=SURFACE)
     style.configure("Card.TCheckbutton", background=SURFACE)
+    style.configure("TCheckbutton", padding=(0, 2))
+    style.map("TCheckbutton", foreground=[("disabled", TEXT_DISABLED)])
     indicator_border = [("disabled", BORDER), ("selected", ACCENT), ("focus", ACCENT), ("active", TEXT_SECONDARY)]
-    for name in ("TCheckbutton", "TRadiobutton"):
-        style.configure(
-            name,
-            padding=(0, 2),
-            indicatorsize=pixels(14),
-            indicatormargin=(0, 0, pixels(6), 0),
-            indicatorbackground=SURFACE,
-            indicatorforeground=SURFACE,  # 勾勾、圓點：藍底上的白色
-            upperbordercolor=CONTROL_BORDER,
-            lowerbordercolor=CONTROL_BORDER,
-        )
-        style.map(
-            name,
-            foreground=[("disabled", TEXT_DISABLED)],
-            indicatorbackground=[
-                ("disabled selected", ACCENT_DISABLED),
-                ("disabled", FIELD_READONLY),
-                ("pressed selected", ACCENT_PRESSED),
-                ("selected", ACCENT),
-            ],
-            upperbordercolor=indicator_border,
-            lowerbordercolor=indicator_border,
-        )
+    style.configure(  # 選項鈕用 clam 的平面圓圈；勾選框用 `Check.indicator` 的圖
+        "TRadiobutton",
+        padding=(0, 2),
+        indicatorsize=pixels(14),
+        indicatormargin=(0, 0, pixels(6), 0),
+        indicatorbackground=SURFACE,
+        indicatorforeground=SURFACE,  # 圓點：藍底上的白色
+        upperbordercolor=CONTROL_BORDER,
+        lowerbordercolor=CONTROL_BORDER,
+    )
+    style.map(
+        "TRadiobutton",
+        foreground=[("disabled", TEXT_DISABLED)],
+        indicatorbackground=[
+            ("disabled selected", ACCENT_DISABLED),
+            ("disabled", FIELD_READONLY),
+            ("pressed selected", ACCENT_PRESSED),
+            ("selected", ACCENT),
+        ],
+        upperbordercolor=indicator_border,
+        lowerbordercolor=indicator_border,
+    )
     style.configure("CardMuted.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=CAPTION_FONT)
     style.configure("KpiCaption.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=CAPTION_FONT)
     style.configure("KpiValue.TLabel", background=SURFACE, foreground=TEXT, font=VALUE_FONT)
