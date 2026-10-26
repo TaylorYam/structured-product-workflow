@@ -136,7 +136,8 @@ class OrderRecord:
         sheet: str = OFFLINE_SHEET,
     ) -> OrderRecord:
         """不經 Excel 直接以標準欄位值建一列（測試與離線用）：有格式設定的每個標準欄位（取先宣告的欄名），
-        沒給值的欄是空白格；儲存格依宣告順序從 A 欄起編號。"""
+        沒給值的欄是空白格；儲存格依宣告順序從 A 欄起編號。選填欄也一定在：沒給 `risk_level` 時是空白的風險等級欄，
+        RR 核對轉人工覆核（`order_missing`），不會退回審查標準的 RR4（#239）。"""
         fields: dict[str, OrderValue] = {}
         cells: dict[str, str] = {}
         code = OrderValue(None, f"{sheet}!?{row}", fmt.key_column)

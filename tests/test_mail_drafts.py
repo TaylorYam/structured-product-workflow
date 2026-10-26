@@ -6,6 +6,7 @@ import datetime as dt
 import os
 import sys
 import types
+from decimal import Decimal
 from pathlib import Path
 
 import openpyxl
@@ -27,6 +28,9 @@ from sp_workflow.mail_drafts import (
     create_drafts,
 )
 from sp_workflow.mailbox import Person
+from sp_workflow.risk_level import DONE, RiskDetail, RiskLevel
+from sp_workflow.risk_level import PENDING as RISK_PENDING
+from sp_workflow.risk_level import _write as write_risk  # 測試直接寫存好的風險等級（算法另有 test_risk_level）
 from synth import snapshot
 
 pytestmark = pytest.mark.db
@@ -81,6 +85,18 @@ def passed_folder(root: Path, tdcc: str, *, sub: str = "2026") -> Path:
     return folder
 
 
+def risk(db, tdcc: str, level: str | None, reason: str = "缺 AAA UW 的 200 日波動率") -> None:
+    """存好的自算風險等級（#238）：`level` 有值時是完成（明細虛構），None 時是待算。"""
+    detail = RiskDetail(
+        12, 1, 4, 1, 1, (("AAA UW", Decimal("20")),), Decimal("20"), 2, "發行機構", (("穆迪", "A1"),), 3
+    )
+    found = (
+        RiskLevel(DONE, level, total=detail.total, detail=detail) if level else RiskLevel(RISK_PENDING, None, reason)
+    )
+    with db.transaction():
+        write_risk(db, tdcc, found)
+
+
 def run(db, root: Path, out: Path, text: str, drafter=None):
     drafter = drafter or FakeDrafter()
     return create_drafts(text, root, out, db, drafter=drafter, now=NOW), drafter
@@ -107,16 +123,23 @@ def test_ready_product_gets_one_draft_to_its_fcs_with_fixed_cc(db, tmp_path: Pat
 
 def test_body_shows_the_terms_in_the_mail_format(db, tmp_path: Path, root: Path, out: Path) -> None:
     load(db, tmp_path, [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1), ("南區", 2)])])
+    risk(db, A, "RR3")
     passed_folder(root, A)
 
-    (_, drafter) = run(db, root, out, A)
+    (receipt, drafter) = run(db, root, out, A)
 
+    assert (
+        receipt.outcomes[0].reason == ""
+        and not receipt.outcomes[0].to_confirm
+        and drafter.drafts[0].risk_level == "RR3"
+    )
     body = drafter.drafts[0].html_body
+    assert "RR4" not in body, "風險等級用自算的，不再寫死 RR4（#239）"
     for expected in (
         "10-15-26",  # Trade date
         "04-27-27",  # Maturity date
         "收盤價",
-        "RR4",
+        "RR3",
         "AAA UW",
         "80.00",  # Strike
         "Daily Memory",
@@ -141,6 +164,28 @@ def test_body_shows_the_terms_in_the_mail_format(db, tmp_path: Path, root: Path,
         "background: #C55A11; color: #FFFFFF; font-weight: bold;",
     ):
         assert expected in body, expected
+
+
+@pytest.mark.parametrize(
+    ("level", "why"),
+    [(None, "風險等級待算（缺 AAA UW 的 200 日波動率）"), ("absent", "資料庫還沒有風險等級")],
+)
+def test_pending_or_missing_risk_level_is_marked_to_confirm(
+    db, tmp_path: Path, root: Path, out: Path, level, why
+) -> None:
+    """#239：待算或還沒算過時不寫 RR4，草稿寫「待確認」照樣建立，結果清單提醒寄出前補上。"""
+    load(db, tmp_path, [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])])
+    if level != "absent":
+        risk(db, A, level)
+    passed_folder(root, A)
+
+    receipt, drafter = run(db, root, out, A)
+
+    (outcome,) = receipt.outcomes
+    assert outcome.status == DRAFTED and outcome.to_confirm
+    assert outcome.reason == f"{why}，草稿寫「待確認」，寄出前請補上風險等級"
+    (draft,) = drafter.drafts
+    assert draft.risk_level == "待確認" and "待確認" in draft.html_body and "RR4" not in draft.html_body
 
 
 def test_fixed_cc_order_prioritizes_max_bob_then_pm() -> None:
@@ -286,6 +331,7 @@ def test_blank_required_terms_wait_with_the_fields_named(db, tmp_path: Path, roo
     passed_folder(root, A)
     passed_folder(root, B)
     db.execute("UPDATE workflow.product SET maturity_date = NULL, coupon_pct = NULL WHERE tdcc = %s", (A,))
+    risk(db, B, "RR4")
 
     receipt, drafter = run(db, root, out, f"{A} {B}")
 
@@ -305,6 +351,7 @@ def test_one_failed_draft_does_not_stop_the_others(db, tmp_path: Path, root: Pat
     )
     passed_folder(root, A)
     passed_folder(root, B)
+    risk(db, B, "RR4")
 
     receipt, drafter = run(db, root, out, f"{A},{B}", FakeDrafter(fail={A}))
 
@@ -402,12 +449,13 @@ def test_an_error_in_one_product_does_not_stop_the_batch(
     )
     passed_folder(root, A)
     passed_folder(root, B)
+    risk(db, B, "RR4")
     real_render = mail_drafts.render_body
 
-    def render(tdcc, product, branches):
+    def render(tdcc, product, branches, risk_level):
         if tdcc == A:
             raise ValueError("內文產生失敗")
-        return real_render(tdcc, product, branches)
+        return real_render(tdcc, product, branches, risk_level)
 
     monkeypatch.setattr(mail_drafts, "render_body", render)
 

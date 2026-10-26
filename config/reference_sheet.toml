@@ -8,7 +8,7 @@
 # 核對結果檔「回填後」一律照 [import_format]（匯入格式）重新產生，不論表上欄位怎麼排（Issue #203）。
 # 規則說明見 docs/checker/order-formats/reference-sheet.md。
 
-version = 18
+version = 19
 effective_date = 2026-10-26
 
 [layout]
@@ -20,6 +20,8 @@ issuer_column = "發行機構"  # 不是必要欄：表上有才確認該列是�
 # 其他欄（不在 [columns] 的欄）一律略過，不提示。
 optional_columns = [  # 表上沒有也照常核對
     "TS", "IIS",
+    # 風險等級（#239）：沒有這欄（舊 Excel）時 RR 核對用審查標準 risk.level
+    "風險等級",
     # 信用評等（#240）：舊 Excel 沒有這些欄時照常核對，評等轉人工覆核
     "發行機構評等_標準普爾", "發行機構評等_穆迪", "發行機構評等_惠譽",
     "保證機構評等_標準普爾", "保證機構評等_穆迪", "保證機構評等_惠譽",
@@ -134,6 +136,9 @@ any_order_issuers = ["CITI", "JPM", "GS", "BBVA"]
 "UL_5_執行價" = "underlying_5_strike_price"
 "UL_5_下限價" = "underlying_5_ki_price"
 "UL_5_KO價" = "underlying_5_ko_price"
+# 風險等級（Issue #239）：RR1～RR5 或「待算」（自算風險等級缺資料算不出來，RR 核對轉人工覆核）；資料庫匯出的是自算風險等級
+# （ADR 0023）。不在匯入格式裡（不寫進「回填後」，也不匯入資料庫）。
+"風險等級" = "risk_level"
 
 # 信用評等（#240）：交易日當時的發行機構、保證機構長期債務信用評等，資料庫來源從評等表（workflow.credit_rating）帶出；
 # 沒有該家評等時空白，沒有保證機構時三欄都空白。不在匯入格式，核對結果檔「回填後」不帶。只核對，不回填。

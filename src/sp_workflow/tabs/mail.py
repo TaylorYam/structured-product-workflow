@@ -95,7 +95,8 @@ class MailDraftTab(Tab):
         recorded, receipt = result.recorded, result.receipt
         problems = [o.status not in (DRAFTED, NOT_NEEDED) for o in receipt.outcomes]  # 不需寄送的不算問題
         for o, problem in zip(receipt.outcomes, problems, strict=True):
-            self.add_row((o.tdcc, o.status, "、".join(o.to), o.reason), problem=problem)
+            # 建了草稿、但風險等級待確認（#239）也標出來
+            self.add_row((o.tdcc, o.status, "、".join(o.to), o.reason), problem=problem or o.to_confirm)
         drafted = sum(o.status == DRAFTED for o in receipt.outcomes)
         not_drafted = len(receipt.outcomes) - drafted
         last = _import_text(receipt.last_import) if receipt.last_import else "沒有匯入紀錄"

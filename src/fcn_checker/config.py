@@ -26,7 +26,8 @@ NAME_PLACEHOLDERS = frozenset(
 )
 # 發行機構全名比對時可另外忽略的寫法差異（審查標準 issuer_name_ignore）→ 結果上的說明
 ISSUER_NAME_IGNORES = {"brackets": "括號（全形／半形）", "trailing_period": "英文名結尾的句點"}
-RISK_LEVEL = "{level}"  # 風險等級寫法（審查標準 risk.level_formats）中填入 RRn 的位置
+RISK_LEVEL = "{level}"  # 風險等級寫法（risk.level_formats）與固定警語中填入 RRn 的位置（固定警語：#239）
+RISK_LEVEL_PENDING = "待算"  # 參考條件表「風險等級」欄的待算寫法（= sp_workflow 自算風險等級的狀態「待算」，#239）
 
 
 @dataclass(frozen=True)
@@ -95,7 +96,7 @@ class IssuerStandard:
     """某上手適用的審查標準：上手專屬值已解析（固定警語有上手版本就用，否則用預設）。"""
 
     issuer: str
-    fixed_warning: str
+    fixed_warning: str  # {level} 處為風險等級，核對時代入期望值（#239）
     # 固定警語的允許寫法：fixed_warning 與只換開頭句的版本（risk.fixed_warning_openings）
     fixed_warnings: tuple[str, ...]
     fixed_warning_occurrences: int
@@ -138,7 +139,7 @@ class ReviewStandard:
     non_protected: tuple[str, ...]
     fees: dict[str, str]  # 第四章費用項目 → 費率區間
     issue_price_pct: Decimal
-    risk_level: str
+    risk_level: str  # 參考條件表沒有「風險等級」欄（舊 Excel）時 RR 核對的期望值（#239）
     fixed_warning: str  # 共用的固定警語（上手表沒有 fixed_warning 時用）
     fixed_warning_occurrences: int  # 說明書的固定警語次數（上手表沒有 fixed_warning_occurrences 時用）
     forbidden: tuple[str, ...]

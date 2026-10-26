@@ -4,7 +4,8 @@
 一起選取（ADR 0007），只給說明書會因「這批缺投資人須知」轉人工覆核。
 
 `CONFIG` 是以 repo config 載入一次的核對設定 fixture（交易所假日表的涵蓋範圍延到合成說明書的年份，見 `cover_synthetic_years`）；要換某個設定檔或上手註冊表時用 `load_config`／
-`CheckConfig.with_registry`。審查標準的原始內容 `STANDARD` 也只在這裡讀一次，三家合成器都從這裡取固定文字。
+`CheckConfig.with_registry`。審查標準的原始內容 `STANDARD` 也只在這裡讀一次，三家合成器都從這裡取固定文字
+（固定警語的風險等級佔位符已代入 `SYNTH_RISK_LEVEL`）。
 
 說明書與參考條件表列由各上手的合成器產生（商品規格與參考條件表列在 tests/checker/reference_synth.py）；
 這裡不引用任何上手的版面或預設值，也不 import 合成器。
@@ -23,6 +24,7 @@ from typing import Any
 
 from fcn_checker.batch import BatchOutcome, check_batch, preview_batch
 from fcn_checker.check_config import CheckConfig, ConfigPaths
+from fcn_checker.config import RISK_LEVEL
 from fcn_checker.issuers import REGISTRY, Issuer
 from fcn_checker.schema import CheckReport, CheckStatus
 from fcn_checker.trading_calendar import Market
@@ -33,7 +35,22 @@ REFERENCE_FORMAT = ROOT / "config" / "reference_sheet.toml"
 ISSUER_PREFIXES = ROOT / "config" / "issuer_prefixes.toml"
 EXCHANGE_HOLIDAYS = ROOT / "config" / "exchange_holidays.toml"
 SYNTHETIC_THROUGH = dt.date(2031, 12, 31)  # 合成說明書的日期在 2030 年前後
-STANDARD: dict[str, Any] = tomllib.loads(REVIEW_STANDARD.read_text(encoding="utf-8"))  # 審查標準原文，只讀這一次
+SYNTH_RISK_LEVEL = "RR4"  # 合成文件的風險等級（= 審查標準 risk.level，參考條件表沒有「風險等級」欄時的期望值）
+_WARNING_KEYS = ("fixed_warning", "fixed_warning_openings", "fixed_warning_variants")
+
+
+def with_risk_level(table: dict[str, Any], level: str = SYNTH_RISK_LEVEL) -> dict[str, Any]:
+    """審查標準原文的固定警語（共用與各上手版本）把風險等級佔位符 {level} 代入 `level`（#239），合成器照寫進文件。"""
+
+    def fill(v: Any) -> Any:
+        return v.replace(RISK_LEVEL, level) if isinstance(v, str) else [fill(x) for x in v]
+
+    out = {k: with_risk_level(v, level) if isinstance(v, dict) else v for k, v in table.items()}
+    return out | {k: fill(table[k]) for k in _WARNING_KEYS if k in table}
+
+
+# 審查標準原文，只讀這一次；固定警語的 {level} 已代入合成文件的風險等級
+STANDARD: dict[str, Any] = with_risk_level(tomllib.loads(REVIEW_STANDARD.read_text(encoding="utf-8")))
 CURRENCY_ISO: dict[str, str] = dict(STANDARD["currency"])  # 幣別中文 → ISO 代碼
 
 

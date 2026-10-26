@@ -6,6 +6,8 @@
    （準備與放回工具只會以標準檔名放回核對通過的文件，所以這就代表核對通過）；
 3. 交易列上的 FC（略過 PB）都對得到信箱（不分大小寫、別名）。
 只有 PB 承作時「不需寄送」；每日匯入略過的非 FCN 商品標「不支援的商品類型」。符合的一檔建一封草稿：收件人是 FC，副本是信箱的固定副本（已在收件人的不重複）。
+風險等級寫自算風險等級（#239、ADR 0023，回填的是 RR4）；待算或還沒算過時寫「待確認」，照樣建草稿，結果清單的原因寫出來，
+請寄出前補上（不自動寫 RR4，以免 2026-10-30 以後交易的商品寫錯等級）。
 只建草稿、不寄出；同一檔重跑會再建一封；某一檔出錯只影響那一檔。結果寫成 `寄信草稿清單_<日期時間>.xlsx`，
 並記錄用的是哪一次每日匯入。商品資料夾只讀。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
@@ -41,6 +43,7 @@ from sp_workflow.product_record import (
     missing_fields,
 )
 from sp_workflow.product_terms import read
+from sp_workflow.risk_level import RiskLevel, risk_level_of
 
 if TYPE_CHECKING:
     import psycopg
@@ -52,7 +55,7 @@ FAILED = "建立失敗"
 
 SUBJECT_FORMAT = "[中文TS/IIS] [{product}] - {tdcc}"  # 例：[中文TS/IIS] [FCN] - 029199990001
 BODY_INTRO = "FYI"
-RISK_LEVEL = "RR4"  # 使用者確認：風險等級固定 RR4
+RISK_TO_CONFIRM = "待確認"  # 風險等級待算或還沒算過時草稿上寫這個（#239）
 NAVY = "#002060"
 GREEN = "#00AB8E"
 ORANGE = "#C55A11"  # 格式檔分公司表頭：佈景主題「輔色 2、較深 25%」
@@ -98,6 +101,7 @@ class Draft:
     template_path: Path | None = None
     template_product: dict[str, Any] | None = None
     template_branches: tuple[str, ...] = ()
+    risk_level: str = RISK_TO_CONFIRM  # 草稿上的風險等級（`risk_text`）
 
 
 Drafter = Callable[[Draft], None]
@@ -110,6 +114,7 @@ class DraftOutcome:
     to: tuple[str, ...] = ()  # 人名
     cc: tuple[str, ...] = ()
     reason: str = ""
+    to_confirm: bool = False  # 建了草稿、但風險等級寫「待確認」（待算或還沒算過，#239）
 
 
 @dataclass(frozen=True)
@@ -210,6 +215,7 @@ def _draft_one(
             "SELECT fc_name FROM workflow.trade_row WHERE tdcc = %s ORDER BY row_seq", (tdcc,)
         )]  # fmt: skip
         other = conn.execute("SELECT product FROM workflow.other_product WHERE tdcc = %s", (tdcc,)).fetchone()
+        risk = risk_level_of(conn, tdcc)
     if product is None and not fc_names and other is not None:
         return DraftOutcome(tdcc, PENDING, reason=f"不支援的商品類型：{other[0]}（目前只做 FCN）")
     problems = []
@@ -238,23 +244,33 @@ def _draft_one(
 
     to = list(dict.fromkeys(p for p in people if p is not None))
     cc = [p for p in fixed_cc if p not in to]
+    level, note = risk_text(risk)
     draft = Draft(
         tdcc=tdcc,
         to=tuple(p.email for p in to),
         cc=tuple(p.email for p in cc),
         subject=SUBJECT_FORMAT.format(product=product["product"], tdcc=tdcc),
-        html_body=render_body(tdcc, product, branches),
+        html_body=render_body(tdcc, product, branches, level),
         attachments=attachments,
         template_path=template_path,
         template_product=product,
         template_branches=tuple(branches),
+        risk_level=level,
     )
     to_names, cc_names = tuple(p.name for p in to), tuple(p.name for p in cc)
     try:
         make_draft(draft)
     except Exception as exc:  # 一檔失敗不影響其他檔；原因寫進結果
         return DraftOutcome(tdcc, FAILED, to_names, cc_names, f"建立草稿失敗：{exc}")
-    return DraftOutcome(tdcc, DRAFTED, to_names, cc_names)
+    return DraftOutcome(tdcc, DRAFTED, to_names, cc_names, note, to_confirm=level == RISK_TO_CONFIRM)
+
+
+def risk_text(risk: RiskLevel | None) -> tuple[str, str]:
+    """草稿上的風險等級與結果清單的提醒：自算風險等級（完成、回填）照寫；待算或還沒算過寫「待確認」並提醒寄出前補上。"""
+    if risk is not None and risk.level:
+        return risk.level, ""
+    why = f"風險等級待算（{risk.reason}）" if risk is not None else "資料庫還沒有風險等級"
+    return RISK_TO_CONFIRM, f"{why}，草稿寫「{RISK_TO_CONFIRM}」，寄出前請補上風險等級"
 
 
 def _order_fixed_cc(people: Sequence[Any]) -> tuple[Any, ...]:
@@ -291,8 +307,8 @@ def _attachments(tdcc: str, folders: Sequence[Path], unreadable: Sequence[Path])
 # ---------- 信件內容 ----------
 
 
-def render_body(tdcc: str, product: dict[str, Any], branches: Sequence[str]) -> str:
-    """`FYI` 加三個表格（版面與配色依使用者提供的寄送格式）。"""
+def render_body(tdcc: str, product: dict[str, Any], branches: Sequence[str], risk_level: str) -> str:
+    """`FYI` 加三個表格（版面與配色依使用者提供的寄送格式）；`risk_level` 是草稿上的風險等級（`risk_text`）。"""
     p = product
     terms_1 = [
         ("TDCC", tdcc),
@@ -301,7 +317,7 @@ def render_body(tdcc: str, product: dict[str, Any], branches: Sequence[str]) -> 
         ("Final valuation date", _date(p["final_valuation_date"])),
         ("Maturity date", _date(p["maturity_date"])),
         ("期初價格", p["initial_pricing"] or ""),
-        ("風險等級", RISK_LEVEL),
+        ("風險等級", risk_level),
     ]
     terms_2 = [
         ("Product", p["product"]),
@@ -452,6 +468,7 @@ class OutlookDrafter:
                     draft.tdcc,
                     draft.template_product,
                     draft.template_branches,
+                    draft.risk_level,
                 )
                 inspector = mail.GetInspector
                 inspector.Display()
@@ -481,6 +498,7 @@ class OutlookDrafter:
         tdcc: str,
         product: dict[str, Any],
         branches: Sequence[str],
+        risk_level: str,
     ) -> tuple[Any, Any, Any, str]:
         if len(branches) > 16:
             raise OutlookError("MAIL 格式範本最多支援 16 間分公司")
@@ -499,7 +517,7 @@ class OutlookDrafter:
             4: _excel_date(product["final_valuation_date"]),
             5: _excel_date(product["maturity_date"]),
             6: product["initial_pricing"] or "",
-            7: RISK_LEVEL,
+            7: risk_level,
         }
         sheet.Cells(2, 1).NumberFormat = "@"
         sheet.Cells(2, 1).Value = str(tdcc)
