@@ -14,6 +14,11 @@
   若單位面額和資料庫不同，改成 TS 的值。每個改變的原值記在 `workflow.backfill_log`。寫入、紀錄與鎖住都經過
   `product_terms.backfill`／`lock_checked`（#203），和商品條件寫入共用同一把鎖（`product_terms.read(…, lock=True)`）。
 - 寫回在同一個 transaction 裡，失敗時什麼都不寫；核對結果檔已經存好，可以重新寫回（使用者 2026-10-21 確認）。
+- 信用評等（#240）：每列帶出交易日當時的發行機構、保證機構評等（三家評等機構各一欄，評等表 `credit_ratings` 依生效日查），
+  核對規則從參考條件表讀，不直接讀資料庫（ADR 0013）。上手代號和風險等級同一個 `product_terms.issuer_code`
+  （TDCC 前三碼，查不到再用發行機構寫法反查）。評等表沒有這個機構（或沒有該家評等）時那幾欄空白。
+  評等在核對後改了也算條件改了（不回填、不鎖住），但只看有做評等核對的上手（`Issuer.ratings`）；
+  核對時的參考條件表沒有評等欄（v18 以前產生的）不算改了。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
@@ -30,7 +35,9 @@ from typing import TYPE_CHECKING, Any
 
 from openpyxl.cell.cell import Cell
 
+from fcn_checker.rating_formats import AGENCY_KEYS, RATING_FIELDS
 from sp_workflow.check_terms import DONE
+from sp_workflow.credit_ratings import RatingRows, load_rows
 from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdatedError, connect
 from sp_workflow.file_tools import save_book, table_book
 from sp_workflow.product_record import PRICE_COLUMNS, missing_fields, same_value
@@ -61,12 +68,38 @@ class CheckSourceError(Exception):
 # ---------- 產生參考條件表 ----------
 
 
+@dataclass(frozen=True)
+class IssuerCodes:
+    """找上手代號用的兩張對照（`product_terms.IssuerLookup`）：上手編號對照與參考條件表格式的發行機構寫法。"""
+
+    issuer_prefixes: Mapping[str, str]  # TDCC 前三碼 → 上手代號
+    issuer_names: Mapping[str, str]  # 上手代號 → 發行機構的寫法
+
+    @classmethod
+    def of(cls, prefixes: Mapping[str, str], fmt: ReferenceFormat) -> IssuerCodes:
+        return cls(prefixes, fmt.issuer_values)
+
+    def code(self, tdcc: str, issuer: str) -> str:
+        from sp_workflow.product_terms import issuer_code  # product_terms 牽涉很多模組，用到才載入
+
+        return issuer_code(tdcc, issuer, self)
+
+
 def export_reference(
-    conn: psycopg.Connection, tdccs: Sequence[str], fmt: ReferenceFormat, path: Path
+    conn: psycopg.Connection,
+    tdccs: Sequence[str],
+    fmt: ReferenceFormat,
+    path: Path,
+    *,
+    prefixes: Mapping[str, str],
 ) -> dict[str, str]:
-    """依 TDCC 從資料庫產生參考條件表到 `path`（每檔一列，欄位照匯入格式），回傳沒有列的 TDCC → 原因。"""
+    """依 TDCC 從資料庫產生參考條件表到 `path`（每檔一列，欄位照匯入格式），回傳沒有列的 TDCC → 原因。
+
+    `prefixes`：上手編號對照（TDCC 前三碼 → 上手代號），評等欄依上手代號查評等表。
+    """
     codes = list(dict.fromkeys(tdccs))
     stored = read_many(conn, codes)
+    ratings = _Ratings(load_rows(conn), IssuerCodes.of(prefixes, fmt))
     headers, rows, absent = _headers(fmt), [], {}
     for tdcc in codes:
         found = stored.get(tdcc)
@@ -75,7 +108,7 @@ def export_reference(
             absent[tdcc] = reason
         else:
             assert found is not None
-            rows.append(_row(found, fmt, headers))
+            rows.append(_row(found, fmt, headers, ratings))
     _write_sheet(path, headers, rows)
     return absent
 
@@ -101,17 +134,18 @@ def _absent_reason(found: Stored | None) -> str:
 
 
 def _headers(fmt: ReferenceFormat) -> list[str]:
-    """TS、IIS、發行機構，加上匯入格式的欄（「TS/IIS完成檢核」除外）：讀檔需要的欄都在，核對結果檔也帶得出其他欄。"""
+    """TS、IIS、發行機構，加上匯入格式的欄（「TS/IIS完成檢核」除外）與信用評等欄：讀檔需要的欄都在，核對結果檔也帶得出其他欄。"""
     names = {std: header for header, std in reversed(list(fmt.columns.items()))}
     checked = [names[key] for key in CHECKED_FIELDS]
     return [
         *checked,
         fmt.issuer_column,
         *(c for c in fmt.import_format.columns if c != fmt.import_format.checked_column),
+        *(names[key] for key in RATING_FIELDS if key in names),
     ]
 
 
-def _row(found: Stored, fmt: ReferenceFormat, headers: Sequence[str]) -> dict[str, Any]:
+def _row(found: Stored, fmt: ReferenceFormat, headers: Sequence[str], ratings: _Ratings) -> dict[str, Any]:
     """一檔商品 → {欄名: 值}。標準欄位依格式設定對到欄名；空值寫法用在 KI NONE、沒有的標的與不需要填的比價日。"""
     p, empty = found.columns, fmt.empty_value
     no_ki = p["barrier_type"] == "NONE"
@@ -136,6 +170,7 @@ def _row(found: Stored, fmt: ReferenceFormat, headers: Sequence[str]) -> dict[st
         "tenor_months": p["tenor_months"],
         "first_callable_period": p["non_call_months"],
     }
+    values.update(ratings.columns(found.tdcc, p["issuer"], p["trade_date"]))
     if locked(found):
         values.update(dict.fromkeys(CHECKED_FIELDS, fmt.checked_value))
     for slot in range(1, SLOTS + 1):
@@ -160,6 +195,32 @@ def _row(found: Stored, fmt: ReferenceFormat, headers: Sequence[str]) -> dict[st
         std = fmt.columns.get(header)
         row[header] = values.get(std) if std is not None else extra.get(header)
     return row
+
+
+@dataclass(frozen=True)
+class _Ratings:
+    """評等表＋上手代號對照：產生參考條件表的評等欄。"""
+
+    rows: RatingRows
+    issuers: IssuerCodes
+
+    def columns(self, tdcc: str, issuer: str, trade_date: dt.date | None) -> dict[str, Any]:
+        """交易日當時的發行機構、保證機構評等（標準欄位 → 評等）；評等表沒有這個機構或沒有該家評等時空白（None）。"""
+        code = self.issuers.code(tdcc, issuer)
+        out: dict[str, Any] = dict.fromkeys(RATING_FIELDS)
+        if not code or trade_date is None:
+            return out
+        for key, (role, agency) in RATING_FIELDS.items():
+            rating = self.rows.on(code, role, trade_date)
+            out[key] = None if rating is None else getattr(rating, AGENCY_KEYS[agency])
+        return out
+
+    def checked(self, tdcc: str, issuer: str) -> bool:
+        """這家上手有做評等核對（`Issuer.ratings`）：評等欄改了才算條件改了。"""
+        from fcn_checker.issuers import by_code
+
+        found = by_code(self.issuers.code(tdcc, issuer))
+        return found is not None and found.ratings
 
 
 def _write_sheet(path: Path, headers: Sequence[str], rows: Iterable[Mapping[str, Any]]) -> None:
@@ -206,6 +267,7 @@ def write_back(
     receipt: SaveReceipt,
     fmt: ReferenceFormat,
     *,
+    prefixes: Mapping[str, str],
     user: str | None = None,
 ) -> WriteBackReceipt:
     """核對結果檔存好之後寫回資料庫；整次在同一個 transaction 裡，失敗時什麼都不寫。
@@ -222,6 +284,7 @@ def write_back(
     codes = list(dict.fromkeys(i.product_code for i in batch.items if i.product_code))
     with conn.transaction():
         known = set(read_many(conn, codes))
+        ratings = _Ratings(load_rows(conn), IssuerCodes.of(prefixes, fmt))
         saved = 0
         for item in batch.items:
             if item.product_code in known and item.kind is not None:
@@ -237,7 +300,10 @@ def write_back(
             if locked(current):
                 already.append(tdcc)
                 continue
-            if _absent_reason(current) or _changed(_row(current, fmt, headers), checked_rows.get(tdcc), fmt):
+            rated = ratings.checked(tdcc, current.columns["issuer"])
+            if _absent_reason(current) or _changed(
+                _row(current, fmt, headers, ratings), checked_rows.get(tdcc), fmt, rated=rated
+            ):
                 stale.append(tdcc)
                 continue
             for column, new in [*_backfill_values(item, fmt), *_released_denomination(item)]:
@@ -247,14 +313,19 @@ def write_back(
     return WriteBackReceipt(tuple(done), tuple(already), saved, changes, tuple(stale))
 
 
-def _changed(current: Mapping[str, Any], checked: Any, fmt: ReferenceFormat) -> bool:
-    """資料庫現在的值和核對時那一列（`OrderRecord`）不同；回填欄位（ISIN、發行日、比價日、TS、IIS）不算。"""
+def _changed(current: Mapping[str, Any], checked: Any, fmt: ReferenceFormat, *, rated: bool) -> bool:
+    """資料庫現在的值和核對時那一列（`OrderRecord`）不同；回填欄位（ISIN、發行日、比價日、TS、IIS）不算。
+
+    評等欄只在 `rated`（這家上手有做評等核對）時才比；核對時的表沒有評等欄（v18 以前產生的）也不算改了。
+    """
     if checked is None:
         return True
     skip = {"isin", "issue_date", *CHECKED_FIELDS}
     for header, value in current.items():
         std = fmt.columns.get(header)
         if std is None or std in skip or std.startswith("autocall_date_"):
+            continue
+        if std in RATING_FIELDS and not (rated and checked.has(std)):
             continue
         found = checked.get(std)
         if not same_value(None if value == "" else value, None if found is None else found.value):
@@ -344,11 +415,19 @@ class WorkflowDatabase:
         *,
         user: str | None = None,
         on_failure: Callable[[], None] = lambda: None,
+        issuer_prefixes: Path | None = None,
     ) -> None:
         self._current_settings = settings
         self.folder = folder
         self.user = user
         self.on_failure = on_failure  # 連不上資料庫時呼叫（例：視窗下次重新問密碼）
+        self.issuer_prefixes = issuer_prefixes  # 上手編號對照設定檔；None 是預設位置（評等欄找上手代號，#240）
+
+    def _prefixes(self) -> dict[str, str]:
+        from fcn_checker.check_config import DEFAULTS
+        from fcn_checker.config import load_issuer_prefixes
+
+        return load_issuer_prefixes(self.issuer_prefixes or DEFAULTS.issuer_prefixes)
 
     def export(self, term_sheets: Sequence[Path], fmt: ReferenceFormat) -> tuple[Path, dict[str, str]]:
         import psycopg
@@ -358,9 +437,10 @@ class WorkflowDatabase:
 
         tdccs = [code for code in (file_code(Path(p)) for p in term_sheets) if code]
         path = self._new_path()
+        prefixes = self._prefixes()  # 設定檔有問題：IngestionError，整批不核對
         try:
             with self._connect() as conn:
-                absent = export_reference(conn, tdccs, fmt, path)
+                absent = export_reference(conn, tdccs, fmt, path, prefixes=prefixes)
         except (CheckSourceError, DatabaseError, psycopg.Error) as exc:
             first = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
             raise IngestionError("database_unavailable", f"從資料庫讀核對條件失敗：{first}") from exc
@@ -369,7 +449,8 @@ class WorkflowDatabase:
     def write_back(self, batch: BatchOutcome, receipt: SaveReceipt) -> str:
         assert batch.reference_format is not None
         with self._connect() as conn:
-            return write_back(conn, batch, receipt, batch.reference_format, user=self.user).summary
+            fmt = batch.reference_format
+            return write_back(conn, batch, receipt, fmt, prefixes=self._prefixes(), user=self.user).summary
 
     def _connect(self) -> psycopg.Connection:
         """連上資料庫；連不上時呼叫 `on_failure`（可能是密碼錯）。資料表版本等其他錯誤不算登入問題。"""

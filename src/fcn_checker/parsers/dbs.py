@@ -19,7 +19,7 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence, ScenarioParam, ScenarioPrice
 from ..text import full_brackets, squash
-from . import money, price_table, schedule
+from . import money, price_table, ratings, schedule
 from .common import RawText, capture_group, compat_normalized, derived, fee_rates, number
 from .layout import TextIndex, capture, join_wrapped_tickers, parse_date
 from .underlying_notes import Markers, underlying_notes
@@ -28,7 +28,16 @@ TEMPLATE_ID = "dbs-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：情境重複寫出的值（Issue #321）；4：日期表標準欄位與共用排程推導（Issue #289）；
 # 5：情境價格表、基本假設與情境三的價格交成共用情境規則的標準欄位（Issue #294）
 # 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
-PARSER_VERSION = "6"
+# 7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
+PARSER_VERSION = "7"
+# 發行機構信用評等（#240）：商品基本資料 `…(DBS Bank Ltd)。截至本中文產品說明書刊印日，發行機構之長期債務信用評等經穆迪(Moody’s)評定為Aa1、…。`、相關機構事業概況 (7) `信用評等：截至…`（同一句）
+RATINGS = (
+    ratings.RatingPlace("商品基本資料", r"）。截至本中文產品說明書刊印日，發行機構之長期債務信用評等(?P<body>.+?)。"),
+    ratings.RatingPlace(
+        "相關機構事業概況 (7) 信用評等",
+        r"信用評等：截至本中文產品說明書刊印日，發行機構之長期債務信用評等(?P<body>.+?)。",
+    ),
+)
 TITLE = "中文產品說明書(最終版本)"
 SECTIONS = (
     "商品基本資料",
@@ -211,6 +220,7 @@ def read(lines: Sequence[Line]) -> DbsTermSheet:
     fields["underlying_notes"] = underlying_notes(
         text_lines, Markers(r"\d+\.(?!\d)")
     )  # 連結標的公司介紹：k.介紹（Issue #225）
+    fields.update(ratings.fields(text_lines, RATINGS))
     return DbsTermSheet(fields, TextIndex(text_lines))
 
 

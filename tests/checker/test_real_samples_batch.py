@@ -7,7 +7,6 @@
 
 from __future__ import annotations
 
-import shutil
 from collections import Counter
 from pathlib import Path
 
@@ -18,7 +17,7 @@ from fcn_checker.batch import DocKind
 from fcn_checker.saving import run_batch
 from fcn_checker.schema import CheckStatus
 from harness import CONFIG
-from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, requires
+from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, rated_check_format, requires
 
 PDFS = pdfs()  # 說明書與投資人須知
 PROBLEMS = (CheckStatus.MISMATCH, CheckStatus.REVIEW_REQUIRED, CheckStatus.ERROR)
@@ -33,7 +32,7 @@ pytestmark = [
 def saved(tmp_path_factory):
     """整批核對並儲存一次：(批量核對結果, 儲存收據)。"""
     tmp = tmp_path_factory.mktemp("real_batch")
-    sheet = shutil.copy(CHECK_FORMAT, tmp / CHECK_FORMAT.name)  # 不在 data/ 產生檔案
+    sheet = rated_check_format(tmp)  # 不在 data/ 產生檔案；加評等欄（#240）
     return run_batch(CONFIG, Path(sheet), PDFS, tmp / "reports", root=tmp)
 
 
@@ -147,7 +146,10 @@ def test_hsbc_investor_sheets_only_differ_where_their_term_sheets_do(outcome):
     wording = [r for i in sheets for r in i.report.results if r.rule_id == "standard.forbidden_wording"]
     assert len(wording) == 7 and all(r.status == CheckStatus.PASS and "特例通過" in r.tolerance for r in wording)
     # 同商品說明書有相同的標的代碼差異；依使用者確認仍逐字比對尾碼（test_real_hsbc.py，Issue #310）
-    assert sum((problems(i) for i in sheets), Counter()) == Counter({("field.underlyings", "value_mismatch"): 1})
+    # 2 份的惠譽評等和評等表不同，同說明書（test_real_hsbc.py，#240）
+    assert sum((problems(i) for i in sheets), Counter()) == Counter(
+        {("field.underlyings", "value_mismatch"): 1, ("standard.credit_rating", "value_mismatch"): 2}
+    )
 
 
 def test_every_local_investor_sheet_has_an_iis_template(outcome):

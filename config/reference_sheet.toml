@@ -8,8 +8,8 @@
 # 核對結果檔「回填後」一律照 [import_format]（匯入格式）重新產生，不論表上欄位怎麼排（Issue #203）。
 # 規則說明見 docs/checker/order-formats/reference-sheet.md。
 
-version = 17
-effective_date = 2026-10-15
+version = 18
+effective_date = 2026-10-26
 
 [layout]
 # 只讀第一張工作表（不看名稱）；表頭是前 header_search_rows 列裡有 key_column 欄名的那一列，下一列起是資料（Issue #199）
@@ -18,7 +18,12 @@ key_column = "TDCC Code"  # 商品代號，用來配對說明書；同一代號�
 issuer_column = "發行機構"  # 不是必要欄：表上有才確認該列是對應上手的寫法
 # 必要欄 = [columns] 的欄名扣掉 optional_columns：少了任何一個（同一標準欄位的欄名有一個就算有）或重複 → 整批錯誤。
 # 其他欄（不在 [columns] 的欄）一律略過，不提示。
-optional_columns = ["TS", "IIS"]  # 表上沒有也照常核對
+optional_columns = [  # 表上沒有也照常核對
+    "TS", "IIS",
+    # 信用評等（#240）：舊 Excel 沒有這些欄時照常核對，評等轉人工覆核
+    "發行機構評等_標準普爾", "發行機構評等_穆迪", "發行機構評等_惠譽",
+    "保證機構評等_標準普爾", "保證機構評等_穆迪", "保證機構評等_惠譽",
+]
 empty_value = "-"         # 空值寫法（比價日不需要填的期別也寫 -）
 checked_value = "V"       # TS、IIS 欄的打勾寫法（半形英文字母 V，同「當日比價」「私銀註記」）
 
@@ -129,6 +134,15 @@ any_order_issuers = ["CITI", "JPM", "GS", "BBVA"]
 "UL_5_執行價" = "underlying_5_strike_price"
 "UL_5_下限價" = "underlying_5_ki_price"
 "UL_5_KO價" = "underlying_5_ko_price"
+
+# 信用評等（#240）：交易日當時的發行機構、保證機構長期債務信用評等，資料庫來源從評等表（workflow.credit_rating）帶出；
+# 沒有該家評等時空白，沒有保證機構時三欄都空白。不在匯入格式，核對結果檔「回填後」不帶。只核對，不回填。
+"發行機構評等_標準普爾" = "issuer_rating_sp"
+"發行機構評等_穆迪" = "issuer_rating_moodys"
+"發行機構評等_惠譽" = "issuer_rating_fitch"
+"保證機構評等_標準普爾" = "guarantor_rating_sp"
+"保證機構評等_穆迪" = "guarantor_rating_moodys"
+"保證機構評等_惠譽" = "guarantor_rating_fitch"
 
 # KO(Freq)：D 期間每日觀察／P 每期定日觀察
 [values.ko_observation]

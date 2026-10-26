@@ -14,15 +14,16 @@ import pytest
 from fcn_checker.issuers import UBS
 from fcn_checker.schema import CheckStatus as S
 from harness import check_all
-from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, requires
+from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, rated_check_format, requires
 
 pytestmark = [pytest.mark.real_samples, requires(TERM_SHEETS / "092*_TS.pdf", CHECK_FORMAT)]
 PROBLEMS = (S.MISMATCH, S.REVIEW_REQUIRED, S.ERROR)
 
 
 @pytest.fixture(scope="module")
-def items():
-    outcome = check_all(CHECK_FORMAT, pdfs("092*.pdf"))
+def items(tmp_path_factory):
+    sheet = rated_check_format(tmp_path_factory.mktemp("rated"))  # 加評等欄（#240）
+    outcome = check_all(sheet, pdfs("092*.pdf"))
     return [i for i in outcome.items if i.term_sheet.name.endswith("_TS.pdf")], [
         i for i in outcome.items if i.term_sheet.name.endswith("_IIS.pdf")
     ]
@@ -50,9 +51,13 @@ def test_only_the_confirmed_differences_are_reported(items):
             # 1 份「即現預計為」的日期是 2025 年修法新增的教師節（孔子誕辰紀念日），次一臺北營業日
             # 是再隔一天：文件問題（Issue #227，2026-10-25 使用者決定判不一致）
             ("doc.redemption_start_date", S.MISMATCH): 1,
+            # 2 份的惠譽評等和評等表不同（說明書兩處、投資人須知一處）
+            # 較舊的樣本寫評等調整前的評等，初始評等表只有現在的評等（#240）：每處評等段落各判不一致
+            ("standard.credit_rating", S.MISMATCH): 6,
         }
     ), bad
-    assert sum(i.fills_sheet for i in term_sheets) == 2  # 開始受理贖回日期不一致的那份不回填
+    # 開始受理贖回日期不一致的那份、惠譽評等不同的那份（#240）不回填
+    assert sum(i.fills_sheet for i in term_sheets) == 1
 
 
 def test_template_variants_match_the_sample_table(items):

@@ -21,8 +21,12 @@ import fitz
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
 from reference_synth import (
+    FITCH,
+    MOODYS,
+    SP,
     UL,
     ProductSpec,
+    Ratings,
     build_reference_sheet,
     price,
     reference_row,
@@ -37,6 +41,13 @@ ISSUER = STANDARD["issuer"]["ms"]["issuer_name"]
 DIST = STANDARD["distributor"]
 TRADE, ISSUE, APPROVAL = dt.date(2030, 1, 7), dt.date(2030, 1, 14), dt.date(2026, 6, 11)
 NUMERIC = set("0123456789,.")
+RATING_NAMES = {MOODYS: "穆迪(Moody's)", SP: "標準普爾(S&P)", FITCH: "惠譽(Fitch)"}
+
+
+def ratings_text(r: Ratings, template: str) -> str:
+    """發行機構評等（#240）：依穆迪、標普、惠譽，`template` 為每家的寫法（例：`經{name}評定為{value}`），最後一家前用「及」。"""
+    parts = [template.format(name=RATING_NAMES[a], value=v) for a, v in r.stated(MOODYS, SP, FITCH)]
+    return "、".join(parts[:-1]) + ("及" if len(parts) > 1 else "") + parts[-1]
 
 
 def money(x: Decimal | int) -> str:
@@ -321,7 +332,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     titles = {
         1: f"商品中文名稱：{short}",
         2: WARNING_CH1,
-        3: f"發行機構名稱及其長期債務信用評等：本商品發行機構為{ISSUER.split('(')[0]}，截至刊印日期之信用評等不核對。",
+        3: f"發行機構名稱及其長期債務信用評等：本商品發行機構為{ISSUER.split('(')[0]}，截至本中文產品說明書刊印日期，"
+        f"發行機構之長期債務信用評等{ratings_text(s.ratings, '經{name}評定為{value}')}。",
         5: f"計價幣別：{s.currency_zh} ({s.ccy})",
         6: f"每單位商品面額：{s.currency_zh} {money(s.denom)} 元",
         7: "發行價格：商品面額之100%",
@@ -470,6 +482,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     en = ISSUER.split("(")[1].rstrip(".)")
     d.text(72, f"(1) 事業名稱：{ISSUER.split('(')[0]}{en}，係依英格蘭及威爾士法律設立及存續之公司", 72)
     d.text(72, "(2) 設立日期：1900 年 1 月 1 日")
+    d.text(72, f"(7) 信用評等：長期債務信用評等：{ratings_text(s.ratings, '{name}{value}')}", 72)
+    d.text(72, "(8) 經會計師查核簽證財務報告中譯本之查核報告書：詳見附件", 72)
     d.text(54, "2. 保證機構：無")
     d.text(54, "3. 總代理人、決定代理機構、受託機構、保管機構及其他相關機構")
     for n, (who, name, addr, boss) in enumerate(
@@ -580,7 +594,8 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
             "受託對象：專業投資人及OSU 客戶",
             "與國外相當之交易條件：專業投資人及OSU 客戶不適用。",
             "本商品風險程度： RR4",
-            f"發行機構之長期債務信用評等：本商品發行機構為{zh_issuer}，截至本投資人須知刊印日期，評等不核對。",
+            f"發行機構之長期債務信用評等：本商品發行機構為{zh_issuer}，截至本投資人須知刊印日期，"
+            f"發行機構之長期債務信用評等{ratings_text(s.ratings, '{name}{value}')}。",
             "商品之發行評等：無",
             f"計價幣別：{s.currency_zh} ({s.ccy})",
             "計價貨幣本金保本率：無。",

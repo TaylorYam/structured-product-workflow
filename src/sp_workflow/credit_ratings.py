@@ -20,22 +20,28 @@ from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING
 
+from fcn_checker.rating_formats import (
+    AGENCIES,
+    EXAMPLES,
+    FITCH,
+    FORMATS,
+    GUARANTOR,
+    MOODYS,
+    ROLES,
+    SP,
+    canonical,
+)
+from fcn_checker.rating_formats import ISSUER as ISSUER  # 這裡沒用到：risk_level、畫面沿用舊的 import
 from sp_workflow.database import OperatorError
 from sp_workflow.product_record import to_json
 
 if TYPE_CHECKING:
     import psycopg
 
-ISSUER, GUARANTOR = "發行機構", "保證機構"
-ROLES = (ISSUER, GUARANTOR)
+
 INITIAL = dt.date(1900, 1, 1)  # 第一批評等：不設起始日
 ADD, EDIT, DELETE = "新增", "修改", "刪除"
 
-SP, MOODYS, FITCH = "標準普爾", "穆迪", "惠譽"
-AGENCIES = (SP, MOODYS, FITCH)
-_SP_FORMAT = re.compile(r"AAA|AA[+-]?|A[+-]?|BBB[+-]?|BB[+-]?|B[+-]?|CCC[+-]?|CC|C|D")
-_FITCH_FORMAT = re.compile(r"AAA|AA[+-]?|A[+-]?|BBB[+-]?|BB[+-]?|B[+-]?|CCC[+-]?|CC|C|RD|D")
-_MOODYS_FORMAT = re.compile(r"Aaa|Aa[123]|A[123]|Baa[123]|Ba[123]|B[123]|Caa[123]|Ca|C")
 _ISSUER_FORMAT = re.compile(r"[A-Z]+")
 
 
@@ -100,18 +106,12 @@ def effective_label(day: dt.date) -> str:
 
 
 def normalize_rating(agency: str, text: str) -> str | None:
-    """一家評等機構的評等：去空白、統一大小寫（標普、惠譽大寫；穆迪首字大寫），空白是沒有評等；格式不對丟錯誤。"""
-    value = text.strip().replace(" ", "")
+    """一家評等機構的評等：寫法統一（`rating_formats.canonical`，同核對時參考條件表那邊），空白是沒有評等；格式不對丟錯誤。"""
+    value = canonical(agency, text)
     if not value:
         return None
-    if agency == MOODYS:
-        value = value[0].upper() + value[1:].lower()
-        pattern, example = _MOODYS_FORMAT, "Aa2、A1、Baa1"
-    else:
-        value = value.upper()
-        pattern, example = (_SP_FORMAT if agency == SP else _FITCH_FORMAT), "AA-、A+、BBB+"
-    if not pattern.fullmatch(value):
-        raise CreditRatingError(f"{agency}評等「{text.strip()}」格式不對（要像 {example}）。")
+    if not FORMATS[agency].fullmatch(value):
+        raise CreditRatingError(f"{agency}評等「{text.strip()}」格式不對（要像 {EXAMPLES[agency]}）。")
     return value
 
 

@@ -12,8 +12,11 @@
 from __future__ import annotations
 
 import os
+import re
+import tomllib
 from pathlib import Path
 
+import openpyxl
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -21,6 +24,9 @@ DATA = Path(os.environ.get("FCN_TEST_DATA_DIR", ROOT / "data"))
 ORDERS = DATA / "orders"
 TERM_SHEETS = DATA / "term-sheets" / "IS"
 CHECK_FORMAT = ORDERS / "核對表格式..xlsx"
+_REFERENCE_FORMAT = ROOT / "config" / "reference_sheet.toml"
+_ISSUER_PREFIXES = ROOT / "config" / "issuer_prefixes.toml"
+_SEED_RATINGS = ROOT / "src" / "sp_workflow" / "migrations" / "0024_credit_ratings.sql"
 
 
 def pdfs(pattern: str = "*.pdf") -> list[Path]:
@@ -50,3 +56,43 @@ def _shown(path: Path) -> str:
         return path.relative_to(ROOT).as_posix()
     except ValueError:
         return str(path)
+
+
+def rated_check_format(folder: Path) -> Path:
+    """`CHECK_FORMAT` 的複本（寫在 `folder`，不在 data/ 產生檔案），加上信用評等欄（#240）並填初始評等表的值。
+
+    `核對表格式..xlsx` 是舊格式、沒有評等欄（也沒有發行機構欄）；資料庫匯出的參考條件表才有。這裡依 TDCC Code
+    前三碼（config/issuer_prefixes.toml）找上手，填 migration 0024 的初始評等，讓真實樣本的評等核對有值可比。
+    """
+    fmt = tomllib.loads(_REFERENCE_FORMAT.read_text(encoding="utf-8"))
+    layout = fmt["layout"]
+    prefixes = tomllib.loads(_ISSUER_PREFIXES.read_text(encoding="utf-8"))["prefixes"]
+    header_of = {f: h for h, f in fmt["columns"].items() if f.startswith(("issuer_rating_", "guarantor_rating_"))}
+    seed = {
+        (code, role): dict(zip(("sp", "moodys", "fitch"), values, strict=True))
+        for code, role, *values in (
+            (m[0], m[1], *(None if v == "NULL" else v.strip("'") for v in m[2:]))
+            for m in re.findall(
+                r"\('(\w+)', '(發行機構|保證機構)', '1900-01-01', ('[^']*'|NULL), ('[^']*'|NULL), ('[^']*'|NULL)\)",
+                _SEED_RATINGS.read_text(encoding="utf-8"),
+            )
+        )
+    }
+    wb = openpyxl.load_workbook(CHECK_FORMAT, data_only=True)  # 公式留下算好的值（存檔後不再重算）
+    ws = wb.worksheets[0]
+    header_row = next(
+        r for r in range(1, layout["header_search_rows"] + 1) if any(c.value == layout["key_column"] for c in ws[r])
+    )
+    key_col = next(c.column for c in ws[header_row] if c.value == layout["key_column"])
+    first = ws.max_column + 1
+    columns = {std: first + i for i, std in enumerate(header_of)}
+    for std, col in columns.items():
+        ws.cell(header_row, col, header_of[std])
+    for r in range(header_row + 1, ws.max_row + 1):
+        code = prefixes.get(str(ws.cell(r, key_col).value or "").strip()[:3])
+        for std, col in columns.items():
+            role = "發行機構" if std.startswith("issuer_") else "保證機構"
+            ws.cell(r, col, seed.get((code, role), {}).get(std.rsplit("_", 1)[1]))
+    out = folder / CHECK_FORMAT.name
+    wb.save(out)
+    return out

@@ -15,12 +15,19 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, Line, ParsedField
 from ..standard_fields import Occurrence
 from ..text import squash
-from . import iis, ubs
+from . import iis, ratings, ubs
 from .common import RawText, fee_rates
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "ubs-zh-iis"
-PARSER_VERSION = "2"  # 2：警語的受託機構名稱（Issue #306）
+# 2：警語的受託機構名稱（Issue #306）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
+PARSER_VERSION = "3"
+# 發行機構信用評等（#240）：商品簡介 4. `…其長期債務信用評等為穆迪（Moody's）Aa2，標準普爾（Standard & Poor's）為A+，…。`
+RATINGS = (
+    ratings.RatingPlace(
+        "商品簡介 4.", r"發行機構為[^，。]+，經由[^，。]+發行。截至[^，。]+，其長期債務信用評等為(?P<body>.+?)。"
+    ),
+)
 SECTIONS = ("警語", "相關機構", "商品事項", "商品風險揭露", "相關機構之權利、義務及責任")
 NOISE = re.compile(iis.PAGE_OF)
 D = ubs.D
@@ -51,6 +58,7 @@ PROVIDED = frozenset(
         "distributor_addresses",
         "distributor_phones",
         *(f"fee_{label}" for label in iis.FEES),
+        *ratings.FIELDS,
     }
 )
 
@@ -200,4 +208,5 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         fees = text_lines[ti.line_at(a) :]
         cut = next((i for i, ln in enumerate(fees) if squash(ln.text).startswith("附註")), None)
         fields.update(fee_rates(fees[:cut]))
+    fields.update(ratings.fields(text_lines, RATINGS))
     return iis.IisSheet(fields, ti, PROVIDED)

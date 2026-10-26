@@ -16,12 +16,19 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence
 from ..text import full_brackets, squash
-from . import dbs, iis, price_table
+from . import dbs, iis, price_table, ratings
 from .common import RawText, capture_group, derived, fee_rates, number
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "dbs-zh-iis"
-PARSER_VERSION = "2"  # 2：價格表改由 parsers/price_table.py 讀（Issue #287）
+# 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
+PARSER_VERSION = "3"
+# 發行機構信用評等（#240）：商品簡介 `發行機構長期債務信用評等：截至本中文投資人須知刊印日，發行機構之長期債務信用評等經穆迪(Moody’s)評定為Aa1、…。`
+RATINGS = (
+    ratings.RatingPlace(
+        "商品簡介", r"發行機構長期債務信用評等：截至本中文投資人須知刊印日，發行機構之長期債務信用評等(?P<body>.+?)。"
+    ),
+)
 TITLE = "中文投資人須知(最終版本)"
 SECTIONS = (
     "※投資風險警語：",
@@ -69,6 +76,7 @@ PROVIDED = frozenset(
         "distributor_names",
         "distributor_addresses",
         *(f"fee_{label}" for label in iis.FEES),
+        *ratings.FIELDS,
     }
 )
 
@@ -292,4 +300,5 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         )
     else:
         fields.update(fee_rates(fees))
+    fields.update(ratings.fields(text_lines, RATINGS))
     return iis.IisSheet(fields, ti, frozenset(provided))

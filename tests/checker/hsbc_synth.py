@@ -18,13 +18,32 @@ from pathlib import Path
 
 from harness import STANDARD, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
-from reference_synth import UL, ProductSpec, price, quote_iso, write_notes
+from reference_synth import FITCH, MOODYS, SP, UL, ProductSpec, Ratings, price, quote_iso, write_notes
 
 CENT = Decimal("0.01")
 # 人民幣商品第一章第 5 條在幣別後面接的說明段落（真實樣本寫法節錄，Issue #180）
 CNH_NOTE = (
     "人民幣計價債券之說明事項：交割貨幣：境外人民幣本債券將以境外人民幣交割並於中國大陸境外交易。替代交割貨幣：美金"
 )
+
+ISSUER_ZH = "香港商香港上海滙豐銀行股份有限公司"
+
+
+def ratings_text(r: Ratings) -> str:
+    """第一章第 3 項與投資人須知第 4 點的評等寫法（#240）：穆迪、標普 `/` 分隔，最後一家前用「與」。"""
+    names = {MOODYS: "穆迪（Moody's）", SP: "標準普爾(Standard & Poor's ) ", FITCH: "惠譽(Fitch)"}
+    parts = [f"{names[a]}信評{v}" for a, v in r.stated(MOODYS, SP, FITCH)]
+    return " /".join(parts[:-1]) + (" 與" if len(parts) > 1 else "") + parts[-1]
+
+
+def ratings_ch2(r: Ratings) -> str:
+    """第二章 (7) 信用評等的寫法（#240）：穆迪、惠譽、標普各一句，以「；」分隔。"""
+    clauses = {
+        MOODYS: "穆迪投資服務公司（Moody's Investors Service）給予" + ISSUER_ZH + "長期信用評等為 {v}",
+        FITCH: "惠譽國際（Fitch Corporation）給與 {v} 的等級",
+        SP: "標準普爾公司（Standard and Poor's Corporation）則給與 {v} 的等級",
+    }
+    return "；".join(clauses[a].format(v=v) for a, v in r.stated(MOODYS, FITCH, SP))
 
 
 # 價格表各欄的左緣（真實樣本的欄序）
@@ -208,6 +227,9 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             {
                 1: "商品名稱：" + short + s.en,
                 2: warning,
+                3: f"發行機構名稱及長期債務信用評等：本商品發行機構為{ISSUER_ZH}，截至本商品說明書印製日期前，"
+                f"其長期債務信用評等為[{ratings_text(s.ratings)})。]為免疑義，此為發行機構之長期債務信用評等，"
+                "並不代表本商品之評等。",
                 5: f"計價幣別：{ccy}" + (CNH_NOTE if ccy == "人民幣" else ""),
                 6: f"每單位面額：{ccy}{denom}元",
                 7: f"最低交易金額：{ccy}{denom}元",
@@ -331,6 +353,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                         line(f"平均年化報酬率(以簡單平均年化報酬率之方式計算)為{s.annual:.2f}%")
     chapter("二", "相關機構事業概況")
     line("發行機構：(1)事業名稱：" + STANDARD["issuer"]["hsbc"]["issuer_name"].replace("（", "(").replace("）", ")"))
+    line(f"(7)信用評等(長期債務信用評等)：{ratings_ch2(s.ratings)}。")
     line("受託或銷售機構：(a)事業名稱：" + STANDARD["distributor"]["name"] + "(b)設立日期：2000年11月20日")
     line(
         "(c)營業所在地：" + STANDARD["distributor"]["address"] + "(d)負責人姓名：" + STANDARD["distributor"]["chairman"]
@@ -406,6 +429,11 @@ def build_iis_pdf(
         line("3. " + warning)
 
     def page2() -> None:
+        line(
+            f"4. 發行機構名稱及其長期債務信用評等：商品發行機構為{ISSUER_ZH}，截至產品說明書印製日期前，"
+            f"其長期債務信用評等為{ratings_text(s.ratings)})。為避免疑慮，此為發行機構之長期債務信用評等，並不代表本商品之評等"
+        )
+        line("5. 本商品之發行評等：不適用(因本商品受託或銷售對象以專業投資人及OSU 客戶為限)")
         line(f"6. 計價幣別：{s.currency_zh}")
         line(f"7. 每單位面額：{s.denom:,} {s.currency_zh}")
         line("8. 計價貨幣本金保本率：不保本。詳細解釋，請參考產品說明書第一章第八項")

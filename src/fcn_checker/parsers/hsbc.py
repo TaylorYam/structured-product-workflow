@@ -12,7 +12,7 @@ from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import ScenarioParam, ScenarioPrice
 from ..text import full_brackets, squash
 from . import hsbc_tables as tables
-from . import money, price_table, schedule
+from . import money, price_table, ratings, schedule
 from .common import derived
 from .layout import Document, LayoutSpec, TextIndex, capture, parse_date
 from .underlying_notes import Paragraphs, underlying_notes
@@ -21,7 +21,13 @@ TEMPLATE_ID = "hsbc-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #288）；3：日期表標準欄位與共用排程推導（Issue #289）；
 # 4：情境價格表、情境假設值與情境的執行價、觸及不保本價格交成共用情境規則的標準欄位（Issue #294）
 # 5：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
-PARSER_VERSION = "5"
+# 6：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
+PARSER_VERSION = "6"
+# 發行機構信用評等（#240）：第一章第 3 項 `其長期債務信用評等為[穆迪（Moody’s）信評Aa3/…]。`、第二章 (7) `信用評等(長期債務信用評等)：穆迪…給予…Aa3；…`
+RATINGS = (
+    ratings.RatingPlace("第一章第 3 項", r"發行機構為[^，。]+，截至[^，。]+，其長期債務信用評等為(?P<body>.+?)。"),
+    ratings.RatingPlace("第二章 (7) 信用評等", r"信用評等（長期債務信用評等）：(?P<body>.+?)。"),
+)
 # 條號自成一行（`9.`），也可能與標題同一行（`10. 發行價格：`，真實樣本第 10 條起是這種版面，Issue #185）
 LAYOUT = LayoutSpec(
     r"第{zh}章\s*{name}", re.compile(r"^(\d{1,2})\.(?:\s+\S.*)?$"), 100, re.compile(r"^\((\d{1,2})\)\s*(.*)$"), 110
@@ -531,6 +537,7 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
     fields["underlying_notes"] = underlying_notes(
         doc.lines, Paragraphs()
     )  # 連結標的公司介紹：沒有編號與名稱，依段落（Issue #225）
+    fields.update(ratings.fields(doc.lines, RATINGS))
     return HsbcTermSheet(fields, TextIndex(doc.lines), doc, scenarios, ScenarioIndex(scenarios))
 
 

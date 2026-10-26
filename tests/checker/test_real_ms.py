@@ -13,7 +13,7 @@ from fcn_checker.extraction import extract_lines
 from fcn_checker.issuers import MS, detect, detect_iis
 from fcn_checker.schema import CheckStatus as S
 from harness import check_all
-from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, requires
+from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, rated_check_format, requires
 
 pytestmark = [
     pytest.mark.real_samples,
@@ -23,8 +23,9 @@ PROBLEMS = (S.MISMATCH, S.REVIEW_REQUIRED, S.ERROR)
 
 
 @pytest.fixture(scope="module")
-def items():
-    outcome = check_all(CHECK_FORMAT, pdfs("147*.pdf"))
+def items(tmp_path_factory):
+    sheet = rated_check_format(tmp_path_factory.mktemp("rated"))  # 加評等欄（#240）
+    outcome = check_all(sheet, pdfs("147*.pdf"))
     return [i for i in outcome.items if i.term_sheet.name.endswith("_TS.pdf")], [
         i for i in outcome.items if i.term_sheet.name.endswith("_IIS.pdf")
     ]
@@ -43,6 +44,9 @@ def test_samples_only_differ_where_the_exploration_said(items):
             ("doc.trustee_product_code", "value_mismatch"): 1,  # 受託機構商品代號空白（文件錯誤）
             # 1 份表上 1 檔標的的價格都是說明書的同一比例：疑為分割調整後的價格，轉人工覆核（Issue #191）
             ("field.underlying_prices", "split_suspected"): 3,
+            # 3 份的惠譽評等和評等表不同（第一章第 3 項、第二章 (7) 各一處）
+            # 較舊的樣本寫評等調整前的評等，初始評等表只有現在的評等（#240）：每處評等段落各判不一致
+            ("standard.credit_rating", "value_mismatch"): 6,
         }
     )
     # 費用表表頭「費率」置中拆兩行的 2 份也讀得到費率（Issue #310）
@@ -62,10 +66,14 @@ def test_samples_only_differ_where_the_exploration_said(items):
 def test_investor_sheets_pass_and_rows_are_filled_only_when_the_term_sheet_passes_too(items):
     term_sheets, investor_sheets = items
     assert len(investor_sheets) == 7
-    assert all(i.report.template == MS.iis.template_id and i.report.status == S.PASS for i in investor_sheets)
-    # 說明書與投資人須知都通過的 5 檔回填；其餘 2 檔說明書有上面列出的差異，不回填
+    assert all(i.report.template == MS.iis.template_id for i in investor_sheets)
+    # 投資人須知只有說明書那 3 份的惠譽評等不同（#240），其餘通過
+    bad = Counter((r.rule_id, r.status) for i in investor_sheets for r in i.report.results if r.status in PROBLEMS)
+    assert bad == Counter({("standard.credit_rating", S.MISMATCH): 3})
+    assert Counter(i.report.status for i in investor_sheets) == Counter({S.PASS: 4, S.MISMATCH: 3})
+    # 說明書與投資人須知都通過的 3 檔回填；其餘 4 檔有上面列出的差異，不回填
     filled = [i for i in term_sheets if i.fills_sheet]
-    assert len(filled) == 5
+    assert len(filled) == 3
     assert all(i.report.status == S.PASS and i.partner.report.status == S.PASS for i in filled)
 
 
