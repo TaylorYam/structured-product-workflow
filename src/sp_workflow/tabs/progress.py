@@ -30,7 +30,7 @@ from sp_workflow.progress import (
     ProgressExport,
     ProgressRow,
     SentBatch,
-    by_days,
+    by_trade_date,
     export_name,
     export_progress,
     filter_rows,
@@ -71,7 +71,7 @@ COLUMNS = (
     *((key, name, 70) for key, name in zip(_READY_KEYS, READY_COLUMNS, strict=True)),
     ("lifecycle", "存續狀態", 80),
     ("pricing", "比價狀態", 110),
-    ("observed_through", "已比到", 90),
+    ("observed_through", "KO比價", 90),
     ("pricing_reason", "比價原因", 220),
     ("ki", "KI", 160),  # #196
     ("objection", "異議", 160),
@@ -95,7 +95,7 @@ class ProgressTab(Tab):
         self.config_paths = config_paths
         self.rows: tuple[ProgressRow, ...] | None = None  # 最近一次重新整理讀到的全部商品；還沒讀過是 None
         self.shown: list[ProgressRow] = []  # 篩選、排序後畫面上的列
-        self.sort: tuple[str, bool] | None = None  # 點欄位排序：(欄, 由大到小)；None 是預設（距今天數由大到小）
+        self.sort: tuple[str, bool] | None = None  # 點欄位排序：(欄, 由大到小)；None 是預設（交易日由新至舊）
         self.notice = ""  # 剛做完的登記（#157），重新整理後寫在狀態列最前面
         self.status_var.set("按「重新整理」讀資料庫，列出每檔商品的作業進度；篩選與排序不會再讀資料庫。")
 
@@ -246,13 +246,13 @@ class ProgressTab(Tab):
 
     def sort_by(self, key: str) -> None:
         """點欄位排序：第一次由大到小（距今天數、日期）或由小到大（文字），再點一次反過來。"""
-        current, descending = self.sort or ("days", True)  # 預設就是距今天數由大到小
+        current, descending = self.sort or ("trade_date", True)  # 預設就是交易日由新至舊
         self.sort = (key, not descending if key == current else key in _DESCENDING_FIRST)
         self.refilter()
 
     def _sorted(self, rows: list[ProgressRow]) -> list[ProgressRow]:
         if self.sort is None:
-            return by_days(rows)
+            return by_trade_date(rows)
         key, descending = self.sort
         index = [k for k, _, _ in COLUMNS].index(key)
         present = [row for row in rows if _sort_value(row, index) is not None]
@@ -262,7 +262,7 @@ class ProgressTab(Tab):
 
     def _sort_text(self) -> str:
         if self.sort is None:
-            return "距今天數由大到小"
+            return "交易日由新至舊"
         key, descending = self.sort
         name = next(label for k, label, _ in COLUMNS if k == key)
         return f"{name}{'由大到小' if descending else '由小到大'}"

@@ -45,7 +45,7 @@ from sp_workflow.progress import (
     Facts,
     ProgressRow,
     SentBatch,
-    by_days,
+    by_trade_date,
     export_progress,
     filter_rows,
     load_progress,
@@ -188,10 +188,15 @@ def test_pricing_text_marks_unlocked_products() -> None:
     assert row("1", pricing_unlocked=True).pricing_text == "", "還沒比過的空白"
 
 
-def test_default_order_puts_the_most_behind_first() -> None:
-    rows = [row("3", days=None), row("1", days=3), row("2", days=30), row("0", days=3)]
+def test_default_order_puts_the_newest_trade_first() -> None:
+    rows = [
+        row("3", trade_date=None),
+        row("1", trade_date=dt.date(2026, 10, 20)),
+        row("2", trade_date=dt.date(2026, 9, 1)),
+        row("0", trade_date=dt.date(2026, 10, 20)),
+    ]
 
-    assert [r.tdcc for r in by_days(rows)] == ["2", "0", "1", "3"]
+    assert [r.tdcc for r in by_trade_date(rows)] == ["0", "1", "2", "3"]
 
 
 def test_export_writes_the_rows_as_shown(tmp_path: Path) -> None:
