@@ -254,9 +254,10 @@ class _Shapes:
         return self.image(side, side, [shapes.Layer(tick, color)])
 
     def heading(self) -> tk.PhotoImage:
-        """表頭的一格：白底、下面一條細線、右邊淡淡的欄分隔。"""
+        """表頭的一格：白底、下面一條細線、右邊淡淡的欄分隔。也要平鋪放大：表頭每捲一次就重畫，
+        中間只有 4 像素時幾十欄的表頭要貼上萬塊，捲一格卡半秒以上（#262）。"""
         side = 6
-        return self.image(
+        small = self.image(
             side,
             side,
             [
@@ -265,6 +266,7 @@ class _Shapes:
                 shapes.Layer(shapes.rounded_box(0, side - 1, side, side, 0), BORDER),
             ],
         )
+        return self.stretch(small, 1, 1)
 
 
 def _create_elements(style: ttk.Style, shape: _Shapes) -> None:
