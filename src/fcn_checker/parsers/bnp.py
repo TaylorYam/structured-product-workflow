@@ -20,9 +20,10 @@ from .layout import Document, LayoutSpec, Span, TextIndex, capture, join_text, p
 from .underlying_notes import Markers, underlying_notes
 
 TEMPLATE_ID = "bnp-zh-pd"
-PARSER_VERSION = "6"  # 2：日期表標準欄位與共用排程推導（Issue #289）；3：情境交成共用情境規則的標準欄位（Issue #294）；5：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
-# 4：第一章依項目名稱對應條號、境外人民幣版（Issue #345）
+# 2：日期表標準欄位與共用排程推導（Issue #289）；3：情境交成共用情境規則的標準欄位（Issue #294）；
+# 4：第一章依項目名稱對應條號、境外人民幣版（Issue #345）；5：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 # 6：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #242）
+PARSER_VERSION = "6"
 # 信用評等（#242）：第一章第 3 項發行機構與保證機構接著寫（發行機構只寫標普 `信用評等為標準普爾（S&P）A+保證機構：…`），
 # 第二章發行機構、保證機構 (7) 信用評等（以前一項 (6) 財務狀況分辨是哪個機構）
 RATINGS = (
