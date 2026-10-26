@@ -6,7 +6,7 @@ import tkinter as tk
 from collections.abc import Callable, Collection, Iterable, Mapping
 from tkinter import ttk
 
-from fcn_checker.ui import DANGER, FONT, SURFACE, TEXT, TEXT_SECONDARY
+from fcn_checker.ui import BODY_FONT, CAPTION_FONT, DANGER, SECTION_FONT, SURFACE, TEXT, TEXT_SECONDARY, Scrollbar
 from sp_workflow.editor_cells import (
     CellState,
     K,
@@ -47,7 +47,7 @@ class _FieldRow:
     ) -> None:
         self.var = tk.StringVar()
         row *= 2  # 每欄兩行：輸入一行、說明一行
-        self.label = tk.Label(parent, text=name, anchor="w", background=SURFACE, font=(FONT, 10), padx=6)
+        self.label = tk.Label(parent, text=name, anchor="w", background=SURFACE, font=BODY_FONT, padx=6)
         self.label.grid(row=row, column=0, sticky="nsew", pady=(1, 0))
         if name in CHOICES:
             self.input: ttk.Entry = ttk.Combobox(parent, textvariable=self.var, values=CHOICES[name], width=18)
@@ -60,7 +60,7 @@ class _FieldRow:
         self.database = ttk.Button(parent, text="用資料庫的值", command=lambda: on_database(name))
         self.database.grid(row=row, column=2, sticky="w", padx=(6, 0), pady=(1, 0))
         self.database.grid_remove()
-        self.note = tk.Label(parent, anchor="w", justify=tk.LEFT, background=SURFACE, font=(FONT, 9), padx=6)
+        self.note = tk.Label(parent, anchor="w", justify=tk.LEFT, background=SURFACE, font=CAPTION_FONT, padx=6)
         self.note.grid(row=row + 1, column=0, columnspan=3, sticky="ew", pady=(0, 2))
         self.note.grid_remove()
         if follow_width:
@@ -110,7 +110,7 @@ class OrderEditor(ttk.Frame):
         fixed: Collection[str] = (),
         placeholder: str = PLACEHOLDER,
     ) -> None:
-        super().__init__(parent, style="Card.TFrame", padding=(14, 12))
+        super().__init__(parent, style="Card.TFrame", padding=(16, 14))
         self.config = config
         self.on_change = on_change
         self.fixed = frozenset(fixed)
@@ -120,14 +120,14 @@ class OrderEditor(ttk.Frame):
         self.frozen = False  # 存檔中整個編輯區不能改
         self.title_var = tk.StringVar(value=placeholder)
         self.note_var = tk.StringVar()
-        ttk.Label(self, textvariable=self.title_var, style="Card.TLabel").pack(anchor="w")
+        ttk.Label(self, textvariable=self.title_var, style="CardSection.TLabel").pack(anchor="w")
         self.note = ttk.Label(self, textvariable=self.note_var, style="CardMuted.TLabel", justify=tk.LEFT)
         self.note.pack(anchor="w", fill=tk.X, pady=(4, 8))
         self.bind("<Configure>", lambda event: self.note.configure(wraplength=max(240, event.width - 40)))
         area = ttk.Frame(self, style="CardBody.TFrame")
         area.pack(fill=tk.BOTH, expand=True)
         canvas = tk.Canvas(area, highlightthickness=0, background=SURFACE)
-        scroll = ttk.Scrollbar(area, orient=tk.VERTICAL, command=canvas.yview)
+        scroll = Scrollbar(area, orient=tk.VERTICAL, command=canvas.yview)
         self.fields = tk.Frame(canvas, background=SURFACE)
         self.fields.columnconfigure(2, weight=1)  # 「用資料庫的值」右邊的空白吃掉多的寬度
         self.fields.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
@@ -262,13 +262,13 @@ class TradeRowsEditor:
         if trades is None:
             return
         row = self.first_row
-        self._label(row, self.TITLE, (FONT, 11, "bold"), pady=(14, 0))
-        self.note = self._label(row, self.NOTE, (FONT, 9), foreground=TEXT_SECONDARY, second=True)
+        self._label(row, self.TITLE, SECTION_FONT, pady=(16, 0))
+        self.note = self._label(row, self.NOTE, CAPTION_FONT, foreground=TEXT_SECONDARY, second=True)
         if not trades.rows:
-            self.empty = self._label(row + 1, self.EMPTY, (FONT, 10))
+            self.empty = self._label(row + 1, self.EMPTY, BODY_FONT)
         for trade in trades.rows:
             row += 1
-            self._label(row, f"第 {trade.seq} 列", (FONT, 10, "bold"), pady=(8, 0))
+            self._label(row, f"第 {trade.seq} 列", SECTION_FONT, pady=(8, 0))
             for name in TRADE_ROW_FIELDS:
                 row += 1
                 key = (trade.seq, name)

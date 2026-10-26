@@ -16,6 +16,7 @@ from fcn_checker.ui import (
     TEXT,
     TEXT_SECONDARY,
     CopyMenu,
+    Scrollbar,
     tab_separated,
     to_clipboard,
 )
@@ -40,13 +41,13 @@ class CellTable(ttk.Frame):
         columns: Sequence[tuple[str, str]],
         on_select: Callable[[str], None],
     ) -> None:
-        super().__init__(parent, style="Card.TFrame")
+        super().__init__(parent, style="CardBody.TFrame")  # 外面的 CopyArea 已經是白色卡片
         self.first = first  # (欄, 表頭)：固定在左邊
         self.columns = tuple(columns)  # [(欄, 表頭)]：可以左右捲動
         self.on_select = on_select
         self.font = tkfont.Font(family=FONT, size=10)
-        self.header_font = tkfont.Font(family=FONT, size=10, weight="bold")
-        self.row_height = self.font.metrics("linespace") + 10
+        self.header_font = tkfont.Font(family=FONT, size=9, weight="bold")  # 和其他結果表的表頭一樣
+        self.row_height = self.font.metrics("linespace") + 14
         self.keys: list[str] = []
         self.selected: str | None = None
         self._rects: dict[tuple[str, str], tuple[tk.Canvas, int]] = {}  # (key, 欄) → 格子的方塊
@@ -62,8 +63,8 @@ class CellTable(ttk.Frame):
         self.corner, self.header, self.side, self.body = canvas(), canvas(), canvas(), canvas()
         for scrolling in (self.side, self.body):
             scrolling.configure(yscrollincrement=self.row_height)
-        self.vbar = ttk.Scrollbar(self, orient=tk.VERTICAL, command=self._yview)
-        self.hbar = ttk.Scrollbar(self, orient=tk.HORIZONTAL, command=self._xview)
+        self.vbar = Scrollbar(self, orient=tk.VERTICAL, command=self._yview)
+        self.hbar = Scrollbar(self, orient=tk.HORIZONTAL, command=self._xview)
         self.body.configure(yscrollcommand=self.vbar.set, xscrollcommand=self.hbar.set)
         self.corner.grid(row=0, column=0, sticky="nsew")
         self.header.grid(row=0, column=1, sticky="ew")

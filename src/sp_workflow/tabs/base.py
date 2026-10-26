@@ -18,16 +18,19 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from typing import TypeVar
 
 from fcn_checker.ui import (
-    ACCENT,
-    CONTROL_BORDER,
+    CODE_FONT,
     DANGER,
-    NUMBER_FONT,
+    SURFACE,
+    TEXT,
     Background,
     CopyArea,
+    FieldBox,
     FitTreeview,
     KpiRow,
     PageHeader,
+    Scrollbar,
     TableCopy,
+    show_done,
 )
 from sp_workflow.database import (
     ConnectionSettings,
@@ -66,14 +69,14 @@ class Tab:
         self.master = notebook.winfo_toplevel()
         self.db = db
         self.background = background(self.master)
-        self.frame = ttk.Frame(notebook, padding=(28, 22))
+        self.frame = ttk.Frame(notebook, padding=(32, 24))
         notebook.add(self.frame, text=title)
         self.frame.columnconfigure(0, weight=1)
         self.status_var = tk.StringVar()
         self.runner = ActionRunner(db, self.background, self.status_var, self._busy, reset=self._reset)
         self.columns = columns
         self.table_area = CopyArea(self.frame, COPY_HINT, lambda: self.copier.copy_all())  # #121
-        self.table = FitTreeview(self.table_area, columns=[c for c, _, _ in columns], show="headings")
+        self.table = FitTreeview(self.table_area.card, columns=[c for c, _, _ in columns], show="headings")
         for col, label, width in columns:
             self.table.heading(col, text=label)
             # 最後一欄跟著視窗變寬，但不縮到比內容窄（窄了就左右捲動，#179）；欄寬依內容（#192）
@@ -85,14 +88,14 @@ class Tab:
     def page_header(self, title: str, description: str) -> None:
         """第 0 列：步驟 N／總數（由視窗用 show_step 填）、標題（只寫功能）與一行說明。"""
         self.header = PageHeader(self.frame, title, description)
-        self.header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 14))
+        self.header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 16))
 
     def show_step(self, step: str) -> None:
         self.header.step.set(step)
 
     def card(self, row: int) -> ttk.Frame:
         """第 row 列的白色輸入卡片。"""
-        card = ttk.Frame(self.frame, style="Card.TFrame", padding=(18, 14))
+        card = ttk.Frame(self.frame, style="Card.TFrame", padding=(20, 16))
         card.grid(row=row, column=0, columnspan=2, sticky="ew")
         return card
 
@@ -100,7 +103,7 @@ class Tab:
         """卡片裡的一欄；有直的 TDCC 欄位時放在它右邊。"""
         card.columnconfigure(column, weight=1)
         body = ttk.Frame(card, style="CardBody.TFrame")
-        body.grid(row=0, column=column, sticky="nsew", padx=(28, 0) if column else 0)
+        body.grid(row=0, column=column, sticky="nsew", padx=(24, 0) if column else 0)
         body.columnconfigure(0, weight=1)
         return body
 
@@ -108,31 +111,34 @@ class Tab:
         """卡片左邊直的 TDCC 欄位（#83）：一次貼很多筆時往下長，底下即時顯示貼了幾筆（重複只算一次）。"""
         column = ttk.Frame(card, style="CardBody.TFrame")
         column.grid(row=0, column=0, sticky="ns")
-        ttk.Label(column, text="TDCC", style="Card.TLabel").pack(anchor="w")
+        ttk.Label(column, text="TDCC", style="CardSection.TLabel").pack(anchor="w")
         ttk.Label(column, text="可以一次貼很多筆，換行、空白或逗號分隔", style="CardMuted.TLabel").pack(
-            anchor="w", pady=(0, 6)
+            anchor="w", pady=(2, 8)
         )
-        box = ttk.Frame(column, style="CardBody.TFrame")
+        box = FieldBox(column)
         box.pack(anchor="w")
         self.tdcc_text = tk.Text(
             box,
             height=12,
             width=16,
-            font=(NUMBER_FONT, 12),
+            font=CODE_FONT,
             relief="flat",
-            highlightthickness=1,
-            highlightbackground=CONTROL_BORDER,
-            highlightcolor=ACCENT,
-            padx=8,
-            pady=6,
+            borderwidth=0,
+            highlightthickness=0,
+            background=SURFACE,
+            foreground=TEXT,
+            insertbackground=TEXT,
+            padx=4,
+            pady=2,
             undo=True,
         )
-        scroll = ttk.Scrollbar(box, command=self.tdcc_text.yview)
+        box.watch(self.tdcc_text)
+        scroll = Scrollbar(box, command=self.tdcc_text.yview)
         self.tdcc_text.configure(yscrollcommand=scroll.set)
         self.tdcc_text.pack(side=tk.LEFT)
         scroll.pack(side=tk.LEFT, fill=tk.Y)
         self.count_var = tk.StringVar(value="已貼 0 筆")
-        ttk.Label(column, textvariable=self.count_var, style="CardMuted.TLabel").pack(anchor="w", pady=(6, 0))
+        ttk.Label(column, textvariable=self.count_var, style="CardMuted.TLabel").pack(anchor="w", pady=(8, 0))
         self.tdcc_text.bind("<<Modified>>", self._tdcc_changed)
 
     def _tdcc_changed(self, _event: object = None) -> None:
@@ -146,8 +152,8 @@ class Tab:
     ) -> int:
         """卡片裡的一個路徑欄位：標題（旁邊可加一行小字）、輸入框與「選擇…」；回傳下一個可用的列。"""
         title = ttk.Frame(body, style="CardBody.TFrame")
-        title.grid(row=row, column=0, columnspan=2, sticky="w", pady=(10 if row else 0, 4))
-        ttk.Label(title, text=label, style="Card.TLabel").pack(side=tk.LEFT)
+        title.grid(row=row, column=0, columnspan=2, sticky="w", pady=(12 if row else 0, 6))
+        ttk.Label(title, text=label, style="CardSection.TLabel").pack(side=tk.LEFT)
         if note:
             ttk.Label(title, text=note, style="CardMuted.TLabel").pack(side=tk.LEFT, padx=(10, 0))
         ttk.Entry(body, textvariable=var).grid(row=row + 1, column=0, sticky="ew")
@@ -159,7 +165,7 @@ class Tab:
     def result_area(self, body: ttk.Frame, row: int) -> None:
         """卡片裡按鈕列、完成後的重點數字與狀態列（做完時變成綠色結果條）。"""
         self.buttons = ttk.Frame(body, style="CardBody.TFrame")
-        self.buttons.grid(row=row, column=0, columnspan=2, sticky="w", pady=(16, 0))
+        self.buttons.grid(row=row, column=0, columnspan=2, sticky="w", pady=(16, 0))  # 主要的動作放最左邊
         self.kpis = KpiRow(body)
         self.kpis.grid(row=row + 1, column=0, columnspan=2, sticky="w", pady=(16, 0))
         self.kpis.hide()
@@ -173,12 +179,12 @@ class Tab:
         欄位比畫面寬時用下方的捲軸左右捲動，看得到最右邊的欄（#179）。
         """
         self.frame.rowconfigure(row, weight=1)
-        self.table_area.grid(row=row, column=0, columnspan=2, sticky="nsew", pady=(16, 0))
-        self.table.grid(row=1, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(self.table_area, orient=tk.VERTICAL, command=self.table.yview)
-        scroll.grid(row=1, column=1, sticky="ns")
-        self.hbar = ttk.Scrollbar(self.table_area, orient=tk.HORIZONTAL, command=self.table.xview)
-        self.hbar.grid(row=2, column=0, sticky="ew")
+        self.table_area.grid(row=row, column=0, columnspan=2, sticky="nsew", pady=(20, 0))
+        self.table.grid(row=0, column=0, sticky="nsew")
+        scroll = Scrollbar(self.table_area.card, orient=tk.VERTICAL, command=self.table.yview)
+        scroll.grid(row=0, column=1, sticky="ns")
+        self.hbar = Scrollbar(self.table_area.card, orient=tk.HORIZONTAL, command=self.table.xview)
+        self.hbar.grid(row=1, column=0, sticky="ew")
         self.table.configure(yscrollcommand=scroll.set, xscrollcommand=self.hbar.set)
 
     def selected_item(self) -> str | None:
@@ -191,7 +197,7 @@ class Tab:
 
     def mark_done(self, done: bool) -> None:
         """狀態列：做完時是綠色結果條（#83），處理中或出錯時是一般顏色。"""
-        self.status_label.configure(style="Done.TLabel" if done else "Card.TLabel")
+        show_done(self.status_label, done, "Card.TLabel")
 
     def restart(self) -> None:
         """重新開始：收起上一次的重點數字，狀態列恢復一般顏色。"""
@@ -377,12 +383,22 @@ class RootFolder:
             self.memory.remember(root=self.var.get())
 
     def build_bar(self, header: tk.Misc, pixels: Callable[[float], int]) -> None:
-        """視窗頂端列固定顯示根目錄與「變更…」；只能用按鈕改，避免不小心打錯。"""
+        """視窗頂端列固定顯示根目錄與「變更…」；只能用按鈕改，避免不小心打錯。還沒設定時旁邊用紅字提醒。"""
         ttk.Label(header, text="根目錄", style="Header.TLabel").pack(side=tk.LEFT)
-        ttk.Entry(header, textvariable=self.var, state="readonly").pack(
+        ttk.Entry(header, textvariable=self.var, state="readonly", style="Path.TEntry").pack(
             side=tk.LEFT, fill=tk.X, expand=True, padx=pixels(10)
         )
-        ttk.Button(header, text="變更…", command=self.change).pack(side=tk.LEFT)
+        ttk.Button(header, text="變更…", command=self.change).pack(side=tk.RIGHT)
+        missing = ttk.Label(header, text="尚未設定：準備、寄信草稿要用", style="HeaderWarning.TLabel")
+
+        def show_missing(*_args: object) -> None:
+            if self.var.get().strip():
+                missing.pack_forget()
+            else:
+                missing.pack(side=tk.RIGHT, padx=(0, pixels(10)))
+
+        self.var.trace_add("write", show_missing)
+        show_missing()
 
     def with_output(self, out_var: tk.StringVar, out_label: str) -> tuple[Path, Path] | None:
         """按「開始」前：根目錄與這一頁的輸出位置；任一個沒設定時提示，回傳 None。"""

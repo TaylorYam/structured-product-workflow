@@ -17,8 +17,8 @@ from .ui import (
     ACCENT,
     ACCENT_ACTIVE,
     ACCENT_SOFT,
+    BODY_FONT,
     BORDER,
-    CONTROL_BORDER,
     FONT,
     HOVER,
     NUMBER_FONT,
@@ -26,6 +26,7 @@ from .ui import (
     TEXT,
     TEXT_DISABLED,
     TEXT_SECONDARY,
+    FieldBox,
 )
 
 WEEKDAYS = "日一二三四五六"  # 星期日開頭，和台灣的月曆一樣
@@ -265,13 +266,7 @@ class DateEntry(ttk.Frame):
         self.on_pick = on_pick
         self.popup: DatePopup | None = None
         scale = _scale(self)
-        self.box = tk.Frame(
-            self,
-            background=SURFACE,
-            highlightthickness=1,
-            highlightbackground=CONTROL_BORDER,
-            highlightcolor=CONTROL_BORDER,
-        )
+        self.box = FieldBox(self)  # 和其他輸入框一樣的圓角外框，聚焦時變藍
         self.box.pack()
         self.entry = tk.Entry(
             self.box,
@@ -286,17 +281,13 @@ class DateEntry(ttk.Frame):
             selectbackground=ACCENT_SOFT,
             selectforeground=TEXT,
             disabledbackground=SURFACE,
-            font=(FONT, 11),
+            font=BODY_FONT,
         )
-        self.entry.pack(side="left", padx=(round(8 * scale), round(4 * scale)), pady=round(6 * scale))
+        self.entry.pack(side="left", padx=(round(4 * scale), round(4 * scale)), pady=round(2 * scale))
         self.button = CalendarIcon(self.box, self.open)
-        self.button.pack(side="left", padx=(0, round(8 * scale)))
-        self.entry.bind("<FocusIn>", lambda _event: self._outline(ACCENT), add="+")
-        self.entry.bind("<FocusOut>", lambda _event: self._outline(CONTROL_BORDER), add="+")
+        self.button.pack(side="left", padx=(0, round(4 * scale)))
+        self.box.watch(self.entry)
         self.box.bind("<Button-1>", lambda _event: self.entry.focus_set())
-
-    def _outline(self, color: str) -> None:
-        self.box.configure(highlightbackground=color, highlightcolor=color)
 
     def open(self) -> DatePopup:
         """跳出月曆（已經開著就先關掉舊的）。"""
