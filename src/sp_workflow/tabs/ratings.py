@@ -13,7 +13,7 @@ from collections.abc import Callable, Sequence
 from tkinter import messagebox, ttk
 
 from fcn_checker.date_picker import DateEntry, parse_day
-from fcn_checker.ui import DANGER, Background, FitTreeview, Scrollbar
+from fcn_checker.ui import DANGER, Background, FitTreeview, Scrollbar, WrapLabel
 from sp_workflow.credit_ratings import (
     AGENCIES,
     INITIAL,
@@ -69,7 +69,7 @@ class RatingsWindow(tk.Toplevel):
         frame.rowconfigure(1, weight=1)
         top = ttk.Frame(frame)
         top.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 10))
-        ttk.Label(
+        WrapLabel(
             top,
             text="自算風險等級與說明書、投資人須知的評等核對都用這裡的評等，依交易日取生效日在那天以前的最新一筆。"
             "評等變了請新增一筆並填生效日；每次按確定就存進資料庫，並記下誰、何時、改前改後。",
@@ -93,7 +93,7 @@ class RatingsWindow(tk.Toplevel):
         self.entities.bind("<Double-1>", lambda _: self.add_rating())
         self.status_var = tk.StringVar()
         self.runner = ActionRunner(db, self.background, self.status_var, self._busy, parent=self)
-        ttk.Label(frame, textvariable=self.status_var, wraplength=1000, justify="left").grid(
+        WrapLabel(frame, textvariable=self.status_var, wraplength=1000, justify="left").grid(
             row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0)
         )
         self.protocol("WM_DELETE_WINDOW", self.close)
@@ -288,7 +288,7 @@ class _Form(tk.Toplevel):
         return var
 
     def note(self, text: str) -> None:
-        ttk.Label(self.body, text=text, wraplength=400, justify="left").grid(
+        WrapLabel(self.body, text=text, wraplength=400, justify="left").grid(
             row=self.row, column=0, columnspan=2, sticky="w", pady=(0, 4)
         )
         self.row += 1

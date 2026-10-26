@@ -12,6 +12,7 @@ import ctypes
 import re
 import sys
 import tkinter as tk
+import unicodedata
 from collections.abc import Callable, Iterable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from pathlib import Path
@@ -625,6 +626,159 @@ def done_mark(widget: tk.Misc) -> tk.PhotoImage | str:
     return shape.done if shape is not None else ""
 
 
+NO_LINE_START = "，。、；：！？」』）】》〉〕｝％…,.;:!?)]}%"  # 不放在行首的標點（跟著前一個字）
+NO_LINE_END = "「『（【《〈〔｛([{"  # 不放在行尾的標點（跟著後一個字）
+
+
+def _wide(char: str) -> bool:
+    """中日韓文字與全形標點：每個字之間都可以斷行。"""
+    return unicodedata.east_asian_width(char) in ("W", "F")
+
+
+def _break_units(paragraph: str) -> list[str]:
+    """拆成不能再分開的單位：一個中文字（連同後面的句號、前面的左括號）、一個英數字詞或一個空白。"""
+    units: list[str] = []
+    for char in paragraph:
+        last = units[-1] if units and units[-1] != " " else ""
+        if char in NO_LINE_START and len(units) > 1 and units[-1] == " ":
+            units.pop()
+            units[-1] += " " + char  # 空白後面的句號也跟著前一個字
+        elif char == " ":
+            units.append(" ")
+        elif last and (char in NO_LINE_START or last[-1] in NO_LINE_END or not (_wide(char) or _wide(last[-1]))):
+            units[-1] += char
+        else:
+            units.append(char)
+    return units
+
+
+def break_lines(text: str, width: int, measure: Callable[[str], int]) -> str:
+    """依寬度（像素）把 text 斷成多行（#255）：中文字之間都可以斷，英數字詞不拆開，句號、逗號、右括號不放在行首，
+    左括號不放在行尾；原本的換行照留，一個字詞就比整行寬時才照字拆。width 不是正數時不斷行。
+
+    Tk 的 wraplength 只在空白處斷行：中英夾雜的句子會在「貼上 TDCC…」這種空白處斷出很短的一行。"""
+    if width <= 0:
+        return text
+    lines: list[str] = []
+    for paragraph in text.split("\n"):
+        line = ""
+        for unit in _break_units(paragraph):
+            if unit == " ":
+                line += " " if line else ""
+                continue
+            if line.strip() and measure(line + unit) > width:
+                lines.append(line.rstrip())
+                line = ""
+            line += unit
+            while len(line) > 1 and measure(line) > width:
+                fit = _fit(line, width, measure)
+                lines.append(line[:fit])
+                line = line[fit:]
+        lines.append(line.rstrip())
+    return "\n".join(lines)
+
+
+def _fit(line: str, width: int, measure: Callable[[str], int]) -> int:
+    """line 開頭最多幾個字放得進 width（至少 1 個）；line 整個放不進。二分搜尋：很長的字詞也只量幾次。"""
+    low, high = 1, len(line) - 1
+    while low < high:
+        middle = (low + high + 1) // 2
+        if measure(line[:middle]) <= width:
+            low = middle
+        else:
+            high = middle - 1
+    return low
+
+
+class _Wrapping:
+    """`WrapLabel`／`WrapTkLabel` 共用：wraplength 不交給 Tk，改用 `break_lines` 斷好行再顯示（#255）。
+
+    text、textvariable（要給 `tk.Variable`）、wraplength（像素或 Tk 的長度寫法）照原本的標籤用，之後 configure
+    也可以改；cget("text") 回傳沒斷行的原文。字型（例如換樣式變粗體）、文字或寬度改變時重新斷行。
+    """
+
+    OWN = ("text", "textvariable", "wraplength")  # 由這裡管、不交給 Tk 的選項
+
+    def __init__(self, master: tk.Misc | None = None, **kw: object) -> None:
+        self._source = str(kw.pop("text", ""))
+        self._width: object = kw.pop("wraplength", 0)
+        variable = kw.pop("textvariable", None)
+        self._variable: tk.Variable | None = None
+        self._trace: str | None = None
+        self._shown: tuple[str, int, str] | None = None
+        super().__init__(master, **kw)
+        self._follow(variable)
+        self.bind("<Destroy>", lambda _event: self._follow(None), add="+")  # 視窗被關掉時也停止跟著變數
+        self._wrap()
+
+    def configure(self, cnf: dict | str | None = None, **kw: object) -> object:
+        if isinstance(cnf, str):  # 查一個選項：照 Tk 回傳 (名稱, 資料庫名稱, 類別, 預設值, 目前的值)
+            if cnf in self.OWN:
+                return (cnf, *super().configure(cnf)[1:4], self.cget(cnf))
+            return super().configure(cnf)
+        kw = {**(cnf or {}), **kw}
+        if not kw:
+            return super().configure()
+        if "text" in kw:
+            self._source = str(kw.pop("text"))
+        if "textvariable" in kw:
+            self._follow(kw.pop("textvariable") or None)
+        if "wraplength" in kw:
+            self._width = kw.pop("wraplength")
+        result = super().configure(**kw) if kw else None
+        self._wrap()
+        return result
+
+    config = configure
+
+    def cget(self, key: str) -> object:
+        if key == "text":
+            return self._text()
+        if key == "textvariable":
+            return str(self._variable) if self._variable else ""
+        if key == "wraplength":
+            return self._width
+        return super().cget(key)
+
+    def __getitem__(self, key: str) -> object:
+        return self.cget(key)
+
+    def _follow(self, variable: tk.Variable | None) -> None:
+        """改跟著這個變數（None：不跟任何變數）。"""
+        if self._variable is not None and self._trace is not None:
+            self._variable.trace_remove("write", self._trace)
+        self._variable = variable
+        self._trace = variable.trace_add("write", lambda *_: self._wrap()) if variable is not None else None
+
+    def _text(self) -> str:
+        return str(self._variable.get()) if self._variable is not None else self._source
+
+    def _font(self) -> str:
+        font = str(super().cget("font"))
+        if not font and isinstance(self, ttk.Widget):
+            font = str(ttk.Style(self).lookup(str(super().cget("style")) or self.winfo_class(), "font"))
+        return font or "TkDefaultFont"
+
+    def _wrap(self) -> None:
+        text, width, font = self._text(), round(self.winfo_fpixels(self._width or 0)), self._font()
+        if self._shown == (text, width, font):
+            return  # 沒變就不重設：重設會讓版面重算、又觸發 <Configure>
+        self._shown = (text, width, font)
+
+        def measure(part: str) -> int:
+            return int(self.tk.call("font", "measure", font, "-displayof", self, part))
+
+        super().configure(text=break_lines(text, width, measure), wraplength=0)
+
+
+class WrapLabel(_Wrapping, ttk.Label):
+    """中英夾雜也照寬度斷行的 `ttk.Label`（#255）；參數同 `ttk.Label`。"""
+
+
+class WrapTkLabel(_Wrapping, tk.Label):
+    """中英夾雜也照寬度斷行的 `tk.Label`（#255）；參數同 `tk.Label`。"""
+
+
 class PageHeader(ttk.Frame):
     """分頁最上方：「步驟 N／總數」、標題（只寫功能，#85）與一行說明（#83）。
 
@@ -636,7 +790,7 @@ class PageHeader(ttk.Frame):
         self.step = tk.StringVar()
         ttk.Label(self, textvariable=self.step, style="Step.TLabel").pack(anchor="w")
         ttk.Label(self, text=title, style="Title.TLabel").pack(anchor="w", pady=(2, 4))
-        self.description = text = ttk.Label(self, text=description, style="Muted.TLabel", wraplength=900)
+        self.description = text = WrapLabel(self, text=description, style="Muted.TLabel", wraplength=900)
         text.pack(anchor="w", fill="x")
         self.bind("<Configure>", lambda event: text.configure(wraplength=max(300, event.width - 20)))
 
@@ -695,7 +849,7 @@ class HintBar(ttk.Frame):
     def __init__(self, parent: tk.Misc, change: Callable[[], None]):
         super().__init__(parent, style="Hint.TFrame", padding=(14, 8))
         self.text = tk.StringVar()
-        label = ttk.Label(self, textvariable=self.text, style="Hint.TLabel", wraplength=900)
+        label = WrapLabel(self, textvariable=self.text, style="Hint.TLabel", wraplength=900)
         label.pack(side="left", fill="x", expand=True)
         ttk.Button(self, text="改選…", command=change).pack(side="left", padx=(10, 0))
         self.bind("<Configure>", lambda event: label.configure(wraplength=max(300, event.width - 180)))

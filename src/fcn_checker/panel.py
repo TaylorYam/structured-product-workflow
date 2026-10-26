@@ -29,6 +29,7 @@ from .ui import (
     PageHeader,
     Scrollbar,
     TableCopy,
+    WrapLabel,
     show_done,
 )
 
@@ -172,7 +173,7 @@ class ResultPane(ttk.Frame):
         self.release_button = ttk.Button(actions, text="人工放行…", command=self._release, state="disabled")
         self.release_button.grid(row=0, column=0, sticky="w")
         self.release_reason = tk.StringVar(value="")
-        ttk.Label(actions, textvariable=self.release_reason, wraplength=pixels(900)).grid(
+        WrapLabel(actions, textvariable=self.release_reason, wraplength=pixels(900)).grid(
             row=0, column=1, sticky="w", padx=(12, 0)
         )
         self.item_table.bind("<<TreeviewSelect>>", self._item_selected)
@@ -314,7 +315,7 @@ class ApprovalDatesDialog(tk.Toplevel):
         self.resizable(False, False)
         frame = ttk.Frame(self, padding=pixels(16))
         frame.pack(fill="both", expand=True)
-        ttk.Label(
+        WrapLabel(
             frame,
             text="每份說明書依交易日，核對當天或之前最近一次的審查通過日期。\n"
             "重新審查後新增新的日期；較早的日期不能修改，只能修改或刪除最新一筆。",
@@ -532,7 +533,7 @@ class CheckTab(ttk.Frame):
         self.pending_text = _text(self.not_covered, 6)
         self.pending_text.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
         self.status = tk.StringVar(value=session.message)
-        self.status_label = ttk.Label(self, textvariable=self.status, wraplength=960)
+        self.status_label = WrapLabel(self, textvariable=self.status, wraplength=960)
         self.status_label.grid(row=4, column=0, sticky="ew")
         self.bind("<Configure>", self._resize)
         self.root.after(1000, self._watch_sources)
