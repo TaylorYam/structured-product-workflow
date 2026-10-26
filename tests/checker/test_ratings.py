@@ -135,11 +135,13 @@ def test_canonical_rating_spelling(agency, typed, expected) -> None:
     assert canonical(agency, typed) == expected
 
 
-def test_a_stated_agency_blank_in_the_reference_sheet_is_a_mismatch(tmp_path) -> None:
-    """評等表沒有這家評等（參考條件表空白）、文件卻寫了：判不一致（文件值和「沒有」不同）。"""
+def test_a_stated_agency_blank_in_the_reference_sheet_needs_review(tmp_path) -> None:
+    """評等表沒有這家評等（參考條件表空白）、文件卻寫了：需人工覆核，寫出機構與評等機構（2026-10-26 使用者決定）。"""
     reports = check(tmp_path, "DBS", **{"發行機構評等_穆迪": None})
     bad = [r for r in rating_results(reports["TS"]) if r.status != S.PASS]
-    assert [(r.status, r.expected, r.actual) for r in bad] == [(S.MISMATCH, None, "Aa3")] * 2
+    assert [(r.status, r.reason_code, r.actual) for r in bad] == [(S.REVIEW_REQUIRED, "rating_missing", "Aa3")] * 2
+    assert all("評等表沒有 DBS 發行機構的穆迪評等" in r.message and "這格空白" in r.message for r in bad)
+    assert {(rid, st) for rid, _, st in problems(reports["TS"])} == {(RULE_ID, S.REVIEW_REQUIRED)}
 
 
 @pytest.mark.parametrize("code", ["UBS", "HSBC"])

@@ -5,7 +5,9 @@
 
 - 只比文件有寫的評等機構；DBRS、R&I 等不追蹤的評等機構 parser 不交出。文件沒寫的不算錯。
 - 有寫但和參考條件表不同 → 不一致，項目寫出機構、評等機構與位置，錯訊寫出兩邊的值。
-  參考條件表這家評等機構空白（評等表沒有這家評等）而文件有寫 → 也是不一致（文件值和「沒有」不同）。
+  參考條件表這家評等機構空白（評等表沒有這家評等）而文件有寫 → 需人工覆核，寫出機構與評等機構
+  （2026-10-26 使用者決定：表上沒有評等不能判對錯）。
+- 評等表只有現在的評等、不保存歷史（使用者決定）：舊文件寫的是後來調整前的評等時判不一致，由作業人員判斷。
 - 參考條件表三家都空白（評等表沒有這個機構，或交易日當時還沒有評等）→ 需人工覆核，寫出上手與機構。
 - 參考條件表沒有評等欄（舊版 Excel）→ 需人工覆核（每個機構一筆），不讓整批出錯，也不算通過。
 - 段落找不到或讀不出來 → 需人工覆核（parser 寫出原因）。範本沒有保證機構（`absent`）→ 不核對。
@@ -86,6 +88,18 @@ def _role(ctx: Context, field: str, role: str, places: tuple[StatedRatings, ...]
             ov = ovs[agency]
             item = Item.sheet(f"{role}{agency}評等（{place.where}）", [ov])
             check = Check(RULE_ID, field, item, ctx.document, ov=(ov,))
+            if table[agency] is None:  # 評等表沒有這家評等：不能判對錯
+                out.append(
+                    check.result(
+                        S.REVIEW_REQUIRED,
+                        actual=stated,
+                        evidence=place.evidence,
+                        reason="rating_missing",
+                        message=f"評等表沒有 {who}的{agency}評等（{ctx.sheet_source}這格空白），"
+                        f"{ctx.document}{place.where}寫 {stated}，請人工核對",
+                    )
+                )
+                continue
             out.append(check.compare(table[agency], stated, evidence=place.evidence))
     return out
 
