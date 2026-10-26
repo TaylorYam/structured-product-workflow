@@ -395,7 +395,8 @@ def test_saved_check_result_is_handed_to_the_return_tab(master, tmp_path: Path) 
     assert window.returning.hint.text.get() == f"已帶入「4 核對」剛存的核對結果檔：\n{result}\n批次資料夾：{batch}"
     assert window.notebook.select() == str(window.check), "不自動切頁"
     assert window.check.next_button.winfo_manager() == "pack", "存過檔才出現下一步"
-    assert window.check.status_label.cget("style") == "Done.TLabel", "存過檔，狀態列變成綠色結果條"
+    # 核對頁的狀態列在灰底上：用同一個綠色結果條、換成灰色墊底的衍生樣式（圓角外才不會露出白角）
+    assert str(window.check.status_label.cget("style")).endswith("Done.TLabel"), "存過檔，狀態列變成綠色結果條"
 
     window.check.next_button.invoke()
 
@@ -461,6 +462,61 @@ def test_sidebar_switches_steps_and_follows_the_next_buttons(master, tmp_path: P
 
     current = [tab for tab, step in steps.items() if step.cget("style") == "CurrentStep.TButton"]
     assert current == [str(window.check)], "「下一步」切頁時步驟欄跟著換"
+
+
+def test_sidebar_groups_steps_and_checks_finished_ones(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    sidebar = window.sidebar
+    groups = [w.cget("text") for w in sidebar.winfo_children() if isinstance(w, ttk.Label)]
+    prepare = str(window.prepare.frame)
+
+    assert groups == ["每日流程", "查詢與維護"], "1～6 每天照順序做，7～9 需要時才用"
+    assert not sidebar.done and not str(sidebar.steps[prepare].cget("image"))
+
+    window.prepare._done(prepared_result(tmp_path / "待核對_1"))
+    assert sidebar.done == {prepare}, "狀態列變成綠色結果條，那一步打勾"
+    assert str(sidebar.steps[prepare].cget("image")), "名稱後面有綠勾"
+
+    window.prepare.restart()
+    assert not sidebar.done and not str(sidebar.steps[prepare].cget("image")), "重新開始就拿掉勾"
+
+
+def test_go_menu_switches_steps(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    menu = window.go_menu
+
+    assert [menu.entrycget(i, "accelerator") for i in range(9)] == [f"Ctrl+{n}" for n in range(1, 10)]
+    assert menu.entrycget(2, "label") == "準備"
+    menu.invoke(2)
+    assert window.notebook.select() == str(window.prepare.frame)
+    bar = master.nametowidget(master["menu"])
+    cascades = [bar.entrycget(i, "label") for i in range(bar.index(tk.END) + 1) if bar.type(i) == "cascade"]
+    assert cascades == ["前往", "維護"], "「前往」在最前面"
+
+
+def test_ctrl_number_switches_steps(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    master.deiconify()
+    master.update()
+    window.daily.table.focus_force()
+    master.update()
+    focused = master.focus_get()
+    if focused is None:
+        pytest.skip("拿不到鍵盤焦點（例如畫面鎖住）")
+
+    focused.event_generate("<Control-Key-3>", when="now")
+    assert window.notebook.select() == str(window.prepare.frame)
+    focused.event_generate("<Control-Key-1>", when="now")
+    assert window.notebook.select() == str(window.daily.frame)
+
+
+def test_root_folder_warns_while_unset(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    (warning,) = [w for w in master.winfo_children()[0].winfo_children() if "尚未設定" in str(w.cget("text"))]
+
+    assert warning.winfo_manager() == "pack", "還沒設定根目錄時提醒"
+    window.root_folder.var.set("R:/FCN")
+    assert warning.winfo_manager() == "", "設好就收起來"
 
 
 def test_page_headers_show_their_step(master, tmp_path: Path) -> None:

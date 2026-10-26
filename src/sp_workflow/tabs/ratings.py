@@ -13,7 +13,7 @@ from collections.abc import Callable, Sequence
 from tkinter import messagebox, ttk
 
 from fcn_checker.date_picker import DateEntry, parse_day
-from fcn_checker.ui import DANGER, Background, FitTreeview
+from fcn_checker.ui import DANGER, Background, FitTreeview, Scrollbar
 from sp_workflow.credit_ratings import (
     AGENCIES,
     INITIAL,
@@ -111,7 +111,7 @@ class RatingsWindow(tk.Toplevel):
             table.heading(col, text=label)
             table.column(col, width=width, stretch=col == columns[-1][0])
         table.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(box, orient=tk.VERTICAL, command=table.yview)
+        scroll = Scrollbar(box, orient=tk.VERTICAL, command=table.yview)
         scroll.grid(row=0, column=1, sticky="ns")
         table.configure(yscrollcommand=scroll.set)
         buttons = ttk.Frame(box)

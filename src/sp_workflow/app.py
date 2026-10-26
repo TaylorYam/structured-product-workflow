@@ -46,20 +46,22 @@ from fcn_checker.panel import CheckTab
 from fcn_checker.panel_workflow import DatabaseSource, PanelSession
 from fcn_checker.ui import (
     ACCENT,
-    ACCENT_SOFT,
     BACKGROUND,
     BORDER,
+    CAPTION_FONT,
+    DANGER,
     FONT,
-    HOVER,
-    NAVY,
-    SURFACE,
+    HEADING_FONT,
+    SECTION_FONT,
+    STEP_DONE,
+    STEP_UNDONE,
+    TEXT,
     TEXT_SECONDARY,
     Background,
     apply_style,
     apply_window_icon,
+    done_mark,
     enable_windows_dpi_awareness,
-    flat,
-    flat_states,
     set_windows_app_id,
 )
 from sp_workflow.check_source import EXPORT_FOLDER, WorkflowDatabase
@@ -122,57 +124,75 @@ class WindowSize:
         # 縮到工作列時關閉：保留上一次的紀錄
 
 
-def _style_shell(master: tk.Tk) -> None:
-    """視窗外殼的樣式（#83）：白色頂端列、左側步驟欄；配色沿用 fcn_checker.panel.apply_style 的那一套。"""
+STEP_GROUPS = (
+    ("每日流程", 6),
+    ("查詢與維護", 3),
+)  # 步驟欄的分組：1～6 每天照順序做，7～9 需要時才用（#115、#156、#171）
+
+
+def _style_shell(master: tk.Tk, pixels: Callable[[float], int]) -> None:
+    """視窗外殼的樣式（#83）：頂端列與左側步驟欄和視窗底同色、用細線和內容分開（macOS 的側邊欄）；
+    配色沿用 `fcn_checker.ui.apply_style` 的那一套，圓角的步驟按鈕也在那裡建。"""
     style = ttk.Style(master)
-    style.configure("Header.TFrame", background=SURFACE)
-    style.configure("Header.TLabel", background=SURFACE, foreground=TEXT_SECONDARY)
-    style.configure("HeaderTitle.TLabel", background=SURFACE, foreground=NAVY, font=(FONT, 13, "bold"))
-    style.configure("Sidebar.TFrame", background=SURFACE)
-    style.configure("SidebarTitle.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=(FONT, 10))
-    step = {"anchor": "w", "padding": (14, 9)}
-    style.configure(
-        "Step.TButton", foreground=TEXT_SECONDARY, bordercolor=SURFACE, focuscolor=SURFACE, **step, **flat(SURFACE)
-    )
-    style.map("Step.TButton", **flat_states([("active", HOVER)]))
-    style.configure(
-        "CurrentStep.TButton",
-        foreground=ACCENT,
-        font=(FONT, 11, "bold"),
-        bordercolor=ACCENT_SOFT,
-        focuscolor=ACCENT_SOFT,
-        **step,
-        **flat(ACCENT_SOFT),
-    )
-    style.map("CurrentStep.TButton", **flat_states([("active", ACCENT_SOFT)]))
+    style.configure("Header.TFrame", background=BACKGROUND)
+    style.configure("Header.TLabel", background=BACKGROUND, foreground=TEXT_SECONDARY)
+    style.configure("HeaderWarning.TLabel", background=BACKGROUND, foreground=DANGER, font=CAPTION_FONT)
+    style.configure("HeaderTitle.TLabel", background=BACKGROUND, foreground=TEXT, font=(FONT, 12, "bold"))
+    style.configure("Sidebar.TFrame", background=BACKGROUND)
+    style.configure("SidebarTitle.TLabel", background=BACKGROUND, foreground=TEXT_SECONDARY, font=HEADING_FONT)
+    step = {"anchor": "w", "padding": (pixels(10), pixels(7)), "width": 0, "compound": "right"}
+    style.configure("Step.TButton", foreground=TEXT, background=BACKGROUND, **step)
+    style.map("Step.TButton", foreground=[])
+    style.configure("CurrentStep.TButton", foreground=ACCENT, font=SECTION_FONT, background=BACKGROUND, **step)
     style.layout("Workflow.TNotebook.Tab", [])  # 用左側步驟欄切頁，不顯示分頁標籤
-    style.configure("Workflow.TNotebook", background=BACKGROUND, borderwidth=0)
+    style.configure("Workflow.TNotebook", background=BACKGROUND, borderwidth=0, tabmargins=0)
 
 
 class StepSidebar(ttk.Frame):
-    """左側步驟欄（#83）：照每天的順序列出 1～9，按了切到那一步；目前所在的那一步用淺藍底標出。
+    """左側步驟欄（#83）：照每天的順序列出 1～9，分成「每日流程」與「查詢與維護」兩組，按了切到那一步；
+    目前所在的那一步用淺藍圓角底標出，這次開視窗後做完的步驟（狀態列變成綠色結果條）名稱後面打綠勾。
 
     分頁標籤已藏起來，切頁一律經過 notebook.select（「下一步 →」也是），步驟欄跟著 <<NotebookTabChanged>> 更新。
     """
 
+    WIDTH = 208  # 96 DPI 下的像素
+
     def __init__(self, parent: tk.Misc, notebook: ttk.Notebook, pixels: Callable[[float], int]) -> None:
-        super().__init__(parent, style="Sidebar.TFrame", padding=(pixels(10), pixels(18)))
+        super().__init__(parent, style="Sidebar.TFrame", padding=(pixels(10), pixels(16)), width=pixels(self.WIDTH))
+        self.pack_propagate(False)
         self.notebook = notebook
-        ttk.Label(self, text="步驟", style="SidebarTitle.TLabel").pack(anchor="w", padx=pixels(14), pady=(0, pixels(8)))
         self.steps: dict[str, ttk.Button] = {}
-        for tab in notebook.tabs():
-            number, _, name = notebook.tab(tab, "text").partition(" ")
-            step = ttk.Button(
-                self, text=f"{number}    {name}", style="Step.TButton", command=lambda t=tab: notebook.select(t)
+        self.done: set[str] = set()
+        tabs = list(notebook.tabs())
+        for group, (title, count) in enumerate(STEP_GROUPS):
+            ttk.Label(self, text=title, style="SidebarTitle.TLabel").pack(
+                anchor="w", padx=pixels(10), pady=(pixels(18) if group else 0, pixels(6))
             )
-            step.pack(fill=tk.X, pady=1, ipadx=pixels(40))
-            self.steps[tab] = step
+            for tab in tabs[:count]:
+                number, _, name = notebook.tab(tab, "text").partition(" ")
+                step = ttk.Button(
+                    self, text=f"{number}   {name}", style="Step.TButton", command=lambda t=tab: notebook.select(t)
+                )
+                step.pack(fill=tk.X, pady=1)
+                self.steps[tab] = step
+            tabs = tabs[count:]
         notebook.bind("<<NotebookTabChanged>>", lambda _event: self.refresh(), add="+")
+        top = self.winfo_toplevel()
+        top.bind(STEP_DONE, lambda event: self._mark(event.widget, True), add="+")
+        top.bind(STEP_UNDONE, lambda event: self._mark(event.widget, False), add="+")
 
     def refresh(self) -> None:
         current = self.notebook.select()
         for tab, step in self.steps.items():
             step.configure(style="CurrentStep.TButton" if tab == current else "Step.TButton")
+
+    def _mark(self, widget: tk.Misc | str, done: bool) -> None:
+        """狀態列在哪一頁裡，那一步就打勾（或拿掉勾）。"""
+        path = str(widget)
+        for tab, step in self.steps.items():
+            if path.startswith(tab + "."):
+                (self.done.add if done else self.done.discard)(tab)
+                step.configure(image=done_mark(self) if done else "")
 
 
 class PanelWindow:
@@ -201,10 +221,10 @@ class PanelWindow:
         self.size = WindowSize(memory.path.with_name(WINDOW_FILE))
         master.title(TITLE)
         self.pixels = apply_style(master)
-        _style_shell(master)
-        top_bar = ttk.Frame(master, style="Header.TFrame", padding=(self.pixels(18), self.pixels(10)))
+        _style_shell(master, self.pixels)
+        top_bar = ttk.Frame(master, style="Header.TFrame", padding=(self.pixels(20), self.pixels(10)))
         top_bar.pack(fill=tk.X)
-        ttk.Label(top_bar, text=TITLE, style="HeaderTitle.TLabel").pack(side=tk.LEFT, padx=(0, self.pixels(28)))
+        ttk.Label(top_bar, text=TITLE, style="HeaderTitle.TLabel").pack(side=tk.LEFT, padx=(0, self.pixels(32)))
         self.root_folder = RootFolder(memory)
         self.root_folder.build_bar(top_bar, self.pixels)
         tk.Frame(master, height=1, background=BORDER).pack(fill=tk.X)
@@ -263,6 +283,7 @@ class PanelWindow:
         self.notebook.select(self.check if start_on_check else 0)
         self.sidebar.refresh()
         self.maintenance = self._maintenance_menu()
+        self.go_menu = self._go_menu()
         master.protocol("WM_DELETE_WINDOW", self.close)
 
     def _prepared(self, receipt: PrepareReceipt) -> bool:
@@ -296,6 +317,21 @@ class PanelWindow:
         menu.add_command(label="使用的設定檔…", command=self.check.show_config_paths)
         bar.add_cascade(label="維護", menu=menu)
         self.master.configure(menu=bar)
+        return menu
+
+    def _go_menu(self) -> tk.Menu:
+        """「前往」選單：步驟欄的每一步也能從選單與 Ctrl+1～9 切過去（鍵盤也能操作整個流程）。"""
+        bar = self.master.nametowidget(self.master["menu"])
+        menu = tk.Menu(bar, tearoff=False)
+        for number, tab in enumerate(self.notebook.tabs(), 1):
+            menu.add_command(
+                label=self.notebook.tab(tab, "text").partition(" ")[2],
+                accelerator=f"Ctrl+{number}",
+                command=lambda t=tab: self.notebook.select(t),
+            )
+            for key in (f"<Control-Key-{number}>", f"<Control-KP_{number}>"):
+                self.master.bind(key, lambda _event, t=tab: self.notebook.select(t))
+        bar.insert_cascade(1 if bar.type(0) == "tearoff" else 0, label="前往", menu=menu)
         return menu
 
     def _refresh_maintenance(self) -> None:

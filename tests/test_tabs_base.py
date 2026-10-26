@@ -8,6 +8,7 @@ from tkinter import messagebox, simpledialog
 
 import pytest
 
+from fcn_checker.ui import Scrollbar
 from sp_workflow.database import DatabaseError
 from sp_workflow.tabs.base import ActionRunner, DatabaseLogin
 from window_synth import HeldBackground, new_window
@@ -40,7 +41,8 @@ def test_result_tables_scroll_sideways(master, tmp_path: Path, tab_name) -> None
     tab = getattr(new_window(master, tmp_path), tab_name)
 
     assert str(tab.hbar.cget("orient")) == "horizontal"
-    assert tab.hbar.grid_info()["row"] == 2, "在表的下方"
+    below = (tab.hbar.grid_info()["row"], tab.hbar.master)
+    assert below == (tab.table.grid_info()["row"] + 1, tab.table.master), "在表的下方"
     assert tab.table.cget("xscrollcommand"), "表捲動時捲軸跟著動"
     last = tab.columns[-1][0]
     assert tab.table.column(last, "minwidth") == tab.columns[-1][2], "最後一欄不會被擠到看不見"
@@ -220,3 +222,31 @@ def test_a_failing_result_handler_does_not_leave_the_buttons_disabled(master, tm
         runner.background.run_all()
 
     assert busy == [True, False] and runner.working is False, "可以再開始下一件"
+
+
+# ---------------------------------------------------------------- macOS 質感的結果表與捲軸
+
+
+def test_empty_result_table_says_so(master, tmp_path: Path) -> None:
+    tab = new_window(master, tmp_path).daily
+    tab.table.fit_columns()
+
+    assert tab.table.placeholder.cget("text") == "沒有資料" and tab.table.placeholder.winfo_manager() == "place"
+    tab.add_row(["029199990001", "已匯入", ""], False)
+    tab.table.fit_columns()
+    assert tab.table.placeholder.winfo_manager() == "", "有列就收起來"
+
+
+def test_result_table_headings_align_left(master, tmp_path: Path) -> None:
+    tab = new_window(master, tmp_path).daily
+
+    assert {str(tab.table.heading(column, "anchor")) for column, _, _ in tab.columns} == {"w"}, "和欄裡的字對齊"
+
+
+def test_scrollbar_hides_its_thumb_when_nothing_to_scroll(master) -> None:
+    bar = Scrollbar(master)
+
+    bar.set(0.0, 1.0)
+    assert bar.instate(["disabled"]), "全部看得到：把手藏起來"
+    bar.set(0.2, 0.6)
+    assert not bar.instate(["disabled"])

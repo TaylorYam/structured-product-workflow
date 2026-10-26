@@ -92,8 +92,8 @@ class MaintenanceTab(Tab):
 
         self.cell_area = CopyArea(self.frame, CELL_COPY_HINT, lambda: self.cells.copy_all())  # #121
         self.cell_area.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(16, 0))
-        self.cells = CellTable(self.cell_area, ("tdcc", "TDCC"), self.COLUMNS, self._selected)
-        self.cells.grid(row=1, column=0, sticky="nsew")
+        self.cells = CellTable(self.cell_area.card, ("tdcc", "TDCC"), self.COLUMNS, self._selected)
+        self.cells.grid(row=0, column=0, sticky="nsew")
         self.frame.rowconfigure(2, weight=1)
         self.frame.columnconfigure(2, weight=1)
         side = ttk.Frame(self.frame)

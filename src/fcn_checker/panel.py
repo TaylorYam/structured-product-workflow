@@ -19,7 +19,18 @@ from .date_picker import DateEntry
 from .ingestion import IngestionError, SourceSnapshot
 from .panel_workflow import PanelOutcome, PanelSession, ReleasePlan, ReleaseState
 from .saving import SaveReceipt
-from .ui import Background, FitTreeview, HintBar, KpiRow, NextButton, PageHeader, TableCopy
+from .ui import (
+    BODY_FONT,
+    Background,
+    FitTreeview,
+    HintBar,
+    KpiRow,
+    NextButton,
+    PageHeader,
+    Scrollbar,
+    TableCopy,
+    show_done,
+)
 
 FOLDERS_RECORD = Path(".local") / "panel_folders.json"  # 兩個選檔按鈕各自記住的上次資料夾（根目錄下）
 
@@ -56,7 +67,7 @@ class LastFolders:
 def _table(
     parent, columns: tuple[tuple[str, str, int], ...], pixels, height: int = 6, selectmode: str = "browse"
 ) -> ttk.Treeview:
-    frame = ttk.Frame(parent)
+    frame = ttk.Frame(parent, style="Card.TFrame", padding=4)  # 白色圓角卡片裡的表
     frame.columnconfigure(0, weight=1)
     frame.rowconfigure(0, weight=1)
     table = FitTreeview(
@@ -67,9 +78,9 @@ def _table(
         last = column == columns[-1][0]  # 欄寬依內容（#192），只有最後一欄跟著視窗變寬
         table.column(column, width=pixels(width), minwidth=pixels(80) if last else 20, anchor="w", stretch=last)
     table.grid(row=0, column=0, sticky="nsew")
-    scroll = ttk.Scrollbar(frame, command=table.yview)
+    scroll = Scrollbar(frame, command=table.yview)
     scroll.grid(row=0, column=1, sticky="ns")
-    horizontal = ttk.Scrollbar(frame, orient="horizontal", command=table.xview)
+    horizontal = Scrollbar(frame, orient="horizontal", command=table.xview)
     horizontal.grid(row=1, column=0, sticky="ew")
     table.configure(yscrollcommand=scroll.set, xscrollcommand=horizontal.set)
     table.frame = frame
@@ -82,7 +93,7 @@ def _text(parent, height: int) -> tk.Text:
         parent,
         height=height,
         wrap="word",
-        font=("Microsoft JhengHei UI", 11),
+        font=BODY_FONT,
         relief="flat",
         padx=8,
         pady=6,
@@ -263,7 +274,7 @@ class ConfirmDialog(tk.Toplevel):
         body = _text(frame, 20)
         body.configure(width=80)
         body.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(frame, command=body.yview)
+        scroll = Scrollbar(frame, command=body.yview)
         scroll.grid(row=0, column=1, sticky="ns")
         body.configure(yscrollcommand=scroll.set)
         _write(body, text)
@@ -309,11 +320,11 @@ class ApprovalDatesDialog(tk.Toplevel):
             "重新審查後新增新的日期；較早的日期不能修改，只能修改或刪除最新一筆。",
             wraplength=pixels(520),
         ).grid(row=0, column=0, columnspan=4, sticky="w")
-        self.listbox = tk.Listbox(frame, height=8, font=("Microsoft JhengHei UI", 11), activestyle="none")
+        self.listbox = tk.Listbox(frame, height=8, font=BODY_FONT, activestyle="none")
         self.listbox.grid(row=1, column=0, columnspan=4, sticky="ew", pady=pixels(10))
         ttk.Label(frame, text="日期（YYYY-MM-DD）").grid(row=2, column=0, sticky="w")
         field = DateEntry(frame, tk.StringVar(self), width=14)  # 小日曆（#192）
-        field.entry.configure(font=("Microsoft JhengHei UI", 11))
+        field.entry.configure(font=BODY_FONT)
         field.grid(row=2, column=1, sticky="w", padx=(pixels(8), 0))
         self.entry = field.entry
         buttons = ttk.Frame(frame)
@@ -673,7 +684,7 @@ class CheckTab(ttk.Frame):
         """目前的結果已經寫出核對結果檔時：狀態列變綠（#83）、顯示下一步；重新核對、改了放行或清除結果就恢復。"""
         receipt = self.session.receipt
         saved = receipt is not None and receipt.output is not None and not self._busy_any()
-        self.status_label.configure(style="Done.TLabel" if saved else "TLabel")
+        show_done(self.status_label, saved, "TLabel")
         if self.next_button is None:
             return
         if saved:

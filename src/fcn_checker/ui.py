@@ -19,6 +19,8 @@ from tkinter import font as tkfont
 from tkinter import ttk
 from typing import TypeVar
 
+from fcn_checker import shapes
+
 T = TypeVar("T")
 
 
@@ -88,27 +90,39 @@ def _set_window_icons(hwnd: int) -> None:
             user32.SendMessageW(hwnd, 0x80, kind, icon)  # WM_SETICON
 
 
-# 整個視窗的配色（#83）：淺灰底、白色卡片、深藍字；只用一個亮藍當強調色，紅色只給有問題的、綠色只給完成
-BACKGROUND = "#F5F5F7"
-SURFACE = "#FFFFFF"
-FIELD_READONLY = "#FAFAFC"
-HOVER = "#F2F2F7"
-PRESSED = "#E8E8ED"
-BORDER = "#E3E3E8"
-CONTROL_BORDER = "#D2D2D7"
+# 整個視窗的配色（#83，改成 macOS 的質感）：淺灰底、白色卡片、近黑的字；只用一個藍當強調色（按鈕、目前所在、選取），
+# 紅色只給有問題的、綠色只給完成。對比（WCAG）：白字在 ACCENT 上 5.5:1、TEXT_SECONDARY 在白底 5.1:1、在 BACKGROUND 4.7:1
+BACKGROUND = "#F5F5F7"  # 視窗底、頂端列、步驟欄
+SURFACE = "#FFFFFF"  # 卡片、表格、輸入框
+FIELD_READONLY = "#F7F7F9"
+HOVER = "#EDEDF0"
+PRESSED = "#E2E2E7"
+BORDER = "#E3E3E8"  # 卡片與分隔線的細線
+CONTROL_BORDER = "#CFCFD4"  # 按鈕、輸入框的外框
 TEXT = "#1D1D1F"
 TEXT_SECONDARY = "#6E6E73"
 TEXT_DISABLED = "#A1A1A6"
-NAVY = "#0B1F3A"
-ACCENT = "#2251FF"
-ACCENT_ACTIVE = "#1A3FCC"
-ACCENT_DISABLED = "#B9C7F5"
-ACCENT_SOFT = "#EAF0FF"
+NAVY = "#0B1F3A"  # 提示條的字
+ACCENT = "#0A64D8"
+ACCENT_ACTIVE = "#0853B5"
+ACCENT_PRESSED = "#06448F"
+ACCENT_DISABLED = "#AFC9EE"
+ACCENT_SOFT = "#E7F0FC"
+SCROLL_THUMB = "#C7C7CC"
+SCROLL_THUMB_ACTIVE = "#9E9EA3"
 DANGER = "#C4262E"
 SUCCESS = "#1E7A4C"
-SUCCESS_SOFT = "#E8F5EE"
+SUCCESS_SOFT = "#E6F4EC"
 FONT = "Microsoft JhengHei UI"  # 公司 Windows 都有；數字另用 Segoe UI
 NUMBER_FONT = "Segoe UI"
+# 字級（點數，96 DPI 下 10 點約 13 像素，和 macOS 內文一樣大）：大標 > 區塊標題 > 內文 > 說明小字；層次靠粗細與顏色，不只靠大小
+TITLE_FONT = (FONT, 17, "bold")
+SECTION_FONT = (FONT, 10, "bold")
+BODY_FONT = (FONT, 10)
+CAPTION_FONT = (FONT, 9)
+VALUE_FONT = (NUMBER_FONT, 17, "bold")  # 重點數字
+CODE_FONT = (NUMBER_FONT, 11)  # 貼 TDCC 的欄位：數字好對齊
+HEADING_FONT = (FONT, 9, "bold")  # 表頭、步驟欄的分組標題
 
 
 def flat(color: str) -> dict[str, str]:
@@ -116,15 +130,318 @@ def flat(color: str) -> dict[str, str]:
     return {"background": color, "lightcolor": color, "darkcolor": color}
 
 
-def flat_states(states: list[tuple[str, str]]) -> dict[str, list[tuple[str, str]]]:
-    """style.map 用：各狀態的底色與立體邊一起換，維持平的。"""
-    return {"background": states, "lightcolor": states, "darkcolor": states}
+class _Shapes:
+    """圓角按鈕、輸入框、卡片、勾選框與捲軸的圖（`fcn_checker.shapes` 畫的 PNG），依螢幕縮放畫一次。
+
+    圖要留著參照，不然 Tk 的圖會被回收；同一個 Tk 只畫一次、元件只建一次（測試一個 Tk 開很多視窗）。
+    """
+
+    STRETCH = 160  # 放大後中間可以拉伸的那一段（像素）
+
+    def __init__(self, root: tk.Misc, scale: float) -> None:
+        self.root = root
+        self.scale = scale
+        self.images: list[tk.PhotoImage] = []
+        self.derived: set[str] = set()  # 已經建好的「Bg<色碼>.<樣式>」（`on_parent`）
+        self.done = self.check(SUCCESS)  # 步驟欄、完成條的綠勾
+
+    def px(self, value: float) -> int:
+        return max(1, round(value * self.scale))
+
+    def image(self, width: int, height: int, layers: Sequence[shapes.Layer]) -> tk.PhotoImage:
+        image = tk.PhotoImage(
+            master=self.root, data=shapes.png_data(shapes.render(width, height, layers)), format="png"
+        )
+        self.images.append(image)
+        return image
+
+    def stretch(self, image: tk.PhotoImage, edge_x: int, edge_y: int) -> tk.PhotoImage:
+        """把圖中間可以拉伸的那一段用 Tk 的 copy 平鋪成 `STRETCH` 像素：九宮格是一塊一塊貼的，中間太窄時大卡片要貼上萬塊、
+        Windows 上畫一次要好幾秒。四角與邊框寬度不變。"""
+        width, height = image.width(), image.height()
+
+        def spans(size: int, edge: int) -> tuple[list[tuple[int, int, int, int]], int]:
+            if not edge:
+                return [(0, size, 0, size)], size
+            grown = 2 * edge + self.STRETCH
+            return [
+                (0, edge, 0, edge),
+                (edge, size - edge, edge, grown - edge),
+                (size - edge, size, grown - edge, grown),
+            ], grown
+
+        xs, big_width = spans(width, edge_x)
+        ys, big_height = spans(height, edge_y)
+        big = tk.PhotoImage(master=self.root, width=big_width, height=big_height)
+        for sx0, sx1, dx0, dx1 in xs:
+            for sy0, sy1, dy0, dy1 in ys:
+                big.tk.call(big, "copy", image, "-from", sx0, sy0, sx1, sy1, "-to", dx0, dy0, dx1, dy1)
+        self.images.append(big)
+        return big
+
+    def box(self, radius: int, fill: str, border: str | None = None, *, ring: int = 1) -> tk.PhotoImage:
+        """正方形的圓角框（九宮格拉伸用，四邊的邊框寬 radius + 2）：fill 底色，border 外框色（ring 是框的粗細）。"""
+        side = 2 * radius + 8  # 先畫中間只有 4 像素的小圖，再平鋪放大
+        outer = shapes.rounded_box(0, 0, side, side, radius)
+        if border is None:
+            layers = [shapes.Layer(outer, fill)] if fill else []
+        else:
+            inner = shapes.rounded_box(ring, ring, side - ring, side - ring, max(radius - ring, 0))
+            layers = [shapes.Layer(inner, fill)] if fill else []
+            layers.append(shapes.Layer(shapes.ring(outer, inner), border))
+        return self.stretch(self.image(side, side, layers), radius + 2, radius + 2)
+
+    def indicator(
+        self, *, round_: bool, fill: str, border: str | None, mark: str | None, focus: bool = False
+    ) -> tk.PhotoImage:
+        """勾選框（方）或選項鈕（圓）；mark 是勾勾或圓點的顏色，右邊留和文字之間的空白。
+        四周留 3 像素給鍵盤聚焦時的半透明藍色外圈（focus）。"""
+        side, gap, margin = self.px(16), self.px(4), self.px(3)
+        radius = side / 2 if round_ else self.px(4)
+        lo, hi = margin, margin + side
+
+        def box(inset: float, extra_radius: float = 0) -> shapes.Distance:
+            return shapes.rounded_box(
+                lo + inset, lo + inset, hi - inset, hi - inset, max(radius - inset + extra_radius, 0)
+            )
+
+        layers = []
+        if focus:
+            ring = shapes.ring(box(-margin + 0.5, margin), box(-0.5, 0.5))
+            layers.append(shapes.Layer(ring, ACCENT, opacity=0.45))
+        if border is not None:
+            layers.append(shapes.Layer(box(0), border))
+            layers.append(shapes.Layer(box(1), fill))
+        else:
+            layers.append(shapes.Layer(box(0), fill))
+        if mark is not None:
+            u = side / 16
+
+            def at(x: float, y: float) -> tuple[float, float]:
+                return lo + x * u, lo + y * u
+
+            if round_:
+                layers.append(shapes.Layer(shapes.rounded_box(*at(5.5, 5.5), *at(10.5, 10.5), 2.5 * u), mark))
+            else:
+                tick = shapes.polyline([at(4.2, 8.4), at(6.9, 11.1), at(11.9, 5.2)], 1.9 * u)
+                layers.append(shapes.Layer(tick, mark))
+        return self.image(side + 2 * margin + gap, side + 2 * margin, layers)
+
+    def thumb(self, vertical: bool, color: str | None) -> tk.PhotoImage:
+        """細的膠囊形捲軸把手：左右（或上下）各留 2 像素空白，看起來像 macOS 的捲軸；color 是 None 時全透明（同尺寸，
+        九宮格才不會因為圖比邊框小而畫不完）。"""
+        thick, long, margin = self.px(11), self.px(28), self.px(2.5)
+        width, height = (thick, long) if vertical else (long, thick)
+        if vertical:
+            pill = shapes.rounded_box(margin, 1, width - margin, height - 1, (width - 2 * margin) / 2)
+        else:
+            pill = shapes.rounded_box(1, margin, width - 1, height - margin, (height - 2 * margin) / 2)
+        small = self.image(width, height, [shapes.Layer(pill, color)] if color else [])
+        edge = self.px(7)
+        return self.stretch(small, 0, edge) if vertical else self.stretch(small, edge, 0)
+
+    def chevron(self, color: str) -> tk.PhotoImage:
+        """下拉選單右邊的向下箭頭。"""
+        width, height, u = self.px(18), self.px(10), self.scale
+        line = shapes.polyline([(4 * u, 3 * u), (8 * u, 7 * u), (12 * u, 3 * u)], 1.6 * u)
+        return self.image(width, height, [shapes.Layer(line, color)])
+
+    def check(self, color: str) -> tk.PhotoImage:
+        """完成的勾勾（步驟欄、完成條）。"""
+        side, u = self.px(14), self.scale
+        tick = shapes.polyline([(3 * u, 7.4 * u), (5.9 * u, 10.2 * u), (11 * u, 4 * u)], 1.8 * u)
+        return self.image(side, side, [shapes.Layer(tick, color)])
+
+    def heading(self) -> tk.PhotoImage:
+        """表頭的一格：白底、下面一條細線、右邊淡淡的欄分隔。"""
+        side = 6
+        return self.image(
+            side,
+            side,
+            [
+                shapes.Layer(shapes.rounded_box(0, 0, side, side, 0), SURFACE),
+                shapes.Layer(shapes.rounded_box(side - 1, 0, side, side, 0), HOVER),
+                shapes.Layer(shapes.rounded_box(0, side - 1, side, side, 0), BORDER),
+            ],
+        )
+
+
+def _create_elements(style: ttk.Style, shape: _Shapes) -> None:
+    """建立圓角的圖片元件（名稱都以 Mac. 開頭）並換掉 clam 的版面；每個 Tk 只做一次。"""
+    px = shape.px
+    control, card = px(6), px(10)
+    edge = control + 2  # 九宮格：圓角那一圈不拉伸
+
+    def element(name: str, default: tk.PhotoImage, *states: tuple[str, tk.PhotoImage], border, **options):
+        """圖是放大過的（`_Shapes.stretch`）：最小尺寸只算四邊不拉伸的部分，不然元件會被撐到圖那麼大；
+        內距固定 2 像素（藍色外框的寬度），其餘留白由各元件的 padding 決定。"""
+        left, top, right, bottom = (border,) * 4 if isinstance(border, int) else border
+        options.setdefault("width", left + right or default.width())
+        options.setdefault("height", top + bottom or default.height())
+        options.setdefault("padding", px(2))
+        style.element_create(f"Mac.{name}", "image", default, *states, border=border, sticky="nsew", **options)
+
+    element(
+        "button",
+        shape.box(control, SURFACE, CONTROL_BORDER),
+        ("disabled", shape.box(control, FIELD_READONLY, BORDER)),
+        ("pressed", shape.box(control, PRESSED, CONTROL_BORDER)),
+        ("active", shape.box(control, HOVER, CONTROL_BORDER)),
+        ("focus", shape.box(control, SURFACE, ACCENT, ring=2)),
+        border=edge,
+    )
+    element(
+        "primary",
+        shape.box(control, ACCENT),
+        ("disabled", shape.box(control, ACCENT_DISABLED)),
+        ("pressed", shape.box(control, ACCENT_PRESSED)),
+        ("active", shape.box(control, ACCENT_ACTIVE)),
+        ("focus", shape.box(control, ACCENT, ACCENT_PRESSED, ring=2)),
+        border=edge,
+    )
+    plain_states = (("pressed", shape.box(control, PRESSED)), ("active", shape.box(control, HOVER)))
+    element("plain", shape.box(control, ""), *plain_states, ("focus", shape.box(control, "", ACCENT)), border=edge)
+    element("current", shape.box(control, ACCENT_SOFT), border=edge)
+    element(
+        "field",
+        shape.box(control, SURFACE, CONTROL_BORDER),
+        ("disabled", shape.box(control, FIELD_READONLY, BORDER)),
+        ("focus", shape.box(control, SURFACE, ACCENT, ring=2)),
+        ("readonly", shape.box(control, FIELD_READONLY, BORDER)),
+        border=edge,
+    )
+    element(
+        "popup",
+        shape.box(control, SURFACE, CONTROL_BORDER),
+        ("disabled", shape.box(control, FIELD_READONLY, BORDER)),
+        ("focus", shape.box(control, SURFACE, ACCENT, ring=2)),
+        ("active", shape.box(control, FIELD_READONLY, CONTROL_BORDER)),
+        border=edge,
+    )
+    element("path", shape.box(control, HOVER), border=edge)
+    element("card", shape.box(card, SURFACE, BORDER), border=card + 2)
+    element("group", shape.box(card, BACKGROUND, BORDER), border=card + 2)
+    element("hint", shape.box(control, ACCENT_SOFT), border=edge)
+    element("done", shape.box(control, SUCCESS_SOFT), border=edge)
+    element(
+        "segment",
+        shape.box(control, ""),
+        ("selected", shape.box(control, PRESSED)),
+        ("active", shape.box(control, HOVER)),
+        border=edge,
+    )
+    element("heading", shape.heading(), border=1)
+    element("chevron", shape.chevron(TEXT_SECONDARY), ("disabled", shape.chevron(TEXT_DISABLED)), border=0)
+    for name, round_ in (("check", False), ("radio", True)):
+        element(
+            name,
+            shape.indicator(round_=round_, fill=SURFACE, border=CONTROL_BORDER, mark=None),
+            ("disabled selected", shape.indicator(round_=round_, fill=ACCENT_DISABLED, border=None, mark=SURFACE)),
+            ("disabled", shape.indicator(round_=round_, fill=FIELD_READONLY, border=BORDER, mark=None)),
+            ("pressed selected", shape.indicator(round_=round_, fill=ACCENT_PRESSED, border=None, mark=SURFACE)),
+            ("focus selected", shape.indicator(round_=round_, fill=ACCENT, border=None, mark=SURFACE, focus=True)),
+            ("selected", shape.indicator(round_=round_, fill=ACCENT, border=None, mark=SURFACE)),
+            ("focus", shape.indicator(round_=round_, fill=SURFACE, border=ACCENT, mark=None, focus=True)),
+            ("active", shape.indicator(round_=round_, fill=SURFACE, border=TEXT_SECONDARY, mark=None)),
+            border=0,
+            padding=0,
+        )
+    for orient, vertical in (("vthumb", True), ("hthumb", False)):
+        element(
+            orient,
+            shape.thumb(vertical, SCROLL_THUMB),
+            ("disabled", shape.thumb(vertical, None)),
+            ("pressed", shape.thumb(vertical, SCROLL_THUMB_ACTIVE)),
+            ("active", shape.thumb(vertical, SCROLL_THUMB_ACTIVE)),
+            border=(0, px(7), 0, px(7)) if vertical else (px(7), 0, px(7), 0),  # 只拉長邊；圖要比兩端的邊框加起來大
+        )
+
+
+def _layouts(style: ttk.Style) -> None:
+    """各元件換成圓角的圖片元件；樣式名稱照舊（測試與各分頁都用這些名稱）。"""
+
+    def button(element: str, *names: str) -> None:
+        label = [("Button.padding", {"sticky": "nswe", "children": [("Button.label", {"sticky": "nswe"})]})]
+        for name in names:
+            style.layout(name, [(f"Mac.{element}", {"sticky": "nswe", "children": label})])
+
+    button("button", "TButton")
+    button("primary", "Primary.TButton")
+    button("plain", "Next.TButton", "Step.TButton", "Toolbar.TButton")
+    button("current", "CurrentStep.TButton")
+    entry = [("Entry.padding", {"sticky": "nswe", "children": [("Entry.textarea", {"sticky": "nswe"})]})]
+    style.layout("TEntry", [("Mac.field", {"sticky": "nswe", "children": entry})])
+    style.layout("Path.TEntry", [("Mac.path", {"sticky": "nswe", "children": entry})])
+    combo = [
+        ("Mac.chevron", {"side": "right", "sticky": ""}),
+        ("Combobox.padding", {"sticky": "nswe", "children": [("Combobox.textarea", {"sticky": "nswe"})]}),
+    ]
+    style.layout("TCombobox", [("Mac.popup", {"sticky": "nswe", "children": combo})])
+    for kind, element in (("Checkbutton", "check"), ("Radiobutton", "radio")):
+        label = [(f"{kind}.label", {"sticky": "nswe"})]
+        inner = [
+            (f"Mac.{element}", {"side": "left", "sticky": ""}),
+            (f"{kind}.focus", {"side": "left", "sticky": "w", "children": label}),
+        ]
+        style.layout(f"T{kind}", [(f"{kind}.padding", {"sticky": "nswe", "children": inner})])
+        style.layout(f"Card.T{kind}", [(f"{kind}.padding", {"sticky": "nswe", "children": inner})])
+    style.layout("Card.TFrame", [("Mac.card", {"sticky": "nswe"})])
+    style.layout("Field.TFrame", [("Mac.field", {"sticky": "nswe"})])
+    style.layout("Hint.TFrame", [("Mac.hint", {"sticky": "nswe"})])
+    style.layout("TLabelframe", [("Mac.group", {"sticky": "nswe"})])
+    style.layout(
+        "Done.TLabel",
+        [
+            (
+                "Mac.done",
+                {
+                    "sticky": "nswe",
+                    "children": [
+                        ("Label.padding", {"sticky": "nswe", "children": [("Label.label", {"sticky": "nswe"})]})
+                    ],
+                },
+            )
+        ],
+    )
+    for orient, element in (("Vertical", "vthumb"), ("Horizontal", "hthumb")):
+        sticky = "ns" if orient == "Vertical" else "we"
+        style.layout(
+            f"{orient}.TScrollbar",
+            [(f"{orient}.Scrollbar.trough", {"sticky": sticky, "children": [(f"Mac.{element}", {"sticky": "nswe"})]})],
+        )
+    style.layout(
+        "Treeview", [("Treeview.padding", {"sticky": "nswe", "children": [("Treeview.treearea", {"sticky": "nswe"})]})]
+    )
+    style.layout(
+        "Heading",
+        [
+            ("Mac.heading", {"sticky": "nswe"}),
+            (
+                "Treeheading.padding",
+                {
+                    "sticky": "nswe",
+                    "children": [
+                        ("Treeheading.image", {"side": "right", "sticky": ""}),
+                        ("Treeheading.text", {"sticky": "we"}),
+                    ],
+                },
+            ),
+        ],
+    )
+    tab = [
+        (
+            "Notebook.padding",
+            {"side": "top", "sticky": "nswe", "children": [("Notebook.label", {"side": "top", "sticky": ""})]},
+        )
+    ]
+    style.layout("TNotebook.Tab", [("Mac.segment", {"sticky": "nswe", "children": tab})])
 
 
 def apply_style(root: tk.Tk) -> Callable[[float], int]:
-    """整個視窗共用的配色、字型、按鈕與表格樣式（#74 起每個分頁都用這一套，#83 改成蘋果 × 麥肯錫風格）。
+    """整個視窗共用的配色、字型、按鈕與表格樣式（#74 起每個分頁都用這一套；#83 蘋果 × 麥肯錫風格，改成 macOS 的圓角控制項）。
 
     回傳 pixels：把 96 DPI 下的像素依目前螢幕縮放換算成實際像素。視窗外殼（頂端列、步驟欄）的樣式在 sp_workflow.app。
+    按鈕、輸入框、勾選框、卡片、捲軸用 `_Shapes` 畫的圓角圖；同一個 Tk 只畫一次。
     """
     scale = root.winfo_fpixels("1i") / 96
 
@@ -134,53 +451,178 @@ def apply_style(root: tk.Tk) -> Callable[[float], int]:
     root.configure(background=BACKGROUND)
     style = ttk.Style(root)
     style.theme_use("clam")
+    tk_root = root.nametowidget(".")
+    if getattr(tk_root, "_mac_shapes", None) is None:
+        shape = _Shapes(tk_root, scale)
+        _create_elements(style, shape)
+        tk_root._mac_shapes = shape  # 留著圖的參照
+        for name in ROUNDED_CLASSES:  # 綁在整個 Tk 上，綁一次就好
+            root.bind_class(name, "<Map>", lambda event: match_parent_background(event.widget), add="+")
+    _layouts(style)
     style.configure(
-        ".", background=BACKGROUND, foreground=TEXT, font=(FONT, 11), focuscolor=ACCENT_SOFT, bordercolor=BORDER
+        ".",
+        background=BACKGROUND,
+        foreground=TEXT,
+        font=BODY_FONT,
+        focuscolor=ACCENT_SOFT,
+        bordercolor=BORDER,
+        selectbackground=ACCENT_SOFT,
+        selectforeground=TEXT,
+        insertcolor=TEXT,
     )
     style.configure(".", lightcolor=BORDER, darkcolor=BORDER)
-    style.configure("Card.TFrame", background=SURFACE, relief="solid", borderwidth=1)
+    style.configure("Card.TFrame", background=BACKGROUND)  # 卡片外面（圓角外）的底色；卡片裡是白的（VISIBLE_FILL）
     style.configure("CardBody.TFrame", background=SURFACE)
     style.configure("Muted.TLabel", foreground=TEXT_SECONDARY)
-    style.configure("Step.TLabel", foreground=TEXT_SECONDARY, font=(FONT, 10))
-    style.configure("Title.TLabel", foreground=NAVY, font=(FONT, 18, "bold"))
+    style.configure("Step.TLabel", foreground=TEXT_SECONDARY, font=CAPTION_FONT)
+    style.configure("Title.TLabel", foreground=TEXT, font=TITLE_FONT)
     style.configure("Card.TLabel", background=SURFACE)
+    style.configure("CardSection.TLabel", background=SURFACE, font=SECTION_FONT)
+    style.configure("Caption.TLabel", foreground=TEXT_SECONDARY, font=CAPTION_FONT)
+    style.configure("Placeholder.TLabel", background=SURFACE, foreground=TEXT_SECONDARY)
+    style.configure("Field.TFrame", background=SURFACE)
     style.configure("Card.TRadiobutton", background=SURFACE)
     style.configure("Card.TCheckbutton", background=SURFACE)
-    style.configure("CardMuted.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=(FONT, 10))
-    style.configure("KpiCaption.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=(FONT, 10))
-    style.configure("KpiValue.TLabel", background=SURFACE, foreground=NAVY, font=(NUMBER_FONT, 18, "bold"))
-    style.configure("KpiBad.TLabel", background=SURFACE, foreground=DANGER, font=(NUMBER_FONT, 18, "bold"))
-    style.configure("TButton", padding=(14, 7), bordercolor=CONTROL_BORDER, **flat(SURFACE))
+    style.configure("TCheckbutton", padding=(0, 2))
+    style.configure("TRadiobutton", padding=(0, 2))
+    style.map("TCheckbutton", foreground=[("disabled", TEXT_DISABLED)])
+    style.map("TRadiobutton", foreground=[("disabled", TEXT_DISABLED)])
+    style.configure("CardMuted.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=CAPTION_FONT)
+    style.configure("KpiCaption.TLabel", background=SURFACE, foreground=TEXT_SECONDARY, font=CAPTION_FONT)
+    style.configure("KpiValue.TLabel", background=SURFACE, foreground=TEXT, font=VALUE_FONT)
+    style.configure("KpiBad.TLabel", background=SURFACE, foreground=DANGER, font=VALUE_FONT)
+    style.configure("TButton", padding=(pixels(14), pixels(5)), width=-4, anchor="center")
+    style.map("TButton", foreground=[("disabled", TEXT_DISABLED)])
+    style.configure("Primary.TButton", foreground=SURFACE, font=SECTION_FONT)
+    style.map("Primary.TButton", foreground=[("disabled", SURFACE)])
+    style.configure("Next.TButton", foreground=ACCENT, font=SECTION_FONT, padding=(pixels(10), pixels(5)))
+    style.map("Next.TButton", foreground=[("pressed", ACCENT_PRESSED), ("active", ACCENT_ACTIVE)])
+    style.configure("Toolbar.TButton", foreground=ACCENT, padding=(pixels(10), pixels(5)), width=0)
+    style.configure("TEntry", padding=(pixels(8), pixels(5)), fieldbackground=SURFACE)
+    style.configure("Path.TEntry", padding=(pixels(10), pixels(5)), foreground=TEXT_SECONDARY)
+    style.configure("TCombobox", padding=(pixels(8), pixels(4)), arrowsize=pixels(12))
     style.map(
-        "TButton",
+        "TCombobox",
+        fieldbackground=[("readonly", SURFACE)],
+        selectbackground=[("readonly", SURFACE)],
+        selectforeground=[("readonly", TEXT)],
         foreground=[("disabled", TEXT_DISABLED)],
-        **flat_states([("disabled", BACKGROUND), ("pressed", PRESSED), ("active", HOVER)]),
     )
-    style.configure("Primary.TButton", foreground=SURFACE, font=(FONT, 11, "bold"), bordercolor=ACCENT, **flat(ACCENT))
-    accent_states = [("disabled", ACCENT_DISABLED), ("pressed", ACCENT_ACTIVE), ("active", ACCENT_ACTIVE)]
-    style.map(
-        "Primary.TButton", foreground=[("disabled", SURFACE)], bordercolor=accent_states, **flat_states(accent_states)
-    )
-    style.configure("Next.TButton", foreground=ACCENT, font=(FONT, 11, "bold"))
-    style.configure("TEntry", padding=6, fieldbackground=SURFACE, bordercolor=CONTROL_BORDER, **flat(SURFACE))
-    style.map("TEntry", fieldbackground=[("readonly", FIELD_READONLY)], bordercolor=[("focus", ACCENT)])
-    style.configure("Treeview", background=SURFACE, fieldbackground=SURFACE, rowheight=pixels(32))
+    style.configure("TLabelframe", padding=pixels(10), labeloutside=True, labelmargins=(0, 0, 0, pixels(6)))
+    style.configure("TLabelframe.Label", font=SECTION_FONT, foreground=TEXT)
     style.configure(
-        "Treeview.Heading", background=BACKGROUND, foreground=TEXT_SECONDARY, font=(FONT, 10, "bold"), relief="flat"
+        "Treeview", background=SURFACE, fieldbackground=SURFACE, rowheight=pixels(28), borderwidth=0, font=BODY_FONT
     )
-    style.map("Treeview.Heading", background=[("active", PRESSED)])
+    style.configure("Treeview.Heading", foreground=TEXT_SECONDARY, font=HEADING_FONT, padding=(pixels(8), pixels(5)))
     style.map("Treeview", background=[("selected", ACCENT_SOFT)], foreground=[("selected", TEXT)])
-    style.configure("TNotebook", borderwidth=0)
-    style.configure("TNotebook.Tab", foreground=TEXT_SECONDARY, padding=(14, 6))
-    style.map("TNotebook.Tab", background=[("selected", SURFACE)], foreground=[("selected", TEXT)])
-    style.configure("TScrollbar", troughcolor=SURFACE, arrowcolor=TEXT_SECONDARY)
-    style.configure("Hint.TFrame", background=ACCENT_SOFT)
+    style.configure(
+        "TNotebook", borderwidth=0, tabmargins=(0, 0, 0, pixels(8)), bordercolor=BACKGROUND, **flat(BACKGROUND)
+    )
+    style.configure("TNotebook.Tab", foreground=TEXT_SECONDARY, padding=(pixels(16), pixels(5)))
+    style.map("TNotebook.Tab", foreground=[("selected", TEXT), ("active", TEXT)])
+    style.configure("TScrollbar", troughcolor=SURFACE, bordercolor=SURFACE, **flat(SURFACE))
+    style.configure("Hint.TFrame", background=BACKGROUND)
     style.configure("Hint.TLabel", background=ACCENT_SOFT, foreground=NAVY)
     # 這一步做完時，狀態列變成綠色結果條（#83）
     style.configure(
-        "Done.TLabel", background=SUCCESS_SOFT, foreground=SUCCESS, font=(FONT, 11, "bold"), padding=(12, 7)
+        "Done.TLabel", foreground=SUCCESS, font=SECTION_FONT, padding=(pixels(12), pixels(7)), background=SURFACE
     )
+    for name in ("TButton", "TCheckbutton", "TRadiobutton", "TEntry", "TCombobox"):
+        style.map(name, background=[])  # 拿掉 clam 依狀態換的底色：底色只用來墊在圓角圖後面
+    # 不是 ttk 的元件（貼 TDCC 的文字框、清單、下拉選單展開的清單）
+    for pattern, value in (
+        ("*Listbox.font", BODY_FONT),
+        ("*Listbox.background", SURFACE),
+        ("*Listbox.foreground", TEXT),
+        ("*Listbox.selectBackground", ACCENT_SOFT),
+        ("*Listbox.selectForeground", TEXT),
+        ("*Listbox.relief", "flat"),
+        ("*Listbox.borderWidth", 0),
+        ("*Listbox.highlightThickness", 1),
+        ("*Listbox.highlightBackground", CONTROL_BORDER),
+        ("*Listbox.highlightColor", ACCENT),
+        ("*TCombobox*Listbox.highlightThickness", 0),
+        ("*Text.selectBackground", ACCENT_SOFT),
+        ("*Text.selectForeground", TEXT),
+        ("*Text.inactiveSelectBackground", HOVER),
+    ):
+        root.option_add(pattern, value)
     return pixels
+
+
+ROUNDED_CLASSES = ("TButton", "TEntry", "TCombobox", "TCheckbutton", "TRadiobutton", "TFrame", "TLabelframe", "TLabel")
+# 圓角圖畫出來的底色和樣式底色不同的容器：放在裡面的元件要用畫出來的那個顏色
+VISIBLE_FILL = {"Card.TFrame": SURFACE, "Field.TFrame": SURFACE, "Hint.TFrame": ACCENT_SOFT}
+
+
+def _base_style(name: str) -> str:
+    """衍生樣式「Bg<色碼>.<原樣式>」的原樣式。"""
+    return name.split(".", 1)[1] if name.startswith("Bg") and "." in name else name
+
+
+def _parent_background(widget: tk.Misc) -> str | None:
+    parent = widget.nametowidget(widget.winfo_parent())
+    if isinstance(parent, ttk.Widget):
+        style = _base_style(str(parent.cget("style"))) or parent.winfo_class()
+        return VISIBLE_FILL.get(style) or str(ttk.Style(widget).lookup(style, "background")) or None
+    try:
+        return str(parent.cget("background"))
+    except tk.TclError:
+        return None
+
+
+def _rounded(style: ttk.Style, name: str) -> bool:
+    """這個樣式最外層是不是圓角圖（`Mac.` 開頭的元件）。"""
+    try:
+        layout = style.layout(name)
+    except tk.TclError:
+        return False
+    return bool(layout) and str(layout[0][0]).startswith("Mac.")
+
+
+def on_parent(widget: tk.Misc, name: str) -> str:
+    """name 這個圓角樣式放在 widget 的父元件上要用的樣式名：Tk 先用樣式底色塗滿、再疊上圓角圖，透明的圓角會露出
+    樣式底色，所以底色要和父元件看起來的顏色一樣。不同時用「Bg<色碼>.<原樣式>」這個衍生樣式（照樣繼承原樣式的一切，
+    只換底色）。"""
+    style = ttk.Style(widget)
+    background = _parent_background(widget)
+    if not background or not background.startswith("#") or style.lookup(name, "background") == background:
+        return name
+    derived = f"Bg{background.lstrip('#').upper()}.{name}"
+    shape = getattr(widget.nametowidget("."), "_mac_shapes", None)
+    made = shape.derived if shape is not None else set()
+    if derived not in made:  # 每次設定樣式整個視窗都會重畫：建過的不再設
+        style.configure(derived, background=background)
+        style.map(derived, background=[("disabled", background), ("pressed", background), ("active", background)])
+        made.add(derived)
+    return derived
+
+
+def match_parent_background(widget: tk.Misc) -> None:
+    """圓角元件第一次出現（<Map>）時，底色改成父元件看起來的顏色（`on_parent`）；不是圓角樣式的不動。"""
+    if not isinstance(widget, ttk.Widget):  # Tcl 自己建的元件（例如下拉選單展開的清單）
+        return
+    current = str(widget.cget("style"))
+    name = _base_style(current) or widget.winfo_class()
+    if _rounded(ttk.Style(widget), name):
+        matched = on_parent(widget, name)
+        if matched != current:
+            widget.configure(style=matched)
+
+
+STEP_DONE, STEP_UNDONE = "<<StepDone>>", "<<StepUndone>>"  # 狀態列變成／不再是綠色結果條；視窗的步驟欄聽這兩個
+
+
+def show_done(label: ttk.Label, done: bool, normal: str) -> None:
+    """狀態列：做完時是綠色結果條（#83），否則用 normal 樣式；並通知步驟欄在那一步打勾或拿掉勾。"""
+    label.configure(style=on_parent(label, "Done.TLabel") if done else normal)
+    label.event_generate(STEP_DONE if done else STEP_UNDONE)
+
+
+def done_mark(widget: tk.Misc) -> tk.PhotoImage | str:
+    """完成的綠色勾勾（`apply_style` 畫好的）；還沒套樣式時是空字串（不顯示圖）。"""
+    shape = getattr(widget.nametowidget("."), "_mac_shapes", None)
+    return shape.done if shape is not None else ""
 
 
 class PageHeader(ttk.Frame):
@@ -219,16 +661,29 @@ class KpiRow(ttk.Frame):
         for tile in self.winfo_children():
             tile.destroy()
         self.values = tuple(values)
-        for column, (caption, value, bad) in enumerate(self.values):
-            tile = ttk.Frame(self, style="Card.TFrame", padding=(14, 6, 26, 6))
-            tile.grid(row=0, column=column, sticky="w", padx=(0, 10))
-            ttk.Label(tile, text=caption, style="KpiCaption.TLabel").pack(anchor="w")
+        for index, (caption, value, bad) in enumerate(self.values):
+            if index:  # 數字之間一條細的直線，不再每個數字各框一格
+                tk.Frame(self, width=1, background=BORDER).grid(row=0, column=2 * index - 1, sticky="ns", padx=20)
+            tile = ttk.Frame(self, style="CardBody.TFrame")
+            tile.grid(row=0, column=2 * index, sticky="w")
             ttk.Label(tile, text=str(value), style="KpiBad.TLabel" if bad else "KpiValue.TLabel").pack(anchor="w")
+            ttk.Label(tile, text=caption, style="KpiCaption.TLabel").pack(anchor="w")
         self.grid()
 
     def hide(self) -> None:
         self.values = ()
         self.grid_remove()
+
+
+class FieldBox(ttk.Frame):
+    """圓角輸入框外框，給 ttk 沒有的多行文字框（貼 TDCC）用：裡面的文字框拿到游標時外框變成藍色。"""
+
+    def __init__(self, parent: tk.Misc) -> None:
+        super().__init__(parent, style="Field.TFrame", padding=4)
+
+    def watch(self, widget: tk.Misc) -> None:
+        widget.bind("<FocusIn>", lambda _event: self.state(["focus"]), add="+")
+        widget.bind("<FocusOut>", lambda _event: self.state(["!focus"]), add="+")
 
 
 class HintBar(ttk.Frame):
@@ -238,7 +693,7 @@ class HintBar(ttk.Frame):
     """
 
     def __init__(self, parent: tk.Misc, change: Callable[[], None]):
-        super().__init__(parent, style="Hint.TFrame", padding=(10, 6))
+        super().__init__(parent, style="Hint.TFrame", padding=(14, 8))
         self.text = tk.StringVar()
         label = ttk.Label(self, textvariable=self.text, style="Hint.TLabel", wraplength=900)
         label.pack(side="left", fill="x", expand=True)
@@ -397,10 +852,11 @@ class FitTreeview(ttk.Treeview):
     """欄寬依內容自動調整的結果表（#192）：列有變動（新增、刪除、改值）後，等畫面空下來重算一次欄寬。
 
     每一欄 = 表頭與內容最寬的那個加左右留白；內容最寬算到 `MAX_WIDTH`（96 DPI 下的像素），太長的照舊左右捲動或右鍵複製。
-    最後一欄照舊跟著視窗變寬，但不縮到比內容窄（#179）。
+    最後一欄照舊跟著視窗變寬，但不縮到比內容窄（#179）。表上沒有列時，表身中間淡淡寫「沒有資料」。
     """
 
     PAD = 24
+    EMPTY = "沒有資料"
     MAX_WIDTH = 420
     SAMPLES = 8  # 每欄只量估起來最長的幾格，表很長時不用每格都量
 
@@ -408,7 +864,14 @@ class FitTreeview(ttk.Treeview):
         super().__init__(*args, **kwargs)
         self._fit_job: str | None = None
         self._fonts: tuple[tkfont.Font, tkfont.Font] | None = None
+        self.placeholder = ttk.Label(self, text=self.EMPTY, style="Placeholder.TLabel")
         self._schedule_fit()  # 表頭設好、還沒有列時也照表頭寬度
+
+    def heading(self, column: str, option: str | None = None, **kw: object):
+        """表頭的字預設靠左，和欄裡的字對齊（macOS 的表格）。"""
+        if "text" in kw:
+            kw.setdefault("anchor", "w")
+        return super().heading(column, option, **kw)
 
     def insert(self, parent, index, iid=None, **kw):
         item = super().insert(parent, index, iid, **kw)
@@ -438,8 +901,12 @@ class FitTreeview(ttk.Treeview):
         super().destroy()
 
     def fit_columns(self) -> None:
-        """依現在表上的列重算每一欄的寬度。"""
+        """依現在表上的列重算每一欄的寬度；沒有列時顯示「沒有資料」。"""
         self._fit_job = None
+        if self.get_children():
+            self.placeholder.place_forget()
+        else:
+            self.placeholder.place(relx=0.5, rely=0.5, anchor="center")
         body, heading = self._measuring_fonts()
         scale = self.winfo_fpixels("1i") / 96
         pad, limit = round(self.PAD * scale), round(self.MAX_WIDTH * scale)
@@ -475,13 +942,21 @@ class FitTreeview(ttk.Treeview):
         return self._fonts
 
 
+class Scrollbar(ttk.Scrollbar):
+    """捲軸：內容全部看得到、不用捲時把手藏起來（像 macOS），位置照留著，版面不跳動。"""
+
+    def set(self, first: float | str, last: float | str) -> None:
+        self.state(["disabled"] if float(first) <= 0 and float(last) >= 1 else ["!disabled"])
+        super().set(first, last)
+
+
 class CopyButton(ttk.Button):
     """結果表右上方的「全部複製」（#121）：一鍵把整張表（含表頭）放進剪貼簿，按完短暫顯示複製了幾列。"""
 
     TEXT = "全部複製"
 
     def __init__(self, parent: tk.Misc, copy_all: Callable[[], int]):
-        super().__init__(parent, text=self.TEXT, command=self.copy, width=12)
+        super().__init__(parent, text=self.TEXT, command=self.copy, width=12, style="Toolbar.TButton")
         self.copy_all = copy_all
         self._reset_job: str | None = None  # 換回「全部複製」的 after 排程
 
@@ -498,7 +973,8 @@ class CopyButton(ttk.Button):
 
 
 class CopyArea(ttk.Frame):
-    """結果表那一塊（#121）：第 0 列左邊寫怎麼複製、右邊「全部複製」；表由呼叫端建在這裡面、放在第 1 列。"""
+    """結果表那一塊（#121）：第 0 列左邊寫怎麼複製、右邊「全部複製」；第 1 列是白色圓角卡片 `card`，
+    表與捲軸由呼叫端建在 `card` 裡面（表在第 0 列第 0 欄，直捲軸在它右邊、橫捲軸在它下面）。"""
 
     def __init__(self, parent: tk.Misc, hint: str, copy_all: Callable[[], int]):
         super().__init__(parent)
@@ -506,9 +982,13 @@ class CopyArea(ttk.Frame):
         self.rowconfigure(1, weight=1)
         bar = ttk.Frame(self)
         bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
-        ttk.Label(bar, text=hint, style="Muted.TLabel").pack(side="left")
+        ttk.Label(bar, text=hint, style="Caption.TLabel").pack(side="left")
         self.button = CopyButton(bar, copy_all)
         self.button.pack(side="right")
+        self.card = ttk.Frame(self, style="Card.TFrame", padding=4)
+        self.card.grid(row=1, column=0, columnspan=2, sticky="nsew")
+        self.card.columnconfigure(0, weight=1)
+        self.card.rowconfigure(0, weight=1)
 
 
 class Background:

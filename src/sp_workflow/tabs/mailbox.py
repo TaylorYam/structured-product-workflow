@@ -10,7 +10,7 @@ import tkinter as tk
 from collections.abc import Callable, Sequence
 from tkinter import messagebox, ttk
 
-from fcn_checker.ui import DANGER, Background, FitTreeview
+from fcn_checker.ui import DANGER, Background, FitTreeview, Scrollbar
 from sp_workflow.database import ConnectionSettings
 from sp_workflow.mailbox import Alias, MailboxError, MailboxRows, Person, alias_from, person_from
 from sp_workflow.tabs.base import TITLE, ActionRunner, BackgroundFactory, DatabaseLogin
@@ -86,7 +86,7 @@ class MailboxWindow(tk.Toplevel):
             table.heading(col, text=label)
             table.column(col, width=width, stretch=col == columns[-1][0])
         table.grid(row=0, column=0, sticky="nsew")
-        scroll = ttk.Scrollbar(box, orient=tk.VERTICAL, command=table.yview)
+        scroll = Scrollbar(box, orient=tk.VERTICAL, command=table.yview)
         scroll.grid(row=0, column=1, sticky="ns")
         table.configure(yscrollcommand=scroll.set)
         buttons = ttk.Frame(box)
