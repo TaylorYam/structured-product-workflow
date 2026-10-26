@@ -63,3 +63,9 @@ def test_copy_all_on_an_empty_table_leaves_the_clipboard_alone(master, table: Ce
 
     assert table.copy_all() == 0
     assert master.clipboard_get() == "原本的內容"
+
+
+def test_an_empty_table_says_so(table: CellTable) -> None:
+    assert table.placeholder.winfo_manager() == "", "有列時不顯示"
+    table.set_rows(())
+    assert table.placeholder.cget("text") == "沒有資料" and table.placeholder.winfo_manager() == "place"

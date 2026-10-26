@@ -494,6 +494,22 @@ def test_go_menu_switches_steps(master, tmp_path: Path) -> None:
     assert cascades == ["前往", "維護"], "「前往」在最前面"
 
 
+def test_ctrl_number_switches_steps(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    master.deiconify()
+    master.update()
+    window.daily.table.focus_force()
+    master.update()
+    focused = master.focus_get()
+    if focused is None:
+        pytest.skip("拿不到鍵盤焦點（例如畫面鎖住）")
+
+    focused.event_generate("<Control-Key-3>", when="now")
+    assert window.notebook.select() == str(window.prepare.frame)
+    focused.event_generate("<Control-Key-1>", when="now")
+    assert window.notebook.select() == str(window.daily.frame)
+
+
 def test_root_folder_warns_while_unset(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
     (warning,) = [w for w in master.winfo_children()[0].winfo_children() if "尚未設定" in str(w.cget("text"))]

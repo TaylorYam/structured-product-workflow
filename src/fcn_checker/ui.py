@@ -122,6 +122,7 @@ BODY_FONT = (FONT, 10)
 CAPTION_FONT = (FONT, 9)
 VALUE_FONT = (NUMBER_FONT, 17, "bold")  # 重點數字
 CODE_FONT = (NUMBER_FONT, 11)  # 貼 TDCC 的欄位：數字好對齊
+HEADING_FONT = (FONT, 9, "bold")  # 表頭、步驟欄的分組標題
 
 
 def flat(color: str) -> dict[str, str]:
@@ -141,6 +142,7 @@ class _Shapes:
         self.root = root
         self.scale = scale
         self.images: list[tk.PhotoImage] = []
+        self.derived: set[str] = set()  # 已經建好的「Bg<色碼>.<樣式>」（`on_parent`）
         self.done = self.check(SUCCESS)  # 步驟欄、完成條的綠勾
 
     def px(self, value: float) -> int:
@@ -511,9 +513,7 @@ def apply_style(root: tk.Tk) -> Callable[[float], int]:
     style.configure(
         "Treeview", background=SURFACE, fieldbackground=SURFACE, rowheight=pixels(28), borderwidth=0, font=BODY_FONT
     )
-    style.configure(
-        "Treeview.Heading", foreground=TEXT_SECONDARY, font=(FONT, 9, "bold"), padding=(pixels(8), pixels(5))
-    )
+    style.configure("Treeview.Heading", foreground=TEXT_SECONDARY, font=HEADING_FONT, padding=(pixels(8), pixels(5)))
     style.map("Treeview", background=[("selected", ACCENT_SOFT)], foreground=[("selected", TEXT)])
     style.configure(
         "TNotebook", borderwidth=0, tabmargins=(0, 0, 0, pixels(8)), bordercolor=BACKGROUND, **flat(BACKGROUND)
@@ -589,8 +589,12 @@ def on_parent(widget: tk.Misc, name: str) -> str:
     if not background or not background.startswith("#") or style.lookup(name, "background") == background:
         return name
     derived = f"Bg{background.lstrip('#').upper()}.{name}"
-    style.configure(derived, background=background)
-    style.map(derived, background=[("disabled", background), ("pressed", background), ("active", background)])
+    shape = getattr(widget.nametowidget("."), "_mac_shapes", None)
+    made = shape.derived if shape is not None else set()
+    if derived not in made:  # 每次設定樣式整個視窗都會重畫：建過的不再設
+        style.configure(derived, background=background)
+        style.map(derived, background=[("disabled", background), ("pressed", background), ("active", background)])
+        made.add(derived)
     return derived
 
 
@@ -674,7 +678,7 @@ class KpiRow(ttk.Frame):
 class FieldBox(ttk.Frame):
     """圓角輸入框外框，給 ttk 沒有的多行文字框（貼 TDCC）用：裡面的文字框拿到游標時外框變成藍色。"""
 
-    def __init__(self, parent: tk.Misc):
+    def __init__(self, parent: tk.Misc) -> None:
         super().__init__(parent, style="Field.TFrame", padding=4)
 
     def watch(self, widget: tk.Misc) -> None:
@@ -863,7 +867,7 @@ class FitTreeview(ttk.Treeview):
         self.placeholder = ttk.Label(self, text=self.EMPTY, style="Placeholder.TLabel")
         self._schedule_fit()  # 表頭設好、還沒有列時也照表頭寬度
 
-    def heading(self, column, option=None, **kw):
+    def heading(self, column: str, option: str | None = None, **kw: object):
         """表頭的字預設靠左，和欄裡的字對齊（macOS 的表格）。"""
         if "text" in kw:
             kw.setdefault("anchor", "w")

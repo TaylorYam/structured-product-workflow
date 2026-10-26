@@ -51,6 +51,7 @@ from fcn_checker.ui import (
     CAPTION_FONT,
     DANGER,
     FONT,
+    HEADING_FONT,
     SECTION_FONT,
     STEP_DONE,
     STEP_UNDONE,
@@ -138,7 +139,7 @@ def _style_shell(master: tk.Tk, pixels: Callable[[float], int]) -> None:
     style.configure("HeaderWarning.TLabel", background=BACKGROUND, foreground=DANGER, font=CAPTION_FONT)
     style.configure("HeaderTitle.TLabel", background=BACKGROUND, foreground=TEXT, font=(FONT, 12, "bold"))
     style.configure("Sidebar.TFrame", background=BACKGROUND)
-    style.configure("SidebarTitle.TLabel", background=BACKGROUND, foreground=TEXT_SECONDARY, font=(FONT, 9, "bold"))
+    style.configure("SidebarTitle.TLabel", background=BACKGROUND, foreground=TEXT_SECONDARY, font=HEADING_FONT)
     step = {"anchor": "w", "padding": (pixels(10), pixels(7)), "width": 0, "compound": "right"}
     style.configure("Step.TButton", foreground=TEXT, background=BACKGROUND, **step)
     style.map("Step.TButton", foreground=[])
