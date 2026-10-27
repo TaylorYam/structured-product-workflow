@@ -14,8 +14,9 @@ import pytest
 from db_synth import inventory, seed_products
 from order_synth import CONFIG
 from sp_workflow.close_prices import latest_close_date
-from sp_workflow.exits import EXPORT_COLUMNS, ExitRow, export_exits, export_name, load_exits
+from sp_workflow.exits import EXPORT_COLUMNS, ExitRow, Waiting, export_exits, export_name, load_exits
 from sp_workflow.lifecycle import LEGACY, MANUAL, OBSERVATION
+from sp_workflow.status import Pricing
 
 DAY = dt.date(2026, 10, 21)
 T = dt.datetime(2026, 10, 22, 8, 30, tzinfo=dt.UTC)
@@ -84,6 +85,31 @@ def test_another_day_and_an_empty_close_table(pg) -> None:
     assert load_exits(pg, CONFIG).rows == ()
     earlier = load_exits(pg, CONFIG, DAY - dt.timedelta(days=3))
     assert (earlier.day, [r.tdcc for r in earlier.rows]) == (DAY - dt.timedelta(days=3), [A])
+
+
+def pricing(pg, tdcc: str, value: str, reason: str | None, through: dt.date | None) -> None:
+    pg.execute(
+        "INSERT INTO workflow.pricing_status (tdcc, status, reason, observed_through, locked)"
+        " VALUES (%s, %s, %s, %s, true)",
+        (tdcc, value, reason, through),
+    )
+
+
+@pytest.mark.db
+def test_products_stopped_at_a_missing_close_by_the_day_are_listed(pg) -> None:
+    seed_products(pg, [inventory(t, [("台北", 10000)]) for t in (A, B, C, D, E)])
+    close(pg, DAY)
+    gap = dt.date(2026, 10, 19)
+    pricing(pg, B, Pricing.WAIT_PRICES, f"UL_1 1321 JT：{gap} 沒有收盤價", gap - dt.timedelta(days=1))
+    pricing(pg, A, Pricing.WAIT_PRICES, f"UL_2 1321 JT：{gap} 沒有收盤價（每日觀察 KI）", None)  # Non-call 期間
+    pricing(pg, C, Pricing.WAIT_PRICES, "UL_1 AAA UW：2026-10-22 沒有收盤價", DAY)  # 這一天比到了
+    pricing(pg, D, Pricing.ON_BOOK, None, DAY - dt.timedelta(days=1))
+    pricing(pg, E, Pricing.TO_CONFIRM, "UL_1 AAA UW：收盤價表沒有這個代碼", None)
+
+    assert load_exits(pg, CONFIG).waiting == (Waiting(A, "1321 JT", gap), Waiting(B, "1321 JT", gap)), (
+        "等股價、缺的那一天不晚於這一天的才列，依 TDCC 排；已比到空白的看原因裡的日期"
+    )
+    assert load_exits(pg, CONFIG, gap - dt.timedelta(days=1)).waiting == (), "缺價之前的那一天比到了"
 
 
 def test_export_writes_the_rows_as_shown(tmp_path: Path) -> None:

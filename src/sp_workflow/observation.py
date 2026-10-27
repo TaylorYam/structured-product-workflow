@@ -35,6 +35,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
@@ -75,6 +76,9 @@ DAILY_TYPES = frozenset(("Daily", "Daily Memory"))
 EKI, AKI, MKI = "EKI", "AKI", "MKI"
 NO_KI_TEXT = "-"  # 沒有 KI 寫一槓，和有 KI 的代碼一眼分開
 MKI_KI = "MKI (manual)"  # MKI 不比（比價日 1～12 不是每一期，ADR 0020），KI 欄提醒人工追蹤
+MISSING_CLOSE = re.compile(
+    r"^UL_\d+ (?P<code>.+?)：(?P<day>\d{4}-\d{2}-\d{2}) 沒有收盤價"
+)  # 等股價的原因，`observe` 寫的
 
 
 @dataclass(frozen=True)
@@ -342,6 +346,12 @@ def _terms_problem(terms: Terms, calendar: TradingCalendar) -> str:
         elif calendar.market_of(u.code) is None:
             problems.append(f"{u.name}：交易所不在假日表")
     return "；".join(problems)
+
+
+def missing_close(reason: str) -> tuple[str, dt.date] | None:
+    """等股價的原因（「UL_1 代碼：日期 沒有收盤價…」）裡缺收盤價的代碼與那一天；不是這種原因時是 None（出場清單用，#282）。"""
+    found = MISSING_CLOSE.match(reason)
+    return (found["code"], dt.date.fromisoformat(found["day"])) if found else None
 
 
 def _open(market: Market, day: dt.date) -> bool:
