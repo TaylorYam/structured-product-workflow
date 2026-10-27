@@ -10,8 +10,10 @@ import openpyxl
 import pytest
 
 from order_synth import CONFIG, A, B, order_row
+from sp_workflow.file_tools import FileWriteError
 from sp_workflow.lifecycle import KO, AutoEvent, replace_auto_events
 from sp_workflow.product_export import (
+    PRODUCT_FIELDS,
     SUMMARY_COLUMNS,
     export_name,
     export_products,
@@ -116,6 +118,10 @@ def test_summary_name_has_the_date_and_time() -> None:
     assert summary_name(dt.datetime(2026, 10, 27, 9, 8, 7)) == "商品總表_20261027_090807.xlsx"
 
 
+def test_every_product_field_is_a_summary_column() -> None:
+    assert set(PRODUCT_FIELDS) <= set(SUMMARY_COLUMNS), "照欄名取值：欄名打錯會整欄變 -"
+
+
 @pytest.mark.db
 def test_an_empty_summary_still_writes_the_header_with_two_trade_groups(pg, tmp_path: Path) -> None:
     receipt = export_summary(pg, tmp_path / "x.xlsx")
@@ -188,3 +194,20 @@ def test_summary_cells_are_centred_with_fonts_by_content(pg, tmp_path: Path) -> 
     assert {(c.alignment.horizontal, c.alignment.vertical) for row in sheet.iter_rows() for c in row} == {
         ("center", "center")
     }
+
+
+@pytest.mark.db
+def test_a_failed_summary_write_keeps_the_old_file(pg, tmp_path: Path, monkeypatch) -> None:
+    import_order(pg, A)
+    path = tmp_path / "商品總表.xlsx"
+    path.write_bytes(b"old")
+
+    def locked(_source, _target):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(Path, "replace", locked)
+
+    with pytest.raises(FileWriteError, match="同名檔開在 Excel 時請先關掉"):
+        export_summary(pg, path)
+
+    assert path.read_bytes() == b"old" and list(tmp_path.iterdir()) == [path], "不留暫存檔"

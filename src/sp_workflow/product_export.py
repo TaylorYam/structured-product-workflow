@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -21,6 +22,7 @@ import openpyxl
 from openpyxl.cell.cell import Cell
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
+from psycopg.rows import dict_row
 
 from sp_workflow.file_tools import MAX_WIDTH, excel_value, save_export, save_rows, table_book, text_cell
 from sp_workflow.lifecycle import Lifecycle, lifecycle_status
@@ -43,8 +45,16 @@ def export_name(now: dt.datetime | None = None) -> str:
     return f"workflow_product_{now or dt.datetime.now():%Y%m%d_%H%M%S}.xlsx"
 
 
+@contextmanager
+def _snapshot(conn: psycopg.Connection) -> Iterator[None]:
+    """一個 REPEATABLE READ 的 transaction：裡面每個 SELECT 看同一個時間點（預設的 READ COMMITTED 每句各看各的）。"""
+    with conn.transaction():
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        yield
+
+
 def export_products(conn: psycopg.Connection, path: Path) -> ExportReceipt:
-    with conn.transaction(), conn.cursor() as cur:  # 商品與存續事件讀同一個時間點
+    with _snapshot(conn), conn.cursor() as cur:  # 商品與存續事件讀同一個時間點
         cur.execute(f"SELECT * FROM {TABLE} ORDER BY tdcc")
         columns = tuple(column.name for column in cur.description or ())
         rows = cur.fetchall()
@@ -59,15 +69,20 @@ def export_products(conn: psycopg.Connection, path: Path) -> ExportReceipt:
 SUMMARY_TITLE = "商品總表"
 DASH = "-"  # 資料庫沒有的值，照舊庫存總表寫 -
 MIN_TRADE_GROUPS = 2  # 範本的分公司／FC／金額組數
-CJK_FONT, LATIN_FONT = "微軟正黑體", "Calibri"
+CJK_FONT = "微軟正黑體"
+LATIN_FONT = "Calibri"
 _CJK = re.compile(r"[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]")
 _CENTER = Alignment(horizontal="center", vertical="center")
-_PRODUCT_COLUMNS = (
-    "tdcc, product, issuer, isin, denomination, currency, trade_date, issue_date, final_valuation_date,"
-    " maturity_date, initial_pricing, ko_pct, ko_freq, ko_memory, strike_pct, ki_pct, ki_freq, upfront_pct,"
-    " coupon_pct, tenor_months, non_call_months, underlying_1, underlying_2, underlying_3, underlying_4, underlying_5"
-)
+PRODUCT_FIELDS = {
+    "Product": "product", "發行機構": "issuer", "TDCC Code": "tdcc", "ISIN Code": "isin",
+    "單位面額": "denomination", "承作幣別": "currency", "交易日": "trade_date", "發行日": "issue_date",
+    "最終比價日": "final_valuation_date", "到期日": "maturity_date", "期初定價": "initial_pricing",
+    "KO(%)": "ko_pct", "KO(Freq)": "ko_freq", "KO(memo)": "ko_memory", "K(%)": "strike_pct", "KI(%)": "ki_pct",
+    "KI(Freq)": "ki_freq", "UF": "upfront_pct", "Coupon p.a. (%)": "coupon_pct", "天期(月)": "tenor_months",
+    "Non-Call(月)": "non_call_months",
+}  # fmt: skip  # 總表欄名 → workflow.product 的欄，照欄名取值
 UL_FIELDS = ("進場價", "執行價", "下限價", "KO價")
+_UNDERLYINGS = tuple(f"underlying_{n}" for n in range(1, 6))
 SUMMARY_COLUMNS = (
     "存續狀態", "存續事件日", "事件標的",
     "Product", "發行機構", "TDCC Code", "ISIN Code", "單位面額", "承作幣別", "承作總額", "私銀註記", "新加坡註記",
@@ -95,9 +110,10 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
     存續是最新一筆還有效的事件（沒有是在庫）；承作總額是交易明細加總，交易列照順序往右排成分公司／FC／金額，
     組數是交易最多那一檔的筆數（至少 `MIN_TRADE_GROUPS`）。資料庫沒有的值（含私銀註記、新加坡註記、Lookback 期間）寫 `-`。
     """
-    with conn.transaction():  # 商品、事件、比價日、價格、交易列讀同一個時間點
-        products = conn.execute(f"SELECT {_PRODUCT_COLUMNS} FROM {TABLE} ORDER BY tdcc").fetchall()
-        tdccs = [row[0] for row in products]
+    with _snapshot(conn), conn.cursor(row_factory=dict_row) as cur:  # 商品、事件、比價日、價格、交易列讀同一個時間點
+        fields = ", ".join([*PRODUCT_FIELDS.values(), *_UNDERLYINGS])
+        products = cur.execute(f"SELECT {fields} FROM {TABLE} ORDER BY tdcc").fetchall()
+        tdccs = [product["tdcc"] for product in products]
         statuses = lifecycle_status(conn, tdccs)
         autocall: dict[str, dict[int, dt.date | None]] = {}
         for tdcc, slot, value in conn.execute("SELECT tdcc, slot, value FROM workflow.autocall_date"):
@@ -113,36 +129,38 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
         ):
             trades.setdefault(tdcc, []).append((branch, fc, amount))
     groups = max([MIN_TRADE_GROUPS, *(len(trades.get(tdcc, ())) for tdcc in tdccs)])
-    rows = [
-        _summary_row(row, statuses[row[0]], autocall.get(row[0], {}), prices.get(row[0], {}), trades.get(row[0], []))
-        for row in products
-    ]
     columns = (*SUMMARY_COLUMNS, *trade_columns(groups))
-    save_export(_summary_book(columns, [[*row, *[None] * (len(columns) - len(row))] for row in rows]), path)
+    rows = [
+        _summary_cells(p, statuses[t], autocall.get(t, {}), prices.get(t, {}), trades.get(t, []))
+        for p, t in zip(products, tdccs, strict=True)
+    ]
+    save_export(_summary_book(columns, [[cells.get(column) for column in columns] for cells in rows]), path)
     return ExportReceipt(path, len(rows))
 
 
-def _summary_row(
-    product: tuple[object, ...],
+def _summary_cells(
+    product: dict[str, object],
     lifecycle: Lifecycle,
     autocall: dict[int, dt.date | None],
     prices: dict[int, tuple[object, ...]],
     trades: list[tuple[str, str, Decimal]],
-) -> list[object]:
-    (tdcc, name, issuer, isin, denomination, currency, trade_date, issue_date, final_date, maturity_date, pricing,
-     ko, ko_freq, ko_memory, strike, ki, ki_freq, upfront, coupon, tenor, non_call, *codes) = product  # fmt: skip
+) -> dict[str, object]:
+    """一檔的總表格子（總表欄名 → 值）；沒放的欄寫 `-`。"""
     event = lifecycle.latest
-    row = [
-        lifecycle.status, event and event.event_date, event and event.underlying,
-        name, issuer, tdcc, isin, denomination, currency, sum(a for _, _, a in trades) if trades else None, None, None,
-        trade_date, issue_date, *(autocall.get(slot) for slot in range(1, 13)), final_date, maturity_date,
-        pricing, ko, ko_freq, ko_memory, strike, ki, ki_freq, upfront, coupon, tenor, non_call, None,
-    ]  # fmt: skip
-    for seq, code in enumerate(codes, start=1):
-        row += [code, *prices.get(seq, (None,) * len(UL_FIELDS))] if code else [None] * (1 + len(UL_FIELDS))
-    for trade in trades:
-        row += trade
-    return row
+    cells: dict[str, object] = {name: product[field] for name, field in PRODUCT_FIELDS.items()}
+    cells.update(
+        {"存續狀態": lifecycle.status, "存續事件日": event and event.event_date, "事件標的": event and event.underlying}
+    )
+    cells.update({f"比價日_{slot}": value for slot, value in autocall.items()})
+    for seq, field in enumerate(_UNDERLYINGS, start=1):
+        if product[field]:
+            cells[f"UL_{seq}"] = product[field]
+            cells.update(zip((f"UL_{seq}_{name}" for name in UL_FIELDS), prices.get(seq, ()), strict=False))
+    if trades:
+        cells["承作總額"] = sum(amount for _, _, amount in trades)
+    for n, (branch, fc, amount) in enumerate(trades, start=1):
+        cells.update({f"分公司_{n}": branch, f"FC_{n}": fc, f"金額_{n}": amount})
+    return cells
 
 
 def _summary_book(columns: Sequence[str], rows: Sequence[Sequence[object]]) -> openpyxl.Workbook:
