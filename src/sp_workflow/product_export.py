@@ -85,7 +85,7 @@ _CJK = re.compile(r"[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]")
 _CENTER = Alignment(horizontal="center", vertical="center")
 PRODUCT_FIELDS = {
     "Product": "product", "發行機構": "issuer", "TDCC Code": "tdcc", "ISIN Code": "isin",
-    "單位面額": "denomination", "承作幣別": "currency", "交易日": "trade_date", "發行日": "issue_date",
+    "單位面額": "denomination", "承作幣別": "currency", "交易日": "trade_date", "期初定價日": "strike_date", "發行日": "issue_date",
     "最終比價日": "final_valuation_date", "到期日": "maturity_date", "期初定價": "initial_pricing",
     "KO(%)": "ko_pct", "KO(Freq)": "ko_freq", "KO(memo)": "ko_memory", "K(%)": "strike_pct", "KI(%)": "ki_pct",
     "KI(Freq)": "ki_freq", "UF": "upfront_pct", "Coupon p.a. (%)": "coupon_pct", "天期(月)": "tenor_months",
@@ -96,7 +96,7 @@ _UNDERLYINGS = tuple(f"underlying_{n}" for n in range(1, 6))
 SUMMARY_COLUMNS = (
     "存續狀態", "事件發生日", "事件標的",
     "Product", "發行機構", "TDCC Code", "ISIN Code", "單位面額", "承作幣別", "承作總額", "私銀註記", "新加坡註記",
-    "交易日", "發行日", *(f"比價日_{i}" for i in range(1, 13)), "最終比價日", "到期日",
+    "交易日", "期初定價日", "發行日", *(f"比價日_{i}" for i in range(1, 13)), "最終比價日", "到期日",
     "期初定價", "KO(%)", "KO(Freq)", "KO(memo)", "K(%)", "KI(%)", "KI(Freq)", "UF", "Coupon p.a. (%)",
     "天期(月)", "Non-Call(月)", "Lookback 期間",
     *(name for n in range(1, 6) for name in (f"UL_{n}", *(f"UL_{n}_{field}" for field in UL_FIELDS))),
