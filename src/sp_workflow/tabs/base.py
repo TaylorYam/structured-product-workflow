@@ -26,6 +26,7 @@ from fcn_checker.ui import (
     CopyArea,
     FieldBox,
     FitTreeview,
+    HintBar,
     KpiRow,
     PageHeader,
     Scrollbar,
@@ -54,7 +55,8 @@ CELL_COPY_HINT = "按右鍵可以只複製一格或一列"  # 人工維護的檢
 class Tab:
     """一個分頁（#83、#85 版面）：頁首、白色輸入卡片（按鈕、完成後的重點數字與結果條）、下方結果表。
 
-    子類別依序用 page_header、card（卡片裡用 tdcc_column、field、result_area 放內容）與 place_table 排版；
+    子類別依序用 page_header、（要從上一步帶入 TDCC 時）tdcc_hint、card（卡片裡用 tdcc_column、field、result_area 放內容）
+    與 place_table 排版；
     動作用 `runner`（`ActionRunner`）在背景執行，處理中停用哪些按鈕寫在 `_busy`；做完用 finish 顯示重點數字並把
     狀態列變成綠色結果條，重新開始用 restart。
     """
@@ -85,6 +87,7 @@ class Tab:
             self.table.column(col, width=width, minwidth=width if last else 20, stretch=last)
         self.table.tag_configure("problem", foreground=DANGER)
         self.copier = TableCopy(self.table)
+        self.handed_tdccs: list[str] | None = None  # 從上一步帶入的 TDCC（`hand_in_tdccs`）
 
     def page_header(self, title: str, description: str) -> None:
         """第 0 列：步驟 N／總數（由視窗用 show_step 填）、標題（只寫功能）與一行說明。"""
@@ -93,6 +96,12 @@ class Tab:
 
     def show_step(self, step: str) -> None:
         self.header.step.set(step)
+
+    def tdcc_hint(self, row: int, columnspan: int = 2) -> None:
+        """第 row 列：從上一步帶入 TDCC 時的藍色提示條（#76）；「改選…」清掉帶入的 TDCC，讓作業人員自己貼。"""
+        self.hint = HintBar(self.frame, self._clear_handed_tdccs)
+        self.hint.grid(row=row, column=0, columnspan=columnspan, sticky="ew", pady=(0, 12))
+        self.hint.hide()
 
     def card(self, row: int) -> ttk.Frame:
         """第 row 列的白色輸入卡片。"""
@@ -147,6 +156,60 @@ class Tab:
             return
         self.tdcc_text.edit_modified(False)  # 清掉旗標，下一次修改才會再通知
         self.count_var.set(f"已貼 {len(parse_tdccs(self.tdcc_text.get('1.0', tk.END)))} 筆")
+        if self.handed_tdccs is not None and parse_tdccs(self.tdcc_text.get("1.0", tk.END)) != self.handed_tdccs:
+            self._forget_handed_tdccs()  # 自己改了帶入的 TDCC，提示條就收起來
+
+    def hand_in_tdccs(self, tdccs: Sequence[str], source: str, hint: str) -> bool:
+        """從上一步帶入 TDCC（#76）並在提示條寫 hint；回傳是否帶入。不切頁、不自動開始。
+
+        正在處理時不帶入；已經貼了不同的 TDCC（不看順序）時先問（#93），`_may_replace` 不同意也不帶入；
+        帶入時收起上一次的結果（`_clear_results`）。source 是寫在對話框的「帶入的是什麼」，例：這次每日匯入的 FCN TDCC。
+        """
+        page = f"「{self.frame.master.tab(self.frame, 'text')}」"  # 視窗編好號的分頁名稱，例：「3 準備」
+        if self.working:
+            messagebox.showinfo(TITLE, f"{page}正在處理，{source} 沒有帶入；處理完後請自己貼。", parent=self.master)
+            return False
+        current = parse_tdccs(self.tdcc_text.get("1.0", tk.END))
+        if (
+            current
+            and set(current) != set(tdccs)
+            and not messagebox.askyesno(
+                TITLE,
+                f"{page}已經有 {len(current)} 筆 TDCC，和{source}（{len(tdccs)} 筆）不同。\n\n要換成{source} 嗎？",
+                parent=self.master,
+            )
+        ):
+            return False
+        if not self._may_replace(source):
+            return False
+        self._clear_results()
+        self.handed_tdccs = list(tdccs)
+        self._set_tdccs("\n".join(tdccs))
+        self.hint.show(hint)
+        return True
+
+    def _may_replace(self, source: str) -> bool:
+        """帶入前的另一個確認；子類別覆寫（例：有改過還沒存的內容時先問）。"""
+        return True
+
+    def _clear_results(self) -> None:
+        """帶入新的 TDCC 前收起上一次的結果；子類別可以覆寫成清得更多。"""
+        self._reset(True)
+
+    def _set_tdccs(self, text: str) -> None:
+        self.tdcc_text.delete("1.0", tk.END)
+        self.tdcc_text.insert("1.0", text)
+        self.count_var.set(f"已貼 {len(parse_tdccs(text))} 筆")
+
+    def _clear_handed_tdccs(self) -> None:
+        """提示條的「改選…」：清掉帶入的 TDCC，讓作業人員自己貼。"""
+        self._forget_handed_tdccs()
+        self._set_tdccs("")
+        self.tdcc_text.focus_set()
+
+    def _forget_handed_tdccs(self) -> None:
+        self.handed_tdccs = None
+        self.hint.hide()
 
     def field(
         self, body: ttk.Frame, row: int, label: str, var: tk.StringVar, choose: Callable[[], str], note: str = ""

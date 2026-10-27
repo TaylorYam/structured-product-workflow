@@ -1,6 +1,6 @@
 """「2 起單資料」分頁：貼 TDCC、讀一份起單建檔（#97），在右邊逐檔確認、修改後匯入資料庫（#86）；匯入後顯示重算的核對條件（#88）
 與風險等級（#238）。風險等級欄是資料庫存的值：讀取時（有連資料庫）與匯入後重讀，已鎖住的也顯示；
-「風險等級明細…」看選到那一檔的計算明細。"""
+「風險等級明細…」看選到那一檔的計算明細。匯入完成後把成功匯入的 TDCC 帶到「3 準備」（#281）。"""
 
 from __future__ import annotations
 
@@ -10,12 +10,11 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from fcn_checker.check_config import ConfigPaths
-from fcn_checker.ui import Background, HintBar
+from fcn_checker.ui import Background, NextButton
 from sp_workflow.check_terms import CalcLine
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.order_terms import OrderRow, describe
-from sp_workflow.preparation import parse_tdccs
-from sp_workflow.product_terms import Draft, ImportConfig, ImportLine
+from sp_workflow.product_terms import BatchReceipt, Draft, ImportConfig, ImportLine
 from sp_workflow.risk_level import RISK_LEVELS, RiskLevel
 from sp_workflow.status import ImportResult, OrderReview, Risk
 from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, Tab
@@ -35,9 +34,12 @@ class OrderTermsTab(Tab):
         memory: FolderMemory,
         db: DatabaseLogin,
         config_paths: Callable[[], ConfigPaths],
+        on_imported: Callable[[Sequence[str]], bool],
+        on_next: Callable[[], None],
         *,
         background: BackgroundFactory = Background,
     ) -> None:
+        """on_imported 把成功匯入的 TDCC 帶到準備頁、回傳是否帶入；on_next 切到準備頁（#281）。"""
         super().__init__(
             notebook,
             "起單資料",
@@ -54,6 +56,7 @@ class OrderTermsTab(Tab):
         )
         self.memory = memory
         self.config_paths = config_paths
+        self.on_imported = on_imported
         self.read: ReadResult | None = None  # 最近一次讀取的結果
         self.items: dict[str, tuple[OrderRow, Draft | None]] = {}  # 結果表的列 → (讀取結果, 確認資料)
         self.unsaved = False  # 有改過、還沒匯入資料庫
@@ -65,10 +68,7 @@ class OrderTermsTab(Tab):
             "讀作業人員的起單建檔，在右邊逐檔確認、修改後匯入資料庫；不修改起單建檔。",
         )
         self.header.grid_configure(columnspan=3)
-        self.handed_off: list[str] | None = None  # 從每日匯入帶入的 TDCC
-        self.hint = HintBar(self.frame, self._clear_handed_off)
-        self.hint.grid(row=1, column=0, columnspan=3, sticky="ew", pady=(0, 12))
-        self.hint.hide()
+        self.tdcc_hint(1, columnspan=3)  # 從每日匯入帶入的 TDCC
         card = self.card(2)  # 只佔左邊，和結果表同寬；右邊讓給確認區（#106）
         self.tdcc_column(card)
         self.tdcc_text.configure(height=6)  # 讓出高度給下方的結果表
@@ -91,6 +91,7 @@ class OrderTermsTab(Tab):
         )
         self.risk_button = ttk.Button(self.buttons, text="風險等級明細…", command=self.show_risk, state=tk.DISABLED)
         self.risk_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.next_button = NextButton(self.buttons, "下一步：準備 →", on_next)
 
     def _selected_tdcc(self) -> str | None:
         item = self.selected_item()
@@ -133,55 +134,16 @@ class OrderTermsTab(Tab):
     def receive_tdccs(self, tdccs: Sequence[str]) -> bool:
         """每日匯入完成後帶入交易明細的 FCN TDCC（#90）；回傳是否帶入。不切頁、不自動讀取。
 
-        正在處理時不帶入；已經貼了不同的 TDCC（不看順序）時先問（#93）；有改過還沒匯入的內容也先問（#86）。
+        除了 `Tab.hand_in_tdccs` 的確認，有改過還沒匯入的內容也先問（#86）。
         """
-        if self.working:
-            messagebox.showinfo(
-                TITLE,
-                "「2 起單資料」正在處理，這次每日匯入的 FCN TDCC 沒有帶入；處理完後請自己貼。",
-                parent=self.master,
-            )
-            return False
-        current = parse_tdccs(self.tdcc_text.get("1.0", tk.END))
-        if (
-            current
-            and set(current) != set(tdccs)
-            and not messagebox.askyesno(
-                TITLE,
-                f"「2 起單資料」已經有 {len(current)} 筆 TDCC，和這次每日匯入的 FCN TDCC（{len(tdccs)} 筆）不同。"
-                "\n\n要換成每日匯入的嗎？",
-                parent=self.master,
-            )
-        ):
-            return False
-        if not self._may_discard("帶入每日匯入的 TDCC"):
-            return False
-        self._clear_results()  # 換了一批要讀的，上一次的結果收起來
-        self.handed_off = list(tdccs)
-        self._set_tdccs("\n".join(tdccs))
-        self.hint.show(f"已帶入每日匯入的 FCN TDCC {len(tdccs)} 筆，選好起單建檔後按「讀取」。")
-        return True
+        return self.hand_in_tdccs(
+            tdccs,
+            "這次每日匯入的 FCN TDCC",
+            f"已帶入每日匯入的 FCN TDCC {len(tdccs)} 筆，選好起單建檔後按「讀取」。",
+        )
 
-    def _set_tdccs(self, text: str) -> None:
-        self.tdcc_text.delete("1.0", tk.END)
-        self.tdcc_text.insert("1.0", text)
-        self.count_var.set(f"已貼 {len(parse_tdccs(text))} 筆")
-
-    def _tdcc_changed(self, _event: object = None) -> None:
-        """自己改了帶入的 TDCC，提示條就收起來。"""
-        super()._tdcc_changed(_event)
-        if self.handed_off is not None and parse_tdccs(self.tdcc_text.get("1.0", tk.END)) != self.handed_off:
-            self._forget_handed_off()
-
-    def _clear_handed_off(self) -> None:
-        """提示條的「改選…」：清掉帶入的 TDCC，讓作業人員自己貼。"""
-        self._forget_handed_off()
-        self._set_tdccs("")
-        self.tdcc_text.focus_set()
-
-    def _forget_handed_off(self) -> None:
-        self.handed_off = None
-        self.hint.hide()
+    def _may_replace(self, source: str) -> bool:
+        return self._may_discard(f"帶入{source}")
 
     def has_unsaved(self) -> bool:
         """有改過、還沒匯入資料庫的內容（先把編輯區還沒解讀的輸入解讀掉）。"""
@@ -201,6 +163,7 @@ class OrderTermsTab(Tab):
     def _clear_results(self) -> None:
         """回到還沒讀取的樣子：清掉結果表、編輯區與重點數字，狀態列回到說明，按鈕不能按。"""
         self.restart()
+        self.next_button.withdraw()
         self.table.delete(*self.table.get_children())
         self.status_var.set(self.READY_TEXT)
         self.read = None
@@ -336,8 +299,12 @@ class OrderTermsTab(Tab):
             "匯入資料庫中…",
             self._saved,
             clear=False,
-            before=lambda: self.mark_done(False),
+            before=self._importing,
         )
+
+    def _importing(self) -> None:
+        self.mark_done(False)
+        self.next_button.withdraw()
 
     def _saved(self, result: OrderImportResult) -> None:
         self.unsaved = False
@@ -378,9 +345,21 @@ class OrderTermsTab(Tab):
         if calcs is not None:
             to_confirm = sum(calc.problem for calc in batch.values())
             kpis.append(("核對條件待確認（檔）", to_confirm, to_confirm > 0))
-        self.finish(kpis, status)
+        self.finish(kpis, f"{status}\n{self._hand_off(receipt)}")
         self.releaser.show(recalc)
         self._refresh_risk_button()
+
+    def _hand_off(self, receipt: BatchReceipt) -> str:
+        """把成功匯入（新增、覆蓋、沒有變）的 TDCC 依結果表順序帶到準備頁（#281）；真的帶入了才有下一步。
+        回傳寫在完成訊息的一句。"""
+        imported = {line.tdcc for line in receipt.lines if line.imported}
+        tdccs = list(dict.fromkeys(row.tdcc for row, _ in self.items.values() if row.tdcc in imported))
+        if not tdccs:
+            return "沒有成功匯入的 TDCC，準備頁沒有帶入。"
+        if not self.on_imported(tdccs):
+            return "準備頁沒有帶入（正在處理，或保留原本的 TDCC）。"
+        self.next_button.offer()
+        return f"已把成功匯入的 TDCC {len(tdccs)} 筆帶到「3 準備」。"
 
 
 def _risk_counts(risks: Sequence[RiskLevel]) -> str:

@@ -1,9 +1,10 @@
-"""「3 準備」分頁：貼 TDCC、選輸出位置，產生批次資料夾與準備清單；登入了資料庫時同時留步驟紀錄（#151）。"""
+"""「3 準備」分頁：貼 TDCC、選輸出位置，產生批次資料夾與準備清單；登入了資料庫時同時留步驟紀錄（#151）。
+起單資料匯入完成後帶入成功匯入的 TDCC（#281）。"""
 
 from __future__ import annotations
 
 import tkinter as tk
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from tkinter import ttk
 
@@ -39,7 +40,8 @@ class PrepareTab(Tab):
             "在最上方的根目錄底下找出每個 TDCC 的中文說明書與投資人須知，改成標準檔名放進新的批次資料夾；"
             "商品資料夾只讀不改。",
         )
-        card = self.card(1)
+        self.tdcc_hint(1)  # 從起單資料帶入的 TDCC
+        card = self.card(2)
         self.tdcc_column(card)
         body = self.body(card, column=1)
         row = self.field(
@@ -56,7 +58,15 @@ class PrepareTab(Tab):
         self.open_button = ttk.Button(self.buttons, text="打開批次資料夾", command=self.open_batch, state=tk.DISABLED)
         self.open_button.pack(side=tk.LEFT, padx=8)
         self.next_button = NextButton(self.buttons, "下一步：核對 →", on_next)
-        self.place_table(2)
+        self.place_table(3)
+
+    def receive_tdccs(self, tdccs: Sequence[str]) -> bool:
+        """起單資料匯入完成後帶入成功匯入的 TDCC（#281）；回傳是否帶入。不切頁、不自動準備。"""
+        return self.hand_in_tdccs(
+            tdccs,
+            "起單資料成功匯入的 TDCC",
+            f"已帶入「2 起單資料」成功匯入的 TDCC {len(tdccs)} 筆，選好輸出位置後按「開始準備」。",
+        )
 
     def _busy(self, busy: bool) -> None:
         """處理中不能再按；打開批次資料夾要等準備好了才能按。"""
