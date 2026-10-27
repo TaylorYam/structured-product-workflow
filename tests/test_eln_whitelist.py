@@ -16,6 +16,7 @@ from sp_workflow.check_terms import recalculate
 from sp_workflow.eln_whitelist import (
     Listed,
     WhitelistError,
+    current_import,
     import_whitelist,
     read_whitelist,
     stored_etfs,
@@ -98,6 +99,7 @@ def test_the_macro_workbook_is_read_too(tmp_path) -> None:
         ({"sheets": ("總表",)}, "沒有「說明」工作表"),
         ({"header": ("代碼", *HEADER[1:])}, "表頭"),
         ({"header": tuple(h for h in HEADER if h != "ETF")}, "ETF"),
+        ({"header": (*HEADER[:11], "KOSPI", *HEADER[11:])}, "不認得的分類欄：KOSPI"),
         ({"fetched": None}, "抓取日期"),
         ({"rows": ()}, "沒有任何代碼"),
         ({"rows": ((None, "SP"),)}, "沒有任何代碼"),
@@ -122,31 +124,44 @@ def test_a_missing_file_is_rejected(tmp_path) -> None:
 @pytest.mark.db
 def test_each_import_replaces_the_whole_list_and_logs_the_changes(pg, tmp_path) -> None:
     first = read_whitelist(write_whitelist(tmp_path / "a.xlsx"))
-    later = dataclasses.replace(
-        first,
-        fetched_on=dt.date(2026, 11, 14),
-        rows=(*first.rows[1:], Listed("SPY US", ("ETF",))),
-    )
+    nov_14 = dt.date(2026, 11, 14)
+    bbb_etf = Listed("BBB UN", ("SP", "ETF"))
+    later = dataclasses.replace(first, fetched_on=nov_14, rows=(bbb_etf, *first.rows[2:], Listed("SPY US", ("ETF",))))
 
-    assert stored_etfs(pg) is None, "還沒匯入過"
+    assert stored_etfs(pg) is None and current_import(pg) is None, "還沒匯入過"
     one = import_whitelist(pg, first, tmp_path / "a.xlsx", user="op1")
     again = import_whitelist(pg, first, tmp_path / "a.xlsx", user="op1")
     two = import_whitelist(pg, later, tmp_path / "b.xlsm", user="op2")
 
-    assert (one.codes, one.etfs, len(one.added), one.removed, one.previous) == (5, 1, 5, (), None)
-    assert (again.added, again.removed, again.previous) == ((), (), FETCHED)
+    assert (one.code_count, one.etf_count, len(one.added), one.removed, one.previous) == (5, 1, 5, (), None)
+    assert (again.added, again.removed, again.regrouped, again.previous) == ((), (), (), FETCHED)
     assert two.added == (Listed("SPY US", ("ETF",)),)
     assert two.removed == (Listed("AAA UW", ("SP", "NQ")),)
-    assert stored_etfs(pg) == frozenset({"QQQ US", "SPY US"})
+    assert two.regrouped == ((Listed("BBB UN", ("SP",)), bbb_etf),), "變成 ETF 也要看得到"
+    assert stored_etfs(pg) == frozenset({"BBB UN", "QQQ US", "SPY US"})
     assert pg.execute("SELECT count(*) FROM workflow.eln_whitelist").fetchone() == (5,)
+    current = current_import(pg)
+    assert current is not None
+    assert (current.fetched_on, current.source_file, current.code_count, current.etf_count, current.imported_by) == (
+        nov_14,
+        "b.xlsm",
+        5,
+        3,
+        "op2",
+    )
+
+    back = import_whitelist(pg, first, tmp_path / "a.xlsx", user="op1")
+
+    assert back.previous == nov_14, "上一份是上一次匯入的那份，不是抓取日最晚的"
     log = pg.execute(
-        "SELECT fetched_on, source_file, codes, etfs, added, removed, imported_by"
-        " FROM workflow.eln_whitelist_import ORDER BY id"
+        "SELECT fetched_on, source_file, code_count, etf_count, added_count, removed_count, regrouped_count,"
+        " imported_by FROM workflow.eln_whitelist_import ORDER BY id"
     ).fetchall()
     assert log == [
-        (FETCHED, "a.xlsx", 5, 1, 5, 0, "op1"),
-        (FETCHED, "a.xlsx", 5, 1, 0, 0, "op1"),
-        (dt.date(2026, 11, 14), "b.xlsm", 5, 2, 1, 1, "op2"),
+        (FETCHED, "a.xlsx", 5, 1, 5, 0, 0, "op1"),
+        (FETCHED, "a.xlsx", 5, 1, 0, 0, 0, "op1"),
+        (nov_14, "b.xlsm", 5, 3, 1, 1, 1, "op2"),
+        (FETCHED, "a.xlsx", 5, 1, 1, 1, 1, "op1"),
     ]
 
 
@@ -182,7 +197,7 @@ def test_the_window_action_imports_then_recalculates(pg, pg_settings, tmp_path) 
 
     result = import_eln_whitelist(pg_settings, write_whitelist(tmp_path / "白名單.xlsm"), PATHS)
 
-    assert (result.receipt.codes, result.receipt.etfs) == (5, 1)
+    assert (result.receipt.code_count, result.receipt.etf_count) == (5, 1)
     assert result.recalc.receipt is not None and result.recalc.error == ""
     assert underlying_type(pg) == "ETF"
     with pytest.raises(WhitelistError):

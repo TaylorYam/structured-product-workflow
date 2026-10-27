@@ -24,7 +24,7 @@ from sp_workflow.daily_import import (
     PriceCsvReceipt,
     PriceSummary,
 )
-from sp_workflow.eln_whitelist import Listed, WhitelistReceipt
+from sp_workflow.eln_whitelist import Listed, WhitelistImport, WhitelistReceipt
 from sp_workflow.legacy_backfill import EXISTING, FILLED, SKIPPED, BackfillLine, BackfillReceipt
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.observation import EventChange, ObservationReceipt, Observed
@@ -221,18 +221,32 @@ def test_close_history_runs_on_this_page_and_lists_problems(master, tmp_path: Pa
     assert str(window.daily.start_button.cget("state")) == "normal"
 
 
+CURRENT_WHITELIST = WhitelistImport(
+    dt.date(2026, 10, 15),
+    "ELN可連結標的白名單.xlsm",
+    6680,
+    1060,
+    "op1",
+    dt.datetime(2026, 10, 16, 9, 30, tzinfo=dt.UTC),
+)
+
+
 def test_whitelist_import_runs_on_this_page_and_lists_changes(master, tmp_path: Path, monkeypatch, immediate) -> None:
-    """匯入可連結標的白名單（#273，維護選單）：寫出抓取日、檔數與比上一份的增減，增減的代碼列在結果表，再重算。"""
+    """匯入可連結標的白名單（#273，維護選單）：先給看資料庫目前那份、確認後選檔；寫出抓取日、檔數與比上一次匯入的
+    增減與分類變動，變動的代碼列在結果表，再重算。"""
     window = new_window(master, tmp_path, background=immediate, logged_in=True)
     source = tmp_path / "ELN可連結標的白名單.xlsm"
-    asked = []
+    asked, confirmed = [], []
+    monkeypatch.setattr(sp_workflow.tabs.daily, "read_whitelist_import", lambda settings: CURRENT_WHITELIST)
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: confirmed.append(a[1]) or True)
     monkeypatch.setattr(sp_workflow.tabs.daily, "ask_excel", lambda *a: asked.append(a) or str(source))
     receipt = WhitelistReceipt(
         dt.date(2026, 11, 14),
-        6681,
-        1061,
+        code_count=6681,
+        etf_count=1061,
         added=(Listed("SPY US", ("ETF",)),),
         removed=(Listed("AAA UW", ("SP", "NQ")),),
+        regrouped=((Listed("BBB UN", ("SP",)), Listed("BBB UN", ("SP", "ETF"))),),
         previous=dt.date(2026, 10, 15),
     )
     running = []
@@ -244,18 +258,37 @@ def test_whitelist_import_runs_on_this_page_and_lists_changes(master, tmp_path: 
 
     window._import_whitelist()
 
+    assert "資料庫目前的白名單：抓取日 2026-10-15，6680 檔（ETF 1060 檔）；op1 在" in confirmed[0]
+    assert "從 ELN可連結標的白名單.xlsm 匯入。" in confirmed[0]
     assert running == [source] and "*.xlsm" in asked[0][2]
     assert window.notebook.select() == str(window.daily.frame)
     status = window.daily.status_var.get()
     assert (
         "完成（可連結標的白名單）：抓取日 2026-11-14，6681 檔（ETF 1061 檔）；"
-        "比上一份（抓取日 2026-10-15）新增 1 檔、移除 1 檔。"
+        "和上一次匯入的那份（抓取日 2026-10-15）比：新增 1 檔、移除 1 檔、分類變了 1 檔。"
     ) in status
     assert "核對條件（還沒鎖住的 0 檔" in status
     rows = [window.daily.table.item(i, "values") for i in window.daily.table.get_children()]
-    assert [tuple(r) for r in rows] == [("SPY US", "白名單新增", "ETF"), ("AAA UW", "白名單移除", "SP、NQ")]
+    assert [tuple(r) for r in rows] == [
+        ("SPY US", "白名單新增", "ETF"),
+        ("AAA UW", "白名單移除", "SP、NQ"),
+        ("BBB UN", "白名單分類變了", "SP → SP、ETF"),
+    ]
     assert ("白名單（檔）", 6681, False) in window.daily.kpis.values
     assert FolderMemory.under(tmp_path).load()["eln_whitelist"] == str(source)
+
+
+def test_declining_the_whitelist_confirm_imports_nothing(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
+    monkeypatch.setattr(sp_workflow.tabs.daily, "read_whitelist_import", lambda settings: None)
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: False)
+    monkeypatch.setattr(sp_workflow.tabs.daily, "ask_excel", lambda *a: pytest.fail("沒確認不用選檔"))
+
+    window._import_whitelist()
+
+    status = window.daily.status_var.get()
+    assert "資料庫還沒有匯入過白名單，風險等級暫用設定檔的備用 ETF 清單。" in status
+    assert "這次沒有匯入。" in status
 
 
 def test_the_first_whitelist_import_does_not_list_every_code(master, tmp_path: Path) -> None:
@@ -263,7 +296,7 @@ def test_the_first_whitelist_import_does_not_list_every_code(master, tmp_path: P
     added = tuple(Listed(f"C{i} UN", ("SP",)) for i in range(3))
 
     window.daily._whitelist_done(
-        WhitelistResult(WhitelistReceipt(dt.date(2026, 10, 15), 3, 1, added, (), None), Recalc(error="假日表壞了"))
+        WhitelistResult(WhitelistReceipt(dt.date(2026, 10, 15), 3, 1, added, (), (), None), Recalc(error="假日表壞了"))
     )
 
     assert window.daily.table.get_children() == ()

@@ -19,6 +19,7 @@ from fcn_checker.ui import Background, NextButton
 from sp_workflow.check_terms import TO_CONFIRM, CalcLine
 from sp_workflow.close_prices import CloseSummary
 from sp_workflow.daily_import import ImportReceipt, PriceCsvReceipt, PriceSummary
+from sp_workflow.eln_whitelist import WhitelistImport
 from sp_workflow.legacy_backfill import EXISTING, FILLED, SKIPPED
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.observation import EXITED, ON_BOOK, UNLOCKED, WAIT_PRICES, ObservationReceipt, Observed
@@ -37,6 +38,7 @@ from sp_workflow.window_actions import (
     import_eln_whitelist,
     import_legacy_products,
     observe_products,
+    read_whitelist_import,
     run_daily_import,
     run_price_csv,
 )
@@ -266,23 +268,37 @@ class DailyImportTab(Tab):
         )
 
     def import_whitelist(self) -> None:
-        """匯入可連結標的白名單（#273，維護選單）：選「ELN可連結標的白名單.xlsm」，整份檢查後取代資料庫的白名單，再重算。"""
-        chosen = ask_excel("選擇可連結標的白名單（ELN可連結標的白名單.xlsm）", self.whitelist_var, "*.xlsm *.xlsx")
-        if not chosen:
-            return
-        source = Path(chosen)
-        paths = self.config_paths()
+        """匯入可連結標的白名單（#273，維護選單）：先給作業人員看資料庫目前這一份，確認後選「ELN可連結標的白名單.xlsm」，
+        整份檢查後取代資料庫的白名單，再重算。"""
 
-        def starting() -> None:
-            self.whitelist_var.set(str(source))
-            self._starting(eln_whitelist=str(source))
+        def confirm(current: WhitelistImport | None) -> None:
+            now = (
+                "資料庫還沒有匯入過白名單，風險等級暫用設定檔的備用 ETF 清單。"
+                if current is None
+                else f"資料庫目前的白名單：{whitelist_text(current)}"
+            )
+            self.status_var.set(now)
+            if not messagebox.askyesno(TITLE, f"{now}\n\n要選新的一份匯入、整份取代嗎？", parent=self.frame):
+                self.status_var.set(f"{now}\n這次沒有匯入。")
+                return
+            chosen = ask_excel("選擇可連結標的白名單（ELN可連結標的白名單.xlsm）", self.whitelist_var, "*.xlsm *.xlsx")
+            if not chosen:
+                return
+            source = Path(chosen)
+            paths = self.config_paths()
 
-        self.runner.run_action(
-            lambda settings: import_eln_whitelist(settings, source, paths),
-            "匯入可連結標的白名單中…（整份檢查完才寫入）",
-            self._whitelist_done,
-            before=starting,
-        )
+            def starting() -> None:
+                self.whitelist_var.set(str(source))
+                self._starting(eln_whitelist=str(source))
+
+            self.runner.run_action(
+                lambda settings: import_eln_whitelist(settings, source, paths),
+                "匯入可連結標的白名單中…（整份檢查完才寫入）",
+                self._whitelist_done,
+                before=starting,
+            )
+
+        self.runner.run_action(read_whitelist_import, "讀取目前的白名單…", confirm)
 
     def _whitelist_done(self, result: WhitelistResult) -> None:
         receipt, recalc = result.receipt, result.recalc
@@ -290,17 +306,22 @@ class DailyImportTab(Tab):
             for kind, rows in (("白名單新增", receipt.added), ("白名單移除", receipt.removed)):
                 for row in rows:
                     self.add_row((row.code, kind, "、".join(row.groups)), problem=False)
+            for before, after in receipt.regrouped:
+                detail = f"{'、'.join(before.groups)} → {'、'.join(after.groups)}"
+                self.add_row((after.code, "白名單分類變了", detail), problem=False)
         self._show_recalc(recalc)
         changes = (
             "第一次匯入。"
             if receipt.previous is None
-            else f"比上一份（抓取日 {receipt.previous:%Y-%m-%d}）新增 {len(receipt.added)} 檔、"
-            f"移除 {len(receipt.removed)} 檔。"
+            else f"和上一次匯入的那份（抓取日 {receipt.previous:%Y-%m-%d}）比：新增 {len(receipt.added)} 檔、"
+            f"移除 {len(receipt.removed)} 檔、分類變了 {len(receipt.regrouped)} 檔。"
         )
         self.finish(
-            [("白名單（檔）", receipt.codes, False), ("ETF（檔）", receipt.etfs, False)] + self._recalc_kpis(recalc),
-            f"完成（可連結標的白名單）：抓取日 {receipt.fetched_on:%Y-%m-%d}，{receipt.codes} 檔（ETF {receipt.etfs} 檔）；"
-            f"{changes}\n風險等級的 ETF 清單改用這一份（加上設定檔的補充 ETF）；已鎖住的商品不變。\n{recalc_text(recalc)}",
+            [("白名單（檔）", receipt.code_count, False), ("ETF（檔）", receipt.etf_count, False)]
+            + self._recalc_kpis(recalc),
+            f"完成（可連結標的白名單）：抓取日 {receipt.fetched_on:%Y-%m-%d}，{receipt.code_count} 檔"
+            f"（ETF {receipt.etf_count} 檔）；{changes}\n"
+            f"風險等級的 ETF 清單改用這一份（加上設定檔的補充 ETF）；已鎖住的商品不變。\n{recalc_text(recalc)}",
         )
         self.releaser.show(recalc)
 
@@ -458,3 +479,11 @@ def _observed_detail(r: Observed) -> str:
 def _calc_row(line: CalcLine) -> tuple[str, str, str]:
     """每日匯入結果表的一列：核對條件重算後的狀態。"""
     return line.tdcc, f"核對條件：{line.status}", line.reason
+
+
+def whitelist_text(current: WhitelistImport) -> str:
+    """一份白名單的說明：抓取日、檔數、誰在何時從哪個檔匯入。"""
+    return (
+        f"抓取日 {current.fetched_on:%Y-%m-%d}，{current.code_count} 檔（ETF {current.etf_count} 檔）；"
+        f"{current.imported_by} 在 {current.imported_at.astimezone():%Y-%m-%d %H:%M} 從 {current.source_file} 匯入。"
+    )

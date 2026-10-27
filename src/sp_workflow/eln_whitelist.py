@@ -2,10 +2,12 @@
 
 可以連結的標的只有九個指數的成分股、ADR、ETF（#252）；風險等級的標的種類分把白名單上的 ETF 算 3 分（`risk_level`）。
 - 讀「總表」工作表（第 2 列表頭，第 3 列起每檔一列）：`TICKER` 之後到「所屬指數數」之前的每一欄是一個分類
-  （SP、NQ…、ADR、ETF），有值就是屬於那一類；抓取日是「說明」工作表的 B3。表頭、分類與代碼都要對才寫入。
+  （`GROUPS`：SP、NQ…、ADR、ETF），有值就是屬於那一類；抓取日是「說明」工作表的 B3。白名單格式固定：
+  工作表、表頭（含不認得的分類欄）、抓取日與代碼有任何不對都整份不寫入，說明哪裡不對。
 - 每次匯入整份取代 `workflow.eln_whitelist`，並在 `workflow.eln_whitelist_import` 留一筆紀錄（抓取日、檔名、檔數、
-  新增與移除幾檔、誰）；同一份重複匯入內容不變。
-- `stored_etfs`：白名單上的 ETF；還沒匯入過時 None（風險等級改用設定檔的備用清單）。
+  和上一次匯入比新增、移除、分類變了幾檔、誰）；同一份重複匯入內容不變。
+- `current_import`：最近一次匯入（畫面在匯入前先給作業人員看）；`stored_etfs`：白名單上的 ETF，還沒匯入過時 None
+  （風險等級改用設定檔的備用清單）。
 傳入的 `conn` 由 `database.connect` 建立。
 """
 
@@ -24,7 +26,20 @@ if TYPE_CHECKING:
 
 SUMMARY_SHEET, NOTES_SHEET = "總表", "說明"
 CODE_HEADER, COUNT_HEADER = "TICKER", "所屬指數數"  # 分類欄在這兩欄之間
-ETF = "ETF"
+ETF_GROUP = "ETF"
+GROUPS = (
+    "SP",
+    "NQ",
+    "SOX",
+    "R1000",
+    "R2000",
+    "R3000",
+    "NKY",
+    "TPX500",
+    "HSI",
+    "ADR",
+    ETF_GROUP,
+)  # 白名單「設定」的簡稱
 _HEADER_ROW, _FETCHED_CELL = 2, "B3"
 
 
@@ -47,18 +62,32 @@ class Whitelist:
 
     @property
     def etfs(self) -> frozenset[str]:
-        return frozenset(row.code for row in self.rows if ETF in row.groups)
+        return frozenset(row.code for row in self.rows if ETF_GROUP in row.groups)
+
+
+@dataclass(frozen=True)
+class WhitelistImport:
+    """一次匯入的紀錄（`workflow.eln_whitelist_import` 的一列）。"""
+
+    fetched_on: dt.date
+    source_file: str
+    code_count: int
+    etf_count: int
+    imported_by: str
+    imported_at: dt.datetime
 
 
 @dataclass(frozen=True)
 class WhitelistReceipt:
-    """一次匯入的結果：這一份的抓取日、檔數與 ETF 檔數，和上一份比新增、移除的檔（上一份的抓取日；第一次是 None）。"""
+    """一次匯入的結果：這一份的抓取日、檔數與 ETF 檔數，和上一次匯入的那份比新增、移除、分類變了的檔
+    （(之前, 之後)）；`previous` 是上一次匯入那份的抓取日，第一次是 None。"""
 
     fetched_on: dt.date
-    codes: int
-    etfs: int
+    code_count: int
+    etf_count: int
     added: tuple[Listed, ...]
     removed: tuple[Listed, ...]
+    regrouped: tuple[tuple[Listed, Listed], ...]
     previous: dt.date | None
 
 
@@ -92,8 +121,13 @@ def _listed(rows: list[tuple[object, ...]]) -> tuple[Listed, ...]:
             f"「{SUMMARY_SHEET}」第 {_HEADER_ROW} 列的表頭不對：要從 {CODE_HEADER} 開始、有「{COUNT_HEADER}」。"
         )
     groups = header[1 : header.index(COUNT_HEADER)]
-    if ETF not in groups:
-        raise WhitelistError(f"「{SUMMARY_SHEET}」的表頭沒有 {ETF} 欄。")
+    unknown = [g or "（空白）" for g in groups if g not in GROUPS]
+    if unknown:
+        raise WhitelistError(
+            f"「{SUMMARY_SHEET}」的表頭有不認得的分類欄：{'、'.join(unknown)}。白名單新增或改名指數時要先更新程式。"
+        )
+    if ETF_GROUP not in groups:
+        raise WhitelistError(f"「{SUMMARY_SHEET}」的表頭沒有 {ETF_GROUP} 欄。")
     found: list[Listed] = []
     seen: set[str] = set()
     for row in rows[1:]:
@@ -109,8 +143,8 @@ def _listed(rows: list[tuple[object, ...]]) -> tuple[Listed, ...]:
         found.append(Listed(code, member))
     if not found:
         raise WhitelistError(f"「{SUMMARY_SHEET}」沒有任何代碼；請在 Excel 開啟、確認總表有算出來後存檔再匯入。")
-    if not any(ETF in row.groups for row in found):
-        raise WhitelistError(f"「{SUMMARY_SHEET}」沒有任何 {ETF}，請確認是完整的白名單。")
+    if not any(ETF_GROUP in row.groups for row in found):
+        raise WhitelistError(f"「{SUMMARY_SHEET}」沒有任何 {ETF_GROUP}，請確認是完整的白名單。")
     return tuple(found)
 
 
@@ -124,42 +158,52 @@ def import_whitelist(
             code: Listed(code, tuple(groups))
             for code, groups in conn.execute("SELECT code, groups FROM workflow.eln_whitelist")
         }
-        previous = conn.execute("SELECT max(fetched_on) FROM workflow.eln_whitelist_import").fetchone()
+        previous = current_import(conn)
         now = {row.code: row for row in whitelist.rows}
-        added = tuple(row for code, row in now.items() if code not in before)
-        removed = tuple(row for code, row in before.items() if code not in now)
-        conn.execute("DELETE FROM workflow.eln_whitelist")
-        with conn.cursor().copy("COPY workflow.eln_whitelist (code, groups) FROM STDIN") as copy:
-            for row in whitelist.rows:
-                copy.write_row((row.code, list(row.groups)))
         receipt = WhitelistReceipt(
             whitelist.fetched_on,
             len(whitelist.rows),
             len(whitelist.etfs),
-            added,
-            removed,
-            previous[0] if previous else None,
+            added=tuple(row for code, row in now.items() if code not in before),
+            removed=tuple(row for code, row in before.items() if code not in now),
+            regrouped=tuple((before[code], row) for code, row in now.items() if code in before and before[code] != row),
+            previous=None if previous is None else previous.fetched_on,
         )
+        conn.execute("DELETE FROM workflow.eln_whitelist")
+        with conn.cursor().copy("COPY workflow.eln_whitelist (code, groups) FROM STDIN") as copy:
+            for row in whitelist.rows:
+                copy.write_row((row.code, list(row.groups)))
         conn.execute(
-            "INSERT INTO workflow.eln_whitelist_import"
-            " (fetched_on, source_file, codes, etfs, added, removed, imported_by) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            "INSERT INTO workflow.eln_whitelist_import (fetched_on, source_file, code_count, etf_count, added_count,"
+            " removed_count, regrouped_count, imported_by) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             (
                 receipt.fetched_on,
                 source.name,
-                receipt.codes,
-                receipt.etfs,
-                len(added),
-                len(removed),
+                receipt.code_count,
+                receipt.etf_count,
+                len(receipt.added),
+                len(receipt.removed),
+                len(receipt.regrouped),
                 user or getpass.getuser(),
             ),
         )
     return receipt
 
 
+def current_import(conn: psycopg.Connection) -> WhitelistImport | None:
+    """最近一次匯入（就是資料庫目前這一份）；還沒匯入過時 None。"""
+    row = conn.execute(
+        "SELECT fetched_on, source_file, code_count, etf_count, imported_by, imported_at"
+        " FROM workflow.eln_whitelist_import ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+    return None if row is None else WhitelistImport(*row)
+
+
 def stored_etfs(conn: psycopg.Connection) -> frozenset[str] | None:
     """資料庫白名單上的 ETF（白名單寫法）；還沒匯入過時 None。"""
-    if conn.execute("SELECT NOT EXISTS (SELECT 1 FROM workflow.eln_whitelist_import)").fetchone() == (True,):
+    if current_import(conn) is None:
         return None
     return frozenset(
-        code for (code,) in conn.execute("SELECT code FROM workflow.eln_whitelist WHERE %s = ANY (groups)", (ETF,))
+        code
+        for (code,) in conn.execute("SELECT code FROM workflow.eln_whitelist WHERE %s = ANY (groups)", (ETF_GROUP,))
     )

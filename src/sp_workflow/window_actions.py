@@ -8,6 +8,8 @@
 歷史收盤價讀不到假日表就整份不匯入。
 比價（#155）在回補股價與歷史收盤價匯入之後跑；比價失敗時匯入保留，原因放在結果裡。
 信箱維護（#158）每次存檔一個動作，寫完重讀全部人員與別名給畫面重新顯示；發行機構評等（#237）也一樣。
+可連結標的白名單（#273）分兩個動作（讀目前這一份 → 匯入），中間的確認與選檔留在視窗；匯入整份一個 transaction，
+之後的重算失敗時匯入保留。
 transaction 的範圍（#205）：每日匯入、回補股價、歷史收盤價、起單資料匯入、舊商品補資料與準備、放回、建草稿的步驟紀錄
 整批一個；進度頁的登記已寄出（含批次）、顧客贖回一檔一個（`_each`），寫不進去只影響那一檔、之前寫好的保留。
 這裡不自己寫 SQL：要判斷進度、查已寄出過的，問 `progress`、`step_records`。
@@ -46,7 +48,13 @@ from sp_workflow.daily_import import (
     latest_import,
 )
 from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdatedError, connect
-from sp_workflow.eln_whitelist import WhitelistReceipt, import_whitelist, read_whitelist
+from sp_workflow.eln_whitelist import (
+    WhitelistImport,
+    WhitelistReceipt,
+    current_import,
+    import_whitelist,
+    read_whitelist,
+)
 from sp_workflow.exits import ExitList, load_exits
 from sp_workflow.legacy_backfill import BackfillReceipt, LegacyBackfillError, backfill_legacy
 from sp_workflow.lifecycle import (
@@ -319,6 +327,12 @@ def import_legacy_products(settings: ConnectionSettings, source: Path, paths: Co
     with connect(settings) as conn:
         receipt = backfill_legacy(conn, source, fmt)
         return LegacyResult(receipt, _observe_after_import(conn, calendar))
+
+
+def read_whitelist_import(settings: ConnectionSettings) -> WhitelistImport | None:
+    """資料庫目前這一份可連結標的白名單（最近一次匯入，#273）；還沒匯入過時 None。"""
+    with connect(settings) as conn:
+        return current_import(conn)
 
 
 def import_eln_whitelist(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> WhitelistResult:
