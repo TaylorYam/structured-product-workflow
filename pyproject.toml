@@ -41,6 +41,7 @@ addopts = "-ra"
 markers = [
     "real_samples: 只在本機有真實樣本時執行（SPW_REAL_SAMPLES_DIR，或核對的 data/／FCN_TEST_DATA_DIR）；CI 自動略過",
     "word: 需要 Windows 與 Microsoft Word；CI 自動略過",
+    "excel: 需要 Windows 與 Microsoft Excel（2021 或 365）；CI 自動略過",
     "db: 需要測試用 PostgreSQL（設定 SPW_TEST_DSN）；沒設定時略過",
 ]
 
