@@ -53,6 +53,7 @@ from sp_workflow.progress import (
     ready_of,
     sent_batch,
     still_pending_mail,
+    to_confirm_tdccs,
 )
 from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP
 
@@ -180,6 +181,21 @@ def test_rows_are_filtered_by_pricing_status() -> None:
 
     assert tdccs() == ["1", "2", "3", "4"]
     assert tdccs(pricing={"等股價", "待確認"}) == ["2", "4"], "選了比價狀態時還沒比過的不列"
+
+
+def test_tdccs_to_confirm_are_only_the_pricing_to_confirm_rows_in_order() -> None:
+    """複製待確認 TDCC（#289）：只取比價狀態是待確認的，照列的順序、重複的只取一次；未鎖住的也算。"""
+    rows = [
+        row("4", pricing="待確認"),
+        row("1", pricing="在庫"),
+        row("2", pricing="等股價"),
+        row("3", reason="核對條件待確認"),
+        row("5", pricing="待確認", pricing_unlocked=True),
+        row("4", pricing="待確認"),
+    ]
+
+    assert to_confirm_tdccs(rows) == ["4", "5"]
+    assert to_confirm_tdccs([row("1", pricing="在庫")]) == []
 
 
 def test_pricing_text_marks_unlocked_products() -> None:

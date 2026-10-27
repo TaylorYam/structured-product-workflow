@@ -132,6 +132,37 @@ def test_pricing_status_is_shown_filtered_and_marked(master, tmp_path: Path, mon
     assert shown(tab) == ["037199990001"]
 
 
+def test_copy_tdccs_to_confirm_puts_only_their_tdccs_on_the_clipboard(master, tmp_path: Path, monkeypatch) -> None:
+    """複製待確認 TDCC（#289）：只放畫面上比價待確認的 TDCC、一行一筆，貼到「3 準備」每筆都認得。"""
+    rows = (
+        row("037001023110", 3, pricing="待確認", pricing_reason="沒有比價日"),
+        row("082001154182", 5, pricing="在庫"),
+        row("092001743359", 7, pricing="待確認", pricing_reason="沒有比價日", pricing_unlocked=True),
+        row("147000030313", 9, pricing="等股價", issuer="BNP"),
+    )
+    window, tab, _ = loaded(master, tmp_path, monkeypatch, rows)
+    button = tab.copy_to_confirm_button
+
+    button.invoke()
+
+    assert master.clipboard_get() == "037001023110\n092001743359", "不含表頭與其他欄，照畫面的順序"
+    assert button.cget("text") == "已複製 2 筆"
+    window.prepare.tdcc_text.insert("1.0", master.clipboard_get())
+    master.update()
+    assert window.prepare.count_var.get() == "已貼 2 筆"
+
+    tab.issuer_var.set("BNP")
+    tab.refilter()
+    master.clipboard_clear()
+    master.clipboard_append("原本的內容")
+    button.invoke()
+    assert master.clipboard_get() == "原本的內容", "畫面上沒有待確認的不動剪貼簿"
+    assert button.cget("text") == "表上沒有待確認"
+
+    tab.table_area.button.invoke()
+    assert master.clipboard_get().split("\n")[0].startswith("TDCC\t上手\t交易日"), "全部複製照舊含表頭"
+
+
 def test_a_bad_date_filter_is_ignored_and_explained(master, tmp_path: Path, monkeypatch) -> None:
     _, tab, _ = loaded(master, tmp_path, monkeypatch)
 

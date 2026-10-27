@@ -338,6 +338,11 @@ def sent_batch(rows: Iterable[ProgressRow], through: dt.date) -> SentBatch:
     )
 
 
+def to_confirm_tdccs(rows: Iterable[ProgressRow]) -> list[str]:
+    """比價狀態是待確認的 TDCC（#289），照列的順序、重複的只取一次；未鎖住的也算。"""
+    return list(dict.fromkeys(row.tdcc for row in rows if row.pricing == Pricing.TO_CONFIRM))
+
+
 def by_trade_date(rows: Iterable[ProgressRow]) -> list[ProgressRow]:
     """預設排序：交易日由新至舊（最近的交易在上面），沒有交易日的放最後，同一天依 TDCC。"""
     return sorted(
