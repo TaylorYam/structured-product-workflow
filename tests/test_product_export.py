@@ -128,7 +128,7 @@ def test_an_empty_summary_still_writes_the_header_with_two_trade_groups(pg, tmp_
 
     assert receipt.count == 0
     assert read_back(tmp_path / "x.xlsx") == [[*SUMMARY_COLUMNS, *trade_columns(2)]]
-    assert "總表[[分公司_1]:[金額_2]]" in openpyxl.load_workbook(tmp_path / "x.xlsx")["分公司x幣別"]["A6"].value.text, (
+    assert "總表[[分公司_1]:[金額_2]]" in openpyxl.load_workbook(tmp_path / "x.xlsx")["分公司x幣別"]["A1"].value.text, (
         "分析分頁照總表的交易組數（#293）"
     )
 
