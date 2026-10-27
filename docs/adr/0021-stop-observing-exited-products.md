@@ -1,6 +1,6 @@
 # 0021: 已出場的商品不再比價／Stop Observing Exited Products
 
-- 狀態／Status: Accepted
+- 狀態／Status: Accepted（拆股登記改了之後受影響的已出場商品重新比價，見 [ADR 0024](0024-stock-splits-in-observation.md)／affected exited products are observed again after a stock split entry changes, see ADR 0024）
 - 日期／Date: 2026-10-23
 - 追蹤／Tracking: #169
 - 取代／Supersedes: [ADR 0019](0019-progress-step-records-and-lifecycle-events.md)「每次比價把這檔的自動事件全部重算，和資料庫不同才整組取代」；[ADR 0020](0020-close-prices-and-observation-rules.md) 舊商品「之後比價照樣重算，結果和舊清單事件不同時標待確認」與比價狀態的待確認原因「和舊清單事件不同」／ADR 0019's "each run recalculates the automatic events in full and replaces them as a set when they differ"; ADR 0020's old-product rule "observation then recalculates them, and a result that differs from an old-list event is 待確認" and the 待確認 reason "disagreement with an old-list event"

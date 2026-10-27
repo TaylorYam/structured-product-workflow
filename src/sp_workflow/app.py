@@ -80,6 +80,7 @@ from sp_workflow.tabs.prepare import PrepareTab
 from sp_workflow.tabs.progress import ProgressTab
 from sp_workflow.tabs.ratings import RatingsWindow
 from sp_workflow.tabs.returning import ReturnTab
+from sp_workflow.tabs.splits import SplitsWindow
 
 
 @dataclass(frozen=True)
@@ -95,6 +96,7 @@ REOBSERVE = "重新比價全部"
 LEGACY_BACKFILL = "匯入舊商品的價格與比價日…"
 MAILBOX = "信箱維護…"
 RATINGS = "發行機構評等…"
+SPLITS = "拆股登記…"
 WHITELIST = "匯入可連結標的白名單…"
 
 
@@ -220,6 +222,7 @@ class PanelWindow:
         self.background = background
         self.mailbox: MailboxWindow | None = None  # 「信箱維護…」開著時的視窗（#158）
         self.ratings: RatingsWindow | None = None  # 「發行機構評等…」開著時的視窗（#237）
+        self.splits: SplitsWindow | None = None  # 「拆股登記…」開著時的視窗（#270）
         self.size = WindowSize(memory.path.with_name(WINDOW_FILE))
         master.title(TITLE)
         self.pixels = apply_style(master)
@@ -315,6 +318,7 @@ class PanelWindow:
         menu.add_command(label=LEGACY_BACKFILL, command=self._import_legacy)
         menu.add_command(label=MAILBOX, command=self.open_mailbox)
         menu.add_command(label=RATINGS, command=self.open_ratings)
+        menu.add_command(label=SPLITS, command=self.open_splits)
         menu.add_command(label=WHITELIST, command=self._import_whitelist)
         menu.add_separator()
         menu.add_command(label="使用的設定檔…", command=self.check.show_config_paths)
@@ -389,6 +393,16 @@ class PanelWindow:
         self.ratings = RatingsWindow(self.master, self.db, background=self.background)
         self.ratings.refresh()
 
+    def open_splits(self) -> None:
+        """另開拆股登記視窗並讀一次；已經開著就拉到前面，不重開（#270）。"""
+        if self._splits_open():
+            self.splits.deiconify()
+            self.splits.lift()
+            self.splits.focus_set()
+            return
+        self.splits = SplitsWindow(self.master, self.db, lambda: self.session.paths, background=self.background)
+        self.splits.refresh()
+
     def restore_size(self) -> None:
         """照上次的大小顯示；第一次開啟時在 Windows 最大化。"""
         self.size.restore(self.master, self.pixels)
@@ -414,6 +428,9 @@ class PanelWindow:
     def _ratings_open(self) -> bool:
         return self.ratings is not None and bool(self.ratings.winfo_exists())
 
+    def _splits_open(self) -> bool:
+        return self.splits is not None and bool(self.splits.winfo_exists())
+
     def close(self) -> None:
         """核對頁還在處理或有還沒存檔的核對結果時先問一次；關閉前記住視窗大小。"""
         warning = self._close_warning()
@@ -434,6 +451,8 @@ class PanelWindow:
             self.mailbox.close()
         if self._ratings_open():
             self.ratings.close()
+        if self._splits_open():
+            self.splits.close()
         self.master.destroy()
 
 
