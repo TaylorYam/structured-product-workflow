@@ -94,7 +94,7 @@ spw-db-migrate --env-file .env --admin-user postgres
 **每天**：
 1. 打開每日更新（範本 `PostgreSQL每日更新.xlsx`，只放在私人樣本倉庫）：把前一天的交易整列貼到 `交易明細`（欄位同交易清單月份工作表，第 1 列欄名不要動）；`BBG_Data` 依範本取價（C1 是取價日，內容是前一個交易日的價格）。以前的 `清單更新` 工作表已停用，檔案裡有也不讀。
 2. 視窗切到「1 每日匯入」，選每日更新，按「匯入」。
-3. 每天匯 MarketData CSV（[#153](https://github.com/TaylorYam/structured-product-workflow/issues/153)、[ADR 0020](docs/adr/0020-close-prices-and-observation-rules.md)）：在「回補股價」選前一個交易日 Bloomberg 匯出的 `MarketData_YYYYMMDD.csv`，按「回補股價」。除了股價（見下面「回補前幾天」），同時把 CSV 那一天的收盤價存進收盤價表給比價用；忘了匯，比價會停在「等股價」。
+3. 收盤價（[#280](https://github.com/TaylorYam/structured-product-workflow/issues/280)、[ADR 0026](docs/adr/0026-daily-update-writes-closes.md)）：「匯入」同時把 `BBG_Data` 的最新收盤價存進收盤價表（見下面「收盤價」），接著比價，比到的那一天帶到「9 出場清單」；不必再另外匯 MarketData CSV。放假或請假後回補，或 Bloomberg 另外匯出了 `MarketData_YYYYMMDD.csv`，照「回補前幾天」匯 CSV，CSV 的收盤價優先。
 4. 看結果：
    - 「新增交易」：寫入成功。「已存在」：之前匯過，這次沒有寫入。
    - 「內容不同（未覆蓋）」：交易列和資料庫裡的不一樣，資料庫保留第一次的內容。資料庫的值寫錯時在「7 人工維護」改（見下面「人工維護」），改到和 Excel 一樣後再匯入就是「已存在」。
@@ -104,7 +104,7 @@ spw-db-migrate --env-file .env --admin-user postgres
    - 「交易已取消」：交易明細的「備註」去頭尾空白、不分大小寫等於 `Cancel`，或備註包含「取消」；該列不會匯入資料庫。
    - 「名字對不到信箱」：交易明細的 FC 名字在 `mailbox.person` 找不到（大小寫不同視為同一人）；拼法不同請在 `mailbox.alias` 加一筆別名。
    - 「信箱尚未建立」：`mailbox.person` 還是空的，名字無法比對。
-   - 完成訊息另外寫出股價的取價日與筆數；同一個取價日重新匯入時，整份取代那一天的股價（每次匯入都留紀錄）。
+   - 完成訊息另外寫出股價的取價日與筆數；同一個取價日重新匯入時，整份取代那一天的股價（每次匯入都留紀錄）。也寫出存了幾筆收盤價、MarketData CSV 或歷史收盤價已有而沒有取代的筆數，與沒有存的代碼（推不出收盤日、超出假日表涵蓋範圍、去掉字尾後重複且值不同）。
    - 「核對條件：…」：匯入後重算還沒鎖住的商品（見下面「核對條件」），列出這次有變、或還沒完成的商品。
 5. 匯入完成後，這份交易明細的 FCN TDCC 已經帶到「2 起單資料」（完成訊息寫出帶了幾筆）；按「下一步：起單資料 →」接著讀起單建檔（[#90](https://github.com/TaylorYam/structured-product-workflow/issues/90)）。已存在的商品照樣帶；交易明細沒有 FCN 或整份不匯入時不帶。
 
@@ -112,7 +112,8 @@ spw-db-migrate --env-file .env --admin-user postgres
 1. 交易明細：照舊用每日更新，勾「只匯交易明細」再按「匯入」；不讀 BBG_Data、股價不動。
 2. 股價：在「回補股價」選 Bloomberg 匯出的 `MarketData_YYYYMMDD.csv`（一次一個），按「回補股價」。CSV 的取價日是收盤那一天，存成**下一天**（10/16 收盤 → 取價日 10/17），等同隔天早上用 BBG_Data 取到的價格；那一天原本的股價整份取代。欄名要完全相同，取價日不是日期、不只一天或沒有任何代碼時整份不匯入；沒有 1日前收盤價，幣別、市值(百萬美元) 不存。匯入後重算核對條件，問題寫進 CSV 同資料夾的 `每日匯入錯誤.xlsx`。
 
-**收盤價**（給比價用，[#153](https://github.com/TaylorYam/structured-product-workflow/issues/153)、[ADR 0020](docs/adr/0020-close-prices-and-observation-rules.md)）：以「實際收盤日＋代碼」存一筆，和上面以取價日為鍵的股價分開；BBG_Data 不寫收盤價（它的日期不明確）。
+**收盤價**（給比價用，[#153](https://github.com/TaylorYam/structured-product-workflow/issues/153)、[ADR 0020](docs/adr/0020-close-prices-and-observation-rules.md)）：以「實際收盤日＋代碼」存一筆，和上面以取價日為鍵的股價分開。來源有三個：每日更新的 `BBG_Data`、MarketData CSV、一次性的歷史收盤價。
+- 每日更新（[#280](https://github.com/TaylorYam/structured-product-workflow/issues/280)、[ADR 0026](docs/adr/0026-daily-update-writes-closes.md)）：用「最新收盤價」，收盤日是各代碼市場在取價日之前最近的交易日（週一取價是週五的收盤；美國週一休市、週二取價時美股算週五、日股算週一）。交易所不在假日表的代碼（外匯、利率、指數等）推不出收盤日，不存；只匯交易明細時不存。只補還沒有的、取代每日更新自己之前寫的：MarketData CSV 或歷史收盤價已有的那一筆不動，CSV 之後再匯照樣取代每日更新的值。已經匯過、但當時還沒存收盤價的每日更新，重新匯入一次就會補上。
 - 代碼去掉彭博最後的類別字（`AAA UW Equity` → `AAA UW`、`USDJPY Curncy` → `USDJPY`），其餘一字不差，和商品條件的標的寫法一致。
 - 只存該代碼市場的交易日：週末、或交易所假日表（`config/exchange_holidays.toml`，有美國、日本、港股）上的休市日不存，CSV 在休市那天帶的前一天價格會略過。交易所不在假日表的代碼照存，之後由比價標待確認；交易所在假日表、但日期超出涵蓋範圍的（例如假日表從 2022-07-28 起，更早的歷史收盤價）不能確認是不是交易日，不存、列出來，補了那幾年的假日表再匯一次。
 - 讀不到交易所假日表時，回補股價照樣匯股價，但收盤價這次不存（完成訊息會寫），修好假日表後再匯一次同一個 CSV。
@@ -361,7 +362,7 @@ After an operator code update, rerun `setup_panel.cmd` to apply pending versions
 **Daily**:
 1. Open the daily update (template `PostgreSQL每日更新.xlsx`, kept only in the private samples repository): paste yesterday's trade rows whole into `交易明細` (same columns as the trade-list monthly sheets; do not change the header row); `BBG_Data` pulls prices per the template (C1 is the price date, and the values are the previous trading day's). The old `清單更新` sheet is retired and is ignored if present.
 2. In the window, open "1 每日匯入", choose the daily update, and click "匯入".
-3. Import the MarketData CSV every day ([#153](https://github.com/TaylorYam/structured-product-workflow/issues/153), [ADR 0020](docs/adr/0020-close-prices-and-observation-rules.md)): under "回補股價", choose the Bloomberg export `MarketData_YYYYMMDD.csv` for the previous trading day and click "回補股價". Besides the prices (see "Backfilling earlier days" below), this stores that day's closes in the close-price table for observation; if it is forgotten, observation stops at "等股價".
+3. Closes ([#280](https://github.com/TaylorYam/structured-product-workflow/issues/280), [ADR 0026](docs/adr/0026-daily-update-writes-closes.md)): "匯入" also stores the latest closes from `BBG_Data` in the close-price table (see "Close prices" below), then observes and hands the observed-through day to "9 出場清單"; a separate MarketData CSV import is no longer needed. After holidays or leave, or when Bloomberg exported a `MarketData_YYYYMMDD.csv` anyway, import the CSV as in "Backfilling earlier days"; its closes take precedence.
 4. Review the results:
    - "新增交易": written. "已存在": imported before; nothing written this time.
    - "內容不同（未覆蓋）": the trade rows differ from the database, which keeps the first version. If the database value is wrong, fix it on "7 人工維護" (see "Manual maintenance" below); once it matches the workbook, a re-import shows "已存在".
@@ -371,7 +372,7 @@ After an operator code update, rerun `setup_panel.cmd` to apply pending versions
    - "交易已取消": the trade-row 備註, after trimming and case-folding, is `Cancel`, or it contains `取消`; the row is not imported into the database.
    - "名字對不到信箱": an FC name is missing from `mailbox.person` (case is ignored); for spelling variants add an alias to `mailbox.alias`.
    - "信箱尚未建立": `mailbox.person` is empty, so names cannot be matched.
-   - The completion message also gives the price date and count; re-importing the same price date replaces that whole day (every import is recorded).
+   - The completion message also gives the price date and count; re-importing the same price date replaces that whole day (every import is recorded). It also gives how many closes were stored, how many a MarketData CSV or the historical import already had and were not replaced, and the codes not stored (no inferable closing day, outside the calendar's coverage, or duplicates with different values after dropping the class word).
    - "核對條件：…": unlocked products are recalculated after the import (see "Check terms" below); products that changed or are not done are listed.
 5. After the import, the trade sheet's FCN TDCCs are already filled into "2 起單資料" (the completion message says how many); click "下一步：起單資料 →" to go on and read the order sheet ([#90](https://github.com/TaylorYam/structured-product-workflow/issues/90)). Products already in the database are included; nothing is filled in when the trade sheet has no FCN or the whole file is rejected.
 
@@ -379,7 +380,8 @@ After an operator code update, rerun `setup_panel.cmd` to apply pending versions
 1. Trade rows: use the daily update as usual, tick "只匯交易明細", and click "匯入"; BBG_Data is not read and prices are untouched.
 2. Prices: choose the Bloomberg export `MarketData_YYYYMMDD.csv` under "回補股價" (one at a time) and click "回補股價". The CSV price date is the closing day and is stored as **the next day** (10/16 close → price date 10/17), the same as a BBG_Data pull the next morning; that day's existing prices are replaced whole. Headers must match exactly; the whole file is rejected when a price date is not a date, spans more than one day, or there are no codes. There is no previous close, and currency and USD market cap are not stored. Check terms are recalculated afterwards, and problems go to `每日匯入錯誤.xlsx` beside the CSV.
 
-**Close prices** (for observation, [#153](https://github.com/TaylorYam/structured-product-workflow/issues/153), [ADR 0020](docs/adr/0020-close-prices-and-observation-rules.md)): one row per actual closing day and code, separate from the price-date prices above; BBG_Data never writes closes (its date is ambiguous).
+**Close prices** (for observation, [#153](https://github.com/TaylorYam/structured-product-workflow/issues/153), [ADR 0020](docs/adr/0020-close-prices-and-observation-rules.md)): one row per actual closing day and code, separate from the price-date prices above. There are three sources: the daily update's `BBG_Data`, the MarketData CSV, and the one-off historical closes.
+- Daily update ([#280](https://github.com/TaylorYam/structured-product-workflow/issues/280), [ADR 0026](docs/adr/0026-daily-update-writes-closes.md)): uses 最新收盤價, and the closing day is the latest trading day of each code's market before the price date (a Monday pull is Friday's close; when the US was closed on Monday, a Tuesday pull is Friday's close for US stocks and Monday's for Japanese stocks). Codes whose exchange is not in the calendar (FX, rates, indices, and so on) have no inferable closing day and are not stored; a trades-only import stores none. It only fills missing closes and replaces the daily update's own earlier ones: a close already stored by a MarketData CSV or the historical import stays, and a later CSV still replaces the daily update's value. A daily update imported before closes were stored fills them in when imported again.
 - Codes drop the trailing Bloomberg class word (`AAA UW Equity` → `AAA UW`, `USDJPY Curncy` → `USDJPY`) and otherwise stay character for character, matching the underlying codes in the product terms.
 - Only trading days of the code's market are stored: weekends and closed days in the exchange holiday calendar (`config/exchange_holidays.toml`, covering the US, Japan, and Hong Kong) are skipped, so the previous day's price a CSV carries on a closed day is ignored. Codes whose exchange is not in the calendar are stored, and observation flags them for confirmation later; when the exchange is in the calendar but the date is outside its coverage (for example historical closes before the calendar's 2022-07-28 start), the day cannot be confirmed as a trading day, so the close is not stored but listed; add those years to the calendar and import again.
 - When the holiday calendar cannot be read, the backfill still imports the prices but stores no closes this time (the completion message says so); fix the calendar and import the same CSV again.

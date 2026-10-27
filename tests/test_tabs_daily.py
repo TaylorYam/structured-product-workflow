@@ -99,6 +99,7 @@ def test_trades_only_import_says_prices_were_left_alone(master, tmp_path: Path) 
     window.daily._done(DailyResult(replace(result.receipt, prices=None), result.recalc))
 
     assert "股價：只匯交易明細，股價沒有變動。" in window.daily.status_var.get()
+    assert "收盤價" not in window.daily.status_var.get()
     assert [caption for caption, _, _ in window.daily.kpis.values] == [
         "正常（項）",
         "要注意（項）",
@@ -339,6 +340,39 @@ def test_price_csv_import_lists_changed_events_and_unfinished_observation(master
     )
     assert ("存續事件有變（檔）", 1, False) in window.daily.kpis.values
     assert ("比價沒完成（檔）", 1, True) in window.daily.kpis.values
+
+
+def test_daily_import_says_how_many_closes_were_stored_and_observes(master, tmp_path: Path) -> None:
+    """每日匯入也寫收盤價（#280）：完成訊息列出收盤價與比價，比到的那一天帶到出場清單。"""
+    window = new_window(master, tmp_path)
+    result = daily_receipt(tmp_path)
+    receipt = replace(
+        result.receipt,
+        closes=CloseSummary(3, dt.date(2026, 10, 21), dt.date(2026, 10, 21), 500, 498, 0, 0, 2),
+        close_unknown=("USDJPY", "SPX"),
+    )
+
+    window.daily._done(DailyResult(receipt, result.recalc, Observation(OBSERVED)))
+
+    status = window.daily.status_var.get()
+    assert (
+        "收盤價：存了 498 筆；MarketData CSV 或歷史收盤價已經有、沒有取代 2 筆；"
+        "交易所不在假日表、推不出收盤日、沒有存 2 個代碼。"
+    ) in status
+    assert "比價：比到 2026-10-21" in status and "已把 2026-10-21 帶到「9 出場清單」。" in status
+    assert ("收盤價（筆）", 498, False) in window.daily.kpis.values
+    assert ("存續事件有變（檔）", 1, False) in window.daily.kpis.values
+    assert window.daily.exits_button.winfo_manager() == "pack"
+
+
+def test_daily_import_without_a_calendar_says_closes_were_not_stored(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+
+    window.daily._done(daily_receipt(tmp_path))
+
+    status = window.daily.status_var.get()
+    assert "收盤價：讀不到交易所假日表，這次沒有存，修好假日表後再匯一次這份每日更新。" in status
+    assert "比價" not in status
 
 
 def test_observation_hands_the_day_to_the_exit_list(master, tmp_path: Path) -> None:

@@ -20,6 +20,7 @@ from sp_workflow.close_prices import (
     ClosePriceError,
     HistoryProblem,
     closes_from_csv,
+    closes_from_daily,
     import_history,
     is_closed,
     is_uncovered,
@@ -193,11 +194,138 @@ def test_without_a_holiday_calendar_closes_are_not_stored(pg, tmp_path: Path) ->
     assert count(pg, "workflow.daily_price") == 1
 
 
-def test_bbg_data_never_writes_closes(pg, tmp_path: Path) -> None:
-    import_daily(write_daily(tmp_path / "每日更新.xlsx", [], [price("AAA UW Equity")]), pg)
+# ---------------------------------------------------------------- 每日更新的 BBG_Data（#280、ADR 0026）
 
+
+@pytest.mark.parametrize(
+    ("price_date", "code", "close_date"),
+    [
+        (dt.date(2026, 10, 19), "AAA UW", dt.date(2026, 10, 16)),  # 週一取價：前一個交易日是週五
+        (dt.date(2026, 10, 19), "7203 JT", dt.date(2026, 10, 16)),
+        (dt.date(2026, 10, 15), "AAA UW", dt.date(2026, 10, 13)),  # 美國 10/14 休市：美股是 10/13 的收盤
+        (dt.date(2026, 10, 15), "7203 JT", US_HOLIDAY),  # 日本照常開市
+        (dt.date(2026, 10, 14), "7203 JT", dt.date(2026, 10, 12)),  # 日本 10/13 休市
+        (dt.date(2026, 10, 18), "AAA UW", dt.date(2026, 10, 16)),  # 週日取價也是週五的收盤
+    ],
+)
+def test_daily_closes_belong_to_each_markets_previous_trading_day(
+    price_date: dt.date, code: str, close_date: dt.date
+) -> None:
+    found = closes_from_daily(price_date, {f"{code} Equity": Decimal("10")}, CALENDAR)
+
+    assert found.closes == {(close_date, code): Decimal("10")}
+
+
+def test_daily_closes_without_a_known_market_are_not_stored() -> None:
+    found = closes_from_daily(
+        dt.date(2026, 10, 16),
+        {"BMW GY Equity": Decimal("50"), "USDJPY Curncy": Decimal("150.1"), "SPX Index": Decimal("7000")},
+        CALENDAR,
+    )
+
+    assert found.closes == {}
+    assert found.unknown == ("BMW GY", "SPX", "USDJPY"), "BBG_Data 的日期不明確，交易所不在假日表就推不出收盤日"
+
+
+def test_daily_closes_outside_the_calendar_are_not_stored() -> None:
+    found = closes_from_daily(dt.date(2027, 1, 4), {"AAA UW": Decimal("1")}, CALENDAR)
+
+    assert found.closes == {} and found.uncovered == ("AAA UW",)
+
+
+def test_daily_closes_skip_conflicts_and_missing_prices() -> None:
+    found = closes_from_daily(
+        dt.date(2026, 10, 16),
+        {"AAA UW": Decimal("5"), "AAA UW Equity": Decimal("6"), "DDD UN": None, "EEE UN": Decimal("7")},
+        CALENDAR,
+        conflicted=("FFF UN Equity",),
+    )
+
+    assert found.closes == {(dt.date(2026, 10, 15), "EEE UN"): Decimal("7")}
+    assert found.conflicts == ("AAA UW",)
+
+
+DAILY_PRICE_DATE = dt.date(2026, 10, 16)  # 週五取價：週四 10/15 的收盤
+
+
+def import_daily_closes(pg, tmp_path: Path, prices: list[tuple], name: str = "每日更新.xlsx"):
+    return import_daily(write_daily(tmp_path / name, [], prices, price_date=DAILY_PRICE_DATE), pg, calendar=CALENDAR)
+
+
+def test_a_daily_import_also_stores_the_previous_trading_days_closes(pg, tmp_path: Path) -> None:
+    receipt = import_daily_closes(
+        pg, tmp_path, [price("AAA UW Equity", 101.25), price("7203 JT Equity", 2000), price("USDJPY Curncy", 150)]
+    )
+
+    day = dt.date(2026, 10, 15)
+    assert closes_in(pg) == [(day, "7203 JT", Decimal("2000")), (day, "AAA UW", Decimal("101.25"))]
+    assert receipt.closes is not None and (receipt.closes.stored, receipt.closes.codes) == (2, 2)
+    assert receipt.close_unknown == ("USDJPY",)
+    (import_row,) = pg.execute("SELECT source, file_name, run_id, summary FROM workflow.close_price_import").fetchall()
+    assert import_row[:3] == ("每日更新", "每日更新.xlsx", receipt.run_id)
+    assert import_row[3]["unknown"] == ["USDJPY"] and import_row[3]["stored"] == 2
+    assert count(pg, "workflow.daily_price") == 3, "daily_price 照舊以取價日存"
+
+
+def test_reimporting_a_daily_update_replaces_its_own_closes(pg, tmp_path: Path) -> None:
+    import_daily_closes(pg, tmp_path, [price("AAA UW", 101), price("BBB UW", 5)], "a.xlsx")
+    first = pg.execute("SELECT import_id FROM workflow.close_price_import").fetchone()[0]
+
+    receipt = import_daily_closes(pg, tmp_path, [price("AAA UW", 102), price("BBB UW", 5)], "b.xlsx")
+
+    day = dt.date(2026, 10, 15)
+    assert closes_in(pg) == [(day, "AAA UW", Decimal("102")), (day, "BBB UW", Decimal("5"))]
+    assert receipt.closes is not None and (receipt.closes.replaced, receipt.closes.changed) == (2, 1)
+    assert pg.execute(
+        "SELECT close_date, code, previous_close, previous_import_id, import_id FROM workflow.close_price_change"
+    ).fetchall() == [(day, "AAA UW", Decimal("101"), first, receipt.closes.import_id)]
+
+
+def test_a_daily_update_leaves_closes_from_a_csv_or_history_alone(pg, tmp_path: Path) -> None:
+    import_price_csv(write_price_csv(tmp_path / "MarketData_20261015.csv", [csv_price("AAA UW", "101")]), pg, CALENDAR)
+
+    receipt = import_daily_closes(pg, tmp_path, [price("AAA UW", 999), price("BBB UW", 5)])
+
+    day = dt.date(2026, 10, 15)
+    assert closes_in(pg) == [(day, "AAA UW", Decimal("101")), (day, "BBB UW", Decimal("5"))]
+    assert receipt.closes is not None
+    assert (receipt.closes.stored, receipt.closes.not_replaced, receipt.closes.replaced) == (1, 1, 0)
+    assert count(pg, "workflow.close_price_change") == 0
+
+
+def test_a_csv_still_replaces_closes_from_a_daily_update(pg, tmp_path: Path) -> None:
+    import_daily_closes(pg, tmp_path, [price("AAA UW", 999)])
+
+    receipt = import_price_csv(
+        write_price_csv(tmp_path / "MarketData_20261015.csv", [csv_price("AAA UW", "101")]), pg, CALENDAR
+    )
+
+    assert closes_in(pg) == [(dt.date(2026, 10, 15), "AAA UW", Decimal("101"))]
+    assert receipt.closes is not None and (receipt.closes.replaced, receipt.closes.changed) == (1, 1)
+
+
+def test_without_a_calendar_or_prices_a_daily_update_writes_no_closes(pg, tmp_path: Path) -> None:
+    receipt = import_daily(write_daily(tmp_path / "a.xlsx", [], [price("AAA UW Equity")]), pg)
+    trades_only = import_daily(
+        write_daily(tmp_path / "b.xlsx", [], [price("AAA UW")]), pg, prices=False, calendar=CALENDAR
+    )
+
+    assert receipt.closes is None and trades_only.closes is None
+    assert count(pg, "workflow.close_price") == 0 and count(pg, "workflow.close_price_import") == 0
     assert count(pg, "workflow.daily_price") == 1
-    assert count(pg, "workflow.close_price") == 0
+
+
+def test_a_daily_update_that_fails_writes_no_closes(pg, tmp_path: Path, monkeypatch) -> None:
+    def broken(*args, **kwargs):
+        raise RuntimeError("寫錯誤清單時壞掉")
+
+    monkeypatch.setattr("sp_workflow.daily_import._save_error_book", broken)
+
+    with pytest.raises(RuntimeError):
+        import_daily_closes(pg, tmp_path, [price("AAA UW", 101)])
+
+    assert count(pg, "workflow.close_price") == 0 and count(pg, "workflow.close_price_import") == 0
+    assert count(pg, "workflow.daily_price") == 0
 
 
 # ---------------------------------------------------------------- 歷史收盤價（HP 格式）

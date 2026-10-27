@@ -1,9 +1,9 @@
 """「1 每日匯入」分頁：匯入每日更新的交易明細與股價、回補股價 CSV（#112），完成後把 FCN TDCC 帶到起單資料頁（#90）。
 
-MarketData CSV 同時寫收盤價（#153）；維護選單的「匯入歷史收盤價…」「匯入舊商品的價格與比價日…」（#154）、
+MarketData CSV 同時寫收盤價（#153），每日更新也寫前一個交易日的收盤價（#280）；維護選單的「匯入歷史收盤價…」「匯入舊商品的價格與比價日…」（#154）、
 「匯入可連結標的白名單…」（#273）也在這一頁的背景執行、顯示結果。
 匯入收盤價之後比價（#155），完成訊息列出這次有變的存續事件與還沒完成的比價狀態；維護選單的「重新比價全部」
-也在這一頁執行。回補股價、歷史收盤價比價完成後把比到的那一天帶到「9 出場清單」，按「下一步」才切過去（#171）。
+也在這一頁執行。每日匯入、回補股價、歷史收盤價比價完成後把比到的那一天帶到「9 出場清單」，按「下一步」才切過去（#171）。
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ class DailyImportTab(Tab):
 
         self.page_header(
             "匯入每日更新",
-            "把每日更新的 FCN 交易明細與每日股價匯入資料庫，再重算還沒鎖住的商品的核對條件；信箱在資料庫直接維護。",
+            "把每日更新的 FCN 交易明細、每日股價與前一個交易日的收盤價匯入資料庫，再重算還沒鎖住的商品的核對條件並比價；信箱在資料庫直接維護。",
         )
         body = self.body(self.card(1))
         row = self.field(body, 0, "每日更新", self.daily_var, lambda: ask_excel("選擇每日更新", self.daily_var))
@@ -91,7 +91,7 @@ class DailyImportTab(Tab):
             "回補股價",
             self.csv_var,
             lambda: ask_csv("選擇股價 CSV", self.csv_var),
-            "MarketData_YYYYMMDD.csv，一次一個：每天匯（收盤價給比價用），放假或請假後也用它回補",
+            "MarketData_YYYYMMDD.csv，一次一個：放假或請假後回補用；它的收盤價優先於每日更新",
         )
         self.result_area(body, row)
         self.start_button = ttk.Button(self.buttons, text="匯入", command=self.start, style="Primary.TButton")
@@ -379,18 +379,28 @@ class DailyImportTab(Tab):
         for line in receipt.lines:
             self.add_row((line.tdcc, line.kind, line.detail), problem=line.problem)
         self._show_recalc(recalc)
+        self._show_observation(result.observation.receipt)
         problems = sum(line.problem for line in receipt.lines)
         normal = len(receipt.lines) - problems
         prices = receipt.prices
         kpis = [("正常（項）", normal, False), ("要注意（項）", problems, problems > 0)]
         if prices is not None:
             kpis.append(("股價（筆）", prices.count, False))
-        price_text = "股價：只匯交易明細，股價沒有變動。" if prices is None else _price_text(prices)
+        if receipt.closes is not None:
+            kpis.append(("收盤價（筆）", receipt.closes.stored, False))
+        if prices is None:
+            price_text = "股價：只匯交易明細，股價沒有變動。"
+        else:
+            price_text = f"{_price_text(prices)}\n{_daily_close_text(receipt)}"
+        observed = ""
+        if receipt.closes is not None:  # 寫了收盤價才比價（#280）
+            kpis += _observation_kpis(result.observation)
+            observed = f"\n{observation_text(result.observation)}{self._hand_off_exits(result.observation)}"
         self.finish(
             kpis + self._recalc_kpis(recalc),
             f"完成（第 {receipt.run_id} 次匯入）：{normal} 項正常、{problems} 項要注意；"
             f"略過非 FCN 交易 {receipt.skipped_trade_rows} 列；取消交易 {receipt.cancelled_trade_rows} 列；"
-            f"信箱 {receipt.people} 人。\n{price_text}\n{recalc_text(recalc)}"
+            f"信箱 {receipt.people} 人。\n{price_text}\n{recalc_text(recalc)}{observed}"
             f"\n錯誤清單：{receipt.error_book_path}\n{self._hand_off(receipt)}",
         )
         self.releaser.show(recalc)
@@ -435,6 +445,25 @@ def _close_text(receipt: PriceCsvReceipt) -> str:
         text += (
             f"那一天超出交易所假日表的涵蓋範圍、沒有存 {len(receipt.close_uncovered)} 個代碼"
             "（補了假日表後再匯一次這個 CSV）；"
+        )
+    if receipt.close_conflicts:
+        text += f"去掉 Equity 這類字尾後重複、值不同、沒有存：{'、'.join(receipt.close_conflicts)}；"
+    return text.rstrip("；") + "。"
+
+
+def _daily_close_text(receipt: ImportReceipt) -> str:
+    """每日匯入完成訊息裡的收盤價一句（#280）。"""
+    if receipt.closes is None:
+        return "收盤價：讀不到交易所假日表，這次沒有存，修好假日表後再匯一次這份每日更新。"
+    text = _summary_text(receipt.closes)
+    if receipt.closes.not_replaced:
+        text += f"MarketData CSV 或歷史收盤價已經有、沒有取代 {receipt.closes.not_replaced} 筆；"
+    if receipt.close_unknown:
+        text += f"交易所不在假日表、推不出收盤日、沒有存 {len(receipt.close_unknown)} 個代碼；"
+    if receipt.close_uncovered:
+        text += (
+            f"超出交易所假日表的涵蓋範圍、沒有存 {len(receipt.close_uncovered)} 個代碼"
+            "（補了假日表後再匯一次這份每日更新）；"
         )
     if receipt.close_conflicts:
         text += f"去掉 Equity 這類字尾後重複、值不同、沒有存：{'、'.join(receipt.close_conflicts)}；"
