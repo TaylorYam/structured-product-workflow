@@ -1,7 +1,7 @@
 """「1 每日匯入」分頁：匯入每日更新的交易明細與股價、回補股價 CSV（#112），完成後把 FCN TDCC 帶到起單資料頁（#90）。
 
-MarketData CSV 同時寫收盤價（#153）；維護選單的「匯入歷史收盤價…」「匯入舊商品的價格與比價日…」（#154）
-也在這一頁的背景執行、顯示結果。
+MarketData CSV 同時寫收盤價（#153）；維護選單的「匯入歷史收盤價…」「匯入舊商品的價格與比價日…」（#154）、
+「匯入可連結標的白名單…」（#273）也在這一頁的背景執行、顯示結果。
 匯入收盤價之後比價（#155），完成訊息列出這次有變的存續事件與還沒完成的比價狀態；維護選單的「重新比價全部」
 也在這一頁執行。回補股價、歷史收盤價比價完成後把比到的那一天帶到「9 出場清單」，按「下一步」才切過去（#171）。
 """
@@ -32,7 +32,9 @@ from sp_workflow.window_actions import (
     Observation,
     PriceCsvResult,
     Recalc,
+    WhitelistResult,
     import_close_history,
+    import_eln_whitelist,
     import_legacy_products,
     observe_products,
     run_daily_import,
@@ -66,6 +68,7 @@ class DailyImportTab(Tab):
         self.csv_var = tk.StringVar(value=folders.get("price_csv", ""))
         self.history_var = tk.StringVar(value=folders.get("close_history", ""))
         self.legacy_var = tk.StringVar(value=folders.get("legacy_backfill", ""))
+        self.whitelist_var = tk.StringVar(value=folders.get("eln_whitelist", ""))
         self.status_var.set(f"選每日更新，按「匯入」。資料庫連線設定：{db.env_path}")
 
         self.page_header(
@@ -170,7 +173,8 @@ class DailyImportTab(Tab):
         self.releaser.show(recalc)
 
     def can_import_history(self) -> bool:
-        """維護選單的「匯入歷史收盤價…」「重新比價全部」「匯入舊商品的價格與比價日…」：這一頁沒有在匯入時才能按。"""
+        """維護選單的「匯入歷史收盤價…」「重新比價全部」「匯入舊商品的價格與比價日…」「匯入可連結標的白名單…」：
+        這一頁沒有在匯入時才能按。"""
         return str(self.start_button.cget("state")) != tk.DISABLED
 
     def import_history(self) -> None:
@@ -260,6 +264,45 @@ class DailyImportTab(Tab):
             f"完成（舊商品的價格與比價日）：已補 {filled} 檔、已存在 {existing} 檔、不匯入 {skipped} 檔；{events}\n"
             f"{book}\n{observation_text(observation)}",
         )
+
+    def import_whitelist(self) -> None:
+        """匯入可連結標的白名單（#273，維護選單）：選「ELN可連結標的白名單.xlsm」，整份檢查後取代資料庫的白名單，再重算。"""
+        chosen = ask_excel("選擇可連結標的白名單（ELN可連結標的白名單.xlsm）", self.whitelist_var, "*.xlsm *.xlsx")
+        if not chosen:
+            return
+        source = Path(chosen)
+        paths = self.config_paths()
+
+        def starting() -> None:
+            self.whitelist_var.set(str(source))
+            self._starting(eln_whitelist=str(source))
+
+        self.runner.run_action(
+            lambda settings: import_eln_whitelist(settings, source, paths),
+            "匯入可連結標的白名單中…（整份檢查完才寫入）",
+            self._whitelist_done,
+            before=starting,
+        )
+
+    def _whitelist_done(self, result: WhitelistResult) -> None:
+        receipt, recalc = result.receipt, result.recalc
+        if receipt.previous is not None:  # 第一次匯入全部都是新增，不逐檔列
+            for kind, rows in (("白名單新增", receipt.added), ("白名單移除", receipt.removed)):
+                for row in rows:
+                    self.add_row((row.code, kind, "、".join(row.groups)), problem=False)
+        self._show_recalc(recalc)
+        changes = (
+            "第一次匯入。"
+            if receipt.previous is None
+            else f"比上一份（抓取日 {receipt.previous:%Y-%m-%d}）新增 {len(receipt.added)} 檔、"
+            f"移除 {len(receipt.removed)} 檔。"
+        )
+        self.finish(
+            [("白名單（檔）", receipt.codes, False), ("ETF（檔）", receipt.etfs, False)] + self._recalc_kpis(recalc),
+            f"完成（可連結標的白名單）：抓取日 {receipt.fetched_on:%Y-%m-%d}，{receipt.codes} 檔（ETF {receipt.etfs} 檔）；"
+            f"{changes}\n風險等級的 ETF 清單改用這一份（加上設定檔的補充 ETF）；已鎖住的商品不變。\n{recalc_text(recalc)}",
+        )
+        self.releaser.show(recalc)
 
     def reobserve(self) -> None:
         """重新比價全部（#155，維護選單）：不匯入，直接用收盤價表現有的價格比一次。"""

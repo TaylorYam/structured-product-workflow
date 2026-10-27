@@ -6,8 +6,8 @@
 - `assess`：一檔的計算本身（不碰資料庫）。
 - `recalculate_risk`：在核對條件重算的 transaction 裡算這幾檔，寫入有變的；`fill_missing_locked`：替還沒有風險等級的已鎖住商品算一次。
 - `risk_levels`／`risk_level_of`：讀存好的結果（起單資料頁顯示；說明書／投資人須知的 RR 核對與寄信草稿用，#239）。
-指數與 ETF 清單由 `product_terms.load_import_config` 讀設定檔 `config/risk_level.toml`
-（`ImportConfig.index_underlyings`、`etf_underlyings`）。
+指數清單與補充、備用 ETF 由 `product_terms.load_import_config` 讀設定檔 `config/risk_level.toml`；
+ETF 清單以資料庫的可連結標的白名單為主（`etf_list`、`eln_whitelist`，#273）。
 
 公式：總分 = 0.4×保本率分 + 0.2×年期分 + 0.3×結構複雜度分 + 0.1×流動性分，十進位計算。
 - 保本率分：FCN 一律不保本（資料庫沒有保本率欄），固定 5。
@@ -347,7 +347,7 @@ def recalculate_risk(conn: psycopg.Connection, tdccs: Sequence[str], config: Imp
     """算這幾檔（還沒鎖住的），和上一次不同的寫入；在呼叫端的 transaction 裡（商品條件列已由核對條件重算鎖住）。
 
     上手代碼用 `product_terms.issuer_code`（TDCC 前三碼，查不到時用發行機構的寫法反查），
-    指數、ETF 清單用 `config.index_underlyings`、`etf_underlyings`。
+    指數清單用 `config.index_underlyings`，ETF 清單見 `etf_list`。
     """
     require_in_transaction(conn)
     stored = risk_levels(conn, list(tdccs))
@@ -396,10 +396,16 @@ def _assess_all(conn: psycopg.Connection, tdccs: Sequence[str], config: ImportCo
     price_dates = [d for (d,) in conn.execute("SELECT DISTINCT price_date FROM workflow.price_import ORDER BY 1")]
     volatilities = _volatilities(conn, terms, price_dates)
     ratings = load_rows(conn)
-    return {
-        t.tdcc: assess(t, price_dates, volatilities, ratings, config.index_underlyings, config.etf_underlyings)
-        for t in terms
-    }
+    etfs = etf_list(conn, config)
+    return {t.tdcc: assess(t, price_dates, volatilities, ratings, config.index_underlyings, etfs) for t in terms}
+
+
+def etf_list(conn: psycopg.Connection, config: ImportConfig) -> frozenset[str]:
+    """標的種類分用的 ETF：資料庫白名單上的 ETF（還沒匯入過時用設定檔的備用清單），加上設定檔的補充 ETF（#273）。"""
+    from sp_workflow.eln_whitelist import stored_etfs
+
+    listed = stored_etfs(conn)
+    return (config.fallback_etf_underlyings if listed is None else listed) | config.etf_underlyings
 
 
 def risk_levels(conn: psycopg.Connection, tdccs: Sequence[str] | None = None) -> dict[str, RiskLevel]:

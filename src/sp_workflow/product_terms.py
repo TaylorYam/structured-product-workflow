@@ -134,7 +134,8 @@ class ImportConfig:
     issuer_prefixes: Mapping[str, str]  # TDCC 前三碼 → 上手代號（上手編號對照）
     calendar: TradingCalendar  # 交易所假日表（明日開盤價的 Strike date，#101）
     index_underlyings: frozenset[str] = frozenset()  # 風險等級的指數清單（設定檔的寫法；比對規則在 `risk_level`，#238）
-    etf_underlyings: frozenset[str] = frozenset()  # 風險等級的 ETF 清單（同上，#252）
+    etf_underlyings: frozenset[str] = frozenset()  # 補充 ETF：白名單沒有的，和白名單的 ETF 合併（同上，#252、#273）
+    fallback_etf_underlyings: frozenset[str] = frozenset()  # 還沒匯入白名單時用的 ETF 清單（#273）
 
 
 def load_import_config(paths: ConfigPaths) -> ImportConfig:
@@ -153,7 +154,7 @@ def load_import_config(paths: ConfigPaths) -> ImportConfig:
         reference = load_reference_format(paths.reference_format)
         prefixes = load_issuer_prefixes(paths.issuer_prefixes)
         calendar = load_exchange_holidays(paths.exchange_holidays)
-        indices, etfs = load_risk_underlyings(paths.risk_level)
+        indices, etfs, fallback_etfs = load_risk_underlyings(paths.risk_level)
     except IngestionError as exc:
         raise TermsError(str(exc)) from exc
     return ImportConfig(
@@ -163,11 +164,15 @@ def load_import_config(paths: ConfigPaths) -> ImportConfig:
         calendar,
         indices,
         etfs,
+        fallback_etfs,
     )
 
 
-def load_risk_underlyings(path: Path) -> tuple[frozenset[str], frozenset[str]]:
-    """風險等級的（指數清單, ETF 清單）（`config/risk_level.toml` 的 `index_underlyings`、`etf_underlyings`，#238、#252）：
+RISK_LISTS = ("index_underlyings", "etf_underlyings", "fallback_etf_underlyings")
+
+
+def load_risk_underlyings(path: Path) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+    """風險等級的（指數清單, 補充 ETF, 還沒匯入白名單時用的 ETF）（`config/risk_level.toml`，#238、#252、#273）：
     彭博代碼，只去頭尾空白；比對規則在 `risk_level.underlying_key`。缺檔或格式錯誤時丟 `fcn_checker.ingestion.IngestionError`。
     """
     from fcn_checker.config import load_toml
@@ -175,12 +180,13 @@ def load_risk_underlyings(path: Path) -> tuple[frozenset[str], frozenset[str]]:
 
     d = load_toml(path, "風險等級")
     found = []
-    for key in ("index_underlyings", "etf_underlyings"):
+    for key in RISK_LISTS:
         codes = d.get(key)
         if not isinstance(codes, list) or not all(isinstance(c, str) and c.strip() for c in codes):
             raise IngestionError("config_invalid", f"風險等級設定檔的 {key} 要是彭博代碼的清單（可以空白）")
         found.append(frozenset(c.strip() for c in codes))
-    return found[0], found[1]
+    indices, etfs, fallback_etfs = found
+    return indices, etfs, fallback_etfs
 
 
 class IssuerLookup(Protocol):

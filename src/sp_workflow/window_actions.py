@@ -46,6 +46,7 @@ from sp_workflow.daily_import import (
     latest_import,
 )
 from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdatedError, connect
+from sp_workflow.eln_whitelist import WhitelistReceipt, import_whitelist, read_whitelist
 from sp_workflow.exits import ExitList, load_exits
 from sp_workflow.legacy_backfill import BackfillReceipt, LegacyBackfillError, backfill_legacy
 from sp_workflow.lifecycle import (
@@ -156,6 +157,14 @@ class LegacyResult:
 
     receipt: BackfillReceipt
     observation: Observation = Observation()
+
+
+@dataclass(frozen=True)
+class WhitelistResult:
+    """匯入可連結標的白名單（#273）與之後的重算。"""
+
+    receipt: WhitelistReceipt
+    recalc: Recalc = Recalc()
 
 
 @dataclass(frozen=True)
@@ -310,6 +319,15 @@ def import_legacy_products(settings: ConnectionSettings, source: Path, paths: Co
     with connect(settings) as conn:
         receipt = backfill_legacy(conn, source, fmt)
         return LegacyResult(receipt, _observe_after_import(conn, calendar))
+
+
+def import_eln_whitelist(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> WhitelistResult:
+    """匯入可連結標的白名單（#273，維護選單）：整份檢查完才取代資料庫的白名單（格式不對丟 `WhitelistError`、不寫入），
+    再重算還沒鎖住的商品（風險等級的 ETF 清單跟著換）。"""
+    whitelist = read_whitelist(source)
+    with connect(settings) as conn:
+        receipt = import_whitelist(conn, whitelist, source)
+        return WhitelistResult(receipt, _recalculate_after_import(conn, paths))
 
 
 def observe_products(settings: ConnectionSettings, paths: ConfigPaths) -> ObservationReceipt:
