@@ -138,7 +138,7 @@ PANEL 使用 Python 內建 Tkinter，與 `fcn-batch` 共用同一套批量核對
    - `核對紀錄_未通過.json`：核對紀錄中這些商品的部分。
    - `PDF/`：這些商品的說明書與投資人須知。
 
-   未通過以「錯誤清單」為準；未支援上手（例如尚無範本的上手）與不支援樣態不列入，只算進摘要；人工放行過的也不列入。維護者可在 Bash 用 `fcn-batch 參考條件表_未通過.xlsx PDF/*.pdf` 重跑；PowerShell 須如上方範例先用 `Get-ChildItem` 展開 PDF 清單（PDF 檔名是辨識依據、不改名；有同名的不同 PDF 時另放 `PDF/同名<n>/`，摘要會註明，重跑時一起帶入）。資料夾已存在時不覆蓋；來源檔案核對後被改過時拒絕匯出。**回報包含真實交易資料，只能推到 Private Repo（`TaylorYam/fcn-oos-samples`），不能放進本 Repo、Issue 或 PR。**
+   未通過以「錯誤清單」為準；未支援上手（例如尚無範本的上手）與不支援樣態不列入，只算進摘要；人工放行過的也不列入。維護者可在 Bash 用 `fcn-batch 參考條件表_未通過.xlsx PDF/*.pdf` 重跑；PowerShell 須如上方範例先用 `Get-ChildItem` 展開 PDF 清單（PDF 檔名是辨識依據、不改名；有同名的不同 PDF 時另放 `PDF/同名<n>/`，摘要會註明，重跑時一起帶入）。資料夾已存在時不覆蓋；來源檔案核對後被改過時拒絕匯出。**回報包含真實交易資料，只能推到 Private Repo（`TaylorYam/Github-Cloud`），不能放進本 Repo、Issue 或 PR。**
 
 設定檔：PANEL 讀專案根目錄 `config/` 的 `review_standard.toml`、`reference_sheet.toml`、`issuer_prefixes.toml` 與 `exchange_holidays.toml`。實際使用的設定檔路徑在「維護」→「使用的設定檔…」。`review_standard.toml` 裡上手不同的基準每家上手一張表 `[issuer.<上手代號小寫>]`（Issue #128，欄位見[審查標準](rules/review-standard.md) §1）；讀到舊版面（每種基準一個表）時會停止並提示執行 `fcn-config-migrate` 一次性轉換（原檔另存 `.bak`）。repo 的 `config/` 已經是新版面，`git pull` 更新後不必另外轉換；只有自己另外保存的舊設定檔（例如用 `--review-standard` 指定的副本）需要轉換。
 
