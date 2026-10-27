@@ -1,4 +1,4 @@
-"""「7 人工維護」分頁（#115、#116、#122）：檢查缺資料的商品、補齊或更正資料庫裡的商品條件與交易明細、匯出商品條件。"""
+"""「7 人工維護」分頁（#115、#116、#122、#291）：檢查缺資料的商品、補齊或更正資料庫裡的商品條件與交易明細、匯出商品條件與商品總表。"""
 
 from __future__ import annotations
 
@@ -9,10 +9,11 @@ from tkinter import filedialog, messagebox, ttk
 
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import NUMBER_FONT, Background, CopyArea, WrapLabel
+from sp_workflow.database import ConnectionSettings
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.order_terms import format_field
 from sp_workflow.preparation import parse_tdccs
-from sp_workflow.product_export import ExportReceipt, export_name
+from sp_workflow.product_export import ExportReceipt, export_name, summary_name
 from sp_workflow.product_record import REQUIRED
 from sp_workflow.product_terms import Draft, ImportConfig, MissingProduct, Receipt
 from sp_workflow.status import OrderReview
@@ -21,7 +22,15 @@ from sp_workflow.tabs.cell_table import CellTable
 from sp_workflow.tabs.editor import OrderEditor, TradeRowsEditor
 from sp_workflow.tabs.recalc import calc_status
 from sp_workflow.trade_rows import TradeRowsDraft
-from sp_workflow.window_actions import Checked, Opened, check_missing, export_product_terms, open_product, save_product
+from sp_workflow.window_actions import (
+    Checked,
+    Opened,
+    check_missing,
+    export_product_summary,
+    export_product_terms,
+    open_product,
+    save_product,
+)
 
 
 class MaintenanceTab(Tab):
@@ -89,6 +98,8 @@ class MaintenanceTab(Tab):
         self.check_button.pack(side=tk.LEFT)
         self.export_button = ttk.Button(self.buttons, text="匯出商品條件…", command=self.export)
         self.export_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.summary_button = ttk.Button(self.buttons, text="匯出商品總表…", command=self.export_summary)
+        self.summary_button.pack(side=tk.LEFT, padx=(8, 0))
 
         self.cell_area = CopyArea(self.frame, CELL_COPY_HINT, lambda: self.cells.copy_all())  # #121
         self.cell_area.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(16, 0))
@@ -135,7 +146,7 @@ class MaintenanceTab(Tab):
         self.editor.set_frozen(busy)
         self.trade_editor.set_frozen(busy)
         state = tk.DISABLED if busy else tk.NORMAL
-        for widget in (self.check_button, self.open_button, self.export_button):
+        for widget in (self.check_button, self.open_button, self.export_button, self.summary_button):
             widget.configure(state=state)
         has_draft = state if self.editor.draft is not None else tk.DISABLED
         for widget in (self.save_button, self.reload_button, self.reason_entry):
@@ -200,16 +211,37 @@ class MaintenanceTab(Tab):
         self.cells.set_rows(rows)
         self.cells.select(self._current_tdcc())
 
-    # ---------- 匯出商品條件（#122） ----------
+    # ---------- 匯出商品條件（#122）與商品總表（#291） ----------
 
     def export(self) -> None:
         """選存放位置，把資料庫目前的 `workflow.product` 整張匯出成 Excel；按取消時不連資料庫。"""
+        self._export(
+            "匯出資料庫的商品條件（workflow.product）",
+            export_name(),
+            export_product_terms,
+            "匯出商品條件中…",
+            "商品條件（workflow.product）",
+        )
+
+    def export_summary(self) -> None:
+        """選存放位置，把資料庫所有商品照新商品總表的欄位匯出成 Excel；按取消時不連資料庫。"""
+        self._export("匯出商品總表", summary_name(), export_product_summary, "匯出商品總表中…", "商品總表")
+
+    def _export(
+        self,
+        title: str,
+        name: str,
+        action: Callable[[ConnectionSettings, Path], ExportReceipt],
+        busy: str,
+        what: str,
+    ) -> None:
+        """兩種匯出共用：選檔（記住上次的資料夾）、背景匯出、狀態列寫匯出了什麼（`what`）。"""
         if self.working:
             return
         chosen = filedialog.asksaveasfilename(
-            title="匯出資料庫的商品條件（workflow.product）",
+            title=title,
             initialdir=self.memory.load().get("product_export") or None,
-            initialfile=export_name(),
+            initialfile=name,
             defaultextension=".xlsx",
             filetypes=[("Excel 活頁簿", "*.xlsx")],
             parent=self.master,
@@ -224,15 +256,15 @@ class MaintenanceTab(Tab):
             self.mark_done(False)
 
         self.runner.run_action(
-            lambda settings: export_product_terms(settings, path),
-            "匯出商品條件中…",
-            lambda result: self._exported(result, unsaved),
+            lambda settings: action(settings, path),
+            busy,
+            lambda result: self._exported(result, unsaved, what),
             clear=False,
             before=starting,
         )
 
-    def _exported(self, result: ExportReceipt, unsaved: bool) -> None:
-        status = f"已匯出資料庫的商品條件（workflow.product）{result.count} 檔：{result.path}"
+    def _exported(self, result: ExportReceipt, unsaved: bool, what: str) -> None:
+        status = f"已匯出資料庫的{what}{result.count} 檔：{result.path}"
         if unsaved:
             status += "\n注意：畫面上還沒存檔的修改不在匯出檔裡。"
         self.status_var.set(status)

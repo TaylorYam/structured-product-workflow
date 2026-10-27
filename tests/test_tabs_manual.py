@@ -1,4 +1,4 @@
-"""「7 人工維護」分頁（`sp_workflow.tabs.manual`）：檢查與補齊商品條件（#115、ADR 0017）、交易明細（#116）、檢查結果表複製（#121）、匯出商品條件（#122）。"""
+"""「7 人工維護」分頁（`sp_workflow.tabs.manual`）：檢查與補齊商品條件（#115、ADR 0017）、交易明細（#116）、檢查結果表複製（#121）、匯出商品條件（#122）與商品總表（#291）。"""
 
 from __future__ import annotations
 
@@ -553,11 +553,28 @@ def test_export_remembers_the_folder_and_runs_in_the_background(master, tmp_path
     assert asked[0]["initialdir"] is None and asked[1]["initialdir"] == str(target.parent), "下次從上次的位置開始"
 
 
+def test_summary_export_runs_in_the_background_and_shares_the_folder(master, tmp_path: Path, monkeypatch) -> None:
+    tab = maintenance_window(master, tmp_path).manual
+    asked = []
+    target = tmp_path / "out" / "summary.xlsx"
+    monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **k: asked.append(k) or str(target))
+
+    tab.export_summary()
+    assert started(tab) == ["匯出商品總表中…"]
+    assert str(tab.summary_button.cget("state")) == "disabled", "匯出中不能再按"
+    tab.background.finish(ExportReceipt(target, 3))
+    assert tab.status_var.get() == f"已匯出資料庫的商品總表3 檔：{target}"
+    tab.export()
+
+    assert asked[0]["initialfile"].startswith("商品總表_") and asked[0]["initialfile"].endswith(".xlsx")
+    assert asked[1]["initialdir"] == str(target.parent), "和匯出商品條件共用上次的位置"
+
+
 def test_export_result_says_how_many_products_and_where(master, tmp_path: Path) -> None:
     tab = new_window(master, tmp_path).manual
     path = tmp_path / "products.xlsx"
 
-    tab._exported(ExportReceipt(path, 12), unsaved=True)
+    tab._exported(ExportReceipt(path, 12), unsaved=True, what="商品條件（workflow.product）")
 
     assert tab.status_var.get() == (
         f"已匯出資料庫的商品條件（workflow.product）12 檔：{path}\n注意：畫面上還沒存檔的修改不在匯出檔裡。"
