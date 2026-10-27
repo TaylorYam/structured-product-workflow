@@ -173,6 +173,8 @@ def test_migrations_apply_once_from_an_empty_database(pg) -> None:
         "workflow.credit_rating_log",
         "workflow.cross_check_release",
         "workflow.daily_price",
+        "workflow.eln_whitelist",
+        "workflow.eln_whitelist_import",
         "workflow.event_objection",
         "workflow.import_run",
         "workflow.order_import",

@@ -1,16 +1,26 @@
-# 自算風險等級的設定（#238、#252、ADR 0023）：流程算核對條件時一起算風險等級，核對不讀這個檔。
+# 自算風險等級的設定（#238、#252、#273、ADR 0023）：流程算核對條件時一起算風險等級，核對不讀這個檔。
 #
 # 標的種類分只看第一檔標的（UL_1）：在指數清單或 ETF 清單上 3 分，其餘（個股、ADR）4 分。
 # 寫彭博代碼，例如 "SPX Index"、"QQQ US Equity"、"1321 JT Equity"。比對時去掉最後的類別字（Index、Equity…）、
 # 去頭尾空白、不分大小寫；美國的交易所代碼（UN、UW、UQ、UR、UP、UF…）都當 US，所以 "QQQ US Equity" 對得到資料庫的
 # "QQQ UQ"。其他市場要寫交易所代碼（"1321 JT"）。改了清單後，下一次重算才會反映到還沒鎖住的商品；已鎖住的不變。
+#
+# ETF 清單以資料庫的可連結標的白名單為主：作業人員從「維護」選單的「匯入可連結標的白名單…」匯入
+# 「ELN可連結標的白名單.xlsm」（大約每月一次），總表上 ETF 欄有值的就是 ETF。這個檔另外放：白名單沒有的補充 ETF，
+# 和還沒匯入過白名單時暫用的備用 ETF 清單。
 
 # 指數清單：可以連結的標的只有指數成分股、ADR、ETF，指數本身不能連結（2026-10-27 確認，#252），所以是空的。
 index_underlyings = []
 
-# ETF 清單：「ELN可連結標的白名單.xlsm」的 ETF 工作表（美國上市 ETF 的 EQS 篩選，抓取日 2026-10-15），整欄照貼、排序；
-# 白名單更新時整段換掉。最後三檔是白名單沒有、資料庫已有商品連結的 ETF，另外補（換清單時要留著）。
+# 補充 ETF：白名單沒有、資料庫已有商品連結的 ETF，和白名單的 ETF 合併（換白名單不影響這裡）。
 etf_underlyings = [
+    "1306 JT Equity",  # NEXT FUNDS 東證股價指數（TOPIX）ETF
+    "1321 JT Equity",  # NEXT FUNDS 日經 225 ETF
+    "UFO US Equity",  # Procure Space ETF
+]
+
+# 還沒匯入過白名單時用的 ETF：2026-10-15 白名單 ETF 工作表的內容（#252）。匯入第一份白名單之後不再使用。
+fallback_etf_underlyings = [
     "AAAU US Equity",
     "AAXJ US Equity",
     "ACIO US Equity",
@@ -1071,8 +1081,4 @@ etf_underlyings = [
     "XYLD US Equity",
     "YEAR US Equity",
     "ZROZ US Equity",
-    # 白名單沒有的 ETF
-    "1306 JT Equity",  # NEXT FUNDS 東證股價指數（TOPIX）ETF
-    "1321 JT Equity",  # NEXT FUNDS 日經 225 ETF
-    "UFO US Equity",  # Procure Space ETF
 ]

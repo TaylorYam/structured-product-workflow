@@ -369,15 +369,21 @@ BUILTIN = Path(__file__).resolve().parents[1] / "config" / "risk_level.toml"
 def test_the_index_and_etf_lists_are_read_from_the_config(tmp_path: Path) -> None:
     path = tmp_path / "risk_level.toml"
     path.write_text(
-        'index_underlyings = ["SPX Index", " nky index "]\netf_underlyings = ["QQQ US Equity"]\n', encoding="utf-8"
+        'index_underlyings = ["SPX Index", " nky index "]\netf_underlyings = ["1321 JT Equity"]\n'
+        'fallback_etf_underlyings = ["QQQ US Equity"]\n',
+        encoding="utf-8",
     )
 
     assert load_risk_underlyings(path) == (
         frozenset({"SPX Index", "nky index"}),
+        frozenset({"1321 JT Equity"}),
         frozenset({"QQQ US Equity"}),
     ), "照寫法，比對時才去類別字"
 
-    for bad in ('index_underlyings = "SPX Index"\netf_underlyings = []\n', "index_underlyings = []\n"):
+    for bad in (
+        'index_underlyings = "SPX Index"\netf_underlyings = []\nfallback_etf_underlyings = []\n',
+        "index_underlyings = []\netf_underlyings = []\n",
+    ):
         path.write_text(bad, encoding="utf-8")
         with pytest.raises(IngestionError, match="_underlyings"):
             load_risk_underlyings(path)
@@ -385,8 +391,10 @@ def test_the_index_and_etf_lists_are_read_from_the_config(tmp_path: Path) -> Non
 
 def test_the_builtin_etf_list_matches_the_stored_underlying_codes() -> None:
     """抽查（#252）：白名單 ETF 工作表的寫法（`SPY US Equity`）要對得到資料庫存的代碼（交易所代碼，例 `SPY UP`）；
-    白名單沒有的日本 ETF 與 UFO 另外補；個股不在清單上。指數本身不能連結，指數清單是空的。"""
-    indices, etfs = load_risk_underlyings(BUILTIN)
+    白名單沒有的日本 ETF 與 UFO 在補充清單；個股不在清單上。指數本身不能連結，指數清單是空的。
+    還沒匯入白名單時用的是備用清單加補充清單（#273）。"""
+    indices, extra, fallback = load_risk_underlyings(BUILTIN)
+    etfs = fallback | extra
     etf_codes = (
         "QQQ UQ",
         "SPY UP",

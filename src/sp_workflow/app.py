@@ -2,7 +2,8 @@
 
 1. 每日匯入：選每日更新，把交易明細與每日股價匯入最小 FCN 資料庫（#32、#87）；信箱在資料庫裡（#35），
    由「維護」選單的「信箱維護…」另開視窗新增、修改、刪除人員與別名（#158）；
-   各上手發行機構與保證機構的評等也在資料庫，由「發行機構評等…」維護（#237）。
+   各上手發行機構與保證機構的評等也在資料庫，由「發行機構評等…」維護（#237）；
+   風險等級用的可連結標的白名單由「匯入可連結標的白名單…」匯入（#273）。
 2. 起單資料：貼 TDCC、選一份起單建檔（#97），在右邊逐檔確認、修改後匯入資料庫（#86）。
    1、2 匯入完成後重算還沒鎖住的商品的核對條件（#88），逐檔顯示狀態；交叉比對的差異可以在這兩頁放行。
 3. 準備：貼 TDCC、選輸出位置，產生批次資料夾與準備清單。
@@ -24,7 +25,7 @@ Treeview 的表（7 的檢查結果表除外）另有 Ctrl+A 全選、Ctrl+C 複
 做完一步，下一頁先帶入結果並用藍色提示條寫出來，按「下一步 →」才切頁，不自動執行（#76）：
 每日匯入完成 → 起單資料頁帶入交易明細的 FCN TDCC（#90）；回補股價、歷史收盤價比價完成 → 出場清單帶入比到的那一天（#171）；
 準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔。
-審查通過日期、匯出回報包、信箱維護、發行機構評等與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
+審查通過日期、匯出回報包、信箱維護、發行機構評等、可連結標的白名單與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
 視窗只收輸入、在背景執行一個動作並顯示結果，不含判斷邏輯：要連資料庫的按鈕各呼叫 `window_actions` 的一個動作，
 連線、transaction 與容錯（ADR 0012）都在那裡（#125）；不連資料庫的直接呼叫 `prepare_batch`／核對／`return_to_folders`。
 這個 module 只有外殼：頂端列、步驟欄、「維護」選單、關閉、視窗大小與啟動參數；各分頁一頁一個 module 在 `sp_workflow.tabs`（#138）。
@@ -96,6 +97,7 @@ LEGACY_BACKFILL = "匯入舊商品的價格與比價日…"
 MAILBOX = "信箱維護…"
 RATINGS = "發行機構評等…"
 SPLITS = "拆股登記…"
+WHITELIST = "匯入可連結標的白名單…"
 
 
 class WindowSize:
@@ -317,6 +319,7 @@ class PanelWindow:
         menu.add_command(label=MAILBOX, command=self.open_mailbox)
         menu.add_command(label=RATINGS, command=self.open_ratings)
         menu.add_command(label=SPLITS, command=self.open_splits)
+        menu.add_command(label=WHITELIST, command=self._import_whitelist)
         menu.add_separator()
         menu.add_command(label="使用的設定檔…", command=self.check.show_config_paths)
         bar.add_cascade(label="維護", menu=menu)
@@ -346,6 +349,7 @@ class PanelWindow:
             (CLOSE_HISTORY, self.daily.can_import_history()),
             (REOBSERVE, self.daily.can_import_history()),
             (LEGACY_BACKFILL, self.daily.can_import_history()),
+            (WHITELIST, self.daily.can_import_history()),
         ):
             self.maintenance.entryconfigure(label, state=tk.NORMAL if allowed else tk.DISABLED)
 
@@ -360,6 +364,10 @@ class PanelWindow:
     def _import_legacy(self) -> None:
         self.notebook.select(self.daily.frame)  # 匯入的進度與結果顯示在每日匯入頁
         self.daily.import_legacy()
+
+    def _import_whitelist(self) -> None:
+        self.notebook.select(self.daily.frame)  # 匯入的進度與結果顯示在每日匯入頁（#273）
+        self.daily.import_whitelist()
 
     def _reobserve(self) -> None:
         self.notebook.select(self.daily.frame)  # 比價的進度與結果顯示在每日匯入頁

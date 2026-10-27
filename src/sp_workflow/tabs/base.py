@@ -485,10 +485,10 @@ def set_if_chosen(var: tk.StringVar, choose: Callable[[], str]) -> None:
         var.set(chosen)
 
 
-def ask_excel(title: str, current: tk.StringVar) -> str:
+def ask_excel(title: str, current: tk.StringVar, patterns: str = "*.xlsx") -> str:
     start = Path(current.get()).parent if current.get() else None
     return filedialog.askopenfilename(
-        title=title, initialdir=start, filetypes=[("Excel", "*.xlsx"), ("全部檔案", "*.*")]
+        title=title, initialdir=start, filetypes=[("Excel", patterns), ("全部檔案", "*.*")]
     )
 
 
