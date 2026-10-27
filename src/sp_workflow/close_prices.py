@@ -1,8 +1,11 @@
 """收盤價（#153、ADR 0020）：以「實際收盤日＋代碼」存進 `workflow.close_price`，給比價用。
 
-兩個來源：
+三個來源：
 - 每天的 MarketData CSV：「1 每日匯入」的回補股價（`daily_import.import_price_csv`）在同一個 transaction 裡
-  用 `closes_from_csv` 挑出 CSV 那一天的收盤價、`write_closes` 寫入；BBG_Data 的日期不明確，不寫。
+  用 `closes_from_csv` 挑出 CSV 那一天的收盤價、`write_closes` 寫入。
+- 每日更新的 BBG_Data（#280、ADR 0026）：每日匯入（`daily_import.import_daily`）在同一個 transaction 裡用
+  `closes_from_daily` 把最新收盤價記到各代碼市場在取價日之前最近的交易日；交易所不在假日表的代碼推不出收盤日，不存。
+  BBG_Data 抓的是取價當下的最新價格，所以只補空缺、取代自己之前寫的：CSV 或歷史收盤價已有的那一筆不動。
 - 歷史收盤價（HP 格式）：「維護」選單一次匯入（`import_history`）。橫向日期、每列一檔、代碼帶類別字；
   整份讀完、檢查完才寫，有問題的格子不存，依代碼與原因整理成錯誤清單放在來源檔同一個資料夾。
 代碼去掉彭博最後的類別字（`sheet_cells.bbg_code`），其餘一字不差，和 `workflow.product.underlying_n` 一致。
@@ -39,6 +42,7 @@ if TYPE_CHECKING:
 
 CSV_SOURCE = "MarketData CSV"
 HISTORY_SOURCE = "歷史收盤價"
+DAILY_SOURCE = "每日更新"
 
 # 歷史收盤價（HP 格式）：第 3 列從 E 欄起是收盤日，第 4 列起每列一檔，C 欄是帶類別字的彭博代碼（B 欄是簡碼）
 HISTORY_DATE_ROW = 3
@@ -68,6 +72,7 @@ class CloseSummary:
     stored: int  # 存了幾筆（含取代的）
     replaced: int  # 取代了資料庫原本的幾筆
     changed: int  # 其中值不一樣的幾筆（舊值記在 close_price_change）
+    not_replaced: int = 0  # 別的來源已經有、沒有取代的幾筆（只有每日更新會有）
 
 
 @dataclass(frozen=True)
@@ -77,6 +82,16 @@ class CsvCloses:
     closes: dict[tuple[dt.date, str], Decimal]
     closed: tuple[str, ...]  # 那一天休市、沒存的代碼
     uncovered: tuple[str, ...]  # 那一天超出假日表涵蓋範圍、沒存的代碼
+    conflicts: tuple[str, ...]  # 去掉類別字後才重複、值不同、沒存的代碼（原本就股價衝突的已另外列出）
+
+
+@dataclass(frozen=True)
+class DailyCloses:
+    """每日更新 BBG_Data 要存的收盤價（收盤日是各代碼市場在取價日之前最近的交易日），與沒存的原因。"""
+
+    closes: dict[tuple[dt.date, str], Decimal]
+    unknown: tuple[str, ...]  # 交易所不在假日表、推不出收盤日的代碼
+    uncovered: tuple[str, ...]  # 超出假日表涵蓋範圍、不能確認收盤日的代碼
     conflicts: tuple[str, ...]  # 去掉類別字後才重複、值不同、沒存的代碼（原本就股價衝突的已另外列出）
 
 
@@ -142,23 +157,71 @@ def closes_from_csv(
     """CSV 那一天要存的收盤價：`closes` 是原始代碼 → 收盤價，`conflicted` 是股價衝突的原始代碼。
 
     去掉類別字後同一個代碼有不同的值、或原本就股價衝突的不存；休市、超出假日表涵蓋範圍的不存。"""
+    found, conflicts = _single_closes(closes, conflicted)
+    kept, closed, uncovered = {}, [], []
+    for code, close in found.items():
+        if is_closed(calendar, code, close_date):
+            closed.append(code)
+        elif is_uncovered(calendar, code, close_date):
+            uncovered.append(code)
+        else:
+            kept[(close_date, code)] = close
+    return CsvCloses(kept, tuple(closed), tuple(uncovered), conflicts)
+
+
+# ---------- 每日更新的 BBG_Data ----------
+
+
+def closes_from_daily(
+    price_date: dt.date,
+    closes: Mapping[str, Decimal | None],
+    calendar: TradingCalendar,
+    conflicted: Iterable[str] = (),
+) -> DailyCloses:
+    """每日更新要存的收盤價（#280）：`closes` 是原始代碼 → 最新收盤價，`conflicted` 是股價衝突的原始代碼。
+
+    取價日的內容是前一個交易日的價格（ADR 0008），各市場休市日不同，所以每個代碼各自往前找它市場的交易日。
+    交易所不在假日表、或那幾天超出涵蓋範圍的推不出收盤日，不存；重複與衝突同 `closes_from_csv`。"""
+    found, conflicts = _single_closes(closes, conflicted)
+    kept, unknown, uncovered = {}, [], []
+    for code, close in found.items():
+        day = previous_trading_day(calendar, code, price_date)
+        if day is not None:
+            kept[(day, code)] = close
+        elif calendar.market_of(code) is None:
+            unknown.append(code)
+        else:
+            uncovered.append(code)
+    return DailyCloses(kept, tuple(unknown), tuple(uncovered), conflicts)
+
+
+def previous_trading_day(calendar: TradingCalendar, code: str, before: dt.date) -> dt.date | None:
+    """這個代碼的市場在 `before` 之前最近的交易日；交易所不在假日表、或中間的日子超出涵蓋範圍時是 None。"""
+    market = calendar.market_of(code)
+    if market is None:
+        return None
+    last = before - dt.timedelta(days=1)
+    day = last
+    while day.weekday() >= 5 or day in market.holidays:
+        day -= dt.timedelta(days=1)
+    return day if market.covers(day, last) else None
+
+
+def _single_closes(
+    closes: Mapping[str, Decimal | None], conflicted: Iterable[str]
+) -> tuple[dict[str, Decimal], tuple[str, ...]]:
+    """去掉類別字後每個代碼一個正數收盤價（依代碼排序）；同一個代碼有不同的值、或原本就股價衝突的不收。
+    回傳 (代碼 → 收盤價, 去掉類別字後才重複、值不同的代碼)。"""
     found: dict[str, set[Decimal]] = defaultdict(set)
     for raw, close in closes.items():
         if close is not None and close > 0:
             found[sheet_cells.bbg_code(raw)].add(close)
     bad = {sheet_cells.bbg_code(raw) for raw in conflicted}
     conflicts = tuple(sorted(code for code, values in found.items() if len(values) > 1 and code not in bad))
-    kept, closed, uncovered = {}, [], []
-    for code, values in sorted(found.items()):
-        if len(values) > 1 or code in bad:
-            continue
-        if is_closed(calendar, code, close_date):
-            closed.append(code)
-        elif is_uncovered(calendar, code, close_date):
-            uncovered.append(code)
-        else:
-            kept[(close_date, code)] = next(iter(values))
-    return CsvCloses(kept, tuple(closed), tuple(uncovered), conflicts)
+    single = {
+        code: next(iter(values)) for code, values in sorted(found.items()) if len(values) == 1 and code not in bad
+    }
+    return single, conflicts
 
 
 # ---------- 寫入 ----------
@@ -174,12 +237,12 @@ def write_closes(
     details: Mapping[str, Any],
     run_id: int | None = None,
     user: str | None = None,
+    keep_others: bool = False,
 ) -> CloseSummary:
-    """在呼叫端的 transaction 裡寫入一次收盤價：記一筆匯入、值改了的留舊值、整筆取代。"""
+    """在呼叫端的 transaction 裡寫入一次收盤價：記一筆匯入、值改了的留舊值、整筆取代。
+
+    `keep_others`（每日更新，#280）：只取代同一個來源寫的；別的來源已經有的那一筆不動，算在 `not_replaced`。"""
     require_in_transaction(conn)
-    days = [day for day, _ in closes]
-    first, last = (min(days), max(days)) if days else (None, None)
-    codes = len({code for _, code in closes})
     import_id = import_run.open_run(
         conn,
         "close_price_import",
@@ -198,6 +261,17 @@ def write_closes(
     with conn.cursor() as cur, cur.copy("COPY incoming_close (close_date, code, close) FROM STDIN") as copy:
         for (day, code), close in closes.items():
             copy.write_row((day, code, close))
+    not_replaced = 0
+    if keep_others:
+        not_replaced = conn.execute(
+            "DELETE FROM incoming_close i USING workflow.close_price c"
+            " JOIN workflow.close_price_import m USING (import_id)"
+            " WHERE (i.close_date, i.code) = (c.close_date, c.code) AND m.source <> %s",
+            (source,),
+        ).rowcount
+    first, last, codes, stored = conn.execute(
+        "SELECT min(close_date), max(close_date), count(DISTINCT code), count(*) FROM incoming_close"
+    ).fetchone()
     (replaced,) = conn.execute(
         "SELECT count(*) FROM incoming_close i JOIN workflow.close_price c USING (close_date, code)"
     ).fetchone()
@@ -214,7 +288,7 @@ def write_closes(
         (import_id,),
     )
     conn.execute("DROP TABLE incoming_close")
-    summary = CloseSummary(import_id, first, last, codes, len(closes), replaced, changed)
+    summary = CloseSummary(import_id, first, last, codes, stored, replaced, changed, not_replaced)
     record = {
         "first": first.isoformat() if first else None,
         "last": last.isoformat() if last else None,
@@ -222,6 +296,7 @@ def write_closes(
         "stored": summary.stored,
         "replaced": replaced,
         "changed": changed,
+        **({"not_replaced": not_replaced} if keep_others else {}),
         **details,
     }
     import_run.finish_run(conn, "close_price_import", import_id, record)

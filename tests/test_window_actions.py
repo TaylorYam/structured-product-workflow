@@ -77,6 +77,20 @@ def test_daily_import_is_committed_then_recalculated(pg, pg_settings, tmp_path: 
 
 
 @pytest.mark.db
+def test_daily_import_stores_closes_then_observes(pg, pg_settings, tmp_path: Path) -> None:
+    seed_mailbox(pg)
+    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 100000)], [price("AAA UW Equity")])
+
+    result = run_daily_import(pg_settings, daily, PATHS, prices=True)
+
+    assert result.receipt.closes is not None and result.receipt.closes.stored == 1
+    assert pg.execute("SELECT close_date, code FROM workflow.close_price").fetchall() == [
+        (dt.date(2026, 10, 15), "AAA UW")
+    ], "取價日 10/16（週五）是週四 10/15 的收盤"
+    assert result.observation.receipt is not None and result.observation.receipt.through == dt.date(2026, 10, 15)
+
+
+@pytest.mark.db
 def test_trades_only_daily_import_leaves_prices_alone(pg, pg_settings, tmp_path: Path) -> None:
     seed_mailbox(pg)
     daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 100000)], [price("AAA UW")])
@@ -84,6 +98,7 @@ def test_trades_only_daily_import_leaves_prices_alone(pg, pg_settings, tmp_path:
     result = run_daily_import(pg_settings, daily, PATHS, prices=False)
 
     assert result.receipt.prices is None and count(pg, "workflow.daily_price") == 0
+    assert result.observation.receipt is None and not result.observation.error, "沒有寫收盤價就不比價"
 
 
 @pytest.mark.db

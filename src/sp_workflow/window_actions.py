@@ -146,6 +146,7 @@ class Observation:
 class DailyResult:
     receipt: ImportReceipt
     recalc: Recalc = Recalc()
+    observation: Observation = Observation()  # 沒有寫收盤價（只匯交易明細、讀不到假日表）時沒有跑
 
 
 @dataclass(frozen=True)
@@ -302,10 +303,18 @@ def _observe_after_write(
 
 
 def run_daily_import(settings: ConnectionSettings, daily: Path, paths: ConfigPaths, *, prices: bool) -> DailyResult:
-    """匯入每日更新（`prices` 為 False 時只匯交易明細），再重算核對條件。"""
+    """匯入每日更新（`prices` 為 False 時只匯交易明細；有股價時同時寫收盤價，#280），再重算核對條件；
+    寫了收盤價就再比價（#155）。"""
+    try:
+        calendar = load_calendar(paths.exchange_holidays) if prices else None
+    except CheckTermsError:
+        calendar = None  # 收盤價這次不存；讀不到的原因由重算寫在結果裡
     with connect(settings) as conn:
-        receipt = import_daily(daily, conn, prices=prices)
-        return DailyResult(receipt, _recalculate_after_import(conn, paths))
+        receipt = import_daily(daily, conn, prices=prices, calendar=calendar)
+        recalc = _recalculate_after_import(conn, paths)
+        if receipt.closes is None:
+            return DailyResult(receipt, recalc)
+        return DailyResult(receipt, recalc, _observe_after_write(conn, calendar))
 
 
 def run_price_csv(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> PriceCsvResult:

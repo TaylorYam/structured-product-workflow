@@ -12,11 +12,13 @@
   代碼只去頭尾空白；代碼空白的列略過；價格格子空白就存空白，不是數字也存空白並列出來。
   同一個代碼出現多列：值都一樣算一筆，值不一樣記成衝突（價格留空），算價格時（#88）不能用。
   同一個取價日重新匯入時，整份取代那一天的股價；每次匯入都留紀錄（`workflow.price_import`）。
+  有交易所假日表時，同一個 transaction 也把最新收盤價寫進 `workflow.close_price`（#280、ADR 0026）：
+  收盤日是各代碼市場在取價日之前最近的交易日；CSV 或歷史收盤價已有的那一筆不動（見 `close_prices`）。
 - 回補股價 CSV（`MarketData_YYYYMMDD.csv`，#112）：第 1 列欄名要完全相同，「取價日」是收盤那一天、整份同一天；
   存成取價日＋1 天，等同隔天早上用 BBG_Data 取到的價格。沒有 1日前收盤價；幣別、市值(百萬美元) 不存。
   代碼、重複代碼、不是數字、整天取代的處理同 BBG_Data；也留一筆 `workflow.import_run`。
   同一個 transaction 也把 CSV 那一天的收盤價寫進 `workflow.close_price`（#153、ADR 0020，見 `close_prices`）；
-  讀不到交易所假日表時不能判斷休市日，收盤價這次不存。BBG_Data 不寫收盤價。
+  讀不到交易所假日表時不能判斷休市日，收盤價這次不存（BBG_Data 也一樣）。
 - 信箱由資料庫直接維護（#35、ADR 0004）：匯入不修改 `mailbox`，只用它比對 FC 名字。
 - 結果另外列出交易明細的 FCN TDCC（依第一次出現的順序、不重複，不是剛好 12 碼與整檔都取消的不列），
   給視窗帶到起單資料頁（#90）。
@@ -44,7 +46,14 @@ import openpyxl
 from openpyxl.utils import get_column_letter
 
 from sp_workflow import import_run, sheet_cells
-from sp_workflow.close_prices import CSV_SOURCE, CloseSummary, closes_from_csv, write_closes
+from sp_workflow.close_prices import (
+    CSV_SOURCE,
+    DAILY_SOURCE,
+    CloseSummary,
+    closes_from_csv,
+    closes_from_daily,
+    write_closes,
+)
 from sp_workflow.database import OperatorError
 from sp_workflow.file_tools import sha256_file
 from sp_workflow.mailbox import Mailbox, is_pb, load_mailbox
@@ -151,6 +160,10 @@ class ImportReceipt:
     prices: PriceSummary | None  # 只匯交易明細時是 None
     fcn_trade_rows: int  # 交易明細裡 Product 為 FCN 的列數，含取消的
     fcn_tdccs: tuple[str, ...]  # 帶到起單資料頁的 TDCC（#90）
+    closes: CloseSummary | None = None  # 收盤價（#280）；只匯交易明細或讀不到假日表時沒有存
+    close_unknown: tuple[str, ...] = ()  # 交易所不在假日表、推不出收盤日、沒有存的代碼
+    close_uncovered: tuple[str, ...] = ()  # 超出假日表涵蓋範圍、收盤價沒有存的代碼
+    close_conflicts: tuple[str, ...] = ()  # 去掉類別字後才重複、值不同、收盤價沒有存的代碼
 
     def count(self, kind: str) -> int:
         return sum(line.kind == kind for line in self.lines)
@@ -201,12 +214,16 @@ class _Parsed:
     fcn_trade_rows: int = 0
 
 
-def import_daily(daily_book: Path, conn: psycopg.Connection, *, prices: bool = True) -> ImportReceipt:
+def import_daily(
+    daily_book: Path, conn: psycopg.Connection, *, prices: bool = True, calendar: TradingCalendar | None = None
+) -> ImportReceipt:
     """匯入一份每日更新；回傳每檔 TDCC 的結果。整份有問題時丟 `DailyImportError`、不寫入任何資料。
 
     `prices=False`：只匯交易明細，不讀 BBG_Data、不動股價（回補時股價改用 `import_price_csv`）。
+    有 `calendar`（交易所假日表）時同時寫前一個交易日的收盤價（#280）；沒有時收盤價不存。
     """
     parsed = _read_daily(daily_book, prices=prices)
+    sha256 = sha256_file(daily_book)
 
     previous: bytes | None = None
     written = False
@@ -214,12 +231,17 @@ def import_daily(daily_book: Path, conn: psycopg.Connection, *, prices: bool = T
         with conn.transaction():
             mailbox = load_mailbox(conn)
             run_id = import_run.open_run(
-                conn, "import_run", {"daily_file_name": daily_book.name, "daily_sha256": sha256_file(daily_book)}
+                conn, "import_run", {"daily_file_name": daily_book.name, "daily_sha256": sha256}
             )
             lines = [*parsed.blocked, *parsed.cancelled_lines, *(parsed.prices.problems if parsed.prices else ())]
             lines += _write_trades(conn, parsed, run_id)
             _write_other_products(conn, parsed, run_id)
             summary = None if parsed.prices is None else _write_prices(conn, parsed.prices, run_id)
+            closes = _DailyCloses()
+            if parsed.prices is not None and calendar is not None:
+                closes = _write_daily_closes(
+                    conn, parsed.prices, calendar, file_name=daily_book.name, sha256=sha256, run_id=run_id
+                )
             lines += _unmatched_names(parsed, mailbox)
             error_book_path = daily_book.parent / IMPORT_ERROR_BOOK_NAME
             receipt = ImportReceipt(
@@ -232,6 +254,10 @@ def import_daily(daily_book: Path, conn: psycopg.Connection, *, prices: bool = T
                 prices=summary,
                 fcn_trade_rows=parsed.fcn_trade_rows,
                 fcn_tdccs=tuple(tdcc for tdcc, live in parsed.fcn_tdccs.items() if live),
+                closes=closes.summary,
+                close_unknown=closes.unknown,
+                close_uncovered=closes.uncovered,
+                close_conflicts=closes.conflicts,
             )
             import_run.finish_run(conn, "import_run", run_id, _summary(receipt))
             previous = _save_error_book(conn, error_book_path)
@@ -563,6 +589,41 @@ def trade_value(header: str, value: Any) -> Any:
 
 
 # ---------- 寫入資料庫 ----------
+
+
+class _DailyCloses(NamedTuple):
+    """每日匯入寫的收盤價（#280）與沒存的代碼；沒有寫時 `summary` 是 None。"""
+
+    summary: CloseSummary | None = None
+    unknown: tuple[str, ...] = ()
+    uncovered: tuple[str, ...] = ()
+    conflicts: tuple[str, ...] = ()
+
+
+def _write_daily_closes(
+    conn: psycopg.Connection, prices: _Prices, calendar: TradingCalendar, *, file_name: str, sha256: str, run_id: int
+) -> _DailyCloses:
+    """BBG_Data 的最新收盤價記到前一個交易日（#280）；CSV、歷史收盤價已有的不取代。"""
+    found = closes_from_daily(
+        prices.price_date, {code: price.last_close for code, price in prices.rows.items()}, calendar, prices.conflicts
+    )
+    details = {
+        "price_date": prices.price_date.isoformat(),
+        "unknown": list(found.unknown),
+        "uncovered": list(found.uncovered),
+        "conflicts": list(found.conflicts),
+    }
+    summary = write_closes(
+        conn,
+        found.closes,
+        source=DAILY_SOURCE,
+        file_name=file_name,
+        sha256=sha256,
+        details=details,
+        run_id=run_id,
+        keep_others=True,
+    )
+    return _DailyCloses(summary, found.unknown, found.uncovered, found.conflicts)
 
 
 def _write_prices(conn: psycopg.Connection, prices: _Prices, run_id: int) -> PriceSummary:
