@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING
 
 import openpyxl
 from openpyxl.cell.cell import Cell
-from openpyxl.styles import Alignment, Font
+from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from psycopg.rows import dict_row
 
@@ -71,6 +71,15 @@ DASH = "-"  # 資料庫沒有的值，照舊庫存總表寫 -
 MIN_TRADE_GROUPS = 2  # 範本的分公司／FC／金額組數
 CJK_FONT = "微軟正黑體"
 LATIN_FONT = "Calibri"
+HEADER_SIZE = 10  # 範本表頭的字級
+HEADER_FILLS = (
+    ("存續狀態", "F8CBAD"),  # 存續：橙
+    ("Product", "C5E0B4"),  # 基本：綠
+    ("交易日", "FFE699"),  # 日期：金
+    ("期初定價", "BDD7EE"),  # 條件：藍
+    ("UL_1", "DBDBDB"),  # 標的：灰
+    ("分公司_1", "F8CBAD"),  # 承作（含多出來的組）：橙
+)  # 表頭區塊的第一欄 → 底色：範本用 Office 佈景主題色「較淺 40%」，這裡寫成顏色值，不靠檔案的佈景主題
 _CJK = re.compile(r"[\u3000-\u303f\u3400-\u9fff\uff00-\uffef]")
 _CENTER = Alignment(horizontal="center", vertical="center")
 PRODUCT_FIELDS = {
@@ -84,7 +93,7 @@ PRODUCT_FIELDS = {
 UL_FIELDS = ("進場價", "執行價", "下限價", "KO價")
 _UNDERLYINGS = tuple(f"underlying_{n}" for n in range(1, 6))
 SUMMARY_COLUMNS = (
-    "存續狀態", "存續事件日", "事件標的",
+    "存續狀態", "事件發生日", "事件標的",
     "Product", "發行機構", "TDCC Code", "ISIN Code", "單位面額", "承作幣別", "承作總額", "私銀註記", "新加坡註記",
     "交易日", "發行日", *(f"比價日_{i}" for i in range(1, 13)), "最終比價日", "到期日",
     "期初定價", "KO(%)", "KO(Freq)", "KO(memo)", "K(%)", "KI(%)", "KI(Freq)", "UF", "Coupon p.a. (%)",
@@ -149,7 +158,7 @@ def _summary_cells(
     event = lifecycle.latest
     cells: dict[str, object] = {name: product[field] for name, field in PRODUCT_FIELDS.items()}
     cells.update(
-        {"存續狀態": lifecycle.status, "存續事件日": event and event.event_date, "事件標的": event and event.underlying}
+        {"存續狀態": lifecycle.status, "事件發生日": event and event.event_date, "事件標的": event and event.underlying}
     )
     cells.update({f"比價日_{slot}": value for slot, value in autocall.items()})
     for seq, field in enumerate(_UNDERLYINGS, start=1):
@@ -178,8 +187,13 @@ def _summary_book(columns: Sequence[str], rows: Sequence[Sequence[object]]) -> o
         auto_filter=True,
     )
     sheet = book.active
-    for cell in sheet[1]:
-        _font_and_alignment(cell)
+    starts = dict(HEADER_FILLS)
+    fill = PatternFill()
+    for cell in sheet[1]:  # 表頭照範本：依區塊上底色、10 號字
+        if cell.value in starts:
+            fill = PatternFill(fill_type="solid", fgColor=starts[cell.value])
+        cell.fill = fill
+        _font_and_alignment(cell, size=HEADER_SIZE)
     sheet.freeze_panes = FROZEN
     return book
 
@@ -191,10 +205,10 @@ def _summary_cell(cell: Cell) -> None:
     _font_and_alignment(cell)
 
 
-def _font_and_alignment(cell: Cell) -> None:
+def _font_and_alignment(cell: Cell, size: float | None = None) -> None:
     """全部置中；有中文字的格子用微軟正黑體，其他（英文、數字、日期、-）用 Calibri。表頭的粗體保留。"""
     cjk = isinstance(cell.value, str) and _CJK.search(cell.value)
-    cell.font = Font(name=CJK_FONT if cjk else LATIN_FONT, bold=cell.font.b)
+    cell.font = Font(name=CJK_FONT if cjk else LATIN_FONT, bold=cell.font.b, size=size)
     cell.alignment = _CENTER
 
 

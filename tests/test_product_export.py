@@ -152,12 +152,14 @@ def test_summary_rows_follow_the_new_summary_columns(pg, tmp_path: Path) -> None
     a, b = as_dicts(path)
     assert receipt.count == 2 and (a["TDCC Code"], b["TDCC Code"]) == (A, B), "依 TDCC 排序，前導零保留"
     assert list(a) == [*SUMMARY_COLUMNS, *trade_columns(3)], "交易組數是最多那一檔的筆數"
-    assert (a["存續狀態"], a["存續事件日"], a["事件標的"]) == ("KO", dt.datetime(2026, 11, 16), "-")
-    assert (b["存續狀態"], b["存續事件日"]) == ("在庫", "-")
+    assert (a["存續狀態"], a["事件發生日"], a["事件標的"]) == ("KO", dt.datetime(2026, 11, 16), "-")
+    assert (b["存續狀態"], b["事件發生日"]) == ("在庫", "-")
     assert (a["發行機構"], a["承作幣別"], a["K(%)"], a["KI(Freq)"]) == ("Barclays", "USD", 80, "AM")
     assert (a["承作總額"], b["承作總額"]) == (180000, "-")
     assert [a[f"{n}_3"] for n in ("分公司", "FC", "金額")] == ["新竹", "Ben", 30000], "照交易明細順序"
     assert {b[c] for c in trade_columns(3)} == {"-"}
+    last = openpyxl.load_workbook(path).active.cell(1, len(a))
+    assert (last.value, last.fill.fgColor.rgb[-6:]) == ("金額_3", "F8CBAD"), "多出來的組也是承作的底色"
     assert (a["比價日_1"], a["比價日_2"], b["比價日_1"]) == (dt.datetime(2026, 11, 16), "-", "-")
     assert [a[c] for c in ("UL_1", "UL_1_進場價", "UL_1_執行價", "UL_1_下限價", "UL_1_KO價")] == [
         "AAA UW",
@@ -191,6 +193,14 @@ def test_summary_cells_are_centred_with_fonts_by_content(pg, tmp_path: Path) -> 
     assert cell["分公司_1"].font.name == "微軟正黑體" and cell["FC_1"].font.name == "Calibri"
     assert cell["存續狀態"].font.name == "微軟正黑體" and cell["私銀註記"].font.name == "Calibri", "在庫是中文、- 不是"
     assert cell["TDCC Code"].number_format == "@" and cell["交易日"].number_format == "yyyy/m/d"
+    fills = {name: sheet.cell(1, column).fill.fgColor.rgb[-6:] for name, column in header.items()}
+    assert [fills[n] for n in ("存續狀態", "事件標的", "Product", "新加坡註記", "交易日", "到期日")] == [
+        "F8CBAD", "F8CBAD", "C5E0B4", "C5E0B4", "FFE699", "FFE699"
+    ]  # fmt: skip
+    assert [fills[n] for n in ("期初定價", "Lookback 期間", "UL_1", "UL_5_KO價", "分公司_1", "金額_2")] == [
+        "BDD7EE", "BDD7EE", "DBDBDB", "DBDBDB", "F8CBAD", "F8CBAD"
+    ]  # fmt: skip
+    assert sheet["A1"].font.sz == 10 and cell["存續狀態"].fill.fill_type is None, "表頭 10 號字；資料列不上底色"
     assert {(c.alignment.horizontal, c.alignment.vertical) for row in sheet.iter_rows() for c in row} == {
         ("center", "center")
     }
