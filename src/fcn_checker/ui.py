@@ -1039,7 +1039,7 @@ class Scrollbar(ttk.Scrollbar):
 class CopyButton(ttk.Button):
     """結果表右上方的複製按鈕（#121）：預設是「全部複製」，一鍵把整張表（含表頭）放進剪貼簿；按完短暫顯示複製了幾列。
 
-    其他複製（例：進度頁的「複製待確認 TDCC」，#289）給自己的字：`copied` 用複製了幾筆填，`empty` 是什麼都沒複製時。
+    其他複製（例：進度頁的「複製待確認 TDCC」，#289）給自己的字：`copied_text` 用複製了幾筆填，`empty_text` 是什麼都沒複製時。
     """
 
     TEXT = "全部複製"
@@ -1047,30 +1047,30 @@ class CopyButton(ttk.Button):
     def __init__(
         self,
         parent: tk.Misc,
-        copy: Callable[[], int],
+        action: Callable[[], int],
         text: str = TEXT,
         *,
-        copied: str = "已複製 {} 列",
-        empty: str = "表上沒有資料",
+        copied_text: str = "已複製 {} 列",
+        empty_text: str = "表上沒有資料",
         width: int = 12,
     ):
         super().__init__(parent, text=text, command=self.copy, width=width, style="Toolbar.TButton")
-        self.action = copy
-        self.text = text
-        self.copied = copied
-        self.empty = empty
+        self.action = action  # 複製並回傳複製了幾筆
+        self.idle_text = text
+        self.copied_text = copied_text
+        self.empty_text = empty_text
         self._reset_job: str | None = None  # 換回原本的字的 after 排程
 
     def copy(self) -> None:
         count = self.action()
-        self.configure(text=self.copied.format(count) if count else self.empty)
+        self.configure(text=self.copied_text.format(count) if count else self.empty_text)
         if self._reset_job is not None:
             self.after_cancel(self._reset_job)
         self._reset_job = self.after(1500, self._reset)
 
     def _reset(self) -> None:
         self._reset_job = None
-        self.configure(text=self.text)
+        self.configure(text=self.idle_text)
 
 
 class CopyArea(ttk.Frame):
@@ -1091,9 +1091,11 @@ class CopyArea(ttk.Frame):
         self.card.columnconfigure(0, weight=1)
         self.card.rowconfigure(0, weight=1)
 
-    def add_button(self, text: str, copy: Callable[[], int], *, copied: str, empty: str, width: int = 12) -> CopyButton:
+    def add_button(
+        self, text: str, action: Callable[[], int], *, copied_text: str, empty_text: str, width: int = 12
+    ) -> CopyButton:
         """在「全部複製」左邊多放一個複製按鈕（#289）；參數同 `CopyButton`。"""
-        button = CopyButton(self.bar, copy, text, copied=copied, empty=empty, width=width)
+        button = CopyButton(self.bar, action, text, copied_text=copied_text, empty_text=empty_text, width=width)
         button.pack(side="right", padx=(0, 8))
         return button
 

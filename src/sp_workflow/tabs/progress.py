@@ -143,7 +143,11 @@ class ProgressTab(Tab):
             button.pack(side=tk.LEFT, padx=(8, 0))
         self.place_table(2)
         self.copy_to_confirm_button = self.table_area.add_button(
-            "複製待確認 TDCC", self.copy_to_confirm, copied="已複製 {} 筆", empty="表上沒有待確認", width=16
+            "複製待確認 TDCC",
+            self.copy_to_confirm,
+            copied_text="已複製 {} 筆",
+            empty_text="表上沒有待確認",
+            width=16,
         )  # #289
         for key, _, _ in COLUMNS:
             self.table.heading(key, command=lambda k=key: self.sort_by(k))
