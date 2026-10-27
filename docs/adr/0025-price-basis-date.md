@@ -29,7 +29,7 @@ ADR 0024 假設商品的進場價、執行價、下限價、KO 價都是 Strike 
 ### 後果
 
 - 資料表版本 0029 只加一欄，不動既有資料；升級後第一次比價補上。
-- 推算靠 Strike date 的收盤價：收盤價表缺那幾天時推不出來（留空白），也不檢查；進場價本來就跟收盤價差很多的（例如不是用收盤價定價）在有拆股時可能被標待確認。
+- 推算靠 Strike date 的收盤價：Strike date 之後有拆股、收盤價表卻缺那幾天的標的推不出來，比價狀態待確認；進場價本來就跟收盤價差很多的（例如不是用收盤價定價）在有拆股時可能被標待確認。
 - 比例接近的兩個候選（例如 2 拆 3）可能推錯；由「對不起來就待確認」與作業人員確認兜底。
 
 ## English
@@ -56,5 +56,5 @@ ADR 0024 assumes a product's initial, strike, KI, and KO prices are on the share
 ### Consequences
 
 - Schema version 0029 only adds a column without touching existing data; the first observation after the upgrade fills it.
-- Inference depends on the Strike-date close: when the close table lacks those days it cannot infer (blank) and does not check; products whose initial price differs a lot from the close anyway (for example, not fixed on the close) may be marked 待確認 when a split exists.
+- Inference depends on the Strike-date close: an underlying with a split after the Strike date whose closes for those days are missing cannot be inferred and is marked 待確認; products whose initial price differs a lot from the close anyway (for example, not fixed on the close) may be marked 待確認 when a split exists.
 - Two close candidates (for example, a 2-for-3 split) can be confused; the 待確認 check and operators are the backstop.

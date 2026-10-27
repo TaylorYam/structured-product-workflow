@@ -689,6 +689,26 @@ def test_a_basis_that_does_not_match_the_strike_close_needs_confirmation() -> No
         ki=NO_KI_TEXT,
     )
     assert observe(t, closes(), CALENDAR, FINAL).status == EXITED, "沒有拆股的標的不檢查"
+    no_strike_close = closes(split_prices("8.5"))
+    del no_strike_close["AAA UW"][STRIKE]
+    assert observe(terms(underlyings=(ADJUSTED, B)), no_strike_close, CALENDAR, FINAL, SplitBook([SPLIT])).reason == (
+        f"UL_1 AAA UW：收盤價表沒有 {STRIKE} 前後的收盤價，推不出價格是不是已經含拆股"
+    )
+
+
+def test_raw_and_adjusted_prices_on_one_code_give_the_same_ki_and_delivery() -> None:
+    touch = dt.date(2026, 11, 20)
+    prices = closes(split_prices("8.5", {touch: "5.5", FINAL: "6"}))  # 5.5 換回 55：低於下限價 65
+    book = SplitBook([SPLIT])
+
+    for underlyings in ((A, B), (ADJUSTED, B)):
+        assert observe(terms(barrier=AKI, underlyings=underlyings), prices, CALENDAR, FINAL, book) == Outcome(
+            EXITED,
+            f"接股 AAA UW {FINAL}",
+            FINAL,
+            (AutoEvent(DELIVERY, FINAL, "AAA UW"),),
+            f"AKI hit {touch} UL_1 AAA UW",
+        ), underlyings[0]
 
 
 @pytest.mark.db

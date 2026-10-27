@@ -707,7 +707,8 @@ def _split_change(
     with connect(settings) as conn:
         write(conn, split)
         observation = _observe_after_write(conn, calendar, affected_exits(conn, split))
-        return SplitResult(load_splits(conn), observation, adjusted_count(conn, split))
+        adjusted = 0 if observation.receipt is None else adjusted_count(conn, split)  # 比價沒跑時基準日沒重算
+        return SplitResult(load_splits(conn), observation, adjusted)
 
 
 def _each(conn: psycopg.Connection, tdccs: Sequence[str], write: Callable[[str], object]) -> Registered:

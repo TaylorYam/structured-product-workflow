@@ -34,6 +34,7 @@ if TYPE_CHECKING:
 
 ADD, DELETE = "新增", "刪除"
 JUMP_LOW = Decimal("0.6")  # 相鄰兩個收盤日的價格比例低於這個、或高於它的倒數（約 1.67），算疑似拆股；1 拆 2 約 0.5
+STRIKE_CLOSE_DAYS = 10  # Strike date 的收盤價：當天或之前這幾天內最近的一筆（推算、檢查價格基準用）
 NOT_A_SPLIT = "確認不是拆股"
 
 
@@ -106,25 +107,34 @@ class SplitBook:
                 result *= split.factor
         return result if day >= base else 1 / result
 
-    def later(self, code: str, strike: dt.date) -> list[Split]:
+    def splits_after(self, code: str, strike: dt.date) -> list[Split]:
         """Strike date 之後生效、真的改了股數的拆股（不含確認不是拆股）。"""
         return [s for s in self.by_code.get(code, ()) if s.effective_date > strike and not s.not_a_split]
 
+    def strike_close(self, code: str, strike: dt.date, closes: Mapping[dt.date, Decimal]) -> Decimal | None:
+        """Strike date 的收盤價（當天或之前 `STRIKE_CLOSE_DAYS` 天內最近的一筆，換到 Strike date 的基準）；沒有是 None。"""
+        start = strike - dt.timedelta(days=STRIKE_CLOSE_DAYS)
+        day = max((d for d in closes if start <= d <= strike), default=None)
+        if day is None or closes[day] <= 0:
+            return None
+        return closes[day] * self.factor(code, strike, day)
+
     def basis(self, code: str, strike: dt.date, initial: Decimal | None, close: Decimal | None) -> dt.date | None:
-        """推算一個標的的價格基準日：進場價跟 Strike date 的收盤價 `close` 比，看已經含 Strike date 之後的哪幾次拆股。
+        """推算一個標的的價格基準日：進場價跟 Strike date 的收盤價 `close`（`strike_close`）比，
+        看已經含 Strike date 之後的哪幾次拆股。
 
         沒含（沒有拆股、缺價格也一樣）是 None，即 Strike date；含到第幾次就是那次的生效日。
-        哪一個都對不起來（比例超出 `JUMP_LOW`）也是 None，由比價檢查、標待確認。"""
-        later = self.later(code, strike)
-        if not later or not initial or not close or initial <= 0 or close <= 0:
+        哪一個都對不起來（`in_range` 以外）也是 None，由比價檢查、標待確認。"""
+        splits = self.splits_after(code, strike)
+        if not splits or not initial or not close or initial <= 0 or close <= 0:
             return None
         candidates = [(None, Decimal(1))]
         total = Decimal(1)
-        for split in later:
+        for split in splits:
             total *= split.factor
             candidates.append((split.effective_date, total))
         day, total = min(candidates, key=lambda c: abs((initial * c[1] / close).ln()))
-        return day if JUMP_LOW <= initial * total / close <= 1 / JUMP_LOW else None
+        return day if in_range(initial * total / close) else None
 
     def jumps(self, code: str, closes: Mapping[dt.date, Decimal]) -> tuple[Jump, ...]:
         """這個代碼的價格斷層：相鄰兩個收盤日換算後的比例 < `JUMP_LOW` 或 > 1 ÷ `JUMP_LOW`，期間沒有確認不是拆股。"""
@@ -134,12 +144,17 @@ class SplitBook:
             if closes[before] <= 0:
                 continue
             ratio = closes[day] * self.factor(code, before, day) / closes[before]
-            if JUMP_LOW <= ratio <= 1 / JUMP_LOW:
+            if in_range(ratio):
                 continue
             if any(s.not_a_split and before < s.effective_date <= day for s in self.by_code.get(code, ())):
                 continue
             found.append(Jump(code, before, day, ratio))
         return tuple(found)
+
+
+def in_range(ratio: Decimal) -> bool:
+    """價格比例在 `JUMP_LOW` 與它的倒數之間：不算斷層、算對得起來。"""
+    return JUMP_LOW <= ratio <= 1 / JUMP_LOW
 
 
 # ---------- 畫面輸入 ----------
@@ -196,19 +211,21 @@ def affected_exits(conn: psycopg.Connection, split: Split) -> list[str]:
 def refresh_basis(conn: psycopg.Connection, book: SplitBook) -> int:
     """依拆股登記重算各標的的價格基準日（`underlying_price.price_basis_date`），有變才寫；回傳改了幾筆。
 
-    只推有登記拆股的代碼，Strike date 的收盤價取當天或之前 10 天內最近的一筆；其他代碼的基準日清成空白。
+    只推有登記拆股的代碼，Strike date 的收盤價同 `SplitBook.strike_close`；其他代碼的基準日清成空白。
     在呼叫端的 transaction 裡執行（`observation.observe_all`）。"""
     rows = conn.execute(
-        "SELECT u.tdcc, u.seq, u.code, u.initial_price, u.price_basis_date, p.strike_date,"
-        " (SELECT c.close FROM workflow.close_price c WHERE c.code = u.code"
-        "  AND c.close_date BETWEEN p.strike_date - 10 AND p.strike_date ORDER BY c.close_date DESC LIMIT 1)"
+        "SELECT u.tdcc, u.seq, u.code, u.initial_price, u.price_basis_date, p.strike_date, c.close_date, c.close"
         " FROM workflow.underlying_price u JOIN workflow.product p ON p.tdcc = u.tdcc"
-        " WHERE u.code = ANY(%s) OR u.price_basis_date IS NOT NULL",
-        (list(book.by_code),),
+        " LEFT JOIN LATERAL (SELECT close_date, close FROM workflow.close_price"
+        "   WHERE code = u.code AND close_date BETWEEN p.strike_date - %(days)s AND p.strike_date"
+        "   ORDER BY close_date DESC LIMIT 1) c ON true"
+        " WHERE u.code = ANY(%(codes)s) OR u.price_basis_date IS NOT NULL",
+        {"days": STRIKE_CLOSE_DAYS, "codes": list(book.by_code)},
     ).fetchall()
     changed = 0
-    for tdcc, seq, code, initial, stored, strike, close in rows:
-        basis = None if strike is None else book.basis(code, strike, initial, close)
+    for tdcc, seq, code, initial, stored, strike, day, close in rows:
+        found = {} if day is None else {day: close}
+        basis = None if strike is None else book.basis(code, strike, initial, book.strike_close(code, strike, found))
         if basis != stored:
             conn.execute(
                 "UPDATE workflow.underlying_price SET price_basis_date = %s WHERE tdcc = %s AND seq = %s",

@@ -56,7 +56,7 @@ from sp_workflow.lifecycle import (
 )
 from sp_workflow.product_record import KO_TYPES
 from sp_workflow.status import CheckTerms, OrderReview, Pricing
-from sp_workflow.stock_splits import JUMP_LOW, Jump, SplitBook, load_splits, refresh_basis
+from sp_workflow.stock_splits import STRIKE_CLOSE_DAYS, Jump, SplitBook, in_range, load_splits, refresh_basis
 
 if TYPE_CHECKING:
     import psycopg
@@ -249,16 +249,16 @@ def _basis_problem(terms: Terms, closes: Mapping[str, Mapping[dt.date, Decimal]]
         return ""
     problems = []
     for u in terms.underlyings:
-        if u.initial is None or not book.later(u.code, strike):
+        if u.initial is None or not book.splits_after(u.code, strike):
             continue
-        series = closes.get(u.code, {})
-        day = max((d for d in series if strike - dt.timedelta(days=10) <= d <= strike), default=None)
-        if day is None or series[day] <= 0:
+        close = book.strike_close(u.code, strike, closes.get(u.code, {}))
+        if close is None:
+            problems.append(f"{u.name}：收盤價表沒有 {strike} 前後的收盤價，推不出價格是不是已經含拆股")
             continue
-        converted = series[day] * book.factor(u.code, u.basis or strike, day)
-        if not JUMP_LOW <= u.initial / converted <= 1 / JUMP_LOW:
+        converted = close * book.factor(u.code, u.basis or strike, strike)
+        if not in_range(u.initial / converted):
             problems.append(
-                f"{u.name}：進場價 {u.initial} 跟 {day} 的收盤價（換到價格基準後 {converted:.6g}）對不起來，"
+                f"{u.name}：進場價 {u.initial} 跟 {strike} 的收盤價（換到價格基準後 {converted:.6g}）對不起來，"
                 "拆股登記的比例或商品的價格可能有誤"
             )
     return "；".join(problems)
@@ -558,7 +558,7 @@ def _load_closes(conn: psycopg.Connection, terms: Collection[Terms]) -> dict[str
         return closes
     for code, day, price in conn.execute(
         "SELECT code, close_date, close FROM workflow.close_price WHERE code = ANY(%s) AND close_date >= %s",
-        (codes, min(starts) - dt.timedelta(days=10)),
+        (codes, min(starts) - dt.timedelta(days=STRIKE_CLOSE_DAYS)),
     ):
         closes.setdefault(code, {})[day] = price
     return closes

@@ -81,6 +81,15 @@ def test_the_basis_is_the_last_split_the_initial_price_already_includes() -> Non
     assert book.basis("BBB UN", strike, D(10), D(101)) is None, "沒有拆股"
 
 
+def test_the_strike_close_is_the_latest_within_ten_days_on_the_strike_basis() -> None:
+    strike = DAY + dt.timedelta(days=1)
+    book = SplitBook([Split("AAA UW", strike, 1, 10)])  # Strike date 當天生效：前一天的收盤價換成新基準
+
+    assert book.strike_close("AAA UW", strike, {DAY: D(100), DAY - dt.timedelta(days=3): D(90)}) == D(10)
+    assert book.strike_close("AAA UW", strike, {strike - dt.timedelta(days=11): D(100)}) is None, "超過 10 天"
+    assert book.strike_close("AAA UW", strike, {strike + dt.timedelta(days=1): D(100)}) is None, "之後的不算"
+
+
 def test_jumps_are_gaps_beyond_the_range_after_registered_splits() -> None:
     before = DAY - dt.timedelta(days=3)  # 上一個收盤日（週五）
     closes = {before: D(500), DAY: D(5), DAY + dt.timedelta(days=1): D("5.1")}
