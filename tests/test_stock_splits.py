@@ -23,6 +23,7 @@ from sp_workflow.stock_splits import (
     affected_exits,
     delete_split,
     load_splits,
+    refresh_basis,
     split_from,
 )
 
@@ -61,6 +62,32 @@ def test_factor_counts_splits_after_the_base_up_to_the_day() -> None:
     assert book.factor("AAA UW", dt.date(2030, 1, 2), later) == 20, "兩次拆股相乘"
     assert book.factor("AAA UW", DAY, later) == 2, "基準日當天（含）以前生效的不算：進場價已經是新基準"
     assert book.factor("CCC UN", dt.date(2030, 1, 2), later) == 1
+    assert book.factor("AAA UW", later, DAY - dt.timedelta(days=1)) == D("0.05"), "基準日之前的收盤價反過來除掉"
+    assert book.factor("AAA UW", DAY, DAY - dt.timedelta(days=1)) == D("0.1")
+
+
+def test_the_basis_is_the_last_split_the_initial_price_already_includes() -> None:
+    strike, later = dt.date(2030, 1, 2), dt.date(2030, 6, 3)
+    book = SplitBook(
+        [Split("AAA UW", DAY, 1, 10), Split("AAA UW", later, 1, 2), Split("AAA UW", later.replace(day=10), 1, 1)]
+    )
+
+    assert book.basis("AAA UW", strike, D(100), D(101)) is None, "交易時的基準"
+    assert book.basis("AAA UW", strike, D(10), D(101)) == DAY, "上手調整過第一次拆股"
+    assert book.basis("AAA UW", strike, D("5.1"), D(101)) == later, "兩次都調整過；確認不是拆股不算"
+    assert book.basis("AAA UW", strike, D(30), D(101)) is None, "都對不起來：交給比價標待確認"
+    assert book.basis("AAA UW", DAY, D(10), D(101)) is None, "Strike date 當天（含）以前生效的不算"
+    assert book.basis("AAA UW", strike, None, D(101)) is None and book.basis("AAA UW", strike, D(10), None) is None
+    assert book.basis("BBB UN", strike, D(10), D(101)) is None, "沒有拆股"
+
+
+def test_the_strike_close_is_the_latest_within_ten_days_on_the_strike_basis() -> None:
+    strike = DAY + dt.timedelta(days=1)
+    book = SplitBook([Split("AAA UW", strike, 1, 10)])  # Strike date 當天生效：前一天的收盤價換成新基準
+
+    assert book.strike_close("AAA UW", strike, {DAY: D(100), DAY - dt.timedelta(days=3): D(90)}) == D(10)
+    assert book.strike_close("AAA UW", strike, {strike - dt.timedelta(days=11): D(100)}) is None, "超過 10 天"
+    assert book.strike_close("AAA UW", strike, {strike + dt.timedelta(days=1): D(100)}) is None, "之後的不算"
 
 
 def test_jumps_are_gaps_beyond_the_range_after_registered_splits() -> None:
@@ -155,9 +182,28 @@ def test_affected_exits_are_observation_exits_on_or_after_the_split(pg) -> None:
     product(pg, "147199990005", "BBB UN", early)  # 別的代碼
     product(pg, "147199990006", "AAA UW", DAY)  # 生效日當天交易：進場價已經是新基準
     replace_auto_events(pg, T1, [AutoEvent(MATURITY, dt.date(2030, 6, 3))], user="tester")
-    replace_auto_events(pg, T2, [AutoEvent(KO, DAY - dt.timedelta(days=1))], user="tester")  # 拆股前就出場
+    replace_auto_events(pg, T2, [AutoEvent(KO, DAY - dt.timedelta(days=1))], user="tester")  # 拆股前出場也重比（#275）
     record_legacy(pg, T3, KO, dt.date(2030, 6, 3), "", user="tester")  # 舊清單不重算
     replace_auto_events(pg, "147199990005", [AutoEvent(MATURITY, dt.date(2030, 6, 3))], user="tester")
     replace_auto_events(pg, "147199990006", [AutoEvent(MATURITY, dt.date(2030, 6, 3))], user="tester")
 
-    assert affected_exits(pg, Split("AAA UW", DAY, 1, 2)) == [T1], "T4 在庫，比價全部時本來就會比"
+    assert affected_exits(pg, Split("AAA UW", DAY, 1, 2)) == [T1, T2], "T4 在庫，比價全部時本來就會比"
+
+
+@pytest.mark.db
+def test_refresh_basis_writes_only_changes_and_clears_codes_without_splits(pg) -> None:
+    early = dt.date(2030, 1, 2)
+    product(pg, T1, "AAA UW", early)  # 進場價 100：交易時的基準
+    product(pg, T2, "AAA UW", early)
+    pg.execute("UPDATE workflow.underlying_price SET initial_price = 1 WHERE tdcc = %s", (T2,))  # 上手調整過 1 拆 100
+    close(pg, "AAA UW", early)
+    pg.execute("UPDATE workflow.close_price SET close = 100")
+
+    book = SplitBook([Split("AAA UW", DAY, 1, 100)])
+    assert refresh_basis(pg, book) == 1
+    assert refresh_basis(pg, book) == 0, "沒變就不寫"
+    basis = "SELECT tdcc, price_basis_date FROM workflow.underlying_price ORDER BY tdcc"
+    assert pg.execute(basis).fetchall() == [(T1, None), (T2, DAY)]
+
+    assert refresh_basis(pg, SplitBook()) == 1, "拆股刪掉了：清成空白"
+    assert pg.execute(basis).fetchall() == [(T1, None), (T2, None)]

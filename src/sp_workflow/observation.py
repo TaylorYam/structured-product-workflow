@@ -20,7 +20,9 @@
   比價狀態「等股價」寫出標的與日期。交易所不在假日表、日期超出假日表涵蓋範圍、要比價了收盤價表卻完全沒有這個代碼
   → 待確認並寫原因。
 - 拆股（#270、ADR 0024）：登記的拆股生效日在 Strike date 之後、不晚於觀察日的，收盤價乘上「拆股後 ÷ 拆股前」股數
-  換回交易時的基準再比；商品的四個價格不動。還沒登記的價格斷層（`stock_splits.SplitBook.jumps`）落在 Strike date 之後、
+  換回交易時的基準再比；商品的四個價格不動。價格已經是上手依拆股調整過的標的，換到它的價格基準日
+  （`Underlying.basis`，#275、ADR 0025），比價全部時先依拆股登記重算。有拆股的標的，進場價跟 Strike date 的收盤價
+  換到基準後對不起來時待確認。還沒登記的價格斷層（`stock_splits.SplitBook.jumps`）落在 Strike date 之後、
   比價範圍以內時，比到斷層前一天就停下來、待確認並寫出標的、日期與倍數；在那之前算出的出場照樣算。
 - 寫入：第一次算出出場事件時經 `lifecycle.replace_auto_events` 寫入（留紀錄）；每檔一筆
   `workflow.pricing_status`，和上一次不同才寫。拆股登記改了之後，受影響、事件全部來自比價的已出場商品
@@ -54,7 +56,7 @@ from sp_workflow.lifecycle import (
 )
 from sp_workflow.product_record import KO_TYPES
 from sp_workflow.status import CheckTerms, OrderReview, Pricing
-from sp_workflow.stock_splits import Jump, SplitBook, load_splits
+from sp_workflow.stock_splits import STRIKE_CLOSE_DAYS, Jump, SplitBook, in_range, load_splits, refresh_basis
 
 if TYPE_CHECKING:
     import psycopg
@@ -85,6 +87,7 @@ class Underlying:
     strike: Decimal | None  # 執行價
     ki: Decimal | None  # 下限價
     ko: Decimal | None  # KO 價
+    basis: dt.date | None = None  # 價格基準日：四個價格含到這天生效的拆股；None 是 Strike date（#275）
 
     @property
     def name(self) -> str:
@@ -177,6 +180,9 @@ def observe(
     base = terms.strike_date or first - dt.timedelta(days=1)  # 進場價的基準日
     if jumps is None:
         jumps = price_jumps(book, calendar, {u.code: closes[u.code] for u in terms.underlyings})
+    mismatch = _basis_problem(terms, closes, book)
+    if mismatch:
+        return result(TO_CONFIRM, mismatch)
     jump = _first_jump(terms, jumps, base, last)
     end = last if jump is None else min(last, jump.day - dt.timedelta(days=1))
 
@@ -205,7 +211,7 @@ def observe(
             if price is None:
                 for_ki = "" if ko_day or is_final else "（每日觀察 KI）"
                 return result(WAIT_PRICES, f"{u.name}：{day} 沒有收盤價{for_ki}", _before(day, first))
-            prices[u.code] = price * book.factor(u.code, base, day)
+            prices[u.code] = price * book.factor(u.code, u.basis or base, day)
         if aki and touch is None:
             hit_ki = [u for u in terms.underlyings if u.code in prices and u.ki is not None and prices[u.code] < u.ki]
             if hit_ki:
@@ -234,6 +240,28 @@ def price_jumps(
         days = series if market is None else {d: p for d, p in series.items() if _open(market, d)}
         found[code] = book.jumps(code, days)
     return found
+
+
+def _basis_problem(terms: Terms, closes: Mapping[str, Mapping[dt.date, Decimal]], book: SplitBook) -> str:
+    """Strike date 之後有拆股的標的：進場價跟 Strike date 的收盤價換到價格基準後要對得起來（#275），否則寫原因。"""
+    strike = terms.strike_date
+    if strike is None:
+        return ""
+    problems = []
+    for u in terms.underlyings:
+        if u.initial is None or not book.splits_after(u.code, strike):
+            continue
+        close = book.strike_close(u.code, strike, closes.get(u.code, {}))
+        if close is None:
+            problems.append(f"{u.name}：收盤價表沒有 {strike} 前後的收盤價，推不出價格是不是已經含拆股")
+            continue
+        converted = close * book.factor(u.code, u.basis or strike, strike)
+        if not in_range(u.initial / converted):
+            problems.append(
+                f"{u.name}：進場價 {u.initial} 跟 {strike} 的收盤價（換到價格基準後 {converted:.6g}）對不起來，"
+                "拆股登記的比例或商品的價格可能有誤"
+            )
+    return "；".join(problems)
 
 
 def _first_jump(terms: Terms, jumps: Mapping[str, Sequence[Jump]], base: dt.date, last: dt.date) -> Jump | None:
@@ -385,9 +413,10 @@ def observe_all(
     """
     with conn.transaction():
         (through,) = conn.execute("SELECT max(close_date) FROM workflow.close_price").fetchone()
+        book = SplitBook(load_splits(conn))
+        refresh_basis(conn, book)  # 價格基準日依目前的拆股登記（#275）
         terms, locked, not_done = _load_terms(conn)
         closes = _load_closes(conn, terms)
-        book = SplitBook(load_splits(conn))
         jumps = price_jumps(book, calendar, closes)
         stored = _stored_status(conn)
         existing = current_events_of(conn, [t.tdcc for t in terms])
@@ -492,12 +521,12 @@ def _load_terms(
     done = [row for row in rows if row[8] == CheckTerms.DONE]
     tdccs = [row[0] for row in done]
     underlyings: dict[str, list[Underlying]] = {}
-    for tdcc, seq, code, initial, strike, ki, ko in conn.execute(
-        "SELECT tdcc, seq, code, initial_price, strike_price, ki_price, ko_price FROM workflow.underlying_price"
-        " WHERE tdcc = ANY(%s) ORDER BY tdcc, seq",
+    for tdcc, seq, code, initial, strike, ki, ko, basis in conn.execute(
+        "SELECT tdcc, seq, code, initial_price, strike_price, ki_price, ko_price, price_basis_date"
+        " FROM workflow.underlying_price WHERE tdcc = ANY(%s) ORDER BY tdcc, seq",
         (tdccs,),
     ):
-        underlyings.setdefault(tdcc, []).append(Underlying(seq, code, initial, strike, ki, ko))
+        underlyings.setdefault(tdcc, []).append(Underlying(seq, code, initial, strike, ki, ko, basis))
     autocall: dict[str, list[dt.date]] = {}
     for tdcc, value in conn.execute(
         "SELECT tdcc, value FROM workflow.autocall_date WHERE tdcc = ANY(%s) AND value IS NOT NULL ORDER BY tdcc, value",
@@ -521,7 +550,7 @@ def _load_terms(
 
 
 def _load_closes(conn: psycopg.Connection, terms: Collection[Terms]) -> dict[str, dict[dt.date, Decimal]]:
-    """比價會用到的代碼的收盤價（從最早的 Strike date 起）。"""
+    """比價會用到的代碼的收盤價（從最早的 Strike date 前 10 天起：核對價格基準用 Strike date 前後的收盤價）。"""
     codes = sorted({u.code for t in terms for u in t.underlyings})
     starts = [d for t in terms for d in (t.strike_date, *t.autocall[:1]) if d is not None]
     closes: dict[str, dict[dt.date, Decimal]] = {}
@@ -529,7 +558,7 @@ def _load_closes(conn: psycopg.Connection, terms: Collection[Terms]) -> dict[str
         return closes
     for code, day, price in conn.execute(
         "SELECT code, close_date, close FROM workflow.close_price WHERE code = ANY(%s) AND close_date >= %s",
-        (codes, min(starts)),
+        (codes, min(starts) - dt.timedelta(days=STRIKE_CLOSE_DAYS)),
     ):
         closes.setdefault(code, {})[day] = price
     return closes

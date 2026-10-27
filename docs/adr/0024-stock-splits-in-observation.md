@@ -1,6 +1,6 @@
 # 0024: 比價的拆股處理／Stock Splits in Observation
 
-- 狀態／Status: Accepted
+- 狀態／Status: Accepted（價格已經是上手調整過的標的見 [ADR 0025](0025-price-basis-date.md)／for prices already adjusted by the issuer, see ADR 0025）
 - 日期／Date: 2026-10-27
 - 追蹤／Tracking: #270
 - 補充／Completes: [ADR 0020](0020-close-prices-and-observation-rules.md) 的比價規則；[ADR 0021](0021-stop-observing-exited-products.md)「已出場的不再比價」多一個例外／ADR 0020's observation rules; one exception to ADR 0021's "exited products are not observed again"
