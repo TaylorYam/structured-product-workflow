@@ -9,7 +9,7 @@
 
 ### 背景
 
-收盤價表（ADR 0020）存的是未調整的原始收盤價。標的拆股或合股之後，同一個代碼前後兩段價格的基準不同（例：前一天約 7 萬、隔天約 700）；比價拿拆股後的收盤價去比拆股前定下的進場價、執行價、下限價、KO 價，會誤判 KI 觸及、接股或 KO。事後重抓舊日期的 MarketData，拿到的又是依之後拆股調整過的價格，跟 HP 表同一天的值基準不同。2026-10-27 用本機資料粗查，有數十個代碼出現這種斷層，跨過斷層的商品有在庫的，也有少數已由比價判定出場。
+收盤價表（ADR 0020）存的是未調整的原始收盤價。標的拆股或合股之後，同一個代碼前後兩段價格的基準不同（例：1 拆 100 時，前一天約 10,000、隔天約 100）；比價拿拆股後的收盤價去比拆股前定下的進場價、執行價、下限價、KO 價，會誤判 KI 觸及、接股或 KO。事後重抓舊日期的 MarketData，拿到的又是依之後拆股調整過的價格，跟 HP 表同一天的值基準不同。2026-10-27 用本機資料粗查，有數十個代碼出現這種斷層，跨過斷層的商品有在庫的，也有少數已由比價判定出場。
 
 ### 決策（2026-10-27 使用者確認）
 
@@ -38,7 +38,7 @@
 
 ### Context
 
-The close-price table (ADR 0020) stores raw, unadjusted closes. After an underlying splits or consolidates, the same code has prices on two different bases (for example about 70,000 one day and about 700 the next); observation then compares post-split closes with the initial, strike, KI, and KO prices set before the split and can wrongly find a KI touch, a delivery, or a KO. Re-fetching an old date's MarketData later returns prices adjusted for subsequent splits, on a different basis from HP's value for the same day. A rough check of local data on 2026-10-27 found dozens of codes with such gaps; the products spanning them include in-stock products and a few already exited by observation.
+The close-price table (ADR 0020) stores raw, unadjusted closes. After an underlying splits or consolidates, the same code has prices on two different bases (for example, with a 1-for-100 split, about 10,000 one day and about 100 the next); observation then compares post-split closes with the initial, strike, KI, and KO prices set before the split and can wrongly find a KI touch, a delivery, or a KO. Re-fetching an old date's MarketData later returns prices adjusted for subsequent splits, on a different basis from HP's value for the same day. A rough check of local data on 2026-10-27 found dozens of codes with such gaps; the products spanning them include in-stock products and a few already exited by observation.
 
 ### Decision (confirmed by the user 2026-10-27)
 

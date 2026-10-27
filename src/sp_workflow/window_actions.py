@@ -17,7 +17,7 @@ transaction 的範圍（#205）：每日匯入、回補股價、歷史收盤價�
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -263,10 +263,11 @@ def _recalculate(conn: psycopg.Connection, config: ImportConfig) -> Recalc:
         return Recalc(error=_first_line(exc))
 
 
-def _observe_after_import(
-    conn: psycopg.Connection, calendar: TradingCalendar | None, revisit: Sequence[str] = ()
+def _observe_after_write(
+    conn: psycopg.Connection, calendar: TradingCalendar | None, revisit: Collection[str] = ()
 ) -> Observation:
-    """匯入收盤價（或改了拆股登記）之後比價全部；讀不到假日表或比價失敗時不丟錯誤（寫入已經完成），說明放在結果裡。"""
+    """寫好收盤價、舊商品或拆股登記之後比價全部（`revisit` 的已出場商品重新比）；
+    讀不到假日表或比價失敗時不丟錯誤（寫入已經完成），說明放在結果裡。"""
     import psycopg
 
     if calendar is None:
@@ -275,7 +276,7 @@ def _observe_after_import(
         return Observation(observe_all(conn, calendar, revisit=revisit))
     except (LifecycleError, psycopg.Error) as exc:
         return Observation(error=_first_line(exc))
-    except Exception as exc:  # 程式錯誤也不能讓已經寫好的匯入跟著失敗
+    except Exception as exc:  # 程式錯誤也不能讓已經寫好的資料跟著失敗
         return Observation(error=f"比價程式出錯（{type(exc).__name__}：{_first_line(exc)}）")
 
 
@@ -298,7 +299,7 @@ def run_price_csv(settings: ConnectionSettings, source: Path, paths: ConfigPaths
     with connect(settings) as conn:
         receipt = import_price_csv(source, conn, calendar)
         recalc = _recalculate_after_import(conn, paths)
-        return PriceCsvResult(receipt, recalc, _observe_after_import(conn, calendar))
+        return PriceCsvResult(receipt, recalc, _observe_after_write(conn, calendar))
 
 
 def import_close_history(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> HistoryResult:
@@ -306,7 +307,7 @@ def import_close_history(settings: ConnectionSettings, source: Path, paths: Conf
     calendar = load_calendar(paths.exchange_holidays)
     with connect(settings) as conn:
         receipt = import_history(source, conn, calendar)
-        return HistoryResult(receipt, _observe_after_import(conn, calendar))
+        return HistoryResult(receipt, _observe_after_write(conn, calendar))
 
 
 def import_legacy_products(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> LegacyResult:
@@ -321,7 +322,7 @@ def import_legacy_products(settings: ConnectionSettings, source: Path, paths: Co
         calendar = None  # 照樣匯入；比價寫「讀不到交易所假日表」
     with connect(settings) as conn:
         receipt = backfill_legacy(conn, source, fmt)
-        return LegacyResult(receipt, _observe_after_import(conn, calendar))
+        return LegacyResult(receipt, _observe_after_write(conn, calendar))
 
 
 def observe_products(settings: ConnectionSettings, paths: ConfigPaths) -> ObservationReceipt:
@@ -651,16 +652,19 @@ def load_split_rows(settings: ConnectionSettings) -> tuple[Split, ...]:
 
 def add_stock_split(settings: ConnectionSettings, split: Split, paths: ConfigPaths) -> SplitResult:
     """新增一筆拆股登記，再比價全部；寫不進去時丟 `StockSplitError`。"""
-    return _split_change(settings, split, paths, lambda conn: add_split(conn, split))
+    return _split_change(settings, split, paths, add_split)
 
 
 def delete_stock_split(settings: ConnectionSettings, split: Split, paths: ConfigPaths) -> SplitResult:
     """刪除一筆拆股登記，再比價全部。"""
-    return _split_change(settings, split, paths, lambda conn: delete_split(conn, split))
+    return _split_change(settings, split, paths, delete_split)
 
 
 def _split_change(
-    settings: ConnectionSettings, split: Split, paths: ConfigPaths, write: Callable[[psycopg.Connection], object]
+    settings: ConnectionSettings,
+    split: Split,
+    paths: ConfigPaths,
+    write: Callable[[psycopg.Connection, Split], object],
 ) -> SplitResult:
     """寫一筆（自己一個 transaction），比價全部（受影響、由比價判定出場的重新比），再重讀全部登記。"""
     try:
@@ -668,8 +672,8 @@ def _split_change(
     except CheckTermsError:
         calendar = None  # 登記照存；比價寫「讀不到交易所假日表」
     with connect(settings) as conn:
-        write(conn)
-        observation = _observe_after_import(conn, calendar, affected_exits(conn, split))
+        write(conn, split)
+        observation = _observe_after_write(conn, calendar, affected_exits(conn, split))
         return SplitResult(load_splits(conn), observation)
 
 

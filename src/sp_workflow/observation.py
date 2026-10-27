@@ -126,7 +126,7 @@ def observe(
 ) -> Outcome:
     """把一檔商品逐日比到 `through`（收盤價表最新的一天）。`closes` 是代碼 → {收盤日: 收盤價}（原始值）。
 
-    `splits` 是拆股登記；`jumps` 是各代碼的價格斷層（`observe_all` 先算好一次），沒給時由 `splits` 從 `closes` 算。"""
+    `splits` 是拆股登記；`jumps` 是各代碼的價格斷層（`observe_all` 先用 `price_jumps` 算好一次），沒給時這裡算。"""
     problem = _terms_problem(terms, calendar)
     if problem:
         return Outcome(TO_CONFIRM, problem)
@@ -175,11 +175,8 @@ def observe(
 
     book = splits or SplitBook()
     base = terms.strike_date or first - dt.timedelta(days=1)  # 進場價的基準日
-    if jumps is None:  # 只看各市場的交易日（收盤價表本來就不存休市日）
-        jumps = {
-            u.code: book.jumps(u.code, {d: p for d, p in closes[u.code].items() if _open(markets[u.code], d)})
-            for u in terms.underlyings
-        }
+    if jumps is None:
+        jumps = price_jumps(book, calendar, {u.code: closes[u.code] for u in terms.underlyings})
     jump = _first_jump(terms, jumps, base, last)
     end = last if jump is None else min(last, jump.day - dt.timedelta(days=1))
 
@@ -225,6 +222,18 @@ def observe(
         return result(TO_CONFIRM, _jump_reason(terms, jump), _before(jump.day, first))
     reason = _waiting(ko_first, final) if ko_first is None or last < ko_first else ""
     return result(ON_BOOK, reason, last)
+
+
+def price_jumps(
+    book: SplitBook, calendar: TradingCalendar, closes: Mapping[str, Mapping[dt.date, Decimal]]
+) -> dict[str, tuple[Jump, ...]]:
+    """各代碼的價格斷層，只看該市場的交易日（休市日的收盤價不算）；交易所不在假日表的代碼全部看。"""
+    found = {}
+    for code, series in closes.items():
+        market = calendar.market_of(code)
+        days = series if market is None else {d: p for d, p in series.items() if _open(market, d)}
+        found[code] = book.jumps(code, days)
+    return found
 
 
 def _first_jump(terms: Terms, jumps: Mapping[str, Sequence[Jump]], base: dt.date, last: dt.date) -> Jump | None:
@@ -379,7 +388,7 @@ def observe_all(
         terms, locked, not_done = _load_terms(conn)
         closes = _load_closes(conn, terms)
         book = SplitBook(load_splits(conn))
-        jumps = {code: book.jumps(code, series) for code, series in closes.items()}
+        jumps = price_jumps(book, calendar, closes)
         stored = _stored_status(conn)
         existing = current_events_of(conn, [t.tdcc for t in terms])
         results: list[Observed] = []

@@ -39,7 +39,7 @@ class StockSplitError(OperatorError):
 
 @dataclass(frozen=True)
 class Split:
-    code: str  # 同收盤價表，例：1321 JT
+    code: str  # 同收盤價表，例：AAA UW
     effective_date: dt.date  # 第一個用新股數交易的日子
     shares_before: int
     shares_after: int
@@ -123,7 +123,7 @@ def split_from(code: str, effective_date: dt.date, before: str, after: str, note
     """畫面輸入的一筆：代碼去掉 Equity 這類字尾，前後股數是正整數。"""
     normalized = sheet_cells.bbg_code(code)
     if not normalized:
-        raise StockSplitError("請填代碼（例：1321 JT，可以帶 Equity）。")
+        raise StockSplitError("請填代碼（例：AAA UW，可以帶 Equity）。")
     return Split(
         normalized, effective_date, _shares("拆股前股數", before), _shares("拆股後股數", after), note.strip() or None
     )
@@ -179,7 +179,7 @@ def add_split(conn: psycopg.Connection, split: Split, *, user: str | None = None
             {"code": split.code},
         ).fetchone()
         if not (known and known[0]):
-            raise StockSplitError(f"收盤價表和商品都沒有「{split.code}」這個代碼，請確認代碼（例：1321 JT）。")
+            raise StockSplitError(f"收盤價表和商品都沒有「{split.code}」這個代碼，請確認代碼（例：AAA UW）。")
         conn.execute(
             "INSERT INTO workflow.stock_split (code, effective_date, shares_before, shares_after, note, recorded_by)"
             " VALUES (%s, %s, %s, %s, %s, %s)",

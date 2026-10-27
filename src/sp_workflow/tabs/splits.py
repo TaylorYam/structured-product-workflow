@@ -13,12 +13,10 @@ from tkinter import messagebox, ttk
 
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import Background, FitTreeview, Scrollbar, WrapLabel
-from sp_workflow.credit_ratings import CreditRatingError
-from sp_workflow.observation import EventChange
-from sp_workflow.stock_splits import Split, StockSplitError, split_from
+from sp_workflow.stock_splits import Split, split_from
 from sp_workflow.tabs.base import TITLE, ActionRunner, BackgroundFactory, DatabaseLogin
-from sp_workflow.tabs.daily import observation_text
-from sp_workflow.tabs.ratings import _ask, _Form, read_day
+from sp_workflow.tabs.daily import events_text, observation_text
+from sp_workflow.tabs.ratings import Form, ask_form, read_day
 from sp_workflow.window_actions import SplitResult, add_stock_split, delete_stock_split, load_split_rows
 
 COLUMNS = (
@@ -118,8 +116,14 @@ class SplitsWindow(tk.Toplevel):
     def _saved(self, result: SplitResult, done: str) -> None:
         self._show(result.splits)
         receipt = result.observation.receipt
-        changes = "" if receipt is None else "".join(f"\n{_change_text(c)}" for c in receipt.changes)
-        self.status_var.set(f"已存：{done}。{observation_text(result.observation)}{changes}")
+        changes = (
+            ""
+            if receipt is None
+            else "".join(
+                f"\n{c.tdcc} 存續事件：{events_text(c.previous)} → {events_text(c.current)}" for c in receipt.changes
+            )
+        )
+        self.status_var.set(f"已存：{done}。{observation_text(result.observation, '登記')}{changes}")
 
     def _selected(self) -> Split | None:
         selection = self.table.selection()
@@ -175,16 +179,7 @@ class SplitsWindow(tk.Toplevel):
         self.destroy()
 
 
-def _change_text(change: EventChange) -> str:
-    def text(events: tuple[tuple[str, str, str | None], ...]) -> str:
-        return (
-            "、".join(" ".join(p for p in (event, underlying, day) if p) for event, day, underlying in events) or "沒有"
-        )
-
-    return f"{change.tdcc} 存續事件：{text(change.previous)} → {text(change.current)}"
-
-
-class SplitForm(_Form):
+class SplitForm(Form):
     """新增一筆拆股登記：代碼、生效日、拆股前後股數、備註。"""
 
     def __init__(self, parent: tk.Misc) -> None:
@@ -195,28 +190,17 @@ class SplitForm(_Form):
         self.after_var = self.entry("拆股後股數", "", width=8)
         self.note_var = self.entry("備註", "")
         self.note(
-            "代碼同收盤價表（例：1321 JT，可以帶 Equity）。生效日是第一個用新股數交易的日子。"
+            "代碼同收盤價表（例：AAA UW，可以帶 Equity）。生效日是第一個用新股數交易的日子。"
             "1 拆 100 填 1、100；10 合 1 填 10、1；確認不是拆股填 1、1。"
         )
         self.finish_layout()
 
     def read(self) -> Split:
-        try:
-            day = read_day(self.day_var.get())
-        except CreditRatingError as exc:  # 生效日欄和評等視窗共用，訊息一樣適用
-            raise StockSplitError(str(exc)) from exc
+        day = read_day(self.day_var.get())
         return split_from(self.code_var.get(), day, self.before_var.get(), self.after_var.get(), self.note_var.get())
-
-    def confirm(self) -> None:
-        try:
-            self.result = self.read()
-        except StockSplitError as exc:
-            self.error_var.set(str(exc))
-            return
-        self.destroy()
 
 
 def ask_split(parent: tk.Misc) -> Split | None:
     """新增拆股登記的輸入；取消時 None。"""
-    found = _ask(SplitForm(parent))
+    found = ask_form(SplitForm(parent))
     return found if isinstance(found, Split) else None

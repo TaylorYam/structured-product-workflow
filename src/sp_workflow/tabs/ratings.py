@@ -26,7 +26,7 @@ from sp_workflow.credit_ratings import (
     entity_from,
     rating_from,
 )
-from sp_workflow.database import ConnectionSettings
+from sp_workflow.database import ConnectionSettings, OperatorError
 from sp_workflow.tabs.base import TITLE, ActionRunner, BackgroundFactory, DatabaseLogin
 from sp_workflow.window_actions import (
     add_credit_rating,
@@ -250,8 +250,10 @@ class RatingsWindow(tk.Toplevel):
         self.destroy()
 
 
-class _Form(tk.Toplevel):
-    """新增、修改用的小視窗：按確定（或 Enter）時讀輸入，有錯寫在視窗裡、不關；取消（或 Esc）關掉。"""
+class Form(tk.Toplevel):
+    """新增、修改用的小視窗：按確定（或 Enter）時讀輸入，有錯寫在視窗裡、不關；取消（或 Esc）關掉。
+
+    拆股登記（`tabs.splits`）也用；`read` 丟的 `OperatorError`（評等、拆股的錯誤）寫在視窗裡。"""
 
     def __init__(self, parent: tk.Misc, title: str) -> None:
         super().__init__(parent)
@@ -316,7 +318,7 @@ class _Form(tk.Toplevel):
     def confirm(self) -> None:
         try:
             self.result = self.read()
-        except CreditRatingError as exc:
+        except OperatorError as exc:
             self.error_var.set(str(exc))
             return
         self.destroy()
@@ -332,7 +334,7 @@ def read_day(text: str, *, blank: dt.date | None = None) -> dt.date:
     return day
 
 
-class RatingForm(_Form):
+class RatingForm(Form):
     """新增（before 是 None）或修改最新一筆評等。第一批評等（最初）的生效日不能改。
 
     新增時三家評等先帶入 `latest`（打開時看到的最新一筆），只改變了的那家就好；空白是「沒有該家評等」，不是「沒變」。
@@ -363,7 +365,7 @@ class RatingForm(_Form):
         return rating_from(self.entity.issuer, self.entity.role, day, *(v.get() for v in self.agency_vars))
 
 
-class EntityForm(_Form):
+class EntityForm(Form):
     """新增一個機構（新上手用）和它的第一筆評等；生效日空白就是「最初」。"""
 
     def __init__(self, parent: tk.Misc) -> None:
@@ -387,7 +389,7 @@ class EntityForm(_Form):
         return entity, rating_from(entity.issuer, entity.role, day, *(v.get() for v in self.agency_vars))
 
 
-def _ask(form: _Form) -> object:
+def ask_form(form: Form) -> object:
     form.grab_set()
     form.master.wait_window(form)
     return form.result
@@ -395,11 +397,11 @@ def _ask(form: _Form) -> object:
 
 def ask_rating(parent: tk.Misc, entity: Entity, before: Rating | None, latest: Rating | None = None) -> Rating | None:
     """新增（before 是 None，三家評等先帶入 `latest`）或修改最新一筆評等的輸入；取消時 None。"""
-    found = _ask(RatingForm(parent, entity, before, latest))
+    found = ask_form(RatingForm(parent, entity, before, latest))
     return found if isinstance(found, Rating) else None
 
 
 def ask_entity(parent: tk.Misc) -> tuple[Entity, Rating] | None:
     """新增機構的輸入：(機構, 第一筆評等)；取消時 None。"""
-    found = _ask(EntityForm(parent))
+    found = ask_form(EntityForm(parent))
     return found if isinstance(found, tuple) else None
