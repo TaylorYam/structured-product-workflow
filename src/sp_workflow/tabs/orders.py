@@ -345,9 +345,11 @@ class OrderTermsTab(Tab):
         if calcs is not None:
             to_confirm = sum(calc.problem for calc in batch.values())
             kpis.append(("核對條件待確認（檔）", to_confirm, to_confirm > 0))
-        self.finish(kpis, f"{status}\n{self._hand_off(receipt)}")
+        self.finish(kpis, status)
         self.releaser.show(recalc)
         self._refresh_risk_button()
+        # 先顯示這次的結果，再帶入準備頁（可能先問要不要換，#286）
+        self.status_var.set(f"{status}\n{self._hand_off(receipt)}")
 
     def _hand_off(self, receipt: BatchReceipt) -> str:
         """把成功匯入（新增、覆蓋、沒有變）的 TDCC 依結果表順序帶到準備頁（#281）；真的帶入了才有下一步。

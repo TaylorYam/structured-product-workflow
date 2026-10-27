@@ -8,6 +8,8 @@ from tkinter import messagebox
 
 import pytest
 
+import sp_workflow.tabs.returning
+from sp_workflow.mail_drafts import DRAFTED, DraftOutcome, DraftReceipt
 from sp_workflow.returning import (
     ALREADY_THERE,
     NOT_CHECKED_REASON,
@@ -18,7 +20,7 @@ from sp_workflow.returning import (
     ReturnReceipt,
 )
 from sp_workflow.step_records import Recorded
-from sp_workflow.window_actions import ReturnResult
+from sp_workflow.window_actions import DraftResult, ReturnResult
 from window_synth import new_window
 
 
@@ -115,11 +117,14 @@ def test_different_tdccs_on_the_mail_tab_are_replaced_only_if_the_operator_agree
     window = new_window(master, tmp_path)
     window.mail.tdcc_text.insert("1.0", "147000000009")
     asked = []
-    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or answer)
+    monkeypatch.setattr(
+        messagebox, "askyesno", lambda *a, **k: asked.append((a[1], window.returning.kpis.values)) or answer
+    )
 
     window.returning._done(returned(PASSED))
 
-    assert len(asked) == 1 and asked[0].startswith("「6 寄信草稿」已經有 1 筆 TDCC")
+    assert len(asked) == 1 and asked[0][0].startswith("「6 寄信草稿」已經有 1 筆 TDCC")
+    assert asked[0][1][0] == ("已放回或已在（檔）", 1, False), "問的時候放回頁已經顯示這次的結果（#286）"
     assert pasted(window.mail) == ("147000000001" if answer else "147000000009")
     assert window.returning.next_button.winfo_manager() == ("pack" if answer else ""), "沒帶入就沒有下一步"
     if not answer:
@@ -154,3 +159,28 @@ def test_a_new_check_result_withdraws_the_next_step_to_mail(master, tmp_path: Pa
     window.returning.receive(tmp_path / "核對結果.xlsx", None)
 
     assert window.returning.next_button.winfo_manager() == ""
+
+
+def test_returning_again_withdraws_the_next_step_to_mail(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    window = new_window(master, tmp_path, background=immediate)
+    window.returning._done(returned(PASSED))
+    assert window.returning.next_button.winfo_manager() == "pack"
+    window.returning.batch_var.set(str(tmp_path / "待核對_1"))
+    window.returning.result_var.set(str(tmp_path / "核對結果.xlsx"))
+    monkeypatch.setattr(sp_workflow.tabs.returning, "run_return", lambda *a: returned(BLOCKED))
+
+    window.returning.start()
+
+    assert window.returning.next_button.winfo_manager() == "", "這次沒有通過的，上一次的下一步收起來"
+
+
+def test_handing_over_clears_the_last_mail_results(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    receipt = DraftReceipt(tmp_path / "寄信草稿清單.xlsx", (DraftOutcome("147000000001", DRAFTED),), last_import=None)
+    window.mail._done(DraftResult(receipt))
+
+    window.returning._done(returned(PASSED))
+
+    mail = window.mail
+    assert mail.table.get_children() == () and mail.kpis.values == ()
+    assert mail.status_var.get() == mail.READY_TEXT, "狀態列不留上一次的完成訊息（#286）"

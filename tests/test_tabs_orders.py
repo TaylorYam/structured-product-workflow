@@ -561,13 +561,18 @@ def test_different_tdccs_on_the_prepare_tab_are_replaced_only_if_the_operator_ag
     window = imported_window(master, tmp_path)
     window.prepare.tdcc_text.insert("1.0", "147000000009")
     asked = []
-    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or answer)
+    monkeypatch.setattr(
+        messagebox, "askyesno", lambda *a, **k: asked.append((a[1], window.orders.kpis.values)) or answer
+    )
 
     window.orders._saved(import_lines(ImportResult.OVERWRITTEN))
 
     assert asked == [
-        "「3 準備」已經有 1 筆 TDCC，和起單資料成功匯入的 TDCC（1 筆）不同。\n\n要換成起單資料成功匯入的 TDCC 嗎？"
-    ]
+        (
+            "「3 準備」已經有 1 筆 TDCC，和起單資料成功匯入的 TDCC（1 筆）不同。\n\n要換成起單資料成功匯入的 TDCC 嗎？",
+            (("已匯入（檔）", 1, False), ("沒匯入（檔）", 0, False)),
+        )
+    ], "問的時候起單資料頁已經顯示這次的匯入結果（#286）"
     assert pasted(window.prepare) == ("029199990001" if answer else "147000000009")
     assert window.prepare.hint.shown is answer
     assert window.orders.next_button.winfo_manager() == ("pack" if answer else ""), "沒帶入就沒有下一步"
@@ -590,10 +595,16 @@ def test_a_busy_prepare_tab_is_not_handed_tdccs(master, tmp_path: Path, monkeypa
 def test_handing_over_clears_the_last_prepare_results_and_change_clears_the_tdccs(master, tmp_path: Path) -> None:
     window = imported_window(master, tmp_path)
     window.prepare._done(prepared_result(tmp_path / "待核對_1"))
+    assert window.prepare.next_button.winfo_manager() == "pack"
 
     window.orders._saved(import_lines(ImportResult.NEW))
 
-    assert window.prepare.table.get_children() == () and window.prepare.kpis.values == ()
+    prepare = window.prepare
+    assert prepare.table.get_children() == () and prepare.kpis.values == ()
+    # 上一批的下一步、批次資料夾不能留著，不然會核對到上一批的 PDF（#286）
+    assert prepare.next_button.winfo_manager() == "" and prepare.batch_dir is None
+    assert str(prepare.open_button.cget("state")) == "disabled"
+    assert prepare.status_var.get() == prepare.READY_TEXT
     hint_change_button(window.prepare.hint).invoke()
     assert pasted(window.prepare) == "" and not window.prepare.hint.shown
 

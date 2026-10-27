@@ -119,13 +119,13 @@ class ReturnTab(Tab):
             ("含待確認（檔）", pending, pending > 0),
             ("不放回（檔）", blocked, blocked > 0),
         )
-        self.finish(
-            kpis,
+        status = (
             f"完成：{returned} 個商品已放回或已在、{pending} 個含「{PENDING_SUFFIX}」檔、"
-            f"{blocked} 個不放回。放回清單：{receipt.list_path}"
-            + record_note(recorded)
-            + f"\n{self._hand_off(receipt)}",
+            f"{blocked} 個不放回。放回清單：{receipt.list_path}" + record_note(recorded)
         )
+        self.finish(kpis, status)
+        # 先顯示這次的結果，再帶入寄信草稿頁（可能先問要不要換，#286）
+        self.status_var.set(f"{status}\n{self._hand_off(receipt)}")
 
     def _hand_off(self, receipt: ReturnReceipt) -> str:
         """把通過的 TDCC（TS、IIS 都用標準檔名放回或已在）帶到寄信草稿頁（#281）；真的帶入了才有下一步。

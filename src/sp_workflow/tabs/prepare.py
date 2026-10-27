@@ -16,6 +16,8 @@ from sp_workflow.window_actions import PrepareResult, run_prepare
 
 
 class PrepareTab(Tab):
+    READY_TEXT = "貼上 TDCC，選好輸出位置後按「開始準備」（在最上方的根目錄底下找商品資料夾）。"
+
     def __init__(
         self,
         notebook: ttk.Notebook,
@@ -34,7 +36,7 @@ class PrepareTab(Tab):
         self.root_folder = root_folder
         self.batch_dir: Path | None = None
         self.out_var = tk.StringVar(value=memory.load().get("out", ""))
-        self.status_var.set("貼上 TDCC，選好輸出位置後按「開始準備」（在最上方的根目錄底下找商品資料夾）。")
+        self.status_var.set(self.READY_TEXT)
         self.page_header(
             "準備待核對批次",
             "在最上方的根目錄底下找出每個 TDCC 的中文說明書與投資人須知，改成標準檔名放進新的批次資料夾；"
@@ -67,6 +69,14 @@ class PrepareTab(Tab):
             "起單資料成功匯入的 TDCC",
             f"已帶入「2 起單資料」成功匯入的 TDCC {len(tdccs)} 筆，選好輸出位置後按「開始準備」。",
         )
+
+    def _clear_results(self) -> None:
+        """帶入新的 TDCC 前收起上一批（#286）：下一步、打開批次資料夾都是上一批的，狀態列回到說明。"""
+        super()._clear_results()
+        self.next_button.withdraw()
+        self.batch_dir = None
+        self.open_button.configure(state=tk.DISABLED)
+        self.status_var.set(self.READY_TEXT)
 
     def _busy(self, busy: bool) -> None:
         """處理中不能再按；打開批次資料夾要等準備好了才能按。"""
