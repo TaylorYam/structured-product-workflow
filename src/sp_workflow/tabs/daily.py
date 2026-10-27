@@ -281,7 +281,7 @@ class DailyImportTab(Tab):
         if receipt is None:
             return
         for change in receipt.changes:
-            detail = f"{_events_text(change.previous)} → {_events_text(change.current)}"
+            detail = f"{events_text(change.previous)} → {events_text(change.current)}"
             self.add_row((change.tdcc, "存續事件有變", detail), problem=False)
         for tdcc, reason in receipt.errors:
             self.add_row((tdcc, "比價寫不進去", reason), problem=True)
@@ -385,13 +385,13 @@ def _observation_kpis(observation: Observation) -> list[tuple[str, int, bool]]:
     return [("存續事件有變（檔）", len(receipt.changes), False), ("比價沒完成（檔）", unfinished, unfinished > 0)]
 
 
-def observation_text(observation: Observation) -> str:
-    """完成訊息裡的比價一句（#155）。"""
+def observation_text(observation: Observation, saved: str = "匯入") -> str:
+    """完成訊息裡的比價一句（#155）；`saved` 是比價前寫好的東西（拆股登記用「登記」）。"""
     receipt = observation.receipt
     if receipt is None and not observation.error:
         return "比價：這次沒有跑。"
     if receipt is None:
-        return f"比價：沒有跑，{observation.error}。匯入已經完成，修好後按「維護 → 重新比價全部」。"
+        return f"比價：沒有跑，{observation.error}。{saved}已經完成，修好後按「維護 → 重新比價全部」。"
     through = "收盤價表還沒有資料" if receipt.through is None else f"比到 {receipt.through:%Y-%m-%d}"
     counts = "、".join(
         f"{status} {receipt.count(status)}" for status in (ON_BOOK, EXITED, WAIT_PRICES, Pricing.TO_CONFIRM)
@@ -402,7 +402,7 @@ def observation_text(observation: Observation) -> str:
     return text + "。"
 
 
-def _events_text(events: Sequence[tuple[str, str, str | None]]) -> str:
+def events_text(events: Sequence[tuple[str, str, str | None]]) -> str:
     texts = [" ".join(part for part in (event, underlying, day) if part) for event, day, underlying in events]
     return "、".join(texts) or "沒有"
 
