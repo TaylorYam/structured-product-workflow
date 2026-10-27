@@ -19,8 +19,12 @@
 - 缺價格就停住：某標的在它市場的交易日要用到價格、收盤價表沒有，這檔停在那一天（已比到的日期是前一天），
   比價狀態「等股價」寫出標的與日期。交易所不在假日表、日期超出假日表涵蓋範圍、要比價了收盤價表卻完全沒有這個代碼
   → 待確認並寫原因。
+- 拆股（#270、ADR 0024）：登記的拆股生效日在 Strike date 之後、不晚於觀察日的，收盤價乘上「拆股後 ÷ 拆股前」股數
+  換回交易時的基準再比；商品的四個價格不動。還沒登記的價格斷層（`stock_splits.SplitBook.jumps`）落在 Strike date 之後、
+  比價範圍以內時，比到斷層前一天就停下來、待確認並寫出標的、日期與倍數；在那之前算出的出場照樣算。
 - 寫入：第一次算出出場事件時經 `lifecycle.replace_auto_events` 寫入（留紀錄）；每檔一筆
-  `workflow.pricing_status`，和上一次不同才寫。
+  `workflow.pricing_status`，和上一次不同才寫。拆股登記改了之後，受影響、事件全部來自比價的已出場商品
+  （`revisit`）忽略原本的事件重新比，結果不同就取代（不再出場就清掉事件，變回在庫）。
 
 `observe` 只算一檔、不碰資料庫；`observe_all` 讀資料庫、算全部、寫回。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
@@ -41,6 +45,7 @@ from sp_workflow.lifecycle import (
     LEGACY,
     MANUAL,
     MATURITY,
+    OBSERVATION,
     AutoEvent,
     LifecycleError,
     StoredEvent,
@@ -49,6 +54,7 @@ from sp_workflow.lifecycle import (
 )
 from sp_workflow.product_record import KO_TYPES
 from sp_workflow.status import CheckTerms, OrderReview, Pricing
+from sp_workflow.stock_splits import Jump, SplitBook, load_splits
 
 if TYPE_CHECKING:
     import psycopg
@@ -115,8 +121,12 @@ def observe(
     closes: Mapping[str, Mapping[dt.date, Decimal]],
     calendar: TradingCalendar,
     through: dt.date | None,
+    splits: SplitBook | None = None,
+    jumps: Mapping[str, Sequence[Jump]] | None = None,
 ) -> Outcome:
-    """把一檔商品逐日比到 `through`（收盤價表最新的一天）。`closes` 是代碼 → {收盤日: 收盤價}。"""
+    """把一檔商品逐日比到 `through`（收盤價表最新的一天）。`closes` 是代碼 → {收盤日: 收盤價}（原始值）。
+
+    `splits` 是拆股登記；`jumps` 是各代碼的價格斷層（`observe_all` 先算好一次），沒給時由 `splits` 從 `closes` 算。"""
     problem = _terms_problem(terms, calendar)
     if problem:
         return Outcome(TO_CONFIRM, problem)
@@ -163,9 +173,19 @@ def observe(
                 f"（{market.covered_from}～{market.covered_through}）",
             )
 
+    book = splits or SplitBook()
+    base = terms.strike_date or first - dt.timedelta(days=1)  # 進場價的基準日
+    if jumps is None:  # 只看各市場的交易日（收盤價表本來就不存休市日）
+        jumps = {
+            u.code: book.jumps(u.code, {d: p for d, p in closes[u.code].items() if _open(markets[u.code], d)})
+            for u in terms.underlyings
+        }
+    jump = _first_jump(terms, jumps, base, last)
+    end = last if jump is None else min(last, jump.day - dt.timedelta(days=1))
+
     remembered: set[str] = set()
     day = first
-    while day <= last:
+    while day <= end:
         open_ = {code for code, market in markets.items() if _open(market, day)}
         is_final = day == final
         ko_day = (ko_start is not None and day >= ko_start and len(open_) == len(markets)) or day in ko_days
@@ -188,7 +208,7 @@ def observe(
             if price is None:
                 for_ki = "" if ko_day or is_final else "（每日觀察 KI）"
                 return result(WAIT_PRICES, f"{u.name}：{day} 沒有收盤價{for_ki}", _before(day, first))
-            prices[u.code] = price
+            prices[u.code] = price * book.factor(u.code, base, day)
         if aki and touch is None:
             hit_ki = [u for u in terms.underlyings if u.code in prices and u.ki is not None and prices[u.code] < u.ki]
             if hit_ki:
@@ -201,8 +221,23 @@ def observe(
         if is_final:
             return _maturity(terms, prices, touch, day)
         day += dt.timedelta(days=1)
+    if jump is not None:
+        return result(TO_CONFIRM, _jump_reason(terms, jump), _before(jump.day, first))
     reason = _waiting(ko_first, final) if ko_first is None or last < ko_first else ""
     return result(ON_BOOK, reason, last)
+
+
+def _first_jump(terms: Terms, jumps: Mapping[str, Sequence[Jump]], base: dt.date, last: dt.date) -> Jump | None:
+    """基準日之後、比到的最後一天以前，各標的最早的價格斷層。"""
+    found = [j for u in terms.underlyings for j in jumps.get(u.code, ()) if base < j.day <= last]
+    return min(found, key=lambda j: (j.day, _seq(terms, j.code)), default=None)
+
+
+def _jump_reason(terms: Terms, jump: Jump) -> str:
+    return (
+        f"{_name(terms, jump.code)}：{jump.day} 收盤價是 {jump.before} 的 {jump.ratio:.3g} 倍，疑似拆股或收盤價有誤"
+        "（拆股請到「維護 → 拆股登記…」登記，價格錯了請重匯）"
+    )
 
 
 def _waiting(ko_first: dt.date | None, final: dt.date) -> str:
@@ -284,6 +319,10 @@ def _name(terms: Terms, code: str) -> str:
     return next(u.name for u in terms.underlyings if u.code == code)
 
 
+def _seq(terms: Terms, code: str) -> int:
+    return next(u.seq for u in terms.underlyings if u.code == code)
+
+
 # ---------- 資料庫 ----------
 
 
@@ -326,16 +365,21 @@ class ObservationReceipt:
         return tuple(r for r in self.results if r.status in (WAIT_PRICES, TO_CONFIRM))
 
 
-def observe_all(conn: psycopg.Connection, calendar: TradingCalendar, *, user: str | None = None) -> ObservationReceipt:
+def observe_all(
+    conn: psycopg.Connection, calendar: TradingCalendar, *, user: str | None = None, revisit: Collection[str] = ()
+) -> ObservationReceipt:
     """比價全部：核對條件完成、還沒出場的商品逐日比到收盤價表最新的一天，寫出場事件與比價狀態（有變才寫）。
 
-    已出場的不比，比價狀態是已出場。核對條件不再是完成、但以前比過的商品不比，
+    已出場的不比，比價狀態是已出場；例外是 `revisit`（拆股登記改了、受影響的商品，`stock_splits.affected_exits`）
+    裡事件全部來自比價的，忽略原本的事件重新比。核對條件不再是完成、但以前比過的商品不比，
     還沒出場的比價狀態改成待確認（事件不動）。
     """
     with conn.transaction():
         (through,) = conn.execute("SELECT max(close_date) FROM workflow.close_price").fetchone()
         terms, locked, not_done = _load_terms(conn)
         closes = _load_closes(conn, terms)
+        book = SplitBook(load_splits(conn))
+        jumps = {code: book.jumps(code, series) for code, series in closes.items()}
         stored = _stored_status(conn)
         existing = current_events_of(conn, [t.tdcc for t in terms])
         results: list[Observed] = []
@@ -343,7 +387,9 @@ def observe_all(conn: psycopg.Connection, calendar: TradingCalendar, *, user: st
         errors: list[tuple[str, str]] = []
         for t in terms:
             events = existing.get(t.tdcc, [])
-            if events:  # 已出場：不再比價（ADR 0020），已比到的日期與 KI 沿用上一次；沒存過 KI 的寫 KI 種類（#198）
+            again = t.tdcc in revisit and all(e.source == OBSERVATION for e in events)
+            # 已出場：不再比價（ADR 0020），已比到的日期與 KI 沿用上一次；沒存過 KI 的寫 KI 種類（#198）
+            if events and not again:
                 before = stored.get(t.tdcc)
                 results.append(
                     Observed(
@@ -356,11 +402,19 @@ def observe_all(conn: psycopg.Connection, calendar: TradingCalendar, *, user: st
                     )
                 )
                 continue
-            outcome = observe(t, closes, calendar, through)
-            if outcome.status == EXITED:
+            outcome = observe(t, closes, calendar, through, book, jumps)
+            if outcome.status == EXITED or events:  # 重新比的已出場商品不再出場時清掉事件
+                new = outcome.events if outcome.status == EXITED else ()
+                previous = tuple(AutoEvent(e.event, e.event_date, e.underlying) for e in events if e.event_date)
                 try:
-                    if replace_auto_events(conn, t.tdcc, outcome.events, user=user):
-                        changes.append(EventChange(t.tdcc, (), tuple(e.key() for e in _sorted(outcome.events))))
+                    if replace_auto_events(conn, t.tdcc, new, user=user):
+                        changes.append(
+                            EventChange(
+                                t.tdcc,
+                                tuple(e.key() for e in _sorted(previous)),
+                                tuple(e.key() for e in _sorted(new)),
+                            )
+                        )
                 except LifecycleError as exc:  # 例如比價中有人登記了顧客贖回
                     errors.append((t.tdcc, str(exc)))
                     outcome = Outcome(TO_CONFIRM, f"自動事件寫不進去：{exc}", outcome.observed_through, ki=outcome.ki)

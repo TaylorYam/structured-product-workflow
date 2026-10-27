@@ -22,8 +22,11 @@ from sp_workflow.database import DatabaseError, SchemaOutdatedError
 from sp_workflow.product_terms import write_batch
 from sp_workflow.progress import SentBatch
 from sp_workflow.status import ImportResult
+from sp_workflow.stock_splits import Split, StockSplitError
 from sp_workflow.window_actions import (
     _drafts,
+    add_stock_split,
+    delete_stock_split,
     import_close_history,
     import_order_sheet,
     mark_sent_batch,
@@ -123,7 +126,7 @@ def test_a_failed_recalculation_keeps_the_price_csv(pg, pg_settings, tmp_path: P
 def test_a_failed_observation_keeps_the_price_csv(pg, pg_settings, tmp_path: Path, monkeypatch) -> None:
     source = write_price_csv(tmp_path / "MarketData_20261015.csv", [csv_price("AAA UW")])
 
-    def broken(conn, calendar):
+    def broken(conn, calendar, **kwargs):
         raise RuntimeError("壞掉了")
 
     monkeypatch.setattr(window_actions, "observe_all", broken)
@@ -181,6 +184,32 @@ def test_close_history_needs_the_holiday_calendar(pg, pg_settings, tmp_path: Pat
         import_close_history(pg_settings, tmp_path / "HP.xlsx", no_holidays(tmp_path))
 
     assert count(pg, "workflow.close_price_import") == 0
+
+
+@pytest.mark.db
+def test_a_split_is_kept_even_when_observation_cannot_run(pg, pg_settings, tmp_path: Path) -> None:
+    """拆股登記（#270）：存檔後比價全部；讀不到假日表時登記照樣保留，原因放在結果裡。"""
+    (import_id,) = pg.execute(
+        "INSERT INTO workflow.close_price_import (source, file_name, file_sha256, imported_by, summary)"
+        " VALUES ('歷史收盤價', 'HP.xlsx', 'x', 'tester', '{}') RETURNING import_id"
+    ).fetchone()
+    pg.execute(
+        "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES ('2026-10-15', 'AAA UW', 10, %s)",
+        (import_id,),
+    )
+    split = Split("AAA UW", dt.date(2026, 10, 16), 1, 2)
+
+    added = add_stock_split(pg_settings, split, no_holidays(tmp_path))
+
+    assert added.splits == (split,) and "讀不到交易所假日表" in added.observation.error
+    assert count(pg, "workflow.stock_split") == 1, "另一條連線看得到：已經 commit"
+    with pytest.raises(StockSplitError, match="已經有一筆"):
+        add_stock_split(pg_settings, split, PATHS)
+
+    deleted = delete_stock_split(pg_settings, split, PATHS)
+
+    assert deleted.splits == () and deleted.observation.receipt is not None
+    assert count(pg, "workflow.stock_split_log") == 2
 
 
 # ---------- 讀起單建檔：能連就帶入資料庫的值，連不上就退回 ----------

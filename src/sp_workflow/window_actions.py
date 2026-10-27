@@ -8,6 +8,7 @@
 歷史收盤價讀不到假日表就整份不匯入。
 比價（#155）在回補股價與歷史收盤價匯入之後跑；比價失敗時匯入保留，原因放在結果裡。
 信箱維護（#158）每次存檔一個動作，寫完重讀全部人員與別名給畫面重新顯示；發行機構評等（#237）也一樣。
+拆股登記（#270）存檔後同樣重讀，並比價全部（受影響、由比價判定出場的商品重新比）；比價失敗時登記保留，原因放在結果裡。
 transaction 的範圍（#205）：每日匯入、回補股價、歷史收盤價、起單資料匯入、舊商品補資料與準備、放回、建草稿的步驟紀錄
 整批一個；進度頁的登記已寄出（含批次）、顧客贖回一檔一個（`_each`），寫不進去只影響那一檔、之前寫好的保留。
 這裡不自己寫 SQL：要判斷進度、查已寄出過的，問 `progress`、`step_records`。
@@ -108,6 +109,7 @@ from sp_workflow.step_records import (
     returned_records,
     write_records,
 )
+from sp_workflow.stock_splits import Split, add_split, affected_exits, delete_split, load_splits
 from sp_workflow.trade_rows import TradeRowsDraft, load_trade_rows
 
 if TYPE_CHECKING:
@@ -155,6 +157,14 @@ class LegacyResult:
     """匯入舊商品的價格與比價日（#154）與之後的比價。"""
 
     receipt: BackfillReceipt
+    observation: Observation = Observation()
+
+
+@dataclass(frozen=True)
+class SplitResult:
+    """拆股登記存檔（#270）後的全部登記與比價結果。"""
+
+    splits: tuple[Split, ...]
     observation: Observation = Observation()
 
 
@@ -253,14 +263,16 @@ def _recalculate(conn: psycopg.Connection, config: ImportConfig) -> Recalc:
         return Recalc(error=_first_line(exc))
 
 
-def _observe_after_import(conn: psycopg.Connection, calendar: TradingCalendar | None) -> Observation:
-    """匯入收盤價之後比價全部；讀不到假日表或比價失敗時不丟錯誤（匯入已經完成），說明放在結果裡。"""
+def _observe_after_import(
+    conn: psycopg.Connection, calendar: TradingCalendar | None, revisit: Sequence[str] = ()
+) -> Observation:
+    """匯入收盤價（或改了拆股登記）之後比價全部；讀不到假日表或比價失敗時不丟錯誤（寫入已經完成），說明放在結果裡。"""
     import psycopg
 
     if calendar is None:
         return Observation(error="讀不到交易所假日表，這次沒有比價")
     try:
-        return Observation(observe_all(conn, calendar))
+        return Observation(observe_all(conn, calendar, revisit=revisit))
     except (LifecycleError, psycopg.Error) as exc:
         return Observation(error=_first_line(exc))
     except Exception as exc:  # 程式錯誤也不能讓已經寫好的匯入跟著失敗
@@ -629,6 +641,36 @@ def _rating_change(settings: ConnectionSettings, write: Callable[[psycopg.Connec
     with connect(settings) as conn:
         write(conn)
         return load_ratings(conn)
+
+
+def load_split_rows(settings: ConnectionSettings) -> tuple[Split, ...]:
+    """拆股登記（#270）：全部登記。"""
+    with connect(settings) as conn:
+        return load_splits(conn)
+
+
+def add_stock_split(settings: ConnectionSettings, split: Split, paths: ConfigPaths) -> SplitResult:
+    """新增一筆拆股登記，再比價全部；寫不進去時丟 `StockSplitError`。"""
+    return _split_change(settings, split, paths, lambda conn: add_split(conn, split))
+
+
+def delete_stock_split(settings: ConnectionSettings, split: Split, paths: ConfigPaths) -> SplitResult:
+    """刪除一筆拆股登記，再比價全部。"""
+    return _split_change(settings, split, paths, lambda conn: delete_split(conn, split))
+
+
+def _split_change(
+    settings: ConnectionSettings, split: Split, paths: ConfigPaths, write: Callable[[psycopg.Connection], object]
+) -> SplitResult:
+    """寫一筆（自己一個 transaction），比價全部（受影響、由比價判定出場的重新比），再重讀全部登記。"""
+    try:
+        calendar = load_calendar(paths.exchange_holidays)
+    except CheckTermsError:
+        calendar = None  # 登記照存；比價寫「讀不到交易所假日表」
+    with connect(settings) as conn:
+        write(conn)
+        observation = _observe_after_import(conn, calendar, affected_exits(conn, split))
+        return SplitResult(load_splits(conn), observation)
 
 
 def _each(conn: psycopg.Connection, tdccs: Sequence[str], write: Callable[[str], object]) -> Registered:

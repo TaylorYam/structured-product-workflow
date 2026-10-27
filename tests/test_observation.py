@@ -13,7 +13,15 @@ import pytest
 
 from db_synth import inventory, seed_products
 from fcn_checker.trading_calendar import Market, TradingCalendar
-from sp_workflow.lifecycle import DELIVERY, KO, MATURITY, AutoEvent, current_events, record_redemption
+from sp_workflow.lifecycle import (
+    DELIVERY,
+    KO,
+    MATURITY,
+    AutoEvent,
+    current_events,
+    record_redemption,
+    replace_auto_events,
+)
 from sp_workflow.observation import (
     AKI,
     EKI,
@@ -30,6 +38,7 @@ from sp_workflow.observation import (
     observe,
     observe_all,
 )
+from sp_workflow.stock_splits import Split, SplitBook, add_split, affected_exits, delete_split
 
 COVERED = (dt.date(2026, 1, 1), dt.date(2027, 12, 31))
 US_HOLIDAY = dt.date(2026, 11, 26)  # 虛構的休市日（週四）
@@ -154,7 +163,7 @@ def test_no_autocall_products_never_knock_out() -> None:
         (NO_KI, "79", {}, AutoEvent(DELIVERY, FINAL, "AAA UW"), NO_KI_TEXT),  # 沒有 KI：低於執行價就接股
         (NO_KI, "80", {}, AutoEvent(MATURITY, FINAL), NO_KI_TEXT),  # 等於執行價不接股
         (EKI, "64", {}, AutoEvent(DELIVERY, FINAL, "AAA UW"), f"EKI hit {FINAL} UL_1 AAA UW"),  # 最終收盤價 < 下限價
-        (EKI, "70", {dt.date(2026, 11, 20): "50"}, AutoEvent(MATURITY, FINAL), "EKI"),  # 期間跌破不算
+        (EKI, "70", {dt.date(2026, 11, 20): "55"}, AutoEvent(MATURITY, FINAL), "EKI"),  # 期間跌破不算
         (
             AKI,
             "70",
@@ -183,7 +192,7 @@ def test_delivery_names_the_worst_performer() -> None:
 
 
 def test_aki_is_watched_on_each_market_own_trading_days() -> None:
-    prices = closes(on({FINAL: "85"}), on({FINAL: "1000"}))
+    prices = closes(on({FINAL: "85"}), on({FINAL: "140"}))
     prices[A.code][US_HOLIDAY] = D("10")  # 美國休市那天的價格不會被讀（收盤價表本來就不會有）
     prices[B.code][US_HOLIDAY] = D("60")  # 日本那天開市：觸及
 
@@ -557,3 +566,97 @@ def test_an_event_that_cannot_be_written_needs_confirmation(pg, monkeypatch) -> 
 
     assert receipt.errors == ((T1, f"{T1} 已登記顧客贖回，停止比價，不寫自動事件"),)
     assert status(pg, T1)[:2] == (TO_CONFIRM, f"自動事件寫不進去：{T1} 已登記顧客贖回，停止比價，不寫自動事件")
+
+
+# ---------------------------------------------------------------- 拆股（#270、ADR 0024）
+
+
+SPLIT_DAY = dt.date(2026, 11, 10)  # 生效日（週二）：Strike date 之後、第一個比價日之前
+SPLIT = Split("AAA UW", SPLIT_DAY, 1, 10)
+JUMP_REASON = (
+    f"UL_1 AAA UW：{SPLIT_DAY} 收盤價是 {SPLIT_DAY - dt.timedelta(days=1)} 的 0.1 倍，疑似拆股或收盤價有誤"
+    "（拆股請到「維護 → 拆股登記…」登記，價格錯了請重匯）"
+)
+
+
+def split_prices(after: str = "9", special: dict[dt.date, str] | None = None) -> Callable[[dt.date], str]:
+    """AAA UW 拆股前 90、生效日起是 `after`（原始收盤價）；`special` 指定某幾天。"""
+    return lambda day: (special or {}).get(day, "90" if day < SPLIT_DAY else after)
+
+
+def test_registered_splits_convert_closes_back_to_the_trade_basis() -> None:
+    prices = closes(split_prices())
+
+    assert observe(terms(), prices, CALENDAR, FINAL) == Outcome(TO_CONFIRM, JUMP_REASON, ki=NO_KI_TEXT), "沒登記"
+    assert observe(terms(), prices, CALENDAR, FINAL, SplitBook([SPLIT])) == Outcome(
+        EXITED, f"到期還本 {FINAL}", FINAL, (AutoEvent(MATURITY, FINAL),), NO_KI_TEXT
+    ), "9 換回 90：沒有 KO、不接股"
+    ko = closes(split_prices(special={KO_DAY: "10.1"}), on({KO_DAY: "100"}))
+    assert observe(terms(), ko, CALENDAR, FINAL, SplitBook([SPLIT])).events == (AutoEvent(KO, KO_DAY),)
+
+
+def test_reverse_splits_and_splits_before_the_strike_date() -> None:
+    merged = closes(split_prices("900"))
+    assert observe(terms(), merged, CALENDAR, FINAL, SplitBook([Split("AAA UW", SPLIT_DAY, 10, 1)])).events == (
+        AutoEvent(MATURITY, FINAL),
+    ), "10 合 1：900 換回 90"
+
+    before_strike = SplitBook([Split("AAA UW", STRIKE, 1, 10)])
+    assert observe(terms(), closes(), CALENDAR, FINAL, before_strike).events == (AutoEvent(MATURITY, FINAL),), (
+        "生效日在 Strike date 當天（含）以前：進場價已經是新基準，不換算"
+    )
+
+
+def test_an_unregistered_jump_stops_the_day_before_but_an_earlier_ko_stands() -> None:
+    late = dt.date(2026, 11, 20)
+    jump = closes(lambda day: "90" if day < late else "9")
+    outcome = observe(terms(), jump, CALENDAR, FINAL)
+    assert (outcome.status, outcome.observed_through) == (TO_CONFIRM, late - dt.timedelta(days=1))
+    assert outcome.reason.startswith(f"UL_1 AAA UW：{late} 收盤價是 {late - dt.timedelta(days=1)} 的 0.1 倍")
+
+    ko_first = closes(lambda day: "101" if day == KO_DAY else ("90" if day < late else "9"), on({KO_DAY: "100"}))
+    assert observe(terms(), ko_first, CALENDAR, FINAL).events == (AutoEvent(KO, KO_DAY),)
+
+
+def test_a_confirmed_real_drop_is_observed() -> None:
+    drop = dt.date(2026, 11, 20)
+    prices = closes(lambda day: "90" if day < drop else "50")
+    t = terms(barrier=AKI)
+
+    assert observe(t, prices, CALENDAR, FINAL).status == TO_CONFIRM
+    assert observe(t, prices, CALENDAR, FINAL, SplitBook([Split("AAA UW", drop, 1, 1)])) == Outcome(
+        EXITED,
+        f"接股 AAA UW {FINAL}",
+        FINAL,
+        (AutoEvent(DELIVERY, FINAL, "AAA UW"),),
+        f"AKI hit {drop} UL_1 AAA UW",
+    )
+
+
+@pytest.mark.db
+def test_changing_a_split_reobserves_affected_observation_exits(pg) -> None:
+    seed(pg, T1)
+    write_closes(pg, us_closes(FINAL, {day: "9" for day in trading_days("AAA UW", SPLIT_DAY, FINAL)}))
+    pg.execute("UPDATE workflow.close_price SET close = 90 WHERE code = 'BBB UN'")
+    replace_auto_events(pg, T1, [AutoEvent(DELIVERY, FINAL, "AAA UW")], user="tester")  # 沒有換算時判錯的接股
+
+    assert observe_all(pg, CALENDAR).changes == (), "已出場的平常不再比價"
+    add_split(pg, SPLIT, user="tester")
+    receipt = observe_all(pg, CALENDAR, user="tester", revisit=affected_exits(pg, SPLIT))
+
+    assert events(pg, T1) == [(MATURITY, FINAL, None, "比價")]
+    assert [(c.tdcc, c.previous, c.current) for c in receipt.changes] == [
+        (T1, ((DELIVERY, FINAL.isoformat(), "AAA UW"),), ((MATURITY, FINAL.isoformat(), None),))
+    ]
+    assert status(pg, T1) == (EXITED, f"到期還本 {FINAL}", FINAL, True)
+
+    delete_split(pg, SPLIT, user="tester")
+    observe_all(pg, CALENDAR, user="tester", revisit=affected_exits(pg, SPLIT))
+
+    assert events(pg, T1) == [], "不再出場就清掉事件"
+    assert status(pg, T1) == (TO_CONFIRM, JUMP_REASON, None, True)
+    (previous, current) = pg.execute(
+        "SELECT previous, current FROM workflow.product_event_change WHERE tdcc = %s ORDER BY change_id DESC LIMIT 1",
+        (T1,),
+    ).fetchone()
+    assert (previous, current) == ([[MATURITY, FINAL.isoformat(), None]], [])
