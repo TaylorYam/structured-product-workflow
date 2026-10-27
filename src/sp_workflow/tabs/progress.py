@@ -2,7 +2,8 @@
 比價狀態（#170）；篩選、排序、匯出 Excel。
 
 按「重新整理」在背景讀資料庫（`window_actions.load_progress_rows`），篩選與排序只在畫面上做、不再連資料庫；
-「匯出 Excel…」把目前篩選、排序後的整張表寫成一份 Excel（`progress.export_progress`）。
+「匯出 Excel…」把目前篩選、排序後的整張表寫成一份 Excel（`progress.export_progress`）；
+結果表右上方的「複製待確認 TDCC」只把表上比價待確認的 TDCC 一行一筆放進剪貼簿，貼回「3 準備」重新核對（#289）。
 人工能做的三件事只在這一頁登記（#157）：對選中的商品「登記已寄出」「登記顧客贖回…」、對一檔的自動事件
 「提出異議…」與「解除異議…」；都在背景寫資料庫，一檔失敗只影響那一檔，寫完重新整理。
 「批次登記已寄出…」（#186）選一個交易日，重新讀進度、列出交易日在這天以前的待寄信商品，確認後各寫一筆「已寄出」。
@@ -18,7 +19,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.date_picker import DateEntry
-from fcn_checker.ui import Background
+from fcn_checker.ui import Background, to_clipboard
 from sp_workflow.lifecycle import DELIVERY, IN_STOCK, KO, MATURITY, REDEMPTION
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.observation import STATUSES as PRICING_STATUSES
@@ -34,6 +35,7 @@ from sp_workflow.progress import (
     export_name,
     export_progress,
     filter_rows,
+    to_confirm_tdccs,
 )
 from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, Tab
 from sp_workflow.tabs.progress_dialogs import (
@@ -140,6 +142,13 @@ class ProgressTab(Tab):
         for button in self._actions():
             button.pack(side=tk.LEFT, padx=(8, 0))
         self.place_table(2)
+        self.copy_to_confirm_button = self.table_area.add_button(
+            "複製待確認 TDCC",
+            self.copy_to_confirm,
+            copied_text="已複製 {} 筆",
+            empty_text="表上沒有待確認",
+            width=16,
+        )  # #289
         for key, _, _ in COLUMNS:
             self.table.heading(key, command=lambda k=key: self.sort_by(k))
         self._busy(False)
@@ -243,6 +252,13 @@ class ProgressTab(Tab):
         )
         self.notice = ""  # 登記結果只在寫完後那一次顯示
         self._busy(self.working)
+
+    def copy_to_confirm(self) -> int:
+        """表上比價待確認的 TDCC 一行一筆放進剪貼簿，貼回「3 準備」就能用（#289）；回傳幾筆，沒有時不動剪貼簿。"""
+        tdccs = to_confirm_tdccs(self.shown)
+        if tdccs:
+            to_clipboard(self.table, "\n".join(tdccs))
+        return len(tdccs)
 
     def sort_by(self, key: str) -> None:
         """點欄位排序：第一次由大到小（距今天數、日期）或由小到大（文字），再點一次反過來。"""

@@ -1037,25 +1037,40 @@ class Scrollbar(ttk.Scrollbar):
 
 
 class CopyButton(ttk.Button):
-    """結果表右上方的「全部複製」（#121）：一鍵把整張表（含表頭）放進剪貼簿，按完短暫顯示複製了幾列。"""
+    """結果表右上方的複製按鈕（#121）：預設是「全部複製」，一鍵把整張表（含表頭）放進剪貼簿；按完短暫顯示複製了幾列。
+
+    其他複製（例：進度頁的「複製待確認 TDCC」，#289）給自己的字：`copied_text` 用複製了幾筆填，`empty_text` 是什麼都沒複製時。
+    """
 
     TEXT = "全部複製"
 
-    def __init__(self, parent: tk.Misc, copy_all: Callable[[], int]):
-        super().__init__(parent, text=self.TEXT, command=self.copy, width=12, style="Toolbar.TButton")
-        self.copy_all = copy_all
-        self._reset_job: str | None = None  # 換回「全部複製」的 after 排程
+    def __init__(
+        self,
+        parent: tk.Misc,
+        action: Callable[[], int],
+        text: str = TEXT,
+        *,
+        copied_text: str = "已複製 {} 列",
+        empty_text: str = "表上沒有資料",
+        width: int = 12,
+    ):
+        super().__init__(parent, text=text, command=self.copy, width=width, style="Toolbar.TButton")
+        self.action = action  # 複製並回傳複製了幾筆
+        self.idle_text = text
+        self.copied_text = copied_text
+        self.empty_text = empty_text
+        self._reset_job: str | None = None  # 換回原本的字的 after 排程
 
     def copy(self) -> None:
-        count = self.copy_all()
-        self.configure(text=f"已複製 {count} 列" if count else "表上沒有資料")
+        count = self.action()
+        self.configure(text=self.copied_text.format(count) if count else self.empty_text)
         if self._reset_job is not None:
             self.after_cancel(self._reset_job)
         self._reset_job = self.after(1500, self._reset)
 
     def _reset(self) -> None:
         self._reset_job = None
-        self.configure(text=self.TEXT)
+        self.configure(text=self.idle_text)
 
 
 class CopyArea(ttk.Frame):
@@ -1066,15 +1081,23 @@ class CopyArea(ttk.Frame):
         super().__init__(parent)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
-        bar = ttk.Frame(self)
-        bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
-        ttk.Label(bar, text=hint, style="Caption.TLabel").pack(side="left")
-        self.button = CopyButton(bar, copy_all)
+        self.bar = ttk.Frame(self)
+        self.bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
+        ttk.Label(self.bar, text=hint, style="Caption.TLabel").pack(side="left")
+        self.button = CopyButton(self.bar, copy_all)
         self.button.pack(side="right")
         self.card = ttk.Frame(self, style="TableCard.TFrame", padding=1)  # 平面、直角的白卡片（#264）
         self.card.grid(row=1, column=0, columnspan=2, sticky="nsew")
         self.card.columnconfigure(0, weight=1)
         self.card.rowconfigure(0, weight=1)
+
+    def add_button(
+        self, text: str, action: Callable[[], int], *, copied_text: str, empty_text: str, width: int = 12
+    ) -> CopyButton:
+        """在「全部複製」左邊多放一個複製按鈕（#289）；參數同 `CopyButton`。"""
+        button = CopyButton(self.bar, action, text, copied_text=copied_text, empty_text=empty_text, width=width)
+        button.pack(side="right", padx=(0, 8))
+        return button
 
 
 class Background:
