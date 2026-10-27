@@ -17,6 +17,10 @@ from sp_workflow.window_actions import DraftResult, make_mail_drafts, read_lates
 
 
 class MailDraftTab(Tab):
+    READY_TEXT = (
+        "貼上核對通過的 TDCC，選結果清單位置，按「建立草稿」（在最上方的根目錄底下找商品資料夾）。只建草稿，不會寄出。"
+    )
+
     def __init__(
         self,
         notebook: ttk.Notebook,
@@ -31,9 +35,7 @@ class MailDraftTab(Tab):
         self.memory = memory
         self.root_folder = root_folder
         self.out_var = tk.StringVar(value=memory.load().get("mail_out", ""))
-        self.status_var.set(
-            "貼上核對通過的 TDCC，選結果清單位置，按「建立草稿」（在最上方的根目錄底下找商品資料夾）。只建草稿，不會寄出。"
-        )
+        self.status_var.set(self.READY_TEXT)
 
         self.page_header(
             "建立寄信草稿",
@@ -64,6 +66,11 @@ class MailDraftTab(Tab):
             f"已帶入「5 放回」通過的 TDCC {len(tdccs)} 筆（TS、IIS 都用標準檔名放回或已在），"
             "選好結果清單位置後按「建立草稿」。",
         )
+
+    def _clear_results(self) -> None:
+        """帶入新的 TDCC 前收起上一次的結果（#286），狀態列回到說明。"""
+        super()._clear_results()
+        self.status_var.set(self.READY_TEXT)
 
     def _busy(self, busy: bool) -> None:
         self.start_button.configure(state=tk.DISABLED if busy else tk.NORMAL)
