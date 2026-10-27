@@ -148,6 +148,7 @@ def test_summary_rows_follow_the_new_summary_columns(pg, tmp_path: Path) -> None
     )
     add_trades(pg, A, [("台北", "Amy", 100000), ("台中", "PB", 50000), ("新竹", "Ben", 30000)])
     replace_auto_events(pg, A, [AutoEvent(KO, dt.date(2026, 11, 16))], user="tester")
+    pg.execute("UPDATE workflow.product SET strike_date = NULL WHERE tdcc = %s", (B,))
     path = tmp_path / "商品總表.xlsx"
 
     receipt = export_summary(pg, path)
@@ -164,6 +165,10 @@ def test_summary_rows_follow_the_new_summary_columns(pg, tmp_path: Path) -> None
     last = openpyxl.load_workbook(path).active.cell(1, len(a))
     assert (last.value, last.fill.fgColor.rgb[-6:]) == ("金額_3", "F8CBAD"), "多出來的組也是承作的底色"
     assert (a["比價日_1"], a["比價日_2"], b["比價日_1"]) == (dt.datetime(2026, 11, 16), "-", "-")
+    assert SUMMARY_COLUMNS.index("期初定價日") == SUMMARY_COLUMNS.index("交易日") + 1, (
+        "期初定價日接在交易日後面（#297）"
+    )
+    assert (a["期初定價日"], b["期初定價日"]) == (dt.datetime(2026, 10, 15), "-")
     assert [a[c] for c in ("UL_1", "UL_1_進場價", "UL_1_執行價", "UL_1_下限價", "UL_1_KO價")] == [
         "AAA UW",
         100,
@@ -197,8 +202,8 @@ def test_summary_cells_are_centred_with_fonts_by_content(pg, tmp_path: Path) -> 
     assert cell["存續狀態"].font.name == "微軟正黑體" and cell["私銀註記"].font.name == "Calibri", "在庫是中文、- 不是"
     assert cell["TDCC Code"].number_format == "@" and cell["交易日"].number_format == "yyyy/m/d"
     fills = {name: sheet.cell(1, column).fill.fgColor.rgb[-6:] for name, column in header.items()}
-    assert [fills[n] for n in ("存續狀態", "事件標的", "Product", "新加坡註記", "交易日", "到期日")] == [
-        "F8CBAD", "F8CBAD", "C5E0B4", "C5E0B4", "FFE699", "FFE699"
+    assert [fills[n] for n in ("存續狀態", "事件標的", "Product", "新加坡註記", "交易日", "期初定價日", "到期日")] == [
+        "F8CBAD", "F8CBAD", "C5E0B4", "C5E0B4", "FFE699", "FFE699", "FFE699"
     ]  # fmt: skip
     assert [fills[n] for n in ("期初定價", "Lookback 期間", "UL_1", "UL_5_KO價", "分公司_1", "金額_2")] == [
         "BDD7EE", "BDD7EE", "DBDBDB", "DBDBDB", "F8CBAD", "F8CBAD"
