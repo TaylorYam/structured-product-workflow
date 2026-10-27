@@ -218,14 +218,20 @@ class MaintenanceTab(Tab):
         self._export(
             "匯出資料庫的商品條件（workflow.product）",
             export_name(),
-            export_product_terms,
+            lambda settings, path: export_product_terms(settings, path),  # 寫成呼叫，參數契約才檢查得到（#208）
             "匯出商品條件中…",
             "商品條件（workflow.product）",
         )
 
     def export_summary(self) -> None:
         """選存放位置，把資料庫所有商品照新商品總表的欄位匯出成 Excel；按取消時不連資料庫。"""
-        self._export("匯出商品總表", summary_name(), export_product_summary, "匯出商品總表中…", "商品總表")
+        self._export(
+            "匯出商品總表",
+            summary_name(),
+            lambda settings, path: export_product_summary(settings, path),
+            "匯出商品總表中…",
+            "商品總表",
+        )
 
     def _export(
         self,
