@@ -29,7 +29,7 @@ REVIEW_STANDARD_FILE = "review_standard.toml"
 REFERENCE_FORMAT_FILE = "reference_sheet.toml"
 ISSUER_PREFIXES_FILE = "issuer_prefixes.toml"
 EXCHANGE_HOLIDAYS_FILE = "exchange_holidays.toml"
-RISK_LEVEL_FILE = "risk_level.toml"  # 自算風險等級的指數清單（流程用，核對不讀；#238）
+RISK_LEVEL_FILE = "risk_level.toml"  # 自算風險等級的指數、ETF 清單（流程用，核對不讀；#238、#252）
 # 開發環境（editable 安裝）的 repo config；PANEL 安裝是非 editable，內建設定由雙擊入口另外指定（專案的 config）
 BUILTIN_CONFIG = Path(__file__).resolve().parents[2] / "config"
 
