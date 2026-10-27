@@ -15,19 +15,23 @@ from order_synth import CONFIG, A, open_terms, order_row
 from sp_workflow.check_terms import WAIT_TRADES, recalculate
 from sp_workflow.credit_ratings import FITCH, GUARANTOR, ISSUER, MOODYS, SP, Entity, Rating, RatingRows
 from sp_workflow.daily_import import import_daily
-from sp_workflow.product_terms import load_index_underlyings, write, write_batch
+from sp_workflow.product_terms import load_risk_underlyings, write, write_batch
 from sp_workflow.risk_level import (
     BACKFILLED,
     DONE,
     PENDING,
+    RiskLevel,
     RiskTerms,
     Volatility,
+    _detail,
+    _detail_json,
     assess,
     count_score,
     level_of,
     rating_score,
     risk_level_of,
     tenor_score,
+    underlying_key,
     volatility_score,
 )
 from sp_workflow.window_actions import _drafts
@@ -69,8 +73,8 @@ _SHEET = {"LITE_UW": "100.98", "NBIS_UW": "113.92", "MRVL_UW": "84.04"}  # Gener
 SHEET_VOLS = vols(**_SHEET)
 
 
-def assess_with(product: RiskTerms, found=SHEET_VOLS, dates=(TRADE,), ratings=RATINGS, indices=()):
-    return assess(product, list(dates), found, ratings, frozenset(indices))
+def assess_with(product: RiskTerms, found=SHEET_VOLS, dates=(TRADE,), ratings=RATINGS, indices=(), etfs=()):
+    return assess(product, list(dates), found, ratings, frozenset(indices), frozenset(etfs))
 
 
 # ---------- 各分數的門檻 ----------
@@ -205,7 +209,8 @@ def test_one_quiet_index_with_a_good_rating_is_rr3() -> None:
 
     risk = assess_with(product, vols(SPX="12.5"), ratings=rated, indices=["SPX Index"])
 
-    assert risk.detail is not None and risk.detail.underlying_type_score == 3
+    assert risk.detail is not None
+    assert (risk.detail.underlying_type, risk.detail.underlying_type_score) == ("指數", 3)
     assert (risk.total, risk.level) == (Decimal("3.18"), "RR3")
     assert "UL_1 是指數，3 分" in risk.describe()
     for listed in (" spx index ", "SPX", "spx"):
@@ -219,6 +224,51 @@ def test_only_the_first_underlying_decides_index_or_stock() -> None:
     risk = assess_with(product, vols(LITE_UW="20", SPX="12"), indices=["SPX Index"])
 
     assert risk.detail is not None and risk.detail.underlying_type_score == 4
+
+
+def test_an_etf_first_underlying_scores_like_an_index() -> None:
+    """ETF 和指數一樣 3 分（#252）；明細寫 ETF。清單照白名單寫 `QQQ US Equity`（美國綜合代碼），
+    資料庫存交易所代碼（`QQQ UQ`）：美國的交易所代碼都當 `US` 比對。"""
+    product = terms(underlyings=("QQQ UQ", "NVDA UW", None, None, None))
+
+    risk = assess_with(product, vols(QQQ_UQ="20", NVDA_UW="40"), etfs=["QQQ US Equity"])
+
+    assert risk.detail is not None
+    assert (risk.detail.underlying_type, risk.detail.underlying_type_score) == ("ETF", 3)
+    assert "UL_1 是 ETF，3 分" in risk.describe()
+    assert risk.total == Decimal("3.46"), "2 + 0.2 + (3 + 2 + 2 + 3) ÷ 10 + 0.26"
+
+
+@pytest.mark.parametrize(
+    ("code", "listed", "is_etf"),
+    [
+        ("SPY UP", "SPY US Equity", True),
+        ("DRAM UF", "DRAM US Equity", True),
+        ("spy up", "SPY US", True),
+        ("SPY US", "SPY UP Equity", True),
+        ("1321 JT", "1321 JT Equity", True),
+        ("1321 HK", "1321 JT Equity", False),
+        ("SPY JT", "SPY US Equity", False),
+        ("SPYG UP", "SPY US Equity", False),
+    ],
+)
+def test_etf_codes_match_across_us_exchanges_only(code, listed, is_etf) -> None:
+    risk = assess_with(
+        terms(underlyings=(code, None, None, None, None)), vols(**{code.replace(" ", "_"): "20"}), etfs=[listed]
+    )
+
+    assert risk.detail is not None and risk.detail.underlying_type == ("ETF" if is_etf else "個股")
+
+
+def test_stored_details_from_before_the_etf_list_still_describe_the_type() -> None:
+    """#252 以前存的明細沒有標的種類：讀回來照分數寫（4 個股、3 指數）；之後存的照存的寫。"""
+    risk = assess_with(terms())
+    assert risk.detail is not None
+    stored = _detail_json(risk.detail)
+    old = {key: value for key, value in stored.items() if key != "underlying_type"}
+
+    assert _detail(stored) == risk.detail
+    assert "UL_1 是個股，4 分" in RiskLevel(DONE, "RR4", "", TRADE, risk.total, _detail(old)).describe()
 
 
 def test_the_guarantor_rating_wins_and_the_best_agency_counts() -> None:
@@ -313,17 +363,41 @@ def test_no_trade_date_or_underlyings_is_pending() -> None:
 # ---------- 設定檔 ----------
 
 
-def test_the_index_list_is_read_from_the_config(tmp_path: Path) -> None:
+BUILTIN = Path(__file__).resolve().parents[1] / "config" / "risk_level.toml"
+
+
+def test_the_index_and_etf_lists_are_read_from_the_config(tmp_path: Path) -> None:
     path = tmp_path / "risk_level.toml"
-    path.write_text('index_underlyings = ["SPX Index", " nky index "]\n', encoding="utf-8")
-    builtin = Path(__file__).resolve().parents[1] / "config" / "risk_level.toml"
+    path.write_text(
+        'index_underlyings = ["SPX Index", " nky index "]\netf_underlyings = ["QQQ US Equity"]\n', encoding="utf-8"
+    )
 
-    assert load_index_underlyings(path) == frozenset({"SPX Index", "nky index"}), "照寫法，比對時才去類別字"
-    assert load_index_underlyings(builtin) == frozenset(), "使用者提供清單前是空的"
+    assert load_risk_underlyings(path) == (
+        frozenset({"SPX Index", "nky index"}),
+        frozenset({"QQQ US Equity"}),
+    ), "照寫法，比對時才去類別字"
 
-    path.write_text('index_underlyings = "SPX Index"\n', encoding="utf-8")
-    with pytest.raises(IngestionError, match="index_underlyings"):
-        load_index_underlyings(path)
+    for bad in ('index_underlyings = "SPX Index"\netf_underlyings = []\n', "index_underlyings = []\n"):
+        path.write_text(bad, encoding="utf-8")
+        with pytest.raises(IngestionError, match="_underlyings"):
+            load_risk_underlyings(path)
+
+
+def test_the_builtin_etf_list_matches_the_stored_underlying_codes() -> None:
+    """抽查（#252）：白名單 ETF 工作表的寫法（`SPY US Equity`）要對得到資料庫存的代碼（交易所代碼，例 `SPY UP`）；
+    白名單沒有的日本 ETF 與 UFO 另外補；個股不在清單上。指數本身不能連結，指數清單是空的。"""
+    indices, etfs = load_risk_underlyings(BUILTIN)
+    etf_codes = ("QQQ UQ", "SPY UP", "VOO UP", "IVV UP", "SMH UQ", "SOXX UQ", "GLD UP", "SLV UP", "XLK UP", "DRAM UF")
+    stocks = ("TSM UN", "NVDA UW", "7011 JT", "700 HK", "TSM US")
+
+    assert indices == frozenset()
+    assert len(etfs) > 1000
+    assert all(len(underlying_key(code).split()) == 2 for code in etfs), "每一項都是「代碼 交易所」"
+    for code in (*etf_codes, "1321 JT", "1306 JT", "UFO UQ", *stocks):
+        risk = assess_with(
+            terms(underlyings=(code, None, None, None, None)), vols(**{code.replace(" ", "_"): "20"}), etfs=etfs
+        )
+        assert risk.detail is not None and risk.detail.underlying_type == ("個股" if code in stocks else "ETF"), code
 
 
 # ---------- 資料庫：跟著核對條件重算、鎖住後不變 ----------

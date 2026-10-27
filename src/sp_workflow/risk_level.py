@@ -6,14 +6,17 @@
 - `assess`：一檔的計算本身（不碰資料庫）。
 - `recalculate_risk`：在核對條件重算的 transaction 裡算這幾檔，寫入有變的；`fill_missing_locked`：替還沒有風險等級的已鎖住商品算一次。
 - `risk_levels`／`risk_level_of`：讀存好的結果（起單資料頁顯示；說明書／投資人須知的 RR 核對與寄信草稿用，#239）。
-指數清單由 `product_terms.load_import_config` 讀設定檔 `config/risk_level.toml`（`ImportConfig.index_underlyings`）。
+指數與 ETF 清單由 `product_terms.load_import_config` 讀設定檔 `config/risk_level.toml`
+（`ImportConfig.index_underlyings`、`etf_underlyings`）。
 
 公式：總分 = 0.4×保本率分 + 0.2×年期分 + 0.3×結構複雜度分 + 0.1×流動性分，十進位計算。
 - 保本率分：FCN 一律不保本（資料庫沒有保本率欄），固定 5。
 - 年期分（`tenor_months`）：<=12 → 1、<=36 → 2、<=60 → 3、<=120 → 4、更長 5。
 - 結構複雜度分 = 平均（標的種類分, 標的數量分, 波動度分）+ 提前贖回 1（FCN 一律可提前出場）。
-  - 標的種類：照試算表只看 UL_1（空白算缺資料），在指數清單上是指數 3 分，否則是個股 4 分。清單與 UL_1 都去掉
-    彭博最後的類別字（`sheet_cells.bbg_code`，例：`SPX Index` → `SPX`，同存進資料庫的代碼）、不分大小寫比對。
+  - 標的種類：照試算表只看 UL_1（空白算缺資料），在指數清單上是指數 3 分；在 ETF 清單上是 ETF，和指數一樣 3 分（#252）；
+    否則是個股 4 分。清單與 UL_1 都用 `underlying_key` 比對：去掉彭博最後的類別字（`sheet_cells.bbg_code`，
+    例：`SPX Index` → `SPX`，同存進資料庫的代碼）、美國的交易所代碼都當 `US`（白名單寫 `QQQ US Equity`、
+    資料庫存 `QQQ UQ`）、不分大小寫。
   - 標的數量（非空的 UL_1～UL_5）：1～4 檔各 1～4 分、5 檔 4 分、6 檔以上 5 分。
   - 波動度：各標的 200 日波動率的平均，<=15 → 1、<=30 → 2、<=45 → 3、<60 → 4、>=60 → 5。
 - 流動性分 = 0.8×評等分 + 0.2×1（可贖回頻率一律 Daily）。評等取保證機構（評等表沒有這家上手的保證機構時取發行機構）
@@ -31,6 +34,7 @@ from __future__ import annotations
 
 import bisect
 import datetime as dt
+import functools
 import json
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
@@ -60,7 +64,10 @@ RISK_LEVELS = ("RR1", "RR2", "RR3", "RR4", "RR5")
 PRINCIPAL_SCORE = 5  # 保本率分：FCN 不保本
 EARLY_REDEMPTION_SCORE = 1  # 提前贖回：FCN 一律有
 REDEMPTION_FREQUENCY_SCORE = 1  # 可贖回頻率：一律 Daily
-INDEX_SCORE, STOCK_SCORE = 3, 4  # 標的種類：指數、個股
+INDEX_SCORE, STOCK_SCORE = 3, 4  # 標的種類：指數（ETF 同分）、個股
+INDEX, ETF, STOCK = "指數", "ETF", "個股"
+# 彭博的美國交易所代碼（UN 紐約、UW／UQ／UR 那斯達克、UP NYSE Arca、UF Cboe…）：比對時都當美國綜合代碼 US
+_US_EXCHANGES = frozenset({"US", "UA", "UB", "UC", "UD", "UF", "UM", "UN", "UP", "UQ", "UR", "UT", "UV", "UW"})
 
 _TENOR = ((12, 1), (36, 2), (60, 3), (120, 4))  # 天期 <= 月數 → 分數；更長 5
 _COUNT = {1: 1, 2: 2, 3: 3, 4: 4, 5: 4}  # 標的數量 → 分數；6 檔以上 5
@@ -73,9 +80,13 @@ _WORST = 5
 _AVERAGE_QUANTUM = Decimal("0.000001")  # 存的平均波動度四捨五入到小數第 6 位（分數用沒有四捨五入的平均）
 
 
-def index_key(code: str) -> str:
-    """指數清單比對用的代碼：去掉彭博最後的類別字（`SPX Index` → `SPX`）、轉大寫。"""
-    return bbg_code(code).upper()
+def underlying_key(code: str) -> str:
+    """指數、ETF 清單比對用的代碼：去掉彭博最後的類別字（`SPX Index` → `SPX`）、轉大寫，
+    美國的交易所代碼換成 US（`QQQ UQ`、`QQQ US Equity` → `QQQ US`）。"""
+    parts = bbg_code(code).upper().split()
+    if len(parts) == 2 and parts[1] in _US_EXCHANGES:
+        parts[1] = "US"
+    return " ".join(parts)
 
 
 # ---------- 計算（不碰資料庫） ----------
@@ -106,7 +117,7 @@ class RiskDetail:
 
     tenor_months: int
     tenor_score: int
-    underlying_type_score: int  # 3 指數、4 個股（看 UL_1）
+    underlying_type_score: int  # 3 指數或 ETF、4 個股（看 UL_1）
     underlying_count: int
     underlying_count_score: int
     volatilities: tuple[tuple[str, Decimal], ...]  # (代碼, 200 日波動率)，依 UL_1～UL_5
@@ -115,6 +126,11 @@ class RiskDetail:
     rating_role: str  # 用的是發行機構或保證機構的評等
     ratings: tuple[tuple[str, str], ...]  # (評等機構, 評等)，交易日當時的
     rating_score: int  # 三家中最好的一家
+    underlying_type: str = ""  # 指數、ETF、個股；#252 以前存的明細沒有，照分數看（`kind`）
+
+    @property
+    def kind(self) -> str:
+        return self.underlying_type or (INDEX if self.underlying_type_score == INDEX_SCORE else STOCK)
 
     @property
     def structure_score(self) -> Decimal:
@@ -168,7 +184,6 @@ class RiskLevel:
         structure, liquidity = detail.structure_score, detail.liquidity_score
         vols = "、".join(f"{code} {_number(value)}" for code, value in detail.volatilities)
         ratings = "、".join(f"{agency} {rating}" for agency, rating in detail.ratings)
-        kind = "指數" if detail.underlying_type_score == INDEX_SCORE else "個股"
         return "\n".join(
             (
                 head,
@@ -178,7 +193,7 @@ class RiskLevel:
                 f"・年期：{detail.tenor_months} 個月，{detail.tenor_score} 分",
                 f"・結構複雜度：平均（標的種類 {detail.underlying_type_score}、標的數量 {detail.underlying_count_score}、"
                 f"波動度 {detail.volatility_score}）+ 提前贖回 {EARLY_REDEMPTION_SCORE} = {_number(structure)}",
-                f"　- 標的種類：UL_1 是{kind}，{detail.underlying_type_score} 分",
+                f"　- 標的種類：UL_1 是{' ETF' if detail.kind == ETF else detail.kind}，{detail.underlying_type_score} 分",
                 f"　- 標的數量：{detail.underlying_count} 檔，{detail.underlying_count_score} 分",
                 f"　- 波動度：平均 {_number(detail.average_volatility)}（{vols}），{detail.volatility_score} 分",
                 f"　- 提前贖回：有，{EARLY_REDEMPTION_SCORE} 分",
@@ -196,9 +211,10 @@ def assess(
     volatilities: Mapping[tuple[dt.date, str], Volatility],
     ratings: RatingRows,
     indices: Collection[str],
+    etfs: Collection[str] = (),
 ) -> RiskLevel:
     """一檔的風險等級。`price_dates` 是已匯入的股價檔取價日（由小到大），`volatilities` 以 (取價日, 代碼) 查，
-    `ratings` 是評等表，`indices` 是指數清單（彭博代碼）。"""
+    `ratings` 是評等表，`indices`、`etfs` 是指數、ETF 清單（彭博代碼）。"""
     problems: list[str] = []
     trade_date = terms.trade_date
     underlyings = [(n, code) for n, code in enumerate(terms.underlyings, 1) if code]
@@ -238,10 +254,11 @@ def assess(
     assert terms.tenor_months is not None and rating is not None and first
     average = sum(value for _, value in found) / len(found)
     by_agency = tuple(rating.items())
+    kind = _kind(first, indices, etfs)
     detail = RiskDetail(
         tenor_months=terms.tenor_months,
         tenor_score=tenor_score(terms.tenor_months),
-        underlying_type_score=INDEX_SCORE if _is_index(first, indices) else STOCK_SCORE,
+        underlying_type_score=STOCK_SCORE if kind == STOCK else INDEX_SCORE,
         underlying_count=len(underlyings),
         underlying_count_score=count_score(len(underlyings)),
         volatilities=tuple(found),
@@ -250,6 +267,7 @@ def assess(
         rating_role=role,
         ratings=by_agency,
         rating_score=min(rating_score(agency, value) for agency, value in by_agency),
+        underlying_type=kind,
     )
     total = detail.total
     return RiskLevel(DONE, level_of(total), "", price_date, total, detail)
@@ -286,8 +304,18 @@ def level_of(total: Decimal) -> str:
     return next((level for limit, level in _LEVELS if total < limit), "RR5")
 
 
-def _is_index(code: str, indices: Collection[str]) -> bool:
-    return index_key(code) in {index_key(c) for c in indices}
+def _kind(code: str, indices: Collection[str], etfs: Collection[str]) -> str:
+    """UL_1 是指數、ETF 或個股。"""
+    key = underlying_key(code)
+    if key in _keys(frozenset(indices)):
+        return INDEX
+    return ETF if key in _keys(frozenset(etfs)) else STOCK
+
+
+@functools.lru_cache(maxsize=8)
+def _keys(codes: frozenset[str]) -> frozenset[str]:
+    """清單的比對代碼；ETF 清單上千檔，重算一批商品時只換算一次。"""
+    return frozenset(underlying_key(c) for c in codes)
 
 
 def _rating(terms: RiskTerms, ratings: RatingRows) -> tuple[str, dict[str, str] | None, str]:
@@ -318,7 +346,8 @@ def _number(value: Decimal) -> str:
 def recalculate_risk(conn: psycopg.Connection, tdccs: Sequence[str], config: ImportConfig) -> dict[str, RiskLevel]:
     """算這幾檔（還沒鎖住的），和上一次不同的寫入；在呼叫端的 transaction 裡（商品條件列已由核對條件重算鎖住）。
 
-    上手代碼用 `product_terms.issuer_code`（TDCC 前三碼，查不到時用發行機構的寫法反查），指數清單用 `config.index_underlyings`。
+    上手代碼用 `product_terms.issuer_code`（TDCC 前三碼，查不到時用發行機構的寫法反查），
+    指數、ETF 清單用 `config.index_underlyings`、`etf_underlyings`。
     """
     require_in_transaction(conn)
     stored = risk_levels(conn, list(tdccs))
@@ -367,7 +396,10 @@ def _assess_all(conn: psycopg.Connection, tdccs: Sequence[str], config: ImportCo
     price_dates = [d for (d,) in conn.execute("SELECT DISTINCT price_date FROM workflow.price_import ORDER BY 1")]
     volatilities = _volatilities(conn, terms, price_dates)
     ratings = load_rows(conn)
-    return {t.tdcc: assess(t, price_dates, volatilities, ratings, config.index_underlyings) for t in terms}
+    return {
+        t.tdcc: assess(t, price_dates, volatilities, ratings, config.index_underlyings, config.etf_underlyings)
+        for t in terms
+    }
 
 
 def risk_levels(conn: psycopg.Connection, tdccs: Sequence[str] | None = None) -> dict[str, RiskLevel]:
@@ -433,6 +465,7 @@ def _detail_json(detail: RiskDetail) -> dict[str, Any]:
         "tenor_months": detail.tenor_months,
         "tenor_score": detail.tenor_score,
         "underlying_type_score": detail.underlying_type_score,
+        "underlying_type": detail.underlying_type,
         "underlying_count": detail.underlying_count,
         "underlying_count_score": detail.underlying_count_score,
         "volatilities": [[code, str(value)] for code, value in detail.volatilities],
