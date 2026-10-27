@@ -4,12 +4,15 @@
 收盤日空白時按「重新整理」用收盤價表最新的收盤日，讀到後把日期填回去；改日期再按一次就看那一天
 （`window_actions.load_exit_list`）。每日匯入（回補股價、歷史收盤價）比價完成後由視窗呼叫 `receive_day`
 帶入比到的那一天並顯示提示條，不自動讀、不切頁（#76）。
+等股價、還沒比到這一天的商品不在清單上，完成訊息另外寫出檔數與缺的收盤價（#282）。
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import re
 import tkinter as tk
+from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
 from tkinter import filedialog, ttk
@@ -34,6 +37,7 @@ COLUMNS = (
     ("locked", "鎖住", 70),
     ("recorded_at", "記錄時間", 140),
 )
+SEQ = re.compile(r"^UL_\d+ ")  # 比價原因開頭的標的序號（`observation.Underlying.name`）
 
 
 class ExitListTab(Tab):
@@ -131,6 +135,12 @@ class ExitListTab(Tab):
         self.day_var.set(f"{result.day:%Y-%m-%d}")
         counts = [(f"{event}（檔）", _products(result.rows, event=event), False) for event in EXIT_EVENTS]
         text = f"出場 {_products(result.rows)} 檔（{_by_source(result.rows)}）。" if result.rows else "沒有出場的商品。"
+        if result.waiting:
+            counts.append(("等股價（檔）", len(result.waiting), True))
+            text += (
+                f"另有 {len(result.waiting)} 檔等股價，比價停在缺價的那一天、沒有判定到這一天，不在這張清單："
+                f"{_waiting_text(result.waiting)}。補上收盤價後重新比價；明細看「8 進度」。"
+            )
         self.finish(counts, f"收盤日 {result.day:%Y-%m-%d}：{text}")
 
     # ---------- 匯出 ----------
@@ -187,3 +197,9 @@ def _by_source(rows: tuple[ExitRow, ...]) -> str:
     """完成訊息的各來源檔數，例如「比價 1、舊清單 2」；沒有的來源不寫。"""
     counts = [(source, _products(rows, source=source)) for source in SOURCES]
     return "、".join(f"{source} {n}" for source, n in counts if n)
+
+
+def _waiting_text(waiting: tuple[tuple[str, str], ...]) -> str:
+    """等股價的原因與檔數，例如「1321 JT：2026-10-19 沒有收盤價 2 檔」；同一個標的、同一天的不分 UL 序號合併，多的排前面。"""
+    counts = Counter(SEQ.sub("", reason) for _, reason in waiting)
+    return "；".join(f"{reason} {n} 檔" for reason, n in sorted(counts.items(), key=lambda item: (-item[1], item[0])))

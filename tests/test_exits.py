@@ -86,6 +86,34 @@ def test_another_day_and_an_empty_close_table(pg) -> None:
     assert (earlier.day, [r.tdcc for r in earlier.rows]) == (DAY - dt.timedelta(days=3), [A])
 
 
+def status(pg, tdcc: str, name: str, reason: str | None, through: dt.date | None) -> None:
+    pg.execute(
+        "INSERT INTO workflow.pricing_status (tdcc, status, reason, observed_through, locked) VALUES (%s, %s, %s, %s, true)",
+        (tdcc, name, reason, through),
+    )
+
+
+@pytest.mark.db
+def test_products_waiting_for_a_price_before_the_day_are_listed(pg) -> None:
+    seed_products(pg, [inventory(t, [("台北", 10000)]) for t in (A, B, C, D, E)])
+    close(pg, DAY)
+    status(pg, B, "等股價", "UL_1 1321 JT：2026-10-19 沒有收盤價", dt.date(2026, 10, 18))
+    status(pg, A, "等股價", "UL_2 1321 JT：2026-10-19 沒有收盤價（每日觀察 KI）", None)  # Non-call 期間，已比到空白
+    status(pg, C, "等股價", "UL_1 AAA UW：2026-10-22 沒有收盤價", DAY)  # 這一天比到了
+    status(pg, D, "在庫", None, DAY - dt.timedelta(days=1))
+    status(pg, E, "待確認", "UL_1 AAA UW：收盤價表沒有這個代碼", None)
+
+    found = load_exits(pg, CONFIG)
+
+    assert found.waiting == (
+        (A, "UL_2 1321 JT：2026-10-19 沒有收盤價（每日觀察 KI）"),
+        (B, "UL_1 1321 JT：2026-10-19 沒有收盤價"),
+    ), "等股價、已比到早於這一天或空白的才列，依 TDCC 排"
+    assert load_exits(pg, CONFIG, dt.date(2026, 10, 18)).waiting == (
+        (A, "UL_2 1321 JT：2026-10-19 沒有收盤價（每日觀察 KI）"),
+    )
+
+
 def test_export_writes_the_rows_as_shown(tmp_path: Path) -> None:
     path = tmp_path / export_name(DAY)
     rows = [ExitRow(B, "BARC", "FCN", "接股", DAY, "AAA UW", LEGACY, False, T)]

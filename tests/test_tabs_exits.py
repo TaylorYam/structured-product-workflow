@@ -78,6 +78,34 @@ def test_two_events_of_one_product_count_as_one(master, tmp_path: Path, monkeypa
     assert str(tab.export_button.cget("state")) == "normal"
 
 
+def test_products_waiting_for_a_price_are_counted_with_reasons(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    waiting = (
+        ("029199990004", "UL_1 1321 JT：2026-10-19 沒有收盤價"),
+        ("037199990005", "UL_3 1321 JT：2026-10-19 沒有收盤價"),
+        ("037199990006", "UL_2 PFE UN：2026-10-01 沒有收盤價（每日觀察 KI）"),
+    )
+    _, tab, _ = loaded(master, tmp_path, monkeypatch, immediate, ExitList(DAY, ROWS, waiting))
+
+    assert tab.kpis.values[-1] == ("等股價（檔）", 3, True), "有問題的數字用紅色"
+    assert tab.status_var.get() == (
+        "收盤日 2026-10-21：出場 3 檔（比價 1、舊清單 2）。"
+        "另有 3 檔等股價，比價停在缺價的那一天、沒有判定到這一天，不在這張清單："
+        "1321 JT：2026-10-19 沒有收盤價 2 檔；PFE UN：2026-10-01 沒有收盤價（每日觀察 KI） 1 檔。"
+        "補上收盤價後重新比價；明細看「8 進度」。"
+    ), "同一個標的、同一天缺價的合併計數，不分 UL 序號"
+
+
+def test_without_waiting_products_there_is_no_waiting_count(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    _, tab, _ = loaded(master, tmp_path, monkeypatch, immediate)
+
+    assert [caption for caption, _, _ in tab.kpis.values] == [
+        "KO（檔）",
+        "接股（檔）",
+        "到期還本（檔）",
+        "顧客贖回（檔）",
+    ]
+
+
 def test_another_day_without_exits(master, tmp_path: Path, monkeypatch, immediate) -> None:
     _, tab, asked = loaded(master, tmp_path, monkeypatch, immediate, ExitList(dt.date(2026, 10, 15), ()))
     tab.day_var.set("2026-10-15")
