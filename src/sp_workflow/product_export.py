@@ -1,5 +1,5 @@
 """匯出資料庫的商品條件（#122）：把 `workflow.product` 整張寫成一份 Excel，給作業人員留存或對照。
-商品總表（#291，`export_summary`）是給人看的版本：欄位照新商品總表，見該函式說明。
+商品總表（#291，`export_summary`）是給人看的版本：欄位照新商品總表，見該函式說明；後面接在庫部位的分析分頁（#293，`summary_analysis`）。
 
 只讀資料庫，不改任何資料。第 1 列是資料庫的欄名，最後多一欄「存續狀態」（最新一筆存續事件，#152），依 TDCC 排序；值照資料庫的型別寫入（日期、數字、文字），
 有時區的時間換成本機時間（Excel 不收時區），Excel 不收的控制字元拿掉（`file_tools.save_rows`）。先寫到同一個資料夾的暫存檔，
@@ -26,6 +26,7 @@ from psycopg.rows import dict_row
 
 from sp_workflow.file_tools import MAX_WIDTH, excel_value, save_export, save_rows, table_book, text_cell
 from sp_workflow.lifecycle import Lifecycle, lifecycle_status
+from sp_workflow.summary_analysis import add_analysis_sheets, enable_spill, summary_table
 
 if TYPE_CHECKING:
     import psycopg
@@ -118,6 +119,7 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
 
     存續是最新一筆還有效的事件（沒有是在庫）；承作總額是交易明細加總，交易列照順序往右排成分公司／FC／金額，
     組數是交易最多那一檔的筆數（至少 `MIN_TRADE_GROUPS`）。資料庫沒有的值（含私銀註記、新加坡註記、Lookback 期間）寫 `-`。
+    總表是 Excel 表格，後面接用公式從總表即時計算的在庫部位分析分頁（#293）。
     """
     with _snapshot(conn), conn.cursor(row_factory=dict_row) as cur:  # 商品、事件、比價日、價格、交易列讀同一個時間點
         fields = ", ".join([*PRODUCT_FIELDS.values(), *_UNDERLYINGS])
@@ -143,7 +145,9 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
         _summary_cells(p, statuses[t], autocall.get(t, {}), prices.get(t, {}), trades.get(t, []))
         for p, t in zip(products, tdccs, strict=True)
     ]
-    save_export(_summary_book(columns, [[cells.get(column) for column in columns] for cells in rows]), path)
+    book = _summary_book(columns, [[cells.get(column) for column in columns] for cells in rows])
+    add_analysis_sheets(book, groups)
+    save_export(book, path, finish=enable_spill)
     return ExportReceipt(path, len(rows))
 
 
@@ -184,7 +188,6 @@ def _summary_book(columns: Sequence[str], rows: Sequence[Sequence[object]]) -> o
         values,
         widths=[min(width + 2, MAX_WIDTH) for width in widths],
         style=_summary_cell,
-        auto_filter=True,
     )
     sheet = book.active
     starts = dict(HEADER_FILLS)
@@ -195,6 +198,7 @@ def _summary_book(columns: Sequence[str], rows: Sequence[Sequence[object]]) -> o
         cell.fill = fill
         _font_and_alignment(cell, size=HEADER_SIZE)
     sheet.freeze_panes = FROZEN
+    summary_table(sheet, len(columns), len(values))  # 表格自帶篩選按鈕，分析分頁的公式也參照它（#293）
     return book
 
 

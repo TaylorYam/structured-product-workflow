@@ -128,6 +128,9 @@ def test_an_empty_summary_still_writes_the_header_with_two_trade_groups(pg, tmp_
 
     assert receipt.count == 0
     assert read_back(tmp_path / "x.xlsx") == [[*SUMMARY_COLUMNS, *trade_columns(2)]]
+    assert "總表[[分公司_1]:[金額_2]]" in openpyxl.load_workbook(tmp_path / "x.xlsx")["分公司x幣別"]["A6"].value.text, (
+        "分析分頁照總表的交易組數（#293）"
+    )
 
 
 @pytest.mark.db
@@ -184,7 +187,7 @@ def test_summary_cells_are_centred_with_fonts_by_content(pg, tmp_path: Path) -> 
     sheet = openpyxl.load_workbook(path).active
     header = {cell.value: cell.column for cell in sheet[1]}
     cell = {name: sheet.cell(2, column) for name, column in header.items()}
-    assert sheet.title == "商品總表" and sheet.freeze_panes == "G2" and sheet.auto_filter.ref == sheet.dimensions
+    assert sheet.title == "商品總表" and sheet.freeze_panes == "G2" and sheet.tables["總表"].ref == sheet.dimensions
     assert (sheet["A1"].font.name, sheet["A1"].font.b) == ("微軟正黑體", True)
     assert (sheet.cell(1, header["TDCC Code"]).font.name, sheet.cell(1, header["TDCC Code"]).font.b) == (
         "Calibri",

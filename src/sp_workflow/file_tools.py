@@ -78,11 +78,16 @@ def table_book(
     return book
 
 
-def save_book(book: openpyxl.Workbook, path: Path, *, overwrite: bool = True) -> None:
-    """先寫 `<檔名>.tmp` 再換名。`overwrite=False` 時同名檔已存在就失敗（Windows 的 `os.rename`），不覆蓋。"""
+def save_book(
+    book: openpyxl.Workbook, path: Path, *, overwrite: bool = True, finish: Callable[[Path], None] | None = None
+) -> None:
+    """先寫 `<檔名>.tmp` 再換名。`overwrite=False` 時同名檔已存在就失敗（Windows 的 `os.rename`），不覆蓋。
+    `finish` 在換名前處理暫存檔（例：補動態陣列中繼資料，#293）。"""
     temp = path.with_name(path.name + ".tmp")
     try:
         book.save(temp)
+        if finish is not None:
+            finish(temp)
         if overwrite:
             temp.replace(path)
         else:
@@ -121,10 +126,10 @@ def save_rows(path: Path, title: str, columns: Sequence[str], rows: Sequence[Seq
     save_export(book, path)
 
 
-def save_export(book: openpyxl.Workbook, path: Path) -> None:
+def save_export(book: openpyxl.Workbook, path: Path, *, finish: Callable[[Path], None] | None = None) -> None:
     """匯出檔存檔（`save_book`）；寫不進去時丟給作業人員看的 `FileWriteError`。"""
     try:
-        save_book(book, path)
+        save_book(book, path, finish=finish)
     except OSError as exc:
         raise FileWriteError(
             f"寫不進 {path}：{exc.strerror or exc}。同名檔開在 Excel 時請先關掉，或換一個檔名再匯出。", path, exc
