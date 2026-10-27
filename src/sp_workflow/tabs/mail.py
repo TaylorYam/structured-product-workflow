@@ -1,8 +1,10 @@
-"""「6 寄信草稿」分頁：貼核對通過的 TDCC，在 Outlook 建 TS／IIS 草稿給承作的 FC（#29），同時留步驟紀錄（#151）。"""
+"""「6 寄信草稿」分頁：貼核對通過的 TDCC，在 Outlook 建 TS／IIS 草稿給承作的 FC（#29），同時留步驟紀錄（#151）。
+放回完成後帶入通過的 TDCC（#281）。"""
 
 from __future__ import annotations
 
 import tkinter as tk
+from collections.abc import Sequence
 from tkinter import messagebox, ttk
 
 from fcn_checker.ui import Background
@@ -37,7 +39,8 @@ class MailDraftTab(Tab):
             "建立寄信草稿",
             "依資料庫的承作 FC 與信箱，在 Outlook 建 TS／IIS 寄信草稿；只建草稿，不會寄出。",
         )
-        card = self.card(1)
+        self.tdcc_hint(1)  # 從放回帶入的 TDCC
+        card = self.card(2)
         self.tdcc_column(card)
         body = self.body(card, column=1)
         row = self.field(
@@ -51,7 +54,16 @@ class MailDraftTab(Tab):
         self.result_area(body, row)
         self.start_button = ttk.Button(self.buttons, text="建立草稿", command=self.start, style="Primary.TButton")
         self.start_button.pack(side=tk.LEFT)
-        self.place_table(2)
+        self.place_table(3)
+
+    def receive_tdccs(self, tdccs: Sequence[str]) -> bool:
+        """放回完成後帶入通過的 TDCC（#281）；回傳是否帶入。不切頁、不自動建草稿。"""
+        return self.hand_in_tdccs(
+            tdccs,
+            "放回通過的 TDCC",
+            f"已帶入「5 放回」通過的 TDCC {len(tdccs)} 筆（TS、IIS 都用標準檔名放回或已在），"
+            "選好結果清單位置後按「建立草稿」。",
+        )
 
     def _busy(self, busy: bool) -> None:
         self.start_button.configure(state=tk.DISABLED if busy else tk.NORMAL)

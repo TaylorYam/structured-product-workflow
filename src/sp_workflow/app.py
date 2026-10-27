@@ -23,8 +23,9 @@ Treeview 的表（7 的檢查結果表除外）另有 Ctrl+A 全選、Ctrl+C 複
 
 商品資料夾所在的根目錄在視窗最上方設一次，3、6 兩頁共用（#75）。
 做完一步，下一頁先帶入結果並用藍色提示條寫出來，按「下一步 →」才切頁，不自動執行（#76）：
-每日匯入完成 → 起單資料頁帶入交易明細的 FCN TDCC（#90）；回補股價、歷史收盤價比價完成 → 出場清單帶入比到的那一天（#171）；
-準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔。
+每日匯入完成 → 起單資料頁帶入交易明細的 FCN TDCC（#90）；起單資料匯入完成 → 準備頁帶入成功匯入的 TDCC（#281）；回補股價、歷史收盤價比價完成 → 出場清單帶入比到的那一天（#171）；
+準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔；
+放回完成 → 寄信草稿頁帶入通過的 TDCC（#281）。
 審查通過日期、匯出回報包、信箱維護、發行機構評等、可連結標的白名單與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
 視窗只收輸入、在背景執行一個動作並顯示結果，不含判斷邏輯：要連資料庫的按鈕各呼叫 `window_actions` 的一個動作，
 連線、transaction 與容錯（ADR 0012）都在那裡（#125）；不連資料庫的直接呼叫 `prepare_batch`／核對／`return_to_folders`。
@@ -248,7 +249,15 @@ class PanelWindow:
             on_exits=lambda: self.notebook.select(self.exits.frame),
             background=background,
         )
-        self.orders = OrderTermsTab(self.notebook, memory, db, lambda: self.session.paths, background=background)
+        self.orders = OrderTermsTab(
+            self.notebook,
+            memory,
+            db,
+            lambda: self.session.paths,
+            on_imported=lambda tdccs: self.prepare.receive_tdccs(tdccs),
+            on_next=lambda: self.notebook.select(self.prepare.frame),
+            background=background,
+        )
         self.prepare = PrepareTab(
             self.notebook,
             memory,
@@ -261,7 +270,14 @@ class PanelWindow:
         self.check = CheckTab(self.notebook, self.session, self.pixels, on_saved=self._check_saved, login=db.log_in)
         self.check.add_next_step("下一步：放回 →", lambda: self.notebook.select(self.returning.frame))
         self.notebook.add(self.check, text="核對")
-        self.returning = ReturnTab(self.notebook, memory, db, background=background)
+        self.returning = ReturnTab(
+            self.notebook,
+            memory,
+            db,
+            on_returned=lambda tdccs: self.mail.receive_tdccs(tdccs),
+            on_next=lambda: self.notebook.select(self.mail.frame),
+            background=background,
+        )
         self.mail = MailDraftTab(self.notebook, memory, db, self.root_folder, background=background)
         self.manual = MaintenanceTab(self.notebook, memory, db, lambda: self.session.paths, background=background)
         self.progress = ProgressTab(self.notebook, memory, db, lambda: self.session.paths, background=background)

@@ -1,10 +1,22 @@
-"""「5 放回」分頁（`sp_workflow.tabs.returning`）：做完後的重點數字（#85）、帶入新的核對結果時收起上一次的結果、步驟紀錄沒寫進去的提示（#151）。"""
+"""「5 放回」分頁（`sp_workflow.tabs.returning`）：做完後的重點數字（#85）、帶入新的核對結果時收起上一次的結果、步驟紀錄沒寫進去的提示（#151）、放回完成帶入寄信草稿（#281）。"""
 
 from __future__ import annotations
 
+import tkinter as tk
 from pathlib import Path
+from tkinter import messagebox
 
-from sp_workflow.returning import NOT_RETURNED, RETURNED, ReturnOutcome, ReturnReceipt
+import pytest
+
+from sp_workflow.returning import (
+    ALREADY_THERE,
+    NOT_CHECKED_REASON,
+    NOT_RETURNED,
+    PENDING_RETURNED,
+    RETURNED,
+    ReturnOutcome,
+    ReturnReceipt,
+)
 from sp_workflow.step_records import Recorded
 from sp_workflow.window_actions import ReturnResult
 from window_synth import new_window
@@ -45,3 +57,100 @@ def test_return_page_says_when_step_records_were_not_written(master, tmp_path: P
     window.returning._done(ReturnResult(receipt, Recorded(error="資料表還沒建立")))
 
     assert "步驟紀錄沒有寫進資料庫：資料表還沒建立（清單照常產出）" in window.returning.status_var.get()
+
+
+# ---------- 放回完成，帶入寄信草稿（#281） ----------
+
+
+def pasted(tab) -> str:
+    return tab.tdcc_text.get("1.0", tk.END).strip()
+
+
+def returned(*outcomes: ReturnOutcome) -> ReturnResult:
+    return ReturnResult(ReturnReceipt(Path("D:/out/放回清單.xlsx"), outcomes))
+
+
+PASSED = ReturnOutcome("147000000001", RETURNED, RETURNED, "商品資料夾還有舊的待確認檔")  # 只提醒，仍算通過
+ALREADY = ReturnOutcome("147000000002", ALREADY_THERE, RETURNED)
+PENDING = ReturnOutcome("147000000003", RETURNED, PENDING_RETURNED)
+BLOCKED = ReturnOutcome("147000000004", NOT_RETURNED, NOT_RETURNED, NOT_CHECKED_REASON)
+
+
+def test_return_hands_passed_tdccs_to_the_mail_tab(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+
+    window.returning._done(returned(PENDING, PASSED, BLOCKED, ALREADY))
+    master.update()  # 帶入時改了 TDCC 欄位，處理完那次 <<Modified>> 提示條仍在
+
+    assert pasted(window.mail) == "147000000001\n147000000002", "待確認、不放回的不帶，照結果表順序"
+    assert window.mail.hint.text.get() == (
+        "已帶入「5 放回」通過的 TDCC 2 筆（TS、IIS 都用標準檔名放回或已在），選好結果清單位置後按「建立草稿」。"
+    )
+    assert window.returning.status_var.get().endswith("已把通過的 TDCC 2 筆帶到「6 寄信草稿」。")
+    assert window.notebook.select() != str(window.mail.frame), "不自動切頁"
+    assert window.returning.next_button.winfo_manager() == "pack"
+
+    window.returning.next_button.invoke()
+
+    assert window.notebook.select() == str(window.mail.frame)
+
+
+def test_nothing_is_handed_to_the_mail_tab_without_a_passed_tdcc(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    window.mail.tdcc_text.insert("1.0", "147000000009")
+
+    window.returning._done(returned(PENDING, BLOCKED))
+
+    assert window.returning.status_var.get().endswith(
+        "沒有通過的 TDCC（TS、IIS 都用標準檔名放回或已在），寄信草稿頁沒有帶入。"
+    )
+    assert pasted(window.mail) == "147000000009" and not window.mail.hint.shown
+    assert window.returning.next_button.winfo_manager() == ""
+
+
+@pytest.mark.parametrize("answer", [False, True])
+def test_different_tdccs_on_the_mail_tab_are_replaced_only_if_the_operator_agrees(
+    master, tmp_path: Path, monkeypatch, answer
+) -> None:
+    window = new_window(master, tmp_path)
+    window.mail.tdcc_text.insert("1.0", "147000000009")
+    asked = []
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or answer)
+
+    window.returning._done(returned(PASSED))
+
+    assert len(asked) == 1 and asked[0].startswith("「6 寄信草稿」已經有 1 筆 TDCC")
+    assert pasted(window.mail) == ("147000000001" if answer else "147000000009")
+    assert window.returning.next_button.winfo_manager() == ("pack" if answer else ""), "沒帶入就沒有下一步"
+    if not answer:
+        assert window.returning.status_var.get().endswith("寄信草稿頁沒有帶入（正在處理，或保留原本的 TDCC）。")
+
+
+def test_the_same_tdccs_are_handed_to_the_mail_tab_again_without_asking(master, tmp_path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    window.returning._done(returned(PASSED, ALREADY))
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: pytest.fail("一樣的 TDCC 不用問"))
+
+    window.returning._done(returned(ALREADY, PASSED))
+
+    assert window.mail.hint.shown
+
+
+def test_editing_the_tdccs_handed_to_the_mail_tab_hides_the_hint(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    window.returning._done(returned(PASSED))
+    master.update()
+
+    window.mail.tdcc_text.insert(tk.END, "\n147000000009")
+    master.update()
+
+    assert not window.mail.hint.shown
+
+
+def test_a_new_check_result_withdraws_the_next_step_to_mail(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    window.returning._done(returned(PASSED))
+
+    window.returning.receive(tmp_path / "核對結果.xlsx", None)
+
+    assert window.returning.next_button.winfo_manager() == ""

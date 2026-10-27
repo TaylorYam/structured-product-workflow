@@ -1,8 +1,9 @@
-"""「2 起單資料」分頁（`sp_workflow.tabs.orders`）：選起單建檔、在視窗裡確認與匯入（#86、#97）、匯入後的核對條件（#88）、結果表複製（#121）。"""
+"""「2 起單資料」分頁（`sp_workflow.tabs.orders`）：選起單建檔、在視窗裡確認與匯入（#86、#97）、匯入後的核對條件（#88）、結果表複製（#121）、匯入完成帶入準備（#281）。"""
 
 from __future__ import annotations
 
 import datetime as dt
+import tkinter as tk
 from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
@@ -23,7 +24,17 @@ from sp_workflow.risk_level import RiskDetail, RiskLevel
 from sp_workflow.status import ImportResult, OrderReview, Risk
 from sp_workflow.tabs.editor import PROBLEM_BG
 from sp_workflow.window_actions import OrderImportResult
-from window_synth import NEEDS_RELEASE, UF_DIFF, new_window, read_result, release_without_database, texts, type_into
+from window_synth import (
+    NEEDS_RELEASE,
+    UF_DIFF,
+    hint_change_button,
+    new_window,
+    prepared_result,
+    read_result,
+    release_without_database,
+    texts,
+    type_into,
+)
 
 
 def test_order_terms_tab_remembers_its_sheet(master, tmp_path: Path) -> None:
@@ -34,9 +45,14 @@ def test_order_terms_tab_remembers_its_sheet(master, tmp_path: Path) -> None:
 
     assert window.orders.sheet_var.get() == "D:/ELN/起單建檔_20261015.xlsm"
     assert not hasattr(window.orders, "root_folder"), "起單資料頁不用根目錄（#97）"
-    assert texts(window.orders.buttons, ttk.Button) == ["讀取", "匯入資料庫", "放行差異…", "風險等級明細…"], (
-        "更正搬到人工維護（#115）"
-    )
+    assert texts(window.orders.buttons, ttk.Button) == [
+        "讀取",
+        "匯入資料庫",
+        "放行差異…",
+        "風險等級明細…",
+        "下一步：準備 →",
+    ], "更正搬到人工維護（#115）"
+    assert window.orders.next_button.winfo_manager() == "", "匯入完才有下一步（#281）"
     assert str(window.orders.import_button.cget("state")) == "disabled"
 
 
@@ -488,3 +504,117 @@ def test_select_all_keeps_the_product_being_edited(master, tmp_path: Path) -> No
     assert len(tab.table.selection()) == 2, "Ctrl+A 全部反白"
     assert tab.editor.draft is editing, "右邊不跳到第一檔"
     assert tab._selected_tdcc() == editing.tdcc, "放行差異照樣對點的那一檔"
+
+
+# ---------- 匯入完成，帶入準備（#281） ----------
+
+
+def pasted(tab) -> str:
+    return tab.tdcc_text.get("1.0", tk.END).strip()
+
+
+def imported_window(master, tmp_path: Path) -> PanelWindow:
+    return order_window(master, tmp_path, *(order_row(f"02919999000{i}") for i in range(1, 5)))
+
+
+def import_lines(*results: ImportResult) -> OrderImportResult:
+    lines = tuple(ImportLine(f"02919999000{i}", result) for i, result in enumerate(results, 1))
+    return OrderImportResult(BatchReceipt(9, lines))
+
+
+def test_order_import_hands_imported_tdccs_to_the_prepare_tab(master, tmp_path: Path) -> None:
+    window = imported_window(master, tmp_path)
+    order = [row.tdcc for row, _ in window.orders.items.values()]
+
+    window.orders._saved(import_lines(ImportResult.NEW, ImportResult.SAME, ImportResult.SKIPPED, ImportResult.LOCKED))
+    master.update()  # 帶入時改了 TDCC 欄位，處理完那次 <<Modified>> 提示條仍在
+
+    handed = [t for t in order if t in ("029199990001", "029199990002")]
+    assert pasted(window.prepare) == "\n".join(handed), "新增、沒有變算成功匯入；不匯入、已鎖住不帶，照結果表順序"
+    assert window.prepare.hint.text.get() == (
+        "已帶入「2 起單資料」成功匯入的 TDCC 2 筆，選好輸出位置後按「開始準備」。"
+    )
+    assert window.orders.status_var.get().endswith("已把成功匯入的 TDCC 2 筆帶到「3 準備」。")
+    assert window.notebook.select() != str(window.prepare.frame), "不自動切頁"
+    assert window.orders.next_button.winfo_manager() == "pack"
+
+    window.orders.next_button.invoke()
+
+    assert window.notebook.select() == str(window.prepare.frame)
+
+
+def test_nothing_is_handed_to_the_prepare_tab_without_an_imported_tdcc(master, tmp_path: Path) -> None:
+    window = imported_window(master, tmp_path)
+    window.prepare.tdcc_text.insert("1.0", "147000000009")
+
+    window.orders._saved(import_lines(ImportResult.SKIPPED, ImportResult.LOCKED))
+
+    assert window.orders.status_var.get().endswith("沒有成功匯入的 TDCC，準備頁沒有帶入。")
+    assert pasted(window.prepare) == "147000000009" and not window.prepare.hint.shown
+    assert window.orders.next_button.winfo_manager() == ""
+
+
+@pytest.mark.parametrize("answer", [False, True])
+def test_different_tdccs_on_the_prepare_tab_are_replaced_only_if_the_operator_agrees(
+    master, tmp_path: Path, monkeypatch, answer
+) -> None:
+    window = imported_window(master, tmp_path)
+    window.prepare.tdcc_text.insert("1.0", "147000000009")
+    asked = []
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or answer)
+
+    window.orders._saved(import_lines(ImportResult.OVERWRITTEN))
+
+    assert asked == [
+        "「3 準備」已經有 1 筆 TDCC，和起單資料成功匯入的 TDCC（1 筆）不同。\n\n要換成起單資料成功匯入的 TDCC 嗎？"
+    ]
+    assert pasted(window.prepare) == ("029199990001" if answer else "147000000009")
+    assert window.prepare.hint.shown is answer
+    assert window.orders.next_button.winfo_manager() == ("pack" if answer else ""), "沒帶入就沒有下一步"
+    if not answer:
+        assert window.orders.status_var.get().endswith("準備頁沒有帶入（正在處理，或保留原本的 TDCC）。")
+
+
+def test_a_busy_prepare_tab_is_not_handed_tdccs(master, tmp_path: Path, monkeypatch) -> None:
+    window = imported_window(master, tmp_path)
+    told = []
+    monkeypatch.setattr(messagebox, "showinfo", lambda *a, **k: told.append(a[1]))
+    window.prepare.runner.working = True
+
+    window.orders._saved(import_lines(ImportResult.NEW))
+
+    assert told == ["「3 準備」正在處理，起單資料成功匯入的 TDCC 沒有帶入；處理完後請自己貼。"]
+    assert pasted(window.prepare) == "" and not window.prepare.hint.shown
+
+
+def test_handing_over_clears_the_last_prepare_results_and_change_clears_the_tdccs(master, tmp_path: Path) -> None:
+    window = imported_window(master, tmp_path)
+    window.prepare._done(prepared_result(tmp_path / "待核對_1"))
+
+    window.orders._saved(import_lines(ImportResult.NEW))
+
+    assert window.prepare.table.get_children() == () and window.prepare.kpis.values == ()
+    hint_change_button(window.prepare.hint).invoke()
+    assert pasted(window.prepare) == "" and not window.prepare.hint.shown
+
+
+@pytest.mark.parametrize("again", ["read", "import"])
+def test_reading_or_importing_again_withdraws_the_next_step(
+    master, tmp_path: Path, monkeypatch, immediate, again
+) -> None:
+    rows = [order_row(f"02919999000{i}") for i in range(1, 5)]
+    window = order_window(master, tmp_path, *rows, background=immediate, logged_in=True)
+    window.orders._saved(import_lines(ImportResult.NEW))
+    assert window.orders.next_button.winfo_manager() == "pack"
+
+    if again == "read":
+        window.orders.sheet_var.set(str(tmp_path / "起單建檔.xlsm"))
+        monkeypatch.setattr(sp_workflow.tabs.orders, "read_order_sheet", lambda *a: read_result(*rows))
+        window.orders.start()
+    else:
+        monkeypatch.setattr(
+            sp_workflow.tabs.orders, "import_order_sheet", lambda *a: import_lines(ImportResult.SKIPPED)
+        )
+        window.orders.import_now()
+
+    assert window.orders.next_button.winfo_manager() == ""
