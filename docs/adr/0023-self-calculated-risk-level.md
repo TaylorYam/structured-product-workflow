@@ -20,6 +20,7 @@
 - **年期分**（`tenor_months`）：≤12 給 1、≤36 給 2、≤60 給 3、≤120 給 4、>120 給 5。
 - **結構複雜度分** = 平均（標的種類分, 標的數量分, 波動度分）+ 提前贖回 1（FCN 一律可提前出場）。
   - 標的種類：照試算表只看 `underlying_1`（空白算缺資料，不改看下一檔），在指數清單上是指數 3 分，否則個股 4 分。指數清單放 `config/risk_level.toml`，由作業人員提供，提供前是空清單；清單與 `underlying_1` 都經 `sheet_cells.bbg_code` 去掉最後的類別字（資料庫存的代碼已經去掉，例：清單寫 `SPX Index`、資料庫存 `SPX`），再去頭尾空白、不分大小寫比對。
+  - 標的種類補充（#252，2026-10-27 使用者確認）：可以連結的標的只有「ELN可連結標的白名單」上的指數成分股、ADR、ETF，指數本身不能連結，所以指數清單維持空的；**ETF 和指數一樣 3 分**，ADR 照個股 4 分。ETF 清單（`etf_underlyings`）照貼白名單 ETF 工作表（美國上市 ETF，寫法 `QQQ US Equity`），另外補白名單沒有、資料庫已有商品連結的 `1306 JT`、`1321 JT`、`UFO`。比對（`risk_level.underlying_key`）另把美國的交易所代碼（UN、UW、UQ、UR、UP、UF…）都當 `US`，白名單的 `QQQ US` 才對得到資料庫的 `QQQ UQ`；其他市場照交易所代碼比。明細多存標的種類（指數／ETF／個股）；#252 以前存的明細沒有，照分數顯示。
   - 標的數量（非空的 `underlying_1..5`）：1→1、2→2、3→3、4→4、5→4、≥6→5。
   - 波動度：各標的 200 日波動率的**平均**，≤15→1、≤30→2、≤45→3、<60→4、≥60→5（試算表用 LOOKUP 與 0／15.0000001／30.0000001／45.0000001／60 的分界，所以剛好 15 是 1 分、剛好 60 是 5 分）。
 - **流動性分** = 0.8×評等分 + 0.2×1（可贖回頻率一律 Daily）。評等取**保證機構**（評等表沒有這家上手的保證機構時取發行機構），三家評等機構中取最好（分數最小）的一家：AAA／Aaa→1；AA+、AA、Aa1、Aa2→2；AA-、A+、Aa3、A1→3；A、A-、A2、A3→4；BBB+、Baa1 以下→5。
@@ -67,7 +68,7 @@
 - 更新程式後要跑 `spw-db-migrate`（資料表版本 0025）；升級後第一次匯入或存檔時，還沒鎖住的商品都會算出風險等級；已鎖住的商品在第一次匯入後的重算時補算一次（交易日在 2026-10-30 以前，缺資料的是回填 RR4），之後凍結。
 - 新增設定檔 `config/risk_level.toml`；設定資料夾沒有這個檔時用程式內建的（`ConfigPaths.with_fallback`）。
 - 匯入後的重算現在也要讀審查標準與參考條件表格式；這兩個設定檔壞掉時，每日匯入的重算也會失敗（匯入保留、寫出原因）。
-- 指數清單還是空的：在使用者提供前，UL_1 是指數的商品會多算 1 分（4 分而不是 3 分）。
+- 指數清單是空的（指數不能連結）；ETF 清單上線後（#252），還沒鎖住、UL_1 是 ETF 的商品在下一次重算時標的種類改為 3 分，已鎖住的不變。還沒鎖住的商品明細多了標的種類，下一次重算會各重寫一次。白名單更新時要換掉設定檔的 ETF 清單；自訂設定資料夾裡的舊 `risk_level.toml` 沒有 `etf_underlyings` 時重算會失敗並寫出原因，要換成新版。
 - 說明書／投資人須知的 RR 核對、固定警語與寄信草稿已改用自算等級（#239）：資料庫產生的參考條件表帶出「風險等級」欄，待算轉人工覆核、寄信草稿寫「待確認」；沒有這欄的舊 Excel 參考條件表照舊用審查標準的 RR4。
 
 ## English
@@ -85,6 +86,7 @@ The formula (recovered from the Generator's "境外結構型商品承作檢核�
 - **Tenor score** (`tenor_months`): ≤12 → 1, ≤36 → 2, ≤60 → 3, ≤120 → 4, >120 → 5.
 - **Structure score** = mean(underlying-type score, underlying-count score, volatility score) + early redemption 1 (FCNs always have an early exit).
   - Underlying type: as in the spreadsheet only `underlying_1` counts (blank is missing data; the next underlying is not used instead); 3 when it is on the index list, otherwise 4 (single stock). The index list lives in `config/risk_level.toml`, is supplied by the operators, and is empty until then; both the list entries and `underlying_1` go through `sheet_cells.bbg_code`, which drops the trailing class word (stored codes already lack it: the list says `SPX Index`, the database stores `SPX`), and are then compared trimmed and case-insensitively.
+  - Underlying type, amended (#252, confirmed by the user on 2026-10-27): the only linkable underlyings are the index constituents, ADRs, and ETFs on 「ELN可連結標的白名單」; indices themselves cannot be linked, so the index list stays empty. **ETFs score 3 like indices**; ADRs score 4 like single stocks. The ETF list (`etf_underlyings`) is the whitelist's ETF sheet pasted as is (US-listed ETFs, written `QQQ US Equity`), plus `1306 JT`, `1321 JT`, and `UFO`, which the whitelist lacks but stored products already link to. Matching (`risk_level.underlying_key`) also treats every US exchange code (UN, UW, UQ, UR, UP, UF, …) as `US`, so the whitelist's `QQQ US` matches the stored `QQQ UQ`; other markets compare by exchange code. The breakdown now also stores the underlying type (指數 / ETF / 個股); breakdowns stored before #252 lack it and are shown by score.
   - Underlying count (non-blank `underlying_1..5`): 1→1, 2→2, 3→3, 4→4, 5→4, ≥6→5.
   - Volatility: the **mean** of the underlyings' 200-day volatilities, ≤15 → 1, ≤30 → 2, ≤45 → 3, <60 → 4, ≥60 → 5 (the spreadsheet uses LOOKUP over the breakpoints 0 / 15.0000001 / 30.0000001 / 45.0000001 / 60, so exactly 15 scores 1 and exactly 60 scores 5).
 - **Liquidity score** = 0.8 × rating score + 0.2 × 1 (redemption frequency is always Daily). The rating is the **guarantor's** (the issuing entity's when the rating table has no guarantor for the issuer), taking the best (lowest-scoring) of the three agencies: AAA/Aaa → 1; AA+, AA, Aa1, Aa2 → 2; AA-, A+, Aa3, A1 → 3; A, A-, A2, A3 → 4; BBB+ / Baa1 or worse → 5.
@@ -132,5 +134,5 @@ Bloomberg VOLATILITY_200D algorithm (documentation only, not implemented now; ke
 - Run `spw-db-migrate` after updating (schema version 0025). After the upgrade, the first import or save calculates the risk level of every unlocked product; locked products get theirs once on the first recalculation after an import (missing data with a trade date before 2026-10-30 gives 回填 RR4) and are frozen afterwards.
 - New settings file `config/risk_level.toml`; when the settings folder lacks it, the built-in one is used (`ConfigPaths.with_fallback`).
 - The post-import recalculation now also reads the review standard and the reference-sheet format; if either file is broken, the daily import's recalculation fails too (the import is kept and the reason shown).
-- The index list is still empty: until the operators supply it, products whose UL_1 is an index score one point more (4 instead of 3).
+- The index list is empty (indices cannot be linked). Once the ETF list ships (#252), unlocked products whose UL_1 is an ETF get an underlying-type score of 3 on the next recalculation; locked products do not change. Unlocked products' breakdowns gain the underlying type, so the next recalculation rewrites each once. Replace the ETF list in the settings file when the whitelist changes; an old `risk_level.toml` in a custom settings folder without `etf_underlyings` makes the recalculation fail with the reason shown, and must be replaced with the new one.
 - The term-sheet / investor-information RR checks, fixed warnings, and mail drafts now use the calculated level (#239): the reference workbook generated from the database carries a 風險等級 column, a pending level goes to manual review, and the mail draft says 待確認; an old Excel reference workbook without that column still uses the review standard's RR4.
