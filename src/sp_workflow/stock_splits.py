@@ -2,7 +2,11 @@
 
 - 一筆登記是一個代碼在一個生效日（第一個用新股數交易的日子）的拆股前、拆股後股數（`workflow.stock_split`）；
   代碼同收盤價表（去掉 Equity 這類類別字）。前後股數都是 1 是「確認不是拆股」：那天的大漲大跌是真的。
-- 換算（`SplitBook.factor`）：生效日在基準日（Strike date）之後、不晚於觀察日的拆股，收盤價乘上「拆股後 ÷ 拆股前」。
+- 換算（`SplitBook.factor`）：收盤價換到標的價格的基準日。基準日平常是 Strike date：生效日在它之後、不晚於觀察日的拆股，
+  收盤價乘上「拆股後 ÷ 拆股前」；價格已經是上手依拆股調整過的（舊商品常見），基準日是含到的那次拆股的生效日，
+  在那之前的收盤價反過來除掉（#275、ADR 0025）。
+- 價格基準日（`SplitBook.basis`、`refresh_basis`）：進場價跟 Strike date 的收盤價比，看已經含 Strike date 之後的哪幾次拆股，
+  存在 `workflow.underlying_price.price_basis_date`；比價全部時依當時的拆股登記重算。
 - 提醒（`SplitBook.jumps`）：同一個代碼相鄰兩個收盤日，換算後的價格比例低於 `JUMP_LOW` 倍或高於它的倒數時是
   疑似拆股或收盤價有誤；這段期間有「確認不是拆股」的登記就不算。
 - 維護只有新增、刪除（改就刪掉重登）；每個動作一個 transaction，並留一筆 `workflow.stock_split_log`。
@@ -93,12 +97,34 @@ class SplitBook:
             self.by_code.setdefault(split.code, []).append(split)
 
     def factor(self, code: str, base: dt.date, day: dt.date) -> Decimal:
-        """`day` 的收盤價換回 `base`（Strike date）的基準要乘的數：生效日在 (`base`, `day`] 的拆股相乘。"""
+        """`day` 的收盤價換到 `base`（價格的基準日）要乘的數：`day` 在 `base` 之後時乘上生效日在 (`base`, `day`] 的拆股，
+        之前時除以生效日在 (`day`, `base`] 的拆股。"""
         result = Decimal(1)
+        low, high = sorted((base, day))
         for split in self.by_code.get(code, ()):
-            if base < split.effective_date <= day:
+            if low < split.effective_date <= high:
                 result *= split.factor
-        return result
+        return result if day >= base else 1 / result
+
+    def later(self, code: str, strike: dt.date) -> list[Split]:
+        """Strike date 之後生效、真的改了股數的拆股（不含確認不是拆股）。"""
+        return [s for s in self.by_code.get(code, ()) if s.effective_date > strike and not s.not_a_split]
+
+    def basis(self, code: str, strike: dt.date, initial: Decimal | None, close: Decimal | None) -> dt.date | None:
+        """推算一個標的的價格基準日：進場價跟 Strike date 的收盤價 `close` 比，看已經含 Strike date 之後的哪幾次拆股。
+
+        沒含（沒有拆股、缺價格也一樣）是 None，即 Strike date；含到第幾次就是那次的生效日。
+        哪一個都對不起來（比例超出 `JUMP_LOW`）也是 None，由比價檢查、標待確認。"""
+        later = self.later(code, strike)
+        if not later or not initial or not close or initial <= 0 or close <= 0:
+            return None
+        candidates = [(None, Decimal(1))]
+        total = Decimal(1)
+        for split in later:
+            total *= split.factor
+            candidates.append((split.effective_date, total))
+        day, total = min(candidates, key=lambda c: abs((initial * c[1] / close).ln()))
+        return day if JUMP_LOW <= initial * total / close <= 1 / JUMP_LOW else None
 
     def jumps(self, code: str, closes: Mapping[dt.date, Decimal]) -> tuple[Jump, ...]:
         """這個代碼的價格斷層：相鄰兩個收盤日換算後的比例 < `JUMP_LOW` 或 > 1 ÷ `JUMP_LOW`，期間沒有確認不是拆股。"""
@@ -151,20 +177,54 @@ def load_splits(conn: psycopg.Connection) -> tuple[Split, ...]:
 
 
 def affected_exits(conn: psycopg.Connection, split: Split) -> list[str]:
-    """這筆登記改了之後要重新比價的已出場商品：用到這個代碼、生效日在 Strike date 之後、
-    還有效的事件全部來自比價、而且最晚的事件不早於生效日（之前就出場的不受影響）。"""
+    """這筆登記改了之後要重新比價的已出場商品：用到這個代碼、生效日在 Strike date 之後、還有效的事件全部來自比價。
+
+    生效日以前的出場也算：價格已經是上手調整過的標的，生效日以前的收盤價也要換算（#275、ADR 0025）。"""
     rows = conn.execute(
         "SELECT p.tdcc FROM workflow.product p"
         " WHERE p.strike_date < %(day)s"
         " AND EXISTS (SELECT 1 FROM workflow.underlying_price u WHERE u.tdcc = p.tdcc AND u.code = %(code)s)"
-        " AND EXISTS (SELECT 1 FROM workflow.product_event e WHERE e.tdcc = p.tdcc AND e.superseded_at IS NULL"
-        "             AND e.event_date >= %(day)s)"
+        " AND EXISTS (SELECT 1 FROM workflow.product_event e WHERE e.tdcc = p.tdcc AND e.superseded_at IS NULL)"
         " AND NOT EXISTS (SELECT 1 FROM workflow.product_event e WHERE e.tdcc = p.tdcc AND e.superseded_at IS NULL"
         "                 AND e.source <> %(auto)s)"
         " ORDER BY p.tdcc",
         {"day": split.effective_date, "code": split.code, "auto": OBSERVATION},
     )
     return [tdcc for (tdcc,) in rows]
+
+
+def refresh_basis(conn: psycopg.Connection, book: SplitBook) -> int:
+    """依拆股登記重算各標的的價格基準日（`underlying_price.price_basis_date`），有變才寫；回傳改了幾筆。
+
+    只推有登記拆股的代碼，Strike date 的收盤價取當天或之前 10 天內最近的一筆；其他代碼的基準日清成空白。
+    在呼叫端的 transaction 裡執行（`observation.observe_all`）。"""
+    rows = conn.execute(
+        "SELECT u.tdcc, u.seq, u.code, u.initial_price, u.price_basis_date, p.strike_date,"
+        " (SELECT c.close FROM workflow.close_price c WHERE c.code = u.code"
+        "  AND c.close_date BETWEEN p.strike_date - 10 AND p.strike_date ORDER BY c.close_date DESC LIMIT 1)"
+        " FROM workflow.underlying_price u JOIN workflow.product p ON p.tdcc = u.tdcc"
+        " WHERE u.code = ANY(%s) OR u.price_basis_date IS NOT NULL",
+        (list(book.by_code),),
+    ).fetchall()
+    changed = 0
+    for tdcc, seq, code, initial, stored, strike, close in rows:
+        basis = None if strike is None else book.basis(code, strike, initial, close)
+        if basis != stored:
+            conn.execute(
+                "UPDATE workflow.underlying_price SET price_basis_date = %s WHERE tdcc = %s AND seq = %s",
+                (basis, tdcc, seq),
+            )
+            changed += 1
+    return changed
+
+
+def adjusted_count(conn: psycopg.Connection, split: Split) -> int:
+    """這個代碼有幾個標的的價格已經含這次拆股（價格基準日不早於生效日）。"""
+    (count,) = conn.execute(
+        "SELECT count(*) FROM workflow.underlying_price WHERE code = %s AND price_basis_date >= %s",
+        (split.code, split.effective_date),
+    ).fetchone()
+    return count
 
 
 # ---------- 維護 ----------

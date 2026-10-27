@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable, Iterable
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -660,3 +661,48 @@ def test_changing_a_split_reobserves_affected_observation_exits(pg) -> None:
         (T1,),
     ).fetchone()
     assert (previous, current) == ([[MATURITY, FINAL.isoformat(), None]], [])
+
+
+# ---------------------------------------------------------------- 價格基準日（#275、ADR 0025）
+
+
+ADJUSTED = replace(ul(1, "AAA UW", "9"), basis=SPLIT_DAY)  # 上手依 1 拆 10 調整過：進場價 9、KO 價 9
+
+
+def test_prices_already_adjusted_by_the_issuer_are_not_converted_twice() -> None:
+    prices = closes(split_prices("8.5"))
+    t = terms(underlyings=(ADJUSTED, B))
+
+    assert observe(t, prices, CALENDAR, FINAL, SplitBook([SPLIT])) == Outcome(
+        EXITED, f"到期還本 {FINAL}", FINAL, (AutoEvent(MATURITY, FINAL),), NO_KI_TEXT
+    ), "拆股前的 90 換成 9、之後的 8.5 不換：都沒到 KO 價"
+    ko = closes(split_prices("8.5", {KO_DAY: "9"}), on({KO_DAY: "100"}))
+    assert observe(t, ko, CALENDAR, FINAL, SplitBook([SPLIT])).events == (AutoEvent(KO, KO_DAY),)
+
+
+def test_a_basis_that_does_not_match_the_strike_close_needs_confirmation() -> None:
+    t = terms(underlyings=(replace(ADJUSTED, basis=None), B))  # 調整過的價格、卻當成交易時的基準
+
+    assert observe(t, closes(split_prices("8.5")), CALENDAR, FINAL, SplitBook([SPLIT])) == Outcome(
+        TO_CONFIRM,
+        f"UL_1 AAA UW：進場價 9 跟 {STRIKE} 的收盤價（換到價格基準後 90）對不起來，拆股登記的比例或商品的價格可能有誤",
+        ki=NO_KI_TEXT,
+    )
+    assert observe(t, closes(), CALENDAR, FINAL).status == EXITED, "沒有拆股的標的不檢查"
+
+
+@pytest.mark.db
+def test_observe_all_stores_the_basis_from_the_registered_splits(pg) -> None:
+    seed(pg, T1)
+    pg.execute("UPDATE workflow.underlying_price SET initial_price = 9, strike_price = 7.2, ko_price = 9 WHERE seq = 1")
+    write_closes(pg, us_closes(FINAL, {day: "8.5" for day in trading_days("AAA UW", SPLIT_DAY, FINAL)}))
+    pg.execute("UPDATE workflow.close_price SET close = 90 WHERE code = 'BBB UN'")
+    add_split(pg, SPLIT, user="tester")
+
+    observe_all(pg, CALENDAR, user="tester")
+
+    assert pg.execute("SELECT seq, price_basis_date FROM workflow.underlying_price ORDER BY seq").fetchall() == [
+        (1, SPLIT_DAY),
+        (2, None),
+    ]
+    assert events(pg, T1) == [(MATURITY, FINAL, None, "比價")]

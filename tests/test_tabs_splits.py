@@ -77,6 +77,18 @@ def test_add_and_delete_save_and_show_the_observation(opened, monkeypatch) -> No
     assert asked == ["刪除 AAA UW 在 2030-03-04 的拆股登記（1 拆 100）？刪除後會重新比價。"]
 
 
+def test_the_status_says_how_many_prices_already_include_the_split(opened, monkeypatch) -> None:
+    _, splits, _ = opened
+    monkeypatch.setattr(screen, "ask_split", lambda parent: AAA)
+    monkeypatch.setattr(screen, "add_stock_split", lambda settings, *args: SplitResult((AAA,), adjusted=3))
+
+    splits.add()
+
+    assert splits.status_var.get().startswith(
+        "已存：新增 AAA UW 2030-03-04 1 拆 100。這個代碼有 3 個標的的價格已經含這次拆股（上手調整過），比價時不會再換算一次。"
+    )
+
+
 def test_split_form_reads_and_checks_the_input(master) -> None:
     form = SplitForm(master)
     form.code_var.set("AAA UW Equity")

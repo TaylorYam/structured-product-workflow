@@ -123,7 +123,12 @@ class SplitsWindow(tk.Toplevel):
                 f"\n{c.tdcc} 存續事件：{events_text(c.previous)} → {events_text(c.current)}" for c in receipt.changes
             )
         )
-        self.status_var.set(f"已存：{done}。{observation_text(result.observation, '登記')}{changes}")
+        adjusted = (
+            f"這個代碼有 {result.adjusted} 個標的的價格已經含這次拆股（上手調整過），比價時不會再換算一次。"
+            if result.adjusted
+            else ""
+        )
+        self.status_var.set(f"已存：{done}。{adjusted}{observation_text(result.observation, '登記')}{changes}")
 
     def _selected(self) -> Split | None:
         selection = self.table.selection()

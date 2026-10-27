@@ -118,7 +118,7 @@ from sp_workflow.step_records import (
     returned_records,
     write_records,
 )
-from sp_workflow.stock_splits import Split, add_split, affected_exits, delete_split, load_splits
+from sp_workflow.stock_splits import Split, add_split, adjusted_count, affected_exits, delete_split, load_splits
 from sp_workflow.trade_rows import TradeRowsDraft, load_trade_rows
 
 if TYPE_CHECKING:
@@ -175,6 +175,7 @@ class SplitResult:
 
     splits: tuple[Split, ...]
     observation: Observation = Observation()
+    adjusted: int = 0  # 這個代碼的價格已經含這次拆股的標的數（#275；比價跑了才算出）
 
 
 @dataclass(frozen=True)
@@ -706,7 +707,7 @@ def _split_change(
     with connect(settings) as conn:
         write(conn, split)
         observation = _observe_after_write(conn, calendar, affected_exits(conn, split))
-        return SplitResult(load_splits(conn), observation)
+        return SplitResult(load_splits(conn), observation, adjusted_count(conn, split))
 
 
 def _each(conn: psycopg.Connection, tdccs: Sequence[str], write: Callable[[str], object]) -> Registered:
