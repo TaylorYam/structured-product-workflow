@@ -84,7 +84,7 @@ from sp_workflow.mailbox import (
 from sp_workflow.observation import ObservationReceipt, observe_all
 from sp_workflow.order_terms import OrderRow, collect_orders
 from sp_workflow.preparation import PrepareReceipt, prepare_batch
-from sp_workflow.product_export import ExportReceipt, export_products
+from sp_workflow.product_export import ExportReceipt, export_products, export_summary
 from sp_workflow.product_terms import (
     BatchReceipt,
     Draft,
@@ -541,6 +541,12 @@ def export_product_terms(settings: ConnectionSettings, path: Path) -> ExportRece
     """把資料庫目前的商品條件整張匯出成 Excel（#122）。"""
     with connect(settings) as conn:
         return export_products(conn, path)
+
+
+def export_product_summary(settings: ConnectionSettings, path: Path) -> ExportReceipt:
+    """把資料庫所有商品照新商品總表的欄位匯出成 Excel（#291）。"""
+    with connect(settings) as conn:
+        return export_summary(conn, path)
 
 
 # ---------- 8 進度 ----------

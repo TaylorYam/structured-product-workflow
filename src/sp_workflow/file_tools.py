@@ -4,6 +4,7 @@
 寫不進去時丟 `OSError`、暫存檔刪掉、原本的同名檔不動。核對結果檔與回報包的 Excel 有自己的版面，不用這裡。
 給作業人員看的「檔案寫不進去」是 `FileWriteError`（#207，例：`import_run.error_book`）。
 `save_rows`：值照資料庫型別寫成一張有篩選的表，商品匯出、進度與出場清單匯出共用（#204 從 `product_export` 搬來）。
+自己排版的匯出（例：商品總表，#291）用 `excel_value`、`text_cell` 寫值，`save_export` 存檔。
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from openpyxl.utils import get_column_letter
 
 from sp_workflow.database import OperatorError
 
-_MAX_WIDTH = 40  # `save_rows` 的欄寬上限
+MAX_WIDTH = 40  # `save_rows` 的欄寬上限
 
 
 class FileWriteError(OperatorError):
@@ -90,7 +91,7 @@ def save_book(book: openpyxl.Workbook, path: Path, *, overwrite: bool = True) ->
         temp.unlink(missing_ok=True)  # 換名成功時已經不在
 
 
-def _excel(value: object) -> object:
+def excel_value(value: object) -> object:
     """資料庫的值 → 寫進 Excel 的值。"""
     if isinstance(value, dt.datetime) and value.tzinfo is not None:
         return value.astimezone().replace(tzinfo=None)
@@ -104,7 +105,7 @@ def save_rows(path: Path, title: str, columns: Sequence[str], rows: Sequence[Seq
     時間、Excel 不收的控制字元拿掉、文字不當公式）。先寫暫存檔再換名；寫不進去時丟 `FileWriteError`。
     商品匯出、進度與出場清單匯出共用（#156、#204）。
     """
-    values = [[_excel(value) for value in row] for row in rows]
+    values = [[excel_value(value) for value in row] for row in rows]
     widths = [len(name) for name in columns]
     for row in values:
         for i, value in enumerate(row):
@@ -113,10 +114,15 @@ def save_rows(path: Path, title: str, columns: Sequence[str], rows: Sequence[Seq
         title,
         columns,
         values,
-        widths=[min(width + 2, _MAX_WIDTH) for width in widths],
-        style=_text_cell,
+        widths=[min(width + 2, MAX_WIDTH) for width in widths],
+        style=text_cell,
         auto_filter=True,
     )
+    save_export(book, path)
+
+
+def save_export(book: openpyxl.Workbook, path: Path) -> None:
+    """匯出檔存檔（`save_book`）；寫不進去時丟給作業人員看的 `FileWriteError`。"""
     try:
         save_book(book, path)
     except OSError as exc:
@@ -125,7 +131,7 @@ def save_rows(path: Path, title: str, columns: Sequence[str], rows: Sequence[Seq
         ) from exc
 
 
-def _text_cell(cell: Cell) -> None:
+def text_cell(cell: Cell) -> None:
     if isinstance(cell.value, str):
         cell.data_type = "s"  # 「=」開頭的文字照文字寫，不當公式
         cell.number_format = "@"  # TDCC 等文字保留前導零
