@@ -180,7 +180,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
    - 資料庫有這檔的商品條件（信裡要用的必填欄沒有空白，[#114](https://github.com/TaylorYam/structured-product-workflow/issues/114)；期初價格空白時信裡空白）與交易列；
    - 商品資料夾裡有 `<TDCC>_TS.pdf` 與 `<TDCC>_IIS.pdf`（放回資料夾只會以標準檔名放回核對通過的文件；`_待確認` 檔不算）；
    - 交易列上的 FC 都對得到信箱。
-4. 信件：一檔一封；收件人是承作的 FC（略過 PB，只有 PB 時標「不需寄送」），副本是信箱裡 `fixed_cc` 的人；主旨 `[中文TS/IIS] [FCN] - <TDCC>`；內文使用 `.env` 的 `SPW_MAIL_TEMPLATE` Excel 範本，填入資料後以可編輯表格貼進 Outlook；附上兩份 PDF。
+4. 信件：一檔一封；收件人是承作的 FC（略過 PB，只有 PB 時標「不需寄送」），副本是信箱裡 `fixed_cc` 的人；主旨 `[中文TS/IIS] [FCN] - <TDCC>`；內文使用專案內建的 Excel 範本 `src/sp_workflow/assets/TS IIS信件寄送格式.xlsx`（可用 `.env` 的 `SPW_MAIL_TEMPLATE` 指定其他檔案覆蓋），填入資料後以可編輯表格貼進 Outlook；附上兩份 PDF。
    風險等級寫自算的等級（[#239](https://github.com/TaylorYam/structured-product-workflow/issues/239)，回填的是 RR4）；待算或還沒算過時寫「待確認」，草稿照樣建立，結果清單與畫面標出這一檔並寫出原因，寄出前請自己補上。
    表格內容置中；英文字型使用 Calibri、中文字型使用 Microsoft JhengHei；表頭最多兩行。固定副本排序為 MAX、BOB、PM，再接其他人員。
 5. 結果清單 `寄信草稿清單_<日期時間>.xlsx` 列出每檔的狀態、收件人、副本與原因；「資料來源」工作表記錄用的是哪一次每日匯入（時間、編號、檔名、SHA-256）與搜尋時讀不到的資料夾。
@@ -447,7 +447,7 @@ Creates TS/IIS emails to the FCs handling each checked FCN in **your own classic
    - the database has the product's terms (no blank required field used in the mail, [#114](https://github.com/TaylorYam/structured-product-workflow/issues/114); a blank initial pricing stays blank in the mail) and trade rows;
    - the product folder holds `<TDCC>_TS.pdf` and `<TDCC>_IIS.pdf` (return-to-folders only writes standard names for checked documents; `_待確認` files do not count);
    - every FC on the trade rows matches the mailbox.
-4. Mail: one per product; recipients are the FCs (PB skipped; PB-only products are "不需寄送"), CC is everyone with `fixed_cc` in the mailbox; subject `[中文TS/IIS] [FCN] - <TDCC>`; the body uses the Excel template configured by `.env` `SPW_MAIL_TEMPLATE`, fills it, and pastes editable tables into Outlook; both PDFs are attached.
+4. Mail: one per product; recipients are the FCs (PB skipped; PB-only products are "不需寄送"), CC is everyone with `fixed_cc` in the mailbox; subject `[中文TS/IIS] [FCN] - <TDCC>`; the body uses the bundled Excel template `src/sp_workflow/assets/TS IIS信件寄送格式.xlsx` (override it with `.env` `SPW_MAIL_TEMPLATE`), fills it, and pastes editable tables into Outlook; both PDFs are attached.
    The risk level is the self-calculated one ([#239](https://github.com/TaylorYam/structured-product-workflow/issues/239); backfilled products show RR4); when it is pending or not calculated yet the draft says 待確認 and is still created, and the result list and the window mark that product with the reason, so fill it in before sending.
    Table content is centered; English uses Calibri and Chinese uses Microsoft JhengHei; table headers are limited to two lines. Fixed CCs are ordered MAX, BOB, then PM, followed by other people.
 5. The result list `寄信草稿清單_<timestamp>.xlsx` records each product's status, recipients, CCs, and reasons; its "資料來源" sheet records which daily import was used (time, run number, file name, SHA-256) and any folders that could not be read.

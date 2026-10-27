@@ -32,7 +32,7 @@ fcn-config-migrate = "fcn_checker.config_migrate:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-sp_workflow = ["migrations/*.sql"]
+sp_workflow = ["migrations/*.sql", "assets/*.xlsx"]
 fcn_checker = ["assets/*.ico"]
 
 [tool.pytest.ini_options]
