@@ -126,13 +126,15 @@ class DraftReceipt:
 
 
 MAIL_TEMPLATE_ENV = "SPW_MAIL_TEMPLATE"
+BUNDLED_MAIL_TEMPLATE = Path(__file__).resolve().parent / "assets" / "TS IIS信件寄送格式.xlsx"
 
 
 def mail_template_from_env(env_path: Path) -> Path | None:
     values = load_env_file(env_path)  # 設定檔有問題時丟 `DatabaseError`
     raw = values.get(MAIL_TEMPLATE_ENV)
+    # 未設定時使用專案內建範本；設定了路徑則以該檔為準
     if not raw:
-        return None
+        return BUNDLED_MAIL_TEMPLATE
     path = Path(raw)
     if not path.is_file():
         raise MailDraftError(f"MAIL 草稿格式範本不存在：{path}")
