@@ -387,7 +387,19 @@ def test_the_builtin_etf_list_matches_the_stored_underlying_codes() -> None:
     """抽查（#252）：白名單 ETF 工作表的寫法（`SPY US Equity`）要對得到資料庫存的代碼（交易所代碼，例 `SPY UP`）；
     白名單沒有的日本 ETF 與 UFO 另外補；個股不在清單上。指數本身不能連結，指數清單是空的。"""
     indices, etfs = load_risk_underlyings(BUILTIN)
-    etf_codes = ("QQQ UQ", "SPY UP", "VOO UP", "IVV UP", "SMH UQ", "SOXX UQ", "GLD UP", "SLV UP", "XLK UP", "DRAM UF")
+    etf_codes = (
+        "QQQ UQ",
+        "SPY UP",
+        "VOO UP",
+        "IVV UP",
+        "SMH UQ",
+        "SOXX UQ",
+        "GLD UP",
+        "SLV UP",
+        "XLK UP",
+        "DRAM UF",
+        "SCHD UP",
+    )
     stocks = ("TSM UN", "NVDA UW", "7011 JT", "700 HK", "TSM US")
 
     assert indices == frozenset()
@@ -446,6 +458,26 @@ def test_recalculation_stores_the_risk_level_and_rewrites_only_changes(pg, tmp_p
 
     assert again.risk == line.risk
     assert pg.execute("SELECT calculated_at FROM workflow.risk_level").fetchone() == before
+
+
+@pytest.mark.db
+def test_an_etf_list_change_reaches_unlocked_products_only(pg, tmp_path) -> None:
+    """設定檔加了 ETF 清單（#252）：還沒鎖住的下一次重算改成 ETF 3 分（2 + 0.2 + 1 + 0.26 = 3.46），已鎖住的不變。"""
+    other = "029199990005"
+    import_prices(pg, tmp_path, OCT_15, [vol_price("AAA UW", 20), vol_price("BBB UN", 40)])
+    import_order(pg)
+    import_order(pg, other)
+    recalculate(pg, CONFIG)
+    pg.execute("UPDATE workflow.product SET locked_at = now() WHERE tdcc = %s", (other,))
+    with_etfs = dataclasses.replace(CONFIG, etf_underlyings=frozenset({"AAA US Equity"}))
+
+    recalculate(pg, with_etfs)
+
+    risk = risk_level_of(pg, A)
+    assert risk is not None and risk.detail is not None
+    assert (risk.detail.underlying_type, risk.total) == ("ETF", Decimal("3.46"))
+    assert "UL_1 是 ETF，3 分" in risk.describe()
+    assert stored_row(pg, other)[2] == Decimal("3.56"), "已鎖住的凍結"
 
 
 @pytest.mark.db

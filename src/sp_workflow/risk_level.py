@@ -211,7 +211,7 @@ def assess(
     volatilities: Mapping[tuple[dt.date, str], Volatility],
     ratings: RatingRows,
     indices: Collection[str],
-    etfs: Collection[str] = (),
+    etfs: Collection[str],
 ) -> RiskLevel:
     """一檔的風險等級。`price_dates` 是已匯入的股價檔取價日（由小到大），`volatilities` 以 (取價日, 代碼) 查，
     `ratings` 是評等表，`indices`、`etfs` 是指數、ETF 清單（彭博代碼）。"""
