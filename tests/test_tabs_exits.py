@@ -9,7 +9,7 @@ from tkinter import filedialog
 import openpyxl
 
 import sp_workflow.tabs.exits
-from sp_workflow.exits import ExitList, ExitRow
+from sp_workflow.exits import ExitList, ExitRow, Waiting
 from window_synth import new_window
 
 DAY = dt.date(2026, 10, 21)
@@ -79,20 +79,21 @@ def test_two_events_of_one_product_count_as_one(master, tmp_path: Path, monkeypa
 
 
 def test_products_waiting_for_a_price_are_counted_with_reasons(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    gap = dt.date(2026, 10, 19)
     waiting = (
-        ("029199990004", "UL_1 1321 JT：2026-10-19 沒有收盤價"),
-        ("037199990005", "UL_3 1321 JT：2026-10-19 沒有收盤價"),
-        ("037199990006", "UL_2 PFE UN：2026-10-01 沒有收盤價（每日觀察 KI）"),
+        Waiting("029199990004", "1321 JT", gap),
+        Waiting("037199990005", "PFE UN", dt.date(2026, 10, 1)),
+        Waiting("037199990006", "1321 JT", gap),
     )
     _, tab, _ = loaded(master, tmp_path, monkeypatch, immediate, ExitList(DAY, ROWS, waiting))
 
     assert tab.kpis.values[-1] == ("等股價（檔）", 3, True), "有問題的數字用紅色"
     assert tab.status_var.get() == (
         "收盤日 2026-10-21：出場 3 檔（比價 1、舊清單 2）。"
-        "另有 3 檔等股價，比價停在缺價的那一天、沒有判定到這一天，不在這張清單："
-        "1321 JT：2026-10-19 沒有收盤價 2 檔；PFE UN：2026-10-01 沒有收盤價（每日觀察 KI） 1 檔。"
+        "另有 3 檔等股價，比價停在缺收盤價的那一天、沒有比到這一天，不在這張清單："
+        "缺 1321 JT 2026-10-19 2 檔；缺 PFE UN 2026-10-01 1 檔。"
         "補上收盤價後重新比價；明細看「8 進度」。"
-    ), "同一個標的、同一天缺價的合併計數，不分 UL 序號"
+    ), "同一個標的、同一天的合併計數，多的排前面"
 
 
 def test_without_waiting_products_there_is_no_waiting_count(master, tmp_path: Path, monkeypatch, immediate) -> None:

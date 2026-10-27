@@ -14,6 +14,8 @@ import pytest
 
 from db_synth import inventory, seed_products
 from fcn_checker.trading_calendar import Market, TradingCalendar
+from order_synth import CONFIG
+from sp_workflow.exits import Waiting, load_exits
 from sp_workflow.lifecycle import (
     DELIVERY,
     KO,
@@ -36,6 +38,7 @@ from sp_workflow.observation import (
     Outcome,
     Terms,
     Underlying,
+    missing_close,
     observe,
     observe_all,
 )
@@ -238,6 +241,17 @@ def test_a_missing_price_stops_on_that_day() -> None:
     )
 
 
+def test_the_missing_close_is_read_back_from_the_reason() -> None:
+    """#282：出場清單從等股價的原因讀出缺哪個代碼、哪一天，每日觀察 KI 的也一樣。"""
+    gap = dt.date(2026, 11, 5)
+    prices = closes()
+    del prices[A.code][gap]
+
+    assert missing_close(run(terms("Daily", AKI), prices).reason) == ("AAA UW", gap)
+    assert missing_close(f"UL_2 7203 JT：{gap} 沒有收盤價") == ("7203 JT", gap)
+    assert missing_close("UL_1 AAA UW：收盤價表沒有這個代碼") is None
+
+
 def test_holidays_are_skipped_without_waiting_for_prices() -> None:
     prices = closes()
     assert US_HOLIDAY not in prices[A.code] and JP_HOLIDAY not in prices[B.code]
@@ -434,6 +448,25 @@ def test_observe_all_writes_events_and_status_only_when_changed(pg) -> None:
 
     assert third.changes == () and third.written == 0, "算一遍、有變才寫"
     assert pg.execute("SELECT calculated_at FROM workflow.pricing_status WHERE tdcc = %s", (T1,)).fetchone() == (at,)
+
+
+@pytest.mark.db
+def test_a_product_stopped_at_a_missing_close_is_named_on_the_exit_list(pg) -> None:
+    """#282：缺收盤價停住、那天的 KO 沒有判定的商品，出場清單寫出缺哪一天；補上後重新比價就出場。"""
+    seed(pg, T1)
+    write_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
+    pg.execute("DELETE FROM workflow.close_price WHERE code = 'BBB UN' AND close_date = %s", (KO_DAY,))
+    observe_all(pg, CALENDAR, user="tester")
+
+    found = load_exits(pg, CONFIG, KO_DAY)
+    assert (found.rows, found.waiting) == ((), (Waiting(T1, "BBB UN", KO_DAY),))
+    assert load_exits(pg, CONFIG, KO_DAY - dt.timedelta(days=1)).waiting == ()
+
+    write_closes(pg, {"BBB UN": {KO_DAY: "100"}})
+    observe_all(pg, CALENDAR, user="tester")
+
+    found = load_exits(pg, CONFIG, KO_DAY)
+    assert ([(r.tdcc, r.event) for r in found.rows], found.waiting) == ([(T1, KO)], ())
 
 
 @pytest.mark.db

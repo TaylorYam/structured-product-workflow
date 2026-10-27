@@ -3,8 +3,8 @@
 列事件日等於選的那一天、還有效（沒有被取代）的事件，來源不限：比價、舊清單（以前清單更新的狀態）、人工（顧客贖回），
 「來源」欄寫出是哪一種，和進度頁的存續狀態對得起來；沒有事件日的事件不在任何一天。
 沒有指定日期時用收盤價表最新的收盤日（早上匯入昨日收盤價後就是昨天）。依事件（KO、接股、到期還本、顧客贖回）、TDCC 排序。
-比價缺收盤價會停在那一天（ADR 0020），之後的出場不會判定；比價狀態等股價、已比到早於這一天（或空白）的商品
-另外列出 TDCC 與原因（`waiting`，#282），畫面寫出檔數與原因，不再靜默漏列。
+比價缺收盤價會停在那一天（ADR 0020），之後的出場不會判定；比價狀態等股價、缺的那一天不晚於這一天的商品
+另外列出（`waiting`，#282），畫面寫出檔數與缺哪個標的哪一天的收盤價，不再靜默漏列。
 只讀資料庫；匯出 Excel 用 `file_tools.save_rows`。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING
 from sp_workflow.close_prices import latest_close_date
 from sp_workflow.file_tools import save_rows
 from sp_workflow.lifecycle import EXIT_EVENTS, exits_on
+from sp_workflow.observation import missing_close
 from sp_workflow.product_terms import ImportConfig, issuer_code
 from sp_workflow.status import OrderReview, Pricing
 
@@ -46,10 +47,19 @@ class ExitRow:
 
 
 @dataclass(frozen=True)
+class Waiting:
+    """等股價、比價停在這一天以前的商品（#282）：缺 `underlying` 在 `day` 的收盤價。"""
+
+    tdcc: str
+    underlying: str  # 代碼，例如 1321 JT
+    day: dt.date  # 缺收盤價的那一天
+
+
+@dataclass(frozen=True)
 class ExitList:
     day: dt.date | None  # 這次看的收盤日；收盤價表還沒有資料又沒有指定時是 None
     rows: tuple[ExitRow, ...]
-    waiting: tuple[tuple[str, str], ...] = ()  # (TDCC, 比價原因)：等股價、還沒比到這一天的商品（#282）
+    waiting: tuple[Waiting, ...] = ()  # 依 TDCC
 
 
 @dataclass(frozen=True)
@@ -76,10 +86,8 @@ def load_exits(conn: psycopg.Connection, config: ImportConfig, day: dt.date | No
                 ([e.tdcc for e in events],),
             )
         }
-        waiting = conn.execute(
-            "SELECT tdcc, coalesce(reason, '') FROM workflow.pricing_status"
-            " WHERE status = %s AND (observed_through IS NULL OR observed_through < %s) ORDER BY tdcc",
-            (Pricing.WAIT_PRICES, day),
+        stopped = conn.execute(
+            "SELECT tdcc, reason FROM workflow.pricing_status WHERE status = %s ORDER BY tdcc", (Pricing.WAIT_PRICES,)
         ).fetchall()
     rows = []
     for e in events:
@@ -98,7 +106,10 @@ def load_exits(conn: psycopg.Connection, config: ImportConfig, day: dt.date | No
             )
         )
     rows.sort(key=lambda row: (EXIT_EVENTS.index(row.event), row.tdcc))
-    return ExitList(day, tuple(rows), tuple((tdcc, reason) for tdcc, reason in waiting))
+    # 已比到在 Non-call 期間是空白（ADR 0022），停在哪一天看原因裡缺收盤價的日期
+    missing = [(tdcc, missing_close(reason or "")) for tdcc, reason in stopped]
+    waiting = tuple(Waiting(tdcc, gap[0], gap[1]) for tdcc, gap in missing if gap and gap[1] <= day)
+    return ExitList(day, tuple(rows), waiting)
 
 
 def export_name(day: dt.date) -> str:

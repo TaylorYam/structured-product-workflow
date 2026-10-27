@@ -10,7 +10,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import re
 import tkinter as tk
 from collections import Counter
 from collections.abc import Callable
@@ -20,9 +19,10 @@ from tkinter import filedialog, ttk
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.date_picker import DateEntry
 from fcn_checker.ui import Background, HintBar
-from sp_workflow.exits import LOCKED_TEXT, ExitExport, ExitList, ExitRow, export_exits, export_name
+from sp_workflow.exits import LOCKED_TEXT, ExitExport, ExitList, ExitRow, Waiting, export_exits, export_name
 from sp_workflow.lifecycle import EXIT_EVENTS, SOURCES
 from sp_workflow.local_settings import FolderMemory
+from sp_workflow.status import Pricing
 from sp_workflow.tabs.base import BackgroundFactory, DatabaseLogin, Tab
 from sp_workflow.window_actions import load_exit_list
 
@@ -37,7 +37,6 @@ COLUMNS = (
     ("locked", "鎖住", 70),
     ("recorded_at", "記錄時間", 140),
 )
-SEQ = re.compile(r"^UL_\d+ ")  # 比價原因開頭的標的序號（`observation.Underlying.name`）
 
 
 class ExitListTab(Tab):
@@ -136,11 +135,10 @@ class ExitListTab(Tab):
         counts = [(f"{event}（檔）", _products(result.rows, event=event), False) for event in EXIT_EVENTS]
         text = f"出場 {_products(result.rows)} 檔（{_by_source(result.rows)}）。" if result.rows else "沒有出場的商品。"
         if result.waiting:
-            counts.append(("等股價（檔）", len(result.waiting), True))
-            text += (
-                f"另有 {len(result.waiting)} 檔等股價，比價停在缺價的那一天、沒有判定到這一天，不在這張清單："
-                f"{_waiting_text(result.waiting)}。補上收盤價後重新比價；明細看「8 進度」。"
-            )
+            n = len(result.waiting)
+            counts.append((f"{Pricing.WAIT_PRICES}（檔）", n, True))
+            text += f"另有 {n} 檔等股價，比價停在缺收盤價的那一天、沒有比到這一天，不在這張清單：{_waiting_text(result.waiting)}。"
+            text += "補上收盤價後重新比價；明細看「8 進度」。"
         self.finish(counts, f"收盤日 {result.day:%Y-%m-%d}：{text}")
 
     # ---------- 匯出 ----------
@@ -199,7 +197,8 @@ def _by_source(rows: tuple[ExitRow, ...]) -> str:
     return "、".join(f"{source} {n}" for source, n in counts if n)
 
 
-def _waiting_text(waiting: tuple[tuple[str, str], ...]) -> str:
-    """等股價的原因與檔數，例如「1321 JT：2026-10-19 沒有收盤價 2 檔」；同一個標的、同一天的不分 UL 序號合併，多的排前面。"""
-    counts = Counter(SEQ.sub("", reason) for _, reason in waiting)
-    return "；".join(f"{reason} {n} 檔" for reason, n in sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+def _waiting_text(waiting: tuple[Waiting, ...]) -> str:
+    """缺的收盤價與檔數，例如「缺 1321 JT 2026-10-19 2 檔」；同一個標的、同一天的合併，多的排前面。"""
+    counts = Counter((w.underlying, w.day) for w in waiting)
+    ordered = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+    return "；".join(f"缺 {code} {day:%Y-%m-%d} {n} 檔" for (code, day), n in ordered)
