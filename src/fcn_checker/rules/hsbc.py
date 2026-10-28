@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
+from ..products import full_coupon_periods
 from ..schema import CheckStatus as S
 from ..schema import FieldStatus, Item
 from ..text import full_brackets, squash
@@ -60,7 +61,7 @@ def schedules(ctx):
         if (problem := nt.blocked) is not None:
             out.append(problem)
             return out
-        whole = max(first.value, 1)  # 不按天數攤的期別：Non-Call 期間；FCN_Express（k = 0）第 1 期配整期息
+        whole = full_coupon_periods(first.value)  # 不按天數攤的期別：Non-Call 期間；FCN_Express（k = 0）第 1 期配整期息
         bad = [r["period"] for r in c.value if (r["nt"] is None) != (r["period"] <= whole)]
         out.append(
             nt.compare(

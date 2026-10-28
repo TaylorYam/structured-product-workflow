@@ -115,6 +115,12 @@ def test_express_compares_from_the_day_after_issue(tmp_path, ki):
     assert cells == {"比價日_1": spec.issue_date + dt.timedelta(days=1), f"比價日_{spec.tenor}": spec.ends[-1]}
 
 
+def test_express_term_sheet_booked_as_fcn_needs_confirmation(tmp_path):
+    # 說明書推得 Non-Call 0、參考條件表 Product 卻是 FCN（#304 交叉檢查對 CA 一樣生效）：待確認
+    r = check(tmp_path, Spec(first_callable=0), Product="FCN")
+    assert rule(r, "field.non_call_product")[0].status == S.REVIEW_REQUIRED
+
+
 def test_express_first_observation_skips_exchange_holidays(tmp_path):
     # 發行日次日是標的交易所休市日：比價日_1 順延到下一個一籃子預定交易日
     spec = Spec(first_callable=0)
@@ -140,10 +146,17 @@ def test_express_first_observation_skips_exchange_holidays(tmp_path):
             "first_period_full_coupon",
             id="fcn-full",
         ),
+        pytest.param(
+            0, Edit("• 配息金額 ＝", "• 第 1 個月配息金額 ＝", "ts.art16"), "scenario_first_months", id="express-month"
+        ),
+        pytest.param(
+            1, Edit("• 第 1 個月配息金額", "• 配息金額", "ts.art16"), "scenario_first_months", id="fcn-no-month"
+        ),
     ],
 )
 def test_first_period_full_coupon_only_without_non_call(tmp_path, first_callable, edit, field):
-    # 第一期整期配息句、最低保證配息率月數要和 Non-Call 一致（沒有 Non-Call 時第一期整期配息、月數為 1）
+    # 第一期整期配息句、最低保證配息率月數、情境一配息月數要和 Non-Call 一致（沒有 Non-Call 時第一期整期配息、最低保證
+    # 月數為 1，情境一只寫「配息金額」）
     spec = Spec(first_callable=first_callable)
     r = check(tmp_path, spec, edits=[edit], **(EXPRESS if first_callable == 0 else {}))
     assert (("doc.autocall_terms", field), S.MISMATCH) in {((x.rule_id, x.field), x.status) for x in r.results}

@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 
+from ..products import full_coupon_periods
 from ..schema import CheckResult, Item, ParsedField
 from ..schema import CheckStatus as S
 from ..text import squash
@@ -159,20 +160,26 @@ def periods(ctx: IssuerContext) -> list[CheckResult]:
 
 def autocall_terms(ctx: IssuerContext) -> list[CheckResult]:
     """第 15 項 (4) 最低保證配息率的月數、情境一配息月數（第 1／第 1~k 個月）= Non-Call。沒有 Non-Call（k = 0，
-    FCN_Express）時第一期出場配整期息：兩處月數都是 1，且只有這時第 9 項 (a) 寫第一期整期配息句（workflow #305）。"""
+    FCN_Express）時第一期出場配整期息：最低保證月數是 1、情境一只寫「配息金額」不寫月數，且只有這時第 9 項 (a) 寫
+    第一期整期配息句（workflow #305）。"""
     f = ctx.ts.f
     k = f("first_callable_period")
     months = f("guaranteed_coupon_months")
     first = f("scenario_first_months")
     full = f("first_period_full_coupon")
-    paid = max(k.value, 1) if k.ok else None  # 第一個可出場期出場時已配的月數
-    express = "（沒有 Non-Call 時第一期整期配息，為 1）"
+    paid = full_coupon_periods(k.value) if k.ok else None  # 第一個可出場期出場時已配的月數
     return [
         kit.doc_check(
             ctx, "doc.autocall_terms", "guaranteed_coupon_months", "第 15 項 (4) 最低保證配息率的月數", k, months
-        ).compare(paid, months.value, fail_message=f"「第一個月／前k個月」的月數須等於第一個可提前出場期{express}"),
+        ).compare(
+            paid,
+            months.value,
+            fail_message="「第一個月／前k個月」的月數須等於第一個可提前出場期（沒有 Non-Call 時第一期整期配息，為 1）",
+        ),
         kit.doc_check(ctx, "doc.autocall_terms", "scenario_first_months", "第 16 項情境一的配息月數", k, first).compare(
-            paid, first.value, fail_message=f"情境一「第 1~k 個月配息金額」的 k 須等於第一個可提前出場期{express}"
+            k.value,
+            first.value,
+            fail_message="情境一「第 1~k 個月配息金額」的 k 須等於第一個可提前出場期（沒有 Non-Call 時不寫月數，為 0）",
         ),
         kit.doc_check(
             ctx, "doc.autocall_terms", "first_period_full_coupon", "第 9 項 (a) 第一期提前出場配整期息", k, full

@@ -12,6 +12,7 @@ from decimal import ROUND_HALF_UP, Decimal
 
 from ..parsers.hsbc import SCENARIO_CCY, ko_scenarios, scenario_formulas, scenario_text, scenario_worst
 from ..parsers.hsbc import scenario_number as number
+from ..products import full_coupon_periods
 from ..schema import CheckStatus as S
 from ..schema import Evidence, Item
 from . import kit
@@ -102,7 +103,7 @@ def run(ctx):
     for i, segment in enumerate(text.segments):
         text_i = segment.text
         worst = scenario_worst(segment)
-        expected_period = max(first.value, 1) if i < ko and first.ok else tenor
+        expected_period = full_coupon_periods(first.value) if i < ko and first.ok else tenor
         if i == 0 and not first.ok:
             item = Item.expected("第一個可提前出場期")
             out.append(Check("doc.scenario_calculations", "first_callable_period", item, ctx.document).review(first))

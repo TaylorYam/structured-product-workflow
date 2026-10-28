@@ -651,13 +651,13 @@ def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> None:
     _scenarios(fields, ti, assumed)
     found = list(
         ti.finditer(
-            r"情境分析一：較佳情況假設於第1個自動提前出場觀察日發生自動提前出場事件。[•‧](?:第1(?:~(\d+))?個月)?配息金額"
+            r"情境分析一：較佳情況假設於第1個自動提前出場觀察日發生自動提前出場事件。[•‧](第1(?:~(\d+))?個月)?配息金額"
         )
     )
     if len(found) == 1:
         m = found[0]
         fields["scenario_first_months"] = ParsedField.present(
-            "scenario_first_months", int(m[1]) if m[1] else 1, ti.lines_for(m.start(), m.end())
+            "scenario_first_months", int(m[2]) if m[2] else 1 if m[1] else 0, ti.lines_for(m.start(), m.end())
         )
     else:
         fields["scenario_first_months"] = ParsedField.missing(

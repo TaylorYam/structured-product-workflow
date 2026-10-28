@@ -115,7 +115,7 @@ class Issuer:
     ratings: bool = False
     # 讀出後用交易所假日表補上推算的欄位（CA：沒有 Non-Call 時第一個觀察日 = 發行日後下一個一籃子預定交易日，workflow #305）；
     # None → 不用補
-    complete: Callable[[TermSheet, TradingCalendar], TermSheet] | None = None
+    with_calendar: Callable[[TermSheet, TradingCalendar], TermSheet] | None = None
 
 
 _IIS_SAMPLES = {
@@ -347,7 +347,7 @@ CA = Issuer(
     not_covered=tuple(ca_rules.NOT_COVERED),
     detect=ca_parser.detect,
     read=ca_parser.read,
-    complete=ca_parser.with_calendar,
+    with_calendar=ca_parser.with_calendar,
     rules=ca_rules.run_all,
     reference_fields=ca_rules.REFERENCE_FIELDS,
     ratings=True,

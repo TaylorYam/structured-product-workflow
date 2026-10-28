@@ -854,6 +854,12 @@ def test_express_compares_from_the_first_period_start(tmp_path, ki):
     assert {x.field.split(".")[1] for x in express_scenarios} >= {"principal", "coupon_amount", "profit"}
 
 
+def test_express_term_sheet_booked_as_fcn_needs_confirmation(tmp_path):
+    # 說明書推得 Non-Call 0、參考條件表 Product 卻是 FCN（#304 交叉檢查對 HSBC 一樣生效）：待確認
+    r = check(tmp_path, Spec(first_callable=0), overrides={"product": "FCN"})
+    assert only(r, "field.non_call_product").status == S.REVIEW_REQUIRED
+
+
 @pytest.mark.parametrize(
     ("spec", "edits", "field"),
     [
