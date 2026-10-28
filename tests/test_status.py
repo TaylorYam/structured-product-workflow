@@ -50,4 +50,4 @@ def test_values_are_plain_strings_for_the_database_and_the_screen() -> None:
 def test_import_results_and_product_sources_keep_the_stored_strings() -> None:
     """存在資料庫的字（`workflow.order_import_line.result`、`workflow.product.source`）不變（#203）。"""
     assert tuple(ImportResult) == ("新增", "覆蓋", "沒有變", "不匯入", "已鎖住"), "畫面列出各結果檔數的順序不變"
-    assert values(ProductSource) == {"清單更新", "Order", "人工維護"}
+    assert values(ProductSource) == {"清單更新", "Order", "人工維護", "歷史回補"}

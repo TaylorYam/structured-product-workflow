@@ -96,6 +96,7 @@ APPROVAL_DATES, EXPORT_BUNDLE = "審查通過日期…", "匯出回報包…"  #
 CLOSE_HISTORY = "匯入歷史收盤價…"
 REOBSERVE = "重新比價全部"
 LEGACY_BACKFILL = "匯入舊商品的價格與比價日…"
+OTHER_PRODUCTS = "匯入既有的 FCN 以外商品…"
 MAILBOX = "信箱維護…"
 RATINGS = "發行機構評等…"
 SPLITS = "拆股登記…"
@@ -333,6 +334,7 @@ class PanelWindow:
         menu.add_command(label=CLOSE_HISTORY, command=self._import_close_history)
         menu.add_command(label=REOBSERVE, command=self._reobserve)
         menu.add_command(label=LEGACY_BACKFILL, command=self._import_legacy)
+        menu.add_command(label=OTHER_PRODUCTS, command=self._import_other_products)
         menu.add_command(label=MAILBOX, command=self.open_mailbox)
         menu.add_command(label=RATINGS, command=self.open_ratings)
         menu.add_command(label=SPLITS, command=self.open_splits)
@@ -366,6 +368,7 @@ class PanelWindow:
             (CLOSE_HISTORY, self.daily.can_import_history()),
             (REOBSERVE, self.daily.can_import_history()),
             (LEGACY_BACKFILL, self.daily.can_import_history()),
+            (OTHER_PRODUCTS, self.daily.can_import_history()),
             (WHITELIST, self.daily.can_import_history()),
         ):
             self.maintenance.entryconfigure(label, state=tk.NORMAL if allowed else tk.DISABLED)
@@ -381,6 +384,10 @@ class PanelWindow:
     def _import_legacy(self) -> None:
         self.notebook.select(self.daily.frame)  # 匯入的進度與結果顯示在每日匯入頁
         self.daily.import_legacy()
+
+    def _import_other_products(self) -> None:
+        self.notebook.select(self.daily.frame)  # 匯入的進度與結果顯示在每日匯入頁（#303）
+        self.daily.import_other_products()
 
     def _import_whitelist(self) -> None:
         self.notebook.select(self.daily.frame)  # 匯入的進度與結果顯示在每日匯入頁（#273）

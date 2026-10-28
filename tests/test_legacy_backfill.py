@@ -212,7 +212,7 @@ def test_a_failed_import_leaves_no_error_book(pg, tmp_path: Path, monkeypatch) -
     def broken(*args, **kwargs):
         raise RuntimeError("寫不進去")
 
-    monkeypatch.setattr(sp_workflow.legacy_backfill, "_write_dates", broken)
+    monkeypatch.setattr(sp_workflow.legacy_backfill, "write_dates", broken)
 
     with pytest.raises(RuntimeError):
         backfill_legacy(pg, source, FMT, user="tester")

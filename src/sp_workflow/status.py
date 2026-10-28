@@ -99,3 +99,4 @@ class ProductSource(StrEnum):
     INVENTORY = "清單更新"
     ORDER = "Order"  # 「匯入起單資料」（#97 起從起單建檔讀）
     MANUAL = "人工維護"  # 只有交易明細的 TDCC 在人工維護建立（#115）
+    BACKFILL = "歷史回補"  # 維護選單回補既有的 FCN 以外商品，建立時就鎖住（#303、ADR 0027）

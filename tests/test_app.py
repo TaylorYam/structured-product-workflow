@@ -71,6 +71,7 @@ def test_maintenance_actions_live_in_the_menu_only(master, tmp_path: Path) -> No
         "匯入歷史收盤價…",
         "重新比價全部",
         "匯入舊商品的價格與比價日…",
+        "匯入既有的 FCN 以外商品…",
         "信箱維護…",
         "發行機構評等…",
         "拆股登記…",
@@ -87,7 +88,8 @@ def test_maintenance_actions_live_in_the_menu_only(master, tmp_path: Path) -> No
     assert str(menu.entrycget(2, "state")) == "disabled", "每日匯入頁正在匯入時不能匯歷史收盤價"
     assert str(menu.entrycget(3, "state")) == "disabled", "也不能重新比價"
     assert str(menu.entrycget(4, "state")) == "disabled", "也不能匯入舊商品"
-    assert str(menu.entrycget(8, "state")) == "disabled", "也不能匯入白名單（#273）"
+    assert str(menu.entrycget(5, "state")) == "disabled", "也不能回補 FCN 以外商品（#303）"
+    assert str(menu.entrycget(9, "state")) == "disabled", "也不能匯入白名單（#273）"
 
 
 class UnsavedSession(PanelSession):

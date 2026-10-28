@@ -358,12 +358,15 @@ def test_blank_initial_pricing_counts_only_until_every_underlying_has_an_initial
 
 @pytest.mark.db
 def test_locked_legacy_products_without_step_records_are_finished(pg) -> None:
-    """#184：以前清單更新建立、已鎖住的舊商品，以前在 Excel 走完；走過新流程的、沒鎖住的、人工維護的照順序。"""
-    seed_products(pg, [inventory(t, [("台北", 10000)]) for t in (A, B, C, D)])
+    """#184：以前清單更新建立、已鎖住的舊商品，以前在 Excel 走完；歷史回補的（#303）也是。
+    走過新流程的、沒鎖住的、人工維護的照順序。"""
+    E = "029199990005"
+    seed_products(pg, [inventory(t, [("台北", 10000)]) for t in (A, B, C, D, E)])
     pg.execute("UPDATE workflow.product SET strike_date = trade_date")
-    pg.execute("UPDATE workflow.product SET locked_at = %s WHERE tdcc IN (%s, %s, %s)", (T, A, B, D))
+    pg.execute("UPDATE workflow.product SET locked_at = %s WHERE tdcc IN (%s, %s, %s, %s)", (T, A, B, D, E))
     pg.execute("UPDATE workflow.product SET source = '人工維護' WHERE tdcc = %s", (D,))
-    for tdcc in (A, B, C, D):
+    pg.execute("UPDATE workflow.product SET source = '歷史回補' WHERE tdcc = %s", (E,))
+    for tdcc in (A, B, C, D, E):
         check_terms(pg, tdcc)
         trade_row(pg, tdcc, dt.date(2026, 10, 15))
     step(pg, B, PREPARED_STEP, T)
@@ -375,6 +378,7 @@ def test_locked_legacy_products_without_step_records_are_finished(pg) -> None:
         B: (TO_CHECK, ""),
         C: (TO_CHECK, ""),
         D: (TO_CHECK, ""),
+        E: (FINISHED, ""),
     }
     assert dict(zip(DATE_COLUMNS, rows[A].dates, strict=True))[LOCKED] == T, "各步日期照實際有的顯示"
 

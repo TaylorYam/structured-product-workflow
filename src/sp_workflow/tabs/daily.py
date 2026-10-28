@@ -23,6 +23,7 @@ from sp_workflow.eln_whitelist import WhitelistImport
 from sp_workflow.legacy_backfill import EXISTING, FILLED, SKIPPED
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.observation import EXITED, ON_BOOK, UNLOCKED, WAIT_PRICES, ObservationReceipt, Observed
+from sp_workflow.product_backfill import IMPORTED
 from sp_workflow.status import Pricing
 from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, Tab, ask_csv, ask_excel
 from sp_workflow.tabs.recalc import Releaser, recalc_text
@@ -31,12 +32,14 @@ from sp_workflow.window_actions import (
     HistoryResult,
     LegacyResult,
     Observation,
+    OtherProductsResult,
     PriceCsvResult,
     Recalc,
     WhitelistResult,
     import_close_history,
     import_eln_whitelist,
     import_legacy_products,
+    import_other_products,
     observe_products,
     read_whitelist_import,
     run_daily_import,
@@ -70,6 +73,7 @@ class DailyImportTab(Tab):
         self.csv_var = tk.StringVar(value=folders.get("price_csv", ""))
         self.history_var = tk.StringVar(value=folders.get("close_history", ""))
         self.legacy_var = tk.StringVar(value=folders.get("legacy_backfill", ""))
+        self.other_products_var = tk.StringVar(value=folders.get("other_products", ""))
         self.whitelist_var = tk.StringVar(value=folders.get("eln_whitelist", ""))
         self.status_var.set(f"選每日更新，按「匯入」。資料庫連線設定：{db.env_path}")
 
@@ -264,6 +268,45 @@ class DailyImportTab(Tab):
         self.finish(
             kpis + _observation_kpis(observation),
             f"完成（舊商品的價格與比價日）：已補 {filled} 檔、已存在 {existing} 檔、不匯入 {skipped} 檔；{events}\n"
+            f"{book}\n{observation_text(observation)}",
+        )
+
+    def import_other_products(self) -> None:
+        """回補既有的 FCN 以外商品（#303，維護選單）：選一份參考條件表格式的 Excel，建立還沒有的商品條件、價格與比價日。"""
+        chosen = ask_excel("選擇 FCN 以外商品的參考條件表（例如 FCN外商品數量.xlsx）", self.other_products_var)
+        if not chosen:
+            return
+        source = Path(chosen)
+        paths = self.config_paths()
+
+        def starting() -> None:
+            self.other_products_var.set(str(source))
+            self._starting(other_products=str(source))
+
+        self.runner.run_action(
+            lambda settings: import_other_products(settings, source, paths),
+            "匯入既有的 FCN 以外商品中…",
+            self._other_products_done,
+            before=starting,
+        )
+
+    def _other_products_done(self, result: OtherProductsResult) -> None:
+        observation, receipt = result.observation, result.receipt
+        for line in receipt.lines:
+            if line.result != EXISTING:  # 已存在的不列，數字在上面
+                self.add_row((line.tdcc, f"其他商品{line.result}", line.detail), problem=line.result == SKIPPED)
+        self._show_observation(observation.receipt)
+        imported, existing, skipped = (receipt.count(r) for r in (IMPORTED, EXISTING, SKIPPED))
+        kpis = [
+            ("已匯入（檔）", imported, False),
+            ("已存在（檔）", existing, False),
+            ("不匯入（檔）", skipped, skipped > 0),
+        ]
+        book = f"錯誤清單：{receipt.error_book_path}" if receipt.error_book_path else "沒有問題，沒有寫錯誤清單。"
+        self.finish(
+            kpis + _observation_kpis(observation),
+            f"完成（既有的 FCN 以外商品）：已匯入 {imported} 檔、已存在 {existing} 檔、不匯入 {skipped} 檔；"
+            f"FCN 與不支援的商品 {receipt.ignored} 列沒有匯入。\n交易明細（含 FC）請用「只匯交易明細」重匯交易清單補上。\n"
             f"{book}\n{observation_text(observation)}",
         )
 

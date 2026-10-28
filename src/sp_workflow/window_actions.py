@@ -11,8 +11,8 @@
 拆股登記（#270）存檔後同樣重讀，並比價全部（受影響、由比價判定出場的商品重新比）；比價失敗時登記保留，原因放在結果裡。
 可連結標的白名單（#273）分兩個動作（讀目前這一份 → 匯入），中間的確認與選檔留在視窗；匯入整份一個 transaction，
 之後的重算失敗時匯入保留。
-transaction 的範圍（#205）：每日匯入、回補股價、歷史收盤價、起單資料匯入、舊商品補資料與準備、放回、建草稿的步驟紀錄
-整批一個；進度頁的登記已寄出（含批次）、顧客贖回一檔一個（`_each`），寫不進去只影響那一檔、之前寫好的保留。
+transaction 的範圍（#205）：每日匯入、回補股價、歷史收盤價、起單資料匯入、舊商品補資料、其他商品回補（#303）與準備、
+放回、建草稿的步驟紀錄整批一個；進度頁的登記已寄出（含批次）、顧客贖回一檔一個（`_each`），寫不進去只影響那一檔、之前寫好的保留。
 這裡不自己寫 SQL：要判斷進度、查已寄出過的，問 `progress`、`step_records`。
 """
 
@@ -84,6 +84,7 @@ from sp_workflow.mailbox import (
 from sp_workflow.observation import ObservationReceipt, observe_all
 from sp_workflow.order_terms import OrderRow, collect_orders
 from sp_workflow.preparation import PrepareReceipt, prepare_batch
+from sp_workflow.product_backfill import ProductBackfillError, ProductBackfillReceipt, backfill_products
 from sp_workflow.product_export import ExportReceipt, export_products, export_summary
 from sp_workflow.product_terms import (
     BatchReceipt,
@@ -167,6 +168,14 @@ class LegacyResult:
     """匯入舊商品的價格與比價日（#154）與之後的比價。"""
 
     receipt: BackfillReceipt
+    observation: Observation = Observation()
+
+
+@dataclass(frozen=True)
+class OtherProductsResult:
+    """回補既有的 FCN 以外商品（#303）與之後的比價。"""
+
+    receipt: ProductBackfillReceipt
     observation: Observation = Observation()
 
 
@@ -350,6 +359,18 @@ def import_legacy_products(settings: ConnectionSettings, source: Path, paths: Co
     with connect(settings) as conn:
         receipt = backfill_legacy(conn, source, fmt)
         return LegacyResult(receipt, _observe_after_write(conn, calendar))
+
+
+def import_other_products(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> OtherProductsResult:
+    """回補既有的 FCN 以外商品（#303，維護選單），再比價：讀不到設定檔、檔案不對就整份不匯入。"""
+    try:
+        fmt = load_reference_format(paths.reference_format)
+        config = load_import_config(paths)
+    except (IngestionError, TermsError) as exc:
+        raise ProductBackfillError(f"{_first_line(exc)}，整份不匯入") from exc
+    with connect(settings) as conn:
+        receipt = backfill_products(conn, source, fmt, config)
+        return OtherProductsResult(receipt, _observe_after_write(conn, config.calendar))
 
 
 def read_whitelist_import(settings: ConnectionSettings) -> WhitelistImport | None:
