@@ -15,7 +15,14 @@ from ..schema import CheckStatus as S
 from . import bnp, bnp_scenario, kit, super_bull
 from .bnp_scenario import _Case, _worse
 from .kit import Check, IssuerContext
-from .super_bull import close
+from .super_bull import within_tolerance
+
+RETURN_MESSAGES = super_bull.ReturnMessages(
+    "總報酬率算式的贖回金額 {got} 與贖回金額算式 {want} 不同",
+    "總報酬率算式的總投資金額 {got} 不等於第一章面額 {denomination}",
+    "總報酬率 {pct}% 應為 ({amount} ÷ {divisor}) − 1 = {expected}%",
+    "年化報酬率 {annualized}% 應為 {pct}% × 12 ÷ {months} = {expected}%（四捨五入到文件位數）",
+)
 
 NOT_COVERED = [
     *(x for x in bnp.NOT_COVERED if x["rule_id"] != "doc.template_variants"),
@@ -112,7 +119,7 @@ def observation_order(ctx: IssuerContext) -> CheckResult:
     table, final = f("date_table"), f("final_valuation_date")
     sb = table.ok and table.value["type"] == "SB"
     rows = [(r["period"], r["pricing"], r["redemption"]) for r in table.value["rows"]] if sb else []
-    return super_bull.observation_order(ctx, ctx.ts.chapter1.label("dates"), WORDS, [table, final], rows)
+    return super_bull.observation_order(ctx, ctx.ts.chapter1.label("dates"), WORDS, table, final, rows)
 
 
 # ---------------------------------------------------------------- 情境分析（核對規則 §3.7）
@@ -158,7 +165,7 @@ def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
 
 
 def _annualized(c: _Case, item: Item, pct: Decimal, annualized: Decimal, months: int, x) -> CheckResult:
-    expected, issues = super_bull.annualized_issues(pct, annualized, months)
+    expected, issues = super_bull.annualized_issues(pct, annualized, months, RETURN_MESSAGES)
     return kit.calc_result(
         c.rid,
         c.field("annualized"),
@@ -197,7 +204,7 @@ def _autocall(c: _Case, x, items: dict[str, Item], bonus: Decimal) -> list[Check
     issues = []
     if b.denomination != c.denom:
         issues.append(f"算式中的面額 {b.denomination} 不等於第一章面額 {c.denom}")
-    if not close(b.amount, expected):
+    if not within_tolerance(b.amount, expected):
         issues.append(f"自動提前贖回金額 {b.amount} 應為 {c.denom} × (100% + {bonus}%) = {expected}")
     out.append(
         kit.calc_result(
@@ -241,7 +248,7 @@ def _best(c: _Case, x, items: dict[str, Item]) -> list[CheckResult]:
     issues = []
     if b.denomination != c.denom:
         issues.append(f"算式中的面額 {b.denomination} 不等於第一章面額 {c.denom}")
-    if not close(b.amount, expected):
+    if not within_tolerance(b.amount, expected):
         issues.append(f"到期贖回金額 {b.amount} 應為 {b.denomination} × {a.close} ÷ {a.strike} = {expected}")
     out.append(
         kit.calc_result(
@@ -264,7 +271,7 @@ def _profit_return(c: _Case, x, items: dict[str, Item], amount: Decimal, months:
         return [c.unread("return", items["return"], "找不到總報酬率算式")]
     tr = x.total_return.value
     # BNP 總報酬率照文件位數重算，不容許進位差（核對規則 §3.7）
-    expected, issues = super_bull.profit_return_issues(tr, amount, c.denom, tolerance=Decimal(0))
+    expected, issues = super_bull.profit_return_issues(tr, amount, c.denom, RETURN_MESSAGES, tolerance=Decimal(0))
     return [
         kit.calc_result(
             c.rid,

@@ -1,4 +1,4 @@
-"""Super Bull 各上手共用的讀法（workflow #326）：觀察日距發行日的月數、觀察日表 → 提前出場排程、固定寫法剛好一處、
+"""Super Bull 各上手共用的讀法（workflow #326）：觀察日距發行日的月數、觀察日表 → 提前出場排程、
 獲利情境的報酬率算式。各上手的範本寫法（句型、表格欄位、段落位置）留在各自的 parser（bnp_super_bull、ca_super_bull）。
 """
 
@@ -6,18 +6,16 @@ from __future__ import annotations
 
 import calendar
 import datetime as dt
-import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from typing import Any, NamedTuple
+from typing import NamedTuple
 
 from .. import standard_fields
 from ..schema import Evidence, FieldStatus, ParsedField
 from ..standard_fields import AutocallSchedule
 from . import schedule
 from .common import derived
-from .layout import TextIndex
 
 
 @dataclass(frozen=True)
@@ -44,24 +42,9 @@ def observation_month(issue: dt.date, observation: dt.date, tenor: int, *, early
     return found[0] if len(found) == 1 else None
 
 
-def window(early: int, late: int) -> str:
-    """容許天數的說法（錯訊用）。"""
-    if early == 0:
-        return f"當天到其後 {late} 個日曆天"
-    if early == late:
-        return f"前後 {late} 個日曆天"
-    return f"前 {early} 到後 {late} 個日曆天"
-
-
-def exactly_one(
-    name: str, ti: TextIndex, pattern: str, missing: str, convert: Callable[[re.Match[str]], Any] = lambda m: m[0]
-) -> ParsedField:
-    """固定寫法（去空白後的句型）剛好一處；值預設為原文去空白，`convert` 可改取其中的數值。"""
-    found = list(ti.finditer(pattern))
-    if len(found) != 1:
-        return ParsedField.missing(name, missing if not found else f"{missing}（出現多次）")
-    m = found[0]
-    return ParsedField.present(name, convert(m), ti.lines_for(m.start(), m.end()))
+def _window(early: int, late: int) -> str:
+    """容許天數的說法（錯訊用）；`early` 只有 0（BNP）或等於 `late`（CA）兩種。"""
+    return f"當天到其後 {late} 個日曆天" if early == 0 else f"前後 {late} 個日曆天"
 
 
 def fill_schedule(
@@ -98,7 +81,7 @@ def fill_schedule(
     if not note and None in months:
         bad_rows = [str(n) for (n, _), m in zip(listed, months, strict=True) if m is None]
         note = (
-            f"{table_name}第 {'、'.join(bad_rows)} 列的{words.day}對不到「發行日 + m 個月」（{window(early, late)}、"
+            f"{table_name}第 {'、'.join(bad_rows)} 列的{words.day}對不到「發行日 + m 個月」（{_window(early, late)}、"
             "1 ≤ m < 天期）"
         )
     if not note and months != sorted(set(months)):

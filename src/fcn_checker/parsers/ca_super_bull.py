@@ -18,9 +18,9 @@ from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import ScenarioParam, ScenarioPrice
 from ..text import squash
 from . import ca, price_table
-from .common import Hit, Mention, capture_group, dec, derived, number, one
+from .common import Hit, Mention, capture_group, dec, derived, exactly_one, number, one
 from .layout import TextIndex, capture, parse_date
-from .super_bull import ProfitReturn, Wording, exactly_one, fill_schedule
+from .super_bull import ProfitReturn, Wording, fill_schedule
 
 TEMPLATE_ID = "ca-zh-sb-pd"
 PARSER_VERSION = "1"
@@ -132,10 +132,6 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
 # ---------------------------------------------------------------- 第 9 項
 
 
-def _phrase(name: str, lines: list[Line], pattern: str, missing: str) -> ParsedField:
-    return exactly_one(name, TextIndex(lines), pattern, missing)
-
-
 def _ko_table(ti: TextIndex, a: int, b: int) -> ParsedField:
     """(a) 四欄觀察日表（範本規格 §4.1）：表頭之後每列「觀察日、出場價 %、出場日、紅利 %」，沒有列號；表後只能接「註:…」。"""
     name = "ko_table"
@@ -212,19 +208,19 @@ def _article9(fields: dict[str, ParsedField], art9: list[Line], whole: TextIndex
     fields["underlying_table"] = table
     fields["main_price_table"] = price_table.at("main_price_table", table, ca.PRICE_TABLE)
     fields["ki_type"] = _ki_type(ti, b, e, table, whole)
-    fields["ko_redemption_formula"] = _phrase(
+    fields["ko_redemption_formula"] = exactly_one(
         "ko_redemption_formula",
-        art9,
+        ti,
         KO_REDEMPTION,
         "第 9 項 (a) 自動提前出場贖回金額不是「面額 x (100%+自動提前出場紅利)」",
     )
-    fields["maturity_formula"] = _phrase(
+    fields["maturity_formula"] = exactly_one(
         "maturity_formula",
-        art9,
+        ti,
         MATURITY_FORMULA,
         "第 9 項 (b)(ii) 不是「面額 x [100%+100%* (…期末訂價/…執行價-100%)]」",
     )
-    fields["no_coupon_art9"] = _phrase("no_coupon_art9", art9, re.escape(PAYMENTS), f"第 9 項 (1) 沒有「{PAYMENTS}」")
+    fields["no_coupon_art9"] = exactly_one("no_coupon_art9", ti, re.escape(PAYMENTS), f"第 9 項 (1) 沒有「{PAYMENTS}」")
 
 
 def _row_bonus(table: ParsedField) -> ParsedField:
@@ -302,7 +298,7 @@ class AutocallCalc(NamedTuple):
     amount: Decimal
 
 
-class BestCalc(NamedTuple):
+class BestPayout(NamedTuple):
     """情境二「＝N × [100% + 100% x (P / K - 100%)]＝N x (100% + r%) = A」。"""
 
     denomination: Decimal
@@ -353,7 +349,7 @@ class SbScenarios:
     autocall: Hit[AutocallCalc] | None = None
     autocall_return: Hit[ProfitReturn] | None = None
     best_assumed: Hit[Assumed] | None = None
-    best: Hit[BestCalc] | None = None
+    best: Hit[BestPayout] | None = None
     best_return: Hit[ProfitReturn] | None = None
     worse_assumed: Hit[Assumed] | None = None
     shares: Hit[SharesCalc] | None = None
@@ -396,7 +392,7 @@ def _scenarios(ti: TextIndex) -> SbScenarios:
     out.autocall_return = find(1, S1_RETURN, _return)
     out.best_assumed = find(2, S2_ASSUMED, lambda m: Assumed(m[1], dec(m[2])))
     out.best = find(
-        2, S2_AMOUNT, lambda m: BestCalc(dec(m[1]), dec(m[3]), dec(m[5]), dec(m[7]), Decimal(m[9]), dec(m[10]))
+        2, S2_AMOUNT, lambda m: BestPayout(dec(m[1]), dec(m[3]), dec(m[5]), dec(m[7]), Decimal(m[9]), dec(m[10]))
     )
     out.best_return = find(2, S2_RETURN, _return)
     out.worse_assumed = find(3, S3_ASSUMED, lambda m: Assumed(m[1], dec(m[2])))
@@ -494,12 +490,14 @@ def read(lines: Sequence[Line]) -> CaSuperBullTermSheet:
     _schedule(fields)
 
     # 13.(6)、15.(4)(5)：沒有配息、參與率
-    fields["no_coupon_art13"] = _phrase(
-        "no_coupon_art13", article(13), re.escape(NO_COUPON_DATE), f"第 13 項沒有「{NO_COUPON_DATE}」"
+    fields["no_coupon_art13"] = exactly_one(
+        "no_coupon_art13", TextIndex(article(13)), re.escape(NO_COUPON_DATE), f"第 13 項沒有「{NO_COUPON_DATE}」"
     )
-    art15 = article(15)
-    fields["no_coupon_art15"] = _phrase("no_coupon_art15", art15, re.escape(MIN_RATE), f"第 15 項沒有「{MIN_RATE}」")
-    fields["participation_rate"] = _phrase(
+    art15 = TextIndex(article(15))
+    fields["no_coupon_art15"] = exactly_one(
+        "no_coupon_art15", art15, re.escape(MIN_RATE), f"第 15 項沒有「{MIN_RATE}」"
+    )
+    fields["participation_rate"] = exactly_one(
         "participation_rate", art15, re.escape(PARTICIPATION), f"第 15 項沒有「{PARTICIPATION}」"
     )
 

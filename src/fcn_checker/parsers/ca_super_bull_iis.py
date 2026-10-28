@@ -14,8 +14,8 @@ from decimal import Decimal
 from ..schema import DetectionResult, Evidence, Line, ParsedField
 from ..text import squash
 from . import ca, ca_iis, ca_super_bull, iis
+from .common import exactly_one
 from .layout import TextIndex
-from .super_bull import exactly_one
 
 TEMPLATE_ID = "ca-zh-sb-iis"
 PARSER_VERSION = "1"
