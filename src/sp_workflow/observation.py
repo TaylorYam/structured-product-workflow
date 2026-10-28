@@ -6,7 +6,8 @@
   先假設收盤價不會事後更正。
 - KO：收盤價 ≥ KO 價。非記憶式要同一個觀察日所有標的都達標；記憶式每檔標的在任一觀察日達標就記住，全部記過即 KO。
   D 型的觀察日是第一個比價日（資料庫最早的比價日；沒有 Non-Call 的 FCN_Express 是比價日_1，#302）起到最終比價日止、所有標的市場都開市的日子；P 型只看各期比價日。
-  Non-Call 等於天期的商品不會提前出場，不觀察 KO。
+  Non-Call 等於天期的商品不會提前出場，不觀察 KO。最終比價日不算 KO 的商品種類（Super Bull，`ProductRule.final_date_callable`，
+  #310、ADR 0028）即使比價日裡有最終比價日，那天也只做到期判定。
 - KI：EKI 只在最終比價日，收盤價 < 下限價；AKI 自 Strike date 之後、該標的市場的每個交易日；
   MKI（每期觀察）不比，KI 欄寫「MKI (manual)」，KO 照比、比價狀態照 KO 算；最終比價日沒有 KO 時待確認（#196）。
 - 比價狀態、已比到、原因只講 KO（#196、ADR 0022）：已比到第一個比價日之前、不觀察 KO 的都空白；KI 另寫一欄
@@ -41,6 +42,7 @@ from dataclasses import dataclass
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
+from fcn_checker.products import PRODUCT_RULES
 from sp_workflow.check_terms import NO_BARRIER as NO_KI
 from sp_workflow.lifecycle import (
     DELIVERY,
@@ -110,6 +112,7 @@ class Terms:
     autocall: tuple[dt.date, ...]  # 資料庫的比價日（空白的不算），由早到晚
     underlyings: tuple[Underlying, ...]
     no_autocall: bool = False  # Non-Call 等於天期：不會提前出場
+    final_date_callable: bool = True  # False：最終比價日不算 KO（Super Bull，#310）
 
 
 @dataclass(frozen=True)
@@ -142,10 +145,12 @@ def observe(
     assert final is not None and markets  # 由 _terms_problem 確認
     daily = terms.ko_type in DAILY_TYPES
     memory = terms.ko_type in MEMORY_TYPES
-    ko_days = frozenset() if terms.no_autocall or daily else frozenset(terms.autocall)
-    ko_start = terms.autocall[0] if daily and not terms.no_autocall else None
+    callable_ = tuple(d for d in terms.autocall if terms.final_date_callable or d != final)  # 可以 KO 的比價日
+    no_autocall = terms.no_autocall or not callable_
+    ko_days = frozenset() if no_autocall or daily else frozenset(callable_)
+    ko_start = callable_[0] if daily and not no_autocall else None
     aki = terms.barrier_type == AKI
-    ko_first = None if terms.no_autocall else terms.autocall[0]  # 第一個比價日；之前是 Non-call 期間
+    ko_first = None if no_autocall else callable_[0]  # 第一個比價日；之前是 Non-call 期間
     touch: tuple[dt.date, Underlying] | None = None  # KI 第一次觸及的日期與標的
 
     def result(status: str, reason: str, day: dt.date | None = None) -> Outcome:
@@ -196,6 +201,7 @@ def observe(
         open_ = {code for code, market in markets.items() if _open(market, day)}
         is_final = day == final
         ko_day = (ko_start is not None and day >= ko_start and len(open_) == len(markets)) or day in ko_days
+        ko_day = ko_day and (terms.final_date_callable or not is_final)
         needed = set(markets) if ko_day or is_final else set()
         if aki and terms.strike_date is not None and day > terms.strike_date:
             needed |= open_
@@ -523,7 +529,7 @@ def _load_terms(
     """
     rows = conn.execute(  # 鎖住＝`locked_at` 有值（同 `product_terms.locked`）
         "SELECT p.tdcc, p.ko_type, p.barrier_type, p.strike_date, p.final_valuation_date,"
-        " p.non_call_months, p.tenor_months, p.locked_at IS NOT NULL, c.status, c.reason"
+        " p.non_call_months, p.tenor_months, p.locked_at IS NOT NULL, c.status, c.reason, p.product"
         " FROM workflow.product p JOIN workflow.check_terms c ON c.tdcc = p.tdcc ORDER BY p.tdcc"
     ).fetchall()
     locked = {row[0]: row[7] for row in rows}
@@ -553,8 +559,9 @@ def _load_terms(
             tuple(autocall.get(tdcc, ())),
             tuple(underlyings.get(tdcc, ())),
             non_call is not None and tenor is not None and non_call >= tenor,
+            product not in PRODUCT_RULES or PRODUCT_RULES[product].final_date_callable,
         )
-        for tdcc, ko_type, barrier, strike_date, final, non_call, tenor, *_ in done
+        for tdcc, ko_type, barrier, strike_date, final, non_call, tenor, _, _, _, product in done
     ]
     return terms, locked, not_done
 

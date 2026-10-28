@@ -26,6 +26,7 @@ PATHS = ConfigPaths.with_fallback(CONFIG_DIR / "review_standard.toml")
 BRANCHES = [name for n in range(1, 8) for name in (f"分公司_{n}", f"分公司_{n}_承作金額")]
 HEADERS = [*dict.fromkeys(headers_of(FMT).values()), "發行機構", "UF", *BRANCHES]  # UF 不是參考條件表的標準欄位
 A, B, C, D = (f"02919999000{i}" for i in range(1, 5))  # BARC
+E = "029199990005"  # 測試設定只有 BARC 等幾家；商品種類和上手無關
 TRADE = dt.date(2026, 4, 28)
 DAY_1 = dt.date(2026, 5, 6)  # 發行日後的第一個觀察日
 FINAL = dt.date(2026, 10, 5)
@@ -76,6 +77,14 @@ def express(tdcc: str, **cells) -> dict:
         **{f"UL_{i}{suffix}": "-" for i in range(3, 6) for suffix in ("", "_進場價", "_執行價", "_下限價", "_KO價")},
     }
     row.update(cells)
+    return row
+
+
+def super_bull(tdcc: str) -> dict:
+    """舊總表的一檔 Super Bull（#310）：每期觀察非記憶式、沒有 KI，第 3 個月比一次，比價日_6 是最終比價日。"""
+    row = express(tdcc, Product="Super Bull", **{"KO(Freq)": "P", "KO(memo)": "N", "K(%)": 70})
+    row.update({"KO(%)": 70, "天期(月)": 6, "Non-Call(月)": 3, "比價日_1": "-", "比價日_5": "-"})
+    row.update({"比價日_3": DAY_1, "比價日_6": FINAL, "Coupon p.a. (%)": 8.5})
     return row
 
 
@@ -147,6 +156,21 @@ def test_an_express_row_becomes_a_locked_product_with_prices_and_dates(pg, tmp_p
     assert pg.execute("SELECT status FROM workflow.check_terms WHERE tdcc = %s", (A,)).fetchone() == ("完成",)
     assert pg.execute("SELECT count(*) FROM workflow.other_product WHERE tdcc = %s", (A,)).fetchone() == (0,)
     assert receipt.error_book_path is None
+
+
+@pytest.mark.db
+def test_a_super_bull_row_keeps_its_non_call_and_dates(pg, tmp_path: Path) -> None:
+    """Super Bull 照舊表匯入（#310）：Non-Call、比價日（含比價日_{天期} 的最終比價日）不轉換，出場紅利存 Coupon 欄。"""
+    source = write_sheet(tmp_path / "x.xlsx", [super_bull(E)])
+
+    receipt = backfill_products(pg, source, FMT, CONFIG)
+
+    assert lines(receipt) == {E: (IMPORTED, "")}
+    columns = read(pg, E).columns
+    assert (columns["product"], columns["non_call_months"], columns["ko_type"]) == ("Super Bull", 3, "Period End")
+    assert (columns["barrier_type"], columns["coupon_pct"]) == ("NONE", Decimal("8.5"))
+    dates = dict(pg.execute("SELECT slot, value FROM workflow.autocall_date WHERE tdcc = %s", (E,)).fetchall())
+    assert {slot: day for slot, day in dates.items() if day} == {3: DAY_1, 6: FINAL}
 
 
 @pytest.mark.db

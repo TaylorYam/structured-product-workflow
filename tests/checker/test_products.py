@@ -30,13 +30,15 @@ def prefixes_with(tmp_path: Path, old: str, new: str) -> Path:
 # ---------------------------------------------------------------- 設定檔
 
 
-def test_repo_table_opens_fcn_everywhere_and_express_for_barclays_ca_hsbc():
+def test_repo_table_opens_fcn_everywhere_express_for_barclays_ca_hsbc_and_no_super_bull_yet():
     issuers = frozenset(CONFIG.issuer_prefixes.values())
 
-    assert CONFIG.auto_check_products == {
+    expected = {
         "FCN": issuers,
         "FCN_Express": frozenset({"BARC", "CA", "HSBC"}),
-    }  # #304～#306
+        "Super Bull": frozenset(),
+    }  # #304～#306、#310
+    assert CONFIG.auto_check_products == expected
 
 
 @pytest.mark.parametrize(
@@ -85,6 +87,14 @@ def test_products_not_opened_for_the_issuer_stop_both_documents(tmp_path, produc
         assert not any(r.rule_id.startswith(("field.", "doc.", "iis.")) for r in item.report.results)
         with pytest.raises(IngestionError):
             outcome.release(item)
+
+
+def test_super_bull_goes_to_manual_review_with_the_repo_table(tmp_path):
+    """Super Bull 還沒開放任何上手（#310）：照不支援樣態轉人工，不跑規則。"""
+    outcome = run(tmp_path, {"Product": "Super Bull"})
+    message = "樣態：BARC 還沒開放「Super Bull」自動核對（參考條件表 Product）；請人工核對，不能人工放行"
+
+    assert [item.problem_messages for item in outcome.items] == [(message,)] * len(outcome.items)
 
 
 @pytest.mark.parametrize("product", ["FCN", " fcn ", None])
