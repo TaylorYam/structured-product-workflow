@@ -37,7 +37,9 @@
 |---|---|
 | FCN | 全部 |
 | FCN_Express | BARC（#304）、CA（#305）、HSBC（#306） |
-| Super Bull | 尚未開放（依序 BNP → CA → HSBC，#311、#312、#314） |
+| Super Bull | 尚未開放（依序 BNP → CA → HSBC，#311、#312、#314）；BNP 規格已定，見下 |
+
+Super Bull 只支援 KO 每期觀察＋非記憶式＋無 KI（`Period End`＋`NONE`），其他樣態照不支援樣態轉人工，所有上手共用。BNP Super Bull 的文件：[說明書範本](templates/bnp-zh-super-bull.md)、[投資人須知範本](templates/bnp-zh-super-bull-iis.md)、[參考條件表對照](order-formats/bnp-super-bull-reference.md)、[核對規則](rules/bnp-super-bull-check-rules.md)（只支援 2026-06 以後的範本版本）。
 
 ## 目前設定明確不支援的樣態
 
