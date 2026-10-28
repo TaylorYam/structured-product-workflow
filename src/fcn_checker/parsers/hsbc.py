@@ -126,7 +126,7 @@ class HsbcTermSheet:
         return standard_fields.lookup(self.fields, name)
 
 
-def _price_table(name: str, lines: list[Line], spec: price_table.TableSpec) -> ParsedField:
+def checked_price_table(name: str, lines: list[Line], spec: price_table.TableSpec) -> ParsedField:
     """價格表；每列的幣別（已知的三碼幣別）與交易所（英數字）讀不到時轉人工覆核（情境價格表逐列比對要用）。"""
     table = price_table.read(name, lines, spec)
     if not table.ok:
@@ -409,7 +409,7 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
     fields["ko_table"] = (
         tables.ko_table(sub(11, 2)) if not daily else ParsedField("ko_table", FieldStatus.NOT_APPLICABLE)
     )
-    fields["price_table"] = _price_table("price_table", sub(12, 1), PRICE_TABLE)
+    fields["price_table"] = checked_price_table("price_table", sub(12, 1), PRICE_TABLE)
     fields["underlyings"] = price_table.underlyings(fields["price_table"])
     fields["underlying_prices"] = _standard_prices(fields["price_table"])
     put("tenor_months", sub(15, 1), r"為(\d+)個月", int)
@@ -540,7 +540,7 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
     if len(start) == 1 and len(end) == 1:
         a = scenarios.index(ti.lines_for(start[0].start(), start[0].end())[-1]) + 1
         b = scenarios.index(ti.lines_for(end[0].start(), end[0].end())[0])
-        fields["scenario_table"] = _price_table("scenario_table", scenarios[a:b], SCENARIO_TABLE)
+        fields["scenario_table"] = checked_price_table("scenario_table", scenarios[a:b], SCENARIO_TABLE)
     else:
         fields["scenario_table"] = ParsedField.missing("scenario_table", "情境價格表錨點缺漏／重複")
     f = fields.get

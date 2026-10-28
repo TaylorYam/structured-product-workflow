@@ -910,11 +910,15 @@ def _product_name(ctx: Context) -> list[CheckResult]:
             if tpl.ignore_whitespace_en:
                 norm = squash
                 tol = "忽略所有空白與換行"
+        same = norm(expected) == norm(pf.value)
+        if lang == "en" and tpl.ignore_prefix_en:  # 前面多的字不核對（HSBC Super Bull 的「Maxi 」）
+            same = norm(pf.value).endswith(norm(expected))
+            tol += "；名稱前面多的字不核對"
         out.append(
             check.compare(
                 expected,
                 pf.value,
-                ok=norm(expected) == norm(pf.value),
+                ok=same,
                 tolerance=tol,
                 message="依審查標準名稱樣板與說明書天期、幣別、是否記憶式"
                 + ("、標的數" if {"underlying_zh", "underlying_en"} & tpl.placeholders(lang) else "")

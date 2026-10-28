@@ -5,7 +5,7 @@
 - 範本代號：`hsbc-zh-sb-iis`
 - 對應說明書範本：[`hsbc-zh-sb-pd`](hsbc-zh-super-bull.md)；一檔商品一份說明書＋一份投資人須知（[ADR 0007](../adr/0007-iis-paired-with-term-sheet.md)）
 - 依據：2026-10-28 對 5 份真實樣本（與說明書 SB-HS01～SB-HS05 同商品）的探勘與開發者螢光標記（workflow #314）
-- 狀態：規格（workflow #314），尚未實作
+- 狀態：已實作（workflow #314）：`parsers/hsbc_super_bull_iis.py`
 
 > 真實樣本與擷取文字只放在被 Git 忽略的 `data/`。本文件的數值範例都是虛構的。
 
@@ -54,7 +54,7 @@
 
 條件 1～3 成立、4 不成立 → 不支援的範本版本：轉人工覆核，錯訊寫明「HSBC Super Bull 投資人須知的寫法和現行版不同，不支援自動核對」。
 
-**`hsbc-zh-iis` 要補商品家族條件**：現行 `hsbc-zh-iis` 只看版面，會把 HSBC Super Bull 投資人須知判定成 FCN（探勘實測，#314）。改成名稱含 `自動提前到期固定配息股權連結`、英文含 `Fixed Coupon Notes` 才算 `hsbc-zh-iis`（見 [`hsbc-zh-iis`](hsbc-zh-iis.md) §5）。
+**`hsbc-zh-iis` 已補商品家族條件**（`hsbc_iis.py` PARSER_VERSION 5）：原本 `hsbc-zh-iis` 只看版面，會把 HSBC Super Bull 投資人須知判定成 FCN（探勘實測，#314）。改成名稱含 `自動提前到期固定配息股權連結`、英文含 `Fixed Coupon Notes` 才算 `hsbc-zh-iis`（見 [`hsbc-zh-iis`](hsbc-zh-iis.md) §5）。
 
 **商品種類一致**：辨識結果和參考條件表 Product 不一致 → 轉人工覆核（同說明書範本 §8）。
 

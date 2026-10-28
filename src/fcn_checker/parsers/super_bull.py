@@ -1,5 +1,5 @@
 """Super Bull 各上手共用的讀法（workflow #326）：觀察日距發行日的月數、觀察日表 → 提前出場排程、
-獲利情境的報酬率算式。各上手的範本寫法（句型、表格欄位、段落位置）留在各自的 parser（bnp_super_bull、ca_super_bull）。
+獲利情境的報酬率算式。各上手的範本寫法（句型、表格欄位、段落位置）留在各自的 parser（bnp_super_bull、ca_super_bull、hsbc_super_bull）。
 """
 
 from __future__ import annotations
@@ -22,7 +22,7 @@ from .common import derived
 class Wording:
     """觀察日表的用語（各上手範本不同，錯訊照範本的叫法）。"""
 
-    issuer: str  # 上手代號（「BNP」「CA」）
+    issuer: str  # 上手代號（「BNP」「CA」「HSBC」）
     day: str  # 觀察日：「評價日」「觀察日」
     exit_day: str  # 出場日：「自動提前贖回日」「自動提前出場日」
     final_day: str  # 期末日：「期末評價日」「期末訂價日」
@@ -43,7 +43,7 @@ def observation_month(issue: dt.date, observation: dt.date, tenor: int, *, early
 
 
 def _window(early: int, late: int) -> str:
-    """容許天數的說法（錯訊用）；`early` 只有 0（BNP）或等於 `late`（CA）兩種。"""
+    """容許天數的說法（錯訊用）；`early` 只有 0（BNP）或等於 `late`（CA、HSBC）兩種。"""
     return f"當天到其後 {late} 個日曆天" if early == 0 else f"前後 {late} 個日曆天"
 
 

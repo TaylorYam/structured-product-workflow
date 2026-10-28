@@ -64,7 +64,7 @@
 - p1 有 `中文投資人須知`；
 - 發行機構為香港商香港上海滙豐銀行股份有限公司；
 - 依序出現 `本商品之投資風險警語：`、`相關機構`、`第一 商品簡介`、`第六 商品相關費用`；
-- 商品家族（workflow #314 補）：中文名稱含 `自動提前到期固定配息股權連結`、英文名稱含 `Fixed Coupon Notes`（忽略空白；FCN 與 FCN_Express 都符合）。Super Bull 投資人須知（`自動提前贖回股權連結`、`SuperBull Notes`）由 [`hsbc-zh-sb-iis`](hsbc-zh-super-bull-iis.md) 辨識；補這條之前 Super Bull 投資人須知會被判定成本範本。
+- 商品家族（workflow #314 補，PARSER_VERSION 5）：中文名稱含 `自動提前到期固定配息股權連結`、英文名稱含 `Fixed Coupon Notes`（忽略空白；FCN 與 FCN_Express 都符合）。Super Bull 投資人須知（`自動提前贖回股權連結`、`SuperBull Notes`）由 [`hsbc-zh-sb-iis`](hsbc-zh-super-bull-iis.md) 辨識；補這條之前 Super Bull 投資人須知會被判定成本範本。
 
 不成立 → 範本不符，轉人工覆核。
 

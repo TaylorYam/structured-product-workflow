@@ -58,7 +58,7 @@
 - 只核對彭博代號：說明書代號 = 參考條件表 `UL_1`～`UL_5`，依順序逐一相等，標的數量也要相同。
 - 代號含交易所尾碼，逐字比對；尾碼代表交易所，例如 `XXX UW` 與 `XXX UQ` 視為不同標的。
 - 標的中文名稱與交易所不核對：上手以代號索引自動帶入名稱，確認代號即可（2026-10-02 使用者確認）。
-- 上手可宣告標的不看順序（`config/reference_sheet.toml` 的 `[underlyings] any_order_issuers`），此時依代號配對各標的價格（Issue #265）。
+- 上手可宣告標的不看順序（`config/reference_sheet.toml` 的 `[underlyings] any_order_issuers`；只限某種商品時用 `any_order_products`，例 HSBC Super Bull），此時依代號配對各標的價格（Issue #265）。
 - 價格表每一列的幣別 = 標的交易所的交易幣別，見 §9。
 
 ### 5.1 連結標的公司介紹（`rules/underlying_notes.py`，Issue #225）

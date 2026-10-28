@@ -1,11 +1,11 @@
 """Super Bull 各上手共用的規則（workflow #326）：固定寫法、出場紅利其他出處、觀察日月數與順序、獲利情境的報酬率與年化、
-投資人須知出場紅利。各上手的型態範圍、要核對哪些出處與情境的算式留在各自的規則（bnp_super_bull、ca_super_bull）。
+投資人須知出場紅利。各上手的型態範圍、要核對哪些出處與情境的算式留在各自的規則（bnp_super_bull、ca_super_bull、hsbc_super_bull）。
 """
 
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from decimal import Decimal
 from typing import NamedTuple
 
@@ -18,6 +18,7 @@ from .iis import NO_TERM_SHEET, IisIssuerContext, ts_unavailable
 from .kit import Check, IssuerContext
 
 AMOUNT_TOLERANCE = Decimal("0.01")  # 情境金額（CA 另含報酬率）容許的進位差（各上手核對規則 §3.7）
+SCENARIO_RID = "doc.scenario_calculations"  # 情境算式重算（CA、HSBC）
 
 
 def within_tolerance(a: Decimal, b: Decimal) -> bool:
@@ -136,3 +137,32 @@ def iis_exit_bonus(ctx: IisIssuerContext, fail_message: str) -> CheckResult:
         why = "同商品說明書讀不到出場紅利，無法比對"
         return ts_unavailable(rid, "exit_bonus", name, why, pf.value, document=ctx.document)
     return check.compare(expected.value, pf.value, fail_message=fail_message)
+
+
+class Scenario:
+    """情境算式重算（`SCENARIO_RID`）的一個情境：欄位「情境X_<項目>」、項目名稱「情境X<項目名稱>」（`names` 由上手給），
+    找不到算式時證據為情境標題行。"""
+
+    def __init__(self, n: int, title, names: Mapping[str, str]) -> None:
+        self.tag = f"情境{'一二三'[n - 1]}"
+        self.title = title
+        self.names = names
+
+    def item(self, key: str) -> Item:
+        return Item.expected(f"{self.tag}{self.names[key]}")
+
+    def unread(self, key: str, why: str) -> CheckResult:
+        return kit.calc_result(
+            SCENARIO_RID, f"{self.tag}_{key}", self.item(key), [why], kit.evidence(self.title), review=True
+        )
+
+    def calc(self, key: str, issues: list[str], hit, *, expected=None, actual=None) -> CheckResult:
+        return kit.calc_result(
+            SCENARIO_RID,
+            f"{self.tag}_{key}",
+            self.item(key),
+            issues,
+            kit.evidence(hit.lines),
+            expected=expected,
+            actual=actual,
+        )

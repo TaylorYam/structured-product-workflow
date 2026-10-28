@@ -7,7 +7,7 @@
 - 商品家族：HSBC 稱 `SuperBull Notes`（`自動提前贖回股權連結`）。沒有配息、每期觀察非記憶式自動提前贖回（贖回付面額 ×（100% + 自動提前贖回配息））、沒有 KI、到期依最差表現連結標的對執行價結算（≥ 執行價付面額 × 期末股價 ÷ 執行價，< 執行價交股）。HSBC 把出場紅利叫「**自動提前贖回配息**」：名稱有「配息」但不是定期配息
 - 發行機構、受託或銷售機構：同 [HSBC FCN 範本](hsbc-zh-product-description.md)（`hsbc-zh-pd`）
 - 依據：2026-10-28 對 5 份真實樣本（SB-HS01～SB-HS05，說明書與投資人須知成對）的探勘與開發者螢光標記（workflow #314）。作業人員獨立標記略過（2026-10-28 使用者決定），核對範圍以開發者凍結的建議清單為準，見 [HSBC Super Bull 核對規則](../rules/hsbc-super-bull-check-rules.md) §7
-- 狀態：規格（workflow #314），尚未實作
+- 狀態：已實作（workflow #314）：`parsers/hsbc_super_bull.py`
 
 > 真實樣本、擷取文字與比對輸出只放在被 Git 忽略的 `data/`。本文件只記錄版面、錨點與規則；所有數值範例都是虛構的。樣本代號與真實商品代號的對照只存在本機（`data/tmp/superball_hsbc/sample_map.txt`）。
 

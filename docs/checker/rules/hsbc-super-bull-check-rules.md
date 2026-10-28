@@ -3,7 +3,7 @@
 - 文件側：[HSBC Super Bull 範本規格](../templates/hsbc-zh-super-bull.md)（`hsbc-zh-sb-pd`）、[HSBC Super Bull 投資人須知範本規格](../templates/hsbc-zh-super-bull-iis.md)（`hsbc-zh-sb-iis`）
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [HSBC Super Bull 下單資料格式](../order-formats/hsbc-super-bull-reference.md)
 - 商品：Super Bull（workflow ADR 0028、#309）；開放順序 BNP → CA → HSBC，本文件是 HSBC（workflow #314）
-- 狀態：規格（workflow #314），尚未實作。核對範圍以開發者凍結的螢光建議清單為準，作業人員獨立標記略過（2026-10-28 使用者決定，§7）
+- 狀態：已實作（workflow #314）：`rules/hsbc_super_bull.py`、`rules/hsbc_super_bull_iis.py`。核對範圍以開發者凍結的螢光建議清單為準，作業人員獨立標記略過（2026-10-28 使用者決定，§7）
 - 本文件只寫和 [HSBC 核對規則](hsbc-check-rules.md)（FCN）不同或 Super Bull 特有的部分；Super Bull 共用的分流（§3.1）照 [BNP Super Bull 核對規則](bnp-super-bull-check-rules.md) §3.1，和 BNP、CA 相同的 Super Bull 規則（月數、順序、出場紅利、沒有配息、情境骨架）不重寫，只寫 HSBC 的出處與差異。沒提到的（審查標準、固定警語、受託機構名稱與負責人、發行機構名稱、信用評等、幣別、費率、最低金額、受理申購日、刊印日期、價格推算、連結標的公司介紹、開始受理贖回日寫法）照 HSBC FCN
 
 ## 1. 範圍
@@ -92,7 +92,7 @@ Super Bull 沒有配息表，提前贖回表只列決定日；共用日期表檢
 只有**商品名稱樣板**不同（依 Product 選樣板，見[審查標準](review-standard.md) §2.2；設定 `[issuer.hsbc.product_names."Super Bull"]`，同 BNP、CA）：
 
 - 中文：`香港上海滙豐銀行{天期}個月{幣別中文}計價自動提前贖回股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）`（投資人須知沒有「（以下簡稱「本商品」）」，同 FCN）
-- 英文：`SuperBull Notes (Non Guaranteed, Unsecured)`；名稱前面多的字（例：`Maxi `）**不核對**（#314 已確認：SB-HS01 有 `Maxi`、其他 3 檔標的的沒有，看不出規則）。設定方式實作時定（例：英文只比結尾）。
+- 英文：`SuperBull Notes (Non Guaranteed, Unsecured)`；名稱前面多的字（例：`Maxi `）**不核對**（#314 已確認：SB-HS01 有 `Maxi`、其他 3 檔標的的沒有，看不出規則）。設定 `ignore_prefix_en = true`：英文只比結尾，前面多的字不核對（[審查標準](review-standard.md) §2.2）。
 - 只有天期、幣別兩個佔位符；比對方式（英文忽略所有空白、中文括號全半形不計）同 HSBC FCN。
 
 ### 3.7 情境分析（§18；#309 決策：照 FCN 重算核對）

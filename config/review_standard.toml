@@ -7,7 +7,7 @@
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
 # 規則說明見 docs/checker/rules/review-standard.md。
 
-version = 31
+version = 32
 effective_date = 2026-10-28
 
 [distributor]
@@ -237,6 +237,18 @@ express_en = "Express "  # 沒有 Non-Call（FCN_Express）時填入，中文相
 normalize_brackets = true
 # 英文名稱在 PDF 換行處常黏字（例 CouponNotes），比對時忽略所有空白
 ignore_whitespace_en = true
+
+[issuer.hsbc.product_names."Super Bull"]
+# HSBC Super Bull 商品名稱（現行版 5 份說明書推得，2026-10-28 規格確認，#314）：「自動提前贖回股權連結」／「SuperBull Notes」，
+# 只依天期、幣別；參考條件表 Product 是 Super Bull 時用這個樣板，其他照 [issuer.hsbc.product_name]。
+# 英文名稱前面多的字（例：Maxi ）不核對（看不出規則，#314 使用者確認）：只比結尾（ignore_prefix_en）。
+zh = "香港上海滙豐銀行{tenor}個月{ccy_zh}計價自動提前贖回股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）"
+en = "SuperBull Notes (Non Guaranteed, Unsecured)"
+memory_zh = ""
+memory_en = ""
+normalize_brackets = true
+ignore_whitespace_en = true
+ignore_prefix_en = true
 
 [issuer.ms]
 issuer_name = "英商摩根士丹利國際股份有限公司(Morgan Stanley & Co. International Plc.)"
