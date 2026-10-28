@@ -356,7 +356,7 @@ def test_old_template_is_not_recognised(tmp_path):
     r = check(tmp_path, S0, edits=old)
     x = rule(r, "template.detect")[0]
     assert (x.status, x.reason_code) == (S.REVIEW_REQUIRED, "template_unknown")
-    assert "MS：" in x.message and "舊版範本不支援" in x.message
+    assert "MS 中文產品說明書：" in x.message and "舊版範本不支援" in x.message
 
 
 def test_ms_and_other_issuers_are_never_confused(tmp_path):
