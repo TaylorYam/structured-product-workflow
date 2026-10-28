@@ -1,7 +1,7 @@
 # 下單資料格式：CA Super Bull（參考條件表）
 
 - 設定檔：所有上手共用的 [`config/reference_sheet.toml`](../../../config/reference_sheet.toml)
-- 狀態：規格（workflow #312），尚未實作。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)，本文件只寫 CA Super Bull 的說明書來源與差異；和 CA FCN 相同的欄位見 [CA 下單資料格式](ca-fcn-reference.md)
+- 狀態：已實作（workflow #312）。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)，本文件只寫 CA Super Bull 的說明書來源與差異；和 CA FCN 相同的欄位見 [CA 下單資料格式](ca-fcn-reference.md)
 
 ## 1. 結構
 

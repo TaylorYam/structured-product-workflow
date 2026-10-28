@@ -3,7 +3,7 @@
 - 文件側：[CA Super Bull 範本規格](../templates/ca-zh-super-bull.md)（`ca-zh-sb-pd`）、[CA Super Bull 投資人須知範本規格](../templates/ca-zh-super-bull-iis.md)（`ca-zh-sb-iis`）
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [CA Super Bull 下單資料格式](../order-formats/ca-super-bull-reference.md)
 - 商品：Super Bull（workflow ADR 0028、#309）；開放順序 BNP → CA → HSBC，本文件是 CA（workflow #312）
-- 狀態：規格（workflow #312），尚未實作。核對範圍以開發者凍結的螢光建議清單為準，作業人員獨立標記略過（2026-10-28 使用者決定，§7）
+- 狀態：已實作（workflow #312）：`rules/ca_super_bull.py`、`rules/ca_super_bull_iis.py`。核對範圍以開發者凍結的螢光建議清單為準，作業人員獨立標記略過（2026-10-28 使用者決定，§7）
 - 本文件只寫和 [CA 核對規則](ca-check-rules.md)（FCN）不同或 Super Bull 特有的部分；Super Bull 共用的分流（§3.1）照 [BNP Super Bull 核對規則](bnp-super-bull-check-rules.md) §3.1。沒提到的（審查標準、固定警語、受託機構名稱與特例、發行機構名稱、保證機構評等、幣別代碼、費率、最低金額、受理申購日、刊印日期、價格推算、分割轉人工、連結標的公司介紹、名稱與 ISIN 交叉驗證、開始受理贖回日寫法）照 CA FCN
 
 ## 1. 範圍
@@ -101,7 +101,7 @@ Super Bull 沒有配息表，觀察日表只列觀察日；共用日期表檢查
 | 情境種類 | 剛好三個：較佳情況、一般情況、較差情況（以標題判斷） |
 | 基本假設 | `自動提前出場紅利：x%` = 出場紅利（§3.3） |
 | 情境一 | 假設句 `假設於第1 個自動提前出場觀察日`；`= N × (100% + x%)` 的 N = 面額、x = 出場紅利；`= A` 的 A = 面額 × (100% + x%)（容許 ±0.01）；總報酬率 = x%（文件位數）；年化 = x × 12 ÷ 第 1 個觀察日的月數，half-up 到文件位數 |
-| 情境二 | 假設收盤價 P ≥ 執行價 K（K = 價格表最差那一檔的執行價）；算式代入的面額、P、K 與 `(100% + r%)` 的 r = P ÷ K − 1；金額 = 面額 × P ÷ K，half-up 到 2 位（容許 ±0.01）；報酬率 = 金額 ÷ 面額 − 1（文件位數）；年化 = 報酬率 × 12 ÷ 天期，half-up 到文件位數 |
+| 情境二 | 假設收盤價 P ≥ 執行價 K（K = 價格表最差那一檔的執行價）；算式代入的面額、P、K 與 `(100% + r%)` 的 r = P ÷ K − 1（half-up 到文件位數）；金額 = 面額 × (100% + 文件寫的 r%)，half-up 到 2 位（容許 ±0.01；樣本先把 r 進位再算金額，用 P ÷ K 直接算會差超過 0.01）；報酬率 = 金額 ÷ 面額 − 1（文件位數）；年化 = 報酬率 × 12 ÷ 天期，half-up 到文件位數 |
 | 情境三 | 假設收盤價 P < 執行價 K；股數 = 面額 ÷ K **無條件去位到 3 位**；整數股數 = 股數取整；畸零股數 = 股數 − 整數股數；剩餘金額 = 畸零股數 × P，half-up 到 2 位（容許 ±0.01）；報酬率算式重寫的整數股數、P、剩餘金額、面額 = 前面各值；總報酬率 = (整數股數 × P + 剩餘金額) ÷ 面額 − 1（2 位，容許 ±0.01）；年化 = **未四捨五入的**總報酬率 × 12 ÷ 天期（2 位，容許 ±0.01） |
 | 幣別字 | 情境金額與 `以X支付剩餘金額` = 承作幣別（同 CA FCN §3.1 `currency_others`） |
 
@@ -195,6 +195,7 @@ Super Bull 沒有配息表，觀察日表只列觀察日；共用日期表檢查
 | 2026-10-28 | 幣別與標的數：境外人民幣轉人工；其他幣別、單一標的、一籃子都開放（#312） |
 | 2026-10-28 | 作業人員獨立螢光標記略過，核對範圍以開發者凍結清單為準 |
 | 2026-10-28 | 開發時決定（可回復）：觀察日月數容許 ±7 天（樣本 ±3 天）；情境三年化以未四捨五入的總報酬率重算；日圓投資人須知 `以美元支付剩餘金額` 照 CA FCN 幣別字規則判不一致 |
+| 2026-10-28 | 實作時決定（可回復，#312）：情境二金額用文件寫的 r 算；投資人須知 (ii) 公式的方括號、少右括號兩種寫法都收、不核對括號 |
 
 ## 10. 規則對照
 
@@ -204,7 +205,7 @@ Super Bull 沒有配息表，觀察日表只列觀察日；共用日期表檢查
 | §3.2 參考條件表欄位 | 共用 `field.*`、`field.non_call_product`、`backfill.*` |
 | §3.3 出場紅利其他出處、KO 贖回金額 | `doc.exit_bonus` |
 | §3.4 觀察日表與比價日 | `schedule.observation_months`、`schedule.observation_order` |
-| §3.5 沒有配息、到期公式 | `doc.no_coupon`、`doc.redemption_formula`；非記憶式沿用 `doc.ko_memory`；名稱、ISIN、幣別沿用 CA FCN |
+| §3.5 沒有配息、到期公式 | `doc.no_coupon`、`doc.redemption_formula`；非記憶式由 `field.ko_memory` 比對（事件句不在範本規格內 → 讀不到、轉人工覆核）；名稱、ISIN、幣別沿用 CA FCN |
 | §3.6 名稱樣板 | 共用 `standard.product_name` |
-| §3.7 情境 | 共用 `scenario.reprint`、`scenario.params`；`doc.scenario_calculations` |
+| §3.7 情境 | 共用 `scenario.reprint`、`scenario.strike`、`scenario.params`；`doc.scenario_calculations` |
 | §3.8 投資人須知 | 共用 `iis.*`；`iis.exit_bonus`、`iis.no_coupon`、`iis.redemption_formula` |

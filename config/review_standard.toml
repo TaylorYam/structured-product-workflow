@@ -7,7 +7,7 @@
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
 # 規則說明見 docs/checker/rules/review-standard.md。
 
-version = 30
+version = 31
 effective_date = 2026-10-28
 
 [distributor]
@@ -595,6 +595,16 @@ en = "Crédit Agricole CIB Financial Solutions {ccy} {tenor}-Month Fixed Coupon 
 memory_zh = ""
 memory_en = ""
 express_en = "Express "  # 沒有 Non-Call（FCN_Express）時英文名稱多「Express」，中文相同（workflow #305，2 份樣本）
+normalize_brackets = true
+ignore_whitespace_en = true
+
+[issuer.ca.product_names."Super Bull"]
+# CA Super Bull 商品名稱（現行版 32 份說明書推得，2026-10-28 規格確認，#312）：「連結表現自動提前出場」／「Performance Autocall
+# Note」，只依天期、幣別；參考條件表 Product 是 Super Bull 時用這個樣板，其他照 [issuer.ca.product_name]。
+zh = "Crédit Agricole CIB Financial Solutions {tenor} 個月{ccy_zh}計價連結表現自動提前出場結構型商品(無擔保) (不保本)"
+en = "Crédit Agricole CIB Financial Solutions {ccy} {tenor}-Month Performance Autocall Note (Unsecured)(Non-principal protected)"
+memory_zh = ""
+memory_en = ""
 normalize_brackets = true
 ignore_whitespace_en = true
 

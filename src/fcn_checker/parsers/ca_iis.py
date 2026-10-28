@@ -22,7 +22,8 @@ from .layout import TextIndex, join_wrapped_tickers, parse_date
 TEMPLATE_ID = "ca-zh-iis"
 # 2：警語的受託機構名稱（Issue #306）；3：贖回 %、說明文字幣別（Issue #319）
 # 4：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）；5：FCN_Express 的英文名稱與自發行日起觀察 KO（workflow #305）
-PARSER_VERSION = "5"
+# 6：標的表代碼和交易所在同一行（workflow #312）
+PARSER_VERSION = "6"
 # 保證機構信用評等（#241）：二、1. (4) `保證機構之長期債務信用評等：…，長期債務信用評等為穆迪A1/標準普爾A+/惠譽AA-。`；
 GUARANTOR_RATINGS = (
     ratings.RatingPlace("商品簡介 (4)", r"保證機構之長期債務信用評等：[^，。]+，長期債務信用評等為(?P<body>.+?)。"),
@@ -47,7 +48,8 @@ NOISE = re.compile(iis.PAGE_OF)
 D = ca.D
 PCT = ca.PCT
 COUPON = r"配息率" + PCT + r"，換算年利率為" + PCT
-TICKER = re.compile(r"(?:^|\s)([A-Z0-9][A-Z0-9./-]*)\s+([A-Z]{2})$")  # 名稱和代碼可能在同一行
+# 名稱和代碼可能在同一行；代碼和交易所也可能在同一行（「ABC UW 那斯達克交易所」，Super Bull 樣本，#312）
+TICKER = re.compile(r"(?:^|\s)([A-Z0-9][A-Z0-9./-]*)\s+([A-Z]{2})(?:\s+\S*交易所)?$")
 # 警語裡寫受託機構名稱的地方（Issue #306：每處都算受託機構名稱出處）：(欄位, 位置, pattern)
 WARNING_NAMES = (
     ("distributor_name_w4a", "警語 4.「本商品雖經…審查」", r"4\.本商品雖經(.+?)審查"),
