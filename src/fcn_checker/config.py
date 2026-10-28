@@ -19,7 +19,7 @@ from .trading_calendar import Market, TradingCalendar
 # 商品名稱樣板可用的佔位符：天期、幣別，以及依說明書欄位填入的 memory（記憶式）、maxi（標的數 ≥ 2）、daily（KO 每日觀察）、
 # autocall（Non-Call < 天期，BNP）、quanto（承作幣別 ≠ 標的報價幣別，DBS）、ki（有 KI，DBS、UBS），與 underlying（標的寫法：
 # 1 檔填 single_*、2 檔以上填 basket_*）、ko_observation（KO 觀察方式：每日填 daily_*、每期填 periodic_*，UBS）
-NAME_FLAGS = ("memory", "maxi", "daily", "autocall", "quanto", "ki")
+NAME_FLAGS = ("memory", "maxi", "daily", "autocall", "quanto", "ki", "express")
 NAME_PLACEHOLDERS = frozenset(
     {"tenor", "ccy_zh", "ccy"}
     | {f"{f}_{lang}" for f in (*NAME_FLAGS, "underlying", "ko_observation") for lang in ("zh", "en")}
@@ -61,6 +61,10 @@ class ProductNameTemplate:
     single_unsupported: bool = False
     periodic_zh: str = ""  # {ko_observation_*}：KO 每期觀察時填入（每日時填 daily_*；UBS）
     periodic_en: str = ""
+    express_zh: str = (
+        ""  # {express_zh}／{express_en}：沒有 Non-Call（FCN_Express）時填入（CA、HSBC「Express」，workflow #305、#306）
+    )
+    express_en: str = ""
 
     def template(self, lang: str, tenor: int) -> str:
         """樣板（zh／en）；天期 1 個月時英文 `{tenor} Months`／`{tenor}Months` 改成單數 `Month`（只接受單數，Issue #343）。"""
@@ -366,6 +370,8 @@ def _product_name(n: dict[str, Any], where: str) -> ProductNameTemplate:
         single_unsupported=bool(n.get("single_unsupported", False)),
         periodic_zh=n.get("periodic_zh", ""),
         periodic_en=n.get("periodic_en", ""),
+        express_zh=n.get("express_zh", ""),
+        express_en=n.get("express_en", ""),
     )
     if any(not (isinstance(k, str) and isinstance(v, str) and v) for k, v in tpl.ccy_aliases.items()):
         raise _fail(f"審查標準商品名稱樣板 {where}.ccy_aliases 須是 ISO 代碼 → 名稱用代碼的文字表")

@@ -71,6 +71,7 @@ from .rules.iis import IisIssuerContext
 from .rules.kit import IssuerContext
 from .schema import CheckResult, CheckStatus, DetectionResult, Evidence, Item, Line
 from .standard_fields import TermSheet
+from .trading_calendar import TradingCalendar
 
 
 @dataclass(frozen=True)
@@ -112,6 +113,9 @@ class Issuer:
     # 說明書與投資人須知的信用評等核對（rules/ratings.py，#240～#243）：parser 交出 `issuer_ratings`／`guarantor_ratings` 的上手才標。
     # 現有 14 家都標了；留著給新上手：上線時評等還沒做的不跑這條規則、不產生結果（docs/checker/issuer-onboarding.md §6.2a）
     ratings: bool = False
+    # 讀出後用交易所假日表補上推算的欄位（CA：沒有 Non-Call 時第一個觀察日 = 發行日後下一個一籃子預定交易日，workflow #305）；
+    # None → 不用補
+    complete: Callable[[TermSheet, TradingCalendar], TermSheet] | None = None
 
 
 _IIS_SAMPLES = {
@@ -343,6 +347,7 @@ CA = Issuer(
     not_covered=tuple(ca_rules.NOT_COVERED),
     detect=ca_parser.detect,
     read=ca_parser.read,
+    complete=ca_parser.with_calendar,
     rules=ca_rules.run_all,
     reference_fields=ca_rules.REFERENCE_FIELDS,
     ratings=True,

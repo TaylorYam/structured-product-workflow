@@ -19,6 +19,7 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence, ScenarioParam
 from ..text import squash
+from ..trading_calendar import TradingCalendar
 from . import money, price_table, ratings, schedule
 from .common import RawText, capture_group, compat_normalized, derived, fee_rates, number
 from .layout import Document, LayoutSpec, TextIndex, capture, join_wrapped_tickers, parse_date
@@ -29,7 +30,8 @@ TEMPLATE_ID = "ca-zh-pd"
 # 4：重複寫出處（情境、贖回 %、說明文字幣別、警語的受託機構名稱；Issue #319）；5：日期表標準欄位與共用排程推導（Issue #289）；
 # 6：情境價格表與假設值交成共用情境規則的標準欄位（Issue #294）；7：多標的非記憶式句型（Issue #344）
 # 8：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）；9：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
-PARSER_VERSION = "9"
+# 10：FCN_Express：英文名稱、自發行日起觀察 KO（k = 0）、第一期整期配息句、情境一只寫「配息金額」（workflow #305）
+PARSER_VERSION = "10"
 # 保證機構信用評等（#241）：第一章第 3 項 `保證機構名稱及其長期債務信用評等：…。截至…，其長期債務信用評等為穆迪A1/標準普爾A+/惠譽AA-`
 # （後面直接接第 4 項，沒有句號）、第二章 2. 保證機構 (7) `信用評等：穆迪A1/…。`（接 (8) 保證條件）。
 GUARANTOR_RATINGS = (
@@ -65,7 +67,8 @@ LAYOUT = LayoutSpec(
 )
 ISSUER = "Crédit Agricole CIB Financial Solutions"
 NAME_ZH_MARK = "計價固定配息自動提前出場結構型商品(無擔保)(不保本)"
-NAME_EN_MARK = "Fixed Coupon Autocall Note"
+# FCN、FCN_Express（workflow #305）
+NAME_EN_MARKS = ("Fixed Coupon Autocall Note", "Fixed Coupon Express Autocall Note")
 ARTICLES = 25  # 第一章條數
 PAGE = re.compile(r"^第\d+ ?頁，共\d+頁$")
 PAGE_Y = 740  # 頁碼在頁底（y≈765）
@@ -78,8 +81,13 @@ TICKER = re.compile(r"^([A-Z0-9][A-Z0-9./-]*)\s+([A-Z]{2})$")
 CN_NUM = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
 CN_NUM.update({f"十{k}": 10 + v for k, v in list(CN_NUM.items())[:9]})
 CN_NUM.update({"二十": 20, **{f"二十{k}": 20 + v for k, v in list(CN_NUM.items())[:4]}})
-# 第 9 項 (b) KO（範本規格 §4.1、§4.2）
-KO_DAILY = r"自動提前出場觀察日：自第(\d{1,2})個配息期結束日\(含\)至期末訂價日\(含\)的每一個預定交易日。"
+# 第 9 項 (b) KO（範本規格 §4.1、§4.2）：自第 k 個配息期結束日，或沒有 Non-Call 時自發行日（不含，k = 0，FCN_Express，
+# workflow #305）
+KO_DAILY = (
+    r"自動提前出場觀察日：自(?:第(\d{1,2})個配息期結束日\(含\)|發行日\(不含\))至期末訂價日\(含\)的每一個預定交易日。"
+)
+# 第 9 項 (a) 沒有 Non-Call 時第一期出場配整期息（乘數 1），之後才按天數攤（FCN_Express，workflow #305）
+FIRST_PERIOD_FULL_COUPON = "若於第一個配息期結束日前發生自動提前出場事件：每單位（張）商品面額x「配息率」x乘數，乘數：1"
 KO_TABLE_HEAD = "i自動提前出場觀察日自動提前出場日"
 KO_EVENT = r"自動提前出場事件：(.+?)則發生自動提前出場事件。"
 MEMORY_PRIOR = "或任何先前的自動提前出場觀察日"
@@ -124,6 +132,11 @@ def document(lines: Sequence[Line]) -> Document:
 # ---------------------------------------------------------------- 辨識
 
 
+def name_en_known(name: str) -> bool:
+    """英文名稱（去空白）有 FCN 或 FCN_Express 的商品名稱（`NAME_EN_MARKS`）。"""
+    return any(squash(mark) in name for mark in NAME_EN_MARKS)
+
+
 def detect(lines: Sequence[Line]) -> DetectionResult:
     """範本辨識（範本規格 §8）：全部條件成立才是 CA 說明書。"""
     doc = document(lines)
@@ -146,8 +159,8 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
             f"封面商品中文名稱不是以「{ISSUER}」開頭或沒有「{NAME_ZH_MARK}」",
         ),
         (
-            en is not None and en[1].startswith(issuer) and squash(NAME_EN_MARK) in en[1],
-            f"封面商品英文名稱不是以「{ISSUER}」開頭或沒有「{NAME_EN_MARK}」",
+            en is not None and en[1].startswith(issuer) and name_en_known(en[1]),
+            f"封面商品英文名稱不是以「{ISSUER}」開頭或沒有「{'」或「'.join(NAME_EN_MARKS)}」",
         ),
         (
             all(
@@ -287,6 +300,9 @@ def _article9(fields: dict[str, ParsedField], art9: list[Line]) -> None:
         ("coupon_note_pct", r"月配息率為" + PCT),
     ):
         fields[name] = capture(name, plain, pattern, Decimal, whole_match=True)
+    p = plain.text.find(FIRST_PERIOD_FULL_COUPON)
+    lns = plain.lines_for(p, p + len(FIRST_PERIOD_FULL_COUPON)) if p >= 0 else []
+    fields["first_period_full_coupon"] = ParsedField.present("first_period_full_coupon", p >= 0, lns)
     ti = TextIndex(art9, separate_digits=True)
     text = ti.text
     a = text.find("(a)「配息金額」")
@@ -353,7 +369,7 @@ def _ko(fields: dict[str, ParsedField], ti: TextIndex, b: int, c: int) -> None:
     if len(daily) == 1 and not has_table:
         m = daily[0]
         fields["ko_wording"] = ParsedField.present(
-            "ko_wording", ("D", int(m[1]), []), ti.lines_for(b + m.start(), b + m.end())
+            "ko_wording", ("D", first_callable_of(m), []), ti.lines_for(b + m.start(), b + m.end())
         )
     elif has_table and not daily:
         rows = _rows(text[text.find(KO_TABLE_HEAD) :], ROW + D + D)
@@ -380,6 +396,11 @@ def _ko(fields: dict[str, ParsedField], ti: TextIndex, b: int, c: int) -> None:
         ti.lines_for(b + m.start(), b + m.end() + (len(tail) if MEMORY_SAME in tail else 0)),
     )
     fields["ko_memory"] = memory_of(fields["ko_memory_wording"])
+
+
+def first_callable_of(m: re.Match[str]) -> int:
+    """`KO_DAILY` 的比對結果 → 第一個可提前出場期 k；自發行日（不含）起觀察為 0（沒有 Non-Call）。"""
+    return int(m[1]) if m[1] else 0
 
 
 class MemoryWording(NamedTuple):
@@ -563,6 +584,42 @@ def _schedule(fields: dict[str, ParsedField]) -> None:
     fields.update(
         schedule.autocall_schedule(obs, first, fields["schedule_table"], "end" if kind == "D" else "observation")
     )
+    if k == 0:  # 日期表沒有期始日：第一個觀察日由 `with_calendar` 依交易所假日表推算後再排
+        fields["autocall_schedule"] = ParsedField.missing(
+            "autocall_schedule", f"沒有 Non-Call：{FIRST_OBSERVATION}要依交易所假日表推算"
+        )
+
+
+FIRST_OBSERVATION = "第一個觀察日（發行日後下一個一籃子預定交易日）"
+
+
+def with_calendar(ts: CaTermSheet, calendar: TradingCalendar) -> CaTermSheet:
+    """沒有 Non-Call（k = 0，FCN_Express，workflow #305）：說明書只寫「自發行日(不含)」、日期表沒有期始日，第 1 期比價日
+    = 發行日後下一個一籃子預定交易日，依交易所假日表推算後排出提前出場排程；推算不確定（讀不到標的、標的交易所不在
+    假日表、超出涵蓋範圍）時排程歧義，轉人工覆核。k ≥ 1 原樣交回。"""
+    f = ts.f
+    first, issue, uls = f("first_callable_period"), f("issue_date"), f("underlyings")
+    if not (first.ok and first.value == 0):
+        return ts
+    name = "first_observation"
+    if not issue.ok:
+        date = derived(name, issue)
+    else:
+        following = calendar.next_trading_day(issue.value, uls.value if uls.ok else None)
+        ev = list(issue.evidence)
+        date = (
+            ParsedField(
+                name,
+                FieldStatus.AMBIGUOUS,
+                evidence=ev,
+                candidates=[following.day],
+                note=f"{FIRST_OBSERVATION}無法確認：{following.uncertain}",
+            )
+            if following.uncertain
+            else ParsedField(name, FieldStatus.PRESENT, following.day, ev)
+        )
+    found = schedule.autocall_schedule(f("ko_observation"), first, f("schedule_table"), "end", first_date=date)
+    return replace(ts, fields={**ts.fields, "autocall_schedule": found["autocall_schedule"]})
 
 
 # ---------------------------------------------------------------- 第 16 項情境分析
@@ -594,7 +651,7 @@ def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> None:
     _scenarios(fields, ti, assumed)
     found = list(
         ti.finditer(
-            r"情境分析一：較佳情況假設於第1個自動提前出場觀察日發生自動提前出場事件。[•‧]第1(?:~(\d+))?個月配息金額"
+            r"情境分析一：較佳情況假設於第1個自動提前出場觀察日發生自動提前出場事件。[•‧](?:第1(?:~(\d+))?個月)?配息金額"
         )
     )
     if len(found) == 1:
@@ -604,7 +661,8 @@ def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> None:
         )
     else:
         fields["scenario_first_months"] = ParsedField.missing(
-            "scenario_first_months", "情境分析一找不到或有多處「假設於第1 個自動提前出場觀察日…第 1(~k) 個月配息金額」"
+            "scenario_first_months",
+            "情境分析一找不到或有多處「假設於第1 個自動提前出場觀察日…（第 1(~k) 個月）配息金額」",
         )
 
 
@@ -612,7 +670,8 @@ SCENARIOS = ("一", "二", "三")
 SCENARIO_END = "※請注意"
 EQ = "[=＝]"
 # 情境的配息金額、贖回金額行：「每單位面額 × x% ＝ 面額 × x% ＝ 金額」（Issue #319：x 兩處與面額是重複寫出的值）
-SCENARIO_COUPON = rf"第1(?:~(\d+))?個月配息金額{EQ}每單位面額×{PCT}{EQ}([\d,]+)×{PCT}{EQ}"
+# 沒有 Non-Call 時情境一（第 1 個觀察日出場、第一期整期配息）只寫「配息金額」（FCN_Express，workflow #305）
+SCENARIO_COUPON = rf"(?:第1(?:~(\d+))?個月)?配息金額{EQ}每單位面額×{PCT}{EQ}([\d,]+)×{PCT}{EQ}"
 SCENARIO_REDEMPTION = rf"{{}}{EQ}每單位面額×{PCT}{EQ}([\d,]+)×{PCT}{EQ}"
 # 情境一、二（拿回 100% 本金）總報酬率後的「（平均年化報酬率：x%）」：x = 年利率（Issue #228）
 SCENARIO_ANNUALIZED = r"平均年化報酬率[:：]" + PCT
@@ -628,13 +687,16 @@ def _scenarios(fields: dict[str, ParsedField], ti: TextIndex, assumed: list[Scen
 
     - 共用情境規則的 `scenario_params`（Issue #294）：基本假設 `assumed`，加上配息金額行的配息率兩處（= 配息表配息率）、
       配息金額與贖回金額行代入的面額（= 第 6 項面額）、情境二、三「第 1~n 個月」的 n（= 天期；情境一的月數另由
-      `scenario_first_months` 核對）、情境一、二（拿回 100% 本金）的平均年化報酬率（= 年利率）
+      `scenario_first_months` 核對）、情境一、二（拿回 100% 本金）的平均年化報酬率（= 年利率；沒有 Non-Call 時情境一在
+      發行日後第一個觀察日出場、整期配息按 1 天年化，不列入，workflow #305）
     - `scenario_ko_redemption_mentions`／`scenario_maturity_redemption_mentions`：贖回金額行的 % 兩處（= 第 9 項 (b)／(c)）
     - `scenario_currencies`：各情境金額旁的幣別（股價、股數與剩餘金額算式所在的行不列入）與情境三「以X支付剩餘金額」
 
     配息金額、累積配息、股數、剩餘金額、總報酬率與情境三（虧損）的平均年化報酬率不重算；情境三的執行價、收盤價跟著標的走，
     不列入。
     """
+    first = fields["first_callable_period"]
+    express = first.ok and first.value == 0
     starts = [ti.text.find(f"情境分析{k}：") for k in SCENARIOS]
     bounds = [*starts, ti.text.find(SCENARIO_END, max(starts))]
     found = all(b >= 0 for b in bounds) and bounds == sorted(bounds)
@@ -693,7 +755,7 @@ def _scenarios(fields: dict[str, ParsedField], ti: TextIndex, assumed: list[Scen
             )
         for container, field, code, place, group, convert in mentions:
             lists[container].append(Occurrence(field, code, f"{where}{place}", coupon(field, group, convert)))
-        if n <= 2:
+        if n == 2 or n == 1 and not express:
             annualized = _one_match(ti, lo, hi, SCENARIO_ANNUALIZED, f"{where}平均年化報酬率")
             field = f"scenario{n}_annualized_pct"
             occ = Occurrence(field, "scenario_annualized_return", where, annualized(field, 1, Decimal))

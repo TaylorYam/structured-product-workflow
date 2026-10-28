@@ -36,6 +36,15 @@ def test_supported_types_pass(tmp_path, spec):
     assert not [x for x in r.results if x.rule_id in nothing]  # 沒有價格表、%、界限事件定義
 
 
+def test_express_passes_with_no_non_call(tmp_path):
+    # FCN_Express（workflow #305）：英文名稱多 Express、自發行日(不含)起每日觀察 → 第一個可提前出場期 0
+    r = check_iis(tmp_path, Spec(first_callable=0), Product="FCN_Express").report
+    assert r.status == S.PASS, problems(r)
+    assert rule(r, "field.first_callable_period")[0].actual == 0
+    en = rule(r, "iis.name_en")[0]  # 和同商品說明書比
+    assert en.status == S.PASS and "Express" in en.actual
+
+
 def test_five_pages_is_a_mismatch(tmp_path):
     r = check_iis(tmp_path, Spec(iis_pages=5)).report
     assert rule(r, "iis.pages")[0].status == S.MISMATCH

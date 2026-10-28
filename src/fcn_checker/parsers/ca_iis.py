@@ -21,8 +21,8 @@ from .layout import TextIndex, join_wrapped_tickers, parse_date
 
 TEMPLATE_ID = "ca-zh-iis"
 # 2：警語的受託機構名稱（Issue #306）；3：贖回 %、說明文字幣別（Issue #319）
-# 4：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
-PARSER_VERSION = "4"
+# 4：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）；5：FCN_Express 的英文名稱與自發行日起觀察 KO（workflow #305）
+PARSER_VERSION = "5"
 # 保證機構信用評等（#241）：二、1. (4) `保證機構之長期債務信用評等：…，長期債務信用評等為穆迪A1/標準普爾A+/惠譽AA-。`；
 GUARANTOR_RATINGS = (
     ratings.RatingPlace("商品簡介 (4)", r"保證機構之長期債務信用評等：[^，。]+，長期債務信用評等為(?P<body>.+?)。"),
@@ -107,8 +107,8 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
             f"中文名稱不是以「{ca.ISSUER}」開頭或沒有「{ca.NAME_ZH_MARK}」",
         ),
         (
-            en.startswith(issuer) and squash(ca.NAME_EN_MARK) in en,
-            f"英文名稱不是以「{ca.ISSUER}」開頭或沒有「{ca.NAME_EN_MARK}」",
+            en.startswith(issuer) and ca.name_en_known(en),
+            f"英文名稱不是以「{ca.ISSUER}」開頭或沒有「{'」或「'.join(ca.NAME_EN_MARKS)}」",
         ),
         ("(種類：" in text and "(TDCC商品代號：" in text, "找不到「(種類：…)(TDCC 商品代號：…)」"),
         (
@@ -150,7 +150,7 @@ def _product_terms(ti: TextIndex, fields: dict[str, ParsedField], provided: set[
         m = daily[0]
         ev = st.lines_for(m.start(), m.end())
         fields["ko_observation"] = ParsedField.present("ko_observation", "D", ev)
-        fields["first_callable_period"] = ParsedField.present("first_callable_period", int(m[1]), ev)
+        fields["first_callable_period"] = ParsedField.present("first_callable_period", ca.first_callable_of(m), ev)
         provided.update({"ko_observation", "first_callable_period"})
     elif daily:
         fields["ko_observation"] = ParsedField.invalid("ko_observation", sec, "自動提前出場觀察日的寫法重複")

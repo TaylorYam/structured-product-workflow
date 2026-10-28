@@ -16,7 +16,8 @@ from .layout import TextIndex, parse_date
 TEMPLATE_ID = "hsbc-zh-iis"
 # 2：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 3：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
-PARSER_VERSION = "3"
+# 4：分銷費用列跨頁時，項目名稱排在「報酬無」與費率之間（FCN_Express 樣本，workflow #306）
+PARSER_VERSION = "4"
 # 發行機構信用評等（#240）：第一商品簡介第 4 點，寫法同說明書第一章第 3 項（沒有 `[`）
 RATINGS = (
     ratings.RatingPlace(
@@ -164,7 +165,8 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
     for label, pattern in (
         ("申購費用", r"申購費用[^%]{0,20}?"),
         ("提前贖回費用", r"提前贖回費用[^%]{0,20}?"),
-        ("分銷費用", r"報酬無[^%]{0,30}?"),  # 分銷費用列拆成報酬／費用／折讓三個子列，費率在「費用」子列
+        # 分銷費用列拆成報酬／費用／折讓三個子列，費率在「費用」子列；跨頁時項目名稱「分銷費用(如屬…單獨列示)」排在中間
+        ("分銷費用", r"報酬無[^%]{0,90}?"),
     ):
         put(f"fee_{label}", pattern + iis.RATE)
     fields.update(ratings.fields(ti.lines, RATINGS, no_guarantor_places=(ratings.NAME_NO_GUARANTOR,)))

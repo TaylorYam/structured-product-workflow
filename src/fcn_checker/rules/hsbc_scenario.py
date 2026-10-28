@@ -10,7 +10,7 @@ from __future__ import annotations
 import re
 from decimal import ROUND_HALF_UP, Decimal
 
-from ..parsers.hsbc import SCENARIO_CCY, scenario_formulas, scenario_text, scenario_worst
+from ..parsers.hsbc import SCENARIO_CCY, ko_scenarios, scenario_formulas, scenario_text, scenario_worst
 from ..parsers.hsbc import scenario_number as number
 from ..schema import CheckStatus as S
 from ..schema import Evidence, Item
@@ -38,7 +38,7 @@ def run(ctx):
     bad = next((p for p in deps if not p.ok), None)
     if bad is not None:
         return [Check("doc.scenario_calculations", "scenario", SCENARIO, ctx.document).review(bad)]
-    text = scenario_text(ts.scenario_index, ts.f("ki_type"))
+    text = scenario_text(ts.scenario_index, ts.f("ki_type"), first)
     if text is None:  # 情境數量或順序不符已知範本：共用情境規則的情境假設值已轉人工覆核
         return []
     rate, tenor, denom, issue_price = [p.value for p in deps]
@@ -95,11 +95,14 @@ def run(ctx):
             m.end(),
             valid=number(m[1]) == notional and number(m[2]) == denom and number(m[3]) == issue_price,
         )
-    expected_count = len(text.segments)
+    # 前 ko 個情境提前到期：FCN 第 k + 1 期（前 k 期整期配息）；FCN_Express 第 1、2 期（第 1 期整期配息，workflow #306）
+    ko = ko_scenarios(first)
+    express = ko == 2
+    has_ki = len(text.segments) == ko + 3
     for i, segment in enumerate(text.segments):
         text_i = segment.text
         worst = scenario_worst(segment)
-        expected_period = first.value if i == 0 and first.ok else tenor
+        expected_period = max(first.value, 1) if i < ko and first.ok else tenor
         if i == 0 and not first.ok:
             item = Item.expected("第一個可提前出場期")
             out.append(Check("doc.scenario_calculations", "first_callable_period", item, ctx.document).review(first))
@@ -109,7 +112,7 @@ def run(ctx):
             Decimal(expected_period),
             f"s{i + 1}.period_range",
             scenario(i, "計息期間"),
-            required=True,
+            required=not (express and i < ko),  # Express 的提前到期情境只寫「第一個／第二個計息期間」
         )
         coupon_hits = []
         principal_hits = []
@@ -168,12 +171,12 @@ def run(ctx):
             )
         if not coupon_hits or len(re.findall(r"(?<!總)配息金額=", text_i)) > len(coupon_hits):
             missing(f"s{i + 1}.coupon_formula", scenario(i, "配息公式"), segment)
-        if (i == 0 or (expected_count == 4 and i == 2)) and not principal_hits:
+        if (i < ko or (has_ki and i == ko + 1)) and not principal_hits:
             missing(f"s{i + 1}.principal_formula", scenario(i, "本金給付公式"), segment)
         total_pattern = r"(\d+)個計息期間配息金額共為" + ccy + N
         totals = list(segment.finditer(total_pattern))
         total = (unit * Decimal(expected_period)).quantize(Q2, ROUND_HALF_UP)
-        if i > 0 and not totals:
+        if i >= ko and not totals:
             missing(f"s{i + 1}.total_coupon", scenario(i, "配息總額"), segment)
         for m in totals:
             compare(

@@ -249,30 +249,32 @@ def _first_callable(ctx: Context) -> CheckResult:
 
 def _ko_observation_dates(ctx: Context) -> list[CheckResult]:
     """期間每日觀察的觀察起日 = 同商品說明書提前出場排程第 k 期的比價日（k 取投資人須知；排程沒有這一期時取說明書日期表第 k 期
-    的期末日）；迄日 = 參考條件表最終比價日。"""
+    的期末日）；沒有 Non-Call（k = 0）時為第 1 期的比價日，即第 1 期期始日（workflow #301）；迄日 = 參考條件表最終比價日。"""
     rid = "iis.ko_observation_dates"
     start, k = read_iis(ctx.iis, "ko_observation_start"), read_iis(ctx.iis, "first_callable_period")
     check = Check(rid, "ko_observation_start", Item.term_sheet("KO 觀察起日"), ctx.document)
     if not (start.ok and k.ok):
         out = [check.review(start if not start.ok else k)]
     else:
+        period = max(k.value, 1)
         schedule, why = _term_sheet_field(ctx, "autocall_schedule", "提前出場排程")
-        expected = None if why else schedule.dates.get(k.value)
-        if expected is None and not why:  # D 型排程只放說明書的第 k 期與末期：k 不同時取說明書日期表該期的期末日
+        expected = None if why else schedule.dates.get(period)
+        if (
+            expected is None and not why
+        ):  # D 型排程只放說明書的第 k 期與末期：k 不同時取說明書日期表該期的期末日（k = 0 取期始日）
             table, _ = _term_sheet_field(ctx, "schedule_table", "日期表")
-            row = next((r for r in table.rows if r.period == k.value), None) if table is not None else None
-            expected = row.end if row is not None else None
+            row = next((r for r in table.rows if r.period == period), None) if table is not None else None
+            expected = (row.start if k.value == 0 else row.end) if row is not None else None
+        where = (
+            "第 1 期期始日（沒有 Non-Call，從第 1 期期始日開始比價）"
+            if k.value == 0
+            else f"第 {k.value} 期的比價日（第 {k.value} 個配息週期終止日）"
+        )
         if expected is None:
-            why = why or f"同商品說明書提前出場排程沒有第 {k.value} 期，無法比對"
+            why = why or f"同商品說明書提前出場排程沒有第 {period} 期，無法比對"
             out = [ts_unavailable(rid, "ko_observation_start", "KO 觀察起日", why, start.value, document=ctx.document)]
         else:
-            out = [
-                check.needs(start).compare(
-                    expected,
-                    start.value,
-                    message=f"須等於說明書第 {k.value} 期的比價日（第 {k.value} 個配息週期終止日）",
-                )
-            ]
+            out = [check.needs(start).compare(expected, start.value, message=f"須等於說明書{where}")]
     end, name = read_iis(ctx.iis, "ko_observation_end"), "KO 觀察迄日"
     v, ov, problem = order_value(
         ctx, "final_valuation_date", rid, "ko_observation_end", end, to_date, "日期", name=name

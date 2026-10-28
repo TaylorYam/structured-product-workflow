@@ -45,7 +45,8 @@ NOT_COVERED = [
         "description": "第 16 項情境只核對基本假設、情境價格表、配息月數與重複寫出的配息率、面額、贖回 %、幣別（Issue #319）；"
         "情境一、二的平均年化報酬率 = 年利率（Issue #228）；配息金額、累積配息、股數、剩餘金額、總報酬率、情境三（虧損）的"
         "年化報酬率、執行價與收盤價、假設匯率不重算，"
-        "KO 每日的 n/N 比例配息不推算（2026-10-15 確認）",
+        "KO 每日的 n/N 比例配息不推算（2026-10-15 確認）；沒有 Non-Call（FCN_Express）時情境一在發行日後第一個觀察日"
+        "出場，整期配息按 1 天年化，平均年化報酬率不核對（workflow #305）",
     },
     {
         "rule_id": "doc.agents_and_addresses",
@@ -157,17 +158,29 @@ def periods(ctx: IssuerContext) -> list[CheckResult]:
 
 
 def autocall_terms(ctx: IssuerContext) -> list[CheckResult]:
-    """第 15 項 (4) 最低保證配息率的月數、情境一配息月數（第 1／第 1~k 個月）= Non-Call。"""
+    """第 15 項 (4) 最低保證配息率的月數、情境一配息月數（第 1／第 1~k 個月）= Non-Call。沒有 Non-Call（k = 0，
+    FCN_Express）時第一期出場配整期息：兩處月數都是 1，且只有這時第 9 項 (a) 寫第一期整期配息句（workflow #305）。"""
     f = ctx.ts.f
     k = f("first_callable_period")
     months = f("guaranteed_coupon_months")
     first = f("scenario_first_months")
+    full = f("first_period_full_coupon")
+    paid = max(k.value, 1) if k.ok else None  # 第一個可出場期出場時已配的月數
+    express = "（沒有 Non-Call 時第一期整期配息，為 1）"
     return [
         kit.doc_check(
             ctx, "doc.autocall_terms", "guaranteed_coupon_months", "第 15 項 (4) 最低保證配息率的月數", k, months
-        ).compare(k.value, months.value, fail_message="「第一個月／前k個月」的月數須等於第一個可提前出場期"),
+        ).compare(paid, months.value, fail_message=f"「第一個月／前k個月」的月數須等於第一個可提前出場期{express}"),
         kit.doc_check(ctx, "doc.autocall_terms", "scenario_first_months", "第 16 項情境一的配息月數", k, first).compare(
-            k.value, first.value, fail_message="情境一「第 1~k 個月配息金額」的 k 須等於第一個可提前出場期"
+            paid, first.value, fail_message=f"情境一「第 1~k 個月配息金額」的 k 須等於第一個可提前出場期{express}"
+        ),
+        kit.doc_check(
+            ctx, "doc.autocall_terms", "first_period_full_coupon", "第 9 項 (a) 第一期提前出場配整期息", k, full
+        ).compare(
+            k.value == 0 if k.ok else None,
+            full.value,
+            fail_message="「若於第一個配息期結束日前發生自動提前出場事件…乘數：1」只在沒有 Non-Call（第一個可提前出場期為 0）"
+            "時寫",
         ),
     ]
 

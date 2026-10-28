@@ -89,7 +89,7 @@ class Spec(ProductSpec):
     product_code: str = "325199990001"
     ki: str = "AM"
     annual: Decimal = Decimal("12")
-    first_callable: int = 2
+    first_callable: int = 2  # 0：FCN_Express（第 1 期期始日起每日觀察，第 1 期提前到期配整期息，workflow #306）
     final_date: dt.date = field(init=False)
     maturity_date: dt.date = field(init=False)
     underlyings: tuple[UL, ...] = field(init=False)
@@ -109,6 +109,24 @@ class Spec(ProductSpec):
     @property
     def payments(self) -> list[dt.date]:
         return [d + dt.timedelta(days=3) for d in self.ends]
+
+    @property
+    def starts(self) -> list[dt.date | None]:
+        """D 型各期期始日：第 1～k 期「-」，之後是前一期期末日後的下一個平日；Express（k = 0）第 1 期是發行日後的下一個平日。"""
+        out: list[dt.date | None] = []
+        for i in range(1, self.tenor + 1):
+            if i <= self.first_callable:
+                out.append(None)
+                continue
+            start = (self.ends[i - 2] if i > 1 else self.issue_date) + dt.timedelta(days=1)
+            while start.weekday() >= 5:
+                start += dt.timedelta(days=1)
+            out.append(start)
+        return out
+
+    @property
+    def express(self) -> bool:
+        return self.first_callable == 0
 
     @property
     def monthly(self) -> Decimal:
@@ -135,6 +153,7 @@ class Spec(ProductSpec):
             maxi_en="Maxi " if len(self.underlyings) > 1 else "",
             daily_en="Daily " if self.ko_obs == "D" else "",
             memory_en="Memory " if self.memory else "",
+            express_en="Express " if self.express else "",
         )
 
 
@@ -246,17 +265,20 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         )
         if k == 11:
             sub(1)
+            if s.express:  # 第 1 期提前到期配整期息，之後按天數攤（真實樣本寫法）
+                line("第1 個計息期間:")
+                line("若發生自動提前到期事件：每單位面額 x 固定配息率x 1")
+                line("若無發生自動提前到期事件：每單位面額 x 固定配息率")
+                line(f"第2 至{n} 個計息期間：每單位面額 x 變動配息率")
+                line(f"變動配息率= {s.annual}% × 1/12 × (nt/Nt)")
             line(f"固定配息率={s.annual}%×1/12")
             line(f"配息期數={n}")
             line("Nt" if s.ko_obs == "D" else "付息日(如未在該計息期間自動提前到期)")
-            for i, (end, pay) in enumerate(zip(s.ends, s.payments, strict=True), 1):
+            for i, (start, end, pay) in enumerate(zip(s.starts, s.ends, s.payments, strict=True), 1):
                 vals = [str(i)]
                 if s.ko_obs == "D":
-                    start = s.ends[i - 2] + dt.timedelta(days=1) if i > first else None
-                    if start:
-                        while start.weekday() >= 5:
-                            start += dt.timedelta(days=1)
-                    vals += [zh_date(start) if start else "-", zh_date(end), zh_date(pay), "20" if start else "-"]
+                    nt = "20" if i > max(first, 1) else "-"
+                    vals += [zh_date(start) if start else "-", zh_date(end), zh_date(pay), nt]
                 else:
                     vals += [zh_date(pay)]
                 for t in vals:
@@ -266,7 +288,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             line(f"自動提前到期價格為期初股價×{pct(s.ko)}%")
             line("所有連結標的皆已成為鎖定股票" if s.memory else "評價等於或大於其自動提前到期價格")
             if s.ko_obs == "D":
-                line("自動提前到期決定日為自" + zh_date(s.ends[first - 1]) + "(含)起每個預定交易日")
+                ko_start = s.starts[0] if s.express else s.ends[first - 1]
+                line("自動提前到期決定日為自" + zh_date(ko_start) + "(含)起每個預定交易日")
             else:
                 line("自動提前到期決定日")
                 line("自動提前到期金額付款日")
@@ -313,8 +336,29 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             line(f"每單位期初投資金額={ccy}{s.denom:,.2f}(={denom}×100%)")
             partial = (s.coupon * 5 / 20).quantize(CENT, ROUND_HALF_UP) if s.partial_coupon else None
             ul = s.underlyings[0]
-            for i, zh in enumerate("一二三" if s.ki == "none" else "一二三四"):
+            ko_cases = 2 if s.express else 1  # Express：情境一在第 1 期、情境二在第 2 期提前到期
+            zh_numbers = "一二三四五"[: ko_cases + (2 if s.ki == "none" else 3)]
+            for k, zh in enumerate(zh_numbers):
                 line("情境分析" + zh + ")")
+                if k < ko_cases and s.express:
+                    # Express 的提前到期情境：第 1 期配整期息（×1），情境二第 2 期再按天數攤
+                    fifth = (s.coupon * 5 / 20).quantize(CENT, ROUND_HALF_UP)
+                    if k == 1:
+                        line("本商品於第1個計息期間發放固定配息")
+                        line(f"支付固定配息金額={ccy}{denom}×{monthly}%×1={ccy}{s.coupon:,.2f}")
+                    line(f"自動提前到期給付金額為每單位面額×100%={ccy}{denom}×100%={ccy}{s.denom:,.2f}")
+                    if k == 0:
+                        line(f"第一個計息期間每單位面額配息金額={ccy}{denom}×{monthly}%×1={ccy}{s.coupon:,.2f}")
+                    else:
+                        line(f"第二個計息期間每單位面額配息金額={ccy}{denom}x{monthly}%x5/20={ccy}{fifth:,.2f}")
+                    paid = s.coupon + (fifth if k == 1 else 0)
+                    line(
+                        f"損益={ccy}{s.denom:,.2f}+{ccy}{s.coupon:,.2f}"
+                        + (f"+{ccy}{fifth:,.2f}" if k == 1 else "")
+                        + f"-{ccy}{s.denom:,.2f}={ccy}{paid:,.2f}"
+                    )
+                    continue
+                i = k - ko_cases + 1  # 對應 FCN 的情境序號（0 為提前到期情境）
                 periods = first if i == 0 else n
                 line(f"第1個至第{periods}個計息期間")
                 if i > 0:

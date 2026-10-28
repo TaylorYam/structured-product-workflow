@@ -826,3 +826,90 @@ def test_scenario_ki_price_truncated_instead_of_rounded(tmp_path, written, statu
     r = check(tmp_path, spec, edits=[Edit("觸及不保本價格美元70.0001", f"觸及不保本價格美元{written}", "ts.art18")])
     refs = [x for x in r.results if x.rule_id == "scenario.strike" and x.item.name.endswith("下限價")]
     assert refs and {x.status for x in refs} == {status}, [(x.field, x.message) for x in refs]
+
+
+EXPRESS = {"product": "FCN_Express"}  # 參考條件表 Product
+
+
+def problems(report):
+    return [(x.rule_id, x.field) for x in report.results if x.status not in (S.PASS, S.NOT_APPLICABLE)]
+
+
+@pytest.mark.parametrize("ki", ["none", "AM"])
+def test_express_compares_from_the_first_period_start(tmp_path, ki):
+    """FCN_Express（workflow #306）：決定日從第 1 期期始日起 → Non-Call 0、比價日_1 = 第 1 期期始日（發行日後下一個一籃子預定
+    交易日）、最後一格 = 最終評價日；第 1 期 Nt「-」、整期配息句與多一個提前到期情境都照常核對。"""
+    spec = Spec(first_callable=0, ki=ki)
+    r = check(tmp_path, spec, overrides=EXPRESS)
+    assert r.status == S.PASS, problems(r)
+    assert only(r, "field.first_callable_period").actual == 0
+    assert only(r, "field.non_call_product").status == S.PASS
+    assert only(r, "schedule.autocall_dates", "first_period_coupon").status == S.PASS
+    starts = [x for x in r.results if x.rule_id == "schedule.period_start"]
+    assert starts and {x.status for x in starts} == {S.PASS}
+    slots = {d.column: d.expected for d in r.backfill if d.column.startswith("比價日_")}
+    assert slots["比價日_1"] == spec.starts[0] and slots[f"比價日_{spec.tenor}"] == spec.final_date
+    assert {v for k, v in slots.items() if k not in ("比價日_1", f"比價日_{spec.tenor}")} == {"-"}
+    express_scenarios = [x for x in r.results if x.rule_id == "doc.scenario_calculations" and x.field.startswith("s2.")]
+    assert {x.field.split(".")[1] for x in express_scenarios} >= {"principal", "coupon_amount", "profit"}
+
+
+@pytest.mark.parametrize(
+    ("spec", "edits", "field"),
+    [
+        pytest.param(  # Express 第 1 期也按天數攤（Nt 有值）
+            Spec(first_callable=0),
+            [Edit("-", "20", "ts.art11")],  # 第 11 條只有第 1 期的 Nt 是「-」
+            "nt",
+            id="express-first-nt",
+        ),
+        pytest.param(  # Express 沒寫第 1 期整期配息句
+            Spec(first_callable=0),
+            [
+                Edit(
+                    "若發生自動提前到期事件：每單位面額 x 固定配息率x 1",
+                    "若發生自動提前到期事件：每單位面額 x 變動配息率",
+                    "ts.art11",
+                )
+            ],
+            "first_period_coupon",
+            id="express-without-full-coupon",
+        ),
+    ],
+)
+def test_express_first_period_coupon_must_follow_the_wording(tmp_path, spec, edits, field):
+    r = check(tmp_path, spec, overrides=EXPRESS, edits=edits)
+    assert only(r, "schedule.autocall_dates", field).status == S.MISMATCH
+
+
+def test_full_first_coupon_wording_without_express_is_a_mismatch(tmp_path):
+    """有 Non-Call 的 FCN 卻寫第 1 期整期配息句：不一致（workflow #306）。"""
+    edits = [
+        Edit(
+            "固定配息率=12%×1/12",
+            "第1 個計息期間:若發生自動提前到期事件：每單位面額 x 固定配息率x 1 固定配息率=12%×1/12",
+            "ts.art11",
+        )
+    ]
+    r = check(tmp_path, edits=edits)
+    assert only(r, "schedule.autocall_dates", "first_period_coupon").status == S.MISMATCH
+
+
+def test_express_needs_its_extra_ko_scenario(tmp_path):
+    """Express 少了第 2 期提前到期的情境：情境數量不符已知範本，情境核對轉人工覆核（workflow #306）。"""
+    r = check(tmp_path, Spec(first_callable=0), overrides=EXPRESS, edits=[Edit("情境分析二)", "情境說明)", "ts.art18")])
+    assert r.status == S.REVIEW_REQUIRED
+    assert any(x.rule_id.startswith("scenario.") and x.status == S.REVIEW_REQUIRED for x in r.results), problems(r)
+
+
+def test_distribution_fee_label_between_the_rows_is_skipped(tmp_path):
+    """投資人須知分銷費用列跨頁：項目名稱排在「報酬無」與費率之間，照樣讀到費率（Express 樣本版面，workflow #306）。"""
+    label = "分銷費用(如屬發行機構或發行人給予受託或銷售機構之報酬、費用、折讓等各項利益應單獨列示)"
+    s = Spec()
+    pdf = build_pdf(
+        tmp_path / f"{s.product_code}_TS.pdf", s, edits=[Edit("報酬無", "報酬無不適用不適用不適用" + label, "iis.p4")]
+    )
+    out = check_all(sheet_for(tmp_path, s), [pdf])
+    iis = next(x.report for x in out.items if x.term_sheet.name.endswith("_IIS.pdf"))
+    fee = [x for x in iis.results if x.rule_id == "standard.fees" and x.field == "分銷費用"]
+    assert fee and {x.status for x in fee} == {S.PASS}, [(x.status, x.message) for x in fee]

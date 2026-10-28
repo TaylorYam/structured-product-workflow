@@ -87,7 +87,7 @@ class Spec(ProductSpec):
     ko_obs: str = "D"  # D 每日（配息表有配息期結束日）／P 每期（配息表＋自動提前出場觀察日表）
     ki: str = "none"  # none／AM／D
     tenor: int = 6
-    first_callable: int = 1
+    first_callable: int = 1  # 0：沒有 Non-Call（FCN_Express，自發行日次一預定交易日起觀察，workflow #305）
     memory: bool = True
     annual: Decimal = Decimal("9.00")
     strike: Decimal = Decimal("70.00")
@@ -130,7 +130,18 @@ class Spec(ProductSpec):
 
     @property
     def name_en(self) -> str:
-        return NAME["en"].format(tenor=self.tenor, ccy=self.ccy)
+        return NAME["en"].format(tenor=self.tenor, ccy=self.ccy, express_en="Express " if self.express else "")
+
+    @property
+    def express(self) -> bool:
+        """沒有 Non-Call（FCN_Express）。"""
+        return self.first_callable == 0
+
+    @property
+    def ko_daily(self) -> str:
+        """第 9 項 (b)、投資人須知二、2. 的 KO 每日觀察句。"""
+        start = "發行日(不含)" if self.express else f"第{self.first_callable} 個配息期結束日 (含)"
+        return f"自動提前出場觀察日：自{start}至期末訂價日(含)的每一個預定交易日。"
 
     @staticmethod
     def date(d: dt.date) -> str:
@@ -322,7 +333,15 @@ def _article9(d: _Doc, s: Spec) -> None:
     d.text(36, "(1) 本商品主要給付項目為「自動提前出場贖回金額」或「到期贖回金額」及「配息金額」。")
     d.text(36, "計算方式：")
     d.text(36, "(a) 「配息金額」：於各配息期(i)：每單位（張）商品面額x「配息率」；")
-    if s.ko_obs == "D":
+    if s.ko_obs == "D" and s.express:  # 第一期出場配整期息，之後按天數攤（真實樣本的換行位置）
+        d.text(36, "若於第一個配息期結束日前發生自動提前出場事件：每單位（張）商品面額x「配息率」x 乘數，乘")
+        d.text(36, "數：1；")
+        d.text(
+            36,
+            "若於第一個配息期結束日及其後之自動提前出場觀察日發生自動提前出場事件，配息金額：每單位（張）商品面額x「配息率」"
+            "x (n/N) ，該配息金額僅計算至該自動提前出場觀察日。",
+        )
+    elif s.ko_obs == "D":
         d.text(
             36,
             "若發生自動提前出場事件，配息金額：每單位（張）商品面額x「配息率」x (n/N) ，該配息金額僅計算至該自動提前出場觀察日。",
@@ -355,9 +374,7 @@ def _article9(d: _Doc, s: Spec) -> None:
     d.text(36, event)
     if s.ko_obs == "D":
         d.text(36, "自動提前出場日：於發生自動提前出場事件時，該自動提前出場觀察日後第二個營業日。")
-        d.text(
-            36, f"自動提前出場觀察日：自第{s.first_callable} 個配息期結束日 (含)至期末訂價日(含)的每一個預定交易日。"
-        )
+        d.text(36, s.ko_daily)
     else:
         d.section = "art9.ko"
         d.w.row([(70, "i"), (130, "自動提前出場觀察日"), (300, "自動提前出場日")], gap=14)
@@ -422,11 +439,14 @@ def _article16(d: _Doc, s: Spec) -> None:
     d.section = "art16.table"
     _price_table(d, s, index=False)
     d.section = "art16"
-    months = "1" if s.first_callable == 1 else f"1~{s.first_callable}"
+    months = "1" if s.first_callable == 1 else f"1~{s.first_callable}"  # 沒有 Non-Call 時情境一只寫「配息金額」
     coupon = (Decimal(s.denom) * s.monthly / 100).quantize(Decimal("0.01"), ROUND_HALF_UP)
     denom, ccy = f"{s.denom:,}", s.currency_zh
 
     def coupons(months: str, n: int) -> None:  # 配息金額行與累積配息（Issue #319：配息率、面額、幣別是重複寫出的值）
+        if n == 0:  # 沒有 Non-Call：第 1 個觀察日出場配整期息，沒有月數與累積配息
+            d.text(36, f"• 配息金額 ＝每單位面額 × {s.monthly}%＝{denom} × {s.monthly}%＝{coupon:,} {ccy}")
+            return
         d.text(36, f"• 第 {months} 個月配息金額 ＝每單位面額 × {s.monthly}%＝{denom} × {s.monthly}%＝{coupon:,} {ccy}")
         d.text(36, f"• 累積配息金額 ＝{coupon * n:,} {ccy}")
 
@@ -435,7 +455,10 @@ def _article16(d: _Doc, s: Spec) -> None:
     coupons(months, s.first_callable)
     d.text(36, f"• 自動提前出場贖回金額＝每單位面額 × 100% ＝{denom} × 100% ＝{denom} {ccy}")
     total = "• 總報酬率 ＝[({}+累積配息金額) / 總投資金額] - 100% ＝{}%（平均年化報酬率：" + f"{s.annual}%）"
-    d.text(36, total.format("自動提前出場贖回金額", "0.75"))
+    if s.express:  # 發行日後第一個觀察日出場：整期配息按 1 天年化（真實樣本 ×360），不是年利率
+        d.text(36, f"• 總報酬率 ＝{s.monthly}%（平均年化報酬率：{s.monthly * 360}%）")
+    else:
+        d.text(36, total.format("自動提前出場贖回金額", "0.75"))
     d.text(36, "情境分析二：一般情況")
     d.text(36, "假設不曾發生任何自動提前出場事件，於到期日以現金結算收益。")
     coupons(f"1~{s.tenor}", s.tenor)
@@ -486,7 +509,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     _cover(d, s)
 
     d.chapter("一", "商品基本資料")
-    guaranteed = "第一個月" if s.first_callable == 1 else f"前{CN[s.first_callable - 1]}個月"
+    guaranteed = "第一個月" if s.first_callable <= 1 else f"前{CN[s.first_callable - 1]}個月"
     for n in range(1, 26):
         title = ARTICLE_TITLES.get(n, f"第{n}項說明（不核對）")
         if n == 1:
@@ -744,9 +767,7 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         )
     if s.ko_obs == "D":
         d.text(30, "自動提前出場日：於發生自動提前出場事件時，該自動提前出場觀察日後第二個營業日。")
-        d.text(
-            30, f"自動提前出場觀察日：自第{s.first_callable} 個配息期結束日 (含)至期末訂價日(含)的每一個預定交易日。"
-        )
+        d.text(30, s.ko_daily)
     d.text(30, "(c) 「到期贖回金額」：本商品到期日將依下列方式贖回：")
     if s.ki == "none":
         d.text(

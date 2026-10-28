@@ -3,7 +3,7 @@
 - 文件側：[HSBC 範本規格](../templates/hsbc-zh-product-description.md)
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [HSBC 下單資料格式](../order-formats/hsbc-fcn-reference.md)（設定檔 `config/reference_sheet.toml`）
 - 會隨時間改變的基準見[審查標準](review-standard.md)（設定檔 `config/review_standard.toml`）
-- 狀態：已實作（Issue #34）；採 §3.7 的 H02 單份作業標記及後續確認範圍。
+- 狀態：已實作（Issue #34）；採 §3.7 的 H02 單份作業標記及後續確認範圍。FCN_Express 已開放（workflow #306，見 §9）。
 - 本文件只寫與 [BARC 核對規則](barc-check-rules.md) 不同或 HSBC 特有的部分；未提到的原則（判定原則、數值處理、標的只核對彭博代號等）見[共用核對規則](shared-check-rules.md)
 - 連結標的公司介紹每檔都有、不是亂碼：共用規則（[共用核對規則](shared-check-rules.md) §5.1，Issue #225）；第 13 項沒有編號也沒有名稱欄，依段落切。
 
@@ -69,7 +69,7 @@
 |---|---|
 | 配息期數 | `配息期數 = N` = 天期（配息表列數 = 天期由共用日期表規則檢查） |
 | 日期表（共用，[共用核對規則](shared-check-rules.md) §6.1，Issue #289） | `第一章第 11 條日期表`：配息表每期一列。期數 = 天期；付息日逐期遞增、末期付息日 = 到期日；觀察日逐期遞增、早於同期付息日，末期觀察日 = 最後評價日。D 型觀察日 = 終止日，第 1～k 期起始日為 `-`，之後起始日 = 前期終止日後的下一個一籃子預定交易日（交易所假日表，Issue #208）；P 型觀察日 = 定期 KO 表對到該期的決定日，沒有起始日欄 |
-| D 型 Nt 欄 | 第一個可提前出場期（含）以前 Nt 為 `-`，之後有值 |
+| D 型 Nt 欄 | 第一個可提前出場期（含）以前 Nt 為 `-`，之後有值；FCN_Express（k = 0）第 1 期配整期息，Nt 也是 `-`（§9） |
 | P 型提前出場表 | 每列付款日依序對到第 k～n 期付息日（各對到唯一一期） |
 | 百分比 | §12(1) 表頭 `(即期初股價的X%)` = §11 定義句；有「觸及不保本價格」欄 ⇔ §11(3) 有 KI 定義 |
 | 記憶式 | 名稱含「記憶式」⇔ §11(2) 為「鎖定股票」寫法 |
@@ -194,7 +194,7 @@
 | `doc.price_header_pct` | 表頭百分比 = 定義句（HSBC 說明書內部；價格表讀不到時與情境表一起轉人工覆核） |
 | `doc.coupon_periods` | 第 11 條(1)「配息期數」= 天期 |
 | `schedule.period_count`、`schedule.payment_order`、`schedule.observation_order`、`schedule.last_observation`、`schedule.last_payment`、`schedule.period_start` | 日期表結構（各上手共用 `rules/schedule.py`，Issue #289；日期表與排程在擷取端 `parsers/hsbc.py` 的 `schedule_table`，排程由共用推導 `parsers/schedule.py` 推得，D 型比價日只放第 k 期與末期） |
-| `schedule.autocall_dates` | D 型 Nt 欄；P 型定期 KO 表付款日對到第 k～n 期 |
+| `schedule.autocall_dates` | D 型 Nt 欄、第 11 條(1) 第 1 個計息期間整期配息句只在 k = 0 時寫（`first_period_coupon`，§9）；P 型定期 KO 表付款日對到第 k～n 期 |
 | `doc.denomination`、`field.min_amounts`、`doc.subscription_start_date`、`doc.print_date` | 面額預設值、最低金額 = 參考條件表單位面額、受理申購開始／結束日 ≤ 交易日、封面與第三章的刊印日期在交易日（含）至發行日（不含）之間（#254）、第三章 = 封面（Issue #227）（各上手共用，BARC 語意，Issue #55；每處出處各一筆結果） |
 | `doc.currency_consistency`、`doc.name_consistency` | 文件重複欄位 |
 | `field.currency`（其他出處） | 面額與最低金額、情境假設與各情境金額前的幣別字 = 參考條件表承作幣別（共用，Issue #170；欄位 `denomination_currency`、`minimum_trade_currency`、`minimum_subscription_currency`、`minimum_additional_currency`、`scenario_assumption_currency`、`scenario_n_currency`） |
@@ -212,3 +212,19 @@ HSBC 複雜股數、零股、最差情境完整贖回、有利／最差年化率
 依 Accepted ADR 0004 及 Issue #43／#46，HSBC 與 BARC 使用同一個 `check_batch`／CLI／PANEL 流程及 `config/reference_sheet.toml`。原 Issue #34 的單筆 `run_check` 與 HSBC 專屬 Excel 設定已隨共用架構停用，不重新引入。
 
 比價日採共用填法：D 型填首個可 KO 期與最後一期，P 型填首可 KO 期起每一期；最晚的比價日須等於最終比價日（Issue #69）。ISIN 與比價日空白時由正式條款提出回填決策，已有值只比對，整份 PASS 才回填到核對結果檔的「回填後」。§3.7 的單份 H02 螢光範圍及情境 A 算法維持不變。
+
+## 9. FCN_Express（2026-10-28，workflow #301、#306）
+
+HSBC 的 FCN_Express 已開放自動核對（`config/issuer_prefixes.toml` 的 `[auto_check_products]`）。說明書與投資人須知用同一個範本、同一套規則；和 FCN 的差別：
+
+- **範本辨識與命名**：英文名稱是「… Autocallable Express Fixed Coupon Notes …」，辨識兩種商品家族都接受；命名規則的英文樣板多 `{express_en}`（說明書推得 Non-Call 0 時填「Express 」），中文名稱和 FCN 相同。
+- **G = 0 的填法**：第 11 條(2)「自動提前到期決定日為自 X(含)起每個預定交易日」的 X = 配息表第 1 期計息期間起始日 → Non-Call(月) = 0；比價日_1 = 第 1 期起始日，`比價日_{期數}` = 最後評價日，其他格 `-`（#301 決定）。第 1 期起始日 = 發行日後的下一個一籃子預定交易日，由共用 `schedule.period_start` 核對（FCN 的第 1～k 期起始日是 `-`，不比）。
+- **第 1 期整期配息**：第 11 條(1) 寫「第1 個計息期間：若發生自動提前到期事件：每單位面額 x 固定配息率 x 1」，第 2 期起才按 nt/Nt 攤；配息表第 1 期 Nt 為 `-`。這句只在 k = 0 時寫、第 1 期 Nt 也照 §3.5 核對（`schedule.autocall_dates`）。
+- **情境分析**：比 FCN 多一個提前到期情境：情境一第 1 期提前到期（配整期息 × 1）、情境二第 2 期提前到期（第 1 期整期＋第 2 期 n/20），接著到期與實物交割情境（有 KI 時再多一個）；前兩個情境沒有「第1個至第k個計息期間」、存續期間、配息次數與年化報酬率，不核對，配息、本金、損益照常重算。
+- **商品種類交叉檢查**（`field.non_call_product`，所有上手共用，見[共用核對規則](shared-check-rules.md) §3）同 BARC。
+- **投資人須知**：範本不寫 KO 起日與 Non-Call，照現有規則核對；分銷費用列跨頁時項目名稱排在「報酬無」與費率之間，照樣讀到費率。
+
+本機真實樣本（私人雲端倉庫，2 檔說明書＋投資人須知，皆無 KI，資料庫來源，2026-10-28 驗證；商品代號不寫在這裡）：Non-Call 0、比價日、Nt、整期配息句、情境重算、命名與投資人須知全部通過。其餘差異都不是 Express 造成的：
+
+- 1 份說明書封面的受託機構審查通過日期比交易日前最近一次的審查日期舊（沿用舊的審查通過日期，同 §8 舊審查日期差異）。
+- 還原的資料庫沒有算風險等級，風險等級與固定風險警語轉人工覆核（資料問題，不是範本差異）。

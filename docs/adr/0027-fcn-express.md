@@ -31,7 +31,7 @@ FCN 以外量最大、成長最快的是 FCN_Express：2026-04～10 共 113 檔�
 ### 後果
 
 - 每日匯入不再把 FCN_Express 記到 `workflow.other_product`；以前記過的由「匯入既有的 FCN 以外商品」（#303）回補：從舊總表格式的 Excel 建立鎖住的商品條件（來源「歷史回補」，Non-Call 轉成 0、期初定價日存交易日）、價格、比價日與分公司配置，並從 `other_product` 移除；交易明細列（含 FC）由「只匯交易明細」重匯交易清單補上，不從舊表寫。
-- 在 Barclays 開放之前，Express 的 TS 不能自動核對，比價日也不會由核對回填；要等 #303 回補或 #304。#304 已開放 Barclays：G = 0 的 Non-Call 為 0、比價日_1 回填第 1 期期始日、最後一格回填最終評價日。
+- 在 Barclays 開放之前，Express 的 TS 不能自動核對，比價日也不會由核對回填；要等 #303 回補或 #304。#304 已開放 Barclays：G = 0 的 Non-Call 為 0、比價日_1 回填第 1 期期始日、最後一格回填最終評價日。#305、#306 開放 CA、HSBC：CA 說明書只寫「自發行日(不含)」、日期表沒有期始日，比價日_1 由交易所假日表推算發行日後下一個一籃子預定交易日（上手 adapter 的 `complete`，讀出後補上）；HSBC 日期表第 1 期有期始日，照 Barclays。名稱樣板多 `{express_en}`（英文名稱的 Express）。
 - 參考條件表格式 v20、上手編號對照 v11；舊的 Excel 參考條件表沒有 Product 欄照常核對。
 - 核對後商品種類改了，也算條件改了（不回填、不鎖住）；核對時的表沒有 Product 欄不算改了。
 
@@ -62,6 +62,6 @@ Fourteen TS/IIS samples (Barclays 10, CA 2, HSBC 2) show the same mechanism at a
 ### Consequences
 
 - The daily import no longer records FCN_Express in `workflow.other_product`; the ones recorded earlier are backfilled by "匯入既有的 FCN 以外商品" (#303), which creates locked product terms from the old master-sheet format (source 歷史回補, Non-Call turned into 0, the trade date stored as the strike date) with prices, autocall dates, and branch allocations, and removes them from `other_product`; trade rows (with the FC) come from re-importing the trade list with "只匯交易明細", not from the old sheet.
-- Until Barclays is opened, Express term sheets are not checked automatically and observation dates are not backfilled by the checker; they come from #303 or #304. #304 opened Barclays: with G = 0 the Non-Call is 0, 比價日_1 is backfilled with the first period's start date, and the last slot with the final valuation date.
+- Until Barclays is opened, Express term sheets are not checked automatically and observation dates are not backfilled by the checker; they come from #303 or #304. #304 opened Barclays: with G = 0 the Non-Call is 0, 比價日_1 is backfilled with the first period's start date, and the last slot with the final valuation date. #305 and #306 open CA and HSBC: the CA term sheet only says observation starts after the issue date and its date table has no start dates, so 比價日_1 is the first basket trading day after the issue date, computed from the exchange holiday table (the issuer adapter's `complete` step, run after reading); HSBC's table gives the first period's start date, as at Barclays. Name templates gain `{express_en}` (the Express in the English name).
 - Reference sheet format v20 and issuer prefix map v11; old Excel reference sheets without a Product column are checked as before.
 - A product type changed after checking counts as changed terms (no backfill or lock); a checked sheet without a Product column does not count as changed.

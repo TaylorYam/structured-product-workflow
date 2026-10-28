@@ -228,11 +228,12 @@ iis_fixed_warning_occurrences = 2  # 警語一、商品簡介第 3 點（2026-10
 # 商品名稱格式（依 8 份 HSBC 說明書推得，2026-10-01 確認照此核對）
 # 佔位符同 BARC；{maxi_en} 標的數 ≥ 2 時填入、{daily_en} 提前出場每日觀察時填入
 zh = "香港上海滙豐銀行{tenor}個月{ccy_zh}計價{memory_zh}自動提前到期固定配息股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）"
-en = "{maxi_en}{daily_en}{memory_en}Autocallable Fixed Coupon Notes (Non Guaranteed, Unsecured)"
+en = "{maxi_en}{daily_en}{memory_en}Autocallable {express_en}Fixed Coupon Notes (Non Guaranteed, Unsecured)"
 memory_zh = "記憶式"
 memory_en = "Memory "
 maxi_en = "Maxi "
 daily_en = "Daily "
+express_en = "Express "  # 沒有 Non-Call（FCN_Express）時填入，中文相同（workflow #306，2 份樣本）
 normalize_brackets = true
 # 英文名稱在 PDF 換行處常黏字（例 CouponNotes），比對時忽略所有空白
 ignore_whitespace_en = true
@@ -575,9 +576,10 @@ distributor_name_exempt = ["玉山綜合證券綜合股份有限公司"]
 # 商品名稱格式（依 5 份 CA 說明書推得，2026-10-15 確認，Issue #274）：只依天期、幣別；不分標的數、記憶式、KI、Non-Call。
 # 名稱後的「(ISIN：…)」「(下稱「商品」或「本商品」)」不屬於名稱。
 zh = "Crédit Agricole CIB Financial Solutions {tenor} 個月{ccy_zh}計價固定配息自動提前出場結構型商品(無擔保) (不保本)"
-en = "Crédit Agricole CIB Financial Solutions {ccy} {tenor}-Month Fixed Coupon Autocall Note (Unsecured)(Non-principal protected)"
+en = "Crédit Agricole CIB Financial Solutions {ccy} {tenor}-Month Fixed Coupon {express_en}Autocall Note (Unsecured)(Non-principal protected)"
 memory_zh = ""
 memory_en = ""
+express_en = "Express "  # 沒有 Non-Call（FCN_Express）時英文名稱多「Express」，中文相同（workflow #305，2 份樣本）
 normalize_brackets = true
 ignore_whitespace_en = true
 

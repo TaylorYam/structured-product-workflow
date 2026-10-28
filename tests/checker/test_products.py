@@ -16,7 +16,7 @@ from harness import CONFIG, ISSUER_PREFIXES, load_config, with_iis
 from reference_synth import build_reference_sheet, reference_row
 
 REVIEW = CheckStatus.REVIEW_REQUIRED
-EXPRESS_OPENED = '\nFCN_Express = ["BARC"]\n'
+EXPRESS_OPENED = '\nFCN_Express = ["BARC", "CA", "HSBC"]\n'
 
 
 def prefixes_with(tmp_path: Path, old: str, new: str) -> Path:
@@ -30,10 +30,13 @@ def prefixes_with(tmp_path: Path, old: str, new: str) -> Path:
 # ---------------------------------------------------------------- 設定檔
 
 
-def test_repo_table_opens_fcn_everywhere_and_express_for_barclays():
+def test_repo_table_opens_fcn_everywhere_and_express_for_barclays_ca_hsbc():
     issuers = frozenset(CONFIG.issuer_prefixes.values())
 
-    assert CONFIG.auto_check_products == {"FCN": issuers, "FCN_Express": frozenset({"BARC"})}  # #304
+    assert CONFIG.auto_check_products == {
+        "FCN": issuers,
+        "FCN_Express": frozenset({"BARC", "CA", "HSBC"}),
+    }  # #304～#306
 
 
 @pytest.mark.parametrize(

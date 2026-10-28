@@ -23,7 +23,8 @@ TEMPLATE_ID = "hsbc-zh-pd"
 # 5：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 # 6：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 7：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
-PARSER_VERSION = "7"
+# 8：FCN_Express（workflow #306）：決定日起日 = 第 1 期期始日推得 k = 0、第 1 期整期配息句、情境多一個提前到期情境
+PARSER_VERSION = "8"
 # 發行機構信用評等（#240）：第一章第 3 項 `其長期債務信用評等為[穆迪（Moody’s）信評Aa3/…]。`、第二章 (7) `信用評等(長期債務信用評等)：穆迪…給予…Aa3；…`
 RATINGS = (
     ratings.RatingPlace("第一章第 3 項", r"發行機構為[^，。]+，截至[^，。]+，其長期債務信用評等為(?P<body>.+?)。"),
@@ -59,6 +60,12 @@ PRICE_TABLE = price_table.TableSpec(
 SCENARIO_TABLE = replace(PRICE_TABLE, where="第一章第 18 條情境價格表")
 
 
+# 商品家族：英文名稱（去空白）；FCN_Express 多「Express」（workflow #306）
+FAMILIES = ("AutocallableFixedCouponNotes", "AutocallableExpressFixedCouponNotes")
+# FCN_Express 第 11 條(1)：第 1 個計息期間提前到期配整期息（×1），第 2 期起按天數攤（變動配息率 × nt/Nt）
+FIRST_PERIOD_FULL_COUPON = r"第1個計息期間[:：]若發生自動提前到期事件[:：]每單位面額[x×X]固定配息率[x×X]1(?!\d)"
+
+
 def document(lines: Sequence[Line]) -> Document:
     clean = [x for x in lines if x.text != "PUBLIC" and not re.fullmatch(r"-?\s*第\s*\d+\s*頁，共\s*\d+\s*頁", x.text)]
     return Document(clean, LAYOUT)
@@ -79,7 +86,7 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
             "香港上海滙豐銀行" in cover.text and "發行機構：香港商香港上海滙豐銀行股份有限公司" in cover.text,
             "發行機構不是HSBC",
         ),
-        ("AutocallableFixedCouponNotes" in cover.text, "商品家族未知"),
+        (any(f in cover.text for f in FAMILIES), "商品家族未知"),
         (len(doc.chapters) == 5, "章節不完整"),
     ):
         if not test:
@@ -158,11 +165,17 @@ class ScenarioText:
     segments: list[ScenarioIndex]
 
 
-def scenario_text(ti: ScenarioIndex, ki_type: ParsedField) -> ScenarioText | None:
-    """依情境標題切段；情境數量或順序不符已知範本（無 KI 3 個、有 KI 4 個）時為 None。"""
+def ko_scenarios(first: ParsedField) -> int:
+    """提前到期的情境數：FCN 1 個（第 k + 1 期）；FCN_Express（k = 0）2 個，第 1 期（配整期息）與第 2 期（workflow #306）。"""
+    return 2 if first.ok and first.value == 0 else 1
+
+
+def scenario_text(ti: ScenarioIndex, ki_type: ParsedField, first: ParsedField) -> ScenarioText | None:
+    """依情境標題切段；情境數量或順序不符已知範本（提前到期情境 `ko_scenarios` 個，加上到期無 KI 2 個、有 KI 3 個）時為
+    None。"""
     headings = list(ti.finditer(SCENARIO_HEADING))
-    expected = 3 if ki_type.ok and ki_type.value == "none" else 4
-    if len(headings) != expected or [m[1] for m in headings] != list("一二三四")[:expected]:
+    expected = ko_scenarios(first) + (2 if ki_type.ok and ki_type.value == "none" else 3)
+    if len(headings) != expected or [m[1] for m in headings] != list("一二三四五六")[:expected]:
         return None
     ends = [h.start() for h in headings[1:]] + [len(ti.text)]
     return ScenarioText(
@@ -198,13 +211,15 @@ def _scenario_standard(fields: dict[str, ParsedField], ti: ScenarioIndex) -> Non
     annual = fields["coupon_pa_pct"]  # 說明書只寫年利率：固定配息率 = 年利率 ÷ 12 四捨五入 4 位
     monthly = (annual.value / 12).quantize(Decimal("0.0001"), ROUND_HALF_UP) if annual.ok else None
     fields["monthly_coupon_pct"] = derived("monthly_coupon_pct", annual, monthly)
-    text = scenario_text(ti, fields["ki_type"])
+    first = fields["first_callable_period"]
+    text = scenario_text(ti, fields["ki_type"], first)
     if text is None:
         note = "第 18 條情境數量或順序不符已知範本"
         fields["scenario_params"] = ParsedField.missing("scenario_params", note)
         fields["scenario_prices"] = ParsedField.missing("scenario_prices", note)
         return
     params: list[ScenarioParam] = []
+    ko = ko_scenarios(first)  # 前 ko 個情境提前到期：沒有存續期間、配息次數與年化報酬率的句子
 
     def mention(
         index: ScenarioIndex, pattern: str, code: str, where: str, convert=scenario_number, required=True
@@ -231,8 +246,8 @@ def _scenario_standard(fields: dict[str, ParsedField], ti: ScenarioIndex) -> Non
     for i, segment in enumerate(text.segments):
         where = f"情境 {i + 1} "
         mention(segment, r"(?:存續期間|本商品於)(\d+)個月", "scenario_tenor", where, int, required=False)
-        mention(segment, r"於(\d+)個月存續期間", "scenario_tenor", where, int, required=i > 0)
-        mention(segment, r"共(\d+)次配息", "scenario_coupon_periods", where, int, required=i > 0)
+        mention(segment, r"於(\d+)個月存續期間", "scenario_tenor", where, int, required=i >= ko)
+        mention(segment, r"共(\d+)次配息", "scenario_coupon_periods", where, int, required=i >= ko)
         for m, principal in scenario_formulas(segment):
             if principal:
                 continue
@@ -251,7 +266,7 @@ def _scenario_standard(fields: dict[str, ParsedField], ti: ScenarioIndex) -> Non
                     ParsedField.present("scenario_monthly_coupon", scenario_number(m[2]), lines),
                 )
             )
-        if i > 0 and not scenario_worst(segment):  # 較差情境（實物交割）的年化報酬率不核對（未涵蓋清單）
+        if i >= ko and not scenario_worst(segment):  # 較差情境（實物交割）的年化報酬率不核對（未涵蓋清單）
             mention(segment, SCENARIO_ANNUALIZED, "scenario_annualized_return", f"{where}平均")
         # 較差情境寫出的價格要對到同一檔，不是任一檔數值相同就算
         named = [
@@ -260,7 +275,7 @@ def _scenario_standard(fields: dict[str, ParsedField], ti: ScenarioIndex) -> Non
         row = 1 if len(rows) == 1 else named[0] if len(named) == 1 else None
         for label, key in SCENARIO_REFERENCES:
             refs = list(segment.finditer(re.escape(label) + SCENARIO_CCY + N))
-            required = i >= 2 and (key == "strike" or len(text.segments) == 4)
+            required = i > ko and (key == "strike" or len(text.segments) == ko + 3)
             written = len(re.findall(re.escape(label) + SCENARIO_CCY, segment.text))
             if (required and not refs) or written > len(refs):
                 missing = ParsedField.missing(f"scenario_{key}", f"{where}{label}缺漏、損壞或寫法未知")
@@ -528,9 +543,10 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
         fields["scenario_table"] = _price_table("scenario_table", scenarios[a:b], SCENARIO_TABLE)
     else:
         fields["scenario_table"] = ParsedField.missing("scenario_table", "情境價格表錨點缺漏／重複")
-    _scenario_standard(fields, ScenarioIndex(scenarios))
     f = fields.get
     fields["first_callable_period"] = first_callable(lambda k: f(k, ParsedField.missing(k)))
+    fields["first_period_full_coupon"] = _first_period_full_coupon(sub(11, 1))
+    _scenario_standard(fields, ScenarioIndex(scenarios))
     fields["schedule_table"] = schedule_table(lambda k: f(k, ParsedField.missing(k)), fields["first_callable_period"])
     fields["autocall_schedule"] = schedule.autocall_schedule(
         fields["ko_observation"], fields["first_callable_period"], fields["schedule_table"]
@@ -540,6 +556,14 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
     )  # 連結標的公司介紹：沒有編號與名稱，依段落（Issue #225）
     fields.update(ratings.fields(doc.lines, RATINGS, no_guarantor_places=(ratings.NAME_NO_GUARANTOR,)))
     return HsbcTermSheet(fields, TextIndex(doc.lines), doc, scenarios, ScenarioIndex(scenarios))
+
+
+def _first_period_full_coupon(lines: list[Line]) -> ParsedField:
+    """第 11 條(1) 有沒有 FCN_Express 的第 1 個計息期間整期配息句（`FIRST_PERIOD_FULL_COUPON`，workflow #306）。"""
+    ti = TextIndex(lines)
+    found = list(ti.finditer(FIRST_PERIOD_FULL_COUPON))
+    lns = ti.lines_for(found[0].start(), found[0].end()) if found else lines[:1]
+    return ParsedField.present("first_period_full_coupon", bool(found), lns)
 
 
 def first_callable(f: Callable[[str], ParsedField]) -> ParsedField:
@@ -553,7 +577,10 @@ def first_callable(f: Callable[[str], ParsedField]) -> ParsedField:
     if bad is not None:
         return ParsedField("first_callable_period", bad.status, evidence=bad.evidence, note=bad.note)
     if obs.value == "D":
-        periods = [r["period"] for r in coupons.value if r["end"] == f("ko_start").value]
+        start = f("ko_start").value
+        # 決定日從第 1 期期始日起：沒有 Non-Call（FCN_Express，workflow #306）；否則對到期末日 = 起日的那一期
+        periods = [0] if coupons.value and coupons.value[0]["start"] == start else []
+        periods += [r["period"] for r in coupons.value if r["end"] == start]
     else:
         first = f("ko_table").value[0]
         periods = [r["period"] for r in coupons.value if r["payment"] == first["payment"]]
@@ -576,7 +603,7 @@ def schedule_table(f: Callable[[str], ParsedField], first: ParsedField) -> Parse
     """標準欄位 `schedule_table`：配息表每期一列。
 
     期間每日觀察（D）：期始日、期末日、配息日，觀察日 = 期末日；第 1～k 期期始日為「-」，之後為前一期期末日後的下一個
-    一籃子預定交易日（讀不到 k 時無法確認）。定期觀察（P）：配息日，觀察日為定期 KO 表付款日對到的那一期的決定日
+    一籃子預定交易日（讀不到 k 時無法確認）；k = 0（FCN_Express）時第 1 期期始日為發行日後的下一個一籃子預定交易日。定期觀察（P）：配息日，觀察日為定期 KO 表付款日對到的那一期的決定日
     （對不到唯一期別的列不放，由 HSBC 規則 `schedule.autocall_dates` 檢查）；沒有期始日欄。
     """
     name = "schedule_table"
@@ -588,7 +615,7 @@ def schedule_table(f: Callable[[str], ParsedField], first: ParsedField) -> Parse
         rows = tuple(
             standard_fields.DateRow(r["period"], r["start"], r["end"], r["end"], r["payment"]) for r in coupons.value
         )
-        start = standard_fields.PeriodStart("next_trading_day", None, first.value if first.ok else None)
+        start = standard_fields.PeriodStart("next_trading_day", "after_issue", first.value if first.ok else None)
         table = standard_fields.DateTable(SCHEDULE_WHERE, rows, start)
         return ParsedField(name, FieldStatus.PRESENT, table, list(coupons.evidence))
     ko = f("ko_table")
