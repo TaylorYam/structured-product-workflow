@@ -13,6 +13,7 @@ from decimal import Decimal
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from . import bnp_iis, iis
 from .layout import TextIndex
+from .super_bull import exactly_one
 
 TEMPLATE_ID = "bnp-zh-sb-iis"
 PARSER_VERSION = "1"
@@ -63,14 +64,6 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     return DetectionResult(not failed, failed, evidence)
 
 
-def _one(name: str, ti: TextIndex, pattern: str, convert, missing: str) -> ParsedField:
-    found = list(ti.finditer(pattern))
-    if len(found) != 1:
-        return ParsedField.missing(name, missing if not found else f"{missing}（出現多次）")
-    m = found[0]
-    return ParsedField.present(name, convert(m), ti.lines_for(m.start(), m.end()))
-
-
 def _ki_type(lines: list[Line] | None, table: ParsedField) -> ParsedField:
     """無 KI：到期贖回金額段沒有「觸及生效事件」、是範本的兩款寫法，標的表沒有下限價格列。"""
     name = "ki_type"
@@ -94,12 +87,12 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
     fields.pop("monthly_coupon_shown_pct", None)
     redemption = iis.section(ti, REDEMPTION_SECTION)
     fields["ki_type"] = _ki_type(redemption, fields["underlying_table"])
-    interval = _one(
+    interval = exactly_one(
         "observation_interval",
         ti,
         INTERVAL,
-        lambda m: int(m[1]) if m[1] else 1,
         "商品簡介「自動提前贖回評價日：每N 個月一次」的寫法缺漏或不在範本規格內",
+        lambda m: int(m[1]) if m[1] else 1,
     )
     fields["observation_interval"] = interval
     fields["ko_observation"] = (
@@ -108,13 +101,13 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         else ParsedField("ko_observation", interval.status, evidence=list(interval.evidence), note=interval.note)
     )
     fields.pop("first_callable_period", None)
-    fields["exit_bonus"] = _one(
+    fields["exit_bonus"] = exactly_one(
         "exit_bonus",
         ti,
         BONUS,
-        lambda m: Decimal(m[1]),
         "收益分配事項找不到「自動提前贖回金額 = 商品面額 × {100% + X%}」",
+        lambda m: Decimal(m[1]),
     )
-    fields["no_coupon"] = _one("no_coupon", ti, re.escape(NO_COUPON), lambda m: m[0], f"找不到「{NO_COUPON}」")
+    fields["no_coupon"] = exactly_one("no_coupon", ti, re.escape(NO_COUPON), f"找不到「{NO_COUPON}」")
     provided = set(base.provided) - {"monthly_coupon_shown_pct", "first_callable_period"}
     return iis.IisSheet(fields, ti, frozenset(provided))

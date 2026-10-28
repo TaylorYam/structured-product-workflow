@@ -15,12 +15,12 @@ from typing import NamedTuple
 
 from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
-from ..standard_fields import AutocallSchedule, ScenarioParam, ScenarioPrice
+from ..standard_fields import ScenarioParam, ScenarioPrice
 from ..text import squash
-from . import ca, price_table, schedule
-from .bnp_super_bull import _phrase, observation_month
+from . import ca, price_table
 from .common import Hit, Mention, capture_group, dec, derived, number, one
 from .layout import TextIndex, capture, parse_date
+from .super_bull import ProfitReturn, Wording, exactly_one, fill_schedule
 
 TEMPLATE_ID = "ca-zh-sb-pd"
 PARSER_VERSION = "1"
@@ -51,6 +51,8 @@ NO_COUPON_DATE = "(6)配息日：" + NO_COUPON
 MIN_RATE = "(4)最低保證配息率：不適用。" + NO_COUPON
 PARTICIPATION = "(5)參與率：不適用。"
 MONTH_TOLERANCE = 7  # 觀察日和「發行日 + m 個月」前後最多差幾個日曆天（範本規格 §4.1；樣本 ±3）
+WORDS = Wording("CA", "觀察日", "自動提前出場日", "期末訂價日")
+TABLE_NAME = "第 9 項觀察日表"
 # CA FCN 才有的欄位（配息表、配息率、FCN 贖回 %、情境配息月數等）：Super Bull 讀不到，也不交給規則
 FCN_ONLY = (
     "coupon_table",
@@ -128,6 +130,10 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
 
 
 # ---------------------------------------------------------------- 第 9 項
+
+
+def _phrase(name: str, lines: list[Line], pattern: str, missing: str) -> ParsedField:
+    return exactly_one(name, TextIndex(lines), pattern, missing)
 
 
 def _ko_table(ti: TextIndex, a: int, b: int) -> ParsedField:
@@ -221,7 +227,7 @@ def _article9(fields: dict[str, ParsedField], art9: list[Line], whole: TextIndex
     fields["no_coupon_art9"] = _phrase("no_coupon_art9", art9, re.escape(PAYMENTS), f"第 9 項 (1) 沒有「{PAYMENTS}」")
 
 
-def _bonus(table: ParsedField) -> ParsedField:
+def _row_bonus(table: ParsedField) -> ParsedField:
     """出場紅利 = 觀察日表各列的紅利（每列相同才交出；不同 → 歧義，轉人工覆核）。"""
     name = "coupon_pa_pct"
     if not table.ok:
@@ -235,46 +241,16 @@ def _bonus(table: ParsedField) -> ParsedField:
 
 
 def _schedule(fields: dict[str, ParsedField]) -> None:
-    """觀察日表只列觀察日（範本規格 §4.1）：每列的月數 m、KO 觀察方式 P、Non-Call = 第 1 列的 m、提前出場排程
-    （`比價日_m` = 觀察日、`比價日_{天期}` = 期末訂價日）。共用日期表檢查不適用（`schedule_table` 交 absent）。"""
-    fields["schedule_table"] = standard_fields.absent(
-        "schedule_table", "每期一列的日期表（Super Bull 只列觀察日，由 CA Super Bull 規則核對）"
-    )
-    table, issue, tenor, final = (fields[k] for k in ("ko_table", "issue_date", "tenor_months", "final_valuation_date"))
-    bad = next((p for p in (table, issue, tenor, final) if not p.ok), None)
-    if bad is not None:
-        fields.update(schedule.failed(bad))
-        fields["observation_months"] = derived("observation_months", bad)
-        return
-    rows = table.value
-    months = [
-        observation_month(issue.value, r["observation"], tenor.value, early=MONTH_TOLERANCE, late=MONTH_TOLERANCE)
-        for r in rows
-    ]
-    note = ""
-    if None in months:
-        bad_rows = [str(n) for n, m in enumerate(months, start=1) if m is None]
-        note = (
-            f"第 9 項觀察日表第 {'、'.join(bad_rows)} 列的觀察日對不到「發行日 + m 個月」（前後 {MONTH_TOLERANCE} 個日曆天、"
-            "1 ≤ m < 天期）"
-        )
-    elif months != sorted(set(months)):
-        note = "第 9 項觀察日表各列觀察日的月數不是遞增且不重複：" + "、".join(map(str, months))
-    ev = list(table.evidence)
-    if note:
-        fields.update(schedule.invalid(ev, note))
-        fields["observation_months"] = ParsedField("observation_months", FieldStatus.INVALID, evidence=ev, note=note)
-        return
-    dates = {m: r["observation"] for m, r in zip(months, rows, strict=True)}
-    dates[tenor.value] = final.value
-    fields["observation_months"] = ParsedField("observation_months", FieldStatus.PRESENT, tuple(months), ev)
-    fields["ko_observation"] = ParsedField("ko_observation", FieldStatus.PRESENT, "P", ev)
-    fields["first_callable_period"] = ParsedField("first_callable_period", FieldStatus.PRESENT, months[0], ev)
-    fields["autocall_schedule"] = ParsedField(
-        "autocall_schedule",
-        FieldStatus.PRESENT,
-        AutocallSchedule("P", months[0], tenor.value, dates, listed=True),
-        ev,
+    """觀察日表只列觀察日（範本規格 §4.1）：觀察日和「發行日 + m 個月」前後差 7 個日曆天內。"""
+    table = fields["ko_table"]
+    fill_schedule(
+        fields,
+        table,
+        lambda: [(n, r["observation"]) for n, r in enumerate(table.value, start=1)],
+        table_name=TABLE_NAME,
+        words=WORDS,
+        early=MONTH_TOLERANCE,
+        late=MONTH_TOLERANCE,
     )
 
 
@@ -326,22 +302,13 @@ class AutocallCalc(NamedTuple):
     amount: Decimal
 
 
-class ReturnCalc(NamedTuple):
-    """情境一、二「(A / N) - 1 ＝ r%（平均年化報酬率：y%）」。"""
-
-    amount: Decimal
-    divisor: Decimal
-    pct: Decimal
-    annualized: Decimal
-
-
 class BestCalc(NamedTuple):
     """情境二「＝N × [100% + 100% x (P / K - 100%)]＝N x (100% + r%) = A」。"""
 
     denomination: Decimal
     close: Decimal
     strike: Decimal
-    denomination2: Decimal
+    denomination_again: Decimal  # 「＝N x (100% + r%)」再寫一次的面額
     pct: Decimal
     amount: Decimal
 
@@ -360,12 +327,12 @@ class RemainderCalc(NamedTuple):
     whole: Decimal
     fraction: Decimal
     close: Decimal
-    fraction2: Decimal
+    fraction_again: Decimal  # 「P x F」再寫一次的畸零股數
     amount: Decimal
     currency: str
 
 
-class WorseReturnCalc(NamedTuple):
+class WorseProfitReturn(NamedTuple):
     """情境三「= ((W x P + R) / N) - 1 = r% (平均年化報酬率:y%)」。"""
 
     whole: Decimal
@@ -384,22 +351,22 @@ class SbScenarios:
     titles: tuple[list[Line], list[Line], list[Line]]
     first: Hit[int] | None = None
     autocall: Hit[AutocallCalc] | None = None
-    autocall_return: Hit[ReturnCalc] | None = None
+    autocall_return: Hit[ProfitReturn] | None = None
     best_assumed: Hit[Assumed] | None = None
     best: Hit[BestCalc] | None = None
-    best_return: Hit[ReturnCalc] | None = None
+    best_return: Hit[ProfitReturn] | None = None
     worse_assumed: Hit[Assumed] | None = None
     shares: Hit[SharesCalc] | None = None
     remainder: Hit[RemainderCalc] | None = None
-    worse_return: Hit[WorseReturnCalc] | None = None
+    worse_return: Hit[WorseProfitReturn] | None = None
 
     @property
     def found(self) -> bool:
         return all(self.titles)
 
 
-def _return(m: re.Match[str]) -> ReturnCalc:
-    return ReturnCalc(dec(m[1]), dec(m[2]), Decimal(m[3]), Decimal(m[4]))
+def _return(m: re.Match[str]) -> ProfitReturn:
+    return ProfitReturn(dec(m[1]), dec(m[2]), Decimal(m[3]), Decimal(m[4]))
 
 
 def _scenarios(ti: TextIndex) -> SbScenarios:
@@ -440,7 +407,7 @@ def _scenarios(ti: TextIndex) -> SbScenarios:
     out.worse_return = find(
         3,
         S3_RETURN,
-        lambda m: WorseReturnCalc(dec(m[1]), dec(m[2]), dec(m[3]), dec(m[4]), Decimal(m[5]), Decimal(m[6])),
+        lambda m: WorseProfitReturn(dec(m[1]), dec(m[2]), dec(m[3]), dec(m[4]), Decimal(m[5]), Decimal(m[6])),
     )
     return out
 
@@ -522,8 +489,8 @@ def read(lines: Sequence[Line]) -> CaSuperBullTermSheet:
 
     # 第 9 項、價格表與標的、觀察日表
     _article9(fields, article(9), base.full_text)
-    ca._table_fields(fields)
-    fields["coupon_pa_pct"] = _bonus(fields["ko_table"])
+    ca.table_fields(fields)
+    fields["coupon_pa_pct"] = _row_bonus(fields["ko_table"])
     _schedule(fields)
 
     # 13.(6)、15.(4)(5)：沒有配息、參與率

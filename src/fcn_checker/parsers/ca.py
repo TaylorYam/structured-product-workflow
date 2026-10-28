@@ -236,7 +236,7 @@ def read(lines: Sequence[Line]) -> CaTermSheet:
     put("final_valuation_date", art13, r"\(4\)期末訂價日：" + D, parse_date)
     put("maturity_date", art13, r"\(5\)到期日：" + D, parse_date)
     fields.update(guaranteed_coupon(article(15)))
-    _table_fields(fields)
+    table_fields(fields)
     _schedule(fields)
     _article16(fields, article(16))
 
@@ -478,7 +478,7 @@ def art10_tickers(art10: list[Line]) -> ParsedField:
     return ParsedField.present("art10_tickers", [t for t, _ in tickers], [ln for _, ln in tickers])
 
 
-def _table_fields(fields: dict[str, ParsedField]) -> None:
+def table_fields(fields: dict[str, ParsedField]) -> None:
     """價格表＋第 10 項代碼 → 標準欄位：標的、各標的價格、K／KI／KO %（表頭是唯一來源）。"""
     table, tickers = fields["underlying_table"], fields["art10_tickers"]
     if table.ok and tickers.ok and len(table.value.rows) == len(tickers.value):

@@ -24,6 +24,7 @@ from typing import Any
 
 import fitz
 
+from fcn_checker.parsers.super_bull import add_months
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
 from reference_synth import (
@@ -161,11 +162,6 @@ class Spec(ProductSpec):
     @property
     def print_date(self) -> dt.date:
         return self.trade_date + dt.timedelta(days=1)
-
-
-def add_months(d: dt.date, months: int) -> dt.date:
-    y, m = divmod(d.month - 1 + months, 12)
-    return d.replace(year=d.year + y, month=m + 1)  # 合成日期都在 14 日，各月都有
 
 
 @dataclass

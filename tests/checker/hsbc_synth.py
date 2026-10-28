@@ -9,13 +9,13 @@
 
 from __future__ import annotations
 
-import calendar
 import datetime as dt
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
+from fcn_checker.parsers.super_bull import add_months
 from harness import STANDARD, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
 from reference_synth import FITCH, MOODYS, SP, UL, ProductSpec, Ratings, price, quote_iso, write_notes
@@ -62,13 +62,6 @@ TABLE_X = {
 def underlyings(count: int) -> tuple[UL, ...]:
     """HSBC 合成文件的標的：ZZn UW、虛構標的n、期初價 100。"""
     return tuple(UL(f"虛構標的{i}", "NASDAQ", f"ZZ{i} UW", Decimal("100.0000")) for i in range(1, count + 1))
-
-
-def add_months(d: dt.date, n: int) -> dt.date:
-    """往後 n 個月的同一天；該月沒有這一天時取月底。"""
-    m = d.month - 1 + n
-    year, month = d.year + m // 12, m % 12 + 1
-    return dt.date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
 
 
 def zh_date_tight(d: dt.date) -> str:

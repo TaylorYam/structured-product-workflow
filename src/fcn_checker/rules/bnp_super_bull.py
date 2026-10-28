@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from decimal import ROUND_HALF_UP, Decimal
 
-from ..parsers.bnp_super_bull import SuperBullTermSheet
+from ..parsers.bnp_super_bull import WORDS, SuperBullTermSheet
 from ..schema import CheckResult, Item
 from ..schema import CheckStatus as S
-from . import bnp, bnp_scenario, kit
+from . import bnp, bnp_scenario, kit, super_bull
 from .bnp_scenario import _Case, _worse
 from .kit import Check, IssuerContext
+from .super_bull import close
 
-AMOUNT_TOLERANCE = Decimal("0.01")  # 情境金額容許的進位差（核對規則 §3.7）
 NOT_COVERED = [
     *(x for x in bnp.NOT_COVERED if x["rule_id"] != "doc.template_variants"),
     {
@@ -73,17 +73,7 @@ def scope(ctx: IssuerContext) -> CheckResult:
 def exit_bonus(ctx: IssuerContext) -> list[CheckResult]:
     """出場紅利的其他出處（§18 情境一、第二章交易架構）= 第 16 項 `[100% + X%]` 的 X。"""
     ts = _ts(ctx)
-    main = ts.f("coupon_pa_pct")
-    name = f"{ts.chapter1.label('autocall')}出場紅利"
-    out = []
-    for k, m in enumerate(ts.bonus_mentions, start=1):
-        pf = m.parsed(f"exit_bonus_{k}")
-        out.append(
-            kit.doc_check(ctx, "doc.exit_bonus", pf.name, f"出場紅利（{m.where}）", main, pf).compare(
-                main.value, pf.value, fail_message=f"須等於{name}"
-            )
-        )
-    return out
+    return super_bull.exit_bonus_mentions(ctx, ts.bonus_mentions, f"須等於{ts.chapter1.label('autocall')}出場紅利")
 
 
 def no_coupon(ctx: IssuerContext) -> CheckResult:
@@ -98,20 +88,14 @@ def redemption_formula(ctx: IssuerContext) -> list[CheckResult]:
     """到期贖回公式、參與率 100%、最低保證配息率無：固定寫法，找不到 → 不一致（核對規則 §3.5）。"""
     f, art_label = ctx.ts.f, ctx.ts.chapter1.label
     where = art_label("maturity")
-    out = []
-    for field, name in (
-        ("maturity_formula", f"{where}到期贖回公式"),
-        ("participation_rate", f"{where}參與率"),
-        ("min_guaranteed_rate", f"{where}最低保證配息率"),
-    ):
-        pf = f(field)
-        check = Check("doc.redemption_formula", field, Item.expected(name), ctx.document)
-        out.append(
-            check.result(S.PASS, actual=pf.value, evidence=pf.evidence, message="範本固定寫法")
-            if pf.ok
-            else check.result(S.MISMATCH, evidence=pf.evidence, reason="value_mismatch", message=pf.note)
+    return [
+        super_bull.fixed("doc.redemption_formula", field, name, f(field), ctx.document)
+        for field, name in (
+            ("maturity_formula", f"{where}到期贖回公式"),
+            ("participation_rate", f"{where}參與率"),
+            ("min_guaranteed_rate", f"{where}最低保證配息率"),
         )
-    return out
+    ]
 
 
 # ---------------------------------------------------------------- 日期表（核對規則 §3.4）
@@ -119,32 +103,16 @@ def redemption_formula(ctx: IssuerContext) -> list[CheckResult]:
 
 def observation_months(ctx: IssuerContext) -> CheckResult:
     """每個評價日的月數 m（發行日 + m 個月起 7 個日曆天內、1 ≤ m < 天期、遞增）；Non-Call = 第 1 列的 m。"""
-    pf = ctx.ts.f("observation_months")
-    where = ctx.ts.chapter1.label("dates")
-    check = kit.doc_check(ctx, "schedule.observation_months", "observation_months", f"{where}評價日月數", pf)
-    months = "、".join(map(str, pf.value)) if pf.ok else ""
-    return check.compare(None, None, ok=True, message=f"評價日在第 {months} 個月；Non-Call = {months.split('、')[0]}")
+    return super_bull.observation_months(ctx, ctx.ts.chapter1.label("dates"), WORDS)
 
 
 def observation_order(ctx: IssuerContext) -> CheckResult:
     """同列評價日 < 自動提前贖回日；評價日逐列遞增；末列評價日 < 期末評價日。"""
     f = ctx.ts.f
     table, final = f("date_table"), f("final_valuation_date")
-    issues = []
-    if table.ok and final.ok and table.value["type"] == "SB":
-        rows = table.value["rows"]
-        for r in rows:
-            if not r["pricing"] < r["redemption"]:
-                issues.append(f"第 {r['period']} 列自動提前贖回日 {r['redemption']} 沒有晚於評價日 {r['pricing']}")
-        for a, b in zip(rows, rows[1:], strict=False):
-            if not a["pricing"] < b["pricing"]:
-                issues.append(f"第 {b['period']} 列評價日 {b['pricing']} 沒有晚於第 {a['period']} 列 {a['pricing']}")
-        if rows and not rows[-1]["pricing"] < final.value:
-            issues.append(f"末列評價日 {rows[-1]['pricing']} 沒有早於期末評價日 {final.value}")
-    where = ctx.ts.chapter1.label("dates")
-    return kit.structure_check(
-        ctx, "schedule.observation_order", "observation_order", f"{where}評價日順序", [table, final], issues
-    )
+    sb = table.ok and table.value["type"] == "SB"
+    rows = [(r["period"], r["pricing"], r["redemption"]) for r in table.value["rows"]] if sb else []
+    return super_bull.observation_order(ctx, ctx.ts.chapter1.label("dates"), WORDS, [table, final], rows)
 
 
 # ---------------------------------------------------------------- 情境分析（核對規則 §3.7）
@@ -152,10 +120,6 @@ def observation_order(ctx: IssuerContext) -> CheckResult:
 
 def _q(decimals: int) -> Decimal:
     return Decimal(1).scaleb(-decimals)
-
-
-def _close(a: Decimal, b: Decimal) -> bool:
-    return abs(a - b) <= AMOUNT_TOLERANCE
 
 
 def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
@@ -194,12 +158,7 @@ def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
 
 
 def _annualized(c: _Case, item: Item, pct: Decimal, annualized: Decimal, months: int, x) -> CheckResult:
-    expected = kit.shown(pct * 12 / months, annualized)
-    issues = (
-        []
-        if expected == annualized
-        else [f"年化報酬率 {annualized}% 應為 {pct}% × 12 ÷ {months} = {expected}%（四捨五入到文件位數）"]
-    )
+    expected, issues = super_bull.annualized_issues(pct, annualized, months)
     return kit.calc_result(
         c.rid,
         c.field("annualized"),
@@ -238,7 +197,7 @@ def _autocall(c: _Case, x, items: dict[str, Item], bonus: Decimal) -> list[Check
     issues = []
     if b.denomination != c.denom:
         issues.append(f"算式中的面額 {b.denomination} 不等於第一章面額 {c.denom}")
-    if not _close(b.amount, expected):
+    if not close(b.amount, expected):
         issues.append(f"自動提前贖回金額 {b.amount} 應為 {c.denom} × (100% + {bonus}%) = {expected}")
     out.append(
         kit.calc_result(
@@ -282,7 +241,7 @@ def _best(c: _Case, x, items: dict[str, Item]) -> list[CheckResult]:
     issues = []
     if b.denomination != c.denom:
         issues.append(f"算式中的面額 {b.denomination} 不等於第一章面額 {c.denom}")
-    if not _close(b.amount, expected):
+    if not close(b.amount, expected):
         issues.append(f"到期贖回金額 {b.amount} 應為 {b.denomination} × {a.close} ÷ {a.strike} = {expected}")
     out.append(
         kit.calc_result(
@@ -304,14 +263,8 @@ def _profit_return(c: _Case, x, items: dict[str, Item], amount: Decimal, months:
     if x.total_return is None:
         return [c.unread("return", items["return"], "找不到總報酬率算式")]
     tr = x.total_return.value
-    issues = []
-    if tr.amount != amount:
-        issues.append(f"總報酬率算式的贖回金額 {tr.amount} 與贖回金額算式 {amount} 不同")
-    if tr.divisor != c.denom:
-        issues.append(f"總報酬率算式的總投資金額 {tr.divisor} 不等於第一章面額 {c.denom}")
-    expected = kit.shown(tr.amount / tr.divisor * 100 - 100, tr.pct) if tr.divisor else None
-    if expected != tr.pct:
-        issues.append(f"總報酬率 {tr.pct}% 應為 ({tr.amount} ÷ {tr.divisor}) − 1 = {expected}%")
+    # BNP 總報酬率照文件位數重算，不容許進位差（核對規則 §3.7）
+    expected, issues = super_bull.profit_return_issues(tr, amount, c.denom, tolerance=Decimal(0))
     return [
         kit.calc_result(
             c.rid,
