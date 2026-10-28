@@ -62,5 +62,5 @@ DBS = ["vwap", "ko_daily", "ko_periodic_memory", "ko_periodic", "ki_daily", "ki_
 # Product 欄空白或表上沒有這欄時不看（照 FCN 核對）。新增商品或開放上手時在這裡加。
 [auto_check_products]
 FCN = ["*"]
-FCN_Express = ["BARC"]
+FCN_Express = ["BARC", "CA", "HSBC"]
 "Super Bull" = []

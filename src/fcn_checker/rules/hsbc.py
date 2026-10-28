@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from dataclasses import replace
 
+from ..products import full_coupon_periods
 from ..schema import CheckStatus as S
 from ..schema import FieldStatus, Item
 from ..text import full_brackets, squash
@@ -37,7 +38,8 @@ def schedules(ctx):
     """HSBC 獨有的日期表交叉驗證；期數、配息日與觀察日順序、末期日期、期始日由共用規則（rules/schedule.py）檢查。
 
     - 第 11 條(1)「配息期數=n」= 天期。
-    - D：第 1～k 期 Nt 為「-」，之後每期都有 Nt。
+    - D：第 1～k 期 Nt 為「-」，之後每期都有 Nt（k = 0 的 FCN_Express 第 1 期配整期息，也是「-」）；第 11 條(1) 第 1 個計息期間
+      整期配息句只在 k = 0 時寫（workflow #306）。
     - P：定期 KO 表每列的付款日依序對到第 k～n 期的配息日（各對到唯一一期）。
     """
     f = ctx.ts.f
@@ -59,13 +61,31 @@ def schedules(ctx):
         if (problem := nt.blocked) is not None:
             out.append(problem)
             return out
-        bad = [r["period"] for r in c.value if (r["nt"] is None) != (r["period"] <= first.value)]
+        whole = full_coupon_periods(first.value)  # 不按天數攤的期別：Non-Call 期間；FCN_Express（k = 0）第 1 期配整期息
+        bad = [r["period"] for r in c.value if (r["nt"] is None) != (r["period"] <= whole)]
         out.append(
             nt.compare(
                 None,
                 "、".join(f"第 {p} 期" for p in bad) or None,
                 ok=not bad,
-                message=f"第 1～{first.value} 期 Nt 為「-」，之後每期都有 Nt",
+                message=f"第 1～{whole} 期 Nt 為「-」，之後每期都有 Nt",
+            )
+        )
+        full = f("first_period_full_coupon")
+        express = first.value == 0
+        out.append(
+            Check(
+                "schedule.autocall_dates",
+                "first_period_coupon",
+                Item.expected("第一章第 11 條(1) 第 1 個計息期間提前到期配整期息"),
+                ctx.document,
+                expected=express,
+            )
+            .needs(full)
+            .compare(
+                express,
+                full.value,
+                message="沒有 Non-Call（k = 0）時第 1 個計息期間提前到期配整期息（× 1），有 Non-Call 時不寫",
             )
         )
         return out

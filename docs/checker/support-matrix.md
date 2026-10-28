@@ -36,7 +36,7 @@
 | 商品種類 | 開放的上手 |
 |---|---|
 | FCN | 全部 |
-| FCN_Express | BARC（#304）；CA、HSBC 尚未開放（#305、#306） |
+| FCN_Express | BARC（#304）、CA（#305）、HSBC（#306） |
 | Super Bull | 尚未開放（依序 BNP → CA → HSBC，#311、#312、#314） |
 
 ## 目前設定明確不支援的樣態

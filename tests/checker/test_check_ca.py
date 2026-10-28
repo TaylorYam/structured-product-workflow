@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import datetime as dt
+from dataclasses import replace
 from decimal import Decimal
 
 import pytest
@@ -19,7 +21,7 @@ import sg_synth
 from ca_synth import DIST, ISIN, PRODUCT_TYPE, WARNING, WARNING_CH1, Spec, check, check_item
 from fcn_checker.issuers import CA
 from fcn_checker.schema import CheckStatus as S
-from harness import also_flagged, check_all
+from harness import CONFIG, also_flagged, check_all, with_markets
 from harness import field_problems as problems
 from harness import results as rule
 from pdf_writer import Edit
@@ -58,7 +60,7 @@ def test_supported_types_pass_and_are_filled(tmp_path, spec):
     assert params.count("scenario_annualized_return_2") == 1 and "scenario_annualized_return_3" not in params
     assert len(rule(r, "scenario.reprint")) == 1
     assert len(rule(r, "doc.coupon_periods")) == 2  # 名稱 2 處（日期表期數是共用檢查）
-    assert len(rule(r, "doc.autocall_terms")) == 2  # 最低保證配息率月數、情境一配息月數
+    assert len(rule(r, "doc.autocall_terms")) == 3  # 最低保證配息率月數、情境一配息月數、第一期整期配息句（#305）
     assert len(rule(r, "doc.isin_consistency")) == 2
     assert rule(r, "standard.fixed_warning")[0].actual == 3  # 封面、第一章第 2 項（去【】）、第三章
     assert rule(r, "standard.forbidden_wording")[0].status == S.PASS  # CA 的「受託投資」寫法都在允許片語內
@@ -94,6 +96,70 @@ def test_daily_autocall_dates_are_the_non_call_and_last_period_ends(tmp_path):
     assert r.status == S.PASS, problems(r)
     cells = {d.column: d.expected for d in r.backfill if d.column.startswith("比價日_") and d.expected != "-"}
     assert cells == {"比價日_2": spec.ends[1], f"比價日_{spec.tenor}": spec.ends[-1]}
+
+
+EXPRESS = {"Product": "FCN_Express"}
+FULL_COUPON = "若於第一個配息期結束日前發生自動提前出場事件：每單位（張）商品面額x「配息率」x 乘數，乘數：1；若發生自動提前出場事件，配息金額"
+
+
+@pytest.mark.parametrize("ki", ["none", "AM"])
+def test_express_compares_from_the_day_after_issue(tmp_path, ki):
+    # FCN_Express（workflow #305）：自發行日(不含)起每日觀察 → Non-Call 0；比價日_1 = 發行日後下一個一籃子預定交易日
+    # （交易所假日表推算）、最後一格 = 期末訂價日；第一期整期配息、最低保證配息率與情境一月數為 1，英文名稱多 Express
+    spec = Spec(first_callable=0, ki=ki)
+    r = check(tmp_path, spec, **EXPRESS)
+    assert r.status == S.PASS, problems(r)
+    assert rule(r, "field.first_callable_period")[0].actual == 0
+    assert rule(r, "field.non_call_product")[0].status == S.PASS
+    cells = {d.column: d.expected for d in r.backfill if d.column.startswith("比價日_") and d.expected != "-"}
+    assert cells == {"比價日_1": spec.issue_date + dt.timedelta(days=1), f"比價日_{spec.tenor}": spec.ends[-1]}
+
+
+def test_express_term_sheet_booked_as_fcn_needs_confirmation(tmp_path):
+    # 說明書推得 Non-Call 0、參考條件表 Product 卻是 FCN（#304 交叉檢查對 CA 一樣生效）：待確認
+    r = check(tmp_path, Spec(first_callable=0), Product="FCN")
+    assert rule(r, "field.non_call_product")[0].status == S.REVIEW_REQUIRED
+
+
+def test_express_first_observation_skips_exchange_holidays(tmp_path):
+    # 發行日次日是標的交易所休市日：比價日_1 順延到下一個一籃子預定交易日
+    spec = Spec(first_callable=0)
+    holiday = spec.issue_date + dt.timedelta(days=1)
+    config = with_markets(CONFIG, lambda m: replace(m, holidays=m.holidays | {holiday}) if m.code == "US" else m)
+    item = check_item(tmp_path, spec, config=config, **EXPRESS)
+    cells = {d.column: d.expected for d in item.report.backfill}
+    assert cells["比價日_1"] == holiday + dt.timedelta(days=1)
+
+
+@pytest.mark.parametrize(
+    ("first_callable", "edit", "field"),
+    [
+        pytest.param(
+            0, Edit("數：1；", "數：2；", "ts.art9"), "first_period_full_coupon", id="express-without-full-coupon"
+        ),
+        pytest.param(
+            0, Edit("第一個月配息", "前二個月配息", "ts.art15"), "guaranteed_coupon_months", id="express-months"
+        ),
+        pytest.param(
+            1,
+            Edit("若發生自動提前出場事件，配息金額", FULL_COUPON, "ts.art9"),
+            "first_period_full_coupon",
+            id="fcn-full",
+        ),
+        pytest.param(
+            0, Edit("• 配息金額 ＝", "• 第 1 個月配息金額 ＝", "ts.art16"), "scenario_first_months", id="express-month"
+        ),
+        pytest.param(
+            1, Edit("• 第 1 個月配息金額", "• 配息金額", "ts.art16"), "scenario_first_months", id="fcn-no-month"
+        ),
+    ],
+)
+def test_first_period_full_coupon_only_without_non_call(tmp_path, first_callable, edit, field):
+    # 第一期整期配息句、最低保證配息率月數、情境一配息月數要和 Non-Call 一致（沒有 Non-Call 時第一期整期配息、最低保證
+    # 月數為 1，情境一只寫「配息金額」）
+    spec = Spec(first_callable=first_callable)
+    r = check(tmp_path, spec, edits=[edit], **(EXPRESS if first_callable == 0 else {}))
+    assert (("doc.autocall_terms", field), S.MISMATCH) in {((x.rule_id, x.field), x.status) for x in r.results}
 
 
 def test_sheet_terms_are_compared(tmp_path):

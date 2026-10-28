@@ -246,6 +246,8 @@ def _draft(pdf: Path, sheet: ReferenceSheet, config: CheckConfig) -> _Draft:
             out.investor_sheet = issuer.iis.read(lines)
         else:
             out.term_sheet = issuer.read(lines)
+            if issuer.with_calendar is not None:
+                out.term_sheet = issuer.with_calendar(out.term_sheet, config.exchange_calendar)
     except Exception as e:  # 上手讀出失敗：這份轉執行錯誤，不中斷整批（預覽也一樣）
         return out.stop(PairingProblem.UNEXPECTED, unexpected_result(e, out.kind))
     terms = (

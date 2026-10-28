@@ -800,6 +800,7 @@ _NAME_FLAG_SOURCES = (
     ),
     ("quanto", "underlying_prices", lambda ctx, v: _quanto(ctx, v), {"quanto_zh", "quanto_en"}, None),
     ("ki", "ki_type", lambda ctx, v: v != "none", {"ki_zh", "ki_en"}, False),
+    ("express", "autocall_schedule", lambda ctx, v: v.first_callable == 0, {"express_zh", "express_en"}, None),
 )
 
 
@@ -918,6 +919,7 @@ def _product_name(ctx: Context) -> list[CheckResult]:
                 + ("、KO 觀察方式" if {"ko_observation_zh", "ko_observation_en"} & tpl.placeholders(lang) else "")
                 + ("、是否為 Quanto" if {"quanto_zh", "quanto_en"} & tpl.placeholders(lang) else "")
                 + ("、有無 KI" if {"ki_zh", "ki_en"} & tpl.placeholders(lang) else "")
+                + ("、有無 Non-Call" if {"express_zh", "express_en"} & tpl.placeholders(lang) else "")
                 + "組出",
             )
         )
