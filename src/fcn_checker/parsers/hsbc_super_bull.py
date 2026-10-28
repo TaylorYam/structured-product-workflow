@@ -16,7 +16,7 @@ from typing import NamedTuple
 
 from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
-from ..standard_fields import ScenarioParam, ScenarioPrice
+from ..standard_fields import Money, ScenarioParam, ScenarioPrice
 from . import hsbc, money, price_table
 from .common import Hit, Mention, dec, derived, exactly_one, one
 from .layout import TextIndex
@@ -68,6 +68,17 @@ FCN_ONLY = ("coupon_table", "coupon_periods", "ko_start", "first_period_full_cou
 # ---------------------------------------------------------------- 辨識
 
 
+def name_problems(zh: str | None, en: str | None) -> list[str]:
+    """商品家族的名稱條件（說明書、投資人須知共用；去空白後的名稱）：中文以發行機構開頭、有 Super Bull 的名稱、沒有
+    「固定配息」，英文有 `SuperBull Notes`。"""
+    out = []
+    if not (zh and zh.startswith(ISSUER_ZH) and NAME_ZH_MARK in zh and "固定配息" not in zh):
+        out.append(f"商品中文名稱不是以「{ISSUER_ZH}」開頭、沒有「{NAME_ZH_MARK}」或有「固定配息」")
+    if not (en and NAME_EN_MARK in en):
+        out.append("商品英文名稱沒有「SuperBull Notes」")
+    return out
+
+
 def detect(lines: Sequence[Line]) -> DetectionResult:
     """範本辨識（範本規格 §8）：HSBC 版面與 Super Bull 名稱（條件 1～3）都成立後，現行版特徵（條件 4）全部成立才是現行版；
     缺任一項 → 不支援的範本版本（錯訊列出缺的特徵）。"""
@@ -83,13 +94,9 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
             "封面缺少中文產品說明書或發行機構不是HSBC",
         ),
         (len(doc.chapters) == 5 and set(range(1, 32)) <= set(arts), "章節不完整或第一章條號 1–31 不連續"),
-        (
-            zh is not None and zh[1].startswith(ISSUER_ZH) and NAME_ZH_MARK in zh[1] and "固定配息" not in zh[1],
-            f"商品中文名稱不是以「{ISSUER_ZH}」開頭、沒有「{NAME_ZH_MARK}」或有「固定配息」",
-        ),
-        (en is not None and NAME_EN_MARK in en[1], "商品英文名稱沒有「SuperBull Notes」"),
     )
     failed = [message for ok, message in family if not ok]
+    failed += name_problems(zh and zh[1], en and en[1])
     if failed:
         return DetectionResult(False, failed, evidence)
 
@@ -245,6 +252,8 @@ def _schedule(fields: dict[str, ParsedField]) -> None:
 
 
 CCY = money.CURRENCY
+# 期末匯率兩邊的幣別字（範本規格 §5：`1 {幣別} = {幣別} 1.00`）；共用 `amounts` 不收匯率裡的金額，另交一處出處
+FX_CURRENCY = rf"期末匯率為1({CCY})=({CCY})[\d.]+"
 N = r"([\d,]+(?:\.\d+)?)"
 SN = r"(-?[\d,]+(?:\.\d+)?)"
 HEADING = r"情境分析([一二三四五六七八九十]+)\)"
@@ -417,6 +426,19 @@ def _assumed_bonus(ti: hsbc.ScenarioIndex, end: int) -> ParsedField:
     return ParsedField.present(name, Decimal(single[1]) if single else m[1], lns)
 
 
+def _fx_currency(art18: list[Line]) -> standard_fields.Occurrence:
+    """期末匯率兩邊的幣別字：承作幣別的其他出處（共用 `money.amounts` 不收匯率裡的金額）。"""
+    ti = hsbc.ScenarioIndex(art18)
+    found = [
+        Money(m[0], m[g], tuple(Evidence.of(x) for x in ti.lines_for(m.start(), m.end())))
+        for m in ti.finditer(FX_CURRENCY)
+        for g in (1, 2)
+    ]
+    return money.scenario_occurrence(
+        "scenario_fx_currency", "scenario_assumption_currency", "第 18 條情境假設期末匯率", found, art18[:1]
+    )
+
+
 def _article18(fields: dict[str, ParsedField], art18: list[Line]) -> SbScenarios:
     """基本假設（天期、面額、發行價格、期初投資金額、期末匯率、出場紅利）、情境價格表、情境一～三的算式（範本規格 §5）。"""
     ti = hsbc.ScenarioIndex(art18)
@@ -523,8 +545,11 @@ def read(lines: Sequence[Line]) -> HsbcSuperBullTermSheet:
         "participation_rate", ti17, PARTICIPATION, "第 17 條 (2) 參與率不是「本商品不適用」"
     )
 
-    # 第 18 條情境
+    # 第 18 條情境；期末匯率的幣別字併入承作幣別的其他出處（field.currency）
     scenarios = _article18(fields, article(18))
+    fields["currency_others"] = standard_fields.occurrences(
+        "currency_others", [*fields["currency_others"].value, _fx_currency(article(18))]
+    )
     table = fields["ko_table"]
     rows = table.value if table.ok else []
     mentions = [

@@ -333,7 +333,7 @@ def underlyings(ctx: Context) -> CheckResult:
     tickers = [str(values[i]) for i in filled]
     used = [ovs[i] for i in filled]
     check = Check(rid, "underlyings", Item.group(UNDERLYINGS, used), ctx.document, ov=tuple(used), expected=tickers)
-    if any_order(ctx):  # 不看順序（Citi）：同一組代號（數量相同、不重複）就相符
+    if any_order(ctx):  # 不看順序（Citi 等上手、HSBC Super Bull）：同一組代號（數量相同、不重複）就相符
         same = pf.ok and sorted(tickers) == sorted(pf.value) and len(set(tickers)) == len(tickers)
         return check.needs(pf).compare(
             tickers,

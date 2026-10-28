@@ -5,8 +5,10 @@ from __future__ import annotations
 from decimal import Decimal
 from pathlib import Path
 
+import fitz
 import pytest
 
+from fcn_checker.extraction import extract_lines
 from fcn_checker.issuers import HSBC, HSBC_SUPER_BULL
 from fcn_checker.schema import CheckStatus as S
 from harness import check_all, flagged, iis_path
@@ -36,6 +38,11 @@ def check_pair(tmp_path: Path, spec: Spec = S0, *, pdf_spec: Spec | None = None,
     outcome = check_all(sheet, [pdf, iis_path(pdf)])
     ts = next(i for i in outcome.items if i.term_sheet == pdf)
     return ts, next(i for i in outcome.items if i.term_sheet != pdf)
+
+
+def lines_of(path: Path):
+    with fitz.open(path) as doc:
+        return extract_lines(doc)
 
 
 def check(tmp_path: Path, spec: Spec = S0, **kw):
@@ -109,6 +116,15 @@ def test_fcn_and_super_bull_templates_are_never_confused(tmp_path):
         pdfs[2].name: HSBC_SUPER_BULL.template_id,
         iis_path(pdfs[2]).name: HSBC_SUPER_BULL.iis.template_id,
     }
+
+
+def test_term_sheet_and_investor_sheet_are_not_taken_for_each_other(tmp_path):
+    """投資人須知範本不收說明書、說明書範本不收投資人須知（投資人須知範本規格 §4）。"""
+    pdf = build_pdf(tmp_path / f"{S0.product_code}_TS.pdf", S0)
+    ts_lines, iis_lines = (lines_of(x) for x in (pdf, iis_path(pdf)))
+    assert not HSBC_SUPER_BULL.iis.detect(ts_lines).matched
+    assert not HSBC.iis.detect(ts_lines).matched
+    assert not HSBC_SUPER_BULL.detect(iis_lines).matched
 
 
 @pytest.mark.parametrize(
@@ -198,6 +214,26 @@ def test_row_ko_different_from_the_price_table_header_is_reported(tmp_path):
     assert flagged(r, "doc.price_header_pct", S.MISMATCH), problems(r)
 
 
+def test_swapped_ko_and_strike_header_pcts_are_reported(tmp_path):
+    """§12(1) KO 欄與執行價欄的表頭 % 對調（核對規則 §7）。"""
+    spec = SbSpec(ko=Decimal("90.0000"))
+    swap = [
+        Edit("(即期初股價的90%)", "(即期初股價的X%)", "ts.art12.table"),
+        Edit("(即期初股價的85%)", "(即期初股價的90%)", "ts.art12.table"),
+        Edit("(即期初股價的X%)", "(即期初股價的85%)", "ts.art12.table"),
+    ]
+    r = check(tmp_path, spec, edits=swap)
+    bad = [x for x in rule(r, "doc.price_header_pct") if x.status == S.MISMATCH]
+    assert len(bad) == 2, problems(r)
+
+
+@pytest.mark.parametrize("pricing", ["開盤價", "收盤價", "VWAP"])
+def test_any_initial_pricing_on_the_sheet_passes(tmp_path, pricing):
+    """期初定價說明書沒寫（範本規格 §4）：開盤、收盤（樣本）與 VWAP（開放、待樣本驗證）都照 HSBC FCN 核對。"""
+    r = check(tmp_path, S0, 期初定價=pricing)
+    assert r.status == S.PASS, problems(r)
+
+
 def test_ko_header_must_be_read_by_column_name(tmp_path):
     """KO 欄在執行價欄前面：表頭 % 依欄名對（KO% ≠ K% 時 KO 欄表頭寫成執行價 % → 不一致）。"""
     spec = SbSpec(ko=Decimal("90.0000"))
@@ -224,6 +260,7 @@ def test_ko_header_must_be_read_by_column_name(tmp_path):
         ("ts.art18", "= 美元 7,058.83 (", "= 美元 7,068.83 (", "doc.scenario_calculations"),
         ("ts.art18", "為: -58.82%", "為: -57.82%", "doc.scenario_calculations"),
         ("ts.art18", "期末匯率為1 美元 = 美元 1.00", "期末匯率為1 美元 = 美元 1.10", "doc.scenario_calculations"),
+        ("ts.art18", "期末匯率為1 美元 = 美元 1.00", "期末匯率為1 日圓 = 日圓 1.00", "field.currency"),
     ],
 )
 def test_term_sheet_difference_is_reported(tmp_path, where, old, new, rule_id):

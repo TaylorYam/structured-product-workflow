@@ -130,7 +130,7 @@ def redemption_formula(ctx: IssuerContext) -> list[CheckResult]:
 
 def observation_months(ctx: IssuerContext) -> CheckResult:
     """每個決定日的月數 m（和發行日 + m 個月差 7 個日曆天內、1 ≤ m < 天期、遞增）；Non-Call = 第 1 列的 m。"""
-    return super_bull.observation_months(ctx, "第 11 條(1) 提前贖回表", WORDS)
+    return super_bull.observation_months(ctx, TABLE_NAME, WORDS)
 
 
 def observation_order(ctx: IssuerContext) -> list[CheckResult]:
@@ -154,7 +154,7 @@ def observation_order(ctx: IssuerContext) -> list[CheckResult]:
 # ---------------------------------------------------------------- 情境分析（核對規則 §3.7）
 
 
-RID = "doc.scenario_calculations"
+RID = super_bull.SCENARIO_RID
 NAMES = {
     "fx": "期末匯率",
     "assumed": "期末股價",
@@ -174,25 +174,6 @@ KEYS = (
 )
 
 
-class _Scenario:
-    """一個情境的結果身分：欄位「情境X_<項目>」、項目名稱「情境X<項目>」，找不到算式時證據為情境標題行。"""
-
-    def __init__(self, n: int, title) -> None:
-        self.tag = f"情境{'一二三'[n - 1]}"
-        self.title = title
-
-    def item(self, key: str) -> Item:
-        return Item.expected(f"{self.tag}{NAMES[key]}")
-
-    def unread(self, key: str, why: str) -> CheckResult:
-        return kit.calc_result(RID, f"{self.tag}_{key}", self.item(key), [why], kit.evidence(self.title), review=True)
-
-    def calc(self, key: str, issues: list[str], hit, *, expected=None, actual=None) -> CheckResult:
-        return kit.calc_result(
-            RID, f"{self.tag}_{key}", self.item(key), issues, kit.evidence(hit.lines), expected=expected, actual=actual
-        )
-
-
 def _cents(x: Decimal) -> Decimal:
     return x.quantize(CENT, ROUND_HALF_UP)
 
@@ -205,7 +186,7 @@ def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
     denom, tenor, k, bonus, fx = (
         f(x) for x in ("denomination", "tenor_months", "first_callable_period", "coupon_pa_pct", "scenario_fx")
     )
-    cases = [_Scenario(n, sc.titles[n - 1]) for n in (1, 2, 3)]
+    cases = [super_bull.Scenario(n, sc.titles[n - 1], NAMES) for n in (1, 2, 3)]
     bad = kit.first_bad((denom, tenor, k, bonus, fx))
     if bad is not None:
         return [
@@ -234,7 +215,7 @@ def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
     ]
 
 
-def _pnl(c: _Scenario, hit, amount: Decimal | None, n: Decimal) -> CheckResult:
+def _pnl(c: super_bull.Scenario, hit, amount: Decimal | None, n: Decimal) -> CheckResult:
     """損益「= A - N = 損益」：A = 前面算出的金額、N = 面額、損益 = A − N。"""
     if hit is None:
         return c.unread("pnl", "找不到「… - 每單位面額期初投資金額 = A - N = 損益」")
@@ -250,7 +231,7 @@ def _pnl(c: _Scenario, hit, amount: Decimal | None, n: Decimal) -> CheckResult:
     return c.calc("pnl", issues, hit, expected=expected, actual=p.pnl)
 
 
-def _annualized(c: _Scenario, hit, pct: Decimal, months: int, how: str) -> CheckResult:
+def _annualized(c: super_bull.Scenario, hit, pct: Decimal, months: int, how: str) -> CheckResult:
     """年化報酬率 = pct × 12 ÷ months，四捨五入到 2 位後比數值（容許 ±0.01）。"""
     if hit is None:
         return c.unread("annualized", "找不到「平均年化報酬率(以簡單平均年化報酬率之方式計算): y%」")
@@ -263,7 +244,7 @@ def _profit(sc_pnl, n: Decimal) -> Decimal | None:
     return sc_pnl.value.pnl / n * 100 if sc_pnl is not None else None
 
 
-def _autocall(c: _Scenario, sc, n: Decimal, bonus: Decimal, k: int) -> list[CheckResult]:
+def _autocall(c: super_bull.Scenario, sc, n: Decimal, bonus: Decimal, k: int) -> list[CheckResult]:
     """情境一：A = 面額 × (100% + 紅利)；損益 = A − 面額；年化 = 紅利 × 12 ÷ 第 1 個決定日的月數。"""
     out = []
     amount = None
@@ -282,7 +263,7 @@ def _autocall(c: _Scenario, sc, n: Decimal, bonus: Decimal, k: int) -> list[Chec
     return out
 
 
-def _best(c: _Scenario, sc, n: Decimal, tenor: int) -> list[CheckResult]:
+def _best(c: super_bull.Scenario, sc, n: Decimal, tenor: int) -> list[CheckResult]:
     """情境二：期末股價 P ≥ 執行價 K；A = 面額 × P ÷ K（2 位）；損益 = A − 面額；年化 = 損益 ÷ 面額 × 12 ÷ 天期。
     K = 價格表那一檔的執行價由共用規則 `scenario.strike` 核對。"""
     out = []
@@ -305,14 +286,14 @@ def _best(c: _Scenario, sc, n: Decimal, tenor: int) -> list[CheckResult]:
     return out
 
 
-def _annualized_of_pnl(c: _Scenario, hit, pnl, n: Decimal, tenor: int) -> CheckResult:
+def _annualized_of_pnl(c: super_bull.Scenario, hit, pnl, n: Decimal, tenor: int) -> CheckResult:
     profit = _profit(pnl, n)
     if profit is None:
         return c.unread("annualized", "找不到損益算式，無法重算年化報酬率")
     return _annualized(c, hit, profit, tenor, f"{pnl.value.pnl} ÷ {n} × 12 ÷ {tenor}")
 
 
-def _worse(c: _Scenario, sc, n: Decimal, fx: Decimal, tenor: int) -> list[CheckResult]:
+def _worse(c: super_bull.Scenario, sc, n: Decimal, fx: Decimal, tenor: int) -> list[CheckResult]:
     """情境三：期末股價 P < 執行價 K；股數 = 面額 × 匯率 ÷ K（4 位）；交割股數 = 股數無條件捨去；零股數 = 股數 − 交割股數；
     剩餘金額 = P × 零股數 ÷ 匯率（2 位）；到期贖回價值 = P × 交割股數 ÷ 匯率 + 剩餘金額；損益 = 價值 − 面額；
     年化 = 損益 ÷ 面額 × 12 ÷ 天期。"""

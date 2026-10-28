@@ -28,14 +28,7 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     evidence = [Evidence.of(x) for x in body[:2]]
     failed = [
         *hsbc_iis.layout_problems(text),
-        *(
-            []
-            if zh.startswith(hsbc_super_bull.ISSUER_ZH) and hsbc_super_bull.NAME_ZH_MARK in zh and "固定配息" not in zh
-            else [
-                f"中文名稱不是以「{hsbc_super_bull.ISSUER_ZH}」開頭、沒有「{hsbc_super_bull.NAME_ZH_MARK}」或有「固定配息」"
-            ]
-        ),
-        *([] if hsbc_super_bull.NAME_EN_MARK in en else ["英文名稱沒有「SuperBull Notes」"]),
+        *hsbc_super_bull.name_problems(zh, en),
     ]
     if failed:
         return DetectionResult(False, failed, evidence)
