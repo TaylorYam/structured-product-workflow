@@ -144,6 +144,29 @@ def test_without_non_call_ko_starts_on_the_first_day_stored() -> None:
     assert run(terms("Daily Memory"), prices).events == (AutoEvent(MATURITY, FINAL),), "比價日_1 之前不比"
 
 
+def test_super_bull_final_date_is_not_a_ko_day() -> None:
+    """Super Bull（#310、ADR 0028）：最終比價日也存在比價日裡，那天全部 ≥ KO 價照樣是到期（依漲幅結算），不是 KO。"""
+    prices = closes(on({FINAL: "100"}), on({FINAL: "100"}))
+
+    assert run(terms("Period End", final_date_callable=False), prices).events == (AutoEvent(MATURITY, FINAL),)
+    assert run(terms("Period End"), prices).events == (AutoEvent(KO, FINAL),), "FCN 照舊：最終比價日也可以 KO"
+
+
+def test_super_bull_kos_before_the_final_date_and_delivers_below_strike() -> None:
+    super_bull = terms("Period End", final_date_callable=False)
+
+    assert run(super_bull, closes(on({START: "100"}), on({START: "100"}))).events == (AutoEvent(KO, START),)
+    assert run(super_bull, closes(on({FINAL: "70"}))).events == (AutoEvent(DELIVERY, FINAL, A.code),)
+
+
+def test_super_bull_with_only_the_final_date_waits_for_maturity() -> None:
+    """比價日只有最終比價日的 Super Bull 不會提前出場：在庫原因寫等最終比價日，不寫 Non-call 期間。"""
+    only_final = terms("Period End", autocall=(FINAL,), final_date_callable=False)
+
+    assert run(only_final, closes(), through=START) == Outcome(ON_BOOK, f"還沒到最終比價日（{FINAL}）", ki=NO_KI_TEXT)
+    assert run(only_final, closes(on({FINAL: "100"}), on({FINAL: "100"}))).events == (AutoEvent(MATURITY, FINAL),)
+
+
 def test_daily_ko_only_on_days_every_market_is_open() -> None:
     prices = closes(on({JP_HOLIDAY: "120"}), on({JP_HOLIDAY - dt.timedelta(days=1): "120"}))
 
@@ -457,6 +480,20 @@ def test_observe_all_writes_events_and_status_only_when_changed(pg) -> None:
 
     assert third.changes == () and third.written == 0, "算一遍、有變才寫"
     assert pg.execute("SELECT calculated_at FROM workflow.pricing_status WHERE tdcc = %s", (T1,)).fetchone() == (at,)
+
+
+@pytest.mark.db
+def test_observe_all_reads_the_final_date_rule_from_the_product_type(pg) -> None:
+    """比價依資料庫的商品種類套規則（#310）：Super Bull 最終比價日全部 ≥ KO 價是到期還本，FCN 是 KO。"""
+    seed(pg, T1)
+    seed(pg, T2)
+    pg.execute("UPDATE workflow.product SET product = 'Super Bull' WHERE tdcc = %s", (T2,))
+    write_closes(pg, us_closes(FINAL, {FINAL: "100"}))
+
+    observe_all(pg, CALENDAR, user="tester")
+
+    assert events(pg, T1) == [(KO, FINAL, None, "比價")]
+    assert events(pg, T2) == [(MATURITY, FINAL, None, "比價")]
 
 
 @pytest.mark.db

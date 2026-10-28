@@ -126,6 +126,17 @@ def test_express_rows_are_imported_like_fcn(pg, tmp_path: Path, mailbox) -> None
     assert count(pg, "workflow.other_product") == 0
 
 
+def test_super_bull_rows_are_imported_like_fcn(pg, tmp_path: Path, mailbox) -> None:
+    """Super Bull 和 FCN 一樣寫進交易明細列（#310）：Product 有空白也照設定的寫法存，不記成其他商品。"""
+    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1, product="SUPER BULL")])
+
+    receipt = import_daily(daily, pg)
+
+    assert (receipt.skipped_trade_rows, receipt.fcn_tdccs) == (0, (A,))
+    assert pg.execute("SELECT tdcc, product FROM workflow.trade_row").fetchall() == [(A, "Super Bull")]
+    assert count(pg, "workflow.other_product") == 0
+
+
 def test_latest_import_describes_the_newest_run(pg, tmp_path: Path, mailbox) -> None:
     assert latest_import(pg) is None
     import_daily(write_daily(tmp_path / "1.xlsx", []), pg)

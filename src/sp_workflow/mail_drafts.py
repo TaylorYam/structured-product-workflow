@@ -1,4 +1,4 @@
-"""寄信草稿：為核對通過的商品（FCN、FCN_Express，#302）在 Outlook 建立 TS／IIS 草稿給承作的 FC（#29，需求更新見 #29 留言）。
+"""寄信草稿：為核對通過的商品（FCN、FCN_Express、Super Bull，#302、#310）在 Outlook 建立 TS／IIS 草稿給承作的 FC（#29，需求更新見 #29 留言）。
 
 對外只有 `create_drafts`。資料全部讀最小 FCN 資料庫（#32、#35），不讀 Excel。每檔 TDCC 都要符合：
 1. 資料庫有這檔的商品條件（沒有缺信裡要用的必填欄，#114）與交易列；

@@ -420,7 +420,7 @@ def test_products_skipped_by_the_daily_import_are_unsupported(db, tmp_path: Path
 
     receipt, _ = run(db, root, out, B)
 
-    reason = "不支援的商品類型：BEN（目前只做 FCN、FCN_Express）"
+    reason = "不支援的商品類型：BEN（目前只做 FCN、FCN_Express、Super Bull）"
     assert [(o.status, o.reason) for o in receipt.outcomes] == [(PENDING, reason)]
 
 
@@ -443,6 +443,20 @@ def test_express_gets_a_draft_like_fcn(db, tmp_path: Path, root: Path, out: Path
     assert (receipt.outcomes[0].status, receipt.outcomes[0].reason) == (DRAFTED, "")
     assert drafter.drafts[0].subject == f"[中文TS/IIS] [FCN_Express] - {A}"
     assert rendered == [("FCN_Express", 0)] and ">FCN_Express<" in drafter.drafts[0].html_body
+
+
+def test_super_bull_gets_a_draft_like_fcn(db, tmp_path: Path, root: Path, out: Path) -> None:
+    """Super Bull 和 FCN 一樣寄（#310）：主旨帶出商品種類，沒有 KI 的 KI Barrier 寫 -。"""
+    super_bull = inventory(A, [("北區", 1)], Product="Super Bull", **{"KI(Freq)": "-", "KI(%)": "-"})
+    load(db, tmp_path, [trade(A, "Amy", "北區", 1, product="Super Bull")], [super_bull])
+    risk(db, A, "RR4")
+    passed_folder(root, A)
+
+    receipt, drafter = run(db, root, out, A)
+
+    assert (receipt.outcomes[0].status, receipt.outcomes[0].reason) == (DRAFTED, "")
+    assert drafter.drafts[0].subject == f"[中文TS/IIS] [Super Bull] - {A}"
+    assert ">Super Bull<" in drafter.drafts[0].html_body
 
 
 def test_unreadable_folders_are_mentioned(db, tmp_path: Path, root: Path, out: Path, monkeypatch) -> None:

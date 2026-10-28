@@ -63,3 +63,4 @@ DBS = ["vwap", "ko_daily", "ko_periodic_memory", "ko_periodic", "ki_daily", "ki_
 [auto_check_products]
 FCN = ["*"]
 FCN_Express = ["BARC"]
+"Super Bull" = []
