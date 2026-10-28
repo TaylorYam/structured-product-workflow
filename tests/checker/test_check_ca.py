@@ -115,6 +115,25 @@ def test_express_compares_from_the_day_after_issue(tmp_path, ki):
     assert cells == {"比價日_1": spec.issue_date + dt.timedelta(days=1), f"比價日_{spec.tenor}": spec.ends[-1]}
 
 
+SCENARIO1 = "• 配息金額 ＝每單位面額 × 0.7500%＝10,000 × 0.7500%"  # 沒有 Non-Call 時情境一的配息金額行
+
+
+@pytest.mark.parametrize(
+    ("new", "status"),
+    [
+        pytest.param("• 配息金額 ＝每單位面額 × 0.7500%×1＝10,000 × 0.7500%", S.PASS, id="times-1"),
+        pytest.param("• 配息金額 ＝每單位面額 × 0.7500%＝1,000 × 0.7600%", S.PASS, id="calc-not-checked"),
+        pytest.param("• 配息金額 ＝每單位面額 × 0.7600%＝10,000 × 0.7500%", S.MISMATCH, id="rate"),
+    ],
+)
+def test_express_scenario_one_checks_only_the_rate_after_denomination(tmp_path, new, status):
+    # 沒有 Non-Call 時情境一只核對「每單位面額 × x%」的月配息率（可寫「×1」）；算式的面額、%、平均年化報酬率不核對
+    # （作業人員 2026-10-28 決定）
+    r = check(tmp_path, Spec(first_callable=0), edits=[Edit(SCENARIO1, new, "ts.art16")], **EXPRESS)
+    [one] = [x for x in rule(r, "scenario.params") if "情境分析一配息金額" in str(x.item)]
+    assert one.status == status
+
+
 def test_express_term_sheet_booked_as_fcn_needs_confirmation(tmp_path):
     # 說明書推得 Non-Call 0、參考條件表 Product 卻是 FCN（#304 交叉檢查對 CA 一樣生效）：待確認
     r = check(tmp_path, Spec(first_callable=0), Product="FCN")
