@@ -15,6 +15,7 @@ from ..schema import DetectionResult, Evidence, Line, ParsedField
 from ..text import squash
 from . import ca, ca_iis, ca_super_bull, iis
 from .layout import TextIndex
+from .super_bull import exactly_one
 
 TEMPLATE_ID = "ca-zh-sb-iis"
 PARSER_VERSION = "1"
@@ -72,21 +73,13 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     return DetectionResult(True, [], evidence)
 
 
-def _one(name: str, ti: TextIndex, pattern: str, convert, missing: str) -> ParsedField:
-    found = list(ti.finditer(pattern))
-    if len(found) != 1:
-        return ParsedField.missing(name, missing if not found else f"{missing}（出現多次）")
-    m = found[0]
-    return ParsedField.present(name, convert(m), ti.lines_for(m.start(), m.end()))
-
-
 def read(lines: Sequence[Line]) -> iis.IisSheet:
     base = ca_iis.read(lines)
     ti, fields = base.full_text, dict(base.fields)
     for name in FCN_ONLY:
         fields.pop(name, None)
-    fields["exit_bonus"] = _one(
-        "exit_bonus", ti, BONUS, lambda m: Decimal(m[1]), "二、2.(a) 找不到「自動提前出場紅利：x%」"
+    fields["exit_bonus"] = exactly_one(
+        "exit_bonus", ti, BONUS, "二、2.(a) 找不到「自動提前出場紅利：x%」", lambda m: Decimal(m[1])
     )
     phrases = (
         ("no_coupon_summary", re.escape(NO_COUPON_DATE), f"二、1. 沒有「{NO_COUPON_DATE}」"),
@@ -103,7 +96,7 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         ),
     )
     for name, pattern, missing in phrases:
-        fields[name] = _one(name, ti, pattern, lambda m: m[0], missing)
+        fields[name] = exactly_one(name, ti, pattern, missing)
     # 無 KI（範本規格 §3）：全文沒有界限事件、(i) 直接比執行價；CA FCN 的讀法只看有沒有「期末訂價低於執行價」
     if not (fields["has_ki"].ok and fields["has_ki"].value):
         problems = ["有界限事件"] if "界限事件" in ti.text else []

@@ -790,7 +790,7 @@ def _table_at(name: str, table: ParsedField, where: str) -> ParsedField:
     return derived(name, table, standard_fields.TableAt(where, shaped))
 
 
-def _worst_row(s: bnp_scenario.Scenario, rows: ParsedField) -> int | None:
+def worst_row(s: bnp_scenario.Scenario, rows: ParsedField) -> int | None:
     """較差情境假設的表現最差標的是價格表第幾檔：單一標的為第 1 檔；多檔時依「(假設為X)」對到第 11 項名稱；對不到為 None。"""
     if not rows.ok:
         return None
@@ -850,7 +850,7 @@ def _scenario_standard(fields: dict[str, ParsedField], sec: bnp_scenario.Scenari
                 ScenarioParam("scenario_annualized_return", where, annualized.parsed("scenario_annualized_return"))
             )
         if s.kind in ("worse", "worst"):
-            row = _worst_row(s, fields["underlying_prices"])
+            row = worst_row(s, fields["underlying_prices"])
             strike = Mention.of_optional_hit(
                 f"{where}「收盤價格…小於其執行價格…」假設句", s.strike, lambda v: v.strike, s.lines[:1]
             )

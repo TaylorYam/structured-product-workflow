@@ -6,25 +6,14 @@ from __future__ import annotations
 
 from ..schema import CheckResult, Item
 from ..schema import CheckStatus as S
+from . import super_bull
 from .iis import NO_TERM_SHEET, IisIssuerContext, ts_unavailable
 from .kit import Check
 
 
 def exit_bonus(ctx: IisIssuerContext) -> CheckResult:
     """收益分配事項 `{100% + X%}` 的 X = 說明書第 16 項出場紅利。"""
-    rid, name = "iis.exit_bonus", "出場紅利"
-    pf = ctx.sheet.f("exit_bonus")
-    check = Check(rid, "exit_bonus", Item.term_sheet(name), ctx.document).needs(pf)
-    if (problem := check.blocked) is not None:
-        return problem
-    if ctx.term_sheet is None:
-        return ts_unavailable(rid, "exit_bonus", name, NO_TERM_SHEET, pf.value, document=ctx.document)
-    expected = ctx.term_sheet.f("coupon_pa_pct")
-    if not expected.ok:
-        return ts_unavailable(
-            rid, "exit_bonus", name, "同商品說明書讀不到出場紅利，無法比對", pf.value, document=ctx.document
-        )
-    return check.compare(expected.value, pf.value, fail_message="須等於說明書第 16 項出場紅利")
+    return super_bull.iis_exit_bonus(ctx, "須等於說明書第 16 項出場紅利")
 
 
 def observation_interval(ctx: IisIssuerContext) -> CheckResult:

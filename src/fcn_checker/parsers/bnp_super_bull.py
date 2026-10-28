@@ -7,8 +7,6 @@
 
 from __future__ import annotations
 
-import calendar
-import datetime as dt
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -16,13 +14,14 @@ from decimal import Decimal
 from typing import NamedTuple
 
 from .. import standard_fields
-from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
-from ..standard_fields import AutocallSchedule, ScenarioPrice
+from ..schema import DetectionResult, Evidence, Line, ParsedField
+from ..standard_fields import ScenarioPrice
 from ..text import squash
-from . import bnp, bnp_scenario, schedule
+from . import bnp, bnp_scenario
 from .bnp_scenario import NUM, PCT, ROUNDING, StrikeAssumption, U, WorseReturn
 from .common import Hit, Mention, dec, hits, one
 from .layout import TextIndex
+from .super_bull import ProfitReturn, Wording, exactly_one, fill_schedule
 
 TEMPLATE_ID = "bnp-zh-sb-pd"
 PARSER_VERSION = "1"
@@ -50,6 +49,7 @@ KO_EVENT = (
     r"則視為發生自動提前贖回事件"
 )
 MAX_DELAY = 7  # 評價日最多晚於「發行日 + m 個月」幾個日曆天（範本規格 §4.1；樣本 0～3）
+WORDS = Wording("BNP", "評價日", "自動提前贖回日", "期末評價日")
 # FCN 才有的 BNP 專屬欄位：Super Bull 讀不到，也不交給規則
 FCN_ONLY = (
     "coupon_formula_pct",
@@ -138,15 +138,6 @@ class BestCalc(NamedTuple):
     decimals: int
 
 
-class SbReturn(NamedTuple):
-    """獲利情境「總報酬率 = (贖回金額 ÷ 總投資金額) - 1 = (A ÷ N) - 1 = r%(年化報酬率：y%)」。"""
-
-    amount: Decimal
-    divisor: Decimal
-    pct: Decimal
-    annualized: Decimal
-
-
 @dataclass
 class SbScenario:
     """Super Bull 情境的專屬算式（FCN 共用的假設句、股數、剩餘金額在 `bnp_scenario.Scenario`）。"""
@@ -154,7 +145,7 @@ class SbScenario:
     bonus: Hit[BonusCalc] | None = None  # 情境一
     best: Hit[BestCalc] | None = None  # 情境二
     best_assumed: Hit[StrikeAssumption] | None = None  # 情境二假設句「收盤價格 C 大於其執行價格 K」
-    total_return: Hit[SbReturn] | None = None  # 情境一、二
+    total_return: Hit[ProfitReturn] | None = None  # 情境一、二「總報酬率 = (贖回金額 ÷ 總投資金額) - 1 = …」
 
 
 def _scenario(s: bnp_scenario.Scenario) -> SbScenario:
@@ -188,7 +179,7 @@ def _scenario(s: bnp_scenario.Scenario) -> SbScenario:
             ti,
             rf"總報酬率=\((?:自動提前贖回金額|到期贖回金額)÷總投資金額\)-1=\[?\({NUM}({U})÷{NUM}({U})\)-1="
             rf"{PCT}\(年化報酬率：{PCT}\)",
-            lambda m: SbReturn(dec(m[1]), dec(m[3]), Decimal(m[5]), Decimal(m[6])),
+            lambda m: ProfitReturn(dec(m[1]), dec(m[3]), Decimal(m[5]), Decimal(m[6])),
         )
     )
     s.worse_return = one(
@@ -223,22 +214,6 @@ class SuperBullTermSheet(bnp.BnpTermSheet):
     bonus_mentions: list[Mention]  # 出場紅利的其他出處（§18 情境一、第二章交易架構；正式值是 §16 的 `coupon_pa_pct`）
 
 
-def add_months(d: dt.date, months: int) -> dt.date:
-    """d 加 months 個月；該月沒有同一天時取月底。"""
-    y, m = divmod(d.month - 1 + months, 12)
-    year, month = d.year + y, m + 1
-    return dt.date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
-
-
-def observation_month(
-    issue: dt.date, observation: dt.date, tenor: int, *, early: int = 0, late: int = MAX_DELAY
-) -> int | None:
-    """評價日距發行日的月數 m（1 ≤ m < 天期）：評價日在「發行日 + m 個月」前 `early` 到後 `late` 個日曆天內（BNP 只會晚
-    0～7 天；CA 前後 7 天，ca_super_bull）；對不到或多個時 None。"""
-    found = [m for m in range(1, tenor) if -early <= (observation - add_months(issue, m)).days <= late]
-    return found[0] if len(found) == 1 else None
-
-
 def _ko_wording(art14: list[Line], where: str) -> ParsedField:
     """§14(6)「自動提前贖回評價日：如下表所列之日期」剛好一處、沒有 FCN 的配息日或每日觀察寫法 → {"type": "SB"}。"""
     name = "ko_wording"
@@ -252,48 +227,22 @@ def _ko_wording(art14: list[Line], where: str) -> ParsedField:
 
 
 def _schedule(fields: dict[str, ParsedField], where: str) -> None:
-    """日期表只列評價日（範本規格 §4.1）：每列的月數 m、KO 觀察方式 P、Non-Call = 第 1 列的 m、提前出場排程
-    （`比價日_m` = 評價日、`比價日_{天期}` = 期末評價日）。共用日期表檢查不適用（`schedule_table` 交 absent）。"""
-    fields["schedule_table"] = standard_fields.absent(
-        "schedule_table", "每期一列的日期表（Super Bull 只列評價日，由 BNP Super Bull 規則核對）"
+    """日期表只列評價日（範本規格 §4.1）：評價日當天到其後 7 個日曆天是「發行日 + m 個月」；表頭要是 Super Bull 的寫法。"""
+    table = fields["date_table"]
+    fill_schedule(
+        fields,
+        table,
+        lambda: [(r["period"], r["pricing"]) for r in table.value["rows"]],
+        table_name=f"{where}日期表",
+        words=WORDS,
+        early=0,
+        late=MAX_DELAY,
+        needs=(fields["ko_wording"],),
+        evidence=fields["ko_wording"].evidence,
+        problem=lambda: (
+            "" if table.value["type"] == "SB" else f"{where}日期表表頭不是「j、自動提前贖回評價日、自動提前贖回日」"
+        ),
     )
-    table, wording = fields["date_table"], fields["ko_wording"]
-    issue, tenor, final = fields["issue_date"], fields["tenor_months"], fields["final_valuation_date"]
-    bad = next((p for p in (table, wording, issue, tenor, final) if not p.ok), None)
-    if bad is not None:
-        fields.update(schedule.failed(bad))
-        fields["observation_months"] = ParsedField(
-            "observation_months", bad.status, None, list(bad.evidence), bad.candidates, bad.note
-        )
-        return
-    ev = table.evidence + wording.evidence
-    note = ""
-    if table.value["type"] != "SB":
-        note = f"{where}日期表表頭不是「j、自動提前贖回評價日、自動提前贖回日」"
-    months = [observation_month(issue.value, r["pricing"], tenor.value) for r in table.value["rows"]]
-    if not note and None in months:
-        rows = [r["period"] for r, m in zip(table.value["rows"], months, strict=True) if m is None]
-        note = (
-            f"{where}日期表第 {'、'.join(map(str, rows))} 列的評價日對不到「發行日 + m 個月」（當天到其後 "
-            f"{MAX_DELAY} 個日曆天、1 ≤ m < 天期）"
-        )
-    if not note and months != sorted(set(months)):
-        note = f"{where}日期表各列評價日的月數不是遞增且不重複：" + "、".join(map(str, months))
-    if note:
-        fields.update(schedule.invalid(ev, note))
-        fields["observation_months"] = ParsedField(
-            "observation_months", FieldStatus.INVALID, evidence=list(ev), note=note
-        )
-        return
-    dates = {m: r["pricing"] for m, r in zip(months, table.value["rows"], strict=True)}
-    dates[tenor.value] = final.value
-    sched = AutocallSchedule("P", months[0], tenor.value, dates, listed=True)
-    fields["observation_months"] = ParsedField(
-        "observation_months", FieldStatus.PRESENT, tuple(months), list(table.evidence)
-    )
-    fields["ko_observation"] = ParsedField("ko_observation", FieldStatus.PRESENT, "P", ev)
-    fields["first_callable_period"] = ParsedField("first_callable_period", FieldStatus.PRESENT, months[0], ev)
-    fields["autocall_schedule"] = ParsedField("autocall_schedule", FieldStatus.PRESENT, sched, ev)
 
 
 def ki_type(art17: list[Line], table: ParsedField) -> ParsedField:
@@ -313,23 +262,12 @@ def ki_type(art17: list[Line], table: ParsedField) -> ParsedField:
 
 
 def _phrase(name: str, lines: list[Line], pattern: str, missing: str) -> ParsedField:
-    """固定寫法（去空白後的句型）剛好一處；值為原文去空白。"""
-    ti = TextIndex(lines)
-    found = list(ti.finditer(pattern))
-    if len(found) != 1:
-        return ParsedField.missing(name, missing if not found else f"{missing}（出現多次）")
-    m = found[0]
-    return ParsedField.present(name, m[0], ti.lines_for(m.start(), m.end()))
+    return exactly_one(name, TextIndex(lines), pattern, missing)
 
 
 def _bonus(name: str, lines: list[Line], pattern: str, missing: str) -> ParsedField:
     """出場紅利 X%：剛好一處。"""
-    ti = TextIndex(lines)
-    found = list(ti.finditer(pattern))
-    if len(found) != 1:
-        return ParsedField.missing(name, missing if not found else f"{missing}（出現多次）")
-    m = found[0]
-    return ParsedField.present(name, Decimal(m[1]), ti.lines_for(m.start(), m.end()))
+    return exactly_one(name, TextIndex(lines), pattern, missing, lambda m: Decimal(m[1]))
 
 
 def read(lines: Sequence[Line]) -> SuperBullTermSheet:
@@ -390,7 +328,7 @@ def read(lines: Sequence[Line]) -> SuperBullTermSheet:
             strike = Mention.of_optional_hit(
                 f"{where}「收盤價格…大於其執行價格…」假設句", x.best_assumed, lambda v: v.strike, s.lines[:1]
             )
-            row = bnp._worst_row(s, fields["underlying_prices"])
+            row = bnp.worst_row(s, fields["underlying_prices"])
             prices.insert(0, ScenarioPrice(f"{where}假設句的", row, "strike", strike.parsed("scenario_strike")))
     fields["scenario_prices"] = standard_fields.occurrences("scenario_prices", prices)
 

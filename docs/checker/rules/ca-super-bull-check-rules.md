@@ -176,7 +176,7 @@ Super Bull 沒有配息表，觀察日表只列觀察日；共用日期表檢查
 |---|---|
 | 範本辨識與讀出 | CA 的 Super Bull 說明書與投資人須知 parser（沿用 `parsers/ca.py`、`ca_iis.py` 的版面、價格表、標的表、共用段落與 `read`，覆寫第 9 項、15.、16. 的 Super Bull 段落；同 BNP Super Bull 的做法）；`ca-zh-pd`／`ca-zh-iis` 辨識確認排除 `連結表現`／`Performance` |
 | 上手註冊 | CA 的範本依商品家族分開辨識（`Issuer.products`，同 BNP） |
-| 規則 | §3.3～§3.5、§3.7 的 CA Super Bull 規則；能和 BNP Super Bull 共用的（月數、順序、情境計算骨架）抽出共用，月數容許差距改為參數（BNP 0～7 天晚、CA ±7 天） |
+| 規則 | §3.3～§3.5、§3.7 的 CA Super Bull 規則；能和 BNP Super Bull 共用的（月數、順序、報酬率與年化）抽到 `parsers/super_bull.py`、`rules/super_bull.py`（workflow #326），月數容許差距是參數（BNP 0～7 天晚、CA ±7 天）；情境算式各上手寫法不同，留在各自的規則 |
 | 設定 | `[auto_check_products]` 的 `"Super Bull"` 加 `CA`；審查標準 `[issuer.ca.product_names."Super Bull"]` |
 | 測試 | 合成 PDF（多檔、單一標的、日圓、KO% ≠ K%、1～5 個觀察日、3～12 個月）；負面測試（CA FCN／FCN_Express ↔ Super Bull、舊版四種、Product 不一致、樣態不符、CNH）；本機真實樣本試跑（§6） |
 
