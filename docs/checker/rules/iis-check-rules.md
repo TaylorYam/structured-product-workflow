@@ -29,7 +29,7 @@
 
 ✓ = 範本有此項，要核對；— = 範本沒有，不核對（不推定通過，也不報缺漏）。範本有、但這份讀不到 → 轉人工覆核。
 
-下表各上手欄是 FCN（含 FCN_Express）的範本。BNP Super Bull 投資人須知（[`bnp-zh-sb-iis`](../templates/bnp-zh-super-bull-iis.md)）照 BNP 欄，差異（沒有配息與月配息率、出場紅利、評價日間隔、無 KI）見 [BNP Super Bull 核對規則](bnp-super-bull-check-rules.md) §3.8。
+下表各上手欄是 FCN（含 FCN_Express）的範本。BNP Super Bull 投資人須知（[`bnp-zh-sb-iis`](../templates/bnp-zh-super-bull-iis.md)）照 BNP 欄，差異（沒有配息與月配息率、出場紅利、評價日間隔、無 KI）見 [BNP Super Bull 核對規則](bnp-super-bull-check-rules.md) §3.8。CA Super Bull 投資人須知（[`ca-zh-sb-iis`](../templates/ca-zh-super-bull-iis.md)）照 CA 欄，差異（沒有配息與年利率、出場紅利、KO 觀察日只參照說明書、無 KI）見 [CA Super Bull 核對規則](ca-super-bull-check-rules.md) §3.8。
 
 ### A. 文件本身
 

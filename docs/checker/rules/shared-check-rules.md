@@ -91,7 +91,7 @@
 
 上手把說明書的日期表交成標準欄位 `schedule_table`（`standard_fields.DateTable`）：每期一列（期別、期始日、期末日、觀察日、配息日，表上沒有或寫「不適用／N/A／-」的格為空），另交出表的位置（例：`第 13 條日期表`）與期始日的定義。各上手的日期表 reader 照舊，只把讀出的列轉成這個形狀；觀察日是哪一欄（評價日、決定日，或期間每日觀察時的期末日）由上手決定。
 
-14 家上手都交出日期表，單份核對在上手說明書內部規則之前對每份說明書執行本節的檢查。Super Bull 的日期表只列評價日、不是每期一列，本節不適用，改由各上手的 Super Bull 規則核對（例：[BNP Super Bull 核對規則](bnp-super-bull-check-rules.md) §3.4）。
+14 家上手都交出日期表，單份核對在上手說明書內部規則之前對每份說明書執行本節的檢查。Super Bull 的日期表只列評價日、不是每期一列，本節不適用，改由各上手的 Super Bull 規則核對（[BNP Super Bull 核對規則](bnp-super-bull-check-rules.md) §3.4、[CA Super Bull 核對規則](ca-super-bull-check-rules.md) §3.4）。
 
 六項檢查各自一個結果，項目名稱是「<表的位置><項目>」。錯訊只寫哪一期、兩邊各是多少。
 
