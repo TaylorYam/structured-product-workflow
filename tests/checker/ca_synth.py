@@ -18,7 +18,7 @@ import datetime as dt
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +42,8 @@ from reference_synth import (
 )
 
 NAME = STANDARD["issuer"]["ca"]["product_name"]
+SB_NAME = STANDARD["issuer"]["ca"]["product_names"]["Super Bull"]
+SB_PRODUCT = "Super Bull"
 WARNING = STANDARD["issuer"]["ca"]["fixed_warning"]
 WARNING_CH1 = STANDARD["issuer"]["ca"]["fixed_warning_variants"][0]
 ISSUER = STANDARD["issuer"]["ca"]["issuer_name"]
@@ -50,6 +52,7 @@ DIST = STANDARD["distributor"]
 ISIN = "XS1999900086"
 APPROVAL = dt.date(2026, 6, 11)
 Q4 = Decimal("0.0001")
+Q2 = Decimal("0.01")
 TICKERS = {
     "US": ("ZCA UW", "ZCB UN", "ZCC UW", "ZCD UN", "ZCE UW"),
     "JT": ("7201 JT", "7202 JT", "7203 JT", "7204 JT", "7205 JT"),
@@ -105,6 +108,7 @@ class Spec(ProductSpec):
     wrap_currency: bool = False  # 說明書價格表每格的幣別字都換到下一行（`1,234.0000 日` / `圓`，範本規格 §5）
     ratings: Ratings = NO_RATINGS  # 發行機構評等：預設文件寫發行機構沒有評等、評等表也沒有；給值時說明書第二章發行機構那段改寫評等（#241）
     guarantor_ratings: Ratings = Ratings()  # 保證機構評等（#241）
+    iis_ticker_with_exchange: bool = False  # 投資人須知標的表的彭博代碼和交易所擠在同一行（真實樣本，workflow #312）
 
     def __post_init__(self) -> None:
         self.underlyings = underlyings(self.count, self.market)
@@ -157,6 +161,68 @@ class Spec(ProductSpec):
     @property
     def print_date(self) -> dt.date:
         return self.trade_date + dt.timedelta(days=1)
+
+
+def add_months(d: dt.date, months: int) -> dt.date:
+    y, m = divmod(d.month - 1 + months, 12)
+    return d.replace(year=d.year + y, month=m + 1)  # 合成日期都在 14 日，各月都有
+
+
+@dataclass
+class SbSpec(Spec):
+    """CA Super Bull 合成規格（docs/checker/templates/ca-zh-super-bull.md、ca-zh-super-bull-iis.md）：沒有配息，`annual` 是
+    出場紅利 x%（不年化，同參考條件表 `Coupon p.a. (%)`）；`months` 是觀察日表各觀察日距發行日的月數，觀察日 = 發行日 +
+    m 個月再加 `shift` 個日曆天（遇週末順延），出場日 = 觀察日後 2 天（遇週末順延），Non-Call = 第一個 m。預設照現行版
+    樣本：非記憶式、無 KI、KO% 80 ≠ K% 70、美元、3 檔。"""
+
+    months: tuple[int, ...] = (3,)
+    annual: Decimal = Decimal("5.00")
+    ko: Decimal = Decimal("80.00")
+    memory: bool = False
+    ko_obs: str = "P"
+    first_callable: int = field(init=False)
+    shift: int = 0
+    note: bool = False  # 觀察日表下多一行「註:自動提前出場價以期初訂價的百分比表示。」
+    row_bonus: tuple[Decimal, ...] = ()  # 觀察日表各列的出場紅利（預設每列都是 `annual`；給值製造各列不同）
+
+    def __post_init__(self) -> None:
+        self.first_callable = self.months[0]
+        super().__post_init__()
+
+    @property
+    def ends(self) -> list[dt.date]:
+        """各觀察日，最後是期末訂價日（發行日 + 天期）。"""
+        shift = dt.timedelta(days=self.shift)
+        return [
+            *(weekday_on_or_after(add_months(self.issue_date, m) + shift) for m in self.months),
+            weekday_on_or_after(add_months(self.issue_date, self.tenor)),
+        ]
+
+    @property
+    def name_zh(self) -> str:
+        return SB_NAME["zh"].format(tenor=self.tenor, ccy_zh=self.currency_zh)
+
+    @property
+    def name_en(self) -> str:
+        return SB_NAME["en"].format(tenor=self.tenor, ccy=self.ccy)
+
+    @property
+    def worst(self) -> str:
+        """條文的「最差表現之連結標的」；單一標的寫「連結標的」。"""
+        return "最差表現之連結標的" if self.count > 1 else "連結標的"
+
+    @property
+    def formula(self) -> str:
+        """到期公式 (ii) 的「最差表現連結標的期末訂價/最差表現連結標的執行價」。"""
+        w = "最差表現連結標的" if self.count > 1 else "連結標的"
+        return f"[100%+100%* ({w}期末訂價/{w}執行價-100%)]"
+
+    @property
+    def event(self) -> str:
+        who = "所有連結標的" if self.count > 1 else "連結標的"
+        return (
+            f"自動提前出場事件：{who}於預定自動提前出場觀察日之收盤價高於或等於自動提前出場價，則發生自動提前出場事件。"
+        )
 
 
 def _tokens(text: str) -> list[str]:
@@ -415,6 +481,50 @@ def _article9(d: _Doc, s: Spec) -> None:
         d.text(36, "界限事件觀察期間：從期初訂價日(含)至期末訂價日(含) 。")
 
 
+def _article9_sb(d: _Doc, s: SbSpec) -> None:
+    """Super Bull 第 9 項（範本規格 §2、§4.1）：沒有配息、(a) 面額 x (100%+紅利)、四欄觀察日表、(b) 到期兩款、價格表。"""
+    d.text(36, "(1) 本商品主要給付項目為「自動提前出場贖回金額」或「到期贖回金額」。本商品持有期間並無配息金額。")
+    d.text(36, "計算方式：")
+    d.text(
+        36,
+        "(a) 「自動提前出場贖回金額」：自動提前出場觀察日時持有之商品單位（張）數x 每單位（張）商品面額x(100%+自動提前出場"
+        "紅利) 。其後無任何金額給付。",
+    )
+    d.text(36, s.event)
+    d.section = "art9.ko"
+    d.w.row(
+        [(49, "自動提前出場觀察日"), (196, "自動提前出場價"), (332, "自動提前出場日"), (461, "自動提前出場紅利")],
+        gap=14,
+    )
+    bonuses = s.row_bonus or (s.annual,) * len(s.months)
+    for obs, exit_, bonus in zip(s.ends[:-1], s.payments[:-1], bonuses, strict=True):
+        d.w.row([(54, s.date(obs)), (220, f"{s.ko}%"), (325, s.date(exit_)), (494, f"{bonus}%")], gap=13)
+    if s.note:
+        d.text(36, "註:自動提前出場價以期初訂價的百分比表示。")
+    d.section = "art9"
+    d.text(
+        36,
+        "(b) 「到期贖回金額」：若商品並無提前贖回、買回或註銷，或未發生自動提前出場事件，本商品到期日將依下列(i)或(ii)"
+        "方式贖回：",
+    )
+    d.text(
+        36,
+        f"(i) 若{s.worst}期末訂價低於執行價：投資人將會收到發行機構交付{s.worst}單位數，及以計價幣別支付剩餘金額（如有）。",
+    )
+    d.text(
+        36,
+        f"(ii) 若{s.worst}期末訂價高於或等於執行價：投資人將會收到發行機構以計價幣別現金交付下列金額：到期時持有之商品"
+        f"單位（張）數x 每單位（張）商品面額x {s.formula}。",
+    )
+    d.text(36, "(2) 連結標的：")
+    d.section = "art9.table"
+    _price_table(d, s, index=True)
+    d.section = "art9"
+    d.text(36, "投資人請注意：本商品之收益與投資最差表現之連結標的相關。")
+    d.text(36, "期初訂價：連結標的於期初訂價日之價格，由計算代理機構決定。")
+    d.text(36, "期末訂價：連結標的於期末訂價日之收盤價，由計算代理機構決定。")
+
+
 def _article10(d: _Doc, s: Spec) -> None:
     d.text(36, "連結標的資產：")
     d.section = "art10.table"
@@ -482,6 +592,85 @@ def _article16(d: _Doc, s: Spec) -> None:
     d.text(36, "※ 請注意：情境分析之結果不保證未來績效，亦不代表連結標的未來表現。")
 
 
+def _article16_sb(d: _Doc, s: SbSpec) -> None:
+    """Super Bull 第 16 項 (3)（範本規格 §5）：基本假設多出場紅利、情境一出場、情境二到期漲 10%、情境三交股；數字依算式算出。"""
+    ccy, quote, denom = s.currency_zh, s.quote, Decimal(s.denom)
+    bonus = s.annual
+    for t in (
+        "(1)投資收益計算方法：請參見上述第一章第9 項。",
+        "(3)以情境分析解說最大可能獲利、損失及其他狀況之年化平均報酬率：",
+        "基本假設",
+        f"天期：{s.tenor} 個月",
+        f"每單位面額：{s.money(s.denom)}",
+        f"初始投資金額：{s.money(s.denom)}",
+        f"自動提前出場紅利：{bonus}%",
+    ):
+        d.text(36, t)
+    d.section = "art16.table"
+    _price_table(d, s, index=False)
+    d.section = "art16"
+    a1 = (denom * (100 + bonus) / 100).quantize(Q2, ROUND_HALF_UP)
+    ann1 = (bonus * 12 / s.months[0]).quantize(Q2, ROUND_HALF_UP)
+    d.text(36, "情境分析一：較佳情況")
+    d.text(36, "假設於第1 個自動提前出場觀察日發生自動提前出場事件。")
+    d.text(36, "• 自動提前出場贖回金額為：每單位商品面額 × (100%+自動提前出場紅利)")
+    d.text(36, f"= {denom:,.2f} {ccy} × (100% + {bonus}%)")
+    d.text(36, f"= {a1:,.2f} {ccy}")
+    d.text(
+        36,
+        f"• 總報酬率 ＝(自動提前出場贖回金額 / 總投資金額) - 1 ＝({a1:,.2f}  / {s.denom:,} ) - 1 ＝{bonus}%（平均年化"
+        f"報酬率：{ann1}%）",
+    )
+    u = s.underlyings[0]
+    k = price(u.initial, s.strike)
+    p2 = (k * Decimal("1.1")).quantize(Q4, ROUND_HALF_UP)
+    a2 = (denom * Decimal("1.1")).quantize(Q2, ROUND_HALF_UP)
+    ann2 = (Decimal(10) * 12 / s.tenor).quantize(Q2, ROUND_HALF_UP)
+    named = f"{s.worst}為{u.name}，" if s.count > 1 else "連結標的"
+    d.text(36, "情境分析二：一般情況")
+    d.text(36, f"假設不曾發生任何自動提前出場事件且於期末訂價日，{s.worst}收盤價高於執行價，於到期日以現金結算收益。")
+    d.text(36, f"• 假設於期末訂價日{named}收盤價為{p2:,.4f} {quote}。")
+    d.text(36, "• 到期給付金額為：")
+    d.text(36, f"每單位面額x[100%+100%x({s.worst}期末訂價/{s.worst}執行價-100%)]。")
+    d.text(
+        36,
+        f"＝{denom:,.2f} {ccy} × [100% + 100% x ( {p2:,.4f} {quote} / {k:,.4f} {quote} - 100%)]＝{denom:,.2f} {ccy} x "
+        "(100% + 10%)",
+    )
+    d.text(36, f"= {a2:,.2f} {ccy}")
+    d.text(36, "• 報酬率計算為：")
+    d.text(
+        36,
+        f"＝(每單位面額到期給付金額 / 每單位面額初始投資金額) - 1 ＝({a2:,.2f}  / {s.denom:,} ) - 1 ＝10.00%（平均"
+        f"年化報酬率：{ann2}%）",
+    )
+    p3 = (k * Decimal("0.6")).quantize(Q2, ROUND_HALF_UP)
+    shares = (denom / k).quantize(Decimal("0.001"), ROUND_DOWN)
+    whole = int(shares)
+    frac = shares - whole
+    rem = (frac * p3).quantize(Q2, ROUND_HALF_UP)
+    total = (whole * p3 + rem) / denom * 100 - 100
+    named = f"表現最差的連結標的為{u.name}，" if s.count > 1 else "連結標的"
+    d.text(36, "情境分析三：較差情況")
+    d.text(
+        36,
+        f"假設不曾發生任何自動提前出場事件且於期末訂價日，{s.worst}收盤價低於執行價，假設於期末訂價日{named}收盤價為"
+        f"{p3:,.2f} {quote}，低於其執行價。投資人將會收到{s.worst}單位數，及以{ccy}支付剩餘金額（如有）。",
+    )
+    d.text(
+        36,
+        f"• 到期給付金額{s.worst}單位數為：每單位面額/{s.worst}的執行價* = {s.denom:,} / {k:,.4f} = {shares} 股",
+    )
+    d.text(36, f"整數股數＝{whole} 股，畸零股數＝{frac} 股，剩餘金額＝{p3:,.2f} x {frac}＝{rem:,.2f} {ccy}")
+    d.text(36, "• 報酬率計算為：")
+    d.text(36, "((整數股數×期末訂價*+剩餘金額)/每單位面額初始投資金額)-1")
+    d.text(36, f"= (({whole} x {p3:,.2f} + {rem:,.2f}) / {s.denom:,}) - 1")
+    annualized = (total * 12 / s.tenor).quantize(Q2, ROUND_HALF_UP)
+    d.text(36, f"= {total.quantize(Q2, ROUND_HALF_UP)}% (平均年化報酬率:{annualized}%)")
+    d.text(36, "*在必要時，依期末匯率轉換為計價貨幣。")
+    d.text(36, "※ 請注意：情境分析之結果不保證未來績效，亦不代表連結標的未來表現。")
+
+
 ARTICLE_TITLES = {
     1: "商品名稱：",
     2: "商品風險程度：",
@@ -530,7 +719,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             d.text(36, f"發行價格：每單位(張)商品面額的100%，即{s.money(s.denom)}({s.ccy})。")
         elif n == 9:
             d.article(n, title)
-            _article9(d, s)
+            (_article9_sb if isinstance(s, SbSpec) else _article9)(d, s)
         elif n == 10:
             d.article(n, title)
             _article10(d, s)
@@ -546,17 +735,26 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                 f"(3) 發行日：{s.date(s.issue_date)}。",
                 f"(4) 期末訂價日：{s.date(s.final_date)}；如當日非所有連結標的之預定交易日，則為次一預定交易日。",
                 f"(5) 到期日：{s.date(s.maturity_date)}。",
-                "(6) 配息日：詳見第9 項「本商品主要給付項目及其計算方式」。",
+                "(6) 配息日："
+                + (
+                    "本商品持有期間並無配息金額。"
+                    if isinstance(s, SbSpec)
+                    else "詳見第9 項「本商品主要給付項目及其計算方式」。"
+                ),
             ):
                 d.text(36, t)
         elif n == 15:
             d.article(n, title)
             d.text(36, "(1)到期贖回計算公式：請參見上述第一章第9 項。")
             d.text(36, f"(3)提前贖回金額即為公平市值贖回金額，此公平市值贖回金額可能低於100%{s.currency_zh}投資本金。")
-            d.text(36, f"(4)最低保證配息率：{guaranteed}配息 {s.monthly}%。")
+            if isinstance(s, SbSpec):
+                d.text(36, "(4)最低保證配息率：不適用。本商品持有期間並無配息金額。")
+                d.text(36, "(5)參與率：不適用。")
+            else:
+                d.text(36, f"(4)最低保證配息率：{guaranteed}配息 {s.monthly}%。")
         elif n == 16:
             d.article(n, title)
-            _article16(d, s)
+            (_article16_sb if isinstance(s, SbSpec) else _article16)(d, s)
         else:
             d.article(n, title)
 
@@ -736,48 +934,32 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         d.text(30, t)
     d.centered_row([(105, "連結標的"), (240, "彭博代碼"), (375, "交易所")], gap=14)
     for u in s.underlyings:
-        d.centered_row([(105, u.name), (240, u.ticker), (375, u.exchange)], gap=14)
+        if s.iis_ticker_with_exchange:
+            d.centered_row([(105, u.name), (300, f"{u.ticker} {u.exchange}")], gap=14)
+        else:
+            d.centered_row([(105, u.name), (240, u.ticker), (375, u.exchange)], gap=14)
     for t in (
         f"(10) 商品年期：{s.tenor} 個月。",
         f"(11) 期初訂價日：{dt_(s.trade_date)}。",
         f"(12) 發行日： {dt_(s.issue_date)}。",
         f"(13) 期末訂價日：{dt_(s.final_date)}。",
         f"(14) 到期日：{dt_(s.maturity_date)}。",
-        "(15) 配息日：詳見中文產品說明書第9 項「本商品主要給付項目及其計算方式」。",
+        "(15) 配息日："
+        + (
+            "本商品持有期間並無配息金額。"
+            if isinstance(s, SbSpec)
+            else "詳見中文產品說明書第9 項「本商品主要給付項目及其計算方式」。"
+        ),
         "(16) 自動提前出場觀察日：詳見中文產品說明書第9 項「本商品主要給付項目及其計算方式」。",
         "(20) 開始受理贖回日及後續受理贖回日：開始受理贖回日期：自發行日次日起。",
     ):
         d.text(30, t)
     d.section = "coupon"
     d.text(30, "2. 收益分配事項：")
-    d.text(30, "(a) 「配息金額」：於各配息期(i)：每單位（張）商品面額x「配息率」；")
-    d.text(30, f"配息率{s.monthly}%，換算年利率為{s.annual}%")
-    d.text(30, "(b) 「自動提前出場贖回金額」：自動提前出場觀察日時持有之商品單位（張）數x 每單位（張）商品面額x100%")
-    if s.memory:
-        d.text(
-            30,
-            "自動提前出場事件：所有連結標的於預定自動提前出場觀察日或任何先前的自動提前出場觀察日之收盤價高於或等於自動提前出場價，"
-            "則發生自動提前出場事件。為避免疑義，所有連結標的無須於同一自動提前出場觀察日符合上開條件。",
-        )
+    if isinstance(s, SbSpec):
+        _iis_payments_sb(d, s)
     else:
-        who = "連結標的" if s.count == 1 else "所有連結標的"
-        d.text(
-            30,
-            f"自動提前出場事件：{who}於預定自動提前出場觀察日之收盤價高於或等於自動提前出場價，則發生自動提前出場事件。",
-        )
-    if s.ko_obs == "D":
-        d.text(30, "自動提前出場日：於發生自動提前出場事件時，該自動提前出場觀察日後第二個營業日。")
-        d.text(30, s.ko_daily)
-    d.text(30, "(c) 「到期贖回金額」：本商品到期日將依下列方式贖回：")
-    if s.ki == "none":
-        d.text(
-            30,
-            f"(i) 若最差表現之連結標的期末訂價低於執行價：交付連結標的單位數，及以{s.currency_zh}支付剩餘金額（如有）。",
-        )
-        d.text(30, "(ii) 若最差表現之連結標的期末訂價高於或等於執行價：每單位（張）商品面額x 100%。")
-    else:
-        d.text(30, "(i) 若未發生界限事件，則到期贖回金額為：每單位（張）商品面額x 100%。")
-        d.text(30, f"(ii) 若發生界限事件：交付連結標的單位數，及以{s.currency_zh}支付剩餘金額（如有）。")
+        _iis_payments(d, s)
     d.text(30, "3. 贖回價金之計算：請參見中文產品說明書第一章第9 項。")
     d.text(30, f"(4) 提前贖回金額即為公平市值贖回金額，此公平市值贖回金額可能低於100%{s.currency_zh}投資本金。")
     d.text(30, "4. 發行不成立之情形：本商品有效申購金額至少達等值三十萬美元之總申購金額。")
@@ -834,13 +1016,76 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
     return w.save(path)
 
 
+def _iis_payments(d: _Doc, s: Spec) -> None:
+    """投資人須知二、2. 收益分配事項（FCN）。"""
+    d.text(30, "(a) 「配息金額」：於各配息期(i)：每單位（張）商品面額x「配息率」；")
+    d.text(30, f"配息率{s.monthly}%，換算年利率為{s.annual}%")
+    d.text(30, "(b) 「自動提前出場贖回金額」：自動提前出場觀察日時持有之商品單位（張）數x 每單位（張）商品面額x100%")
+    if s.memory:
+        d.text(
+            30,
+            "自動提前出場事件：所有連結標的於預定自動提前出場觀察日或任何先前的自動提前出場觀察日之收盤價高於或等於自動提前出場價，"
+            "則發生自動提前出場事件。為避免疑義，所有連結標的無須於同一自動提前出場觀察日符合上開條件。",
+        )
+    else:
+        who = "連結標的" if s.count == 1 else "所有連結標的"
+        d.text(
+            30,
+            f"自動提前出場事件：{who}於預定自動提前出場觀察日之收盤價高於或等於自動提前出場價，則發生自動提前出場事件。",
+        )
+    if s.ko_obs == "D":
+        d.text(30, "自動提前出場日：於發生自動提前出場事件時，該自動提前出場觀察日後第二個營業日。")
+        d.text(30, s.ko_daily)
+    d.text(30, "(c) 「到期贖回金額」：本商品到期日將依下列方式贖回：")
+    if s.ki == "none":
+        d.text(
+            30,
+            f"(i) 若最差表現之連結標的期末訂價低於執行價：交付連結標的單位數，及以{s.currency_zh}支付剩餘金額（如有）。",
+        )
+        d.text(30, "(ii) 若最差表現之連結標的期末訂價高於或等於執行價：每單位（張）商品面額x 100%。")
+    else:
+        d.text(30, "(i) 若未發生界限事件，則到期贖回金額為：每單位（張）商品面額x 100%。")
+        d.text(30, f"(ii) 若發生界限事件：交付連結標的單位數，及以{s.currency_zh}支付剩餘金額（如有）。")
+
+
+def _iis_payments_sb(d: _Doc, s: SbSpec) -> None:
+    """投資人須知二、2. 收益分配事項（Super Bull，投資人須知範本規格 §2；到期段原文標號寫成第二個 (a)）。"""
+    d.text(30, "本商品主要給付項目為「自動提前出場贖回金額」或「到期贖回金額」。本商品持有期間並無配息金額。")
+    d.text(
+        30,
+        "(a) 「自動提前出場贖回金額」：本商品於自動提前出場觀察日發生自動提前出場事件，發行機構將在該自動提前出場日支付"
+        "每單位金額=每單位商品面額 × (100%+自動提前出場紅利) 。其後無任何金額給付。",
+    )
+    d.text(30, f"自動提前出場紅利：{s.annual:.4f}%。")
+    d.text(30, s.event)
+    d.text(
+        30,
+        "(a) 到期贖回金額：若本商品於所有自動提前出場觀察日均未發生自動提前出場事件，則於到期日時，發行機構將依下列計算"
+        "公式給付：",
+    )
+    d.text(
+        30,
+        f"(i) 若{s.worst}期末訂價低於執行價：投資人將會收到發行機構交付{s.worst}單位數，及以{s.currency_zh}支付剩餘金額"
+        "（如有）。",
+    )
+    d.text(
+        30,
+        f"(ii) 若{s.worst}期末訂價高於或等於執行價：投資人將會收到發行機構交付下列金額：到期時持有之商品單位數x 每單位"
+        f"商品面額x{s.formula}。",
+    )
+    d.text(30, "詳細請參見中文產品說明書第一章第9 項之說明。")
+
+
 # ---------------------------------------------------------------- 參考條件表與核對
 
 
 def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
-    """與 `spec` 一致的參考條件表列：期初定價依 `pricing`（VWAP 時進場價空白）。`overrides` 以 Excel 欄名覆寫。"""
+    """與 `spec` 一致的參考條件表列：期初定價依 `pricing`（VWAP 時進場價空白）、Super Bull 的 Product 填 `Super Bull`。
+    `overrides` 以 Excel 欄名覆寫。"""
     out = reference_row(spec)
     out["期初定價"] = PRICING[spec.pricing]
+    if isinstance(spec, SbSpec):
+        out["Product"] = SB_PRODUCT
     if spec.pricing == "vwap":
         out.update({f"UL_{i}_進場價": None for i in range(1, spec.count + 1)})
     out.update(overrides)
@@ -877,3 +1122,21 @@ def check_iis(tmp_path: Path, spec: Spec | None = None, *, edits: Sequence[Edit]
     sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [row(spec, **overrides)])
     outcome = check_all(sheet, [pdf, iis_path(pdf)], config)
     return next(i for i in outcome.items if i.term_sheet == iis_path(pdf))
+
+
+def check_pair(
+    tmp_path: Path,
+    spec: Spec | None = None,
+    *,
+    pdf_spec: Spec | None = None,
+    edits: Sequence[Edit] = (),
+    config=CONFIG,
+    **overrides: Any,
+):
+    """同 `check_item`，回傳（說明書, 投資人須知）兩份的批量核對項目（BatchItem）。"""
+    spec = spec or Spec()
+    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", pdf_spec or spec, edits=edits)
+    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [row(spec, **overrides)])
+    outcome = check_all(sheet, [pdf, iis_path(pdf)], config)
+    ts = next(i for i in outcome.items if i.term_sheet == pdf)
+    return ts, next(i for i in outcome.items if i.term_sheet != pdf)

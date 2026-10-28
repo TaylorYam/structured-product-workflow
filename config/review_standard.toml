@@ -598,6 +598,16 @@ express_en = "Express "  # 沒有 Non-Call（FCN_Express）時英文名稱多「
 normalize_brackets = true
 ignore_whitespace_en = true
 
+[issuer.ca.product_names."Super Bull"]
+# CA Super Bull 商品名稱（現行版 32 份說明書推得，2026-10-28 規格確認，#312）：「連結表現自動提前出場」／「Performance Autocall
+# Note」，只依天期、幣別；參考條件表 Product 是 Super Bull 時用這個樣板，其他照 [issuer.ca.product_name]。
+zh = "Crédit Agricole CIB Financial Solutions {tenor} 個月{ccy_zh}計價連結表現自動提前出場結構型商品(無擔保) (不保本)"
+en = "Crédit Agricole CIB Financial Solutions {ccy} {tenor}-Month Performance Autocall Note (Unsecured)(Non-principal protected)"
+memory_zh = ""
+memory_en = ""
+normalize_brackets = true
+ignore_whitespace_en = true
+
 [issuer.bbva]
 # BBVA：中文國籍前綴＋英文法人名；第二章 1.(1)(a)、投資人須知一、 1. 相同；第一章 3.(1) 沒有「荷蘭商」，parser 補上後比對
 # （2026-10-15 確認也算一致，Issue #269）；第 1 頁沒有發行機構名稱欄。目前只有這一個發行主體。

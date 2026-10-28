@@ -19,6 +19,7 @@ from .parsers import (
     bnp_iis,
     bnp_super_bull_iis,
     ca_iis,
+    ca_super_bull_iis,
     citi_iis,
     dbs_iis,
     gs_iis,
@@ -34,6 +35,7 @@ from .parsers import bbva as bbva_parser
 from .parsers import bnp as bnp_parser
 from .parsers import bnp_super_bull as bnp_sb_parser
 from .parsers import ca as ca_parser
+from .parsers import ca_super_bull as ca_sb_parser
 from .parsers import citi as citi_parser
 from .parsers import dbs as dbs_parser
 from .parsers import gs as gs_parser
@@ -53,6 +55,8 @@ from .rules import bnp_super_bull as bnp_sb_rules
 from .rules import bnp_super_bull_iis as bnp_sb_iis_rules
 from .rules import ca as ca_rules
 from .rules import ca_iis as ca_iis_rules
+from .rules import ca_super_bull as ca_sb_rules
+from .rules import ca_super_bull_iis as ca_sb_iis_rules
 from .rules import citi as citi_rules
 from .rules import citi_iis as citi_iis_rules
 from .rules import dbs as dbs_rules
@@ -393,6 +397,30 @@ CA = Issuer(
     ),
 )
 
+# CA Super Bull（#312）：和 CA FCN 同一家上手、不同範本；依參考條件表 Product 選用（商品種類一致檢查在辨識）
+CA_SUPER_BULL = Issuer(
+    code=ca_rules.ISSUER,
+    template_id=ca_sb_parser.TEMPLATE_ID,
+    label="CA Super Bull 中文產品說明書",
+    parser_version=ca_sb_parser.PARSER_VERSION,
+    not_covered=tuple(ca_sb_rules.NOT_COVERED),
+    detect=ca_sb_parser.detect,
+    read=ca_sb_parser.read,
+    rules=ca_sb_rules.run_all,
+    reference_fields=ca_rules.REFERENCE_FIELDS,
+    ratings=True,
+    iis=IisTemplate(
+        template_id=ca_super_bull_iis.TEMPLATE_ID,
+        label="CA Super Bull 中文投資人須知",
+        parser_version=ca_super_bull_iis.PARSER_VERSION,
+        detect=ca_super_bull_iis.detect,
+        read=ca_super_bull_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=ca_sb_iis_rules.run_all,
+    ),
+    products=frozenset({SUPER_BULL}),
+)
+
 BBVA = Issuer(
     code=bbva_rules.ISSUER,
     template_id=bbva_parser.TEMPLATE_ID,
@@ -472,6 +500,7 @@ REGISTRY: tuple[Issuer, ...] = (
     GS,
     NATIXIS,
     CA,
+    CA_SUPER_BULL,
     BBVA,
     DBS,
     UBS,

@@ -36,7 +36,7 @@ def test_repo_table_opens_fcn_everywhere_express_for_barclays_ca_hsbc_and_super_
     expected = {
         "FCN": issuers,
         "FCN_Express": frozenset({"BARC", "CA", "HSBC"}),
-        "Super Bull": frozenset({"BNP"}),
+        "Super Bull": frozenset({"BNP", "CA"}),
     }  # #304～#306、#310、#311
     assert CONFIG.auto_check_products == expected
 

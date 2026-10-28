@@ -230,9 +230,12 @@ def add_months(d: dt.date, months: int) -> dt.date:
     return dt.date(year, month, min(d.day, calendar.monthrange(year, month)[1]))
 
 
-def observation_month(issue: dt.date, observation: dt.date, tenor: int) -> int | None:
-    """評價日距發行日的月數 m（1 ≤ m < 天期）：評價日在「發行日 + m 個月」當天到其後 7 個日曆天內；對不到或多個時 None。"""
-    found = [m for m in range(1, tenor) if 0 <= (observation - add_months(issue, m)).days <= MAX_DELAY]
+def observation_month(
+    issue: dt.date, observation: dt.date, tenor: int, *, early: int = 0, late: int = MAX_DELAY
+) -> int | None:
+    """評價日距發行日的月數 m（1 ≤ m < 天期）：評價日在「發行日 + m 個月」前 `early` 到後 `late` 個日曆天內（BNP 只會晚
+    0～7 天；CA 前後 7 天，ca_super_bull）；對不到或多個時 None。"""
+    found = [m for m in range(1, tenor) if -early <= (observation - add_months(issue, m)).days <= late]
     return found[0] if len(found) == 1 else None
 
 

@@ -45,6 +45,13 @@ def test_express_passes_with_no_non_call(tmp_path):
     assert en.status == S.PASS and "Express" in en.actual
 
 
+def test_ticker_and_exchange_on_one_line_are_read(tmp_path):
+    """真實樣本標的表的彭博代碼和交易所擠在同一行（workflow #312）：照樣讀出代碼。"""
+    r = check_iis(tmp_path, Spec(iis_ticker_with_exchange=True)).report
+    assert r.status == S.PASS, problems(r)
+    assert rule(r, "field.underlyings")[0].status == S.PASS
+
+
 def test_five_pages_is_a_mismatch(tmp_path):
     r = check_iis(tmp_path, Spec(iis_pages=5)).report
     assert rule(r, "iis.pages")[0].status == S.MISMATCH
