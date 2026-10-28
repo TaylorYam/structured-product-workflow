@@ -31,7 +31,8 @@ TEMPLATE_ID = "ca-zh-pd"
 # 6：情境價格表與假設值交成共用情境規則的標準欄位（Issue #294）；7：多標的非記憶式句型（Issue #344）
 # 8：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）；9：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
 # 10：FCN_Express：英文名稱、自發行日起觀察 KO（k = 0）、第一期整期配息句、情境一只寫「配息金額」（workflow #305）
-PARSER_VERSION = "10"
+# 11：FCN_Express 情境一只讀「每單位面額 × x%」的月配息率，允許「×1」（作業人員 2026-10-28 決定）
+PARSER_VERSION = "11"
 # 保證機構信用評等（#241）：第一章第 3 項 `保證機構名稱及其長期債務信用評等：…。截至…，其長期債務信用評等為穆迪A1/標準普爾A+/惠譽AA-`
 # （後面直接接第 4 項，沒有句號）、第二章 2. 保證機構 (7) `信用評等：穆迪A1/…。`（接 (8) 保證條件）。
 GUARANTOR_RATINGS = (
@@ -670,8 +671,10 @@ SCENARIOS = ("一", "二", "三")
 SCENARIO_END = "※請注意"
 EQ = "[=＝]"
 # 情境的配息金額、贖回金額行：「每單位面額 × x% ＝ 面額 × x% ＝ 金額」（Issue #319：x 兩處與面額是重複寫出的值）
-# 沒有 Non-Call 時情境一（第 1 個觀察日出場、第一期整期配息）只寫「配息金額」（FCN_Express，workflow #305）
-SCENARIO_COUPON = rf"(?:第1(?:~(\d+))?個月)?配息金額{EQ}每單位面額×{PCT}{EQ}([\d,]+)×{PCT}{EQ}"
+SCENARIO_COUPON = rf"第1(?:~(\d+))?個月配息金額{EQ}每單位面額×{PCT}{EQ}([\d,]+)×{PCT}{EQ}"
+# 沒有 Non-Call 時情境一（第 1 個觀察日出場、第一期整期配息）只寫「配息金額」，有的樣本在 % 後多寫「×1」；只核對
+# 「每單位面額 × x%」的 x（作業人員 2026-10-28 決定：算式的面額與 %、平均年化報酬率不核對；FCN_Express，workflow #305）
+SCENARIO_FIRST_FULL_COUPON = rf"配息金額{EQ}每單位面額×{PCT}(?:×1)?{EQ}"
 SCENARIO_REDEMPTION = rf"{{}}{EQ}每單位面額×{PCT}{EQ}([\d,]+)×{PCT}{EQ}"
 # 情境一、二（拿回 100% 本金）總報酬率後的「（平均年化報酬率：x%）」：x = 年利率（Issue #228）
 SCENARIO_ANNUALIZED = r"平均年化報酬率[:：]" + PCT
@@ -686,7 +689,7 @@ def _scenarios(fields: dict[str, ParsedField], ti: TextIndex, assumed: list[Scen
     """情境分析一～三重複寫出的值（Issue #319，比照 BBVA #305）→ 出處清單，由規則逐處比對正式條款：
 
     - 共用情境規則的 `scenario_params`（Issue #294）：基本假設 `assumed`，加上配息金額行的配息率兩處（= 配息表配息率）、
-      配息金額與贖回金額行代入的面額（= 第 6 項面額）、情境二、三「第 1~n 個月」的 n（= 天期；情境一的月數另由
+      配息金額與贖回金額行代入的面額（= 第 6 項面額；沒有 Non-Call 時情境一配息金額行只核對「每單位面額 × x%」）、情境二、三「第 1~n 個月」的 n（= 天期；情境一的月數另由
       `scenario_first_months` 核對）、情境一、二（拿回 100% 本金）的平均年化報酬率（= 年利率；沒有 Non-Call 時情境一在
       發行日後第一個觀察日出場、整期配息按 1 天年化，不列入，workflow #305）
     - `scenario_ko_redemption_mentions`／`scenario_maturity_redemption_mentions`：贖回金額行的 % 兩處（= 第 9 項 (b)／(c)）
@@ -715,33 +718,37 @@ def _scenarios(fields: dict[str, ParsedField], ti: TextIndex, assumed: list[Scen
     for n, k in enumerate(SCENARIOS, start=1):
         where = f"第一章第 16 項情境分析{k}"
         lo, hi = (bounds[n - 1], bounds[n]) if found else (-1, -1)
-        coupon = _one_match(ti, lo, hi, SCENARIO_COUPON, f"{where}配息金額行")
+        full = n == 1 and express
+        coupon = _one_match(ti, lo, hi, SCENARIO_FIRST_FULL_COUPON if full else SCENARIO_COUPON, f"{where}配息金額行")
         mentions = [
             (
                 "scenario_coupon_mentions",
                 f"scenario{n}_coupon_pct",
                 "scenario_monthly_coupon",
                 "配息金額「每單位面額 × x%」",
-                2,
+                1 if full else 2,
                 Decimal,
-            ),
-            (
-                "scenario_coupon_mentions",
-                f"scenario{n}_coupon_pct_calc",
-                "scenario_monthly_coupon",
-                "配息金額算式「面額 × x%」",
-                4,
-                Decimal,
-            ),
-            (
-                "scenario_denomination_mentions",
-                f"scenario{n}_coupon_denomination",
-                "scenario_denomination",
-                "配息金額算式",
-                3,
-                number,
             ),
         ]
+        if not full:  # 配息金額算式「面額 × x%」
+            mentions += [
+                (
+                    "scenario_coupon_mentions",
+                    f"scenario{n}_coupon_pct_calc",
+                    "scenario_monthly_coupon",
+                    "配息金額算式「面額 × x%」",
+                    4,
+                    Decimal,
+                ),
+                (
+                    "scenario_denomination_mentions",
+                    f"scenario{n}_coupon_denomination",
+                    "scenario_denomination",
+                    "配息金額算式",
+                    3,
+                    number,
+                ),
+            ]
         if n > 1:
             mentions.append(
                 (
