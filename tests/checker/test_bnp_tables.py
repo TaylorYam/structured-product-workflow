@@ -128,3 +128,47 @@ def test_first_name_on_the_label_line_wrapped():
     table = bnp_tables.price_table("underlying_table", bnp._art11_region(art11), with_tickers=True)
     assert table.ok, table.note
     assert table.value["names"] == ["虛構甲乙丙丁公司", "虛構戊己公司"]
+
+
+def merged(page: int, y: float, *parts: tuple[float, str]) -> Line:
+    """擷取時併成一行的多格（各段從自己的 x 起排，每字寬 5）：帶逐字位置，`split_merged_cells` 才拆得開。"""
+    text, spans = "", []
+    for x, part in parts:
+        if text:
+            text += " "
+            spans.append((spans[-1][1], spans[-1][1] + 1))
+        text += part
+        spans += [(x + 5 * i, x + 5 * i + 5) for i in range(len(part))]
+    return Line(page, parts[0][0], y, spans[-1][1], y + 10, text, char_spans=tuple(spans))
+
+
+def test_cells_merged_into_one_line_before_a_page_break_are_split_back():
+    """投資人須知標的表在頁尾跨頁（#311）：執行價格列的標籤與各格前半被擷取成同一行，各格後半在下一頁頂端。"""
+    lines = [
+        ln(1, LABEL_X, 700, "連結標的名稱："),
+        *cells(1, 700, "虛構甲公司", "虛構乙公司"),
+        ln(1, LABEL_X, 720, "期初價格(Initial Price)："),
+        *cells(1, 720, "400.0000", "200.0000"),
+        merged(
+            1,
+            760,
+            (LABEL_X, "執行價格(Strike Price):"),
+            (COLS[0], "280.0000,即期初價格之"),
+            (COLS[1], "140.0000,即期初價格之"),
+        ),
+        *cells(2, 60, "70.00%", "70.00%"),
+        ln(2, LABEL_X, 80, "自動提前贖回價格(Automatic Early Redemption Price)："),
+        *cells(2, 80, "280.0000,即期初價格之70.00%", "140.0000,即期初價格之70.00%"),
+        ln(2, LABEL_X, 100, "貨幣(Currency)："),
+        *cells(2, 100, "美元", "美元"),
+    ]
+    split = bnp_tables.split_merged_cells(lines)
+    assert [(x.x0, x.text) for x in split[6:9]] == [
+        (LABEL_X, "執行價格(Strike Price):"),
+        (COLS[0], "280.0000,即期初價格之"),
+        (COLS[1], "140.0000,即期初價格之"),
+    ]
+    table = bnp_tables.price_table("scenario_table", lines, with_tickers=False)
+    assert table.ok, table.note
+    assert table.value["pcts"]["strike"] == [Decimal("70.00"), Decimal("70.00")]
+    assert [r["prices"]["strike"] for r in table.value["rows"]] == [Decimal("280.0000"), Decimal("140.0000")]

@@ -7,8 +7,8 @@
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
 # 規則說明見 docs/checker/rules/review-standard.md。
 
-version = 29
-effective_date = 2026-10-26
+version = 30
+effective_date = 2026-10-28
 
 [distributor]
 # 受託或銷售機構審查通過之日期（說明書封面 p1）：歷次日期都保留，由舊到新。
@@ -312,6 +312,21 @@ minimum_subscription = 5
 minimum_additional = 1
 minimum_redemption = 5
 redemption_increment = 1
+
+[issuer.bnp.product_names."Super Bull"]
+# BNP Super Bull 商品名稱（現行版 27 份說明書推得，2026-10-28 規格確認，#311）：沒有「固定配息」，「自動提前贖回」固定寫出；
+# 參考條件表 Product 是 Super Bull 時用這個樣板，其他照 [issuer.bnp.product_name]。
+zh = "法國巴黎銀行{tenor}個月期{ccy_zh}計價自動提前贖回連結{underlying_zh}股票/交易所買賣基金結構型商品(不保本)(無擔保)"
+en = "{tenor} Months {ccy} Super Bull Early Redeemable Note linked to {underlying_en} issued by BNP Paribas Issuance B.V. (unsecured)"
+memory_zh = ""
+memory_en = ""
+single_zh = "單一"
+single_en = "a Single Share/ETI"
+basket_zh = "一籃子"
+basket_en = "a Basket of Shares/ETIs"
+ccy_aliases = { CNH = "CNY" }
+normalize_brackets = true
+ignore_whitespace_en = true
 
 [issuer.sg]
 # SG：只有英文法人名；封面與第二章第 1 項(1) 兩處相同，第一章沒有出處（第 3 項寫的是保證機構；2026-10-13 確認）。

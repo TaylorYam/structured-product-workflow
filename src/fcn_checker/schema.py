@@ -290,3 +290,5 @@ class DetectionResult:
     matched: bool
     failed: list[str] = field(default_factory=list)
     evidence: list[Evidence] = field(default_factory=list)
+    # 認得出是這家上手、但不支援的範本版本（例：BNP Super Bull 舊版）：說明寫在這裡，辨識轉人工覆核、不能人工放行
+    unsupported: str = ""

@@ -127,7 +127,9 @@ def expected_slots(sched: AutocallSchedule, tenor: int | None, empty: str) -> li
     )  # D 可為 0（沒有 Non-Call）：比價日_1 = 第 1 期期始日（FCN_Express，#301）
     if not lowest <= sched.first_callable <= sched.periods:
         return f"第一個可提前出場的期別（{sched.first_callable}）不在第 {lowest}～{sched.periods} 期之間"
-    if sched.observation == "D":
+    if sched.listed:
+        callable_ = sorted(sched.dates)
+    elif sched.observation == "D":
         callable_ = sorted({max(sched.first_callable, 1), sched.periods})
     else:
         callable_ = list(range(sched.first_callable, sched.periods + 1))
@@ -229,7 +231,13 @@ def compare_dates(ctx: Context) -> tuple[CheckResult, list[CellDecision]]:
             decisions,
         )
     bad = [d for d in decisions if d.action == BackfillAction.MISMATCH]
-    rule = "D：填第一個可提前出場期與最後一期" if sched.value.observation == "D" else "P：第一個可提前出場期起每期都填"
+    rule = (
+        "評價日的月數與天期才填"
+        if sched.value.listed
+        else "D：填第一個可提前出場期與最後一期"
+        if sched.value.observation == "D"
+        else "P：第一個可提前出場期起每期都填"
+    )
     return (
         result(
             rid,

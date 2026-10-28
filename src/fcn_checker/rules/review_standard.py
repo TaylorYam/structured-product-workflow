@@ -17,6 +17,7 @@ from decimal import Decimal
 
 from ..config import ISSUER_NAME_IGNORES, NAME_FLAGS, RISK_LEVEL, RISK_LEVEL_PENDING
 from ..investor_sheet import read_iis
+from ..products import product_name
 from ..schema import CheckResult, DocKind, Evidence, FieldStatus, Item, OrderValue, ParsedField
 from ..schema import CheckStatus as S
 from ..standard_fields import AGENT_PLACES, GUARANTOR_PLACES, Occurrence, fee_field
@@ -827,11 +828,13 @@ def _name_flags(ctx: Context, used: frozenset[str]) -> tuple[dict[str, bool], Pa
 def _product_name(ctx: Context) -> list[CheckResult]:
     """用說明書的天期、幣別、是否記憶式（樣板有用到時再加標的數、KO 觀察方式）組出預期名稱後比對。
 
-    名稱樣板依上手讀取審查標準 `issuer.<上手代號小寫>.product_name`；沒有樣板時轉人工覆核。中文名稱括號全半形不計。
+    名稱樣板依上手讀取審查標準 `issuer.<上手代號小寫>.product_name`，參考條件表 Product 另有樣板時用
+    `product_names."<Product>"`（Super Bull，#311）；沒有樣板時轉人工覆核。中文名稱括號全半形不計。
     """
     rid, issuer = "standard.product_name", ctx.issuer
     items = {"name_zh": Item.standard("中文商品名稱"), "name_en": Item.standard("英文商品名稱")}
-    tpl = ctx.issuer_std.product_name
+    product = ctx.order.get("product")
+    tpl = ctx.issuer_std.product_name_for(product_name(product.value) if product is not None else None)
     if tpl is None:
         return [
             Check(rid, field, items[field], ctx.document)

@@ -17,6 +17,7 @@ from .parsers import (
     barc_iis,
     bbva_iis,
     bnp_iis,
+    bnp_super_bull_iis,
     ca_iis,
     citi_iis,
     dbs_iis,
@@ -31,6 +32,7 @@ from .parsers import (
 )
 from .parsers import bbva as bbva_parser
 from .parsers import bnp as bnp_parser
+from .parsers import bnp_super_bull as bnp_sb_parser
 from .parsers import ca as ca_parser
 from .parsers import citi as citi_parser
 from .parsers import dbs as dbs_parser
@@ -42,10 +44,13 @@ from .parsers import natixis as natixis_parser
 from .parsers import nomura as nomura_parser
 from .parsers import sg as sg_parser
 from .parsers import ubs as ubs_parser
+from .products import FCN, FCN_EXPRESS, SUPER_BULL
 from .rules import barc as barc_rules
 from .rules import bbva as bbva_rules
 from .rules import bbva_iis as bbva_iis_rules
 from .rules import bnp as bnp_rules
+from .rules import bnp_super_bull as bnp_sb_rules
+from .rules import bnp_super_bull_iis as bnp_sb_iis_rules
 from .rules import ca as ca_rules
 from .rules import ca_iis as ca_iis_rules
 from .rules import citi as citi_rules
@@ -116,6 +121,9 @@ class Issuer:
     # 讀出後用交易所假日表補上推算的欄位（CA：沒有 Non-Call 時第一個觀察日 = 發行日後下一個一籃子預定交易日，workflow #305）；
     # None → 不用補
     with_calendar: Callable[[TermSheet, TradingCalendar], TermSheet] | None = None
+    # 範本涵蓋的商品種類（參考條件表 Product 的寫法）：辨識到的範本和該列 Product 不同時轉人工覆核（#311）。同一家上手
+    # 依商品家族分成不同範本時各登記一筆（BNP FCN／Super Bull），上手代號相同；Product 空白視為 FCN
+    products: frozenset[str] = frozenset({FCN, FCN_EXPRESS})
 
 
 _IIS_SAMPLES = {
@@ -206,6 +214,29 @@ BNP = Issuer(
         read=bnp_iis.read,
         not_covered=(_IIS_SAMPLES,),
     ),
+)
+
+# BNP Super Bull（#311）：和 BNP FCN 同一家上手、不同範本；依參考條件表 Product 選用（商品種類一致檢查在辨識）
+BNP_SUPER_BULL = Issuer(
+    code=bnp_rules.ISSUER,
+    template_id=bnp_sb_parser.TEMPLATE_ID,
+    label="BNP Super Bull 中文產品說明書",
+    parser_version=bnp_sb_parser.PARSER_VERSION,
+    not_covered=tuple(bnp_sb_rules.NOT_COVERED),
+    detect=bnp_sb_parser.detect,
+    read=bnp_sb_parser.read,
+    rules=bnp_sb_rules.run_all,
+    ratings=True,
+    iis=IisTemplate(
+        template_id=bnp_super_bull_iis.TEMPLATE_ID,
+        label="BNP Super Bull 中文投資人須知",
+        parser_version=bnp_super_bull_iis.PARSER_VERSION,
+        detect=bnp_super_bull_iis.detect,
+        read=bnp_super_bull_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=bnp_sb_iis_rules.run_all,
+    ),
+    products=frozenset({SUPER_BULL}),
 )
 
 SG = Issuer(
@@ -428,7 +459,23 @@ UBS = Issuer(
     ),
 )
 
-REGISTRY: tuple[Issuer, ...] = (BARC, HSBC, MS, BNP, SG, CITI, JPM, NOMURA, GS, NATIXIS, CA, BBVA, DBS, UBS)
+REGISTRY: tuple[Issuer, ...] = (
+    BARC,
+    HSBC,
+    MS,
+    BNP,
+    BNP_SUPER_BULL,
+    SG,
+    CITI,
+    JPM,
+    NOMURA,
+    GS,
+    NATIXIS,
+    CA,
+    BBVA,
+    DBS,
+    UBS,
+)
 
 
 def by_code(code: str, registry: Sequence[Issuer] = REGISTRY) -> Issuer | None:
@@ -479,8 +526,20 @@ def _detect(
             message="同時符合多個範本，無法確定上手，請人工處理：" + "、".join(label for _, _, _, label in hits),
             item=TEMPLATE,
         )
+    old = [(i, d) for i, d, _, _ in detections if d.unsupported]
+    if len(old) == 1:  # 認得出上手、但範本版本不支援
+        _, det = old[0]
+        return None, CheckResult(
+            rule_id=rid,
+            field="template",
+            status=CheckStatus.REVIEW_REQUIRED,
+            reason_code="template_unsupported",
+            document_evidence=det.evidence,
+            message=f"{det.unsupported}；請人工核對，不能人工放行",
+            item=TEMPLATE,
+        )
     evidence: list[Evidence] = [e for _, d, _, _ in detections for e in d.evidence]
-    reasons = "；".join(f"{i.code}：" + "；".join(d.failed) for i, d, _, _ in detections)
+    reasons = "；".join(f"{label}：" + "；".join(d.failed) for _, d, _, label in detections)
     return None, CheckResult(
         rule_id=rid,
         field="template",

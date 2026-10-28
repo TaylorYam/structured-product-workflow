@@ -35,8 +35,13 @@ WRAP_LABELS = (NAME_LABEL, TICKER_LABEL, EXCHANGE_LABEL)
 ROW_STARTS = ("連結標的名", "彭博代碼", "交易所", "期初價格", "執行價格", "自動提前贖回", "下限價格", "貨幣")
 
 # 日期表：表頭（去空白、接在「j」之後）→ 表型
-DATE_HEADERS = {"配息期開始日配息期結束日配息日": "D", "自動提前贖回評價日配息日": "P"}
-DATE_KEYS = {"D": ("start", "end", "payment"), "P": ("pricing", "payment")}
+# 表頭（去空白）→ 表型：D 每日觀察、P 每期觀察；SB 為 Super Bull 只列評價日的表（範本規格 bnp-zh-super-bull.md §4.1，#311）
+DATE_HEADERS = {
+    "配息期開始日配息期結束日配息日": "D",
+    "自動提前贖回評價日配息日": "P",
+    "自動提前贖回評價日自動提前贖回日": "SB",
+}
+DATE_KEYS = {"D": ("start", "end", "payment"), "P": ("pricing", "payment"), "SB": ("pricing", "redemption")}
 NOT_APPLICABLE = "不適用"  # P 型第一個可提前出場期之前的自動提前贖回評價日
 
 FEE_PATTERNS = {  # 第四章第 2 項費用表（去空白）：費用項目名稱 → 該列費率欄的寫法
@@ -56,7 +61,7 @@ def price_table(name: str, lines: list[Line], *, with_tickers: bool) -> ParsedFi
     """
     if not lines:
         return ParsedField.missing(name, "找不到標的表")
-    lines = join_wrapped_labels(stitch_page_break(lines))
+    lines = join_wrapped_labels(stitch_page_break(split_merged_cells(lines)))
     ti = TextIndex(lines, separate_digits=True)
     found: dict[str, re.Match[str]] = {}
     for col, pattern in PRICE_LABELS:
@@ -124,6 +129,36 @@ def price_table(name: str, lines: list[Line], *, with_tickers: bool) -> ParsedFi
 
 def _row_start(ln: Line, label_x: float) -> bool:
     return abs(ln.x0 - label_x) < 2 and squash(ln.text).startswith(ROW_STARTS)
+
+
+# 一格「價格,即期初價格之X%」（原文，可含空白；百分比可能換到下一行或下一頁）
+_CELL = re.compile(r"[\d,]+\.\d{4}\s*[，,]?\s*即期初價格之(?:\s*\d+(?:\.\d+)?%)?")
+
+
+def split_merged_cells(lines: list[Line]) -> list[Line]:
+    """同一行裡有兩格以上、或列標籤後面接著格時，依每格第一個字的位置拆成多行（x0 為該格起點）。
+
+    標的表在頁尾跨頁時，同一列各格的前半可能被擷取成一行（投資人須知，#311），各格後半在下一頁；拆開後
+    `stitch_page_break` 才能依欄把後半接回。沒有逐字位置的行不拆。
+    """
+    if not lines:
+        return lines
+    label_x = lines[0].x0
+    out: list[Line] = []
+    for ln in lines:
+        spans, cells = ln.aligned_char_spans, list(_CELL.finditer(ln.text))
+        labelled = abs(ln.x0 - label_x) < 2 and bool(cells) and bool(ln.text[: cells[0].start()].strip())
+        if not spans or not (len(cells) >= 2 or labelled):
+            out.append(ln)
+            continue
+        cuts = [m.start() for m in cells]
+        cuts = [0, *cuts] if labelled else [0, *cuts[1:]]
+        for a, b in zip(cuts, [*cuts[1:], len(ln.text)], strict=True):
+            piece = ln.text[a:b]
+            k, e = a + len(piece) - len(piece.lstrip()), a + len(piece.rstrip())
+            if k < e:
+                out.append(replace(ln, x0=spans[k][0], x1=spans[e - 1][1], text=ln.text[k:e], char_spans=spans[k:e]))
+    return out
 
 
 def stitch_page_break(lines: list[Line]) -> list[Line]:
@@ -230,11 +265,12 @@ def ticker_lines(lines: list[Line]) -> list[Line]:
 
 
 def date_table(lines: list[Line]) -> ParsedField:
-    """第 14 項日期表：表頭「j」之後的表頭格決定表型（D 配息期開始日／結束日／配息日、P 自動提前贖回評價日／配息日）；
+    """第 14 項日期表：表頭「j」之後的表頭格決定表型（D 配息期開始日／結束日／配息日、P 自動提前贖回評價日／配息日、
+    SB 自動提前贖回評價日／自動提前贖回日）；
     資料列到下一個「(n)」子項為止。P 型自動提前贖回評價日可為「不適用」。
 
     值：{"type": "D"|"P", "rows": [各列 dict], "row_lines": [各列原文行]}；D 列為 period／start／end／payment，
-    P 列為 period／pricing（None 為不適用）／payment。
+    P 列為 period／pricing（None 為不適用）／payment，SB 列為 period／pricing／redemption（都要是日期）。
     """
     name = "date_table"
     heads = [i for i, ln in enumerate(lines) if squash(ln.text) == "j"]
@@ -246,7 +282,7 @@ def date_table(lines: list[Line]) -> ParsedField:
     header_cells = [squash(ln.text) for ln in lines[heads[0] + 1 : first]]
     kind = DATE_HEADERS.get("".join(header_cells))
     if kind is None:
-        return ParsedField.invalid(name, lines[heads[0] : first], "日期表表頭不是已知的兩種寫法")
+        return ParsedField.invalid(name, lines[heads[0] : first], "日期表表頭不是已知的寫法")
     end = next((i for i in range(first, len(lines)) if re.match(r"^[(（]\d{1,2}[)）]", lines[i].text)), len(lines))
     rows: list[dict] = []
     row_lines: list[list[Line]] = []

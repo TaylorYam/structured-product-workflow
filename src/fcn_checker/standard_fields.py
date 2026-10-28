@@ -76,6 +76,8 @@ class AutocallSchedule:
     first_callable: int  # 第一個可以提前出場的期別（Non-Call(月)）；P 最小為 1，D 為 0 時從第 1 期期始日開始比價
     periods: int  # 期數
     dates: dict[int, dt.date]  # 期別 → 比價日；D 只有第 k 期與末期（k = 0 時第 1 期放期始日），P 為第 k 期起的每一期
+    # True：只有 `dates` 列出的期別有比價日（Super Bull：評價日的月數與天期，其他格空白，#311）
+    listed: bool = False
 
 
 @dataclass(frozen=True)

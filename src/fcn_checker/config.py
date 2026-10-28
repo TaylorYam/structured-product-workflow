@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from .ingestion import IngestionError
+from .products import SUPPORTED_PRODUCTS, product_name
 from .standard_fields import AGENT_PLACES, GUARANTOR_PLACES
 from .trading_calendar import Market, TradingCalendar
 
@@ -127,6 +128,12 @@ class IssuerStandard:
     redemption_start_wordings: tuple[str, ...] = ()
     osu_clients: bool = True  # 可否承作 OSU 客戶（issuer.<上手>.osu_clients；沒寫為可以，Issue #224）
     distributor_name_exempt: tuple[str, ...] = ()  # 全文受託機構名稱特例放行的寫法（CA，Issue #226）
+    # 商品種類 → 該商品的名稱樣板（issuer.<上手>.product_names."<Product>"；沒列的商品用 product_name，Super Bull #311）
+    product_names: dict[str, ProductNameTemplate] = field(default_factory=dict)
+
+    def product_name_for(self, product: str | None) -> ProductNameTemplate | None:
+        """參考條件表 Product（支援的商品種類寫法；None 為空白或不認得）適用的名稱樣板。"""
+        return self.product_names.get(product, self.product_name) if product is not None else self.product_name
 
 
 @dataclass(frozen=True)
@@ -185,6 +192,7 @@ class ReviewStandard:
             issuer_name=v.get("issuer_name"),
             issuer_name_ignore=v.get("issuer_name_ignore", frozenset()),
             product_name=v.get("product_name"),
+            product_names=dict(v.get("product_names", {})),
             distributor_name=self.distributor_name,
             distributor_phone=self.distributor_phone,
             distributor_phone_equivalents=self.distributor_phone_equivalents,
@@ -401,6 +409,19 @@ def _product_name(n: dict[str, Any], where: str) -> ProductNameTemplate:
     return tpl
 
 
+def _product_names(n: Any, where: str) -> dict[str, ProductNameTemplate]:
+    """商品種類（參考條件表 Product 的寫法，須是支援的商品種類）→ 名稱樣板。"""
+    if not isinstance(n, dict) or not all(isinstance(v, dict) for v in n.values()):
+        raise _fail(f'審查標準 {where} 須是「商品種類 → 名稱樣板」的子表（例：[{where}."Super Bull"]）')
+    out = {}
+    for key, tpl in n.items():
+        product = product_name(key)
+        if product is None or product != key:
+            raise _fail(f"審查標準 {where} 的「{key}」不是支援的商品種類寫法（可用：{SUPPORTED_PRODUCTS}）")
+        out[product] = _product_name(tpl, f"{where}.{key}")
+    return out
+
+
 # 每家上手一張表 [issuer.<上手代號小寫>] 的欄位與讀法（schema 只在這裡宣告，Issue #128）：新上手只在審查標準加一張表，
 # 不改程式。讀法收（值, 位置）回傳解析後的值；沒寫的欄位用共用值，或視為該上手沒有這項基準（見 ReviewStandard.for_issuer）。
 ISSUER_FIELDS: dict[str, Callable[[Any, str], Any]] = {
@@ -417,6 +438,7 @@ ISSUER_FIELDS: dict[str, Callable[[Any, str], Any]] = {
     "guarantor_name_equivalents": _texts,  # 投資人須知相關機構的保證機構名稱其他寫法
     "redemption_start_wordings": _texts,  # 開始受理贖回日期允許的文字寫法；沒有 → 寫文字時轉人工覆核
     "product_name": _product_name,  # 子表 [issuer.<上手>.product_name]：商品名稱樣板；沒有 → 轉人工覆核
+    "product_names": _product_names,  # 子表 [issuer.<上手>.product_names."<Product>"]：依商品種類的名稱樣板（#311）
     "guarantor_name": _place_texts(GUARANTOR_PLACES),  # 子表：出處 → 保證機構名稱；沒有 → 不核對
     "agent_name": _place_texts(AGENT_PLACES),  # 子表：出處 → 總代理人名稱；沒有 → 不核對
     "min_amount_multiples": _min_amount_multiples,  # 子表：最低金額出處 → 單位面額的倍數；沒列為 1

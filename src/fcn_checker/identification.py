@@ -5,10 +5,12 @@
 0. 檔名（不含副檔名）須為 `<12 位商品代號>_TS`（說明書）或 `<12 位商品代號>_IIS`（投資人須知）；
    其他 → 檔名無法辨識（人工覆核、不能放行）。
 1. 檔名前三碼（上手編號）查上手編號對照 → 上手；不在對照表或上手沒有該種文件的範本 → 未支援上手。
-2. 內容辨識出的上手必須與檔名一致；說明書封面商品代號也要等於檔名的商品代號，否則轉人工覆核。
+2. 內容辨識出的上手必須與檔名一致；說明書封面商品代號也要等於檔名的商品代號，否則轉人工覆核。同一家上手依商品家族
+   分成多個範本時（BNP FCN／Super Bull），以辨識到的範本為準。
 3. 以商品代號找參考條件表的列（TDCC Code）；表上有發行機構欄時，該列發行機構必須是此上手的寫法。
-4. 對到列後判斷樣態（variants.py）：參考條件表該列的 Product 沒開放給這家上手自動核對（#302），或該列、這份與
-   同商品另一份明確讀出的值任一邊是該上手的不支援樣態 → 不支援樣態（人工覆核、不跑規則、不能放行；同商品兩份都是）。
+4. 對到列後判斷樣態（variants.py）：參考條件表該列的 Product 沒開放給這家上手自動核對（#302）、辨識到的範本不涵蓋
+   該列 Product（#311）、該列不是這種商品支援的樣態（Super Bull），或該列、這份與同商品另一份明確讀出的值任一邊是
+   該上手的不支援樣態 → 不支援樣態（人工覆核、不跑規則、不能放行；同商品兩份都是）。
 5. 同一商品代號（檔名）的說明書與投資人須知配成一組；同種文件有多份時，對到列的全部轉人工覆核，不核對也不回填。
 6. 這批只有說明書或只有投資人須知、且已對到列時，那一份轉人工覆核（這批缺另一份），不能人工放行。
    另一份在這批裡但本身配對失敗（例：未支援上手、範本不符）時不算缺，但那份沒通過，說明書就不回填。
@@ -34,6 +36,7 @@ from .ingestion import IngestionError, error_result, open_pdf
 from .investor_sheet import IisSheet
 from .issuers import Issuer, by_code, detect, detect_iis
 from .orders.reference import SOURCE, OrderRecord, ReferenceSheet
+from .products import FCN, product_name
 from .rules.kit import doc_review, read_standard
 from .schema import CheckResult, CheckStatus, DocKind, Evidence, Item, ParsedField
 from .standard_fields import TermSheet
@@ -42,6 +45,8 @@ from .variants import (
     Variant,
     investor_sheet_terms,
     opened_products,
+    product_terms_problems,
+    product_terms_text,
     row_terms,
     term_sheet_terms,
     unopened_product,
@@ -60,6 +65,7 @@ class PairingProblem(StrEnum):
     UNSUPPORTED = "issuer_unsupported"
     TEMPLATE_UNKNOWN = "template_unknown"
     TEMPLATE_AMBIGUOUS = "template_ambiguous"
+    TEMPLATE_UNSUPPORTED = "template_unsupported"  # 認得出上手、但範本版本不支援（例：BNP Super Bull 舊版，#311）
     PREFIX_MISMATCH = "issuer_prefix_mismatch"
     UNEXPECTED = "unexpected_error"  # 上手讀出或辨識時的非預期錯誤
     PRODUCT_CODE_UNREADABLE = "product_code_unreadable"  # 說明書封面商品代號讀不到
@@ -236,11 +242,11 @@ def _draft(pdf: Path, sheet: ReferenceSheet, config: CheckConfig) -> _Draft:
     if detected is None:  # 範本不符或多重命中：原因碼就是配對問題的值
         return out.stop(PairingProblem(template_result.reason_code), template_result)
     out.template = template_result
-    if detected is not issuer:
+    if detected.code != issuer.code:
         problem = PairingProblem.PREFIX_MISMATCH
         msg = f"檔名上手編號 {prefix} 對應 {issuer.code}，但{what}內容是 {detected.code} 範本，可能檔名取錯或檔案放錯"
         return out.stop(problem, _review("batch.issuer_prefix", "issuer", _ISSUER_ITEM, problem, msg, detected.code))
-    out.adapter = issuer
+    out.adapter = issuer = detected  # 同一家上手可能有多個範本（商品家族），用辨識到的那個
     try:
         if issuer.iis is not None and out.kind == DocKind.IIS:
             out.investor_sheet = issuer.iis.read(lines)
@@ -390,6 +396,8 @@ def _variant(d: _Draft) -> CheckResult | None:
     if product is not None:
         msg = f"{d.issuer} 還沒開放「{product}」自動核對（{SOURCE} Product）；請人工核對，不能人工放行"
         return _review("batch.variant", "variant", _VARIANT_ITEM, PairingProblem.UNSUPPORTED_VARIANT, msg)
+    if (family := _product_family(d, product_value.value if product_value else None)) is not None:
+        return family
     docs = [x for x in (d, d.partner) if x is not None and x.terms is not None and x.problem is None]
     docs.sort(key=lambda x: x.kind != DocKind.TERM_SHEET)  # 出處依參考條件表、說明書、投資人須知
     found = unsupported([(SOURCE, d.row_terms), *(x.terms for x in docs)], d.unsupported_variants)
@@ -398,6 +406,26 @@ def _variant(d: _Draft) -> CheckResult | None:
     parts = "、".join(f"「{v.label}」（{'、'.join(names)}）" for v, names in found.items())
     msg = f"{d.issuer} 不支援{parts}；這個樣態沒有範本可以核對，不能人工放行"
     return _review("batch.variant", "variant", _VARIANT_ITEM, PairingProblem.UNSUPPORTED_VARIANT, msg)
+
+
+def _product_family(d: _Draft, product_value: Any) -> CheckResult | None:
+    """辨識到的範本涵蓋的商品種類要包含該列 Product（空白視為 FCN），Super Bull 另限定樣態（#311）；不符時人工覆核、不能放行。"""
+    if d.adapter is None:
+        return None
+    product = product_name(product_value) or FCN
+    if product not in d.adapter.products:
+        shown = product_value.strip() if isinstance(product_value, str) and product_value.strip() else "空白（FCN）"
+        tpl = d.adapter.iis if d.kind == DocKind.IIS else None
+        label, tid = (tpl.label, tpl.template_id) if tpl is not None else (d.adapter.label, d.adapter.template_id)
+        msg = (
+            f"{SOURCE} Product 是「{shown}」，但文件是 {label} 範本（{tid}）；商品種類不一致，請人工核對，不能人工放行"
+        )
+        return _review("template.product_family", "product", _VARIANT_ITEM, PairingProblem.UNSUPPORTED_VARIANT, msg)
+    bad = product_terms_problems(product, d.row, d.row_terms)
+    if bad:
+        msg = f"{d.issuer} {product} 只支援 {product_terms_text(product)}，{SOURCE} 是 {'、'.join(bad)}；請人工核對，不能人工放行"
+        return _review("batch.variant", "variant", _VARIANT_ITEM, PairingProblem.UNSUPPORTED_VARIANT, msg)
+    return None
 
 
 def _freeze(d: _Draft) -> Identification:

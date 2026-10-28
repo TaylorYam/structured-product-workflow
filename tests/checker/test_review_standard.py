@@ -311,6 +311,8 @@ def test_phone_form_not_listed_in_standard_is_mismatch(tmp_path):
         (f"{NOMURA_COUNT}2\n", f'{NOMURA_COUNT}"2"\n', "issuer.nomura.fixed_warning_occurrences"),
         # UBS 分節（Issue #279）：名稱用了 {ko_observation_*} 就要有每日與每期兩種寫法
         ('periodic_zh = "定期觀察"\n', "", "periodic_zh"),
+        # BNP 依商品種類的名稱樣板（#311）：鍵須是支援的商品種類寫法
+        ('[issuer.bnp.product_names."Super Bull"]', '[issuer.bnp.product_names."Super Bear"]', "Super Bear"),
     ],
 )
 def test_invalid_ms_review_standard_is_a_batch_config_error(tmp_path, old, new, where):
