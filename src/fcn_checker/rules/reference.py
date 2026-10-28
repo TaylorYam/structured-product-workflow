@@ -17,6 +17,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from ..orders.reference import UNDERLYING_SLOTS
+from ..products import FCN, PRODUCT_RULES, product_name
 from ..schema import CheckResult, DocKind, Evidence, FieldStatus, Item, OrderValue, ParsedField
 from ..schema import CheckStatus as S
 from ..standard_fields import AutocallSchedule, Occurrence
@@ -46,10 +47,12 @@ __all__ = [
     "field_rules",
     "first_callable_period",
     "is_vwap",
+    "non_call_product",
     "sheet_slots",
 ]
 
 PCT_TOLERANCE = "依說明書顯示位數四捨五入後比對"
+NON_CALL_MESSAGE = "Non-Call(月) = 第一個可以提前出場的期別（FCN 最小為 1；FCN_Express 為 0，從第 1 期期始日開始比價）"
 OBS_LABEL = {"D": "期間每日觀察", "P": "期末定日觀察"}
 UNDERLYINGS = "標的"  # UL_1～UL_5 合起來核對，項目用這個名稱
 PRICE_COLUMNS = (  # 價格欄（`OrderRecord.price` 的鍵）與核對結果欄位用的中文
@@ -678,4 +681,30 @@ def first_callable_period(ctx: Context) -> CheckResult:
     if (problem := check.blocked) is not None:
         return problem
     s: AutocallSchedule = sched.value
-    return check.compare(v, s.first_callable, message="Non-Call(月) = 第一個可以提前出場的期別（最小為 1）")
+    return check.compare(v, s.first_callable, message=NON_CALL_MESSAGE)
+
+
+def non_call_product(ctx: Context) -> CheckResult:
+    """說明書推得的 Non-Call 須符合參考條件表的商品種類（`products.PRODUCT_RULES`：FCN 至少 1、FCN_Express 為 0，#304）；
+    不符合時待確認（資料庫的商品種類或說明書可能有一邊錯）。所有上手共用；Product 空白或表上沒有這欄時照 FCN
+    （同核對分流）。說明書讀不到提前出場排程時不適用（由 `first_callable_period` 轉人工覆核）。"""
+    rid, key, sched = "field.non_call_product", "first_callable_period", standard_field(ctx, "autocall_schedule")
+    ov = ctx.order.get("product")
+    text = ov.value if ov is not None else None
+    product = product_name(text) if isinstance(text, str) and text.strip() else FCN
+    check = _column(ctx, rid, key, "Product", ov, product)
+    rule = PRODUCT_RULES.get(product) if product else None
+    if rule is None or not sched.ok:
+        why = f"{text} 沒有 Non-Call 規則" if rule is None else f"{ctx.document}讀不到提前出場排程"
+        return check.result(S.NOT_APPLICABLE, expected=product, message=f"{why}，不檢查")
+    k = sched.value.first_callable
+    problem = rule.non_call_problem(k)
+    return check.result(
+        S.REVIEW_REQUIRED if problem else S.PASS,
+        expected=product,
+        actual=f"Non-Call {k}",
+        reason="non_call_product" if problem else "",
+        message=f"商品種類 {product}，{ctx.document}推得 Non-Call {k}"
+        + (f"：{problem}，請確認商品種類或說明書" if problem else ""),
+        evidence=sched.evidence,
+    )

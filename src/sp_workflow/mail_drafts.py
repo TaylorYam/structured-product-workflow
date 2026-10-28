@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING, Any
 
 from openpyxl.utils import get_column_letter
 
+from fcn_checker.products import SUPPORTED_PRODUCTS
 from sp_workflow.daily_import import ImportInfo, latest_import
 from sp_workflow.database import OperatorError, load_env_file
 from sp_workflow.file_tools import save_book, table_book, tdcc_as_text
@@ -39,7 +40,6 @@ from sp_workflow.product_record import (
     PRICING_FIELD,
     REQUIRED,
     STRIKE_FIELD,
-    SUPPORTED_PRODUCTS,
     invert_upfront,
     missing_fields,
 )

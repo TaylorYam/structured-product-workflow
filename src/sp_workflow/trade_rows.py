@@ -131,7 +131,7 @@ def load_trade_rows(conn: psycopg.Connection, tdcc: str) -> TradeRowsDraft:
 
 
 def trade_product(conn: psycopg.Connection, tdcc: str) -> str | None:
-    """這檔第一列交易明細的商品種類（每日匯入只收支援的商品，存的是 `product_record.PRODUCT_RULES` 的寫法）。"""
+    """這檔第一列交易明細的商品種類（每日匯入只收支援的商品，存的是 `fcn_checker.products.PRODUCT_RULES` 的寫法）。"""
     found = conn.execute(
         "SELECT product FROM workflow.trade_row WHERE tdcc = %s ORDER BY row_seq LIMIT 1", (tdcc,)
     ).fetchone()

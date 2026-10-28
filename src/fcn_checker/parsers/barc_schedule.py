@@ -334,7 +334,8 @@ def date_table(coupon: ParsedField, ko: ParsedField, ko_observation: ParsedField
 def first_callable(f: Callable[[str], ParsedField]) -> ParsedField:
     """第一個可提前出場期：D = 保證配息期 G（第 G 期期始日 N/A、期末日起可提前出場），P = G + 1。
 
-    G 須和 §13(7) 定義句推得的一致；D 型第 1 期期始日就有日期（G = 0，從第一天開始比價）尚無已確認的填法，不合法。
+    G 須和 §13(7) 定義句推得的一致。D 型第 1 期期始日就有日期（G = 0，從第一天開始比價）為 0：沒有 Non-Call，
+    比價日_1 = 第 1 期期始日（FCN_Express，#301）。
     """
     name = "first_callable_period"
     obs, g, text = (f(k) for k in ("ko_observation", "guaranteed_periods", "guaranteed_periods_text"))
@@ -344,9 +345,6 @@ def first_callable(f: Callable[[str], ParsedField]) -> ParsedField:
     if text.ok and text.value != g.value:
         note = "提前出場表與 §13(7) 定義句推得的保證配息期不同"
         return ParsedField(name, FieldStatus.INVALID, None, g.evidence + text.evidence, note=note)
-    if obs.value == "D" and g.value == 0:
-        note = "第 1 期期始日就有日期（從第一天開始比價），比價日填法尚未確認"
-        return ParsedField(name, FieldStatus.INVALID, None, list(g.evidence), note=note)
     return ParsedField(name, FieldStatus.PRESENT, g.value if obs.value == "D" else g.value + 1, list(g.evidence))
 
 

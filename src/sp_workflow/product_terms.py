@@ -39,6 +39,7 @@ from enum import Enum
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Protocol
 
+from fcn_checker.products import PRODUCT_RULES, SUPPORTED_PRODUCTS, product_name
 from sp_workflow import import_run
 from sp_workflow.check_terms import CalcLine, UnderlyingPrice, recalculate, recalculate_corrected
 from sp_workflow.database import OperatorError, require_in_transaction
@@ -52,17 +53,14 @@ from sp_workflow.product_record import (
     PRICE_COLUMNS,
     PRICING_FIELD,
     PRODUCT_COLUMNS,
-    PRODUCT_RULES,
     REQUIRED,
     STRIKE_FIELD,
-    SUPPORTED_PRODUCTS,
     TRADE_FIELD,
     UNDERLYINGS,
     FieldKind,
     columns_of,
     fields_of,
     missing_fields,
-    product_name,
     same_value,
     to_json,
 )

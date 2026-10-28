@@ -2,7 +2,7 @@
 
 每日匯入以前把 FCN 以外的商品略過（記在 `workflow.other_product`），開始支援之後要把既有的一次補進來。「維護」選單
 讀一份參考條件表格式的 Excel（例如 `FCN外商品數量.xlsx`），每一檔建立鎖住的商品條件與比價要用的資料：
-- 範圍：Product 是支援的商品種類（`product_record.PRODUCT_RULES`）、而且不是 FCN 的列；其他列只計數，
+- 範圍：Product 是支援的商品種類（`fcn_checker.products.PRODUCT_RULES`）、而且不是 FCN 的列；其他列只計數，
   Product 空白的不知道是哪種商品，不匯入、列出來。
 - 商品條件照起單資料匯入的檢查（`product_terms.create_backfilled`），來源「歷史回補」、建立時就鎖住：
   KO(Freq)＋KO(memo) → KO Type、KI(Freq) → Barrier Type、UF → Upfront / NotePrice；沒有 Non-Call 的商品
@@ -41,6 +41,7 @@ from fcn_checker.orders.reference import (
     price_key,
     underlying_key,
 )
+from fcn_checker.products import FCN, PRODUCT_RULES, product_name
 from sp_workflow import import_run
 from sp_workflow.check_terms import DONE
 from sp_workflow.database import OperatorError
@@ -56,17 +57,14 @@ from sp_workflow.legacy_backfill import (
 )
 from sp_workflow.order_terms import describe
 from sp_workflow.product_record import (
-    FCN,
     KI_CODES,
     KO_CODES,
     PRICING_FIELD,
-    PRODUCT_RULES,
     STRIKE_FIELD,
     TRADE_FIELD,
     UNDERLYINGS,
     UPFRONT_FIELD,
     invert_upfront,
-    product_name,
 )
 from sp_workflow.product_terms import create_backfilled, read, read_many
 

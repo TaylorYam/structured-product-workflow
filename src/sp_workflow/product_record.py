@@ -2,8 +2,6 @@
 
 讀寫 `workflow.product` 的地方（起單資料讀取 `order_terms`、確認、寫入與人工維護 `product_terms`、
 核對條件 `check_terms`、核對讀資料庫 `check_source`、寄信草稿 `mail_drafts`）都從這裡拿欄位與轉換，不各自維護。對外：
-- `PRODUCT_RULES`／`product_name`／`SUPPORTED_PRODUCTS`：支援的商品種類與各自的 Non-Call 規則（#302、ADR 0027）；交易明細、起單建檔的
-  Product 不分大小寫對到這裡的寫法，對不到的不支援。
 - `PRODUCT_COLUMNS`：資料庫的商品欄（TDCC、ISIN、來源、鎖住時間這類不是商品條件的欄不在內）。
 - `FIELDS`／`KINDS`／`CHOICES`：畫面的欄（依起單建檔的順序）、型別與選項；`REQUIRED`：必填欄。
 - `COLUMN_FIELDS`：資料庫的欄 → 畫面的欄；`DERIVED_COLUMNS`：沒有對應畫面欄的資料庫欄 → 說明用的名稱。
@@ -14,7 +12,8 @@
 
 `REQUIRED` 與欄位對照放在這裡、不放在 `product_terms`：`check_terms` 也要用，
 而它被 `product_terms` import，放在寫入那邊會循環 import（ADR 0016 當時因此搬到 `order_terms`，#126 再收到這裡）。
-這個 module 不 import 任何 `sp_workflow` module；商品種類與紀錄用的 `to_json` 也在這裡（#201）。
+這個 module 不 import 任何 `sp_workflow` module；紀錄用的 `to_json` 也在這裡（#201）；商品種類與 Non-Call 規則在
+`fcn_checker.products`（核對也用，#304）。
 
 畫面上的 Upfront / NotePrice (%) 是價格，資料庫存 UF = 100 − 價格（`invert_upfront`，兩個方向一樣）。
 """
@@ -24,42 +23,16 @@ from __future__ import annotations
 import datetime as dt
 import json
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Any
 
-FCN = "FCN"  # 商品種類（#201）
-FCN_EXPRESS = "FCN_Express"  # 沒有 Non-Call 的每日記憶式 FCN（#302、ADR 0027）
+from fcn_checker.products import product_name
+
 UPFRONT_FIELD = "Upfront / NotePrice (%)"
 TRADE_FIELD = "Trade date"
 STRIKE_FIELD = "Strike date"
 PRICING_FIELD = "期初價格"
-
-
-@dataclass(frozen=True)
-class ProductRule:
-    """一種商品種類的條件規則。"""
-
-    name: str
-    has_non_call: bool = True  # False：沒有 Non-Call，Guaranteed Periods (m) 一定是 0（FCN_Express）
-
-    def non_call_problem(self, months: int) -> str:
-        """Guaranteed Periods (m) 不符合這種商品時的說明；符合時空字串。"""
-        if not self.has_non_call:
-            return "" if months == 0 else f"{self.name} 沒有 Non-Call，要填 0"
-        return "" if months >= 1 else "至少 1"
-
-
-# 支援的商品種類（依加入的順序）；新增商品時在這裡加一筆，訂它自己的規則
-PRODUCT_RULES = {rule.name: rule for rule in (ProductRule(FCN), ProductRule(FCN_EXPRESS, has_non_call=False))}
-_PRODUCT_NAMES = {name.upper(): name for name in PRODUCT_RULES}
-SUPPORTED_PRODUCTS = "、".join(PRODUCT_RULES)  # 錯訊用：目前只做這些商品種類
-
-
-def product_name(text: object) -> str | None:
-    """交易明細、起單建檔的 Product → 支援的商品種類的寫法（不分大小寫、不看頭尾空白）；不支援時 None。"""
-    return _PRODUCT_NAMES.get(text.strip().upper()) if isinstance(text, str) else None
 
 
 class FieldKind(Enum):
@@ -183,7 +156,7 @@ def columns_of(
     """畫面的值 → 資料庫商品欄位（依 `PRODUCT_COLUMNS` 的順序）。
 
     `issuer` 是發行機構的寫法；`denominations` 是幣別 → 單位面額預設值。空白的欄（人工維護，#115）寫空白，
-    換算的代碼與單位面額也是空白；商品種類存 `PRODUCT_RULES` 的寫法（不支援的存空白，寫入前已由檢查擋下）。
+    換算的代碼與單位面額也是空白；商品種類存 `fcn_checker.products.PRODUCT_RULES` 的寫法（不支援的存空白，寫入前已由檢查擋下）。
     """
     columns: dict[str, object] = {}
     for column, name in COLUMN_FIELDS.items():

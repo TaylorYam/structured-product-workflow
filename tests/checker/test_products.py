@@ -16,6 +16,7 @@ from harness import CONFIG, ISSUER_PREFIXES, load_config, with_iis
 from reference_synth import build_reference_sheet, reference_row
 
 REVIEW = CheckStatus.REVIEW_REQUIRED
+EXPRESS_OPENED = '\nFCN_Express = ["BARC"]\n'
 
 
 def prefixes_with(tmp_path: Path, old: str, new: str) -> Path:
@@ -29,17 +30,17 @@ def prefixes_with(tmp_path: Path, old: str, new: str) -> Path:
 # ---------------------------------------------------------------- 設定檔
 
 
-def test_repo_table_opens_fcn_everywhere_and_express_nowhere_yet():
+def test_repo_table_opens_fcn_everywhere_and_express_for_barclays():
     issuers = frozenset(CONFIG.issuer_prefixes.values())
 
-    assert CONFIG.auto_check_products == {"FCN": issuers, "FCN_Express": frozenset()}
+    assert CONFIG.auto_check_products == {"FCN": issuers, "FCN_Express": frozenset({"BARC"})}  # #304
 
 
 @pytest.mark.parametrize(
     ("old", "new", "message"),
     [
-        ("\nFCN_Express = []\n", '\nFCN_Express = ["FAKE"]\n', "FCN_Express 有上手編號對照沒有的上手：FAKE"),
-        ("\nFCN_Express = []\n", '\nFCN_Express = "BARC"\n', "FCN_Express 須是上手代號的清單"),
+        (EXPRESS_OPENED, '\nFCN_Express = ["FAKE"]\n', "FCN_Express 有上手編號對照沒有的上手：FAKE"),
+        (EXPRESS_OPENED, '\nFCN_Express = "BARC"\n', "FCN_Express 須是上手代號的清單"),
         ("[auto_check_products]", "[products]", "[auto_check_products]不存在"),
     ],
 )
@@ -70,7 +71,8 @@ def product_result(item):
 
 @pytest.mark.parametrize("product", ["FCN_Express", "BEN"])
 def test_products_not_opened_for_the_issuer_stop_both_documents(tmp_path, product):
-    outcome = run(tmp_path, {"Product": product})
+    config = load_config(issuer_prefixes=prefixes_with(tmp_path, EXPRESS_OPENED, "\nFCN_Express = []\n"))
+    outcome = run(tmp_path, {"Product": product}, config)
     message = f"樣態：BARC 還沒開放「{product}」自動核對（參考條件表 Product）；請人工核對，不能人工放行"
 
     for item in outcome.items:
@@ -90,7 +92,6 @@ def test_fcn_and_a_blank_product_are_checked_as_usual(tmp_path, product):
 
 
 def test_opening_a_product_for_the_issuer_lets_it_through(tmp_path):
-    config = load_config(issuer_prefixes=prefixes_with(tmp_path, "\nFCN_Express = []\n", '\nFCN_Express = ["BARC"]\n'))
-    outcome = run(tmp_path, {"Product": "FCN_Express"}, config)
+    outcome = run(tmp_path, {"Product": "FCN_Express"})  # 設定檔開放 BARC（#304）
 
     assert not any(r.rule_id == "batch.variant" for i in outcome.items for r in i.report.results)

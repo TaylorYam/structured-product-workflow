@@ -122,10 +122,13 @@ def expected_slots(sched: AutocallSchedule, tenor: int | None, empty: str) -> li
         return f"說明書提前出場表有 {sched.periods} 期，與天期 {tenor} 個月不同，比價日無法對應到格子"
     if sched.periods > SLOTS:
         return f"說明書有 {sched.periods} 期，超過參考條件表的 {SLOTS} 格比價日"
-    if not 1 <= sched.first_callable <= sched.periods:
-        return f"第一個可提前出場的期別（{sched.first_callable}）不在第 1～{sched.periods} 期之間"
+    lowest = (
+        0 if sched.observation == "D" else 1
+    )  # D 可為 0（沒有 Non-Call）：比價日_1 = 第 1 期期始日（FCN_Express，#301）
+    if not lowest <= sched.first_callable <= sched.periods:
+        return f"第一個可提前出場的期別（{sched.first_callable}）不在第 {lowest}～{sched.periods} 期之間"
     if sched.observation == "D":
-        callable_ = sorted({sched.first_callable, sched.periods})
+        callable_ = sorted({max(sched.first_callable, 1), sched.periods})
     else:
         callable_ = list(range(sched.first_callable, sched.periods + 1))
     missing = [n for n in callable_ if n not in sched.dates]

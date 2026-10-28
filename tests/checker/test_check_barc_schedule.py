@@ -9,7 +9,7 @@ import datetime as dt
 
 import pytest
 
-from barc_synth import Spec, check
+from barc_synth import Spec, check, next_weekday
 from fcn_checker.schema import CheckStatus
 from harness import MISMATCH, PASS, REVIEW, problems, results
 from pdf_writer import Edit
@@ -55,10 +55,35 @@ def test_schedule_variants_pass(tmp_path, spec, non_call):
     assert [r.status for r in starts] == ([PASS] if spec.ko_obs == "D" else [])
 
 
-def test_daily_observation_from_first_day_requires_review(tmp_path):
-    # 第 1 期期始日就有日期（S08、S10 型）：說明書內部規則照常通過，Non-Call 與比價日轉人工覆核
-    report = check(tmp_path, Spec(ko_obs="D", memory=True, guaranteed=0), overrides={"Non-Call(月)": 1})
-    assert problems(report) == {("field.first_callable_period", REVIEW), ("backfill.compare_dates", REVIEW)}
+EXPRESS = {"Product": "FCN_Express"}
+
+
+@pytest.mark.parametrize("memory", [True, False], ids=["memory", "combined"])
+def test_express_compares_from_the_first_period_start(tmp_path, memory):
+    # FCN_Express（G = 0，第 1 期期始日就有日期）：Non-Call 0、比價日_1 = 第 1 期期始日、最後一格 = 最終評價日（#301）
+    spec = Spec(ko_obs="D", memory=memory, guaranteed=0)
+    report = check(tmp_path, spec, overrides=EXPRESS)
+    assert problems(report) == set()
+    assert results(report, "field.first_callable_period")[0].actual == 0
+    assert results(report, "field.non_call_product")[0].status == PASS
+    slots = {d.column: d.expected for d in report.backfill if d.column.startswith("比價日_")}
+    assert slots["比價日_1"] == next_weekday(spec.issue_date) and slots[f"比價日_{spec.tenor}"] == spec.final_date
+    assert {v for k, v in slots.items() if k not in ("比價日_1", f"比價日_{spec.tenor}")} == {"-"}
+
+
+@pytest.mark.parametrize(
+    ("spec", "product", "sheet_non_call"),
+    [
+        pytest.param(Spec(guaranteed=0), "FCN", 0, id="fcn-from-first-day"),
+        pytest.param(Spec(guaranteed=1), "FCN_Express", 1, id="express-with-non-call"),
+    ],
+)
+def test_non_call_must_fit_the_product(tmp_path, spec, product, sheet_non_call):
+    # 說明書推得的 Non-Call 不符合商品種類（FCN ≥ 1、FCN_Express = 0）：待確認，寫出商品種類與說明書推得的值
+    report = check(tmp_path, spec, overrides={"Product": product, "Non-Call(月)": sheet_non_call})
+    assert problems(report) == {("field.non_call_product", REVIEW)}
+    r = results(report, "field.non_call_product")[0]
+    assert product in r.message and f"Non-Call {spec.first_callable}" in r.message
 
 
 def test_not_covered_only_lists_deferred_rules(tmp_path):

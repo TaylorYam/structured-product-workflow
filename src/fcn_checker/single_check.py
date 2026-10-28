@@ -91,6 +91,7 @@ def check_document(pairing: Sequence[CheckResult], paired: Paired | None, config
         if paired.issuer.ratings:
             results.extend(ratings.run(ctx))
         results.append(reference.first_callable_period(ctx))
+        results.append(reference.non_call_product(ctx))
         decisions, backfill_results = [], []
         rules = (
             backfill.checked_marks,

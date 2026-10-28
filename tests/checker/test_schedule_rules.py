@@ -226,6 +226,21 @@ def test_daily_schedule_keeps_only_the_first_callable_and_last_period():
     assert out["ko_observation"].value == "D" and out["first_callable_period"].value == 2
 
 
+def test_daily_schedule_from_the_first_day_compares_from_the_first_period_start():
+    # 沒有 Non-Call（k = 0，FCN_Express）：比價日放第 1 期期始日與末期（#301）
+    out = autocall_schedule(present("ko_observation", "D"), present("first_callable_period", 0), TABLE)
+    assert out["autocall_schedule"].value == AutocallSchedule("D", 0, 3, {1: D(2030, 1, 7), 3: D(2030, 4, 4)})
+    periodic = autocall_schedule(present("ko_observation", "P"), present("first_callable_period", 0), TABLE)
+    assert periodic["autocall_schedule"].status == FieldStatus.INVALID, "每期定日觀察沒有第 0 期"
+    no_start = present("schedule_table", table((replace(ROWS[0], start=None), *ROWS[1:])))
+    out = autocall_schedule(present("ko_observation", "D"), present("first_callable_period", 0), no_start)
+    assert out["autocall_schedule"].status == FieldStatus.INVALID and "第 1 期" in out["autocall_schedule"].note
+    single = present("schedule_table", table(ROWS[:1]))
+    final = present("final_valuation_date", D(2030, 2, 4))
+    out = autocall_schedule(present("ko_observation", "D"), present("first_callable_period", 0), single, final=final)
+    assert out["autocall_schedule"].status == FieldStatus.INVALID, "只有 1 期：期始日與最終評價日不能放同一格"
+
+
 def test_periodic_schedule_has_every_period_from_k_and_final_overrides_the_last():
     final = present("final_valuation_date", D(2030, 4, 5))
     obs, first = present("ko_observation", "P"), present("first_callable_period", 1)
@@ -244,7 +259,7 @@ def test_derivation_failures_pass_the_status_through_all_three_fields():
 
     out = autocall_schedule(present("ko_observation", "D"), present("first_callable_period", 4), TABLE, "end")
     assert out["autocall_schedule"].status == FieldStatus.INVALID
-    assert "不在第 13 項日期表的第 1～3 期之間" in out["autocall_schedule"].note
+    assert "不在第 13 項日期表的第 0～3 期之間" in out["autocall_schedule"].note, "D 型可以從第 0 期（沒有 Non-Call）"
     assert (out["ko_observation"].value, out["first_callable_period"].value) == ("D", 4), (
         "照說明書交出，Non-Call 仍可比"
     )

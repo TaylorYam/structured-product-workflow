@@ -73,9 +73,9 @@ class AutocallSchedule:
     """說明書的提前出場排程（由 parsers/schedule.py 的共用推導從日期表推得）。"""
 
     observation: str  # D 期間每日觀察／P 每期定日觀察
-    first_callable: int  # 第一個可以提前出場的期別（Non-Call(月)），最小為 1
+    first_callable: int  # 第一個可以提前出場的期別（Non-Call(月)）；P 最小為 1，D 為 0 時從第 1 期期始日開始比價
     periods: int  # 期數
-    dates: dict[int, dt.date]  # 期別 → 比價日；D 只有第 k 期與末期，P 為第 k 期起的每一期
+    dates: dict[int, dt.date]  # 期別 → 比價日；D 只有第 k 期與末期（k = 0 時第 1 期放期始日），P 為第 k 期起的每一期
 
 
 @dataclass(frozen=True)

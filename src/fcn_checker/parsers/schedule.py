@@ -42,8 +42,10 @@ def autocall_schedule(
     P 取觀察日（`observation`）；
     `final` 有給時末期比價日取最終評價日，否則取表的末列；`first_date` 有給時第 k 期比價日取它（SG：第 k 期終止日
     「不適用」，取第 8 項觀察期間起始日）。依賴的欄位第一個有問題的決定三個欄位的狀態；
-    k 不在第 1～n 期之間、需要的比價日空白時只有排程不合法（Non-Call 與比價日轉人工覆核），KO 觀察方式與 k 照說明書交出
-    （上手規則仍可核對 k 的範圍）。
+    D 的 k 可以是 0（沒有 Non-Call，從第 1 期期始日開始比價，FCN_Express，#301）：第一個比價日取第 1 期期始日，
+    放在第 1 期。
+    k 不在第 1～n 期之間（D 為 0～n）、需要的比價日空白時只有排程不合法（Non-Call 與比價日轉人工覆核），KO 觀察方式與 k
+    照說明書交出（上手規則仍可核對 k 的範圍）。
     """
     deps = [observation, first, table] + [p for p in (final, first_date) if p is not None]
     bad = next((p for p in deps if not p.ok), None)
@@ -56,18 +58,23 @@ def autocall_schedule(
         "ko_observation": _renamed("ko_observation", observation),
         "first_callable_period": _renamed("first_callable_period", first),
     }
-    if not 1 <= k <= n:
-        note = f"第一個可提前出場期（第 {k} 期）不在{t.where}的第 1～{n} 期之間"
+    daily = observation.value == "D"
+    lowest = 0 if daily else 1
+    if not lowest <= k <= n or k == 0 and n == 1:
+        note = f"第一個可提前出場期（第 {k} 期）不在{t.where}的第 {lowest}～{n} 期之間"
+        if lowest <= k <= n:  # 只有 1 期：第 1 期期始日與末期比價日要放同一格
+            note = f"{t.where}只有 1 期，從第 1 期期始日開始比價時比價日無法對應到格子"
         return {
             **terms,
             "autocall_schedule": ParsedField("autocall_schedule", FieldStatus.INVALID, evidence=ev, note=note),
         }
-    daily = observation.value == "D"
     column = column or ("end" if daily else "observation")
-    periods = (k, n) if daily else range(k, n + 1)
+    periods = (max(k, 1), n) if daily else range(k, n + 1)
     dates: dict[int, dt.date | None] = {p: getattr(t.rows[p - 1], column) for p in periods}
+    if k == 0:
+        dates[1] = t.rows[0].start
     if first_date is not None:
-        dates[k] = first_date.value
+        dates[max(k, 1)] = first_date.value
     if final is not None:
         dates[n] = final.value
     blank = [p for p, d in dates.items() if d is None]
