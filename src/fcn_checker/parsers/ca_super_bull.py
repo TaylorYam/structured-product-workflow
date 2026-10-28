@@ -173,11 +173,11 @@ def _ko_memory(fields: dict[str, ParsedField], ti: TextIndex, a: int, b: int) ->
         fields["ko_memory"] = ParsedField.invalid("ko_memory", lns, "第 9 項 (a) 自動提前出場事件的句型不在範本規格內")
 
 
-def _ki_type(ti: TextIndex, b: int, e: int, table: ParsedField) -> ParsedField:
-    """無 KI（範本規格 §3）：第 9 項沒有「界限事件」、價格表沒有下限價欄、(b)(i) 直接比執行價，三者都成立。"""
+def _ki_type(ti: TextIndex, b: int, e: int, table: ParsedField, whole: TextIndex) -> ParsedField:
+    """無 KI（範本規格 §3）：說明書全文沒有「界限事件」、價格表沒有下限價欄、(b)(i) 直接比執行價，三者都成立。"""
     problems = []
-    if "界限事件" in ti.text:
-        problems.append("第 9 項有界限事件")
+    if "界限事件" in whole.text:
+        problems.append("說明書有界限事件")
     if table.ok and "ki" in table.value.columns:
         problems.append("價格表有下限價欄")
     if re.search(NO_KI, ti.text[b:e]) is None:
@@ -187,7 +187,7 @@ def _ki_type(ti: TextIndex, b: int, e: int, table: ParsedField) -> ParsedField:
     return ParsedField.present("ki_type", "none", ti.lines_for(b, e))
 
 
-def _article9(fields: dict[str, ParsedField], art9: list[Line]) -> None:
+def _article9(fields: dict[str, ParsedField], art9: list[Line], whole: TextIndex) -> None:
     ti = TextIndex(art9)
     text = ti.text
     a = text.find("(a)「自動提前出場贖回金額」")
@@ -205,7 +205,7 @@ def _article9(fields: dict[str, ParsedField], art9: list[Line]) -> None:
     )
     fields["underlying_table"] = table
     fields["main_price_table"] = price_table.at("main_price_table", table, ca.PRICE_TABLE)
-    fields["ki_type"] = _ki_type(ti, b, e, table)
+    fields["ki_type"] = _ki_type(ti, b, e, table, whole)
     fields["ko_redemption_formula"] = _phrase(
         "ko_redemption_formula",
         art9,
@@ -403,10 +403,13 @@ def _return(m: re.Match[str]) -> ReturnCalc:
 
 
 def _scenarios(ti: TextIndex) -> SbScenarios:
-    """以標題切出情境一～三（到「※請注意」為止），在各自範圍內找算式。"""
+    """以標題切出情境一～三（到「※請注意」為止），在各自範圍內找算式；情境要剛好這三個（核對規則 §3.7），多出其他
+    「情境分析X：」標題就當找不到。"""
     starts = [ti.text.find(t) for t in TITLES]
     bounds = [*starts, ti.text.find("※請注意", max(starts))]
     if not (all(x >= 0 for x in bounds) and bounds == sorted(bounds)):
+        return SbScenarios(([], [], []))
+    if len(re.findall(r"情境分析[一二三四五六七八九十]+：", ti.text)) != len(TITLES):
         return SbScenarios(([], [], []))
     titles = tuple(ti.lines_for(s, s + len(t)) for s, t in zip(starts, TITLES, strict=True))
     out = SbScenarios(titles)  # type: ignore[arg-type]
@@ -518,7 +521,7 @@ def read(lines: Sequence[Line]) -> CaSuperBullTermSheet:
     fields["monthly_coupon_pct"] = standard_fields.absent("monthly_coupon_pct", "月配息率（Super Bull 沒有配息）")
 
     # 第 9 項、價格表與標的、觀察日表
-    _article9(fields, article(9))
+    _article9(fields, article(9), base.full_text)
     ca._table_fields(fields)
     fields["coupon_pa_pct"] = _bonus(fields["ko_table"])
     _schedule(fields)

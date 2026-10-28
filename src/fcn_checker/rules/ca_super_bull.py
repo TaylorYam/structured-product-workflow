@@ -205,7 +205,7 @@ def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
             for key in keys
         ]
     if not sc.found:
-        why = "第 16 項找不到「情境分析一：較佳情況」「情境分析二：一般情況」「情境分析三：較差情況」"
+        why = "第 16 項的情境不是剛好「情境分析一：較佳情況」「情境分析二：一般情況」「情境分析三：較差情況」三個"
         return [c.unread(key, why) for c, keys in zip(cases, KEYS, strict=True) for key in keys]
     n = Decimal(denom.value)
     return [

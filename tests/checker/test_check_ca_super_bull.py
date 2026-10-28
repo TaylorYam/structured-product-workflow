@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from decimal import Decimal
 
+import fitz
 import pytest
 
 from ca_synth import SB_PRODUCT, SbSpec, Spec, build_pdf, check, check_pair, row
+from fcn_checker.extraction import extract_lines
 from fcn_checker.issuers import CA, CA_SUPER_BULL
+from fcn_checker.parsers import ca_super_bull_iis
 from fcn_checker.schema import CheckStatus as S
 from harness import check_all, flagged, iis_path
 from harness import field_problems as problems
@@ -28,11 +32,12 @@ def compare_dates(report) -> dict:
         S0,
         SbSpec(count=1),
         SbSpec(months=(1, 2, 3, 4, 5), count=2, annual=Decimal("1.25")),
+        SbSpec(months=(1, 2), tenor=3, count=2),
         SbSpec(months=(3, 6, 9), tenor=12, note=True, shift=3),
         SbSpec(months=(6,), tenor=12, shift=-3),
         SbSpec(market="JT", currency_zh="日圓", count=4),
     ],
-    ids=["3UL", "single", "monthly", "note-late", "early", "jpy"],
+    ids=["3UL", "single", "monthly", "3m", "note-late", "early", "jpy"],
 )
 def test_supported_super_bull_pairs_pass_and_fill_compare_dates(tmp_path, spec):
     ts, iis = check_pair(tmp_path, spec)
@@ -101,10 +106,12 @@ def test_super_bull_terms_on_the_sheet_must_be_the_supported_variant(tmp_path, c
         [Edit("「到期贖回金額」。本商品持有期間並無配息金額。", "「到期贖回金額」。", "ts.art9")],
         # ■ 版：第 15 項參與率寫 100%
         [Edit("(5)參與率：不適用。", "(5)參與率：100%。", "ts.art15")],
+        # ■ 版：條列用 ■
+        [Edit("計算方式：", "■ 計算方式：", "ts.art9")],
         # 舊版：觀察日表少「自動提前出場紅利」欄
         [Edit("自動提前出場紅利", "", "ts.art9.ko"), Edit("5.00%", "", "ts.art9.ko")],
     ],
-    ids=["x100", "no-coupon-sentence", "participation-100", "three-columns"],
+    ids=["x100", "no-coupon-sentence", "participation-100", "bullet", "three-columns"],
 )
 def test_old_term_sheet_version_is_not_supported(tmp_path, edits):
     ts, _ = check_pair(tmp_path, S0, edits=edits)
@@ -119,6 +126,50 @@ def test_old_investor_sheet_version_is_not_supported(tmp_path):
     detect = rule(iis.report, "template.detect")[0]
     assert (detect.status, detect.reason_code) == (S.REVIEW_REQUIRED, "template_unsupported")
     assert iis.status_label == "不支援的範本版本" and iis.release_problem
+
+
+def test_bulleted_investor_sheet_is_the_old_version(tmp_path):
+    """■ 版投資人須知用 ▪ 條列（範本規格 §1）；合成字型畫不出 ▪，直接改擷取後的行再辨識。"""
+    pdf = build_pdf(tmp_path / f"{S0.product_code}_TS.pdf", S0)
+    with fitz.open(iis_path(pdf)) as doc:
+        lines = extract_lines(doc)
+    at = next(i for i, ln in enumerate(lines) if ln.text.startswith("詳細請參見"))
+    lines[at] = replace(lines[at], text="▪ " + lines[at].text)
+    result = ca_super_bull_iis.detect(lines)
+    assert not result.matched and result.unsupported == ca_super_bull_iis.OLD_VERSION
+    assert result.failed == ["用「▪」條列"]
+
+
+def test_barrier_event_anywhere_in_the_term_sheet_is_not_read_as_no_ki(tmp_path):
+    """無 KI 要說明書全文沒有「界限事件」（範本規格 §3），不只第 9 項。"""
+    edit = Edit("亦不代表連結標的未來表現。", "亦不代表連結標的未來表現。界限事件不適用。", "ts.art16")
+    r = check(tmp_path, S0, edits=[edit])
+    assert flagged(r, "field.ki_type", S.REVIEW_REQUIRED), problems(r)
+
+
+def test_a_fourth_scenario_is_not_checked_as_the_three(tmp_path):
+    """情境要剛好三個（核對規則 §3.7）：多一個情境標題 → 情境重算轉人工覆核。"""
+    edit = Edit("※ 請注意：", "情境分析四：其他情況 ※ 請注意：", "ts.art16")
+    r = check(tmp_path, S0, edits=[edit])
+    assert flagged(r, "doc.scenario_calculations", S.REVIEW_REQUIRED), problems(r)
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        Edit("詳細請參見中文產品說明書第一章第9 項之說明。", "未發生界限事件時詳細請參見說明書。", "iis.coupon"),
+        Edit(
+            "(i) 若最差表現之連結標的期末訂價低於執行價：",
+            "(i) 若最差表現之連結標的期末訂價低於執行價者：",
+            "iis.coupon",
+        ),
+    ],
+    ids=["barrier-event", "not-direct"],
+)
+def test_investor_sheet_no_ki_needs_both_conditions(tmp_path, edit):
+    """投資人須知無 KI：全文沒有界限事件、(i) 直接比執行價（投資人須知範本規格 §3）；否則讀不到 → 轉人工覆核。"""
+    _, iis = check_pair(tmp_path, S0, edits=[edit])
+    assert flagged(iis.report, "iis.has_ki", S.REVIEW_REQUIRED), problems(iis.report)
 
 
 def test_offshore_renminbi_needs_review(tmp_path):

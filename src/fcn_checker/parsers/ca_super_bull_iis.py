@@ -104,4 +104,11 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
     )
     for name, pattern, missing in phrases:
         fields[name] = _one(name, ti, pattern, lambda m: m[0], missing)
+    # 無 KI（範本規格 §3）：全文沒有界限事件、(i) 直接比執行價；CA FCN 的讀法只看有沒有「期末訂價低於執行價」
+    if not (fields["has_ki"].ok and fields["has_ki"].value):
+        problems = ["有界限事件"] if "界限事件" in ti.text else []
+        if re.search(ca_super_bull.NO_KI, ti.text) is None:
+            problems.append("到期贖回 (i) 不是「若…期末訂價低於執行價：」")
+        if problems:
+            fields["has_ki"] = ParsedField.missing("has_ki", "判斷不出有無 KI：" + "；".join(problems))
     return iis.IisSheet(fields, ti, frozenset(set(base.provided) - set(FCN_ONLY)))
