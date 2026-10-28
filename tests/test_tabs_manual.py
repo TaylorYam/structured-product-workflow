@@ -29,8 +29,8 @@ A_TDCC, B_TDCC, NEW_TDCC = "029199990001", "029199990002", "029199990003"
 
 
 def new_product_draft(tdcc: str = NEW_TDCC) -> Draft:
-    """只有交易明細的 TDCC：從空白開始，商品種類 FCN（人工維護打開資料庫沒有的一檔）。"""
-    return draft_from(tdcc, None, CONFIG)
+    """只有交易明細的 TDCC：從空白開始，商品種類是交易明細的 FCN（人工維護打開資料庫沒有的一檔，#302）。"""
+    return draft_from(tdcc, None, CONFIG, trade_product="FCN")
 
 
 def missing(tdcc: str, status: str = OrderReview.UNLOCKED, **changes) -> MissingProduct:

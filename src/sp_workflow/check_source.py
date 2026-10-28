@@ -64,6 +64,7 @@ UNDERLYINGS = 5
 BRANCHES = 7  # 匯入格式的分公司欄數
 CHECKED_FIELDS = ("checked_term_sheet", "checked_iis")
 RISK_FIELD = "risk_level"  # 參考條件表的風險等級（#239；不在匯入格式裡，排在最後）
+PRODUCT_FIELD = "product"  # 參考條件表的商品種類（#302；決定能不能自動核對）
 DENOMINATION_RULE = "field.denomination"
 DENOMINATION_COLUMN = "單位面額"
 
@@ -164,6 +165,7 @@ def _row(
     prices = {price.seq: price for price in found.prices}
     values: dict[str, Any] = {
         "product_code": found.tdcc,
+        "product": p["product"],
         "isin": found.isin,
         "denomination": p["denomination"],
         "currency": p["currency"],
@@ -199,7 +201,7 @@ def _row(
                 values[key] = empty
             else:
                 values[key] = None if price is None else getattr(price, col)  # VWAP 還沒回填時空白，核對通過後回填
-    extra: dict[str, Any] = {fmt.issuer_column: p["issuer"], "Product": p["product"], "UF": p["upfront_pct"]}
+    extra: dict[str, Any] = {fmt.issuer_column: p["issuer"], "UF": p["upfront_pct"]}
     extra["交易日期"] = p["trade_date"]
     for n, (branch, amount) in enumerate(found.branches[:BRANCHES], 1):
         extra[f"分公司_{n}"], extra[f"分公司_{n}_承作金額"] = branch, amount
@@ -341,7 +343,7 @@ def _changed(current: Mapping[str, Any], checked: Any, fmt: ReferenceFormat, *, 
     """資料庫現在的值和核對時那一列（`OrderRecord`）不同；回填欄位（ISIN、發行日、比價日、TS、IIS）不算。
 
     評等欄只在 `rated`（這家上手有做評等核對）時才比；核對時的表沒有評等欄（v18 以前產生的）也不算改了。
-    風險等級欄同樣：核對時的表沒有這欄（v19 以前產生的）不算改了。
+    風險等級欄同樣：核對時的表沒有這欄（v19 以前產生的）不算改了；商品種類欄（#302）同樣。
     """
     if checked is None:
         return True
@@ -352,7 +354,7 @@ def _changed(current: Mapping[str, Any], checked: Any, fmt: ReferenceFormat, *, 
             continue
         if std in RATING_FIELDS and not (rated and checked.has(std)):
             continue
-        if std == RISK_FIELD and not checked.has(std):
+        if std in (RISK_FIELD, PRODUCT_FIELD) and not checked.has(std):
             continue
         found = checked.get(std)
         if not same_value(None if value == "" else value, None if found is None else found.value):

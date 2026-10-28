@@ -119,7 +119,7 @@ from sp_workflow.step_records import (
     write_records,
 )
 from sp_workflow.stock_splits import Split, add_split, adjusted_count, affected_exits, delete_split, load_splits
-from sp_workflow.trade_rows import TradeRowsDraft, load_trade_rows
+from sp_workflow.trade_rows import TradeRowsDraft, load_trade_rows, trade_product
 
 if TYPE_CHECKING:
     import psycopg
@@ -509,9 +509,10 @@ def open_product(settings: ConnectionSettings, tdcc: str, paths: ConfigPaths) ->
     with connect(settings) as conn:
         stored = read(conn, tdcc)
         trades = load_trade_rows(conn, tdcc)
+        product = trade_product(conn, tdcc)
     if stored is None and not trades.rows:
         raise TermsError(f"{tdcc}：交易明細和商品條件都沒有這檔，不能在這裡新增")
-    return Opened(draft_from(tdcc, stored, config), config, trades)
+    return Opened(draft_from(tdcc, stored, config, trade_product=product), config, trades)
 
 
 def save_product(

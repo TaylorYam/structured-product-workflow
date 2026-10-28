@@ -63,7 +63,15 @@ def seed_risk(pg, tdcc: str, risk: str | None) -> None:
 
 
 def seed(
-    pg, spec: barc_synth.Spec, *, pricing="收盤價", denomination=None, status="完成", reason=None, risk="RR4"
+    pg,
+    spec: barc_synth.Spec,
+    *,
+    pricing="收盤價",
+    denomination=None,
+    status="完成",
+    reason=None,
+    risk="RR4",
+    product="FCN",
 ) -> None:
     """像起單資料匯入＋算出核對條件與風險等級（#86、#88、#238）那樣寫一檔商品，條件和合成說明書一致（風險等級預設
     RR4，同合成文件）。"""
@@ -73,7 +81,7 @@ def seed(
     tickers = [u.ticker for u in spec.underlyings] + [None] * (5 - len(spec.underlyings))
     product = {
         "tdcc": spec.product_code,
-        "product": "FCN",
+        "product": product,
         "issuer": issuer_value(spec.issuer),
         "currency": spec.ccy,
         "trade_date": spec.trade_date,
@@ -366,6 +374,29 @@ def test_missing_or_unfinished_products_need_review_and_cannot_be_released(pg, t
             assert item.category == Category.REVIEW
             assert any(reason in m for m in item.problem_messages), item.problem_messages
             assert item.release_problem, "不能人工放行"
+
+
+@pytest.mark.db
+def test_products_not_opened_for_automatic_checks_need_review(pg, tmp_path) -> None:
+    """資料庫的商品種類帶到參考條件表的 Product（#302）：沒開放給這家上手的商品種類不核對、不能人工放行。"""
+    fcn, express = barc_spec(), barc_spec(product_code=OTHER)
+    seed(pg, fcn)
+    seed(pg, express, product="FCN_Express")
+    pdfs = pdfs_of(tmp_path, fcn, express)
+
+    sheet, _ = export(pg, tmp_path, pdfs)
+    outcome, _ = run_from_database(pg, tmp_path, pdfs, name="資料庫2.xlsx")
+
+    rows = {r.product_code.value: r.get("product").value for r in load_reference_sheet(sheet, FMT).rows}
+    assert rows == {fcn.product_code: "FCN", OTHER: "FCN_Express"}
+    items = by_name(outcome)
+    assert items[f"{fcn.product_code}_TS.pdf"].category == Category.PASSED
+    for kind in ("TS", "IIS"):
+        item = items[f"{OTHER}_{kind}.pdf"]
+        assert item.category == Category.REVIEW and item.release_problem
+        assert item.problem_messages == (
+            "樣態：BARC 還沒開放「FCN_Express」自動核對（參考條件表 Product）；請人工核對，不能人工放行",
+        )
 
 
 @pytest.mark.db

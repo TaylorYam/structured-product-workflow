@@ -1,12 +1,12 @@
-# 上手編號對照：商品代號（＝說明書 PDF 檔名）前三碼 → 上手代號，以及各上手的支援樣態表
+# 上手編號對照：商品代號（＝說明書 PDF 檔名）前三碼 → 上手代號，以及各上手的支援樣態表與開放自動核對的商品種類
 #
 # 批量核對依檔名前三碼選擇上手範本，再與說明書內容辨識結果、說明書商品代號前三碼互相確認。
 # 新增上手時在這裡登記一筆（[prefixes] 與 [unsupported_variants] 都要），並在上手註冊表（src/fcn_checker/issuers.py）登記範本。
 # 對照表有、但註冊表還沒有範本的上手 → 標示「未支援上手」，錯訊寫出上手代號。
 # 前三碼依作業人員提供的「發行機構 → TDCC 開頭」對照（2026-10-09 確認，Issue #149）。
 
-version = 10
-effective_date = 2026-10-15
+version = 11
+effective_date = 2026-10-28
 
 [prefixes]
 # 已有範本
@@ -56,3 +56,10 @@ NOMURA = []
 UBS = ["vwap", "non_call_equals_tenor"]
 BBVA = ["ko_periodic", "ki_daily", "ki_periodic", "non_call_equals_tenor"]
 DBS = ["vwap", "ko_daily", "ko_periodic_memory", "ko_periodic", "ki_daily", "ki_periodic", "non_call_equals_tenor"]
+
+# 開放自動核對的商品種類（#302、ADR 0027）：參考條件表 Product 欄的值（不分大小寫）→ 開放的上手代號，"*" 是所有上手。
+# 採白名單：沒列的商品種類、或沒開放的上手，照不支援樣態處理（不跑規則、不能人工放行，請人工核對）。
+# Product 欄空白或表上沒有這欄時不看（照 FCN 核對）。新增商品或開放上手時在這裡加。
+[auto_check_products]
+FCN = ["*"]
+FCN_Express = []

@@ -117,8 +117,12 @@ def test_sheet_notes_are_shown_but_do_not_block_on_their_own() -> None:
         ({"Barrier Type": "NONE"}, {"KI Barrier (%)": "Barrier Type 是 NONE 時要空白"}),
         ({"KI Barrier (%)": None}, {"KI Barrier (%)": "有 KI 時必填"}),
         ({"Currency": "TWD"}, {"Currency": "這個幣別沒有單位面額預設值"}),
-        ({"Product": "BEN"}, {"Product": "目前只做 FCN"}),
+        ({"Product": "BEN"}, {"Product": "目前只做 FCN、FCN_Express"}),
         ({"Guaranteed Periods (m)": 0}, {"Guaranteed Periods (m)": "至少 1"}),
+        ({"Product": "FCN_Express"}, {"Guaranteed Periods (m)": "FCN_Express 沒有 Non-Call，要填 0"}),
+        ({"Product": "FCN_Express", "Guaranteed Periods (m)": 0}, {}),
+        ({"Product": "fcn_express", "Guaranteed Periods (m)": 0}, {}),
+        ({"Product": "BEN", "Guaranteed Periods (m)": 0}, {"Product": "目前只做 FCN、FCN_Express"}),
         ({"BBG Code 2": None, "BBG Code 3": "CCC UQ"}, {"BBG Code 2": "標的要從 BBG Code 1 依序填，中間不能空"}),
         ({"KO Type": "Weekly"}, {"KO Type": "要選 Daily／Daily Memory／Period End／Period End Memory"}),
         ({"Tenor (m)": "6"}, {"Tenor (m)": "要填整數"}),
@@ -254,6 +258,21 @@ def test_a_sheet_read_from_disk_imports_end_to_end(pg, tmp_path: Path) -> None:
     assert [(line.tdcc, line.result) for line in receipt.lines] == [(A, ImportResult.NEW), (B, ImportResult.NEW)]
     assert product(pg, A)["coupon_pct"] == Decimal("12.5") and product(pg, A)["upfront_pct"] == Decimal("1.5")
     assert (product(pg, B)["issuer"], product(pg, B)["ki_freq"], product(pg, B)["ki_pct"]) == ("SG", "-", None)
+
+
+@pytest.mark.db
+def test_an_express_row_imports_with_no_non_call(pg, tmp_path: Path) -> None:
+    """FCN_Express 沒有 Non-Call（#302）：起單建檔的 Guaranteed Periods 是 0，商品種類照設定的寫法存。"""
+    lines = [sheet_line(A, {"Product": "fcn_express", "Guaranteed Periods (m)": 0, "Barrier Type": "NONE",
+                            "KI Barrier (%)": None})]  # fmt: skip
+    path = write_sheet(tmp_path / "起單建檔_20261015.xlsx", lines)
+    rows = collect_orders(A, path, PREFIXES, CONFIG.calendar)
+
+    receipt = write_batch(pg, _drafts(rows, CONFIG, pg), CONFIG, user="tester")
+
+    assert [(line.tdcc, line.result) for line in receipt.lines] == [(A, ImportResult.NEW)]
+    p = product(pg, A)
+    assert (p["product"], p["non_call_months"], p["ko_type"]) == ("FCN_Express", 0, "Daily Memory")
 
 
 @pytest.mark.db

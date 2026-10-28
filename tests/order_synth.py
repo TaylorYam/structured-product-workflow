@@ -14,7 +14,7 @@ from sp_workflow.mailbox import Mailbox, Person
 from sp_workflow.order_terms import NOT_FOUND, PENDING, READ, TDCC_FIELD, OrderRow
 from sp_workflow.product_terms import Draft, ImportConfig, draft_from, read
 from sp_workflow.status import OrderReview
-from sp_workflow.trade_rows import TradeRowDraft, TradeRowsDraft
+from sp_workflow.trade_rows import TradeRowDraft, TradeRowsDraft, trade_product
 
 A = "029199990001"  # BARC
 B = "037199990002"  # SG
@@ -81,7 +81,7 @@ def maintenance_draft(status: str = OrderReview.UNLOCKED, tdcc: str = A, issuer:
 
 def open_terms(conn, tdcc: str, config: ImportConfig = CONFIG) -> Draft:
     """人工維護打開一檔（同 `window_actions.open_product`，不讀交易明細、不檢查兩邊都沒有）。"""
-    return draft_from(tdcc, read(conn, tdcc), config)
+    return draft_from(tdcc, read(conn, tdcc), config, trade_product=trade_product(conn, tdcc))
 
 
 # 資料庫裡一列交易明細（表頭 → 值），同 db_synth.trade 匯入後的樣子

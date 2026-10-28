@@ -135,6 +135,15 @@ def test_daily_ko_starts_on_the_first_autocall_date() -> None:
     assert run(terms("Daily"), prices).events == (AutoEvent(MATURITY, FINAL),)
 
 
+def test_without_non_call_ko_starts_on_the_first_day_stored() -> None:
+    """沒有 Non-Call 的商品（FCN_Express，#302）：比價日_1 存第一個觀察日，從那天起每天比，不另外推算。"""
+    first = STRIKE + dt.timedelta(days=1)
+    prices = closes(on({first: "100"}), on({first: "100"}))
+
+    assert run(terms("Daily Memory", autocall=(first, FINAL)), prices).events == (AutoEvent(KO, first),)
+    assert run(terms("Daily Memory"), prices).events == (AutoEvent(MATURITY, FINAL),), "比價日_1 之前不比"
+
+
 def test_daily_ko_only_on_days_every_market_is_open() -> None:
     prices = closes(on({JP_HOLIDAY: "120"}), on({JP_HOLIDAY - dt.timedelta(days=1): "120"}))
 

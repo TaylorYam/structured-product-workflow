@@ -420,7 +420,29 @@ def test_products_skipped_by_the_daily_import_are_unsupported(db, tmp_path: Path
 
     receipt, _ = run(db, root, out, B)
 
-    assert [(o.status, o.reason) for o in receipt.outcomes] == [(PENDING, "不支援的商品類型：BEN（目前只做 FCN）")]
+    reason = "不支援的商品類型：BEN（目前只做 FCN、FCN_Express）"
+    assert [(o.status, o.reason) for o in receipt.outcomes] == [(PENDING, reason)]
+
+
+def test_express_gets_a_draft_like_fcn(db, tmp_path: Path, root: Path, out: Path, monkeypatch) -> None:
+    """FCN_Express 和 FCN 一樣寄（#302）：主旨與表格的 Product 帶出商品種類，Guaranteed Periods 寫 0。"""
+    express = inventory(A, [("北區", 1)], Product="FCN_Express", **{"Non-Call(月)": 0})
+    load(db, tmp_path, [trade(A, "Amy", "北區", 1, product="FCN_Express")], [express])
+    risk(db, A, "RR4")
+    passed_folder(root, A)
+    real_render, rendered = mail_drafts.render_body, []
+
+    def render(tdcc, product, branches, risk_level):
+        rendered.append((product["product"], product["non_call_months"]))
+        return real_render(tdcc, product, branches, risk_level)
+
+    monkeypatch.setattr(mail_drafts, "render_body", render)
+
+    receipt, drafter = run(db, root, out, A)
+
+    assert (receipt.outcomes[0].status, receipt.outcomes[0].reason) == (DRAFTED, "")
+    assert drafter.drafts[0].subject == f"[中文TS/IIS] [FCN_Express] - {A}"
+    assert rendered == [("FCN_Express", 0)] and ">FCN_Express<" in drafter.drafts[0].html_body
 
 
 def test_unreadable_folders_are_mentioned(db, tmp_path: Path, root: Path, out: Path, monkeypatch) -> None:

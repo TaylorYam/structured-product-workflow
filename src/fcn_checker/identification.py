@@ -7,8 +7,8 @@
 1. 檔名前三碼（上手編號）查上手編號對照 → 上手；不在對照表或上手沒有該種文件的範本 → 未支援上手。
 2. 內容辨識出的上手必須與檔名一致；說明書封面商品代號也要等於檔名的商品代號，否則轉人工覆核。
 3. 以商品代號找參考條件表的列（TDCC Code）；表上有發行機構欄時，該列發行機構必須是此上手的寫法。
-4. 對到列後判斷樣態（variants.py）：參考條件表該列、這份與同商品另一份明確讀出的值，任一邊是該上手的不支援樣態
-   → 不支援樣態（人工覆核、不跑規則、不能放行；同商品兩份都是）。
+4. 對到列後判斷樣態（variants.py）：參考條件表該列的 Product 沒開放給這家上手自動核對（#302），或該列、這份與
+   同商品另一份明確讀出的值任一邊是該上手的不支援樣態 → 不支援樣態（人工覆核、不跑規則、不能放行；同商品兩份都是）。
 5. 同一商品代號（檔名）的說明書與投資人須知配成一組；同種文件有多份時，對到列的全部轉人工覆核，不核對也不回填。
 6. 這批只有說明書或只有投資人須知、且已對到列時，那一份轉人工覆核（這批缺另一份），不能人工放行。
    另一份在這批裡但本身配對失敗（例：未支援上手、範本不符）時不算缺，但那份沒通過，說明書就不回填。
@@ -37,7 +37,16 @@ from .orders.reference import SOURCE, OrderRecord, ReferenceSheet
 from .rules.kit import doc_review, read_standard
 from .schema import CheckResult, CheckStatus, DocKind, Evidence, Item, ParsedField
 from .standard_fields import TermSheet
-from .variants import Terms, Variant, investor_sheet_terms, row_terms, term_sheet_terms, unsupported
+from .variants import (
+    Terms,
+    Variant,
+    investor_sheet_terms,
+    opened_products,
+    row_terms,
+    term_sheet_terms,
+    unopened_product,
+    unsupported,
+)
 
 
 class PairingProblem(StrEnum):
@@ -178,6 +187,7 @@ class _Draft:
     terms: tuple[str, Terms] | None = None  # 這份讀出的樣態條件（出處稱呼, 條件）：讀出成功才有
     row_terms: Terms | None = None  # 對到的參考條件表列的樣態條件
     unsupported_variants: frozenset[Variant] = frozenset()  # 這家上手的不支援樣態（上手支援樣態表）
+    opened_products: frozenset[str] = frozenset()  # 這家上手開放自動核對的商品種類（#302）
     problem: PairingProblem | None = None  # 遇到就停的配對問題
     stopped: CheckResult | None = None  # 該問題對應的結果
     shared: tuple[str, str] | None = None  # 多份對到同一列：（哪種文件有多份, 其他文件的檔名）
@@ -242,6 +252,7 @@ def _draft(pdf: Path, sheet: ReferenceSheet, config: CheckConfig) -> _Draft:
         investor_sheet_terms(out.investor_sheet) if out.investor_sheet is not None else term_sheet_terms(out.term_sheet)
     )
     out.terms, out.unsupported_variants = (what, terms), config.unsupported_variants.get(issuer.code, frozenset())
+    out.opened_products = opened_products(config.auto_check_products, issuer.code)
 
     if out.kind == DocKind.IIS:  # 投資人須知以檔名前 12 碼配對（HSBC 範本沒有商品代號；封面有的另由規則核對）
         pc = out.product_code = ParsedField.present("product_code", file_code(pdf), [])
@@ -370,7 +381,13 @@ def _variant(d: _Draft) -> CheckResult | None:
     """對到列後的樣態：參考條件表該列、這份與同商品另一份讀出的條件，任一邊是不支援樣態就人工覆核（不能放行）。
 
     同商品另一份本身有配對問題（例：檔名商品代號不符，可能放錯檔）時，它讀出的條件不算，避免蓋掉真正的原因。
+    參考條件表該列的商品種類沒開放給這家上手自動核對（#302）時也一樣攔下，不再看樣態。
     """
+    product_value = d.row.get("product") if d.row is not None else None
+    product = unopened_product(product_value.value if product_value else None, d.opened_products)
+    if product is not None:
+        msg = f"{d.issuer} 還沒開放「{product}」自動核對（{SOURCE} Product）；請人工核對，不能人工放行"
+        return _review("batch.variant", "variant", _VARIANT_ITEM, PairingProblem.UNSUPPORTED_VARIANT, msg)
     docs = [x for x in (d, d.partner) if x is not None and x.terms is not None and x.problem is None]
     docs.sort(key=lambda x: x.kind != DocKind.TERM_SHEET)  # 出處依參考條件表、說明書、投資人須知
     found = unsupported([(SOURCE, d.row_terms), *(x.terms for x in docs)], d.unsupported_variants)

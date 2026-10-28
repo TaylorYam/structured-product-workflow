@@ -8,8 +8,8 @@
 # 核對結果檔「回填後」一律照 [import_format]（匯入格式）重新產生，不論表上欄位怎麼排（Issue #203）。
 # 規則說明見 docs/checker/order-formats/reference-sheet.md。
 
-version = 19
-effective_date = 2026-10-26
+version = 20
+effective_date = 2026-10-28
 
 [layout]
 # 只讀第一張工作表（不看名稱）；表頭是前 header_search_rows 列裡有 key_column 欄名的那一列，下一列起是資料（Issue #199）
@@ -20,6 +20,8 @@ issuer_column = "發行機構"  # 不是必要欄：表上有才確認該列是�
 # 其他欄（不在 [columns] 的欄）一律略過，不提示。
 optional_columns = [  # 表上沒有也照常核對
     "TS", "IIS",
+    # 商品種類（#302）：沒有這欄時不看（照 FCN 核對）；有值時依上手編號對照的 [auto_check_products] 決定能不能自動核對
+    "Product",
     # 風險等級（#239）：沒有這欄（舊 Excel）時 RR 核對用審查標準 risk.level
     "風險等級",
     # 信用評等（#240）：舊 Excel 沒有這些欄時照常核對，評等轉人工覆核
@@ -81,6 +83,7 @@ any_order_issuers = ["CITI", "JPM", "GS", "BBVA"]
 "TS" = "checked_term_sheet"  # 回填欄位：說明書核對沒問題
 "IIS" = "checked_iis"        # 回填欄位：投資人須知核對沒問題
 "TDCC Code" = "product_code"
+"Product" = "product"  # 商品種類（#302），不和說明書比對，只用來決定能不能自動核對
 "ISIN Code" = "isin"
 "單位面額" = "denomination"
 "承作幣別" = "currency"

@@ -29,6 +29,15 @@
 | DBS | `078` | [dbs-zh-pd](templates/dbs-zh-product-description.md) | [dbs-zh-iis](templates/dbs-zh-iis.md) | [欄位來源](order-formats/dbs-fcn-reference.md) | [核對規則](rules/dbs-check-rules.md) |
 | UBS | `092` | [ubs-zh-pd](templates/ubs-zh-product-description.md) | [ubs-zh-iis](templates/ubs-zh-iis.md) | [欄位來源](order-formats/ubs-fcn-reference.md) | [核對規則](rules/ubs-check-rules.md) |
 
+## 開放自動核對的商品種類
+
+下表是 `config/issuer_prefixes.toml` 的 `[auto_check_products]`（白名單，#302、ADR 0027）。參考條件表 Product 欄（不分大小寫）沒列、或沒開放給該上手的商品，照不支援樣態處理：兩份都停止條件核對、不回填、不能人工放行，請人工核對。Product 空白或表上沒有這欄時照 FCN。
+
+| 商品種類 | 開放的上手 |
+|---|---|
+| FCN | 全部 |
+| FCN_Express | 尚未開放（依序 BARC → CA、HSBC，#304～#306） |
+
 ## 目前設定明確不支援的樣態
 
 下表是 `config/issuer_prefixes.toml` 的 `[unsupported_variants]`，不是 parser 能力或樣本涵蓋率的完整清單。參考條件表、說明書或同商品投資人須知任一邊明確是黑名單樣態，兩份都停止條件核對、不回填、不能人工放行。未列入黑名單的組合仍須通過範本、必要欄位與規則檢查。

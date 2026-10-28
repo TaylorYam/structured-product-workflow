@@ -182,6 +182,22 @@ def test_summary_rows_follow_the_new_summary_columns(pg, tmp_path: Path) -> None
 
 
 @pytest.mark.db
+def test_express_is_in_the_summary_like_fcn(pg, tmp_path: Path) -> None:
+    """FCN_Express 和 FCN 在同一張總表（#302）：Product 寫商品種類，Non-Call 寫 0。"""
+    express = order_row(A, {**UF_215, "Product": "FCN_Express", "Guaranteed Periods (m)": 0})
+    receipt = write_batch(pg, _drafts([express], CONFIG, pg), CONFIG, user="tester")
+    assert receipt.lines[0].imported, receipt.lines[0].detail
+    import_order(pg, B)
+    path = tmp_path / "商品總表.xlsx"
+
+    export_summary(pg, path)
+
+    a, b = as_dicts(path)
+    assert (a["Product"], a["Non-Call(月)"]) == ("FCN_Express", 0)
+    assert b["Product"] == "FCN"
+
+
+@pytest.mark.db
 def test_summary_cells_are_centred_with_fonts_by_content(pg, tmp_path: Path) -> None:
     import_order(pg, A)
     add_trades(pg, A, [("台北", "Amy", 100000)])

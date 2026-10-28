@@ -1,11 +1,11 @@
-"""寄信草稿：為核對通過的 FCN 在 Outlook 建立 TS／IIS 草稿給承作的 FC（#29，需求更新見 #29 留言）。
+"""寄信草稿：為核對通過的商品（FCN、FCN_Express，#302）在 Outlook 建立 TS／IIS 草稿給承作的 FC（#29，需求更新見 #29 留言）。
 
 對外只有 `create_drafts`。資料全部讀最小 FCN 資料庫（#32、#35），不讀 Excel。每檔 TDCC 都要符合：
 1. 資料庫有這檔的商品條件（沒有缺信裡要用的必填欄，#114）與交易列；
 2. 根目錄底下找得到剛好一個商品資料夾，裡面有 `<TDCC>_TS.pdf` 與 `<TDCC>_IIS.pdf`
    （準備與放回工具只會以標準檔名放回核對通過的文件，所以這就代表核對通過）；
 3. 交易列上的 FC（略過 PB）都對得到信箱（不分大小寫、別名）。
-只有 PB 承作時「不需寄送」；每日匯入略過的非 FCN 商品標「不支援的商品類型」。符合的一檔建一封草稿：收件人是 FC，副本是信箱的固定副本（已在收件人的不重複）。
+只有 PB 承作時「不需寄送」；每日匯入略過的不支援商品標「不支援的商品類型」。符合的一檔建一封草稿：收件人是 FC，副本是信箱的固定副本（已在收件人的不重複）。
 風險等級寫自算風險等級（#239、ADR 0023，回填的是 RR4）；待算或還沒算過時寫「待確認」，照樣建草稿，結果清單的原因寫出來，
 請寄出前補上（不自動寫 RR4，以免 2026-10-30 以後交易的商品寫錯等級）。
 只建草稿、不寄出；同一檔重跑會再建一封；某一檔出錯只影響那一檔。結果寫成 `寄信草稿清單_<日期時間>.xlsx`，
@@ -39,6 +39,7 @@ from sp_workflow.product_record import (
     PRICING_FIELD,
     REQUIRED,
     STRIKE_FIELD,
+    SUPPORTED_PRODUCTS,
     invert_upfront,
     missing_fields,
 )
@@ -219,7 +220,7 @@ def _draft_one(
         other = conn.execute("SELECT product FROM workflow.other_product WHERE tdcc = %s", (tdcc,)).fetchone()
         risk = risk_level_of(conn, tdcc)
     if product is None and not fc_names and other is not None:
-        return DraftOutcome(tdcc, PENDING, reason=f"不支援的商品類型：{other[0]}（目前只做 FCN）")
+        return DraftOutcome(tdcc, PENDING, reason=f"不支援的商品類型：{other[0]}（目前只做 {SUPPORTED_PRODUCTS}）")
     problems = []
     if product is None:
         problems.append("資料庫沒有這檔的商品條件（還沒匯入起單資料）")

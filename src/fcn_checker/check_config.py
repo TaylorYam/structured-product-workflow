@@ -22,7 +22,7 @@ from .config import (
 from .ingestion import SourceSnapshot
 from .issuers import REGISTRY, Issuer
 from .trading_calendar import TradingCalendar
-from .variants import Variant, load_unsupported_variants
+from .variants import Variant, load_auto_check_products, load_unsupported_variants
 
 CONFIG_DIR = Path("config")  # 預設設定資料夾（相對於執行目錄）
 REVIEW_STANDARD_FILE = "review_standard.toml"
@@ -91,6 +91,7 @@ class ConfigPaths:
             reference_format=load_reference_format(paths[1]),
             issuer_prefixes=prefixes,
             unsupported_variants=load_unsupported_variants(paths[2], prefixes.values()),
+            auto_check_products=load_auto_check_products(paths[2], prefixes.values()),
             exchange_calendar=load_exchange_holidays(paths[3]),
             registry=tuple(registry),
             paths=ConfigPaths(*paths, risk_level=Path(self.risk_level)),
@@ -109,6 +110,7 @@ class CheckConfig:
     reference_format: ReferenceFormat
     issuer_prefixes: dict[str, str]  # 上手編號（三碼）→ 上手代號
     unsupported_variants: dict[str, frozenset[Variant]]  # 上手支援樣態表：上手代號 → 不支援的樣態（Issue #207）
+    auto_check_products: dict[str, frozenset[str]]  # 開放自動核對的商品種類 → 上手代號（#302）
     exchange_calendar: TradingCalendar  # 交易所假日表：一籃子預定交易日（Issue #208）
     registry: tuple[Issuer, ...]
     paths: ConfigPaths
