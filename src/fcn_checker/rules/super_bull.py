@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Sequence
 from decimal import Decimal
+from typing import NamedTuple
 
 from ..parsers.common import Mention
 from ..parsers.super_bull import ProfitReturn, Wording
@@ -19,7 +20,8 @@ from .kit import Check, IssuerContext
 AMOUNT_TOLERANCE = Decimal("0.01")  # 情境金額（CA 另含報酬率）容許的進位差（各上手核對規則 §3.7）
 
 
-def close(a: Decimal, b: Decimal) -> bool:
+def within_tolerance(a: Decimal, b: Decimal) -> bool:
+    """兩個金額差在 `AMOUNT_TOLERANCE` 內。"""
     return abs(a - b) <= AMOUNT_TOLERANCE
 
 
@@ -59,12 +61,12 @@ def observation_order(
     ctx: IssuerContext,
     table_name: str,
     words: Wording,
-    needs: Sequence[ParsedField],
+    table: ParsedField,
+    final: ParsedField,
     rows: Sequence[tuple[int, dt.date, dt.date]],
 ) -> CheckResult:
-    """同列觀察日 < 出場日；觀察日逐列遞增；末列觀察日 < 期末日。`rows` 交出（列號, 觀察日, 出場日），`needs` 是要讀到的
-    觀察日表與期末日（最後一個是期末日）。"""
-    final = needs[-1]
+    """同列觀察日 < 出場日；觀察日逐列遞增；末列觀察日 < 期末日 `final`。`rows` 交出觀察日表 `table` 的（列號, 觀察日,
+    出場日）。"""
     issues = []
     for n, day, exit_day in rows:
         if not day < exit_day:
@@ -75,35 +77,46 @@ def observation_order(
     if rows and final.ok and not rows[-1][1] < final.value:
         issues.append(f"末列{words.day} {rows[-1][1]} 沒有早於{words.final_day} {final.value}")
     return kit.structure_check(
-        ctx, "schedule.observation_order", "observation_order", f"{table_name}{words.day}順序", list(needs), issues
+        ctx, "schedule.observation_order", "observation_order", f"{table_name}{words.day}順序", [table, final], issues
     )
 
 
 # ---------------------------------------------------------------- 獲利情境的報酬率（各上手核對規則 §3.7）
 
 
+class ReturnMessages(NamedTuple):
+    """報酬率與年化的錯訊，各上手照原本的寫法（`str.format` 代入的名稱見各欄）。"""
+
+    amount: str  # 報酬率算式的贖回金額和贖回金額算式不同：{got}、{want}
+    divisor: str  # 報酬率算式的除數不等於第一章面額：{got}、{denomination}
+    pct: str  # 報酬率算錯：{pct}、{amount}、{divisor}、{expected}
+    annualized: str  # 年化算錯：{annualized}、{pct}、{months}、{expected}
+
+
 def profit_return_issues(
-    r: ProfitReturn, amount: Decimal | None, denomination: Decimal, *, tolerance: Decimal
+    r: ProfitReturn, amount: Decimal | None, denomination: Decimal, messages: ReturnMessages, *, tolerance: Decimal
 ) -> tuple[Decimal | None, list[str]]:
     """報酬率算式「(A ÷ N) - 1 = r%」：A = 贖回金額算式（讀不到時不比）、N = 面額、r = A ÷ N − 1 四捨五入到文件位數
     （差在 `tolerance` 內算對）。回傳（應有的 r, 問題）。"""
     issues = []
     if amount is not None and r.amount != amount:
-        issues.append(f"報酬率算式的贖回金額 {r.amount} 和贖回金額算式 {amount} 不同")
+        issues.append(messages.amount.format(got=r.amount, want=amount))
     if r.divisor != denomination:
-        issues.append(f"報酬率算式的總投資金額 {r.divisor} 不等於第一章面額 {denomination}")
+        issues.append(messages.divisor.format(got=r.divisor, denomination=denomination))
     expected = kit.shown(r.amount / r.divisor * 100 - 100, r.pct) if r.divisor else None
     if expected is None or abs(expected - r.pct) > tolerance:
-        issues.append(f"報酬率 {r.pct}% 應為 ({r.amount} ÷ {r.divisor}) − 1 = {expected}%")
+        issues.append(messages.pct.format(pct=r.pct, amount=r.amount, divisor=r.divisor, expected=expected))
     return expected, issues
 
 
-def annualized_issues(pct: Decimal, annualized: Decimal, months: int) -> tuple[Decimal, list[str]]:
+def annualized_issues(
+    pct: Decimal, annualized: Decimal, months: int, messages: ReturnMessages
+) -> tuple[Decimal, list[str]]:
     """年化報酬率 = 報酬率 × 12 ÷ months，四捨五入到文件位數。回傳（應有的年化, 問題）。"""
     expected = kit.shown(pct * 12 / months, annualized)
     if expected == annualized:
         return expected, []
-    return expected, [f"年化報酬率 {annualized}% 應為 {pct}% × 12 ÷ {months} = {expected}%（四捨五入到文件位數）"]
+    return expected, [messages.annualized.format(annualized=annualized, pct=pct, months=months, expected=expected)]
 
 
 # ---------------------------------------------------------------- 投資人須知（各上手核對規則 §3.8）

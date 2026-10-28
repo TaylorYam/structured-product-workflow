@@ -14,7 +14,14 @@ from ..schema import CheckResult, Item
 from ..schema import CheckStatus as S
 from . import ca, kit, super_bull
 from .kit import Check, IssuerContext
-from .super_bull import AMOUNT_TOLERANCE, close
+from .super_bull import AMOUNT_TOLERANCE, within_tolerance
+
+RETURN_MESSAGES = super_bull.ReturnMessages(
+    "報酬率算式的金額 {got} 和贖回金額算式 {want} 不同",
+    "報酬率算式的投資金額 {got} 不等於第一章面額 {denomination}",
+    "報酬率 {pct}% 應為 ({amount} / {divisor}) - 1 = {expected}%",
+    "年化報酬率 {annualized}% 應為 {pct}% × 12 ÷ {months} = {expected}%",
+)
 
 NOT_COVERED = [
     *(x for x in ca.NOT_COVERED if x["rule_id"] not in ("doc.scenario_calculations", "doc.template_variants")),
@@ -35,11 +42,6 @@ def _ts(ctx: IssuerContext) -> CaSuperBullTermSheet:
     if not isinstance(ts, CaSuperBullTermSheet):  # 註冊表只把 Super Bull 讀出結果交給這組規則
         raise TypeError("CA Super Bull 規則需要 Super Bull 說明書的讀出結果")
     return ts
-
-
-def _fixed(ctx: IssuerContext, rid: str, field: str, name: str) -> CheckResult:
-    """固定寫法（核對規則 §3.3、§3.5）。"""
-    return super_bull.fixed(rid, field, name, ctx.ts.f(field), ctx.document)
 
 
 # ---------------------------------------------------------------- CA 限定的型態（核對規則 §3.1）
@@ -76,13 +78,19 @@ def exit_bonus(ctx: IssuerContext) -> list[CheckResult]:
     """出場紅利的其他出處（基本假設、情境一）= 觀察日表的紅利；第 9 項 (a) 贖回金額 `x(100%+自動提前出場紅利)`。"""
     return [
         *super_bull.exit_bonus_mentions(ctx, _ts(ctx).bonus_mentions, "須等於第 9 項觀察日表的出場紅利"),
-        _fixed(ctx, "doc.exit_bonus", "ko_redemption_formula", "第 9 項 (a) 自動提前出場贖回金額"),
+        super_bull.fixed(
+            "doc.exit_bonus",
+            "ko_redemption_formula",
+            "第 9 項 (a) 自動提前出場贖回金額",
+            ctx.ts.f("ko_redemption_formula"),
+            ctx.document,
+        ),
     ]
 
 
 def no_coupon(ctx: IssuerContext) -> list[CheckResult]:
     return [
-        _fixed(ctx, "doc.no_coupon", field, name)
+        super_bull.fixed("doc.no_coupon", field, name, ctx.ts.f(field), ctx.document)
         for field, name in (
             ("no_coupon_art9", "第 9 項 (1) 沒有配息"),
             ("no_coupon_art13", "第 13 項 (6) 配息日"),
@@ -93,8 +101,11 @@ def no_coupon(ctx: IssuerContext) -> list[CheckResult]:
 
 def redemption_formula(ctx: IssuerContext) -> list[CheckResult]:
     return [
-        _fixed(ctx, "doc.redemption_formula", "maturity_formula", "第 9 項 (b)(ii) 到期贖回公式"),
-        _fixed(ctx, "doc.redemption_formula", "participation_rate", "第 15 項 (5) 參與率"),
+        super_bull.fixed("doc.redemption_formula", field, name, ctx.ts.f(field), ctx.document)
+        for field, name in (
+            ("maturity_formula", "第 9 項 (b)(ii) 到期贖回公式"),
+            ("participation_rate", "第 15 項 (5) 參與率"),
+        )
     ]
 
 
@@ -111,7 +122,7 @@ def observation_order(ctx: IssuerContext) -> CheckResult:
     f = ctx.ts.f
     table, final = f("ko_table"), f("final_valuation_date")
     rows = [(n, r["observation"], r["exit"]) for n, r in enumerate(table.value, start=1)] if table.ok else []
-    return super_bull.observation_order(ctx, "第 9 項", WORDS, [table, final], rows)
+    return super_bull.observation_order(ctx, "第 9 項", WORDS, table, final, rows)
 
 
 # ---------------------------------------------------------------- 情境分析（核對規則 §3.7）
@@ -185,14 +196,14 @@ def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
 
 
 def _annualized(c: _Scenario, hit, pct: Decimal, annualized: Decimal, months: int) -> CheckResult:
-    expected, issues = super_bull.annualized_issues(pct, annualized, months)
+    expected, issues = super_bull.annualized_issues(pct, annualized, months, RETURN_MESSAGES)
     return c.calc("annualized", issues, hit, expected=expected, actual=annualized)
 
 
 def _profit_return(c: _Scenario, hit, amount: Decimal | None, n: Decimal) -> CheckResult:
     """獲利情境「(A / N) - 1 = r%」：A = 贖回金額算式、N = 面額、r = A ÷ N − 1（文件位數）。"""
     r = hit.value
-    expected, issues = super_bull.profit_return_issues(r, amount, n, tolerance=AMOUNT_TOLERANCE)
+    expected, issues = super_bull.profit_return_issues(r, amount, n, RETURN_MESSAGES, tolerance=AMOUNT_TOLERANCE)
     return c.calc("return", issues, hit, expected=expected, actual=r.pct)
 
 
@@ -212,7 +223,7 @@ def _autocall(c: _Scenario, sc, n: Decimal, bonus: Decimal, k: int) -> list[Chec
         amount = a.amount
         expected = kit.shown(n * (100 + bonus) / 100, a.amount)
         issues = [] if a.denomination == n else [f"算式中的面額 {a.denomination} 不等於第一章面額 {n}"]
-        if not close(a.amount, expected):
+        if not within_tolerance(a.amount, expected):
             issues.append(f"自動提前出場贖回金額 {a.amount} 應為 {n} × (100% + {bonus}%) = {expected}")
         out.append(c.calc("redemption", issues, sc.autocall, expected=expected, actual=a.amount))
     if sc.autocall_return is None:
@@ -254,7 +265,7 @@ def _best(c: _Scenario, sc, n: Decimal, tenor: int) -> list[CheckResult]:
         if pct != b.pct:
             issues.append(f"(100% + {b.pct}%) 應為 {b.close} / {b.strike} - 100% = {pct}%")
         expected = kit.shown(n * (100 + b.pct) / 100, b.amount)  # 文件用寫出的 r%（已四捨五入）算金額
-        if not close(b.amount, expected):
+        if not within_tolerance(b.amount, expected):
             issues.append(f"到期給付金額 {b.amount} 應為 {n} × (100% + {b.pct}%) = {expected}")
         out.append(c.calc("redemption", issues, sc.best, expected=expected, actual=b.amount))
     if sc.best_return is None:
@@ -302,7 +313,7 @@ def _worse(c: _Scenario, sc, n: Decimal, tenor: int) -> list[CheckResult]:
         if assumed is not None and rm.close != assumed:
             issues.append(f"剩餘金額算式的收盤價 {rm.close} 和假設句 {assumed} 不同")
         expected = kit.shown(rm.fraction * rm.close, rm.amount)
-        if not close(rm.amount, expected):
+        if not within_tolerance(rm.amount, expected):
             issues.append(f"剩餘金額 {rm.amount} 應為 {rm.close} × {rm.fraction} = {expected}")
         out.append(c.calc("remainder", issues, sc.remainder, expected=expected, actual=rm.amount))
     if sc.worse_return is None:
@@ -326,13 +337,13 @@ def _worse(c: _Scenario, sc, n: Decimal, tenor: int) -> list[CheckResult]:
         issues.append(f"報酬率算式的投資金額 {w.divisor} 不等於第一章面額 {n}")
     total = (w.whole * w.close + w.remainder) / w.divisor * 100 - 100
     expected = kit.shown(total, w.pct)
-    if not close(w.pct, expected):
+    if not within_tolerance(w.pct, expected):
         issues.append(f"報酬率 {w.pct}% 應為 (({w.whole} × {w.close} + {w.remainder}) / {w.divisor}) - 1 = {expected}%")
     out.append(c.calc("return", issues, sc.worse_return, expected=expected, actual=w.pct))
     annualized = kit.shown(total * 12 / tenor, w.annualized)
     issues = (
         []
-        if close(w.annualized, annualized)
+        if within_tolerance(w.annualized, annualized)
         else [f"年化報酬率 {w.annualized}% 應為未四捨五入的報酬率 × 12 ÷ {tenor} = {annualized}%"]
     )
     out.append(c.calc("annualized", issues, sc.worse_return, expected=annualized, actual=w.annualized))

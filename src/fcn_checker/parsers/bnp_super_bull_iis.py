@@ -12,8 +12,8 @@ from decimal import Decimal
 
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from . import bnp_iis, iis
+from .common import exactly_one
 from .layout import TextIndex
-from .super_bull import exactly_one
 
 TEMPLATE_ID = "bnp-zh-sb-iis"
 PARSER_VERSION = "1"

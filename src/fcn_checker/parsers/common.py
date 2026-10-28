@@ -1,6 +1,6 @@
 """各上手說明書 parser 共用的小工具：數字、推得欄位、文件上的一組值（含原文行）、月配息率出處、沒有 KO 價時的 KO 100%，
 以及保留空白的原文合併文字 `RawText`、同一句另一組的 `capture_group`（Nomura、GS），
-費用表依座標讀費率的 `fee_rates`（GS、Natixis、CA）。
+費用表依座標讀費率的 `fee_rates`（GS、Natixis、CA）、固定寫法剛好一處的 `exactly_one`（Super Bull）。
 
 MS 與 BNP（之後的上手同樣）的 `read` 與情境分析解析都用這裡的版本，不各自複製一份（Issue #196）。
 """
@@ -84,6 +84,17 @@ def hits(ti: TextIndex, pattern: str, convert: Callable[[re.Match[str]], T]) -> 
 def one(found: list[Hit[T]]) -> Hit[T] | None:
     """剛好一處時回傳那一處；沒有或多處為 None（由規則轉人工覆核）。"""
     return found[0] if len(found) == 1 else None
+
+
+def exactly_one(
+    name: str, ti: TextIndex, pattern: str, missing: str, convert: Callable[[re.Match[str]], object] = lambda m: m[0]
+) -> ParsedField:
+    """固定寫法（去空白後的句型）剛好一處；值預設為原文去空白，`convert` 可改取其中的數值（Super Bull，workflow #326）。"""
+    found = list(ti.finditer(pattern))
+    if len(found) != 1:
+        return ParsedField.missing(name, missing if not found else f"{missing}（出現多次）")
+    m = found[0]
+    return ParsedField.present(name, convert(m), ti.lines_for(m.start(), m.end()))
 
 
 @dataclass(frozen=True)

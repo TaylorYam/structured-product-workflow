@@ -19,9 +19,9 @@ from ..standard_fields import ScenarioPrice
 from ..text import squash
 from . import bnp, bnp_scenario
 from .bnp_scenario import NUM, PCT, ROUNDING, StrikeAssumption, U, WorseReturn
-from .common import Hit, Mention, dec, hits, one
+from .common import Hit, Mention, dec, exactly_one, hits, one
 from .layout import TextIndex
-from .super_bull import ProfitReturn, Wording, exactly_one, fill_schedule
+from .super_bull import ProfitReturn, Wording, fill_schedule
 
 TEMPLATE_ID = "bnp-zh-sb-pd"
 PARSER_VERSION = "1"
@@ -261,13 +261,9 @@ def ki_type(art17: list[Line], table: ParsedField) -> ParsedField:
     return ParsedField.present(name, "none", art17)
 
 
-def _phrase(name: str, lines: list[Line], pattern: str, missing: str) -> ParsedField:
-    return exactly_one(name, TextIndex(lines), pattern, missing)
-
-
-def _bonus(name: str, lines: list[Line], pattern: str, missing: str) -> ParsedField:
-    """出場紅利 X%：剛好一處。"""
-    return exactly_one(name, TextIndex(lines), pattern, missing, lambda m: Decimal(m[1]))
+def _bonus(m: re.Match[str]) -> Decimal:
+    """出場紅利 X%（句型第 1 組）。"""
+    return Decimal(m[1])
 
 
 def read(lines: Sequence[Line]) -> SuperBullTermSheet:
@@ -288,26 +284,31 @@ def read(lines: Sequence[Line]) -> SuperBullTermSheet:
     _schedule(fields, art_label("dates"))
 
     # §15～§17
-    art15 = article("coupon")
-    fields["no_coupon"] = _phrase("no_coupon", art15, re.escape(NO_COUPON), f"{art_label('coupon')}不是「{NO_COUPON}」")
+    no_coupon = f"{art_label('coupon')}不是「{NO_COUPON}」"
+    fields["no_coupon"] = exactly_one("no_coupon", TextIndex(article("coupon")), re.escape(NO_COUPON), no_coupon)
     art16 = article("autocall")
-    fields["coupon_pa_pct"] = _bonus(
-        "coupon_pa_pct", art16, BONUS, f"找不到{art_label('autocall')}「自動提前贖回金額 = 商品面額 × [100% + X%]」"
+    fields["coupon_pa_pct"] = exactly_one(
+        "coupon_pa_pct",
+        TextIndex(art16),
+        BONUS,
+        f"找不到{art_label('autocall')}「自動提前贖回金額 = 商品面額 × [100% + X%]」",
+        _bonus,
     )
     fields["ko_memory"] = bnp.ko_memory(
         "ko_memory", art16, KO_EVENT, f"找不到{art_label('autocall')}自動提前贖回事件定義句"
     )
     art17 = article("maturity")
+    ti17 = TextIndex(art17)
     fields["ki_type"] = ki_type(art17, fields["underlying_table"])
     maturity = art_label("maturity")
-    fields["maturity_formula"] = _phrase(
-        "maturity_formula", art17, MATURITY_UP, f"{maturity}(1) 不是「商品面額 × [100% + 100% × (… ÷ … - 1)]」的寫法"
+    fields["maturity_formula"] = exactly_one(
+        "maturity_formula", ti17, MATURITY_UP, f"{maturity}(1) 不是「商品面額 × [100% + 100% × (… ÷ … - 1)]」的寫法"
     )
-    fields["participation_rate"] = _phrase(
-        "participation_rate", art17, re.escape(PARTICIPATION), f"{maturity}沒有「{PARTICIPATION}」"
+    fields["participation_rate"] = exactly_one(
+        "participation_rate", ti17, re.escape(PARTICIPATION), f"{maturity}沒有「{PARTICIPATION}」"
     )
-    fields["min_guaranteed_rate"] = _phrase(
-        "min_guaranteed_rate", art17, re.escape(MIN_RATE), f"{maturity}沒有「{MIN_RATE}」"
+    fields["min_guaranteed_rate"] = exactly_one(
+        "min_guaranteed_rate", ti17, re.escape(MIN_RATE), f"{maturity}沒有「{MIN_RATE}」"
     )
     bnp.pct_fields(fields, art_label("underlying"))
 
@@ -340,7 +341,13 @@ def read(lines: Sequence[Line]) -> SuperBullTermSheet:
         mentions.append(Mention.of_optional_hit(where, x.bonus, lambda v: v.bonus, s.lines[:1]))
     if not autocall:
         mentions.append(Mention.missing(f"{scenario_item}自動提前贖回情況", base.scenarios.lines[:1]))
-    ch2 = _bonus("bonus_ch2", doc.chapter_lines(2), BONUS_CH2, "第二章交易架構找不到「以商品面額之{100% + X%}贖回」")
+    ch2 = exactly_one(
+        "bonus_ch2",
+        TextIndex(doc.chapter_lines(2)),
+        BONUS_CH2,
+        "第二章交易架構找不到「以商品面額之{100% + X%}贖回」",
+        _bonus,
+    )
     mentions.append(Mention.of_field("第二章交易架構提前贖回金額", ch2))
 
     return SuperBullTermSheet(
