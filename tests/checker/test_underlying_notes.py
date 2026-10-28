@@ -10,6 +10,8 @@ import importlib
 import pytest
 
 import hsbc_synth
+from fcn_checker.parsers.underlying_notes import NameColumn, underlying_notes
+from fcn_checker.schema import Line
 from harness import MISMATCH, PASS, REVIEW, check_sheet
 from pdf_writer import Edit
 from reference_synth import build_reference_sheet, reference_row, ul_note
@@ -43,6 +45,38 @@ def test_every_underlying_has_a_note(tmp_path, name):
     n = len(synth(name).Spec().underlyings)
     assert count.status == PASS and count.expected == count.actual == n
     assert [r.status for r in per_note(report)] == [PASS] * n
+
+
+@pytest.mark.parametrize("name", ["ca", "gs", "jpm", "natixis", "ubs"])
+def test_an_english_only_name_starts_its_own_note(tmp_path, name):
+    """名稱欄只寫英文（左欄那一行沒有中文）的標的也自成一段，不併進上一檔（workflow #324）。"""
+    m = synth(name)
+    n = len(m.Spec().underlyings)
+    u = m.Spec().underlyings[1]
+    report = m.check(tmp_path, edits=[Edit(u.name, "Acme Robotics Corp", "ts.notes")])
+    [count] = notes(report)
+    assert count.status == PASS and count.actual == n
+    assert [r.status for r in per_note(report)] == [PASS] * n
+
+
+def test_a_wrapped_english_name_stays_in_its_note():
+    """英文名稱換行：第二行在上一個左欄行正下方（中間夾著介紹欄的行）是同一檔，下一個英文名稱才開新的一段（workflow #324）。"""
+
+    def line(x: float, y: float, text: str) -> Line:
+        return Line(1, x, y, x + 100, y + 10, text)
+
+    lines = [
+        line(45, 80, "連結標的之相關說明"),
+        line(45, 100, "Acme Robotics"),
+        line(200, 100, "艾克米公司為虛構公司，從事虛構產品之研發、製造與銷售，"),
+        line(45, 112, "Holdings Corp"),
+        line(200, 112, "並提供相關服務。該公司服務全球客戶。"),
+        line(45, 140, "Zeta Quantum Inc"),
+        line(200, 140, "Zeta 為虛構公司，從事虛構產品之研發、製造與銷售，並提供相關服務。"),
+    ]
+    pf = underlying_notes(lines, NameColumn())
+    first, second = pf.value
+    assert "HoldingsCorp" in first.text and second.text.startswith("ZetaQuantum")
 
 
 def test_hsbc_notes_are_split_by_paragraph(tmp_path):

@@ -8,9 +8,10 @@
 
 - `Markers`：每段以行首的編號開始（BARC `標的資產k：`、Citi `連結標的k：`、DBS `k.`、MS／Nomura `(k)連結標的k：`、
   BNP／SG 行首 `(k)`、BBVA 單獨一行 `k`）；第一個編號之前的行（表頭）不算。
-- `NameColumn`：兩欄表，左欄標的名稱、右欄介紹（CA、UBS、JPM、Natixis、GS）。左欄有中文的行開始一段（名稱跨行時連續的
-  左欄行、以括號開頭的左欄行（GS `（美國航空集團）`，可能隔著換頁）算同一段）；後面沒有右欄介紹就遇到下一段的左欄行
-  不算（表頭 `連結標的`／`簡介`）。右欄 = 段落裡最常見的長行左緣。
+- `NameColumn`：兩欄表，左欄標的名稱、右欄介紹（CA、UBS、JPM、Natixis、GS）。左欄有中文的行開始一段；名稱只寫英文
+  （例 `Acme Robotics Corp`）的左欄行也開始一段，但緊接在上一個左欄行正下方（間距不到半行高）的是名稱換行，不算（workflow #324）。
+  名稱跨行時連續的左欄行、以括號開頭的左欄行（GS `（美國航空集團）`，可能隔著換頁）算同一段；後面沒有右欄介紹就遇到
+  下一段的左欄行不算（表頭 `連結標的`／`簡介`）。右欄 = 段落裡最常見的長行左緣。
 - `Paragraphs`：沒有編號也沒有名稱欄（HSBC）：介紹欄的行依段落切，句號結尾、右緣明顯短於欄寬的行是一段的最後一行。
 
 只切段、不判斷內容；每段有沒有中文敘述、像不像亂碼由共用規則判斷（rules/underlying_notes.py）。找不到標題時交出缺漏。
@@ -34,6 +35,7 @@ END = re.compile(
 )
 _LEFT_GAP = 15.0  # 名稱欄：左緣比介紹欄左 15pt 以上
 _SHORT = 15.0  # 段落最後一行：右緣比欄寬短 15pt 以上
+_LATIN = re.compile(r"[A-Za-z]")
 
 
 @dataclass(frozen=True)
@@ -105,10 +107,10 @@ def _by_name_column(body: Sequence[Line]) -> list[list[Line]]:
     if col is None:
         return []
     groups: list[list[Line]] = []
-    has_note, prev_left = False, False
+    has_note, prev_left, last_left = False, False, None
     for ln in body:
         left = ln.x0 < col - _LEFT_GAP
-        if left and not prev_left and CJK.search(ln.text) and not squash(ln.text).startswith(("(", "（")):
+        if left and not prev_left and _starts_note(ln, last_left):
             if groups and not has_note:
                 groups.pop()  # 上一段沒有介紹：表頭
             groups.append([ln])
@@ -117,9 +119,21 @@ def _by_name_column(body: Sequence[Line]) -> list[list[Line]]:
             groups[-1].append(ln)
             has_note = has_note or abs(ln.x0 - col) <= _LEFT_GAP
         prev_left = left
+        last_left = ln if left else last_left
     if groups and not has_note:
         groups.pop()
     return groups
+
+
+def _starts_note(ln: Line, last_left: Line | None) -> bool:
+    """左欄行開始新的一檔：有中文，或只有英文且不在上一個左欄行正下方（名稱換行）；括號開頭的行是同一檔的別名。"""
+    text = squash(ln.text)
+    if text.startswith(("(", "（")):
+        return False
+    if CJK.search(text):
+        return True
+    beneath = last_left is not None and last_left.page == ln.page and ln.y0 - last_left.y1 < (ln.y1 - ln.y0) / 2
+    return bool(_LATIN.search(text)) and not beneath
 
 
 def _by_paragraphs(body: Sequence[Line]) -> list[list[Line]]:
