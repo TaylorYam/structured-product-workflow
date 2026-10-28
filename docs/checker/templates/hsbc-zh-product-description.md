@@ -213,7 +213,7 @@
 
 輔助特徵：PDF producer 為 Aspose.Words；頁面標記 `PUBLIC`。
 
-負面測試：本機 14 份 BARC 與 SG、BNP、Nomura 各 1 份樣本，皆不含 `香港上海滙豐銀行`，不應被判定為本範本；8 份 HSBC 也不含 `Barclays Bank PLC`，不會被 BARC 範本誤判。
+負面測試：本機 14 份 BARC 與 SG、BNP、Nomura 各 1 份樣本，皆不含 `香港上海滙豐銀行`，不應被判定為本範本；8 份 HSBC 也不含 `Barclays Bank PLC`，不會被 BARC 範本誤判。HSBC Super Bull 說明書（名稱 `自動提前贖回股權連結`、`SuperBull Notes`）不符合條件 3、4，由 [`hsbc-zh-sb-pd`](hsbc-zh-super-bull.md) 辨識（workflow #314）。
 
 ## 9. 文件資訊、固定文字與用語
 
