@@ -71,7 +71,7 @@
   - 中文：`香港上海滙豐銀行{天期}個月{幣別中文}計價{記憶式}自動提前到期固定配息股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）`
   - 英文：`{Maxi }{Daily }{Memory }Autocallable Fixed Coupon Notes (Non Guaranteed, Unsecured)`；`Maxi ` 標的數 ≥ 2、`Daily ` 提前出場每日觀察、`Memory ` 記憶式。
   - 英文名稱在 PDF 換行處常黏字，比對時忽略所有空白（`ignore_whitespace_en`）；中文括號全半形不計。
-- **Super Bull 商品名稱樣板**（`issuer.hsbc.product_names."Super Bull"`，workflow #314；參考條件表 Product 是 Super Bull 時用這個樣板，其他照 `issuer.hsbc.product_name`）：中文 `香港上海滙豐銀行{天期}個月{幣別中文}計價自動提前贖回股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）`（沒有 `固定配息`），英文 `SuperBull Notes (Non Guaranteed, Unsecured)`；英文名稱前面多的字（例：`Maxi `）不核對（看不出規則，#314 使用者確認）；比對方式同 FCN。其他審查標準和 HSBC FCN 相同（[HSBC Super Bull 核對規則](hsbc-super-bull-check-rules.md) §3.6）。
+- **Super Bull 商品名稱樣板**（`issuer.hsbc.product_names."Super Bull"`，workflow #314；參考條件表 Product 是 Super Bull 時用這個樣板，其他照 `issuer.hsbc.product_name`）：中文 `香港上海滙豐銀行{天期}個月{幣別中文}計價自動提前贖回股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）`（沒有 `固定配息`），英文 `SuperBull Notes (Non Guaranteed, Unsecured)`；英文名稱前面多的字（例：`Maxi `）不核對（看不出規則，#314 使用者確認；設定 `ignore_prefix_en = true`：英文只比結尾，錯訊容差註明「名稱前面多的字不核對」）；比對方式同 FCN。其他審查標準和 HSBC FCN 相同（[HSBC Super Bull 核對規則](hsbc-super-bull-check-rules.md) §3.6）。
 
 ### 2.3 依上手解析與商品名稱佔位符（Issue #52）
 

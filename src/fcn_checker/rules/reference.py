@@ -257,6 +257,16 @@ def _sheet_tickers(ctx: Context) -> list[Any]:
     return [o.value if o and o.value not in (None, empty) else None for o in ovs]
 
 
+def any_order(ctx: Context) -> bool:
+    """這一列的標的不看順序：上手在 `underlyings.any_order_issuers`，或該列 Product 在 `any_order_products` 列了這家上手
+    （HSBC Super Bull，#314）。"""
+    product = ctx.order.get("product")
+    name = product_name(product.value) if product is not None and isinstance(product.value, str) else None
+    return ctx.issuer in ctx.fmt.underlyings_any_order or ctx.issuer in ctx.fmt.underlyings_any_order_products.get(
+        name or FCN, ()
+    )
+
+
 def sheet_slots(ctx: Context, rows: int) -> list[int]:
     """說明書第 i 檔（順序同標準欄位 `underlyings`，共 `rows` 檔）對到表上第幾檔 UL_n（從 1 起）。
 
@@ -267,7 +277,7 @@ def sheet_slots(ctx: Context, rows: int) -> list[int]:
     """
     identity = list(range(1, rows + 1))
     uls = standard_field(ctx, "underlyings")
-    if ctx.issuer not in ctx.fmt.underlyings_any_order or not uls.ok or len(uls.value) != rows:
+    if not any_order(ctx) or not uls.ok or len(uls.value) != rows:
         return identity
     sheet = {n: str(t) for n, t in enumerate(_sheet_tickers(ctx), start=1) if t is not None}
     docs = list(uls.value)
@@ -323,7 +333,7 @@ def underlyings(ctx: Context) -> CheckResult:
     tickers = [str(values[i]) for i in filled]
     used = [ovs[i] for i in filled]
     check = Check(rid, "underlyings", Item.group(UNDERLYINGS, used), ctx.document, ov=tuple(used), expected=tickers)
-    if ctx.issuer in ctx.fmt.underlyings_any_order:  # 不看順序（Citi）：同一組代號（數量相同、不重複）就相符
+    if any_order(ctx):  # 不看順序（Citi）：同一組代號（數量相同、不重複）就相符
         same = pf.ok and sorted(tickers) == sorted(pf.value) and len(set(tickers)) == len(tickers)
         return check.needs(pf).compare(
             tickers,

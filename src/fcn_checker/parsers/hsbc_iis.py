@@ -17,7 +17,9 @@ TEMPLATE_ID = "hsbc-zh-iis"
 # 2：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 3：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
 # 4：分銷費用列跨頁時，項目名稱排在「報酬無」與費率之間（FCN_Express 樣本，workflow #306）
-PARSER_VERSION = "4"
+# 5：辨識補商品家族條件（中文「自動提前到期固定配息股權連結」、英文「Fixed Coupon Notes」）；Super Bull 投資人須知由
+#    hsbc_super_bull_iis 辨識（workflow #314）
+PARSER_VERSION = "5"
 # 發行機構信用評等（#240）：第一商品簡介第 4 點，寫法同說明書第一章第 3 項（沒有 `[`）
 RATINGS = (
     ratings.RatingPlace(
@@ -56,16 +58,41 @@ def body(lines: Sequence[Line]) -> list[Line]:
     return [x for x in lines if x.text != "PUBLIC" and not PAGE_HEADER.fullmatch(x.text)]
 
 
+# 商品家族（去空白）：FCN 與 FCN_Express 都符合；Super Bull 是「自動提前贖回股權連結」「SuperBull Notes」（workflow #314）
+FAMILY_ZH = "自動提前到期固定配息股權連結"
+FAMILY_EN = "FixedCouponNotes"
+NAME_ZH = r"中文投資人須知(?:\([^)]*\))?(香港上海滙豐銀行.+?結構型商品)"
+NAME_EN = r"中文投資人須知(?:\([^)]*\))?香港上海滙豐銀行.+?結構型商品(.+?)本商品之投資風險警語"
+
+
+def layout_problems(text: str) -> list[str]:
+    """HSBC 投資人須知的版面條件（FCN 與 Super Bull 共用）：不成立的說明。"""
+    return [
+        message
+        for ok, message in (
+            ("中文投資人須知" in text, "封面缺少「中文投資人須知」"),
+            (
+                re.search(r"相關機構.?發行機構[:：]香港商香港上海滙豐銀行股份有限公司", text) is not None,
+                "發行機構不是HSBC",
+            ),
+            (iis.in_order(text, SECTIONS), "段落標題不完整或順序不符：" + "、".join(SECTIONS)),
+        )
+        if not ok
+    ]
+
+
+def names(text: str) -> tuple[str, str]:
+    """第 1 頁的中英文商品名稱（去空白；讀不到為空字串）。"""
+    zh, en = re.search(NAME_ZH, text), re.search(NAME_EN, text)
+    return (zh[1] if zh else "", en[1] if en else "")
+
+
 def detect(lines: Sequence[Line]) -> DetectionResult:
     text = TextIndex(body(lines)).text
-    failed = []
-    for ok, message in (
-        ("中文投資人須知" in text, "封面缺少「中文投資人須知」"),
-        (re.search(r"相關機構.?發行機構[:：]香港商香港上海滙豐銀行股份有限公司", text) is not None, "發行機構不是HSBC"),
-        (iis.in_order(text, SECTIONS), "段落標題不完整或順序不符：" + "、".join(SECTIONS)),
-    ):
-        if not ok:
-            failed.append(message)
+    zh, en = names(text)
+    failed = layout_problems(text)
+    if FAMILY_ZH not in zh or FAMILY_EN not in en:
+        failed.append(f"商品家族不是 FCN（名稱沒有「{FAMILY_ZH}」或「Fixed Coupon Notes」）")
     return DetectionResult(not failed, failed, [Evidence.of(x) for x in body(lines)[:2]])
 
 
@@ -88,8 +115,8 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
     def put(name, pattern, convert=lambda x: x):
         fields[name] = iis.capture(name, ti, pattern, convert)
 
-    put("name_zh", r"中文投資人須知(?:\([^)]*\))?(香港上海滙豐銀行.+?結構型商品)")
-    put("name_en", r"中文投資人須知(?:\([^)]*\))?香港上海滙豐銀行.+?結構型商品(.+?)本商品之投資風險警語")
+    put("name_zh", NAME_ZH)
+    put("name_en", NAME_EN)
     put("currency_zh", r"6\.計價幣別[:：](.+?)7\.每單位面額")
     put("denomination", r"7\.每單位面額[:：]([\d,]+)", iis.integer)
     fields["currency_others"] = iis.occurrences(  # 金額旁的幣別字 = 參考條件表承作幣別（Issue #170）

@@ -65,7 +65,7 @@
 | KI(Freq) | `ki_type` | `-` 無 KI、`AM` 到期觀察、`D` 每日觀察、`P` 每期觀察（每個配息週期終止日，含期末定價日；各上手是否能讀出、是否被設定攔截須分開看；目前 MS 也在 `ki_periodic` 黑名單，見[支援範圍](../support-matrix.md)） |
 | 天期(月) | `tenor_months` | 核對 |
 | Non-Call(月) | `first_callable_period` | 第一個可以提前出場的期別；FCN、Super Bull 最小為 1，FCN_Express 為 0（沒有 Non-Call）。Super Bull 是第一個評價日距發行日的月數。須和說明書推得的相同，且符合 Product 的商品種類（`field.non_call_product`） |
-| UL_1～UL_5 | `underlying_n` | 彭博代號（不含 ` Equity`），數量須相同，缺少的標的填 `-`。CITI、JPM、GS、BBVA 依代號配對、不看順序（`[underlyings].any_order_issuers`），價格核對與 VWAP 回填也寫到相同代號。代碼有一檔不同時仍判不一致；價格先比完整代碼，再比去交易所碼後兩邊唯一的代號，仍配不起來才依順序。其餘上手依原順序比對 |
+| UL_1～UL_5 | `underlying_n` | 彭博代號（不含 ` Equity`），數量須相同，缺少的標的填 `-`。CITI、JPM、GS、BBVA 依代號配對、不看順序（`[underlyings].any_order_issuers`），只有某種商品不看順序時用 `any_order_products`（依參考條件表 Product；目前 HSBC Super Bull），價格核對與 VWAP 回填也寫到相同代號。代碼有一檔不同時仍判不一致；價格先比完整代碼，再比去交易所碼後兩邊唯一的代號，仍配不起來才依順序。其餘上手依原順序比對 |
 | 期初定價 | `initial_pricing` | `開盤價`、`收盤價` 或 `VWAP`（作業人員放在 `KO(%)` 前一欄）；空白時當成不是 VWAP，價格照常比對，說明書寫明期初定價（Citi、GS）時改依說明書判斷（Issue #246）；其他值 → 轉人工覆核。決定價格欄怎麼處理（Issue #122）；說明書寫明期初定價時（Citi 標的表表頭「期初評價日之收盤價格／VWAP」；GS 第一章第 15 項「初始參考價格」的定義句，Issue #248）另須相同，其他範本沒有對應資料（標準欄位 `initial_pricing` 交 `absent`），不比對（Issue #220） |
 | UL_n_進場價／執行價／下限價／KO價 | `underlying_n_initial_price` 等 | 表上值四捨五入（half-up）到 4 位後與說明書價格表相等；沒有 KI 時下限價必須是 `-`；說明書沒有 KO 價（SG、MS Non-Call = 天期）時 KO 價 = 期初價格，照常比對。期初定價為 `VWAP` 時不比對，改為**回填欄位**（§5） |
 | 風險等級 | `risk_level` | RR 核對（全文風險等級、固定警語裡的 RR、投資人須知商品簡介的 RR）的期望值：`RR1`～`RR5`；`待算`、空白或其他值 → RR 相關項目轉人工覆核。資料庫匯出的是自算風險等級（workflow ADR 0023）。不是必要欄，表上沒有時用審查標準 `risk.level`（見[審查標準](../rules/review-standard.md) §2.21）。不在匯入格式裡，「回填後」不帶 |

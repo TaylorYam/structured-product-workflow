@@ -1,7 +1,7 @@
 # 下單資料格式：HSBC Super Bull（參考條件表）
 
 - 設定檔：所有上手共用的 [`config/reference_sheet.toml`](../../../config/reference_sheet.toml)
-- 狀態：規格（workflow #314），尚未實作。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)，本文件只寫 HSBC Super Bull 的說明書來源與差異；和 HSBC FCN 相同的欄位見 [HSBC 下單資料格式](hsbc-fcn-reference.md)
+- 狀態：已實作（workflow #314；`config/reference_sheet.toml` 的 `[underlyings] any_order_products`）。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)，本文件只寫 HSBC Super Bull 的說明書來源與差異；和 HSBC FCN 相同的欄位見 [HSBC 下單資料格式](hsbc-fcn-reference.md)
 
 ## 1. 結構
 
@@ -56,7 +56,7 @@ Super Bull 沿用 FCN 那組欄（workflow ADR 0028）：`Coupon p.a. (%)` 存�
 
 ## 5. 標的順序
 
-參考條件表的 `UL_n` 順序可以和說明書不同（探勘 5 份裡 3 份不同）：HSBC Super Bull 以彭博代號配對各標的與價格，不管順序（#314 已確認；共用規則的「不看順序」，[共用核對規則](../rules/shared-check-rules.md) §5）。標的數量仍要相同。HSBC FCN 照舊依順序比對。
+參考條件表的 `UL_n` 順序可以和說明書不同（探勘 5 份裡 3 份不同）：HSBC Super Bull 以彭博代號配對各標的與價格，不管順序（#314 已確認；設定 `[underlyings] any_order_products = { "Super Bull" = ["HSBC"] }`；共用規則的「不看順序」，[共用核對規則](../rules/shared-check-rules.md) §5）。標的數量仍要相同。HSBC FCN 照舊依順序比對。
 
 ## 6. 不核對的欄位
 

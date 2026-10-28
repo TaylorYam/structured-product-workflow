@@ -24,6 +24,7 @@ from .parsers import (
     dbs_iis,
     gs_iis,
     hsbc_iis,
+    hsbc_super_bull_iis,
     jpm_iis,
     ms_iis,
     natixis_iis,
@@ -40,6 +41,7 @@ from .parsers import citi as citi_parser
 from .parsers import dbs as dbs_parser
 from .parsers import gs as gs_parser
 from .parsers import hsbc as hsbc_parser
+from .parsers import hsbc_super_bull as hsbc_sb_parser
 from .parsers import jpm as jpm_parser
 from .parsers import ms as ms_parser
 from .parsers import natixis as natixis_parser
@@ -64,6 +66,8 @@ from .rules import dbs_iis as dbs_iis_rules
 from .rules import gs as gs_rules
 from .rules import gs_iis as gs_iis_rules
 from .rules import hsbc as hsbc_rules
+from .rules import hsbc_super_bull as hsbc_sb_rules
+from .rules import hsbc_super_bull_iis as hsbc_sb_iis_rules
 from .rules import jpm as jpm_rules
 from .rules import jpm_iis as jpm_iis_rules
 from .rules import ms as ms_rules
@@ -175,6 +179,29 @@ HSBC = Issuer(
         read=hsbc_iis.read,
         not_covered=(_IIS_SAMPLES,),
     ),
+)
+
+# HSBC Super Bull（#314）：和 HSBC FCN 同一家上手、不同範本；依參考條件表 Product 選用（商品種類一致檢查在辨識）
+HSBC_SUPER_BULL = Issuer(
+    code=hsbc_rules.ISSUER,
+    template_id=hsbc_sb_parser.TEMPLATE_ID,
+    label="HSBC Super Bull 中文產品說明書",
+    parser_version=hsbc_sb_parser.PARSER_VERSION,
+    not_covered=tuple(hsbc_sb_rules.NOT_COVERED),
+    detect=hsbc_sb_parser.detect,
+    read=hsbc_sb_parser.read,
+    rules=hsbc_sb_rules.run_all,
+    ratings=True,
+    iis=IisTemplate(
+        template_id=hsbc_super_bull_iis.TEMPLATE_ID,
+        label="HSBC Super Bull 中文投資人須知",
+        parser_version=hsbc_super_bull_iis.PARSER_VERSION,
+        detect=hsbc_super_bull_iis.detect,
+        read=hsbc_super_bull_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=hsbc_sb_iis_rules.run_all,
+    ),
+    products=frozenset({SUPER_BULL}),
 )
 
 MS = Issuer(
@@ -490,6 +517,7 @@ UBS = Issuer(
 REGISTRY: tuple[Issuer, ...] = (
     BARC,
     HSBC,
+    HSBC_SUPER_BULL,
     MS,
     BNP,
     BNP_SUPER_BULL,

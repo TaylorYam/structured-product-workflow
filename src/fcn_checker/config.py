@@ -66,6 +66,7 @@ class ProductNameTemplate:
         ""  # {express_zh}／{express_en}：沒有 Non-Call（FCN_Express）時填入（CA、HSBC「Express」，workflow #305、#306）
     )
     express_en: str = ""
+    ignore_prefix_en: bool = False  # 英文名稱只比結尾：前面多的字不核對（HSBC Super Bull 的「Maxi 」，#314）
 
     def template(self, lang: str, tenor: int) -> str:
         """樣板（zh／en）；天期 1 個月時英文 `{tenor} Months`／`{tenor}Months` 改成單數 `Month`（只接受單數，Issue #343）。"""
@@ -243,6 +244,8 @@ class ReferenceFormat:
     initial_pricing_values: dict[str, str]  # 期初定價：開盤價／收盤價／VWAP → open／close／vwap
     # 標的不看順序的上手代號：表上 UL_n 與說明書同一組代號就相符，價格與 VWAP 回填依代號配對（Citi，Issue #220）
     underlyings_any_order: tuple[str, ...] = ()
+    # 只在某商品種類不看順序的上手：商品種類（參考條件表 Product 的寫法）→ 上手代號（HSBC Super Bull，#314）
+    underlyings_any_order_products: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
 
 def load_toml(path: Path, what: str) -> dict[str, Any]:
@@ -380,6 +383,7 @@ def _product_name(n: dict[str, Any], where: str) -> ProductNameTemplate:
         periodic_en=n.get("periodic_en", ""),
         express_zh=n.get("express_zh", ""),
         express_en=n.get("express_en", ""),
+        ignore_prefix_en=bool(n.get("ignore_prefix_en", False)),
     )
     if any(not (isinstance(k, str) and isinstance(v, str) and v) for k, v in tpl.ccy_aliases.items()):
         raise _fail(f"審查標準商品名稱樣板 {where}.ccy_aliases 須是 ISO 代碼 → 名稱用代碼的文字表")
@@ -634,6 +638,10 @@ def load_reference_format(path: Path) -> ReferenceFormat:
             ki_type_values=dict(d["values"]["ki_type"]),
             initial_pricing_values=dict(d["values"]["initial_pricing"]),
             underlyings_any_order=tuple(str(c) for c in d.get("underlyings", {}).get("any_order_issuers", [])),
+            underlyings_any_order_products={
+                str(p): tuple(str(c) for c in codes)
+                for p, codes in d.get("underlyings", {}).get("any_order_products", {}).items()
+            },
         )
     except (KeyError, TypeError, ValueError) as e:
         raise IngestionError("config_invalid", f"參考條件表格式設定檔缺少或格式錯誤的項目：{e}") from e
