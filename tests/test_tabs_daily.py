@@ -30,11 +30,13 @@ from sp_workflow.local_settings import FolderMemory
 from sp_workflow.observation import EventChange, ObservationReceipt, Observed
 from sp_workflow.order_terms import PENDING as ORDER_PENDING
 from sp_workflow.order_terms import OrderRow
+from sp_workflow.product_backfill import IMPORTED, ProductBackfillReceipt
 from sp_workflow.window_actions import (
     DailyResult,
     HistoryResult,
     LegacyResult,
     Observation,
+    OtherProductsResult,
     PriceCsvResult,
     Recalc,
     WhitelistResult,
@@ -451,6 +453,38 @@ def test_legacy_backfill_runs_on_this_page_and_lists_what_changed(
     rows = [window.daily.table.item(i, "values") for i in window.daily.table.get_children()]
     assert [r[:2] for r in rows] == [("147199990001", "舊商品已補"), ("147199990003", "舊商品不匯入")], "已存在的不列"
     assert window.daily.memory.load()["legacy_backfill"] == str(source)
+
+
+def test_other_products_backfill_runs_on_this_page_and_lists_what_changed(
+    master, tmp_path: Path, monkeypatch, immediate
+) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
+    source = tmp_path / "FCN外商品數量.xlsx"
+    monkeypatch.setattr(sp_workflow.tabs.daily, "ask_excel", lambda *a: str(source))
+    receipt = ProductBackfillReceipt(
+        (
+            BackfillLine("029199990001", IMPORTED, "", (2,)),
+            BackfillLine("029199990002", EXISTING, "資料庫已有這檔的商品條件，沒有動", (3,)),
+            BackfillLine("029199990003", SKIPPED, "表上有 2 列（第 4、5 列），不知道用哪一列", (4, 5)),
+        ),
+        ignored=7,
+        error_book_path=tmp_path / "其他商品回補錯誤.xlsx",
+    )
+    result = OtherProductsResult(receipt, Observation(error="讀不到交易所假日表，這次沒有比價"))
+    monkeypatch.setattr(sp_workflow.tabs.daily, "import_other_products", lambda settings, path, paths: result)
+
+    window._import_other_products()
+
+    assert window.notebook.select() == str(window.daily.frame)
+    status = window.daily.status_var.get()
+    assert (
+        "完成（既有的 FCN 以外商品）：已匯入 1 檔、已存在 1 檔、不匯入 1 檔；FCN 與不支援的商品 7 列沒有匯入。"
+        in status
+    )
+    assert "「只匯交易明細」" in status and f"錯誤清單：{tmp_path / '其他商品回補錯誤.xlsx'}" in status
+    rows = [window.daily.table.item(i, "values") for i in window.daily.table.get_children()]
+    assert [r[:2] for r in rows] == [("029199990001", "其他商品已匯入"), ("029199990003", "其他商品不匯入")]
+    assert window.daily.memory.load()["other_products"] == str(source)
 
 
 def test_close_history_does_nothing_without_a_file(master, tmp_path: Path, monkeypatch, immediate) -> None:

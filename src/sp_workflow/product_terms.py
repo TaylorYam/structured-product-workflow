@@ -15,6 +15,7 @@
 - `write`：更正與人工維護存一檔（`Receipt`），自己一個 transaction；這檔的交易明細（`trade_rows`，#116、ADR 0018）
   一起存，商品條件、交易明細各在 `workflow.term_correction`、`workflow.trade_row_correction` 留紀錄。
 - `backfill`／`lock_checked`：核對寫回寫一格並記 `workflow.backfill_log`、核對通過鎖住這檔。
+- `create_backfilled`：回補既有的 FCN 以外商品（#303，`product_backfill`）建立一檔鎖住的商品條件，來源「歷史回補」。
 - `missing_products`：人工維護「檢查」列出的商品；`load_import_config`／`issuer_code`：設定與上手代號。
 不能讀設定、不能存檔時丟 `TermsError`（訊息是給作業人員看的中文）。
 
@@ -49,6 +50,7 @@ from sp_workflow.product_record import (
     FIELDS,
     KINDS,
     PRICE_COLUMNS,
+    PRICING_FIELD,
     PRODUCT_COLUMNS,
     PRODUCT_RULES,
     REQUIRED,
@@ -320,6 +322,8 @@ def _locked_reason(source: str, locked_at: dt.datetime | None) -> str:
         return ""
     if source == ProductSource.INVENTORY:
         return "以前清單更新匯入的商品，條件已鎖住，要改請到「7 人工維護」"
+    if source == ProductSource.BACKFILL:
+        return "歷史回補的商品，條件已鎖住，要改請到「7 人工維護」"
     return "已核對通過，條件已鎖住，要改請到「7 人工維護」"
 
 
@@ -1076,6 +1080,37 @@ def backfill(
         (tdcc, item, _text(old), _text(value), result_file, user),
     )
     return True
+
+
+def create_backfilled(
+    conn: psycopg.Connection,
+    tdcc: str,
+    values: Mapping[str, object],
+    config: ImportConfig,
+    *,
+    isin: str | None,
+    denomination: Decimal | None,
+) -> dict[str, str]:
+    """回補既有的 FCN 以外商品（#303）：資料庫還沒有的一檔，照起單資料匯入的檢查建立商品條件並鎖住，來源「歷史回補」。
+
+    `values` 是畫面的欄 → 值；期初價格可以空白（舊表有空白的，之後在人工維護補）。ISIN 與單位面額用表上的值
+    （面額空白時照幣別預設值）。回傳擋下的問題 {欄位: 問題}，空的表示寫好了。在呼叫端的 transaction 裡執行。
+    """
+    require_in_transaction(conn)
+    row = OrderRow(tdcc, OrderReview.READ, config.issuer_prefixes.get(tdcc[:3], ""), dict(values))
+    draft = draft_from(row, None, config)
+    found = _blocking(draft, config, Mode.IMPORT)
+    if values.get(PRICING_FIELD) is None:
+        found.pop(PRICING_FIELD, None)
+    if found:
+        return found
+    product = _product_for(draft.values, draft, None, config, Mode.IMPORT)
+    if denomination is not None:
+        product["denomination"] = denomination
+    if not _write(conn, tdcc, product, PRODUCT_COLUMNS, None, {"source": ProductSource.BACKFILL, "isin": isin}):
+        return {TDCC_FIELD: "資料庫已經有這檔的商品條件"}
+    lock_checked(conn, tdcc)
+    return {}
 
 
 def lock_checked(conn: psycopg.Connection, tdcc: str) -> None:

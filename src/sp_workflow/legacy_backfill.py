@@ -11,6 +11,7 @@
 - 表上沒有、資料庫沒有、還沒鎖住、表上有兩列、代碼和資料庫不同、價格不是數字、比價日不是日期的：那一檔不匯入並
   寫出原因，其他照常；不匯入的另外寫一份錯誤清單放在來源檔旁邊。
 - 整次匯入一個 transaction；重跑同一份，補過的都是「已存在」，不重寫。
+讀格子、檢查與寫比價日的 `cell_value`／`date_problems`／`write_dates` 回補 FCN 以外商品（`product_backfill`，#303）也用。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
@@ -141,7 +142,7 @@ def backfill_legacy(
                 status = statuses.get(record.row)
                 problems = [
                     *([] if found.has_prices else _price_problems(record, found, fmt)),
-                    *([] if found.has_dates else _date_problems(record, fmt)),
+                    *([] if found.has_dates else date_problems(record, fmt)),
                 ]
                 event, event_problem = _status_event(status, found.final_date)
                 if event_problem:
@@ -163,7 +164,7 @@ def backfill_legacy(
                     _write_prices(conn, tdcc, record, found, fmt)
                     done.append("價格")
                 if not found.has_dates:
-                    _write_dates(conn, tdcc, record, fmt)
+                    write_dates(conn, tdcc, record, fmt)
                     done.append("比價日 1～12")
                 detail = f"補了{'、'.join(done)}"
                 if found.terms_status not in (None, DONE):
@@ -262,7 +263,7 @@ def _scope_problem(found: _Product | None, rows: Sequence[OrderRecord]) -> str:
     return ""
 
 
-def _value(record: OrderRecord, key: str, fmt: ReferenceFormat) -> Any:
+def cell_value(record: OrderRecord, key: str, fmt: ReferenceFormat) -> Any:
     """一格的值；空白與空值寫法都是 None。"""
     found = record.fields.get(key)
     value = None if found is None else found.value
@@ -272,8 +273,8 @@ def _value(record: OrderRecord, key: str, fmt: ReferenceFormat) -> Any:
 def _price_problems(record: OrderRecord, found: _Product, fmt: ReferenceFormat) -> list[str]:
     problems = []
     for i, code in enumerate(found.codes, 1):
-        listed = _value(record, underlying_key(i), fmt)
-        values = {label: _value(record, price_key(i, col), fmt) for col, _, label in PRICES}
+        listed = cell_value(record, underlying_key(i), fmt)
+        values = {label: cell_value(record, price_key(i, col), fmt) for col, _, label in PRICES}
         if code is None:
             if listed is not None or any(v is not None for v in values.values()):
                 problems.append(f"資料庫沒有 UL_{i}，表上卻有代碼或價格")
@@ -290,10 +291,10 @@ def _price_problems(record: OrderRecord, found: _Product, fmt: ReferenceFormat) 
     return problems
 
 
-def _date_problems(record: OrderRecord, fmt: ReferenceFormat) -> list[str]:
+def date_problems(record: OrderRecord, fmt: ReferenceFormat) -> list[str]:
     problems = []
     for n in range(1, SLOTS + 1):
-        value = _value(record, autocall_date_key(n), fmt)
+        value = cell_value(record, autocall_date_key(n), fmt)
         if value is not None and not isinstance(value, dt.date):
             problems.append(f"比價日_{n} 不是日期（{value}）")
     return problems
@@ -334,7 +335,7 @@ def _write_prices(
     for i, code in enumerate(found.codes, 1):
         if code is None:
             continue
-        values = [_value(record, price_key(i, col), fmt) for col, _, _ in PRICES]
+        values = [cell_value(record, price_key(i, col), fmt) for col, _, _ in PRICES]
         conn.execute(
             "INSERT INTO workflow.underlying_price (tdcc, seq, code, initial_price, strike_price, ki_price, ko_price)"
             " VALUES (%s, %s, %s, %s, %s, %s, %s)",
@@ -342,9 +343,9 @@ def _write_prices(
         )
 
 
-def _write_dates(conn: psycopg.Connection, tdcc: str, record: OrderRecord, fmt: ReferenceFormat) -> None:
+def write_dates(conn: psycopg.Connection, tdcc: str, record: OrderRecord, fmt: ReferenceFormat) -> None:
     with conn.cursor() as cur:
         cur.executemany(
             "INSERT INTO workflow.autocall_date (tdcc, slot, value) VALUES (%s, %s, %s)",
-            [(tdcc, n, _value(record, autocall_date_key(n), fmt)) for n in range(1, SLOTS + 1)],
+            [(tdcc, n, cell_value(record, autocall_date_key(n), fmt)) for n in range(1, SLOTS + 1)],
         )

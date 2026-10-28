@@ -2,7 +2,7 @@
 
 - 狀態／Status: Accepted
 - 日期／Date: 2026-10-28
-- 追蹤／Tracking: #301、#302
+- 追蹤／Tracking: #301、#302、#303
 
 ## 繁體中文
 
@@ -30,7 +30,7 @@ FCN 以外量最大、成長最快的是 FCN_Express：2026-04～10 共 113 檔�
 
 ### 後果
 
-- 每日匯入不再把 FCN_Express 記到 `workflow.other_product`；以前記過的 114 檔照舊在那裡，由 #303 回補後處理。
+- 每日匯入不再把 FCN_Express 記到 `workflow.other_product`；以前記過的由「匯入既有的 FCN 以外商品」（#303）回補：從舊總表格式的 Excel 建立鎖住的商品條件（來源「歷史回補」，Non-Call 轉成 0、期初定價日存交易日）、價格、比價日與分公司配置，並從 `other_product` 移除；交易明細列（含 FC）由「只匯交易明細」重匯交易清單補上，不從舊表寫。
 - 在 Barclays 開放之前，Express 的 TS 不能自動核對，比價日也不會由核對回填；要等 #303 回補或 #304。
 - 參考條件表格式 v20、上手編號對照 v11；舊的 Excel 參考條件表沒有 Product 欄照常核對。
 - 核對後商品種類改了，也算條件改了（不回填、不鎖住）；核對時的表沒有 Product 欄不算改了。
@@ -61,7 +61,7 @@ Fourteen TS/IIS samples (Barclays 10, CA 2, HSBC 2) show the same mechanism at a
 
 ### Consequences
 
-- The daily import no longer records FCN_Express in `workflow.other_product`; the 114 already there stay until the backfill in #303.
+- The daily import no longer records FCN_Express in `workflow.other_product`; the ones recorded earlier are backfilled by "匯入既有的 FCN 以外商品" (#303), which creates locked product terms from the old master-sheet format (source 歷史回補, Non-Call turned into 0, the trade date stored as the strike date) with prices, autocall dates, and branch allocations, and removes them from `other_product`; trade rows (with the FC) come from re-importing the trade list with "只匯交易明細", not from the old sheet.
 - Until Barclays is opened, Express term sheets are not checked automatically and observation dates are not backfilled by the checker; they come from #303 or #304.
 - Reference sheet format v20 and issuer prefix map v11; old Excel reference sheets without a Product column are checked as before.
 - A product type changed after checking counts as changed terms (no backfill or lock); a checked sheet without a Product column does not count as changed.

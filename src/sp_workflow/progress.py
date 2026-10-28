@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     import psycopg
 
 _FLOW_STEPS = (PREPARED_STEP, RETURNED_STEP, DRAFTED_STEP, SENT_STEP)  # 新流程的步驟紀錄
+_EXCEL_SOURCES = (ProductSource.INVENTORY, ProductSource.BACKFILL)  # 以前在 Excel 走完、建立時就鎖住的商品
 
 PREPARING = Progress.PREPARING
 TO_CHECK = Progress.TO_CHECK
@@ -72,7 +73,7 @@ class Facts:
     tdcc: str
     has_trades: bool = False  # 有交易明細
     has_terms: bool = False  # 有商品條件
-    locked_inventory: bool = False  # 以前清單更新建立、已鎖住的舊商品（ADR 0020）
+    locked_inventory: bool = False  # 以前清單更新建立或歷史回補（#303）、已鎖住的舊商品（ADR 0020）
     missing: tuple[str, ...] = ()  # 缺的必填欄（畫面的欄名）
     terms_status: str | None = None  # 核對條件狀態；還沒算過時是 None
     terms_reason: str | None = None
@@ -192,8 +193,9 @@ def _read_facts(conn: psycopg.Connection) -> _AllFacts:
         item["has_trades"] = True
         trade_dates[tdcc] = first_trade
     terms_imported = dict(
-        conn.execute(  # 商品條件匯入的日期：Order 匯入、清單更新或最後一次人工維護存檔
+        conn.execute(  # 商品條件匯入的日期：Order 匯入、清單更新、歷史回補（#303）或最後一次人工維護存檔
             "SELECT p.tdcc, CASE p.source WHEN 'Order' THEN o.imported_at WHEN '清單更新' THEN r.imported_at"
+            " WHEN '歷史回補' THEN p.locked_at"
             " ELSE (SELECT max(c.corrected_at) FROM workflow.term_correction c WHERE c.tdcc = p.tdcc) END"
             " FROM workflow.product p"
             " LEFT JOIN workflow.order_import o ON o.import_id = p.order_import_id"
@@ -207,7 +209,7 @@ def _read_facts(conn: psycopg.Connection) -> _AllFacts:
         required = _PRICED_REQUIRED if _has_initial_prices(product, initial_prices) else REQUIRED
         item.update(
             has_terms=True,
-            locked_inventory=stored.source == ProductSource.INVENTORY and locked(stored),
+            locked_inventory=stored.source in _EXCEL_SOURCES and locked(stored),
             missing=tuple(missing_fields(product, required)),
         )
         _put(item["dates"], TERMS_IMPORTED, terms_imported.get(tdcc))
