@@ -46,19 +46,21 @@ from sp_workflow.product_record import (
     CHOICES,
     COLUMN_FIELDS,
     DERIVED_COLUMNS,
-    FCN,
     FIELDS,
     KINDS,
     PRICE_COLUMNS,
     PRODUCT_COLUMNS,
+    PRODUCT_RULES,
     REQUIRED,
     STRIKE_FIELD,
+    SUPPORTED_PRODUCTS,
     TRADE_FIELD,
     UNDERLYINGS,
     FieldKind,
     columns_of,
     fields_of,
     missing_fields,
+    product_name,
     same_value,
     to_json,
 )
@@ -92,6 +94,7 @@ _TYPES: dict[FieldKind, tuple[type, ...]] = {
     FieldKind.DATE: (dt.date,),
 }
 
+_NON_CALL_FIELD = "Guaranteed Periods (m)"
 _CONFLICT = "起單建檔裡這檔有好幾列、這欄不同，要填正確的值（正確是空白的話請改起單建檔後重新讀取）"
 # 人工維護可以空白的必填欄（#115）：資料庫的商品種類不可空白（ADR 0016）
 _BLANK_ALLOWED = frozenset(REQUIRED) - {"Product"}
@@ -430,7 +433,14 @@ class Draft:
         self.database_checked = True
 
 
-def draft_from(row: OrderRow | str, stored: Stored | None, config: ImportConfig, *, checked: bool = True) -> Draft:
+def draft_from(
+    row: OrderRow | str,
+    stored: Stored | None,
+    config: ImportConfig,
+    *,
+    checked: bool = True,
+    trade_product: str | None = None,
+) -> Draft:
     """讀到的一檔 → 可以編輯的確認資料。`stored` 是 `read` 讀到的資料庫這檔（沒有時 None）。
 
     `row` 是起單建檔讀到的列（找到的才有草稿，呼叫端先看 `OrderRow.found`）：資料庫已有、還沒鎖住的商品，
@@ -438,10 +448,10 @@ def draft_from(row: OrderRow | str, stored: Stored | None, config: ImportConfig,
     作業人員填。`checked` 是 False 時表示沒連資料庫看過（`stored` 是 None），匯入時不覆蓋資料庫裡的這檔。
 
     `row` 是 TDCC 時是人工維護打開這檔：資料庫有商品條件的帶出目前的值（已鎖住的照更正的規則）；沒有的是
-    只有交易明細的 TDCC，從空白開始（商品種類 FCN，上手依上手編號對照）。
+    只有交易明細的 TDCC，從空白開始（商品種類是交易明細的 Product `trade_product`，#302；上手依上手編號對照）。
     """
     if isinstance(row, str):
-        return _maintenance_draft(row, stored, config)
+        return _maintenance_draft(row, stored, config, trade_product)
     original = {name: row.values.get(name) for name in FIELDS}
     fields = None if stored is None else stored.fields
     reason = "" if stored is None else stored.locked_reason
@@ -453,13 +463,13 @@ def draft_from(row: OrderRow | str, stored: Stored | None, config: ImportConfig,
     return Draft(row, original, values, fields, reason, database_checked=checked)
 
 
-def _maintenance_draft(tdcc: str, stored: Stored | None, config: ImportConfig) -> Draft:
+def _maintenance_draft(tdcc: str, stored: Stored | None, config: ImportConfig, trade_product: str | None) -> Draft:
     if stored is not None:
         fields = stored.fields
         review = OrderReview.LOCKED if locked(stored) else OrderReview.UNLOCKED
         row = OrderRow(tdcc, review, issuer_code(tdcc, stored.columns["issuer"], config), dict(fields))
         return Draft(row, dict(fields), dict(fields), dict(fields), database_checked=True)
-    values: dict[str, object] = {**dict.fromkeys(FIELDS), "Product": FCN}  # 交易明細只有 FCN
+    values: dict[str, object] = {**dict.fromkeys(FIELDS), "Product": trade_product}
     row = OrderRow(tdcc, OrderReview.TRADES_ONLY, config.issuer_prefixes.get(tdcc[:3], ""), dict(values))
     return Draft(row, dict(values), dict(values), dict(values), database_checked=True)
 
@@ -524,13 +534,16 @@ def _value_problems(
     def filled(name: str) -> bool:
         return name not in problems and values.get(name) is not None
 
-    if filled("Product") and str(values["Product"]).upper() != FCN:
-        problems["Product"] = "目前只做 FCN"
+    product = product_name(values.get("Product")) if filled("Product") else None
+    if filled("Product") and product is None:
+        problems["Product"] = f"目前只做 {SUPPORTED_PRODUCTS}"
     if filled("Currency") and values["Currency"] not in config.denominations:
         problems["Currency"] = "這個幣別沒有單位面額預設值"
-    for name in ("Guaranteed Periods (m)", "Tenor (m)"):
-        if filled(name) and values[name] < 1:
-            problems[name] = "至少 1"
+    if product is not None and filled(_NON_CALL_FIELD):  # Non-Call 依商品種類（#302）；商品種類不支援時不看
+        if problem := PRODUCT_RULES[product].non_call_problem(values[_NON_CALL_FIELD]):
+            problems[_NON_CALL_FIELD] = problem
+    if filled("Tenor (m)") and values["Tenor (m)"] < 1:
+        problems["Tenor (m)"] = "至少 1"
     if filled(TRADE_FIELD) and filled(STRIKE_FIELD) and values[STRIKE_FIELD] < values[TRADE_FIELD]:
         problems[STRIKE_FIELD] = "不能早於 Trade date"
     underlyings = [values.get(name) is not None for name in UNDERLYINGS]

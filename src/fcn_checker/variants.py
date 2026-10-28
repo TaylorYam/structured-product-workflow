@@ -6,11 +6,14 @@
 辨識階段對到參考條件表列之後，分別從參考條件表該列、這份說明書或投資人須知明確讀出的值判斷樣態；
 任一邊是該上手的不支援樣態，這份就是配對問題「不支援樣態」（identification.py）。讀不出或值不在允許值內的條件
 不判斷（照參考條件表欄位規則處理）。
+
+開放自動核對的商品種類（#302、ADR 0027）在同一個設定檔的 `[auto_check_products]`，採白名單：參考條件表該列的
+Product（不分大小寫）沒列、或沒開放給這家上手時，同樣是配對問題「不支援樣態」；Product 空白或表上沒有這欄時不看。
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -173,3 +176,38 @@ def load_unsupported_variants(path: Path, issuers: Iterable[str]) -> dict[str, f
     if extra := sorted(out.keys() - issuers):
         raise IngestionError("config_invalid", f"{what}有上手編號對照沒有的上手：{'、'.join(extra)}")
     return out
+
+
+ALL_ISSUERS = "*"  # [auto_check_products] 裡代表所有上手
+
+
+def load_auto_check_products(path: Path, issuers: Iterable[str]) -> dict[str, frozenset[str]]:
+    """開放自動核對的商品種類（上手編號對照設定檔的 `[auto_check_products]`，#302）：商品種類 → 開放的上手代號。
+
+    `"*"` 展開成上手編號對照的全部上手；上手代號要是對照表有的。
+    """
+    what = "上手編號對照設定檔的自動核對商品種類 [auto_check_products]"
+    table = load_toml(path, "上手編號對照").get("auto_check_products")
+    if not isinstance(table, dict):
+        raise IngestionError("config_invalid", f"{what}不存在或格式錯誤")
+    issuers = frozenset(issuers)
+    out: dict[str, frozenset[str]] = {}
+    for product, codes in table.items():
+        if not isinstance(codes, list) or not all(isinstance(c, str) for c in codes):
+            raise IngestionError("config_invalid", f"{what}的 {product} 須是上手代號的清單")
+        if extra := sorted(set(codes) - issuers - {ALL_ISSUERS}):
+            raise IngestionError("config_invalid", f"{what}的 {product} 有上手編號對照沒有的上手：{'、'.join(extra)}")
+        out[str(product)] = issuers if ALL_ISSUERS in codes else frozenset(codes)
+    return out
+
+
+def opened_products(opened: Mapping[str, frozenset[str]], issuer: str) -> frozenset[str]:
+    """這家上手開放自動核對的商品種類（大寫，比對不分大小寫）。"""
+    return frozenset(name.upper() for name, codes in opened.items() if issuer in codes)
+
+
+def unopened_product(product: Any, opened: frozenset[str]) -> str | None:
+    """參考條件表該列的 Product 不在 `opened`（`opened_products`）時，回傳 Product 的寫法；開放、空白或不是文字時 None。"""
+    if not isinstance(product, str) or not product.strip():
+        return None
+    return None if product.strip().upper() in opened else product.strip()

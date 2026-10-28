@@ -7,6 +7,7 @@
   `TradeRowsDraft.differences`：改了的格子 → 資料庫的值（畫面標黃）。
 - `trade_problems`：擋存檔的問題（改了的格子必填空白、備註改成取消；寫錯的格子）；`trade_notes`／`unmatched_names`：
   改了的 FC 名字對不到信箱（照每日匯入的規則），只提示、不擋存檔。沒改的格子照資料庫的值，不擋也不提示。
+- `trade_product`：這檔交易明細列的商品種類（只有交易明細的 TDCC 打開時帶入，#302）。
 - `read_rows`、`write_trade_rows`：存檔時鎖住這檔的列（確認打開之後沒變在 `product_terms`）、寫入改了的格子。
 只改值，不新增、不刪除列；之後的每日匯入照舊以資料庫為準、不覆蓋，改到和 Excel 一樣時匯入結果是「已存在」。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
@@ -127,6 +128,14 @@ def load_trade_rows(conn: psycopg.Connection, tdcc: str) -> TradeRowsDraft:
     return TradeRowsDraft(
         tdcc, [TradeRowDraft(seq, dict(values), dict(values)) for seq, values in rows.items()], mailbox
     )
+
+
+def trade_product(conn: psycopg.Connection, tdcc: str) -> str | None:
+    """這檔第一列交易明細的商品種類（每日匯入只收支援的商品，存的是 `product_record.PRODUCT_RULES` 的寫法）。"""
+    found = conn.execute(
+        "SELECT product FROM workflow.trade_row WHERE tdcc = %s ORDER BY row_seq LIMIT 1", (tdcc,)
+    ).fetchone()
+    return None if found is None else found[0]
 
 
 def read_rows(conn: psycopg.Connection, tdcc: str, *, lock: bool = False) -> dict[int, dict[str, object]]:

@@ -10,6 +10,7 @@ import openpyxl
 
 from sp_workflow import daily_import
 from sp_workflow.daily_import import PRICE_CSV_HEADERS, PRICE_HEADERS, TRADE_HEADERS
+from sp_workflow.product_record import product_name
 
 PRICE_DATE = dt.datetime(2026, 10, 16)  # 虛構的取價日：交易日 2026-10-15 的下一份股價檔
 
@@ -121,7 +122,7 @@ def inventory(tdcc: str, branches: list[tuple[str, int]], **overrides) -> dict:
 def seed_products(pg, inventories: Sequence[dict]) -> None:
     """像以前清單更新那樣直接寫商品與分公司配置（source 清單更新、沒鎖住）；#87 起每日匯入不再建商品。
 
-    掛在最近一次每日匯入上（還沒有就建一筆）；非 FCN 的列略過。
+    掛在最近一次每日匯入上（還沒有就建一筆）；不支援的商品種類（`product_record.PRODUCT_RULES` 以外）略過。
     """
     found = pg.execute("SELECT max(run_id) FROM workflow.import_run").fetchone()[0]
     run_id = (
@@ -137,12 +138,12 @@ def seed_products(pg, inventories: Sequence[dict]) -> None:
         " WHERE table_schema = 'workflow' AND table_name = 'product' AND column_name = 'status_event'"
     ).fetchone()[0]
     for row in inventories:
-        if row["Product"] != "FCN":
+        if product_name(row["Product"]) is None:
             continue
         ki_freq = row["KI(Freq)"]
         product = {
             "tdcc": row["TDCC Code"],
-            "product": "FCN",
+            "product": product_name(row["Product"]),
             "issuer": row["發行機構"],
             "isin": row["ISIN Code"],
             "currency": row["承作幣別"],

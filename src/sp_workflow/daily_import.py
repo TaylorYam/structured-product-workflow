@@ -6,7 +6,8 @@
   「只匯交易明細」（`prices=False`，回補時用）不讀 `BBG_Data`、不動股價，沒有這張工作表也可以。
   商品條件改由「匯入起單資料」建立（#86），每日匯入不再寫商品條件、也不做分公司對帳。
 - `交易明細` 第 1 列是欄名，必須和交易清單月份工作表的欄名與順序完全相同；不同就整份不匯入。
-  只收 Product 為 FCN 的列，其他略過並計數；略過的 TDCC 與 Product 記在 `workflow.other_product`。
+  只收 Product 為支援的商品種類（`product_record.PRODUCT_RULES`：FCN、FCN_Express，#302）的列，商品種類存設定的寫法；
+  其他略過並計數，略過的 TDCC 與 Product 記在 `workflow.other_product`。
   以 TDCC 為單位、第一次寫入為準：資料庫已有的交易不重複寫入，內容不同只列出差異、不覆蓋。
 - `BBG_Data`：C1 是取價日（要是日期），第 2 列 B～H 是欄名（要完全相同），第 4 列起每列一檔。
   代碼只去頭尾空白；代碼空白的列略過；價格格子空白就存空白，不是數字也存空白並列出來。
@@ -20,7 +21,7 @@
   同一個 transaction 也把 CSV 那一天的收盤價寫進 `workflow.close_price`（#153、ADR 0020，見 `close_prices`）；
   讀不到交易所假日表時不能判斷休市日，收盤價這次不存（BBG_Data 也一樣）。
 - 信箱由資料庫直接維護（#35、ADR 0004）：匯入不修改 `mailbox`，只用它比對 FC 名字。
-- 結果另外列出交易明細的 FCN TDCC（依第一次出現的順序、不重複，不是剛好 12 碼與整檔都取消的不列），
+- 結果另外列出交易明細的 FCN TDCC（含 FCN_Express；依第一次出現的順序、不重複，不是剛好 12 碼與整檔都取消的不列），
   給視窗帶到起單資料頁（#90）。
 - 整次匯入在一個 transaction 內完成，任何錯誤都不留下部分寫入。錯誤清單（`每日匯入錯誤.xlsx`，每次重建全部歷史）
   在 transaction 的最後寫：寫不進去時丟 `file_tools.FileWriteError`、整次不匯入；寫好之後 commit 失敗就放回上一份（#207）。
@@ -57,7 +58,7 @@ from sp_workflow.close_prices import (
 from sp_workflow.database import OperatorError
 from sp_workflow.file_tools import sha256_file
 from sp_workflow.mailbox import Mailbox, is_pb, load_mailbox
-from sp_workflow.product_record import FCN
+from sp_workflow.product_record import product_name
 
 if TYPE_CHECKING:
     import psycopg
@@ -114,7 +115,7 @@ _RETIRED_SUCCESS_KINDS = frozenset(("新增商品", "補上空白"))
 
 _FULL_TDCC = re.compile(rf"[0-9]{{{sheet_cells.TDCC_DIGITS}}}")
 
-# 交易明細的欄 → `workflow.trade_row` 的欄（Product 只收 FCN、TDCC 是哪一檔，不在這裡）；人工維護可以改這些欄（#116）
+# 交易明細的欄 → `workflow.trade_row` 的欄（Product 只收支援的商品種類、TDCC 是哪一檔，不在這裡）；人工維護可以改這些欄（#116）
 TRADE_FIELDS = {
     "編號": "number", "交易日期": "trade_date", "幣別": "currency", "金額": "amount", "FC/PB": "fc_name",
     "分公司": "branch", "前台主管/投專": "supervisor", "UF": "uf", "期初價格": "initial_pricing", "備註": "note",
@@ -158,7 +159,7 @@ class ImportReceipt:
     cancelled_trade_rows: int
     error_book_path: Path
     prices: PriceSummary | None  # 只匯交易明細時是 None
-    fcn_trade_rows: int  # 交易明細裡 Product 為 FCN 的列數，含取消的
+    fcn_trade_rows: int  # 交易明細裡 Product 為支援的商品種類的列數，含取消的
     fcn_tdccs: tuple[str, ...]  # 帶到起單資料頁的 TDCC（#90）
     closes: CloseSummary | None = None  # 收盤價（#280）；只匯交易明細或讀不到假日表時沒有存
     close_unknown: tuple[str, ...] = ()  # 交易所不在假日表、推不出收盤日、沒有存的代碼
@@ -207,8 +208,9 @@ class _Parsed:
     trades: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     blocked: list[ImportLine] = field(default_factory=list)
     cancelled_lines: list[ImportLine] = field(default_factory=list)
-    other_products: dict[str, str] = field(default_factory=dict)  # 略過的非 FCN：TDCC → Product
-    fcn_tdccs: dict[str, bool] = field(default_factory=dict)  # 交易明細的 FCN TDCC（出現順序）→ 有沒有沒取消的列
+    other_products: dict[str, str] = field(default_factory=dict)  # 略過的不支援商品：TDCC → Product
+    # 交易明細的 FCN（含 FCN_Express）TDCC（出現順序）→ 有沒有沒取消的列
+    fcn_tdccs: dict[str, bool] = field(default_factory=dict)
     skipped_trade_rows: int = 0
     cancelled_trade_rows: int = 0
     fcn_trade_rows: int = 0
@@ -522,7 +524,8 @@ def _parse_trades(rows: Iterable[_SheetRow], parsed: _Parsed) -> None:
     errors: dict[str, list[str]] = defaultdict(list)
     for sheet_row in rows:
         number, row = sheet_row.number, sheet_row.values
-        if (sheet_cells.text(row["Product"]) or "").upper() != FCN:
+        product = product_name(sheet_cells.text(row["Product"]))
+        if product is None:
             parsed.skipped_trade_rows += 1
             _remember_other(parsed, row["TDCC"], row["Product"])
             continue
@@ -545,7 +548,7 @@ def _parse_trades(rows: Iterable[_SheetRow], parsed: _Parsed) -> None:
             parsed.blocked.append(ImportLine(sheet_cells.tdcc_or_raw(row["TDCC"]), BLOCKED, f"{where}：{exc}"))
             continue
         try:
-            trade = _trade(row)
+            trade = _trade(row, product)
             groups[tdcc].append(trade)
         except ValueError as exc:
             errors[tdcc].append(f"{where}：{exc}")
@@ -569,8 +572,8 @@ def _remember_fcn(parsed: _Parsed, row: Mapping[str, Any]) -> None:
     parsed.fcn_tdccs[tdcc] = parsed.fcn_tdccs.get(tdcc, False) or not is_cancel_note(row["備註"])
 
 
-def _trade(row: Mapping[str, Any]) -> dict[str, Any]:
-    trade: dict[str, Any] = {"product": FCN}
+def _trade(row: Mapping[str, Any], product: str) -> dict[str, Any]:
+    trade: dict[str, Any] = {"product": product}
     for header, column in TRADE_FIELDS.items():
         try:
             value = trade_value(header, row[header])

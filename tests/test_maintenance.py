@@ -197,6 +197,26 @@ def test_a_trade_only_tdcc_gets_partial_terms(pg, tmp_path) -> None:
 
 
 @pytest.mark.db
+def test_a_trade_only_tdcc_takes_its_product_from_the_trade_rows(pg, pg_settings, tmp_path) -> None:
+    """只有交易明細的 TDCC：商品種類是交易明細的 Product（#302），不固定 FCN。"""
+    daily = write_daily(
+        tmp_path / "d.xlsx", [trade(C, "Amy", "台北", 100000, product="FCN_Express")], [price("AAA UW")]
+    )
+    import_daily(daily, pg)
+
+    draft = open_product(pg_settings, C, PATHS).draft
+    assert open_terms(pg, C, CONFIG).values["Product"] == draft.values["Product"] == "FCN_Express"
+    assert problems(draft, CONFIG)["Guaranteed Periods (m)"] == _MISSING_NOTE
+    draft.values["Guaranteed Periods (m)"] = 1
+    assert problems(draft, CONFIG)["Guaranteed Periods (m)"] == "FCN_Express 沒有 Non-Call，要填 0"
+    draft.values["Guaranteed Periods (m)"] = 0
+
+    write(pg, draft, CONFIG, reason="起單建檔漏了", user="operator1")
+
+    assert (column(pg, "product", C), column(pg, "non_call_months", C)) == ("FCN_Express", 0)
+
+
+@pytest.mark.db
 def test_filling_every_required_field_takes_the_product_off_the_check(pg, tmp_path) -> None:
     import_trades(pg, tmp_path, A)
     import_order(pg, A)
