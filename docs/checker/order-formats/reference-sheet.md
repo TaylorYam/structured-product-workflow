@@ -64,7 +64,7 @@
 | KO(memo) | `ko_memory` | `Y` 記憶式、`N` 非記憶式 |
 | KI(Freq) | `ki_type` | `-` 無 KI、`AM` 到期觀察、`D` 每日觀察、`P` 每期觀察（每個配息週期終止日，含期末定價日；各上手是否能讀出、是否被設定攔截須分開看；目前 MS 也在 `ki_periodic` 黑名單，見[支援範圍](../support-matrix.md)） |
 | 天期(月) | `tenor_months` | 核對 |
-| Non-Call(月) | `first_callable_period` | 第一個可以提前出場的期別；FCN 最小為 1，FCN_Express 為 0（沒有 Non-Call）。須和說明書推得的相同，且符合 Product 的商品種類（`field.non_call_product`） |
+| Non-Call(月) | `first_callable_period` | 第一個可以提前出場的期別；FCN、Super Bull 最小為 1，FCN_Express 為 0（沒有 Non-Call）。Super Bull 是第一個評價日距發行日的月數。須和說明書推得的相同，且符合 Product 的商品種類（`field.non_call_product`） |
 | UL_1～UL_5 | `underlying_n` | 彭博代號（不含 ` Equity`），數量須相同，缺少的標的填 `-`。CITI、JPM、GS、BBVA 依代號配對、不看順序（`[underlyings].any_order_issuers`），價格核對與 VWAP 回填也寫到相同代號。代碼有一檔不同時仍判不一致；價格先比完整代碼，再比去交易所碼後兩邊唯一的代號，仍配不起來才依順序。其餘上手依原順序比對 |
 | 期初定價 | `initial_pricing` | `開盤價`、`收盤價` 或 `VWAP`（作業人員放在 `KO(%)` 前一欄）；空白時當成不是 VWAP，價格照常比對，說明書寫明期初定價（Citi、GS）時改依說明書判斷（Issue #246）；其他值 → 轉人工覆核。決定價格欄怎麼處理（Issue #122）；說明書寫明期初定價時（Citi 標的表表頭「期初評價日之收盤價格／VWAP」；GS 第一章第 15 項「初始參考價格」的定義句，Issue #248）另須相同，其他範本沒有對應資料（標準欄位 `initial_pricing` 交 `absent`），不比對（Issue #220） |
 | UL_n_進場價／執行價／下限價／KO價 | `underlying_n_initial_price` 等 | 表上值四捨五入（half-up）到 4 位後與說明書價格表相等；沒有 KI 時下限價必須是 `-`；說明書沒有 KO 價（SG、MS Non-Call = 天期）時 KO 價 = 期初價格，照常比對。期初定價為 `VWAP` 時不比對，改為**回填欄位**（§5） |
@@ -85,6 +85,7 @@
 |---|---|---|
 | `D` | 填 `比價日_{Non-Call}`（開始）與 `比價日_{期數}`（最後一期）；Non-Call = 天期時只填最後一格 | 開始那格：BARC 該期提前出場觀察期的期末日、HSBC KO 起日、MS 該期配息週期終止日；最後一期：該期期末日（= 最終比價日） |
 | `P` | 從 `比價日_{Non-Call}` 填到 `比價日_{期數}`（兩端都包含）；Non-Call = 天期時只填最後一格 | 各期自動提前出場評價日（MS：各期定價日） |
+| `P`（Super Bull） | 每個評價日放 `比價日_{距發行日月數}`，`比價日_{天期}` 放最終比價日，其他格 `-`（workflow #309、ADR 0028） | 說明書日期表的評價日（只列評價日、間隔不固定）＋最終評價日；見 [BNP Super Bull 下單資料格式](bnp-super-bull-reference.md) §4 |
 
 填出來最晚的比價日必須等於最終比價日（MAX(`比價日_1`～`比價日_12`) = `最終比價日`），不符就轉人工覆核、不回填（Issue #69）。
 

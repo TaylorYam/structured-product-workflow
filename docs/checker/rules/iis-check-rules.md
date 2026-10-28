@@ -29,6 +29,8 @@
 
 ✓ = 範本有此項，要核對；— = 範本沒有，不核對（不推定通過，也不報缺漏）。範本有、但這份讀不到 → 轉人工覆核。
 
+下表各上手欄是 FCN（含 FCN_Express）的範本。BNP Super Bull 投資人須知（[`bnp-zh-sb-iis`](../templates/bnp-zh-super-bull-iis.md)）照 BNP 欄，差異（沒有配息與月配息率、出場紅利、評價日間隔、無 KI）見 [BNP Super Bull 核對規則](bnp-super-bull-check-rules.md) §3.8。
+
 ### A. 文件本身
 
 | # | 檢查點 | BARC | HSBC | MS | BNP | SG | Citi | JPM | Nomura | GS | Natixis | CA | BBVA | UBS | DBS | 預期值 | 不符時 |

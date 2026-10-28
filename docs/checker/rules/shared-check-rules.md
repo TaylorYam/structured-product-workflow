@@ -38,8 +38,8 @@
 | KO(memo) | `ko_memory` | `Y`／`N` |
 | KI(Freq) | `ki_type` | `-` 無／`AM` 到期觀察／`D` 每日觀察／`P` 每期觀察；是否允許先由[樣態黑名單](../support-matrix.md)決定，未知寫法或必核欄位缺漏轉人工覆核 |
 | 天期(月) | `tenor_months` | 整數相等 |
-| Non-Call(月) | `autocall_schedule` 的第一個可提前出場期 | 相等（FCN 最小為 1；FCN_Express 為 0） |
-| Product、Non-Call(月) | `autocall_schedule` 的第一個可提前出場期 | 說明書推得的 Non-Call 須符合 Product 的商品種類（`fcn_checker.products.PRODUCT_RULES`：FCN 至少 1、FCN_Express 為 0）；不符合待人工覆核，寫出商品種類與說明書推得的值（`field.non_call_product`，workflow #304）。Product 空白或表上沒有這欄時照 FCN；說明書讀不到排程時不適用 |
+| Non-Call(月) | `autocall_schedule` 的第一個可提前出場期 | 相等（FCN、Super Bull 最小為 1；FCN_Express 為 0） |
+| Product、Non-Call(月) | `autocall_schedule` 的第一個可提前出場期 | 說明書推得的 Non-Call 須符合 Product 的商品種類（`fcn_checker.products.PRODUCT_RULES`：FCN、Super Bull 至少 1、FCN_Express 為 0）；不符合待人工覆核，寫出商品種類與說明書推得的值（`field.non_call_product`，workflow #304）。Product 空白或表上沒有這欄時照 FCN；說明書讀不到排程時不適用 |
 | 期初定價 | `initial_pricing` | 表上須是 `開盤價`／`收盤價`／`VWAP`；表上空白時當成不是 VWAP。說明書寫明期初定價的範本（範本沒有就是 `absent`），表上有值時須相同，表上空白時依說明書判斷（Issue #122、#246） |
 | UL_1～UL_5 | `underlyings` | 見 §5；`-` 表示沒有這檔標的 |
 | UL_n_進場價／執行價／下限價／KO價 | `underlying_prices` | 表上值四捨五入到 4 位後相等。同一檔標的可比對的價格欄全部與說明書差同一比例（表上值 ÷ 說明書值，4 位）且不是 1 時，該檔轉人工覆核並寫出比例（疑為股票分割調整後的價格，`split_suspected`，Issue #191）；只有部分欄位不同或比例不同時照常判不一致。無 KI 時下限價必須是 `-`。期初定價為 `VWAP` 時不比對，通過或人工放行後以說明書價格覆寫（`backfill.underlying_prices`） |
@@ -91,7 +91,7 @@
 
 上手把說明書的日期表交成標準欄位 `schedule_table`（`standard_fields.DateTable`）：每期一列（期別、期始日、期末日、觀察日、配息日，表上沒有或寫「不適用／N/A／-」的格為空），另交出表的位置（例：`第 13 條日期表`）與期始日的定義。各上手的日期表 reader 照舊，只把讀出的列轉成這個形狀；觀察日是哪一欄（評價日、決定日，或期間每日觀察時的期末日）由上手決定。
 
-14 家上手都交出日期表，單份核對在上手說明書內部規則之前對每份說明書執行本節的檢查。
+14 家上手都交出日期表，單份核對在上手說明書內部規則之前對每份說明書執行本節的檢查。Super Bull 的日期表只列評價日、不是每期一列，本節不適用，改由各上手的 Super Bull 規則核對（例：[BNP Super Bull 核對規則](bnp-super-bull-check-rules.md) §3.4）。
 
 六項檢查各自一個結果，項目名稱是「<表的位置><項目>」。錯訊只寫哪一期、兩邊各是多少。
 
