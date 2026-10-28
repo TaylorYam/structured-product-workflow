@@ -3,7 +3,7 @@
 - 文件側：[BNP Super Bull 範本規格](../templates/bnp-zh-super-bull.md)（`bnp-zh-sb-pd`）、[BNP Super Bull 投資人須知範本規格](../templates/bnp-zh-super-bull-iis.md)（`bnp-zh-sb-iis`）
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [BNP Super Bull 下單資料格式](../order-formats/bnp-super-bull-reference.md)
 - 商品：Super Bull（workflow ADR 0028、#309）；開放順序 BNP → CA → HSBC，本文件是 BNP（workflow #311）
-- 狀態：規格文件（workflow #311）；尚未實作。核對範圍以開發者凍結的螢光建議清單為準，作業人員獨立標記略過（2026-10-28 使用者決定，§7）
+- 狀態：已實作（workflow #311）：`rules/bnp_super_bull.py`、`rules/bnp_super_bull_iis.py`。核對範圍以開發者凍結的螢光建議清單為準，作業人員獨立標記略過（2026-10-28 使用者決定，§7）
 - 本文件只寫和 [BNP 核對規則](bnp-check-rules.md)（FCN）不同或 Super Bull 特有的部分；沒提到的（審查標準、固定警語、保證機構、受託機構、評等、費率、最低金額、發行不成立門檻、價格推算、分割轉人工、連結標的公司介紹、基本公開說明書日期、頁首總頁數）照 BNP FCN
 
 ## 1. 範圍
@@ -15,7 +15,7 @@
 ## 2. 不核對的項目
 
 - 照 BNP FCN §2（總代理人、保證機構地址、警語 (2)～(9) 全文、連結標的中文名稱與交易所、第一章 §4、§8～§10、§12 內容、§13、§19、§21～§27 等）。
-- §14(7) 以後的營業日、營業日慣例、預定交易日等定義；自動提前贖回日的日期本身（只檢查晚於同列評價日）。
+- §14(8) 以後的營業日、營業日慣例、預定交易日等定義；自動提前贖回日的日期本身（只檢查晚於同列評價日）。
 - §18 情境四末句「除本商品之配息金額外，到期時潛在收益可能不存在」（FCN 範本殘留，2026-10-28 決定不核對）；情境五（只有文字）；情境三、四的年化報酬率（同 BNP FCN）。
 - 起單建檔的 `Observation Frequency (m)`（不在參考條件表）。
 - 評價日到自動提前贖回日、期末評價日到到期日的天數（只作參考）。
@@ -26,7 +26,7 @@
 
 | 檢查 | 規則 |
 |---|---|
-| 開放 | `[auto_check_products]` 的 `"Super Bull"` 加 `BNP`（實作完成時才加；沒開放照現行轉人工） |
+| 開放 | `[auto_check_products]` 的 `"Super Bull"` 已加 `BNP`（#311）；沒開放的上手照不支援樣態轉人工 |
 | 樣態 | 參考條件表 KO(Freq) = `P`、KO(memo) = `N`、KI(Freq) = `-`；任一不符 → 照不支援樣態轉人工（兩份都停、不回填、不能人工放行），錯訊寫出哪一欄。起單建檔的 `KO Type` 不是 `Period End` 或 `Barrier Type` 不是 `NONE` 匯出後就是這三欄不符（從 workflow #310 移來） |
 | 範本版本 | 舊版 → 轉人工覆核（同不支援樣態），錯訊寫明舊版 |
 | 商品種類一致 | 範本辨識的商品家族 ≠ Product → 轉人工覆核，錯訊寫出 Product 與辨識到的範本 |
@@ -194,11 +194,11 @@ Non-Call、出場紅利 = `Coupon p.a. (%)`、KO(Freq) `P`、KO(memo) `N`、KI(F
 | 2026-10-28 | 作業人員獨立螢光標記略過，核對範圍以開發者凍結清單為準 |
 | 2026-10-28 | 非美元計價、單一標的現行版沒有樣本，先轉人工（依上手導入流程：樣本不足的型態維持人工） |
 
-## 10. 規則對照（建議，實作時定）
+## 10. 規則對照
 
 | 核對規則 | rule_id |
 |---|---|
-| §3.1 樣態、範本版本、商品種類一致 | `batch.variant`（同不支援樣態）、`template.product_family` |
+| §3.1 樣態、範本版本、商品種類一致、BNP 限定 | `batch.variant`（同不支援樣態）、`template.detect`（舊版：原因 `template_unsupported`，狀態「不支援的範本版本」）、`template.product_family`、`doc.template_variant` |
 | §3.2 參考條件表欄位 | 共用 `field.*`、`field.non_call_product`、`backfill.*` |
 | §3.3 出場紅利其他出處 | `doc.exit_bonus` |
 | §3.4 日期表與比價日 | `schedule.observation_months`、`schedule.observation_order` |

@@ -19,7 +19,15 @@ from .layout import TextIndex
 PCT = r"(-?\d+(?:\.\d+)?)%"
 U = money.CURRENCY  # 金額後的幣別字（任一已知寫法；寫哪一個才對由共用規則核對）
 ROUNDING = r"\((四捨五入至小數點以下第二位|四捨五入至整數位)\)"
-KINDS = (("自動提前贖回", "autocall"), ("最佳", "best"), ("較差", "worse"), ("最差", "worst"), ("極端", "extreme"))
+# 標題 → 種類；Super Bull 的情境二寫「較佳情況」（#311）
+KINDS = (
+    ("自動提前贖回", "autocall"),
+    ("最佳", "best"),
+    ("較佳", "best"),
+    ("較差", "worse"),
+    ("最差", "worst"),
+    ("極端", "extreme"),
+)
 TABLE_TITLE = "連結標的相關價格如下："
 DECIMALS = {"四捨五入至小數點以下第二位": 2, "四捨五入至整數位": 0}  # 四捨五入寫法 → 小數位數（第 15 項同）
 REMAINDER_LABEL = "剩餘金額"  # 剩餘金額算式裡的收盤價跟著標的走，不是商品幣別的出處

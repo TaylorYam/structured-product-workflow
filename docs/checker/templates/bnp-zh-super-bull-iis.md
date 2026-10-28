@@ -5,7 +5,7 @@
 - 範本代號：`bnp-zh-sb-iis`
 - 對應說明書範本：[`bnp-zh-sb-pd`](bnp-zh-super-bull.md)；一檔商品一份說明書＋一份投資人須知（[ADR 0007](../adr/0007-iis-paired-with-term-sheet.md)）
 - 依據：2026-10-28 對 57 份真實樣本（與說明書 S01～S57 同商品）的探勘與開發者螢光標記（workflow #311）
-- 狀態：規格文件（workflow #311）；尚未實作
+- 狀態：已實作（workflow #311）：`parsers/bnp_super_bull_iis.py`
 
 > 真實樣本與擷取文字只放在被 Git 忽略的 `data/`。本文件的數值範例都是虛構的。
 

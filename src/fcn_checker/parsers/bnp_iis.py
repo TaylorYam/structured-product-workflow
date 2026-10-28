@@ -30,6 +30,7 @@ GUARANTOR_RATINGS = (
 )
 TITLE = "中文投資人須知(適用於專業投資人及OSU客戶)"
 NAME_EN = "issuedbyBNPParibasIssuanceB.V."
+FIXED_COUPON_EN = "FixedCoupon"
 SECTIONS = (
     "本商品之投資風險警語：",
     "壹、相關機構",
@@ -107,6 +108,11 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
             "商品中文名稱不是「法國巴黎銀行…(下稱「商品」)」",
         ),
         (NAME_EN in text, "商品英文名稱沒有「issued by BNP Paribas Issuance B.V.」"),
+        (  # Super Bull 舊版的段名和 FCN 相同，以名稱區分（bnp-zh-super-bull-iis.md §4，#311）
+            re.search(r"刊印日期[:：]\d{4}年\d{1,2}月\d{1,2}日法國巴黎銀行[^(]*?固定配息", text) is not None
+            and FIXED_COUPON_EN in text,
+            "商品名稱沒有「固定配息」／「Fixed Coupon」",
+        ),
         (
             re.search(r"相關機構1?發行機構[:：]BNPParibas", text) is not None,  # 全名另由審查標準核對
             "相關機構的發行機構不是BNP",
@@ -167,7 +173,8 @@ def _fees(lines: list[Line]) -> dict[str, ParsedField]:
         a = heads[rows[0]]
         b = heads[rows[0] + 1] if rows[0] + 1 < len(heads) else len(lines)
         cells = [ln for ln in lines[a + 1 : b] if ln.x0 >= FEE_LABEL_EDGE]
-        rates = re.findall(iis.RATE, "".join(squash(ln.text) for ln in cells))
+        head = squash(lines[a].text)[len(label) :]  # 列首和其他欄黏成一行時（Super Bull 樣本），列首之後的字也算
+        rates = re.findall(iis.RATE, head + "".join(squash(ln.text) for ln in cells))
         out[name] = (
             ParsedField.present(name, rates[0], [lines[a], *cells])
             if len(rates) == 1
@@ -176,7 +183,8 @@ def _fees(lines: list[Line]) -> dict[str, ParsedField]:
     return out
 
 
-def read(lines: Sequence[Line]) -> iis.IisSheet:
+def read(lines: Sequence[Line], redemption_section: tuple[str, str] = REDEMPTION_SECTION) -> iis.IisSheet:
+    """讀出；`redemption_section` 為 KO 事件、KI 寫法所在段落的頭尾段名（Super Bull 段名不同，parsers/bnp_super_bull_iis.py）。"""
     text_lines = body(lines)
     ti = TextIndex(text_lines)
     fields: dict[str, ParsedField] = {"page_totals": iis.page_totals(lines)}
@@ -252,9 +260,9 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
     fields.update(_ko_terms(ti))
     # 收益分配事項、自動提前贖回金額及到期贖回金額之計算
     put("monthly_coupon_shown_pct", r"其中C為(\d+(?:\.\d+)?)%", Decimal)
-    redemption = iis.section(ti, REDEMPTION_SECTION)
+    redemption = iis.section(ti, redemption_section)
     if redemption is None:
-        note = "找不到「收益分配事項、自動提前贖回金額及到期贖回金額之計算」段落"
+        note = f"找不到「{redemption_section[0]}」段落"
         fields["ko_memory"] = ParsedField.missing("ko_memory", note)
         fields["ki_type"] = ParsedField.missing("ki_type", note)
     else:

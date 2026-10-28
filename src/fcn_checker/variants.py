@@ -23,6 +23,7 @@ from .config import ReferenceFormat, load_toml
 from .ingestion import IngestionError
 from .investor_sheet import IisSheet, read_iis
 from .orders.reference import OrderRecord
+from .products import SUPER_BULL
 from .rules.kit import read_standard, to_int
 from .rules.reference import VWAP
 from .schema import ParsedField
@@ -211,3 +212,31 @@ def unopened_product(product: Any, opened: frozenset[str]) -> str | None:
     if not isinstance(product, str) or not product.strip():
         return None
     return None if product.strip().upper() in opened else product.strip()
+
+
+# 商品種類限定的樣態（#309 決策、ADR 0028；所有上手共用）：參考條件表欄 → （樣態條件, 允許值, 允許值的寫法）。
+# 該列 Product 是這種商品、任一欄不是允許值 → 不支援樣態。Super Bull 只支援 KO 每期觀察、非記憶式、無 KI
+# （起單建檔 KO Type = Period End、Barrier Type = NONE）。
+PRODUCT_TERMS: dict[str, tuple[tuple[str, str, Any, str], ...]] = {
+    SUPER_BULL: (
+        ("KO(Freq)", "ko_observation", "P", "P"),
+        ("KO(memo)", "ko_memory", False, "N"),
+        ("KI(Freq)", "ki_type", "none", "-"),
+    ),
+}
+
+
+def product_terms_text(product: str) -> str:
+    """這種商品支援的樣態寫法（錯訊用），例：KO(Freq) P、KO(memo) N、KI(Freq) -。"""
+    return "、".join(f"{col} {shown}" for col, _, _, shown in PRODUCT_TERMS.get(product, ()))
+
+
+def product_terms_problems(product: str, row: OrderRecord, terms: Terms | None) -> list[str]:
+    """參考條件表該列不是這種商品支援的樣態的欄（例：「KO(memo) Y」）；沒有限定或都符合時為空。"""
+    out = []
+    for col, attr, want, _ in PRODUCT_TERMS.get(product, ()):
+        if terms is None or getattr(terms, attr) != want:
+            ov = row.get(attr)
+            raw = ov.value if ov is not None else None
+            out.append(f"{col}「{raw if raw not in (None, '') else '空白'}」")
+    return out
