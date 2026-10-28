@@ -9,7 +9,7 @@
 - `Markers`：每段以行首的編號開始（BARC `標的資產k：`、Citi `連結標的k：`、DBS `k.`、MS／Nomura `(k)連結標的k：`、
   BNP／SG 行首 `(k)`、BBVA 單獨一行 `k`）；第一個編號之前的行（表頭）不算。
 - `NameColumn`：兩欄表，左欄標的名稱、右欄介紹（CA、UBS、JPM、Natixis、GS）。左欄有中文的行開始一段；名稱只寫英文
-  （CA `Disco Corp`）的左欄行也開始一段，但緊接在上一個左欄行正下方（間距不到半行高）的是名稱換行，不算（workflow #324）。
+  （例 `Acme Robotics Corp`）的左欄行也開始一段，但緊接在上一個左欄行正下方（間距不到半行高）的是名稱換行，不算（workflow #324）。
   名稱跨行時連續的左欄行、以括號開頭的左欄行（GS `（美國航空集團）`，可能隔著換頁）算同一段；後面沒有右欄介紹就遇到
   下一段的左欄行不算（表頭 `連結標的`／`簡介`）。右欄 = 段落裡最常見的長行左緣。
 - `Paragraphs`：沒有編號也沒有名稱欄（HSBC）：介紹欄的行依段落切，句號結尾、右緣明顯短於欄寬的行是一段的最後一行。
@@ -110,7 +110,7 @@ def _by_name_column(body: Sequence[Line]) -> list[list[Line]]:
     has_note, prev_left, last_left = False, False, None
     for ln in body:
         left = ln.x0 < col - _LEFT_GAP
-        if left and not prev_left and _starts_name(ln, last_left):
+        if left and not prev_left and _starts_note(ln, last_left):
             if groups and not has_note:
                 groups.pop()  # 上一段沒有介紹：表頭
             groups.append([ln])
@@ -125,7 +125,7 @@ def _by_name_column(body: Sequence[Line]) -> list[list[Line]]:
     return groups
 
 
-def _starts_name(ln: Line, last_left: Line | None) -> bool:
+def _starts_note(ln: Line, last_left: Line | None) -> bool:
     """左欄行開始新的一檔：有中文，或只有英文且不在上一個左欄行正下方（名稱換行）；括號開頭的行是同一檔的別名。"""
     text = squash(ln.text)
     if text.startswith(("(", "（")):
