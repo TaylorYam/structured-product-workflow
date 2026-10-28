@@ -6,7 +6,7 @@
   「只匯交易明細」（`prices=False`，回補時用）不讀 `BBG_Data`、不動股價，沒有這張工作表也可以。
   商品條件改由「匯入起單資料」建立（#86），每日匯入不再寫商品條件、也不做分公司對帳。
 - `交易明細` 第 1 列是欄名，必須和交易清單月份工作表的欄名與順序完全相同；不同就整份不匯入。
-  只收 Product 為支援的商品種類（`product_record.PRODUCT_RULES`：FCN、FCN_Express，#302）的列，商品種類存設定的寫法；
+  只收 Product 為支援的商品種類（`fcn_checker.products.PRODUCT_RULES`：FCN、FCN_Express，#302）的列，商品種類存設定的寫法；
   其他略過並計數，略過的 TDCC 與 Product 記在 `workflow.other_product`。
   以 TDCC 為單位、第一次寫入為準：資料庫已有的交易不重複寫入，內容不同只列出差異、不覆蓋。
 - `BBG_Data`：C1 是取價日（要是日期），第 2 列 B～H 是欄名（要完全相同），第 4 列起每列一檔。
@@ -46,6 +46,7 @@ from typing import TYPE_CHECKING, Any, NamedTuple
 import openpyxl
 from openpyxl.utils import get_column_letter
 
+from fcn_checker.products import product_name
 from sp_workflow import import_run, sheet_cells
 from sp_workflow.close_prices import (
     CSV_SOURCE,
@@ -58,7 +59,6 @@ from sp_workflow.close_prices import (
 from sp_workflow.database import OperatorError
 from sp_workflow.file_tools import sha256_file
 from sp_workflow.mailbox import Mailbox, is_pb, load_mailbox
-from sp_workflow.product_record import product_name
 
 if TYPE_CHECKING:
     import psycopg

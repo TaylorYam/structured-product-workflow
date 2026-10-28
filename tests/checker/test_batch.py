@@ -17,7 +17,7 @@ from openpyxl.formatting.rule import CellIsRule
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
 
-from barc_synth import SYNTH_ISIN, Spec, barc_adapter, build_iis_pdf, build_pdf, schedule_rows
+from barc_synth import SYNTH_ISIN, Spec, barc_adapter, build_iis_pdf, build_pdf, next_weekday, schedule_rows
 from fcn_checker import __version__
 from fcn_checker.batch import check_batch, preview_batch
 from fcn_checker.ingestion import IngestionError, sha256_of
@@ -237,14 +237,14 @@ def test_non_call_must_be_the_first_callable_period(tmp_path):
     assert not receipt.filled(outcome.items[0])
 
 
-def test_daily_observation_from_first_day_requires_review_without_back_fill(tmp_path):
-    spec = Spec(guaranteed=0)  # 第 1 期期始日就有日期（S08、S10 型），比價日填法未確認
-    outcome, receipt, _ = batch(tmp_path, [pdf_for(tmp_path, spec)], [reference_row(spec, **{"Non-Call(月)": 1})])
+def test_express_from_the_first_day_is_filled(tmp_path):
+    spec = Spec(guaranteed=0)  # 第 1 期期始日就有日期（FCN_Express）：Non-Call 0、比價日_1 = 第 1 期期始日（#301）
+    outcome, receipt, _ = batch(tmp_path, [pdf_for(tmp_path, spec)], [reference_row(spec, Product="FCN_Express")])
 
     item = outcome.items[0]
-    assert only(item, "backfill.compare_dates").status == REVIEW
-    assert only(item, "field.first_callable_period").status == REVIEW
-    assert item.report.status == REVIEW and not receipt.filled(item)
+    assert only(item, "backfill.compare_dates").status == PASS and receipt.filled(item)
+    filled = slots(row_of(receipt.output, spec.product_code))
+    assert (filled[0], filled[spec.tenor - 1]) == (next_weekday(spec.issue_date), spec.final_date)
 
 
 def test_more_than_twelve_periods_requires_review(tmp_path):

@@ -377,8 +377,8 @@ def test_missing_or_unfinished_products_need_review_and_cannot_be_released(pg, t
 
 
 @pytest.mark.db
-def test_products_not_opened_for_automatic_checks_need_review(pg, tmp_path) -> None:
-    """資料庫的商品種類帶到參考條件表的 Product（#302）：沒開放給這家上手的商品種類不核對、不能人工放行。"""
+def test_the_database_product_type_reaches_the_non_call_check(pg, tmp_path) -> None:
+    """資料庫的商品種類帶到參考條件表的 Product（#302）；BARC 已開放 FCN_Express（#304），說明書有 Non-Call 時待確認。"""
     fcn, express = barc_spec(), barc_spec(product_code=OTHER)
     seed(pg, fcn)
     seed(pg, express, product="FCN_Express")
@@ -391,12 +391,9 @@ def test_products_not_opened_for_automatic_checks_need_review(pg, tmp_path) -> N
     assert rows == {fcn.product_code: "FCN", OTHER: "FCN_Express"}
     items = by_name(outcome)
     assert items[f"{fcn.product_code}_TS.pdf"].category == Category.PASSED
-    for kind in ("TS", "IIS"):
-        item = items[f"{OTHER}_{kind}.pdf"]
-        assert item.category == Category.REVIEW and item.release_problem
-        assert item.problem_messages == (
-            "樣態：BARC 還沒開放「FCN_Express」自動核對（參考條件表 Product）；請人工核對，不能人工放行",
-        )
+    item = items[f"{OTHER}_TS.pdf"]
+    assert item.category == Category.REVIEW
+    assert any("FCN_Express" in m and "Non-Call 1" in m for m in item.problem_messages), item.problem_messages
 
 
 @pytest.mark.db

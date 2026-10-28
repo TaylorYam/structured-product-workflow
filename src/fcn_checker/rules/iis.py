@@ -244,7 +244,7 @@ def _first_callable(ctx: Context) -> CheckResult:
     if problem:
         return problem
     check = Check(rid, key, Item.column(name, [ov]), ctx.document, ov=(ov,), expected=v).needs(pf)
-    return check.compare(v, pf.value, message="Non-Call(月) = 第一個可以提前出場的期別（最小為 1）")
+    return check.compare(v, pf.value, message=reference.NON_CALL_MESSAGE)
 
 
 def _ko_observation_dates(ctx: Context) -> list[CheckResult]:

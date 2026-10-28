@@ -7,14 +7,12 @@ from decimal import Decimal
 
 import pytest
 
+from fcn_checker.products import FCN, FCN_EXPRESS, PRODUCT_RULES, product_name
 from sp_workflow.product_record import (
     COLUMN_FIELDS,
     DERIVED_COLUMNS,
-    FCN,
-    FCN_EXPRESS,
     FIELDS,
     PRODUCT_COLUMNS,
-    PRODUCT_RULES,
     REQUIRED,
     REQUIRED_COLUMNS,
     UPFRONT_FIELD,
@@ -22,7 +20,6 @@ from sp_workflow.product_record import (
     fields_of,
     invert_upfront,
     missing_fields,
-    product_name,
 )
 
 DENOMINATIONS = {"USD": Decimal(10000), "JPY": Decimal(1000000)}

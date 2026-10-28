@@ -49,6 +49,7 @@ REASON_ZH = {
     "period_count": "期數不同",
     "occurrence_count": "出現次數不對",
     "split_suspected": "同一檔標的各價格都差同一比例，疑為股票分割調整後的價格",
+    "non_call_product": "說明書推得的 Non-Call 不符合參考條件表的商品種類",
     "unexpected_error": "執行時發生非預期錯誤",
 }
 STATUS_DEFAULT = {
