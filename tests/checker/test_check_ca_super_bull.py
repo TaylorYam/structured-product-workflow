@@ -177,6 +177,13 @@ def test_offshore_renminbi_needs_review(tmp_path):
     assert flagged(r, "doc.template_variant", S.REVIEW_REQUIRED), problems(r)
 
 
+def test_underlying_quoted_in_another_currency_needs_review(tmp_path):
+    """第 16 項有匯率行（標的報價幣別和計價幣別不同）轉人工覆核，同境外人民幣（workflow #335）。"""
+    r = check(tmp_path, S0, pdf_spec=SbSpec(fx="美元/日圓=150.00"))
+    [variant] = rule(r, "doc.template_variant")
+    assert variant.status == S.REVIEW_REQUIRED and "美元/日圓=150.00" in variant.message, problems(r)
+
+
 def test_row_ko_price_different_from_the_header_needs_review(tmp_path):
     spec = SbSpec(months=(3, 6), tenor=9)
     r = check(tmp_path, spec, edits=[Edit("80.00%", "85.00%", "ts.art9.ko")])

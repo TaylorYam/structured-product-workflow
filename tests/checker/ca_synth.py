@@ -180,6 +180,7 @@ class SbSpec(Spec):
     shift: int = 0
     note: bool = False  # 觀察日表下多一行「註:自動提前出場價以期初訂價的百分比表示。」
     row_bonus: tuple[Decimal, ...] = ()  # 觀察日表各列的出場紅利（預設每列都是 `annual`；給值製造各列不同）
+    fx: str = ""  # 第 16 項情境價格表後的匯率行（例 `美元/日圓=150.00`；標的報價幣別和計價幣別不同的型態）
 
     def __post_init__(self) -> None:
         self.first_callable = self.months[0]
@@ -605,6 +606,8 @@ def _article16_sb(d: _Doc, s: SbSpec) -> None:
     d.section = "art16.table"
     _price_table(d, s, index=False)
     d.section = "art16"
+    if s.fx:
+        d.text(36, s.fx)
     a1 = (denom * (100 + bonus) / 100).quantize(Q2, ROUND_HALF_UP)
     ann1 = (bonus * 12 / s.months[0]).quantize(Q2, ROUND_HALF_UP)
     d.text(36, "情境分析一：較佳情況")

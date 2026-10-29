@@ -27,7 +27,8 @@ NOT_COVERED = [
     *(x for x in ca.NOT_COVERED if x["rule_id"] not in ("doc.scenario_calculations", "doc.template_variants")),
     {
         "rule_id": "doc.template_variants",
-        "description": "只支援現行版範本（舊版轉人工覆核、不能放行）；境外人民幣、觀察日表各列出場價或紅利不同轉人工覆核",
+        "description": "只支援現行版範本（舊版轉人工覆核、不能放行）；境外人民幣、標的報價幣別和計價幣別不同、觀察日表各列出場價"
+        "或紅利不同轉人工覆核",
     },
     {
         "rule_id": "doc.super_bull_skipped",
@@ -48,15 +49,18 @@ def _ts(ctx: IssuerContext) -> CaSuperBullTermSheet:
 
 
 def scope(ctx: IssuerContext) -> CheckResult:
-    """境外人民幣轉人工覆核；觀察日表各列出場價須等於價格表表頭 KO%（不同轉人工覆核，各列紅利不同由出場紅利歧義處理）。"""
+    """境外人民幣、標的報價幣別和計價幣別不同（第 16 項有匯率行）轉人工覆核；觀察日表各列出場價須等於價格表表頭 KO%
+    （不同轉人工覆核，各列紅利不同由出場紅利歧義處理）。"""
     f = ctx.ts.f
-    cz, table, ko = f("currency_zh"), f("ko_table"), f("ko_pct")
-    check = kit.doc_check(ctx, "doc.template_variant", "template_variant", "Super Bull 型態", cz, table, ko)
+    cz, table, ko, fx = f("currency_zh"), f("ko_table"), f("ko_pct"), f("scenario_fx")
+    check = kit.doc_check(ctx, "doc.template_variant", "template_variant", "Super Bull 型態", cz, table, ko, fx)
     if (problem := check.blocked) is not None:
         return problem
     issues = []
     if ctx.std.currency_zh_to_iso.get(cz.value) == "CNH":
         issues.append(f"計價幣別是{cz.value}（境外人民幣轉人工覆核）")
+    if fx.value:
+        issues.append(f"第 16 項有匯率 {'、'.join(fx.value)}（標的報價幣別和計價幣別不同，轉人工覆核）")
     rows = [str(n) for n, r in enumerate(table.value, start=1) if r["ko"] != ko.value]
     if rows:
         issues.append(f"觀察日表第 {'、'.join(rows)} 列的自動提前出場價不等於價格表表頭 KO% {ko.value}%")
