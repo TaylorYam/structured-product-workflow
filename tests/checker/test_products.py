@@ -78,7 +78,9 @@ def product_result(item):
 def test_products_not_opened_for_the_issuer_stop_both_documents(tmp_path, product):
     config = load_config(issuer_prefixes=prefixes_with(tmp_path, EXPRESS_OPENED, "\nFCN_Express = []\n"))
     outcome = run(tmp_path, {"Product": product}, config)
-    message = f"樣態：BARC 還沒開放「{product}」自動核對（參考條件表 Product）；請人工核對，不能人工放行"
+    message = (
+        f"目前樣態不支援自動核對：BARC 還沒開放「{product}」自動核對（參考條件表 Product）；請人工核對，不能人工放行"
+    )
 
     for item in outcome.items:
         assert (product_result(item).status, product_result(item).reason_code) == (REVIEW, "variant_unsupported")
@@ -92,7 +94,9 @@ def test_products_not_opened_for_the_issuer_stop_both_documents(tmp_path, produc
 def test_super_bull_goes_to_manual_review_with_the_repo_table(tmp_path):
     """Super Bull 還沒開放任何上手（#310）：照不支援樣態轉人工，不跑規則。"""
     outcome = run(tmp_path, {"Product": "Super Bull"})
-    message = "樣態：BARC 還沒開放「Super Bull」自動核對（參考條件表 Product）；請人工核對，不能人工放行"
+    message = (
+        "目前樣態不支援自動核對：BARC 還沒開放「Super Bull」自動核對（參考條件表 Product）；請人工核對，不能人工放行"
+    )
 
     assert [item.problem_messages for item in outcome.items] == [(message,)] * len(outcome.items)
 

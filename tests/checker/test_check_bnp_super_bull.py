@@ -99,6 +99,7 @@ def test_old_template_version_is_not_supported(tmp_path):
         detect = rule(item.report, "template.detect")[0]
         assert (detect.status, detect.reason_code) == (S.REVIEW_REQUIRED, "template_unsupported")
         assert "舊版" in detect.message and "不能人工放行" in detect.message
+        assert item.problem_messages == (f"目前樣態不支援自動核對：{detect.message}",)  # Issue #340
         assert item.status_label == "不支援的範本版本" and item.release_problem
 
 

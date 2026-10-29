@@ -129,7 +129,9 @@ def filled_codes(output: Path) -> set[str]:
 )
 def test_reference_sheet_variant_stops_both_documents_without_rules_or_release(tmp_path, spec, build, issuer):
     outcome, receipt = run(tmp_path, spec, reference_row(spec, **{"KI(Freq)": "P"}), build=build)
-    message = f"樣態：{issuer} 不支援「KI 每期觀察」（參考條件表）；這個樣態沒有範本可以核對，不能人工放行"
+    message = (
+        f"目前樣態不支援自動核對：{issuer} 不支援「KI 每期觀察」（參考條件表）；這個樣態沒有範本可以核對，不能人工放行"
+    )
 
     assert [i.kind.value for i in outcome.items] == ["說明書", "投資人須知"]
     for item in outcome.items:
