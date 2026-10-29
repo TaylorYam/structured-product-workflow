@@ -275,9 +275,12 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 
 - 範圍：存續狀態在庫、連結任一選定標的、最終比價日不晚於截止日的商品，FCN、FCN_Express、Super Bull 都算；已過最終比價日還在庫的（例：等股價）一併列入。
 - 價格：每個標的用收盤價表最新的一筆，依拆股登記換回價格基準（同比價），不做假設價格。
-- 核對條件不是完成（同比價）、缺 KI 型態、有 KI 卻沒有下限價、缺價格的「無法計算」；MKI 系統不比 →「MKI 人工確認」。其他看最差標的（收盤價 ÷ 進場價最低）：收盤價 < 執行價，且沒有 KI、收盤價 < 下限價或比價已記 AKI 觸及 →「會接股」；低於執行價但還在下限價之上（EKI，或還沒觸及的 AKI）→「KI 未破下限」（觀察，另列假設接股時的帳面估損供參考）；其他「高於執行價」。
-- 金額照交易明細逐筆（分公司、理專、金額），沒有交易明細的用庫存的分公司配置（理專寫 `-`）。估損 = 金額 ×（1 − 最差標的收盤價 ÷ 執行價），不含已領配息；USD 以收盤價表最新的匯率換算，查不到匯率的 USD 欄空白、不算進各表的 USD 合計。
-- Excel 分頁：「總覽」（選定標的與收盤日、截止日、各分類檔數／面額／估損）、「依分公司」、「依理專」（同一理專跨分公司合併，列出服務的分公司；一檔分給同一人好幾筆只算一檔）、「通知明細」（會接股、觀察、MKI 的每筆交易，依最終比價日排序，標出最差標的是不是選定的標的）、「全部商品」（一檔一列，含各標的表現）。
+- 核對條件不是完成（同比價）、缺 KI 型態、有 KI 卻沒有下限價、缺價格的「無法計算」；MKI 系統不比 →「MKI 人工確認」。其他看最差標的（收盤價 ÷ 進場價最低）：收盤價 < 執行價，且沒有 KI、收盤價 < 下限價或比價已記 AKI 觸及 →「會接股」；低於執行價但還在下限價之上（EKI，或還沒觸及的 AKI）→「KI 未破下限」；還在執行價之上、距執行價 10% 以內 →「接近執行價」（[#347](https://github.com/TaylorYam/structured-product-workflow/issues/347)，一樣列進通知明細）；其他「高於執行價」。
+- 金額照交易明細逐筆（分公司、理專、金額），沒有交易明細的用庫存的分公司配置（理專寫 `-`）。估損 = 金額 ×（1 − 最差標的收盤價 ÷ 執行價）；到期配息估計 = 金額 × Coupon p.a. × 天期 ÷ 12（Super Bull 沒有配息，算 0；沒有 Coupon 或天期的空白），會接股的另列扣配息後淨損益 = 到期配息估計 − 估損（加總裡有商品缺配息資料時空白）；USD 以收盤價表最新的匯率換算，查不到匯率的 USD 欄空白、不算進各表的 USD 合計。
+- 選定標的造成／其他標的造成：最差標的是選定的代碼算「選定標的造成」，籃子裡別的股票最差算「其他標的造成」；總覽的會接股、KI 未破下限、接近執行價，與依分公司、依理專的估損都分開這兩種。
+- 每檔另列剩餘天數（到最終比價日）、執行價(%)、下限價(%)、距執行價、距下限價（最差標的收盤價 ÷ 執行價或下限價 − 1），與依距執行價的緩衝分組（已低於執行價、<3%、3–10%、>10%）。
+- Excel 分頁：「總覽」（選定標的與收盤日、截止日、各分類檔數／面額／估損）、「依分公司」、「依理專」（同一理專跨分公司合併，列出服務的分公司；一檔分給同一人好幾筆只算一檔）、「通知明細」（會接股、KI 未破下限、接近執行價、MKI 的每筆交易，依最終比價日排序，標出最差標的是不是選定的標的）、「全部商品」（一檔一列，含各標的表現）。
+- 圖表（Excel 原生圖表）：「總覽」右邊有各分類面額（選定標的／其他標的疊在一起）、緩衝分組的面額、會接股估損依最差標的三張圖；「依分公司」「依理專」右邊有會接股估損（選定標的／其他標的）與面額組成（會接股、KI 未破下限、接近執行價）的橫條圖，各畫排前面的 15 名。
 
 測試（資料全部虛構；真實資料只在本機）：
 
@@ -562,9 +565,12 @@ When a stock drops sharply ([#345](https://github.com/TaylorYam/structured-produ
 
 - Scope: products on book that link any chosen underlying and whose final valuation date is on or before the cutoff, whether FCN, FCN_Express, or Super Bull; products past their final valuation date but still on book (for example 等股價) are included.
 - Prices: each underlying uses its latest close in the close table, brought to the price basis through the split registry (as observation does); there are no hypothetical prices.
-- Products whose check terms are not 完成 (as in observation), with no barrier type, with a barrier but no KI price, or with missing prices are 「無法計算」; MKI is not observed → 「MKI 人工確認」. The rest follow the worst performer (lowest close ÷ initial): close below strike with no KI, close below the KI barrier, or an AKI touch already recorded by observation → 「會接股」 (delivers shares); below strike but above the barrier (EKI, or AKI not yet touched) → 「KI 未破下限」 (watch, with the book loss if it did deliver shown for reference); otherwise 「高於執行價」.
-- Amounts follow each trade row (branch, FC, amount); products without trade rows use the inventory's branch allocation (FC `-`). Estimated loss = amount × (1 − worst close ÷ strike), excluding coupons already paid; USD uses the latest FX close in the close table, and currencies without a rate get blank USD cells and are left out of every USD total.
-- Excel sheets: 「總覽」 (chosen underlyings with close dates, cutoff, count / notional / loss per category), 「依分公司」 (by branch), 「依理專」 (by FC, merged across branches and listing them; a product split into several rows for one person counts once), 「通知明細」 (every trade row of 會接股, watch, and MKI products, by final valuation date, marking whether the worst performer is a chosen underlying), and 「全部商品」 (one row per product with every underlying's performance).
+- Products whose check terms are not 完成 (as in observation), with no barrier type, with a barrier but no KI price, or with missing prices are 「無法計算」; MKI is not observed → 「MKI 人工確認」. The rest follow the worst performer (lowest close ÷ initial): close below strike with no KI, close below the KI barrier, or an AKI touch already recorded by observation → 「會接股」 (delivers shares); below strike but above the barrier (EKI, or AKI not yet touched) → 「KI 未破下限」; above strike by 10% or less → 「接近執行價」 ([#347](https://github.com/TaylorYam/structured-product-workflow/issues/347), also listed in 通知明細); otherwise 「高於執行價」.
+- Amounts follow each trade row (branch, FC, amount); products without trade rows use the inventory's branch allocation (FC `-`). Estimated loss = amount × (1 − worst close ÷ strike); estimated coupons to maturity = amount × Coupon p.a. × tenor ÷ 12 (Super Bull pays none, so 0; blank without a coupon or tenor), and delivering products also show the net after coupons = estimated coupons − estimated loss (blank in a total that includes a product without coupon data); USD uses the latest FX close in the close table, and currencies without a rate get blank USD cells and are left out of every USD total.
+- Caused by the chosen underlying or by others: a product whose worst performer is a chosen code counts as 「選定標的造成」, one where another stock in the basket is worst as 「其他標的造成」; the overview's 會接股, KI 未破下限, and 接近執行價 rows and the branch and FC losses keep the two apart.
+- Each product also shows days left (to the final valuation date), strike (%), KI (%), distance to strike and to KI (worst close ÷ strike or KI price − 1), and a buffer group by distance to strike (已低於執行價, <3%, 3–10%, >10%).
+- Excel sheets: 「總覽」 (chosen underlyings with close dates, cutoff, count / notional / loss per category), 「依分公司」 (by branch), 「依理專」 (by FC, merged across branches and listing them; a product split into several rows for one person counts once), 「通知明細」 (every trade row of 會接股, KI 未破下限, 接近執行價, and MKI products, by final valuation date, marking whether the worst performer is a chosen underlying), and 「全部商品」 (one row per product with every underlying's performance).
+- Charts (native Excel charts): 「總覽」 has three on the right: notional per category (chosen and other stacked), notional per buffer group, and delivering loss by worst performer; 「依分公司」 and 「依理專」 have horizontal bars of delivering loss (chosen / other) and of notional composition (會接股, KI 未破下限, 接近執行價), each for the top 15.
 
 Tests (synthetic data only; real data stays local):
 
