@@ -106,7 +106,7 @@ def test_default_name_lists_the_tickers() -> None:
 
 # ---------------------------------------------------------------- 資料庫
 
-A, B, C, LATE, GONE, OTHER, PENDING = (f"14719999000{n}" for n in range(1, 8))
+A, B, C, LATE, GONE, OTHER, PENDING, OTHER_EXCHANGE = (f"14719999000{n}" for n in range(1, 9))
 
 
 def seed(pg, tdcc: str, codes: list[str], *, barrier: str = "NONE", final=dt.date(2026, 11, 20), currency="USD"):
@@ -175,12 +175,28 @@ def seeded(pg):
 
 
 @pytest.mark.db
-def test_choices_list_codes_linked_by_products_on_book(seeded) -> None:
-    choices = {c.code: c for c in load_choices(seeded)}
+def test_choices_merge_exchange_codes_by_ticker(seeded) -> None:
+    seed(seeded, OTHER_EXCHANGE, ["AAA UQ", "BBB UN"])
+    choices = {c.ticker: c for c in load_choices(seeded)}
 
-    assert sorted(choices) == ["AAA UW", "BBB UN", "CCC UN", "DDD JT"]
-    assert choices["AAA UW"].products == 5, "已出場的不算"
-    assert (choices["AAA UW"].close_date, choices["AAA UW"].close) == (DAY, D(72))
+    assert sorted(choices) == ["AAA", "BBB", "CCC", "DDD"]
+    assert choices["AAA"].codes == ("AAA UW", "AAA UQ"), "連結多的代碼在前"
+    assert choices["AAA"].products == 6, "兩個代碼的在庫檔數合計，已出場的不算"
+    assert (choices["AAA"].close_date, choices["AAA"].close) == (DAY, D(72)), "收盤價取連結最多的代碼"
+
+
+@pytest.mark.db
+def test_every_exchange_code_of_a_ticker_is_analysed(seeded, tmp_path: Path) -> None:
+    seed(seeded, OTHER_EXCHANGE, ["AAA UQ", "BBB UN"])
+    closes(seeded, {"AAA UQ": "72"})
+    path = tmp_path / "曝險.xlsx"
+
+    export_exposure(seeded, ["AAA UW", "AAA UQ"], UNTIL, path, today=DAY)
+
+    every = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}
+    assert (every[OTHER_EXCHANGE]["分類"], every[OTHER_EXCHANGE]["最差是選定標的"]) == (DELIVER, "是")
+    branches = {row["分公司"]: row for row in sheet_rows(path, "依分公司")}
+    assert branches["台北"]["會接股檔數"] == 2, "AAA UW 的 A 與 AAA UQ 的那一檔"
 
 
 @pytest.mark.db

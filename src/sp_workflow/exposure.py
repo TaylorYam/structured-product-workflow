@@ -1,5 +1,7 @@
 """標的曝險分析（#345）：選定的標的大跌時，近期到期、連結它們的在庫商品有哪些會接股、面額與估損多少。
 
+- 選標的照股票代號（彭博代碼的第一段，例 `GOOG`）：一個代號包含它所有交易所的代碼（`GOOG UW`、`GOOG UQ`），
+  作業人員只打代號就好，分析與依分公司、理專的加總都算進全部代碼（`Choice.codes`）。
 - 範圍：存續狀態在庫（沒有還有效的存續事件）、連結任一選定標的、最終比價日不晚於截止日的商品，商品種類不限
   （FCN、FCN_Express、Super Bull）。已過最終比價日、還在庫的（例：等股價）一併列入。
 - 價格：每個標的用收盤價表最新的一筆，依拆股登記換回價格基準（同比價，`stock_splits.SplitBook.factor`）；不做假設價格。
@@ -50,12 +52,18 @@ _UNDERLYING_COLUMNS = ", ".join(f"underlying_{n}" for n in range(1, 6))  # workf
 
 @dataclass(frozen=True)
 class Choice:
-    """視窗上可選的一個標的：在庫商品連結它的檔數與最新收盤價。"""
+    """視窗上可選的一個股票代號：它在各交易所的代碼、連結任一代碼的在庫檔數，與連結最多那個代碼的最新收盤價。"""
 
-    code: str
+    ticker: str
+    codes: tuple[str, ...]  # 依連結檔數多到少
     products: int
     close_date: dt.date | None
     close: Decimal | None
+
+
+def ticker_of(code: str) -> str:
+    """股票代號：彭博代碼的第一段（`GOOG UW` → `GOOG`）。"""
+    return code.split()[0] if code.split() else code
 
 
 @dataclass(frozen=True)
@@ -164,18 +172,27 @@ def _shortfall(leg: Leg) -> Decimal:
 
 
 def load_choices(conn: psycopg.Connection) -> list[Choice]:
-    """在庫商品連結的標的代碼，依代碼排序。"""
+    """在庫商品連結的標的，照股票代號合併各交易所的代碼，依代號排序。"""
     rows = conn.execute(
         f"SELECT DISTINCT tdcc, code FROM workflow.product, unnest(ARRAY[{_UNDERLYING_COLUMNS}]) AS code"
         " WHERE code IS NOT NULL"
     ).fetchall()
     statuses = lifecycle_status(conn, [tdcc for tdcc, _ in rows])
-    counts: dict[str, int] = defaultdict(int)
+    by_code: dict[str, set[str]] = defaultdict(set)
     for tdcc, code in rows:
         if statuses[tdcc].status == IN_STOCK:
-            counts[code] += 1
-    latest = _latest_closes(conn, counts)
-    return [Choice(code, counts[code], *latest.get(code, (None, None))) for code in sorted(counts)]
+            by_code[code].add(tdcc)
+    latest = _latest_closes(conn, by_code)
+    by_ticker: dict[str, list[str]] = defaultdict(list)
+    for code in by_code:
+        by_ticker[ticker_of(code)].append(code)
+    choices = []
+    for ticker in sorted(by_ticker):
+        codes = tuple(sorted(by_ticker[ticker], key=lambda c: (-len(by_code[c]), c)))
+        products = len(set().union(*(by_code[c] for c in codes)))
+        main = next((c for c in codes if c in latest), None)
+        choices.append(Choice(ticker, codes, products, *(latest[main] if main else (None, None))))
+    return choices
 
 
 def load_positions(conn: psycopg.Connection, codes: Iterable[str], until: dt.date) -> list[Position]:
@@ -287,7 +304,7 @@ class ExposureReceipt:
 
 def export_name(codes: Sequence[str], now: dt.datetime | None = None) -> str:
     """存檔視窗預設的檔名。"""
-    tickers = "_".join(dict.fromkeys(code.split()[0] for code in codes))[:40]
+    tickers = "_".join(dict.fromkeys(ticker_of(code) for code in codes))[:40]
     return f"標的曝險分析_{tickers}_{now or dt.datetime.now():%Y%m%d_%H%M}.xlsx"
 
 

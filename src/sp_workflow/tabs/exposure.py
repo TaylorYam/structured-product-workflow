@@ -1,6 +1,7 @@
 """「分析」選單的「標的曝險分析…」（#345）：另開一個視窗，選一檔或多檔標的與最終比價日截止日，匯出曝險分析的 Excel。
 
-打開時讀一次在庫商品連結的標的（最新收盤價、連結檔數）；可以搜尋，搜尋時已選的保留。
+打開時讀一次在庫商品連結的標的，一列一個股票代號（合併各交易所的代碼、最新收盤價、連結檔數）；
+可以搜尋，搜尋時已選的保留；匯出時把選的代號展開成全部交易所的代碼。
 分析規則在 `sp_workflow.exposure`，這裡只收輸入、在背景呼叫 `window_actions`。
 """
 
@@ -20,7 +21,8 @@ from sp_workflow.tabs.base import TITLE, ActionRunner, BackgroundFactory, Databa
 from sp_workflow.window_actions import export_underlying_exposure, load_exposure_choices
 
 COLUMNS = (
-    ("code", "代碼", 120),
+    ("ticker", "代號", 90),
+    ("codes", "交易所代碼", 180),
     ("close", "最新收盤", 100),
     ("day", "收盤日", 100),
     ("count", "在庫檔數", 80),
@@ -51,7 +53,7 @@ class ExposureWindow(tk.Toplevel):
         self.memory = memory
         self.background = background(self)
         self.choices: tuple[Choice, ...] = ()
-        self.chosen: list[str] = []  # 依選的先後
+        self.chosen: list[str] = []  # 選的股票代號，依選的先後
         self._showing = False  # 重畫表時不把畫面上的選取當成使用者改選
         frame = ttk.Frame(self, padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
@@ -63,7 +65,7 @@ class ExposureWindow(tk.Toplevel):
             top,
             text="選一檔或多檔標的（按住 Ctrl 複選），用收盤價表最新的收盤價，找出最終比價日不晚於截止日、"
             "連結這些標的的在庫商品，判斷哪些會接股，依分公司與理專統計面額與估損，匯出 Excel。"
-            "同一檔股票可能有不同交易所的代碼（例：GOOG UW、GOOG UQ），請一起選。"
+            "一列是一個股票代號，已包含它所有交易所的代碼（例：GOOG 含 GOOG UW、GOOG UQ）。"
             "請先匯入最新的收盤價再分析；這裡只讀資料庫，不改資料。",
             wraplength=760,
             justify="left",
@@ -72,7 +74,7 @@ class ExposureWindow(tk.Toplevel):
         self.refresh_button.pack(side=tk.RIGHT)
         search = ttk.Frame(frame)
         search.grid(row=1, column=0, sticky="ew", pady=(0, 6))
-        ttk.Label(search, text="搜尋代碼").pack(side=tk.LEFT, padx=(0, 8))
+        ttk.Label(search, text="搜尋代號").pack(side=tk.LEFT, padx=(0, 8))
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", lambda *_: self._show())
         ttk.Entry(search, textvariable=self.search_var, width=20).pack(side=tk.LEFT)
@@ -125,16 +127,16 @@ class ExposureWindow(tk.Toplevel):
 
     def _loaded(self, choices: list[Choice]) -> None:
         self.choices = tuple(choices)
-        known = {c.code for c in choices}
+        known = {c.ticker for c in choices}
         self.chosen = [code for code in self.chosen if code in known]
         self._show()
         self._show_chosen()
         self.status_var.set(f"在庫商品連結的標的 {len(choices)} 個。")
 
     def visible(self) -> list[Choice]:
-        """符合搜尋的標的（不分大小寫、比對代碼的任一段）。"""
+        """符合搜尋的標的（不分大小寫，比對代號與交易所代碼）。"""
         words = self.search_var.get().upper().split()
-        return [c for c in self.choices if all(word in c.code.upper() for word in words)]
+        return [c for c in self.choices if all(word in " ".join((c.ticker, *c.codes)).upper() for word in words)]
 
     def _show(self) -> None:
         self._showing = True
@@ -143,7 +145,8 @@ class ExposureWindow(tk.Toplevel):
             for choice in self.visible():
                 close = "" if choice.close is None else f"{choice.close:,f}"
                 day = "" if choice.close_date is None else choice.close_date.isoformat()
-                self.table.insert("", tk.END, iid=choice.code, values=(choice.code, close, day, choice.products))
+                values = (choice.ticker, "、".join(choice.codes), close, day, choice.products)
+                self.table.insert("", tk.END, iid=choice.ticker, values=values)
             shown = [code for code in self.chosen if self.table.exists(code)]
             self.table.selection_set(shown)
         finally:
@@ -179,11 +182,12 @@ class ExposureWindow(tk.Toplevel):
         if until is None:
             messagebox.showinfo(TITLE, "最終比價日截止請填 YYYY-MM-DD（可以點右邊的小月曆）。", parent=self)
             return
-        codes = list(self.chosen)
+        by_ticker = {c.ticker: c.codes for c in self.choices}
+        codes = [code for ticker in self.chosen for code in by_ticker.get(ticker, ())]
         chosen = filedialog.asksaveasfilename(
             title="匯出標的曝險分析",
             initialdir=self.memory.load().get(MEMORY_KEY) or None,
-            initialfile=export_name(codes),
+            initialfile=export_name(self.chosen),
             defaultextension=".xlsx",
             filetypes=[("Excel 活頁簿", "*.xlsx")],
             parent=self,

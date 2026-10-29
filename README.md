@@ -271,7 +271,7 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 
 ### 標的曝險分析
 
-某檔股票大跌時（[#345](https://github.com/TaylorYam/structured-product-workflow/issues/345)），在視窗上方的「分析」選單按「標的曝險分析…」，另開一個視窗列出在庫商品連結的標的（代碼、最新收盤價、收盤日、連結的在庫檔數），可以搜尋代碼、按住 Ctrl 複選（同一檔股票可能有不同交易所的代碼，例 `GOOG UW`、`GOOG UQ`，請一起選；搜尋時已選的保留）。選好最終比價日截止日（預設今天起一個月）後按「匯出 Excel…」。只讀資料庫，請先匯入最新的收盤價再分析。
+某檔股票大跌時（[#345](https://github.com/TaylorYam/structured-product-workflow/issues/345)），在視窗上方的「分析」選單按「標的曝險分析…」，另開一個視窗列出在庫商品連結的標的，一列一個股票代號（例 `GOOG`），已合併它所有交易所的代碼（`GOOG UW`、`GOOG UQ`），寫出最新收盤價、收盤日與連結的在庫檔數；只要打代號搜尋、按住 Ctrl 複選（搜尋時已選的保留），分析與依分公司、理專的加總都算進全部交易所的代碼。選好最終比價日截止日（預設今天起一個月）後按「匯出 Excel…」。只讀資料庫，請先匯入最新的收盤價再分析。
 
 - 範圍：存續狀態在庫、連結任一選定標的、最終比價日不晚於截止日的商品，FCN、FCN_Express、Super Bull 都算；已過最終比價日還在庫的（例：等股價）一併列入。
 - 價格：每個標的用收盤價表最新的一筆，依拆股登記換回價格基準（同比價），不做假設價格。
@@ -558,7 +558,7 @@ After an import on "1 每日匯入" or "2 起單資料", every **unlocked** prod
 
 ### Underlying exposure analysis
 
-When a stock drops sharply ([#345](https://github.com/TaylorYam/structured-product-workflow/issues/345)), choose 「標的曝險分析…」 in the 「分析」 menu at the top of the window. A separate window lists the underlyings linked by products on book (code, latest close, close date, number of linked products on book); search by code and hold Ctrl to pick several (one stock may have codes on different exchanges, such as `GOOG UW` and `GOOG UQ`, so pick them together; choices survive a search). Set the final-valuation cutoff (default: one month from today) and press 「匯出 Excel…」. It only reads the database; import the latest closes first.
+When a stock drops sharply ([#345](https://github.com/TaylorYam/structured-product-workflow/issues/345)), choose 「標的曝險分析…」 in the 「分析」 menu at the top of the window. A separate window lists the underlyings linked by products on book, one row per ticker (for example `GOOG`) with all its exchange codes merged (`GOOG UW`, `GOOG UQ`), its latest close, close date, and number of linked products on book. Search by ticker and hold Ctrl to pick several (choices survive a search); the analysis and the branch and FC totals cover every exchange code. Set the final-valuation cutoff (default: one month from today) and press 「匯出 Excel…」. It only reads the database; import the latest closes first.
 
 - Scope: products on book that link any chosen underlying and whose final valuation date is on or before the cutoff, whether FCN, FCN_Express, or Super Bull; products past their final valuation date but still on book (for example 等股價) are included.
 - Prices: each underlying uses its latest close in the close table, brought to the price basis through the split registry (as observation does); there are no hypothetical prices.

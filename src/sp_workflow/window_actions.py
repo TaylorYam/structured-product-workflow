@@ -650,7 +650,7 @@ def load_exit_list(settings: ConnectionSettings, paths: ConfigPaths, day: dt.dat
 
 
 def load_exposure_choices(settings: ConnectionSettings) -> list[Choice]:
-    """標的曝險分析可選的標的：在庫商品連結的代碼與最新收盤價（#345）。"""
+    """標的曝險分析可選的標的：在庫商品連結的股票代號（合併各交易所的代碼）與最新收盤價（#345）。"""
     with connect(settings) as conn:
         return load_choices(conn)
 

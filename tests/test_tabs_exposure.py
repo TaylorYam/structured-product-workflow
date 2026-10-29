@@ -18,9 +18,9 @@ from window_synth import new_window
 
 DAY = dt.date(2030, 3, 4)
 CHOICES = [
-    Choice("AAA UQ", 2, DAY, Decimal("101.5")),
-    Choice("AAA UW", 12, DAY, Decimal("101.5")),
-    Choice("BBB UN", 3, None, None),
+    Choice("AAA", ("AAA UW", "AAA UQ"), 13, DAY, Decimal("101.5")),
+    Choice("AAAB", ("AAAB UN",), 1, DAY, Decimal("7")),
+    Choice("BBB", ("BBB UN",), 3, None, None),
 ]
 
 
@@ -46,9 +46,9 @@ def codes(table) -> list[str]:
 def test_menu_opens_one_window_listing_choices(opened) -> None:
     window, exposure, _ = opened
 
-    assert codes(exposure.table) == ["AAA UQ", "AAA UW", "BBB UN"]
-    assert exposure.table.item("AAA UW", "values") == ("AAA UW", "101.5", "2030-03-04", "12")
-    assert exposure.table.item("BBB UN", "values")[1:3] == ("", "")
+    assert codes(exposure.table) == ["AAA", "AAAB", "BBB"]
+    assert exposure.table.item("AAA", "values") == ("AAA", "AAA UW、AAA UQ", "101.5", "2030-03-04", "13")
+    assert exposure.table.item("BBB", "values")[2:4] == ("", "")
     assert exposure.status_var.get() == "在庫商品連結的標的 3 個。"
     window.open_exposure()
     assert window.exposure is exposure, "已經開著就拉到前面，不重開"
@@ -56,18 +56,20 @@ def test_menu_opens_one_window_listing_choices(opened) -> None:
 
 def test_search_keeps_what_was_chosen(opened) -> None:
     _, exposure, _ = opened
-    exposure.table.selection_set(["BBB UN"])
+    exposure.table.selection_set(["BBB"])
     exposure.update()
 
     exposure.search_var.set("aaa")
-    assert codes(exposure.table) == ["AAA UQ", "AAA UW"], "不分大小寫"
-    exposure.table.selection_add(["AAA UW"])
+    assert codes(exposure.table) == ["AAA", "AAAB"], "只打代號就找得到，不分大小寫"
+    exposure.table.selection_add(["AAA"])
     exposure.update()
-    assert exposure.chosen == ["BBB UN", "AAA UW"], "搜尋藏起來的保留"
-    assert exposure.chosen_var.get() == "已選：BBB UN、AAA UW"
+    assert exposure.chosen == ["BBB", "AAA"], "搜尋藏起來的保留"
+    assert exposure.chosen_var.get() == "已選：BBB、AAA"
 
+    exposure.search_var.set("uq")
+    assert codes(exposure.table) == ["AAA"], "交易所代碼也搜得到"
     exposure.search_var.set("")
-    assert set(exposure.table.selection()) == {"BBB UN", "AAA UW"}
+    assert set(exposure.table.selection()) == {"BBB", "AAA"}
     exposure.clear()
     assert exposure.chosen == [] and exposure.table.selection() == ()
 
@@ -79,7 +81,7 @@ def test_export_asks_for_a_file_and_runs_the_analysis(opened, monkeypatch, tmp_p
     exposure.export()
     assert infos == ["請先在表上選一檔或多檔標的（按住 Ctrl 複選）。"] and not calls
 
-    exposure.table.selection_set(["AAA UW", "AAA UQ"])
+    exposure.table.selection_set(["AAA", "BBB"])
     exposure.update()
     exposure.until_var.set("2030-04-04")
     target = tmp_path / "out" / "曝險.xlsx"
@@ -88,15 +90,15 @@ def test_export_asks_for_a_file_and_runs_the_analysis(opened, monkeypatch, tmp_p
 
     exposure.export()
 
-    assert calls == [(["AAA UQ", "AAA UW"], dt.date(2030, 4, 4), target)]
-    assert asked[0]["initialfile"].startswith("標的曝險分析_AAA_")
+    assert calls == [(["AAA UW", "AAA UQ", "BBB UN"], dt.date(2030, 4, 4), target)], "代號展開成全部交易所代碼"
+    assert asked[0]["initialfile"].startswith("標的曝險分析_AAA_BBB_")
     assert exposure.status_var.get() == f"已匯出 4 檔（會接股 3、KI 未破下限 1）：{target}"
     assert exposure.memory.load()[screen.MEMORY_KEY] == str(target.parent), "記住存檔的資料夾"
 
 
 def test_a_bad_cutoff_date_is_refused(opened, monkeypatch) -> None:
     _, exposure, calls = opened
-    exposure.table.selection_set(["AAA UW"])
+    exposure.table.selection_set(["AAA"])
     exposure.update()
     exposure.until_var.set("明天")
     infos: list[str] = []
