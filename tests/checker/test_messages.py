@@ -18,7 +18,7 @@ import hsbc_synth
 from barc_synth import ISSUER_NAME, Spec, build_pdf, check, check_rows
 from fcn_checker.identification import PairingProblem
 from fcn_checker.issuers import by_code
-from fcn_checker.messages import UNSUPPORTED_REASONS, Problem, problem_message, problems
+from fcn_checker.messages import UNSUPPORTED_REASONS, Problem, fix_message, problem_message, problems
 from fcn_checker.panel_workflow import PanelOutcome
 from fcn_checker.rules import kit
 from fcn_checker.schema import CheckResult, CheckStatus, DocKind, Evidence, Item, ItemSource
@@ -282,6 +282,62 @@ def test_problems_list_each_message_once_with_merged_evidence_pages():
     assert problems(results) == (Problem("項目：乙", (9, 10)), Problem("項目：丙", ())), (
         "通過的不列；同一句只列一次、依第一次出現的順序，頁碼合併由小到大；沒有證據時頁碼為空"
     )
+
+
+# ---------------------------------------------------------------- 錯誤清單「應改為」（Issue #339）
+
+ADDRESS = "台北市信義區信義路五段7號35樓之1、新北市板橋區縣民大道二段7號15樓"
+ENGLISH = "Societe Generale, Paris Branch, 29 Boulevard Haussmann 75009 Paris France"
+
+
+def fix_of(expected, actual, *, source=ItemSource.STANDARD, status=CheckStatus.MISMATCH, fix="") -> str:
+    return fix_message(CheckResult("standard.x", "x", status, expected, actual, fix=fix, item=Item("項目", source)))
+
+
+@pytest.mark.parametrize(
+    "expected,actual,want",
+    [
+        ("林晋輝", "林晉輝", "林晋輝"),  # 短文字：完整的正確值
+        ("  台北市  信義區 ", "台北市大安區", "台北市 信義區"),  # 空白收成一格
+        (dt.date(2026, 3, 1), dt.date(2025, 3, 1), "2026-03-01"),
+        (dt.datetime(2026, 3, 1), dt.datetime(2025, 3, 1), "2026-03-01"),  # 不帶時間
+        (ADDRESS, ADDRESS.replace("15樓", "16樓"), "…道二段7號16樓… → …道二段7號15樓…"),  # 長文字：只列差異片段
+        (ADDRESS, ADDRESS.replace("五段", "五\n段"), ADDRESS),  # 只差換行：沒有差異片段，寫完整的值
+        (ENGLISH, ENGLISH.replace("29", "39"), "…anch, 39 Boul… → …anch, 29 Boul…"),  # 英文片段保留空白
+        (ADDRESS, "完全不同的一段文字" * 5, ADDRESS),  # 幾乎整段不同：完整的正確值
+        (ADDRESS, None, ADDRESS),  # 沒有原文可比
+        (4, 5, ""),  # 數字不寫
+        (Decimal("0.5"), Decimal("1"), ""),
+        (["甲", "乙"], ["甲"], ""),  # 清單等結構不寫
+    ],
+)
+def test_fix_lists_the_correct_text_for_standard_mismatches(expected, actual, want):
+    assert fix_of(expected, actual) == want
+
+
+@pytest.mark.parametrize(
+    "source", [ItemSource.REFERENCE, ItemSource.REFERENCE_DERIVED, ItemSource.TERM_SHEET, ItemSource.EXPECTED]
+)
+def test_fix_is_blank_when_either_side_could_be_wrong(source):
+    """參考條件表、同商品說明書、說明書其他位置推得的預期值：可能錯的是預期值那一邊，不寫。"""
+    assert fix_of("林晋輝", "林晉輝", source=source) == ""
+
+
+@pytest.mark.parametrize("status", [CheckStatus.REVIEW_REQUIRED, CheckStatus.ERROR, CheckStatus.PASS])
+def test_fix_is_only_for_mismatches(status):
+    assert fix_of("林晋輝", "林晉輝", status=status, fix="規則給的") == ""
+
+
+def test_fix_given_by_the_rule_wins():
+    assert fix_of(3, 1, fix="…RR3… → …RR4…") == "…RR3… → …RR4…"
+
+
+def test_problems_merge_the_fixes_of_the_same_message():
+    def result(fix: str) -> CheckResult:
+        return CheckResult("standard.x", "x", CheckStatus.MISMATCH, message="乙", fix=fix, item=Item.note("項目"))
+
+    merged = problems([result("甲"), result("甲"), result(""), result("丙")])
+    assert merged == (Problem("項目：乙", (), "甲\n丙"),), "同一句錯訊的應改為去重、每段一行"
 
 
 # ---------------------------------------------------------------- 新規則沒寫錯訊時的預設

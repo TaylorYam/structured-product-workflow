@@ -268,6 +268,7 @@ class CheckResult:
     rule_version: str = "1"
     item: Item = field(kw_only=True)  # 必填：沒給項目就建立不了結果
     document: DocKind = field(default=DocKind.TERM_SHEET, kw_only=True)  # 這條結果屬於哪份文件（錯訊的文件那一邊）
+    fix: str = field(default="", kw_only=True)  # 規則另給的「應改為」（例：固定警語差異片段，Issue #339）
 
 
 @dataclass

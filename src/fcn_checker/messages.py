@@ -11,7 +11,11 @@
 - 不支援樣態與不支援的範本版本：「目前樣態不支援自動核對：<說明>」（Issue #340）。
 - 規則沒寫說明時，依原因與狀態給中文預設。
 
-核對結果檔「錯誤清單」的錯訊與 PANEL 結果明細都用 `problem_message`；錯誤清單另用 `problems` 帶每句錯訊的證據頁碼（Issue #342）。
+核對結果檔「錯誤清單」的錯訊與 PANEL 結果明細都用 `problem_message`；錯誤清單另用 `problems` 帶每句錯訊的證據頁碼（Issue #342）
+與「應改為」（`fix_message`，Issue #339）。
+
+「應改為」只在對的值有明確來源時寫：不一致、且預期值出自審查標準的文字或日期（規則另給 `CheckResult.fix` 時用它）。
+其他出處不寫：參考條件表、同商品說明書與說明書其他位置推得的值，可能錯的就是預期值那一邊，要人判斷；錯訊已列出兩邊的值。
 """
 
 from __future__ import annotations
@@ -22,6 +26,7 @@ from decimal import Decimal
 from typing import Any, NamedTuple
 
 from .schema import CheckResult, CheckStatus, DocKind, ItemSource, column_label
+from .text import text_fix
 
 STATUS_ZH = {
     CheckStatus.PASS: "通過",
@@ -126,17 +131,43 @@ def problem_message(r: CheckResult) -> str:
     return f"{head}{detail}{values}"
 
 
+def fix_message(r: CheckResult) -> str:
+    """錯誤清單「應改為」：不一致、且預期值出自審查標準時，寫出正確的文字或日期；其他空白。
+
+    規則另給 `CheckResult.fix` 時用它；文字見 `text.text_fix`，日期寫 ISO；數字（頁數、次數）與表格等結構不寫。
+    """
+    if r.status != CheckStatus.MISMATCH:
+        return ""
+    if r.fix:
+        return r.fix
+    if r.item.source != ItemSource.STANDARD:
+        return ""
+    if isinstance(r.expected, dt.datetime):
+        return r.expected.date().isoformat()
+    if isinstance(r.expected, dt.date):
+        return r.expected.isoformat()
+    if isinstance(r.expected, str) and r.expected.strip():
+        return text_fix(r.expected, r.actual if isinstance(r.actual, str) else "")
+    return ""
+
+
 class Problem(NamedTuple):
-    """一句錯訊與它的證據頁碼（由小到大，沒有證據時為空）。"""
+    """一句錯訊與它的證據頁碼（由小到大，沒有證據時為空）及「應改為」（沒有時空白）。"""
 
     message: str
     pages: tuple[int, ...]
+    fix: str = ""
 
 
 def problems(results: Iterable[CheckResult]) -> tuple[Problem, ...]:
-    """有問題的結果的錯訊：同一句只列一次（依第一次出現的順序），各結果的證據頁碼合併。"""
+    """有問題的結果的錯訊：同一句只列一次（依第一次出現的順序），各結果的證據頁碼合併，「應改為」去重後每段一行。"""
     pages: dict[str, set[int]] = {}
+    fixes: dict[str, list[str]] = {}
     for r in results:
         if r.status.is_problem:
-            pages.setdefault(problem_message(r), set()).update(e.page for e in r.document_evidence)
-    return tuple(Problem(message, tuple(sorted(p))) for message, p in pages.items())
+            message = problem_message(r)
+            pages.setdefault(message, set()).update(e.page for e in r.document_evidence)
+            found = fixes.setdefault(message, [])
+            if (fix := fix_message(r)) and fix not in found:
+                found.append(fix)
+    return tuple(Problem(message, tuple(sorted(p)), "\n".join(fixes[message])) for message, p in pages.items())
