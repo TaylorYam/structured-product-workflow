@@ -35,6 +35,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from openpyxl.chart import BarChart, Reference
+from openpyxl.chart.text import RichText, Text
+from openpyxl.chart.title import Title
+from openpyxl.drawing.text import CharacterProperties, Paragraph, ParagraphProperties, RegularTextRun
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
@@ -905,7 +908,8 @@ def _rollup_charts(sheet, title: str, rows: Sequence[Sequence[object]]) -> None:
 def _bar(title: str, *, stacked: bool = False, horizontal: bool = False) -> BarChart:
     chart = BarChart()
     chart.type = "bar" if horizontal else "col"
-    chart.title = title
+    chart.title = _title(title)
+    chart.legend.position = "b"  # 圖例放下面，不擠繪圖區
     chart.width = 18
     chart.height = 7.5
     if stacked:
@@ -914,7 +918,15 @@ def _bar(title: str, *, stacked: bool = False, horizontal: bool = False) -> BarC
     if horizontal:
         chart.y_axis.majorGridlines = None
         chart.x_axis.scaling.orientation = "maxMin"  # 第一名在最上面
+        chart.y_axis.crosses = "max"  # 分類反過來後數值軸會跑到上面蓋到標題，放回下面（#350）
     chart.y_axis.numFmt = "#,##0"
     chart.x_axis.delete = False  # openpyxl 3.1 預設不寫，Excel 會把座標軸藏起來
     chart.y_axis.delete = False
     return chart
+
+
+def _title(text: str) -> Title:
+    """圖表標題：11 pt 粗體、放在繪圖區外面，不蓋到圖（#350）。"""
+    font = CharacterProperties(sz=1100, b=True)
+    paragraph = Paragraph(pPr=ParagraphProperties(defRPr=font), r=[RegularTextRun(rPr=font, t=text)])
+    return Title(tx=Text(rich=RichText(p=[paragraph])), overlay=False)

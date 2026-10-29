@@ -107,3 +107,14 @@ def test_a_bad_cutoff_date_is_refused(opened, monkeypatch) -> None:
     exposure.export()
 
     assert infos == ["最終比價日截止請填 YYYY-MM-DD（可以點右邊的小月曆）。"] and not calls
+
+
+def test_text_wraps_beside_its_button(opened) -> None:
+    _, exposure, _ = opened
+    exposure.chosen_var.set("已選：" + "、".join(f"T{n:03d}" for n in range(80)))  # 選很多檔
+    exposure.status_var.set("已匯出 " + "很長的路徑\\" * 40)
+    exposure.update()
+
+    for label, button in ((exposure.intro, exposure.refresh_button), (exposure.chosen_label, exposure.clear_button)):
+        assert button.winfo_width() >= button.winfo_reqwidth(), "按鈕不能被文字擠扁（#349）"
+        assert label.winfo_x() + label.winfo_reqwidth() <= button.winfo_x(), "文字照剩下的寬度換行，不被裁掉"
