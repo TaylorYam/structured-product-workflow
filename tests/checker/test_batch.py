@@ -648,6 +648,17 @@ def test_error_list_has_one_row_per_message_in_input_order(tmp_path):
     assert list(sheet_rows(receipt.output)) == [ok.product_code]
 
 
+def test_error_list_writes_the_standard_value_to_fix(tmp_path):
+    """審查標準文字不一致：錯誤清單「應改為」寫審查標準的完整值，同一列的錯訊照舊（#339）。"""
+    spec = Spec()
+    pdf = pdf_for(tmp_path, spec, edits=[Edit("林晋輝", "林晉輝", "ts.ch二.5")])
+    _, receipt, _ = batch(tmp_path, [pdf], [reference_row(spec)])
+
+    [row] = [e for e in error_rows(receipt.output) if e["PDF 檔名"] == pdf.name]
+    assert row["錯訊"].startswith("受託機構負責人") and row["應改為"] == "林晋輝"
+    assert openpyxl.load_workbook(receipt.output)["錯誤清單"]["E2"].alignment.wrap_text
+
+
 def edit_sheet(sheet: Path, change) -> None:
     wb = openpyxl.load_workbook(sheet)
     change(wb)

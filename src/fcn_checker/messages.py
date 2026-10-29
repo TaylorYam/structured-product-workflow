@@ -13,8 +13,8 @@
 核對結果檔「錯誤清單」的錯訊與 PANEL 結果明細都用 `problem_message`；錯誤清單另用 `problems` 帶每句錯訊的證據頁碼（Issue #342）
 與「應改為」（`fix_message`，Issue #339）。
 
-「應改為」只在對的值有明確來源時寫：不一致、且預期值出自審查標準或說明書其他位置的文字或日期（規則另給 `CheckResult.fix` 時用它）。
-預期值出自參考條件表或同商品說明書的不寫：兩邊誰錯要人判斷，錯訊已列出兩邊的值。
+「應改為」只在對的值有明確來源時寫：不一致、且預期值出自審查標準的文字或日期（規則另給 `CheckResult.fix` 時用它）。
+其他出處不寫：參考條件表、同商品說明書與說明書其他位置推得的值，可能錯的就是預期值那一邊，要人判斷；錯訊已列出兩邊的值。
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from decimal import Decimal
 from typing import Any, NamedTuple
 
 from .schema import CheckResult, CheckStatus, DocKind, ItemSource, column_label
-from .text import diff_parts, squash
+from .text import text_fix
 
 STATUS_ZH = {
     CheckStatus.PASS: "通過",
@@ -63,9 +63,6 @@ STATUS_DEFAULT = {
     CheckStatus.ERROR: "執行錯誤",
 }
 MAX_VALUE = 80  # 值太長（例：整段固定警語）只顯示前段，完整值見核對紀錄
-SHORT_TEXT = 30  # 「應改為」：去空白後這麼長以內的文字直接寫完整的正確值，更長的只列差異片段
-MAX_FIX_PARTS = 5  # 差異片段超過這麼多處（幾乎整段不同）時改寫完整的正確值
-FIX_SOURCES = (ItemSource.STANDARD, ItemSource.EXPECTED)  # 「應改為」只寫這兩種出處的預期值
 
 
 def show(v: Any) -> str:
@@ -128,33 +125,23 @@ def problem_message(r: CheckResult) -> str:
 
 
 def fix_message(r: CheckResult) -> str:
-    """錯誤清單「應改為」：不一致、且預期值出自審查標準或說明書其他位置時，寫出正確的文字或日期；其他空白。
+    """錯誤清單「應改為」：不一致、且預期值出自審查標準時，寫出正確的文字或日期；其他空白。
 
-    規則另給 `CheckResult.fix` 時用它；文字見 `text_fix`，日期寫 ISO；數字（頁數、次數、金額）與表格等結構不寫。
+    規則另給 `CheckResult.fix` 時用它；文字見 `text.text_fix`，日期寫 ISO；數字（頁數、次數）與表格等結構不寫。
     """
     if r.status != CheckStatus.MISMATCH:
         return ""
     if r.fix:
         return r.fix
-    if r.item.source not in FIX_SOURCES:
+    if r.item.source != ItemSource.STANDARD:
         return ""
+    if isinstance(r.expected, dt.datetime):
+        return r.expected.date().isoformat()
     if isinstance(r.expected, dt.date):
         return r.expected.isoformat()
     if isinstance(r.expected, str) and r.expected.strip():
         return text_fix(r.expected, r.actual if isinstance(r.actual, str) else "")
     return ""
-
-
-def text_fix(want: str, have: str) -> str:
-    """把 `have` 改成 `want` 要怎麼改：短文字（或沒有原文可比）寫完整的 `want`；長文字每處差異一行
-    「…原文片段… → …改後片段…」（忽略空白，前後帶幾個字方便在 PDF 找到），差異太多處或幾乎整段不同時寫完整的 `want`。"""
-    whole = " ".join(want.split())
-    if len(squash(want)) <= SHORT_TEXT or not have.strip():
-        return whole
-    parts = diff_parts(squash(have), squash(want))
-    if not parts or len(parts) > MAX_FIX_PARTS:
-        return whole
-    return "\n".join(f"…{old}… → …{new}…" for old, new in parts)
 
 
 class Problem(NamedTuple):

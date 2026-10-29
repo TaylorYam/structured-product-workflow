@@ -17,12 +17,11 @@ from decimal import Decimal
 
 from ..config import ISSUER_NAME_IGNORES, NAME_FLAGS, RISK_LEVEL, RISK_LEVEL_PENDING
 from ..investor_sheet import read_iis
-from ..messages import text_fix
 from ..products import product_name
 from ..schema import CheckResult, DocKind, Evidence, FieldStatus, Item, OrderValue, ParsedField
 from ..schema import CheckStatus as S
 from ..standard_fields import AGENT_PLACES, GUARANTOR_PLACES, Occurrence, fee_field
-from ..text import compat_standard, full_brackets, nearest, squash
+from ..text import compat_standard, full_brackets, nearest, squash, text_fix
 from .kit import Check, Context, occurrences_of, standard_field
 
 __all__ = ["iis_review_standard_rules", "review_standard_rules"]

@@ -31,6 +31,8 @@ def compat_standard(text: str) -> str:
 ANCHOR = 6  # 找相近段落時，目標每這麼多字一段，用各段在全文的位置投票決定對齊點
 CONTEXT = 6  # 差異片段前後各帶的字數
 SIMILAR = 0.6  # 相似度（difflib ratio）達到這麼多才算同一段文字被改過，否則視為不同的文字
+SHORT_TEXT = 30  # 「應改為」：去空白後這麼長以內的文字直接寫完整的正確值，更長的只列差異片段
+MAX_FIX_PARTS = 5  # 差異片段超過這麼多處（幾乎整段不同）時改寫完整的正確值
 
 
 def nearest(text: str, target: str, *, skip: Sequence[tuple[int, int]] = ()) -> Near | None:
@@ -47,13 +49,15 @@ def nearest(text: str, target: str, *, skip: Sequence[tuple[int, int]] = ()) -> 
             at = text.find(chunk, at + 1)
     margin, best = len(target) // 4, None
     for offset, count in votes.most_common(3):
-        if count < 2 or any(offset < e and s < offset + len(target) for s, e in skip):
+        if count < 2:
             continue
         lo, hi = max(0, offset - margin), min(len(text), offset + len(target) + margin)
         blocks = [b for b in SequenceMatcher(None, text[lo:hi], target, autojunk=False).get_matching_blocks() if b.size]
         first, last = blocks[0], blocks[-1]
         start = max(lo, lo + first.a - first.b)
         end = min(hi, lo + last.a + last.size + len(target) - last.b - last.size)
+        if any(start < e and s < end for s, e in skip):
+            continue
         ratio = SequenceMatcher(None, text[start:end], target, autojunk=False).ratio()
         if ratio >= SIMILAR and (best is None or ratio > best.ratio):
             best = Near(start, end, ratio)
@@ -87,3 +91,21 @@ def diff_parts(have: str, want: str) -> list[tuple[str, str]]:
         before, after = have[max(0, i1 - CONTEXT) : i1], have[i2 : i2 + CONTEXT]
         out.append((before + have[i1:i2] + after, before + want[j1:j2] + after))
     return out
+
+
+def text_fix(want: str, have: str) -> str:
+    """錯誤清單「應改為」：把 `have` 改成 `want` 要怎麼改。短文字（或沒有原文可比）寫完整的 `want`；長文字每處差異一行
+    「…原文片段… → …改後片段…」（前後帶幾個字方便在 PDF 找到），差異太多處或幾乎整段不同時寫完整的 `want`。
+    比對忽略空白，只有半形英數字、符號之間的空白留一格（英文片段不黏在一起）。"""
+    whole = " ".join(want.split())
+    if len(squash(want)) <= SHORT_TEXT or not have.strip():
+        return whole
+    parts = diff_parts(_word_spaces(have), _word_spaces(want))
+    if not parts or len(parts) > MAX_FIX_PARTS:
+        return whole
+    return "\n".join(f"…{old}… → …{new}…" for old, new in parts)
+
+
+def _word_spaces(text: str) -> str:
+    """移除空白（含換行），但英文、數字與半形符號之間的空白留一格。"""
+    return squash(re.sub(r"(?<=[!-~])\s+(?=[!-~])", "\0", text)).replace("\0", " ")

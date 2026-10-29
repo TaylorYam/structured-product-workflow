@@ -286,6 +286,7 @@ def test_problems_list_each_message_once_with_merged_evidence_pages():
 # ---------------------------------------------------------------- 錯誤清單「應改為」（Issue #339）
 
 ADDRESS = "台北市信義區信義路五段7號35樓之1、新北市板橋區縣民大道二段7號15樓"
+ENGLISH = "Societe Generale, Paris Branch, 29 Boulevard Haussmann 75009 Paris France"
 
 
 def fix_of(expected, actual, *, source=ItemSource.STANDARD, status=CheckStatus.MISMATCH, fix="") -> str:
@@ -298,20 +299,26 @@ def fix_of(expected, actual, *, source=ItemSource.STANDARD, status=CheckStatus.M
         ("林晋輝", "林晉輝", "林晋輝"),  # 短文字：完整的正確值
         ("  台北市  信義區 ", "台北市大安區", "台北市 信義區"),  # 空白收成一格
         (dt.date(2026, 3, 1), dt.date(2025, 3, 1), "2026-03-01"),
+        (dt.datetime(2026, 3, 1), dt.datetime(2025, 3, 1), "2026-03-01"),  # 不帶時間
         (ADDRESS, ADDRESS.replace("15樓", "16樓"), "…道二段7號16樓… → …道二段7號15樓…"),  # 長文字：只列差異片段
-        (ADDRESS, "完全不同的一段文字" * 5, ADDRESS),  # 差異太多處：完整的正確值
+        (ADDRESS, ADDRESS.replace("五段", "五\n段"), ADDRESS),  # 只差換行：沒有差異片段，寫完整的值
+        (ENGLISH, ENGLISH.replace("29", "39"), "…anch, 39 Boul… → …anch, 29 Boul…"),  # 英文片段保留空白
+        (ADDRESS, "完全不同的一段文字" * 5, ADDRESS),  # 幾乎整段不同：完整的正確值
         (ADDRESS, None, ADDRESS),  # 沒有原文可比
         (4, 5, ""),  # 數字不寫
+        (Decimal("0.5"), Decimal("1"), ""),
         (["甲", "乙"], ["甲"], ""),  # 清單等結構不寫
     ],
 )
 def test_fix_lists_the_correct_text_for_standard_mismatches(expected, actual, want):
     assert fix_of(expected, actual) == want
-    assert fix_of(expected, actual, source=ItemSource.EXPECTED) == want, "說明書其他位置推得的預期值一樣寫"
 
 
-@pytest.mark.parametrize("source", [ItemSource.REFERENCE, ItemSource.REFERENCE_DERIVED, ItemSource.TERM_SHEET])
+@pytest.mark.parametrize(
+    "source", [ItemSource.REFERENCE, ItemSource.REFERENCE_DERIVED, ItemSource.TERM_SHEET, ItemSource.EXPECTED]
+)
 def test_fix_is_blank_when_either_side_could_be_wrong(source):
+    """參考條件表、同商品說明書、說明書其他位置推得的預期值：可能錯的是預期值那一邊，不寫。"""
     assert fix_of("林晋輝", "林晉輝", source=source) == ""
 
 
