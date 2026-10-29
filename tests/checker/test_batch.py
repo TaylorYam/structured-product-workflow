@@ -628,7 +628,7 @@ def test_error_list_has_one_row_per_message_in_input_order(tmp_path):
     outcome, receipt, _ = batch(tmp_path, pdfs, rows)
 
     errors = error_rows(receipt.output)
-    assert list(errors[0]) == ["TDCC Code", "PDF 檔名", "PDF 頁碼", "錯訊"]
+    assert list(errors[0]) == ["TDCC Code", "PDF 檔名", "PDF 頁碼", "錯訊", "應改為"]
     assert list(dict.fromkeys((e["TDCC Code"], e["PDF 檔名"]) for e in errors)) == [
         (bad.product_code, pdfs[0].name),
         (missing.product_code, pdfs[2].name),
@@ -642,6 +642,7 @@ def test_error_list_has_one_row_per_message_in_input_order(tmp_path):
     assert len(bad_rows) == 2 and all(e["TDCC Code"] == bad.product_code for e in bad_rows), "每列都有 TDCC Code"
     k = next(e for e in bad_rows if e["錯訊"] == "K(%)對不起來：參考條件表 71.00／說明書 70.00")
     assert isinstance(k["PDF 頁碼"], int), "有證據的錯訊寫頁碼"
+    assert k["應改為"] is None, "參考條件表不一致不寫應改為（#339）"
     assert all(e["錯訊"] for e in errors)
     assert openpyxl.load_workbook(receipt.output)["錯誤清單"]["D2"].alignment.wrap_text
     assert list(sheet_rows(receipt.output)) == [ok.product_code]

@@ -12,7 +12,7 @@ import pytest
 
 from barc_synth import APPROVAL_DATE, Spec, build_not_barc_pdf, build_pdf, check, check_pdf
 from fcn_checker.ingestion import IngestionError
-from fcn_checker.messages import problem_message, show
+from fcn_checker.messages import fix_message, problem_message, show
 from harness import ERROR, MISMATCH, NA, PASS, REVIEW, check_sheet, problems, results
 from pdf_writer import Edit, zh_date
 from reference_synth import REFERENCE_HEADERS, UL, build_reference_sheet, reference_row
@@ -254,6 +254,23 @@ def test_chairman_archaic_character(tmp_path):
 def test_fixed_warning_altered_by_one_character(tmp_path):
     report = check(tmp_path, edits=[Edit("並不保本", "並未保本", "ts.art2")])
     assert problems(report) == {("standard.fixed_warning", MISMATCH)}
+    r = results(report, "standard.fixed_warning")[0]
+    assert fix_message(r) == "…由於本商品並未保本，連結標… → …由於本商品並不保本，連結標…", "應改為只列差異片段（#339）"
+
+
+def test_fixed_warning_with_the_wrong_risk_level_lists_the_level_to_fix(tmp_path):
+    report = check(tmp_path, edits=[Edit("等級為【RR4】", "等級為【RR3】", "ts.art2")])
+    r = results(report, "standard.fixed_warning")[0]
+    assert r.status == MISMATCH
+    assert fix_message(r) == "…等級為【RR3】。根據受託… → …等級為【RR4】。根據受託…"
+
+
+def test_missing_fixed_warning_without_a_similar_passage_has_no_fix(tmp_path):
+    from barc_synth import FIXED_WARNING
+
+    report = check(tmp_path, edits=[Edit(FIXED_WARNING, "本商品之風險請參閱銷售說明書。", "ts.ch三")])
+    r = results(report, "standard.fixed_warning")[0]
+    assert r.status == MISMATCH and fix_message(r) == ""
 
 
 def test_fixed_warning_wrong_occurrence_count(tmp_path):

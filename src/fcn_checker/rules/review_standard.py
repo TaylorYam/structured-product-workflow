@@ -12,16 +12,17 @@ from __future__ import annotations
 import datetime as dt
 import re
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 
 from ..config import ISSUER_NAME_IGNORES, NAME_FLAGS, RISK_LEVEL, RISK_LEVEL_PENDING
 from ..investor_sheet import read_iis
+from ..messages import text_fix
 from ..products import product_name
 from ..schema import CheckResult, DocKind, Evidence, FieldStatus, Item, OrderValue, ParsedField
 from ..schema import CheckStatus as S
 from ..standard_fields import AGENT_PLACES, GUARANTOR_PLACES, Occurrence, fee_field
-from ..text import compat_standard, full_brackets, squash
+from ..text import compat_standard, full_brackets, nearest, squash
 from .kit import Check, Context, occurrences_of, standard_field
 
 __all__ = ["iis_review_standard_rules", "review_standard_rules"]
@@ -253,7 +254,7 @@ def _fixed_warning(ctx: Context, expected: int | None = None) -> CheckResult:
     hits = sorted((m for t in targets for m in re.finditer(t, ti.text)), key=lambda m: m.start())
     evidence = [Evidence.of(ti.lines_for(m.start(), m.end())[0]) for m in hits]
     source = "審查標準 risk.level" if level.ov is None else ctx.sheet_source
-    return check.compare(
+    result = check.compare(
         expected,
         len(hits),
         evidence=evidence,
@@ -264,6 +265,24 @@ def _fixed_warning(ctx: Context, expected: int | None = None) -> CheckResult:
         message=f"固定風險警語逐字相符 {len(hits)} 次，應為 {expected} 次",
         fail_message="（可能被改字、缺漏或多出）",
     )
+    if result.status != S.MISMATCH or len(hits) >= expected:
+        return result
+    warnings = [squash(w).replace(RISK_LEVEL, level.value) for w in std.fixed_warnings]
+    return replace(result, fix=_warning_fix(ti.text, warnings, [m.span() for m in hits], expected - len(hits)))
+
+
+def _warning_fix(text: str, warnings: list[str], spans: list[tuple[int, int]], missing: int) -> str:
+    """固定警語少了 `missing` 次時的「應改為」（Issue #339）：全文裡和任一允許寫法最接近、且不是已逐字相符的段落
+    （最多 `missing` 段），各列出改成該寫法的差異片段；找不到相近段落時空白。"""
+    fixes, spans = [], list(spans)
+    for _ in range(missing):
+        found = [(near, w) for w in warnings if (near := nearest(text, w, skip=spans)) is not None]
+        if not found:
+            break
+        near, warning = max(found, key=lambda x: x[0].ratio)
+        spans.append((near.start, near.end))
+        fixes.append(text_fix(warning, text[near.start : near.end]))
+    return "\n".join(fixes)
 
 
 def _risk_level(ctx: Context) -> CheckResult:
