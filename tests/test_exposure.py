@@ -1,4 +1,4 @@
-"""標的曝險分析（#345、#347）：分類規則、依分公司與理專加總、匯出的 Excel。資料庫測試對真的 PostgreSQL；資料全部虛構。"""
+"""標的曝險分析（#345、#347、#352）：分類規則、依分公司與理專加總、匯出的 Excel。資料庫測試對真的 PostgreSQL；資料全部虛構。"""
 
 from __future__ import annotations
 
@@ -11,8 +11,9 @@ import pytest
 
 from db_synth import inventory, seed_products
 from sp_workflow.exposure import (
-    BUFFER_GROUPS,
+    CROSSED,
     DELIVER,
+    FIXED,
     MANUAL,
     NEAR,
     SAFE,
@@ -40,48 +41,55 @@ def leg(seq: int, code: str, close: str | None, *, initial: str = "100", strike:
     )
 
 
-def position(
-    barrier: str | None, *legs: Leg, ki_text: str = "", terms: str | None = "完成", product: str = "FCN"
-) -> Position:
+def position(barrier: str | None, *legs: Leg, ki_text: str = "", terms: str | None = "完成") -> Position:
     holdings = (Holding("台北", "Amy", D(100000)),)
-    return Position(
-        "147199990001", product, "XBANK", "USD", UNTIL, barrier, ki_text, terms, None, legs, holdings, D(1),
-        coupon_pct=D(10), tenor_months=6,
-    )  # fmt: skip
+    return Position("147199990001", "FCN", "XBANK", "USD", UNTIL, barrier, ki_text, terms, None, legs, holdings, D(1))
 
 
 @pytest.mark.parametrize(
-    ("barrier", "close", "ki_text", "category", "loss"),
+    ("barrier", "close", "ki_text", "category"),
     [
-        ("NONE", "72", "-", DELIVER, D("0.1")),  # 沒有 KI，低於執行價就接股：1 − 72 ÷ 80
-        ("EKI", "60", "EKI", DELIVER, D("0.25")),  # 破下限價
-        ("EKI", "70", "EKI", WATCH, D(0)),  # 低於執行價、還在下限價之上
-        ("AKI", "70", "AKI hit 2026-10-01 UL_1 AAA UW", DELIVER, D("0.125")),  # 比價已記 AKI 觸及
-        ("AKI", "70", "AKI", WATCH, D(0)),
-        ("MKI", "60", "MKI (manual)", MANUAL, D(0)),
-        ("NONE", "80", "-", NEAR, D(0)),  # 等於執行價不接股，但距執行價不到 10%
-        ("NONE", "87.9", "-", NEAR, D(0)),
-        ("NONE", "88", "-", NEAR, D(0)),  # 剛好高 10% 還算以內
-        ("NONE", "88.1", "-", SAFE, D(0)),
+        ("NONE", "72", "-", DELIVER),  # 沒有 KI，低於執行價就接股
+        ("EKI", "60", "EKI", DELIVER),  # 破下限價
+        ("EKI", "70", "EKI", WATCH),  # 低於執行價、還在下限價之上
+        ("AKI", "70", "AKI hit 2026-10-01 UL_1 AAA UW", DELIVER),  # 比價已記 AKI 觸及
+        ("AKI", "70", "AKI", WATCH),
+        ("MKI", "60", "MKI (manual)", MANUAL),
+        ("NONE", "80", "-", NEAR),  # 等於執行價不接股，但距執行價 10% 以內
+        ("NONE", "88", "-", NEAR),  # 剛好高 10% 還算以內
+        ("NONE", "88.1", "-", SAFE),
     ],
 )
-def test_the_worst_underlying_decides(barrier: str, close: str, ki_text: str, category: str, loss: Decimal) -> None:
+def test_the_worst_underlying_decides(barrier: str, close: str, ki_text: str, category: str) -> None:
     result = assess(position(barrier, leg(1, "AAA UW", close), leg(2, "BBB UN", "95"), ki_text=ki_text))
 
-    assert (result.category, result.loss_ratio) == (category, loss)
+    assert result.category == category
     assert result.worst is not None and result.worst.code == "AAA UW"
     assert result.notional == D(100000)
 
 
 @pytest.mark.parametrize(
-    ("close", "group"),
-    [("79", BUFFER_GROUPS[0]), ("82", "<3%"), ("82.4", "3–10%"), ("88", "3–10%"), ("88.1", ">10%")],
+    ("barrier", "ki_text", "close", "basis", "group"),
+    [
+        ("EKI", "EKI", "72", "下限價", ">10%"),  # 72 ÷ 65 − 1 = 10.8%，不是距執行價的 −10%
+        ("EKI", "EKI", "70", "下限價", "3–10%"),
+        ("EKI", "EKI", "66", "下限價", "<3%"),
+        ("EKI", "EKI", "60", "下限價", CROSSED),
+        ("AKI", "AKI", "70", "下限價", "3–10%"),  # 還沒觸及，下限價還要看
+        ("AKI", "AKI hit 2026-10-01 UL_1 AAA UW", "70", "執行價", CROSSED),  # 已觸及，只剩執行價
+        ("MKI", "MKI (manual)", "66", "下限價", "<3%"),
+        ("NONE", "-", "79", "執行價", CROSSED),
+        ("NONE", "-", "82", "執行價", "<3%"),
+        ("NONE", "-", "82.4", "執行價", "3–10%"),  # 剛好 3%
+        ("NONE", "-", "88", "執行價", "3–10%"),  # 剛好 10%
+        ("NONE", "-", "88.1", "執行價", ">10%"),
+    ],
 )
-def test_buffer_groups_by_the_worst_distance_to_strike(close: str, group: str) -> None:
-    result = assess(position("EKI", leg(1, "AAA UW", close), ki_text="EKI"))
+def test_buffer_is_the_distance_to_the_trigger(barrier: str, ki_text: str, close: str, basis: str, group: str) -> None:
+    result = assess(position(barrier, leg(1, "AAA UW", close), ki_text=ki_text))
 
-    assert result.buffer_group == group
-    assert result.worst is not None and result.worst.to_strike == D(close) / 80 - 1
+    assert (result.buffer_basis, result.buffer_group) == (basis, group)
+    assert result.buffer == D(close) / (65 if basis == "下限價" else 80) - 1
 
 
 def test_distances_to_strike_and_ki() -> None:
@@ -90,14 +98,14 @@ def test_distances_to_strike_and_ki() -> None:
     assert worst is not None and (worst.to_strike, worst.to_ki) == (D("-0.1"), D(72) / 65 - 1)
 
 
-def test_net_after_coupons_to_maturity() -> None:
-    fcn = assess(position("NONE", leg(1, "AAA UW", "72")))
-    assert fcn.position.coupon_ratio == D("0.05"), "10% p.a. × 6 個月"
-    assert fcn.net_ratio == D("-0.05"), "配息 5% − 估損 10%"
+def test_products_past_the_final_valuation_are_fixed() -> None:
+    p = position("NONE", leg(1, "AAA UW", "72"))
 
-    super_bull = assess(position("NONE", leg(1, "AAA UW", "72"), product="Super Bull"))
-    assert super_bull.net_ratio == D("-0.1"), "Super Bull 沒有配息"
-    assert assess(position("EKI", leg(1, "AAA UW", "72"), ki_text="EKI")).net_ratio is None, "沒接股不算淨損益"
+    fixed = assess(p, UNTIL + dt.timedelta(days=1))
+    assert (fixed.category, fixed.buffer_group) == (FIXED, FIXED), "不用最新收盤價判斷會不會接股"
+    assert (fixed.buffer_basis, fixed.buffer) == (None, None), "緩衝也不用最新收盤價算"
+    assert fixed.worst is not None and fixed.worst.code == "AAA UW"
+    assert assess(p, UNTIL).category == DELIVER, "最終比價日當天還用最新收盤價判斷"
 
 
 def test_worst_is_lowest_performance_not_lowest_price() -> None:
@@ -111,6 +119,7 @@ def test_missing_prices_cannot_be_assessed() -> None:
     assert assess(position("NONE")).category == UNKNOWN
     missing = assess(position("NONE", leg(1, "AAA UW", None), leg(2, "BBB UN", "95")))
     assert (missing.category, missing.reason) == (UNKNOWN, "缺進場價、執行價或收盤價：AAA UW")
+    assert (missing.buffer, missing.buffer_group) == (None, None)
 
 
 @pytest.mark.parametrize(
@@ -246,8 +255,24 @@ def test_products_near_the_strike_are_on_the_notice_list(seeded, tmp_path: Path)
 
     assert receipt.counts[NEAR] == 1
     [row] = sheet_rows(path, "通知明細")
-    assert (row["分類"], row["緩衝分組"], row["距執行價"]) == (NEAR, "3–10%", pytest.approx(85 / 80 - 1))
-    assert (row["估損"], row["扣配息後淨損益"]) == (0, None)
+    assert (row["分類"], row["緩衝分組"], row["緩衝基準"]) == (NEAR, "3–10%", "執行價")
+    assert row["緩衝"] == row["距執行價"] == pytest.approx(85 / 80 - 1)
+
+
+@pytest.mark.db
+def test_products_past_the_final_valuation_are_listed_apart(seeded, tmp_path: Path) -> None:
+    seed(seeded, OTHER_EXCHANGE, ["AAA UW", "BBB UN"], final=DAY - dt.timedelta(days=3))  # 等股價
+    path = tmp_path / "曝險.xlsx"
+
+    receipt = export_exposure(seeded, ["AAA UW"], UNTIL, path, today=DAY)
+
+    assert (receipt.counts[FIXED], receipt.counts[DELIVER]) == (1, 2), "AAA 72 也不算會接股"
+    every = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}
+    assert (every[OTHER_EXCHANGE]["分類"], every[OTHER_EXCHANGE]["緩衝分組"]) == (FIXED, FIXED)
+    assert every[OTHER_EXCHANGE]["剩餘天數"] == -3
+    assert OTHER_EXCHANGE not in {row["TDCC"] for row in sheet_rows(path, "通知明細")}
+    overview = dict(openpyxl.load_workbook(path)["總覽"].iter_rows(min_row=2, max_col=2, values_only=True))
+    assert overview[FIXED] == "1 檔，面額 USD 1"
 
 
 @pytest.mark.db
@@ -258,47 +283,52 @@ def test_export_sums_by_branch_and_by_fc(seeded, tmp_path: Path) -> None:
 
     assert receipt.count == 4, "截止日之後、已出場、沒連結的不列"
     assert (receipt.counts[DELIVER], receipt.counts[WATCH], receipt.counts[UNKNOWN]) == (2, 1, 1)
-    assert openpyxl.load_workbook(path).sheetnames == ["總覽", "依分公司", "依理專", "通知明細", "全部商品"]
+    book = openpyxl.load_workbook(path)
+    assert book.sheetnames == ["總覽", "依分公司", "依理專", "通知明細", "全部商品"]
+    for sheet in book:
+        texts = {str(cell.value) for row in sheet.iter_rows() for cell in row if cell.value is not None}
+        assert not [t for t in texts if any(word in t for word in ("估損", "配息", "淨損益"))], "只呈現現況（#352）"
 
-    fcs = {row["理專"]: row for row in sheet_rows(path, "依理專")}
-    assert fcs["Amy"]["會接股檔數"] == 1 and fcs["Amy"]["會接股面額(USD)"] == 150000, "跨分公司合併、一檔只算一次"
-    assert fcs["Amy"]["估損(USD)"] == fcs["Amy"]["估損：選定標的造成(USD)"] == pytest.approx(150000 * 0.1)
-    assert fcs["Amy"]["扣配息後淨損益(USD)"] == pytest.approx(150000 * (0.0625 - 0.1)), "配息 12.5% p.a. × 6 個月"
-    assert fcs["Amy"]["服務的分公司"] == "台中、台北"
-    assert (fcs["Ben"]["會接股面額(USD)"], fcs["Ben"]["KI 未破下限面額(USD)"]) == (30000, 200000)
-    assert fcs["Cara"]["會接股面額(USD)"] == pytest.approx(10000000 / 150), "JPY 用 USDJPY 換算"
-    assert fcs["Cara"]["估損(USD)"] == fcs["Cara"]["估損：其他標的造成(USD)"] == pytest.approx(10000000 / 150 * 0.25)
-    assert fcs["Cara"]["估損：選定標的造成(USD)"] == 0, "最差是 DDD，不是選定標的造成"
+    fcs = sheet_rows(path, "依理專")
+    assert [row["理專"] for row in fcs] == ["Amy", "Cara", "Ben", "-"], "依會接股面額，再看 KI 未破下限面額"
+    fc = {row["理專"]: row for row in fcs}
+    assert fc["Amy"]["會接股檔數"] == 1 and fc["Amy"]["會接股面額(USD)"] == 150000, "跨分公司合併、一檔只算一次"
+    assert fc["Amy"]["會接股面額：選定標的造成(USD)"] == 150000
+    assert fc["Amy"]["服務的分公司"] == "台中、台北"
+    assert (fc["Ben"]["會接股面額(USD)"], fc["Ben"]["KI 未破下限面額(USD)"]) == (30000, 200000)
+    assert fc["Cara"]["會接股面額(USD)"] == fc["Cara"]["會接股面額：其他標的造成(USD)"] == pytest.approx(10000000 / 150)
+    assert fc["Cara"]["會接股面額：選定標的造成(USD)"] == 0, "最差是 DDD，不是選定標的造成"
 
-    branches = {row["分公司"]: row for row in sheet_rows(path, "依分公司")}
-    assert branches["台中"]["會接股面額(USD)"] == 80000 and branches["台中"]["理專"] == "Amy、Ben"
-    assert branches["台中"]["連結檔數"] == 2
+    branches = sheet_rows(path, "依分公司")
+    assert [row["分公司"] for row in branches] == ["台北", "台中", "新竹"]
+    branch = {row["分公司"]: row for row in branches}
+    assert branch["台中"]["會接股面額(USD)"] == 80000 and branch["台中"]["理專"] == "Amy、Ben"
+    assert branch["台中"]["連結檔數"] == 2
 
     detail = sheet_rows(path, "通知明細")
     assert [(r["TDCC"], r["分類"], r["理專"]) for r in detail] == [
-        (A, DELIVER, "Amy"),
+        (A, DELIVER, "Amy"),  # 剩餘天數都是 23，緩衝 −10% 最小
         (A, DELIVER, "Amy"),
         (A, DELIVER, "Ben"),
-        (B, WATCH, "Ben"),
-        (C, DELIVER, "Cara"),
+        (C, DELIVER, "Cara"),  # DDD 距下限價 −7.7%
+        (B, WATCH, "Ben"),  # AAA 距下限價 +10.8%
     ]
-    assert detail[4]["最差標的"] == "DDD JT" and detail[4]["最差是選定標的"] == "否"
-    assert detail[0]["最差是選定標的"] == "是" and detail[0]["估損"] == pytest.approx(10000)
-    assert (detail[0]["剩餘天數"], detail[0]["緩衝分組"], detail[0]["最差表現"]) == (23, BUFFER_GROUPS[0], -0.28)
-    assert (detail[0]["執行價(%)"], detail[0]["距執行價"]) == (0.8, pytest.approx(-0.1))
-    assert detail[0]["到期配息估計"] == pytest.approx(6250)
-    assert detail[0]["扣配息後淨損益"] == pytest.approx(6250 - 10000)
-    assert detail[3]["距下限價"] == pytest.approx(72 / 65 - 1), "B 是 EKI，最差 AAA 72、下限價 65"
+    assert detail[3]["最差標的"] == "DDD JT" and detail[3]["最差是選定標的"] == "否"
+    assert (detail[0]["剩餘天數"], detail[0]["緩衝分組"], detail[0]["緩衝基準"]) == (23, CROSSED, "執行價")
+    assert (detail[0]["緩衝"], detail[0]["最差表現"], detail[0]["執行價(%)"]) == (pytest.approx(-0.1), -0.28, 0.8)
+    assert (detail[4]["緩衝基準"], detail[4]["緩衝分組"]) == ("下限價", ">10%"), "B 是 EKI，看距下限價"
+    assert detail[4]["緩衝"] == detail[4]["距下限價"] == pytest.approx(72 / 65 - 1)
 
     every = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}
     assert every[A]["各標的表現"] == "AAA UW -28.0% / BBB UN -5.0%"
     assert (every[PENDING]["分類"], every[PENDING]["說明"]) == (UNKNOWN, "核對條件待確認：幣別不同")
-    book = openpyxl.load_workbook(path)
-    overview = dict(book["總覽"].iter_rows(min_row=2, max_col=2, values_only=True))
+    rows = list(book["總覽"].iter_rows(min_row=2, max_col=2, values_only=True))
+    assert rows[0] == ("判斷基準", "以 10/28 收盤價判斷"), "最上面寫用哪天的收盤價"
+    overview = dict(rows)
     assert overview["選定標的 AAA UW"] == "最新收盤 72（2026-10-28）"
-    assert overview[f"{DELIVER}｜選定標的造成"] == "1 檔，面額 USD 180,000，估損 USD 18,000，扣配息後淨損益 USD -6,750"
-    assert overview[f"{DELIVER}｜其他標的造成"].startswith("1 檔，面額 USD 66,667，估損 USD 16,667")
-    assert overview[f"{WATCH}｜選定標的造成"].startswith("1 檔，面額 USD 200,000")
+    assert overview[f"{DELIVER}｜選定標的造成"] == "1 檔，面額 USD 180,000"
+    assert overview[f"{DELIVER}｜其他標的造成"] == "1 檔，面額 USD 66,667"
+    assert overview[f"{WATCH}｜選定標的造成"] == "1 檔，面額 USD 200,000"
 
 
 @pytest.mark.db
@@ -316,12 +346,23 @@ def test_every_analysis_has_a_chart(seeded, tmp_path: Path) -> None:
         (WATCH, 200000, 0),
         (NEAR, 0, 0),
     ]
-    assert data[4] == ("緩衝分組（最差標的距執行價）", "檔數", "面額(USD)")
-    assert data[5] == (BUFFER_GROUPS[0], 3, pytest.approx(380000 + 10000000 / 150)), "PENDING 沒分類，不算"
-    assert data[-1] == ("DDD JT", pytest.approx(10000000 / 150 * 0.25), None), "會接股的最差標的依估損排"
+    assert data[4:10] == [
+        ("緩衝分組（距下限價或執行價）", "檔數", "面額(USD)"),
+        (CROSSED, 2, pytest.approx(180000 + 10000000 / 150)),  # PENDING 沒分類，不算
+        ("<3%", 0, 0),
+        ("3–10%", 0, 0),
+        (">10%", 1, 200000),
+        (FIXED, 0, 0),
+    ]
+    assert data[10:] == [
+        ("會接股的最差標的", "會接股面額(USD)", None),
+        ("AAA UW", 180000, None),
+        ("DDD JT", pytest.approx(10000000 / 150), None),
+    ]
     charts = [chart for title in book.sheetnames for chart in book[title]._charts]
     assert all(c.title.overlay is False and c.legend.position == "b" for c in charts), "標題不蓋到圖（#350）"
     assert all(c.y_axis.crosses == "max" for c in charts if c.type == "bar"), "橫條圖數值軸在下面"
+    assert all((c.x_axis.delete, c.y_axis.delete) == (False, False) for c in charts), "Excel 才會顯示座標軸"
 
 
 @pytest.mark.db
@@ -336,24 +377,10 @@ def test_products_without_trade_rows_use_the_branch_allocation(seeded, tmp_path:
 
 
 @pytest.mark.db
-def test_no_loss_chart_when_nothing_delivers(seeded, tmp_path: Path) -> None:
+def test_no_delivery_chart_when_nothing_delivers(seeded, tmp_path: Path) -> None:
     path = tmp_path / "曝險.xlsx"
 
     export_exposure(seeded, ["CCC UN"], UNTIL, path, today=DAY)
 
     book = openpyxl.load_workbook(path)
     assert [len(book[title]._charts) for title in book.sheetnames] == [3, 1, 1, 0, 0], "只剩面額組成"
-
-
-@pytest.mark.db
-def test_net_total_is_blank_when_a_product_has_no_coupon(seeded, tmp_path: Path) -> None:
-    seeded.execute("UPDATE workflow.product SET coupon_pct = NULL WHERE tdcc = %s", (C,))
-    path = tmp_path / "曝險.xlsx"
-
-    export_exposure(seeded, ["AAA UW"], UNTIL, path, today=DAY)
-
-    fcs = {row["理專"]: row for row in sheet_rows(path, "依理專")}
-    assert fcs["Cara"]["扣配息後淨損益(USD)"] is None, "缺配息不能當 0 算，空白"
-    assert fcs["Amy"]["扣配息後淨損益(USD)"] == pytest.approx(150000 * (0.0625 - 0.1))
-    charts = openpyxl.load_workbook(path)["總覽"]._charts
-    assert [(c.x_axis.delete, c.y_axis.delete) for c in charts] == [(False, False)] * 3, "Excel 才會顯示座標軸"

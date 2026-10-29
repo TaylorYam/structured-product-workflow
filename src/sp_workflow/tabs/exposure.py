@@ -72,7 +72,7 @@ class ExposureWindow(tk.Toplevel):
         self.intro = intro = WrapLabel(
             top,
             text="選一檔或多檔標的（按住 Ctrl 複選），用收盤價表最新的收盤價，找出最終比價日不晚於截止日、"
-            "連結這些標的的在庫商品，判斷哪些會接股，依分公司與理專統計面額與估損，匯出 Excel。"
+            "連結這些標的的在庫商品，判斷目前哪些會接股、離觸發點多遠，依分公司與理專統計檔數與面額，匯出 Excel。"
             "一列是一個股票代號，已包含它所有交易所的代碼（例：GOOG 含 GOOG UW、GOOG UQ）。"
             "請先匯入最新的收盤價再分析；這裡只讀資料庫，不改資料。",
             wraplength=600,

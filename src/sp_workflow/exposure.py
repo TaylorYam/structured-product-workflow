@@ -1,23 +1,27 @@
-"""標的曝險分析（#345、#347）：選定的標的大跌時，近期到期、連結它們的在庫商品有哪些會接股、面額與估損多少。
+"""標的曝險分析（#345、#347、#352）：選定的標的大跌時，近期到期、連結它們的在庫商品目前有哪些會接股、面額多少。
+
+只呈現目前的狀態（檔數、面額、距觸發點多遠），不做估損、配息、淨損益或情境模擬等任何預估金額（#352）。
 
 - 選標的照股票代號（彭博代碼的第一段，例 `GOOG`）：一個代號包含它所有交易所的代碼（`GOOG UW`、`GOOG UQ`），
   作業人員只打代號就好，分析與依分公司、理專的加總都算進全部代碼（`Choice.codes`）。
 - 範圍：存續狀態在庫（沒有還有效的存續事件）、連結任一選定標的、最終比價日不晚於截止日的商品，商品種類不限
-  （FCN、FCN_Express、Super Bull）。已過最終比價日、還在庫的（例：等股價）一併列入。
+  （FCN、FCN_Express、Super Bull）。最終比價日早於分析日、還在庫的（例：等股價）是「已比價」，
+  結果以最終比價日為準，不用最新收盤價判斷，另列一類。
 - 價格：每個標的用收盤價表最新的一筆，依拆股登記換回價格基準（同比價，`stock_splits.SplitBook.factor`）；不做假設價格。
+  總覽最上面寫「以 X/X 收盤價判斷」。
 - 核對條件不是完成（同比價只比完成的）、缺 KI 型態、有 KI 卻沒有下限價、缺價格的商品無法計算；MKI 不比、人工確認。
 - 其他看最差標的（收盤價 ÷ 進場價最低）：收盤價 < 執行價，且沒有 KI、收盤價 < 下限價或比價已記 AKI 觸及 → 會接股；
   < 執行價但還在下限價之上（EKI 或還沒觸及的 AKI）→ KI 未破下限（觀察）；還在執行價之上、距執行價 10% 以內
-  → 接近執行價；其他是高於執行價。每檔另寫距執行價、距下限價（最差標的收盤價 ÷ 執行價或下限價 − 1）、
-  到最終比價日的剩餘天數與緩衝分組（已低於執行價、<3%、3–10%、>10%）。
-- 選定標的／其他標的：最差標的是選定的代碼之一時，損失算「選定標的造成」，否則算「其他標的造成」（#347），
-  總覽與依分公司、依理專分開列，避免把籃子裡別的股票造成的損失算到選定標的頭上。
+  → 接近執行價；其他是高於執行價。
+- 緩衝（#352）：最差標的收盤價 ÷ 觸發價 − 1。還有下限價要看的（EKI、還沒觸及的 AKI、MKI）觸發價是下限價，
+  沒有 KI（含 Super Bull）或已觸及 AKI 的是執行價；分組已跌破、<3%、3–10%、>10%，已比價的另成一組。
+- 選定標的／其他標的：最差標的是選定的代碼之一時算「選定標的造成」，否則算「其他標的造成」（#347），
+  總覽與依分公司、依理專分開列，避免把籃子裡別的股票造成的狀況算到選定標的頭上。
 - 金額照交易明細逐筆（分公司、理專、金額），沒有交易明細的用庫存的分公司配置（理專寫 `-`）。
-  估損 = 金額 ×（1 − 最差標的收盤價 ÷ 執行價）。到期配息估計 = 金額 × Coupon p.a. × 天期月數 ÷ 12（算到到期的全部配息，
-  不看實際入帳；Super Bull 沒有配息算 0；沒有 Coupon 或天期的空白），會接股的扣配息後淨損益 = 到期配息估計 − 估損。
   USD 以收盤價表最新的匯率換算；查不到匯率的 USD 欄空白、不算進 USD 合計。
-- 圖表（#347）：總覽右邊放各分類面額（選定標的／其他標的）、緩衝分組、會接股的最差標的三張圖與它們的資料表；
-  依分公司、依理專右邊放會接股估損與面額組成的橫條圖（排前面的 `CHART_ROWS` 名）。圖是 Excel 原生圖表，資料改了跟著變。
+- 排序：依分公司、依理專照會接股面額、再看 KI 未破下限面額；通知明細照剩餘天數、再看緩衝小的在前。
+- 圖表：總覽右邊放各分類面額（選定標的／其他標的）、緩衝分組、會接股面額依最差標的三張圖與它們的資料表；
+  依分公司、依理專右邊放會接股面額與面額組成的橫條圖（排前面的 `CHART_ROWS` 名）。圖是 Excel 原生圖表。
 - 只讀資料庫，不改任何資料。
 
 `assess` 只判斷一檔、不碰資料庫；`load_choices`、`load_positions` 讀資料庫；`export_exposure` 寫 Excel。
@@ -41,7 +45,6 @@ from openpyxl.drawing.text import CharacterProperties, Paragraph, ParagraphPrope
 from openpyxl.styles import Font
 from openpyxl.utils import get_column_letter
 
-from fcn_checker.products import SUPER_BULL
 from sp_workflow.check_terms import NO_BARRIER
 from sp_workflow.file_tools import excel_value, save_export, table_book, text_cell
 from sp_workflow.lifecycle import IN_STOCK, lifecycle_status
@@ -57,12 +60,15 @@ NEAR = "接近執行價"
 MANUAL = "MKI 人工確認"
 SAFE = "高於執行價"
 UNKNOWN = "無法計算"
-CATEGORIES = (DELIVER, WATCH, NEAR, MANUAL, SAFE, UNKNOWN)
+FIXED = "已比價"  # 最終比價日早於分析日、還在庫（#352）
+CATEGORIES = (DELIVER, WATCH, NEAR, MANUAL, SAFE, FIXED, UNKNOWN)
 NOTIFY = (DELIVER, WATCH, NEAR, MANUAL)  # 通知明細列的分類
-NEAR_BUFFER = Decimal("0.10")  # 還在執行價之上、距執行價不超過這個比例的是接近執行價（#347）
-TIGHT_BUFFER = Decimal("0.03")
-BELOW_STRIKE = "已低於執行價"
-BUFFER_GROUPS = (BELOW_STRIKE, "<3%", "3–10%", ">10%")
+NEAR_BUFFER = Decimal("0.10")  # 接近執行價的門檻（距執行價，#347），也是緩衝分組 3–10% 的上限（#352）
+TIGHT_BUFFER = Decimal("0.03")  # 緩衝分組 <3% 的上限
+CROSSED = "已跌破"  # 最差標的已低於觸發價（下限價或執行價）
+BUFFER_GROUPS = (CROSSED, "<3%", "3–10%", ">10%", FIXED)
+KI_BASIS = "下限價"
+STRIKE_BASIS = "執行價"
 MKI = "MKI"
 AKI_HIT = "AKI hit"  # 比價寫的 KI 欄：`AKI hit 日期 標的`（observation._ki_text）
 NO_FC = "-"
@@ -142,27 +148,20 @@ class Position:
     usd_rate: Decimal | None  # 1 單位幣別換幾 USD
     strike_pct: Decimal | None = None  # 執行價 (%)
     ki_pct: Decimal | None = None  # 下限價 (%)
-    coupon_pct: Decimal | None = None  # Coupon p.a. (%)；Super Bull 存的是出場紅利，不是配息
-    tenor_months: int | None = None
 
     @property
-    def coupon_ratio(self) -> Decimal | None:
-        """到期的全部配息占面額的比例：Coupon p.a. × 天期月數 ÷ 12；Super Bull 是 0；缺資料時 None。"""
-        if self.product == SUPER_BULL:
-            return Decimal(0)
-        if self.coupon_pct is None or self.tenor_months is None:
-            return None
-        return self.coupon_pct / 100 * self.tenor_months / 12
+    def watches_ki(self) -> bool:
+        """還有下限價要看：EKI、還沒觸及的 AKI、MKI；沒有 KI 或已觸及 AKI 的只看執行價。"""
+        return self.barrier_type not in (None, NO_BARRIER) and not self.ki_text.startswith(AKI_HIT)
 
 
 @dataclass(frozen=True)
 class Assessed:
-    """一檔的分類、最差標的與估損比例。"""
+    """一檔的分類與最差標的。"""
 
     position: Position
     category: str
     worst: Leg | None
-    loss_ratio: Decimal  # 估損占面額的比例；不會接股時是 0
     reason: str = ""
 
     @property
@@ -170,35 +169,48 @@ class Assessed:
         return sum((h.amount for h in self.position.holdings), Decimal(0))
 
     @property
-    def net_ratio(self) -> Decimal | None:
-        """會接股時扣配息後的淨損益占面額的比例（到期配息 − 估損）；不會接股或缺配息資料時 None。"""
-        coupon = self.position.coupon_ratio
-        return None if self.category != DELIVER or coupon is None else coupon - self.loss_ratio
+    def buffer_basis(self) -> str | None:
+        """緩衝看哪個價格（#352）：還有下限價要看的是下限價，其他是執行價；已比價或算不出最差標的時 None。"""
+        if self.worst is None or self.category == FIXED:  # 已比價的不用最新收盤價判斷
+            return None
+        return KI_BASIS if self.position.watches_ki and self.worst.ki is not None else STRIKE_BASIS
+
+    @property
+    def buffer(self) -> Decimal | None:
+        """最差標的距 `buffer_basis`：收盤價 ÷ 下限價或執行價 − 1，負的是已跌破；沒有 `buffer_basis` 時 None。"""
+        if self.worst is None or self.buffer_basis is None:
+            return None
+        return self.worst.to_ki if self.buffer_basis == KI_BASIS else self.worst.to_strike
 
     @property
     def buffer_group(self) -> str | None:
-        """依最差標的距執行價分組；算不出最差標的時 None。"""
-        gap = self.worst.to_strike if self.worst is not None else None
+        """依 `buffer` 分組；已比價的不分距離；算不出時 None。"""
+        if self.category == FIXED:
+            return FIXED
+        gap = self.buffer
         if gap is None:
             return None
         if gap < 0:
-            return BELOW_STRIKE
+            return CROSSED
         return BUFFER_GROUPS[1] if gap < TIGHT_BUFFER else BUFFER_GROUPS[2] if gap <= NEAR_BUFFER else BUFFER_GROUPS[3]
 
 
-def assess(position: Position) -> Assessed:
-    """依最差標的判斷一檔的分類與估損比例（見 module 說明）。"""
+def assess(position: Position, today: dt.date | None = None) -> Assessed:
+    """依最差標的判斷一檔的分類（見 module 說明）；給 `today` 時，最終比價日早於它的是已比價。"""
 
     def unknown(reason: str) -> Assessed:
-        return Assessed(position, UNKNOWN, None, Decimal(0), reason)
+        return Assessed(position, UNKNOWN, None, reason)
 
+    priced = all(leg.performance is not None and leg.strike is not None for leg in position.legs)
+    worst = min(position.legs, key=lambda leg: (leg.performance, leg.seq)) if position.legs and priced else None
+    final = position.final_date
+    if today is not None and final is not None and final < today:
+        return Assessed(position, FIXED, worst, f"{final} 已比價，結果以最終比價日為準，不用最新收盤價判斷")
     if position.terms_status != CheckTerms.DONE:
         status = position.terms_status or "還沒算"
         return unknown(f"核對條件{status}" + (f"：{position.terms_reason}" if position.terms_reason else ""))
-    priced = all(leg.performance is not None and leg.strike is not None for leg in position.legs)
-    worst = min(position.legs, key=lambda leg: (leg.performance, leg.seq)) if position.legs and priced else None
     if position.barrier_type == MKI:
-        return Assessed(position, MANUAL, worst, Decimal(0), "MKI 每期觀察，系統不比，請人工確認")
+        return Assessed(position, MANUAL, worst, "MKI 每期觀察，系統不比，請人工確認")
     if position.barrier_type is None:
         return unknown("沒有 KI 型態")
     if worst is None:
@@ -206,25 +218,19 @@ def assess(position: Position) -> Assessed:
         return unknown(f"缺進場價、執行價或收盤價：{'、'.join(missing)}" if missing else "沒有標的價格")
     if position.barrier_type != NO_BARRIER and worst.ki is None:
         return unknown(f"{position.barrier_type} 沒有下限價：{worst.code}")
-    shortfall = _shortfall(worst)
-    if shortfall <= 0:
-        near = -shortfall <= NEAR_BUFFER  # 收盤價 ÷ 執行價 − 1 = −shortfall
-        return Assessed(position, NEAR if near else SAFE, worst, Decimal(0), "距執行價 10% 以內" if near else "")
-    assert worst.close is not None
+    to_strike = worst.to_strike
+    assert to_strike is not None and worst.close is not None
+    if to_strike >= 0:
+        near = to_strike <= NEAR_BUFFER
+        return Assessed(position, NEAR if near else SAFE, worst, "距執行價 10% 以內" if near else "")
     knocked = (
         position.barrier_type == NO_BARRIER
         or (worst.ki is not None and worst.close < worst.ki)
         or position.ki_text.startswith(AKI_HIT)
     )
     if not knocked:
-        return Assessed(position, WATCH, worst, Decimal(0), "低於執行價，但還在下限價之上")
-    return Assessed(position, DELIVER, worst, shortfall)
-
-
-def _shortfall(leg: Leg) -> Decimal:
-    """1 − 收盤價 ÷ 執行價：接股時估損占面額的比例；收盤價不低於執行價時 ≤ 0。"""
-    assert leg.close is not None and leg.strike is not None
-    return 1 - leg.close / leg.strike
+        return Assessed(position, WATCH, worst, "低於執行價，但還在下限價之上")
+    return Assessed(position, DELIVER, worst)
 
 
 # ---------------------------------------------------------------- 讀資料庫
@@ -259,7 +265,7 @@ def load_positions(conn: psycopg.Connection, codes: Iterable[str], until: dt.dat
     wanted = sorted(set(codes))
     rows = conn.execute(
         "SELECT p.tdcc, p.product, p.issuer, p.currency, p.final_valuation_date, p.barrier_type, p.strike_date,"
-        " s.ki, c.status, c.reason, p.strike_pct, p.ki_pct, p.coupon_pct, p.tenor_months FROM workflow.product p"
+        " s.ki, c.status, c.reason, p.strike_pct, p.ki_pct FROM workflow.product p"
         " LEFT JOIN workflow.pricing_status s ON s.tdcc = p.tdcc LEFT JOIN workflow.check_terms c ON c.tdcc = p.tdcc"
         f" WHERE p.final_valuation_date <= %s AND ARRAY[{_UNDERLYING_COLUMNS}] && %s::text[]"
         " ORDER BY p.final_valuation_date, p.tdcc",
@@ -373,12 +379,13 @@ def export_exposure(
     conn: psycopg.Connection, codes: Sequence[str], until: dt.date, path: Path, *, today: dt.date | None = None
 ) -> ExposureReceipt:
     """分析並寫成一份 Excel：總覽、依分公司、依理專、通知明細、全部商品。"""
+    today = today or dt.date.today()
     with conn.transaction():  # 每個 SELECT 看同一個時間點
         conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         positions = load_positions(conn, codes, until)
         chosen = _latest_closes(conn, codes)
-    results = [assess(p) for p in positions]
-    report = _Report(results, frozenset(codes), today or dt.date.today())
+    results = [assess(p, today) for p in positions]
+    report = _Report(results, frozenset(codes), today)
     counts = {category: sum(r.category == category for r in results) for category in CATEGORIES}
     book = table_book(OVERVIEW, ("項目", "值"), _overview(codes, chosen, until, report))
     _style(book.active, widths=(30, 70))
@@ -428,10 +435,8 @@ OTHERS = "其他標的造成"
 _ROLLUP = (
     "會接股檔數",
     "會接股面額(USD)",
-    "估損(USD)",
-    f"估損：{CHOSEN}(USD)",
-    f"估損：{OTHERS}(USD)",
-    "扣配息後淨損益(USD)",
+    f"會接股面額：{CHOSEN}(USD)",
+    f"會接股面額：{OTHERS}(USD)",
     "KI 未破下限檔數",
     "KI 未破下限面額(USD)",
     "接近執行價檔數",
@@ -442,13 +447,8 @@ _ROLLUP = (
 )
 BRANCH_HEADERS = ("分公司", *_ROLLUP, "理專")
 FC_HEADERS = ("理專", *_ROLLUP, "服務的分公司")
-ROLLUP_WIDTHS = (12, 12, 18, 14, 20, 20, 20, 16, 20, 14, 20, 10, 10, 16, 40)
-_POSITION = (
-    "最終比價日",
-    "剩餘天數",
-    "分類",
-    "緩衝分組",
-)
+ROLLUP_WIDTHS = (12, 12, 18, 28, 28, 16, 20, 14, 20, 10, 10, 16, 40)
+_POSITION = ("最終比價日", "剩餘天數", "分類", "緩衝分組", "緩衝基準", "緩衝")
 _WORST = (
     "KI",
     "最差標的",
@@ -462,177 +462,81 @@ _WORST = (
     "執行價",
     "下限價",
 )
-DETAIL_HEADERS = (
-    *_POSITION,
-    "分公司",
-    "理專",
-    "TDCC",
-    "商品",
-    "發行機構",
-    "幣別",
-    *_WORST,
-    "金額",
-    "估損",
-    "到期配息估計",
-    "扣配息後淨損益",
-    "估損(USD)",
-    "扣配息後淨損益(USD)",
-    "說明",
-)
-DETAIL_WIDTHS = (
-    12,
-    9,
-    12,
-    12,
-    10,
-    12,
-    15,
-    12,
-    10,
-    6,
-    24,
-    12,
-    14,
-    10,
-    10,
-    10,
-    10,
-    10,
-    14,
-    10,
-    10,
-    14,
-    12,
-    14,
-    16,
-    12,
-    18,
-    30,
-)
-ALL_HEADERS = (
-    *_POSITION,
-    "TDCC",
-    "商品",
-    "發行機構",
-    "幣別",
-    *_WORST,
-    "面額",
-    "面額(USD)",
-    "估損",
-    "到期配息估計",
-    "扣配息後淨損益",
-    "估損(USD)",
-    "扣配息後淨損益(USD)",
-    "各標的表現",
-    "說明",
-)
-ALL_WIDTHS = (
-    12,
-    9,
-    12,
-    12,
-    15,
-    12,
-    10,
-    6,
-    24,
-    12,
-    14,
-    10,
-    10,
-    10,
-    10,
-    10,
-    14,
-    10,
-    10,
-    14,
-    14,
-    12,
-    14,
-    16,
-    12,
-    18,
-    50,
-    30,
-)
+_POSITION_WIDTHS = (12, 9, 12, 10, 10, 9)
+_WORST_WIDTHS = (24, 12, 14, 10, 10, 10, 10, 10, 14, 10, 10)
+DETAIL_HEADERS = (*_POSITION, "分公司", "理專", "TDCC", "商品", "發行機構", "幣別", *_WORST, "金額", "說明")
+DETAIL_WIDTHS = (*_POSITION_WIDTHS, 10, 12, 15, 12, 10, 6, *_WORST_WIDTHS, 14, 30)
+ALL_HEADERS = (*_POSITION, "TDCC", "商品", "發行機構", "幣別", *_WORST, "面額", "面額(USD)", "各標的表現", "說明")
+ALL_WIDTHS = (*_POSITION_WIDTHS, 15, 12, 10, 6, *_WORST_WIDTHS, 14, 14, 50, 30)
+SPLIT = (DELIVER, WATCH, NEAR)  # 總覽與圖分開選定標的、其他標的的分類
 
 
 @dataclass
 class _Sum:
-    """一群商品的檔數與 USD 合計；查不到匯率的商品算檔數、不算金額。"""
+    """一群商品的檔數與面額 USD 合計；查不到匯率的商品算檔數、不算面額。"""
 
     tdccs: set[str] = field(default_factory=set)
     notional: Decimal = Decimal(0)
-    loss: Decimal = Decimal(0)
-    net: Decimal = Decimal(0)
     missing_rate: bool = False
-    missing_coupon: bool = False
 
     def add(self, r: Assessed, amount: Decimal) -> None:
         self.tdccs.add(r.position.tdcc)
-        rate = r.position.usd_rate
-        if rate is None:
+        if r.position.usd_rate is None:
             self.missing_rate = True
-            return
-        self.notional += amount * rate
-        self.loss += amount * r.loss_ratio * rate
-        if r.category == DELIVER:
-            if r.net_ratio is None:
-                self.missing_coupon = True
-            else:
-                self.net += amount * r.net_ratio * rate
+        else:
+            self.notional += amount * r.position.usd_rate
 
-    def text(self, *, net: bool) -> str:
+    def text(self) -> str:
         notes = "；部分幣別查不到匯率，未計入" if self.missing_rate else ""
-        if net and self.missing_coupon:
-            notes += "；部分商品沒有配息資料，淨損益未計入"
-        money = f"面額 USD {self.notional:,.0f}，估損 USD {self.loss:,.0f}"
-        if net:
-            money += f"，扣配息後淨損益 USD {self.net:,.0f}"
-        return f"{len(self.tdccs)} 檔，{money}{notes}"
+        return f"{len(self.tdccs)} 檔，面額 USD {self.notional:,.0f}{notes}"
 
 
 def _overview(
     codes: Sequence[str], chosen: Mapping[str, tuple[dt.date, Decimal]], until: dt.date, report: _Report
 ) -> list[tuple[object, ...]]:
     results = report.results
-    rows: list[tuple[object, ...]] = [("分析日", report.today), ("最終比價日截止", until)]
+    rows: list[tuple[object, ...]] = [
+        ("判斷基準", _close_basis(chosen.values())),
+        ("分析日", report.today),
+        ("最終比價日截止", until),
+    ]
     for code in codes:
         day, close = chosen.get(code, (None, None))
         rows.append((f"選定標的 {code}", f"最新收盤 {close}（{day}）" if close is not None else "收盤價表沒有這個代碼"))
     rows.append(("列入商品", f"{len(results)} 檔（在庫、連結選定標的、最終比價日不晚於截止日）"))
     for category in CATEGORIES:
         sel = [r for r in results if r.category == category]
-        if category in (DELIVER, WATCH, NEAR):  # 分開最差標的是不是選定標的（#347）
+        if category in SPLIT:  # 分開最差標的是不是選定標的（#347）
             for label, wanted in ((CHOSEN, True), (OTHERS, False)):
                 total = _Sum()
                 for r in sel:
                     if report.caused_by_chosen(r) == wanted:
                         total.add(r, r.notional)
-                rows.append((f"{category}｜{label}", total.text(net=category == DELIVER)))
+                rows.append((f"{category}｜{label}", total.text()))
             continue
         total = _Sum()
         for r in sel:
             total.add(r, r.notional)
-        rows.append((category, total.text(net=False)))
-    rows.append(("說明", "會接股：最差標的收盤價 < 執行價，且沒有 KI、收盤價 < 下限價或已觸及 AKI。"))
-    rows.append(("", "選定標的造成：最差標的是選定的代碼；其他標的造成：籃子裡別的股票最差，損失不是選定標的造成的。"))
+        rows.append((category, total.text()))
+    rows.append(("說明", "只呈現目前的狀態（檔數、面額、距觸發點多遠），不做任何預估金額。"))
+    rows.append(("", "會接股：最差標的收盤價 < 執行價，且沒有 KI、收盤價 < 下限價或已觸及 AKI。"))
+    rows.append(("", "選定標的造成：最差標的是選定的代碼；其他標的造成：籃子裡別的股票最差。"))
+    rows.append(("", "接近執行價：還在執行價之上、距執行價 10% 以內。"))
     rows.append(
-        (
-            "",
-            "接近執行價：還在執行價之上、距執行價 10% 以內；距執行價、距下限價 = 最差標的收盤價 ÷ 執行價或下限價 − 1。",
-        )
+        ("", "緩衝 = 最差標的收盤價 ÷ 觸發價 − 1：EKI、還沒觸及的 AKI、MKI 看下限價，沒有 KI 或已觸及 AKI 看執行價。")
     )
-    rows.append(
-        (
-            "",
-            "估損 = 金額 ×（1 − 最差標的收盤價 ÷ 執行價）；到期配息估計 = 金額 × Coupon p.a. × 天期 ÷ 12（Super Bull 為 0）。",
-        )
-    )
-    rows.append(("", "扣配息後淨損益 = 到期配息估計 − 估損，正的是連同配息仍賺；配息是估計，不看實際入帳。"))
+    rows.append(("", "已比價：最終比價日早於分析日、還在庫的商品，結果以最終比價日為準，不用最新收盤價判斷。"))
     rows.append(("", "USD 以收盤價表最新匯率換算；查不到匯率的幣別，USD 欄空白、不算進各表的 USD 合計。"))
     return rows
+
+
+def _close_basis(closes: Iterable[tuple[dt.date, Decimal]]) -> str:
+    """「以 10/23 收盤價判斷」；選定標的最新收盤日不同時全部列出。"""
+    days = sorted({day for day, _ in closes})
+    if not days:
+        return "收盤價表沒有選定標的的收盤價"
+    text = f"以 {'、'.join(f'{day.month}/{day.day}' for day in days)} 收盤價判斷"
+    return text + ("（選定標的最新收盤日不同）" if len(days) > 1 else "")
 
 
 def _usd(amount: Decimal | None, rate: Decimal | None) -> Decimal | None:
@@ -642,7 +546,10 @@ def _usd(amount: Decimal | None, rate: Decimal | None) -> Decimal | None:
 def _rollup(
     report: _Report, key: Callable[[Holding], str], other: Callable[[Holding], str]
 ) -> list[tuple[object, ...]]:
-    """依 `key`（分公司或理專）加總、`other` 是最後一欄列出的另一邊；一檔分給同一個人好幾筆時只算一檔，依估損排序。"""
+    """依 `key`（分公司或理專）加總、`other` 是最後一欄列出的另一邊；一檔分給同一個人好幾筆時只算一檔。
+
+    依會接股面額排序，相同時看 KI 未破下限面額（#352）。
+    """
     sums: dict[str, dict[str, _Sum]] = defaultdict(lambda: defaultdict(_Sum))
     others: dict[str, set[str]] = defaultdict(set)
     for r in report.results:
@@ -656,18 +563,16 @@ def _rollup(
                 group[cause].add(r, h.amount)
     rows = []
     for name, group in sums.items():
-        deliver = group[DELIVER]
+        deliver, watch = group[DELIVER], group[WATCH]
         rows.append(
             (
                 name,
                 len(deliver.tdccs),
                 deliver.notional,
-                deliver.loss,
-                group[CHOSEN].loss,
-                group[OTHERS].loss,
-                None if deliver.missing_coupon else deliver.net,  # 有商品缺配息資料時空白，不少算
-                len(group[WATCH].tdccs),
-                group[WATCH].notional,
+                group[CHOSEN].notional,
+                group[OTHERS].notional,
+                len(watch.tdccs),
+                watch.notional,
                 len(group[NEAR].tdccs),
                 group[NEAR].notional,
                 len(group[MANUAL].tdccs),
@@ -676,8 +581,13 @@ def _rollup(
                 "、".join(sorted(others[name])),
             )
         )
-    rows.sort(key=lambda row: (-row[3], -row[2], -row[8], -row[10], str(row[0])))
+    rows.sort(key=lambda row: (-row[2], -row[6], str(row[0])))  # 會接股面額、KI 未破下限面額
     return rows
+
+
+def _position_cells(report: _Report, r: Assessed) -> tuple[object, ...]:
+    """最終比價日到緩衝那幾欄（`_POSITION`）。"""
+    return (r.position.final_date, report.days_left(r), r.category, r.buffer_group, r.buffer_basis, r.buffer)
 
 
 def _worst_cells(report: _Report, r: Assessed) -> tuple[object, ...]:
@@ -698,30 +608,20 @@ def _worst_cells(report: _Report, r: Assessed) -> tuple[object, ...]:
     )
 
 
-def _money_cells(r: Assessed, amount: Decimal) -> tuple[object, ...]:
-    """估損、到期配息估計、扣配息後淨損益與它們的 USD。"""
-    coupon = r.position.coupon_ratio
-    net = r.net_ratio
-    loss = amount * r.loss_ratio
-    net_amount = None if net is None else amount * net
-    rate = r.position.usd_rate
-    return loss, None if coupon is None else amount * coupon, net_amount, _usd(loss, rate), _usd(net_amount, rate)
-
-
 def _detail(report: _Report) -> list[tuple[object, ...]]:
+    """通知明細：依剩餘天數排序，天數相同時緩衝小的在前（#352）。"""
+
+    def order(r: Assessed) -> tuple[object, ...]:
+        days, gap = report.days_left(r), r.buffer
+        return (days is None, days or 0, gap is None, gap or 0, r.position.tdcc)
+
     rows = []
-    for r in report.results:
-        if r.category not in NOTIFY:
-            continue
+    for r in sorted((r for r in report.results if r.category in NOTIFY), key=order):
         p = r.position
         for h in p.holdings:
-            loss, coupon, net, loss_usd, net_usd = _money_cells(r, h.amount)
             rows.append(
                 (
-                    p.final_date,
-                    report.days_left(r),
-                    r.category,
-                    r.buffer_group,
+                    *_position_cells(report, r),
                     h.branch,
                     h.fc,
                     p.tdcc,
@@ -730,11 +630,6 @@ def _detail(report: _Report) -> list[tuple[object, ...]]:
                     p.currency,
                     *_worst_cells(report, r),
                     h.amount,
-                    loss,
-                    coupon,
-                    net,
-                    loss_usd,
-                    net_usd,
                     r.reason,
                 )
             )
@@ -744,12 +639,8 @@ def _detail(report: _Report) -> list[tuple[object, ...]]:
 def _all_row(report: _Report, r: Assessed) -> tuple[object, ...]:
     p = r.position
     legs = " / ".join(f"{leg.code} {'-' if leg.performance is None else f'{leg.performance:+.1%}'}" for leg in p.legs)
-    loss, coupon, net, loss_usd, net_usd = _money_cells(r, r.notional)
     return (
-        p.final_date,
-        report.days_left(r),
-        r.category,
-        r.buffer_group,
+        *_position_cells(report, r),
         p.tdcc,
         p.product,
         p.issuer,
@@ -757,11 +648,6 @@ def _all_row(report: _Report, r: Assessed) -> tuple[object, ...]:
         *_worst_cells(report, r),
         r.notional,
         _usd(r.notional, p.usd_rate),
-        loss,
-        coupon,
-        net,
-        loss_usd,
-        net_usd,
         legs,
         r.reason,
     )
@@ -772,8 +658,8 @@ def _ratio(pct: Decimal | None) -> Decimal | None:
     return None if pct is None else pct / 100
 
 
-MONEY_WORDS = ("面額", "金額", "估損", "配息", "淨損益")  # 表頭有這些字的欄是金額，顯示到整數、千分位
-PERCENT_HEADERS = ("最差表現", "執行價(%)", "下限價(%)", "距執行價", "距下限價")
+MONEY_WORDS = ("面額", "金額")  # 表頭有這些字的欄是金額，顯示到整數、千分位
+PERCENT_HEADERS = ("緩衝", "最差表現", "執行價(%)", "下限價(%)", "距執行價", "距下限價")
 WIDEST = 70  # 欄寬上限（說明、各標的表現較長）
 
 
@@ -803,28 +689,30 @@ _CHART_ANCHOR = "H"  # 圖放在資料表右邊
 
 
 def _overview_charts(sheet, report: _Report) -> None:
-    """總覽右邊：各分類面額、緩衝分組、會接股的最差標的，三張圖與資料表。"""
+    """總覽右邊：各分類面額、緩衝分組、會接股面額依最差標的，三張圖與資料表。"""
     results = report.results
     by_category = []
-    for category in (DELIVER, WATCH, NEAR):
-        split = {True: Decimal(0), False: Decimal(0)}
+    for category in SPLIT:
+        split = {True: _Sum(), False: _Sum()}
         for r in results:
-            if r.category == category and r.position.usd_rate is not None:
-                split[report.caused_by_chosen(r)] += r.notional * r.position.usd_rate
-        by_category.append((category, split[True], split[False]))
+            if r.category == category:
+                split[report.caused_by_chosen(r)].add(r, r.notional)
+        by_category.append((category, split[True].notional, split[False].notional))
     by_buffer = []
     for group in BUFFER_GROUPS:
-        sel = [r for r in results if r.buffer_group == group]
-        usd = sum((r.notional * r.position.usd_rate for r in sel if r.position.usd_rate is not None), Decimal(0))
-        by_buffer.append((group, len(sel), usd))
-    worst: dict[str, Decimal] = defaultdict(Decimal)
+        total = _Sum()
+        for r in results:
+            if r.buffer_group == group:
+                total.add(r, r.notional)
+        by_buffer.append((group, len(total.tdccs), total.notional))
+    worst: dict[str, _Sum] = defaultdict(_Sum)
     for r in results:
-        if r.category == DELIVER and r.worst is not None and r.position.usd_rate is not None:
-            worst[r.worst.code] += r.notional * r.loss_ratio * r.position.usd_rate
-    ranked = sorted(worst.items(), key=lambda item: (-item[1], item[0]))
+        if r.category == DELIVER and r.worst is not None:
+            worst[r.worst.code].add(r, r.notional)
+    ranked = sorted(((code, total.notional) for code, total in worst.items()), key=lambda item: (-item[1], item[0]))
     by_worst: list[tuple[str, Decimal | int]] = list(ranked[:CHART_ROWS]) or [("（沒有會接股）", 0)]
     if rest := ranked[CHART_ROWS:]:
-        by_worst.append((f"其他 {len(rest)} 檔標的", sum((loss for _, loss in rest), Decimal(0))))
+        by_worst.append((f"其他 {len(rest)} 檔標的", sum((usd for _, usd in rest), Decimal(0))))
 
     row = 1
     row = _chart_table(
@@ -832,12 +720,12 @@ def _overview_charts(sheet, report: _Report) -> None:
         _bar("各分類面額（USD）", stacked=True), anchor=1,
     )  # fmt: skip
     row = _chart_table(
-        sheet, row + 2, ("緩衝分組（最差標的距執行價）", "檔數", "面額(USD)"), by_buffer,
-        _bar("距執行價分組（面額 USD）"), anchor=18, series=(2,),
+        sheet, row + 2, ("緩衝分組（距下限價或執行價）", "檔數", "面額(USD)"), by_buffer,
+        _bar("緩衝分組（面額 USD）"), anchor=18, series=(2,),
     )  # fmt: skip
     _chart_table(
-        sheet, row + 2, ("會接股的最差標的", "估損(USD)"), by_worst,
-        _bar("會接股估損：最差標的（USD）", horizontal=True), anchor=35,
+        sheet, row + 2, ("會接股的最差標的", "會接股面額(USD)"), by_worst,
+        _bar("會接股面額：最差標的（USD）", horizontal=True), anchor=35,
     )  # fmt: skip
     for col, width in zip("DEFG", (28, 24, 24, 4), strict=True):
         sheet.column_dimensions[col].width = width
@@ -879,16 +767,21 @@ _COMPOSITION = ("會接股面額(USD)", "KI 未破下限面額(USD)", "接近執
 
 
 def _rollup_charts(sheet, title: str, rows: Sequence[Sequence[object]]) -> None:
-    """依分公司、依理專右邊：會接股估損（選定標的／其他標的）與面額組成，各畫排前面的 `CHART_ROWS` 名。
+    """依分公司、依理專右邊：會接股面額（選定標的／其他標的）與面額組成，各畫排前面的 `CHART_ROWS` 名。
 
-    `rows` 是 `_rollup` 的列（已依估損排序）；估損圖只畫有估損的，沒有就不畫。
+    `rows` 是 `_rollup` 的列（已依會接股面額排序）；會接股面額圖只畫有會接股的，沒有就不畫。
     """
     headers = [str(cell.value) for cell in sheet[1]]
-    losses = sum(1 for row in rows[:CHART_ROWS] if row[headers.index("估損(USD)")])
+    delivering = sum(1 for row in rows[:CHART_ROWS] if row[headers.index("會接股面額(USD)")])
     who = "分公司" if title == BY_BRANCH else "理專"
+    shown = min(len(rows), CHART_ROWS)
     charts = (
-        (f"會接股估損（USD，前 {losses} 名{who}）", losses, (f"估損：{CHOSEN}(USD)", f"估損：{OTHERS}(USD)")),
-        (f"面額組成（USD，前 {min(len(rows), CHART_ROWS)} 名）", min(len(rows), CHART_ROWS), _COMPOSITION),
+        (
+            f"會接股面額（USD，前 {delivering} 名{who}）",
+            delivering,
+            (f"會接股面額：{CHOSEN}(USD)", f"會接股面額：{OTHERS}(USD)"),
+        ),
+        (f"面額組成（USD，前 {shown} 名）", shown, _COMPOSITION),
     )
     anchor = get_column_letter(len(headers) + 2)
     top = 1
