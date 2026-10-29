@@ -319,6 +319,9 @@ def test_every_analysis_has_a_chart(seeded, tmp_path: Path) -> None:
     assert data[4] == ("緩衝分組（最差標的距執行價）", "檔數", "面額(USD)")
     assert data[5] == (BUFFER_GROUPS[0], 3, pytest.approx(380000 + 10000000 / 150)), "PENDING 沒分類，不算"
     assert data[-1] == ("DDD JT", pytest.approx(10000000 / 150 * 0.25), None), "會接股的最差標的依估損排"
+    charts = [chart for title in book.sheetnames for chart in book[title]._charts]
+    assert all(c.title.overlay is False and c.legend.position == "b" for c in charts), "標題不蓋到圖（#350）"
+    assert all(c.y_axis.crosses == "max" for c in charts if c.type == "bar"), "橫條圖數值軸在下面"
 
 
 @pytest.mark.db
