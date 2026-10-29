@@ -496,7 +496,7 @@ def test_go_menu_switches_steps(master, tmp_path: Path) -> None:
     assert window.notebook.select() == str(window.prepare.frame)
     bar = master.nametowidget(master["menu"])
     cascades = [bar.entrycget(i, "label") for i in range(bar.index(tk.END) + 1) if bar.type(i) == "cascade"]
-    assert cascades == ["前往", "維護"], "「前往」在最前面"
+    assert cascades == ["前往", "維護", "分析"], "「前往」在最前面"
 
 
 def test_ctrl_number_switches_steps(master, tmp_path: Path) -> None:

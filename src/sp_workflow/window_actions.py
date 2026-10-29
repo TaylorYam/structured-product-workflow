@@ -57,6 +57,7 @@ from sp_workflow.eln_whitelist import (
     read_whitelist,
 )
 from sp_workflow.exits import ExitList, load_exits
+from sp_workflow.exposure import Choice, ExposureReceipt, export_exposure, load_choices
 from sp_workflow.legacy_backfill import BackfillReceipt, LegacyBackfillError, backfill_legacy
 from sp_workflow.lifecycle import (
     OBSERVATION,
@@ -643,6 +644,23 @@ def load_exit_list(settings: ConnectionSettings, paths: ConfigPaths, day: dt.dat
     config = load_import_config(paths)
     with connect(settings) as conn:
         return load_exits(conn, config, day)
+
+
+# ---------- 分析 ----------
+
+
+def load_exposure_choices(settings: ConnectionSettings) -> list[Choice]:
+    """標的曝險分析可選的標的：在庫商品連結的代碼與最新收盤價（#345）。"""
+    with connect(settings) as conn:
+        return load_choices(conn)
+
+
+def export_underlying_exposure(
+    settings: ConnectionSettings, codes: Sequence[str], until: dt.date, path: Path
+) -> ExposureReceipt:
+    """選定標的、最終比價日不晚於 `until` 的在庫商品曝險分析，寫成 Excel（#345）；只讀資料庫。"""
+    with connect(settings) as conn:
+        return export_exposure(conn, codes, until, path)
 
 
 # ---------- 信箱維護 ----------
