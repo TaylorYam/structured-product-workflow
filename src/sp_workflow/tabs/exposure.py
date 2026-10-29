@@ -36,6 +36,11 @@ def one_month_later(day: dt.date) -> dt.date:
     return dt.date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
 
 
+def follow_width(label: WrapLabel) -> None:
+    """說明文字照實際寬度換行：固定的斷行寬度比視窗寬時，文字被裁掉、旁邊的按鈕被擠扁（#349）。"""
+    label.bind("<Configure>", lambda event: label.configure(wraplength=max(300, event.width)))
+
+
 class ExposureWindow(tk.Toplevel):
     """標的曝險分析視窗：打開時讀一次可選的標的；處理中按鈕不能按。"""
 
@@ -61,17 +66,20 @@ class ExposureWindow(tk.Toplevel):
         frame.rowconfigure(2, weight=1)
         top = ttk.Frame(frame)
         top.grid(row=0, column=0, sticky="ew", pady=(0, 10))
-        WrapLabel(
+        # 先排按鈕，說明文字用剩下的寬度、跟著寬度換行；固定寬度會把按鈕擠扁（#349）
+        self.refresh_button = ttk.Button(top, text="重新整理", command=self.refresh)
+        self.refresh_button.pack(side=tk.RIGHT, padx=(12, 0))
+        self.intro = intro = WrapLabel(
             top,
             text="選一檔或多檔標的（按住 Ctrl 複選），用收盤價表最新的收盤價，找出最終比價日不晚於截止日、"
             "連結這些標的的在庫商品，判斷哪些會接股，依分公司與理專統計面額與估損，匯出 Excel。"
             "一列是一個股票代號，已包含它所有交易所的代碼（例：GOOG 含 GOOG UW、GOOG UQ）。"
             "請先匯入最新的收盤價再分析；這裡只讀資料庫，不改資料。",
-            wraplength=760,
+            wraplength=600,
             justify="left",
-        ).pack(side=tk.LEFT, fill=tk.X, expand=True)
-        self.refresh_button = ttk.Button(top, text="重新整理", command=self.refresh)
-        self.refresh_button.pack(side=tk.RIGHT)
+        )
+        intro.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        follow_width(intro)
         search = ttk.Frame(frame)
         search.grid(row=1, column=0, sticky="ew", pady=(0, 6))
         ttk.Label(search, text="搜尋代號").pack(side=tk.LEFT, padx=(0, 8))
@@ -94,11 +102,11 @@ class ExposureWindow(tk.Toplevel):
         self.chosen_var = tk.StringVar()
         chosen = ttk.Frame(box)
         chosen.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-        WrapLabel(chosen, textvariable=self.chosen_var, wraplength=700, justify="left").pack(
-            side=tk.LEFT, fill=tk.X, expand=True
-        )
         self.clear_button = ttk.Button(chosen, text="清除已選", command=self.clear)
-        self.clear_button.pack(side=tk.RIGHT)
+        self.clear_button.pack(side=tk.RIGHT, padx=(12, 0))
+        self.chosen_label = WrapLabel(chosen, textvariable=self.chosen_var, wraplength=600, justify="left")
+        self.chosen_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        follow_width(self.chosen_label)
         bottom = ttk.Frame(frame)
         bottom.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         ttk.Label(bottom, text="最終比價日截止").pack(side=tk.LEFT, padx=(0, 8))
@@ -109,9 +117,9 @@ class ExposureWindow(tk.Toplevel):
         self.buttons = [self.refresh_button, self.clear_button, self.export_button]
         self.status_var = tk.StringVar()
         self.runner = ActionRunner(db, self.background, self.status_var, self._busy, parent=self)
-        WrapLabel(frame, textvariable=self.status_var, wraplength=900, justify="left").grid(
-            row=4, column=0, sticky="ew", pady=(10, 0)
-        )
+        status = WrapLabel(frame, textvariable=self.status_var, wraplength=600, justify="left")
+        status.grid(row=4, column=0, sticky="ew", pady=(10, 0))
+        follow_width(status)
         self._show_chosen()
         self.protocol("WM_DELETE_WINDOW", self.close)
         self.geometry("820x620")
