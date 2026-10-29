@@ -16,8 +16,9 @@ import pytest
 
 import hsbc_synth
 from barc_synth import ISSUER_NAME, Spec, build_pdf, check, check_rows
+from fcn_checker.identification import PairingProblem
 from fcn_checker.issuers import by_code
-from fcn_checker.messages import Problem, fix_message, problem_message, problems
+from fcn_checker.messages import UNSUPPORTED_REASONS, Problem, fix_message, problem_message, problems
 from fcn_checker.panel_workflow import PanelOutcome
 from fcn_checker.rules import kit
 from fcn_checker.schema import CheckResult, CheckStatus, DocKind, Evidence, Item, ItemSource
@@ -361,6 +362,29 @@ def test_rule_without_message_gets_a_chinese_default(rule_id, status, expected):
         rule_id, "brand_new_field", status, Decimal(1), Decimal(2), reason_code="new_reason", item=Item(name, source)
     )
     assert problem_message(r) == expected
+
+
+# ---------------------------------------------------------------- 不支援樣態（Issue #340）
+
+
+def test_unsupported_reasons_are_the_pairing_problem_codes():
+    assert {PairingProblem.UNSUPPORTED_VARIANT.value, PairingProblem.TEMPLATE_UNSUPPORTED.value} == UNSUPPORTED_REASONS
+
+
+@pytest.mark.parametrize(
+    "reason,head",
+    [("variant_unsupported", True), ("template_unsupported", True), ("issuer_unsupported", False)],
+)
+def test_unsupported_variant_message_starts_with_the_plain_reason(reason, head):
+    r = CheckResult(
+        "batch.variant",
+        "variant",
+        CheckStatus.REVIEW_REQUIRED,
+        reason_code=reason,
+        message="甲",
+        item=Item.note("樣態"),
+    )
+    assert problem_message(r) == ("目前樣態不支援自動核對：甲" if head else "樣態：甲")
 
 
 # ---------------------------------------------------------------- 每條錯訊都寫出具體項目（Issue #91）
