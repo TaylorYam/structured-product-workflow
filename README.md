@@ -43,7 +43,7 @@ spw-panel
 在「3 準備」分頁：
 
 1. 在輸入框貼上要核對的 TDCC（換行、空白、逗號、頓號都可以分隔；重複的只算一次）。
-2. 確認視窗最上方的根目錄（商品資料夾可以在底下任何一層；要換時按「變更…」），再選輸出位置；兩者都會記在本機 `.local/`，下次直接帶入。
+2. 確認視窗最上方的根目錄（商品資料夾可以在底下任何一層，但不會往商品資料夾裡面找，放在另一個商品資料夾裡面的同名資料夾不算；要換時按「變更…」），再選輸出位置；兩者都會記在本機 `.local/`，下次直接帶入。
 3. 按「開始準備」。每次在輸出位置開一個 `待核對_<日期時間>` 資料夾，已存在就不做。
 4. 看第一頁內容判斷：開頭附近出現「中文產品說明書」或「中文投資人須知」；說明書第一頁要有資料夾的 TDCC，投資人須知有 12 碼代號時要相符。檔名只當參考。
 5. 有上手 PDF 就用 PDF；某種文件沒有 PDF 時（例如 MS、BNP 只給 Word），才把資料夾裡的 Word（`.docx`、`.doc`）複製到暫存區，用 Microsoft Word 轉成 PDF 再判斷（[ADR 0002](docs/adr/0002-word-to-pdf-with-microsoft-word.md)）。原始 Word 不動；轉檔失敗或逾時（Word 跳出對話框）時那個商品跳過。MS 說明書封面的「受託機構商品代號：」固定空白，轉檔前在暫存複本補上 TDCC（已有值不動），不用再手動改 Word；商品資料夾裡的原始 Word 仍是空白，放回與寄信用的是補好的 PDF；準備清單的原因欄會寫「已補受託機構商品代號」（[#56](https://github.com/TaylorYam/structured-product-workflow/issues/56)）。
@@ -320,7 +320,7 @@ spw-panel
 On the 3 準備 (prepare) tab:
 
 1. Paste the TDCCs to check (newlines, spaces, commas, or ideographic commas; duplicates count once).
-2. Check the root folder at the top of the window (product folders may be at any depth; press 變更… to change it), then choose the output location; both are remembered in local `.local/`.
+2. Check the root folder at the top of the window (product folders may be at any depth, but the search does not look inside a product folder, so a same-named folder inside another product folder does not count; press 變更… to change it), then choose the output location; both are remembered in local `.local/`.
 3. Press Start. Each run creates `待核對_<timestamp>` in the output location and refuses an existing folder.
 4. Identification uses page-one content: a 中文產品說明書 or 中文投資人須知 title near the top; the term sheet's first page must contain the folder TDCC, and an investor sheet's 12-digit code must match when present. File names are hints only.
 5. Issuer PDFs take precedence. Only when a document type has no PDF (for example MS and BNP provide Word only) are the folder's Word files (`.docx`, `.doc`) copied to a temporary area and converted with Microsoft Word before identification ([ADR 0002](docs/adr/0002-word-to-pdf-with-microsoft-word.md)). Original Word files stay untouched; a failed or timed-out conversion (for example a Word dialog) skips that product. The MS term sheet cover always leaves 受託機構商品代號 (trustee product code) blank, so the TDCC is filled into the temporary copy before conversion (existing values are left alone) and nobody edits the Word by hand; the original Word in the product folder stays blank, while the returned and mailed PDF is the filled one; the preparation list's reason column says 已補受託機構商品代號 ([#56](https://github.com/TaylorYam/structured-product-workflow/issues/56)).
