@@ -438,6 +438,9 @@ def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> SbScenarios
         "scenario_table", ca.table_region(art16, "自動提前出場紅利：", "情境分析一"), ca.SCENARIO_TABLE
     )
     fields["scenario_reprint_table"] = price_table.at("scenario_reprint_table", scenario_table, ca.SCENARIO_TABLE)
+    # 標的報價幣別和計價幣別不同時，情境價格表後多一行匯率（`美元/日圓=150.00`），由規則轉人工覆核（workflow #335）
+    fx = [ln for ln in art16 if re.fullmatch(rf"{ca.CCY}/{ca.CCY}=[\d,.]+", squash(ln.text))]
+    fields["scenario_fx"] = ParsedField.present("scenario_fx", [squash(ln.text) for ln in fx], fx)
     fields["scenario_params"] = standard_fields.occurrences(
         "scenario_params",
         [
