@@ -7,7 +7,7 @@
 - 價格：每個標的用收盤價表最新的一筆，依拆股登記換回價格基準（同比價，`stock_splits.SplitBook.factor`）；不做假設價格。
 - 核對條件不是完成（同比價只比完成的）、缺 KI 型態、有 KI 卻沒有下限價、缺價格的商品無法計算；MKI 不比、人工確認。
 - 其他看最差標的（收盤價 ÷ 進場價最低）：收盤價 < 執行價，且沒有 KI、收盤價 < 下限價或比價已記 AKI 觸及 → 會接股；
-  < 執行價但還在下限價之上（EKI 或還沒觸及的 AKI）→ KI 未破下限（觀察）；還在執行價之上、距執行價不到 10%
+  < 執行價但還在下限價之上（EKI 或還沒觸及的 AKI）→ KI 未破下限（觀察）；還在執行價之上、距執行價 10% 以內
   → 接近執行價；其他是高於執行價。每檔另寫距執行價、距下限價（最差標的收盤價 ÷ 執行價或下限價 − 1）、
   到最終比價日的剩餘天數與緩衝分組（已低於執行價、<3%、3–10%、>10%）。
 - 選定標的／其他標的：最差標的是選定的代碼之一時，損失算「選定標的造成」，否則算「其他標的造成」（#347），
@@ -56,7 +56,7 @@ SAFE = "高於執行價"
 UNKNOWN = "無法計算"
 CATEGORIES = (DELIVER, WATCH, NEAR, MANUAL, SAFE, UNKNOWN)
 NOTIFY = (DELIVER, WATCH, NEAR, MANUAL)  # 通知明細列的分類
-NEAR_BUFFER = Decimal("0.10")  # 還在執行價之上、距執行價不到這個比例的是接近執行價（#347）
+NEAR_BUFFER = Decimal("0.10")  # 還在執行價之上、距執行價不超過這個比例的是接近執行價（#347）
 TIGHT_BUFFER = Decimal("0.03")
 BELOW_STRIKE = "已低於執行價"
 BUFFER_GROUPS = (BELOW_STRIKE, "<3%", "3–10%", ">10%")
@@ -180,7 +180,7 @@ class Assessed:
             return None
         if gap < 0:
             return BELOW_STRIKE
-        return BUFFER_GROUPS[1] if gap < TIGHT_BUFFER else BUFFER_GROUPS[2] if gap < NEAR_BUFFER else BUFFER_GROUPS[3]
+        return BUFFER_GROUPS[1] if gap < TIGHT_BUFFER else BUFFER_GROUPS[2] if gap <= NEAR_BUFFER else BUFFER_GROUPS[3]
 
 
 def assess(position: Position) -> Assessed:
@@ -205,8 +205,8 @@ def assess(position: Position) -> Assessed:
         return unknown(f"{position.barrier_type} 沒有下限價：{worst.code}")
     shortfall = _shortfall(worst)
     if shortfall <= 0:
-        near = -shortfall < NEAR_BUFFER  # 收盤價 ÷ 執行價 − 1 = −shortfall
-        return Assessed(position, NEAR if near else SAFE, worst, Decimal(0), "距執行價不到 10%" if near else "")
+        near = -shortfall <= NEAR_BUFFER  # 收盤價 ÷ 執行價 − 1 = −shortfall
+        return Assessed(position, NEAR if near else SAFE, worst, Decimal(0), "距執行價 10% 以內" if near else "")
     assert worst.close is not None
     knocked = (
         position.barrier_type == NO_BARRIER
@@ -616,7 +616,10 @@ def _overview(
     rows.append(("說明", "會接股：最差標的收盤價 < 執行價，且沒有 KI、收盤價 < 下限價或已觸及 AKI。"))
     rows.append(("", "選定標的造成：最差標的是選定的代碼；其他標的造成：籃子裡別的股票最差，損失不是選定標的造成的。"))
     rows.append(
-        ("", "接近執行價：還在執行價之上、距執行價不到 10%；距執行價、距下限價 = 最差標的收盤價 ÷ 執行價或下限價 − 1。")
+        (
+            "",
+            "接近執行價：還在執行價之上、距執行價 10% 以內；距執行價、距下限價 = 最差標的收盤價 ÷ 執行價或下限價 − 1。",
+        )
     )
     rows.append(
         (
@@ -659,7 +662,7 @@ def _rollup(
                 deliver.loss,
                 group[CHOSEN].loss,
                 group[OTHERS].loss,
-                deliver.net,
+                None if deliver.missing_coupon else deliver.net,  # 有商品缺配息資料時空白，不少算
                 len(group[WATCH].tdccs),
                 group[WATCH].notional,
                 len(group[NEAR].tdccs),
@@ -815,7 +818,10 @@ def _overview_charts(sheet, report: _Report) -> None:
     for r in results:
         if r.category == DELIVER and r.worst is not None and r.position.usd_rate is not None:
             worst[r.worst.code] += r.notional * r.loss_ratio * r.position.usd_rate
-    by_worst = sorted(worst.items(), key=lambda item: (-item[1], item[0]))[:CHART_ROWS] or [("（沒有會接股）", 0)]
+    ranked = sorted(worst.items(), key=lambda item: (-item[1], item[0]))
+    by_worst: list[tuple[str, Decimal | int]] = list(ranked[:CHART_ROWS]) or [("（沒有會接股）", 0)]
+    if rest := ranked[CHART_ROWS:]:
+        by_worst.append((f"其他 {len(rest)} 檔標的", sum((loss for _, loss in rest), Decimal(0))))
 
     row = 1
     row = _chart_table(
@@ -855,7 +861,7 @@ def _chart_table(
     for r, values in enumerate(rows, start=top + 1):
         for i, value in enumerate(values):
             cell = sheet.cell(row=r, column=first + i, value=excel_value(value))
-            if isinstance(value, Decimal | int | float) and "(USD)" in headers[i]:
+            if isinstance(value, Decimal | int | float) and not isinstance(value, bool) and "(USD)" in headers[i]:
                 cell.number_format = "#,##0"
     last = top + len(rows)
     for i in series or range(1, len(headers)):
@@ -864,6 +870,9 @@ def _chart_table(
     chart.set_categories(Reference(sheet, min_col=first, min_row=top + 1, max_row=last))
     sheet.add_chart(chart, f"{_CHART_ANCHOR}{anchor}")
     return last
+
+
+_COMPOSITION = ("會接股面額(USD)", "KI 未破下限面額(USD)", "接近執行價面額(USD)")
 
 
 def _rollup_charts(sheet, title: str, rows: Sequence[Sequence[object]]) -> None:
@@ -893,9 +902,6 @@ def _rollup_charts(sheet, title: str, rows: Sequence[Sequence[object]]) -> None:
         top += int(chart.height * 2) + 2  # 一列約 0.5 公分
 
 
-_COMPOSITION = ("會接股面額(USD)", "KI 未破下限面額(USD)", "接近執行價面額(USD)")
-
-
 def _bar(title: str, *, stacked: bool = False, horizontal: bool = False) -> BarChart:
     chart = BarChart()
     chart.type = "bar" if horizontal else "col"
@@ -909,4 +915,6 @@ def _bar(title: str, *, stacked: bool = False, horizontal: bool = False) -> BarC
         chart.y_axis.majorGridlines = None
         chart.x_axis.scaling.orientation = "maxMin"  # 第一名在最上面
     chart.y_axis.numFmt = "#,##0"
+    chart.x_axis.delete = False  # openpyxl 3.1 預設不寫，Excel 會把座標軸藏起來
+    chart.y_axis.delete = False
     return chart

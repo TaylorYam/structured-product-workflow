@@ -61,7 +61,8 @@ def position(
         ("MKI", "60", "MKI (manual)", MANUAL, D(0)),
         ("NONE", "80", "-", NEAR, D(0)),  # 等於執行價不接股，但距執行價不到 10%
         ("NONE", "87.9", "-", NEAR, D(0)),
-        ("NONE", "88", "-", SAFE, D(0)),  # 剛好高 10%
+        ("NONE", "88", "-", NEAR, D(0)),  # 剛好高 10% 還算以內
+        ("NONE", "88.1", "-", SAFE, D(0)),
     ],
 )
 def test_the_worst_underlying_decides(barrier: str, close: str, ki_text: str, category: str, loss: Decimal) -> None:
@@ -74,7 +75,7 @@ def test_the_worst_underlying_decides(barrier: str, close: str, ki_text: str, ca
 
 @pytest.mark.parametrize(
     ("close", "group"),
-    [("79", BUFFER_GROUPS[0]), ("82", "<3%"), ("82.4", "3–10%"), ("88", ">10%")],
+    [("79", BUFFER_GROUPS[0]), ("82", "<3%"), ("82.4", "3–10%"), ("88", "3–10%"), ("88.1", ">10%")],
 )
 def test_buffer_groups_by_the_worst_distance_to_strike(close: str, group: str) -> None:
     result = assess(position("EKI", leg(1, "AAA UW", close), ki_text="EKI"))
@@ -339,3 +340,17 @@ def test_no_loss_chart_when_nothing_delivers(seeded, tmp_path: Path) -> None:
 
     book = openpyxl.load_workbook(path)
     assert [len(book[title]._charts) for title in book.sheetnames] == [3, 1, 1, 0, 0], "只剩面額組成"
+
+
+@pytest.mark.db
+def test_net_total_is_blank_when_a_product_has_no_coupon(seeded, tmp_path: Path) -> None:
+    seeded.execute("UPDATE workflow.product SET coupon_pct = NULL WHERE tdcc = %s", (C,))
+    path = tmp_path / "曝險.xlsx"
+
+    export_exposure(seeded, ["AAA UW"], UNTIL, path, today=DAY)
+
+    fcs = {row["理專"]: row for row in sheet_rows(path, "依理專")}
+    assert fcs["Cara"]["扣配息後淨損益(USD)"] is None, "缺配息不能當 0 算，空白"
+    assert fcs["Amy"]["扣配息後淨損益(USD)"] == pytest.approx(150000 * (0.0625 - 0.1))
+    charts = openpyxl.load_workbook(path)["總覽"]._charts
+    assert [(c.x_axis.delete, c.y_axis.delete) for c in charts] == [(False, False)] * 3, "Excel 才會顯示座標軸"
