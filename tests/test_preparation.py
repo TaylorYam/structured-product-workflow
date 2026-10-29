@@ -399,6 +399,40 @@ def test_duplicate_product_folders_are_skipped_with_their_paths(root: Path, out:
     assert str(root / "2026" / A) in o.reason and str(root / "舊資料" / A) in o.reason
 
 
+def test_search_does_not_list_inside_product_folders(root: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """12 碼數字名稱的資料夾（要找的、不要找的都一樣）不往裡面列（#337）。
+
+    要確認的是少列了哪些資料夾，從 prepare_batch 的結果看不出來，所以這裡直接看搜尋列了哪些資料夾。"""
+    make_product_folder(root, A)
+    (root / A / "往來信件").mkdir()
+    (root / B / "往來信件").mkdir(parents=True)
+    (root / "Super Bull" / C).mkdir(parents=True)
+    listed: list[Path] = []
+    real_walk = preparation.os.walk
+
+    def spy(top, **kwargs):
+        for entry in real_walk(top, **kwargs):
+            listed.append(Path(entry[0]))
+            yield entry
+
+    monkeypatch.setattr(preparation.os, "walk", spy)
+
+    found, _ = preparation.find_product_folders(root, {A, C})
+
+    assert found == {A: [root / A], C: [root / "Super Bull" / C]}
+    assert sorted(listed) == [root, root / "Super Bull"]
+
+
+def test_same_name_folder_inside_a_product_folder_is_not_a_candidate(root: Path, out: Path) -> None:
+    """商品資料夾裡面不往下找，放在裡面的同名資料夾（例如備份）不算第二個（#337）。"""
+    make_product_folder(root, A)
+    make_product_folder(root / A, A, sub="備份")
+
+    o = outcome(run(A, root, out), A)
+
+    assert o.status == PREPARED and o.folder == root / A
+
+
 # ---- 輸入 ----
 
 

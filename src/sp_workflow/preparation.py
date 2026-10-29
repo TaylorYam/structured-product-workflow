@@ -165,16 +165,20 @@ def parse_tdccs(text: str) -> list[str]:
 
 
 def find_product_folders(root: Path, wanted: set[str]) -> tuple[dict[str, list[Path]], list[Path]]:
-    """根目錄底下任何深度、名稱剛好等於 TDCC 的資料夾（只走一次樹），以及讀不到的資料夾。"""
+    """根目錄底下任何深度、名稱剛好等於 TDCC 的資料夾（只走一次樹），以及讀不到的資料夾。
+
+    名稱是 12 碼數字的資料夾（不論是不是要找的）就是商品資料夾，裡面不會再放商品資料夾，不往裡面走（#337）：
+    公槽上每列一個資料夾都要等一次網路，不進去才不用把幾千個商品資料夾逐一打開。
+    """
     found: dict[str, list[Path]] = {}
     unreadable: list[Path] = []
     if not wanted:
         return found, unreadable
     for dirpath, dirnames, _ in os.walk(root, onerror=lambda e: unreadable.append(Path(e.filename))):
-        dirnames.sort()
         for name in dirnames:
             if name in wanted:
                 found.setdefault(name, []).append(Path(dirpath) / name)
+        dirnames[:] = sorted(name for name in dirnames if not is_tdcc(name))
     return found, unreadable
 
 
