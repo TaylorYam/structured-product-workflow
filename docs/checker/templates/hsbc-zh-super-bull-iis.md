@@ -52,7 +52,7 @@
 3. 英文名稱含 `SuperBull Notes`（忽略空白）。
 4. 現行版特徵：`第二 收益分配事項：請見產品說明書第一章第11 項之說明。`
 
-條件 1～3 成立、4 不成立 → 不支援的範本版本：轉人工覆核，錯訊寫明「HSBC Super Bull 投資人須知的寫法和現行版不同，不支援自動核對」。
+條件 1～3 成立、4 不成立 → 不支援的範本版本：轉人工覆核，錯訊寫明「HSBC Super Bull 投資人須知的寫法和現行版不同」（錯訊開頭是「目前樣態不支援自動核對：」，Issue #340）。
 
 **`hsbc-zh-iis` 已補商品家族條件**（`hsbc_iis.py` PARSER_VERSION 5）：原本 `hsbc-zh-iis` 只看版面，會把 HSBC Super Bull 投資人須知判定成 FCN（探勘實測，#314）。改成名稱含 `自動提前到期固定配息股權連結`、英文含 `Fixed Coupon Notes` 才算 `hsbc-zh-iis`（見 [`hsbc-zh-iis`](hsbc-zh-iis.md) §5）。
 

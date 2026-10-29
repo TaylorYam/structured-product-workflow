@@ -19,7 +19,7 @@ from .layout import TextIndex
 
 TEMPLATE_ID = "ca-zh-sb-iis"
 PARSER_VERSION = "1"
-OLD_VERSION = "CA Super Bull 舊版投資人須知（範本文字和現行版不同），不支援自動核對"
+OLD_VERSION = "CA Super Bull 舊版投資人須知（範本文字和現行版不同）"
 BONUS = r"自動提前出場紅利：" + ca.PCT + "。"
 NO_COUPON_DATE = "(15)配息日：" + ca_super_bull.NO_COUPON
 KO_REDEMPTION = r"支付每單位金額=每單位商品面額×\(100%\+自動提前出場紅利\)。其後無任何金額給付。"

@@ -25,7 +25,7 @@ from .super_bull import ProfitReturn, Wording, fill_schedule
 
 TEMPLATE_ID = "bnp-zh-sb-pd"
 PARSER_VERSION = "1"
-OLD_VERSION = "BNP Super Bull 舊版說明書（2026-06 以前的範本），不支援自動核對"
+OLD_VERSION = "BNP Super Bull 舊版說明書（2026-06 以前的範本）"
 NAME_EN = "Super Bull Early Redeemable Note"
 NO_COUPON = "配息資料及其計算公式：不適用。"
 # §16 出場紅利（現行版 `[100% + X%]`；舊版 `{100.00% + X% }` 不支援）

@@ -72,6 +72,7 @@ def test_product_must_match_the_template_family(tmp_path, spec, product):
     for item in (ts, iis):
         assert flagged(item.report, "template.product_family", S.REVIEW_REQUIRED)
         assert item.unsupported_variant and item.release_problem
+        assert all(m.startswith("目前樣態不支援自動核對：") for m in item.problem_messages)  # Issue #340
 
 
 @pytest.mark.parametrize(
@@ -84,6 +85,7 @@ def test_super_bull_terms_on_the_sheet_must_be_the_supported_variant(tmp_path, c
     for item in (ts, iis):
         assert flagged(item.report, "batch.variant", S.REVIEW_REQUIRED)
         assert item.unsupported_variant and item.release_problem
+        assert all(m.startswith("目前樣態不支援自動核對：") for m in item.problem_messages)  # Issue #340
 
 
 def test_old_template_version_is_not_supported(tmp_path):

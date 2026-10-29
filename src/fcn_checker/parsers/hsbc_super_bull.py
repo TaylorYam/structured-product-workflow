@@ -24,7 +24,7 @@ from .super_bull import Wording, fill_schedule
 
 TEMPLATE_ID = "hsbc-zh-sb-pd"
 PARSER_VERSION = "1"
-OLD_VERSION = "HSBC Super Bull 說明書的寫法和現行版不同，不支援自動核對"
+OLD_VERSION = "HSBC Super Bull 說明書的寫法和現行版不同"
 ISSUER_ZH = "香港上海滙豐銀行"
 NAME_ZH_MARK = "自動提前贖回股權連結"
 NAME_EN_MARK = "SuperBullNotes"  # 去空白

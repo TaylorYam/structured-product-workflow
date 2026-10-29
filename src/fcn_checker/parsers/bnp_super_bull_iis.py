@@ -17,7 +17,7 @@ from .layout import TextIndex
 
 TEMPLATE_ID = "bnp-zh-sb-iis"
 PARSER_VERSION = "1"
-OLD_VERSION = "BNP Super Bull 舊版投資人須知（2026-06 以前的範本），不支援自動核對"
+OLD_VERSION = "BNP Super Bull 舊版投資人須知（2026-06 以前的範本）"
 NAME_EN = "SuperBullEarlyRedeemableNote"
 REDEMPTION_HEAD = "收益分配事項及到期贖回金額之計算"
 SECTIONS = tuple(REDEMPTION_HEAD if s == bnp_iis.REDEMPTION_SECTION[0] else s for s in bnp_iis.SECTIONS)

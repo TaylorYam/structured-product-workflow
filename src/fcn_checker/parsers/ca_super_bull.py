@@ -24,7 +24,7 @@ from .super_bull import ProfitReturn, Wording, fill_schedule
 
 TEMPLATE_ID = "ca-zh-sb-pd"
 PARSER_VERSION = "1"
-OLD_VERSION = "CA Super Bull 舊版說明書（範本文字和現行版不同），不支援自動核對"
+OLD_VERSION = "CA Super Bull 舊版說明書（範本文字和現行版不同）"
 NAME_ZH_MARK = "計價連結表現自動提前出場結構型商品(無擔保)(不保本)"
 NAME_EN_MARK = "Performance Autocall Note"
 NO_COUPON = "本商品持有期間並無配息金額。"
