@@ -5,7 +5,7 @@
 - 「錯誤清單」上的 PDF（沒通過、也沒人工放行）檔名加 `_待確認` 放回，同商品通過的那份仍用標準檔名；
 - 核對結果檔裡沒出現的商品（還沒核對）不放回。
 這次新放回了 `_待確認` 檔，或同一版重複核對而錯訊和最新一份錯訊檔不同時，另在商品資料夾寫一份
-`<TDCC>_錯誤訊息_<日期時間>.xlsx`（一條錯訊一列，#19、#23）。
+`<TDCC>_錯誤訊息_<日期時間>.xlsx`（一條錯訊一列，附錯誤清單的 PDF 頁碼與應改為，#19、#23、#343）。
 放回標準檔名時，商品資料夾若還有同種的舊 `_待確認` 檔或舊錯訊檔，只提醒、不刪。
 目的地取準備清單記的商品資料夾；放回前重算指紋，和準備清單不符就不放。
 商品資料夾已有同名檔：內容相同算已在，內容不同不覆蓋、整個商品不放回。一個商品的兩份要嘛都處理、要嘛都不動。
@@ -26,6 +26,7 @@ from typing import NamedTuple
 
 import openpyxl
 from openpyxl.cell.cell import Cell
+from openpyxl.styles import Alignment
 
 from sp_workflow import import_run
 from sp_workflow.database import OperatorError
@@ -53,6 +54,7 @@ ERROR_TDCC_COLUMN = "TDCC Code"
 ERROR_PDF_COLUMN = "PDF 檔名"
 ERROR_MESSAGE_COLUMN = "錯訊"
 ERROR_PAGES_COLUMN = "PDF 頁碼"  # 核對工具 acb5dbd（#350）起才有；舊格式沒有這欄也能讀（#25）
+ERROR_FIX_COLUMN = "應改為"  # #339 起才有；舊格式沒有這欄也能讀（#343）
 
 NOT_CHECKED_REASON = "核對結果檔沒有這個商品（還沒核對）"
 _TEMP_SUFFIX = ".spw-tmp"  # 放回時先寫成暫存名，確認指紋後才改成正式檔名
@@ -61,14 +63,15 @@ _TEMP_SUFFIX = ".spw-tmp"  # 放回時先寫成暫存名，確認指紋後才改
 LIST_COLUMNS = (("TDCC", 15), ("TS", 10), ("IIS", 10), ("原因", 80))
 ERROR_BOOK_MARK = "_錯誤訊息_"  # 錯訊檔名：<TDCC>_錯誤訊息_<YYYYMMDD-HHMMSS>.xlsx
 # 錯訊檔的欄（欄名, 欄寬）
-ERROR_BOOK_COLUMNS = (("TDCC", 15), ("種類", 6), ("放回檔名", 28), ("PDF 頁碼", 10), ("錯訊", 100))
+ERROR_BOOK_COLUMNS = (("TDCC", 15), ("種類", 6), ("放回檔名", 28), ("PDF 頁碼", 10), ("錯訊", 100), ("應改為", 60))
 
 
 class _ErrorLine(NamedTuple):
-    """錯誤清單上的一條錯訊與它的 PDF 頁碼（文字，例：`9`、`9、10`；沒有頁碼時空白）。"""
+    """錯誤清單上的一條錯訊與它的 PDF 頁碼（文字，例：`9`、`9、10`；沒有頁碼時空白）及應改為（沒有時空白）。"""
 
     pages: str
     message: str
+    fix: str = ""
 
     def text(self) -> str:
         return f"{self.message}（第 {self.pages} 頁）" if self.pages else self.message
@@ -187,22 +190,22 @@ def _read_result(path: Path) -> tuple[list[str], dict[str, dict[str, tuple[_Erro
     passed = [
         _normalize_tdcc(row[tdcc_col]) for row in rows if str(row[checked_col] or "").strip() == RESULT_CHECKED_VALUE
     ]
-    rows, (code_col, pdf_col, message_col, pages_col) = _columns(
+    rows, (code_col, pdf_col, message_col, pages_col, fix_col) = _columns(
         errors,
         ERROR_SHEET,
         ERROR_HEADER_ROW,
         (ERROR_TDCC_COLUMN, ERROR_PDF_COLUMN, ERROR_MESSAGE_COLUMN),
-        optional=(ERROR_PAGES_COLUMN,),
+        optional=(ERROR_PAGES_COLUMN, ERROR_FIX_COLUMN),
     )
     failed: dict[str, dict[str, list[_ErrorLine]]] = {}
     for row in rows:
         tdcc, name = _normalize_tdcc(row[code_col]), str(row[pdf_col] or "").strip()
         if tdcc and name:
             lines = failed.setdefault(tdcc, {}).setdefault(name, [])  # 錯訊空白的列：PDF 仍算在錯誤清單上
-            pages = _page_text(_cell(row, pages_col))
-            for line in str(row[message_col] or "").splitlines():  # 舊格式：多條錯訊在同一格換行
+            pages, fix = _page_text(_cell(row, pages_col)), str(_cell(row, fix_col) or "").strip()
+            for line in str(row[message_col] or "").splitlines():  # 舊格式：多條錯訊在同一格換行（沒有應改為欄）
                 if line.strip():
-                    lines.append(_ErrorLine(pages, line.strip()))
+                    lines.append(_ErrorLine(pages, line.strip(), fix))
     passed_tdccs = list(dict.fromkeys(t for t in passed if t))
     return passed_tdccs, {t: {n: tuple(lines) for n, lines in docs.items()} for t, docs in failed.items()}
 
@@ -345,7 +348,7 @@ def _return_product(
     notes = list(check_notes)
     old_books = sorted(p.name for p in folder.glob(f"{tdcc}{ERROR_BOOK_MARK}*.xlsx"))  # 寫新的之前就有的錯訊檔
     rows = [
-        (tdcc, kind.value, names[kind], line.pages, line.message)
+        (tdcc, kind.value, names[kind], line.pages, line.message, line.fix)
         for kind in DocKind
         if kind in pending
         for line in messages[docs[kind].output_name.lower()] or (_ErrorLine("", "（錯誤清單沒有寫錯訊）"),)
@@ -397,7 +400,7 @@ def _error_rows(path: Path | None) -> list[tuple] | None:
     return [tuple("" if v is None else str(v) for v in row[: len(ERROR_BOOK_COLUMNS)]) for row in rows[1:]]
 
 
-def _error_book_note(path: Path, rows: list[tuple[str, str, str, str, str]]) -> str:
+def _error_book_note(path: Path, rows: list[tuple[str, ...]]) -> str:
     """在商品資料夾寫錯訊檔（不覆蓋）；回傳要寫進原因欄的說明。寫不進去不影響已放回的檔。"""
     if path.exists():
         return f"錯訊檔已存在，沒有覆蓋：{path.name}"
@@ -418,6 +421,7 @@ def _error_book_note(path: Path, rows: list[tuple[str, str, str, str, str]]) -> 
 
 def _error_cell(cell: Cell) -> None:
     cell.data_type = "s"  # 一律存成文字：錯訊以「=」開頭也不會變成公式
+    cell.alignment = Alignment(wrap_text=True, vertical="top")  # 應改為的差異片段一處一行
     tdcc_as_text(cell)
 
 
