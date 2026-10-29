@@ -3,10 +3,11 @@
 - 範圍：存續狀態在庫（沒有還有效的存續事件）、連結任一選定標的、最終比價日不晚於截止日的商品，商品種類不限
   （FCN、FCN_Express、Super Bull）。已過最終比價日、還在庫的（例：等股價）一併列入。
 - 價格：每個標的用收盤價表最新的一筆，依拆股登記換回價格基準（同比價，`stock_splits.SplitBook.factor`）；不做假設價格。
-- 分類看最差標的（收盤價 ÷ 進場價最低）：收盤價 < 執行價，且沒有 KI、收盤價 < 下限價或比價已記 AKI 觸及 → 會接股；
-  < 執行價但還在下限價之上 → EKI 未破下限（觀察）；MKI 不比、人工確認；其他是高於執行價；缺價格的無法計算。
+- 核對條件不是完成（同比價只比完成的）、缺 KI 型態、有 KI 卻沒有下限價、缺價格的商品無法計算；MKI 不比、人工確認。
+- 其他看最差標的（收盤價 ÷ 進場價最低）：收盤價 < 執行價，且沒有 KI、收盤價 < 下限價或比價已記 AKI 觸及 → 會接股；
+  < 執行價但還在下限價之上（EKI 或還沒觸及的 AKI）→ KI 未破下限（觀察）；其他是高於執行價。
 - 金額照交易明細逐筆（分公司、理專、金額），沒有交易明細的用庫存的分公司配置（理專寫 `-`）。
-  估損 = 金額 ×（1 − 最差標的收盤價 ÷ 執行價），不含已領配息；USD 以收盤價表最新的匯率換算，查不到匯率的留空。
+  估損 = 金額 ×（1 − 最差標的收盤價 ÷ 執行價），不含已領配息；USD 以收盤價表最新的匯率換算；查不到匯率的 USD 欄空白、不算進 USD 合計。
 - 只讀資料庫，不改任何資料。
 
 `assess` 只判斷一檔、不碰資料庫；`load_choices`、`load_positions` 讀資料庫；`export_exposure` 寫 Excel。
@@ -17,7 +18,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections import defaultdict
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
@@ -26,15 +27,16 @@ from typing import TYPE_CHECKING
 from openpyxl.utils import get_column_letter
 
 from sp_workflow.check_terms import NO_BARRIER
-from sp_workflow.file_tools import MAX_WIDTH, excel_value, save_export, table_book, text_cell
+from sp_workflow.file_tools import excel_value, save_export, table_book, text_cell
 from sp_workflow.lifecycle import IN_STOCK, lifecycle_status
+from sp_workflow.status import CheckTerms
 from sp_workflow.stock_splits import SplitBook, load_splits
 
 if TYPE_CHECKING:
     import psycopg
 
 DELIVER = "會接股"
-WATCH = "EKI 未破下限"
+WATCH = "KI 未破下限"
 MANUAL = "MKI 人工確認"
 SAFE = "高於執行價"
 UNKNOWN = "無法計算"
@@ -78,6 +80,8 @@ class Leg:
 
 @dataclass(frozen=True)
 class Holding:
+    """一筆交易明細（沒有交易明細時是一筆分公司配置）。"""
+
     branch: str
     fc: str
     amount: Decimal
@@ -94,6 +98,8 @@ class Position:
     final_date: dt.date | None
     barrier_type: str | None
     ki_text: str  # 比價狀態的 KI 欄
+    terms_status: str | None  # 核對條件狀態；還沒算過是 None
+    terms_reason: str | None
     legs: tuple[Leg, ...]
     holdings: tuple[Holding, ...]
     usd_rate: Decimal | None  # 1 單位幣別換幾 USD
@@ -101,6 +107,8 @@ class Position:
 
 @dataclass(frozen=True)
 class Assessed:
+    """一檔的分類、最差標的與估損比例。"""
+
     position: Position
     category: str
     worst: Leg | None
@@ -114,25 +122,42 @@ class Assessed:
 
 def assess(position: Position) -> Assessed:
     """依最差標的判斷一檔的分類與估損比例（見 module 說明）。"""
-    if not position.legs:
-        return Assessed(position, UNKNOWN, None, Decimal(0), "沒有標的價格（核對條件沒完成）")
-    missing = [leg.code for leg in position.legs if leg.performance is None or leg.strike is None]
-    if missing:
-        return Assessed(position, UNKNOWN, None, Decimal(0), f"缺進場價、執行價或收盤價：{'、'.join(missing)}")
-    worst = min(position.legs, key=lambda leg: (leg.performance, leg.seq))
-    assert worst.close is not None and worst.strike is not None
+
+    def unknown(reason: str) -> Assessed:
+        return Assessed(position, UNKNOWN, None, Decimal(0), reason)
+
+    if position.terms_status != CheckTerms.DONE:
+        status = position.terms_status or "還沒算"
+        return unknown(f"核對條件{status}" + (f"：{position.terms_reason}" if position.terms_reason else ""))
+    priced = all(leg.performance is not None and leg.strike is not None for leg in position.legs)
+    worst = min(position.legs, key=lambda leg: (leg.performance, leg.seq)) if position.legs and priced else None
     if position.barrier_type == MKI:
         return Assessed(position, MANUAL, worst, Decimal(0), "MKI 每期觀察，系統不比，請人工確認")
-    if worst.close >= worst.strike:
+    if position.barrier_type is None:
+        return unknown("沒有 KI 型態")
+    if worst is None:
+        missing = [leg.code for leg in position.legs if leg.performance is None or leg.strike is None]
+        return unknown(f"缺進場價、執行價或收盤價：{'、'.join(missing)}" if missing else "沒有標的價格")
+    if position.barrier_type != NO_BARRIER and worst.ki is None:
+        return unknown(f"{position.barrier_type} 沒有下限價：{worst.code}")
+    shortfall = _shortfall(worst)
+    if shortfall <= 0:
         return Assessed(position, SAFE, worst, Decimal(0))
+    assert worst.close is not None
     knocked = (
-        position.barrier_type in (None, NO_BARRIER)
+        position.barrier_type == NO_BARRIER
         or (worst.ki is not None and worst.close < worst.ki)
         or position.ki_text.startswith(AKI_HIT)
     )
     if not knocked:
         return Assessed(position, WATCH, worst, Decimal(0), "低於執行價，但還在下限價之上")
-    return Assessed(position, DELIVER, worst, 1 - worst.close / worst.strike)
+    return Assessed(position, DELIVER, worst, shortfall)
+
+
+def _shortfall(leg: Leg) -> Decimal:
+    """1 − 收盤價 ÷ 執行價：接股時估損占面額的比例；收盤價不低於執行價時 ≤ 0。"""
+    assert leg.close is not None and leg.strike is not None
+    return 1 - leg.close / leg.strike
 
 
 # ---------------------------------------------------------------- 讀資料庫
@@ -158,7 +183,8 @@ def load_positions(conn: psycopg.Connection, codes: Iterable[str], until: dt.dat
     wanted = sorted(set(codes))
     rows = conn.execute(
         "SELECT p.tdcc, p.product, p.issuer, p.currency, p.final_valuation_date, p.barrier_type, p.strike_date,"
-        " s.ki FROM workflow.product p LEFT JOIN workflow.pricing_status s ON s.tdcc = p.tdcc"
+        " s.ki, c.status, c.reason FROM workflow.product p"
+        " LEFT JOIN workflow.pricing_status s ON s.tdcc = p.tdcc LEFT JOIN workflow.check_terms c ON c.tdcc = p.tdcc"
         f" WHERE p.final_valuation_date <= %s AND ARRAY[{_UNDERLYING_COLUMNS}] && %s::text[]"
         " ORDER BY p.final_valuation_date, p.tdcc",
         (until, wanted),
@@ -180,7 +206,7 @@ def load_positions(conn: psycopg.Connection, codes: Iterable[str], until: dt.dat
     rates = {ccy: _usd_rate(ccy, fx) for ccy in currencies}
     book = SplitBook(load_splits(conn))
     positions = []
-    for tdcc, product, issuer, currency, final, barrier, strike_date, ki_text in rows:
+    for tdcc, product, issuer, currency, final, barrier, strike_date, ki_text, terms_status, terms_reason in rows:
         legs = []
         for seq, code, initial, strike, ki, basis in prices.get(tdcc, ()):
             day, close = latest.get(code, (None, None))
@@ -197,6 +223,8 @@ def load_positions(conn: psycopg.Connection, codes: Iterable[str], until: dt.dat
                 final,
                 barrier,
                 ki_text or "",
+                terms_status,
+                terms_reason,
                 tuple(legs),
                 tuple(holdings.get(tdcc, ())),
                 rates[currency],
@@ -276,8 +304,8 @@ def export_exposure(
     book = table_book(OVERVIEW, ("項目", "值"), _overview(codes, chosen, until, today or dt.date.today(), results))
     _style(book.active, widths=(26, 60))
     for title, headers, rows, widths in (
-        (BY_BRANCH, BRANCH_HEADERS, _rollup(results, lambda h: h.branch, lambda h: h.fc), BRANCH_WIDTHS),
-        (BY_FC, FC_HEADERS, _rollup(results, lambda h: h.fc, lambda h: h.branch), BRANCH_WIDTHS),
+        (BY_BRANCH, BRANCH_HEADERS, _rollup(results, lambda h: h.branch, lambda h: h.fc), ROLLUP_WIDTHS),
+        (BY_FC, FC_HEADERS, _rollup(results, lambda h: h.fc, lambda h: h.branch), ROLLUP_WIDTHS),
         (DETAIL, DETAIL_HEADERS, _detail(results, set(codes)), DETAIL_WIDTHS),
         (ALL, ALL_HEADERS, [_all_row(r, set(codes)) for r in results], ALL_WIDTHS),
     ):
@@ -310,7 +338,7 @@ _ROLLUP = (
 )
 BRANCH_HEADERS = ("分公司", *_ROLLUP, "理專")
 FC_HEADERS = ("理專", *_ROLLUP, "服務的分公司")
-BRANCH_WIDTHS = (12, 12, 18, 14, 10, 16, 18, 10, 10, 16, 40)
+ROLLUP_WIDTHS = (12, 12, 18, 14, 10, 16, 18, 10, 10, 16, 40)
 DETAIL_HEADERS = (
     "最終比價日",
     "分類",
@@ -373,6 +401,7 @@ def _overview(
         rows.append((category, f"{len(sel)} 檔，面額 USD {amount:,.0f}，估損 USD {loss:,.0f}{note}"))
     rows.append(("說明", "會接股：最差標的收盤價 < 執行價，且沒有 KI、收盤價 < 下限價或已觸及 AKI。"))
     rows.append(("", "估損 = 金額 ×（1 − 最差標的收盤價 ÷ 執行價），不含已領配息；USD 以收盤價表最新匯率換算。"))
+    rows.append(("", "查不到匯率的幣別，USD 欄空白、不算進各表的 USD 合計。觀察帳面估損是假設接股時的估損，供參考。"))
     return rows
 
 
@@ -394,8 +423,10 @@ def _usd_sum(results: Iterable[Assessed]) -> tuple[Decimal, Decimal, bool]:
     return amount, loss, partial
 
 
-def _rollup(results: Sequence[Assessed], key, other) -> list[tuple[object, ...]]:
-    """依分公司或理專加總（一檔分給同一個人好幾筆時只算一檔），依估損排序。"""
+def _rollup(
+    results: Sequence[Assessed], key: Callable[[Holding], str], other: Callable[[Holding], str]
+) -> list[tuple[object, ...]]:
+    """依 `key`（分公司或理專）加總、`other` 是最後一欄列出的另一邊；一檔分給同一個人好幾筆時只算一檔，依估損排序。"""
     groups: dict[str, dict] = defaultdict(
         lambda: {"tdccs": defaultdict(set), "usd": defaultdict(Decimal), "other": set()}
     )
@@ -414,8 +445,7 @@ def _rollup(results: Sequence[Assessed], key, other) -> list[tuple[object, ...]]
             if r.category == DELIVER:
                 g["usd"]["loss"] += usd * r.loss_ratio
             if r.category == WATCH and r.worst is not None:
-                assert r.worst.close is not None and r.worst.strike is not None
-                g["usd"]["watch_loss"] += usd * (1 - r.worst.close / r.worst.strike)
+                g["usd"]["watch_loss"] += usd * _shortfall(r.worst)
     rows = []
     for name, g in groups.items():
         n, usd = g["tdccs"], g["usd"]
@@ -476,7 +506,7 @@ def _all_row(r: Assessed, chosen: Collection[str]) -> tuple[object, ...]:
     p, w = r.position, r.worst
     legs = " / ".join(f"{leg.code} {'-' if leg.performance is None else f'{leg.performance:+.1%}'}" for leg in p.legs)
     loss = r.notional * r.loss_ratio
-    row = (
+    return (
         p.final_date,
         r.category,
         p.tdcc,
@@ -494,7 +524,6 @@ def _all_row(r: Assessed, chosen: Collection[str]) -> tuple[object, ...]:
         legs,
         r.reason,
     )
-    return row
 
 
 def _worst_chosen(worst: Leg | None, chosen: Collection[str]) -> str | None:
@@ -507,6 +536,7 @@ def _pct(value: Decimal | None) -> str | None:
 
 
 MONEY_WORDS = ("面額", "金額", "估損")  # 表頭有這些字的欄是金額，顯示到整數、千分位
+WIDEST = 60  # 欄寬上限（說明、各標的表現較長）
 
 
 def _style(sheet, *, widths: Sequence[float]) -> None:
@@ -519,4 +549,4 @@ def _style(sheet, *, widths: Sequence[float]) -> None:
             elif cell.column in money and isinstance(cell.value, int | float | Decimal):
                 cell.number_format = "#,##0"
     for i, width in enumerate(widths, start=1):
-        sheet.column_dimensions[get_column_letter(i)].width = min(width, MAX_WIDTH + 20)
+        sheet.column_dimensions[get_column_letter(i)].width = min(width, WIDEST)

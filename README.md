@@ -275,8 +275,8 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 
 - 範圍：存續狀態在庫、連結任一選定標的、最終比價日不晚於截止日的商品，FCN、FCN_Express、Super Bull 都算；已過最終比價日還在庫的（例：等股價）一併列入。
 - 價格：每個標的用收盤價表最新的一筆，依拆股登記換回價格基準（同比價），不做假設價格。
-- 分類看最差標的（收盤價 ÷ 進場價最低）：收盤價 < 執行價，且沒有 KI、收盤價 < 下限價或比價已記 AKI 觸及 →「會接股」；低於執行價但還在下限價之上 →「EKI 未破下限」（觀察）；MKI 系統不比 →「MKI 人工確認」；其他「高於執行價」；缺價格的「無法計算」。
-- 金額照交易明細逐筆（分公司、理專、金額），沒有交易明細的用庫存的分公司配置（理專寫 `-`）。估損 = 金額 ×（1 − 最差標的收盤價 ÷ 執行價），不含已領配息；USD 以收盤價表最新的匯率換算，查不到匯率的不算進 USD 合計。
+- 核對條件不是完成（同比價）、缺 KI 型態、有 KI 卻沒有下限價、缺價格的「無法計算」；MKI 系統不比 →「MKI 人工確認」。其他看最差標的（收盤價 ÷ 進場價最低）：收盤價 < 執行價，且沒有 KI、收盤價 < 下限價或比價已記 AKI 觸及 →「會接股」；低於執行價但還在下限價之上（EKI，或還沒觸及的 AKI）→「KI 未破下限」（觀察，另列假設接股時的帳面估損供參考）；其他「高於執行價」。
+- 金額照交易明細逐筆（分公司、理專、金額），沒有交易明細的用庫存的分公司配置（理專寫 `-`）。估損 = 金額 ×（1 − 最差標的收盤價 ÷ 執行價），不含已領配息；USD 以收盤價表最新的匯率換算，查不到匯率的 USD 欄空白、不算進各表的 USD 合計。
 - Excel 分頁：「總覽」（選定標的與收盤日、截止日、各分類檔數／面額／估損）、「依分公司」、「依理專」（同一理專跨分公司合併，列出服務的分公司；一檔分給同一人好幾筆只算一檔）、「通知明細」（會接股、觀察、MKI 的每筆交易，依最終比價日排序，標出最差標的是不是選定的標的）、「全部商品」（一檔一列，含各標的表現）。
 
 測試（資料全部虛構；真實資料只在本機）：
@@ -562,8 +562,8 @@ When a stock drops sharply ([#345](https://github.com/TaylorYam/structured-produ
 
 - Scope: products on book that link any chosen underlying and whose final valuation date is on or before the cutoff, whether FCN, FCN_Express, or Super Bull; products past their final valuation date but still on book (for example 等股價) are included.
 - Prices: each underlying uses its latest close in the close table, brought to the price basis through the split registry (as observation does); there are no hypothetical prices.
-- Categories follow the worst performer (lowest close ÷ initial): close below strike with no KI, close below the KI barrier, or an AKI touch already recorded by observation → 「會接股」 (delivers shares); below strike but above the barrier → 「EKI 未破下限」 (watch); MKI is not observed → 「MKI 人工確認」; otherwise 「高於執行價」; missing prices → 「無法計算」.
-- Amounts follow each trade row (branch, FC, amount); products without trade rows use the inventory's branch allocation (FC `-`). Estimated loss = amount × (1 − worst close ÷ strike), excluding coupons already paid; USD uses the latest FX close in the close table, and currencies without a rate are left out of the USD totals.
+- Products whose check terms are not 完成 (as in observation), with no barrier type, with a barrier but no KI price, or with missing prices are 「無法計算」; MKI is not observed → 「MKI 人工確認」. The rest follow the worst performer (lowest close ÷ initial): close below strike with no KI, close below the KI barrier, or an AKI touch already recorded by observation → 「會接股」 (delivers shares); below strike but above the barrier (EKI, or AKI not yet touched) → 「KI 未破下限」 (watch, with the book loss if it did deliver shown for reference); otherwise 「高於執行價」.
+- Amounts follow each trade row (branch, FC, amount); products without trade rows use the inventory's branch allocation (FC `-`). Estimated loss = amount × (1 − worst close ÷ strike), excluding coupons already paid; USD uses the latest FX close in the close table, and currencies without a rate get blank USD cells and are left out of every USD total.
 - Excel sheets: 「總覽」 (chosen underlyings with close dates, cutoff, count / notional / loss per category), 「依分公司」 (by branch), 「依理專」 (by FC, merged across branches and listing them; a product split into several rows for one person counts once), 「通知明細」 (every trade row of 會接股, watch, and MKI products, by final valuation date, marking whether the worst performer is a chosen underlying), and 「全部商品」 (one row per product with every underlying's performance).
 
 Tests (synthetic data only; real data stays local):

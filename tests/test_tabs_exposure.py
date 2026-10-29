@@ -90,7 +90,7 @@ def test_export_asks_for_a_file_and_runs_the_analysis(opened, monkeypatch, tmp_p
 
     assert calls == [(["AAA UQ", "AAA UW"], dt.date(2030, 4, 4), target)]
     assert asked[0]["initialfile"].startswith("標的曝險分析_AAA_")
-    assert exposure.status_var.get() == f"已匯出 4 檔（會接股 3、EKI 未破下限 1）：{target}"
+    assert exposure.status_var.get() == f"已匯出 4 檔（會接股 3、KI 未破下限 1）：{target}"
     assert exposure.memory.load()[screen.MEMORY_KEY] == str(target.parent), "記住存檔的資料夾"
 
 

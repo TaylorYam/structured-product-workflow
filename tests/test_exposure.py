@@ -33,12 +33,14 @@ UNTIL = dt.date(2026, 11, 30)
 
 
 def leg(seq: int, code: str, close: str | None, *, initial: str = "100", strike: str = "80", ki: str | None = "65"):
-    return Leg(seq, code, D(initial), D(strike), None if ki is None else D(ki), None if close is None else D(close), DAY)
+    return Leg(
+        seq, code, D(initial), D(strike), None if ki is None else D(ki), None if close is None else D(close), DAY
+    )
 
 
-def position(barrier: str, *legs: Leg, ki_text: str = "") -> Position:
+def position(barrier: str | None, *legs: Leg, ki_text: str = "", terms: str | None = "完成") -> Position:
     holdings = (Holding("台北", "Amy", D(100000)),)
-    return Position("147199990001", "FCN", "XBANK", "USD", UNTIL, barrier, ki_text, legs, holdings, D(1))
+    return Position("147199990001", "FCN", "XBANK", "USD", UNTIL, barrier, ki_text, terms, None, legs, holdings, D(1))
 
 
 @pytest.mark.parametrize(
@@ -74,6 +76,23 @@ def test_missing_prices_cannot_be_assessed() -> None:
     assert (missing.category, missing.reason) == (UNKNOWN, "缺進場價、執行價或收盤價：AAA UW")
 
 
+@pytest.mark.parametrize(
+    ("p", "reason"),
+    [
+        (position("NONE", leg(1, "AAA UW", "60"), terms="待確認"), "核對條件待確認"),  # 價格算得出來也不分類
+        (position("NONE", leg(1, "AAA UW", "60"), terms=None), "核對條件還沒算"),
+        (position(None, leg(1, "AAA UW", "60")), "沒有 KI 型態"),
+        (position("EKI", leg(1, "AAA UW", "60", ki=None)), "EKI 沒有下限價：AAA UW"),
+    ],
+)
+def test_incomplete_terms_cannot_be_assessed(p: Position, reason: str) -> None:
+    assert (assess(p).category, assess(p).reason) == (UNKNOWN, reason)
+
+
+def test_mki_is_listed_for_manual_review_even_without_prices() -> None:
+    assert assess(position("MKI", leg(1, "AAA UW", None))).category == MANUAL
+
+
 def test_one_month_later_clips_to_the_month_end() -> None:
     assert one_month_later(dt.date(2026, 10, 29)) == dt.date(2026, 11, 29)
     assert one_month_later(dt.date(2027, 1, 31)) == dt.date(2027, 2, 28)
@@ -87,7 +106,7 @@ def test_default_name_lists_the_tickers() -> None:
 
 # ---------------------------------------------------------------- 資料庫
 
-A, B, C, LATE, GONE, OTHER = (f"14719999000{n}" for n in range(1, 7))
+A, B, C, LATE, GONE, OTHER, PENDING = (f"14719999000{n}" for n in range(1, 8))
 
 
 def seed(pg, tdcc: str, codes: list[str], *, barrier: str = "NONE", final=dt.date(2026, 11, 20), currency="USD"):
@@ -149,6 +168,8 @@ def seeded(pg):
     seed(pg, GONE, ["AAA UW", "BBB UN"])  # 已出場
     replace_auto_events(pg, GONE, [AutoEvent(KO, dt.date(2026, 10, 1))], user="tester")
     seed(pg, OTHER, ["BBB UN", "CCC UN"])  # 沒有連結 AAA
+    seed(pg, PENDING, ["AAA UW", "BBB UN"])  # 核對條件待確認：價格有，但不分類
+    pg.execute("UPDATE workflow.check_terms SET status = '待確認', reason = '幣別不同' WHERE tdcc = %s", (PENDING,))
     closes(pg, {"AAA UW": "72", "BBB UN": "95", "CCC UN": "110", "DDD JT": "60", "USDJPY": "150"})
     return pg
 
@@ -158,7 +179,7 @@ def test_choices_list_codes_linked_by_products_on_book(seeded) -> None:
     choices = {c.code: c for c in load_choices(seeded)}
 
     assert sorted(choices) == ["AAA UW", "BBB UN", "CCC UN", "DDD JT"]
-    assert choices["AAA UW"].products == 4, "已出場的不算"
+    assert choices["AAA UW"].products == 5, "已出場的不算"
     assert (choices["AAA UW"].close_date, choices["AAA UW"].close) == (DAY, D(72))
 
 
@@ -168,8 +189,8 @@ def test_export_sums_by_branch_and_by_fc(seeded, tmp_path: Path) -> None:
 
     receipt = export_exposure(seeded, ["AAA UW"], UNTIL, path, today=DAY)
 
-    assert receipt.count == 3, "截止日之後、已出場、沒連結的不列"
-    assert (receipt.counts[DELIVER], receipt.counts[WATCH]) == (2, 1)
+    assert receipt.count == 4, "截止日之後、已出場、沒連結的不列"
+    assert (receipt.counts[DELIVER], receipt.counts[WATCH], receipt.counts[UNKNOWN]) == (2, 1, 1)
     assert openpyxl.load_workbook(path).sheetnames == ["總覽", "依分公司", "依理專", "通知明細", "全部商品"]
 
     fcs = {row["理專"]: row for row in sheet_rows(path, "依理專")}
@@ -197,6 +218,7 @@ def test_export_sums_by_branch_and_by_fc(seeded, tmp_path: Path) -> None:
 
     every = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}
     assert every[A]["各標的表現"] == "AAA UW -28.0% / BBB UN -5.0%"
+    assert (every[PENDING]["分類"], every[PENDING]["說明"]) == (UNKNOWN, "核對條件待確認：幣別不同")
     overview = dict(openpyxl.load_workbook(path)["總覽"].iter_rows(min_row=2, values_only=True))
     assert overview["選定標的 AAA UW"] == "最新收盤 72（2026-10-28）"
     assert overview[DELIVER].startswith("2 檔，面額 USD 246,667")
