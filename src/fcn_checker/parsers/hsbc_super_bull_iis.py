@@ -15,7 +15,7 @@ from .layout import TextIndex
 
 TEMPLATE_ID = "hsbc-zh-sb-iis"
 PARSER_VERSION = "1"
-OLD_VERSION = "HSBC Super Bull 投資人須知的寫法和現行版不同，不支援自動核對"
+OLD_VERSION = "HSBC Super Bull 投資人須知的寫法和現行版不同"
 NO_COUPON = "第二收益分配事項：請見產品說明書第一章第11項之說明。"
 
 

@@ -8,6 +8,7 @@
   「<項目>對不起來：說明書 <值>／投資人須知 <值>」（ADR 0007）。
 - 其他（含由參考條件表推算的值）：「<項目>：<規則的中文說明>」，有雙方值時附上「（參考條件表／審查標準／預期 <值>／說明書 <值>）」；
   不比對值的項目（配對、範本、讀檔、寫檔、參考條件表表頭）只寫說明。
+- 不支援樣態與不支援的範本版本：「目前樣態不支援自動核對：<說明>」（Issue #340）。
 - 規則沒寫說明時，依原因與狀態給中文預設。
 
 核對結果檔「錯誤清單」的錯訊與 PANEL 結果明細都用 `problem_message`；錯誤清單另用 `problems` 帶每句錯訊的證據頁碼（Issue #342）。
@@ -58,6 +59,10 @@ STATUS_DEFAULT = {
     CheckStatus.ERROR: "執行錯誤",
 }
 MAX_VALUE = 80  # 值太長（例：整段固定警語）只顯示前段，完整值見核對紀錄
+# 不支援樣態（identification.PairingProblem.UNSUPPORTED_VARIANT）與不支援的範本版本（TEMPLATE_UNSUPPORTED）的原因碼：
+# 錯訊以 UNSUPPORTED_HEAD 開頭，一看就知道要人工核對（Issue #340）
+UNSUPPORTED_REASONS = frozenset({"variant_unsupported", "template_unsupported"})
+UNSUPPORTED_HEAD = "目前樣態不支援自動核對"
 
 
 def show(v: Any) -> str:
@@ -111,6 +116,8 @@ def problem_message(r: CheckResult) -> str:
             )
         return f"{where}對不起來：{other} {show(r.expected)}／{document} {show(r.actual)}"
     detail = _detail(r)
+    if r.reason_code in UNSUPPORTED_REASONS:
+        return f"{UNSUPPORTED_HEAD}：{detail}"
     has_both = r.expected is not None and r.actual is not None
     values = ""
     if has_both and _shows_values(r, detail):
