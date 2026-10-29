@@ -103,6 +103,7 @@ def test_products_past_the_final_valuation_are_fixed() -> None:
 
     fixed = assess(p, UNTIL + dt.timedelta(days=1))
     assert (fixed.category, fixed.buffer_group) == (FIXED, FIXED), "不用最新收盤價判斷會不會接股"
+    assert (fixed.buffer_basis, fixed.buffer) == (None, None), "緩衝也不用最新收盤價算"
     assert fixed.worst is not None and fixed.worst.code == "AAA UW"
     assert assess(p, UNTIL).category == DELIVER, "最終比價日當天還用最新收盤價判斷"
 

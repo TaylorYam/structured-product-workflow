@@ -63,8 +63,8 @@ UNKNOWN = "無法計算"
 FIXED = "已比價"  # 最終比價日早於分析日、還在庫（#352）
 CATEGORIES = (DELIVER, WATCH, NEAR, MANUAL, SAFE, FIXED, UNKNOWN)
 NOTIFY = (DELIVER, WATCH, NEAR, MANUAL)  # 通知明細列的分類
-NEAR_BUFFER = Decimal("0.10")  # 還在執行價之上、距執行價不超過這個比例的是接近執行價（#347）
-TIGHT_BUFFER = Decimal("0.03")
+NEAR_BUFFER = Decimal("0.10")  # 接近執行價的門檻（距執行價，#347），也是緩衝分組 3–10% 的上限（#352）
+TIGHT_BUFFER = Decimal("0.03")  # 緩衝分組 <3% 的上限
 CROSSED = "已跌破"  # 最差標的已低於觸發價（下限價或執行價）
 BUFFER_GROUPS = (CROSSED, "<3%", "3–10%", ">10%", FIXED)
 KI_BASIS = "下限價"
@@ -170,15 +170,15 @@ class Assessed:
 
     @property
     def buffer_basis(self) -> str | None:
-        """緩衝看哪個價格（#352）：還有下限價要看的是下限價，其他是執行價；算不出最差標的時 None。"""
-        if self.worst is None:
+        """緩衝看哪個價格（#352）：還有下限價要看的是下限價，其他是執行價；已比價或算不出最差標的時 None。"""
+        if self.worst is None or self.category == FIXED:  # 已比價的不用最新收盤價判斷
             return None
         return KI_BASIS if self.position.watches_ki and self.worst.ki is not None else STRIKE_BASIS
 
     @property
     def buffer(self) -> Decimal | None:
-        """最差標的距 `buffer_basis`：收盤價 ÷ 下限價或執行價 − 1，負的是已跌破。"""
-        if self.worst is None:
+        """最差標的距 `buffer_basis`：收盤價 ÷ 下限價或執行價 − 1，負的是已跌破；沒有 `buffer_basis` 時 None。"""
+        if self.worst is None or self.buffer_basis is None:
             return None
         return self.worst.to_ki if self.buffer_basis == KI_BASIS else self.worst.to_strike
 
