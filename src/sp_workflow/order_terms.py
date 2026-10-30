@@ -42,6 +42,7 @@ from sp_workflow.product_record import (
     CHOICES,
     FIELDS,
     KINDS,
+    LOOKBACK_FIELD,
     MATURITY_ONLY_TERMS,
     OPEN,
     PARTICIPATION_FIELD,
@@ -65,7 +66,9 @@ NOT_FOUND = OrderReview.NOT_FOUND
 TDCC_FIELD = "TDCC"
 NEXT_OPEN = "明日開盤價"  # 交易日隔一個營業日的開盤價（#101）
 
-SHEET_FIELDS = tuple(name for name in FIELDS if name not in (STRIKE_FIELD, PARTICIPATION_FIELD))  # 起單建檔上有的欄
+SHEET_FIELDS = tuple(
+    name for name in FIELDS if name not in (STRIKE_FIELD, PARTICIPATION_FIELD, LOOKBACK_FIELD)
+)  # 起單建檔上有的欄
 # 起單建檔的表頭（不分大小寫）→ 欄位；UF (%) 是 2026 年起的表頭
 _HEADERS = {name.casefold(): name for name in (TDCC_FIELD, *SHEET_FIELDS)} | {"uf (%)": UPFRONT_FIELD}
 _HEADER_ROWS = 5  # 表頭在前幾列找
@@ -210,6 +213,7 @@ def _row_for(
             unresolved.add(STRIKE_FIELD)
             notes[STRIKE_FIELD] = note
     values[PARTICIPATION_FIELD] = None  # 起單建檔沒有這欄；BEN 的預設值在 `product_terms.draft_from` 帶
+    values[LOOKBACK_FIELD] = None  # 起單建檔沒有這欄；資料庫已有的值由 `product_terms.draft_from` 帶
     rule = PRODUCT_RULES.get(product_name(values.get("Product")) or "")
     if rule is not None and rule.maturity_only:
         _maturity_only(values, notes, conflicts)

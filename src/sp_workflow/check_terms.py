@@ -133,6 +133,7 @@ class UnderlyingPrice:
     strike: Decimal | None = None  # 執行價
     ki: Decimal | None = None  # 下限價
     ko: Decimal | None = None  # KO 價
+    lookback: Decimal | None = None  # 回顧期初價格（#374）：比價在回顧期間結束後寫入，有值時執行價由它算
 
 
 @dataclass(frozen=True)
@@ -509,6 +510,8 @@ def _recalculate(
         old = stored.get(product.tdcc)
         if vwap_from is not None and _pricing(product.initial_pricing) == VWAP:
             calc = _keep_vwap(calc, product, vwap_from, () if old is None else old.prices)
+        if old is not None:
+            calc = _keep_lookback(calc, product, old.prices)
         changed = not _same(calc, old)
         if changed:
             _write(conn, product.tdcc, calc)
@@ -545,6 +548,23 @@ def _keep_vwap(
     problem = f"更正後 {'、'.join(blank)} 沒有 TS 回填的價格"  # 價格空白，不能算完成
     reason = "；".join(filter(None, (problem, calc.reason)))
     return replace(calc, status=TO_CONFIRM, prices=tuple(prices), reason=reason)
+
+
+def _keep_lookback(calc: Calculation, product: ProductTerms, old: Sequence[UnderlyingPrice]) -> Calculation:
+    """比價寫過回顧期初價格的標的（#374，同一位置同一標的）保留它，執行價 = 回顧期初價格 × 執行價(%)；
+    其他價格照算。標的改了的不保留，回顧結束日還在時由下一次比價重算。"""
+    kept = {p.seq: p for p in old if p.lookback is not None}
+    if not kept or product.strike_pct is None:
+        return calc
+    prices = []
+    for price in calc.prices:
+        was = kept.get(price.seq)
+        if was is None or was.code != price.code:
+            prices.append(price)
+            continue
+        strike = _round(was.lookback * product.strike_pct / _HUNDRED)  # type: ignore[operator]
+        prices.append(replace(price, strike=strike, lookback=was.lookback))
+    return replace(calc, prices=tuple(prices))
 
 
 def _kept_or_derived(
@@ -652,8 +672,8 @@ def _stored(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, Calcula
     """上一次算的結果（分公司配置是資料庫目前的）。"""
     prices: dict[str, list[UnderlyingPrice]] = {}
     for tdcc, *values in conn.execute(
-        "SELECT tdcc, seq, code, initial_price, strike_price, ki_price, ko_price FROM workflow.underlying_price"
-        " WHERE tdcc = ANY(%s) ORDER BY tdcc, seq",
+        "SELECT tdcc, seq, code, initial_price, strike_price, ki_price, ko_price, lookback_price"
+        " FROM workflow.underlying_price WHERE tdcc = ANY(%s) ORDER BY tdcc, seq",
         (list(tdccs),),
     ):
         prices.setdefault(tdcc, []).append(UnderlyingPrice(*values))
@@ -706,9 +726,10 @@ def _write(conn: psycopg.Connection, tdcc: str, calc: Calculation) -> None:
     conn.execute("DELETE FROM workflow.underlying_price WHERE tdcc = %s", (tdcc,))
     with conn.cursor() as cur:
         cur.executemany(
-            "INSERT INTO workflow.underlying_price (tdcc, seq, code, initial_price, strike_price, ki_price, ko_price)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            [(tdcc, p.seq, p.code, p.initial, p.strike, p.ki, p.ko) for p in calc.prices],
+            "INSERT INTO workflow.underlying_price"
+            " (tdcc, seq, code, initial_price, strike_price, ki_price, ko_price, lookback_price)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            [(tdcc, p.seq, p.code, p.initial, p.strike, p.ki, p.ko, p.lookback) for p in calc.prices],
         )
     if calc.allocation is not None:
         conn.execute("DELETE FROM workflow.branch_allocation WHERE tdcc = %s", (tdcc,))

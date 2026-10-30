@@ -36,6 +36,8 @@ PRICING_FIELD = "期初價格"
 # 參與率（%）：只有 BEN 有（#373、ADR 0029）；起單建檔沒有這欄，起單資料匯入時 BEN 預設 100、Digital 由作業人員改 0
 PARTICIPATION_FIELD = "Participation (%)"
 DEFAULT_PARTICIPATION = 100
+# 回顧結束日：只有 lookback 的 BEN 有（#374、ADR 0029）；起單建檔沒有這欄，在人工維護或確認畫面填
+LOOKBACK_FIELD = "Lookback end date"
 
 
 class FieldKind(Enum):
@@ -79,6 +81,7 @@ KINDS: dict[str, FieldKind] = {
     "Final valuation date": FieldKind.DATE,
     "Maturity date": FieldKind.DATE,
     PRICING_FIELD: FieldKind.CHOICE,
+    LOOKBACK_FIELD: FieldKind.DATE,
 }
 FIELDS = tuple(KINDS)
 # 必填欄：起單資料匯入時空白就擋下（#86）。資料庫的商品條件可以先存一部分（#114、ADR 0016），
@@ -110,6 +113,7 @@ PRODUCT_COLUMNS = (
     "initial_pricing", "non_call_months", "underlying_1", "underlying_2", "underlying_3", "underlying_4",
     "underlying_5", "strike_pct", "ko_freq", "ko_memory", "ko_type", "ko_pct", "coupon_pct", "upfront_pct",
     "tenor_months", "ki_freq", "barrier_type", "ki_pct", "denomination", "strike_date", "participation_pct",
+    "lookback_end_date",
 )  # fmt: skip
 # 資料庫 workflow.product 的欄 ↔ 畫面的欄（畫面上的 Upfront / NotePrice = 100 − UF）
 COLUMN_FIELDS = {
@@ -132,6 +136,7 @@ COLUMN_FIELDS = {
     "final_valuation_date": "Final valuation date",
     "maturity_date": "Maturity date",
     "initial_pricing": PRICING_FIELD,
+    "lookback_end_date": LOOKBACK_FIELD,
 }
 # 由 KO Type／Barrier Type 換算的代碼欄、發行機構與面額：沒有對應的畫面欄，說明時用的名稱
 DERIVED_COLUMNS = {
