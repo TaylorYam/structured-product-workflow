@@ -17,7 +17,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from ..orders.reference import UNDERLYING_SLOTS
-from ..products import FCN, PRODUCT_RULES, product_name
+from ..products import BEN, FCN, PRODUCT_RULES, product_name
 from ..schema import CheckResult, DocKind, Evidence, FieldStatus, Item, OrderValue, ParsedField
 from ..schema import CheckStatus as S
 from ..standard_fields import AutocallSchedule, Occurrence
@@ -403,6 +403,22 @@ def ki_type(ctx: Context) -> CheckResult:
     return check.compare(f"{ov.value}（{KI_LABEL[mapped]}）", KI_LABEL[doc], ok=mapped == doc, evidence=pf.evidence)
 
 
+# 參與率（BEN，#375）：數值相等（說明書推得 100／0，表上可能寫 100.00）
+PARTICIPATION = FieldCheck(
+    "field.participation_pct", "participation_pct", "參與率 %", to_decimal, "數字", lambda o, d: (o == d, o), "數值相等"
+)
+
+
+def participation(ctx: Context) -> list[CheckResult]:
+    """參與率(%)：只有 Product 是 BEN 的列才比（其他商品沒有結果）；= 說明書的參與率（HSBC 由到期公式推得）。表上沒有這欄
+    或空白 → 轉人工覆核（舊的 Excel 參考條件表可能沒有這欄；資料庫匯出的 BEN 一定有值，ADR 0029）。"""
+    ov = ctx.order.get("product")
+    text = ov.value if ov is not None else None
+    if not (isinstance(text, str) and product_name(text) == BEN):
+        return []
+    return [PARTICIPATION.check(ctx)]
+
+
 def ki_pct(ctx: Context) -> CheckResult:
     """KI(%)：說明書無 KI（由 KI 型態判定）時表上必須是空值寫法；有 KI 時數值相等。"""
     rid, key, name = "field.ki_pct", "ki_pct", "KI %"
@@ -673,6 +689,7 @@ def field_rules(ctx: Context) -> list[CheckResult]:
         ko_memory(ctx),
         ki_type(ctx),
         ki_pct(ctx),
+        *participation(ctx),
         initial_pricing(ctx),
         *underlying_prices(ctx),
     ]

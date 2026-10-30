@@ -426,7 +426,7 @@ def _assumed_bonus(ti: hsbc.ScenarioIndex, end: int) -> ParsedField:
     return ParsedField.present(name, Decimal(single[1]) if single else m[1], lns)
 
 
-def _fx_currency(art18: list[Line]) -> standard_fields.Occurrence:
+def fx_currency(art18: list[Line]) -> standard_fields.Occurrence:
     """期末匯率兩邊的幣別字：承作幣別的其他出處（共用 `money.amounts` 不收匯率裡的金額）。"""
     ti = hsbc.ScenarioIndex(art18)
     found = [
@@ -548,7 +548,7 @@ def read(lines: Sequence[Line]) -> HsbcSuperBullTermSheet:
     # 第 18 條情境；期末匯率的幣別字併入承作幣別的其他出處（field.currency）
     scenarios = _article18(fields, article(18))
     fields["currency_others"] = standard_fields.occurrences(
-        "currency_others", [*fields["currency_others"].value, _fx_currency(article(18))]
+        "currency_others", [*fields["currency_others"].value, fx_currency(article(18))]
     )
     table = fields["ko_table"]
     rows = table.value if table.ok else []

@@ -820,12 +820,14 @@ _NAME_FLAG_SOURCES = (
     ("quanto", "underlying_prices", lambda ctx, v: _quanto(ctx, v), {"quanto_zh", "quanto_en"}, None),
     ("ki", "ki_type", lambda ctx, v: v != "none", {"ki_zh", "ki_en"}, False),
     ("express", "autocall_schedule", lambda ctx, v: v.first_callable == 0, {"express_zh", "express_en"}, None),
+    ("digital", "participation_pct", lambda ctx, v: v == 0, {"payoff_zh", "payoff_en"}, None),
 )
 
 
 def _name_flags(ctx: Context, used: frozenset[str]) -> tuple[dict[str, bool], ParsedField | None]:
     """名稱樣板的 maxi（標的數 ≥ 2；{underlying_*} 也依它選 1 檔或 2 檔以上的寫法）、daily（KO 每日觀察）、
-    autocall（第一個可提前出場期早於到期，即 Non-Call < 天期）、quanto（承作幣別 ≠ 標的報價幣別）、ki（有 KI）旗標；
+    autocall（第一個可提前出場期早於到期，即 Non-Call < 天期）、quanto（承作幣別 ≠ 標的報價幣別）、ki（有 KI）、
+    digital（參與率 0，{payoff_*} 依它選寫法）旗標；
     只讀樣板用到的說明書欄位。不依上手分支。"""
     flags: dict[str, bool] = {}
     for flag, field, test, names, not_applicable in _NAME_FLAG_SOURCES:
@@ -918,6 +920,9 @@ def _product_name(ctx: Context) -> list[CheckResult]:
         if {"ko_observation_zh", "ko_observation_en"} & tpl.placeholders(lang):
             for code in ("zh", "en"):
                 values[f"ko_observation_{code}"] = tpl.ko_observation_text(flags["daily"], code)
+        if "digital" in flags:  # 到期給付寫法（HSBC BEN：參與率 0 是 Digital，#375）
+            for code in ("zh", "en"):
+                values[f"payoff_{code}"] = tpl.payoff_text(flags["digital"], code)
         expected = tpl.template(lang, tenor.value).format(**values)
         if lang == "zh":
             norm = (lambda s: full_brackets(squash(s))) if tpl.normalize_brackets else squash
@@ -945,6 +950,7 @@ def _product_name(ctx: Context) -> list[CheckResult]:
                 + ("、是否為 Quanto" if {"quanto_zh", "quanto_en"} & tpl.placeholders(lang) else "")
                 + ("、有無 KI" if {"ki_zh", "ki_en"} & tpl.placeholders(lang) else "")
                 + ("、有無 Non-Call" if {"express_zh", "express_en"} & tpl.placeholders(lang) else "")
+                + ("、參與率（到期給付型態）" if {"payoff_zh", "payoff_en"} & tpl.placeholders(lang) else "")
                 + "組出",
             )
         )

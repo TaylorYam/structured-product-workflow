@@ -338,9 +338,12 @@ STANDARD_FIELDS: dict[str, str] = {
     "underlying_notes": "tuple[UnderlyingNote, ...]：「連結標的之相關說明」每檔標的的公司介紹（parsers/underlying_notes.py），"
     "依說明書順序",
     "strike_pct": "Decimal：執行價為最初價格的 N%，保留說明書顯示位數",
-    "ko_pct": "Decimal：KO 價為最初價格的 N%，保留說明書顯示位數；說明書沒有 KO 價（Non-Call = 天期）時為 100",
+    "ko_pct": "Decimal：KO 價為最初價格的 N%，保留說明書顯示位數；說明書沒有 KO 價（Non-Call = 天期）時為 100；"
+    "BEN 沒有 KO 時交不適用（KO% 與 KO 價不比，ADR 0029）",
     "ki_pct": "Decimal：下限價為最初價格的 N%，保留說明書顯示位數；無 KI 時不讀",
-    "coupon_pa_pct": "Decimal：年利率 %，保留說明書顯示位數",
+    "coupon_pa_pct": "Decimal：年利率 %，保留說明書顯示位數；BEN 為到期一次付的紅利 %（不年化，ADR 0029）",
+    "participation_pct": "Decimal：參與率 %（BEN；HSBC 由到期公式寫法推得：Maxi 100、Digital 0），只有參考條件表 Product 是 "
+    "BEN 的列才和「參與率(%)」比（`field.participation_pct`）；其他範本不交",
     "tenor_months": "int：天期（月）",
     "trade_date": "date：交易日",
     "issue_date": "date：發行日",

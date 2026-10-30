@@ -7,8 +7,8 @@
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
 # 規則說明見 docs/checker/rules/review-standard.md。
 
-version = 32
-effective_date = 2026-10-28
+version = 33
+effective_date = 2026-10-30
 
 [distributor]
 # 受託或銷售機構審查通過之日期（說明書封面 p1）：歷次日期都保留，由舊到新。
@@ -246,6 +246,22 @@ zh = "香港上海滙豐銀行{tenor}個月{ccy_zh}計價自動提前贖回股�
 en = "SuperBull Notes (Non Guaranteed, Unsecured)"
 memory_zh = ""
 memory_en = ""
+normalize_brackets = true
+ignore_whitespace_en = true
+ignore_prefix_en = true
+
+[issuer.hsbc.product_names.BEN]
+# HSBC BEN 商品名稱（現行版 27 份說明書推得，2026-10-30 規格確認，#375）：Maxi「紅利表現股權連結」／「Bonus Enhanced Notes」，
+# Digital「紅利配息股權連結」／「Reverse Convertible with Digital Coupon Notes」；依說明書推得的參與率選（0 是 Digital）。
+# 參考條件表 Product 是 BEN 時用這個樣板。英文名稱前面多的「Maxi 」不核對（比照 #314）：只比結尾（ignore_prefix_en）。
+zh = "香港上海滙豐銀行{tenor}個月{ccy_zh}計價紅利{payoff_zh}股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）"
+en = "{payoff_en} (Non Guaranteed, Unsecured)"
+memory_zh = ""
+memory_en = ""
+enhanced_zh = "表現"
+enhanced_en = "Bonus Enhanced Notes"
+digital_zh = "配息"
+digital_en = "Reverse Convertible with Digital Coupon Notes"
 normalize_brackets = true
 ignore_whitespace_en = true
 ignore_prefix_en = true

@@ -19,10 +19,11 @@ from .trading_calendar import Market, TradingCalendar
 
 # 商品名稱樣板可用的佔位符：天期、幣別，以及依說明書欄位填入的 memory（記憶式）、maxi（標的數 ≥ 2）、daily（KO 每日觀察）、
 # autocall（Non-Call < 天期，BNP）、quanto（承作幣別 ≠ 標的報價幣別，DBS）、ki（有 KI，DBS、UBS），與 underlying（標的寫法：
-# 1 檔填 single_*、2 檔以上填 basket_*）、ko_observation（KO 觀察方式：每日填 daily_*、每期填 periodic_*，UBS）
+# 1 檔填 single_*、2 檔以上填 basket_*）、ko_observation（KO 觀察方式：每日填 daily_*、每期填 periodic_*，UBS）、
+# payoff（到期給付：參與率 0 填 digital_*、其他填 enhanced_*，HSBC BEN）
 NAME_FLAGS = ("memory", "maxi", "daily", "autocall", "quanto", "ki", "express")
 NAME_PLACEHOLDERS = frozenset(
-    {"tenor", "ccy_zh", "ccy"}
+    {"tenor", "ccy_zh", "ccy", "payoff_zh", "payoff_en"}
     | {f"{f}_{lang}" for f in (*NAME_FLAGS, "underlying", "ko_observation") for lang in ("zh", "en")}
 )
 # 發行機構全名比對時可另外忽略的寫法差異（審查標準 issuer_name_ignore）→ 結果上的說明
@@ -67,6 +68,10 @@ class ProductNameTemplate:
     )
     express_en: str = ""
     ignore_prefix_en: bool = False  # 英文名稱只比結尾：前面多的字不核對（HSBC Super Bull 的「Maxi 」，#314）
+    digital_zh: str = ""  # {payoff_zh}／{payoff_en}：參與率 0（BEN Digital）時填入，其他填 enhanced_*（HSBC BEN，#375）
+    digital_en: str = ""
+    enhanced_zh: str = ""
+    enhanced_en: str = ""
 
     def template(self, lang: str, tenor: int) -> str:
         """樣板（zh／en）；天期 1 個月時英文 `{tenor} Months`／`{tenor}Months` 改成單數 `Month`（只接受單數，Issue #343）。"""
@@ -95,6 +100,10 @@ class ProductNameTemplate:
     def underlying_text(self, basket: bool, lang: str) -> str:
         """{underlying_<lang>} 的標的寫法：2 檔以上用 basket_*，1 檔用 single_*。"""
         return getattr(self, f"{'basket' if basket else 'single'}_{lang}")
+
+    def payoff_text(self, digital: bool, lang: str) -> str:
+        """{payoff_<lang>} 的到期給付寫法：參與率 0 用 digital_*，其他用 enhanced_*。"""
+        return getattr(self, f"{'digital' if digital else 'enhanced'}_{lang}")
 
 
 @dataclass(frozen=True)
@@ -384,6 +393,10 @@ def _product_name(n: dict[str, Any], where: str) -> ProductNameTemplate:
         express_zh=n.get("express_zh", ""),
         express_en=n.get("express_en", ""),
         ignore_prefix_en=bool(n.get("ignore_prefix_en", False)),
+        digital_zh=n.get("digital_zh", ""),
+        digital_en=n.get("digital_en", ""),
+        enhanced_zh=n.get("enhanced_zh", ""),
+        enhanced_en=n.get("enhanced_en", ""),
     )
     if any(not (isinstance(k, str) and isinstance(v, str) and v) for k, v in tpl.ccy_aliases.items()):
         raise _fail(f"審查標準商品名稱樣板 {where}.ccy_aliases 須是 ISO 代碼 → 名稱用代碼的文字表")
@@ -409,6 +422,12 @@ def _product_name(n: dict[str, Any], where: str) -> ProductNameTemplate:
             raise _fail(
                 f"審查標準商品名稱樣板 {where}.{lang} 用了 {{underlying_{lang}}}，"
                 f"但沒有設定 {'、'.join(missing)}（1 檔與 2 檔以上的標的寫法）",
+            )
+        missing = [k for k in (f"digital_{lang}", f"enhanced_{lang}") if not getattr(tpl, k)]
+        if f"payoff_{lang}" in tpl.placeholders(lang) and missing:
+            raise _fail(
+                f"審查標準商品名稱樣板 {where}.{lang} 用了 {{payoff_{lang}}}，"
+                f"但沒有設定 {'、'.join(missing)}（參與率 0 與其他的到期給付寫法）",
             )
     return tpl
 
