@@ -170,7 +170,7 @@ def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
     return [
         *_autocall(cases[0], sc, n, bonus.value, k.value),
         *_best(cases[1], sc, n, tenor.value),
-        *_worse(cases[2], sc, n, tenor.value),
+        *worse(cases[2], sc, n, tenor.value),
     ]
 
 
@@ -256,7 +256,7 @@ def _best(c: super_bull.Scenario, sc, n: Decimal, tenor: int) -> list[CheckResul
     return out
 
 
-def _worse(c: super_bull.Scenario, sc, n: Decimal, tenor: int) -> list[CheckResult]:
+def worse(c: super_bull.Scenario, sc, n: Decimal, tenor: int) -> list[CheckResult]:
     """情境三：假設收盤價 P < 執行價 K；股數 = 面額 ÷ K 無條件去位到 3 位；整數股數、畸零股數；剩餘金額 = 畸零股數 × P；
     報酬率 = (整數股數 × P + 剩餘金額) ÷ 面額 − 1；年化 = 未四捨五入的報酬率 × 12 ÷ 天期。"""
     out = []
