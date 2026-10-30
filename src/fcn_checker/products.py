@@ -1,4 +1,4 @@
-"""支援的商品種類與各自的 Non-Call、比價規則（#302、#304、#310、#373、ADR 0027、0028、0029）。
+"""支援的商品種類與各自的 Non-Call、比價、配息門檻規則（#302、#304、#310、#367、#373、ADR 0027、0028、0029、0030）。
 
 流程（`sp_workflow`：交易明細、起單建檔、人工維護、歷史回補、比價）與核對（說明書推得的 Non-Call 符不符合參考條件表的
 商品種類，`rules/reference.non_call_product`）共用這一份；新增商品時在 `PRODUCT_RULES` 加一筆，訂它自己的規則。
@@ -12,6 +12,7 @@ FCN = "FCN"  # 商品種類（#201）
 FCN_EXPRESS = "FCN_Express"  # 沒有 Non-Call 的每日記憶式 FCN（#302、ADR 0027）
 SUPER_BULL = "Super Bull"  # 沒有配息、每期觀察、到期依最差標的對執行價結算（#310、ADR 0028）
 BEN = "BEN"  # 沒有配息、不會提前出場、沒有 KI，只在到期依最差標的對執行價結算（#373、ADR 0029）
+DACN = "DACN"  # 每日計息：依所有標的 ≥ 配息門檻的天數比例配息，其他和 FCN 相同（#367、ADR 0030）
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,8 @@ class ProductRule:
     # True：只在到期判定（BEN）：不會提前出場（Non-Call = 天期）、KO Type 一律 Period End、沒有 KI，
     # 起單資料匯入不管起單建檔填什麼都套這組；另有參與率（%）（#373、ADR 0029）
     maturity_only: bool = False
+    # True：要有配息門檻（DACN，#367）；起單建檔沒有這欄，匯入時預設帶執行價。False 的商品配息門檻要空白
+    has_coupon_barrier: bool = False
 
     def non_call_problem(self, months: int, tenor: int | None = None) -> str:
         """Guaranteed Periods (m) 不符合這種商品時的說明；符合時空字串。`tenor` 是天期（月），只在到期判定的商品要等於它，
@@ -45,6 +48,7 @@ PRODUCT_RULES = {
         ProductRule(FCN_EXPRESS, has_non_call=False),
         ProductRule(SUPER_BULL, final_date_callable=False),
         ProductRule(BEN, final_date_callable=False, maturity_only=True),
+        ProductRule(DACN, has_coupon_barrier=True),
     )
 }
 _PRODUCT_NAMES = {name.upper(): name for name in PRODUCT_RULES}

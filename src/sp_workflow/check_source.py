@@ -14,6 +14,7 @@
   還沒算過的空白。核對規則拿它當 RR 核對的期望值（待算、空白轉人工覆核）。寫回前一樣比對，核對後重算改了等級也不回填
   （核對時的表沒有風險等級欄（v19 以前產生的）不算改了）。
 - 參與率欄（#373）：`workflow.product.participation_pct`，只有 BEN 有值；核對時的表沒有這欄（v21 以前產生的）不算改了。
+- 配息門檻欄（#367）：DACN 的配息門檻，其他商品寫空值寫法。核對時的表沒有這欄（v22 以前產生的）不算改了。
 - 回填：ISIN、發行日、比價日_1～12（空值寫法存成空白）、期初定價 VWAP 時各標的四個價格；人工放行的說明書
   若單位面額和資料庫不同，改成 TS 的值。每個改變的原值記在 `workflow.backfill_log`。寫入、紀錄與鎖住都經過
   `product_terms.backfill`／`lock_checked`（#203），和商品條件寫入共用同一把鎖（`product_terms.read(…, lock=True)`）。
@@ -67,6 +68,7 @@ CHECKED_FIELDS = ("checked_term_sheet", "checked_iis")
 RISK_FIELD = "risk_level"  # 參考條件表的風險等級（#239；不在匯入格式裡，排在最後）
 PRODUCT_FIELD = "product"  # 參考條件表的商品種類（#302；決定能不能自動核對）
 PARTICIPATION_FIELD = "participation_pct"  # 參考條件表的參與率（#373；只有 BEN 有，不在匯入格式裡，排在風險等級後面）
+COUPON_BARRIER_FIELD = "coupon_barrier_pct"  # 參考條件表的配息門檻（#367；不在匯入格式裡，排在參與率後面）
 DENOMINATION_RULE = "field.denomination"
 DENOMINATION_COLUMN = "單位面額"
 
@@ -144,7 +146,7 @@ def _absent_reason(found: Stored | None) -> str:
 
 
 def _headers(fmt: ReferenceFormat) -> list[str]:
-    """TS、IIS、發行機構，加上匯入格式的欄（「TS/IIS完成檢核」除外）、風險等級、參與率與信用評等欄：讀檔需要的欄都在，
+    """TS、IIS、發行機構，加上匯入格式的欄（「TS/IIS完成檢核」除外）、風險等級、參與率、配息門檻與信用評等欄：讀檔需要的欄都在，
     核對結果檔也帶得出其他欄。"""
     names = {std: header for header, std in reversed(list(fmt.columns.items()))}
     checked = [names[key] for key in CHECKED_FIELDS]
@@ -154,6 +156,7 @@ def _headers(fmt: ReferenceFormat) -> list[str]:
         *(c for c in fmt.import_format.columns if c != fmt.import_format.checked_column),
         names[RISK_FIELD],
         names[PARTICIPATION_FIELD],
+        names[COUPON_BARRIER_FIELD],
         *(names[key] for key in RATING_FIELDS if key in names),
     ]
 
@@ -184,6 +187,7 @@ def _row(
         "ki_pct": empty if no_ki else p["ki_pct"],
         "ki_type": p["ki_freq"],
         "coupon_pa_pct": p["coupon_pct"],
+        COUPON_BARRIER_FIELD: empty if p["coupon_barrier_pct"] is None else p["coupon_barrier_pct"],
         "tenor_months": p["tenor_months"],
         "first_callable_period": p["non_call_months"],
         RISK_FIELD: _risk_cell(risk),
@@ -355,7 +359,7 @@ def _changed(current: Mapping[str, Any], checked: Any, fmt: ReferenceFormat, *, 
     """資料庫現在的值和核對時那一列（`OrderRecord`）不同；回填欄位（ISIN、發行日、比價日、TS、IIS）不算。
 
     評等欄只在 `rated`（這家上手有做評等核對）時才比；核對時的表沒有評等欄（v18 以前產生的）也不算改了。
-    風險等級欄同樣：核對時的表沒有這欄（v19 以前產生的）不算改了；商品種類欄（#302）、參與率欄（#373）同樣。
+    風險等級欄同樣：核對時的表沒有這欄（v19 以前產生的）不算改了；商品種類欄（#302）、參與率欄（#373）、配息門檻欄（#367）同樣。
     """
     if checked is None:
         return True
@@ -366,7 +370,7 @@ def _changed(current: Mapping[str, Any], checked: Any, fmt: ReferenceFormat, *, 
             continue
         if std in RATING_FIELDS and not (rated and checked.has(std)):
             continue
-        if std in (RISK_FIELD, PRODUCT_FIELD, PARTICIPATION_FIELD) and not checked.has(std):
+        if std in (RISK_FIELD, PRODUCT_FIELD, PARTICIPATION_FIELD, COUPON_BARRIER_FIELD) and not checked.has(std):
             continue
         found = checked.get(std)
         if not same_value(None if value == "" else value, None if found is None else found.value):

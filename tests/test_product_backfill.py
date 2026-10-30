@@ -204,6 +204,37 @@ def test_ben_rows_get_period_end_and_a_participation_of_100(pg, tmp_path: Path) 
 
 
 @pytest.mark.db
+@pytest.mark.parametrize(
+    ("barrier", "headers", "expected"),
+    [
+        (None, HEADERS, Decimal("82.62")),
+        (75, HEADERS, Decimal(75)),
+        (None, [h for h in HEADERS if h != "配息門檻(%)"], Decimal("82.62")),
+    ],
+    ids=["空白帶執行價", "表上的值", "舊表沒有這欄"],
+)
+def test_a_dacn_row_gets_its_coupon_barrier(pg, tmp_path: Path, barrier, headers, expected) -> None:
+    """DACN 照舊表匯入（#367）：Non-Call 照舊表；配息門檻用表上的值，空白或舊表沒有這欄時帶執行價。"""
+    row = {**express(E, Product="DACN", **{"配息門檻(%)": barrier}), "Non-Call(月)": 1}
+    source = write_sheet(tmp_path / "x.xlsx", [row], headers)
+
+    receipt = backfill_products(pg, source, FMT, CONFIG)
+
+    assert lines(receipt) == {E: (IMPORTED, "")}
+    columns = read(pg, E).columns
+    assert (columns["product"], columns["non_call_months"], columns["coupon_barrier_pct"]) == ("DACN", 1, expected)
+
+
+@pytest.mark.db
+def test_a_coupon_barrier_on_other_products_is_not_imported(pg, tmp_path: Path) -> None:
+    source = write_sheet(tmp_path / "x.xlsx", [express(A, **{"配息門檻(%)": 80})])
+
+    receipt = backfill_products(pg, source, FMT, CONFIG)
+
+    assert lines(receipt) == {A: (SKIPPED, "Coupon Barrier (%)：FCN_Express 沒有配息門檻，要空白")}
+
+
+@pytest.mark.db
 def test_a_blank_initial_pricing_is_imported_and_mentioned(pg, tmp_path: Path) -> None:
     source = write_sheet(tmp_path / "x.xlsx", [express(A, 期初定價=None)])
 

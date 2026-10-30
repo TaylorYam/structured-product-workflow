@@ -8,7 +8,7 @@
 # 核對結果檔「回填後」一律照 [import_format]（匯入格式）重新產生，不論表上欄位怎麼排（Issue #203）。
 # 規則說明見 docs/checker/order-formats/reference-sheet.md。
 
-version = 22
+version = 23
 effective_date = 2026-10-30
 
 [layout]
@@ -22,6 +22,8 @@ optional_columns = [  # 表上沒有也照常核對
     "TS", "IIS",
     # 商品種類（#302）：沒有這欄時不看（照 FCN 核對）；有值時依上手編號對照的 [auto_check_products] 決定能不能自動核對
     "Product",
+    # 配息門檻（#367）：只有 DACN 有值，其他商品是空值寫法；沒有這欄（舊 Excel）時 DACN 的配息門檻拿 K(%) 比
+    "配息門檻(%)",
     # 風險等級（#239）：沒有這欄（舊 Excel）時 RR 核對用審查標準 risk.level
     "風險等級",
     # 信用評等（#240）：舊 Excel 沒有這些欄時照常核對，評等轉人工覆核
@@ -104,6 +106,7 @@ any_order_products = { "Super Bull" = ["HSBC"] }
 "KI(%)" = "ki_pct"
 "KI(Freq)" = "ki_type"
 "Coupon p.a. (%)" = "coupon_pa_pct"
+"配息門檻(%)" = "coupon_barrier_pct"  # DACN 的配息門檻（#367），不在匯入格式裡
 "天期(月)" = "tenor_months"
 "Non-Call(月)" = "first_callable_period"
 "比價日_1" = "autocall_date_1"

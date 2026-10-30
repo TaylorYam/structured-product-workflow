@@ -30,7 +30,7 @@ def prefixes_with(tmp_path: Path, old: str, new: str) -> Path:
 # ---------------------------------------------------------------- 設定檔
 
 
-def test_repo_table_opens_fcn_everywhere_and_express_and_super_bull_for_their_issuers():
+def test_repo_table_opens_fcn_everywhere_and_other_products_for_their_issuers():
     issuers = frozenset(CONFIG.issuer_prefixes.values())
 
     expected = {
@@ -38,7 +38,8 @@ def test_repo_table_opens_fcn_everywhere_and_express_and_super_bull_for_their_is
         "FCN_Express": frozenset({"BARC", "CA", "HSBC"}),
         "Super Bull": frozenset({"BNP", "CA", "HSBC"}),
         "BEN": frozenset(),
-    }  # #304～#306、#310～#312、#314、#373
+        "DACN": frozenset(),
+    }  # #304～#306、#310～#312、#314、#367、#373
     assert CONFIG.auto_check_products == expected
 
 

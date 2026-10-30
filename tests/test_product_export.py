@@ -223,6 +223,22 @@ def test_ben_is_in_the_summary_without_the_participation(pg, tmp_path: Path) -> 
 
 
 @pytest.mark.db
+def test_the_summary_shows_the_coupon_barrier_of_dacn(pg, tmp_path: Path) -> None:
+    """DACN 的配息門檻（#367）：起單資料匯入存進資料庫，總表接在 Coupon 後面；其他商品寫 -。"""
+    dacn = order_row(A, {**UF_215, "Product": "DACN", "Coupon Barrier (%)": Decimal(75)})
+    receipt = write_batch(pg, _drafts([dacn], CONFIG, pg), CONFIG, user="tester")
+    assert receipt.lines[0].imported, receipt.lines[0].detail
+    import_order(pg, B)
+    path = tmp_path / "商品總表.xlsx"
+
+    export_summary(pg, path)
+
+    a, b = as_dicts(path)
+    assert SUMMARY_COLUMNS.index("配息門檻(%)") == SUMMARY_COLUMNS.index("Coupon p.a. (%)") + 1
+    assert (a["Product"], a["配息門檻(%)"], b["配息門檻(%)"]) == ("DACN", 75, "-")
+
+
+@pytest.mark.db
 def test_summary_cells_are_centred_with_fonts_by_content(pg, tmp_path: Path) -> None:
     import_order(pg, A)
     add_trades(pg, A, [("台北", "Amy", 100000)])

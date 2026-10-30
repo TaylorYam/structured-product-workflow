@@ -450,7 +450,7 @@ def test_maintenance_check_table_copies_cells_rows_and_everything(master, tmp_pa
     tab.cell_area.button.invoke()
 
     lines = master.clipboard_get().split("\n")
-    assert lines[0].split("\t") == ["TDCC", "上手", "狀態", *REQUIRED]
+    assert lines[0].split("\t") == ["TDCC", "上手", "狀態", *REQUIRED, "Coupon Barrier (%)"]
     assert lines[1].split("\t")[:3] == [B_TDCC, "BARC", OrderReview.UNLOCKED]
     assert lines[1].split("\t")[3 + REQUIRED.index("Maturity date")] == ""
     assert len(lines) == 3 and tab.cell_area.button.cget("text") == "已複製 2 列"

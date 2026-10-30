@@ -168,10 +168,10 @@ def test_database_rows_read_the_same_as_the_excel_reference_sheet(pg, tmp_path, 
     pdfs = pdfs_of(tmp_path, spec)
     db_sheet, absent = export(pg, tmp_path, pdfs)
     overrides = {"期初定價": pricing, "風險等級": "RR4", **(VWAP_BLANK if pricing == "VWAP" else {})}
+    overrides["配息門檻(%)"] = "-"  # FCN 沒有配息門檻（#367）
     excel_row = reference_row(spec.with_(ratings=BARC_RATINGS), **overrides)
-    excel_sheet = build_reference_sheet(
-        tmp_path / "FCN參考條件.xlsx", [excel_row], [*REFERENCE_HEADERS, "風險等級", "參與率(%)"]
-    )
+    headers = [*REFERENCE_HEADERS, "風險等級", "參與率(%)", "配息門檻(%)"]
+    excel_sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [excel_row], headers)
 
     (db_row,) = load_reference_sheet(db_sheet, FMT).rows
     (xl_row,) = load_reference_sheet(excel_sheet, FMT).rows
@@ -384,6 +384,49 @@ def test_a_checked_sheet_without_the_participation_column_is_not_stale(pg, tmp_p
     result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
 
     assert (result.locked, result.stale) == ((spec.product_code,), ())
+
+
+# ---------- 配息門檻（#367） ----------
+
+
+@pytest.mark.db
+def test_the_export_carries_the_coupon_barrier_and_dacn_goes_to_manual_review(pg, tmp_path) -> None:
+    """DACN 寫配息門檻，其他商品寫空值寫法；DACN 還沒開放任何上手，轉人工核對。"""
+    fcn, dacn = barc_spec(), barc_spec(product_code="029199990002")
+    seed(pg, fcn)
+    seed(pg, dacn, product="DACN")
+    pg.execute("UPDATE workflow.product SET coupon_barrier_pct = 75 WHERE tdcc = %s", (dacn.product_code,))
+    pdfs = pdfs_of(tmp_path, fcn, dacn)
+
+    sheet, absent = export(pg, tmp_path, pdfs)
+
+    rows = {r.product_code.value: r.get("coupon_barrier_pct").value for r in load_reference_sheet(sheet, FMT).rows}
+    assert (absent, rows) == ({}, {fcn.product_code: "-", dacn.product_code: Decimal(75)})
+    outcome = check_batch(preview_batch(CONFIG, sheet, pdfs, absent=absent))
+    messages = {m for i in outcome.items if i.product_code == dacn.product_code for m in i.problem_messages}
+    assert any("還沒開放「DACN」自動核對" in m for m in messages)
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("drop_column", [False, True], ids=["改了", "核對時的表沒有這欄"])
+def test_a_coupon_barrier_changed_after_checking_is_stale(pg, tmp_path, drop_column) -> None:
+    """核對後改了配息門檻：不回填、不鎖住；核對時的表沒有這欄（v22 以前產生的）不算改了。"""
+    spec = barc_spec()
+    seed(pg, spec)
+    outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
+    assert {i.category for i in outcome.items} == {Category.PASSED}
+    if drop_column:
+        book = openpyxl.load_workbook(outcome.reference_sheet)
+        sheet = book.worksheets[0]
+        (col,) = (c.column for c in sheet[1] if c.value == "配息門檻(%)")
+        sheet.delete_cols(col)
+        book.save(outcome.reference_sheet)
+    pg.execute("UPDATE workflow.product SET coupon_barrier_pct = 75 WHERE tdcc = %s", (spec.product_code,))
+
+    result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
+
+    expected = ((spec.product_code,), ()) if drop_column else ((), (spec.product_code,))
+    assert (result.locked, result.stale) == expected
 
 
 # ---------- 查不到、條件未完成 ----------

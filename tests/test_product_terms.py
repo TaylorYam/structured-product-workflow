@@ -117,16 +117,23 @@ def test_sheet_notes_are_shown_but_do_not_block_on_their_own() -> None:
         ({"Barrier Type": "NONE"}, {"KI Barrier (%)": "Barrier Type 是 NONE 時要空白"}),
         ({"KI Barrier (%)": None}, {"KI Barrier (%)": "有 KI 時必填"}),
         ({"Currency": "TWD"}, {"Currency": "這個幣別沒有單位面額預設值"}),
-        ({"Product": "FCN_Stepdown"}, {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN"}),
+        ({"Product": "FCN_Stepdown"}, {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN、DACN"}),
         ({"Guaranteed Periods (m)": 0}, {"Guaranteed Periods (m)": "至少 1"}),
         ({"Product": "FCN_Express"}, {"Guaranteed Periods (m)": "FCN_Express 沒有 Non-Call，要填 0"}),
         ({"Product": "FCN_Express", "Guaranteed Periods (m)": 0}, {}),
         ({"Product": "fcn_express", "Guaranteed Periods (m)": 0}, {}),
         ({"Product": "Super Bull", "Guaranteed Periods (m)": 0}, {"Guaranteed Periods (m)": "至少 1"}),
         ({"Product": "super bull", "KO Type": "Period End"}, {}),
+        ({"Product": "DACN"}, {"Coupon Barrier (%)": "必填"}),  # 配息門檻（#367）
+        (
+            {"Product": "DACN", "Guaranteed Periods (m)": 0, "Coupon Barrier (%)": Decimal(80)},
+            {"Guaranteed Periods (m)": "至少 1"},
+        ),
+        ({"Product": "dacn", "Coupon Barrier (%)": Decimal(75)}, {}),
+        ({"Coupon Barrier (%)": Decimal(80)}, {"Coupon Barrier (%)": "FCN 沒有配息門檻，要空白"}),
         (
             {"Product": "FCN_Stepdown", "Guaranteed Periods (m)": 0},
-            {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN"},
+            {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN、DACN"},
         ),
         ({"BBG Code 2": None, "BBG Code 3": "CCC UQ"}, {"BBG Code 2": "標的要從 BBG Code 1 依序填，中間不能空"}),
         ({"KO Type": "Weekly"}, {"KO Type": "要選 Daily／Daily Memory／Period End／Period End Memory"}),
@@ -218,6 +225,26 @@ def test_a_next_day_strike_date_stays_when_the_trade_date_changes() -> None:
     assert draft.values["Strike date"] == dt.date(2026, 10, 16)
     draft.set_value("Trade date", dt.date(2026, 10, 19))
     assert problems(draft, CONFIG) == {"Strike date": "不能早於 Trade date"}
+
+
+def test_the_coupon_barrier_follows_the_strike_until_it_is_typed_differently() -> None:
+    """配息門檻（#367）：DACN 等於執行價（預設值）或空白時跟著執行價、商品種類改；作業人員填了別的值就不動。"""
+    draft = draft_of(order_row(changes={"Product": "DACN", "Coupon Barrier (%)": Decimal(80)}))
+
+    assert draft.set_value("Strike (%)", Decimal(70)) == ["Coupon Barrier (%)"]
+    assert draft.values["Coupon Barrier (%)"] == Decimal(70)
+    draft.set_value("Coupon Barrier (%)", Decimal(65))
+    assert draft.set_value("Strike (%)", Decimal(60)) == []
+    assert draft.values["Coupon Barrier (%)"] == Decimal(65)
+
+
+def test_changing_the_product_sets_or_clears_the_default_coupon_barrier() -> None:
+    draft = draft_of(order_row())
+
+    assert draft.set_value("Product", "DACN") == ["Coupon Barrier (%)"]
+    assert (draft.values["Coupon Barrier (%)"], problems(draft, CONFIG)) == (Decimal(80), {})
+    assert draft.set_value("Product", "FCN") == ["Coupon Barrier (%)"]
+    assert draft.values["Coupon Barrier (%)"] is None
 
 
 def test_mistyped_fields_block_only_that_product() -> None:
@@ -341,6 +368,23 @@ def test_a_ben_row_imports_with_the_fixed_terms_and_keeps_a_digital_participatio
     assert draft.values["Participation (%)"] == 0
     write_batch(pg, [draft], CONFIG, user="tester")
     assert product(pg, A)["participation_pct"] == 0
+
+
+@pytest.mark.db
+def test_a_dacn_row_defaults_its_coupon_barrier_and_keeps_an_edited_one(pg, tmp_path: Path) -> None:
+    """DACN（#367、ADR 0030）：起單建檔沒有配息門檻，匯入時帶執行價；重新匯入時資料庫的值還是預設值（等於執行價）
+    就跟著新的執行價換，作業人員改過的值不動。"""
+    path = write_sheet(tmp_path / "起單建檔_20261015.xlsx", [sheet_line(A, {"Product": "DACN"})])
+    write_batch(pg, _drafts(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg), CONFIG, user="tester")
+    assert product(pg, A)["coupon_barrier_pct"] == 80
+
+    path = write_sheet(tmp_path / "起單建檔_20261016.xlsx", [sheet_line(A, {"Product": "DACN", "Strike (%)": 70})])
+    (draft,) = _drafts(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg)
+    assert draft.values["Coupon Barrier (%)"] == 70
+
+    pg.execute("UPDATE workflow.product SET coupon_barrier_pct = 75 WHERE tdcc = %s", (A,))
+    (draft,) = _drafts(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg)
+    assert draft.values["Coupon Barrier (%)"] == 75
 
 
 @pytest.mark.db

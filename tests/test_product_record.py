@@ -40,6 +40,7 @@ VALUES: dict[str, object] = {
     "Coupon p.a. (%)": Decimal("12.5"),
     PARTICIPATION_FIELD: None,
     LOOKBACK_FIELD: None,
+    "Coupon Barrier (%)": None,  # 只有 DACN 有（#367）
     UPFRONT_FIELD: Decimal("97.14"),
     "Tenor (m)": 12,
     "Barrier Type": "AKI",

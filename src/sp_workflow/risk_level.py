@@ -1,4 +1,4 @@
-"""自算風險等級（#238、ADR 0023）：照承辦的 Generator 試算表（「境外結構型商品承作檢核表」工作表）的公式算 FCN 的 RR（FCN_Express、Super Bull、BEN 照同一套，#310、#373）。
+"""自算風險等級（#238、ADR 0023）：照承辦的 Generator 試算表（「境外結構型商品承作檢核表」工作表）的公式算 FCN 的 RR（FCN_Express、Super Bull、BEN、DACN 照同一套，#310、#373、#367）。
 
 算核對條件時一起算（`check_terms.recalculate`）：還沒鎖住的商品每次都算，和上一次不同才寫入 `workflow.risk_level`；
 已鎖住的商品只在還沒有風險等級時算一次（本功能上線前就鎖住的），之後凍結、不再重算（更正已鎖住的商品也不重算），

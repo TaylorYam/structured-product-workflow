@@ -6,7 +6,7 @@
   「只匯交易明細」（`prices=False`，回補時用）不讀 `BBG_Data`、不動股價，沒有這張工作表也可以。
   商品條件改由「匯入起單資料」建立（#86），每日匯入不再寫商品條件、也不做分公司對帳。
 - `交易明細` 第 1 列是欄名，必須和交易清單月份工作表的欄名與順序完全相同；不同就整份不匯入。
-  只收 Product 為支援的商品種類（`fcn_checker.products.PRODUCT_RULES`：FCN、FCN_Express、Super Bull、BEN，#302、#310、#373）的列，商品種類存設定的寫法；
+  只收 Product 為支援的商品種類（`fcn_checker.products.PRODUCT_RULES`：FCN、FCN_Express、Super Bull、BEN、DACN，#302、#310、#373、#367）的列，商品種類存設定的寫法；
   其他略過並計數，略過的 TDCC 與 Product 記在 `workflow.other_product`。
   以 TDCC 為單位、第一次寫入為準：資料庫已有的交易不重複寫入，內容不同只列出差異、不覆蓋。
 - `BBG_Data`：C1 是取價日（要是日期），第 2 列 B～H 是欄名（要完全相同），第 4 列起每列一檔。
@@ -21,7 +21,7 @@
   同一個 transaction 也把 CSV 那一天的收盤價寫進 `workflow.close_price`（#153、ADR 0020，見 `close_prices`）；
   讀不到交易所假日表時不能判斷休市日，收盤價這次不存（BBG_Data 也一樣）。
 - 信箱由資料庫直接維護（#35、ADR 0004）：匯入不修改 `mailbox`，只用它比對 FC 名字。
-- 結果另外列出交易明細的 FCN TDCC（含 FCN_Express、Super Bull、BEN；依第一次出現的順序、不重複，不是剛好 12 碼與整檔都取消的不列），
+- 結果另外列出交易明細的 FCN TDCC（含 FCN_Express、Super Bull、BEN、DACN；依第一次出現的順序、不重複，不是剛好 12 碼與整檔都取消的不列），
   給視窗帶到起單資料頁（#90）。
 - 整次匯入在一個 transaction 內完成，任何錯誤都不留下部分寫入。錯誤清單（`每日匯入錯誤.xlsx`，每次重建全部歷史）
   在 transaction 的最後寫：寫不進去時丟 `file_tools.FileWriteError`、整次不匯入；寫好之後 commit 失敗就放回上一份（#207）。
@@ -209,7 +209,7 @@ class _Parsed:
     blocked: list[ImportLine] = field(default_factory=list)
     cancelled_lines: list[ImportLine] = field(default_factory=list)
     other_products: dict[str, str] = field(default_factory=dict)  # 略過的不支援商品：TDCC → Product
-    # 交易明細的 FCN（含 FCN_Express、Super Bull、BEN）TDCC（出現順序）→ 有沒有沒取消的列
+    # 交易明細的 FCN（含 FCN_Express、Super Bull、BEN、DACN）TDCC（出現順序）→ 有沒有沒取消的列
     fcn_tdccs: dict[str, bool] = field(default_factory=dict)
     skipped_trade_rows: int = 0
     cancelled_trade_rows: int = 0
