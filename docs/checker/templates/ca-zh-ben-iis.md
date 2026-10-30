@@ -5,7 +5,7 @@
 - 範本代號：`ca-zh-ben-iis`
 - 對應說明書範本：[`ca-zh-ben-pd`](ca-zh-ben.md)；一檔商品一份說明書＋一份投資人須知（[ADR 0007](../adr/0007-iis-paired-with-term-sheet.md)）
 - 依據：2026-10-30 對 5 份真實樣本（與說明書 BEN-CA01～BEN-CA05 同商品）的探勘與開發者螢光標記（workflow #377）。**作業人員獨立標記先略過，2026-10-30 使用者決定**
-- 狀態：規格；實作另開（workflow #377）。標「待使用者確認（BEN-377-nn）」的是暫定的保守做法，編號對到本機疑慮記錄，全部列在 [CA BEN 核對規則](../rules/ca-ben-check-rules.md) §9.2
+- 狀態：已實作（workflow #377）。標「待使用者確認（BEN-377-nn）」的是暫定的保守做法，編號對到本機疑慮記錄，全部列在 [CA BEN 核對規則](../rules/ca-ben-check-rules.md) §9.2
 
 > 真實樣本與擷取文字只放在被 Git 忽略的 `data/`。本文件的數值範例都是虛構的。
 

@@ -3,7 +3,7 @@
 - 文件側：[CA BEN 範本規格](../templates/ca-zh-ben.md)（`ca-zh-ben-pd`）、[CA BEN 投資人須知範本規格](../templates/ca-zh-ben-iis.md)（`ca-zh-ben-iis`）
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [CA BEN 下單資料格式](../order-formats/ca-ben-reference.md)
 - 商品：BEN（workflow ADR 0029、#372、#373）；開放順序 HSBC → MS → CA，本文件是 CA（workflow #377）
-- 狀態：規格；實作另開（workflow #377）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記先略過，2026-10-30 使用者決定**（§7）
+- 狀態：已實作（workflow #377）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記先略過，2026-10-30 使用者決定**（§7）
 - 標「待使用者確認（BEN-377-nn）」的是暫定的保守做法（轉人工覆核、不放行、不臆測、不覆蓋），編號對到本機疑慮記錄，全部集中列在 §9.2；使用者回覆後再更新本文件與實作。實作時每一項放在一個設定值或一個函式，方便日後改
 - 本文件只寫和 [CA 核對規則](ca-check-rules.md)（FCN）不同或 BEN 特有的部分；和 [CA Super Bull 核對規則](ca-super-bull-check-rules.md) 相同的做法（沒有配息、無 KI、情境交股算式、境外人民幣轉人工）、和 [HSBC BEN](hsbc-ben-check-rules.md)／[MS BEN](ms-ben-check-rules.md) 相同的做法（沒有 KO、比價日只放期末訂價日、紅利不年化、KO% 不核對、參與率和參考條件表比）只寫出處與差異。沒提到的（審查標準、固定警語、受託機構名稱與特例、發行機構名稱、保證機構評等、幣別代碼、費率、最低金額、受理申購日、刊印日期、價格推算、連結標的公司介紹、名稱與 ISIN 交叉驗證、開始受理贖回日寫法）照 CA FCN
 
@@ -138,7 +138,7 @@ CA FCN 的情境規則（每期配息、總配息、獲利情境年化 = 年利�
 
 以私人雲端倉庫的樣本（`Ben PDF/086*`）、資料庫匯出或舊總表整理的參考條件表在本機跑完整核對：
 
-- BEN-CA04：全部通過並回填（ISIN、發行日、比價日）。
+- BEN-CA04：13.(6) 配息日寫成參照第 9 項，`doc.no_coupon` 判不一致（BEN-377-08）；人工放行後回填（ISIN、發行日、比價日），其他全部通過。
 - BEN-CA05：說明書通過；投資人須知中文名稱判不一致（BEN-377-04），人工放行後回填。
 - BEN-CA02、BEN-CA03：說明書判不支援的範本版本、轉人工（不能人工放行）；投資人須知照說明書一起停（BEN-377-01）。
 - BEN-CA01：Digital（境外人民幣）轉人工覆核（BEN-377-03）。
@@ -234,6 +234,7 @@ CA FCN 的情境規則（每期配息、總配息、獲利情境年化 = 年利�
 | BEN-377-05 | 情境報酬率行重寫的金額要 = 到期給付金額；寫錯判不一致、人工放行 | §3.7 |
 | BEN-377-06 | 第 9 項與投資人須知公式的括號不對稱照樣本當固定寫法；情境公式標籤行（少 `-100%`）不核對，只核對代入值與重算結果 | §3.4、§2 |
 | BEN-377-07 | 沒有樣本的 Bonus 型態（單一標的、3 檔以上、K% ≠ 100、非美元）轉人工，錯訊寫「待樣本驗證」 | §3.1 |
+| BEN-377-08 | 13.(6) 配息日只收 `配息日：本商品持有期間並無配息金額。`；1 份現行版樣本寫 `詳見第9 項「本商品主要給付項目及其計算方式」。`，判不一致、人工放行（實作時發現） | §3.4、範本規格 §2 |
 
 ## 10. 規則對照
 
@@ -246,5 +247,5 @@ CA FCN 的情境規則（每期配息、總配息、獲利情境年化 = 年利�
 | §3.3 紅利、參與率 | `doc.bonus`、`doc.participation`（和 HSBC、MS BEN 共用） |
 | §3.4 沒有 KO、沒有配息、到期公式 | `doc.no_autocall`、`doc.no_coupon`、`doc.redemption_formula`；無 KI 沿用 `doc.ki_consistency`；表頭 % 沿用 `doc.price_header_pct`；名稱、ISIN、幣別沿用 CA FCN |
 | §3.5 名稱樣板 | 共用 `standard.product_name` |
-| §3.6 投資人須知 | 共用 `iis.*`；`iis.no_coupon`；紅利、參與率、到期公式同 §3.3、§3.4 |
+| §3.6 投資人須知 | 共用 `iis.*`；`iis.no_coupon`、`iis.bonus`、`iis.participation`、`iis.redemption_formula`；有無 KI 沿用 `iis.has_ki` |
 | §3.7 情境 | 共用 `scenario.reprint`、`scenario.params`；`doc.scenario_calculations` |
