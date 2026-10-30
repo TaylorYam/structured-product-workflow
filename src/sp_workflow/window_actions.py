@@ -21,6 +21,7 @@ from __future__ import annotations
 import datetime as dt
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -656,11 +657,15 @@ def load_exposure_choices(settings: ConnectionSettings) -> list[Choice]:
 
 
 def export_underlying_exposure(
-    settings: ConnectionSettings, codes: Sequence[str], until: dt.date, path: Path
+    settings: ConnectionSettings,
+    codes: Sequence[str],
+    until: dt.date,
+    path: Path,
+    trial: Mapping[str, Decimal] | None = None,
 ) -> ExposureReceipt:
-    """選定標的、最終比價日不晚於 `until` 的在庫商品曝險分析，寫成 Excel（#345）；只讀資料庫。"""
+    """選定標的、最終比價日不晚於 `until` 的在庫商品曝險分析，寫成 Excel（#345）；`trial` 是試算價（#356）。只讀資料庫。"""
     with connect(settings) as conn:
-        return export_exposure(conn, codes, until, path)
+        return export_exposure(conn, codes, until, path, trial=trial)
 
 
 # ---------- 信箱維護 ----------

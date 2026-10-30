@@ -28,8 +28,8 @@ CHOICES = [
 def opened(master, tmp_path: Path, monkeypatch, immediate):
     calls: list[tuple] = []
 
-    def export(settings, codes, until, path):
-        calls.append((codes, until, path))
+    def export(settings, codes, until, path, trial=None):
+        calls.append((codes, until, path, trial))
         return ExposureReceipt(path, 4, {DELIVER: 3, WATCH: 1})
 
     monkeypatch.setattr(screen, "export_underlying_exposure", export)
@@ -90,7 +90,7 @@ def test_export_asks_for_a_file_and_runs_the_analysis(opened, monkeypatch, tmp_p
 
     exposure.export()
 
-    assert calls == [(["AAA UW", "AAA UQ", "BBB UN"], dt.date(2030, 4, 4), target)], "代號展開成全部交易所代碼"
+    assert calls == [(["AAA UW", "AAA UQ", "BBB UN"], dt.date(2030, 4, 4), target, {})], "代號展開成全部交易所代碼"
     assert asked[0]["initialfile"].startswith("標的曝險分析_AAA_BBB_")
     assert exposure.status_var.get() == f"已匯出 4 檔（會接股 3、KI 未破下限 1）：{target}"
     assert exposure.memory.load()[screen.MEMORY_KEY] == str(target.parent), "記住存檔的資料夾"
@@ -118,3 +118,36 @@ def test_text_wraps_beside_its_button(opened) -> None:
     for label, button in ((exposure.intro, exposure.refresh_button), (exposure.chosen_label, exposure.clear_button)):
         assert button.winfo_width() >= button.winfo_reqwidth(), "按鈕不能被文字擠扁（#349）"
         assert label.winfo_x() + label.winfo_reqwidth() <= button.winfo_x(), "文字照剩下的寬度換行，不被裁掉"
+
+
+def test_trial_prices_apply_to_every_exchange_code(opened, monkeypatch, tmp_path: Path) -> None:
+    _, exposure, calls = opened
+    assert not exposure.trial_frame.winfo_children(), "還沒選標的時不顯示試算價"
+    exposure.table.selection_set(["AAA", "BBB"])
+    exposure.update()
+    entries = [w for w in exposure.trial_frame.winfo_children() if w.winfo_class() == "TEntry"]
+    assert len(entries) == 2, "已選的每個代號一格"
+    infos: list[str] = []
+    monkeypatch.setattr(messagebox, "showinfo", lambda title, message, **kw: infos.append(message))
+    target = tmp_path / "曝險.xlsx"
+    asked: list[dict] = []
+    monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **kw: asked.append(kw) or str(target))
+
+    for bad in ("abc", "0", "-5", "NaN"):
+        exposure.trial_vars["AAA"].set(bad)
+        exposure.export()
+    assert infos == ["AAA 的試算價請填大於 0 的數字（空白用最新收盤價）。"] * 4 and not calls and not asked
+
+    exposure.trial_vars["AAA"].set(" 1,234.5 ")
+    exposure.table.selection_set(["AAA"])  # 取消 BBB 再選回來，已填的保留
+    exposure.update()
+    exposure.table.selection_set(["AAA", "BBB"])
+    exposure.update()
+    assert exposure.trial_vars["AAA"].get() == " 1,234.5 "
+    exposure.export()
+
+    price = Decimal("1234.5")
+    assert calls[0][0] == ["AAA UW", "AAA UQ", "BBB UN"]
+    assert calls[0][3] == {"AAA UW": price, "AAA UQ": price}, "BBB 空白，用最新收盤價"
+    assert "_試算_" in asked[0]["initialfile"]
+    assert exposure.status_var.get() == f"已匯出 4 檔（會接股 3、KI 未破下限 1；試算價 AAA 1234.5）：{target}"

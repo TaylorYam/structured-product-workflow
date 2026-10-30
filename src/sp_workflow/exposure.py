@@ -1,4 +1,4 @@
-"""標的曝險分析（#345、#347、#352）：選定的標的大跌時，近期到期、連結它們的在庫商品目前有哪些會接股、面額多少。
+"""標的曝險分析（#345、#347、#352、#356）：選定的標的大跌時，近期到期、連結它們的在庫商品目前有哪些會接股、面額多少。
 
 只呈現目前的狀態（檔數、面額、距觸發點多遠），不做估損、配息、淨損益或情境模擬等任何預估金額（#352）。
 
@@ -7,8 +7,11 @@
 - 範圍：存續狀態在庫（沒有還有效的存續事件）、連結任一選定標的、最終比價日不晚於截止日的商品，商品種類不限
   （FCN、FCN_Express、Super Bull）。最終比價日早於分析日、還在庫的（例：等股價）是「已比價」，
   結果以最終比價日為準，不用最新收盤價判斷，另列一類。
-- 價格：每個標的用收盤價表最新的一筆，依拆股登記換回價格基準（同比價，`stock_splits.SplitBook.factor`）；不做假設價格。
+- 價格：每個標的用收盤價表最新的一筆，依拆股登記換回價格基準（同比價，`stock_splits.SplitBook.factor`）。
   總覽最上面寫「以 X/X 收盤價判斷」。
+- 試算價（#356）：盤後大跌等不及收盤價時，作業人員可替選定標的填價格（`trial`，代碼 → 價格），
+  取代最新收盤價、當作分析日的價格（拆股照分析日換算）；其他標的照舊用最新收盤價。試算價不存進資料庫，
+  總覽的判斷基準、明細的「價格依據」都標出來，檔名加「_試算」。
 - 核對條件不是完成（同比價只比完成的）、缺 KI 型態、有 KI 卻沒有下限價、缺價格的商品無法計算；MKI 不比、人工確認。
 - 其他看最差標的（收盤價 ÷ 進場價最低）：收盤價 < 執行價，且沒有 KI、收盤價 < 下限價或比價已記 AKI 觸及 → 會接股；
   < 執行價但還在下限價之上（EKI 或還沒觸及的 AKI）→ KI 未破下限（觀察）；還在執行價之上、距執行價 10% 以內
@@ -63,6 +66,7 @@ MANUAL = "MKI 人工確認"
 SAFE = "高於執行價"
 UNKNOWN = "無法計算"
 FIXED = "已比價"  # 最終比價日早於分析日、還在庫（#352）
+TRIAL = "試算價"  # 作業人員填的價格，取代最新收盤價（#356）
 CATEGORIES = (DELIVER, WATCH, NEAR, MANUAL, SAFE, FIXED, UNKNOWN)
 NOTIFY = (DELIVER, WATCH, NEAR, MANUAL)  # 通知明細列的分類
 NEAR_BUFFER = Decimal("0.10")  # 接近執行價的門檻（距執行價，#347），也是緩衝分組 3–10% 的上限（#352）
@@ -106,8 +110,16 @@ class Leg:
     initial: Decimal | None
     strike: Decimal | None
     ki: Decimal | None
-    close: Decimal | None
+    close: Decimal | None  # 換回價格基準的收盤價或試算價
     close_date: dt.date | None
+    trial: bool = False  # `close` 是作業人員填的試算價（#356）
+
+    @property
+    def price_source(self) -> str | None:
+        """價格依據：`試算價` 或 `10/29 收盤`；缺價格時 None。"""
+        if self.close is None or self.close_date is None:
+            return None
+        return TRIAL if self.trial else f"{self.close_date.month}/{self.close_date.day} 收盤"
 
     @property
     def performance(self) -> Decimal | None:
@@ -279,8 +291,20 @@ def load_choices(conn: psycopg.Connection) -> list[Choice]:
     return choices
 
 
-def load_positions(conn: psycopg.Connection, codes: Iterable[str], until: dt.date) -> list[Position]:
-    """在庫、連結任一 `codes`、最終比價日不晚於 `until` 的商品，依最終比價日、TDCC 排序。"""
+def load_positions(
+    conn: psycopg.Connection,
+    codes: Iterable[str],
+    until: dt.date,
+    *,
+    trial: Mapping[str, Decimal] | None = None,
+    today: dt.date | None = None,
+) -> list[Position]:
+    """在庫、連結任一 `codes`、最終比價日不晚於 `until` 的商品，依最終比價日、TDCC 排序。
+
+    `trial` 裡的代碼用試算價、當作 `today`（預設今天）的價格，其他用最新收盤價（#356）。
+    """
+    trial = trial or {}
+    today = today or dt.date.today()
     wanted = sorted(set(codes))
     rows = conn.execute(
         "SELECT p.tdcc, p.product, p.issuer, p.currency, p.final_valuation_date, p.barrier_type, p.strike_date,"
@@ -311,11 +335,11 @@ def load_positions(conn: psycopg.Connection, codes: Iterable[str], until: dt.dat
         tdcc, product, issuer, currency, final, barrier, strike_date, ki_text, terms_status, terms_reason = row[:10]
         legs = []
         for seq, code, initial, strike, ki, basis in prices.get(tdcc, ()):
-            day, close = latest.get(code, (None, None))
+            day, close = (today, trial[code]) if code in trial else latest.get(code, (None, None))
             base = basis or strike_date
             if close is not None and day is not None and base is not None:
                 close = close * book.factor(code, base, day)
-            legs.append(Leg(seq, code, initial, strike, ki, close, day))
+            legs.append(Leg(seq, code, initial, strike, ki, close, day, code in trial))
         positions.append(
             Position(
                 tdcc,
@@ -388,25 +412,35 @@ class ExposureReceipt:
     counts: Mapping[str, int]  # 各分類檔數
 
 
-def export_name(codes: Sequence[str], now: dt.datetime | None = None) -> str:
-    """存檔視窗預設的檔名。"""
+def export_name(codes: Sequence[str], now: dt.datetime | None = None, *, trial: bool = False) -> str:
+    """存檔視窗預設的檔名；用了試算價時加「_試算」（#356）。"""
     tickers = "_".join(dict.fromkeys(ticker_of(code) for code in codes))[:40]
-    return f"標的曝險分析_{tickers}_{now or dt.datetime.now():%Y%m%d_%H%M}.xlsx"
+    return f"標的曝險分析_{tickers}{'_試算' if trial else ''}_{now or dt.datetime.now():%Y%m%d_%H%M}.xlsx"
 
 
 def export_exposure(
-    conn: psycopg.Connection, codes: Sequence[str], until: dt.date, path: Path, *, today: dt.date | None = None
+    conn: psycopg.Connection,
+    codes: Sequence[str],
+    until: dt.date,
+    path: Path,
+    *,
+    today: dt.date | None = None,
+    trial: Mapping[str, Decimal] | None = None,
 ) -> ExposureReceipt:
-    """分析並寫成一份 Excel：總覽、依分公司、依理專、通知明細、全部商品。"""
+    """分析並寫成一份 Excel：總覽、依分公司、依理專、通知明細、全部商品。
+
+    `trial` 是選定代碼的試算價（#356）；不在 `codes` 裡的代碼不理會，只有選定標的能用試算價。
+    """
     today = today or dt.date.today()
+    trial = {code: price for code, price in (trial or {}).items() if code in codes}
     with conn.transaction():  # 每個 SELECT 看同一個時間點
         conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-        positions = load_positions(conn, codes, until)
+        positions = load_positions(conn, codes, until, trial=trial, today=today)
         chosen = _latest_closes(conn, codes)
     results = [assess(p, today) for p in positions]
     report = _Report(results, frozenset(codes), today)
     counts = {category: sum(r.category == category for r in results) for category in CATEGORIES}
-    book = table_book(OVERVIEW, ("項目", "值"), _overview(codes, chosen, until, report))
+    book = table_book(OVERVIEW, ("項目", "值"), _overview(codes, chosen, until, report, trial))
     _style(book.active, widths=(30, 70))
     _overview_charts(book.active, report)
     for title, headers, rows, widths in (
@@ -477,12 +511,13 @@ _WORST = (
     "下限價(%)",
     "距執行價",
     "距下限價",
-    "最差標的收盤價",
+    "最差標的價格",
+    "價格依據",
     "執行價",
     "下限價",
 )
 _POSITION_WIDTHS = (12, 9, 12, 10, 10, 9)
-_WORST_WIDTHS = (24, 12, 14, 10, 10, 10, 10, 10, 14, 10, 10)
+_WORST_WIDTHS = (24, 12, 14, 10, 10, 10, 10, 10, 14, 12, 10, 10)
 DETAIL_HEADERS = (*_POSITION, "分公司", "理專", "TDCC", "商品", "發行機構", "幣別", *_WORST, "金額", "說明")
 DETAIL_WIDTHS = (*_POSITION_WIDTHS, 10, 12, 15, 12, 10, 6, *_WORST_WIDTHS, 14, 30)
 _LEG_HEADERS = tuple(f"{name}{n}" for n in range(1, MAX_LEGS + 1) for name in ("標的", "表現"))
@@ -528,17 +563,22 @@ class _Sum:
 
 
 def _overview(
-    codes: Sequence[str], chosen: Mapping[str, tuple[dt.date, Decimal]], until: dt.date, report: _Report
+    codes: Sequence[str],
+    chosen: Mapping[str, tuple[dt.date, Decimal]],
+    until: dt.date,
+    report: _Report,
+    trial: Mapping[str, Decimal],
 ) -> list[tuple[object, ...]]:
     results = report.results
     rows: list[tuple[object, ...]] = [
-        ("判斷基準", _close_basis(chosen.values())),
+        ("判斷基準", _close_basis(codes, chosen, trial)),
         ("分析日", report.today),
         ("最終比價日截止", until),
     ]
     for code in codes:
         day, close = chosen.get(code, (None, None))
-        rows.append((f"選定標的 {code}", f"最新收盤 {close}（{day}）" if close is not None else "收盤價表沒有這個代碼"))
+        latest = f"最新收盤 {close}（{day}）" if close is not None else "收盤價表沒有這個代碼"
+        rows.append((f"選定標的 {code}", f"{TRIAL} {trial[code]}；{latest}" if code in trial else latest))
     rows.append(("列入商品", f"{len(results)} 檔（在庫、連結選定標的、最終比價日不晚於截止日）"))
     for category in CATEGORIES:
         sel = [r for r in results if r.category == category]
@@ -563,16 +603,24 @@ def _overview(
     )
     rows.append(("", "已比價：最終比價日早於分析日、還在庫的商品，結果以最終比價日為準，不用最新收盤價判斷。"))
     rows.append(("", "USD 以收盤價表最新匯率換算；查不到匯率的幣別，USD 欄空白、不算進各表的 USD 合計。"))
+    if trial:
+        rows.append(
+            ("", f"{TRIAL}：作業人員填的價格（盤後、盤前或盤中），不是收盤價、不存進資料庫；其他標的用最新收盤價。")
+        )
     return rows
 
 
-def _close_basis(closes: Iterable[tuple[dt.date, Decimal]]) -> str:
-    """「以 10/23 收盤價判斷」；選定標的最新收盤日不同時全部列出。"""
-    days = sorted({day for day, _ in closes})
-    if not days:
-        return "收盤價表沒有選定標的的收盤價"
-    text = f"以 {'、'.join(f'{day.month}/{day.day}' for day in days)} 收盤價判斷"
-    return text + ("（選定標的最新收盤日不同）" if len(days) > 1 else "")
+def _close_basis(
+    codes: Sequence[str], chosen: Mapping[str, tuple[dt.date, Decimal]], trial: Mapping[str, Decimal]
+) -> str:
+    """「以 10/23 收盤價判斷」；選定標的最新收盤日不同時全部列出；有試算價的寫在最前面（#356）。"""
+    days = sorted({chosen[code][0] for code in codes if code not in trial and code in chosen})
+    text = f"以 {'、'.join(f'{day.month}/{day.day}' for day in days)} 收盤價判斷" if days else ""
+    text += "（選定標的最新收盤日不同）" if len(days) > 1 else ""
+    if trial:
+        prices = "、".join(f"{code} {price}" for code, price in trial.items())
+        return f"{prices} 以{TRIAL}判斷" + (f"；其他選定標的{text}" if text else "")
+    return text or "收盤價表沒有選定標的的收盤價"
 
 
 def _rollup(
@@ -635,6 +683,7 @@ def _worst_cells(report: _Report, r: Assessed) -> tuple[object, ...]:
         w and w.to_strike,
         w and w.to_ki,
         w and w.close,
+        w and w.price_source,
         w and w.strike,
         w and w.ki,
     )
