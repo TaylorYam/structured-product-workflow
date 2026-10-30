@@ -43,6 +43,8 @@
 
 Super Bull 只支援 KO 每期觀察＋非記憶式＋無 KI（`Period End`＋`NONE`），其他樣態照不支援樣態轉人工，所有上手共用。BNP Super Bull 的文件：[說明書範本](templates/bnp-zh-super-bull.md)、[投資人須知範本](templates/bnp-zh-super-bull-iis.md)、[參考條件表對照](order-formats/bnp-super-bull-reference.md)、[核對規則](rules/bnp-super-bull-check-rules.md)（只支援 2026-06 以後的範本版本）。CA Super Bull 的文件：[說明書範本](templates/ca-zh-super-bull.md)、[投資人須知範本](templates/ca-zh-super-bull-iis.md)、[參考條件表對照](order-formats/ca-super-bull-reference.md)、[核對規則](rules/ca-super-bull-check-rules.md)（只支援現行版範本；境外人民幣轉人工）。HSBC Super Bull 的文件：[說明書範本](templates/hsbc-zh-super-bull.md)、[投資人須知範本](templates/hsbc-zh-super-bull-iis.md)、[參考條件表對照](order-formats/hsbc-super-bull-reference.md)、[核對規則](rules/hsbc-super-bull-check-rules.md)（只支援現行版範本；單一標的、非美元、KO% ≠ K%、多個決定日轉人工）。
 
+Nomura DACN 的文件（workflow #368 規格，實作另開；開放前照未開放商品轉人工）：[說明書範本](templates/nomura-zh-dacn.md)、[投資人須知範本](templates/nomura-zh-dacn-iis.md)、[參考條件表對照](order-formats/nomura-dacn-reference.md)、[核對規則](rules/nomura-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工）。
+
 ## 目前設定明確不支援的樣態
 
 下表是 `config/issuer_prefixes.toml` 的 `[unsupported_variants]`，不是 parser 能力或樣本涵蓋率的完整清單。參考條件表、說明書或同商品投資人須知任一邊明確是黑名單樣態，兩份都停止條件核對、不回填、不能人工放行。未列入黑名單的組合仍須通過範本、必要欄位與規則檢查。
