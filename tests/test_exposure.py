@@ -1,4 +1,4 @@
-"""標的曝險分析（#345、#347、#352）：分類規則、依分公司與理專加總、匯出的 Excel。資料庫測試對真的 PostgreSQL；資料全部虛構。"""
+"""標的曝險分析（#345、#347、#352、#354）：分類規則、依分公司與理專加總、匯出的 Excel。資料庫測試對真的 PostgreSQL；資料全部虛構。"""
 
 from __future__ import annotations
 
@@ -90,6 +90,29 @@ def test_buffer_is_the_distance_to_the_trigger(barrier: str, ki_text: str, close
 
     assert (result.buffer_basis, result.buffer_group) == (basis, group)
     assert result.buffer == D(close) / (65 if basis == "下限價" else 80) - 1
+
+
+@pytest.mark.parametrize(
+    ("barrier", "ki_text", "close", "status"),
+    [
+        ("EKI", "EKI", "60", "跌破KI"),
+        ("EKI", "EKI", "70", "跌破K"),
+        ("EKI", "EKI", "85", "未跌破"),
+        ("AKI", "AKI hit 2026-10-01 UL_1 AAA UW", "85", "跌破KI"),  # 比價已記觸及，現在回到執行價之上也算
+        ("MKI", "MKI (manual)", "60", "跌破KI"),
+        ("NONE", "-", "60", "跌破K"),  # 沒有 KI，不會跌破KI
+        ("NONE", "-", "80", "未跌破"),  # 等於執行價不算跌破
+    ],
+)
+def test_status_is_what_the_worst_close_broke(barrier: str, ki_text: str, close: str, status: str) -> None:
+    assert assess(position(barrier, leg(1, "AAA UW", close), ki_text=ki_text)).status == status
+
+
+def test_status_keeps_fixed_and_unknown() -> None:
+    p = position("EKI", leg(1, "AAA UW", "60"), ki_text="EKI")
+    assert assess(p, UNTIL + dt.timedelta(days=1)).status == FIXED
+    assert assess(position("EKI", leg(1, "AAA UW", "60"), terms="待確認")).status == UNKNOWN
+    assert assess(position("MKI", leg(1, "AAA UW", None))).status == UNKNOWN, "MKI 缺價格算不出"
 
 
 def test_distances_to_strike_and_ki() -> None:
@@ -240,7 +263,7 @@ def test_every_exchange_code_of_a_ticker_is_analysed(seeded, tmp_path: Path) -> 
     export_exposure(seeded, ["AAA UW", "AAA UQ"], UNTIL, path, today=DAY)
 
     every = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}
-    assert (every[OTHER_EXCHANGE]["分類"], every[OTHER_EXCHANGE]["最差是選定標的"]) == (DELIVER, "是")
+    assert (every[OTHER_EXCHANGE]["狀態"], every[OTHER_EXCHANGE]["最差表現標的"]) == ("跌破K", "AAA UQ")
     branches = {row["分公司"]: row for row in sheet_rows(path, "依分公司")}
     assert branches["台北"]["會接股檔數"] == 2, "AAA UW 的 A 與 AAA UQ 的那一檔"
 
@@ -268,8 +291,7 @@ def test_products_past_the_final_valuation_are_listed_apart(seeded, tmp_path: Pa
 
     assert (receipt.counts[FIXED], receipt.counts[DELIVER]) == (1, 2), "AAA 72 也不算會接股"
     every = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}
-    assert (every[OTHER_EXCHANGE]["分類"], every[OTHER_EXCHANGE]["緩衝分組"]) == (FIXED, FIXED)
-    assert every[OTHER_EXCHANGE]["剩餘天數"] == -3
+    assert (every[OTHER_EXCHANGE]["狀態"], every[OTHER_EXCHANGE]["剩餘天數"]) == (FIXED, -3)
     assert OTHER_EXCHANGE not in {row["TDCC"] for row in sheet_rows(path, "通知明細")}
     overview = dict(openpyxl.load_workbook(path)["總覽"].iter_rows(min_row=2, max_col=2, values_only=True))
     assert overview[FIXED] == "1 檔，面額 USD 1"
@@ -319,9 +341,22 @@ def test_export_sums_by_branch_and_by_fc(seeded, tmp_path: Path) -> None:
     assert (detail[4]["緩衝基準"], detail[4]["緩衝分組"]) == ("下限價", ">10%"), "B 是 EKI，看距下限價"
     assert detail[4]["緩衝"] == detail[4]["距下限價"] == pytest.approx(72 / 65 - 1)
 
+    header, *_ = book["全部商品"].iter_rows(values_only=True, max_row=1)
+    assert header[:13] == (
+        *("狀態", "TDCC", "剩餘天數", "最終比價日", "商品", "最差表現標的", "最差表現"),
+        *("K%", "KI%", "KI種類", "面額", "發行機構", "幣別"),
+    )
+    assert header[13:] == tuple(f"{name}{n}" for n in range(1, 6) for name in ("標的", "表現")), "#354"
     every = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}
-    assert every[A]["各標的表現"] == "AAA UW -28.0% / BBB UN -5.0%"
-    assert (every[PENDING]["分類"], every[PENDING]["說明"]) == (UNKNOWN, "核對條件待確認：幣別不同")
+    a = every[A]
+    assert (a["狀態"], a["剩餘天數"], a["商品"], a["KI種類"], a["發行機構"], a["幣別"]) == (
+        "跌破K", 23, "FCN", "NONE", "XBANK", "USD"
+    )  # fmt: skip
+    assert (a["最差表現標的"], a["最差表現"], a["K%"], a["KI%"], a["面額"]) == ("AAA UW", 72, 80, 65, 180000)
+    assert [every[B][f"標的{n}"] for n in (1, 2, 3)] == ["AAA UW", "CCC UN", None], "由差到好，不照 UL 順序"
+    assert [every[B][f"表現{n}"] for n in (1, 2)] == [72, 110], "100 為基數"
+    assert (every[C]["狀態"], every[PENDING]["狀態"]) == ("跌破KI", UNKNOWN)
+    assert book["全部商品"]["G2"].number_format == "0.0", "最差表現不是百分比"
     rows = list(book["總覽"].iter_rows(min_row=2, max_col=2, values_only=True))
     assert rows[0] == ("判斷基準", "以 10/28 收盤價判斷"), "最上面寫用哪天的收盤價"
     overview = dict(rows)

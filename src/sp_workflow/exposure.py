@@ -20,6 +20,8 @@
 - 金額照交易明細逐筆（分公司、理專、金額），沒有交易明細的用庫存的分公司配置（理專寫 `-`）。
   USD 以收盤價表最新的匯率換算；查不到匯率的 USD 欄空白、不算進 USD 合計。
 - 排序：依分公司、依理專照會接股面額、再看 KI 未破下限面額；通知明細照剩餘天數、再看緩衝小的在前。
+- 全部商品（#354）：一檔一列，固定欄位給作業人員看；狀態簡化成跌破KI、跌破K、未跌破（已比價、無法計算照分類），
+  表現用 100 為基數（100 + 表現 %，例 −26.1% → 73.9），各標的由差到好拆成標的N、表現N。
 - 圖表：總覽右邊放各分類面額（選定標的／其他標的）、緩衝分組、會接股面額依最差標的三張圖與它們的資料表；
   依分公司、依理專右邊放會接股面額與面額組成的橫條圖（排前面的 `CHART_ROWS` 名）。圖是 Excel 原生圖表。
 - 只讀資料庫，不改任何資料。
@@ -72,7 +74,11 @@ STRIKE_BASIS = "執行價"
 MKI = "MKI"
 AKI_HIT = "AKI hit"  # 比價寫的 KI 欄：`AKI hit 日期 標的`（observation._ki_text）
 NO_FC = "-"
-_UNDERLYING_COLUMNS = ", ".join(f"underlying_{n}" for n in range(1, 6))  # workflow.product 的連結標的
+MAX_LEGS = 5  # 一檔最多連結幾個標的
+_UNDERLYING_COLUMNS = ", ".join(f"underlying_{n}" for n in range(1, MAX_LEGS + 1))  # workflow.product 的連結標的
+KI_BROKEN = "跌破KI"  # 全部商品的狀態（#354）
+K_BROKEN = "跌破K"
+INTACT = "未跌破"
 
 
 @dataclass(frozen=True)
@@ -167,6 +173,19 @@ class Assessed:
     @property
     def notional(self) -> Decimal:
         return sum((h.amount for h in self.position.holdings), Decimal(0))
+
+    @property
+    def status(self) -> str:
+        """全部商品的狀態（#354）：最差標的的最新收盤價跌破下限價（或比價已記 AKI 觸及）、跌破執行價或都沒有；
+        已比價與算不出的照分類。"""
+        if self.category in (FIXED, UNKNOWN):
+            return self.category
+        w, p = self.worst, self.position
+        if w is None or w.close is None or w.to_strike is None:
+            return UNKNOWN
+        if p.ki_text.startswith(AKI_HIT) or (p.barrier_type != NO_BARRIER and w.ki is not None and w.close < w.ki):
+            return KI_BROKEN
+        return K_BROKEN if w.to_strike < 0 else INTACT
 
     @property
     def buffer_basis(self) -> str | None:
@@ -401,8 +420,8 @@ def export_exposure(
         for row in rows:
             sheet.append([excel_value(value) for value in row])
         sheet.freeze_panes = "A2"
-        sheet.auto_filter.ref = sheet.dimensions
-        _style(sheet, widths=widths)
+        sheet.auto_filter.ref = f"A1:{get_column_letter(len(headers))}{sheet.max_row}"
+        _style(sheet, widths=widths, index=ALL_INDEX if title == ALL else ())
         if title in (BY_BRANCH, BY_FC):
             _rollup_charts(sheet, title, rows)
     save_export(book, path)
@@ -466,8 +485,25 @@ _POSITION_WIDTHS = (12, 9, 12, 10, 10, 9)
 _WORST_WIDTHS = (24, 12, 14, 10, 10, 10, 10, 10, 14, 10, 10)
 DETAIL_HEADERS = (*_POSITION, "分公司", "理專", "TDCC", "商品", "發行機構", "幣別", *_WORST, "金額", "說明")
 DETAIL_WIDTHS = (*_POSITION_WIDTHS, 10, 12, 15, 12, 10, 6, *_WORST_WIDTHS, 14, 30)
-ALL_HEADERS = (*_POSITION, "TDCC", "商品", "發行機構", "幣別", *_WORST, "面額", "面額(USD)", "各標的表現", "說明")
-ALL_WIDTHS = (*_POSITION_WIDTHS, 15, 12, 10, 6, *_WORST_WIDTHS, 14, 14, 50, 30)
+_LEG_HEADERS = tuple(f"{name}{n}" for n in range(1, MAX_LEGS + 1) for name in ("標的", "表現"))
+ALL_HEADERS = (
+    "狀態",
+    "TDCC",
+    "剩餘天數",
+    "最終比價日",
+    "商品",
+    "最差表現標的",
+    "最差表現",
+    "K%",
+    "KI%",
+    "KI種類",
+    "面額",
+    "發行機構",
+    "幣別",
+    *_LEG_HEADERS,
+)
+ALL_WIDTHS = (10, 15, 9, 12, 12, 14, 10, 7, 7, 8, 14, 10, 6, *(11, 8) * MAX_LEGS)
+ALL_INDEX = ("最差表現", *_LEG_HEADERS[1::2])  # 全部商品的表現用 100 為基數，不是百分比
 SPLIT = (DELIVER, WATCH, NEAR)  # 總覽與圖分開選定標的、其他標的的分類
 
 
@@ -537,10 +573,6 @@ def _close_basis(closes: Iterable[tuple[dt.date, Decimal]]) -> str:
         return "收盤價表沒有選定標的的收盤價"
     text = f"以 {'、'.join(f'{day.month}/{day.day}' for day in days)} 收盤價判斷"
     return text + ("（選定標的最新收盤日不同）" if len(days) > 1 else "")
-
-
-def _usd(amount: Decimal | None, rate: Decimal | None) -> Decimal | None:
-    return None if amount is None or rate is None else amount * rate
 
 
 def _rollup(
@@ -637,20 +669,30 @@ def _detail(report: _Report) -> list[tuple[object, ...]]:
 
 
 def _all_row(report: _Report, r: Assessed) -> tuple[object, ...]:
-    p = r.position
-    legs = " / ".join(f"{leg.code} {'-' if leg.performance is None else f'{leg.performance:+.1%}'}" for leg in p.legs)
+    """全部商品的一列（#354）：各標的依表現由差到好，表現用 100 為基數。"""
+    p, w = r.position, r.worst
+    legs = sorted(p.legs, key=lambda leg: (leg.performance is None, leg.performance or 0, leg.seq))
     return (
-        *_position_cells(report, r),
+        r.status,
         p.tdcc,
+        report.days_left(r),
+        p.final_date,
         p.product,
+        w and w.code,
+        w and _index(w.performance),
+        p.strike_pct,
+        p.ki_pct,
+        p.barrier_type,
+        r.notional,
         p.issuer,
         p.currency,
-        *_worst_cells(report, r),
-        r.notional,
-        _usd(r.notional, p.usd_rate),
-        legs,
-        r.reason,
+        *(value for leg in legs for value in (leg.code, _index(leg.performance))),
     )
+
+
+def _index(performance: Decimal | None) -> Decimal | None:
+    """表現換成 100 為基數：100 + 表現 %（−26.1% → 73.9）。"""
+    return None if performance is None else 100 + performance * 100
 
 
 def _ratio(pct: Decimal | None) -> Decimal | None:
@@ -660,20 +702,24 @@ def _ratio(pct: Decimal | None) -> Decimal | None:
 
 MONEY_WORDS = ("面額", "金額")  # 表頭有這些字的欄是金額，顯示到整數、千分位
 PERCENT_HEADERS = ("緩衝", "最差表現", "執行價(%)", "下限價(%)", "距執行價", "距下限價")
-WIDEST = 70  # 欄寬上限（說明、各標的表現較長）
+WIDEST = 70  # 欄寬上限（說明較長）
 
 
-def _style(sheet, *, widths: Sequence[float]) -> None:
+def _style(sheet, *, widths: Sequence[float], index: Sequence[str] = ()) -> None:
+    """日期、百分比、金額的格式與欄寬；`index` 的欄是 100 為基數的表現，顯示一位小數。"""
     headers = {cell.column: str(cell.value) for cell in sheet[1]}
     money = {col for col, name in headers.items() if any(word in name for word in MONEY_WORDS)}
-    percent = {col for col, name in headers.items() if name in PERCENT_HEADERS}
+    indexed = {col for col, name in headers.items() if name in index}
+    percent = {col for col, name in headers.items() if name in PERCENT_HEADERS} - indexed
     for row in sheet.iter_rows(min_row=2):
         for cell in row:
             text_cell(cell)
             if isinstance(cell.value, dt.date):
                 cell.number_format = "yyyy/m/d"
             elif isinstance(cell.value, int | float | Decimal) and not isinstance(cell.value, bool):
-                if cell.column in percent:
+                if cell.column in indexed:
+                    cell.number_format = "0.0"
+                elif cell.column in percent:
                     cell.number_format = "0.0%"
                 elif cell.column in money:
                     cell.number_format = "#,##0"
