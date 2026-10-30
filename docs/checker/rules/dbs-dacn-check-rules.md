@@ -3,8 +3,8 @@
 - 文件側：[DBS DACN 範本規格](../templates/dbs-zh-dacn.md)（`dbs-zh-dacn-pd`）、[DBS DACN 投資人須知範本規格](../templates/dbs-zh-dacn-iis.md)（`dbs-zh-dacn-iis`）
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [DBS DACN 下單資料格式](../order-formats/dbs-dacn-reference.md)
 - 商品：DACN（workflow ADR 0030、#366、#367）；開放順序 Nomura → SG → DBS → Natixis，本文件是 DBS（workflow #370）
-- 狀態：規格；實作另開 PR（workflow #370）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記先略過，2026-10-30 使用者決定**（§7）
-- 標「待使用者確認」的是暫定的保守做法（轉人工覆核、不放行、不臆測），詳見本機疑慮記錄（DACN-370-01～06）；使用者回覆後再更新本文件與實作
+- 狀態：已實作（workflow #370）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記先略過，2026-10-30 使用者決定**（§7）
+- 標「待使用者確認」的是暫定的保守做法（轉人工覆核、不放行、不臆測），詳見本機疑慮記錄（DACN-370-01～08）；使用者回覆後再更新本文件與實作
 - 本文件只寫和 [DBS 核對規則](dbs-check-rules.md)（FCN）不同或 DACN 特有的部分。沒提到的（審查標準、固定警語與次數、受託機構名稱與等價寫法、發行機構名稱、信用評等、商品種類、幣別、費率、最低金額倍數、受理申購日、刊印日期、審查通過日期、價格推算、KO／KI／記憶式／標的的內部一致、表A 與比價日、觀察起始日、連結標的公司介紹、開始受理贖回日寫法、OSU 受託對象 `standard.osu_clients`）照 DBS FCN。共用的 DACN 規則（配息門檻、商品種類一致、沒有樣本的型態轉人工）和 [Nomura DACN 核對規則](nomura-dacn-check-rules.md) 相同
 
 ## 1. 範圍
@@ -29,7 +29,7 @@
 
 | 檢查 | 規則 |
 |---|---|
-| 開放 | `[auto_check_products]` 的 `DACN` 加 `DBS`（實作 PR）；沒開放的上手照不支援樣態轉人工 |
+| 開放 | `[auto_check_products]` 的 `DACN` 加 `DBS`；沒開放的上手照不支援樣態轉人工 |
 | 範本版本 | 寫法和現行版不同、或交易日早於 2026-06-01 → 不支援的範本版本（`template.detect`，原因 `template_unsupported`），錯訊列出缺的特徵 |
 | 商品種類一致 | 辨識到的範本商品家族 ≠ Product → 轉人工覆核（共用 `template.product_family`）；Product 空白視為 FCN |
 | 沒有樣本的型態 | 說明書讀出的型態不是「美元計價、非 Quanto、多標的、保證期數 1、Non-Call 1、表1 區間上限每列 `不適用`」→ 轉人工覆核（`doc.template_variant`），錯訊寫出哪一項「待樣本驗證」 |
@@ -52,8 +52,8 @@
 |---|---|
 | 配息門檻 % | 表1 表頭 `區間下限價格 (期初價格的X%)` 的 X → 共用 `field.coupon_barrier_pct`（同 [Nomura DACN 核對規則](nomura-dacn-check-rules.md) §3.4：表上有「配息門檻(%)」欄且有數字 → 和欄比；有欄但空白或 `-` → 轉人工覆核；沒有這欄 → 和 `K(%)` 比並註明；說明書讀不到 → 轉人工覆核） |
 | 配息門檻價格 | 表1 每列 `區間下限價格` = 該列期初價格 × X%，half-up 到 4 位後相等（`doc.coupon_barrier`，同 `derive.prices` 的推算方式）；列數 = 標的數 |
-| 情境價格表 | 情境價格表 `區間下限價格` 欄表頭 % 與各格 = 表1（`doc.coupon_barrier`） |
-| 區間上限 | 表1 每列 `區間上限價格` = `不適用`；其他 → 沒有樣本的型態（§3.1） |
+| 情境價格表 | 情境價格表 `區間下限價格` 欄表頭 % 與各格 = 表1（共用 `scenario.reprint`：區間下限欄和期初、執行、KO、KI 一起逐格比） |
+| 區間上限 | 表1 每列 `區間上限價格` = `不適用`；其他 → 沒有樣本的型態（§3.1，`doc.template_variant`） |
 
 說明書沒有其他寫出配息門檻 % 的地方（累積日數定義只寫 `其區間下限價格`），所以表頭 % 是唯一來源（同 FCN 的 K／KO／KI %）。
 
@@ -63,7 +63,7 @@
 |---|---|
 | 保證期數 = Non-Call | `利率：1) 對於第1個觀察期間而言，利率為最大利率值`（g ≥ 2 寫 `第1~g個`）的 g = 強制贖回 KO 決定日 k（同 FCN `doc.autocall_terms` 的「第 1～k 期」） |
 | 情境一出場期 | 有利情況 `假設本商品於第j個觀察期間結束日發生自動提前出場事件` 的 j = Non-Call + 1（`doc.autocall_terms`；FCN 讀 `第j個觀察期間的第n個觀察日`） |
-| 情境範圍 | 於到期最佳情況、於到期較佳情況（KI 到期觀察才有）、較差情況的 `於第a~b個觀察期間`：每處 a = g + 1、b = 天期（`doc.scenario_periods`，新）；找不到或範圍不同 → 不一致 |
+| 情境範圍 | 於到期最佳情況、於到期較佳情況（KI 到期觀察才有）、較差情況的 `於第a~b個觀察期間`：每處 a = g + 1、b = 天期（`doc.scenario_periods`）；找不到或範圍不同 → 不一致 |
 
 ### 3.6 說明書內部交叉驗證
 
@@ -72,7 +72,7 @@
 | 檢查 | DACN |
 |---|---|
 | KI | 到期 `(a)` 寫法、`下限觸發事件：` 定義、表1 有無下限觸發價格欄三者一致（同 FCN；表1 多了區間下限／上限兩欄，KI 欄依表頭 `下限觸發價格` 找，不會和 `區間下限價格` 混淆） |
-| 情境價格表 | 期初、執行、KO、KI 四欄照 FCN 逐格 = 表1；區間下限欄見 §3.4 |
+| 情境價格表 | 期初、執行、KO、KI、區間下限五欄逐格 = 表1（`scenario.reprint`，§3.4）；表頭讀不到（例：Word 輸出把 `彭博代碼`、`期初價格` 擠成一行）→ 轉人工覆核，不放寬讀法 |
 | 情境種類 | 無 KI：有利、於到期最佳、較差、最大損失 4 個；KI 到期觀察：多 `於到期較佳情況` 共 5 個，依序；不同 → 轉人工覆核（`doc.scenario_periods`） |
 | 較差情況最終價格表 | 照 FCN（期初價格 = 表1；`表現最差連結標的為X，其最終價格(x)低於其執行價格(y)`／`下限觸發價格(y)`） |
 
@@ -91,7 +91,7 @@
 | 檢查點 | DACN |
 |---|---|
 | B6 名稱 | = 說明書封面名稱（DACN 樣板） |
-| 價格表 | B17～B19a 照 DBS FCN；另核 `區間下限價格` 表頭 % = 說明書配息門檻、各列價格 = 期初價格 × %（half-up 4 位）、`區間上限價格` 每列 `不適用`（`iis.coupon_barrier`，新） |
+| 價格表 | B17～B19a 照 DBS FCN；另核 `區間下限價格` 表頭 % = 說明書配息門檻、各列價格 = 期初價格 × %（half-up 4 位）、`區間上限價格` 每列 `不適用`（`iis.coupon_barrier`） |
 | 保證期數 | `利率：對於第1個觀察期間而言` 的 g = 說明書（照 DBS FCN 的 `first_callable_period` 讀法） |
 | 累積日數、總日數 | 固定寫法（辨識，投資人須知範本規格 §1.1） |
 | KI 型態 | 到期贖回 `1.`／`2.` 編號的 `如果未發生下限觸發事件，將適用現金結算` 也認（FCN 只認 `(a)`）；其他照 DBS FCN |
@@ -123,6 +123,8 @@
 - 說明書與投資人須知全部通過並回填（ISIN、發行日、比價日）；配息門檻沒有欄時和 K% 比、有欄時和欄比都通過；改錯配息門檻時判不一致。
 - Word 輸出的 DD02 和其他 6 份同樣通過（若空白差異造成讀不到，轉人工並記入疑慮記錄，不放寬到猜測）。
 - DBS FCN 與其他上手既有測試、本機真實樣本結果不變（FCN 辨識多一個條件，FCN 樣本的累積日數都沒有 `其區間下限價格`）。
+
+試跑結果（2026-10-30，本機）：7 份全部辨識成 `dbs-zh-dacn-pd`／`dbs-zh-dacn-iis`，沒有被 FCN 範本認走；投資人須知 7 份全部通過；配息門檻有欄、沒欄都通過，改錯時 7 份都判不一致；DACN 新規則（`doc.coupon_barrier`、`doc.scenario_periods`、`doc.template_variant`、`iis.coupon_barrier`）與 `scenario.reprint`（含區間下限欄）都通過。說明書 DD01 通過並回填；其他 6 份說明書的受託機構設立日期和審查標準不同，`standard.distributor_established` 判不一致（文件和審查標準不符，不是 DACN 規則的問題；待使用者確認，詳見本機疑慮記錄）；Word 輸出的 DD02 情境價格表表頭擠成一行讀不到，`scenario.reprint` 轉人工覆核（不放寬讀法；詳見本機疑慮記錄）。
 
 ## 7. 核對範圍（開發者螢光標記，2026-10-30）
 
@@ -168,15 +170,15 @@
 
 標記外、刻意不核對的段落見 §2。每條新規則實作時要有合成反例，特別是「正式條款正確、但其他出處錯」：表1 區間下限 % 正確、某列區間下限價格不是期初 × %；情境價格表區間下限格或表頭 % 和表1 不同；區間上限寫成數字（→ 轉人工）；累積日數定義改成不比區間下限（→ 被 FCN 認走或不支援）；累積日數其他字改掉（→ 不支援的範本版本）；保證期數和 Non-Call 不同；情境 `於第a~b個觀察期間` 範圍錯；有利情況出場期錯；KI 樣本少了於到期較佳情況；參考條件表配息門檻 ≠ 說明書；配息門檻欄存在但空白；表上沒有配息門檻欄；Product 是 FCN 但文件是 DACN（及反過來）；交易日早於 2026-06-01；非美元或單一標的（→ 轉人工）；投資人須知區間下限 % 或價格和說明書不同。
 
-## 8. 實作方式（workflow #370，另開實作 PR）
+## 8. 實作方式（workflow #370）
 
 | 內容 | 位置 |
 |---|---|
-| 範本辨識與讀出 | `parsers/dbs_dacn.py`、`parsers/dbs_dacn_iis.py`：沿用 `parsers/dbs.py`、`dbs_iis.py` 的版面、封面、表A、強制贖回、到期贖回、情境與第二章以後，價格表多宣告區間下限／上限兩欄，覆寫情境一出場期、情境範圍與投資人須知 KI 型態（同 Nomura DACN 先照 FCN 讀出再改讀的做法）；`dbs.py`、`dbs_iis.py` 的辨識加「沒有 `其區間下限價格`」條件（parser 版本各 +1） |
+| 範本辨識與讀出 | `parsers/dbs_dacn.py`、`parsers/dbs_dacn_iis.py`：沿用 `parsers/dbs.py`、`dbs_iis.py` 的版面、封面、表A、強制贖回、到期贖回、情境與第二章以後，價格表多宣告區間下限／上限兩欄，覆寫情境一出場期、情境範圍與投資人須知 KI 型態（同 Nomura DACN 先照 FCN 讀出再改讀的做法）；`dbs.py`、`dbs_iis.py` 的辨識拆出共用骨架（`skeleton`），FCN 另加「沒有 `其區間下限價格`」條件（parser 版本各 +1）；共用價格表讀法（`parsers/price_table.py`）接回窄欄裡幣別字在前、數字在任意位置換行的價格（`美元` ／ `1,05` ／ `9.22` ／ `05`） |
 | 上手註冊 | `issuers.py` 登記 `DBS_DACN`（`products=frozenset({DACN})`，上手代號同 `DBS`） |
-| 規則 | `rules/dbs_dacn.py`（§3.1 型態、§3.4 配息門檻價格、§3.5 情境範圍，其餘沿用 `rules/dbs.py`）、`rules/dbs_dacn_iis.py`（§3.8）；配息門檻 % 用共用 `field.coupon_barrier_pct` |
+| 規則 | `rules/dbs_dacn.py`（§3.1 型態、§3.4 表1 配息門檻價格、§3.5 情境種類與範圍，其餘沿用 `rules/dbs.py`）、`rules/dbs_dacn_iis.py`（§3.8）；配息門檻 % 用共用 `field.coupon_barrier_pct`；情境價格表區間下限欄用共用 `scenario.reprint`（`rules/scenario.py` 的欄名加 `barrier`） |
 | 設定 | `[auto_check_products]` 的 `DACN` 加 `DBS`；審查標準 `[issuer.dbs.product_names.DACN]`（版本 +1） |
-| 測試 | 合成 PDF（沿用 DBS 的合成工具加 DACN 段落）；§7 的反例；本機真實樣本辨識與讀取測試（環境變數指向本機樣本，不進 repo）；試跑（§6） |
+| 測試 | 合成 PDF（`tests/checker/dbs_synth.py` 的 `DacnSpec`）；§7 的反例（`tests/checker/test_check_dbs_dacn.py`）；價格表換行接回（`tests/checker/test_price_table.py`）；本機真實樣本辨識與讀取測試（`tests/checker/test_real_dbs_dacn.py`，`FCN_DACN_DIR` 指向本機樣本，不進 repo）；試跑（§6） |
 
 ## 9. 決策紀錄
 
@@ -195,15 +197,14 @@
 
 ## 10. 規則對照
 
-新 rule_id 的名稱實作時可調整，調整後同步更新本表。
 
 | 核對規則 | rule_id |
 |---|---|
 | §3.1 範本版本、商品種類一致、沒有樣本的型態 | `template.detect`（`template_unsupported`）、`template.product_family`、`doc.template_variant` |
 | §3.2 參考條件表欄位 | 共用 `field.*`、`field.non_call_product`、`backfill.*` |
 | §3.3 年利率與最大利率值 | 共用 `field.coupon_pa_pct`、`scenario.params`；`derive.monthly_coupon`、`doc.coupon_mentions`（同 DBS FCN） |
-| §3.4 配息門檻 | 共用 `field.coupon_barrier_pct`；`doc.coupon_barrier`（新） |
-| §3.5 保證期數與情境期別 | `doc.autocall_terms`（同 DBS FCN）；`doc.scenario_periods`（新） |
+| §3.4 配息門檻 | 共用 `field.coupon_barrier_pct`；`doc.coupon_barrier`（表1）；共用 `scenario.reprint`（情境價格表） |
+| §3.5 保證期數與情境期別 | `doc.autocall_terms`（同 DBS FCN）；`doc.scenario_periods` |
 | §3.6 內部交叉驗證 | 照 DBS FCN（`doc.*`、`schedule.*`、`derive.prices`、`scenario.*`） |
 | §3.7 名稱樣板 | 共用 `standard.product_name` |
-| §3.8 投資人須知 | 共用 `iis.*`；照 DBS FCN；`iis.coupon_barrier`（新） |
+| §3.8 投資人須知 | 共用 `iis.*`；照 DBS FCN；`iis.coupon_barrier` |

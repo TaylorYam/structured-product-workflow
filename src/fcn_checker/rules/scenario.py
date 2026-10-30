@@ -23,7 +23,8 @@ from ..standard_fields import PriceRow, ScenarioParam, ScenarioPrice, TableAt
 from . import kit
 from .kit import Check, IssuerContext, read_standard
 
-COLUMNS = {"initial": "期初價格", "strike": "執行價", "ko": "KO 價", "ki": "下限價"}
+# barrier：DBS DACN 表1 的區間下限價格（配息門檻價，workflow #370）
+COLUMNS = {"initial": "期初價格", "strike": "執行價", "ko": "KO 價", "ki": "下限價", "barrier": "配息門檻價"}
 
 
 @dataclass(frozen=True)

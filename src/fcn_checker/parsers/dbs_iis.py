@@ -23,7 +23,8 @@ from .layout import TextIndex, parse_date
 TEMPLATE_ID = "dbs-zh-iis"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 4：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
-PARSER_VERSION = "4"
+# 5：辨識加「收益分配事項沒有其區間下限價格」，和 DBS DACN 投資人須知（parsers/dbs_dacn_iis.py）互斥（workflow #370）
+PARSER_VERSION = "5"
 # 發行機構信用評等（#240）：商品簡介 `發行機構長期債務信用評等：截至本中文投資人須知刊印日，發行機構之長期債務信用評等經穆迪(Moody’s)評定為Aa1、…。`
 RATINGS = (
     ratings.RatingPlace(
@@ -45,6 +46,7 @@ SECTIONS = (
 PAGE_OF = r"第\s*(\d+)\s*頁\s*/\s*共\s*(\d+)\s*頁"
 PRINT_HEAD = re.compile(r"^中文投資人須知刊印日期：")
 TERMS = ("收益分配事項", "發行或受託不成立之處理")  # KO／KI 寫法所在的段落
+COUPON = ("收益分配事項", "贖回價金之計算")  # 配息寫法所在的段落
 D = dbs.D
 PCT = dbs.PCT
 PROVIDED = frozenset(
@@ -93,8 +95,25 @@ def body(lines: Sequence[Line]) -> list[Line]:
 
 
 def detect(lines: Sequence[Line]) -> DetectionResult:
+    """範本辨識（範本規格 §6）：全部條件成立才是 DBS 投資人須知；收益分配事項的累積日數比區間下限價格的是 DACN。"""
+    ti, failed, evidence = skeleton(lines)
+    if dbs.RANGE_MARK in coupon_text(ti):
+        failed.append(f"收益分配事項的累積日數比「{dbs.RANGE_MARK}」（是區間累計配息 DACN，不是固定利率 FCN）")
+    return DetectionResult(not failed, failed, evidence)
+
+
+def coupon_text(ti: TextIndex) -> str:
+    """「收益分配事項」到「贖回價金之計算」之間去空白的全文；找不到這段時為全文（寧可不認成 FCN）。"""
+    sec = iis.section(ti, COUPON)
+    return TextIndex(sec).text if sec is not None else ti.text
+
+
+def skeleton(lines: Sequence[Line]) -> tuple[TextIndex, list[str], list[Evidence]]:
+    """第一行、中英文名稱、代號標籤、相關機構第 1、2 點與段落順序（範本規格 §6 條件 1～5；FCN 與 DACN 共用）：
+    回傳（內文全文, 不成立的條件, 證據）。"""
     text_lines = body(lines)
-    text = TextIndex(text_lines).text
+    ti = TextIndex(text_lines)
+    text = ti.text
     head = squash(text_lines[0].text) if text_lines else ""
     m = re.search(r"^中文投資人須知\(最終版本\)(.+?)\(下稱「本商品」\)", text)
     zh = m[1] if m else ""
@@ -122,7 +141,7 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     ):
         if not ok:
             failed.append(message)
-    return DetectionResult(not failed, failed, [Evidence.of(x) for x in text_lines[:2]])
+    return ti, failed, [Evidence.of(x) for x in text_lines[:2]]
 
 
 def print_dates(lines: Sequence[Line]) -> ParsedField:
@@ -178,9 +197,10 @@ def _terms(ti: TextIndex, fields: dict[str, ParsedField]) -> None:
     fields["ki_type"] = dbs.ki_type(st, fields["price_table"])
 
 
-def _prices(fields: dict[str, ParsedField], lines: list[Line]) -> set[str]:
-    """商品簡介價格表（同說明書表1）→ 各標的價格與 K／KO／KI %；回傳額外交出的欄位（有下限觸發價格欄時的 ki_pct）。"""
-    table = price_table.read("price_table", _table_region(lines), dbs.IIS_TABLE)
+def prices(fields: dict[str, ParsedField], lines: list[Line], spec: price_table.TableSpec = dbs.IIS_TABLE) -> set[str]:
+    """商品簡介價格表（同說明書表1；DACN 另有區間下限、上限兩欄，`spec`）→ 各標的價格與 K／KO／KI %；回傳額外交出的欄位
+    （有下限觸發價格欄時的 ki_pct）。"""
+    table = price_table.read("price_table", table_region(lines), spec)
     uls = fields["underlyings"]
     if table.ok and uls.ok and table.value.tickers != uls.value:
         note = f"價格表的彭博代碼 {table.value.tickers} 和「連結標的資產：」{uls.value} 不同"
@@ -195,7 +215,7 @@ def _prices(fields: dict[str, ParsedField], lines: list[Line]) -> set[str]:
     return set()
 
 
-def _table_region(lines: list[Line]) -> list[Line]:
+def table_region(lines: list[Line]) -> list[Line]:
     """價格表的範圍：「連結標的資產：…。」那一句結束的下一行起、「商品面額：」之前。這句換行後的下一行可能以彭博代碼
     開頭（`TSM UN。`），不能算進表（Issue #295）。"""
     region = dbs.table_region(lines, "連結標的資產：", "商品面額：")
@@ -253,7 +273,7 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         ],
     )
     fields["underlyings"] = underlyings(raw)
-    provided |= _prices(fields, text_lines)
+    provided |= prices(fields, text_lines)
     put("tenor_months", r"商品年期：(\d+)個月。", int)
     put("trade_date", r"交易日：" + D + "；", parse_date)
     put("issue_date", r"發行日：" + D + "；", parse_date)

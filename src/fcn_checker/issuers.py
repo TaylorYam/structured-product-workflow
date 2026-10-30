@@ -22,6 +22,7 @@ from .parsers import (
     ca_iis,
     ca_super_bull_iis,
     citi_iis,
+    dbs_dacn_iis,
     dbs_iis,
     gs_iis,
     hsbc_ben_iis,
@@ -45,6 +46,7 @@ from .parsers import ca_ben as ca_ben_parser
 from .parsers import ca_super_bull as ca_sb_parser
 from .parsers import citi as citi_parser
 from .parsers import dbs as dbs_parser
+from .parsers import dbs_dacn as dbs_dacn_parser
 from .parsers import gs as gs_parser
 from .parsers import hsbc as hsbc_parser
 from .parsers import hsbc_ben as hsbc_ben_parser
@@ -74,6 +76,8 @@ from .rules import ca_super_bull_iis as ca_sb_iis_rules
 from .rules import citi as citi_rules
 from .rules import citi_iis as citi_iis_rules
 from .rules import dbs as dbs_rules
+from .rules import dbs_dacn as dbs_dacn_rules
+from .rules import dbs_dacn_iis as dbs_dacn_iis_rules
 from .rules import dbs_iis as dbs_iis_rules
 from .rules import gs as gs_rules
 from .rules import gs_iis as gs_iis_rules
@@ -628,6 +632,31 @@ DBS = Issuer(
     ),
 )
 
+# DBS DACN（workflow #370）：和 DBS FCN 同一家上手、不同範本（依累積日數定義的「其區間下限價格」辨識，兩者互斥）；依參考條件表
+# Product 選用
+DBS_DACN = Issuer(
+    code=dbs_dacn_rules.ISSUER,
+    template_id=dbs_dacn_parser.TEMPLATE_ID,
+    label="DBS DACN 中文產品說明書",
+    parser_version=dbs_dacn_parser.PARSER_VERSION,
+    not_covered=tuple(dbs_dacn_rules.NOT_COVERED),
+    detect=dbs_dacn_parser.detect,
+    read=dbs_dacn_parser.read,
+    rules=dbs_dacn_rules.run_all,
+    reference_fields=dbs_dacn_rules.REFERENCE_FIELDS,
+    ratings=True,
+    iis=IisTemplate(
+        template_id=dbs_dacn_iis.TEMPLATE_ID,
+        label="DBS DACN 中文投資人須知",
+        parser_version=dbs_dacn_iis.PARSER_VERSION,
+        detect=dbs_dacn_iis.detect,
+        read=dbs_dacn_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=dbs_dacn_iis_rules.run_all,
+    ),
+    products=frozenset({DACN}),
+)
+
 UBS = Issuer(
     code=ubs_rules.ISSUER,
     template_id=ubs_parser.TEMPLATE_ID,
@@ -672,6 +701,7 @@ REGISTRY: tuple[Issuer, ...] = (
     CA_BEN,
     BBVA,
     DBS,
+    DBS_DACN,
     UBS,
 )
 

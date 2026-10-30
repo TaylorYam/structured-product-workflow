@@ -11,6 +11,10 @@
 投資人須知（docs/checker/templates/dbs-zh-iis.md）：`build_pdf` 旁邊另寫一份 `_IIS.pdf`（`iis=False` 時不寫），`edits` 兩份都套用；
 （真實文件寫異體字「視爲」，合成字型畫不出來，改寫「視為」；parser 兩種都收）段落代號 `iis.cover`、`iis.warn`、`iis.org`、`iis.summary`（商品簡介；價格表 `iis.summary.table`）、`iis.terms`（收益分配事項、
 贖回價金之計算）、`iis.fees`、`iis.rest`；每頁頁首刊印日期 `iis.head`。
+DACN（`DacnSpec`，docs/checker/templates/dbs-zh-dacn.md、dbs-zh-dacn-iis.md，workflow #370）：名稱用審查標準 DACN 樣板；表1、
+情境價格表、投資人須知價格表多 `區間下限價格`（配息門檻，表頭有 %）與 `區間上限價格`（每列 `不適用`）兩欄，欄名、表頭 %、
+每格幣別字與數字都分兩行；配息資料多累積日數（比其區間下限價格）與總日數定義；情境一寫 `第j個觀察期間結束日`，情境二～四寫
+`於第a~b個觀察期間`，KI 到期觀察多 `於到期較佳情況`；投資人須知 KI 到期觀察的到期贖回用 `1.`／`2.` 編號。段落代號同 FCN。
 """
 
 from __future__ import annotations
@@ -41,6 +45,8 @@ from reference_synth import (
 )
 
 NAME = STANDARD["issuer"]["dbs"]["product_name"]
+DACN_PRODUCT = "DACN"
+DACN_NAME = STANDARD["issuer"]["dbs"]["product_names"][DACN_PRODUCT]
 RATING_NAMES = {MOODYS: "穆迪(Moody's)", SP: "標準普爾(S&P) ", FITCH: "惠譽(Fitch) "}
 
 
@@ -137,20 +143,26 @@ class Spec(ProductSpec):
         """計價幣別：之後的寫法（不含句尾）；人民幣多一段定義。"""
         return f"{self.currency_zh}({self.doc_ccy})" + (RMB_NOTE if self.ccy == "CNH" else "")
 
+    @property
+    def template(self) -> dict[str, Any]:
+        """審查標準的名稱樣板（FCN；DACN 另有樣板）。"""
+        return NAME
+
     def name_values(self, lang: str) -> dict[str, Any]:
+        name = self.template
         out = {"tenor": self.tenor, "ccy_zh": self.currency_zh, "ccy": self.doc_ccy}
-        out[f"quanto_{lang}"] = NAME[f"quanto_{lang}"] if self.quanto else ""
-        out[f"ki_{lang}"] = NAME[f"ki_{lang}"] if self.ki != "none" else ""
-        out[f"underlying_{lang}"] = NAME[f"basket_{lang}"]
+        out[f"quanto_{lang}"] = name[f"quanto_{lang}"] if self.quanto else ""
+        out[f"ki_{lang}"] = name[f"ki_{lang}"] if self.ki != "none" else ""
+        out[f"underlying_{lang}"] = name[f"basket_{lang}"]
         return out
 
     @property
     def name_zh(self) -> str:
-        return NAME["zh"].format(**self.name_values("zh"))
+        return self.template["zh"].format(**self.name_values("zh"))
 
     @property
     def name_en(self) -> str:
-        return NAME["en"].format(**self.name_values("en"))
+        return self.template["en"].format(**self.name_values("en"))
 
     @staticmethod
     def date(d: dt.date) -> str:
@@ -171,6 +183,53 @@ class Spec(ProductSpec):
     @property
     def k_text(self) -> str:
         return "1" if self.first_callable == 1 else f"1~{self.first_callable}"
+
+    @property
+    def g(self) -> int:
+        """保證期數（第 1～g 期利率 = 最大利率值）；FCN 同 Non-Call。"""
+        return self.first_callable
+
+    @property
+    def g_text(self) -> str:
+        return "1" if self.g == 1 else f"1~{self.g}"
+
+
+@dataclass
+class DacnSpec(Spec):
+    """DBS DACN 合成規格（docs/checker/templates/dbs-zh-dacn.md）：預設同樣本的型態（KO 每日觀察＋記憶式、3 檔、9 個月、無 KI、
+    美元、保證 1 期 = Non-Call 1、區間上限不適用）。`guaranteed` 是配息公式的保證期數（None → 同 Non-Call）；`barrier` 是配息
+    門檻 %（表1 區間下限價格欄與參考條件表「配息門檻(%)」；None → 同執行價）；`upper` 是區間上限價格欄每列的寫法。"""
+
+    product_code: str = "078199990002"
+    tenor: int = 9
+    count: int = 3
+    guaranteed: int | None = None
+    barrier: Decimal | None = None
+    upper: str = "不適用"
+
+    @property
+    def template(self) -> dict[str, Any]:
+        return DACN_NAME
+
+    @property
+    def g(self) -> int:
+        return self.first_callable if self.guaranteed is None else self.guaranteed
+
+    @property
+    def barrier_pct(self) -> Decimal:
+        return self.strike if self.barrier is None else self.barrier
+
+
+# DACN 配息資料的累積日數、總日數定義（範本規格 §2.1；投資人須知 §1.1 同一句、總日數多一個「為」）
+DACN_ACCRUAL_A = (
+    "如果該觀察期間內未發生自動提前出場事件，則累積日數為該觀察期間內所有連結標的的參考價格皆等於或高於其區間下限價格"
+    "(且等於或低於其區間上限價格(如適用))的觀察日的總數；或者"
+)
+DACN_ACCRUAL_B = (
+    "如果該觀察期間內發生了自動提前出場事件，則累積日數為該觀察期間內截至(包含)自動提前出場事件日為止之期間內，"
+    "所有連結標的的參考價格皆等於或高於其區間下限價格(且等於或低於其區間上限價格(如適用))的觀察日的總數。"
+)
+DACN_TOTAL = "就每個觀察期間而言，該觀察期間內觀察日的總數。"
 
 
 def _width(text: str, size: float) -> float:
@@ -314,6 +373,8 @@ TABLE_X = {"code": 98, "initial": 193, "strike": 288, "ko": 383, "ki": 478}  # �
 
 def _price_columns(s: Spec) -> list[tuple[str, str, Decimal]]:
     cols = [("strike", "執行價格", s.strike), ("ko", "自動提前出場價格", s.ko)]
+    if isinstance(s, DacnSpec):
+        cols.append(("barrier", "區間下限價格", s.barrier_pct))
     if s.ki != "none":
         cols.append(("ki", "下限觸發價格", s.ki_pct))
     return cols
@@ -358,6 +419,49 @@ def _scenario_table(d: _Doc, s: Spec) -> None:
         keys = ["initial", *[c for c, _, _ in cols]]
         d.centered_row([(x["code"], u.ticker), *[(x[c], QUOTE) for c in keys]], gap=11)
         d.centered_row([(x[c], f"{v:.4f}") for c, v in zip(keys, prices, strict=True)], gap=12)
+
+
+# DACN 價格表各欄中心：表1、情境價格表（字級 8）、投資人須知價格表
+DACN_TABLE_X = {"code": 80, "initial": 150, "strike": 220, "ko": 290, "barrier": 360, "upper": 430, "ki": 500}
+DACN_SCENARIO_X = {"code": 195, "initial": 250, "strike": 305, "ko": 360, "barrier": 415, "upper": 470, "ki": 525}
+DACN_IIS_X = {"code": 45, "initial": 115, "strike": 190, "ko": 265, "barrier": 345, "upper": 425, "ki": 505}
+
+
+def _dacn_table(
+    d: _Doc,
+    s: DacnSpec,
+    x: dict[str, float],
+    *,
+    pct: tuple[str, str] = ("(期初價格的", "%)"),
+    size: float = 9,
+    split: bool = False,
+) -> None:
+    """DACN 價格表（範本規格 §2、§5）：FCN 的欄＋`區間下限價格`（表頭有 %）與 `區間上限價格`（表頭沒有 %，每列 `s.upper`），
+    欄序 K → KO → 區間下限 → 區間上限 →（有 KI 時）KI；欄名（`自動提前出場`／`價格`、`區間上限`／`價格`）、表頭 %（`pct`
+    前後兩段）與每格幣別字／數字都分兩行；`split` 時欄名與 % 之間換頁（表頭跨頁）。"""
+    cols = _price_columns(s)
+    keys = [c for c, _, _ in cols]
+    names = {"strike": "執行價格", "ko": "自動提前出場", "barrier": "區間下限價格", "ki": "下限觸發價格"}
+    d.w.need(60 + 24 * s.count if not split else 0)
+    head = [
+        (x["code"], "彭博代碼"),
+        (x["initial"], "期初價格"),
+        *[(x[c], names[c]) for c in keys],
+        (x["upper"], "區間上限"),
+    ]
+    d.centered_row(head, gap=11, size=size)
+    d.centered_row([(x["ko"], "價格"), (x["upper"], "價格")], gap=11, size=size)
+    if split:
+        d.w.new_page()
+    d.centered_row([(x[c], pct[0]) for c in keys], gap=11, size=size)
+    d.centered_row([(x[c], f"{p}{pct[1]}") for c, _, p in cols], gap=12, size=size)
+    for u in s.underlyings:
+        prices = [u.initial] + [price(u.initial, p) for _, _, p in cols]
+        pkeys = ["initial", *keys]
+        d.centered_row(
+            [(x["code"], u.ticker), *[(x[c], QUOTE) for c in pkeys], (x["upper"], s.upper)], gap=11, size=size
+        )
+        d.centered_row([(x[c], f"{v:.4f}") for c, v in zip(pkeys, prices, strict=True)], gap=12, size=size)
 
 
 def _basic(d: _Doc, s: Spec) -> None:
@@ -412,13 +516,30 @@ def _basic(d: _Doc, s: Spec) -> None:
     d.text(170, f"觀察起始日：{s.date(weekday_on_or_after(s.trade_date + dt.timedelta(days=1)))}")
     d.text(170, "觀察日：就一觀察期間而言，指該觀察期間內所有連結標的的所有交易所的每一個規劃交易日。")
     d.section = "basic.coupon"
+    max_rate = f"最大利率值：就每個觀察期間而言，為{s.monthly}%（即{s.annual}%/12），無條件進位至小數點後第四位。"
+    if isinstance(s, DacnSpec):  # 公式是分數：「最大利率值 X 累積日數」／「總日數」兩行；另有累積日數、總日數定義
+        coupon = [
+            f"利率：1) 對於第{s.g_text}個觀察期間而言，利率為最大利率值；及",
+            "2) 對於其後每個觀察期間而言，利率將根據以下公式決定：",
+            "最大利率值 X 累積日數",
+            "總日數",
+            max_rate,
+            "累積日數：就每個觀察期間而言，",
+            f"(a) {DACN_ACCRUAL_A}",
+            f"(b) {DACN_ACCRUAL_B}",
+            f"總日數：{DACN_TOTAL}",
+        ]
+    else:
+        coupon = [
+            f"利率：1) 對於第{s.k_text}個觀察期間而言，利率為最大利率值；及",
+            "2) 對於其後每個觀察期間而言，利率將根據以下公式決定：最大利率值 X 累積日數 / 總日數",
+            max_rate,
+        ]
     d.cell(
         "配息資料及計算公式：",
         [
             "適用，利息金額以計價幣別支付並根據下方公式計算(四捨五入至小數點後第二位數)：商品面額 X 適用之觀察期間的利率",
-            f"利率：1) 對於第{s.k_text}個觀察期間而言，利率為最大利率值；及",
-            "2) 對於其後每個觀察期間而言，利率將根據以下公式決定：最大利率值 X 累積日數 / 總日數",
-            f"最大利率值：就每個觀察期間而言，為{s.monthly}%（即{s.annual}%/12），無條件進位至小數點後第四位。",
+            *coupon,
         ],
     )
     d.section = "basic.ko"
@@ -437,7 +558,10 @@ def _basic(d: _Doc, s: Spec) -> None:
     d.section = "basic.table"
     d.w.need(60 + 13 * s.count)
     d.centered_row([(295, "表1")], gap=14, size=10)
-    _table1(d, s)
+    if isinstance(s, DacnSpec):
+        _dacn_table(d, s, DACN_TABLE_X)
+    else:
+        _table1(d, s)
     d.section = "basic.maturity"
     if s.ki == "none":
         terms = [
@@ -458,10 +582,17 @@ def _basic(d: _Doc, s: Spec) -> None:
             *terms,
             "期初價格：就每一連結標的而言，為上述表1所示該連結標的每股或每單位(視情況而定)的價格。",
             *ki,
+            *(DACN_DEFINITIONS if isinstance(s, DacnSpec) else ()),
             "定價時間：指相關交易所的規劃收盤時間。",
             "最低保證配息率：不適用，本商品不保證最低收益率。",
         ],
     )
+
+
+DACN_DEFINITIONS = (  # 到期贖回的區間下限、上限價格定義（不核對）
+    "區間下限價格：就每一連結標的而言，為上述表1所示依據期初價格的特定比例計算得到的該連結標的的價格。",
+    "區間上限價格：如有適用，就每一連結標的而言，為上述表1所示依據期初價格的特定比例計算得到的該連結標的的價格。",
+)
 
 
 def _scenario(d: _Doc, s: Spec) -> None:
@@ -477,16 +608,22 @@ def _scenario(d: _Doc, s: Spec) -> None:
             "發行價格 = 100.00%",
             "投資單位數 = 1 單位",
             f"投資金額 = {s.denom:,} X 100.00% X 1= {s.currency_zh}{s.denom:,}",
-            f"利率：第{s.k_text}個觀察期間之利率為最大利率值，其後每個觀察期間之利率為最大利率值x累積日數/總日數",
+            f"利率：第{s.g_text}個觀察期間之利率為最大利率值，其後每個觀察期間之利率為最大利率值x累積日數/總日數",
             f"最大利率值：{m}%",
             f"自動提前出場決定日：從第{s.first_callable}個觀察期間結束日（包含）開始至預定規劃定價日（包含）為止的期間內的每一個觀察日",
             "各連結標的之相關價格：",
         ],
     )
     d.section = "scenario.table"
-    _scenario_table(d, s)
+    if isinstance(s, DacnSpec):
+        _dacn_table(d, s, DACN_SCENARIO_X, pct=("（期初價格", "%）"), size=8)
+    else:
+        _scenario_table(d, s)
     d.section = "scenario"
-    _scenario_cases(d, s)
+    if isinstance(s, DacnSpec):
+        _dacn_scenario_cases(d, s)
+    else:
+        _scenario_cases(d, s)
 
 
 def _scenario_cases(d: _Doc, s: Spec) -> None:
@@ -519,6 +656,13 @@ def _scenario_cases(d: _Doc, s: Spec) -> None:
         f"即年化平均報酬率約為{s.annual}%。",
     )
     d.text(172, "3. 較差情況：假設本商品未發生自動提前出場事件，且假設表現最差連結標的之最終價格低於其執行價格。")
+    _worse_case(d, s, f"(1) 投資人可取得之利息總計500.04{ccy}({denom} X {m}% X {s.tenor}個月)；及")
+    d.text(172, "4. 最大損失情況：假設發行機構破產或無力償還本商品下的付款責任，投資人可能無法收到任何金額。")
+
+
+def _worse_case(d: _Doc, s: Spec, interest: str) -> None:
+    """較差情況的「假設於定價日」最終價格表、「依上所示，表現最差連結標的為…」、(1) 利息（`interest`）與 (2) 交付股票。"""
+    ccy, denom = s.currency_zh, f"{s.denom:,}"
     d.text(172, "假設於定價日，各連結標的最終價格如下：")
     d.section = "scenario.final"
     x = {"code": 207, "initial": 275, "final": 343, "perf": 450}
@@ -546,14 +690,76 @@ def _scenario_cases(d: _Doc, s: Spec) -> None:
         f"依上所示，表現最差連結標的為{worst.ticker}，其最終價格({finals[0]})低於其{word}({price(worst.initial, pct)})"
         f"{fx}，則：",
     )
-    d.text(172, f"(1) 投資人可取得之利息總計500.04{ccy}({denom} X {m}% X {s.tenor}個月)；及")
+    d.text(172, interest)
     d.text(
         172,
         f"(2) 發行機構將於到期日就每一單位商品交付99股({denom} ÷ 100.0000 = 99.554)之股票及支付27.70{ccy}"
         f"((0.554) X {finals[0]})。合計現金價值為5,477.74{ccy}(99 X {finals[0]} + 500.04 + 27.70)，較原始投資金額損失約"
         "45.223%，即年化平均報酬率約為-90.446%。",
     )
-    d.text(172, "4. 最大損失情況：假設發行機構破產或無力償還本商品下的付款責任，投資人可能無法收到任何金額。")
+
+
+def _dacn_scenario_cases(d: _Doc, s: DacnSpec) -> None:
+    """DACN 情境（範本規格 §4.3）：有利情況寫 `第j個觀察期間結束日`（j = Non-Call + 1）；於到期最佳、（KI 到期觀察才有）
+    於到期較佳、較差情況寫 `於第a~b個觀察期間`（a = 保證期數 + 1、b = 天期）。利息與報酬率是示意，規則不重算。"""
+    m, g, k, ccy, denom = s.monthly, s.g, s.first_callable, s.currency_zh, f"{s.denom:,}"
+    span = f"於第{g + 1}~{s.tenor}個觀察期間"
+    guaranteed = f"第{s.g_text}個觀察期間之利息金額為83.34{ccy}({denom} X {m}% X {g}個月)"
+    d.text(
+        172,
+        f"1. 有利情況：假設本商品於第{k + 1}個觀察期間結束日發生自動提前出場事件，該觀察期間總日數為20但累積日數僅為10：",
+    )
+    d.text(
+        172,
+        f"(1) 投資人可取得之利息總計125.01{ccy}(包括{guaranteed}，及第{k + 1}個觀察期間之利息金額為41.67{ccy}"
+        f"({denom} X {m}% X 10 ÷ 20) )；及",
+    )
+    d.text(
+        172,
+        f"(2) 於強制贖回日可取得之強制贖回金額為100%商品面額，即{ccy}{denom}。較原始投資金額獲利約1.250%，"
+        "即年化平均報酬率約為7.50%。",
+    )
+    no_ki = "" if s.ki == "none" else "，且未發生下限觸發事件"
+    d.text(
+        172,
+        f"2. 於到期最佳情況：假設本商品未發生自動提前出場事件，{span}，每一個觀察期間之累積日數皆等於該期總日數{no_ki}：",
+    )
+    d.text(172, f"(1) 投資人可取得之利息總計750.06{ccy}({denom} X {m}% X {s.tenor}個月)；及")
+    d.text(
+        172,
+        f"(2) 於到期日可取得之最終贖回金額為100%商品面額，即{ccy}{denom}。較原始投資金額獲利約7.501%，"
+        f"即年化平均報酬率約為{s.annual}%。",
+    )
+    n = 3
+    if s.ki != "none":
+        d.text(
+            172,
+            f"3. 於到期較佳情況：假設本商品未發生自動提前出場事件，{span}，每一個觀察期間總日數為20但累積日數僅為10，"
+            "且未發生下限觸發事件：",
+        )
+        d.text(
+            172,
+            f"(1) 投資人可取得之利息總計416.70{ccy}(包括{guaranteed}，及第{g + 1}~{s.tenor}個觀察期間之利息金額為"
+            f"333.36{ccy}({denom} X {m}% X 10 ÷ 20 X {s.tenor - g}個月) )；及",
+        )
+        d.text(
+            172,
+            f"(2) 於到期日可取得之最終贖回金額為100%商品面額，即{ccy}{denom}。較原始投資金額獲利約4.167%，"
+            "即年化平均報酬率約為5.56%。",
+        )
+        n = 4
+    then = (
+        "且假設表現最差連結標的之最終價格低於其執行價格。"
+        if s.ki == "none"
+        else f"但發生下限觸發事件，投資人除於第{s.g_text}個觀察期間可收取之利息外，發行機構於到期日將以實物結算方式"
+        "贖回所有商品。"
+    )
+    d.text(172, f"{n}. 較差情況：假設本商品未發生自動提前出場事件，{span}，每一個觀察期間之累積日數皆為0，{then}")
+    _worse_case(d, s, f"(1) 投資人可取得第{s.g_text}個觀察期間之利息83.34{ccy}({denom} X {m}% X {g}個月)；及")
+    d.text(
+        172,
+        f"{n + 1}. 最大損失情況：假設發行機構破產或無力償還本商品下的付款責任，投資人可能無法收到任何金額。",
+    )
 
 
 def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = True) -> Path:
@@ -701,7 +907,10 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
     if s.split_iis_table:
         while w.y < 735:  # 表頭欄名排在頁底，「(期初價格的X%)」換到下一頁
             w.space(13)
-    _table1(d, s, {"code": 60, "initial": 150, "strike": 262, "ko": 382, "ki": 502}, split=s.split_iis_table)
+    if isinstance(s, DacnSpec):
+        _dacn_table(d, s, DACN_IIS_X, split=s.split_iis_table)
+    else:
+        _table1(d, s, {"code": 60, "initial": 150, "strike": 262, "ko": 382, "ki": 502}, split=s.split_iis_table)
     d.section = "summary"
     for t in (
         f"商品面額：每單位{s.currency_zh}{s.denom:,}, 發行價格：商品面額的100.00%。",
@@ -713,21 +922,33 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         d.text(16, t, size=9)
     d.section = "terms"
     d.title("收益分配事項", size=9)
-    for label, value in (
+    terms = [
         ("配息資料及計算公式：", "本商品每月配發利息。利息金額 = 商品面額 X 適用之觀察期間的利率"),
         (
             "利率：",
             f"對於第{s.k_text} 個觀察期間而言，利率為最大利率值。對於其後每個觀察期間而言，利率將根據以下公式決定。",
         ),
         ("最大利率值：", f"就每個觀察期間而言，為{s.monthly}% ({s.annual}%/12) ，無條件進位至小數點後第四位。"),
-    ):
+    ]
+    if isinstance(s, DacnSpec):
+        terms[1] = (
+            "利率：",
+            f"對於第{s.g_text} 個觀察期間而言，利率為最大利率值。對於其後每個觀察期間而言，利率將根據以下公式決定："
+            "最大利率值 X 累積日數 /總日數",
+        )
+        terms += [
+            ("累積日數：", f"就每個觀察期間而言，(a){DACN_ACCRUAL_A}(b){DACN_ACCRUAL_B}"),
+            ("總日數：", "就每個觀察期間而言，為該觀察期間內觀察日的總數。"),
+        ]
+    for label, value in terms:
         d.cell(label, [value], lx=22, vx=118, chunk=8)
     d.title("贖回價金之計算", size=9)
-    maturity = (
-        "(a) 若表現最差連結標的之最終價格等於或高於其執行價格，將適用現金結算；或者"
-        if s.ki == "none"
-        else "(a) 如果未發生下限觸發事件，將適用現金結算；或者"
-    )
+    if s.ki == "none":
+        maturity = "(a) 若表現最差連結標的之最終價格等於或高於其執行價格，將適用現金結算；或者"
+    elif isinstance(s, DacnSpec):  # DACN 投資人須知 KI 到期觀察用 `1.`／`2.` 編號（範本規格 §1）
+        maturity = "1. 如果未發生下限觸發事件，將適用現金結算；或者"
+    else:
+        maturity = "(a) 如果未發生下限觸發事件，將適用現金結算；或者"
     rows = [
         ("強制贖回金額：", "每一單位商品，為100%商品面額。"),
         ("自動提前出場事件：", "若所有連結標的皆被視為記憶標的，則視為發生自動提前出場事件。"),
@@ -803,8 +1024,14 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
 
 
 def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
-    """與 `spec` 一致的參考條件表列；`overrides` 以 Excel 欄名覆寫。"""
-    return reference_row(spec, **overrides)
+    """與 `spec` 一致的參考條件表列；`overrides` 以 Excel 欄名覆寫。DACN 的 Product 寫 DACN、「配息門檻(%)」= 配息門檻 %
+    （表頭沒有這欄時不會寫出）。"""
+    out = reference_row(spec)
+    if isinstance(spec, DacnSpec):
+        out["Product"] = DACN_PRODUCT
+        out["配息門檻(%)"] = float(spec.barrier_pct)
+    out.update(overrides)
+    return out
 
 
 def check_item(
