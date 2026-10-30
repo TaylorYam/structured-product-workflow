@@ -516,6 +516,21 @@ def test_a_ben_only_settles_at_maturity(pg, close, event) -> None:
 
 
 @pytest.mark.db
+@pytest.mark.parametrize(
+    ("day", "closes"), [(KO_DAY, {KO_DAY: "120"}), (FINAL, {FINAL: "100"})], ids=["期間", "最終比價日"]
+)
+def test_a_dacn_is_observed_like_fcn(pg, day, closes) -> None:
+    """DACN（#367、ADR 0030）比價和 FCN 相同：期間全部 ≥ KO 價是 KO，最終比價日也算 KO（不追蹤每日計息）。"""
+    seed(pg, T1)
+    pg.execute("UPDATE workflow.product SET product = 'DACN', coupon_barrier_pct = strike_pct WHERE tdcc = %s", (T1,))
+    write_closes(pg, us_closes(day, closes))
+
+    observe_all(pg, CALENDAR, user="tester")
+
+    assert [row[:2] for row in events(pg, T1)] == [(KO, day)]
+
+
+@pytest.mark.db
 def test_a_ben_waits_for_the_final_valuation_date(pg) -> None:
     """BEN（#373）到期前不觀察 KO：即使收盤價 ≥ KO 價，狀態仍是在庫、原因「還沒到最終比價日」。"""
     seed(pg, T1)

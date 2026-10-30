@@ -421,9 +421,9 @@ class Draft:
                 self.values[STRIKE_FIELD] = value
                 followed.append(STRIKE_FIELD)
         barrier = self.values.get(COUPON_BARRIER_FIELD)
-        default = barrier is None or same_value(barrier, self.values.get("Strike (%)"))
+        is_default = barrier is None or same_value(barrier, self.values.get("Strike (%)"))
         self.values[name] = value
-        if name in ("Strike (%)", "Product") and default:
+        if name in ("Strike (%)", "Product") and is_default:
             new = default_coupon_barrier(self.values)
             if not same_value(new, barrier):
                 self.values[COUPON_BARRIER_FIELD] = new
@@ -480,6 +480,8 @@ def draft_from(
             if values.get(name) is None and value is not None and name not in row.must_fill:
                 values[name] = value
     _default_participation(values)
+    if original.get(COUPON_BARRIER_FIELD) is None:
+        _default_coupon_barrier(values, None if reason else fields)
     return Draft(row, original, values, fields, reason, database_checked=checked)
 
 
@@ -499,6 +501,14 @@ def _default_participation(values: dict[str, object]) -> dict[str, object]:
     if values.get(PARTICIPATION_FIELD) is None and _is_maturity_only(values.get("Product")):
         values[PARTICIPATION_FIELD] = Decimal(DEFAULT_PARTICIPATION)
     return values
+
+
+def _default_coupon_barrier(values: dict[str, object], fields: Mapping[str, object] | None) -> None:
+    """起單建檔沒有配息門檻（#367）：資料庫沒有值、或還是預設值（等於資料庫的執行價）時，換成依讀到的值算的預設值
+    （`default_coupon_barrier`）；作業人員改過的值不動。"""
+    barrier = values.get(COUPON_BARRIER_FIELD)
+    if barrier is None or (fields is not None and same_value(barrier, fields.get("Strike (%)"))):
+        values[COUPON_BARRIER_FIELD] = default_coupon_barrier(values)
 
 
 def _is_maturity_only(product: object) -> bool:
@@ -892,7 +902,11 @@ def write(
         calc,
         locked=locked_product,
         created=stored is None and bool(changed),
-        missing=() if locked_product else tuple(missing_fields(product)) if exists else REQUIRED,
+        missing=()
+        if locked_product
+        else tuple(missing_fields(product))
+        if exists
+        else required_fields(draft.values.get("Product")),
         **_trade_receipt(trades, trade_changes, trade_id),
     )
 

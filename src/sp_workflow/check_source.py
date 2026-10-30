@@ -68,7 +68,7 @@ CHECKED_FIELDS = ("checked_term_sheet", "checked_iis")
 RISK_FIELD = "risk_level"  # 參考條件表的風險等級（#239；不在匯入格式裡，排在最後）
 PRODUCT_FIELD = "product"  # 參考條件表的商品種類（#302；決定能不能自動核對）
 PARTICIPATION_FIELD = "participation_pct"  # 參考條件表的參與率（#373；只有 BEN 有，不在匯入格式裡，排在風險等級後面）
-COUPON_BARRIER_FIELD = "coupon_barrier_pct"  # 參考條件表的配息門檻（#367；不在匯入格式裡，排在風險等級後面）
+COUPON_BARRIER_FIELD = "coupon_barrier_pct"  # 參考條件表的配息門檻（#367；不在匯入格式裡，排在參與率後面）
 DENOMINATION_RULE = "field.denomination"
 DENOMINATION_COLUMN = "單位面額"
 

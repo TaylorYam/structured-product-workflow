@@ -8,7 +8,7 @@
 - `COLUMN_FIELDS`：資料庫的欄 → 畫面的欄；`DERIVED_COLUMNS`：沒有對應畫面欄的資料庫欄 → 說明用的名稱。
 - `columns_of`／`fields_of`：畫面的值 ↔ 資料庫的欄（KO／KI 代碼、UF 反轉、單位面額預設）。
 - `missing_fields`：資料庫商品條件缺哪幾個必填欄（#114）。
-- `default_coupon_barrier`：起單建檔、舊總表沒有配息門檻，要配息門檻的商品（DACN）預設帶執行價（#367）。
+- `has_coupon_barrier`／`default_coupon_barrier`：商品種類要不要配息門檻；起單建檔、舊總表沒有配息門檻，要配息門檻的商品（DACN）預設帶執行價（#367）。
 - `PRICE_COLUMNS`：標的價格（核對用的鍵 → `workflow.underlying_price` 的欄）；核對讀資料庫與核對寫回共用（#203）。
 - `same_value`：兩個值一樣嗎（數字不分 int 與 Decimal、不看小數位數）；商品條件寫入與核對寫回共用（#203）。
 
@@ -235,7 +235,7 @@ def missing_fields(product: Mapping[str, object], names: Sequence[str] = REQUIRE
 
     換算的代碼欄空白也算那一欄缺（沒有存齊）。`product` 要有必填欄存的欄（讀 `PRODUCT_COLUMNS` 就有）。
     """
-    extra = () if not has_coupon_barrier(product["product"]) else _COUPON_BARRIER_REQUIRED
+    extra = _COUPON_BARRIER_REQUIRED if has_coupon_barrier(product["product"]) else ()
     return [name for name in (*names, *extra) if any(product[column] is None for column in _REQUIRED_STORED[name])]
 
 

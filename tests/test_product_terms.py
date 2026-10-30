@@ -125,6 +125,10 @@ def test_sheet_notes_are_shown_but_do_not_block_on_their_own() -> None:
         ({"Product": "Super Bull", "Guaranteed Periods (m)": 0}, {"Guaranteed Periods (m)": "至少 1"}),
         ({"Product": "super bull", "KO Type": "Period End"}, {}),
         ({"Product": "DACN"}, {"Coupon Barrier (%)": "必填"}),  # 配息門檻（#367）
+        (
+            {"Product": "DACN", "Guaranteed Periods (m)": 0, "Coupon Barrier (%)": Decimal(80)},
+            {"Guaranteed Periods (m)": "至少 1"},
+        ),
         ({"Product": "dacn", "Coupon Barrier (%)": Decimal(75)}, {}),
         ({"Coupon Barrier (%)": Decimal(80)}, {"Coupon Barrier (%)": "FCN 沒有配息門檻，要空白"}),
         (
@@ -364,6 +368,23 @@ def test_a_ben_row_imports_with_the_fixed_terms_and_keeps_a_digital_participatio
     assert draft.values["Participation (%)"] == 0
     write_batch(pg, [draft], CONFIG, user="tester")
     assert product(pg, A)["participation_pct"] == 0
+
+
+@pytest.mark.db
+def test_a_dacn_row_defaults_its_coupon_barrier_and_keeps_an_edited_one(pg, tmp_path: Path) -> None:
+    """DACN（#367、ADR 0030）：起單建檔沒有配息門檻，匯入時帶執行價；重新匯入時資料庫的值還是預設值（等於執行價）
+    就跟著新的執行價換，作業人員改過的值不動。"""
+    path = write_sheet(tmp_path / "起單建檔_20261015.xlsx", [sheet_line(A, {"Product": "DACN"})])
+    write_batch(pg, _drafts(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg), CONFIG, user="tester")
+    assert product(pg, A)["coupon_barrier_pct"] == 80
+
+    path = write_sheet(tmp_path / "起單建檔_20261016.xlsx", [sheet_line(A, {"Product": "DACN", "Strike (%)": 70})])
+    (draft,) = _drafts(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg)
+    assert draft.values["Coupon Barrier (%)"] == 70
+
+    pg.execute("UPDATE workflow.product SET coupon_barrier_pct = 75 WHERE tdcc = %s", (A,))
+    (draft,) = _drafts(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg)
+    assert draft.values["Coupon Barrier (%)"] == 75
 
 
 @pytest.mark.db
