@@ -344,6 +344,8 @@ STANDARD_FIELDS: dict[str, str] = {
     "coupon_pa_pct": "Decimal：年利率 %，保留說明書顯示位數；BEN 為到期一次付的紅利 %（不年化，ADR 0029）",
     "participation_pct": "Decimal：參與率 %（BEN；HSBC 由到期公式寫法推得：Maxi 100、Digital 0），只有參考條件表 Product 是 "
     "BEN 的列才和「參與率(%)」比（`field.participation_pct`）；其他範本不交",
+    "coupon_barrier_pct": "Decimal：配息門檻為最初價格的 N%（DACN，workflow #368），保留說明書顯示位數；只有要配息門檻的商品"
+    "（products.PRODUCT_RULES 的 has_coupon_barrier）才核對，其他範本不必交",
     "tenor_months": "int：天期（月）",
     "trade_date": "date：交易日",
     "issue_date": "date：發行日",

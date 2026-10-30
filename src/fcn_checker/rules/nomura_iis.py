@@ -17,7 +17,7 @@ from .iis import NO_TERM_SHEET, IisIssuerContext, ts_unavailable
 from .kit import Check
 
 
-def _vs_term_sheet(
+def vs_term_sheet(
     ctx: IisIssuerContext,
     rid: str,
     field: str,
@@ -48,7 +48,7 @@ def _vs_term_sheet(
 
 def coupon(ctx: IisIssuerContext) -> CheckResult:
     """收益分配事項每期配息率 = 說明書第 7 項（B16；= 年利率 ÷ 12 另由共用規則核對）。"""
-    return _vs_term_sheet(
+    return vs_term_sheet(
         ctx, "iis.coupon_per_period", "coupon_per_period_pct", "每期配息率 %", lambda v: v, "coupon_period_pct"
     )
 
@@ -59,7 +59,7 @@ def ko_start(ctx: IisIssuerContext) -> list[CheckResult]:
     if not (obs.ok and obs.value == "D"):
         return []
     return [
-        _vs_term_sheet(
+        vs_term_sheet(
             ctx,
             "iis.ko_observation_dates",
             "ko_observation_start",
@@ -73,7 +73,7 @@ def ko_start(ctx: IisIssuerContext) -> list[CheckResult]:
 
 def underlying_names(ctx: IisIssuerContext) -> CheckResult:
     """商品簡介標的英文名稱（依順序、檔數相同）= 說明書第一章第 8 項（B12；名稱本身是否正確不核對）。"""
-    return _vs_term_sheet(
+    return vs_term_sheet(
         ctx,
         "iis.underlying_names",
         "underlying_names_en",
@@ -88,7 +88,7 @@ def underlying_names(ctx: IisIssuerContext) -> CheckResult:
 def redemption_dates(ctx: IisIssuerContext) -> list[CheckResult]:
     """開始、後續受理贖回日期的文字 = 說明書第四章 1.(3)、(4)（D36；忽略空白）。"""
     return [
-        _vs_term_sheet(
+        vs_term_sheet(
             ctx,
             "iis.redemption_start",
             field,
