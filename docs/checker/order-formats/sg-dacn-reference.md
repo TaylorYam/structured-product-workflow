@@ -1,13 +1,13 @@
 # 下單資料格式：SG DACN（參考條件表）
 
 - 設定檔：所有上手共用的 [`config/reference_sheet.toml`](../../../config/reference_sheet.toml)
-- 狀態：規格；實作另開 PR（workflow #369）。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)；和 [SG FCN 下單資料格式](sg-fcn-reference.md) 相同的不重寫，本文件只寫 DACN 的差異
+- 狀態：已實作（workflow #369）。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)；和 [SG FCN 下單資料格式](sg-fcn-reference.md) 相同的不重寫，本文件只寫 DACN 的差異
 
 ## 1. 結構
 
 和 SG FCN 相同（商品代號前 3 碼 `037`，`發行機構` 欄寫 `SG`）。商品種類看 `Product` = `DACN`：辨識到的範本是 `sg-zh-dacn-pd`／`sg-zh-dacn-iis` 時，該列 Product 必須是 `DACN`；Product 是 `DACN`、文件卻是 SG FCN 範本（或反過來）→ 商品種類不一致，轉人工覆核（共用 `template.product_family`）。下單信主旨寫 `FCN` 不影響（以交易明細／起單建檔的 Product 為準，workflow #366；本機疑慮記錄）。
 
-開放自動核對：`config/issuer_prefixes.toml` `[auto_check_products]` 的 `DACN` 加 `SG`（實作 PR）；開放前 SG DACN 照未開放商品轉人工。
+開放自動核對：`config/issuer_prefixes.toml` `[auto_check_products]` 的 `DACN` 加 `SG`（workflow #369）。
 
 探勘用的參考條件表是私人雲端倉庫的舊總表 `FCN外商品數量.xlsx`（第一張工作表，涵蓋全部 10 份樣本；ISIN、發行日、比價日已填好）。舊總表沒有 `配息門檻(%)` 欄。
 

@@ -283,7 +283,7 @@ SG 範本**沒有**的標準欄位：第一章發行機構名稱（`issuer_name_
 3. 商品英文名稱以 `SG ISSUER` 開頭、含 `Fixed Coupon Equity Linked Notes (Non Principal Guaranteed and Unsecured)`。
 4. 章名為 `一、商品基本資料`、`二、相關機構事業概況`、`三、商品風險揭露`、`四、一般交易事項`、`五、特別記載事項`（中文數字＋頓號，五章）。
 5. 第一章條號 1–26 連續。
-6. 第 8 項沒有區間累積配息的 `n(i)(i=`、`N(i)(i=` 定義（和 [SG DACN 範本](sg-zh-dacn.md)互斥；workflow #369，實作另開 PR）。
+6. 第 8 項沒有區間累積配息的 `n(i)(i=`、`N(i)(i=` 定義（和 [SG DACN 範本](sg-zh-dacn.md)互斥；workflow #369）。
 
 交叉驗證：商品代號前 3 碼應為 `037`；與辨識結果不一致轉人工覆核。舊版面（SG5、SG6）也符合以上條件，同一範本處理。
 

@@ -409,6 +409,20 @@ normalize_brackets = true
 # 英文名稱在 PDF 換行處常黏字，比對時忽略所有空白
 ignore_whitespace_en = true
 
+[issuer.sg.product_names.DACN]
+# SG DACN 商品名稱（現行版說明書推得，2026-10-30 規格，workflow #369）：「固定配息」改「區間累積配息」、英文
+# 「Fixed Coupon」改「Range Accrual」；其他佔位符與比對方式同 FCN。參考條件表 Product 是 DACN 時用這個樣板。
+zh = "SG ISSUER {ccy_zh}計價{tenor}個月區間累積配息{autocall_zh}股權連結結構型商品（不保本及無擔保）"
+en = "SG ISSUER {ccy} {tenor}-month {memory_en}{autocall_en}Range Accrual Equity Linked Notes (Non Principal Guaranteed and Unsecured)"
+memory_zh = ""
+memory_en = "Memory "
+autocall_zh = "可自動提前出場"
+autocall_memory_zh = "（記憶式自動提前出場）"
+autocall_en = "Autocallable "
+ccy_aliases = { CNH = "CNY" }
+normalize_brackets = true
+ignore_whitespace_en = true
+
 # SG：三處皆同一寫法（2026-10-13 確認）；地址電話不核對。
 [issuer.sg.guarantor_name]
 cover = "法商法國興業銀行股份有限公司(Societe Generale)"

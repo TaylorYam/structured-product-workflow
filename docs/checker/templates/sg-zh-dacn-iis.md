@@ -5,7 +5,7 @@
 - 範本代號：`sg-zh-dacn-iis`
 - 對應說明書範本：[`sg-zh-dacn-pd`](sg-zh-dacn.md)；一檔商品一份說明書＋一份投資人須知（[ADR 0007](../adr/0007-iis-paired-with-term-sheet.md)）
 - 依據：2026-10-30 對 10 份真實樣本（SD01-IIS～SD10-IIS，與說明書 SD01～SD10 同商品）的探勘與開發者螢光標記（workflow #369）。**作業人員獨立標記先略過，2026-10-30 使用者決定**
-- 狀態：規格；實作另開 PR（workflow #369）
+- 狀態：已實作（workflow #369）
 
 > 真實樣本與擷取文字只放在被 Git 忽略的 `data/`。本文件的數值範例都是虛構的；樣本代號與真實商品代號的對照只存在本機（`data/tmp/dacn_sg/sample_map.txt`）。
 
@@ -18,6 +18,7 @@
 | 封面中文名稱 | `…個月固定配息…` | `SG ISSUER {幣別}計價{天期}個月區間累積配息（記憶式自動提前出場）股權連結結構型商品（不保本及無擔保）` |
 | 封面英文名稱 | `… Fixed Coupon Equity Linked Notes (Non Principal Guaranteed and Unsecured)` | `SG ISSUER {幣別代碼} {天期}-month Memory Autocallable Range Accrual Equity Linked Notes (Non Principal Guaranteed and Unsecured)` |
 | 收益分配事項 配息 | `配息率 = X%（相當於年率Y%）` | `■第1個配息金額 = 每單位面額×配息率`（保證 2 期寫 `第1~2個`）、`第a~T個配息金額 = 每單位面額×配息率×[n(i)/N(i)]`、`配息率 = X%（相當於年配息率Y%）`，以及 §1.1 的定義 |
+| 收益分配事項 配息日給付幣別 | `■於配息日，發行機構將依下列計算公式以{幣別}為計價單位給付：` | 沒有這一行（配息公式直接接在 `■` 後）：金額旁幣別的出處少配息日這一處 |
 | 收益分配事項 到期贖回 | `■到期贖回金額：若不曾發生任何自動提前出場事件…` | `■到期贖回金額：若於觀察期間不曾發生任何自動提前出場事件…`（多「於觀察期間」，不核對；KI 型態照 `sg-zh-iis` 的各款判斷） |
 
 ### 1.1 n(i)、N(i) 的寫法（10 份逐字相同；和說明書不同）

@@ -275,7 +275,8 @@ def schedule(ctx: IssuerContext) -> list[CheckResult]:
     """SG 獨有的日期表交叉驗證；期數、配息日與觀察日順序、末期日期、起始日由共用規則（rules/schedule.py）檢查。
 
     - 末列標「（最終評價日）」「（到期日）」，其他列不標；單一評價日寫法（S 型，Issue #130）表上沒有評價日，只標「（到期日）」。
-    - D：第 k+1 期起始日 = 第 8 項觀察期間起始日；配息按比例條款與自動提前出場日寫法。P：第 8 項期數與評價日「不適用」列。
+    - D：第 k+1 期起始日 = 第 8 項觀察期間起始日；配息按比例條款（範本沒有時不適用，DACN）與自動提前出場日寫法。
+      P：第 8 項期數與評價日「不適用」列。
     """
     f = ctx.ts.f
     table, wording, k = (f(x) for x in ("date_table", "ko_wording", "first_callable_period"))
@@ -307,7 +308,9 @@ def schedule(ctx: IssuerContext) -> list[CheckResult]:
                     f"第 {n + 1} 期起始日 {rows[n]['start']} 不等於第 8 項觀察期間起始日 {wording.value['start']}"
                 )
             pr, day = f("prorate_range"), f("autocall_day")
-            if pr.ok and pr.value != (n + 1, len(rows)):
+            if pr.status == FieldStatus.NOT_APPLICABLE:
+                pass  # DACN 範本沒有按比例條款，計息範圍另由 rules/sg_dacn.py 核對
+            elif pr.ok and pr.value != (n + 1, len(rows)):
                 issues.append(
                     f"配息按比例條款寫第 {pr.value[0]}-{pr.value[1]} 個配息週期，應為第 {n + 1}-{len(rows)} 個"
                 )

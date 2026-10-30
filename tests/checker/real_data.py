@@ -8,7 +8,7 @@
 樣本外（OOS）的 `term-sheets/OOS/<上手>/` 與 `orders/OOS/` 是驗證用，不在這裡讀、不放進測試斷言。
 Super Bull 樣本（BNP Issue #311、CA Issue #312，說明書與投資人須知成對）在 `term-sheets/super-bull/`，或用環境變數 `FCN_SUPER_BULL_DIR`
 指到私人雲端倉庫的資料夾。HSBC BEN 樣本（Issue #375，成對）在 `term-sheets/ben/`，或用環境變數 `FCN_BEN_DIR` 指到雲端倉庫。
-DACN 樣本（Nomura workflow #368，說明書與投資人須知成對）在 `term-sheets/dacn/`，或用環境變數 `FCN_DACN_DIR` 指到私人雲端倉庫的資料夾。
+DACN 樣本（Nomura workflow #368、SG workflow #369，說明書與投資人須知成對）在 `term-sheets/dacn/`，或用環境變數 `FCN_DACN_DIR` 指到私人雲端倉庫的資料夾。
 缺檔時測試略過，略過原因寫出缺的路徑；CI 沒有 data/，一律略過。
 """
 

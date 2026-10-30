@@ -26,7 +26,8 @@ TEMPLATE_ID = "sg-zh-pd"
 # 4：重印價格表、情境假設值與較差情境執行價交成共用情境規則的標準欄位（Issue #294）；
 # 5：無自動提前出場的單一評價日寫法（只有配息日欄的日期表、§12「評價日：」，Issue #130）
 # 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）；7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
-PARSER_VERSION = "7"
+# 8：辨識加「第 8 項沒有區間累積配息的 n(i)／N(i) 定義」，和 SG DACN 範本互斥（workflow #369）
+PARSER_VERSION = "8"
 # 保證機構信用評等（#241）：第一章第 3 項 `保證機構名稱及其長期債務信用評等：…，截至…，長期債務信用評等標準普爾A、穆迪A1、惠譽A+。`、
 # 第二章保證機構 (7) `長期債務信用評等：標準普爾A，穆迪A1，惠譽A+。（此處引用之信評為…）`。
 GUARANTOR_RATINGS = (
@@ -58,6 +59,8 @@ LAYOUT = LayoutSpec(
 COVER_TITLE = "中文產品說明書"
 ISSUER_EN = "SG ISSUER"
 NAME_EN_TAIL = "Fixed Coupon Equity Linked Notes (Non Principal Guaranteed and Unsecured)"
+# 區間累積配息（DACN）的 n(i)、N(i) 定義（parsers/sg_dacn.py）；FCN 範本第 8 項不會有（範本規格 §8 條件 6）
+ACCRUAL_DEFINITIONS = ("n(i)(i=", "N(i)(i=")
 # 頁尾註腳的開頭（註腳編號＋固定文字）；從這一行到頁底都不算內文
 FOOTNOTE = re.compile(
     r"^\d{1,2}\s*(非許可之受讓人|本商品之一切付款|特殊因素指|連結標的中斷日之後果|評價時間指|買賣中斷指|交易所中斷指|提早收盤|持有由SG)"
@@ -118,14 +121,36 @@ def _cover_title_lines(cover: Sequence[Line]) -> tuple[Line | None, Line | None]
     return None, None
 
 
-def detect(lines: Sequence[Line]) -> DetectionResult:
-    """範本辨識（範本規格 §8）：全部條件成立才是 SG 說明書（兩種版面同一範本）。"""
+@dataclass
+class Skeleton:
+    """SG 說明書骨架（範本規格 §8 條件 1、2、4、5，FCN 與 DACN 共用）：版面、封面兩欄表與不成立的條件。"""
+
+    doc: Document
+    items: dict[str, list[Line]]
+    failed: list[str]
+    evidence: list[Evidence]
+
+    @property
+    def en(self) -> str:
+        """商品英文名稱（去空白）。"""
+        return squash(join_text(self.items.get("商品英文名稱") or []))
+
+    @property
+    def zh(self) -> str:
+        """商品中文名稱（去空白）。"""
+        return squash(join_text(self.items.get("商品中文名稱") or []))
+
+    def article(self, n: int) -> list[Line]:
+        return self.doc.span_lines(self.doc.articles(1).get(n))
+
+
+def skeleton(lines: Sequence[Line]) -> Skeleton:
+    """封面標題、發行機構、五章章名、第一章條號 1–26（範本規格 §8 條件 1、2、4、5）。"""
     doc = document(lines)
     cover = doc.before_chapter1()
     items = sg_tables.cover_items(cover)
     head, title = _cover_title_lines(cover)
     issuer = items.get("發行機構之名稱、電話及地址") or []
-    en = squash(join_text(items.get("商品英文名稱") or []))
     arts = doc.articles(1)
     failed = []
     for test, message in (
@@ -135,10 +160,6 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
         ),
         (bool(issuer) and squash(issuer[0].text) == squash(ISSUER_EN), f"封面發行機構名稱不是 {ISSUER_EN}"),
         (
-            en.startswith(squash(ISSUER_EN)) and squash(NAME_EN_TAIL) in en,
-            f"商品英文名稱不是 SG ISSUER … {NAME_EN_TAIL}",
-        ),
-        (
             all(n in doc.chapters for n in range(1, 6)),
             "章名不是「一、商品基本資料」…「五、特別記載事項」寫法或五章不完整",
         ),
@@ -146,7 +167,21 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     ):
         if not test:
             failed.append(message)
-    return DetectionResult(not failed, failed, [Evidence.of(x) for x in cover[:2]])
+    return Skeleton(doc, items, failed, [Evidence.of(x) for x in cover[:2]])
+
+
+def detect(lines: Sequence[Line]) -> DetectionResult:
+    """範本辨識（範本規格 §8）：全部條件成立才是 SG 說明書（兩種版面同一範本）；第 8 項有區間累積配息的 n(i)／N(i)
+    定義是 SG DACN（parsers/sg_dacn.py），不是本範本。"""
+    sk = skeleton(lines)
+    failed = list(sk.failed)
+    en = sk.en
+    if not (en.startswith(squash(ISSUER_EN)) and squash(NAME_EN_TAIL) in en):
+        failed.append(f"商品英文名稱不是 SG ISSUER … {NAME_EN_TAIL}")
+    art8 = TextIndex(sk.article(8)).text
+    if any(x in art8 for x in ACCRUAL_DEFINITIONS):
+        failed.append("第 8 項有區間累積配息的 n(i)／N(i) 定義（DACN）")
+    return DetectionResult(not failed, failed, sk.evidence)
 
 
 # ---------------------------------------------------------------- 讀出

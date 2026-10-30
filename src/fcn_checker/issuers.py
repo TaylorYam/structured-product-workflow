@@ -33,6 +33,7 @@ from .parsers import (
     natixis_iis,
     nomura_dacn_iis,
     nomura_iis,
+    sg_dacn_iis,
     sg_iis,
     ubs_iis,
 )
@@ -55,6 +56,7 @@ from .parsers import natixis as natixis_parser
 from .parsers import nomura as nomura_parser
 from .parsers import nomura_dacn as nomura_dacn_parser
 from .parsers import sg as sg_parser
+from .parsers import sg_dacn as sg_dacn_parser
 from .parsers import ubs as ubs_parser
 from .products import BEN, DACN, FCN, FCN_EXPRESS, SUPER_BULL
 from .rules import barc as barc_rules
@@ -93,6 +95,8 @@ from .rules import nomura_dacn as nomura_dacn_rules
 from .rules import nomura_dacn_iis as nomura_dacn_iis_rules
 from .rules import nomura_iis as nomura_iis_rules
 from .rules import sg as sg_rules
+from .rules import sg_dacn as sg_dacn_rules
+from .rules import sg_dacn_iis as sg_dacn_iis_rules
 from .rules import sg_iis as sg_iis_rules
 from .rules import ubs as ubs_rules
 from .rules import ubs_iis as ubs_iis_rules
@@ -352,6 +356,30 @@ SG = Issuer(
         not_covered=(_IIS_SAMPLES,),
         rules=sg_iis_rules.run_all,
     ),
+)
+
+# SG DACN（workflow #369）：和 SG FCN 同一家上手、不同範本（依第 8 項 n(i)／N(i) 區間累積配息公式辨識，兩者互斥）；依參考條件表 Product 選用
+SG_DACN = Issuer(
+    code=sg_rules.ISSUER,
+    template_id=sg_dacn_parser.TEMPLATE_ID,
+    label="SG DACN 中文產品說明書",
+    parser_version=sg_dacn_parser.PARSER_VERSION,
+    not_covered=tuple(sg_dacn_rules.NOT_COVERED),
+    detect=sg_dacn_parser.detect,
+    read=sg_dacn_parser.read,
+    rules=sg_dacn_rules.run_all,
+    reference_fields=sg_dacn_rules.REFERENCE_FIELDS,
+    ratings=True,
+    iis=IisTemplate(
+        template_id=sg_dacn_iis.TEMPLATE_ID,
+        label="SG DACN 中文投資人須知",
+        parser_version=sg_dacn_iis.PARSER_VERSION,
+        detect=sg_dacn_iis.detect,
+        read=sg_dacn_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=sg_dacn_iis_rules.run_all,
+    ),
+    products=frozenset({DACN}),
 )
 
 CITI = Issuer(
@@ -632,6 +660,7 @@ REGISTRY: tuple[Issuer, ...] = (
     BNP,
     BNP_SUPER_BULL,
     SG,
+    SG_DACN,
     CITI,
     JPM,
     NOMURA,
