@@ -13,6 +13,7 @@
 之後的重算失敗時匯入保留。
 transaction 的範圍（#205）：每日匯入、回補股價、歷史收盤價、起單資料匯入、舊商品補資料、其他商品回補（#303）與準備、
 放回、建草稿的步驟紀錄整批一個；進度頁的登記已寄出（含批次）、顧客贖回一檔一個（`_each`），寫不進去只影響那一檔、之前寫好的保留。
+回填通用（#364）只讀資料庫，寫的是作業人員選的 Excel。
 這裡不自己寫 SQL：要判斷進度、查已寄出過的，問 `progress`、`step_records`。
 """
 
@@ -66,6 +67,7 @@ from sp_workflow.exposure import (
     export_hotspots,
     load_choices,
 )
+from sp_workflow.generic_backfill import GenericBackfillError, GenericReceipt, backfill_generic
 from sp_workflow.legacy_backfill import BackfillReceipt, LegacyBackfillError, backfill_legacy
 from sp_workflow.lifecycle import (
     OBSERVATION,
@@ -503,6 +505,16 @@ def run_return(settings: ConnectionSettings | None, batch: Path, result: Path) -
     """放回商品資料夾（產生放回清單），再為放回的每檔留步驟紀錄。"""
     receipt = return_to_folders(batch, result)
     return ReturnResult(receipt, _record_steps(settings, returned_records(receipt)))
+
+
+def fill_generic(settings: ConnectionSettings, source: Path, target: Path, paths: ConfigPaths) -> GenericReceipt:
+    """回填通用（#364）：ELN 通用回補格式以 TDCC 從資料庫回填，寫到 `target`；讀不到參考條件表格式就整份不處理。只讀資料庫。"""
+    try:
+        fmt = load_reference_format(paths.reference_format)
+    except IngestionError as exc:
+        raise GenericBackfillError(f"{_first_line(exc)}，整份不處理") from exc
+    with connect(settings) as conn:
+        return backfill_generic(conn, source, target, fmt)
 
 
 # ---------- 6 寄信草稿 ----------

@@ -1,14 +1,15 @@
-"""「5 放回」分頁（`sp_workflow.tabs.returning`）：做完後的重點數字（#85）、帶入新的核對結果時收起上一次的結果、步驟紀錄沒寫進去的提示（#151）、放回完成帶入寄信草稿（#281）。"""
+"""「5 放回」分頁（`sp_workflow.tabs.returning`）：做完後的重點數字（#85）、帶入新的核對結果時收起上一次的結果、步驟紀錄沒寫進去的提示（#151）、放回完成帶入寄信草稿（#281）、回填通用（#364）。"""
 
 from __future__ import annotations
 
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox
+from tkinter import filedialog, messagebox
 
 import pytest
 
 import sp_workflow.tabs.returning
+from sp_workflow.generic_backfill import NOT_FOUND, GenericLine, GenericReceipt
 from sp_workflow.mail_drafts import DRAFTED, DraftOutcome, DraftReceipt
 from sp_workflow.returning import (
     ALREADY_THERE,
@@ -184,3 +185,70 @@ def test_handing_over_clears_the_last_mail_results(master, tmp_path: Path) -> No
     mail = window.mail
     assert mail.table.get_children() == () and mail.kpis.values == ()
     assert mail.status_var.get() == mail.READY_TEXT, "狀態列不留上一次的完成訊息（#286）"
+
+
+def test_generic_backfill_asks_for_files_and_shows_its_own_columns(
+    master, tmp_path: Path, monkeypatch, immediate
+) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
+    page = window.returning
+    page._done(returned(PASSED))
+    source, target = tmp_path / "來源" / "ELN通用.xlsx", tmp_path / "來源" / "ELN通用_回填.xlsx"
+    saving: list[dict] = []
+    monkeypatch.setattr(filedialog, "askopenfilename", lambda **kw: str(source))
+    monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **kw: saving.append(kw) or str(target))
+    calls: list[tuple] = []
+
+    def fill(settings, src, out, paths):
+        calls.append((src, out))
+        lines = (
+            GenericLine("147000000001", "FCN", 13, ()),
+            GenericLine("147000000002", "BEN", 0, (NOT_FOUND,)),
+            GenericLine("147000000003", "FCN", 11, ("ISIN Code 表上是 X、資料庫是 Y，保留原值",)),
+        )
+        return GenericReceipt(out, lines)
+
+    monkeypatch.setattr(sp_workflow.tabs.returning, "fill_generic", fill)
+
+    page.start_generic()
+
+    assert calls == [(source, target)]
+    assert saving[0]["initialdir"] == str(source.parent) and saving[0]["initialfile"] == "ELN通用_回填.xlsx"
+    assert [page.table.heading(c, "text") for c in page.table["columns"]] == ["TDCC", "Product", "回填（格）", "原因"]
+    assert page.copier.rows()[1] == ["147000000002", "BEN", "0", NOT_FOUND]
+    assert page.kpis.values == (
+        ("回填（格）", 24, False),
+        ("資料庫沒有（檔）", 1, True),
+        ("有格子沒填或不一致（檔）", 1, True),
+    )
+    assert page.next_button.winfo_manager() == "", "回填通用不是放回，收起帶到寄信草稿的下一步"
+    assert page.memory.load()["generic_backfill"] == str(source.parent), "記住選檔的資料夾"
+
+    page.batch_var.set(str(tmp_path / "待核對_1"))
+    page.result_var.set(str(tmp_path / "核對結果.xlsx"))
+    monkeypatch.setattr(sp_workflow.tabs.returning, "run_return", lambda *a: returned(BLOCKED))
+    page.start()
+    assert [page.table.heading(c, "text") for c in page.table["columns"]] == ["TDCC", "TS", "IIS", "原因"], (
+        "放回時換回來"
+    )
+
+
+def test_a_handed_check_result_switches_back_to_return_columns(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    page = window.returning
+    page.use_columns(sp_workflow.tabs.returning.GENERIC_COLUMNS)
+
+    page.receive(tmp_path / "核對結果.xlsx", None)
+
+    assert page.table["columns"] == ("tdcc", "ts", "iis", "reason")
+
+
+def test_cancelling_the_save_dialog_does_nothing(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
+    monkeypatch.setattr(filedialog, "askopenfilename", lambda **kw: str(tmp_path / "ELN通用.xlsx"))
+    monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **kw: "")
+    monkeypatch.setattr(sp_workflow.tabs.returning, "fill_generic", lambda *a: pytest.fail("取消存檔就不回填"))
+
+    window.returning.start_generic()
+
+    assert window.returning.table["columns"] == ("tdcc", "ts", "iis", "reason")

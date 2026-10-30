@@ -351,8 +351,8 @@ def open_reference(path: Path) -> Workbook:
         raise IngestionError("reference_unreadable", f"參考條件表無法開啟（可能已損毀或不是 Excel）：{e}") from e
 
 
-def _date_format(ws: Any, first_data_row: int) -> str:
-    """沿用表上既有日期格的顯示格式。"""
+def date_format(ws: Any, first_data_row: int) -> str:
+    """沿用表上既有日期格的顯示格式；回填通用（`sp_workflow.generic_backfill`，#364）也用。"""
     for row in ws.iter_rows(min_row=first_data_row):
         for c in row:
             if isinstance(c.value, dt.datetime):
@@ -365,7 +365,7 @@ def apply(wb: Workbook, rfmt: ReferenceFormat, reports: Sequence[CheckReport]) -
     回填格不能在合併儲存格裡（呼叫端先拆開）。"""
     layout = locate(wb, rfmt)
     ws = wb[layout.sheet]
-    fmt = _date_format(ws, layout.first_data_row)
+    fmt = date_format(ws, layout.first_data_row)
     for report in reports:
         for d in report.backfill:
             if d.action not in WRITE_ACTIONS:

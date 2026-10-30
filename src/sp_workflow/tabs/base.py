@@ -77,17 +77,23 @@ class Tab:
         self.frame.columnconfigure(0, weight=1)
         self.status_var = tk.StringVar()
         self.runner = ActionRunner(db, self.background, self.status_var, self._busy, reset=self._reset)
-        self.columns = columns
         self.table_area = CopyArea(self.frame, COPY_HINT, lambda: self.copier.copy_all())  # #121
-        self.table = FitTreeview(self.table_area.card, columns=[c for c, _, _ in columns], show="headings")
+        self.table = FitTreeview(self.table_area.card, show="headings")
+        self.use_columns(columns)
+        self.table.tag_configure("problem", foreground=DANGER)
+        self.copier = TableCopy(self.table)
+        self.handed_tdccs: list[str] | None = None  # 從上一步帶入的 TDCC（`hand_in_tdccs`）
+
+    def use_columns(self, columns: Sequence[tuple[str, str, int]]) -> None:
+        """設定結果表的欄（欄代號, 表頭, 寬度）；同一頁有兩種結果時換欄（放回與回填通用，#364），表上的列一起清掉。"""
+        self.table.delete(*self.table.get_children())
+        self.columns = columns
+        self.table.configure(columns=[c for c, _, _ in columns])
         for col, label, width in columns:
             self.table.heading(col, text=label)
             # 最後一欄跟著視窗變寬，但不縮到比內容窄（窄了就左右捲動，#179）；欄寬依內容（#192）
             last = col == columns[-1][0]
             self.table.column(col, width=width, minwidth=width if last else 20, stretch=last)
-        self.table.tag_configure("problem", foreground=DANGER)
-        self.copier = TableCopy(self.table)
-        self.handed_tdccs: list[str] | None = None  # 從上一步帶入的 TDCC（`hand_in_tdccs`）
 
     def page_header(self, title: str, description: str) -> None:
         """第 0 列：步驟 N／總數（由視窗用 show_step 填）、標題（只寫功能）與一行說明。"""
