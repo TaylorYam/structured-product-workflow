@@ -233,6 +233,21 @@ LOOKBACK_SCENARIO_TABLE = replace(
 PRICE_PLACES = Decimal("0.0001")
 
 
+def _without_label(lines: list[Line]) -> list[Line]:
+    """表頭左欄「連結 / 標的」（列號欄）的「標的」可能和右邊的「彭博(Bloomberg)代碼」擷取成同一行，代碼欄的左界就落到列號上、
+    把列號讀進代碼：從「標的」後面切開，只留代碼欄表頭。"""
+    out = []
+    for ln in lines:
+        m = re.match(r"\s*標的\s+(?=\S)", ln.text)
+        spans = ln.aligned_char_spans
+        if m is None or not spans:
+            out.append(ln)
+            continue
+        i = m.end()
+        out.append(replace(ln, x0=spans[i][0], text=ln.text[i:], char_spans=spans[i:]))
+    return out
+
+
 def _price_table(art15: list[Line]) -> tuple[ParsedField, bool]:
     """§15 價格表（標題「期初價格…：依下表所示」到「(1) 紅利配息率」）與表上有沒有執行價欄（沒有 → lookback 寫法）。"""
     region = ms_tables.price_region(art15, ("（1）紅利配息率",))
@@ -242,7 +257,7 @@ def _price_table(art15: list[Line]) -> tuple[ParsedField, bool]:
     title, lines = region
     has_strike = "執行價" in squash(title)
     spec = PRICE_TABLE if has_strike else LOOKBACK_TABLE
-    return ms_tables.price_table("price_table", lines, spec, title=title), has_strike
+    return ms_tables.price_table("price_table", _without_label(lines), spec, title=title), has_strike
 
 
 def _with_strike(table: ParsedField, pct: ParsedField) -> ParsedField:
@@ -403,7 +418,7 @@ def _reprint(art16: list[Line], sec: ms_scenario.ScenarioSection, lookback: bool
         return ParsedField.missing(name, "找不到第 16 項重印價格表（假設「參與率」之後、情境一之前）")
     a = art16.index(ti.lines_for(found[0].start(), found[0].end())[-1]) + 1
     region = [x for x in art16[a : art16.index(first)] if squash(x.text) != "▪"]
-    return ms_tables.price_table(name, region, LOOKBACK_SCENARIO_TABLE if lookback else SCENARIO_TABLE)
+    return ms_tables.price_table(name, _without_label(region), LOOKBACK_SCENARIO_TABLE if lookback else SCENARIO_TABLE)
 
 
 def _article16(fields: dict[str, ParsedField], kind: Kind, art16: list[Line], lookback: bool) -> tuple:
