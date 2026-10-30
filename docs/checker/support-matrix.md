@@ -47,6 +47,8 @@ BEN 沒有 KO、沒有定期配息、無 KI，只在到期判定（[ADR 0029](..
 
 Nomura DACN 的文件（workflow #368 已實作）：[說明書範本](templates/nomura-zh-dacn.md)、[投資人須知範本](templates/nomura-zh-dacn-iis.md)、[參考條件表對照](order-formats/nomura-dacn-reference.md)、[核對規則](rules/nomura-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工）。
 
+SG DACN 的文件（workflow #369 規格；實作另開 PR，開放前照未開放商品轉人工）：[說明書範本](templates/sg-zh-dacn.md)、[投資人須知範本](templates/sg-zh-dacn-iis.md)、[參考條件表對照](order-formats/sg-dacn-reference.md)、[核對規則](rules/sg-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工；保證 1 期、2 期都支援）。
+
 ## 目前設定明確不支援的樣態
 
 下表是 `config/issuer_prefixes.toml` 的 `[unsupported_variants]`，不是 parser 能力或樣本涵蓋率的完整清單。參考條件表、說明書或同商品投資人須知任一邊明確是黑名單樣態，兩份都停止條件核對、不回填、不能人工放行。未列入黑名單的組合仍須通過範本、必要欄位與規則檢查。
