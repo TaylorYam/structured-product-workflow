@@ -68,6 +68,11 @@ def test_supported_dacn_pairs_pass_and_fill(tmp_path, spec, headers):
     assert ts.report.status == S.PASS, problems(ts.report)
     assert iis.report.status == S.PASS, problems(iis.report)
     assert ts.fills_sheet
+    # 比價日回填照 FCN D 型：比價日_1 = 第一個 KO 觀察日（第 1 期配息觀察期間結束日）、最後一格 = 最終評價日，中間 `-`
+    slots = {d.column: d.expected for d in ts.report.backfill if d.column.startswith("比價日_")}
+    last = f"比價日_{spec.tenor}"
+    assert (slots["比價日_1"], slots[last]) == (spec.ends[spec.first_callable - 1], spec.final_date)
+    assert {v for k, v in slots.items() if k not in ("比價日_1", last)} == {"-"}
     barrier = rule(ts.report, "field.coupon_barrier_pct")[0]
     assert barrier.status == S.PASS
     assert ("沒有配息門檻欄" in barrier.message) == (headers is None)
