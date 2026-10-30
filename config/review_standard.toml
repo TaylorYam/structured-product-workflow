@@ -7,7 +7,7 @@
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
 # 規則說明見 docs/checker/rules/review-standard.md。
 
-version = 37
+version = 38
 effective_date = 2026-10-30
 
 [distributor]
