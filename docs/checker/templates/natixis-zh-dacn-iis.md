@@ -5,7 +5,7 @@
 - 範本代號：`natixis-zh-dacn-iis`
 - 對應說明書範本：[`natixis-zh-dacn-pd`](natixis-zh-dacn.md)；一檔商品一份說明書＋一份投資人須知（[ADR 0007](../adr/0007-iis-paired-with-term-sheet.md)）
 - 依據：2026-10-30 對 7 份真實樣本（NX01-IIS～NX07-IIS，與說明書 NX01～NX07 同商品）的探勘與開發者螢光標記（workflow #371）。**作業人員獨立標記先略過，2026-10-30 使用者決定**
-- 狀態：規格；實作另開 PR（workflow #371）
+- 狀態：已實作（workflow #371）
 
 > 真實樣本與擷取文字只放在被 Git 忽略的 `data/`。本文件的數值範例都是虛構的；樣本代號與真實商品代號的對照只存在本機（`data/tmp/dacn_natixis/sample_map.txt`）。
 

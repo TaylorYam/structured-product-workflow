@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from decimal import Decimal
+from typing import NamedTuple
 
 from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
@@ -24,7 +25,8 @@ TEMPLATE_ID = "natixis-zh-iis"
 # 5：警語的受託機構名稱（Issue #306）；6：說明文字幣別（Issue #318）
 # 7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 8：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
-PARSER_VERSION = "8"
+# 9：辨識另要求貳、商品事項沒有區間計息寫法（和 Natixis DACN 投資人須知互斥，workflow #371）
+PARSER_VERSION = "9"
 # 發行機構信用評等（#240）：商品簡介 `發行機構之長期債務信用評等(截至本中文投資人須知刊印日期)：長期債務信用評等標準普爾評等A+/…。`
 RATINGS = (
     ratings.RatingPlace(
@@ -97,9 +99,21 @@ def body(lines: Sequence[Line]) -> list[Line]:
     return [ln for ln in lines if not NOISE.match(ln.text.strip())]
 
 
-def detect(lines: Sequence[Line]) -> DetectionResult:
+class Skeleton(NamedTuple):
+    """Natixis 投資人須知共用的辨識結果（FCN、DACN 都要成立的條件）：全文索引、中英文名稱（去空白）、不成立的條件與證據。"""
+
+    text: TextIndex
+    zh: str
+    en: str
+    failed: list[str]
+    evidence: list[Evidence]
+
+
+def skeleton(lines: Sequence[Line]) -> Skeleton:
+    """範本規格 §6 條件 1、3、4、5 與條件 2 的中文名稱部分。"""
     lines = body(lines)
-    text = TextIndex(lines).text
+    ti = TextIndex(lines)
+    text = ti.text
     head = squash(lines[0].text) if lines else ""
     m = re.search(r"刊印日期：\d{4}年\d{1,2}月\d{1,2}日(.+?)\(下稱「本商品」\)(.+?)商品種類：", text)
     zh, en = (m[1], m[2]) if m else ("", "")
@@ -113,10 +127,6 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
             zh.startswith(natixis.ISSUER) and "(不保本、無擔保及無保證機構)" in zh,
             f"中文名稱不是以「{natixis.ISSUER}」開頭或沒有「(不保本、無擔保及無保證機構)」",
         ),
-        (
-            en.startswith("Natixis–") and squash(natixis.NAME_EN_MARK) in en,
-            f"英文名稱沒有「Natixis –」與「{natixis.NAME_EN_MARK}」",
-        ),
         ("商品種類：" in text and "TDCC商品代號為" in text, "找不到「商品種類：…，TDCC商品代號為…」"),
         (
             f"壹、相關機構1.發行機構：{natixis.ISSUER}" in text and "2.發行人：" in text,
@@ -126,7 +136,25 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     ):
         if not ok:
             failed.append(message)
-    return DetectionResult(not failed, failed, [Evidence.of(x) for x in lines[:2]])
+    return Skeleton(ti, zh, en, failed, [Evidence.of(x) for x in lines[:2]])
+
+
+def product_text(ti: TextIndex) -> str:
+    """「貳、商品事項」到「叁、投資風險」的去空白文字（找不到時為空字串）。"""
+    sec = iis.section(ti, PRODUCT)
+    return TextIndex(sec).text if sec is not None else ""
+
+
+def detect(lines: Sequence[Line]) -> DetectionResult:
+    """範本辨識（範本規格 §6）：骨架（`skeleton`）、英文名稱都成立，且貳、商品事項沒有區間計息寫法（條件 6，和 Natixis DACN
+    投資人須知互斥）才是 Natixis FCN 投資人須知。"""
+    sk = skeleton(lines)
+    failed = list(sk.failed)
+    if not (sk.en.startswith("Natixis–") and squash(natixis.NAME_EN_MARK) in sk.en):
+        failed.append(f"英文名稱沒有「Natixis –」與「{natixis.NAME_EN_MARK}」")
+    if found := natixis.accrual_words(product_text(sk.text)):
+        failed.append(f"貳、商品事項有區間計息（DACN）的寫法「{'」「'.join(found)}」")
+    return DetectionResult(not failed, failed, sk.evidence)
 
 
 def _product_terms(ti: TextIndex, fields: dict[str, ParsedField], provided: set[str]) -> None:

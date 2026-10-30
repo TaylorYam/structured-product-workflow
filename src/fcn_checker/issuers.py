@@ -31,6 +31,7 @@ from .parsers import (
     jpm_iis,
     ms_ben_iis,
     ms_iis,
+    natixis_dacn_iis,
     natixis_iis,
     nomura_dacn_iis,
     nomura_iis,
@@ -55,6 +56,7 @@ from .parsers import jpm as jpm_parser
 from .parsers import ms as ms_parser
 from .parsers import ms_ben as ms_ben_parser
 from .parsers import natixis as natixis_parser
+from .parsers import natixis_dacn as natixis_dacn_parser
 from .parsers import nomura as nomura_parser
 from .parsers import nomura_dacn as nomura_dacn_parser
 from .parsers import sg as sg_parser
@@ -93,6 +95,8 @@ from .rules import ms_ben as ms_ben_rules
 from .rules import ms_ben_iis as ms_ben_iis_rules
 from .rules import ms_iis as ms_iis_rules
 from .rules import natixis as natixis_rules
+from .rules import natixis_dacn as natixis_dacn_rules
+from .rules import natixis_dacn_iis as natixis_dacn_iis_rules
 from .rules import natixis_iis as natixis_iis_rules
 from .rules import nomura as nomura_rules
 from .rules import nomura_dacn as nomura_dacn_rules
@@ -518,6 +522,31 @@ NATIXIS = Issuer(
     ),
 )
 
+# Natixis DACN（workflow #371）：和 Natixis FCN 同一家上手、不同範本（依第 13 項「變動配息金額」公式與配息界限價格辨識，兩者互斥）；
+# 依參考條件表 Product 選用
+NATIXIS_DACN = Issuer(
+    code=natixis_rules.ISSUER,
+    template_id=natixis_dacn_parser.TEMPLATE_ID,
+    label="Natixis DACN 中文產品說明書",
+    parser_version=natixis_dacn_parser.PARSER_VERSION,
+    not_covered=tuple(natixis_dacn_rules.NOT_COVERED),
+    detect=natixis_dacn_parser.detect,
+    read=natixis_dacn_parser.read,
+    rules=natixis_dacn_rules.run_all,
+    reference_fields=natixis_dacn_rules.REFERENCE_FIELDS,
+    ratings=True,
+    iis=IisTemplate(
+        template_id=natixis_dacn_iis.TEMPLATE_ID,
+        label="Natixis DACN 中文投資人須知",
+        parser_version=natixis_dacn_iis.PARSER_VERSION,
+        detect=natixis_dacn_iis.detect,
+        read=natixis_dacn_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=natixis_dacn_iis_rules.run_all,
+    ),
+    products=frozenset({DACN}),
+)
+
 CA = Issuer(
     code=ca_rules.ISSUER,
     template_id=ca_parser.TEMPLATE_ID,
@@ -696,6 +725,7 @@ REGISTRY: tuple[Issuer, ...] = (
     NOMURA_DACN,
     GS,
     NATIXIS,
+    NATIXIS_DACN,
     CA,
     CA_SUPER_BULL,
     CA_BEN,
