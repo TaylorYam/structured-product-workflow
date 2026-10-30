@@ -34,14 +34,22 @@ def fixed(rid: str, field: str, name: str, pf: ParsedField, document: DocKind) -
     return check.result(S.MISMATCH, evidence=pf.evidence, reason="value_mismatch", message=pf.note)
 
 
-def exit_bonus_mentions(ctx: IssuerContext, mentions: Sequence[Mention], fail_message: str) -> list[CheckResult]:
-    """出場紅利的其他出處，每處一筆：數值 = 正式值 `coupon_pa_pct`。"""
+def exit_bonus_mentions(
+    ctx: IssuerContext,
+    mentions: Sequence[Mention],
+    fail_message: str,
+    *,
+    rid: str = "doc.exit_bonus",
+    label: str = "出場紅利",
+    key: str = "exit_bonus",
+) -> list[CheckResult]:
+    """出場紅利的其他出處，每處一筆：數值 = 正式值 `coupon_pa_pct`（BEN 的到期紅利同樣比，規則與名稱另給）。"""
     main = ctx.ts.f("coupon_pa_pct")
     out = []
     for k, m in enumerate(mentions, start=1):
-        pf = m.parsed(f"exit_bonus_{k}")
+        pf = m.parsed(f"{key}_{k}")
         out.append(
-            kit.doc_check(ctx, "doc.exit_bonus", pf.name, f"出場紅利（{m.where}）", main, pf).compare(
+            kit.doc_check(ctx, rid, pf.name, f"{label}（{m.where}）", main, pf).compare(
                 main.value, pf.value, fail_message=fail_message
             )
         )

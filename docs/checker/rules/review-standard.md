@@ -100,6 +100,7 @@
 | `{ki_zh}`／`{ki_en}` | 有 KI（KI 型態不是「無」）時填入 `ki_zh`／`ki_en`，否則空白（DBS 中文「及定價日觸發(歐式)」、英文「European Knock-In 」，Issue #280；UBS 中文「（含觸及下限價事件）」、英文「Kick-In Event and 」，Issue #279） |
 | `{quanto_zh}`／`{quanto_en}` | 承作幣別和任一檔標的報價幣別（說明書價格旁的幣別字）不同時填入 `quanto_zh`／`quanto_en`，否則空白；幣別字讀不到或不在幣別對照時轉人工覆核（DBS「Quanto」，Issue #280） |
 | `{express_zh}`／`{express_en}` | 說明書推得的第一個可提前出場期為 0（沒有 Non-Call，FCN_Express）時填入 `express_zh`／`express_en`，否則空白；提前出場排程讀不到時轉人工覆核（CA「Fixed Coupon Express Autocall Note」、HSBC「Autocallable Express Fixed Coupon Notes」的 `Express `，workflow #305、#306） |
+| `{payoff_zh}`／`{payoff_en}` | BEN 的到期給付型態：說明書參與率為 0（Digital）時填入 `digital_zh`／`digital_en`，否則填 `enhanced_zh`／`enhanced_en`；參與率讀不到時轉人工覆核（HSBC「紅利表現」／「紅利配息」，workflow #375） |
 | `{ccy}` 的別名 | 樣板的 `ccy_aliases`（ISO 代碼 → 名稱用的代碼）：SG 英文名稱把 CNH 寫成 CNY（Issue #194）；GS、BNP 同（BNP 境外人民幣版，Issue #345）；DBS 寫 RMB（Issue #296） |
 
 樣板設 `single_unsupported = true` 時，標的只有 1 檔的名稱轉人工覆核（沒有樣本、寫法未知；`single_*` 可不設，DBS，Issue #280）。樣板出現上表以外的佔位符，或用了 `{underlying_*}` 卻沒設定 `single_*`（`single_unsupported` 時免設）／`basket_*` 時，載入審查標準就回報設定錯誤（`config_invalid`，整批不核對），不會在核對途中才出錯。`issuer.<上手>.risk_level_formats`、`issuer.<上手>.fixed_warning_openings`、`issuer_name_ignore` 寫法有誤時同樣在載入時回報。

@@ -8,7 +8,7 @@
 # 核對結果檔「回填後」一律照 [import_format]（匯入格式）重新產生，不論表上欄位怎麼排（Issue #203）。
 # 規則說明見 docs/checker/order-formats/reference-sheet.md。
 
-version = 23
+version = 24
 effective_date = 2026-10-30
 
 [layout]
@@ -82,7 +82,8 @@ UBS = "UBS"  # 2026-10-15 確認（Issue #279）
 [underlyings]
 any_order_issuers = ["CITI", "JPM", "GS", "BBVA"]
 # 只有某商品種類（參考條件表 Product）不看順序的上手：HSBC Super Bull 表上順序常和說明書不同（2026-10-28 確認，#314；HSBC FCN 照舊依順序）
-any_order_products = { "Super Bull" = ["HSBC"] }
+# HSBC BEN 同樣（探勘 13 份順序不同、代號相同，2026-10-30 規格確認，#375）
+any_order_products = { "Super Bull" = ["HSBC"], BEN = ["HSBC"] }
 
 # Excel 欄名 → 標準欄位
 [columns]

@@ -23,6 +23,7 @@ from .parsers import (
     citi_iis,
     dbs_iis,
     gs_iis,
+    hsbc_ben_iis,
     hsbc_iis,
     hsbc_super_bull_iis,
     jpm_iis,
@@ -41,6 +42,7 @@ from .parsers import citi as citi_parser
 from .parsers import dbs as dbs_parser
 from .parsers import gs as gs_parser
 from .parsers import hsbc as hsbc_parser
+from .parsers import hsbc_ben as hsbc_ben_parser
 from .parsers import hsbc_super_bull as hsbc_sb_parser
 from .parsers import jpm as jpm_parser
 from .parsers import ms as ms_parser
@@ -48,7 +50,7 @@ from .parsers import natixis as natixis_parser
 from .parsers import nomura as nomura_parser
 from .parsers import sg as sg_parser
 from .parsers import ubs as ubs_parser
-from .products import FCN, FCN_EXPRESS, SUPER_BULL
+from .products import BEN, FCN, FCN_EXPRESS, SUPER_BULL
 from .rules import barc as barc_rules
 from .rules import bbva as bbva_rules
 from .rules import bbva_iis as bbva_iis_rules
@@ -66,6 +68,8 @@ from .rules import dbs_iis as dbs_iis_rules
 from .rules import gs as gs_rules
 from .rules import gs_iis as gs_iis_rules
 from .rules import hsbc as hsbc_rules
+from .rules import hsbc_ben as hsbc_ben_rules
+from .rules import hsbc_ben_iis as hsbc_ben_iis_rules
 from .rules import hsbc_super_bull as hsbc_sb_rules
 from .rules import hsbc_super_bull_iis as hsbc_sb_iis_rules
 from .rules import jpm as jpm_rules
@@ -202,6 +206,29 @@ HSBC_SUPER_BULL = Issuer(
         rules=hsbc_sb_iis_rules.run_all,
     ),
     products=frozenset({SUPER_BULL}),
+)
+
+# HSBC BEN（#375）：Maxi 與 Digital 同一個範本，依參考條件表 Product 選用（同 Super Bull）
+HSBC_BEN = Issuer(
+    code=hsbc_rules.ISSUER,
+    template_id=hsbc_ben_parser.TEMPLATE_ID,
+    label="HSBC BEN 中文產品說明書",
+    parser_version=hsbc_ben_parser.PARSER_VERSION,
+    not_covered=tuple(hsbc_ben_rules.NOT_COVERED),
+    detect=hsbc_ben_parser.detect,
+    read=hsbc_ben_parser.read,
+    rules=hsbc_ben_rules.run_all,
+    ratings=True,
+    iis=IisTemplate(
+        template_id=hsbc_ben_iis.TEMPLATE_ID,
+        label="HSBC BEN 中文投資人須知",
+        parser_version=hsbc_ben_iis.PARSER_VERSION,
+        detect=hsbc_ben_iis.detect,
+        read=hsbc_ben_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=hsbc_ben_iis_rules.run_all,
+    ),
+    products=frozenset({BEN}),
 )
 
 MS = Issuer(
@@ -518,6 +545,7 @@ REGISTRY: tuple[Issuer, ...] = (
     BARC,
     HSBC,
     HSBC_SUPER_BULL,
+    HSBC_BEN,
     MS,
     BNP,
     BNP_SUPER_BULL,
