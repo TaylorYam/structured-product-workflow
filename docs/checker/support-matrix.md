@@ -45,6 +45,8 @@ Super Bull 只支援 KO 每期觀察＋非記憶式＋無 KI（`Period End`＋`N
 
 BEN 沒有 KO、沒有定期配息、無 KI，只在到期判定（[ADR 0029](../adr/0029-ben.md)）；參考條件表的參與率(%) 只有 BEN 核對，沒有這欄或空白轉人工。HSBC BEN 的文件：[說明書範本](templates/hsbc-zh-ben.md)、[投資人須知範本](templates/hsbc-zh-ben-iis.md)、[參考條件表對照](order-formats/hsbc-ben-reference.md)、[核對規則](rules/hsbc-ben-check-rules.md)（只支援現行版範本的 Maxi 與 Digital；Maxi 1 檔或 4 檔以上標的、Digital 2 檔以上標的、非美元轉人工；參與率由到期公式推得：Maxi 100、Digital 0）。CA BEN 的文件：[說明書範本](templates/ca-zh-ben.md)、[投資人須知範本](templates/ca-zh-ben-iis.md)、[參考條件表對照](order-formats/ca-ben-reference.md)、[核對規則](rules/ca-ben-check-rules.md)（只支援現行版 Bonus 範本；KO 價欄版、早期版與 Digital 轉人工、不能人工放行；1 檔或 3 檔以上標的、K% 不是 100、非美元、境外人民幣、標的報價幣別和計價幣別不同轉人工；參與率讀第 9 項）。MS BEN 的文件：[說明書範本](templates/ms-zh-ben.md)、[投資人須知範本](templates/ms-zh-ben-iis.md)、[參考條件表對照](order-formats/ms-ben-reference.md)、[核對規則](rules/ms-ben-check-rules.md)（只支援現行版範本的一般 BEN 與 Digital，各有 lookback；一般 BEN 1 檔或 4 檔以上標的、Digital 2 檔以上標的、非美元轉人工；參與率讀說明書 §15(3)；lookback 的回顧結束日核對並回填參考條件表「回顧結束日」）。
 
+KI 每期觀察（MKI）的 DACN 目前在流程各階段都不支援、人工處理，待 workflow #386 使用者決定：各上手 DACN 核對都不會自動通過（Nomura、SG 照沒有樣本的型態轉人工覆核；DBS 讀不到每期觀察的下限觸發事件而轉人工覆核，參考條件表寫 `P` 是 DBS 的不支援樣態；還沒開放的上手照未開放商品轉人工核對）。
+
 Nomura DACN 的文件（workflow #368 已實作）：[說明書範本](templates/nomura-zh-dacn.md)、[投資人須知範本](templates/nomura-zh-dacn-iis.md)、[參考條件表對照](order-formats/nomura-dacn-reference.md)、[核對規則](rules/nomura-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工）。
 
 SG DACN 的文件（workflow #369 已實作）：[說明書範本](templates/sg-zh-dacn.md)、[投資人須知範本](templates/sg-zh-dacn-iis.md)、[參考條件表對照](order-formats/sg-dacn-reference.md)、[核對規則](rules/sg-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工；保證 1 期、2 期都支援）。

@@ -265,6 +265,22 @@ def test_variants_without_samples_need_review(tmp_path, spec):
     assert "待樣本驗證" in result.message
 
 
+def test_periodic_ki_wording_is_not_read(tmp_path):
+    """KI 每期觀察（MKI，#386 待決定）：DBS 範本只認「於定價日」的下限觸發事件，改成每期觀察的寫法讀不到 KI 型態，
+    轉人工覆核，不會自動通過。"""
+    edit = Edit("於定價日的參考價格", "於任一觀察期間結束日的參考價格", "ts.basic.maturity")
+    r = check(tmp_path, AM, edits=[edit])
+    assert r.status != S.PASS
+    assert flagged(r, "field.ki_type", S.REVIEW_REQUIRED), problems(r)
+
+
+def test_periodic_ki_on_the_sheet_is_an_unsupported_variant(tmp_path):
+    """參考條件表 KI(Freq) 寫 P（KI 每期觀察）：DBS 的不支援樣態（config/issuer_prefixes.toml），不核對、不能人工放行。"""
+    ts, iis = check_pair(tmp_path, AM, **{"KI(Freq)": "P"})
+    for item in (ts, iis):
+        assert item.unsupported_variant and item.release_problem
+
+
 def test_guaranteed_periods_must_equal_non_call(tmp_path):
     """強制贖回 Non-Call 2，但配息資料只保證第 1 期（情境範圍照公式）：保證期數 ≠ Non-Call。"""
     r = check(tmp_path, DacnSpec(first_callable=2), pdf_spec=DacnSpec(first_callable=2, guaranteed=1))
