@@ -11,6 +11,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from ..parsers.ca_ben import CaBenTermSheet
+from ..parsers.ca_super_bull import worst_row
 from ..schema import CheckResult
 from ..schema import CheckStatus as S
 from . import ca, kit, super_bull
@@ -183,17 +184,15 @@ def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
     n = Decimal(denom.value)
     out = []
     for case in (1, 2):
-        out += _bonus_case(cases[case - 1], sc, case, n, bonus_pct.value, rate.value, prices.value, tenor.value)
+        out += _bonus_case(cases[case - 1], sc, case, n, bonus_pct.value, prices, tenor.value)
     return [*out, *worse(cases[2], sc, n, tenor.value)]
 
 
 def _strike_of(sc, case: int, prices) -> Decimal | None:
     """情境假設的最差標的在價格表的執行價；認不出是哪一檔時為 None。"""
-    from ..parsers.ca_super_bull import worst_row
-
     hit = sc.assumed.get(case)
-    row = worst_row(hit.value.name, kit.present(prices)) if hit is not None else None
-    return prices[row - 1].prices.get("strike") if row is not None else None
+    row = worst_row(hit.value.name, prices) if hit is not None else None
+    return prices.value[row - 1].prices.get("strike") if row is not None else None
 
 
 def _bonus_case(
@@ -202,7 +201,6 @@ def _bonus_case(
     case: int,
     n: Decimal,
     bonus_pct: Decimal,
-    rate: Decimal,
     prices,
     tenor: int,
 ) -> list[CheckResult]:
@@ -235,7 +233,11 @@ def _bonus_case(
             out.append(c.calc("assumed", issues, assumed, expected=f"≥ {strike}", actual=p))
     total = None
     if amount is None or gain is None:
-        out.append(c.unread("redemption", "找不到「＝N × [100%+最大值（x%，y% x（P / I - 100%))] ＝N × [100%+最大值（x%，r%) = A」"))
+        out.append(
+            c.unread(
+                "redemption", "找不到「＝N × [100%+最大值（x%，y% x（P / I - 100%))] ＝N × [100%+最大值（x%，r%) = A」"
+            )
+        )
     else:
         a = amount.value
         shown_gain = kit.shown(gain, a.gain)
@@ -253,17 +255,25 @@ def _bonus_case(
         total = a.amount
         out.append(c.calc("redemption", issues, amount, expected=expected, actual=a.amount))
     if ret is None:
-        out += [c.unread(key, "找不到「＝A / N ) - 100% ＝r%（平均年化報酬率：y%）」") for key in ("return", "annualized")]
+        out += [
+            c.unread(key, "找不到「＝A / N ) - 100% ＝r%（平均年化報酬率：y%）」") for key in ("return", "annualized")
+        ]
         return out
     r = ret.value
-    expected, issues = super_bull.profit_return_issues(r, None, n, RETURN_MESSAGES, tolerance=AMOUNT_TOLERANCE)
-    out.append(c.calc("return", issues, ret, expected=expected, actual=r.pct))
-    if total is not None and r.amount != total:
-        out.append(
-            c.calc("return", [RETURN_MESSAGES.amount.format(got=r.amount, want=total)], ret, expected=total, actual=r.amount)
-            if RETURN_AMOUNT_STATUS == S.MISMATCH
-            else c.unread("return", RETURN_MESSAGES.amount.format(got=r.amount, want=total))
+    expected, issues = super_bull.profit_return_issues(r, total, n, RETURN_MESSAGES, tolerance=AMOUNT_TOLERANCE)
+    amount_only = total is not None and r.amount != total and len(issues) == 1
+    out.append(
+        kit.calc_result(
+            RID,
+            f"{c.tag}_return",
+            c.item("return"),
+            issues,
+            kit.evidence(ret.lines),
+            review=amount_only and RETURN_AMOUNT_STATUS == S.REVIEW_REQUIRED,
+            expected=expected,
+            actual=r.pct,
         )
+    )
     annualized = kit.shown(r.pct * 12 / tenor, r.annualized)
     issues = (
         []

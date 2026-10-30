@@ -53,9 +53,7 @@ DELIVERY = (
     rf"（1）若最差表現之連結標的期末訂價小於執行價，則投資人將會收到發行機構交付表現最差的連結標的股票之股數，"
     rf"及以({ca.CCY})支付剩餘金額（如有）;"
 )
-FORMULA = (
-    "每單位面額x[100%+最大值(紅利率，參與率x(最差表現之連結標的期末訂價/最差表現之連結標的期初訂價)-100%))]。"
-)
+FORMULA = "每單位面額x[100%+最大值(紅利率，參與率x(最差表現之連結標的期末訂價/最差表現之連結標的期初訂價)-100%))]。"
 MATURITY = "（2）若最差表現之連結標的期末訂價大於或等於執行價，則投資人可領回：" + FORMULA
 DIGITAL_FORMULA = "每單位面額x紅利水準。"
 PARTICIPATION = r"參與率：" + ca.PCT + "。"
@@ -148,7 +146,9 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     art9 = text(9)
     digital_name, digital_formula = squash(DIGITAL_EN) in en, DIGITAL_FORMULA in art9
     if digital_name and digital_formula:
-        return DetectionResult(False, ["英文名稱是 Digital Coupon Note、第 9 項是 Digital 公式"], evidence, unsupported=DIGITAL)
+        return DetectionResult(
+            False, ["英文名稱是 Digital Coupon Note、第 9 項是 Digital 公式"], evidence, unsupported=DIGITAL
+        )
     if digital_name or digital_formula:
         why = "英文名稱是 Digital Coupon Note、第 9 項不是 Digital 公式" if digital_name else "第 9 項是 Digital 公式"
         return DetectionResult(False, [why], evidence, unsupported=MIXED)
@@ -269,7 +269,10 @@ def _article9(fields: dict[str, ParsedField], art9: list[Line]) -> None:
     ti = TextIndex(art9)
     fields["no_coupon_art9"] = exactly_one("no_coupon_art9", ti, re.escape(PAYMENTS), f"第 9 項 (1) 沒有「{PAYMENTS}」")
     fields["delivery_formula"] = exactly_one(
-        "delivery_formula", ti, DELIVERY, "第 9 項到期（1）不是「若最差表現之連結標的期末訂價小於執行價…交付…股數」的寫法"
+        "delivery_formula",
+        ti,
+        DELIVERY,
+        "第 9 項到期（1）不是「若最差表現之連結標的期末訂價小於執行價…交付…股數」的寫法",
     )
     fields["maturity_formula"] = exactly_one(
         "maturity_formula", ti, re.escape(MATURITY), "第 9 項到期（2）與 Bonus 公式不是範本固定寫法"
@@ -280,7 +283,9 @@ def _article9(fields: dict[str, ParsedField], art9: list[Line]) -> None:
         ("participation_pct", PARTICIPATION, "參與率"),
         ("coupon_pa_pct", BONUS, "紅利率"),
     ):
-        found = [m for m in ti.finditer(pattern) if formula >= 0 and formula < m.start() and (end < 0 or m.start() < end)]
+        found = [
+            m for m in ti.finditer(pattern) if formula >= 0 and formula < m.start() and (end < 0 or m.start() < end)
+        ]
         if len(found) != 1:
             note = f"第 9 項公式後找不到「{what}：x%。」" if not found else f"第 9 項公式後有多處「{what}：x%。」"
             fields[name] = ParsedField.missing(name, note)
@@ -378,9 +383,7 @@ def _scenarios(ti: TextIndex) -> BenScenarios:
     out = BenScenarios(titles, {}, {}, {}, {})  # type: ignore[arg-type]
     for n in (1, 2):
         out.assumed[n] = find(n, ASSUMED, lambda m: Assumed(m[1], dec(m[2])))
-        out.calc[n] = find(
-            n, CALC, lambda m: BonusCalc(dec(m[1]), Decimal(m[2]), Decimal(m[3]), dec(m[4]), dec(m[6]))
-        )
+        out.calc[n] = find(n, CALC, lambda m: BonusCalc(dec(m[1]), Decimal(m[2]), Decimal(m[3]), dec(m[4]), dec(m[6])))
         out.amount[n] = find(n, AMOUNT, lambda m: BonusAmount(dec(m[1]), Decimal(m[2]), Decimal(m[3]), dec(m[4])))
         out.returns[n] = find(n, RETURN, lambda m: ProfitReturn(dec(m[1]), dec(m[3]), Decimal(m[4]), Decimal(m[5])))
     out.worse_assumed = find(3, S3_ASSUMED, lambda m: Assumed(m[1], dec(m[2])))
@@ -408,7 +411,9 @@ def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> BenScenario
     investment = capture_group(art16, invest, 1, "scenario_initial_investment", number)
     fields["scenario_investment_currency"] = capture_group(art16, invest, 2, "scenario_investment_currency")
     fields["bonus_assumed"] = capture_group(art16, r"紅利率：" + ca.PCT, 1, "bonus_assumed", Decimal)
-    scenario_table = price_table.read("scenario_table", ca.table_region(art16, "紅利率：", "情境分析一"), SCENARIO_TABLE)
+    scenario_table = price_table.read(
+        "scenario_table", ca.table_region(art16, "紅利率：", "情境分析一"), SCENARIO_TABLE
+    )
     fields["scenario_reprint_table"] = price_table.at("scenario_reprint_table", scenario_table, SCENARIO_TABLE)
     # 標的報價幣別和計價幣別不同時，情境價格表後多一行匯率（`美元/日圓=150.00`），由規則轉人工覆核（同 CA Super Bull）
     fx = [ln for ln in art16 if re.fullmatch(rf"{ca.CCY}/{ca.CCY}=[\d,.]+", squash(ln.text))]
@@ -473,7 +478,9 @@ def read(lines: Sequence[Line]) -> CaBenTermSheet:
         "no_coupon_art13", art13, re.escape(NO_COUPON_DATE), f"第 13 項沒有「{NO_COUPON_DATE}」"
     )
     art15 = TextIndex(article(15))
-    fields["no_coupon_art15"] = exactly_one("no_coupon_art15", art15, re.escape(MIN_RATE), f"第 15 項沒有「{MIN_RATE}」")
+    fields["no_coupon_art15"] = exactly_one(
+        "no_coupon_art15", art15, re.escape(MIN_RATE), f"第 15 項沒有「{MIN_RATE}」"
+    )
     fields["participation_art15"] = exactly_one(
         "participation_art15", art15, ART15_PARTICIPATION, "第 15 項沒有「(5)參與率：x%」", lambda m: Decimal(m[1])
     )
@@ -487,12 +494,12 @@ def read(lines: Sequence[Line]) -> CaBenTermSheet:
         title = scenarios.titles[n - 1]
         bonus += [
             Mention.of_optional_hit(f"{where}代入行「最大值（x%，」", scenarios.calc.get(n), lambda v: v.bonus, title),
-            Mention.of_optional_hit(f"{where}結果行「最大值（x%，」", scenarios.amount.get(n), lambda v: v.bonus, title),
+            Mention.of_optional_hit(
+                f"{where}結果行「最大值（x%，」", scenarios.amount.get(n), lambda v: v.bonus, title
+            ),
         ]
         participation.append(
-            Mention.of_optional_hit(
-                f"{where}代入行「x% x（」", scenarios.calc.get(n), lambda v: v.participation, title
-            )
+            Mention.of_optional_hit(f"{where}代入行「x% x（」", scenarios.calc.get(n), lambda v: v.participation, title)
         )
 
     # 幣別出處：情境三只有剩餘金額是計價幣別的金額（CA FCN 不列入剩餘金額那行），改取它的幣別字（同 CA Super Bull）

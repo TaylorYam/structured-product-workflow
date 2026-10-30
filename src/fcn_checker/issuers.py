@@ -18,6 +18,7 @@ from .parsers import (
     bbva_iis,
     bnp_iis,
     bnp_super_bull_iis,
+    ca_ben_iis,
     ca_iis,
     ca_super_bull_iis,
     citi_iis,
@@ -38,6 +39,7 @@ from .parsers import bbva as bbva_parser
 from .parsers import bnp as bnp_parser
 from .parsers import bnp_super_bull as bnp_sb_parser
 from .parsers import ca as ca_parser
+from .parsers import ca_ben as ca_ben_parser
 from .parsers import ca_super_bull as ca_sb_parser
 from .parsers import citi as citi_parser
 from .parsers import dbs as dbs_parser
@@ -60,6 +62,8 @@ from .rules import bnp as bnp_rules
 from .rules import bnp_super_bull as bnp_sb_rules
 from .rules import bnp_super_bull_iis as bnp_sb_iis_rules
 from .rules import ca as ca_rules
+from .rules import ca_ben as ca_ben_rules
+from .rules import ca_ben_iis as ca_ben_iis_rules
 from .rules import ca_iis as ca_iis_rules
 from .rules import ca_super_bull as ca_sb_rules
 from .rules import ca_super_bull_iis as ca_sb_iis_rules
@@ -502,6 +506,29 @@ CA_SUPER_BULL = Issuer(
     products=frozenset({SUPER_BULL}),
 )
 
+CA_BEN = Issuer(
+    code=ca_rules.ISSUER,
+    template_id=ca_ben_parser.TEMPLATE_ID,
+    label="CA BEN 中文產品說明書",
+    parser_version=ca_ben_parser.PARSER_VERSION,
+    not_covered=tuple(ca_ben_rules.NOT_COVERED),
+    detect=ca_ben_parser.detect,
+    read=ca_ben_parser.read,
+    rules=ca_ben_rules.run_all,
+    reference_fields=ca_rules.REFERENCE_FIELDS,
+    ratings=True,
+    iis=IisTemplate(
+        template_id=ca_ben_iis.TEMPLATE_ID,
+        label="CA BEN 中文投資人須知",
+        parser_version=ca_ben_iis.PARSER_VERSION,
+        detect=ca_ben_iis.detect,
+        read=ca_ben_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=ca_ben_iis_rules.run_all,
+    ),
+    products=frozenset({BEN}),
+)
+
 BBVA = Issuer(
     code=bbva_rules.ISSUER,
     template_id=bbva_parser.TEMPLATE_ID,
@@ -585,6 +612,7 @@ REGISTRY: tuple[Issuer, ...] = (
     NATIXIS,
     CA,
     CA_SUPER_BULL,
+    CA_BEN,
     BBVA,
     DBS,
     UBS,
