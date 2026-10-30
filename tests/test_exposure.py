@@ -1,9 +1,8 @@
-"""標的曝險分析（#345、#347、#352、#354、#356、#358）：分類規則、狀態、匯出的「全部商品」。資料庫測試對真的 PostgreSQL；資料全部虛構。"""
+"""標的曝險分析（#345、#347、#352、#354、#356、#358、#360）：分類規則、狀態、匯出的「全部商品」。資料庫測試對真的 PostgreSQL；資料全部虛構。"""
 
 from __future__ import annotations
 
 import datetime as dt
-from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -37,9 +36,7 @@ UNTIL = dt.date(2026, 11, 30)
 
 
 def leg(seq: int, code: str, close: str | None, *, initial: str = "100", strike: str = "80", ki: str | None = "65"):
-    return Leg(
-        seq, code, D(initial), D(strike), None if ki is None else D(ki), None if close is None else D(close), DAY
-    )
+    return Leg(seq, code, D(initial), D(strike), None if ki is None else D(ki), None if close is None else D(close))
 
 
 def position(barrier: str | None, *legs: Leg, ki_text: str = "", terms: str | None = "完成") -> Position:
@@ -149,12 +146,6 @@ def test_default_name_lists_the_tickers() -> None:
     assert name == "標的曝險分析_GOOG_GOOGL_20261030_0905.xlsx"
     trial = export_name(["GOOG UW"], dt.datetime(2026, 10, 30, 9, 5), trial=True)
     assert trial == "標的曝險分析_GOOG_試算_20261030_0905.xlsx", "用了試算價，檔名看得出來"
-
-
-def test_price_source_tells_trial_from_close() -> None:
-    assert leg(1, "AAA UW", "72").price_source == "10/28 收盤"
-    assert replace(leg(1, "AAA UW", "72"), trial=True).price_source == "試算價"
-    assert leg(1, "AAA UW", None).price_source is None
 
 
 # ---------------------------------------------------------------- 資料庫
@@ -280,18 +271,16 @@ def test_export_is_one_sheet_of_every_product(seeded, tmp_path: Path) -> None:
 
     header, *_ = sheet.iter_rows(values_only=True, max_row=1)
     assert header == (
-        *("狀態", "TDCC", "剩餘天數", "最終比價日", "商品", "最差表現標的", "最差表現", "價格依據"),
+        *("狀態", "TDCC", "剩餘天數", "最終比價日", "商品", "最差表現標的", "最差表現"),
         *("K%", "KI%", "KI種類", "面額", "幣別", "發行機構"),
         *("分公司1", "FC1", "面額1", "分公司2", "FC2", "面額2", "分公司3", "FC3", "面額3"),
     ), "交易明細最多的 A 有三筆"
     every = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}
     a = every[A]
     assert (a["狀態"], a["剩餘天數"], a["商品"], a["KI種類"], a["幣別"], a["發行機構"]) == (
-        "跌破K", 23, "FCN", "NONE", "USD", "XBANK"
+        "跌破K", 23, "FCN", None, "USD", "XBANK"
     )  # fmt: skip
-    assert (a["最差表現標的"], a["最差表現"], a["價格依據"], a["K%"], a["KI%"], a["面額"]) == (
-        "AAA UW", 72, "10/28 收盤", 80, 65, 180000
-    )  # fmt: skip
+    assert (a["最差表現標的"], a["最差表現"], a["K%"], a["KI%"], a["面額"]) == ("AAA UW", 72, 80, 65, 180000)
     assert [a[f"{name}{n}"] for n in (1, 2, 3) for name in ("分公司", "FC", "面額")] == [
         *("台北", "Amy", 100000),
         *("台中", "Amy", 50000),
@@ -300,13 +289,27 @@ def test_export_is_one_sheet_of_every_product(seeded, tmp_path: Path) -> None:
     assert [every[B][name] for name in ("分公司1", "FC1", "面額1", "分公司2")] == ["台中", "Ben", 200000, None]
     assert (every[B]["狀態"], every[C]["狀態"], every[PENDING]["狀態"]) == ("跌破K", "跌破KI", UNKNOWN)
     assert every[C]["最差表現標的"] == "DDD JT", "最差不一定是選定標的"
+    assert (every[B]["KI種類"], every[C]["KI種類"]) == ("EKI", "EKI"), "沒有 KI 的才留空（#360）"
 
     statuses = {sheet.cell(row, 2).value: sheet.cell(row, 1) for row in range(2, sheet.max_row + 1)}
     assert all(statuses[tdcc].fill.fgColor.rgb.endswith("FFC7CE") for tdcc in (A, B, C)), "跌破的狀態格淺紅色"
     assert statuses[PENDING].fill.fill_type is None
     assert sheet.cell(statuses[A].row, 3).fill.fill_type is None, "只填狀態那一欄"
-    assert sheet["G2"].number_format == "0.0", "最差表現不是百分比"
-    assert sheet["L2"].number_format == sheet["Q2"].number_format == "#,##0"
+    assert (sheet["D2"].number_format, sheet["G2"].number_format) == ("mm-dd-yy", "0.00"), (
+        "簡短日期；最差表現不是百分比"
+    )
+    assert (sheet["H2"].number_format, sheet["K2"].number_format, sheet["P2"].number_format) == (
+        "0.0",
+        "#,##0",
+        "#,##0",
+    )
+
+    colors = [cell.fill.fgColor.rgb[-6:] for cell in sheet[1]]
+    blue, green, orange = "B8CCE4", "D7E4BC", "FCD5B4"
+    assert colors == [blue] * 5 + [green] * 5 + [blue] * 3 + [orange] * 9, "基本資料、表現、交易明細三種底色"
+    cells = [cell for row in sheet.iter_rows(max_row=sheet.max_row) for cell in row]
+    assert {(c.alignment.horizontal, c.alignment.vertical) for c in cells} == {("center", "center")}, "全部置中"
+    assert round(sheet.column_dimensions["F"].width, 1) == 18.4, "欄寬照範本"
 
 
 @pytest.mark.db
@@ -344,11 +347,11 @@ def test_trial_prices_replace_the_latest_close_of_chosen_codes(seeded, tmp_path:
 
     assert (receipt.counts[DELIVER], receipt.counts[WATCH], receipt.counts[FIXED]) == (3, 0, 1)
     every = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}
-    assert (every[B]["狀態"], every[B]["最差表現"], every[B]["價格依據"]) == ("跌破KI", 50, "試算價"), "破下限 65"
-    assert (every[C]["最差表現標的"], every[C]["價格依據"]) == ("AAA UW", "試算價"), "AAA −50% 比 DDD −40% 差"
+    assert (every[B]["狀態"], every[B]["最差表現"]) == ("跌破KI", 50), "破下限 65"
+    assert (every[C]["最差表現標的"], every[C]["最差表現"]) == ("AAA UW", 50), "AAA −50% 比 DDD −40% 差"
     assert every[OTHER_EXCHANGE]["狀態"] == FIXED, "已比價的不受試算價影響"
 
     export_exposure(seeded, ["AAA UW", "CCC UN"], UNTIL, path, today=DAY, trial={"AAA UW": D(90)})
     every = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}
     assert every[A]["狀態"] is None, "AAA 90 還在執行價 80 之上"
-    assert (every[C]["最差表現標的"], every[C]["價格依據"]) == ("DDD JT", "10/28 收盤"), "DDD 照舊用收盤價"
+    assert (every[C]["最差表現標的"], every[C]["最差表現"]) == ("DDD JT", 60), "DDD 照舊用收盤價"
