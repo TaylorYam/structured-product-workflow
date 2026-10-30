@@ -23,7 +23,8 @@ from .super_bull import ReturnMessages, profit_return_issues, within_tolerance
 
 # ---------------------------------------------------------------- 待使用者確認的暫定做法（核對規則 §9，詳見本機疑慮記錄）
 # 每項只在這裡改；說明書端另有 parsers/ms_ben.py 的 OLD_VERSION（BEN-376-05）、NAME_ZH（BEN-376-03）、HEAD15（BEN-376-04）、
-# WORST_DEF（BEN-376-01），投資人須知端 parsers/ms_ben_iis.py 的 NO_COUPON（BEN-376-04）、OLD_VERSION（BEN-376-05）。
+# WORST_DEF（BEN-376-01），投資人須知端 parsers/ms_ben_iis.py 的 NO_COUPON（BEN-376-04）、OLD_VERSION（BEN-376-05）、
+# DELIVERY_PUNCTUATION（BEN-376-09）；回顧結束日回填在 backfill.lookback_end_date 與 product_terms.backfill（BEN-376-07）。
 
 # BEN-376-06：有樣本的標的數與幣別；其他型態轉人工覆核（待樣本驗證）
 SAMPLED_UNDERLYINGS: dict[Kind, range] = {"maxi": range(2, 4), "digital": range(1, 2)}

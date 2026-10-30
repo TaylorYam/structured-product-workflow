@@ -82,12 +82,12 @@ def names(text: str) -> tuple[str | None, str | None]:
 
 
 def detect(lines: Sequence[Line]) -> DetectionResult:
-    """範本辨識：MS 投資人須知的版面，而且是固定配息商品（名稱有「固定配息」「Fixed Coupon Notes」；BEN 另有範本，#376）。"""
+    """範本辨識：MS 投資人須知的版面，而且是固定配息商品（名稱有「固定配息」「Fixed Coupon」；BEN 另有範本，#376）。"""
     text = TextIndex(body(lines)).text
     failed = layout_problems(text)
     zh, en = names(text)
-    if not (zh and "固定配息" in zh and en and "FixedCouponNotes" in en):
-        failed.append("商品名稱沒有「固定配息」或「Fixed Coupon Notes」")
+    if not (zh and "固定配息" in zh and en and "FixedCoupon" in en):
+        failed.append("商品名稱沒有「固定配息」或「Fixed Coupon」")
     return DetectionResult(not failed, failed, [Evidence.of(x) for x in body(lines)[:2]])
 
 

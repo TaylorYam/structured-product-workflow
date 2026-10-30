@@ -74,6 +74,7 @@ WORST_DEF = (
 BONUS = r"（1）紅利配息率：" + PCT
 PARTICIPATION_RATE = r"（3）參與率：" + PCT
 LOOKBACK_PERIOD = r"（9）回顧觀察期間：(.*?)至(\d{4}年\d{1,2}月\d{1,2}日)（包含）。"
+BULLET = "▪?"  # §16 假設的項目符號（PDF 字型沒有這個符號時擷取不到，不強求）
 LOOKBACK_START = "自交易日（包含）起"  # §14(9) 起點的固定寫法（核對規則 §3.4）
 
 
@@ -423,7 +424,9 @@ def _reprint(art16: list[Line], sec: ms_scenario.ScenarioSection, lookback: bool
     first = sec.scenarios[0].lines[0] if sec.scenarios else None
     ti = TextIndex(art16)
     found = [
-        m for m in ti.finditer(r"▪參與率：" + PCT) if first is None or ti.lines_for(m.start(), m.end())[-1] != first
+        m
+        for m in ti.finditer(BULLET + "參與率：" + PCT)
+        if first is None or ti.lines_for(m.start(), m.end())[-1] != first
     ]
     if len(found) != 1 or first is None:
         return ParsedField.missing(name, "找不到第 16 項重印價格表（假設「參與率」之後、情境一之前）")
@@ -443,10 +446,10 @@ def _article16(fields: dict[str, ParsedField], kind: Kind, art16: list[Line], lo
     def assumed(name: str, pattern: str, convert=lambda m: Decimal(m[1])) -> ParsedField:
         return exactly_one(name, ti, pattern, f"{where}找不到「{pattern}」", convert)
 
-    fields["bonus_assumed"] = assumed("bonus_assumed", r"▪紅利配息率：" + PCT)
-    fields["participation_assumed"] = assumed("participation_assumed", r"▪參與率：" + PCT)
+    fields["bonus_assumed"] = assumed("bonus_assumed", BULLET + "紅利配息率：" + PCT)
+    fields["participation_assumed"] = assumed("participation_assumed", BULLET + "參與率：" + PCT)
     fields["min_rate_assumed"] = exactly_one(
-        "min_rate_assumed", ti, re.escape("▪" + MIN_RATE), f"{where}最低保證贖回率不是「本商品不適用。…」"
+        "min_rate_assumed", ti, BULLET + re.escape(MIN_RATE), f"{where}最低保證贖回率不是「本商品不適用。…」"
     )
     table = _reprint(art16, sec, lookback)
     spec = LOOKBACK_SCENARIO_TABLE if lookback else SCENARIO_TABLE

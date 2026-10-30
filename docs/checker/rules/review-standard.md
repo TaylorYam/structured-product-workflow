@@ -144,7 +144,7 @@ OOS 中 HSBC 週五交易、下週一刊印，以及受理申購從交易日前�
 - **固定警語**（`issuer.ms.fixed_warning`）：現行版本去掉【】，結尾沒有句號；第一章 §2 開頭寫成「本商品風險程度為RR4。」（少「等級」）也視為正確（`issuer.ms.fixed_warning_openings`）。出現 3 次。
 - **風險等級**（`issuer.ms.risk_level_formats`）：沒有【】，以「風險程度等級為RRn」「風險程度為RRn」「歸類為RRn」找出每一處。
 - **商品名稱樣板**（`issuer.ms.product_name`）：中文 `英商摩根士丹利發行{天期}個月期{幣別中文}計價連結{標的寫法}固定配息{記憶式}結構型商品(無保證機構)(無擔保)(不保本)(下稱「本商品」)`，英文 `Morgan Stanley & Co. International Plc issuance of {天期} Months {幣別代碼} Fixed Coupon Notes linked to {標的寫法} (non-guaranteed)(unsecured)(non-principal protected)`。標的寫法依 1 檔／多檔是兩組不同字串，用佔位符 `{underlying_zh}`／`{underlying_en}`（§2.3）。
-- **BEN 商品名稱樣板**（`issuer.ms.product_names.BEN`，workflow #376 規格、實作另開；參考條件表 Product 是 BEN 時用這個樣板）：MS BEN 有兩種型態，依範本辨識出的型態選樣板（[MS BEN 核對規則](ms-ben-check-rules.md) §3.6）；lookback 不改名稱。作業人員獨立標記先略過，2026-10-30 使用者決定。
+- **BEN 商品名稱樣板**（`issuer.ms.product_names.BEN`，workflow #376；參考條件表 Product 是 BEN 時用這個樣板）：MS BEN 有兩種型態，依範本辨識出的型態選樣板（[MS BEN 核對規則](ms-ben-check-rules.md) §3.6）；lookback 不改名稱。作業人員獨立標記先略過，2026-10-30 使用者決定。
   - 一般 BEN：中文 `英商摩根士丹利發行{天期}個月期{幣別中文}計價連結{標的寫法}紅利表現結構型商品(無保證機構)(無擔保)(不保本)(下稱「本商品」)`，英文 `Morgan Stanley & Co. International Plc issuance of {天期} Months {幣別代碼} Bonus Enhanced Notes linked to {標的寫法} (non-guaranteed)(unsecured)(non-principal protected)`。
   - Digital：中文 `英商摩根士丹利發行{天期}個月期{幣別中文}計價連結{標的寫法}結構型商品(無保證機構)(無擔保)(不保本)(下稱「本商品」)`（沒有產品字樣），英文 `… {幣別代碼} Equity Linked Notes linked to {標的寫法} (non-guaranteed)(unsecured)(non-principal protected)`；名稱太通用，還要範本辨識的 Digital 條件都成立才用（待使用者確認（BEN-376-03），詳見本機疑慮記錄）。
   - 標的寫法佔位符、1 個月單數 `Month` 與比對方式同 MS FCN；其他審查標準和 MS FCN 相同。
