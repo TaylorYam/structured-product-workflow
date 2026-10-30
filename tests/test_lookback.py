@@ -136,13 +136,13 @@ def test_a_split_in_the_period_is_converted_back() -> None:
 @pytest.mark.parametrize(
     ("a_final", "event", "without"),
     [
-        ("75", AutoEvent(MATURITY, FINAL), AutoEvent(DELIVERY, FINAL, A.code)),
+        ("60", AutoEvent(MATURITY, FINAL), AutoEvent(DELIVERY, FINAL, A.code)),
         ("55", AutoEvent(DELIVERY, FINAL, A.code), AutoEvent(DELIVERY, FINAL, A.code)),
     ],
 )
 def test_maturity_uses_the_lookback_price_and_strike(a_final, event, without) -> None:
-    """AAA 回顧期初價格 70、回顧執行價 56：最終 75 → 表現 75/70 不是最差（7203 是 95/100），到期還本；
-    沒有 lookback 時 75 < 執行價 80 會接股。最終 55 < 56 → 接股。"""
+    """AAA 回顧期初價格 70、回顧執行價 56，兩種選法的最差都是 AAA（7203 是 95/100）：最終 60 ≥ 56 到期還本；
+    沒有 lookback 時 60 < 執行價 80 會接股。最終 55 < 56 → 接股。"""
     before = FINAL - dt.timedelta(days=1)
     prices = closes({MIDDLE: "70", before: "80", FINAL: a_final}, {FINAL: "95"})
 
@@ -151,6 +151,21 @@ def test_maturity_uses_the_lookback_price_and_strike(a_final, event, without) ->
     assert outcome.events == (event,)
     assert [u.strike for u in outcome.lookback] == [D(56), D(80)]
     assert run(ben(lookback_end=None), prices).events == (without,)
+
+
+def test_a_different_worst_by_the_initial_price_is_to_confirm() -> None:
+    """MS 說明書的最差標的用期初價格定義（#383 未決）：AAA 回顧期初 70、最終 66 → 回顧表現 94% 不是最差（7203 是 93%）；
+    用進場價 100 選，AAA 66% 才是最差。兩種選法不同時不自動判定。"""
+    prices = closes({MIDDLE: "70", FINAL: "66"}, {FINAL: "93"})
+
+    outcome = run(ben(), prices)
+
+    assert outcome.status == TO_CONFIRM
+    assert outcome.reason == (
+        f"最終比價日 {FINAL}：用回顧期初價格選的最差標的 7203 JT 和用進場價選的 AAA UW 不同，要人工判定接股或到期還本"
+    )
+    assert outcome.events == ()
+    assert [u.lookback for u in outcome.lookback] == [D("70.0000"), D(100)], "回顧期初價格照樣寫入"
 
 
 def test_a_backfilled_product_with_a_different_strike_is_not_overwritten() -> None:

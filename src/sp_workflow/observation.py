@@ -414,6 +414,15 @@ def _maturity(
     ki = _ki_text(terms, touch)
     # 最差表現：最終收盤價 ÷ 進場價（lookback 用回顧期初價格，#374）
     worst = min(terms.underlyings, key=lambda u: (prices[u.code] / (u.lookback or u.initial), u.seq))  # type: ignore[operator]
+    by_initial = min(terms.underlyings, key=lambda u: (prices[u.code] / u.initial, u.seq))  # type: ignore[operator]
+    if by_initial.seq != worst.seq:  # MS 說明書的最差標的用期初價格定義，未決（#383）：不同時不自動判定
+        return Outcome(
+            TO_CONFIRM,
+            f"最終比價日 {day}：用回顧期初價格選的最差標的 {worst.code} 和用進場價選的 {by_initial.code} 不同，"
+            "要人工判定接股或到期還本",
+            day,
+            ki=ki,
+        )
     knocked = terms.barrier_type == NO_KI or touch is not None
     assert worst.strike is not None
     if knocked and prices[worst.code] < worst.strike:
