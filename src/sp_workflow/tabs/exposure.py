@@ -2,6 +2,7 @@
 
 打開時讀一次在庫商品連結的標的，一列一個股票代號（合併各交易所的代碼、最新收盤價、連結檔數）；
 可以搜尋，搜尋時已選的保留；匯出時把選的代號展開成全部交易所的代碼。
+已選的代號可以填試算價（#356），空白用最新收盤價；一個代號的試算價套用到它全部交易所的代碼。
 分析規則在 `sp_workflow.exposure`，這裡只收輸入、在背景呼叫 `window_actions`。
 """
 
@@ -10,6 +11,7 @@ from __future__ import annotations
 import calendar
 import datetime as dt
 import tkinter as tk
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -28,6 +30,7 @@ COLUMNS = (
     ("count", "在庫檔數", 80),
 )
 MEMORY_KEY = "exposure_export"
+TRIALS_PER_ROW = 5  # 試算價一列放幾個代號，選很多檔時換列
 
 
 def one_month_later(day: dt.date) -> dt.date:
@@ -74,7 +77,8 @@ class ExposureWindow(tk.Toplevel):
             text="選一檔或多檔標的（按住 Ctrl 複選），用收盤價表最新的收盤價，找出最終比價日不晚於截止日、"
             "連結這些標的的在庫商品，判斷目前哪些會接股、離觸發點多遠，依分公司與理專統計檔數與面額，匯出 Excel。"
             "一列是一個股票代號，已包含它所有交易所的代碼（例：GOOG 含 GOOG UW、GOOG UQ）。"
-            "請先匯入最新的收盤價再分析；這裡只讀資料庫，不改資料。",
+            "請先匯入最新的收盤價再分析；盤後大跌等不及收盤價時，可以替已選的標的填試算價。"
+            "這裡只讀資料庫，不改資料。",
             wraplength=600,
             justify="left",
         )
@@ -107,6 +111,9 @@ class ExposureWindow(tk.Toplevel):
         self.chosen_label = WrapLabel(chosen, textvariable=self.chosen_var, wraplength=600, justify="left")
         self.chosen_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
         follow_width(self.chosen_label)
+        self.trial_frame = ttk.Frame(box)
+        self.trial_frame.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(6, 0))
+        self.trial_vars: dict[str, tk.StringVar] = {}  # 股票代號 → 試算價（#356）；換選標的時保留已填的
         bottom = ttk.Frame(frame)
         bottom.grid(row=3, column=0, sticky="ew", pady=(10, 0))
         ttk.Label(bottom, text="最終比價日截止").pack(side=tk.LEFT, padx=(0, 8))
@@ -172,6 +179,41 @@ class ExposureWindow(tk.Toplevel):
 
     def _show_chosen(self) -> None:
         self.chosen_var.set(f"已選：{'、'.join(self.chosen)}" if self.chosen else "已選：（還沒選標的）")
+        self._show_trials()
+
+    def _show_trials(self) -> None:
+        """已選的每個代號一格試算價（#356）；還沒選標的時不顯示。"""
+        for child in self.trial_frame.winfo_children():
+            child.destroy()
+        if not self.chosen:
+            return
+        ttk.Label(self.trial_frame, text="試算價（選填，空白用最新收盤價）").grid(
+            row=0, column=0, sticky="w", padx=(0, 8)
+        )
+        for i, ticker in enumerate(self.chosen):
+            var = self.trial_vars.setdefault(ticker, tk.StringVar())
+            row, col = divmod(i, TRIALS_PER_ROW)
+            ttk.Label(self.trial_frame, text=ticker).grid(row=row, column=1 + col * 2, sticky="e", padx=(8, 4), pady=2)
+            ttk.Entry(self.trial_frame, textvariable=var, width=10).grid(
+                row=row, column=2 + col * 2, sticky="w", pady=2
+            )
+
+    def trials(self) -> dict[str, Decimal] | None:
+        """已選代號填的試算價，空白的不算；填的不是大於 0 的數字時提示並回傳 None。"""
+        prices: dict[str, Decimal] = {}
+        for ticker in self.chosen:
+            text = self.trial_vars[ticker].get().strip().replace(",", "") if ticker in self.trial_vars else ""
+            if not text:
+                continue
+            try:
+                price = Decimal(text)
+            except InvalidOperation:
+                price = None
+            if price is None or not price.is_finite() or price <= 0:
+                messagebox.showinfo(TITLE, f"{ticker} 的試算價請填大於 0 的數字（空白用最新收盤價）。", parent=self)
+                return None
+            prices[ticker] = price
+        return prices
 
     def clear(self) -> None:
         self.chosen = []
@@ -190,12 +232,16 @@ class ExposureWindow(tk.Toplevel):
         if until is None:
             messagebox.showinfo(TITLE, "最終比價日截止請填 YYYY-MM-DD（可以點右邊的小月曆）。", parent=self)
             return
+        prices = self.trials()
+        if prices is None:
+            return
         by_ticker = {c.ticker: c.codes for c in self.choices}
         codes = [code for ticker in self.chosen for code in by_ticker.get(ticker, ())]
+        trial = {code: prices[ticker] for ticker in prices for code in by_ticker.get(ticker, ())}
         chosen = filedialog.asksaveasfilename(
             title="匯出標的曝險分析",
             initialdir=self.memory.load().get(MEMORY_KEY) or None,
-            initialfile=export_name(self.chosen),
+            initialfile=export_name(self.chosen, trial=bool(prices)),
             defaultextension=".xlsx",
             filetypes=[("Excel 活頁簿", "*.xlsx")],
             parent=self,
@@ -204,15 +250,17 @@ class ExposureWindow(tk.Toplevel):
             return
         path = Path(chosen)
         self.memory.remember(**{MEMORY_KEY: str(path.parent)})
+        used = "、".join(f"{ticker} {price}" for ticker, price in prices.items())
         self.runner.run_action(
-            lambda settings: export_underlying_exposure(settings, codes, until, path),
+            lambda settings: export_underlying_exposure(settings, codes, until, path, trial),
             "分析並匯出中…",
-            self._exported,
+            lambda receipt: self._exported(receipt, used),
         )
 
-    def _exported(self, receipt: ExposureReceipt) -> None:
+    def _exported(self, receipt: ExposureReceipt, trial: str = "") -> None:
         counts = "、".join(f"{c} {receipt.counts[c]}" for c in CATEGORIES if receipt.counts.get(c))
-        self.status_var.set(f"已匯出 {receipt.count} 檔（{counts or '沒有符合的商品'}）：{receipt.path}")
+        used = f"；試算價 {trial}" if trial else ""
+        self.status_var.set(f"已匯出 {receipt.count} 檔（{counts or '沒有符合的商品'}{used}）：{receipt.path}")
 
     def _busy(self, busy: bool) -> None:
         for button in self.buttons:

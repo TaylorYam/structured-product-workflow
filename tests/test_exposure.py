@@ -1,8 +1,9 @@
-"""標的曝險分析（#345、#347、#352、#354）：分類規則、依分公司與理專加總、匯出的 Excel。資料庫測試對真的 PostgreSQL；資料全部虛構。"""
+"""標的曝險分析（#345、#347、#352、#354、#356）：分類規則、依分公司與理專加總、匯出的 Excel。資料庫測試對真的 PostgreSQL；資料全部虛構。"""
 
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
@@ -171,6 +172,14 @@ def test_one_month_later_clips_to_the_month_end() -> None:
 def test_default_name_lists_the_tickers() -> None:
     name = export_name(["GOOG UW", "GOOG UQ", "GOOGL UW"], dt.datetime(2026, 10, 30, 9, 5))
     assert name == "標的曝險分析_GOOG_GOOGL_20261030_0905.xlsx"
+    trial = export_name(["GOOG UW"], dt.datetime(2026, 10, 30, 9, 5), trial=True)
+    assert trial == "標的曝險分析_GOOG_試算_20261030_0905.xlsx", "用了試算價，檔名看得出來"
+
+
+def test_price_source_tells_trial_from_close() -> None:
+    assert leg(1, "AAA UW", "72").price_source == "10/28 收盤"
+    assert replace(leg(1, "AAA UW", "72"), trial=True).price_source == "試算價"
+    assert leg(1, "AAA UW", None).price_source is None
 
 
 # ---------------------------------------------------------------- 資料庫
@@ -419,3 +428,31 @@ def test_no_delivery_chart_when_nothing_delivers(seeded, tmp_path: Path) -> None
 
     book = openpyxl.load_workbook(path)
     assert [len(book[title]._charts) for title in book.sheetnames] == [3, 1, 1, 0, 0], "只剩面額組成"
+
+
+@pytest.mark.db
+def test_trial_prices_replace_the_latest_close_of_chosen_codes(seeded, tmp_path: Path) -> None:
+    seed(seeded, OTHER_EXCHANGE, ["AAA UW", "BBB UN"], final=DAY - dt.timedelta(days=3))  # 已比價
+    path = tmp_path / "曝險.xlsx"
+    trial = {"AAA UW": D(50), "DDD JT": D(10)}  # DDD 不是選定標的，不理會
+
+    receipt = export_exposure(seeded, ["AAA UW"], UNTIL, path, today=DAY, trial=trial)
+
+    assert (receipt.counts[DELIVER], receipt.counts[WATCH], receipt.counts[FIXED]) == (3, 0, 1)
+    detail = {row["TDCC"]: row for row in sheet_rows(path, "通知明細")}
+    assert (detail[B]["分類"], detail[B]["最差標的價格"], detail[B]["價格依據"]) == (DELIVER, 50, "試算價"), "破下限 65"
+    assert detail[B]["距下限價"] == pytest.approx(50 / 65 - 1)
+    assert (detail[C]["最差標的"], detail[C]["最差是選定標的"]) == ("AAA UW", "是"), "AAA −50% 比 DDD −40% 差"
+    every = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}
+    assert (every[C]["標的2"], every[C]["表現2"]) == ("DDD JT", 60), "DDD 照舊用收盤價 60"
+    assert every[OTHER_EXCHANGE]["狀態"] == FIXED, "已比價的不受試算價影響"
+    overview = dict(openpyxl.load_workbook(path)["總覽"].iter_rows(min_row=2, max_col=2, values_only=True))
+    assert overview["判斷基準"] == "AAA UW 50 以試算價判斷"
+    assert overview["選定標的 AAA UW"] == "試算價 50；最新收盤 72（2026-10-28）"
+
+    export_exposure(seeded, ["AAA UW", "CCC UN"], UNTIL, path, today=DAY, trial={"AAA UW": D(90)})
+    overview = dict(openpyxl.load_workbook(path)["總覽"].iter_rows(min_row=2, max_col=2, values_only=True))
+    assert overview["判斷基準"] == "AAA UW 90 以試算價判斷；其他選定標的以 10/28 收盤價判斷"
+    detail = {row["TDCC"]: row for row in sheet_rows(path, "通知明細")}
+    assert sorted(detail) == [C], "AAA 90 高於執行價 80 超過 10%，A、B 不用通知"
+    assert (detail[C]["最差標的"], detail[C]["價格依據"]) == ("DDD JT", "10/28 收盤")
