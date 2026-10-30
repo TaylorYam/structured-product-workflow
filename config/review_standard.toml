@@ -7,7 +7,7 @@
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
 # 規則說明見 docs/checker/rules/review-standard.md。
 
-version = 38
+version = 39
 effective_date = 2026-10-30
 
 [distributor]
@@ -638,6 +638,16 @@ product_type = "股權連結結構型商品"
 # 「(Non Principal」，parser 正規化成「(Non-Principal」後比對（封面不正規化）。
 zh = "法國外貿銀行{tenor}個月{ccy_zh}計價固定配息(自動提前到期)連結一籃子標的結構型商品(不保本、無擔保及無保證機構)"
 en = "Natixis – {tenor}-Month {ccy} – Autocallable Fixed Coupon Note Linked to Basket of Equities (Non-Principal Protected, Unsecured and Non-Guaranteed)"
+memory_zh = ""
+memory_en = ""
+normalize_brackets = true
+ignore_whitespace_en = true
+
+[issuer.natixis.product_names.DACN]
+# Natixis DACN 商品名稱（現行版 7 份說明書推得，2026-10-30 規格，workflow #371）：「固定配息」改「區間計息」、英文
+# 「Fixed Coupon」改「Daily Range Accrual」；佔位符與比對方式同 FCN。參考條件表 Product 是 DACN 時用這個樣板。
+zh = "法國外貿銀行{tenor}個月{ccy_zh}計價區間計息(自動提前到期)連結一籃子標的結構型商品(不保本、無擔保及無保證機構)"
+en = "Natixis – {tenor}-Month {ccy} – Autocallable Daily Range Accrual Note Linked to Basket of Equities (Non-Principal Protected, Unsecured and Non-Guaranteed)"
 memory_zh = ""
 memory_en = ""
 normalize_brackets = true

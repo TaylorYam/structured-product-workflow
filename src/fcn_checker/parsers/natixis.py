@@ -30,7 +30,8 @@ TEMPLATE_ID = "natixis-zh-pd"
 # 8：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 # 9：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 10：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
-PARSER_VERSION = "10"
+# 11：辨識另要求沒有區間計息寫法（和 Natixis DACN 互斥）；頁尾英文名稱第二行也收「Principal Protected, …」（workflow #371）
+PARSER_VERSION = "11"
 # 發行機構信用評等（#240）：封面「發行機構名稱」下一行 `(長期債務信用評等標準普爾評等A+/穆迪評等A2/惠譽評等A+ (高級優先債務))(截至…)`、第一章第 3 項 `發行機構長期債務信用評等(截至…)：長期債務信用評等…。`、第二章 (7) `信用評等：長期債務信用評等…(截至…)`
 RATINGS = (
     ratings.RatingPlace("封面", r"法國外貿銀行（長期債務信用評等(?P<body>.+?)）（截至"),
@@ -57,9 +58,13 @@ LAYOUT = LayoutSpec(
 )
 ISSUER = "法國外貿銀行"
 NAME_EN_MARK = "Autocallable Fixed Coupon Note Linked to Basket of Equities"
+# 區間計息（DACN）才有的寫法：FCN 範本全文都沒有（範本規格 §8 條件 8；FCN KO 期按比例條款也有「x (n/N)」，不能只看 n、N）
+ACCRUAL_WORDS = ("「變動配息金額」", "配息界限價格")
 ARTICLES = 26  # 第一章條數
+# 頁尾英文名稱第二行：FCN 從「Protected」換行，DACN（名稱較長）從「Principal」換行（workflow #371）
 FOOTER = re.compile(
-    r"^(Natixis – .*|Protected, Unsecured and Non-Guaranteed\)|第\d+頁/共計?\d+頁|C[12] - (?:Inter ?nal|Public) Natixis)$"
+    r"^(Natixis – .*|(?:Principal )?Protected, Unsecured and Non-Guaranteed\)|第\d+頁/共計?\d+頁"
+    r"|C[12] - (?:Inter ?nal|Public) Natixis)$"
 )
 FOOTER_Y = 760  # 頁尾（英文名稱、頁碼、分類標記）y≈785–827
 STRAY_DIGIT = re.compile(r"^\d{1,2}$")  # 部分文件左上角單獨的數字（NX8 第 1、15 頁），不屬於內文
@@ -163,6 +168,39 @@ CH4_NAMES = (
     (10, "distributor_name_ch4_10b", "第四章第 10 項贖回價金", rf"受理其贖回申請，{DISTRIBUTOR}[(（](.+?)[)）]需俟"),
     (14, "distributor_name_ch4_14", "第四章第 14 項給付之方式", rf"給付之方式：{DISTRIBUTOR}[(（](.+?)[)）]於實際收到"),
 )
+
+
+def coupon_pa_terms(ti: TextIndex) -> list[ScenarioParam]:
+    """第 16 項各期配息「x (y%/12)」的 y（同一個值一筆，共用情境規則和年利率比）；一處都沒有時一筆讀不到。"""
+    terms = by_value((Decimal(m[1]), ti.lines_for(m.start(), m.end())) for m in ti.finditer(r"x\(" + PCT + r"/12\)"))
+    return [
+        ScenarioParam("scenario_coupon_pa", "第 16 項各期配息的", ParsedField.present("scenario_coupon_pa", v, lns))
+        for v, lns in terms.items()
+    ] or [
+        ScenarioParam(
+            "scenario_coupon_pa",
+            "第 16 項各期配息的",
+            ParsedField.missing("scenario_coupon_pa", "情境找不到各期配息「x (年利率/12)」"),
+        )
+    ]
+
+
+@dataclass(frozen=True)
+class Variant:
+    """FCN 與 DACN 說明書（parsers/natixis_dacn.py）讀法不同的地方：第 9 項價格表的欄、第 16 項情境各期配息列與其配息率
+    出處、要核對平均年化報酬率的情境（DACN 只有情境一 = 年利率，其他情境假設計息一半天數）。"""
+
+    table: price_table.TableSpec
+    coupon_row: re.Pattern[str]  # 情境各期配息列（在原文行上找；第 1 組是面額）
+    coupon_terms: Callable[[TextIndex], list[ScenarioParam]]  # 情境配息算式的配息率出處（交給 `scenario.params`）
+    annualized_cases: int | None = None  # 只讀前幾個情境的平均年化報酬率（None：所有拿回本金的情境）
+
+    @property
+    def scenario_table(self) -> price_table.TableSpec:
+        return replace(self.table, where="第 16 項情境價格表", anchor="price", code=None)
+
+
+FCN = Variant(PRICE_TABLE, SCENARIO_COUPON_ROW, coupon_pa_terms)
 
 
 def non_principal(text: str) -> str:
@@ -286,8 +324,20 @@ def _row_field(name: str, row: CoverRow | None, pattern: str, convert: Callable 
 # ---------------------------------------------------------------- 辨識
 
 
-def detect(lines: Sequence[Line]) -> DetectionResult:
-    """範本辨識（範本規格 §8）：全部條件成立才是 Natixis 說明書。"""
+@dataclass
+class Skeleton:
+    """Natixis 說明書共用的辨識結果（FCN、DACN 都要成立的條件）：版面、封面欄、中英文名稱（去空白）、不成立的條件與證據。"""
+
+    document: Document
+    rows: list[CoverRow]
+    zh: str
+    en: str
+    failed: list[str]
+    evidence: list[Evidence]
+
+
+def skeleton(lines: Sequence[Line]) -> Skeleton:
+    """範本規格 §8 條件 1～3、5～7（封面前兩行、代號句、中文名稱、發行機構與發行人、五章章名、第一章 26 條）。"""
     doc = document(lines)
     cover = doc.before_chapter1()
     head = [squash(x.text) for x in cover[:2]]
@@ -309,10 +359,6 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
             f"封面商品中文名稱不是以「{ISSUER}」開頭或沒有「(不保本、無擔保及無保證機構)」",
         ),
         (
-            en.startswith("Natixis–") and squash(NAME_EN_MARK) in en,
-            f"封面商品英文名稱沒有「Natixis –」與「{NAME_EN_MARK}」",
-        ),
-        (
             issuer.startswith(ISSUER) and _row(rows, "發行人之名稱、電話及地址") is not None,
             f"封面發行機構不是{ISSUER}或沒有「發行人之名稱、電話及地址」",
         ),
@@ -324,7 +370,24 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     ):
         if not test:
             failed.append(message)
-    return DetectionResult(not failed, failed, [Evidence.of(x) for x in cover[:2]])
+    return Skeleton(doc, rows, zh, en, failed, [Evidence.of(x) for x in cover[:2]])
+
+
+def accrual_words(text: str) -> list[str]:
+    """去空白全文裡出現的區間計息寫法（`ACCRUAL_WORDS`）。"""
+    return [w for w in ACCRUAL_WORDS if w in text]
+
+
+def detect(lines: Sequence[Line]) -> DetectionResult:
+    """範本辨識（範本規格 §8）：骨架（`skeleton`）、英文名稱（條件 4）都成立，且全文沒有區間計息寫法（條件 8，和 Natixis DACN
+    互斥）才是 Natixis FCN 說明書。"""
+    sk = skeleton(lines)
+    failed = list(sk.failed)
+    if not (sk.en.startswith("Natixis–") and squash(NAME_EN_MARK) in sk.en):
+        failed.append(f"封面商品英文名稱沒有「Natixis –」與「{NAME_EN_MARK}」")
+    if found := accrual_words(TextIndex(sk.document.lines).text):
+        failed.append(f"有區間計息（DACN）的寫法「{'」「'.join(found)}」")
+    return DetectionResult(not failed, failed, sk.evidence)
 
 
 def _value(rows: list[CoverRow], label: str) -> str:
@@ -345,8 +408,8 @@ class NatixisTermSheet:
         return standard_fields.lookup(self.fields, name)
 
 
-def read(lines: Sequence[Line]) -> NatixisTermSheet:
-    """讀出標準欄位與 Natixis 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）。"""
+def read(lines: Sequence[Line], variant: Variant = FCN) -> NatixisTermSheet:
+    """讀出標準欄位與 Natixis 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）；`variant` 是 FCN／DACN 不同的讀法。"""
     doc = document(lines)
     arts = doc.articles(1)
     fields: dict[str, ParsedField] = {}
@@ -375,9 +438,9 @@ def read(lines: Sequence[Line]) -> NatixisTermSheet:
     fields["denomination_currency"] = capture_group(art5, denom, 2, "denomination_currency")
     put("issue_price_pct", art5, r"\(3\)發行價格：" + PCT, Decimal)
 
-    table = underlying_table("underlying_table", article(9))
+    table = underlying_table("underlying_table", article(9), variant.table)
     fields["underlying_table"] = table
-    fields["main_price_table"] = price_table.at("main_price_table", table, PRICE_TABLE)
+    fields["main_price_table"] = price_table.at("main_price_table", table, variant.table)
 
     art12 = article(12)
     put("tenor_months", art12, r"商品年期：(\d+)個月", int)
@@ -402,8 +465,8 @@ def read(lines: Sequence[Line]) -> NatixisTermSheet:
     put("maturity_redemption_pct", art15, MATURITY_REDEMPTION, Decimal)
     _table_fields(fields, table)
     _schedule(fields)
-    assumed = _article16(fields, article(16))
-    scenario_currencies = _scenarios(fields, article(16), art15, assumed)
+    assumed = _article16(fields, article(16), variant)
+    scenario_currencies = _scenarios(fields, article(16), art15, assumed, variant)
 
     _chapter2(fields, doc)
     _chapter4(fields, doc, put)
@@ -467,22 +530,22 @@ def _cover(fields: dict[str, ParsedField], cover: list[Line]) -> None:
 # ---------------------------------------------------------------- 第 9 項價格表、第 16 項情境價格表
 
 
-def underlying_table(name: str, art9: list[Line]) -> ParsedField:
+def underlying_table(name: str, art9: list[Line], spec: price_table.TableSpec = PRICE_TABLE) -> ParsedField:
     """第 9 項價格表：「投資組合」那一句之後到「相對權重：」之前。"""
     ti = TextIndex(art9)
     a = ti.text.find("「投資組合」於本商品發行日")
     b = ti.text.find("相對權重：", a)
     region = art9[ti.line_at(a) + 1 : ti.line_at(b)] if 0 <= a < b else []
-    return price_table.read(name, region, PRICE_TABLE)
+    return price_table.read(name, region, spec)
 
 
-def scenario_table(name: str, lns: list[Line]) -> ParsedField:
+def scenario_table(name: str, lns: list[Line], spec: price_table.TableSpec = SCENARIO_TABLE) -> ParsedField:
     """第 16 項情境假設的價格表：「連結標的(i)」那一行起到「情境一」之前。"""
     ti = TextIndex(lns)
     a = ti.text.find("連結標的(i)")
     b = ti.text.find("情境一", a)
     region = lns[ti.line_at(a) : ti.line_at(b)] if 0 <= a < b else []
-    return price_table.read(name, region, SCENARIO_TABLE)
+    return price_table.read(name, region, spec)
 
 
 def distributor_code(ti: TextIndex, pattern: str) -> ParsedField:
@@ -709,7 +772,7 @@ def scenario_ko_kind(text: str) -> tuple[str, int | None, str | None] | None:
     return ("P", None, None) if text.startswith("依第一章第12(7)項所列") else None
 
 
-def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> list[ScenarioParam]:
+def _article16(fields: dict[str, ParsedField], art16: list[Line], variant: Variant) -> list[ScenarioParam]:
     """情境假設（天期、期數、KO 觀察文字、年利率、面額）、情境價格表、情境一提前到期期別、各期配息的年利率（範本規格 §4.9）；
     回傳交給共用情境規則的情境假設與各期配息的年利率（Issue #294）。"""
     ti = TextIndex(art16)
@@ -739,21 +802,10 @@ def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> list[Scenar
     fields["scenario_ko_wording"] = capture(
         "scenario_ko_wording", ti, r"e\.自動提前到期觀察日：(.+?)f\.年利率", scenario_ko_kind, whole_match=True
     )
-    # 各期配息「x (y%/12)」的 y：同一個值一筆
-    terms = by_value((Decimal(m[1]), ti.lines_for(m.start(), m.end())) for m in ti.finditer(r"x\(" + PCT + r"/12\)"))
-    assumed += [
-        ScenarioParam("scenario_coupon_pa", "第 16 項各期配息的", ParsedField.present("scenario_coupon_pa", v, lns))
-        for v, lns in terms.items()
-    ] or [
-        ScenarioParam(
-            "scenario_coupon_pa",
-            "第 16 項各期配息的",
-            ParsedField.missing("scenario_coupon_pa", "情境找不到各期配息「x (年利率/12)」"),
-        )
-    ]
-    table = scenario_table("scenario_table", art16)
+    assumed += variant.coupon_terms(ti)  # 各期配息算式的配息率
+    table = scenario_table("scenario_table", art16, variant.scenario_table)
     fields["scenario_table"] = table
-    fields["scenario_reprint_table"] = price_table.at("scenario_reprint_table", table, SCENARIO_TABLE)
+    fields["scenario_reprint_table"] = price_table.at("scenario_reprint_table", table, variant.scenario_table)
     section1 = re.search(r"情境一(.+?)情境二", ti.text)
     first = (
         list(
@@ -778,7 +830,7 @@ def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> list[Scenar
     return assumed
 
 
-def _scenario_spans(ti: TextIndex) -> list[tuple[str, int, int]]:
+def scenario_spans(ti: TextIndex) -> list[tuple[str, int, int]]:
     """情境一～四（無 KI 為一～三）在 `ti.text` 的範圍（到下一個情境或「關於上述情境分析之警語」為止）；
     找不到、順序不對或不是從情境一連續時為空。"""
     heads = list(ti.finditer(SCENARIO_HEAD))
@@ -818,7 +870,11 @@ def _mentions(
 
 
 def _scenarios(
-    fields: dict[str, ParsedField], art16: list[Line], art15: list[Line], assumed: list[ScenarioParam]
+    fields: dict[str, ParsedField],
+    art16: list[Line],
+    art15: list[Line],
+    assumed: list[ScenarioParam],
+    variant: Variant,
 ) -> list[Occurrence]:
     """第 16 項情境與第 15 項重複寫出的值（Issue #318，比照 BBVA #305）：各情境配息列數、自動提前到期與到期贖回的 %；
     配息算式／原始投資本金／實物交割算式的面額與拿回本金情境的平均年化報酬率（Issue #228）併入情境假設 `assumed` 交成
@@ -834,7 +890,7 @@ def _scenarios(
         for n, m in enumerate(hits, start=1):
             pf = ParsedField.present(f"{field}_{n}", (Decimal(m[1]),), t15.lines_for(m.start(), m.end()))
             repeats.append(Occurrence(f"{field}_{n}", "maturity_redemption_pct", places[min(n, len(places)) - 1], pf))
-    spans = _scenario_spans(ti)
+    spans = scenario_spans(ti)
     if not spans:
         missing = "第 16 項找不到情境一～三（或四）到「關於上述情境分析之警語」的段落"
         for name in ("scenario_row_counts", "autocall_redemption_mentions", "maturity_redemption_mentions"):
@@ -852,7 +908,7 @@ def _scenarios(
         return [Occurrence("scenario_currency", "scenario_currency", "第 16 項情境", pf)]
     rows, coupon_denominations = [], []
     for n, (case, a, b) in enumerate(spans, start=1):
-        hits = [(ln, m) for ln in ti.lines_for(a, b) if (m := SCENARIO_COUPON_ROW.search(ln.text))]
+        hits = [(ln, m) for ln in ti.lines_for(a, b) if (m := variant.coupon_row.search(ln.text))]
         field = f"scenario{n}_rows"
         if not hits:
             rows.append(
@@ -886,7 +942,11 @@ def _scenarios(
     ]
     fields["scenario_params"] = standard_fields.occurrences(
         "scenario_params",
-        [*assumed, *(p for occ in denominations for p in _denomination_params(occ)), *_annualized(ti, spans)],
+        [
+            *assumed,
+            *(p for occ in denominations for p in _denomination_params(occ)),
+            *_annualized(ti, spans[: variant.annualized_cases]),
+        ],
     )
     fields["autocall_redemption_mentions"] = standard_fields.occurrences(
         "autocall_redemption_mentions",
