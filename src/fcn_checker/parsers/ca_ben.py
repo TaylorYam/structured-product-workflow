@@ -59,6 +59,7 @@ DIGITAL_FORMULA = "每單位面額x紅利水準。"
 PARTICIPATION = r"參與率：" + ca.PCT + "。"
 BONUS = r"紅利率：" + ca.PCT + "。"
 NO_KO = "提前出場"
+# BEN-377-08（待使用者確認）：13.(6) 只收這句；1 份現行版樣本寫「詳見第9 項…」→ `doc.no_coupon` 不一致、人工放行
 NO_COUPON_DATE = "(6)配息日：" + NO_COUPON
 ART15_TITLE = "15.到期贖回計算公式，包含保證配息率及參與率："
 MIN_RATE = "(4)最低保證配息率：不適用，" + NO_COUPON

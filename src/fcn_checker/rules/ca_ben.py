@@ -20,8 +20,9 @@ from .kit import Check, IssuerContext
 from .super_bull import AMOUNT_TOLERANCE, within_tolerance
 
 # ---------------------------------------------------------------- 待使用者確認的暫定做法（核對規則 §9.2，詳見本機疑慮記錄）
-# 每項只在這裡改；說明書端另有 parsers/ca_ben.py 的 OLD_VERSION、DIGITAL（BEN-377-01～03），投資人須知端另有
-# parsers/ca_ben_iis.py 的名稱辨識（BEN-377-04）。
+# 每項只在這裡改；說明書端另有 parsers/ca_ben.py 的 `_current`／OLD_VERSION（BEN-377-01、02）、DIGITAL（BEN-377-03）、
+# FORMULA（括號照樣本，BEN-377-06）、NO_COUPON_DATE（BEN-377-08），投資人須知端另有 parsers/ca_ben_iis.py 的
+# NAME_ZH_MARK／NAME_ZH_NOT 與英文 Bonus＋Note（BEN-377-04）。
 
 # BEN-377-07：有樣本的 Bonus 型態（2 檔標的、K% 100、美元）；其他型態轉人工覆核（待樣本驗證）
 SAMPLED_UNDERLYINGS = range(2, 3)
