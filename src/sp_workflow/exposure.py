@@ -1,4 +1,4 @@
-"""標的曝險分析（#345、#352、#354、#356、#358）：選定的標的大跌時，近期到期、連結它們的在庫商品目前跌破了沒有。
+"""標的曝險分析（#345、#352、#354、#356、#358、#360）：選定的標的大跌時，近期到期、連結它們的在庫商品目前跌破了沒有。
 
 只呈現目前的狀態，不做估損、配息、淨損益或情境模擬等任何預估金額（#352）；Excel 只有「全部商品」一個分頁（#358）。
 
@@ -10,7 +10,7 @@
 - 價格：每個標的用收盤價表最新的一筆，依拆股登記換回價格基準（同比價，`stock_splits.SplitBook.factor`）。
 - 試算價（#356）：盤後大跌等不及收盤價時，作業人員可替選定標的填價格（`trial`，代碼 → 價格），
   取代最新收盤價、當作分析日的價格（拆股照分析日換算）；其他標的照舊用最新收盤價。試算價不存進資料庫，
-  「價格依據」欄標出來，檔名加「_試算」。
+  檔名加「_試算」。
 - 分類（`assess`）：核對條件不是完成（同比價只比完成的）、缺 KI 型態、有 KI 卻沒有下限價、缺價格的無法計算；
   MKI 不比、人工確認。其他看最差標的（收盤價 ÷ 進場價最低）：收盤價 < 執行價，且沒有 KI、收盤價 < 下限價或比價已記
   AKI 觸及 → 會接股；< 執行價但還在下限價之上 → KI 未破下限；還在執行價之上、距執行價 10% 以內 → 接近執行價；
@@ -18,6 +18,7 @@
 - 全部商品（#354、#358）：一檔一列。狀態只標跌破KI（跌破下限價或比價已記 AKI 觸及）、跌破K，那一格填淺紅色，
   未跌破留空；已比價、無法計算照分類。最差表現用 100 為基數（100 + 表現 %，例 −26.1% → 73.9）。
   後面接交易明細的分公司1、FC1、面額1、分公司2…，依面額大到小；沒有交易明細的用庫存的分公司配置（FC 寫 `-`）。
+  版面照作業人員的範本（#360）：表頭分基本資料、表現、交易明細三種底色，全部置中，沒有 KI 的 KI種類 留空。
 - 只讀資料庫，不改任何資料。
 
 `assess` 只判斷一檔、不碰資料庫；`load_choices`、`load_positions` 讀資料庫；`export_exposure` 寫 Excel。
@@ -34,7 +35,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from openpyxl.styles import PatternFill
+from openpyxl.styles import Alignment, Color, PatternFill
 
 from sp_workflow.check_terms import NO_BARRIER
 from sp_workflow.file_tools import excel_value, save_export, table_book, text_cell
@@ -52,7 +53,6 @@ MANUAL = "MKI 人工確認"
 SAFE = "高於執行價"
 UNKNOWN = "無法計算"
 FIXED = "已比價"  # 最終比價日早於分析日、還在庫（#352）
-TRIAL = "試算價"  # 作業人員填的價格，取代最新收盤價（#356）
 CATEGORIES = (DELIVER, WATCH, NEAR, MANUAL, SAFE, FIXED, UNKNOWN)
 NEAR_BUFFER = Decimal("0.10")  # 接近執行價的門檻（距執行價，#347）
 MKI = "MKI"
@@ -91,15 +91,6 @@ class Leg:
     strike: Decimal | None
     ki: Decimal | None
     close: Decimal | None  # 換回價格基準的收盤價或試算價
-    close_date: dt.date | None
-    trial: bool = False  # `close` 是作業人員填的試算價（#356）
-
-    @property
-    def price_source(self) -> str | None:
-        """價格依據：`試算價` 或 `10/29 收盤`；缺價格時 None。"""
-        if self.close is None or self.close_date is None:
-            return None
-        return TRIAL if self.trial else f"{self.close_date.month}/{self.close_date.day} 收盤"
 
     @property
     def performance(self) -> Decimal | None:
@@ -279,7 +270,7 @@ def load_positions(
             base = basis or strike_date
             if close is not None and day is not None and base is not None:
                 close = close * book.factor(code, base, day)
-            legs.append(Leg(seq, code, initial, strike, ki, close, day, code in trial))
+            legs.append(Leg(seq, code, initial, strike, ki, close))
         positions.append(
             Position(
                 tdcc,
@@ -329,26 +320,35 @@ def _latest_closes(conn: psycopg.Connection, codes: Iterable[str]) -> dict[str, 
 # ---------------------------------------------------------------- 匯出
 
 ALL = "全部商品"
-ALL_HEADERS = (
-    "狀態",
-    "TDCC",
-    "剩餘天數",
-    "最終比價日",
-    "商品",
-    "最差表現標的",
-    "最差表現",
-    "價格依據",
-    "K%",
-    "KI%",
-    "KI種類",
-    "面額",
-    "幣別",
-    "發行機構",
+# 表頭底色照作業人員的範本（#360）：主題色淡 60%，基本資料淺藍、表現淺綠、交易明細淺橙
+BASIC_FILL = PatternFill("solid", fgColor=Color(theme=4, tint=0.5999938962981048))
+PERFORMANCE_FILL = PatternFill("solid", fgColor=Color(theme=6, tint=0.5999938962981048))
+HOLDING_FILL = PatternFill("solid", fgColor=Color(theme=9, tint=0.5999938962981048))
+_COLUMNS = (  # 表頭、欄寬、表頭底色
+    ("狀態", 8.7, BASIC_FILL),
+    ("TDCC", 14.1, BASIC_FILL),
+    ("剩餘天數", 13.3, BASIC_FILL),
+    ("最終比價日", 15.9, BASIC_FILL),
+    ("商品", 10.4, BASIC_FILL),
+    ("最差表現標的", 18.4, PERFORMANCE_FILL),
+    ("最差表現", 13.3, PERFORMANCE_FILL),
+    ("K%", 7.4, PERFORMANCE_FILL),
+    ("KI%", 8.3, PERFORMANCE_FILL),
+    ("KI種類", 11, PERFORMANCE_FILL),
+    ("面額", 11, BASIC_FILL),
+    ("幣別", 8.6, BASIC_FILL),
+    ("發行機構", 13.3, BASIC_FILL),
 )
-ALL_WIDTHS = (10, 15, 9, 12, 12, 14, 10, 12, 7, 7, 8, 14, 6, 10)
-_HOLDING_WIDTHS = (10, 12, 14)  # 每組交易明細：分公司、FC、面額
-MONEY_WORDS = ("面額",)  # 表頭有這些字的欄是金額，顯示到整數、千分位
-INDEX_HEADERS = ("最差表現",)  # 100 為基數的表現，顯示一位小數
+ALL_HEADERS = tuple(name for name, _, _ in _COLUMNS)
+_HOLDING_COLUMNS = (("分公司", 12), ("FC", 7.9), ("面額", 11))  # 每組交易明細
+FORMATS = {
+    "最終比價日": "mm-dd-yy",
+    "最差表現": "0.00",
+    "K%": "0.0",
+    "KI%": "0.0",
+    "面額": "#,##0",
+}  # 依表頭（去掉組號）
+CENTER = Alignment(horizontal="center", vertical="center")
 BROKEN_FILL = PatternFill("solid", fgColor="FFC7CE")  # 跌破K、跌破KI 的狀態格：淺紅色（Excel 內建的淺紅色填滿）
 
 
@@ -386,15 +386,19 @@ def export_exposure(
     results = [assess(p, today) for p in positions]
     counts = {category: sum(r.category == category for r in results) for category in CATEGORIES}
     slots = max((len(p.holdings) for p in positions), default=0) or 1  # 交易明細最多那檔有幾筆
-    headers = (*ALL_HEADERS, *(f"{name}{n}" for n in range(1, slots + 1) for name in ("分公司", "FC", "面額")))
+    holdings = [(f"{name}{n}", width, HOLDING_FILL) for n in range(1, slots + 1) for name, width in _HOLDING_COLUMNS]
+    columns = (*_COLUMNS, *holdings)
     book = table_book(
         ALL,
-        headers,
+        [name for name, _, _ in columns],
         ([excel_value(value) for value in _row(r, today)] for r in results),
-        widths=(*ALL_WIDTHS, *_HOLDING_WIDTHS * slots),
+        widths=[width for _, width, _ in columns],
         auto_filter=True,
     )
     sheet = book.active
+    for cell, (_, _, fill) in zip(sheet[1], columns, strict=True):
+        cell.fill = fill
+        cell.alignment = CENTER
     _style(sheet)
     save_export(book, path)
     return ExposureReceipt(path, len(results), counts)
@@ -412,10 +416,9 @@ def _row(r: Assessed, today: dt.date) -> tuple[object, ...]:
         p.product,
         w and w.code,
         w and _index(w.performance),
-        w and w.price_source,
         p.strike_pct,
         p.ki_pct,
-        p.barrier_type,
+        None if p.barrier_type == NO_BARRIER else p.barrier_type,  # 沒有 KI 留空（#360）
         r.notional,
         p.currency,
         p.issuer,
@@ -429,19 +432,13 @@ def _index(performance: Decimal | None) -> Decimal | None:
 
 
 def _style(sheet) -> None:
-    """日期、金額、100 為基數表現的格式；跌破K、跌破KI 只有狀態那一格填淺紅色。"""
-    headers = {cell.column: str(cell.value) for cell in sheet[1]}
-    money = {col for col, name in headers.items() if any(word in name for word in MONEY_WORDS)}
-    indexed = {col for col, name in headers.items() if name in INDEX_HEADERS}
+    """依表頭設數字與日期格式、置中；跌破K、跌破KI 只有狀態那一格填淺紅色。"""
+    formats = {cell.column: FORMATS.get(str(cell.value).rstrip("0123456789")) for cell in sheet[1]}
     for row in sheet.iter_rows(min_row=2):
         for cell in row:
             text_cell(cell)
-            if isinstance(cell.value, dt.date):
-                cell.number_format = "yyyy/m/d"
-            elif isinstance(cell.value, int | float | Decimal) and not isinstance(cell.value, bool):
-                if cell.column in indexed:
-                    cell.number_format = "0.0"
-                elif cell.column in money:
-                    cell.number_format = "#,##0"
+            if formats[cell.column] and cell.value is not None:
+                cell.number_format = formats[cell.column]
+            cell.alignment = CENTER
         if row[0].value in (KI_BROKEN, K_BROKEN):
             row[0].fill = BROKEN_FILL
