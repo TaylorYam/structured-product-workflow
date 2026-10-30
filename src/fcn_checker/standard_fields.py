@@ -350,6 +350,8 @@ STANDARD_FIELDS: dict[str, str] = {
     "trade_date": "date：交易日",
     "issue_date": "date：發行日",
     "final_valuation_date": "date：最終比價日",
+    "lookback_end_date": "date：回顧結束日（BEN lookback 的回顧觀察期間最後一天，MS §14(9)，#376）；說明書沒有回顧觀察期間時交"
+    "不適用；回填欄位（`backfill.lookback_end_date`），沒交的上手不核對",
     "maturity_date": "date：到期日",
     "denomination": "int 或 Decimal：每單位面額",
     "ko_observation": "str：D 期間每日觀察／P 每期定日觀察",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import bisect
 import datetime as dt
+import itertools
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
@@ -184,18 +185,20 @@ class Document:
         return self.lines[: sp.start] if sp else list(self.lines)
 
     # ---- 條 ----
-    def articles(self, chapter: int) -> dict[int, Span]:
+    def articles(self, chapter: int, numbers: Sequence[int] | None = None) -> dict[int, Span]:
+        """條號依序出現（預設 1、2、3…）；`numbers` 給定時依它的順序找（範本跳號，例：MS BEN 第一章沒有第 20 條）。"""
         sp = self.chapters.get(chapter)
         if not sp:
             return {}
         marks: list[tuple[int, int]] = []
-        expect = 1
+        order = iter(numbers) if numbers is not None else itertools.count(1)
+        expect = next(order, None)
         for i in range(sp.start + 1, sp.end):
             ln = self.lines[i]
             m = self.spec.article_re.match(ln.text)
-            if m and ln.x0 < self.spec.article_max_x and int(m.group(1)) == expect:
+            if expect is not None and m and ln.x0 < self.spec.article_max_x and int(m.group(1)) == expect:
                 marks.append((expect, i))
-                expect += 1
+                expect = next(order, None)
         return self._article_spans(marks, sp.end)
 
     def _article_spans(self, marks: list[tuple[int, int]], end: int) -> dict[int, Span]:

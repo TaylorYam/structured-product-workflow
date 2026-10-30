@@ -44,7 +44,7 @@ def exit_bonus_mentions(
     key: str = "exit_bonus",
     main_field: str = "coupon_pa_pct",
 ) -> list[CheckResult]:
-    """出場紅利的其他出處，每處一筆：數值 = 正式值 `main_field`（BEN 的到期紅利、CA BEN 的參與率同樣比，規則與名稱另給）。"""
+    """出場紅利的其他出處，每處一筆：數值 = 正式值 `main_field`（BEN 的到期紅利、CA BEN 與 MS BEN 的參與率同樣比，規則與名稱另給）。"""
     main = ctx.ts.f(main_field)
     out = []
     for k, m in enumerate(mentions, start=1):

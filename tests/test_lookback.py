@@ -27,7 +27,7 @@ from sp_workflow.observation import (
     observe,
     observe_all,
 )
-from sp_workflow.product_terms import TermsError, problems, write
+from sp_workflow.product_terms import TermsError, backfill, problems, write
 from sp_workflow.status import ProductSource
 from sp_workflow.stock_splits import Split, SplitBook
 
@@ -400,6 +400,7 @@ def test_the_reference_sheet_keeps_the_term_sheet_strike_and_the_screen_shows_th
     rows = list(openpyxl.load_workbook(path).active.iter_rows(values_only=True))
     row = dict(zip(rows[0], rows[1], strict=True))
     assert (D(str(row["UL_1_進場價"])), D(str(row["UL_1_執行價"]))) == (D(100), D(80))
+    assert row["回顧結束日"].date() == END  # #376：說明書的回顧結束日和它比
     assert lookback_text(read(pg, T1)) == "UL_1 AAA UW 70、UL_2 BBB UN 100"
     assert lookback_text(None) == ""
 
@@ -411,3 +412,30 @@ def test_only_ben_can_have_a_lookback_end_in_the_database(pg) -> None:
     seed(pg)
     with pytest.raises(psycopg.errors.CheckViolation):
         pg.execute("UPDATE workflow.product SET product = 'FCN' WHERE tdcc = %s", (T1,))
+
+
+def lookback_end(pg) -> dt.date | None:
+    return pg.execute("SELECT lookback_end_date FROM workflow.product WHERE tdcc = %s", (T1,)).fetchone()[0]
+
+
+@pytest.mark.db
+def test_check_write_back_fills_a_blank_lookback_end_and_logs_it(pg) -> None:
+    """#376：說明書的回顧結束日回填空白的資料庫值，原值記在 backfill_log。"""
+    seed(pg, locked=False, lookback=None)
+    with pg.transaction():
+        changed = backfill(pg, T1, "lookback_end_date", END, item="回顧結束日", result_file="r.xlsx", user="tester")
+    assert changed and lookback_end(pg) == END
+    assert logs(pg) == [("回顧結束日", None, str(END), "r.xlsx")]
+
+
+@pytest.mark.db
+def test_check_write_back_does_not_move_a_lookback_end_already_used(pg) -> None:
+    """#376：已經算出回顧期初價格的商品，回填不改回顧結束日（同人工維護，#374）。"""
+    seed(pg, locked=False)
+    write_closes(pg, END, {MIDDLE: "70"})
+    observe_all(pg, CALENDAR, user="tester")
+    before = logs(pg)
+    with pg.transaction():
+        changed = backfill(pg, T1, "lookback_end_date", MIDDLE, item="回顧結束日", result_file="r.xlsx", user="tester")
+    assert not changed and lookback_end(pg) == END
+    assert logs(pg) == before

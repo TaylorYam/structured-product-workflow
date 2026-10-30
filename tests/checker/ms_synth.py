@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
@@ -294,39 +294,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     d = _Doc(edits, "ts", used)
     w = d.w
     ends, payments, starts = s.ends, s.payments, s.starts
-    trustee = s.product_code if s.trustee_code is None else s.trustee_code
-    w.line(258, "中文產品說明書", gap=16)
-    for n, t in enumerate(
-        [
-            f"商品代號：{s.product_code}",
-            f"受託機構商品代號：{trustee}",
-            "國際證券編碼ISIN：XS1999900001",
-            f"商品中文名稱：{s.name_zh}",
-            f"商品英文名稱：{s.name_en}",
-            "商品種類："
-            + (
-                "股票與/或指數股票型基金連結結構型債券"
-                if len(s.underlyings) > 1
-                else "股票或指數股票型基金連結結構型債券"
-            ),
-            "發行機構註冊地：英國",
-            "商品註冊地：專業投資人與OSU 客戶不適用",
-            f"商品計價幣別：{s.currency_zh} ({s.ccy})",
-            f"發行機構：{ISSUER}",
-            "發行機構之地址： 25 Fictional Square, London",
-            f"報價機構名稱及地址：{ISSUER}",
-            "總代理人之名稱、電話及地址：台灣虛構證券股份有限公司，電話： (02)0000-0000",
-            f"受託機構之名稱、電話及地址：{DIST['name']}, 電話: +886 2 5556 1313, 地址: {DIST['address']}(營業活動所在地)",
-            f"受託機構審查通過之日期及文號：{zh_date(APPROVAL)}",
-            "本商品之投資風險警語：",
-        ],
-        1,
-    ):
-        d.text(36, f"{n}. {t}", 54)
-    d.text(54, "1) " + WARNING, 71)
-    d.text(54, "2) 本商品係複雜的金融商品，必須經過符合資格的人員解說後再進行投資。", 71)
-    d.text(72, f"中文產品說明書刊印日期：{zh_date(s.trade_date)}")
-
+    cover(d, s)
     d.chapter("一", "商品基本資料")
     short = s.name_zh.replace("(下稱「本商品」)", "")
     titles = {
@@ -350,19 +318,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     for n in range(1, 30):
         d.article(n, titles.get(n, "範本說明。"))
         if n == 11:
-            d.text(72, "連結標的資產：")
-            if len(s.underlyings) > 1:  # 多標的另有列號欄
-                d.cell(40, "連結標的")
-            d.cell(85, "股票 / 指數股票型基金")
-            d.cell(250, "彭博代碼(Bloomberg)")
-            d.cell(441, "交易所")
-            for i, ticker in enumerate(s.tickers, 1):
-                if len(s.underlyings) > 1:
-                    d.cell(44, str(i))
-                d.cell(66, underlying_name(i))
-                d.cell(283, ticker)
-                d.cell(419, "那斯達克證交所")
-            d.text(72, "相對權重：不適用。")
+            underlying_table(d, s)
         elif n == 12:
             write_notes(d.w, s.underlyings, "inline", x=72, label="({k})連結標的{k}：", heading=None, width=44)
         elif n == 14:
@@ -477,6 +433,65 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             _price_table(d, s, "art18.table")
             _scenarios(d, s)
 
+    return later_chapters(d, s, edits, used, path)
+
+
+def cover(d: _Doc, s: Spec) -> None:
+    """封面 1～16 項、警語與刊印日期（MS FCN 與 BEN 同一寫法）。"""
+    trustee = s.product_code if s.trustee_code is None else s.trustee_code
+    d.w.line(258, "中文產品說明書", gap=16)
+    for n, t in enumerate(
+        [
+            f"商品代號：{s.product_code}",
+            f"受託機構商品代號：{trustee}",
+            "國際證券編碼ISIN：XS1999900001",
+            f"商品中文名稱：{s.name_zh}",
+            f"商品英文名稱：{s.name_en}",
+            "商品種類："
+            + (
+                "股票與/或指數股票型基金連結結構型債券"
+                if len(s.underlyings) > 1
+                else "股票或指數股票型基金連結結構型債券"
+            ),
+            "發行機構註冊地：英國",
+            "商品註冊地：專業投資人與OSU 客戶不適用",
+            f"商品計價幣別：{s.currency_zh} ({s.ccy})",
+            f"發行機構：{ISSUER}",
+            "發行機構之地址： 25 Fictional Square, London",
+            f"報價機構名稱及地址：{ISSUER}",
+            "總代理人之名稱、電話及地址：台灣虛構證券股份有限公司，電話： (02)0000-0000",
+            f"受託機構之名稱、電話及地址：{DIST['name']}, 電話: +886 2 5556 1313, 地址: {DIST['address']}(營業活動所在地)",
+            f"受託機構審查通過之日期及文號：{zh_date(APPROVAL)}",
+            "本商品之投資風險警語：",
+        ],
+        1,
+    ):
+        d.text(36, f"{n}. {t}", 54)
+    d.text(54, "1) " + WARNING, 71)
+    d.text(54, "2) 本商品係複雜的金融商品，必須經過符合資格的人員解說後再進行投資。", 71)
+    d.text(72, f"中文產品說明書刊印日期：{zh_date(s.trade_date)}")
+
+
+def underlying_table(d: _Doc, s: Spec) -> None:
+    """第一章第 11 項標的表（MS FCN 與 BEN 同一寫法）。"""
+    d.text(72, "連結標的資產：")
+    if len(s.underlyings) > 1:  # 多標的另有列號欄
+        d.cell(40, "連結標的")
+    d.cell(85, "股票 / 指數股票型基金")
+    d.cell(250, "彭博代碼(Bloomberg)")
+    d.cell(441, "交易所")
+    for i, ticker in enumerate(s.tickers, 1):
+        if len(s.underlyings) > 1:
+            d.cell(44, str(i))
+        d.cell(66, underlying_name(i))
+        d.cell(283, ticker)
+        d.cell(419, "那斯達克證交所")
+    d.text(72, "相對權重：不適用。")
+
+
+def later_chapters(d: _Doc, s: Spec, edits: Sequence[Edit], used: set[Edit], path: Path) -> Path:
+    """第二章～第六章、頁底，存檔（MS FCN 與 BEN 同一寫法）。"""
+    w = d.w
     d.chapter("二", "相關機構事業概況")
     d.text(54, "1. 發行機構")
     en = ISSUER.split("(")[1].rstrip(".)")
@@ -555,11 +570,18 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     return w.save(path)
 
 
-def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
-    """MS 中文投資人須知（新版，docs/checker/templates/ms-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
+def build_iis_pdf(
+    path: Path,
+    s: Spec,
+    *,
+    edits: Sequence[Edit] = (),
+    used: set[Edit] | None = None,
+    body: Callable[[_Doc, Spec], None] | None = None,
+) -> Path:
+    """MS 中文投資人須知（新版，docs/checker/templates/ms-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。
+    `body` 換掉境外結構型商品事項到主要投資風險（預設 FCN 的 `_iis_body`；BEN 見 ms_ben_synth.py）。"""
     d = _Doc(edits, "iis", used)
     w = d.w
-    ends, payments, k, final = s.ends, s.payments, s.first_callable, s.ends[-1]
     dist, zh_issuer = DIST["name"], ISSUER.split("(")[0]
     kind = "股票與/或指數股票型基金連結結構型債券" if len(s.underlyings) > 1 else "股票或指數股票型基金連結結構型債券"
     w.line(130, "中文投資人須知(專業投資人/國際證券業務分公司受託買賣客戶)")
@@ -583,6 +605,54 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         f"1. 發行機構：{ISSUER}；營業所在地：25 Fictional Square, London。2. 總代理人：台灣虛構證券股份有限公司；"
         f"營業所在地：台北市虛構路1號。3. 受託機構：{dist}；營業所在地：{DIST['address']}",
     )
+    (body or _iis_body)(d, s)
+    w.new_page()
+    d.section = "fees"
+    d.text(18, "四、 費用：")
+    d.text(12, "投資人應負擔的各項費用及金額或計算基準之表列：")
+    for x, t in ((94, "費用項目"), (236, "費率 (百分比)"), (328, "收取時點")):
+        d.cell(x, t)
+    w.new_page()
+    for item, cells in [
+        ("申購費用", ("申購價金的", "0%~5%")),
+        ("提前贖回費用", ("投資人提前贖回價金的", "0%~5%")),
+        ("管理費用（信託管理費或管銷費用）", ("無",)),
+        (
+            "分銷費用（如屬發行機構或發行人給予受託或銷售機構之報酬、費用、折讓等各項利益應單獨列示）",
+            ("申購價金的", "0%~5%"),
+        ),
+        ("保費費用", ("不適用",)),
+    ]:
+        d.cell(18, item)
+        for t in cells:
+            d.cell(229, t)
+    d.section = "rest"
+    d.text(18, "五、 相關機構之權利、義務及責任")
+    d.text(18, "1. 範本說明。")
+    d.text(18, "六、 協助投資人權益之保護方式")
+    d.text(18, "七、 總代理人及受託機構與投資人爭議之處理方式")
+    while len(w.doc) < s.iis_pages:
+        w.new_page()
+    while len(w.doc) > s.iis_pages:
+        w.doc.delete_page(-1)
+    d.section = "cover"
+    # 第 1 頁右上角的刊印日期寫在最後：擷取順序同真實樣本，排在第 1 頁最後
+    w.doc[0].insert_text(
+        (374, 21), d.edit(f"中文投資人須知刊印日期:{zh_date(s.trade_date)}"), fontname=FONT, fontsize=8
+    )
+    total = s.iis_page_total or len(w.doc)
+    for i, page in enumerate(w.doc):
+        page.insert_text((262, 826), f"第{i + 1} 頁，共 {total}頁", fontname=FONT, fontsize=8)
+    if used is None:
+        require_used(edits, w.used)
+    return w.save(path)
+
+
+def _iis_body(d: _Doc, s: Spec) -> None:
+    """MS FCN 投資人須知：境外結構型商品事項（商品簡介、收益分配、贖回價金）與主要投資風險。"""
+    w = d.w
+    ends, payments, k, final = s.ends, s.payments, s.first_callable, s.ends[-1]
+    zh_issuer = ISSUER.split("(")[0]
     d.section = "summary"
     d.text(18, "二、 境外結構型商品事項：")
     d.text(18, "1. 商品簡介：")
@@ -675,46 +745,6 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         "1. 基本風險資訊：範本說明。2. 個別商品風險資訊：(6)本金轉換風險：若於期末定價日時觸及下限事件發生或表現最差的"
         "連結標的之收盤價低於其執行價，投資人將收到連結標的。",
     )
-    w.new_page()
-    d.section = "fees"
-    d.text(18, "四、 費用：")
-    d.text(12, "投資人應負擔的各項費用及金額或計算基準之表列：")
-    for x, t in ((94, "費用項目"), (236, "費率 (百分比)"), (328, "收取時點")):
-        d.cell(x, t)
-    w.new_page()
-    for item, cells in [
-        ("申購費用", ("申購價金的", "0%~5%")),
-        ("提前贖回費用", ("投資人提前贖回價金的", "0%~5%")),
-        ("管理費用（信託管理費或管銷費用）", ("無",)),
-        (
-            "分銷費用（如屬發行機構或發行人給予受託或銷售機構之報酬、費用、折讓等各項利益應單獨列示）",
-            ("申購價金的", "0%~5%"),
-        ),
-        ("保費費用", ("不適用",)),
-    ]:
-        d.cell(18, item)
-        for t in cells:
-            d.cell(229, t)
-    d.section = "rest"
-    d.text(18, "五、 相關機構之權利、義務及責任")
-    d.text(18, "1. 範本說明。")
-    d.text(18, "六、 協助投資人權益之保護方式")
-    d.text(18, "七、 總代理人及受託機構與投資人爭議之處理方式")
-    while len(w.doc) < s.iis_pages:
-        w.new_page()
-    while len(w.doc) > s.iis_pages:
-        w.doc.delete_page(-1)
-    d.section = "cover"
-    # 第 1 頁右上角的刊印日期寫在最後：擷取順序同真實樣本，排在第 1 頁最後
-    w.doc[0].insert_text(
-        (374, 21), d.edit(f"中文投資人須知刊印日期:{zh_date(s.trade_date)}"), fontname=FONT, fontsize=8
-    )
-    total = s.iis_page_total or len(w.doc)
-    for i, page in enumerate(w.doc):
-        page.insert_text((262, 826), f"第{i + 1} 頁，共 {total}頁", fontname=FONT, fontsize=8)
-    if used is None:
-        require_used(edits, w.used)
-    return w.save(path)
 
 
 def check_pair(

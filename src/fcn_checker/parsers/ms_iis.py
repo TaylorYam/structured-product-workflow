@@ -74,8 +74,25 @@ def body(lines: Sequence[Line]) -> list[Line]:
     return [x for x in lines if not PAGE_FOOTER.fullmatch(x.text)]
 
 
+def names(text: str) -> tuple[str | None, str | None]:
+    """封面的中文、英文名稱（去空白）；讀不到為 None。"""
+    zh = re.search(r"商品中文名稱[:：](.+?)商品英文名稱[:：]", text)
+    en = re.search(r"商品英文名稱[:：](.+?)\(ISIN[:：]", text)
+    return (zh[1] if zh else None), (en[1] if en else None)
+
+
 def detect(lines: Sequence[Line]) -> DetectionResult:
+    """範本辨識：MS 投資人須知的版面，而且是固定配息商品（名稱有「固定配息」「Fixed Coupon」；BEN 另有範本，#376）。"""
     text = TextIndex(body(lines)).text
+    failed = layout_problems(text)
+    zh, en = names(text)
+    if not (zh and "固定配息" in zh and en and "FixedCoupon" in en):
+        failed.append("商品名稱沒有「固定配息」或「Fixed Coupon」")
+    return DetectionResult(not failed, failed, [Evidence.of(x) for x in body(lines)[:2]])
+
+
+def layout_problems(text: str) -> list[str]:
+    """MS 投資人須知版面條件（封面、名稱開頭、發行機構、段落標題順序）不成立的說明；FCN、BEN 共用。"""
     failed = []
     for ok, message in (
         ("中文投資人須知" in text, "封面缺少「中文投資人須知」"),
@@ -92,7 +109,7 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     ):
         if not ok:
             failed.append(message)
-    return DetectionResult(not failed, failed, [Evidence.of(x) for x in body(lines)[:2]])
+    return failed
 
 
 def _section(ti: TextIndex, anchors: tuple[str, str]) -> TextIndex | None:

@@ -198,7 +198,12 @@ def _no_autocall(fields: dict[str, ParsedField], kind: Kind, art11: list[Line], 
         fields["no_autocall"] = ParsedField.invalid("no_autocall", art11[:3], note)
     else:
         fields["no_autocall"] = ParsedField("no_autocall", FieldStatus.PRESENT, True, list(opening.evidence))
-    no_ko = fields["no_autocall"]
+    maturity_only(fields, fields["no_autocall"])
+
+
+def maturity_only(fields: dict[str, ParsedField], no_ko: ParsedField) -> None:
+    """沒有 KO（`no_ko` 讀得到）的 BEN 交出的 KO 與排程欄位（各上手 BEN 共用）：KO% 不適用、每期觀察、非記憶式、沒有日期表、
+    Non-Call = 天期、比價日只有最後評價日（期末定價日）。"""
     fields["ko_pct"] = (
         ParsedField("ko_pct", FieldStatus.NOT_APPLICABLE, evidence=list(no_ko.evidence), note="BEN 沒有 KO")
         if no_ko.ok

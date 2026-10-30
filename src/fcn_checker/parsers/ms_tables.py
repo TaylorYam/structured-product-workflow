@@ -178,6 +178,8 @@ def underlying_names(lines: list[Line]) -> ParsedField:
             if int(t) != row + 2:
                 return ParsedField.invalid(name, [ln], "第 11 項標的表的列號不連續")
             row += 1
+        elif row < 0 and count > 1:
+            continue  # 第一個列號之前是表頭的續行（MS BEN 的「標的」「金」排在代碼表頭之後，#376）
         elif row < 0 or row >= count:
             return ParsedField.invalid(name, [ln], "第 11 項標的表的名稱對不到列號")
         else:

@@ -1112,14 +1112,22 @@ def _field_edits(original: Mapping[str, object], values: Mapping[str, object]) -
 def backfill(
     conn: psycopg.Connection, tdcc: str, column: str, value: object, *, item: str, result_file: str, user: str
 ) -> bool:
-    """核對寫回一格：`column` 是資料庫的欄（`isin`、`issue_date`、`denomination`、`autocall_date_<期>`、
-    `underlying_<序>_<價格>`）。值有改變時在 `workflow.backfill_log` 記原值（`item` 是參考條件表的欄名），
+    """核對寫回一格：`column` 是資料庫的欄（`isin`、`issue_date`、`denomination`、`lookback_end_date`、`autocall_date_<期>`、
+    `underlying_<序>_<價格>`）。已算出回顧期初價格的商品不改回顧結束日（同 `_lookback_fixed`，#374）。值有改變時在 `workflow.backfill_log` 記原值（`item` 是參考條件表的欄名），
     回傳有沒有改；不認得的欄、沒有這個標的不寫。在呼叫端的 transaction 裡執行，這檔先用 `read(…, lock=True)` 鎖住。
     """
     require_in_transaction(conn)
     if column in ("isin", "issue_date", "denomination"):
         (old,) = conn.execute(f"SELECT {column} FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
         conn.execute(f"UPDATE workflow.product SET {column} = %s WHERE tdcc = %s", (value, tdcc))
+    elif column == "lookback_end_date":
+        (old,) = conn.execute("SELECT lookback_end_date FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
+        (fixed,) = conn.execute(
+            "SELECT count(*) FROM workflow.underlying_price WHERE tdcc = %s AND lookback_price IS NOT NULL", (tdcc,)
+        ).fetchone()
+        if fixed and not same_value(old, value):
+            return False
+        conn.execute("UPDATE workflow.product SET lookback_end_date = %s WHERE tdcc = %s", (value, tdcc))
     elif column.startswith("autocall_date_"):
         slot = int(column.rsplit("_", 1)[1])
         found = conn.execute(

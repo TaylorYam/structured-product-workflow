@@ -8,7 +8,7 @@
 # 核對結果檔「回填後」一律照 [import_format]（匯入格式）重新產生，不論表上欄位怎麼排（Issue #203）。
 # 規則說明見 docs/checker/order-formats/reference-sheet.md。
 
-version = 24
+version = 25
 effective_date = 2026-10-30
 
 [layout]
@@ -31,6 +31,8 @@ optional_columns = [  # 表上沒有也照常核對
     "保證機構評等_標準普爾", "保證機構評等_穆迪", "保證機構評等_惠譽",
     # 參與率（#373）：只有 BEN 有；舊 Excel 沒有這欄時照常讀
     "參與率(%)",
+    # 回顧結束日（#376）：只有 lookback 的 BEN 有；舊 Excel 沒有這欄時照常讀，lookback 說明書的回填轉人工覆核
+    "回顧結束日",
 ]
 empty_value = "-"         # 空值寫法（比價日不需要填的期別也寫 -）
 checked_value = "V"       # TS、IIS 欄的打勾寫法（半形英文字母 V，同「當日比價」「私銀註記」）
@@ -163,6 +165,10 @@ any_order_products = { "Super Bull" = ["HSBC"], BEN = ["HSBC"] }
 # 參與率（#373、ADR 0029）：只有 BEN 有（一般 100、Digital 0），其他商品空白；資料庫來源帶出商品條件的參與率。
 # 不在匯入格式，核對結果檔「回填後」不帶。只核對，不回填。
 "參與率(%)" = "participation_pct"
+
+# 回顧結束日（#374、#376、ADR 0029）：只有 lookback 的 BEN 有值，其他商品空白；資料庫來源帶出商品條件的回顧結束日。
+# 回填欄位：表上空白且核對通過時回填資料庫（已算出回顧期初價格的不改）；已有不同值 → 不一致、不覆蓋。不在匯入格式。
+"回顧結束日" = "lookback_end_date"
 
 # KO(Freq)：D 期間每日觀察／P 每期定日觀察
 [values.ko_observation]

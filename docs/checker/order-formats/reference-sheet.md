@@ -70,8 +70,8 @@
 | 期初定價 | `initial_pricing` | `開盤價`、`收盤價` 或 `VWAP`（作業人員放在 `KO(%)` 前一欄）；空白時當成不是 VWAP，價格照常比對，說明書寫明期初定價（Citi、GS）時改依說明書判斷（Issue #246）；其他值 → 轉人工覆核。決定價格欄怎麼處理（Issue #122）；說明書寫明期初定價時（Citi 標的表表頭「期初評價日之收盤價格／VWAP」；GS 第一章第 15 項「初始參考價格」的定義句，Issue #248）另須相同，其他範本沒有對應資料（標準欄位 `initial_pricing` 交 `absent`），不比對（Issue #220） |
 | UL_n_進場價／執行價／下限價／KO價 | `underlying_n_initial_price` 等 | 表上值四捨五入（half-up）到 4 位後與說明書價格表相等；沒有 KI 時下限價必須是 `-`；說明書沒有 KO 價（SG、MS Non-Call = 天期）時 KO 價 = 期初價格，照常比對。期初定價為 `VWAP` 時不比對，改為**回填欄位**（§5） |
 | 風險等級 | `risk_level` | RR 核對（全文風險等級、固定警語裡的 RR、投資人須知商品簡介的 RR）的期望值：`RR1`～`RR5`；`待算`、空白或其他值 → RR 相關項目轉人工覆核。資料庫匯出的是自算風險等級（workflow ADR 0023）。不是必要欄，表上沒有時用審查標準 `risk.level`（見[審查標準](../rules/review-standard.md) §2.21）。不在匯入格式裡，「回填後」不帶 |
-| 參與率(%) | `participation_pct` | 只有 BEN 有（workflow #373、ADR 0029）：一般 BEN 100、Digital 0，其他商品空白。不是必要欄，資料庫來源帶出；Product 是 BEN 的列（`field.participation_pct`）和說明書的參與率比。HSBC（#375，規格見 [HSBC BEN 下單資料格式](hsbc-ben-reference.md) §2）：和說明書到期公式推得的參與率比（Maxi 100、Digital 0），沒有這欄或空白轉人工覆核；MS BEN 開放後（#376，[MS BEN 下單資料格式](ms-ben-reference.md) §2）：和說明書明寫的參與率比，沒有這欄或空白同樣轉人工覆核；CA（#377，[CA BEN 下單資料格式](ca-ben-reference.md)）：和說明書第 9 項明寫的參與率比，沒有這欄或空白同樣轉人工覆核。不在匯入格式裡，「回填後」不帶 |
-| 回顧結束日 | `lookback_end_date` | 只有 lookback 的 BEN 有（workflow #374、ADR 0029）。**規格，實作另開（#376）**：不是必要欄，資料庫來源帶出 `product.lookback_end_date`；MS BEN 開放後和說明書回顧觀察期間的結束日比，表上空白時通過後回填資料庫（[MS BEN 下單資料格式](ms-ben-reference.md) §5）；其他上手目前不核對。不在匯入格式裡，「回填後」不帶 |
+| 參與率(%) | `participation_pct` | 只有 BEN 有（workflow #373、ADR 0029）：一般 BEN 100、Digital 0，其他商品空白。不是必要欄，資料庫來源帶出；Product 是 BEN 的列（`field.participation_pct`）和說明書的參與率比。HSBC（#375，規格見 [HSBC BEN 下單資料格式](hsbc-ben-reference.md) §2）：和說明書到期公式推得的參與率比（Maxi 100、Digital 0），沒有這欄或空白轉人工覆核；MS（#376，[MS BEN 下單資料格式](ms-ben-reference.md) §2）：和說明書明寫的參與率比，沒有這欄或空白同樣轉人工覆核；CA（#377，[CA BEN 下單資料格式](ca-ben-reference.md)）：和說明書第 9 項明寫的參與率比，沒有這欄或空白同樣轉人工覆核。不在匯入格式裡，「回填後」不帶 |
+| 回顧結束日 | `lookback_end_date` | 只有 lookback 的 BEN 有（workflow #374、ADR 0029）。不是必要欄，資料庫來源帶出 `product.lookback_end_date`；MS BEN 開放後和說明書回顧觀察期間的結束日比，表上空白時通過後回填資料庫（[MS BEN 下單資料格式](ms-ben-reference.md) §5）；其他上手目前不核對。不在匯入格式裡，「回填後」不帶 |
 | 發行機構 | — | 不是必要欄；表上有才確認該列屬於此上手（§2） |
 | 發行機構評等_標準普爾／_穆迪／_惠譽、保證機構評等_標準普爾／_穆迪／_惠譽 | `issuer_rating_sp`、`issuer_rating_moodys`、`issuer_rating_fitch`、`guarantor_rating_*` | 交易日當時的長期債務信用評等（Issue #240）。不是必要欄：資料庫來源從評等表（`workflow.credit_rating`，生效日 ≤ 交易日的最新一筆）帶出，沒有保證機構或評等表沒有那家時空白；舊版 Excel 沒有這些欄時，做評等核對的上手（14 家都做，#240～#243；CA、JPM、Nomura、SG 只看保證機構評等欄，#241）評等轉人工覆核。說明書與投資人須知的評等依[共用規則](../rules/shared-check-rules.md) §10 比對。不在匯入格式內（不回填） |
 | Product | — | 不和說明書比對；決定能不能自動核對（上手編號對照的 `[auto_check_products]`，#302）：沒開放給這家上手的商品種類照不支援樣態處理，空白或沒有這欄時照 FCN |
@@ -103,7 +103,7 @@
 
 ## 5. 回填
 
-- 回填欄位只有 `TS`、`IIS`（下一點）、`ISIN Code`、`發行日`（BARC 第一章 §13(3)、HSBC 第一章 §15(2)、MS 第一章 §14(3)；2026-10-02 起，Issue #64）與 `比價日_1`～`比價日_12`；VWAP 商品另加四個價格欄（再下一點）。MS lookback BEN 另加 `回顧結束日`（規格，實作另開 #376；規則見 [MS BEN 下單資料格式](ms-ben-reference.md) §5）。
+- 回填欄位只有 `TS`、`IIS`（下一點）、`ISIN Code`、`發行日`（BARC 第一章 §13(3)、HSBC 第一章 §15(2)、MS 第一章 §14(3)；2026-10-02 起，Issue #64）與 `比價日_1`～`比價日_12`；VWAP 商品另加四個價格欄（再下一點）。MS lookback BEN 另加 `回顧結束日`（#376；規則見 [MS BEN 下單資料格式](ms-ben-reference.md) §5）。
 - `TS`、`IIS` 的值不取自說明書：說明書與投資人須知**都**通過或人工放行的商品，兩欄都填 `V`（人工放行的也填）。表上空白 → 回填；已是 `V` → 相同；`V` 以外的值（含 `v`、`-`、`✓`）→ 不一致、保留原值，跟其他回填欄位一樣不能人工放行（Issue #127）。表上沒有這兩欄（或其中一欄）時不影響核對（Issue #199）。「回填後」沒有 `TS`、`IIS` 欄，改由匯入格式的 `TS/IIS完成檢核` 一律填 `V`（留在「回填後」的都是兩份通過或人工放行的商品；Issue #203）。
 - 期初定價為 `VWAP` 的商品，`UL_n_進場價／執行價／下限價／KO價` 也是回填欄位，但規則不同：整份通過或人工放行後，`UL_1`～`UL_5` 的價格欄**不論格子空白或已有值，一律覆寫**：說明書價格表上有的標的寫說明書的值（4 位小數），沒有 KI 時下限價寫 `-`；說明書沒有 KO 價（SG、MS Non-Call = 天期）時 KO 價寫說明書的期初價格（Issue #202）；說明書沒有的標的四欄都寫 `-`。表上原有的值不算「已有不同值」，不擋人工放行；原值記在核對紀錄（Issue #122）。
 - 格子是空白：整份說明書核對 **PASS**，或作業人員在 PANEL 人工放行時才回填（格子已有不同值時不能人工放行）。

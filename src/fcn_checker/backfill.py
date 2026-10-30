@@ -36,9 +36,9 @@ from .ingestion import IngestionError
 from .orders.reference import OrderRecord, autocall_date_key, locate, price_key
 from .rules.kit import Context, doc_review, result
 from .rules.reference import PRICE_COLUMNS, is_vwap, sheet_slots, standard_field
-from .schema import CheckReport, CheckResult, Item, OrderValue, ParsedField
+from .schema import CheckReport, CheckResult, FieldStatus, Item, OrderValue, ParsedField
 from .schema import CheckStatus as S
-from .standard_fields import AutocallSchedule
+from .standard_fields import AutocallSchedule, not_provided
 
 SLOTS = 12
 FALLBACK_DATE_FORMAT = "yyyy/m/d"
@@ -253,6 +253,29 @@ def compare_dates(ctx: Context) -> tuple[CheckResult, list[CellDecision]]:
             item=item,
         ),
         decisions,
+    )
+
+
+def lookback_end_date(ctx: Context) -> tuple[CheckResult | None, list[CellDecision]]:
+    """回顧結束日（BEN lookback，#376）：上手沒交這欄（沒有 lookback 範本）時沒有結果。說明書有回顧觀察期間時同其他單格回填
+    欄位（表上沒有這欄 → 轉人工覆核）；說明書沒有（不是 lookback）時表上要空白（或空值寫法），有值 → 不一致，表上沒有這欄
+    不影響。已算出回顧期初價格的商品寫回時不改值（`sp_workflow.product_terms.backfill`）。"""
+    rid, key, name = "backfill.lookback_end_date", "lookback_end_date", "回顧結束日"
+    pf, row = standard_field(ctx, key), ctx.order
+    if pf == not_provided(key):
+        return None, []
+    if pf.status != FieldStatus.NOT_APPLICABLE:
+        return _single(rid, key, name, name, row, pf)
+    ov = row.get(key)
+    if ov is None or ov.value in (None, ctx.fmt.empty_value):
+        return None, []
+    message = "說明書沒有回顧觀察期間（不是 lookback），表上回顧結束日要空白；保留原值"
+    item = Item.column(name, [ov])
+    return (
+        result(
+            rid, key, S.MISMATCH, expected=ov.value, pf=pf, ov=[ov], reason="value_mismatch", message=message, item=item
+        ),
+        [],
     )
 
 

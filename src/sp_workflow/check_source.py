@@ -15,7 +15,9 @@
   （核對時的表沒有風險等級欄（v19 以前產生的）不算改了）。
 - 參與率欄（#373）：`workflow.product.participation_pct`，只有 BEN 有值；核對時的表沒有這欄（v21 以前產生的）不算改了。
 - 配息門檻欄（#367）：DACN 的配息門檻，其他商品寫空值寫法。核對時的表沒有這欄（v22 以前產生的）不算改了。
-- 回填：ISIN、發行日、比價日_1～12（空值寫法存成空白）、期初定價 VWAP 時各標的四個價格；人工放行的說明書
+- 回顧結束日欄（#376）：`workflow.product.lookback_end_date`，只有 lookback 的 BEN 有值，其他空白；是回填欄位。
+- 回填：ISIN、發行日、比價日_1～12（空值寫法存成空白）、回顧結束日（已算出回顧期初價格的不改）、
+  期初定價 VWAP 時各標的四個價格；人工放行的說明書
   若單位面額和資料庫不同，改成 TS 的值。每個改變的原值記在 `workflow.backfill_log`。寫入、紀錄與鎖住都經過
   `product_terms.backfill`／`lock_checked`（#203），和商品條件寫入共用同一把鎖（`product_terms.read(…, lock=True)`）。
 - 寫回在同一個 transaction 裡，失敗時什麼都不寫；核對結果檔已經存好，可以重新寫回（使用者 2026-10-21 確認）。
@@ -69,6 +71,7 @@ RISK_FIELD = "risk_level"  # 參考條件表的風險等級（#239；不在匯�
 PRODUCT_FIELD = "product"  # 參考條件表的商品種類（#302；決定能不能自動核對）
 PARTICIPATION_FIELD = "participation_pct"  # 參考條件表的參與率（#373；只有 BEN 有，不在匯入格式裡，排在風險等級後面）
 COUPON_BARRIER_FIELD = "coupon_barrier_pct"  # 參考條件表的配息門檻（#367；不在匯入格式裡，排在參與率後面）
+LOOKBACK_FIELD = "lookback_end_date"  # 參考條件表的回顧結束日（#376；回填欄位，不在匯入格式裡，排在參與率後面）
 DENOMINATION_RULE = "field.denomination"
 DENOMINATION_COLUMN = "單位面額"
 
@@ -146,7 +149,7 @@ def _absent_reason(found: Stored | None) -> str:
 
 
 def _headers(fmt: ReferenceFormat) -> list[str]:
-    """TS、IIS、發行機構，加上匯入格式的欄（「TS/IIS完成檢核」除外）、風險等級、參與率、配息門檻與信用評等欄：讀檔需要的欄都在，
+    """TS、IIS、發行機構，加上匯入格式的欄（「TS/IIS完成檢核」除外）、風險等級、參與率、回顧結束日、配息門檻與信用評等欄：讀檔需要的欄都在，
     核對結果檔也帶得出其他欄。"""
     names = {std: header for header, std in reversed(list(fmt.columns.items()))}
     checked = [names[key] for key in CHECKED_FIELDS]
@@ -156,6 +159,7 @@ def _headers(fmt: ReferenceFormat) -> list[str]:
         *(c for c in fmt.import_format.columns if c != fmt.import_format.checked_column),
         names[RISK_FIELD],
         names[PARTICIPATION_FIELD],
+        names[LOOKBACK_FIELD],
         names[COUPON_BARRIER_FIELD],
         *(names[key] for key in RATING_FIELDS if key in names),
     ]
@@ -192,6 +196,7 @@ def _row(
         "first_callable_period": p["non_call_months"],
         RISK_FIELD: _risk_cell(risk),
         PARTICIPATION_FIELD: p["participation_pct"],
+        LOOKBACK_FIELD: p["lookback_end_date"],
     }
     values.update(ratings.columns(found.tdcc, p["issuer"], p["trade_date"]))
     if locked(found):
@@ -356,14 +361,14 @@ def write_back(
 
 
 def _changed(current: Mapping[str, Any], checked: Any, fmt: ReferenceFormat, *, rated: bool) -> bool:
-    """資料庫現在的值和核對時那一列（`OrderRecord`）不同；回填欄位（ISIN、發行日、比價日、TS、IIS）不算。
+    """資料庫現在的值和核對時那一列（`OrderRecord`）不同；回填欄位（ISIN、發行日、比價日、回顧結束日、TS、IIS）不算。
 
     評等欄只在 `rated`（這家上手有做評等核對）時才比；核對時的表沒有評等欄（v18 以前產生的）也不算改了。
     風險等級欄同樣：核對時的表沒有這欄（v19 以前產生的）不算改了；商品種類欄（#302）、參與率欄（#373）、配息門檻欄（#367）同樣。
     """
     if checked is None:
         return True
-    skip = {"isin", "issue_date", *CHECKED_FIELDS}
+    skip = {"isin", "issue_date", LOOKBACK_FIELD, *CHECKED_FIELDS}
     for header, value in current.items():
         std = fmt.columns.get(header)
         if std is None or std in skip or std.startswith("autocall_date_"):
