@@ -47,9 +47,11 @@ from sp_workflow.order_terms import TDCC_FIELD, OrderRow, describe, unknown_issu
 from sp_workflow.product_record import (
     CHOICES,
     COLUMN_FIELDS,
+    DEFAULT_PARTICIPATION,
     DERIVED_COLUMNS,
     FIELDS,
     KINDS,
+    PARTICIPATION_FIELD,
     PRICE_COLUMNS,
     PRICING_FIELD,
     PRODUCT_COLUMNS,
@@ -462,6 +464,7 @@ def draft_from(
         for name, value in fields.items():
             if values.get(name) is None and value is not None and name not in row.must_fill:
                 values[name] = value
+    _default_participation(values)
     return Draft(row, original, values, fields, reason, database_checked=checked)
 
 
@@ -470,10 +473,23 @@ def _maintenance_draft(tdcc: str, stored: Stored | None, config: ImportConfig, t
         fields = stored.fields
         review = OrderReview.LOCKED if locked(stored) else OrderReview.UNLOCKED
         row = OrderRow(tdcc, review, issuer_code(tdcc, stored.columns["issuer"], config), dict(fields))
-        return Draft(row, dict(fields), dict(fields), dict(fields), database_checked=True)
+        return Draft(row, dict(fields), _default_participation(dict(fields)), dict(fields), database_checked=True)
     values: dict[str, object] = {**dict.fromkeys(FIELDS), "Product": trade_product}
     row = OrderRow(tdcc, OrderReview.TRADES_ONLY, config.issuer_prefixes.get(tdcc[:3], ""), dict(values))
-    return Draft(row, dict(values), dict(values), dict(values), database_checked=True)
+    return Draft(row, dict(values), _default_participation(dict(values)), dict(values), database_checked=True)
+
+
+def _default_participation(values: dict[str, object]) -> dict[str, object]:
+    """BEN 的參與率空白時帶預設值 100（#373、ADR 0029；起單建檔沒有這欄，資料庫已有的值優先）；回傳 `values`。"""
+    if values.get(PARTICIPATION_FIELD) is None and _has_participation(values.get("Product")):
+        values[PARTICIPATION_FIELD] = Decimal(DEFAULT_PARTICIPATION)
+    return values
+
+
+def _has_participation(product: object) -> bool:
+    """這種商品有參與率（只在到期判定的 BEN）。"""
+    name = product_name(product)
+    return name is not None and PRODUCT_RULES[name].maturity_only
 
 
 # ---------- 檢查 ----------
@@ -542,8 +558,19 @@ def _value_problems(
     if filled("Currency") and values["Currency"] not in config.denominations:
         problems["Currency"] = "這個幣別沒有單位面額預設值"
     if product is not None and filled(_NON_CALL_FIELD):  # Non-Call 依商品種類（#302）；商品種類不支援時不看
-        if problem := PRODUCT_RULES[product].non_call_problem(values[_NON_CALL_FIELD]):
+        tenor = values["Tenor (m)"] if filled("Tenor (m)") else None
+        if problem := PRODUCT_RULES[product].non_call_problem(values[_NON_CALL_FIELD], tenor):
             problems[_NON_CALL_FIELD] = problem
+    if product is not None and PRODUCT_RULES[product].maturity_only:  # BEN：只在到期判定（#373）
+        for name, fixed in (("KO Type", "Period End"), ("Barrier Type", "NONE")):
+            if filled(name) and values[name] != fixed:
+                problems[name] = f"{product} 不會提前出場、沒有 KI，要選 {fixed}"
+        if values.get(PARTICIPATION_FIELD) is None and PARTICIPATION_FIELD not in problems:
+            problems[PARTICIPATION_FIELD] = f"{product} 必填（一般 100、Digital 0）"
+        elif filled(PARTICIPATION_FIELD) and values[PARTICIPATION_FIELD] < 0:
+            problems[PARTICIPATION_FIELD] = "不能是負數"
+    elif product is not None and filled(PARTICIPATION_FIELD):
+        problems[PARTICIPATION_FIELD] = f"{product} 沒有參與率，要空白"
     if filled("Tenor (m)") and values["Tenor (m)"] < 1:
         problems["Tenor (m)"] = "至少 1"
     if filled(TRADE_FIELD) and filled(STRIKE_FIELD) and values[STRIKE_FIELD] < values[TRADE_FIELD]:

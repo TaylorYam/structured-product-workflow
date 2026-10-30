@@ -192,6 +192,20 @@ def test_different_duplicate_lines_leave_those_fields_for_the_operator(tmp_path:
     }
 
 
+def test_ben_rows_get_the_fixed_maturity_only_terms(tmp_path: Path) -> None:
+    """BEN 只在到期判定（#373、ADR 0029）：不管起單建檔填什麼，Non-Call = 天期、Period End、NONE、沒有 KI；
+    好幾列在這幾欄不同也不用作業人員填。參與率起單建檔沒有，讀取結果是空白（預設值在 draft_from 帶）。"""
+    ben = {"Product": "BEN", "Guaranteed Periods (m)": 1, "KO Type": "Daily Memory", "KI Barrier (%)": Decimal(65)}
+    other = sheet_line(A, {**ben, "KO Type": "Period End", "Guaranteed Periods (m)": 3})
+    path = write_sheet(tmp_path / "s.xlsx", [sheet_line(A, ben), other])
+
+    (row,) = read(path, A)
+
+    assert (row.status, row.conflicts, row.notes) == (READ, frozenset(), {})
+    fixed = ("Guaranteed Periods (m)", "KO Type", "Barrier Type", "KI Barrier (%)", "Participation (%)")
+    assert [row.values[name] for name in fixed] == [6, "Period End", "NONE", None, None]
+
+
 @pytest.mark.parametrize(
     ("make", "message"),
     [

@@ -7,11 +7,12 @@ from decimal import Decimal
 
 import pytest
 
-from fcn_checker.products import FCN, FCN_EXPRESS, PRODUCT_RULES, product_name
+from fcn_checker.products import BEN, FCN, FCN_EXPRESS, PRODUCT_RULES, product_name
 from sp_workflow.product_record import (
     COLUMN_FIELDS,
     DERIVED_COLUMNS,
     FIELDS,
+    PARTICIPATION_FIELD,
     PRODUCT_COLUMNS,
     REQUIRED,
     REQUIRED_COLUMNS,
@@ -36,6 +37,7 @@ VALUES: dict[str, object] = {
     "KO Type": "Period End Memory",
     "KO Barrier (%)": Decimal("100"),
     "Coupon p.a. (%)": Decimal("12.5"),
+    PARTICIPATION_FIELD: None,
     UPFRONT_FIELD: Decimal("97.14"),
     "Tenor (m)": 12,
     "Barrier Type": "AKI",
@@ -95,7 +97,7 @@ def test_blank_fields_leave_their_columns_codes_and_denomination_blank() -> None
 
     # 商品種類不可空白（ADR 0016）：寫入前由檢查擋下；不支援的商品種類同樣存空白，不猜成 FCN（#302）
     assert all(value is None for value in columns.values())
-    assert columns_of({**VALUES, "Product": "BEN"}, "Barclays", DENOMINATIONS)["product"] is None
+    assert columns_of({**VALUES, "Product": "FCN_Stepdown"}, "Barclays", DENOMINATIONS)["product"] is None
 
 
 def test_fields_of_reads_back_what_columns_of_wrote() -> None:
@@ -123,7 +125,8 @@ def test_missing_fields_name_blank_required_fields_and_their_derived_codes() -> 
         (" fcn ", FCN),
         ("FCN_Express", FCN_EXPRESS),
         ("fcn_express", FCN_EXPRESS),
-        ("BEN", None),
+        (" ben ", BEN),
+        ("FCN_Stepdown", None),
         (None, None),
     ],
 )
@@ -149,6 +152,27 @@ def test_the_product_is_stored_the_way_it_is_named_in_the_rules() -> None:
 )
 def test_non_call_follows_the_product_rule(product, months, problem) -> None:
     assert PRODUCT_RULES[product].non_call_problem(months) == problem
+
+
+@pytest.mark.parametrize(
+    ("months", "tenor", "problem"),
+    [(6, 6, ""), (3, 6, "BEN 不會提前出場，要等於天期（6）"), (3, None, ""), (0, None, "至少 1")],
+)
+def test_ben_non_call_must_equal_the_tenor(months, tenor, problem) -> None:
+    """BEN 只在到期判定（#373）：Non-Call 要等於天期；不知道天期時只看至少 1。"""
+    rule = PRODUCT_RULES[BEN]
+
+    assert (rule.maturity_only, rule.final_date_callable) == (True, False)
+    assert rule.non_call_problem(months, tenor) == problem
+    assert PRODUCT_RULES[FCN].non_call_problem(3, 6) == ""
+
+
+def test_participation_is_stored_as_a_percentage() -> None:
+    """參與率（%）存 `participation_pct`（#373），讀回來去掉多餘的 0。"""
+    columns = columns_of({**VALUES, "Product": BEN, PARTICIPATION_FIELD: 100}, "HSBC", DENOMINATIONS)
+
+    assert columns["participation_pct"] == Decimal("100.000000")
+    assert fields_of(columns)[PARTICIPATION_FIELD] == 100
 
 
 @pytest.mark.parametrize("module", ["sp_workflow.product_record", "sp_workflow.mailbox"])

@@ -1,4 +1,4 @@
-"""支援的商品種類與各自的 Non-Call、比價規則（#302、#304、#310、ADR 0027、0028）。
+"""支援的商品種類與各自的 Non-Call、比價規則（#302、#304、#310、#373、ADR 0027、0028、0029）。
 
 流程（`sp_workflow`：交易明細、起單建檔、人工維護、歷史回補、比價）與核對（說明書推得的 Non-Call 符不符合參考條件表的
 商品種類，`rules/reference.non_call_product`）共用這一份；新增商品時在 `PRODUCT_RULES` 加一筆，訂它自己的規則。
@@ -11,6 +11,7 @@ from dataclasses import dataclass
 FCN = "FCN"  # 商品種類（#201）
 FCN_EXPRESS = "FCN_Express"  # 沒有 Non-Call 的每日記憶式 FCN（#302、ADR 0027）
 SUPER_BULL = "Super Bull"  # 沒有配息、每期觀察、到期依最差標的對執行價結算（#310、ADR 0028）
+BEN = "BEN"  # 沒有配息、不會提前出場、沒有 KI，只在到期依最差標的對執行價結算（#373、ADR 0029）
 
 
 @dataclass(frozen=True)
@@ -22,11 +23,17 @@ class ProductRule:
     # False：最終比價日即使也存在比價日裡，也不算 KO、只做到期判定（Super Bull：出場表不含期末評價日，
     # 舊總表卻把它放在比價日_{天期}，#310）
     final_date_callable: bool = True
+    # True：只在到期判定（BEN）：不會提前出場（Non-Call = 天期）、KO Type 一律 Period End、沒有 KI，
+    # 起單資料匯入不管起單建檔填什麼都套這組；另有參與率（%）（#373、ADR 0029）
+    maturity_only: bool = False
 
-    def non_call_problem(self, months: int) -> str:
-        """Guaranteed Periods (m) 不符合這種商品時的說明；符合時空字串。"""
+    def non_call_problem(self, months: int, tenor: int | None = None) -> str:
+        """Guaranteed Periods (m) 不符合這種商品時的說明；符合時空字串。`tenor` 是天期（月），只在到期判定的商品要等於它，
+        沒給時不看。"""
         if not self.has_non_call:
             return "" if months == 0 else f"{self.name} 沒有 Non-Call，要填 0"
+        if self.maturity_only and tenor is not None and months != tenor:
+            return f"{self.name} 不會提前出場，要等於天期（{tenor}）"
         return "" if months >= 1 else "至少 1"
 
 
@@ -37,6 +44,7 @@ PRODUCT_RULES = {
         ProductRule(FCN),
         ProductRule(FCN_EXPRESS, has_non_call=False),
         ProductRule(SUPER_BULL, final_date_callable=False),
+        ProductRule(BEN, final_date_callable=False, maturity_only=True),
     )
 }
 _PRODUCT_NAMES = {name.upper(): name for name in PRODUCT_RULES}

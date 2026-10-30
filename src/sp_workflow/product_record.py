@@ -33,6 +33,9 @@ UPFRONT_FIELD = "Upfront / NotePrice (%)"
 TRADE_FIELD = "Trade date"
 STRIKE_FIELD = "Strike date"
 PRICING_FIELD = "期初價格"
+# 參與率（%）：只有 BEN 有（#373、ADR 0029）；起單建檔沒有這欄，起單資料匯入時 BEN 預設 100、Digital 由作業人員改 0
+PARTICIPATION_FIELD = "Participation (%)"
+DEFAULT_PARTICIPATION = 100
 
 
 class FieldKind(Enum):
@@ -63,6 +66,7 @@ KINDS: dict[str, FieldKind] = {
     "KO Type": FieldKind.CHOICE,
     "KO Barrier (%)": FieldKind.PERCENT,
     "Coupon p.a. (%)": FieldKind.PERCENT,
+    PARTICIPATION_FIELD: FieldKind.PERCENT,
     UPFRONT_FIELD: FieldKind.PERCENT,
     "Tenor (m)": FieldKind.INT,
     "Barrier Type": FieldKind.CHOICE,
@@ -103,7 +107,7 @@ PRODUCT_COLUMNS = (
     "product", "issuer", "currency", "trade_date", "issue_date", "final_valuation_date", "maturity_date",
     "initial_pricing", "non_call_months", "underlying_1", "underlying_2", "underlying_3", "underlying_4",
     "underlying_5", "strike_pct", "ko_freq", "ko_memory", "ko_type", "ko_pct", "coupon_pct", "upfront_pct",
-    "tenor_months", "ki_freq", "barrier_type", "ki_pct", "denomination", "strike_date",
+    "tenor_months", "ki_freq", "barrier_type", "ki_pct", "denomination", "strike_date", "participation_pct",
 )  # fmt: skip
 # 資料庫 workflow.product 的欄 ↔ 畫面的欄（畫面上的 Upfront / NotePrice = 100 − UF）
 COLUMN_FIELDS = {
@@ -115,6 +119,7 @@ COLUMN_FIELDS = {
     "ko_type": "KO Type",
     "ko_pct": "KO Barrier (%)",
     "coupon_pct": "Coupon p.a. (%)",
+    "participation_pct": PARTICIPATION_FIELD,
     "upfront_pct": UPFRONT_FIELD,
     "tenor_months": "Tenor (m)",
     "barrier_type": "Barrier Type",

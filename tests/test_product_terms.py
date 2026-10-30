@@ -117,14 +117,17 @@ def test_sheet_notes_are_shown_but_do_not_block_on_their_own() -> None:
         ({"Barrier Type": "NONE"}, {"KI Barrier (%)": "Barrier Type 是 NONE 時要空白"}),
         ({"KI Barrier (%)": None}, {"KI Barrier (%)": "有 KI 時必填"}),
         ({"Currency": "TWD"}, {"Currency": "這個幣別沒有單位面額預設值"}),
-        ({"Product": "BEN"}, {"Product": "目前只做 FCN、FCN_Express、Super Bull"}),
+        ({"Product": "FCN_Stepdown"}, {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN"}),
         ({"Guaranteed Periods (m)": 0}, {"Guaranteed Periods (m)": "至少 1"}),
         ({"Product": "FCN_Express"}, {"Guaranteed Periods (m)": "FCN_Express 沒有 Non-Call，要填 0"}),
         ({"Product": "FCN_Express", "Guaranteed Periods (m)": 0}, {}),
         ({"Product": "fcn_express", "Guaranteed Periods (m)": 0}, {}),
         ({"Product": "Super Bull", "Guaranteed Periods (m)": 0}, {"Guaranteed Periods (m)": "至少 1"}),
         ({"Product": "super bull", "KO Type": "Period End"}, {}),
-        ({"Product": "BEN", "Guaranteed Periods (m)": 0}, {"Product": "目前只做 FCN、FCN_Express、Super Bull"}),
+        (
+            {"Product": "FCN_Stepdown", "Guaranteed Periods (m)": 0},
+            {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN"},
+        ),
         ({"BBG Code 2": None, "BBG Code 3": "CCC UQ"}, {"BBG Code 2": "標的要從 BBG Code 1 依序填，中間不能空"}),
         ({"KO Type": "Weekly"}, {"KO Type": "要選 Daily／Daily Memory／Period End／Period End Memory"}),
         ({"Tenor (m)": "6"}, {"Tenor (m)": "要填整數"}),
@@ -137,6 +140,49 @@ def test_field_checks(changes, expected) -> None:
     draft.values.update(changes)
 
     assert problems(draft, CONFIG) == expected
+
+
+BEN_TERMS = {
+    "Product": "BEN",
+    "Guaranteed Periods (m)": 6,
+    "KO Type": "Period End",
+    "Barrier Type": "NONE",
+    "KI Barrier (%)": None,
+    "Participation (%)": Decimal(100),
+}
+
+
+@pytest.mark.parametrize(
+    ("changes", "expected"),
+    [
+        ({}, {}),
+        ({"Participation (%)": Decimal(0)}, {}),  # Digital
+        ({"Guaranteed Periods (m)": 3}, {"Guaranteed Periods (m)": "BEN 不會提前出場，要等於天期（6）"}),
+        ({"KO Type": "Daily Memory"}, {"KO Type": "BEN 不會提前出場、沒有 KI，要選 Period End"}),
+        (
+            {"Barrier Type": "EKI", "KI Barrier (%)": Decimal(65)},
+            {"Barrier Type": "BEN 不會提前出場、沒有 KI，要選 NONE"},
+        ),
+        ({"Participation (%)": None}, {"Participation (%)": "BEN 必填（一般 100、Digital 0）"}),
+        ({"Participation (%)": Decimal(-1)}, {"Participation (%)": "不能是負數"}),
+        (
+            {"Product": "FCN", "Guaranteed Periods (m)": 1, "KO Type": "Daily Memory"},
+            {"Participation (%)": "FCN 沒有參與率，要空白"},
+        ),
+    ],
+)
+def test_ben_field_checks(changes, expected) -> None:
+    """BEN 只在到期判定（#373、ADR 0029）：Non-Call = 天期、Period End、NONE，參與率必填；其他商品沒有參與率。"""
+    draft = draft_of(order_row())
+    draft.values.update({**BEN_TERMS, **changes})
+
+    assert problems(draft, CONFIG) == expected
+
+
+def test_a_ben_draft_starts_with_a_participation_of_100() -> None:
+    """起單建檔沒有參與率（#373）：BEN 的草稿預設 100，其他商品空白。"""
+    assert draft_of(order_row(changes=BEN_TERMS | {"Participation (%)": None})).values["Participation (%)"] == 100
+    assert draft_of(order_row()).values["Participation (%)"] is None
 
 
 def test_conflicting_duplicate_fields_must_be_filled() -> None:
@@ -275,6 +321,26 @@ def test_an_express_row_imports_with_no_non_call(pg, tmp_path: Path) -> None:
     assert [(line.tdcc, line.result) for line in receipt.lines] == [(A, ImportResult.NEW)]
     p = product(pg, A)
     assert (p["product"], p["non_call_months"], p["ko_type"]) == ("FCN_Express", 0, "Daily Memory")
+
+
+@pytest.mark.db
+def test_a_ben_row_imports_with_the_fixed_terms_and_keeps_a_digital_participation(pg, tmp_path: Path) -> None:
+    """BEN（#373、ADR 0029）：起單建檔填什麼都存 Non-Call = 天期、Period End、NONE，參與率預設 100；
+    作業人員改成 0（Digital）之後重新匯入起單資料，參與率照資料庫的值、不回到 100。"""
+    lines = [sheet_line(A, {"Product": "ben", "Guaranteed Periods (m)": 1, "KO Type": "Daily Memory"})]
+    path = write_sheet(tmp_path / "起單建檔_20261015.xlsx", lines)
+    rows = collect_orders(A, path, PREFIXES, CONFIG.calendar)
+
+    write_batch(pg, _drafts(rows, CONFIG, pg), CONFIG, user="tester")
+
+    p = product(pg, A)
+    assert (p["product"], p["non_call_months"], p["tenor_months"], p["ko_type"]) == ("BEN", 6, 6, "Period End")
+    assert (p["barrier_type"], p["ki_freq"], p["ki_pct"], p["participation_pct"]) == ("NONE", "-", None, 100)
+    pg.execute("UPDATE workflow.product SET participation_pct = 0 WHERE tdcc = %s", (A,))
+    (draft,) = _drafts(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg)
+    assert draft.values["Participation (%)"] == 0
+    write_batch(pg, [draft], CONFIG, user="tester")
+    assert product(pg, A)["participation_pct"] == 0
 
 
 @pytest.mark.db

@@ -18,6 +18,9 @@
 - Strike date（期初定價日，#101）起單建檔沒有這欄，由期初價格推：期初價格寫「明日開盤價」時，期初價格記成開盤價、
   Strike date = 交易日之後標的市場的下一個營業日（交易所假日表）；其他情況 Strike date = Trade date。
   假日表確定不了（標的交易所不在表上、日期超出範圍）時留空，由作業人員填。
+- 只在到期判定的商品（BEN，`fcn_checker.products.ProductRule.maturity_only`，#373、ADR 0029）不管起單建檔填什麼，
+  Guaranteed Periods (m) = Tenor (m)、KO Type = Period End、Barrier Type = NONE、KI Barrier (%) 空白。
+  參與率（%）起單建檔沒有這欄，預設值在 `product_terms.draft_from` 帶（資料庫已有的值優先）。
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from typing import TYPE_CHECKING
 
 import openpyxl
 
+from fcn_checker.products import PRODUCT_RULES, product_name
 from sp_workflow.database import OperatorError
 from sp_workflow.preparation import is_tdcc, parse_tdccs
 from sp_workflow.product_record import (
@@ -39,6 +43,7 @@ from sp_workflow.product_record import (
     FIELDS,
     KINDS,
     OPEN,
+    PARTICIPATION_FIELD,
     PRICING_FIELD,
     STRIKE_FIELD,
     TRADE_FIELD,
@@ -59,7 +64,7 @@ NOT_FOUND = OrderReview.NOT_FOUND
 TDCC_FIELD = "TDCC"
 NEXT_OPEN = "明日開盤價"  # 交易日隔一個營業日的開盤價（#101）
 
-SHEET_FIELDS = tuple(name for name in FIELDS if name != STRIKE_FIELD)  # 起單建檔上有的欄
+SHEET_FIELDS = tuple(name for name in FIELDS if name not in (STRIKE_FIELD, PARTICIPATION_FIELD))  # 起單建檔上有的欄
 # 起單建檔的表頭（不分大小寫）→ 欄位；UF (%) 是 2026 年起的表頭
 _HEADERS = {name.casefold(): name for name in (TDCC_FIELD, *SHEET_FIELDS)} | {"uf (%)": UPFRONT_FIELD}
 _HEADER_ROWS = 5  # 表頭在前幾列找
@@ -203,10 +208,28 @@ def _row_for(
         if note:
             unresolved.add(STRIKE_FIELD)
             notes[STRIKE_FIELD] = note
+    values[PARTICIPATION_FIELD] = None  # 起單建檔沒有這欄；BEN 的預設值在 `product_terms.draft_from` 帶
+    rule = PRODUCT_RULES.get(product_name(values.get("Product")) or "")
+    if rule is not None and rule.maturity_only:
+        _maturity_only(values, notes, conflicts)
     if not issuer:
         notes[TDCC_FIELD] = unknown_issuer(tdcc)
     status = PENDING if notes else READ
     return OrderRow(tdcc, status, issuer, values, notes, frozenset(conflicts), path, numbers, frozenset(unresolved))
+
+
+def _maturity_only(values: dict[str, object], notes: dict[str, str], conflicts: set[str]) -> None:
+    """只在到期判定的商品（BEN）：不會提前出場、沒有 KI 的那幾欄一律照規則填，起單建檔的值與問題都不算。"""
+    fixed = {
+        "Guaranteed Periods (m)": values.get("Tenor (m)"),  # 天期好幾列不同時是空白，天期填好前要作業人員填
+        "KO Type": "Period End",
+        "Barrier Type": "NONE",
+        "KI Barrier (%)": None,
+    }
+    for name, value in fixed.items():
+        values[name] = value
+        notes.pop(name, None)
+        conflicts.discard(name)
 
 
 def unknown_issuer(tdcc: str) -> str:

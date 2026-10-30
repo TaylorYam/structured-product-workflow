@@ -8,8 +8,8 @@
 # 核對結果檔「回填後」一律照 [import_format]（匯入格式）重新產生，不論表上欄位怎麼排（Issue #203）。
 # 規則說明見 docs/checker/order-formats/reference-sheet.md。
 
-version = 21
-effective_date = 2026-10-28
+version = 22
+effective_date = 2026-10-30
 
 [layout]
 # 只讀第一張工作表（不看名稱）；表頭是前 header_search_rows 列裡有 key_column 欄名的那一列，下一列起是資料（Issue #199）
@@ -27,6 +27,8 @@ optional_columns = [  # 表上沒有也照常核對
     # 信用評等（#240）：舊 Excel 沒有這些欄時照常核對，評等轉人工覆核
     "發行機構評等_標準普爾", "發行機構評等_穆迪", "發行機構評等_惠譽",
     "保證機構評等_標準普爾", "保證機構評等_穆迪", "保證機構評等_惠譽",
+    # 參與率（#373）：只有 BEN 有；舊 Excel 沒有這欄時照常讀
+    "參與率(%)",
 ]
 empty_value = "-"         # 空值寫法（比價日不需要填的期別也寫 -）
 checked_value = "V"       # TS、IIS 欄的打勾寫法（半形英文字母 V，同「當日比價」「私銀註記」）
@@ -153,6 +155,10 @@ any_order_products = { "Super Bull" = ["HSBC"] }
 "保證機構評等_標準普爾" = "guarantor_rating_sp"
 "保證機構評等_穆迪" = "guarantor_rating_moodys"
 "保證機構評等_惠譽" = "guarantor_rating_fitch"
+
+# 參與率（#373、ADR 0029）：只有 BEN 有（一般 100、Digital 0），其他商品空白；資料庫來源帶出商品條件的參與率。
+# 不在匯入格式，核對結果檔「回填後」不帶。只核對，不回填。
+"參與率(%)" = "participation_pct"
 
 # KO(Freq)：D 期間每日觀察／P 每期定日觀察
 [values.ko_observation]

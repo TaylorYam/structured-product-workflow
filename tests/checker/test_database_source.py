@@ -169,7 +169,9 @@ def test_database_rows_read_the_same_as_the_excel_reference_sheet(pg, tmp_path, 
     db_sheet, absent = export(pg, tmp_path, pdfs)
     overrides = {"期初定價": pricing, "風險等級": "RR4", **(VWAP_BLANK if pricing == "VWAP" else {})}
     excel_row = reference_row(spec.with_(ratings=BARC_RATINGS), **overrides)
-    excel_sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [excel_row], [*REFERENCE_HEADERS, "風險等級"])
+    excel_sheet = build_reference_sheet(
+        tmp_path / "FCN參考條件.xlsx", [excel_row], [*REFERENCE_HEADERS, "風險等級", "參與率(%)"]
+    )
 
     (db_row,) = load_reference_sheet(db_sheet, FMT).rows
     (xl_row,) = load_reference_sheet(excel_sheet, FMT).rows
@@ -346,6 +348,38 @@ def test_a_checked_sheet_without_the_risk_level_column_is_not_stale(pg, tmp_path
     sheet.delete_cols(col)
     book.save(outcome.reference_sheet)
     seed_risk(pg, spec.product_code, "RR3")
+
+    result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
+
+    assert (result.locked, result.stale) == ((spec.product_code,), ())
+
+
+@pytest.mark.db
+def test_the_export_carries_the_participation(pg, tmp_path) -> None:
+    """參與率（#373）：BEN 帶資料庫的值（Digital 是 0），其他商品空白。"""
+    fcn, ben = barc_spec(), barc_spec(product_code=OTHER)
+    seed(pg, fcn)
+    seed(pg, ben, product="BEN")
+    pg.execute("UPDATE workflow.product SET participation_pct = 0 WHERE tdcc = %s", (OTHER,))
+
+    sheet, _ = export(pg, tmp_path, pdfs_of(tmp_path, fcn, ben))
+
+    rows = {r.product_code.value: r.get("participation_pct").value for r in load_reference_sheet(sheet, FMT).rows}
+    assert rows == {fcn.product_code: None, OTHER: 0}
+
+
+@pytest.mark.db
+def test_a_checked_sheet_without_the_participation_column_is_not_stale(pg, tmp_path) -> None:
+    """核對時的參考條件表沒有參與率欄（v21 以前產生的）：不算條件改了，照常回填、鎖住。"""
+    spec = barc_spec()
+    seed(pg, spec)
+    outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
+    assert {i.category for i in outcome.items} == {Category.PASSED}
+    book = openpyxl.load_workbook(outcome.reference_sheet)
+    sheet = book.worksheets[0]
+    (col,) = (c.column for c in sheet[1] if c.value == "參與率(%)")
+    sheet.delete_cols(col)
+    book.save(outcome.reference_sheet)
 
     result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
 

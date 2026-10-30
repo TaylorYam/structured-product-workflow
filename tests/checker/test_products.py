@@ -37,7 +37,8 @@ def test_repo_table_opens_fcn_everywhere_and_express_and_super_bull_for_their_is
         "FCN": issuers,
         "FCN_Express": frozenset({"BARC", "CA", "HSBC"}),
         "Super Bull": frozenset({"BNP", "CA", "HSBC"}),
-    }  # #304～#306、#310～#312、#314
+        "BEN": frozenset(),
+    }  # #304～#306、#310～#312、#314、#373
     assert CONFIG.auto_check_products == expected
 
 
@@ -74,7 +75,7 @@ def product_result(item):
     return r
 
 
-@pytest.mark.parametrize("product", ["FCN_Express", "BEN"])
+@pytest.mark.parametrize("product", ["FCN_Express", "FCN_Stepdown"])
 def test_products_not_opened_for_the_issuer_stop_both_documents(tmp_path, product):
     config = load_config(issuer_prefixes=prefixes_with(tmp_path, EXPRESS_OPENED, "\nFCN_Express = []\n"))
     outcome = run(tmp_path, {"Product": product}, config)
@@ -91,11 +92,12 @@ def test_products_not_opened_for_the_issuer_stop_both_documents(tmp_path, produc
             outcome.release(item)
 
 
-def test_super_bull_goes_to_manual_review_with_the_repo_table(tmp_path):
-    """Super Bull 還沒開放任何上手（#310）：照不支援樣態轉人工，不跑規則。"""
-    outcome = run(tmp_path, {"Product": "Super Bull"})
+@pytest.mark.parametrize("product", ["Super Bull", "BEN"])
+def test_products_not_opened_for_barc_go_to_manual_review_with_the_repo_table(tmp_path, product):
+    """Super Bull 沒開放 BARC（#310）、BEN 還沒開放任何上手（#373）：照不支援樣態轉人工，不跑規則。"""
+    outcome = run(tmp_path, {"Product": product})
     message = (
-        "目前樣態不支援自動核對：BARC 還沒開放「Super Bull」自動核對（參考條件表 Product）；請人工核對，不能人工放行"
+        f"目前樣態不支援自動核對：BARC 還沒開放「{product}」自動核對（參考條件表 Product）；請人工核對，不能人工放行"
     )
 
     assert [item.problem_messages for item in outcome.items] == [(message,)] * len(outcome.items)

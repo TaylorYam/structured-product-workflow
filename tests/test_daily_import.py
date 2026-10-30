@@ -101,13 +101,15 @@ def test_tdcc_loses_no_leading_zero(pg, tmp_path: Path, mailbox) -> None:
 
 
 def test_other_products_are_skipped_and_counted(pg, tmp_path: Path, mailbox) -> None:
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1), trade(D, "Amy", "北區", 1, product="BEN")])
+    daily = write_daily(
+        tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1), trade(D, "Amy", "北區", 1, product="FCN_Stepdown")]
+    )
 
     receipt = import_daily(daily, pg)
 
     assert receipt.skipped_trade_rows == 1
     assert count(pg, "workflow.trade_row") == 1 and kinds(receipt, D) == []
-    assert pg.execute("SELECT tdcc, product FROM workflow.other_product").fetchall() == [(D, "BEN")]
+    assert pg.execute("SELECT tdcc, product FROM workflow.other_product").fetchall() == [(D, "FCN_Stepdown")]
 
 
 def test_express_rows_are_imported_like_fcn(pg, tmp_path: Path, mailbox) -> None:
@@ -126,14 +128,15 @@ def test_express_rows_are_imported_like_fcn(pg, tmp_path: Path, mailbox) -> None
     assert count(pg, "workflow.other_product") == 0
 
 
-def test_super_bull_rows_are_imported_like_fcn(pg, tmp_path: Path, mailbox) -> None:
-    """Super Bull 和 FCN 一樣寫進交易明細列（#310）：Product 有空白也照設定的寫法存，不記成其他商品。"""
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1, product="SUPER BULL")])
+@pytest.mark.parametrize(("written", "stored"), [("SUPER BULL", "Super Bull"), (" ben ", "BEN")])
+def test_super_bull_and_ben_rows_are_imported_like_fcn(pg, tmp_path: Path, mailbox, written, stored) -> None:
+    """Super Bull（#310）、BEN（#373）和 FCN 一樣寫進交易明細列：大小寫、空白不同也照設定的寫法存，不記成其他商品。"""
+    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1, product=written)])
 
     receipt = import_daily(daily, pg)
 
     assert (receipt.skipped_trade_rows, receipt.fcn_tdccs) == (0, (A,))
-    assert pg.execute("SELECT tdcc, product FROM workflow.trade_row").fetchall() == [(A, "Super Bull")]
+    assert pg.execute("SELECT tdcc, product FROM workflow.trade_row").fetchall() == [(A, stored)]
     assert count(pg, "workflow.other_product") == 0
 
 
@@ -209,7 +212,7 @@ def test_fcn_tdccs_are_listed_for_the_order_tab_in_first_seen_order(pg, tmp_path
         tmp_path / "d.xlsx",
         [
             trade(C, "Amy", "北區", 1),
-            trade(D, "Amy", "北區", 1, product="BEN"),
+            trade(D, "Amy", "北區", 1, product="FCN_Stepdown"),
             trade(A, "Amy", "北區", 1),
             cancelled_b,
             cancelled_c,
@@ -237,7 +240,7 @@ def test_reimporting_the_same_file_still_lists_its_fcn_tdccs(pg, tmp_path: Path,
 
 
 def test_no_fcn_trades_leaves_nothing_to_hand_over(pg, tmp_path: Path, mailbox) -> None:
-    daily = write_daily(tmp_path / "d.xlsx", [trade(D, "Amy", "北區", 1, product="BEN")])
+    daily = write_daily(tmp_path / "d.xlsx", [trade(D, "Amy", "北區", 1, product="FCN_Stepdown")])
 
     receipt = import_daily(daily, pg)
 
