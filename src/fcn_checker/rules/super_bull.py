@@ -42,9 +42,10 @@ def exit_bonus_mentions(
     rid: str = "doc.exit_bonus",
     label: str = "出場紅利",
     key: str = "exit_bonus",
+    main_field: str = "coupon_pa_pct",
 ) -> list[CheckResult]:
-    """出場紅利的其他出處，每處一筆：數值 = 正式值 `coupon_pa_pct`（BEN 的到期紅利同樣比，規則與名稱另給）。"""
-    main = ctx.ts.f("coupon_pa_pct")
+    """出場紅利的其他出處，每處一筆：數值 = 正式值 `main_field`（BEN 的到期紅利、CA BEN 的參與率同樣比，規則與名稱另給）。"""
+    main = ctx.ts.f(main_field)
     out = []
     for k, m in enumerate(mentions, start=1):
         pf = m.parsed(f"{key}_{k}")
@@ -131,19 +132,26 @@ def annualized_issues(
 # ---------------------------------------------------------------- 投資人須知（各上手核對規則 §3.8）
 
 
-def iis_exit_bonus(ctx: IisIssuerContext, fail_message: str) -> CheckResult:
-    """投資人須知的出場紅利 = 同商品說明書的出場紅利（`coupon_pa_pct`）。"""
-    rid, name = "iis.exit_bonus", "出場紅利"
-    pf = ctx.sheet.f("exit_bonus")
-    check = Check(rid, "exit_bonus", Item.term_sheet(name), ctx.document).needs(pf)
+def iis_exit_bonus(
+    ctx: IisIssuerContext,
+    fail_message: str,
+    *,
+    rid: str = "iis.exit_bonus",
+    name: str = "出場紅利",
+    field: str = "exit_bonus",
+    ts_field: str = "coupon_pa_pct",
+) -> CheckResult:
+    """投資人須知的出場紅利 `field` = 同商品說明書的出場紅利 `ts_field`（CA BEN 的紅利、參與率同樣比，規則與名稱另給）。"""
+    pf = ctx.sheet.f(field)
+    check = Check(rid, field, Item.term_sheet(name), ctx.document).needs(pf)
     if (problem := check.blocked) is not None:
         return problem
     if ctx.term_sheet is None:
-        return ts_unavailable(rid, "exit_bonus", name, NO_TERM_SHEET, pf.value, document=ctx.document)
-    expected = ctx.term_sheet.f("coupon_pa_pct")
+        return ts_unavailable(rid, field, name, NO_TERM_SHEET, pf.value, document=ctx.document)
+    expected = ctx.term_sheet.f(ts_field)
     if not expected.ok:
-        why = "同商品說明書讀不到出場紅利，無法比對"
-        return ts_unavailable(rid, "exit_bonus", name, why, pf.value, document=ctx.document)
+        why = f"同商品說明書讀不到{name}，無法比對"
+        return ts_unavailable(rid, field, name, why, pf.value, document=ctx.document)
     return check.compare(expected.value, pf.value, fail_message=fail_message)
 
 

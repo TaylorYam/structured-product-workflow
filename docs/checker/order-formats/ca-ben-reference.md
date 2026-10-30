@@ -1,7 +1,7 @@
 # 下單資料格式：CA BEN（參考條件表）
 
 - 設定檔：所有上手共用的 [`config/reference_sheet.toml`](../../../config/reference_sheet.toml)
-- 狀態：規格；實作另開（workflow #377）。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)，本文件只寫 CA BEN 的說明書來源與差異；和 CA FCN 相同的欄位見 [CA 下單資料格式](ca-fcn-reference.md)
+- 狀態：已實作（workflow #377）。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)，本文件只寫 CA BEN 的說明書來源與差異；和 CA FCN 相同的欄位見 [CA 下單資料格式](ca-fcn-reference.md)
 - 依據：2026-10-30 探勘與開發者螢光標記（workflow #377）。**作業人員獨立標記先略過，2026-10-30 使用者決定**。標「待使用者確認（BEN-377-nn）」的是暫定的保守做法，編號對到本機疑慮記錄
 
 ## 1. 結構

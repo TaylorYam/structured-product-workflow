@@ -37,9 +37,9 @@ def test_repo_table_opens_fcn_everywhere_and_other_products_for_their_issuers():
         "FCN": issuers,
         "FCN_Express": frozenset({"BARC", "CA", "HSBC"}),
         "Super Bull": frozenset({"BNP", "CA", "HSBC"}),
-        "BEN": frozenset({"HSBC"}),
+        "BEN": frozenset({"CA", "HSBC"}),
         "DACN": frozenset({"NOMURA"}),
-    }  # #304～#306、#310～#312、#314、#367、#368、#373、#375
+    }  # #304～#306、#310～#312、#314、#367、#368、#373、#375、#377
     assert CONFIG.auto_check_products == expected
 
 
@@ -95,7 +95,7 @@ def test_products_not_opened_for_the_issuer_stop_both_documents(tmp_path, produc
 
 @pytest.mark.parametrize("product", ["Super Bull", "BEN"])
 def test_products_not_opened_for_barc_go_to_manual_review_with_the_repo_table(tmp_path, product):
-    """Super Bull 沒開放 BARC（#310）、BEN 只開放 HSBC（#375）：照不支援樣態轉人工，不跑規則。"""
+    """Super Bull 沒開放 BARC（#310）、BEN 只開放 HSBC、CA（#375、#377）：照不支援樣態轉人工，不跑規則。"""
     outcome = run(tmp_path, {"Product": product})
     message = (
         f"目前樣態不支援自動核對：BARC 還沒開放「{product}」自動核對（參考條件表 Product）；請人工核對，不能人工放行"

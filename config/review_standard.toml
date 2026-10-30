@@ -7,7 +7,7 @@
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
 # 規則說明見 docs/checker/rules/review-standard.md。
 
-version = 34
+version = 35
 effective_date = 2026-10-30
 
 [distributor]
@@ -645,6 +645,16 @@ ignore_whitespace_en = true
 # Note」，只依天期、幣別；參考條件表 Product 是 Super Bull 時用這個樣板，其他照 [issuer.ca.product_name]。
 zh = "Crédit Agricole CIB Financial Solutions {tenor} 個月{ccy_zh}計價連結表現自動提前出場結構型商品(無擔保) (不保本)"
 en = "Crédit Agricole CIB Financial Solutions {ccy} {tenor}-Month Performance Autocall Note (Unsecured)(Non-principal protected)"
+memory_zh = ""
+memory_en = ""
+normalize_brackets = true
+ignore_whitespace_en = true
+
+[issuer.ca.product_names.BEN]
+# CA BEN 商品名稱（現行版 Bonus 樣本推得，2026-10-30 規格確認，#377）：「紅利結構型商品」／「Bonus Note」，只依天期、幣別；
+# 參考條件表 Product 是 BEN 時用這個樣板。Digital 轉人工，不設樣板（待使用者確認 BEN-377-03）。
+zh = "Crédit Agricole CIB Financial Solutions {tenor} 個月{ccy_zh}計價紅利結構型商品(無擔保) (不保本)"
+en = "Crédit Agricole CIB Financial Solutions {ccy} {tenor}-Month Bonus Note (Unsecured)(Non-principal protected)"
 memory_zh = ""
 memory_en = ""
 normalize_brackets = true

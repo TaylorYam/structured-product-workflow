@@ -408,7 +408,7 @@ def _scenarios(ti: TextIndex) -> SbScenarios:
     return out
 
 
-def _worst_row(name: str | None, prices: ParsedField) -> int | None:
+def worst_row(name: str | None, prices: ParsedField) -> int | None:
     """情境假設句寫的最差標的 → 價格表第幾檔：單一標的為第 1 檔；多標的依名稱（表下的「註:…」可能併進最後一列的名稱，
     所以比開頭），對不到為 None（共用規則轉人工覆核）。"""
     if not prices.ok:
@@ -458,7 +458,7 @@ def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> SbScenarios
         place = f"第一章第 16 項情境分析{ca.SCENARIOS[n - 1]}{'到期給付金額' if n == 2 else '股數'}算式的"
         title = sc.titles[n - 1]
         strike = Mention.of_optional_hit(place, calc, strike_of, title).parsed(f"scenario{n}_strike")
-        row = _worst_row(assumed.value.name, fields["underlying_prices"]) if assumed is not None else None
+        row = worst_row(assumed.value.name, fields["underlying_prices"]) if assumed is not None else None
         prices.append(ScenarioPrice(place, row, "strike", strike))
     fields["scenario_prices"] = standard_fields.occurrences("scenario_prices", prices)
     return sc
