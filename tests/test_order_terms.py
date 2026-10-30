@@ -41,6 +41,18 @@ def test_reads_the_pasted_tdccs_in_order_with_typed_values(tmp_path: Path) -> No
     assert rows[1].source == path and rows[1].notes == {} and rows[1].conflicts == frozenset()
 
 
+def test_dacn_takes_the_strike_as_its_coupon_barrier(tmp_path: Path) -> None:
+    """起單建檔沒有配息門檻（#367）：DACN 帶執行價，執行價好幾列不同時一起空白；其他商品空白。"""
+    lines = [sheet_line(A, {"Product": "DACN"}), sheet_line(B, {"Product": "dacn"})]
+    lines.append(sheet_line(B, {"Product": "dacn", "Strike (%)": Decimal(70)}))
+    path = write_sheet(tmp_path / "s.xlsx", [*lines, sheet_line("147199990003")])
+
+    rows = read(path, f"{A}\n{B}\n147199990003")
+
+    assert [r.values["Coupon Barrier (%)"] for r in rows] == [Decimal(80), None, None]
+    assert "Coupon Barrier (%)" not in rows[1].notes and "Strike (%)" in rows[1].conflicts
+
+
 def test_the_old_upfront_header_and_any_column_order_are_accepted(tmp_path: Path) -> None:
     headers = ["Upfront / NotePrice (%)" if h.strip() == "UF (%)" else h for h in reversed(HEADERS)]
     line = sheet_line(A)

@@ -117,16 +117,19 @@ def test_sheet_notes_are_shown_but_do_not_block_on_their_own() -> None:
         ({"Barrier Type": "NONE"}, {"KI Barrier (%)": "Barrier Type 是 NONE 時要空白"}),
         ({"KI Barrier (%)": None}, {"KI Barrier (%)": "有 KI 時必填"}),
         ({"Currency": "TWD"}, {"Currency": "這個幣別沒有單位面額預設值"}),
-        ({"Product": "FCN_Stepdown"}, {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN"}),
+        ({"Product": "FCN_Stepdown"}, {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN、DACN"}),
         ({"Guaranteed Periods (m)": 0}, {"Guaranteed Periods (m)": "至少 1"}),
         ({"Product": "FCN_Express"}, {"Guaranteed Periods (m)": "FCN_Express 沒有 Non-Call，要填 0"}),
         ({"Product": "FCN_Express", "Guaranteed Periods (m)": 0}, {}),
         ({"Product": "fcn_express", "Guaranteed Periods (m)": 0}, {}),
         ({"Product": "Super Bull", "Guaranteed Periods (m)": 0}, {"Guaranteed Periods (m)": "至少 1"}),
         ({"Product": "super bull", "KO Type": "Period End"}, {}),
+        ({"Product": "DACN"}, {"Coupon Barrier (%)": "必填"}),  # 配息門檻（#367）
+        ({"Product": "dacn", "Coupon Barrier (%)": Decimal(75)}, {}),
+        ({"Coupon Barrier (%)": Decimal(80)}, {"Coupon Barrier (%)": "FCN 沒有配息門檻，要空白"}),
         (
             {"Product": "FCN_Stepdown", "Guaranteed Periods (m)": 0},
-            {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN"},
+            {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN、DACN"},
         ),
         ({"BBG Code 2": None, "BBG Code 3": "CCC UQ"}, {"BBG Code 2": "標的要從 BBG Code 1 依序填，中間不能空"}),
         ({"KO Type": "Weekly"}, {"KO Type": "要選 Daily／Daily Memory／Period End／Period End Memory"}),
@@ -218,6 +221,26 @@ def test_a_next_day_strike_date_stays_when_the_trade_date_changes() -> None:
     assert draft.values["Strike date"] == dt.date(2026, 10, 16)
     draft.set_value("Trade date", dt.date(2026, 10, 19))
     assert problems(draft, CONFIG) == {"Strike date": "不能早於 Trade date"}
+
+
+def test_the_coupon_barrier_follows_the_strike_until_it_is_typed_differently() -> None:
+    """配息門檻（#367）：DACN 等於執行價（預設值）或空白時跟著執行價、商品種類改；作業人員填了別的值就不動。"""
+    draft = draft_of(order_row(changes={"Product": "DACN", "Coupon Barrier (%)": Decimal(80)}))
+
+    assert draft.set_value("Strike (%)", Decimal(70)) == ["Coupon Barrier (%)"]
+    assert draft.values["Coupon Barrier (%)"] == Decimal(70)
+    draft.set_value("Coupon Barrier (%)", Decimal(65))
+    assert draft.set_value("Strike (%)", Decimal(60)) == []
+    assert draft.values["Coupon Barrier (%)"] == Decimal(65)
+
+
+def test_changing_the_product_sets_or_clears_the_default_coupon_barrier() -> None:
+    draft = draft_of(order_row())
+
+    assert draft.set_value("Product", "DACN") == ["Coupon Barrier (%)"]
+    assert (draft.values["Coupon Barrier (%)"], problems(draft, CONFIG)) == (Decimal(80), {})
+    assert draft.set_value("Product", "FCN") == ["Coupon Barrier (%)"]
+    assert draft.values["Coupon Barrier (%)"] is None
 
 
 def test_mistyped_fields_block_only_that_product() -> None:

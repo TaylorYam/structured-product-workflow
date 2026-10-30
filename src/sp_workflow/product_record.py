@@ -3,10 +3,12 @@
 讀寫 `workflow.product` 的地方（起單資料讀取 `order_terms`、確認、寫入與人工維護 `product_terms`、
 核對條件 `check_terms`、核對讀資料庫 `check_source`、寄信草稿 `mail_drafts`）都從這裡拿欄位與轉換，不各自維護。對外：
 - `PRODUCT_COLUMNS`：資料庫的商品欄（TDCC、ISIN、來源、鎖住時間這類不是商品條件的欄不在內）。
-- `FIELDS`／`KINDS`／`CHOICES`：畫面的欄（依起單建檔的順序）、型別與選項；`REQUIRED`：必填欄。
+- `FIELDS`／`KINDS`／`CHOICES`：畫面的欄（依起單建檔的順序）、型別與選項；`REQUIRED`：必填欄；
+  `required_fields`：某商品種類的必填欄（DACN 多配息門檻，#367）。
 - `COLUMN_FIELDS`：資料庫的欄 → 畫面的欄；`DERIVED_COLUMNS`：沒有對應畫面欄的資料庫欄 → 說明用的名稱。
 - `columns_of`／`fields_of`：畫面的值 ↔ 資料庫的欄（KO／KI 代碼、UF 反轉、單位面額預設）。
 - `missing_fields`：資料庫商品條件缺哪幾個必填欄（#114）。
+- `default_coupon_barrier`：起單建檔、舊總表沒有配息門檻，要配息門檻的商品（DACN）預設帶執行價（#367）。
 - `PRICE_COLUMNS`：標的價格（核對用的鍵 → `workflow.underlying_price` 的欄）；核對讀資料庫與核對寫回共用（#203）。
 - `same_value`：兩個值一樣嗎（數字不分 int 與 Decimal、不看小數位數）；商品條件寫入與核對寫回共用（#203）。
 
@@ -27,9 +29,10 @@ from decimal import Decimal, InvalidOperation
 from enum import Enum
 from typing import Any
 
-from fcn_checker.products import product_name
+from fcn_checker.products import PRODUCT_RULES, product_name
 
 UPFRONT_FIELD = "Upfront / NotePrice (%)"
+COUPON_BARRIER_FIELD = "Coupon Barrier (%)"  # 配息門檻（DACN，#367）：起單建檔沒有這欄
 TRADE_FIELD = "Trade date"
 STRIKE_FIELD = "Strike date"
 PRICING_FIELD = "期初價格"
@@ -71,6 +74,7 @@ KINDS: dict[str, FieldKind] = {
     "KO Barrier (%)": FieldKind.PERCENT,
     "Coupon p.a. (%)": FieldKind.PERCENT,
     PARTICIPATION_FIELD: FieldKind.PERCENT,
+    COUPON_BARRIER_FIELD: FieldKind.PERCENT,
     UPFRONT_FIELD: FieldKind.PERCENT,
     "Tenor (m)": FieldKind.INT,
     "Barrier Type": FieldKind.CHOICE,
@@ -104,6 +108,8 @@ REQUIRED = (
     "Maturity date",
     PRICING_FIELD,
 )
+# 只有某些商品種類必填的欄（`ProductRule.has_coupon_barrier`）；其他商品種類這欄要空白
+_COUPON_BARRIER_REQUIRED = (COUPON_BARRIER_FIELD,)
 
 # 資料庫商品欄位
 PRICE_COLUMNS = {"initial": "initial_price", "strike": "strike_price", "ki": "ki_price", "ko": "ko_price"}
@@ -114,6 +120,7 @@ PRODUCT_COLUMNS = (
     "underlying_5", "strike_pct", "ko_freq", "ko_memory", "ko_type", "ko_pct", "coupon_pct", "upfront_pct",
     "tenor_months", "ki_freq", "barrier_type", "ki_pct", "denomination", "strike_date", "participation_pct",
     "lookback_end_date",
+    "coupon_barrier_pct",
 )  # fmt: skip
 # 資料庫 workflow.product 的欄 ↔ 畫面的欄（畫面上的 Upfront / NotePrice = 100 − UF）
 COLUMN_FIELDS = {
@@ -126,6 +133,7 @@ COLUMN_FIELDS = {
     "ko_pct": "KO Barrier (%)",
     "coupon_pct": "Coupon p.a. (%)",
     "participation_pct": PARTICIPATION_FIELD,
+    "coupon_barrier_pct": COUPON_BARRIER_FIELD,
     "upfront_pct": UPFRONT_FIELD,
     "tenor_months": "Tenor (m)",
     "barrier_type": "Barrier Type",
@@ -154,7 +162,9 @@ _FIELD_COLUMNS = {name: column for column, name in COLUMN_FIELDS.items()}
 # KO Type、Barrier Type 另外存換算的代碼（`KO_CODES`／`KI_CODES`）
 _CODE_COLUMNS = {"KO Type": ("ko_freq", "ko_memory"), "Barrier Type": ("ki_freq",)}
 # 必填欄 → 資料庫裡存它的欄
-_REQUIRED_STORED = {name: (_FIELD_COLUMNS[name], *_CODE_COLUMNS.get(name, ())) for name in REQUIRED}
+_REQUIRED_STORED = {
+    name: (_FIELD_COLUMNS[name], *_CODE_COLUMNS.get(name, ())) for name in (*REQUIRED, *_COUPON_BARRIER_REQUIRED)
+}
 REQUIRED_COLUMNS = tuple(column for columns in _REQUIRED_STORED.values() for column in columns)
 
 _PCT = Decimal("0.000001")
@@ -203,12 +213,30 @@ def invert_upfront(value: Decimal) -> Decimal:
     return _HUNDRED - value
 
 
-def missing_fields(product: Mapping[str, object], names: Sequence[str] = REQUIRED) -> list[str]:
-    """資料庫商品條件的一列（`workflow.product` 的欄 → 值）裡空白的必填欄，依 `names` 的順序回傳畫面的欄名。
+def required_fields(product: object) -> tuple[str, ...]:
+    """這種商品種類（Product 的值）的必填欄：`REQUIRED`，要配息門檻的商品（DACN）再加配息門檻。"""
+    return (*REQUIRED, *_COUPON_BARRIER_REQUIRED) if has_coupon_barrier(product) else REQUIRED
 
-    換算的代碼欄空白也算那一欄缺（沒有存齊）。`product` 要有 `REQUIRED_COLUMNS`（讀 `PRODUCT_COLUMNS` 就有）。
+
+def has_coupon_barrier(product: object) -> bool:
+    """這種商品種類（Product 的值，不分大小寫）要有配息門檻；不支援的商品種類 False。"""
+    name = product_name(product)
+    return name is not None and PRODUCT_RULES[name].has_coupon_barrier
+
+
+def default_coupon_barrier(values: Mapping[str, object]) -> object:
+    """起單建檔、舊總表沒有配息門檻（#367）：要配息門檻的商品預設帶執行價（執行價空白時也空白），其他商品空白。"""
+    return values.get("Strike (%)") if has_coupon_barrier(values.get("Product")) else None
+
+
+def missing_fields(product: Mapping[str, object], names: Sequence[str] = REQUIRED) -> list[str]:
+    """資料庫商品條件的一列（`workflow.product` 的欄 → 值）裡空白的必填欄，依 `names` 的順序回傳畫面的欄名；
+    要配息門檻的商品（DACN）空白的配息門檻也算，排在最後。
+
+    換算的代碼欄空白也算那一欄缺（沒有存齊）。`product` 要有必填欄存的欄（讀 `PRODUCT_COLUMNS` 就有）。
     """
-    return [name for name in names if any(product[column] is None for column in _REQUIRED_STORED[name])]
+    extra = () if not has_coupon_barrier(product["product"]) else _COUPON_BARRIER_REQUIRED
+    return [name for name in (*names, *extra) if any(product[column] is None for column in _REQUIRED_STORED[name])]
 
 
 def same_value(a: object, b: object) -> bool:

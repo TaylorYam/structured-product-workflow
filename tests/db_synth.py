@@ -165,6 +165,7 @@ def seed_products(pg, inventories: Sequence[dict]) -> None:
             "ki_freq": ki_freq,
             "barrier_type": BARRIER_TYPES[ki_freq],
             "ki_pct": None if ki_freq == "-" else row["KI(%)"],
+            **({"coupon_barrier_pct": row["配息門檻(%)"]} if "配息門檻(%)" in row else {}),  # 0034 起（#367）
             "first_run_id": run_id,
             **({"status_event": "在庫"} if has_status_column else {}),
         }

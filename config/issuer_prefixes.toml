@@ -65,3 +65,4 @@ FCN = ["*"]
 FCN_Express = ["BARC", "CA", "HSBC"]
 "Super Bull" = ["BNP", "CA", "HSBC"]
 BEN = []  # #373：先不開放任何上手，之後依 HSBC → MS → CA 開放（#375～#377）
+DACN = []  # #367：先不開放任何上手，依 Nomura → SG → DBS → Natixis 開放（#368～#371）

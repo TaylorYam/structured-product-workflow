@@ -9,6 +9,8 @@
   （FCN_Express）Non-Call 一律存 0（舊表寫 1）；舊表沒有期初定價日，照舊商品存交易日；期初定價空白照樣匯入、
   結果寫出來，之後在人工維護補。ISIN、單位面額用表上的值。只在到期判定的商品（BEN，#373、ADR 0029）KO Type 一律
   Period End（舊表的 KO(memo) 不看），參與率帶 100（`product_terms.draft_from`；Digital 由作業人員在人工維護改 0），Non-Call 照舊表、要等於天期。
+  要配息門檻的商品（DACN，#367）用表上的配息門檻，
+  舊表沒有這欄（或空白）時帶執行價。
 - 價格與比價日：UL_1～UL_5 的四個價格寫進 `workflow.underlying_price`，核對條件寫一筆「完成」；比價日 1～12 照搬
   （比價日_1 是第一個觀察日，沒有 Non-Call 的商品不能空白）。
 - 分公司配置：分公司_1～7 與承作金額寫進 `workflow.branch_allocation`。交易明細列（含 FC）不在這裡寫，
@@ -58,6 +60,7 @@ from sp_workflow.legacy_backfill import (
 )
 from sp_workflow.order_terms import describe
 from sp_workflow.product_record import (
+    COUPON_BARRIER_FIELD,
     KI_CODES,
     KO_CODES,
     MATURITY_ONLY_TERMS,
@@ -66,6 +69,7 @@ from sp_workflow.product_record import (
     TRADE_FIELD,
     UNDERLYINGS,
     UPFRONT_FIELD,
+    default_coupon_barrier,
     invert_upfront,
 )
 from sp_workflow.product_terms import create_backfilled, read, read_many
@@ -260,6 +264,8 @@ def _values(record: OrderRecord, cells: Mapping[str, Any], fmt: ReferenceFormat)
     values[UPFRONT_FIELD] = invert_upfront(uf) if isinstance(uf, Decimal) else uf
     values["Tenor (m)"] = _whole(value("tenor_months"))
     values["Guaranteed Periods (m)"] = _whole(value("first_callable_period")) if product.has_non_call else 0
+    barrier = _number(value("coupon_barrier_pct"))  # 舊表沒有這欄（#367）
+    values[COUPON_BARRIER_FIELD] = default_coupon_barrier(values) if barrier is None else barrier
     return values, problems
 
 

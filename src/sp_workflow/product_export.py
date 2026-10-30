@@ -88,7 +88,8 @@ PRODUCT_FIELDS = {
     "單位面額": "denomination", "承作幣別": "currency", "交易日": "trade_date", "期初定價日": "strike_date", "發行日": "issue_date",
     "最終比價日": "final_valuation_date", "到期日": "maturity_date", "期初定價": "initial_pricing",
     "KO(%)": "ko_pct", "KO(Freq)": "ko_freq", "KO(memo)": "ko_memory", "K(%)": "strike_pct", "KI(%)": "ki_pct",
-    "KI(Freq)": "ki_freq", "UF": "upfront_pct", "Coupon p.a. (%)": "coupon_pct", "天期(月)": "tenor_months",
+    "KI(Freq)": "ki_freq", "UF": "upfront_pct", "Coupon p.a. (%)": "coupon_pct", "配息門檻(%)": "coupon_barrier_pct",
+    "天期(月)": "tenor_months",
     "Non-Call(月)": "non_call_months",
 }  # fmt: skip  # 總表欄名 → workflow.product 的欄，照欄名取值
 UL_FIELDS = ("進場價", "執行價", "下限價", "KO價")
@@ -97,7 +98,7 @@ SUMMARY_COLUMNS = (
     "存續狀態", "事件發生日", "事件標的",
     "Product", "發行機構", "TDCC Code", "ISIN Code", "單位面額", "承作幣別", "承作總額", "私銀註記", "新加坡註記",
     "交易日", "期初定價日", "發行日", *(f"比價日_{i}" for i in range(1, 13)), "最終比價日", "到期日",
-    "期初定價", "KO(%)", "KO(Freq)", "KO(memo)", "K(%)", "KI(%)", "KI(Freq)", "UF", "Coupon p.a. (%)",
+    "期初定價", "KO(%)", "KO(Freq)", "KO(memo)", "K(%)", "KI(%)", "KI(Freq)", "UF", "Coupon p.a. (%)", "配息門檻(%)",
     "天期(月)", "Non-Call(月)", "Lookback 期間",
     *(name for n in range(1, 6) for name in (f"UL_{n}", *(f"UL_{n}_{field}" for field in UL_FIELDS))),
 )  # fmt: skip
@@ -118,7 +119,8 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
     """商品總表（#291）：所有商品一檔一列、依 TDCC 排序，欄位照新商品總表；只讀資料庫。
 
     存續是最新一筆還有效的事件（沒有是在庫）；承作總額是交易明細加總，交易列照順序往右排成分公司／FC／金額，
-    組數是交易最多那一檔的筆數（至少 `MIN_TRADE_GROUPS`）。資料庫沒有的值（含私銀註記、新加坡註記、Lookback 期間）寫 `-`。
+    組數是交易最多那一檔的筆數（至少 `MIN_TRADE_GROUPS`）。資料庫沒有的值（含私銀註記、新加坡註記、Lookback 期間，
+    DACN 以外商品的配息門檻，#367）寫 `-`。
     總表是 Excel 表格，後面接用公式從總表即時計算的在庫部位分析分頁（#293）。
     """
     with _snapshot(conn), conn.cursor(row_factory=dict_row) as cur:  # 商品、事件、比價日、價格、交易列讀同一個時間點

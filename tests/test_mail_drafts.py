@@ -425,7 +425,7 @@ def test_products_skipped_by_the_daily_import_are_unsupported(db, tmp_path: Path
 
     receipt, _ = run(db, root, out, B)
 
-    reason = "不支援的商品類型：FCN_Stepdown（目前只做 FCN、FCN_Express、Super Bull、BEN）"
+    reason = "不支援的商品類型：FCN_Stepdown（目前只做 FCN、FCN_Express、Super Bull、BEN、DACN）"
     assert [(o.status, o.reason) for o in receipt.outcomes] == [(PENDING, reason)]
 
 
@@ -464,6 +464,20 @@ def test_super_bull_and_ben_get_a_draft_like_fcn(db, tmp_path: Path, root: Path,
     assert drafter.drafts[0].subject == f"[中文TS/IIS] [{product}] - {A}"
     assert f">{product}<" in drafter.drafts[0].html_body
     assert "Participation" not in drafter.drafts[0].html_body
+
+
+def test_dacn_gets_a_draft_like_fcn_without_the_coupon_barrier(db, tmp_path: Path, root: Path, out: Path) -> None:
+    """DACN 和 FCN 一樣寄（#367）：主旨帶出商品種類，表格不加配息門檻。"""
+    dacn = inventory(A, [("北區", 1)], Product="DACN", **{"配息門檻(%)": 80})
+    load(db, tmp_path, [trade(A, "Amy", "北區", 1, product="DACN")], [dacn])
+    risk(db, A, "RR4")
+    passed_folder(root, A)
+
+    receipt, drafter = run(db, root, out, A)
+
+    assert (receipt.outcomes[0].status, receipt.outcomes[0].reason) == (DRAFTED, "")
+    assert drafter.drafts[0].subject == f"[中文TS/IIS] [DACN] - {A}"
+    assert ">DACN<" in drafter.drafts[0].html_body and "Coupon Barrier" not in drafter.drafts[0].html_body
 
 
 def test_unreadable_folders_are_mentioned(db, tmp_path: Path, root: Path, out: Path, monkeypatch) -> None:

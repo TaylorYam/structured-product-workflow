@@ -14,7 +14,7 @@ from sp_workflow.local_settings import FolderMemory
 from sp_workflow.order_terms import format_field
 from sp_workflow.preparation import parse_tdccs
 from sp_workflow.product_export import ExportReceipt, export_name, summary_name
-from sp_workflow.product_record import REQUIRED
+from sp_workflow.product_record import COUPON_BARRIER_FIELD, REQUIRED
 from sp_workflow.product_terms import Draft, ImportConfig, MissingProduct, Receipt
 from sp_workflow.status import OrderReview
 from sp_workflow.tabs.base import CELL_COPY_HINT, TITLE, BackgroundFactory, DatabaseLogin, Tab
@@ -55,7 +55,8 @@ class MaintenanceTab(Tab):
             "必填欄可以先空著，缺欄時核對條件停在待確認、不能核對。"
         ),
     }
-    COLUMNS = (("issuer", "上手"), ("status", "狀態"), *((name, name) for name in REQUIRED))
+    LISTED = (*REQUIRED, COUPON_BARRIER_FIELD)  # 列出的欄：必填欄，加上只有 DACN 必填的配息門檻（#367）
+    COLUMNS = (("issuer", "上手"), ("status", "狀態"), *((name, name) for name in LISTED))
 
     def __init__(
         self,
@@ -202,7 +203,7 @@ class MaintenanceTab(Tab):
                 {
                     "issuer": product.issuer,
                     "status": product.status,
-                    **{name: format_field(product.values.get(name)) for name in REQUIRED},
+                    **{name: format_field(product.values.get(name)) for name in self.LISTED},
                 },
                 product.missing,
             )

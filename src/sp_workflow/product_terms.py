@@ -47,6 +47,7 @@ from sp_workflow.order_terms import TDCC_FIELD, OrderRow, describe, unknown_issu
 from sp_workflow.product_record import (
     CHOICES,
     COLUMN_FIELDS,
+    COUPON_BARRIER_FIELD,
     DEFAULT_PARTICIPATION,
     DERIVED_COLUMNS,
     FIELDS,
@@ -63,8 +64,11 @@ from sp_workflow.product_record import (
     UNDERLYINGS,
     FieldKind,
     columns_of,
+    default_coupon_barrier,
     fields_of,
+    has_coupon_barrier,
     missing_fields,
+    required_fields,
     same_value,
     to_json,
 )
@@ -101,7 +105,7 @@ _TYPES: dict[FieldKind, tuple[type, ...]] = {
 _NON_CALL_FIELD = "Guaranteed Periods (m)"
 _CONFLICT = "起單建檔裡這檔有好幾列、這欄不同，要填正確的值（正確是空白的話請改起單建檔後重新讀取）"
 # 人工維護可以空白的必填欄（#115）：資料庫的商品種類不可空白（ADR 0016）
-_BLANK_ALLOWED = frozenset(REQUIRED) - {"Product"}
+_BLANK_ALLOWED = frozenset((*REQUIRED, COUPON_BARRIER_FIELD)) - {"Product"}
 _ALREADY_CREATED = "打開之後資料庫已經有這檔的商品條件，請重新載入"
 _MISSING_NOTE = "缺，可以先存、之後再補"  # 還沒鎖住的商品空著的必填欄：畫面標紅但不擋存檔
 
@@ -406,6 +410,8 @@ class Draft:
         改 Trade date 時，Strike date 原本等於舊的 Trade date（一般情況），或因為 Trade date 空白才空著，
         就跟著改；明日開盤價算出的、或作業人員自己填的 Strike date 不動。`follow` 是 False（畫面上 Strike date
         還有沒解讀的輸入）時也不動。
+        改 Strike (%) 或 Product 時，配息門檻原本空白或等於舊的執行價（預設值），就換成新的預設值
+        （`default_coupon_barrier`：要配息門檻的商品是執行價，其他空白，#367）；作業人員填了別的值不動。
         """
         followed = []
         if name == TRADE_FIELD and follow:
@@ -414,7 +420,14 @@ class Draft:
             if same or (strike is None and STRIKE_FIELD not in self.row.must_fill):
                 self.values[STRIKE_FIELD] = value
                 followed.append(STRIKE_FIELD)
+        barrier = self.values.get(COUPON_BARRIER_FIELD)
+        default = barrier is None or same_value(barrier, self.values.get("Strike (%)"))
         self.values[name] = value
+        if name in ("Strike (%)", "Product") and default:
+            new = default_coupon_barrier(self.values)
+            if not same_value(new, barrier):
+                self.values[COUPON_BARRIER_FIELD] = new
+                followed.append(COUPON_BARRIER_FIELD)
         return followed
 
     def edits(self) -> list[tuple[str, object, object]]:
@@ -509,7 +522,8 @@ def problems(draft: Draft, config: ImportConfig) -> dict[str, str]:
     found = _blocking(draft, config, mode)
     if not mode.allow_blank:
         return found
-    blank = [name for name in REQUIRED if draft.values.get(name) is None and name not in found]
+    required = required_fields(draft.values.get("Product"))
+    blank = [name for name in required if draft.values.get(name) is None and name not in found]
     return {**found, **dict.fromkeys(blank, _MISSING_NOTE)}
 
 
@@ -536,6 +550,7 @@ def _value_problems(
         problems[TDCC_FIELD] = unknown_issuer(draft.tdcc)
     elif draft.issuer not in config.issuer_names:
         problems[TDCC_FIELD] = f"上手 {draft.issuer} 在參考條件表設定沒有發行機構寫法"
+    required = required_fields(values.get("Product"))  # 依商品種類：DACN 多配息門檻（#367）
     for name in FIELDS:
         value = values.get(name)
         if value is None:
@@ -543,7 +558,7 @@ def _value_problems(
                 problems[name] = _CONFLICT
             elif name in draft.row.unresolved:
                 problems[name] = "起單建檔算不出來，要填"
-            elif name in REQUIRED and not (allow_blank and name in _BLANK_ALLOWED):
+            elif name in required and not (allow_blank and name in _BLANK_ALLOWED):
                 problems[name] = "必填"
             continue
         if not isinstance(value, _TYPES[KINDS[name]]) or isinstance(value, bool):
@@ -573,6 +588,8 @@ def _value_problems(
             problems[PARTICIPATION_FIELD] = "不能是負數"
     elif product is not None and filled(PARTICIPATION_FIELD):
         problems[PARTICIPATION_FIELD] = f"{product} 沒有參與率，要空白"
+    if product is not None and filled(COUPON_BARRIER_FIELD) and not has_coupon_barrier(product):
+        problems[COUPON_BARRIER_FIELD] = f"{product} 沒有配息門檻，要空白"
     if filled("Tenor (m)") and values["Tenor (m)"] < 1:
         problems["Tenor (m)"] = "至少 1"
     if filled(TRADE_FIELD) and filled(STRIKE_FIELD) and values[STRIKE_FIELD] < values[TRADE_FIELD]:

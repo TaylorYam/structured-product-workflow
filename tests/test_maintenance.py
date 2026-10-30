@@ -237,6 +237,23 @@ def test_a_trade_only_tdcc_takes_its_product_from_the_trade_rows(pg, pg_settings
 
 
 @pytest.mark.db
+def test_a_dacn_without_its_coupon_barrier_can_be_saved_but_stays_on_the_check(pg, tmp_path) -> None:
+    """DACN 的配息門檻（#367）和其他必填欄一樣：人工維護可以先空著存，缺的時候核對條件待確認、列在檢查裡。"""
+    import_trades(pg, tmp_path, A)
+    import_order(pg, A, Product="DACN", **{"Coupon Barrier (%)": Decimal(80)})
+    draft = open_terms(pg, A, CONFIG)
+    draft.values["Coupon Barrier (%)"] = None
+    assert problems(draft, CONFIG) == {"Coupon Barrier (%)": _MISSING_NOTE}
+
+    receipt = write(pg, draft, CONFIG, user="operator1")
+
+    assert receipt.missing == ("Coupon Barrier (%)",) and receipt.calc is not None
+    assert (receipt.calc.status, receipt.calc.reason) == (TO_CONFIRM, "缺 Coupon Barrier (%)")
+    (listed,) = missing_products(pg, CONFIG)
+    assert (listed.tdcc, listed.missing) == (A, ("Coupon Barrier (%)",))
+
+
+@pytest.mark.db
 def test_filling_every_required_field_takes_the_product_off_the_check(pg, tmp_path) -> None:
     import_trades(pg, tmp_path, A)
     import_order(pg, A)
