@@ -1,6 +1,6 @@
 # 支援範圍與文件索引
 
-核實日期：2026-10-18。依據：上手註冊表 `src/fcn_checker/issuers.py`、支援樣態設定 `config/issuer_prefixes.toml`，以及各上手 parser、規則與測試。
+核實日期：2026-10-30。依據：上手註冊表 `src/fcn_checker/issuers.py`、支援樣態設定 `config/issuer_prefixes.toml`，以及各上手 parser、規則與測試。
 
 ## 文件如何使用
 
@@ -38,10 +38,12 @@
 | FCN | 全部 |
 | FCN_Express | BARC（#304）、CA（#305）、HSBC（#306） |
 | Super Bull | BNP（#311）、CA（#312）、HSBC（#314） |
-| BEN | 尚未開放（之後依 HSBC #375 → MS #376 → CA #377） |
+| BEN | HSBC（#375）；MS、CA 待 #376、#377 |
 | DACN | 尚未開放（依序 Nomura → SG → DBS → Natixis，#368～#371） |
 
 Super Bull 只支援 KO 每期觀察＋非記憶式＋無 KI（`Period End`＋`NONE`），其他樣態照不支援樣態轉人工，所有上手共用。BNP Super Bull 的文件：[說明書範本](templates/bnp-zh-super-bull.md)、[投資人須知範本](templates/bnp-zh-super-bull-iis.md)、[參考條件表對照](order-formats/bnp-super-bull-reference.md)、[核對規則](rules/bnp-super-bull-check-rules.md)（只支援 2026-06 以後的範本版本）。CA Super Bull 的文件：[說明書範本](templates/ca-zh-super-bull.md)、[投資人須知範本](templates/ca-zh-super-bull-iis.md)、[參考條件表對照](order-formats/ca-super-bull-reference.md)、[核對規則](rules/ca-super-bull-check-rules.md)（只支援現行版範本；境外人民幣轉人工）。HSBC Super Bull 的文件：[說明書範本](templates/hsbc-zh-super-bull.md)、[投資人須知範本](templates/hsbc-zh-super-bull-iis.md)、[參考條件表對照](order-formats/hsbc-super-bull-reference.md)、[核對規則](rules/hsbc-super-bull-check-rules.md)（只支援現行版範本；單一標的、非美元、KO% ≠ K%、多個決定日轉人工）。
+
+BEN 沒有 KO、沒有定期配息、無 KI，只在到期判定（[ADR 0029](../adr/0029-ben.md)）；參考條件表的參與率(%) 只有 BEN 核對，沒有這欄或空白轉人工。HSBC BEN 的文件：[說明書範本](templates/hsbc-zh-ben.md)、[投資人須知範本](templates/hsbc-zh-ben-iis.md)、[參考條件表對照](order-formats/hsbc-ben-reference.md)、[核對規則](rules/hsbc-ben-check-rules.md)（只支援現行版範本的 Maxi 與 Digital；Maxi 1 檔或 4 檔以上標的、Digital 2 檔以上標的、非美元轉人工；參與率由到期公式推得：Maxi 100、Digital 0）。
 
 Nomura DACN 的文件（workflow #368 規格，實作另開；開放前照未開放商品轉人工）：[說明書範本](templates/nomura-zh-dacn.md)、[投資人須知範本](templates/nomura-zh-dacn-iis.md)、[參考條件表對照](order-formats/nomura-dacn-reference.md)、[核對規則](rules/nomura-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工）。
 

@@ -3,7 +3,7 @@
 - 文件側：[HSBC BEN 範本規格](../templates/hsbc-zh-ben.md)（`hsbc-zh-ben-pd`）、[HSBC BEN 投資人須知範本規格](../templates/hsbc-zh-ben-iis.md)（`hsbc-zh-ben-iis`）
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [HSBC BEN 下單資料格式](../order-formats/hsbc-ben-reference.md)
 - 商品：BEN（workflow ADR 0029、#372、#373）；開放順序 HSBC → MS → CA，本文件是 HSBC（workflow #375）
-- 狀態：規格；實作另開（workflow #375）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記先略過，2026-10-30 使用者決定**（§7）
+- 狀態：已實作（workflow #375）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記先略過，2026-10-30 使用者決定**（§7）
 - 標「待使用者確認」的是暫定的保守做法（轉人工覆核、不放行、不臆測），詳見本機疑慮記錄；使用者回覆後再更新本文件與實作
 - 本文件只寫和 [HSBC 核對規則](hsbc-check-rules.md)（FCN）不同或 BEN 特有的部分；和 [HSBC Super Bull 核對規則](hsbc-super-bull-check-rules.md) 相同的做法（沒有配息、無 KI、名稱前綴、標的不看順序、情境的交股算式、只比數值）只寫出處與差異。沒提到的（審查標準、固定警語、受託機構名稱與負責人、發行機構名稱、信用評等、幣別、費率、最低金額、受理申購日、刊印日期、價格推算、連結標的公司介紹、開始受理贖回日寫法）照 HSBC FCN
 
@@ -229,15 +229,15 @@ HSBC 說明書不寫參與率（§17(2) `本商品不適用`），由 §11(1) �
 
 ## 10. 規則對照
 
-新 rule_id 的名稱實作時可調整，調整後同步更新本表。
+實作後的 rule_id（#375）。暫定做法各自集中在一處設定，見 §9 與 `rules/hsbc_ben.py` 開頭。
 
 | 核對規則 | rule_id |
 |---|---|
 | §3.1 樣態、範本版本、商品種類一致、型態一致、HSBC 限定 | `batch.variant`（同不支援樣態）、`template.detect`（寫法不同：原因 `template_unsupported`，狀態「不支援的範本版本」）、`template.product_family`、`doc.template_variant` |
 | §3.2 參考條件表欄位 | 共用 `field.*`、`field.non_call_product`、`backfill.*` |
-| §3.3 紅利其他出處、Digital 配息金額 | `doc.bonus`（新） |
-| §3.4 參與率 | `doc.participation`（新） |
-| §3.5 沒有 KO、沒有定期配息、到期公式、殘留註記、`(最終版)` | `doc.no_autocall`（新）、`doc.no_coupon`、`doc.redemption_formula`、`doc.template_residue`（新）、`doc.final_edition`（新）；無 KI 沿用 `doc.ki_consistency`；表頭 % 沿用 `doc.price_header_pct`；名稱、ISIN、幣別沿用 HSBC FCN |
+| §3.3 紅利其他出處、Digital 配息金額 | `doc.bonus` |
+| §3.4 參與率 | 共用 `field.participation_pct`（只有 Product 是 BEN 的列；說明書端由到期公式推得） |
+| §3.5 沒有 KO、沒有定期配息、到期公式、殘留註記、`(最終版)` | `doc.no_autocall`、`doc.no_coupon`、`doc.redemption_formula`、`doc.template_residue`、`doc.final_edition`；無 KI 沿用 `doc.ki_consistency`；表頭 % 沿用 `doc.price_header_pct`；名稱、ISIN、幣別沿用 HSBC FCN |
 | §3.6 名稱樣板 | 共用 `standard.product_name` |
 | §3.7 情境 | 共用 `scenario.reprint`、`scenario.params`；`doc.scenario_calculations` |
-| §3.8 投資人須知 | 共用 `iis.*`；`iis.no_coupon`；`iis.final_edition`（新） |
+| §3.8 投資人須知 | 共用 `iis.*`；`iis.no_coupon`；`iis.final_edition` |
