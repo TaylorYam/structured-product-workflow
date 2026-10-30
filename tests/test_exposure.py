@@ -1,4 +1,4 @@
-"""標的曝險分析（#345、#347、#352、#354、#356、#358、#360）：分類規則、狀態、匯出的「全部商品」。資料庫測試對真的 PostgreSQL；資料全部虛構。"""
+"""標的曝險分析（#345、#347、#352、#354、#356、#358、#360）與重災區掃描（#362）：分類規則、狀態、匯出的「全部商品」。資料庫測試對真的 PostgreSQL；資料全部虛構。"""
 
 from __future__ import annotations
 
@@ -24,7 +24,9 @@ from sp_workflow.exposure import (
     Position,
     assess,
     export_exposure,
+    export_hotspots,
     export_name,
+    hotspot_name,
     load_choices,
 )
 from sp_workflow.lifecycle import KO, AutoEvent, replace_auto_events
@@ -146,6 +148,7 @@ def test_default_name_lists_the_tickers() -> None:
     assert name == "標的曝險分析_GOOG_GOOGL_20261030_0905.xlsx"
     trial = export_name(["GOOG UW"], dt.datetime(2026, 10, 30, 9, 5), trial=True)
     assert trial == "標的曝險分析_GOOG_試算_20261030_0905.xlsx", "用了試算價，檔名看得出來"
+    assert hotspot_name(dt.datetime(2026, 10, 30, 9, 5)) == "重災區掃描_20261030_0905.xlsx"
 
 
 # ---------------------------------------------------------------- 資料庫
@@ -324,6 +327,37 @@ def test_intact_status_is_blank_and_unfilled(seeded, tmp_path: Path) -> None:
     sheet = openpyxl.load_workbook(path)["全部商品"]
     [row] = [r for r in range(2, sheet.max_row + 1) if sheet.cell(r, 2).value == OTHER]
     assert sheet.cell(row, 1).fill.fill_type is None
+
+
+@pytest.mark.db
+def test_hotspots_list_every_broken_product_whatever_it_links(seeded, tmp_path: Path) -> None:
+    seed(seeded, OTHER_EXCHANGE, ["DDD JT", "BBB UN"], final=DAY - dt.timedelta(days=3))  # 已比價，不列
+    path = tmp_path / "重災區.xlsx"
+
+    receipt = export_hotspots(seeded, UNTIL, path, today=DAY)
+
+    assert (receipt.scanned, dict(receipt.counts), receipt.count) == (6, {"跌破K": 2, "跌破KI": 1}, 3), (
+        "截止日內在庫：A、B、C、OTHER、PENDING 與已比價那檔；截止日之後、已出場的不算"
+    )
+    book = openpyxl.load_workbook(path)
+    assert book.sheetnames == ["全部商品"]
+    every = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}
+    assert {tdcc: row["狀態"] for tdcc, row in every.items()} == {A: "跌破K", B: "跌破K", C: "跌破KI"}, (
+        "OTHER 沒跌破、PENDING 算不出、已比價的都不列"
+    )
+    assert (every[C]["最差表現標的"], every[C]["幣別"]) == ("DDD JT", "JPY"), "連結什麼標的都算"
+    header, *_ = book["全部商品"].iter_rows(values_only=True, max_row=1)
+    assert header[-3:] == ("分公司3", "FC3", "面額3"), "格式同標的曝險分析"
+
+
+@pytest.mark.db
+def test_no_hotspots_still_writes_the_header(seeded, tmp_path: Path) -> None:
+    path = tmp_path / "重災區.xlsx"
+
+    receipt = export_hotspots(seeded, DAY, path, today=DAY)  # 截止日當天沒有到期的
+
+    assert (receipt.scanned, receipt.count) == (0, 0)
+    assert sheet_rows(path, "全部商品") == []
 
 
 @pytest.mark.db

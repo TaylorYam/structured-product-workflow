@@ -28,7 +28,8 @@ Treeview 的表（7 的檢查結果表除外）另有 Ctrl+A 全選、Ctrl+C 複
 準備完成 → 核對頁帶入這批 PDF；核對存檔 → 放回頁帶入批次資料夾與核對結果檔；
 放回完成 → 寄信草稿頁帶入通過的 TDCC（#281）。
 審查通過日期、匯出回報包、信箱維護、發行機構評等、可連結標的白名單與使用的設定檔不是每天的步驟，收在視窗上方的「維護」選單。
-唯讀的資料分析收在「分析」選單：「標的曝險分析…」選標的，匯出近期到期商品目前跌破了沒有，與所在的分公司、FC 與面額（#345、#352、#358）。
+唯讀的資料分析收在「分析」選單：「標的曝險分析…」選標的，匯出近期到期商品目前跌破了沒有，與所在的分公司、FC 與面額（#345、#352、#358）；
+「重災區掃描…」不挑標的，列出近期到期、目前跌破的全部在庫商品（#362）。
 視窗只收輸入、在背景執行一個動作並顯示結果，不含判斷邏輯：要連資料庫的按鈕各呼叫 `window_actions` 的一個動作，
 連線、transaction 與容錯（ADR 0012）都在那裡（#125）；不連資料庫的直接呼叫 `prepare_batch`／核對／`return_to_folders`。
 這個 module 只有外殼：頂端列、步驟欄、「維護」與「分析」選單、關閉、視窗大小與啟動參數；各分頁一頁一個 module 在 `sp_workflow.tabs`（#138）。
@@ -76,6 +77,7 @@ from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, RootF
 from sp_workflow.tabs.daily import DailyImportTab
 from sp_workflow.tabs.exits import ExitListTab
 from sp_workflow.tabs.exposure import ExposureWindow
+from sp_workflow.tabs.hotspot import HotspotWindow
 from sp_workflow.tabs.mail import MailDraftTab
 from sp_workflow.tabs.mailbox import MailboxWindow
 from sp_workflow.tabs.manual import MaintenanceTab
@@ -104,6 +106,7 @@ RATINGS = "發行機構評等…"
 SPLITS = "拆股登記…"
 WHITELIST = "匯入可連結標的白名單…"
 EXPOSURE = "標的曝險分析…"
+HOTSPOTS = "重災區掃描…"
 
 
 class WindowSize:
@@ -230,6 +233,7 @@ class PanelWindow:
         self.ratings: RatingsWindow | None = None  # 「發行機構評等…」開著時的視窗（#237）
         self.splits: SplitsWindow | None = None  # 「拆股登記…」開著時的視窗（#270）
         self.exposure: ExposureWindow | None = None  # 「標的曝險分析…」開著時的視窗（#345）
+        self.hotspots: HotspotWindow | None = None  # 「重災區掃描…」開著時的視窗（#362）
         self.memory = memory
         self.size = WindowSize(memory.path.with_name(WINDOW_FILE))
         master.title(TITLE)
@@ -356,6 +360,7 @@ class PanelWindow:
         bar = self.master.nametowidget(self.master["menu"])
         menu = tk.Menu(bar, tearoff=False)
         menu.add_command(label=EXPOSURE, command=self.open_exposure)
+        menu.add_command(label=HOTSPOTS, command=self.open_hotspots)
         bar.add_cascade(label="分析", menu=menu)
 
     def _go_menu(self) -> tk.Menu:
@@ -450,6 +455,15 @@ class PanelWindow:
         self.exposure = ExposureWindow(self.master, self.db, self.memory, background=self.background)
         self.exposure.refresh()
 
+    def open_hotspots(self) -> None:
+        """另開重災區掃描視窗；已經開著就拉到前面，不重開（#362）。"""
+        if self._hotspots_open():
+            self.hotspots.deiconify()
+            self.hotspots.lift()
+            self.hotspots.focus_set()
+            return
+        self.hotspots = HotspotWindow(self.master, self.db, self.memory, background=self.background)
+
     def restore_size(self) -> None:
         """照上次的大小顯示；第一次開啟時在 Windows 最大化。"""
         self.size.restore(self.master, self.pixels)
@@ -481,6 +495,9 @@ class PanelWindow:
     def _exposure_open(self) -> bool:
         return self.exposure is not None and bool(self.exposure.winfo_exists())
 
+    def _hotspots_open(self) -> bool:
+        return self.hotspots is not None and bool(self.hotspots.winfo_exists())
+
     def close(self) -> None:
         """核對頁還在處理或有還沒存檔的核對結果時先問一次；關閉前記住視窗大小。"""
         warning = self._close_warning()
@@ -505,6 +522,8 @@ class PanelWindow:
             self.splits.close()
         if self._exposure_open():
             self.exposure.close()
+        if self._hotspots_open():
+            self.hotspots.close()
         self.master.destroy()
 
 
