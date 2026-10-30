@@ -6,7 +6,7 @@
   先假設收盤價不會事後更正。
 - KO：收盤價 ≥ KO 價。非記憶式要同一個觀察日所有標的都達標；記憶式每檔標的在任一觀察日達標就記住，全部記過即 KO。
   D 型的觀察日是第一個比價日（資料庫最早的比價日；沒有 Non-Call 的 FCN_Express 是比價日_1，#302）起到最終比價日止、所有標的市場都開市的日子；P 型只看各期比價日。
-  Non-Call 等於天期的商品不會提前出場，不觀察 KO。最終比價日不算 KO 的商品種類（Super Bull，`ProductRule.final_date_callable`，
+  Non-Call 等於天期的商品不會提前出場，不觀察 KO。最終比價日不算 KO 的商品種類（Super Bull、BEN，`ProductRule.final_date_callable`，
   #310、ADR 0028）即使比價日裡有最終比價日，那天也只做到期判定。
 - KI：EKI 只在最終比價日，收盤價 < 下限價；AKI 自 Strike date 之後、該標的市場的每個交易日；
   MKI（每期觀察）不比，KI 欄寫「MKI (manual)」，KO 照比、比價狀態照 KO 算；最終比價日沒有 KO 時待確認（#196）。
@@ -112,7 +112,7 @@ class Terms:
     autocall: tuple[dt.date, ...]  # 資料庫的比價日（空白的不算），由早到晚
     underlyings: tuple[Underlying, ...]
     no_autocall: bool = False  # Non-Call 等於天期：不會提前出場
-    final_date_callable: bool = True  # False：最終比價日不算 KO（Super Bull，#310）
+    final_date_callable: bool = True  # False：最終比價日不算 KO（Super Bull、BEN，#310、#373）
 
 
 @dataclass(frozen=True)

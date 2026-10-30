@@ -81,6 +81,26 @@ def test_locked_products_follow_the_correction_rules() -> None:
     assert problems(draft, CONFIG) == {"Maturity date": "必填"}
 
 
+BEN = {
+    "Product": "BEN",
+    "Guaranteed Periods (m)": 6,
+    "KO Type": "Period End",
+    "Barrier Type": "NONE",
+    "KI Barrier (%)": None,
+}
+
+
+@pytest.mark.parametrize("status", [OrderReview.UNLOCKED, OrderReview.LOCKED])
+def test_a_ben_cannot_be_saved_with_a_blank_participation(status) -> None:
+    """BEN 的參與率（#373、ADR 0029）人工維護、更正都不能清成空白；其他商品要空白。"""
+    draft = maintenance_draft(status, **BEN, **{"Participation (%)": None})
+
+    assert problems(draft, CONFIG) == {"Participation (%)": "BEN 必填（一般 100、Digital 0）"}
+    assert problems(maintenance_draft(status, **BEN, **{"Participation (%)": Decimal(0)}), CONFIG) == {}
+    fcn = maintenance_draft(status, **{"Participation (%)": Decimal(100)})
+    assert problems(fcn, CONFIG) == {"Participation (%)": "FCN 沒有參與率，要空白"}
+
+
 def test_a_new_product_needs_a_known_issuer() -> None:
     draft = maintenance_draft(OrderReview.TRADES_ONLY, tdcc="999199990001", issuer="")
 

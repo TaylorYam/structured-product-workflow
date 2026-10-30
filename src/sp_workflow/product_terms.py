@@ -51,6 +51,7 @@ from sp_workflow.product_record import (
     DERIVED_COLUMNS,
     FIELDS,
     KINDS,
+    MATURITY_ONLY_TERMS,
     PARTICIPATION_FIELD,
     PRICE_COLUMNS,
     PRICING_FIELD,
@@ -562,7 +563,7 @@ def _value_problems(
         if problem := PRODUCT_RULES[product].non_call_problem(values[_NON_CALL_FIELD], tenor):
             problems[_NON_CALL_FIELD] = problem
     if product is not None and PRODUCT_RULES[product].maturity_only:  # BEN：只在到期判定（#373）
-        for name, fixed in (("KO Type", "Period End"), ("Barrier Type", "NONE")):
+        for name, fixed in MATURITY_ONLY_TERMS.items():
             if filled(name) and values[name] != fixed:
                 problems[name] = f"{product} 不會提前出場、沒有 KI，要選 {fixed}"
         if values.get(PARTICIPATION_FIELD) is None and PARTICIPATION_FIELD not in problems:

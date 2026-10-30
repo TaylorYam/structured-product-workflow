@@ -516,6 +516,24 @@ def test_a_ben_only_settles_at_maturity(pg, close, event) -> None:
 
 
 @pytest.mark.db
+def test_a_ben_waits_for_the_final_valuation_date(pg) -> None:
+    """BEN（#373）到期前不觀察 KO：即使收盤價 ≥ KO 價，狀態仍是在庫、原因「還沒到最終比價日」。"""
+    seed(pg, T1)
+    pg.execute(
+        "UPDATE workflow.product SET product = 'BEN', non_call_months = tenor_months, ko_type = 'Period End',"
+        " ko_freq = 'P', participation_pct = 100 WHERE tdcc = %s",
+        (T1,),
+    )
+    pg.execute("UPDATE workflow.autocall_date SET value = NULL WHERE tdcc = %s AND value <> %s", (T1, FINAL))
+    write_closes(pg, us_closes(KO_DAY, {KO_DAY: "120"}))
+
+    observe_all(pg, CALENDAR, user="tester")
+
+    assert events(pg, T1) == []
+    assert status(pg, T1)[:2] == (ON_BOOK, f"還沒到最終比價日（{FINAL}）")
+
+
+@pytest.mark.db
 def test_a_product_stopped_at_a_missing_close_is_named_on_the_exit_list(pg) -> None:
     """#282：缺收盤價停住、那天的 KO 沒有判定的商品，出場清單寫出缺哪一天；補上後重新比價就出場。"""
     seed(pg, T1)

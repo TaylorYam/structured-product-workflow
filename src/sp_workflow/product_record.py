@@ -48,6 +48,8 @@ class FieldKind(Enum):
 
 KO_TYPES = ("Daily", "Daily Memory", "Period End", "Period End Memory")
 BARRIER_TYPES = ("NONE", "EKI", "AKI")
+# 只在到期判定的商品（BEN，`ProductRule.maturity_only`，#373）：不會提前出場、沒有 KI，這兩欄固定
+MATURITY_ONLY_TERMS = {"KO Type": "Period End", "Barrier Type": "NONE"}
 OPEN = "開盤價"
 INITIAL_PRICINGS = (OPEN, "收盤價", "VWAP")
 UNDERLYINGS = tuple(f"BBG Code {n}" for n in range(1, 6))

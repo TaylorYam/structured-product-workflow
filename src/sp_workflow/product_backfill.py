@@ -60,6 +60,7 @@ from sp_workflow.order_terms import describe
 from sp_workflow.product_record import (
     KI_CODES,
     KO_CODES,
+    MATURITY_ONLY_TERMS,
     PRICING_FIELD,
     STRIKE_FIELD,
     TRADE_FIELD,
@@ -247,7 +248,7 @@ def _values(record: OrderRecord, cells: Mapping[str, Any], fmt: ReferenceFormat)
     for n, name in enumerate(UNDERLYINGS, 1):
         values[name] = value(underlying_key(n))
     ko = (value("ko_observation"), value("ko_memory"))
-    values["KO Type"] = "Period End" if product.maturity_only else _KO_TYPES.get(ko)  # type: ignore[arg-type]
+    values["KO Type"] = MATURITY_ONLY_TERMS["KO Type"] if product.maturity_only else _KO_TYPES.get(ko)  # type: ignore[arg-type]
     if values["KO Type"] is None:
         problems.append(f"KO(Freq)／KO(memo) 看不懂（{ko[0]}／{ko[1]}）")
     ki = value("ki_type") or fmt.empty_value  # 空值寫法「-」就是沒有 KI

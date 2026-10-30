@@ -42,6 +42,7 @@ from sp_workflow.product_record import (
     CHOICES,
     FIELDS,
     KINDS,
+    MATURITY_ONLY_TERMS,
     OPEN,
     PARTICIPATION_FIELD,
     PRICING_FIELD,
@@ -222,8 +223,7 @@ def _maturity_only(values: dict[str, object], notes: dict[str, str], conflicts: 
     """只在到期判定的商品（BEN）：不會提前出場、沒有 KI 的那幾欄一律照規則填，起單建檔的值與問題都不算。"""
     fixed = {
         "Guaranteed Periods (m)": values.get("Tenor (m)"),  # 天期好幾列不同時是空白，天期填好前要作業人員填
-        "KO Type": "Period End",
-        "Barrier Type": "NONE",
+        **MATURITY_ONLY_TERMS,
         "KI Barrier (%)": None,
     }
     for name, value in fixed.items():
