@@ -107,22 +107,27 @@ def document_info(ctx: IssuerContext) -> list[CheckResult]:
     return out
 
 
+def name_months(ctx: IssuerContext) -> CheckResult:
+    """商品名稱「發行 N 個月期」= 天期（FCN、BEN 共用）。"""
+    f = ctx.ts.f
+    tenor, zh = f("tenor_months"), f("name_zh")
+    months = re.search(r"發行(\d+)個月期", squash(zh.value)) if zh.ok else None
+    named = ParsedField("name_months", zh.status, int(months[1]) if months else None, zh.evidence, note=zh.note)
+    if zh.ok and months is None:
+        named = ParsedField.invalid("name_months", [], "商品名稱找不到「N 個月期」")
+    return kit.doc_check(ctx, "doc.coupon_periods", "name_months", "商品名稱月數", tenor, named).compare(
+        tenor.value, named.value
+    )
+
+
 def periods(ctx: IssuerContext) -> list[CheckResult]:
     """天期 = 名稱月數 = 第 15 項期別終點；第 15 項期別起點 D 型為第 17 項 Non-Call k + 1（第 k 期終止日起才觀察提前出場，
     比例配息最早在第 k+1 期；Issue #310）、P 型為 1（日期表期數由共用規則 `schedule.period_count` 檢查）。"""
     f = ctx.ts.f
-    tenor, table, zh, rng = f("tenor_months"), f("date_table"), f("name_zh"), f("coupon_range")
+    tenor, table, rng = f("tenor_months"), f("date_table"), f("coupon_range")
     obs = f("ko_observation_art17")
     rid = "doc.coupon_periods"
-    months = re.search(r"發行(\d+)個月期", squash(zh.value)) if zh.ok else None
-    name_months = ParsedField("name_months", zh.status, int(months[1]) if months else None, zh.evidence, note=zh.note)
-    if zh.ok and months is None:
-        name_months = ParsedField.invalid("name_months", [], "商品名稱找不到「N 個月期」")
-    out = [
-        kit.doc_check(ctx, rid, "name_months", "商品名稱月數", tenor, name_months).compare(
-            tenor.value, name_months.value
-        ),
-    ]
+    out = [name_months(ctx)]
     daily = table.ok and table.value["type"] == "D"
     start = obs.value["k"] + 1 if daily and obs.ok else 1
     out.append(

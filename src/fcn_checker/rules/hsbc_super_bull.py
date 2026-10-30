@@ -286,17 +286,24 @@ def _best(c: super_bull.Scenario, sc, n: Decimal, tenor: int) -> list[CheckResul
     return out
 
 
-def annualized_of_pnl(c: super_bull.Scenario, hit, pnl, n: Decimal, tenor: int) -> CheckResult:
+def annualized_of_pnl(
+    c: super_bull.Scenario, hit, pnl, n: Decimal, tenor: int, *, round_return: bool = False
+) -> CheckResult:
+    """年化 = 損益 ÷ 面額 × 12 ÷ 天期；`round_return`：報酬率先四捨五入到 2 位再年化（MS BEN 的寫法，#376）。"""
     profit = _profit(pnl, n)
     if profit is None:
         return c.unread("annualized", "找不到損益算式，無法重算年化報酬率")
+    if round_return:
+        return _annualized(c, hit, cents(profit), tenor, f"({pnl.value.pnl} ÷ {n} 四捨五入到 2 位) × 12 ÷ {tenor}")
     return _annualized(c, hit, profit, tenor, f"{pnl.value.pnl} ÷ {n} × 12 ÷ {tenor}")
 
 
-def worse(c: super_bull.Scenario, sc, n: Decimal, fx: Decimal, tenor: int) -> list[CheckResult]:
+def worse(
+    c: super_bull.Scenario, sc, n: Decimal, fx: Decimal, tenor: int, *, round_return: bool = False
+) -> list[CheckResult]:
     """情境三：期末股價 P < 執行價 K；股數 = 面額 × 匯率 ÷ K（4 位）；交割股數 = 股數無條件捨去；零股數 = 股數 − 交割股數；
     剩餘金額 = P × 零股數 ÷ 匯率（2 位）；到期贖回價值 = P × 交割股數 ÷ 匯率 + 剩餘金額；損益 = 價值 − 面額；
-    年化 = 損益 ÷ 面額 × 12 ÷ 天期。"""
+    年化 = 損益 ÷ 面額 × 12 ÷ 天期（`round_return` 見 `annualized_of_pnl`）。"""
     out = []
     s = sc.shares.value if sc.shares is not None else None
     rm = sc.remainder.value if sc.remainder is not None else None
@@ -367,7 +374,7 @@ def worse(c: super_bull.Scenario, sc, n: Decimal, fx: Decimal, tenor: int) -> li
             issues.append(f"到期贖回價值 {v.amount} 應為 {v.close} × {v.whole} / {v.fx} + {v.remainder} = {expected}")
         out.append(c.calc("value", issues, sc.value, expected=expected, actual=v.amount))
     out.append(pnl_check(c, sc.worse_pnl, amount, n))
-    out.append(annualized_of_pnl(c, sc.worse_annualized, sc.worse_pnl, n, tenor))
+    out.append(annualized_of_pnl(c, sc.worse_annualized, sc.worse_pnl, n, tenor, round_return=round_return))
     return out
 
 

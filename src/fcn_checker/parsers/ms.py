@@ -320,7 +320,7 @@ def read(lines: Sequence[Line]) -> MsTermSheet:
         ],
     )
     scenarios = ms_scenario.section(article(18))
-    fields["currency_others"] = standard_fields.occurrences("currency_others", _currency_occurrences(fields, scenarios))
+    fields["currency_others"] = standard_fields.occurrences("currency_others", currency_occurrences(fields, scenarios))
     fields["issue_price_others"] = standard_fields.occurrences(
         "issue_price_others",
         [occ("issue_price_ch4", "issue_price_subscription", "第四章第 5 項申購價金", fields["issue_price_ch4"])],
@@ -344,11 +344,12 @@ def read(lines: Sequence[Line]) -> MsTermSheet:
     return MsTermSheet(fields, TextIndex(doc.lines), doc, scenarios, _mentions(fields))
 
 
-def _currency_occurrences(
-    fields: dict[str, ParsedField], scenarios: ms_scenario.ScenarioSection
+def currency_occurrences(
+    fields: dict[str, ParsedField], scenarios: ms_scenario.ScenarioSection, article: int = 18
 ) -> list[standard_fields.Occurrence]:
-    """金額旁的幣別字（標準欄位 `currency_others`，Issue #170）：第一章 §6 面額、第四章四個最低金額、§18 假設總投資金額
-    各一處，§18 每個情境一處（該情境裡每一處「金額 幣別」；股價與含「股」的實物交割算式用標的幣別，不算）。"""
+    """金額旁的幣別字（標準欄位 `currency_others`，Issue #170）：第一章 §6 面額、第四章四個最低金額、情境條（FCN §18、
+    BEN §16，`article`）假設總投資金額各一處，情境條每個情境一處（該情境裡每一處「金額 幣別」；股價與含「股」的實物交割
+    算式用標的幣別，不算）。"""
     occ = standard_fields.Occurrence
     out = [
         occ(
@@ -382,7 +383,7 @@ def _currency_occurrences(
             fields["redemption_increment_currency"],
         ),
     ]
-    name, where = "scenario_denomination_currency", "第 18 項假設總投資金額"
+    name, where = "scenario_denomination_currency", f"第 {article} 項假設總投資金額"
     hit = scenarios.denomination_currency
     out.append(
         occ(
@@ -391,7 +392,7 @@ def _currency_occurrences(
             where,
             ParsedField.present(name, hit.value, list(hit.lines))
             if hit
-            else ParsedField.missing(name, "第 18 項假設找不到總投資金額或出現多次"),
+            else ParsedField.missing(name, f"第 {article} 項假設找不到總投資金額或出現多次"),
         )
     )
     for s in scenarios.scenarios:
@@ -400,7 +401,7 @@ def _currency_occurrences(
         field = f"情境{s.number}_currency"
         out.append(
             money.scenario_occurrence(
-                field, "scenario_currency", f"第 18 項情境{s.number}", s.money, s.lines[:1], f"情境{s.number}"
+                field, "scenario_currency", f"第 {article} 項情境{s.number}", s.money, s.lines[:1], f"情境{s.number}"
             )
         )
     return out
