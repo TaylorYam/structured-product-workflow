@@ -668,10 +668,18 @@ def _last_row(lines: list[Line], anchor: Line, price_column: Callable[[Line], st
 
 def _continues(upper: str, lower: str) -> bool:
     """`lower` 是 `upper` 那一格換下來的部分：接起來剛好一個值，而且是幣別字（`日圓`）、數字前的幣別字那一格的
-    數字（`美元` / `123.4567`）或小數的後幾位（`19,740.000` / `0日圓`、`123.45` / `67`，接起來最多 4 位小數）。
-    兩個完整的值（整數、4 位小數的價格）不接。"""
-    if COMPLETE.fullmatch(upper) or not VALUE.fullmatch(upper + lower):
+    數字（`美元` / `123.4567`）或小數的後幾位（`19,740.000` / `0日圓`、`123.45` / `67`，接起來最多 4 位小數）；幣別字在前
+    的一格數字可在任意位置換行（`美元` / `216.000` / `0`、`美元` / `1,05` / `9.22` / `05`、`美元` / `185.` / `250` / `0`；
+    DBS DACN 情境價格表欄窄，workflow #370）。兩個完整的值（整數、4 位小數的價格）不接。"""
+    if not VALUE.fullmatch((upper + lower).removesuffix(".")):  # 小數點後換行（`美元` / `185.` / `250`）：先接整數部分
         return False
+    if COMPLETE.fullmatch(upper):
+        # 幣別字在前的一格，數字在任意位置換行（`美元` / `1,05` / `9.22` / `05`）：下一行沒有幣別字、上一行還不到 4 位小數、
+        # 接起來最多 4 位小數才接；幣別字在後的一格（`123.45日圓`）已經完整
+        if not re.match(CURRENCY, upper) or not re.fullmatch(r"[\d,.]+", lower):
+            return False
+        before, after = re.search(r"(?:\.(\d*))?$", upper), re.search(r"\.(\d*)$", upper + lower)
+        return len(before[1] or "") < 4 and (after is None or len(after[1]) <= 4)
     digits = re.compile(r"\d")
     if not digits.search(lower) or not digits.search(upper):
         return True

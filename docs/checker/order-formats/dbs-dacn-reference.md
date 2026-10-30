@@ -1,13 +1,13 @@
 # 下單資料格式：DBS DACN（參考條件表）
 
 - 設定檔：所有上手共用的 [`config/reference_sheet.toml`](../../../config/reference_sheet.toml)
-- 狀態：規格；實作另開 PR（workflow #370）。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)；和 [DBS FCN 下單資料格式](dbs-fcn-reference.md) 相同的不重寫，本文件只寫 DACN 的差異
+- 狀態：已實作（workflow #370）。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)；和 [DBS FCN 下單資料格式](dbs-fcn-reference.md) 相同的不重寫，本文件只寫 DACN 的差異
 
 ## 1. 結構
 
 和 DBS FCN 相同（商品代號前 3 碼 `078`，`發行機構` 欄寫 `DBS`）。商品種類看 `Product` = `DACN`：辨識到的範本是 `dbs-zh-dacn-pd`／`dbs-zh-dacn-iis` 時，該列 Product 必須是 `DACN`；Product 是 `DACN`、文件卻是 DBS FCN 範本（或反過來）→ 商品種類不一致，轉人工覆核（共用 `template.product_family`）。
 
-開放自動核對：`config/issuer_prefixes.toml` `[auto_check_products]` 的 `DACN` 加 `DBS`（實作 PR）；開放前 DBS DACN 照未開放商品轉人工。`[unsupported_variants]` 的 DBS 清單（VWAP、KO 每期、KO 每日非記憶式、KI 每日／每期、Non-Call = 天期）不分商品種類，DACN 一樣在辨識時攔下。
+開放自動核對：`config/issuer_prefixes.toml` `[auto_check_products]` 的 `DACN` 加 `DBS`。`[unsupported_variants]` 的 DBS 清單（VWAP、KO 每期、KO 每日非記憶式、KI 每日／每期、Non-Call = 天期）不分商品種類，DACN 一樣在辨識時攔下。
 
 探勘用的參考條件表是私人雲端倉庫的舊總表 `FCN外商品數量.xlsx`（第一張工作表，涵蓋全部 7 份樣本；ISIN、發行日、比價日已填好）。舊總表沒有 `配息門檻(%)` 欄。
 

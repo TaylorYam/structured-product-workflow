@@ -176,6 +176,53 @@ def test_currency_word_wrapped_onto_the_next_line_stays_in_its_cell():
     assert [len(r.lines) for r in table.value.rows] == [10, 10]
 
 
+def test_price_after_the_currency_word_wrapped_over_several_lines_is_joined_back():
+    """窄欄裡幣別字在前、數字在任意位置換行（`美元` / `1,05` / `9.22` / `05`、`美元` / `185.` / `250` / `0`、`美元` /
+    `216.000` / `0`；DBS DACN 情境價格表）：接回同一格；下一列的幣別字不接到上一列。"""
+    cells = {
+        "initial": ["美元", "1,05", "9.22", "05"],
+        "strike": ["美元", "185.", "250", "0"],
+        "ko": ["美元", "216.000", "0"],
+        "ki": ["美元", "60.0000"],
+    }
+    lines = [*header()]
+    for y, n, name in ((150, 1, "甲公司"), (196, 2, "乙公司")):
+        for key, parts in cells.items():
+            lines += [centered(1, X[key], y + 10 * i, t) for i, t in enumerate(parts)]
+        lines += [
+            centered(1, X["n"], y, str(n)),
+            centered(1, X["name"], y, name),
+            centered(1, X["code"], y, f"Z{n}Z UW"),
+        ]
+    table = read("t", lines, SPEC)
+    assert table.ok, table.note
+    expected = {
+        "initial": Decimal("1059.2205"),
+        "strike": Decimal("185.2500"),
+        "ko": Decimal("216.0000"),
+        "ki": Decimal("60.0000"),
+    }
+    assert table.value.prices == [expected, expected]
+    assert table.value.currencies == ["美元", "美元"]
+
+
+def test_a_complete_price_after_the_currency_word_takes_no_more_digits():
+    """幣別字在前、價格已有 4 位小數（`美元` / `123.4567`）：下一行的數字是另一個值，不接。"""
+    lines = [*header()]
+    for y, n, name, prices in ((150, 1, "甲公司", ROW1), (172, 2, "乙公司", ROW2)):
+        for key, p in zip(["initial", "strike", "ko", "ki"], prices, strict=True):
+            lines += [centered(1, X[key], y, "美元"), centered(1, X[key], y + 10, p)]
+        lines += [
+            centered(1, X["n"], y, str(n)),
+            centered(1, X["name"], y, name),
+            centered(1, X["code"], y, f"Z{n}Z UW"),
+        ]
+    table = read("t", lines, SPEC)
+    assert table.ok, table.note
+    assert table.value.prices[0]["initial"] == Decimal("100.0000")
+    assert table.value.prices[1]["ki"] == Decimal("30.0000")
+
+
 def test_cells_squeezed_into_one_line_without_character_boxes_still_fill_the_columns_in_order():
     """相鄰幾格擠成一行、又沒有字座標可以切開時，一列的價格依欄序對到各欄。"""
     lines = [*header()]

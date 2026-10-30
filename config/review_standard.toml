@@ -793,6 +793,24 @@ normalize_brackets = true
 # 英文名稱跨行處可能多空白，比對時忽略所有空白
 ignore_whitespace_en = true
 
+[issuer.dbs.product_names.DACN]
+# DBS DACN 商品名稱（現行版 7 份說明書推得，2026-10-30 規格，workflow #370）：「固定利率」改「區間累計配息」、英文「Fixed
+# Coupon」改「Range Accrual」；Quanto、KI、標的寫法同 FCN。參考條件表 Product 是 DACN 時用這個樣板。
+zh = "星展銀行{tenor}個月期{ccy_zh}計價{quanto_zh}區間累計配息記憶型每日觀察自動提前出場{ki_zh}{underlying_zh}股權連結結構型商品(無擔保及無保證機構)(不保本)"
+en = "DBS Bank Ltd {tenor}-Month {ccy} {quanto_en}Range Accrual Memory Daily Knock-Out {ki_en}{underlying_en}Equity Linked Notes (unsecured and non-guaranteed) (non-principal protected)"
+memory_zh = ""
+memory_en = ""
+quanto_zh = "Quanto"
+quanto_en = "Quanto "
+ki_zh = "及定價日觸發(歐式)"
+ki_en = "European Knock-In "
+basket_zh = "一籃子中表現最差"
+basket_en = "Worst of Basket "
+single_unsupported = true
+ccy_aliases = { CNH = "RMB" }
+normalize_brackets = true
+ignore_whitespace_en = true
+
 # DBS：最低申購為單位面額的倍數依承作幣別（USD 5、AUD 7、JPY 8 單位；沒列的幣別轉人工覆核），最低加購、最低贖回、
 # 增加贖回單位 1 倍（2026-10-15 確認，Issue #280）。說明書寫單位數與金額，parser 交出金額。CNH 4 單位（1 份 OOS 樣本，
 # 2026-10-16 確認，Issue #296）。

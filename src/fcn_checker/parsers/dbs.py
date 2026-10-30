@@ -30,7 +30,8 @@ TEMPLATE_ID = "dbs-zh-pd"
 # 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 # 7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 8：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
-PARSER_VERSION = "8"
+# 9：辨識加「商品基本資料的累積日數不比其區間下限價格」，和 DBS DACN（parsers/dbs_dacn.py）互斥（workflow #370）
+PARSER_VERSION = "9"
 # 發行機構信用評等（#240）：商品基本資料 `…(DBS Bank Ltd)。截至本中文產品說明書刊印日，發行機構之長期債務信用評等經穆迪(Moody’s)評定為Aa1、…。`、相關機構事業概況 (7) `信用評等：截至…`（同一句）
 RATINGS = (
     ratings.RatingPlace("商品基本資料", r"）。截至本中文產品說明書刊印日，發行機構之長期債務信用評等(?P<body>.+?)。"),
@@ -75,6 +76,8 @@ FULL_RATE = r"利率：1?\)?對於第1(?:~(\d{1,2}))?個觀察期間而言，利
 KI_EVENT = "下限觸發事件：若任一連結標的於定價日的參考價格小於其下限觸發價格，則視為發生下限觸發事件"
 KI_MATURITY = r"\(a\)如果未發生下限觸發事件，將適用現金結算"
 NO_KI_MATURITY = r"\(a\)若表現最差連結標的之最終價格等於或高於其執行價格，將適用現金結算"
+# 區間累計配息（DACN）累積日數定義的比較對象（去空白）：商品基本資料有它就不是 FCN 範本（workflow #370）
+RANGE_MARK = "其區間下限價格"
 # 情境分析（範本規格 §4.9）：各情境的起點（情境三的金額從最終價格表之後的「依上所示」起算）與重複寫出的值（Issue #321）
 SCENARIO_MARKS = ("有利情況：", "於到期最佳情況：", "較差情況：", "依上所示", "最大損失情況：")
 TIMES = "[Xx×]"
@@ -136,8 +139,31 @@ def sections(lines: list[Line]) -> dict[str, list[Line]]:
 # ---------------------------------------------------------------- 辨識
 
 
+@dataclass(frozen=True)
+class Skeleton:
+    """說明書骨架的辨識結果（FCN 與 DACN 範本共用，範本規格 §8 條件 1～5）：內文、段落、不成立的條件與證據。"""
+
+    lines: list[Line]
+    secs: dict[str, list[Line]]
+    failed: list[str]
+    evidence: list[Evidence]
+
+    def text(self, name: str) -> str:
+        """段落 `name` 去空白的全文；沒有這段時為空。"""
+        return TextIndex(self.secs.get(name, [])).text
+
+
 def detect(lines: Sequence[Line]) -> DetectionResult:
-    """範本辨識（範本規格 §8）：全部條件成立才是 DBS 說明書。"""
+    """範本辨識（範本規格 §8）：全部條件成立才是 DBS 說明書；累積日數比區間下限價格的是 DACN，不是本範本。"""
+    sk = skeleton(lines)
+    failed = list(sk.failed)
+    if RANGE_MARK in sk.text("商品基本資料"):
+        failed.append(f"商品基本資料的累積日數比「{RANGE_MARK}」（是區間累計配息 DACN，不是固定利率 FCN）")
+    return DetectionResult(not failed, failed, sk.evidence)
+
+
+def skeleton(lines: Sequence[Line]) -> Skeleton:
+    """第一行、封面標籤、中英文名稱、發行人與保證機構標籤、段落標題順序（範本規格 §8 條件 1～5）。"""
     text_lines = body(lines)
     secs = sections(text_lines)
     ti = TextIndex(secs["cover"])
@@ -176,7 +202,7 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     ):
         if not ok:
             failed.append(message)
-    return DetectionResult(not failed, failed, [Evidence.of(x) for x in text_lines[:2]])
+    return Skeleton(text_lines, secs, failed, [Evidence.of(x) for x in text_lines[:2]])
 
 
 # ---------------------------------------------------------------- 讀出
@@ -276,7 +302,7 @@ def _basic(fields: dict[str, ParsedField], basic: list[Line], put: Callable) -> 
     fields["underlying_table"] = table
     fields["main_price_table"] = price_table.at("main_price_table", table, PRICE_TABLE)
     fields["ki_type"] = ki_type(ti, table)
-    _table_fields(fields)
+    table_fields(fields)
 
 
 def basic_tickers(basic: list[Line]) -> ParsedField:
@@ -341,9 +367,10 @@ def memory(ti: TextIndex, name: str) -> ParsedField:
     return ParsedField.present(name, True, ti.lines_for(m.start(), m.end()))
 
 
-def ki_type(ti: TextIndex, table: ParsedField) -> ParsedField:
-    """下限觸發事件（範本規格 §4.4）：到期 (a)、下限觸發事件定義、價格表下限觸發價格欄三者須一致（說明書、投資人須知共用）。"""
-    am, none = list(ti.finditer(KI_MATURITY)), list(ti.finditer(NO_KI_MATURITY))
+def ki_type(ti: TextIndex, table: ParsedField, maturity: str = KI_MATURITY) -> ParsedField:
+    """下限觸發事件（範本規格 §4.4）：到期 (a)、下限觸發事件定義、價格表下限觸發價格欄三者須一致（說明書、投資人須知共用）。
+    `maturity` 是 KI 到期觀察的到期贖回寫法（DACN 投資人須知另有 `1.` 編號，workflow #370）。"""
+    am, none = list(ti.finditer(maturity)), list(ti.finditer(NO_KI_MATURITY))
     event = ti.text.count(KI_EVENT)
     has_col = table.ok and "ki" in table.value.columns
     if len(am) == 1 and not none and event == 1:
@@ -371,7 +398,7 @@ def table_region(lns: list[Line], start_marker: str, end_marker: str) -> list[Li
     return lns[a + 1 : b] if b is not None else []
 
 
-def _table_fields(fields: dict[str, ParsedField]) -> None:
+def table_fields(fields: dict[str, ParsedField]) -> None:
     """表1＋標的表代碼 → 標準欄位：標的、各標的價格、K／KO／KI %（表頭是唯一來源）。"""
     table, tickers = fields["underlying_table"], fields["basic_tickers"]
     if table.ok and tickers.ok and table.value.tickers == tickers.value:
@@ -468,11 +495,11 @@ def _scenario(fields: dict[str, ParsedField], sec: list[Line], put: Callable) ->
     best = ti.lines_for(a, b) if a >= 0 and b > a else []
     put("scenario_best_annual_pct", best, r"年化平均報酬率約為" + PCT, Decimal)
     currencies = _scenario_mentions(fields, ti)
-    _scenario_standard(fields)
+    scenario_standard(fields)
     return currencies
 
 
-def _scenario_standard(fields: dict[str, ParsedField]) -> None:
+def scenario_standard(fields: dict[str, ParsedField]) -> None:
     """交給共用情境規則的標準欄位（Issue #294）：情境價格表；基本假設的年期、面額、發行價格、投資金額算式的面額與發行價格、
     最大利率值，情境二年化平均報酬率，情境一～三利息算式的最大利率值（`scenario_params`）；情境三最終價格表的期初價格與
     表現最差連結標的的執行價格／下限觸發價格（`scenario_prices`）。"""
