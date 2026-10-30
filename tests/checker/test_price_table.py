@@ -206,6 +206,26 @@ def test_price_after_the_currency_word_wrapped_over_several_lines_is_joined_back
     assert table.value.currencies == ["美元", "美元"]
 
 
+def test_a_whole_price_after_the_currency_word_is_not_joined_with_the_next_row():
+    """幣別字與整數同一行（`美元100`），下一行是下一列的數字（`95`）：兩列各自的值，不接成 `10095`。"""
+    lines = [*header()]
+    for y, n, name, prices, ccy in (
+        (150, 1, "甲公司", ("100", "80", "100", "60"), "美元"),
+        (161, 2, "乙公司", ("95", "76", "95", "57"), ""),
+    ):
+        for key, p in zip(["initial", "strike", "ko", "ki"], prices, strict=True):
+            lines.append(centered(1, X[key], y, f"{ccy}{p}"))
+        lines += [
+            centered(1, X["n"], y, str(n)),
+            centered(1, X["name"], y, name),
+            centered(1, X["code"], y, f"Z{n}Z UW"),
+        ]
+    table = read("t", lines, SPEC)
+    assert table.ok, table.note
+    assert [p["initial"] for p in table.value.prices] == [Decimal(100), Decimal(95)]
+    assert [p["ki"] for p in table.value.prices] == [Decimal(60), Decimal(57)]
+
+
 def test_a_complete_price_after_the_currency_word_takes_no_more_digits():
     """幣別字在前、價格已有 4 位小數（`美元` / `123.4567`）：下一行的數字是另一個值，不接。"""
     lines = [*header()]

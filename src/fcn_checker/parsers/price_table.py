@@ -674,10 +674,14 @@ def _continues(upper: str, lower: str) -> bool:
     if not VALUE.fullmatch((upper + lower).removesuffix(".")):  # 小數點後換行（`美元` / `185.` / `250`）：先接整數部分
         return False
     if COMPLETE.fullmatch(upper):
-        # 幣別字在前的一格，數字在任意位置換行（`美元` / `1,05` / `9.22` / `05`）：下一行沒有幣別字、上一行還不到 4 位小數、
-        # 接起來最多 4 位小數才接；幣別字在後的一格（`123.45日圓`）已經完整
-        if not re.match(CURRENCY, upper) or not re.fullmatch(r"[\d,.]+", lower):
+        # 幣別字在前的一格，數字在任意位置換行（`美元` / `1,05` / `9.22` / `05`）：下一行沒有幣別字、上一行的數字還沒寫完
+        # （有小數點且不到 4 位小數，或千分位不足 3 位）、接起來最多 4 位小數才接；幣別字在後的一格（`123.45日圓`）已經完整
+        lead = re.match(CURRENCY, upper)
+        if lead is None or not re.fullmatch(r"[\d,.]+", lower):
             return False
+        number = upper[lead.end() :]
+        if "." not in number and not re.search(r",\d{0,2}$", number):
+            return False  # 整數已寫完（`美元100`、`美元1,059`）：下一行的數字是下一列的值，不接
         before, after = re.search(r"(?:\.(\d*))?$", upper), re.search(r"\.(\d*)$", upper + lower)
         return len(before[1] or "") < 4 and (after is None or len(after[1]) <= 4)
     digits = re.compile(r"\d")
