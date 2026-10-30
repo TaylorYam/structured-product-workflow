@@ -135,9 +135,9 @@ def price_headers(ctx: IssuerContext) -> list[CheckResult]:
 
 def underlying_tickers(ctx: IssuerContext) -> CheckResult:
     uls, art11 = ctx.ts.f("underlyings"), ctx.ts.f("underlyings_art11")
-    return kit.doc_check(ctx, "doc.underlying_tickers", "underlyings_art11", "第 11 項標的彭博代碼", uls, art11).compare(
-        uls.value, art11.value, fail_message="第 11 項標的表的彭博代碼須依序等於第 15 項價格表"
-    )
+    return kit.doc_check(
+        ctx, "doc.underlying_tickers", "underlyings_art11", "第 11 項標的彭博代碼", uls, art11
+    ).compare(uls.value, art11.value, fail_message="第 11 項標的表的彭博代碼須依序等於第 15 項價格表")
 
 
 # ---------------------------------------------------------------- 紅利、參與率、沒有 KO、沒有定期配息、無 KI、到期公式（§3.3、§3.5）
@@ -311,7 +311,9 @@ def _gain(participation: Decimal, close: Decimal, initial: Decimal) -> Decimal:
     return participation * (close / initial - 1)
 
 
-def _assumed(c: super_bull.Scenario, sc, case: int, initial: Decimal | None, bonus: Decimal, rate: Decimal) -> CheckResult:
+def _assumed(
+    c: super_bull.Scenario, sc, case: int, initial: Decimal | None, bonus: Decimal, rate: Decimal
+) -> CheckResult:
     """情境假設：一般 BEN 情境一 P ≥ K 且漲幅 > 紅利、情境二 P ≥ K 且漲幅 < 紅利（漲幅用期初價格；lookback 用回顧期初價格欄
     的值）；Digital 情境一 P > K、情境二 P = K。K、I 是不是價格表那一檔的值由共用 `scenario.strike` 核對。"""
     cond = sc.conditions.get(case)

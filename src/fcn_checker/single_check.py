@@ -98,11 +98,12 @@ def check_document(pairing: Sequence[CheckResult], paired: Paired | None, config
             backfill.isin,
             backfill.issue_date,
             backfill.compare_dates,
+            backfill.lookback_end_date,
             backfill.underlying_prices,
         )
         for rule in rules:
             r, cells = rule(ctx)
-            if r is not None:  # 價格欄只有期初定價 VWAP 時才是回填欄位
+            if r is not None:  # 價格欄只有期初定價 VWAP 時才是回填欄位；回顧結束日只有交這欄的上手
                 backfill_results.append(r)
             decisions.extend(cells)
         results.extend(backfill_results)

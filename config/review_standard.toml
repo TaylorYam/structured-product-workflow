@@ -7,7 +7,7 @@
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
 # 規則說明見 docs/checker/rules/review-standard.md。
 
-version = 35
+version = 36
 effective_date = 2026-10-30
 
 [distributor]
@@ -291,6 +291,25 @@ basket_zh = "一籃子股票與/或指數股票型基金"
 basket_en = "Worst of Shares and/or ETFs"
 normalize_brackets = true
 # 英文名稱在 PDF 換行處常黏字（例 Noteslinked），比對時忽略所有空白
+ignore_whitespace_en = true
+
+[issuer.ms.product_names.BEN]
+# MS BEN 商品名稱（現行版 18 份說明書推得，2026-10-30 規格確認，#376）：一般 BEN「紅利表現結構型商品」／「Bonus Enhanced Notes」，
+# Digital 沒有產品字樣「結構型商品」／「Equity Linked Notes」；依說明書 §15(3) 參與率選（0 是 Digital）。lookback 不改名稱。
+# 參考條件表 Product 是 BEN 時用這個樣板；標的寫法、比對方式同 MS FCN。
+zh = "英商摩根士丹利發行{tenor}個月期{ccy_zh}計價連結{underlying_zh}{payoff_zh}(無保證機構)(無擔保)(不保本)(下稱「本商品」)"
+en = "Morgan Stanley & Co. International Plc issuance of {tenor} Months {ccy} {payoff_en} linked to {underlying_en} (non-guaranteed)(unsecured)(non-principal protected)"
+memory_zh = ""
+memory_en = ""
+single_zh = "股票或指數股票型基金"
+single_en = "Shares or ETFs"
+basket_zh = "一籃子股票與/或指數股票型基金"
+basket_en = "Worst of Shares and/or ETFs"
+enhanced_zh = "紅利表現結構型商品"
+enhanced_en = "Bonus Enhanced Notes"
+digital_zh = "結構型商品"
+digital_en = "Equity Linked Notes"
+normalize_brackets = true
 ignore_whitespace_en = true
 
 [issuer.bnp]

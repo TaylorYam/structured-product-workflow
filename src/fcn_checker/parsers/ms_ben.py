@@ -91,11 +91,14 @@ def cash_clause(kind: Kind, lookback: bool) -> str:
         )
     else:
         payoff = "每單位面額x（100%+紅利配息率）；否則，"
-    return f"（a）現金交割：若於期末定價日時{SUBJECT[kind]}之收盤價高於或等於其{strike_word(lookback)}，則投資人領回：" + payoff
+    return (
+        f"（a）現金交割：若於期末定價日時{SUBJECT[kind]}之收盤價高於或等於其{strike_word(lookback)}，則投資人領回："
+        + payoff
+    )
 
 
 def delivery_opening(kind: Kind, lookback: bool) -> str:
-    """§15(1)(b) 開頭（投資人須知只比這一句，後面的說明寫法略有不同）。"""
+    """§15(1)(b) 開頭（無 KI 的判斷用：直接比執行價）。"""
     return (
         f"（b）實物交割：若於期末定價日時{SUBJECT[kind]}之收盤價低於其{strike_word(lookback)}，發行機構將於到期日，"
         "以支付「最終實物贖回權益」之方式贖回每單位商品："
@@ -132,10 +135,14 @@ def kind_of(zh: str | None, en: str | None) -> tuple[Kind | None, list[str]]:
     if not (zh and zh.startswith(ISSUER_ZH) and len(zh_kinds) == 1 and not any(w in zh for w in NOT_IN_ZH)):
         out.append(
             f"商品中文名稱不是以「{ISSUER_ZH}」開頭、沒有「紅利表現結構型商品」或「連結…結構型商品」、或有"
-            + "「" + "」「".join(NOT_IN_ZH) + "」"
+            + "「"
+            + "」「".join(NOT_IN_ZH)
+            + "」"
         )
     if not (en and en.startswith(NAME_EN) and len(en_kinds) == 1 and not any(w in en for w in NOT_IN_EN)):
-        out.append("商品英文名稱不是新版 MS 寫法、沒有「Bonus Enhanced Notes」或「Equity Linked Notes」、或有 Fixed Coupon、Autocallable")
+        out.append(
+            "商品英文名稱不是新版 MS 寫法、沒有「Bonus Enhanced Notes」或「Equity Linked Notes」、或有 Fixed Coupon、Autocallable"
+        )
     if not out and zh_kinds != en_kinds:
         out.append(f"中文名稱是 {KIND_LABEL[zh_kinds[0]]}、英文名稱是 {KIND_LABEL[en_kinds[0]]}，型態不同")
     return (zh_kinds[0] if not out else None), out
@@ -266,7 +273,13 @@ def _with_strike(table: ParsedField, pct: ParsedField) -> ParsedField:
         return derived(table.name, table if not table.ok else pct)
     t: price_table.PriceTable = table.value
     rows = tuple(
-        replace(r, prices={**r.prices, "strike": (r.prices["initial"] * pct.value / 100).quantize(PRICE_PLACES, ROUND_HALF_UP)})
+        replace(
+            r,
+            prices={
+                **r.prices,
+                "strike": (r.prices["initial"] * pct.value / 100).quantize(PRICE_PLACES, ROUND_HALF_UP),
+            },
+        )
         for r in t.rows
     )
     value = replace(t, columns=(*t.columns, "strike"), pcts={**t.pcts, "strike": pct.value}, rows=rows)
@@ -301,9 +314,7 @@ TITLES: dict[Kind, tuple[str, ...]] = {
     "maxi": ("較佳情況A", "較佳情況B", "最差情況", "發行機構無法履約"),
     "digital": ("較佳情況", "較佳情況", "最差情況", "發行機構無法履約"),
 }
-CONDITION = (
-    rf"假設於期末定價日時(?:籃子中表現最差的|該)連結標的[（(]([A-Z0-9./-]+)[）)]之收盤價={N}{CCY}；(回顧)?執行價={N}{CCY}"
-)
+CONDITION = rf"假設於期末定價日時(?:籃子中表現最差的|該)連結標的[（(]([A-Z0-9./-]+)[）)]之收盤價={N}{CCY}；(回顧)?執行價={N}{CCY}"
 # 一般 BEN 情境一「= N x [100% + 參與率 x (P/I - 100%)] = A」
 MAXI_AMOUNT = rf"={N}{OPT}{MUL}\[100%\+{PCT}{MUL}[（(]{N}{OPT}/{N}{OPT}-100%[）)]\]={N}{OPT}"
 # 一般 BEN 情境二、Digital 情境一二「= N x (100% + x%) = A」
@@ -399,9 +410,7 @@ def _scenarios(sec: ms_scenario.ScenarioSection, kind: Kind, prices: ParsedField
             )
             continue
         if kind == "maxi" and n == 1:
-            out.maxi = find(
-                MAXI_AMOUNT, lambda m: MaxiCalc(dec(m[1]), Decimal(m[2]), dec(m[3]), dec(m[4]), dec(m[5]))
-            )
+            out.maxi = find(MAXI_AMOUNT, lambda m: MaxiCalc(dec(m[1]), Decimal(m[2]), dec(m[3]), dec(m[4]), dec(m[5])))
         else:
             out.bonus[n] = find(BONUS_AMOUNT, lambda m: BonusCalc(dec(m[1]), Decimal(m[2]), dec(m[3])))
         out.returns[n] = find(RETURN, lambda m: ProfitReturn(dec(m[1]), dec(m[2]), Decimal(m[3]), Decimal(m[4])))
@@ -413,7 +422,9 @@ def _reprint(art16: list[Line], sec: ms_scenario.ScenarioSection, lookback: bool
     name = "scenario_table"
     first = sec.scenarios[0].lines[0] if sec.scenarios else None
     ti = TextIndex(art16)
-    found = [m for m in ti.finditer(r"▪參與率：" + PCT) if first is None or ti.lines_for(m.start(), m.end())[-1] != first]
+    found = [
+        m for m in ti.finditer(r"▪參與率：" + PCT) if first is None or ti.lines_for(m.start(), m.end())[-1] != first
+    ]
     if len(found) != 1 or first is None:
         return ParsedField.missing(name, "找不到第 16 項重印價格表（假設「參與率」之後、情境一之前）")
     a = art16.index(ti.lines_for(found[0].start(), found[0].end())[-1]) + 1
@@ -454,7 +465,9 @@ def _article16(fields: dict[str, ParsedField], kind: Kind, art16: list[Line], lo
         "scenario_params",
         [
             ScenarioParam(
-                "scenario_investment", where, value("scenario_investment", sec.denomination, f"{where}找不到總投資金額或出現多次")
+                "scenario_investment",
+                where,
+                value("scenario_investment", sec.denomination, f"{where}找不到總投資金額或出現多次"),
             ),
             ScenarioParam("scenario_tenor", where, value("scenario_tenor", sec.tenor, f"{where}找不到年期或出現多次")),
         ],
@@ -470,7 +483,9 @@ def _article16(fields: dict[str, ParsedField], kind: Kind, art16: list[Line], lo
             prices.append(ScenarioPrice(f"{tag}算式的", sc.rows.get(n), "initial", i.parsed("scenario1_initial")))
         if n == 3:
             s = Mention.of_optional_hit(f"{tag}股數算式的", sc.delivery.shares, lambda v: v.strike, sc.titles[2])
-            prices.append(ScenarioPrice(f"{tag}股數算式的", sc.rows.get(n), "strike", s.parsed("scenario3_shares_strike")))
+            prices.append(
+                ScenarioPrice(f"{tag}股數算式的", sc.rows.get(n), "strike", s.parsed("scenario3_shares_strike"))
+            )
     fields["scenario_prices"] = standard_fields.occurrences("scenario_prices", prices)
     return sec, sc
 
@@ -558,7 +573,11 @@ def read(lines: Sequence[Line]) -> MsBenTermSheet:
     # §14(9) 回顧觀察期間；§15 價格表、定義、紅利、參與率
     # §14(1) 寫「商品年期：N 個月」（FCN 是「N 個月期」）
     fields["tenor_months"] = capture(
-        "tenor_months", TextIndex(article_sub(doc, arts, 14, 1), unify_brackets=True), r"商品年期：(\d+)個月", int, whole_match=True
+        "tenor_months",
+        TextIndex(article_sub(doc, arts, 14, 1), unify_brackets=True),
+        r"商品年期：(\d+)個月",
+        int,
+        whole_match=True,
     )
     period = _lookback_period(fields, art14)
     table, has_strike = _price_table(art15)
@@ -573,7 +592,11 @@ def read(lines: Sequence[Line]) -> MsBenTermSheet:
         )
     else:
         fields["strike_pct"] = exactly_one(
-            "strike_pct", ti15, r"(?<!回顧)" + STRIKE_DEF, "§15 找不到「執行價：…期初價格的X%」", lambda m: Decimal(m[1])
+            "strike_pct",
+            ti15,
+            r"(?<!回顧)" + STRIKE_DEF,
+            "§15 找不到「執行價：…期初價格的X%」",
+            lambda m: Decimal(m[1]),
         )
     main = table if has_strike else _with_strike(table, fields["strike_pct"])
     _prices(fields, main)
@@ -607,7 +630,8 @@ def read(lines: Sequence[Line]) -> MsBenTermSheet:
         fields,
         {
             "§14(9) 回顧觀察期間": period,
-            "§15 回顧期初價格與回顧執行價定義": LOOKBACK_INITIAL_DEF in ti15.text and bool(re.search(LOOKBACK_STRIKE_DEF, ti15.text)),
+            "§15 回顧期初價格與回顧執行價定義": LOOKBACK_INITIAL_DEF in ti15.text
+            and bool(re.search(LOOKBACK_STRIKE_DEF, ti15.text)),
             "§15(1) 比回顧執行價": any(lb for _, lb in formulas["§15"]),
             "§15 價格表沒有執行價欄": table.ok and not has_strike,
         },
@@ -627,7 +651,9 @@ def read(lines: Sequence[Line]) -> MsBenTermSheet:
     sec, scenarios = _article16(fields, kind, art16, lookback)
     if fields["lookback"].ok and fields["lookback_reprint"].ok and fields["lookback_reprint"].value != lookback:
         fields["lookback"] = ParsedField.invalid(
-            "lookback", art16[:1], "lookback 寫法混雜：§16 重印表表頭" + ("寫" if not lookback else "沒寫") + "回顧期初價格"
+            "lookback",
+            art16[:1],
+            "lookback 寫法混雜：§16 重印表表頭" + ("寫" if not lookback else "沒寫") + "回顧期初價格",
         )
     # 一般 BEN 情境一的金額沒寫幣別（只有股價旁有，範本原樣）：讀不到金額時不交這一處
     currencies = [
@@ -640,7 +666,10 @@ def read(lines: Sequence[Line]) -> MsBenTermSheet:
     for n in (2,) if kind == "maxi" else (1, 2):
         bonus.append(
             Mention.of_optional_hit(
-                f"第 16 項情境{'一二'[n - 1]}「(100% + X%)」", scenarios.bonus.get(n), lambda v: v.bonus, scenarios.titles[n - 1]
+                f"第 16 項情境{'一二'[n - 1]}「(100% + X%)」",
+                scenarios.bonus.get(n),
+                lambda v: v.bonus,
+                scenarios.titles[n - 1],
             )
         )
     participation = [Mention.of_field("第 16 項假設「參與率：X%」", fields["participation_assumed"])]
@@ -659,7 +688,9 @@ def _no_autocall(fields: dict[str, ParsedField], ti10: TextIndex, arts: dict[int
     if "自動提前出場" in whole.text:
         problems.append("說明書有「自動提前出場」")
     if problems:
-        fields["no_autocall"] = ParsedField.invalid("no_autocall", ti10.lines[:3], "無法判定沒有 KO：" + "；".join(problems))
+        fields["no_autocall"] = ParsedField.invalid(
+            "no_autocall", ti10.lines[:3], "無法判定沒有 KO：" + "；".join(problems)
+        )
     else:
         fields["no_autocall"] = ParsedField("no_autocall", FieldStatus.PRESENT, True, list(opening.evidence))
     fields["opening_art10"] = derived("opening_art10", opening, True) if opening.ok else opening
