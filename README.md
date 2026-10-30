@@ -282,6 +282,8 @@ DELETE FROM mailbox.person WHERE name = 'Amy';  -- 她的別名會一起刪除
 - 版面照作業人員的範本（[#360](https://github.com/TaylorYam/structured-product-workflow/issues/360)）：表頭底色分三種：基本資料（狀態到商品、面額到發行機構）淺藍、表現（最差表現標的到 KI 種類）淺綠、交易明細淺橙；全部置中；最差表現兩位小數、K%、KI% 一位小數、最終比價日用 Excel 的簡短日期；沒有 KI 的 KI 種類留空。
 - 狀態（[#354](https://github.com/TaylorYam/structured-product-workflow/issues/354)、#358）：跌破KI（跌破下限價或比價已記 AKI 觸及）、跌破K（跌破執行價）的那一格填淺紅色，未跌破留空；已比價與無法計算照分類寫、不填色。最差表現用 100 為基數，例 −26.1% 寫 73.9。
 
+重災區掃描（[#362](https://github.com/TaylorYam/structured-product-workflow/issues/362)）：不用挑標的，「分析」選單按「重災區掃描…」另開小視窗，選最終比價日截止日（預設今天起一個月）後按「匯出 Excel…」。掃過截止日內的全部在庫商品（連結什麼標的都算），只列出目前跌破K、跌破KI 的，格式與上面的「全部商品」相同；用收盤價表最新的收盤價，沒有試算價；預設檔名 `重災區掃描_YYYYMMDD_HHMM.xlsx`，匯出後寫出列出幾檔與截止日內在庫幾檔。
+
 測試（資料全部虛構；真實資料只在本機）：
 
 - `pytest -q` 一次跑完流程與核對（`tests/checker/`）兩組測試。真的 Word 轉檔測試只在本機有 Word 時執行，CI 自動略過。
@@ -571,6 +573,8 @@ When a stock drops sharply ([#345](https://github.com/TaylorYam/structured-produ
 - The Excel file has the single sheet 「全部商品」 with no charts ([#358](https://github.com/TaylorYam/structured-product-workflow/issues/358)), one row per product: status, TDCC, days left (calendar days), final valuation date, product, worst performer, worst performance, K%, KI%, KI type, notional (whole product, original currency), currency, issuer, then the product's trade rows: 分公司1, FC1, 面額1, 分公司2, FC2, 面額2, and so on, largest amount first, with as many groups as the product with the most trade rows in that export; products without trade rows use the inventory's branch allocation (FC `-`).
 - The layout follows the operators' template ([#360](https://github.com/TaylorYam/structured-product-workflow/issues/360)): header fills in three colours: basics (status through product, notional through issuer) light blue, performance (worst performer through KI type) light green, trade rows light orange; every cell centred; worst performance with two decimals, K% and KI% with one, and the final valuation date in Excel's short date format; KI type is blank for products without KI.
 - Status ([#354](https://github.com/TaylorYam/structured-product-workflow/issues/354), #358): 跌破KI (below the KI price, or an AKI touch recorded by observation) and 跌破K (below strike) get a light-red fill in that cell only; products still above strike are left blank; 已比價 and 無法計算 keep their category with no fill. Performance is on a base of 100, so −26.1% shows as 73.9.
+
+Hotspot scan ([#362](https://github.com/TaylorYam/structured-product-workflow/issues/362)): with no underlying to pick, choose 「重災區掃描…」 in the 「分析」 menu to open a small window, set the final-valuation cutoff (default: one month from today), and press 「匯出 Excel…」. It scans every product on book within the cutoff (whatever it links) and lists only those currently 跌破K or 跌破KI, in the same format as 「全部商品」 above. It uses the latest closes in the close table, with no trial prices. The default file name is `重災區掃描_YYYYMMDD_HHMM.xlsx`, and after the export the window reports how many products were listed and how many on book were within the cutoff.
 
 Tests (synthetic data only; real data stays local):
 

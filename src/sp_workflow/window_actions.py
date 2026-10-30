@@ -58,7 +58,14 @@ from sp_workflow.eln_whitelist import (
     read_whitelist,
 )
 from sp_workflow.exits import ExitList, load_exits
-from sp_workflow.exposure import Choice, ExposureReceipt, export_exposure, load_choices
+from sp_workflow.exposure import (
+    Choice,
+    ExposureReceipt,
+    HotspotReceipt,
+    export_exposure,
+    export_hotspots,
+    load_choices,
+)
 from sp_workflow.legacy_backfill import BackfillReceipt, LegacyBackfillError, backfill_legacy
 from sp_workflow.lifecycle import (
     OBSERVATION,
@@ -666,6 +673,12 @@ def export_underlying_exposure(
     """選定標的、最終比價日不晚於 `until` 的在庫商品曝險分析，寫成 Excel（#345）；`trial` 是試算價（#356）。只讀資料庫。"""
     with connect(settings) as conn:
         return export_exposure(conn, codes, until, path, trial=trial)
+
+
+def export_hotspot_scan(settings: ConnectionSettings, until: dt.date, path: Path) -> HotspotReceipt:
+    """重災區掃描：最終比價日不晚於 `until` 的全部在庫商品裡，目前跌破K、跌破KI 的寫成 Excel（#362）。只讀資料庫。"""
+    with connect(settings) as conn:
+        return export_hotspots(conn, until, path)
 
 
 # ---------- 信箱維護 ----------

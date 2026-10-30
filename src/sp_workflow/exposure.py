@@ -1,4 +1,5 @@
-"""標的曝險分析（#345、#352、#354、#356、#358、#360）：選定的標的大跌時，近期到期、連結它們的在庫商品目前跌破了沒有。
+"""標的曝險分析（#345、#352、#354、#356、#358、#360）：選定的標的大跌時，近期到期、連結它們的在庫商品目前跌破了沒有；
+重災區掃描（#362）不挑標的，列出近期到期、目前跌破的全部在庫商品。
 
 只呈現目前的狀態，不做估損、配息、淨損益或情境模擬等任何預估金額（#352）；Excel 只有「全部商品」一個分頁（#358）。
 
@@ -63,6 +64,7 @@ _UNDERLYING_COLUMNS = ", ".join(f"underlying_{n}" for n in range(1, MAX_LEGS + 1
 KI_BROKEN = "跌破KI"  # 全部商品的狀態（#354）
 K_BROKEN = "跌破K"
 INTACT = ""  # 未跌破留空（#358）
+BROKEN = (K_BROKEN, KI_BROKEN)  # 填淺紅色、重災區掃描列出的狀態（#362）
 
 
 @dataclass(frozen=True)
@@ -227,26 +229,26 @@ def load_choices(conn: psycopg.Connection) -> list[Choice]:
 
 def load_positions(
     conn: psycopg.Connection,
-    codes: Iterable[str],
+    codes: Iterable[str] | None,
     until: dt.date,
     *,
     trial: Mapping[str, Decimal] | None = None,
     today: dt.date | None = None,
 ) -> list[Position]:
-    """在庫、連結任一 `codes`、最終比價日不晚於 `until` 的商品，依最終比價日、TDCC 排序。
+    """在庫、連結任一 `codes`（None 是不限標的，#362）、最終比價日不晚於 `until` 的商品，依最終比價日、TDCC 排序。
 
     `trial` 裡的代碼用試算價、當作 `today`（預設今天）的價格，其他用最新收盤價（#356）。
     """
     trial = trial or {}
     today = today or dt.date.today()
-    wanted = sorted(set(codes))
+    wanted = None if codes is None else sorted(set(codes))
     rows = conn.execute(
         "SELECT p.tdcc, p.product, p.issuer, p.currency, p.final_valuation_date, p.barrier_type, p.strike_date,"
         " s.ki, c.status, c.reason, p.strike_pct, p.ki_pct FROM workflow.product p"
         " LEFT JOIN workflow.pricing_status s ON s.tdcc = p.tdcc LEFT JOIN workflow.check_terms c ON c.tdcc = p.tdcc"
-        f" WHERE p.final_valuation_date <= %s AND ARRAY[{_UNDERLYING_COLUMNS}] && %s::text[]"
+        f" WHERE p.final_valuation_date <= %s AND (%s::text[] IS NULL OR ARRAY[{_UNDERLYING_COLUMNS}] && %s::text[])"
         " ORDER BY p.final_valuation_date, p.tdcc",
-        (until, wanted),
+        (until, wanted, wanted),
     ).fetchall()
     statuses = lifecycle_status(conn, [row[0] for row in rows])
     rows = [row for row in rows if statuses[row[0]].status == IN_STOCK]
@@ -398,7 +400,46 @@ def export_exposure(
         positions = load_positions(conn, codes, until, trial=trial, today=today)
     results = [assess(p, today) for p in positions]
     counts = {category: sum(r.category == category for r in results) for category in CATEGORIES}
-    slots = max((len(p.holdings) for p in positions), default=0) or 1  # 交易明細最多那檔有幾筆
+    _write(results, path, today)
+    return ExposureReceipt(path, len(results), counts)
+
+
+@dataclass(frozen=True)
+class HotspotReceipt:
+    path: Path
+    scanned: int  # 截止日內的在庫商品檔數
+    counts: Mapping[str, int]  # 列出的跌破K、跌破KI 各幾檔
+
+    @property
+    def count(self) -> int:
+        return sum(self.counts.values())
+
+
+def hotspot_name(now: dt.datetime | None = None) -> str:
+    """重災區掃描存檔視窗預設的檔名（#362）。"""
+    return f"重災區掃描_{now or dt.datetime.now():%Y%m%d_%H%M}.xlsx"
+
+
+def export_hotspots(
+    conn: psycopg.Connection, until: dt.date, path: Path, *, today: dt.date | None = None
+) -> HotspotReceipt:
+    """重災區掃描（#362）：不挑標的，最終比價日不晚於 `until` 的全部在庫商品裡，目前跌破K、跌破KI 的寫成 Excel。
+
+    格式同 `export_exposure` 的「全部商品」；用最新收盤價，沒有試算價。
+    """
+    today = today or dt.date.today()
+    with conn.transaction():  # 每個 SELECT 看同一個時間點
+        conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        positions = load_positions(conn, None, until, today=today)
+    results = [assess(p, today) for p in positions]
+    broken = [r for r in results if r.status in BROKEN]
+    _write(broken, path, today)
+    return HotspotReceipt(path, len(results), {status: sum(r.status == status for r in broken) for status in BROKEN})
+
+
+def _write(results: Sequence[Assessed], path: Path, today: dt.date) -> None:
+    """「全部商品」一個分頁；分公司N／FCN／面額N 的組數照交易明細最多那檔。"""
+    slots = max((len(r.position.holdings) for r in results), default=0) or 1
     columns = (*_COLUMNS, *(c for n in range(1, slots + 1) for c in _holding_columns(n)))
     book = table_book(
         ALL,
@@ -409,7 +450,6 @@ def export_exposure(
     )
     _style(book.active, columns)
     save_export(book, path)
-    return ExposureReceipt(path, len(results), counts)
 
 
 def _row(r: Assessed, today: dt.date) -> tuple[object, ...]:
@@ -450,5 +490,5 @@ def _style(sheet, columns: Sequence[_Column]) -> None:
             if column.number_format and cell.value is not None and not isinstance(cell.value, str):
                 cell.number_format = column.number_format
             cell.alignment = CENTER
-        if row[0].value in (KI_BROKEN, K_BROKEN):
+        if row[0].value in BROKEN:
             row[0].fill = BROKEN_FILL
