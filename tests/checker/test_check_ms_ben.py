@@ -203,6 +203,43 @@ def test_investor_sheet_difference_is_reported(tmp_path, where, old, new, rule_i
     assert flagged(iis.report, rule_id), problems(iis.report)
 
 
+def delivery(report):
+    (r,) = [r for r in rule(report, "doc.redemption_formula") if r.field == "delivery_clause"]
+    return r
+
+
+@pytest.mark.parametrize(
+    ("spec", "old", "new"),
+    [
+        (M0, None, None),  # 合成投資人須知照樣本寫句號
+        (M0, "後之數。非整數", "後之數，非整數"),  # 和說明書一樣寫逗號
+        (DL, None, None),
+    ],
+    ids=["full-stop", "comma-as-term-sheet", "digital-lookback"],
+)
+def test_investor_sheet_delivery_allows_only_the_known_full_stop(tmp_path, spec, old, new):
+    """BEN-376-09：(b) 股數一句的句號／逗號不判錯。"""
+    edits = [Edit(old, new, "iis.redeem")] if old else []
+    _, iis = check_pair(tmp_path, spec, edits=edits)
+    assert delivery(iis.report).status == S.PASS, problems(iis.report)
+
+
+@pytest.mark.parametrize(
+    ("old", "new"),
+    [
+        ("後之數。非整數", "後之數；非整數"),  # 同一處換成其他標點
+        ("連結標的。如該數目", "連結標的，如該數目"),  # 同樣的句號／逗號互換，但在 (b) 的別句
+        ("轉換匯率），並以", "轉換匯率）。並以"),
+        ("並以計價幣別支付", "並以美元支付"),
+    ],
+    ids=["other-mark-same-place", "swap-other-sentence", "swap-last-sentence", "wording"],
+)
+def test_investor_sheet_delivery_other_differences_are_mismatches(tmp_path, old, new):
+    """BEN-376-09 的容許只限那一處：其他標點或文字不同 → 不一致。"""
+    _, iis = check_pair(tmp_path, M0, edits=[Edit(old, new, "iis.redeem")])
+    assert delivery(iis.report).status == S.MISMATCH, problems(iis.report)
+
+
 @pytest.mark.parametrize(
     "spec",
     [BenSpec(count=1), BenSpec(count=4), BenSpec(kind="digital", count=2), BenSpec(currency_zh="日圓")],

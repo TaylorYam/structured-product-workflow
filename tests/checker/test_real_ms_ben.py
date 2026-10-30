@@ -12,6 +12,8 @@ import pytest
 
 from fcn_checker.extraction import extract_lines
 from fcn_checker.issuers import MS_BEN, detect, detect_iis
+from fcn_checker.parsers import ms_ben
+from fcn_checker.parsers.ms_ben_iis import DELIVERY_PUNCTUATION, delivery_as_term_sheet
 from fcn_checker.schema import CheckStatus as S
 from fcn_checker.schema import FieldStatus
 from real_data import BEN, requires
@@ -77,4 +79,7 @@ def test_samples_follow_the_ben_terms(documents):
         if iis and sheet is not None:
             ts = term_sheets[sheet.f("isin").value]
             assert sheet.f("maturity_formula").value == (ts.kind, ts.f("lookback").value)
+            text = sheet.f("delivery_clause").value
+            assert DELIVERY_PUNCTUATION[1] in text  # BEN-376-09：樣本都寫句號
+            assert delivery_as_term_sheet(text) == ms_ben.delivery_clause(ts.kind, ts.f("lookback").value)
             assert sheet.f("bonus").value == ts.f("coupon_pa_pct").value

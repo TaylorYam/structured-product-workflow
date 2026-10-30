@@ -8,7 +8,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
-from ..parsers import ms_ben
+from ..parsers import ms_ben, ms_ben_iis
 from ..schema import CheckResult, Item
 from . import super_bull
 from .iis import NO_TERM_SHEET, IisIssuerContext, ts_unavailable
@@ -29,8 +29,10 @@ def _vs_term_sheet(
     ts_fields: tuple[str, ...],
     shown: Callable[[Any], Any] = lambda v: v,
     fail_message: str = "",
+    expect: Callable[[Any], Any] = lambda v: v,
 ) -> CheckResult:
-    """投資人須知的 `field` = 同商品說明書 `ts_fields` 的值（多個時合成 tuple）；`shown` 把兩邊轉成結果上的寫法。"""
+    """投資人須知的 `field` = 同商品說明書 `ts_fields` 的值（多個時合成 tuple）經 `expect` 推得的值；`shown` 把兩邊轉成結果上的
+    寫法。"""
     pf = ctx.sheet.f(field)
     check = Check(rid, field, Item.term_sheet(name), ctx.document).needs(pf)
     if (problem := check.blocked) is not None:
@@ -41,7 +43,7 @@ def _vs_term_sheet(
     if not all(x.ok for x in found):
         why = f"同商品說明書讀不到「{name}」，無法比對"
         return ts_unavailable(rid, field, name, why, shown(pf.value), document=ctx.document)
-    expected = found[0].value if len(found) == 1 else tuple(x.value for x in found)
+    expected = expect(found[0].value if len(found) == 1 else tuple(x.value for x in found))
     return check.compare(shown(expected), shown(pf.value), fail_message=fail_message)
 
 
@@ -61,5 +63,16 @@ def run_all(ctx: IisIssuerContext) -> list[CheckResult]:
             ("ben_kind", "lookback"),
             _formula,
             "投資人須知的到期公式須和說明書 §15(1) 同一型態、同樣有沒有 lookback",
+        ),
+        # (b) 實物交割：逐字 = 說明書該型態的寫法，只容許股數一句的句號／逗號（BEN-376-09，`ms_ben_iis.DELIVERY_PUNCTUATION`）
+        _vs_term_sheet(
+            ctx,
+            "doc.redemption_formula",
+            "delivery_clause",
+            "贖回價金之計算 1) (b) 實物交割",
+            ("ben_kind", "lookback"),
+            ms_ben_iis.delivery_as_term_sheet,
+            "投資人須知 (b) 須和說明書 §15(1)(b) 逐字相同（只容許股數一句「後之數。非整數」的句號）",
+            expect=lambda v: ms_ben.delivery_clause(*v),
         ),
     ]
