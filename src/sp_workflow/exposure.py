@@ -35,7 +35,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from openpyxl.styles import Alignment, Color, PatternFill
+from openpyxl.styles import Alignment, PatternFill
 
 from sp_workflow.check_terms import NO_BARRIER
 from sp_workflow.file_tools import excel_value, save_export, table_book, text_cell
@@ -320,34 +320,47 @@ def _latest_closes(conn: psycopg.Connection, codes: Iterable[str]) -> dict[str, 
 # ---------------------------------------------------------------- 匯出
 
 ALL = "全部商品"
-# 表頭底色照作業人員的範本（#360）：主題色淡 60%，基本資料淺藍、表現淺綠、交易明細淺橙
-BASIC_FILL = PatternFill("solid", fgColor=Color(theme=4, tint=0.5999938962981048))
-PERFORMANCE_FILL = PatternFill("solid", fgColor=Color(theme=6, tint=0.5999938962981048))
-HOLDING_FILL = PatternFill("solid", fgColor=Color(theme=9, tint=0.5999938962981048))
-_COLUMNS = (  # 表頭、欄寬、表頭底色
-    ("狀態", 8.7, BASIC_FILL),
-    ("TDCC", 14.1, BASIC_FILL),
-    ("剩餘天數", 13.3, BASIC_FILL),
-    ("最終比價日", 15.9, BASIC_FILL),
-    ("商品", 10.4, BASIC_FILL),
-    ("最差表現標的", 18.4, PERFORMANCE_FILL),
-    ("最差表現", 13.3, PERFORMANCE_FILL),
-    ("K%", 7.4, PERFORMANCE_FILL),
-    ("KI%", 8.3, PERFORMANCE_FILL),
-    ("KI種類", 11, PERFORMANCE_FILL),
-    ("面額", 11, BASIC_FILL),
-    ("幣別", 8.6, BASIC_FILL),
-    ("發行機構", 13.3, BASIC_FILL),
+# 表頭底色照作業人員的範本（#360）：Office 2007 佈景主題色「較淺 60%」，寫成顏色值，不靠檔案的佈景主題
+BASIC_FILL = PatternFill("solid", fgColor="B8CCE4")  # 基本資料：淺藍
+PERFORMANCE_FILL = PatternFill("solid", fgColor="D7E4BC")  # 表現：淺綠
+HOLDING_FILL = PatternFill("solid", fgColor="FCD5B4")  # 交易明細：淺橙
+DATE, INDEX, PERCENT, MONEY = "mm-dd-yy", "0.00", "0.0", "#,##0"  # 簡短日期、100 為基數的表現、K%／KI%、千分位
+
+
+@dataclass(frozen=True)
+class _Column:
+    name: str
+    width: float
+    fill: PatternFill
+    number_format: str | None = None
+
+
+_COLUMNS = (
+    _Column("狀態", 8.7, BASIC_FILL),
+    _Column("TDCC", 14.1, BASIC_FILL),
+    _Column("剩餘天數", 13.3, BASIC_FILL),
+    _Column("最終比價日", 15.9, BASIC_FILL, DATE),
+    _Column("商品", 10.4, BASIC_FILL),
+    _Column("最差表現標的", 18.4, PERFORMANCE_FILL),
+    _Column("最差表現", 13.3, PERFORMANCE_FILL, INDEX),
+    _Column("K%", 7.4, PERFORMANCE_FILL, PERCENT),
+    _Column("KI%", 8.3, PERFORMANCE_FILL, PERCENT),
+    _Column("KI種類", 11, PERFORMANCE_FILL),
+    _Column("面額", 11, BASIC_FILL, MONEY),  # 範本沒設寬度，同面額N
+    _Column("幣別", 8.6, BASIC_FILL),
+    _Column("發行機構", 13.3, BASIC_FILL),
 )
-ALL_HEADERS = tuple(name for name, _, _ in _COLUMNS)
-_HOLDING_COLUMNS = (("分公司", 12), ("FC", 7.9), ("面額", 11))  # 每組交易明細
-FORMATS = {
-    "最終比價日": "mm-dd-yy",
-    "最差表現": "0.00",
-    "K%": "0.0",
-    "KI%": "0.0",
-    "面額": "#,##0",
-}  # 依表頭（去掉組號）
+
+
+def _holding_columns(n: int) -> tuple[_Column, ...]:
+    """第 n 組交易明細：分公司n、FCn、面額n。"""
+    return (
+        _Column(f"分公司{n}", 12, HOLDING_FILL),
+        _Column(f"FC{n}", 7.9, HOLDING_FILL),
+        _Column(f"面額{n}", 11, HOLDING_FILL, MONEY),
+    )
+
+
 CENTER = Alignment(horizontal="center", vertical="center")
 BROKEN_FILL = PatternFill("solid", fgColor="FFC7CE")  # 跌破K、跌破KI 的狀態格：淺紅色（Excel 內建的淺紅色填滿）
 
@@ -386,20 +399,15 @@ def export_exposure(
     results = [assess(p, today) for p in positions]
     counts = {category: sum(r.category == category for r in results) for category in CATEGORIES}
     slots = max((len(p.holdings) for p in positions), default=0) or 1  # 交易明細最多那檔有幾筆
-    holdings = [(f"{name}{n}", width, HOLDING_FILL) for n in range(1, slots + 1) for name, width in _HOLDING_COLUMNS]
-    columns = (*_COLUMNS, *holdings)
+    columns = (*_COLUMNS, *(c for n in range(1, slots + 1) for c in _holding_columns(n)))
     book = table_book(
         ALL,
-        [name for name, _, _ in columns],
+        [c.name for c in columns],
         ([excel_value(value) for value in _row(r, today)] for r in results),
-        widths=[width for _, width, _ in columns],
+        widths=[c.width for c in columns],
         auto_filter=True,
     )
-    sheet = book.active
-    for cell, (_, _, fill) in zip(sheet[1], columns, strict=True):
-        cell.fill = fill
-        cell.alignment = CENTER
-    _style(sheet)
+    _style(book.active, columns)
     save_export(book, path)
     return ExposureReceipt(path, len(results), counts)
 
@@ -431,14 +439,16 @@ def _index(performance: Decimal | None) -> Decimal | None:
     return None if performance is None else 100 + performance * 100
 
 
-def _style(sheet) -> None:
-    """依表頭設數字與日期格式、置中；跌破K、跌破KI 只有狀態那一格填淺紅色。"""
-    formats = {cell.column: FORMATS.get(str(cell.value).rstrip("0123456789")) for cell in sheet[1]}
+def _style(sheet, columns: Sequence[_Column]) -> None:
+    """表頭底色、數字與日期格式、全部置中；跌破K、跌破KI 只有狀態那一格填淺紅色。"""
+    for cell, column in zip(sheet[1], columns, strict=True):
+        cell.fill = column.fill
+        cell.alignment = CENTER
     for row in sheet.iter_rows(min_row=2):
-        for cell in row:
+        for cell, column in zip(row, columns, strict=True):
             text_cell(cell)
-            if formats[cell.column] and cell.value is not None:
-                cell.number_format = formats[cell.column]
+            if column.number_format and cell.value is not None and not isinstance(cell.value, str):
+                cell.number_format = column.number_format
             cell.alignment = CENTER
         if row[0].value in (KI_BROKEN, K_BROKEN):
             row[0].fill = BROKEN_FILL

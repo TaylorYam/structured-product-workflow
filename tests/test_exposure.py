@@ -304,10 +304,9 @@ def test_export_is_one_sheet_of_every_product(seeded, tmp_path: Path) -> None:
         "#,##0",
     )
 
-    colors = [(cell.fill.fgColor.theme, round(cell.fill.fgColor.tint, 1)) for cell in sheet[1]]
-    assert colors == [(4, 0.6)] * 5 + [(6, 0.6)] * 5 + [(4, 0.6)] * 3 + [(9, 0.6)] * 9, (
-        "基本資料、表現、交易明細三種底色"
-    )
+    colors = [cell.fill.fgColor.rgb[-6:] for cell in sheet[1]]
+    blue, green, orange = "B8CCE4", "D7E4BC", "FCD5B4"
+    assert colors == [blue] * 5 + [green] * 5 + [blue] * 3 + [orange] * 9, "基本資料、表現、交易明細三種底色"
     cells = [cell for row in sheet.iter_rows(max_row=sheet.max_row) for cell in row]
     assert {(c.alignment.horizontal, c.alignment.vertical) for c in cells} == {("center", "center")}, "全部置中"
     assert round(sheet.column_dimensions["F"].width, 1) == 18.4, "欄寬照範本"
