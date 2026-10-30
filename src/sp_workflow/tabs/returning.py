@@ -1,5 +1,7 @@
 """「5 放回」分頁：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾；登入了資料庫時同時留步驟紀錄（#151）。
-放回完成後把通過的 TDCC 帶到「6 寄信草稿」（#281）。"""
+放回完成後把通過的 TDCC 帶到「6 寄信草稿」（#281）。
+「回填通用」（#364）：選一份 ELN 通用回補格式的 Excel，以 TDCC 從資料庫回填、另存新檔（`sp_workflow.generic_backfill`）；
+結果表換成回填通用的欄，再放回時換回來。"""
 
 from __future__ import annotations
 
@@ -8,11 +10,22 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import Background, HintBar, NextButton
+from sp_workflow.generic_backfill import GenericReceipt
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.returning import PENDING_SUFFIX, ReturnReceipt
 from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, Tab, ask_dir, record_note, set_if_chosen
-from sp_workflow.window_actions import ReturnResult, run_return
+from sp_workflow.window_actions import ReturnResult, fill_generic, run_return
+
+RETURN_COLUMNS = (("tdcc", "TDCC", 130), ("ts", "TS", 70), ("iis", "IIS", 70), ("reason", "原因", 450))
+GENERIC_COLUMNS = (
+    ("tdcc", "TDCC", 130),
+    ("product", "Product", 100),
+    ("filled", "回填（格）", 80),
+    ("reason", "原因", 450),
+)
+GENERIC_MEMORY = "generic_backfill"  # 回填通用上次選的資料夾
 
 
 class ReturnTab(Tab):
@@ -23,13 +36,15 @@ class ReturnTab(Tab):
         db: DatabaseLogin,
         on_returned: Callable[[Sequence[str]], bool],
         on_next: Callable[[], None],
+        config_paths: Callable[[], ConfigPaths],
         *,
         background: BackgroundFactory = Background,
     ) -> None:
-        """on_returned 把通過的 TDCC 帶到寄信草稿頁、回傳是否帶入；on_next 切到寄信草稿頁（#281）。"""
-        columns = (("tdcc", "TDCC", 130), ("ts", "TS", 70), ("iis", "IIS", 70), ("reason", "原因", 450))
-        super().__init__(notebook, "放回", columns, db, background)
+        """on_returned 把通過的 TDCC 帶到寄信草稿頁、回傳是否帶入；on_next 切到寄信草稿頁（#281）；
+        config_paths 給回填通用讀參考條件表格式（#364）。"""
+        super().__init__(notebook, "放回", RETURN_COLUMNS, db, background)
         self.memory = memory
+        self.config_paths = config_paths
         self.on_returned = on_returned
         self.batch_var = tk.StringVar(value=memory.load().get("batch", ""))
         self.result_var = tk.StringVar()
@@ -49,6 +64,8 @@ class ReturnTab(Tab):
         self.result_area(body, row)
         self.start_button = ttk.Button(self.buttons, text="放回資料夾", command=self.start, style="Primary.TButton")
         self.start_button.pack(side=tk.LEFT)
+        self.generic_button = ttk.Button(self.buttons, text="回填通用", command=self.fill_generic)
+        self.generic_button.pack(side=tk.LEFT, padx=(12, 0))
         self.next_button = NextButton(self.buttons, "下一步：寄信草稿 →", on_next)
         self.place_table(3)
         for var in (self.batch_var, self.result_var):
@@ -95,6 +112,7 @@ class ReturnTab(Tab):
         def starting() -> None:
             self.memory.remember(batch=str(batch))
             self.next_button.withdraw()
+            self.use_columns(RETURN_COLUMNS)
 
         self.runner.run_maybe(  # 沒有連線設定或取消登入：照樣放回，不留步驟紀錄
             lambda settings: run_return(settings, batch, result),
@@ -105,7 +123,56 @@ class ReturnTab(Tab):
         )
 
     def _busy(self, busy: bool) -> None:
-        self.start_button.configure(state=tk.DISABLED if busy else tk.NORMAL)
+        for button in (self.start_button, self.generic_button):
+            button.configure(state=tk.DISABLED if busy else tk.NORMAL)
+
+    def fill_generic(self) -> None:
+        """回填通用（#364）：選 ELN 通用回補格式的 Excel 與存檔位置（預設在原檔旁、檔名加「_回填」），在背景回填。"""
+        if self.working:
+            return
+        chosen = filedialog.askopenfilename(
+            title="選擇要回填的 ELN 通用回補格式",
+            initialdir=self.memory.load().get(GENERIC_MEMORY) or None,
+            filetypes=[("Excel", "*.xlsx"), ("全部檔案", "*.*")],
+        )
+        if not chosen:
+            return
+        source = Path(chosen)
+        self.memory.remember(**{GENERIC_MEMORY: str(source.parent)})
+        saved = filedialog.asksaveasfilename(
+            title="回填結果存成",
+            initialdir=str(source.parent),
+            initialfile=f"{source.stem}_回填.xlsx",
+            defaultextension=".xlsx",
+            filetypes=[("Excel 活頁簿", "*.xlsx")],
+        )
+        if not saved:
+            return
+        target, paths = Path(saved), self.config_paths()
+
+        def starting() -> None:
+            self.next_button.withdraw()
+            self.use_columns(GENERIC_COLUMNS)
+
+        self.runner.run_action(
+            lambda settings: fill_generic(settings, source, target, paths), "回填中…", self._filled, before=starting
+        )
+
+    def _filled(self, receipt: GenericReceipt) -> None:
+        for line in receipt.lines:
+            self.add_row(
+                (line.tdcc, line.product, str(line.filled), "；".join(line.reasons)), problem=bool(line.reasons)
+            )
+        kpis = (
+            ("回填（格）", receipt.cells, False),
+            ("資料庫沒有（檔）", receipt.not_found, receipt.not_found > 0),
+            ("有格子沒填或不一致（檔）", receipt.with_reasons, receipt.with_reasons > 0),
+        )
+        self.finish(
+            kpis,
+            f"完成：{len(receipt.lines)} 檔，回填 {receipt.cells} 格；資料庫沒有的 {receipt.not_found} 檔維持空白。"
+            f"回填結果：{receipt.path}",
+        )
 
     def _done(self, result: ReturnResult) -> None:
         recorded, receipt = result.recorded, result.receipt

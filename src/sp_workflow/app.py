@@ -8,7 +8,7 @@
    1、2 匯入完成後重算還沒鎖住的商品的核對條件（#88），逐檔顯示狀態；交叉比對的差異可以在這兩頁放行。
 3. 準備：貼 TDCC、選輸出位置，產生批次資料夾與準備清單。
 4. 核對：參考條件表＋說明書／投資人須知 PDF 的預覽、核對與儲存（`fcn_checker.panel.CheckTab`）。
-5. 放回：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾。
+5. 放回：選批次資料夾與核對結果檔，把核對通過的 TS／IIS 複製回商品資料夾；「回填通用」以 TDCC 從資料庫回填 ELN 通用回補格式（#364）。
 6. 寄信草稿：貼核對通過的 TDCC，在 Outlook 建 TS／IIS 草稿給承作的 FC（#29）。
 7. 人工維護：按「檢查」列出還沒鎖住、缺資料的商品（缺的格子淺紅底），或輸入 TDCC 打開任何一檔，
    在右邊補齊、修改資料庫裡的商品條件與交易明細列的值；已鎖住的照更正的規則存檔（#55、#115、#116）。
@@ -287,6 +287,7 @@ class PanelWindow:
             db,
             on_returned=lambda tdccs: self.mail.receive_tdccs(tdccs),
             on_next=lambda: self.notebook.select(self.mail.frame),
+            config_paths=lambda: self.session.paths,
             background=background,
         )
         self.mail = MailDraftTab(self.notebook, memory, db, self.root_folder, background=background)
