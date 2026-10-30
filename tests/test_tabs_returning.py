@@ -210,7 +210,7 @@ def test_generic_backfill_asks_for_files_and_shows_its_own_columns(
 
     monkeypatch.setattr(sp_workflow.tabs.returning, "fill_generic", fill)
 
-    page.fill_generic()
+    page.start_generic()
 
     assert calls == [(source, target)]
     assert saving[0]["initialdir"] == str(source.parent) and saving[0]["initialfile"] == "ELN通用_回填.xlsx"
@@ -233,12 +233,22 @@ def test_generic_backfill_asks_for_files_and_shows_its_own_columns(
     )
 
 
+def test_a_handed_check_result_switches_back_to_return_columns(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    page = window.returning
+    page.use_columns(sp_workflow.tabs.returning.GENERIC_COLUMNS)
+
+    page.receive(tmp_path / "核對結果.xlsx", None)
+
+    assert page.table["columns"] == ("tdcc", "ts", "iis", "reason")
+
+
 def test_cancelling_the_save_dialog_does_nothing(master, tmp_path: Path, monkeypatch, immediate) -> None:
     window = new_window(master, tmp_path, background=immediate, logged_in=True)
     monkeypatch.setattr(filedialog, "askopenfilename", lambda **kw: str(tmp_path / "ELN通用.xlsx"))
     monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **kw: "")
     monkeypatch.setattr(sp_workflow.tabs.returning, "fill_generic", lambda *a: pytest.fail("取消存檔就不回填"))
 
-    window.returning.fill_generic()
+    window.returning.start_generic()
 
     assert window.returning.table["columns"] == ("tdcc", "ts", "iis", "reason")

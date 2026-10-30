@@ -196,3 +196,30 @@ def test_window_action_reads_the_reference_format(pg, pg_settings, tmp_path: Pat
     receipt = fill_generic(pg_settings, source, tmp_path / "out.xlsx", PATHS)
 
     assert lines(receipt) == {D: (13, ())} and receipt.path == tmp_path / "out.xlsx"
+
+
+@pytest.mark.db
+def test_error_values_and_merged_cells_are_filled_and_the_source_may_be_overwritten(pg, tmp_path: Path) -> None:
+    filled(pg, A)
+    source = write_sheet(tmp_path / "通用.xlsx", [sheet_row(A), sheet_row(B)])
+    book = openpyxl.load_workbook(source)
+    sheet = book.active
+    sheet["E2"] = "#VALUE!"  # 公式算錯留下的錯誤值
+    sheet.merge_cells("L2:M2")  # 比價日_1、比價日_2 合併
+    book.save(source)
+
+    receipt = backfill_generic(pg, source, source, FMT)
+
+    assert lines(receipt)[A] == (13, ())
+    out = read_back(source)
+    assert out[A]["ISIN Code"] == "XS0000000001", "錯誤值算空白"
+    assert (out[A]["比價日_1"], out[A]["比價日_2"]) == (dt.datetime(2026, 11, 23), "-"), "合併儲存格拆開後各自回填"
+    assert not openpyxl.load_workbook(source).active.merged_cells.ranges
+
+
+@pytest.mark.db
+def test_a_sheet_without_the_tdcc_header_is_refused(pg, tmp_path: Path) -> None:
+    source = write_sheet(tmp_path / "通用.xlsx", [sheet_row(A)], [h for h in HEADERS if h != "TDCC Code"])
+
+    with pytest.raises(GenericBackfillError, match=r"通用.xlsx 第一張工作表「工作表2」前 10 列找不到「TDCC Code」欄名"):
+        backfill_generic(pg, source, tmp_path / "out.xlsx", FMT)

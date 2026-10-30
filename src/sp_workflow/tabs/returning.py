@@ -64,7 +64,7 @@ class ReturnTab(Tab):
         self.result_area(body, row)
         self.start_button = ttk.Button(self.buttons, text="放回資料夾", command=self.start, style="Primary.TButton")
         self.start_button.pack(side=tk.LEFT)
-        self.generic_button = ttk.Button(self.buttons, text="回填通用", command=self.fill_generic)
+        self.generic_button = ttk.Button(self.buttons, text="回填通用", command=self.start_generic)
         self.generic_button.pack(side=tk.LEFT, padx=(12, 0))
         self.next_button = NextButton(self.buttons, "下一步：寄信草稿 →", on_next)
         self.place_table(3)
@@ -74,6 +74,7 @@ class ReturnTab(Tab):
     def receive(self, result: Path, batch: Path | None) -> None:
         """核對存檔後帶入剛存的核對結果檔與這批的批次資料夾（#76）；不切頁、不自動放回。"""
         self.restart()  # 換了一批要放回的，上一次的結果收起來
+        self.use_columns(RETURN_COLUMNS)  # 上一次是回填通用時換回放回的欄
         self.next_button.withdraw()
         if batch is not None:
             self.batch_var.set(str(batch))
@@ -126,7 +127,7 @@ class ReturnTab(Tab):
         for button in (self.start_button, self.generic_button):
             button.configure(state=tk.DISABLED if busy else tk.NORMAL)
 
-    def fill_generic(self) -> None:
+    def start_generic(self) -> None:
         """回填通用（#364）：選 ELN 通用回補格式的 Excel 與存檔位置（預設在原檔旁、檔名加「_回填」），在背景回填。"""
         if self.working:
             return
