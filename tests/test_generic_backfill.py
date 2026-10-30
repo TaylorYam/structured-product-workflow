@@ -101,7 +101,7 @@ def lines(receipt) -> dict[str, tuple[int, tuple[str, ...]]]:
 @pytest.mark.db
 def test_isin_and_compare_dates_are_filled_and_unknown_products_stay_blank(pg, tmp_path: Path) -> None:
     filled(pg, A)
-    source = write_sheet(tmp_path / "通用.xlsx", [sheet_row(A), sheet_row(B, Product="BEN")])
+    source = write_sheet(tmp_path / "通用.xlsx", [sheet_row(A), sheet_row(B, Product="FCN_Stepdown")])
     before = source.read_bytes()
 
     receipt = backfill_generic(pg, source, tmp_path / "通用_回填.xlsx", FMT)

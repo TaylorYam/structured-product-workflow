@@ -5,8 +5,8 @@
 # 對照表有、但註冊表還沒有範本的上手 → 標示「未支援上手」，錯訊寫出上手代號。
 # 前三碼依作業人員提供的「發行機構 → TDCC 開頭」對照（2026-10-09 確認，Issue #149）。
 
-version = 11
-effective_date = 2026-10-28
+version = 12
+effective_date = 2026-10-30
 
 [prefixes]
 # 已有範本
@@ -64,3 +64,4 @@ DBS = ["vwap", "ko_daily", "ko_periodic_memory", "ko_periodic", "ki_daily", "ki_
 FCN = ["*"]
 FCN_Express = ["BARC", "CA", "HSBC"]
 "Super Bull" = ["BNP", "CA", "HSBC"]
+BEN = []  # #373：先不開放任何上手，之後依 HSBC → MS → CA 開放（#375～#377）

@@ -88,6 +88,15 @@ def super_bull(tdcc: str) -> dict:
     return row
 
 
+def ben(tdcc: str, **cells) -> dict:
+    """舊總表的一檔 BEN（#373）：Non-Call = 天期、比價日只有比價日_{天期} = 最終比價日、沒有 KI；
+    舊表的 KO(memo) 偶爾寫 Y、KO(%) 和 K(%) 不一定相同。"""
+    row = express(tdcc, Product="BEN", **{"KO(Freq)": "P", "KO(memo)": "N", "K(%)": 90})
+    row.update({"KO(%)": 100, "天期(月)": 5, "Non-Call(月)": 5, "比價日_1": "-", "比價日_5": FINAL})
+    row.update({"Coupon p.a. (%)": 20.2, **cells})
+    return row
+
+
 def write_sheet(path: Path, rows: list[dict], headers: list[str] = HEADERS) -> Path:
     book = openpyxl.Workbook()
     sheet = book.active
@@ -120,7 +129,7 @@ def test_an_express_row_becomes_a_locked_product_with_prices_and_dates(pg, tmp_p
     other_product(pg, A)
     source = write_sheet(
         tmp_path / "FCN外商品數量.xlsx",
-        [express(A), {**express(B), "Product": "FCN"}, {**express(C), "Product": "BEN"}],
+        [express(A), {**express(B), "Product": "FCN"}, {**express(C), "Product": "FCN_Stepdown"}],
     )
 
     receipt = backfill_products(pg, source, FMT, CONFIG)
@@ -171,6 +180,27 @@ def test_a_super_bull_row_keeps_its_non_call_and_dates(pg, tmp_path: Path) -> No
     assert (columns["barrier_type"], columns["coupon_pct"]) == ("NONE", Decimal("8.5"))
     dates = dict(pg.execute("SELECT slot, value FROM workflow.autocall_date WHERE tdcc = %s", (E,)).fetchall())
     assert {slot: day for slot, day in dates.items() if day} == {3: DAY_1, 6: FINAL}
+
+
+@pytest.mark.db
+def test_ben_rows_get_period_end_and_a_participation_of_100(pg, tmp_path: Path) -> None:
+    """BEN 照舊表匯入（#373、ADR 0029）：KO Type 一律 Period End（舊表 KO(memo) 不看），參與率帶 100，
+    KO(%)、Non-Call、比價日照舊表；Non-Call 不等於天期的不匯入。"""
+    source = write_sheet(tmp_path / "x.xlsx", [ben(A), ben(B, **{"KO(memo)": "Y"}), ben(C, **{"Non-Call(月)": 3})])
+
+    receipt = backfill_products(pg, source, FMT, CONFIG)
+
+    assert lines(receipt) == {
+        A: (IMPORTED, ""),
+        B: (IMPORTED, ""),
+        C: (SKIPPED, "Guaranteed Periods (m)：BEN 不會提前出場，要等於天期（5）"),
+    }
+    columns = read(pg, B).columns
+    assert (columns["product"], columns["non_call_months"], columns["ko_type"]) == ("BEN", 5, "Period End")
+    assert (columns["ko_pct"], columns["strike_pct"], columns["participation_pct"]) == (100, 90, 100)
+    assert (columns["barrier_type"], columns["coupon_pct"]) == ("NONE", Decimal("20.2"))
+    dates = dict(pg.execute("SELECT slot, value FROM workflow.autocall_date WHERE tdcc = %s", (A,)).fetchall())
+    assert {slot: day for slot, day in dates.items() if day} == {5: FINAL}
 
 
 @pytest.mark.db

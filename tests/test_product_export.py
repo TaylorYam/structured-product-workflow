@@ -198,6 +198,31 @@ def test_express_is_in_the_summary_like_fcn(pg, tmp_path: Path) -> None:
 
 
 @pytest.mark.db
+def test_ben_is_in_the_summary_without_the_participation(pg, tmp_path: Path) -> None:
+    """BEN 和 FCN 在同一張總表（#373、ADR 0029）：Product 寫 BEN，總表沒有參與率欄。"""
+    ben = order_row(
+        A,
+        {
+            **UF_215,
+            "Product": "BEN",
+            "Guaranteed Periods (m)": 6,
+            "KO Type": "Period End",
+            "Barrier Type": "NONE",
+            "KI Barrier (%)": None,
+        },
+    )
+    receipt = write_batch(pg, _drafts([ben], CONFIG, pg), CONFIG, user="tester")
+    assert receipt.lines[0].imported, receipt.lines[0].detail
+    path = tmp_path / "商品總表.xlsx"
+
+    export_summary(pg, path)
+
+    (a,) = as_dicts(path)
+    assert (a["Product"], a["Non-Call(月)"]) == ("BEN", 6)
+    assert not [name for name in a if "參與率" in name or "Participation" in name]
+
+
+@pytest.mark.db
 def test_summary_cells_are_centred_with_fonts_by_content(pg, tmp_path: Path) -> None:
     import_order(pg, A)
     add_trades(pg, A, [("台北", "Amy", 100000)])

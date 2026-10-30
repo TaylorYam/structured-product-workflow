@@ -7,7 +7,8 @@
 - 商品條件照起單資料匯入的檢查（`product_terms.create_backfilled`），來源「歷史回補」、建立時就鎖住：
   KO(Freq)＋KO(memo) → KO Type、KI(Freq) → Barrier Type、UF → Upfront / NotePrice；沒有 Non-Call 的商品
   （FCN_Express）Non-Call 一律存 0（舊表寫 1）；舊表沒有期初定價日，照舊商品存交易日；期初定價空白照樣匯入、
-  結果寫出來，之後在人工維護補。ISIN、單位面額用表上的值。
+  結果寫出來，之後在人工維護補。ISIN、單位面額用表上的值。只在到期判定的商品（BEN，#373、ADR 0029）KO Type 一律
+  Period End（舊表的 KO(memo) 不看），參與率帶 100（`product_terms.draft_from`；Digital 由作業人員在人工維護改 0），Non-Call 照舊表、要等於天期。
 - 價格與比價日：UL_1～UL_5 的四個價格寫進 `workflow.underlying_price`，核對條件寫一筆「完成」；比價日 1～12 照搬
   （比價日_1 是第一個觀察日，沒有 Non-Call 的商品不能空白）。
 - 分公司配置：分公司_1～7 與承作金額寫進 `workflow.branch_allocation`。交易明細列（含 FC）不在這裡寫，
@@ -59,6 +60,7 @@ from sp_workflow.order_terms import describe
 from sp_workflow.product_record import (
     KI_CODES,
     KO_CODES,
+    MATURITY_ONLY_TERMS,
     PRICING_FIELD,
     STRIKE_FIELD,
     TRADE_FIELD,
@@ -246,7 +248,7 @@ def _values(record: OrderRecord, cells: Mapping[str, Any], fmt: ReferenceFormat)
     for n, name in enumerate(UNDERLYINGS, 1):
         values[name] = value(underlying_key(n))
     ko = (value("ko_observation"), value("ko_memory"))
-    values["KO Type"] = _KO_TYPES.get(ko)  # type: ignore[arg-type]
+    values["KO Type"] = MATURITY_ONLY_TERMS["KO Type"] if product.maturity_only else _KO_TYPES.get(ko)  # type: ignore[arg-type]
     if values["KO Type"] is None:
         problems.append(f"KO(Freq)／KO(memo) 看不懂（{ko[0]}／{ko[1]}）")
     ki = value("ki_type") or fmt.empty_value  # 空值寫法「-」就是沒有 KI

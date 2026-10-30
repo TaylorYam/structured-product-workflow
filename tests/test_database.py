@@ -255,7 +255,9 @@ def test_upgrading_to_0012_lets_required_terms_be_blank_and_keeps_existing_produ
     applied = apply_migrations(pg)
 
     assert applied[0] == "0012_partial_product_terms.sql"
-    assert _products(pg) == before
+    assert [
+        {k: row[k] for k in before[0]} for row in _products(pg)
+    ] == before  # 之後的 migration 新增的欄不比（例：0032）
     nullable = _nullable(pg)
     blank = [c for c in REQUIRED_COLUMNS if c not in IDENTITY_COLUMNS]  # 含 KO Type／Barrier Type 換算的代碼欄
     assert [c for c in blank if not nullable[c]] == []
