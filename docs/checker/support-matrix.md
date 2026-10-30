@@ -39,7 +39,7 @@
 | FCN_Express | BARC（#304）、CA（#305）、HSBC（#306） |
 | Super Bull | BNP（#311）、CA（#312）、HSBC（#314） |
 | BEN | CA（#377）、HSBC（#375）、MS（#376） |
-| DACN | NOMURA（#368）；之後依序 SG → DBS → Natixis（#369～#371） |
+| DACN | NOMURA（#368）、SG（#369）；之後依序 DBS → Natixis（#370、#371） |
 
 Super Bull 只支援 KO 每期觀察＋非記憶式＋無 KI（`Period End`＋`NONE`），其他樣態照不支援樣態轉人工，所有上手共用。BNP Super Bull 的文件：[說明書範本](templates/bnp-zh-super-bull.md)、[投資人須知範本](templates/bnp-zh-super-bull-iis.md)、[參考條件表對照](order-formats/bnp-super-bull-reference.md)、[核對規則](rules/bnp-super-bull-check-rules.md)（只支援 2026-06 以後的範本版本）。CA Super Bull 的文件：[說明書範本](templates/ca-zh-super-bull.md)、[投資人須知範本](templates/ca-zh-super-bull-iis.md)、[參考條件表對照](order-formats/ca-super-bull-reference.md)、[核對規則](rules/ca-super-bull-check-rules.md)（只支援現行版範本；境外人民幣轉人工）。HSBC Super Bull 的文件：[說明書範本](templates/hsbc-zh-super-bull.md)、[投資人須知範本](templates/hsbc-zh-super-bull-iis.md)、[參考條件表對照](order-formats/hsbc-super-bull-reference.md)、[核對規則](rules/hsbc-super-bull-check-rules.md)（只支援現行版範本；單一標的、非美元、KO% ≠ K%、多個決定日轉人工）。
 
@@ -47,7 +47,7 @@ BEN 沒有 KO、沒有定期配息、無 KI，只在到期判定（[ADR 0029](..
 
 Nomura DACN 的文件（workflow #368 已實作）：[說明書範本](templates/nomura-zh-dacn.md)、[投資人須知範本](templates/nomura-zh-dacn-iis.md)、[參考條件表對照](order-formats/nomura-dacn-reference.md)、[核對規則](rules/nomura-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工）。
 
-SG DACN 的文件（workflow #369 規格；實作另開 PR，開放前照未開放商品轉人工）：[說明書範本](templates/sg-zh-dacn.md)、[投資人須知範本](templates/sg-zh-dacn-iis.md)、[參考條件表對照](order-formats/sg-dacn-reference.md)、[核對規則](rules/sg-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工；保證 1 期、2 期都支援）。
+SG DACN 的文件（workflow #369 已實作）：[說明書範本](templates/sg-zh-dacn.md)、[投資人須知範本](templates/sg-zh-dacn-iis.md)、[參考條件表對照](order-formats/sg-dacn-reference.md)、[核對規則](rules/sg-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工；保證 1 期、2 期都支援）。
 
 DBS DACN 的文件（workflow #370 規格；實作另開 PR，開放前照未開放商品轉人工）：[說明書範本](templates/dbs-zh-dacn.md)、[投資人須知範本](templates/dbs-zh-dacn-iis.md)、[參考條件表對照](order-formats/dbs-dacn-reference.md)、[核對規則](rules/dbs-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工；DBS 不支援樣態照舊）。
 

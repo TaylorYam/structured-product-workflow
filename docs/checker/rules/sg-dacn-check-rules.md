@@ -3,7 +3,7 @@
 - 文件側：[SG DACN 範本規格](../templates/sg-zh-dacn.md)（`sg-zh-dacn-pd`）、[SG DACN 投資人須知範本規格](../templates/sg-zh-dacn-iis.md)（`sg-zh-dacn-iis`）
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [SG DACN 下單資料格式](../order-formats/sg-dacn-reference.md)
 - 商品：DACN（workflow ADR 0030、#366、#367）；開放順序 Nomura → SG → DBS → Natixis，本文件是 SG（workflow #369）
-- 狀態：規格；實作另開 PR（workflow #369）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記先略過，2026-10-30 使用者決定**（§7）
+- 狀態：已實作（workflow #369）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記先略過，2026-10-30 使用者決定**（§7）
 - 標「待使用者確認」的是暫定的保守做法（轉人工覆核、不放行、不臆測），詳見本機疑慮記錄（DACN-369-01～08）；使用者回覆後再更新本文件與實作
 - 本文件只寫和 [SG 核對規則](sg-check-rules.md)（FCN）不同或 DACN 特有的部分。沒提到的（審查標準、固定警語、受託機構名稱與負責人、發行機構／保證機構／總代理人名稱、信用評等、幣別、費率、最低金額倍數、受理申購日、刊印日期、價格推算、KO／KI／記憶式／標的數的內部一致、日期表、連結標的公司介紹、開始受理贖回日寫法）照 SG FCN。共用的 DACN 規則（配息門檻、商品種類一致、沒有樣本的型態轉人工）和 [Nomura DACN 核對規則](nomura-dacn-check-rules.md) 相同
 
@@ -169,13 +169,13 @@
 
 標記外、刻意不核對的段落見 §2。每條新規則實作時要有合成反例，特別是「正式條款正確、但其他出處錯」：第 8 項年配息率正確、配息率不是年利率 ÷ 12；第 15 項假設或某個情境算式的配息率錯；情境一或二年化錯；n(i) 定義改成別的價格（→ 不支援的範本版本）；配息公式第一行改成保證 2 期但日期表 Non-Call 1（不一致）；n(i) 或 N(i) 範圍和配息公式不同；情境少一個或標題不同；情境期別錯；參考條件表配息門檻 ≠ K%；配息門檻欄存在但空白；表上沒有配息門檻欄；Product 是 FCN 但文件是 DACN（及反過來）；FCN 說明書英文名稱誤寫成 DACN（兩邊都不符）；DACN 說明書英文名稱誤寫成 FCN（不被 FCN 認走）；訂價日早於 2026-06-01；投資人須知年配息率或保證期數和說明書不同。
 
-## 8. 實作方式（workflow #369，另開實作 PR）
+## 8. 實作方式（workflow #369）
 
 | 內容 | 位置 |
 |---|---|
-| 範本辨識與讀出 | `parsers/sg_dacn.py`、`parsers/sg_dacn_iis.py`：沿用 `parsers/sg.py`、`sg_iis.py` 的版面、封面、標的表、日期表、第二章以後與 `read`，覆寫配息段落與情境標準欄位（同 Nomura DACN 先照 FCN 讀出再改讀的做法）；`sg.py`、`sg_iis.py` 的辨識加「沒有 n(i)／N(i)」條件（parser 版本各 +1） |
+| 範本辨識與讀出 | `parsers/sg_dacn.py`、`parsers/sg_dacn_iis.py`：沿用 `parsers/sg.py`、`sg_iis.py` 的版面、封面、標的表、日期表、第二章以後與 `read`，覆寫配息段落、封面標題（DACN 名稱較長，換成兩行）與情境標準欄位（同 Nomura DACN 先照 FCN 讀出再改讀的做法）；`sg.py`、`sg_iis.py` 的辨識拆出共用骨架（`skeleton`），FCN 另加「沒有 n(i)／N(i)」條件（parser 版本各 +1） |
 | 上手註冊 | `issuers.py` 登記 `SG_DACN`（`products=frozenset({DACN})`，上手代號同 `SG`） |
-| 規則 | `rules/sg_dacn.py`（§3.1 型態、§3.5、§3.8 情境種類與期別，其餘沿用 `rules/sg.py`；`schedule` 的按比例條款檢查改成可替換）、`rules/sg_dacn_iis.py`（§3.9）；配息門檻用共用 `field.coupon_barrier_pct` |
+| 規則 | `rules/sg_dacn.py`（§3.1 型態、§3.5、§3.8 情境種類與期別，其餘沿用 `rules/sg.py`；`schedule` 的按比例條款在 DACN 交不適用時略過）、`rules/sg_dacn_iis.py`（§3.9）；配息門檻用共用 `field.coupon_barrier_pct` |
 | 設定 | `[auto_check_products]` 的 `DACN` 加 `SG`；審查標準 `[issuer.sg.product_names.DACN]`（版本 +1） |
 | 測試 | 合成 PDF（沿用 `tests/checker/sg_synth.py` 加 DACN 段落）；§7 的反例；本機真實樣本辨識與讀取測試（環境變數指向本機樣本，不進 repo）；試跑（§6） |
 
