@@ -92,10 +92,8 @@ class HotspotWindow(tk.Toplevel):
         )
 
     def _exported(self, receipt: HotspotReceipt) -> None:
-        counts = "、".join(f"{status} {receipt.counts[status]}" for status in BROKEN if receipt.counts.get(status))
-        self.status_var.set(
-            f"已匯出 {receipt.count} 檔（{counts or '沒有跌破的商品'}；截止日內在庫 {receipt.scanned} 檔）：{receipt.path}"
-        )
+        counts = "、".join(f"{status} {receipt.counts.get(status, 0)}" for status in BROKEN)
+        self.status_var.set(f"已匯出 {receipt.count} 檔（{counts}；截止日內在庫 {receipt.scanned} 檔）：{receipt.path}")
 
     def _busy(self, busy: bool) -> None:
         self.export_button.configure(state=tk.DISABLED if busy else tk.NORMAL)

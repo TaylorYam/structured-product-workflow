@@ -13,7 +13,7 @@ import pytest
 
 import sp_workflow.tabs.hotspot as screen
 from sp_workflow.exposure import HotspotReceipt
-from sp_workflow.tabs.exposure import MEMORY_KEY
+from sp_workflow.tabs.exposure import MEMORY_KEY, one_month_later
 from window_synth import new_window
 
 
@@ -34,7 +34,7 @@ def opened(master, tmp_path: Path, monkeypatch, immediate):
 def test_menu_opens_one_window(opened) -> None:
     window, hotspots, _ = opened
 
-    assert dt.date.fromisoformat(hotspots.until_var.get()) > dt.date.today(), "預設今天起一個月"
+    assert hotspots.until_var.get() == one_month_later(dt.date.today()).isoformat(), "預設今天起一個月"
     window.open_hotspots()
     assert window.hotspots is hotspots, "已經開著就拉到前面，不重開"
 
@@ -80,3 +80,12 @@ def test_closing_the_main_window_closes_it(opened) -> None:
     window.close()
 
     assert not hotspots.winfo_exists()
+
+
+def test_status_line_shows_both_counts(opened, tmp_path: Path) -> None:
+    _, hotspots, _ = opened
+    path = tmp_path / "重災區.xlsx"
+
+    hotspots._exported(HotspotReceipt(path, 12, {"跌破K": 2}))
+
+    assert hotspots.status_var.get() == f"已匯出 2 檔（跌破K 2、跌破KI 0；截止日內在庫 12 檔）：{path}"

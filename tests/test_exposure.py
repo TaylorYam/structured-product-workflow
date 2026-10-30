@@ -332,6 +332,9 @@ def test_intact_status_is_blank_and_unfilled(seeded, tmp_path: Path) -> None:
 @pytest.mark.db
 def test_hotspots_list_every_broken_product_whatever_it_links(seeded, tmp_path: Path) -> None:
     seed(seeded, OTHER_EXCHANGE, ["DDD JT", "BBB UN"], final=DAY - dt.timedelta(days=3))  # 已比價，不列
+    seeded.execute(  # 商品條件沒有連結標的的也要掃到
+        "UPDATE workflow.product SET underlying_1 = NULL, underlying_2 = NULL WHERE tdcc = %s", (PENDING,)
+    )
     path = tmp_path / "重災區.xlsx"
 
     receipt = export_hotspots(seeded, UNTIL, path, today=DAY)
@@ -339,6 +342,7 @@ def test_hotspots_list_every_broken_product_whatever_it_links(seeded, tmp_path: 
     assert (receipt.scanned, dict(receipt.counts), receipt.count) == (6, {"跌破K": 2, "跌破KI": 1}, 3), (
         "截止日內在庫：A、B、C、OTHER、PENDING 與已比價那檔；截止日之後、已出場的不算"
     )
+    assert [row["TDCC"] for row in sheet_rows(path, "全部商品")] == [A, B, C], "依最終比價日、TDCC"
     book = openpyxl.load_workbook(path)
     assert book.sheetnames == ["全部商品"]
     every = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}

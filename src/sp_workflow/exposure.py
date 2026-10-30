@@ -229,26 +229,26 @@ def load_choices(conn: psycopg.Connection) -> list[Choice]:
 
 def load_positions(
     conn: psycopg.Connection,
-    codes: Iterable[str],
+    codes: Iterable[str] | None,
     until: dt.date,
     *,
     trial: Mapping[str, Decimal] | None = None,
     today: dt.date | None = None,
 ) -> list[Position]:
-    """在庫、連結任一 `codes`、最終比價日不晚於 `until` 的商品，依最終比價日、TDCC 排序。
+    """在庫、連結任一 `codes`（None 是不限標的，#362）、最終比價日不晚於 `until` 的商品，依最終比價日、TDCC 排序。
 
     `trial` 裡的代碼用試算價、當作 `today`（預設今天）的價格，其他用最新收盤價（#356）。
     """
     trial = trial or {}
     today = today or dt.date.today()
-    wanted = sorted(set(codes))
+    wanted = None if codes is None else sorted(set(codes))
     rows = conn.execute(
         "SELECT p.tdcc, p.product, p.issuer, p.currency, p.final_valuation_date, p.barrier_type, p.strike_date,"
         " s.ki, c.status, c.reason, p.strike_pct, p.ki_pct FROM workflow.product p"
         " LEFT JOIN workflow.pricing_status s ON s.tdcc = p.tdcc LEFT JOIN workflow.check_terms c ON c.tdcc = p.tdcc"
-        f" WHERE p.final_valuation_date <= %s AND ARRAY[{_UNDERLYING_COLUMNS}] && %s::text[]"
+        f" WHERE p.final_valuation_date <= %s AND (%s::text[] IS NULL OR ARRAY[{_UNDERLYING_COLUMNS}] && %s::text[])"
         " ORDER BY p.final_valuation_date, p.tdcc",
-        (until, wanted),
+        (until, wanted, wanted),
     ).fetchall()
     statuses = lifecycle_status(conn, [row[0] for row in rows])
     rows = [row for row in rows if statuses[row[0]].status == IN_STOCK]
@@ -430,8 +430,7 @@ def export_hotspots(
     today = today or dt.date.today()
     with conn.transaction():  # 每個 SELECT 看同一個時間點
         conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
-        codes = [code for choice in load_choices(conn) for code in choice.codes]
-        positions = load_positions(conn, codes, until, today=today)
+        positions = load_positions(conn, None, until, today=today)
     results = [assess(p, today) for p in positions]
     broken = [r for r in results if r.status in BROKEN]
     _write(broken, path, today)
