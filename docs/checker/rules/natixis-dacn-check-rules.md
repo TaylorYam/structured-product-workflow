@@ -3,8 +3,8 @@
 - 文件側：[Natixis DACN 範本規格](../templates/natixis-zh-dacn.md)（`natixis-zh-dacn-pd`）、[Natixis DACN 投資人須知範本規格](../templates/natixis-zh-dacn-iis.md)（`natixis-zh-dacn-iis`）
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [Natixis DACN 下單資料格式](../order-formats/natixis-dacn-reference.md)
 - 商品：DACN（workflow ADR 0030、#366、#367）；開放順序 Nomura → SG → DBS → Natixis，本文件是 Natixis（workflow #371）
-- 狀態：規格；實作另開 PR（workflow #371）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記先略過，2026-10-30 使用者決定**（§7）
-- 標「待使用者確認」的是暫定的保守做法（轉人工覆核、不放行、不臆測），詳見本機疑慮記錄（DACN-371-01～08）；使用者回覆後再更新本文件與實作
+- 狀態：已實作（workflow #371）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記先略過，2026-10-30 使用者決定**（§7）
+- 標「待使用者確認」的是暫定的保守做法（轉人工覆核、不放行、不臆測），詳見本機疑慮記錄（DACN-371-01～09）；使用者回覆後再更新本文件與實作
 - 本文件只寫和 [Natixis 核對規則](natixis-check-rules.md)（FCN）不同或 DACN 特有的部分。沒提到的（審查標準、固定警語與次數、受託機構名稱與其他出處、發行機構名稱、信用評等、商品種類、幣別、費率、最低申購與贖回、受理申購日、刊印日期、審查通過日期、價格推算、表頭 %、KO／KI／記憶式的內部一致、KO 每日到最終評價日含不含（Issue #351）、日期表與比價日、連結標的公司介紹、開始受理贖回日寫法、受託機構商品代號）照 Natixis FCN。共用的 DACN 規則（配息門檻、商品種類一致、沒有樣本的型態轉人工）和 [Nomura DACN 核對規則](nomura-dacn-check-rules.md) 相同
 
 ## 1. 範圍
@@ -130,7 +130,7 @@
 以私人雲端倉庫的 7 份樣本、舊總表整理的參考條件表（加 `配息門檻(%)` 欄 = `K(%)` 與不加兩種）在本機跑完整核對：
 
 - 全部辨識成 `natixis-zh-dacn-pd`／`natixis-zh-dacn-iis`；沒有一份被 Natixis FCN 範本認走。
-- 美元 6 份說明書與投資人須知全部通過並回填（ISIN、發行日、比價日）；配息門檻沒有欄時和 K% 比、有欄時和欄比都通過；改錯配息門檻時判不一致。
+- 美元 6 份說明書與投資人須知通過並回填（ISIN、發行日、比價日）；其中 1 份說明書封面受託或銷售機構商品代號空白，照 Natixis FCN 既有規則 `doc.distributor_product_code` 轉人工覆核（DACN-371-09，不是 DACN 新規則的問題）；配息門檻沒有欄時和 K% 比、有欄時和欄比都通過；改錯配息門檻時判不一致。
 - 日圓那份：情境配息算式的月配息率和第 13 項不同 → 判不一致（DACN-371-04），其他項目通過。
 - Natixis FCN 與其他上手既有測試、本機真實樣本結果不變（FCN 辨識多一個條件，FCN 樣本都沒有 `變動配息金額`）。
 
@@ -173,14 +173,14 @@
 
 標記外、刻意不核對的段落見 §2。每條新規則實作時要有合成反例，特別是「正式條款正確、但其他出處錯」：情境某一列的月配息率錯（第 13 項正確）；情境一年化錯；配息界限價格欄頭 % 和執行價格定義不同；參考條件表配息門檻 ≠ K%；配息門檻欄存在但空白；表上沒有配息門檻欄；投資人須知配息界限價格 % 和說明書不同；日期表第 2 期也寫 `固定`（保證 2 期但 Non-Call 1）；日期表 `固定` 夾在 `變動` 中間；某個情境第 2 列沒有 `x (n/N)`；n 定義改成別的價格（→ 不支援的範本版本）；Product 是 FCN 但文件是 DACN（及反過來）；Natixis FCN 說明書（有 KO 期按比例條款）不被 DACN 範本認走；DACN 說明書英文名稱誤寫成 FCN（不被 FCN 認走）；交易日早於 2026-06-01；KI 每期觀察、單一標的、澳幣計價（轉人工）。
 
-## 8. 實作方式（workflow #371，實作 PR）
+## 8. 實作方式（workflow #371）
 
 | 內容 | 位置 |
 |---|---|
 | 範本辨識與讀出 | `parsers/natixis_dacn.py`、`parsers/natixis_dacn_iis.py`：沿用 `parsers/natixis.py`、`natixis_iis.py` 的版面、封面、價格表、日期表、第二章以後與 `read`（價格表欄的關鍵字、情境配息算式的讀法由參數交入），另讀配息門檻、保證期數與情境各列的保證期／計息期；`natixis.py`、`natixis_iis.py` 的辨識拆出共用骨架，FCN 另加「沒有 `變動配息金額`」條件，頁尾英文名稱第二行也收 `Principal Protected, …`（parser 版本各 +1） |
 | 上手註冊 | `issuers.py` 登記 `NATIXIS_DACN`（`products=frozenset({DACN})`，上手代號同 `NATIXIS`） |
 | 規則 | `rules/natixis_dacn.py`（§3.1 型態、§3.5、§3.8 保證期與計息期，其餘沿用 `rules/natixis.py`）、`rules/natixis_dacn_iis.py`（§3.9）；配息門檻用共用 `field.coupon_barrier_pct` |
-| 設定 | `[auto_check_products]` 的 `DACN` 加 `NATIXIS`；審查標準 `[issuer.natixis.product_names.DACN]`（版本 +1，開 PR 時依 main 最新版本再定） |
+| 設定 | `[auto_check_products]` 的 `DACN` 加 `NATIXIS`；審查標準 `[issuer.natixis.product_names.DACN]`（版本 +1） |
 | 測試 | 合成 PDF（沿用 Natixis 合成樣本加 DACN 段落）；§7 的反例；本機真實樣本辨識與讀取測試（環境變數指向本機樣本，不進 repo）；試跑（§6） |
 
 ## 9. 決策紀錄
