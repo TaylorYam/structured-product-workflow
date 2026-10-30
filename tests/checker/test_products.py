@@ -38,8 +38,8 @@ def test_repo_table_opens_fcn_everywhere_and_other_products_for_their_issuers():
         "FCN_Express": frozenset({"BARC", "CA", "HSBC"}),
         "Super Bull": frozenset({"BNP", "CA", "HSBC"}),
         "BEN": frozenset({"HSBC"}),
-        "DACN": frozenset(),
-    }  # #304～#306、#310～#312、#314、#367、#373、#375
+        "DACN": frozenset({"NOMURA"}),
+    }  # #304～#306、#310～#312、#314、#367、#368、#373、#375
     assert CONFIG.auto_check_products == expected
 
 

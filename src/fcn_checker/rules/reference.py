@@ -44,6 +44,7 @@ __all__ = [
     "FIELD_CHECKS",
     "AutocallSchedule",
     "FieldCheck",
+    "coupon_barrier",
     "field_rules",
     "first_callable_period",
     "is_vwap",
@@ -676,6 +677,45 @@ def min_amounts(ctx: Context) -> list[CheckResult]:
     return out
 
 
+def _product(ctx: Context) -> tuple[str | None, OrderValue | None]:
+    """參考條件表該列的商品種類（支援的寫法；不支援時 None）與 Product 欄；空白或表上沒有這欄時照 FCN（同核對分流）。"""
+    ov = ctx.order.get("product")
+    text = ov.value if ov is not None else None
+    return (product_name(text) if isinstance(text, str) and text.strip() else FCN), ov
+
+
+def coupon_barrier(ctx: Context) -> list[CheckResult]:
+    """配息門檻 %（要配息門檻的商品，`PRODUCT_RULES` 的 `has_coupon_barrier`：DACN，workflow #368、ADR 0030）：說明書配息門檻
+    = 表上「配息門檻(%)」，依說明書顯示位數四捨五入後比；表上沒有這欄（舊 Excel）時和「K(%)」比；有這欄但該列空白或是空值
+    寫法轉人工覆核（DACN 一定要有值）。其他商品不產生結果。"""
+    product, _ = _product(ctx)
+    rule = PRODUCT_RULES.get(product) if product else None
+    if rule is None or not rule.has_coupon_barrier:
+        return []
+    rid, key, name = "field.coupon_barrier_pct", "coupon_barrier_pct", "配息門檻 %"
+    pf = standard_field(ctx, key)
+    ov = ctx.sheet_field(key)
+    if ov is None:  # 舊 Excel 沒有配息門檻欄：和執行價比（workflow #366 決定 3）
+        v, ov_k, problem = order_value(ctx, "strike_pct", rid, key, pf, to_decimal, "數字", name="K(%)")
+        if problem:
+            return [problem]
+        check = Check(rid, key, Item.sheet(name, [ov_k]), ctx.document, ov=(ov_k,), expected=v).needs(pf)
+        message = f"{ctx.sheet_source}沒有配息門檻欄，和 K(%) 比"
+    else:
+        if ov.value is None or ov.value == ctx.fmt.empty_value:
+            why = f"{product} 要有配息門檻，{ctx.sheet_source}該列配息門檻空白"
+            return [order_review(rid, key, ov, pf, "order_missing", why, name=name)]
+        v, ov, problem = order_value(ctx, key, rid, key, pf, to_decimal, "數字", name=name)
+        if problem:
+            return [problem]
+        check = Check(rid, key, Item.column(name, [ov]), ctx.document, ov=(ov,), expected=v).needs(pf)
+        message = ""
+    if (problem := check.blocked) is not None:
+        return [problem]
+    ok, shown = cmp_pct(v, pf.value)
+    return [check.compare(shown, pf.value, ok=ok, tolerance=PCT_TOLERANCE, message=message)]
+
+
 def field_rules(ctx: Context) -> list[CheckResult]:
     """表上作業人員事先填好的欄位逐一與說明書標準欄位比對（Non-Call 與回填欄位見下方）。"""
     return [
@@ -684,6 +724,7 @@ def field_rules(ctx: Context) -> list[CheckResult]:
         *currency_others(ctx),
         underlyings(ctx),
         *(check.check(ctx) for check in FIELD_CHECKS.values()),
+        *coupon_barrier(ctx),
         *min_amounts(ctx),
         ko_observation(ctx),
         ko_memory(ctx),
@@ -716,9 +757,8 @@ def non_call_product(ctx: Context) -> CheckResult:
     不符合時待確認（資料庫的商品種類或說明書可能有一邊錯）。所有上手共用；Product 空白或表上沒有這欄時照 FCN
     （同核對分流）。說明書讀不到提前出場排程時不適用（由 `first_callable_period` 轉人工覆核）。"""
     rid, key, sched = "field.non_call_product", "first_callable_period", standard_field(ctx, "autocall_schedule")
-    ov = ctx.order.get("product")
+    product, ov = _product(ctx)
     text = ov.value if ov is not None else None
-    product = product_name(text) if isinstance(text, str) and text.strip() else FCN
     check = _column(ctx, rid, key, "Product", ov, product)
     rule = PRODUCT_RULES.get(product) if product else None
     if rule is None or not sched.ok:

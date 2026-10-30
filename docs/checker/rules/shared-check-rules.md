@@ -34,6 +34,7 @@
 | 發行日 | `issue_date` | 回填欄位：空白 → 通過後回填；有值 → 比對（`backfill.issue_date`，Issue #64） |
 | 交易日、最終比價日、到期日 | `trade_date`、`final_valuation_date`、`maturity_date` | 日期相等 |
 | KO(%)、K(%)、KI(%)、Coupon p.a. (%) | `ko_pct`、`strike_pct`、`ki_pct`、`coupon_pa_pct` | 依說明書顯示位數四捨五入後比對；無 KI 時 KI(%) 必須是 `-` |
+| 配息門檻(%) | `coupon_barrier_pct` | 只在 Product 有配息門檻的商品種類（`PRODUCT_RULES.has_coupon_barrier`，目前 DACN）核對，依說明書顯示位數四捨五入後比對；表上沒有這欄時和 `K(%)` 比（訊息寫明），DACN 列空白或 `-` 轉人工覆核（`field.coupon_barrier_pct`，workflow #368、ADR 0030） |
 | KO(Freq) | `ko_observation` | `D` 期間每日／`P` 每期定日 |
 | KO(memo) | `ko_memory` | `Y`／`N` |
 | KI(Freq) | `ki_type` | `-` 無／`AM` 到期觀察／`D` 每日觀察／`P` 每期觀察；是否允許先由[樣態黑名單](../support-matrix.md)決定，未知寫法或必核欄位缺漏轉人工覆核 |

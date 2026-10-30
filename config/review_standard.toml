@@ -7,7 +7,7 @@
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
 # 規則說明見 docs/checker/rules/review-standard.md。
 
-version = 33
+version = 34
 effective_date = 2026-10-30
 
 [distributor]
@@ -524,6 +524,20 @@ single_en = "a Single Stock"
 basket_en = "a basket of stocks"
 normalize_brackets = true
 # 英文名稱有雙空白（Knock-Out  linked），比對時忽略所有空白
+ignore_whitespace_en = true
+
+[issuer.nomura.product_names.DACN]
+# Nomura DACN 商品名稱（現行版 11 份說明書推得，2026-10-30 規格，workflow #368）：「固定配息」改「每日計息」、英文
+# 「Autocall Daily Range Accrual Notes」；記憶式、標的寫法同 FCN。參考條件表 Product 是 DACN 時用這個樣板。
+zh = "Nomura International Funding Pte. Ltd.發行{tenor}個月{ccy_zh}計價每日計息({memory_zh}自動提前出場){underlying_zh}結構型商品(無擔保)"
+en = "{tenor}-Month {ccy} Autocall Daily Range Accrual Notes {memory_en}linked to {underlying_en} issued by Nomura International Funding Pte. Ltd. (unsecured)"
+memory_zh = "記憶式"
+memory_en = "with Memory Knock-Out "
+single_zh = "股票連結"
+basket_zh = "連結一籃子股票"
+single_en = "a Single Stock"
+basket_en = "a basket of stocks"
+normalize_brackets = true
 ignore_whitespace_en = true
 
 # Nomura：封面、第一章第 3 項、第二章 2.(1) 三處皆同一寫法（2026-10-15 確認，Issue #239）；地址電話不核對。

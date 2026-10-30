@@ -1,7 +1,7 @@
 # 下單資料格式：Nomura DACN（參考條件表）
 
 - 設定檔：所有上手共用的 [`config/reference_sheet.toml`](../../../config/reference_sheet.toml)
-- 狀態：規格；實作另開 PR（workflow #368）。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)；和 [Nomura FCN 下單資料格式](nomura-fcn-reference.md) 相同的不重寫，本文件只寫 DACN 的差異
+- 狀態：已實作（workflow #368）。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)；和 [Nomura FCN 下單資料格式](nomura-fcn-reference.md) 相同的不重寫，本文件只寫 DACN 的差異
 
 ## 1. 結構
 
@@ -40,7 +40,7 @@
 
 ## 6. 探勘時發現的表上狀況（2026-10-30）
 
-- 舊總表 5 格 Nomura DACN 的 `Coupon p.a. (%)` 是前後帶不換行空白的文字（本機疑慮記錄 DACN-367-01）：核對時表上的值不是數字 → 轉人工覆核（共用 `order_value`），不自動去空白。試跑用的複本另行整理，PR 只寫定性結果。
+- 舊總表 5 格 Nomura DACN 的 `Coupon p.a. (%)` 是前後帶不換行空白的文字（本機疑慮記錄 DACN-367-01）：讀表時去掉前後空白（含不換行空白）後照數字核對，不會因此轉人工覆核（實作時試跑確認）。中間夾空白或其他文字仍照共用 `order_value` 轉人工覆核。
 - 一檔（ND02）表上兩檔標的的交易所碼寫 `UQ`，說明書寫 `UW`（本機疑慮記錄 DACN-368-07）：照常判不一致，不放寬規則。
 - 表上 `UL_n_執行價` 存多位小數，四捨五入到 4 位後和說明書相等（同 FCN）。
 - 其他欄位（代號、幣別、面額、各日期、天期、K／KO／KI %、KO／KI 型態、Non-Call、比價日、各標的進場價與執行價）11 份全部和說明書一致。

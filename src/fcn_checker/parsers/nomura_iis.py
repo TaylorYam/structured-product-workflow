@@ -19,7 +19,8 @@ from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "nomura-zh-iis"
 # 2：無 KI 要有第四的明確到期贖回款（Issue #297）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
-PARSER_VERSION = "3"
+# 4：辨識加「收益分配事項沒有 ×實際日數/總日數」，和 Nomura DACN 投資人須知（parsers/nomura_dacn_iis.py）互斥（workflow #368）
+PARSER_VERSION = "4"
 # 保證機構信用評等（#241）：第二商品簡介 4. `…截至本中文投資人須知刊印日期，發行機構未獲評等，保證機構Nomura Holdings, Inc.之
 # 長期債務評等為穆迪Baa1（Moody's）、…。`
 GUARANTOR_RATINGS = (
@@ -101,9 +102,16 @@ def _cover(text_lines: list[Line]) -> tuple[nomura.RawText, re.Match[str] | None
     return raw, m
 
 
-def detect(lines: Sequence[Line]) -> DetectionResult:
+# 每日計息（DACN）配息公式的寫法（去空白）：收益分配事項有它就不是 FCN 範本（workflow #368）
+ACCRUAL = "×實際日數/總日數"
+
+
+def skeleton(lines: Sequence[Line]) -> tuple[TextIndex, str, str, list[str], list[Evidence]]:
+    """首列、中文名稱、商品種類行、相關機構第 1 點與段落順序（範本規格 §6 條件 1、2 的中文名稱、3～5；FCN 與 DACN 共用）：
+    回傳（全文, 封面中文名稱、英文名稱（去空白）, 不成立的條件, 證據）。"""
     lines = body(lines)
-    text = TextIndex(lines).text
+    ti = TextIndex(lines)
+    text = ti.text
     first = squash(lines[0].text) if lines else ""
     raw, cover = _cover(lines)
     zh, en = (squash(cover[1]), squash(cover[2])) if cover else ("", "")
@@ -114,17 +122,30 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
             zh.startswith(ISSUER + "發行") and zh.endswith("(無擔保)"),
             f"封面中文名稱不是「{nomura.ISSUER_EN} 發行…(無擔保)」",
         ),
-        (
-            "AutocallFixedCouponNotes" in en and en.endswith(f"issuedby{ISSUER}(unsecured)"),
-            f"封面英文名稱沒有「Autocall Fixed Coupon Notes」或不是以「issued by {nomura.ISSUER_EN} (unsecured)」結尾",
-        ),
         (cover is not None, "封面找不到「商品種類：… (ISIN 號碼: … / TDCC商品代號為… )」"),
         (f"第一相關機構1.發行機構:{ISSUER}" in text, f"相關機構第 1 點的發行機構不是 {nomura.ISSUER_EN}"),
         (iis.in_order(text, SECTIONS), "段落標題不完整或順序不符：" + "、".join(SECTIONS)),
     ):
         if not ok:
             failed.append(message)
-    return DetectionResult(not failed, failed, [Evidence.of(x) for x in lines[:2]])
+    return ti, zh, en, failed, [Evidence.of(x) for x in lines[:2]]
+
+
+def coupon_text(ti: TextIndex) -> str:
+    """「第三 收益分配事項」到「第四 贖回價金之計算」之間的全文（去空白）；找不到這段時為空。"""
+    sec = iis.section(ti, COUPON)
+    return TextIndex(sec).text if sec else ""
+
+
+def detect(lines: Sequence[Line]) -> DetectionResult:
+    ti, _, en, failed, evidence = skeleton(lines)
+    if not ("AutocallFixedCouponNotes" in en and en.endswith(f"issuedby{ISSUER}(unsecured)")):
+        failed.append(
+            f"封面英文名稱沒有「Autocall Fixed Coupon Notes」或不是以「issued by {nomura.ISSUER_EN} (unsecured)」結尾"
+        )
+    if ACCRUAL in coupon_text(ti):
+        failed.append(f"收益分配事項有每日計息的「{ACCRUAL}」（是 DACN，不是固定配息 FCN）")
+    return DetectionResult(not failed, failed, evidence)
 
 
 def _coupon_terms(ti: TextIndex, fields: dict[str, ParsedField]) -> None:

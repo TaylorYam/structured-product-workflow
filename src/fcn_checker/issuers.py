@@ -29,6 +29,7 @@ from .parsers import (
     jpm_iis,
     ms_iis,
     natixis_iis,
+    nomura_dacn_iis,
     nomura_iis,
     sg_iis,
     ubs_iis,
@@ -48,9 +49,10 @@ from .parsers import jpm as jpm_parser
 from .parsers import ms as ms_parser
 from .parsers import natixis as natixis_parser
 from .parsers import nomura as nomura_parser
+from .parsers import nomura_dacn as nomura_dacn_parser
 from .parsers import sg as sg_parser
 from .parsers import ubs as ubs_parser
-from .products import BEN, FCN, FCN_EXPRESS, SUPER_BULL
+from .products import BEN, DACN, FCN, FCN_EXPRESS, SUPER_BULL
 from .rules import barc as barc_rules
 from .rules import bbva as bbva_rules
 from .rules import bbva_iis as bbva_iis_rules
@@ -79,6 +81,8 @@ from .rules import ms_iis as ms_iis_rules
 from .rules import natixis as natixis_rules
 from .rules import natixis_iis as natixis_iis_rules
 from .rules import nomura as nomura_rules
+from .rules import nomura_dacn as nomura_dacn_rules
+from .rules import nomura_dacn_iis as nomura_dacn_iis_rules
 from .rules import nomura_iis as nomura_iis_rules
 from .rules import sg as sg_rules
 from .rules import sg_iis as sg_iis_rules
@@ -384,6 +388,29 @@ NOMURA = Issuer(
     ),
 )
 
+# Nomura DACN（workflow #368）：和 Nomura FCN 同一家上手、不同範本（依第 7 項每日計息公式辨識，兩者互斥）；依參考條件表 Product 選用
+NOMURA_DACN = Issuer(
+    code=nomura_rules.ISSUER,
+    template_id=nomura_dacn_parser.TEMPLATE_ID,
+    label="Nomura DACN 中文產品說明書",
+    parser_version=nomura_dacn_parser.PARSER_VERSION,
+    not_covered=tuple(nomura_dacn_rules.NOT_COVERED),
+    detect=nomura_dacn_parser.detect,
+    read=nomura_dacn_parser.read,
+    rules=nomura_dacn_rules.run_all,
+    ratings=True,
+    iis=IisTemplate(
+        template_id=nomura_dacn_iis.TEMPLATE_ID,
+        label="Nomura DACN 中文投資人須知",
+        parser_version=nomura_dacn_iis.PARSER_VERSION,
+        detect=nomura_dacn_iis.detect,
+        read=nomura_dacn_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=nomura_dacn_iis_rules.run_all,
+    ),
+    products=frozenset({DACN}),
+)
+
 GS = Issuer(
     code=gs_rules.ISSUER,
     template_id=gs_parser.TEMPLATE_ID,
@@ -553,6 +580,7 @@ REGISTRY: tuple[Issuer, ...] = (
     CITI,
     JPM,
     NOMURA,
+    NOMURA_DACN,
     GS,
     NATIXIS,
     CA,
