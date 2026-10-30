@@ -170,7 +170,7 @@ def test_database_rows_read_the_same_as_the_excel_reference_sheet(pg, tmp_path, 
     overrides = {"期初定價": pricing, "風險等級": "RR4", **(VWAP_BLANK if pricing == "VWAP" else {})}
     overrides["配息門檻(%)"] = "-"  # FCN 沒有配息門檻（#367）
     excel_row = reference_row(spec.with_(ratings=BARC_RATINGS), **overrides)
-    headers = [*REFERENCE_HEADERS, "風險等級", "參與率(%)", "配息門檻(%)"]
+    headers = [*REFERENCE_HEADERS, "風險等級", "參與率(%)", "回顧結束日", "配息門檻(%)"]
     excel_sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [excel_row], headers)
 
     (db_row,) = load_reference_sheet(db_sheet, FMT).rows
