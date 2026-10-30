@@ -83,10 +83,10 @@ def test_the_worst_underlying_decides(barrier: str, close: str, ki_text: str, ca
 )
 def test_status_is_what_the_worst_close_broke(barrier: str, ki_text: str, close: str, status: str) -> None:
     assert assess(position(barrier, leg(1, "AAA UW", close), ki_text=ki_text)).status == status
-    assert INTACT == "", "未跌破留空（#358）"
 
 
 def test_status_keeps_fixed_and_unknown() -> None:
+    assert INTACT == "", "未跌破留空（#358）"
     p = position("EKI", leg(1, "AAA UW", "60"), ki_text="EKI")
     assert assess(p, UNTIL + dt.timedelta(days=1)).status == FIXED
     assert assess(position("EKI", leg(1, "AAA UW", "60"), terms="待確認")).status == UNKNOWN
