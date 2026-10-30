@@ -267,6 +267,7 @@ def test_existing_products_are_left_alone_and_a_rerun_changes_nothing(pg, tmp_pa
         ([express(A, 比價日_1="-")], "比價日_1"),
         ([express(A, UL_2_進場價="-")], "UL_2 進場價是空白"),
         ([express(A, **{"KI(Freq)": "AM"})], "KI Barrier (%)"),
+        ([express(A, Product="DACN", **{"KI(Freq)": "P", "KI(%)": 50})], "KI(Freq)「P」目前不支援"),  # MKI，#386
         ([express(A, 發行機構="SG")], "發行機構"),
         ([express("02919999001", **{"TDCC Code": "02919999001"})], "12 碼"),
         ([express(A, Product=None)], "Product 空白"),

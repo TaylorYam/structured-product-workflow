@@ -228,8 +228,14 @@ def test_guaranteed_periods_must_equal_non_call(tmp_path):
 
 @pytest.mark.parametrize(
     "spec",
-    [DacnSpec(ki="D"), DacnSpec(memory=False), DacnSpec(ko_obs="P"), DacnSpec(currency_zh="澳幣")],
-    ids=["ki-daily", "non-memory", "ko-periodic", "aud"],
+    [
+        DacnSpec(ki="D"),
+        DacnSpec(ki="P"),  # KI 每期觀察（MKI）：流程各階段都不支援、人工處理，待 #386 決定
+        DacnSpec(memory=False),
+        DacnSpec(ko_obs="P"),
+        DacnSpec(currency_zh="澳幣"),
+    ],
+    ids=["ki-daily", "ki-periodic", "non-memory", "ko-periodic", "aud"],
 )
 def test_variants_without_samples_need_review(tmp_path, spec):
     r = check(tmp_path, spec)

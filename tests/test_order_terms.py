@@ -51,6 +51,17 @@ def test_the_order_sheet_has_no_coupon_barrier(tmp_path: Path) -> None:
     assert "Coupon Barrier (%)" not in rows[0].notes
 
 
+def test_a_dacn_with_periodic_ki_is_flagged(tmp_path: Path) -> None:
+    """MKI（每期觀察 KI）的 DACN 目前不支援（#386 待決定）：Barrier Type 讀不進來、標紅待確認，要人工處理。"""
+    path = write_sheet(tmp_path / "s.xlsx", [sheet_line(A, {"Product": "DACN", "Barrier Type": "MKI"})])
+
+    (row,) = read(path, A)
+
+    assert row.status == PENDING
+    assert row.values["Barrier Type"] is None
+    assert row.notes == {"Barrier Type": "讀到「MKI」，要選 NONE／EKI／AKI"}
+
+
 def test_the_old_upfront_header_and_any_column_order_are_accepted(tmp_path: Path) -> None:
     headers = ["Upfront / NotePrice (%)" if h.strip() == "UF (%)" else h for h in reversed(HEADERS)]
     line = sheet_line(A)
