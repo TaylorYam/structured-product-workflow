@@ -169,7 +169,10 @@ def _current(art9: str, art13: str, art15: str, whole: str, evidence: list[Evide
         ("自動提前出場價" not in art9, "第 9 項價格表有自動提前出場價欄"),
         (NO_KO not in whole, f"說明書有「{NO_KO}」"),
         ("觀察日" not in art13, "第 13 項有觀察日條"),
-        (ART15_TITLE in art15 and MIN_RATE in art15, f"第 15 項不是「{ART15_TITLE}」「{MIN_RATE}」的寫法"),
+        (
+            ART15_TITLE in art15 and MIN_RATE in art15 and re.search(ART15_PARTICIPATION, art15) is not None,
+            f"第 15 項不是「{ART15_TITLE}」「{MIN_RATE}」「(5)參與率：x%」的寫法",
+        ),
     )
     missing = [message for ok, message in current if not ok]
     if missing:

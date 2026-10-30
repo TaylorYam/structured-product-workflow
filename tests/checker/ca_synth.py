@@ -45,6 +45,8 @@ from reference_synth import (
 NAME = STANDARD["issuer"]["ca"]["product_name"]
 SB_NAME = STANDARD["issuer"]["ca"]["product_names"]["Super Bull"]
 SB_PRODUCT = "Super Bull"
+BEN_PRODUCT = "BEN"
+BEN_NAME = STANDARD["issuer"]["ca"]["product_names"][BEN_PRODUCT]
 WARNING = STANDARD["issuer"]["ca"]["fixed_warning"]
 WARNING_CH1 = STANDARD["issuer"]["ca"]["fixed_warning_variants"][0]
 ISSUER = STANDARD["issuer"]["ca"]["issuer_name"]
@@ -222,6 +224,47 @@ class SbSpec(Spec):
         )
 
 
+@dataclass
+class BenSpec(Spec):
+    """CA BEN 合成規格（docs/checker/templates/ca-zh-ben.md、ca-zh-ben-iis.md）：現行版 Bonus；沒有配息、沒有 KO、無 KI，`annual`
+    是紅利率（不年化，同參考條件表 `Coupon p.a. (%)`）、`participation` 是參與率；Non-Call = 天期，參考條件表 KO% 照填 K%
+    （說明書沒有 KO，不核對）。預設照現行版樣本：2 檔、K% 100、美元、3 個月。情境以第 1 檔為最差標的：情境一期末價 =
+    期初 × `above`%（漲幅大於紅利）、情境二 × `below`%（漲幅小於紅利）、情境三 × `worse`%。`ko_column` 在價格表多 KO 價欄
+    （KO 價欄版）；`fx` 是第 16 項情境價格表後的匯率行。"""
+
+    tenor: int = 3
+    count: int = 2
+    annual: Decimal = Decimal("20.00")
+    participation: Decimal = Decimal("100.00")
+    strike: Decimal = Decimal("100.00")
+    ko: Decimal = Decimal("100.00")
+    memory: bool = False
+    ko_obs: str = "P"
+    first_callable: int = field(init=False)
+    above: Decimal = Decimal("150")
+    below: Decimal = Decimal("110")
+    worse: Decimal = Decimal("40")
+    ko_column: bool = False
+    fx: str = ""
+
+    def __post_init__(self) -> None:
+        self.first_callable = self.tenor
+        super().__post_init__()
+
+    @property
+    def ends(self) -> list[dt.date]:
+        """只有期末訂價日（發行日 + 天期）。"""
+        return [weekday_on_or_after(add_months(self.issue_date, self.tenor))]
+
+    @property
+    def name_zh(self) -> str:
+        return BEN_NAME["zh"].format(tenor=self.tenor, ccy_zh=self.currency_zh)
+
+    @property
+    def name_en(self) -> str:
+        return BEN_NAME["en"].format(tenor=self.tenor, ccy=self.ccy)
+
+
 def _tokens(text: str) -> list[str]:
     return re.findall(r"[\x21-\x7e]+|\s|.", text)
 
@@ -346,7 +389,8 @@ def _price_table(d: _Doc, s: Spec, *, index: bool) -> None:
     cols = [("strike", "執行價", s.strike)]
     if s.ki != "none":
         cols.append(("ki", "下限價", s.ki_pct))
-    cols.append(("ko", "自動提前出場價", s.ko))
+    if not isinstance(s, BenSpec) or s.ko_column:
+        cols.append(("ko", "自動提前出場價", s.ko))
     x = dict(HEAD_X)
     if s.ki == "none":
         x["ko"] = 430
@@ -522,6 +566,42 @@ def _article9_sb(d: _Doc, s: SbSpec) -> None:
     d.text(36, "期末訂價：連結標的於期末訂價日之收盤價，由計算代理機構決定。")
 
 
+BEN_FORMULA = (
+    "每單位面額 x[100%+最大值(紅利率，參與率x(最差表現之連結標的期末訂價/最差表現之連結標的期初訂價)-100%))]。"
+)
+
+
+def _ben_maturity(d: _Doc, s: BenSpec, x: float) -> None:
+    """BEN 到期（1）交股、（2）領回與 Bonus 公式（括號不對稱照樣本）。"""
+    d.text(
+        x,
+        "（1） 若最差表現之連結標的期末訂價小於執行價，則投資人將會收到發行機構交付表現最差的連結標的股票之股數，"
+        f"及以{s.currency_zh}支付剩餘金額（如有）;",
+    )
+    d.text(x, "（2） 若最差表現之連結標的期末訂價大於或等於執行價，則投資人可領回：")
+    d.text(x, BEN_FORMULA)
+
+
+def _article9_ben(d: _Doc, s: BenSpec) -> None:
+    """BEN 第 9 項（範本規格 §2）：沒有配息、沒有 KO 的開頭句、到期（1）（2）與 Bonus 公式、參與率與紅利率、價格表只有執行價。"""
+    d.text(36, "(1) 本商品主要給付項目為「到期贖回金額」，持有期間並無配息金額。")
+    d.text(
+        36,
+        "本商品到期日給付視最差表現之連結標期末訂價而定，依每單位面額，發行機構在到期日將依下列（1）或（2）方式支付到期"
+        "贖回金額：",
+    )
+    _ben_maturity(d, s, 36)
+    d.text(36, f"參與率：{s.participation}%。")
+    d.text(36, f"紅利率： {s.annual}%。")
+    d.text(36, "(2) 連結標的：")
+    d.section = "art9.table"
+    _price_table(d, s, index=True)
+    d.section = "art9"
+    d.text(36, "投資人請注意：本商品之收益與投資最差表現之連結標的相關。")
+    d.text(36, "期初訂價：連結標的於期初訂價日之價格，由計算代理機構決定。")
+    d.text(36, "期末訂價：連結標的於期末訂價日之收盤價，由計算代理機構決定。")
+
+
 def _article10(d: _Doc, s: Spec) -> None:
     d.text(36, "連結標的資產：")
     d.section = "art10.table"
@@ -670,6 +750,78 @@ def _article16_sb(d: _Doc, s: SbSpec) -> None:
     d.text(36, "※ 請注意：情境分析之結果不保證未來績效，亦不代表連結標的未來表現。")
 
 
+def _article16_ben(d: _Doc, s: BenSpec) -> None:
+    """BEN 第 16 項 (3)（範本規格 §5）：基本假設多紅利率、情境一（漲幅 > 紅利）、二（漲幅 < 紅利）、三交股；數字依算式算出。
+    段落代號：情境 `ts.art16.s1`～`ts.art16.s3`。"""
+    ccy, quote, denom = s.currency_zh, s.quote, Decimal(s.denom)
+    for t in (
+        "(1)投資收益計算方法：請參見上述第一章第9 項「本商品主要給付項目及其計算方式」。",
+        "(3)以情境分析解說最大可能獲利、損失及其他狀況之年化平均報酬率：",
+        "基本假設",
+        f"天期：{s.tenor} 個月",
+        f"每單位面額：{s.money(s.denom)}",
+        f"初始投資金額：{s.money(s.denom)}",
+        f"紅利率：{s.annual}%",
+    ):
+        d.text(36, t)
+    d.section = "art16.table"
+    _price_table(d, s, index=False)
+    d.section = "art16"
+    if s.fx:
+        d.text(36, s.fx)
+    u = s.underlyings[0]
+    cases = (("情境分析一：較佳情況", s.above, "高於"), ("情境分析二：一般情況", s.below, "略高於"))
+    for n, (title, pct, case) in enumerate(cases, 1):
+        p = (u.initial * pct / 100).quantize(Q4, ROUND_HALF_UP)
+        gain = (s.participation * (p / u.initial - 1)).quantize(Q2, ROUND_HALF_UP)
+        a = (denom * (100 + max(s.annual, gain)) / 100).quantize(Q2, ROUND_HALF_UP)
+        r = (a / denom * 100 - 100).quantize(Q2, ROUND_HALF_UP)
+        ann = (r * 12 / s.tenor).quantize(Q2, ROUND_HALF_UP)
+        d.section = f"art16.s{n}"
+        d.text(36, title)
+        d.text(36, f"於期末訂價日，最差表現之連結標的收盤價{case}執行價")
+        d.text(36, f"假設於期末訂價日，最差表現的連結標的為{u.name}，收盤價為{p:,.4f} {quote}，高於其執行價。")
+        d.text(36, "• 到期給付金額為：")
+        d.text(36, "每單位面額x[100%+最大值(紅利率，參與率x(最差表現之連結標的期末訂價/最差表現之連結標的期初訂價))]。")
+        d.text(
+            36,
+            f"＝{s.denom:,} × [100%+最大值（{s.annual}%，{s.participation}% x（{p:,.4f} {quote} / {u.initial:,.4f} {quote}"
+            " - 100%))]",
+        )
+        d.text(36, f"＝{s.denom:,} × [100%+最大值（{s.annual}%，{gain}%) = {a:,.2f} {ccy}")
+        d.text(36, "• 報酬率計算為：")
+        d.text(36, "(每單位面額到期給付金額/每單位面額初始投資金額)-100%")
+        d.text(36, f"＝{a:,.2f} {ccy}  / {s.denom:,} )  - 100% ＝{r}%（平均年化報酬率：{ann}%）")
+    k = price(u.initial, s.strike)
+    p3 = (u.initial * s.worse / 100).quantize(Q2, ROUND_HALF_UP)
+    shares = (denom / k).quantize(Decimal("0.001"), ROUND_DOWN)
+    whole = int(shares)
+    frac = shares - whole
+    rem = (frac * p3).quantize(Q2, ROUND_HALF_UP)
+    total = (whole * p3 + rem) / denom * 100 - 100
+    annualized = (total * 12 / s.tenor).quantize(Q2, ROUND_HALF_UP)
+    d.section = "art16.s3"
+    d.text(36, "情境分析三：較差情況")
+    d.text(36, "於期末訂價日，最差表現之連結標的收盤價低於執行價")
+    d.text(
+        36,
+        f"假設於期末訂價日表現最差的連結標的為{u.name}，收盤價為{p3:,.2f} {quote}。投資人將會收到最差表現之連結標的"
+        f"單位數，及以{ccy}支付剩餘金額（如有）。",
+    )
+    d.text(
+        36,
+        f"• 到期給付最差表現之連結標的單位數為：每單位面額/表現最差連結標的的執行價* = {s.denom:,} / {k:,.4f} = {shares} 股",
+    )
+    d.text(36, f"整數股數＝{whole} 股，畸零股數＝{frac} 股，剩餘金額＝{p3:,.2f} x {frac}＝{rem:,.2f} {ccy}")
+    d.text(36, "• 報酬率計算為：")
+    d.text(36, "((整數股數×期末訂價*+剩餘金額)/每單位面額初始投資金額)-100%")
+    d.text(36, f"= (({whole} x {p3:,.2f} + {rem:,.2f} ) / {s.denom:,}) - 100%")
+    d.text(36, f"= {total.quantize(Q2, ROUND_HALF_UP)}% (平均年化報酬率:{annualized}%)")
+    d.text(36, "*在必要時，依期末匯率轉換為計價貨幣。")
+    d.text(36, "※ 請注意：情境分析之結果不保證未來績效，亦不代表連結標的未來表現。")
+    d.section = "art16"
+
+
 ARTICLE_TITLES = {
     1: "商品名稱：",
     2: "商品風險程度：",
@@ -718,7 +870,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             d.text(36, f"發行價格：每單位(張)商品面額的100%，即{s.money(s.denom)}({s.ccy})。")
         elif n == 9:
             d.article(n, title)
-            (_article9_sb if isinstance(s, SbSpec) else _article9)(d, s)
+            (_article9_ben if isinstance(s, BenSpec) else _article9_sb if isinstance(s, SbSpec) else _article9)(d, s)
         elif n == 10:
             d.article(n, title)
             _article10(d, s)
@@ -737,7 +889,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                 "(6) 配息日："
                 + (
                     "本商品持有期間並無配息金額。"
-                    if isinstance(s, SbSpec)
+                    if isinstance(s, (SbSpec, BenSpec))
                     else "詳見第9 項「本商品主要給付項目及其計算方式」。"
                 ),
             ):
@@ -746,14 +898,17 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             d.article(n, title)
             d.text(36, "(1)到期贖回計算公式：請參見上述第一章第9 項。")
             d.text(36, f"(3)提前贖回金額即為公平市值贖回金額，此公平市值贖回金額可能低於100%{s.currency_zh}投資本金。")
-            if isinstance(s, SbSpec):
+            if isinstance(s, BenSpec):
+                d.text(36, "(4)最低保證配息率：不適用，本商品持有期間並無配息金額。")
+                d.text(36, f"(5)參與率：{s.participation}%。")
+            elif isinstance(s, SbSpec):
                 d.text(36, "(4)最低保證配息率：不適用。本商品持有期間並無配息金額。")
                 d.text(36, "(5)參與率：不適用。")
             else:
                 d.text(36, f"(4)最低保證配息率：{guaranteed}配息 {s.monthly}%。")
         elif n == 16:
             d.article(n, title)
-            (_article16_sb if isinstance(s, SbSpec) else _article16)(d, s)
+            (_article16_ben if isinstance(s, BenSpec) else _article16_sb if isinstance(s, SbSpec) else _article16)(d, s)
         else:
             d.article(n, title)
 
@@ -946,16 +1101,22 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
         "(15) 配息日："
         + (
             "本商品持有期間並無配息金額。"
-            if isinstance(s, SbSpec)
+            if isinstance(s, (SbSpec, BenSpec))
             else "詳見中文產品說明書第9 項「本商品主要給付項目及其計算方式」。"
         ),
-        "(16) 自動提前出場觀察日：詳見中文產品說明書第9 項「本商品主要給付項目及其計算方式」。",
+        *(
+            ()
+            if isinstance(s, BenSpec)
+            else ("(16) 自動提前出場觀察日：詳見中文產品說明書第9 項「本商品主要給付項目及其計算方式」。",)
+        ),
         "(20) 開始受理贖回日及後續受理贖回日：開始受理贖回日期：自發行日次日起。",
     ):
         d.text(30, t)
     d.section = "coupon"
     d.text(30, "2. 收益分配事項：")
-    if isinstance(s, SbSpec):
+    if isinstance(s, BenSpec):
+        _iis_payments_ben(d, s)
+    elif isinstance(s, SbSpec):
         _iis_payments_sb(d, s)
     else:
         _iis_payments(d, s)
@@ -1075,6 +1236,18 @@ def _iis_payments_sb(d: _Doc, s: SbSpec) -> None:
     d.text(30, "詳細請參見中文產品說明書第一章第9 項之說明。")
 
 
+def _iis_payments_ben(d: _Doc, s: BenSpec) -> None:
+    """投資人須知二、2. 收益分配事項（BEN，投資人須知範本規格 §2；開頭「之的」照樣本）。"""
+    d.text(30, "本商品主要給付項目為「到期贖回金額」，持有期間並無配息金額。")
+    d.text(
+        30,
+        "到期日給付視最差表現之的連結標的期末訂價而定，依每單位面額，發行機構在到期日將依下列（1）或（2）方式支付到期"
+        "贖回金額：",
+    )
+    _ben_maturity(d, s, 30)
+    d.text(30, f"參與率：{s.participation}%。紅利率：{s.annual}%。詳細請參見中文產品說明書第一章第9 項之說明。")
+
+
 # ---------------------------------------------------------------- 參考條件表與核對
 
 
@@ -1083,7 +1256,10 @@ def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
     `overrides` 以 Excel 欄名覆寫。"""
     out = reference_row(spec)
     out["期初定價"] = PRICING[spec.pricing]
-    if isinstance(spec, SbSpec):
+    if isinstance(spec, BenSpec):
+        out["Product"] = BEN_PRODUCT
+        out["參與率(%)"] = float(spec.participation)
+    elif isinstance(spec, SbSpec):
         out["Product"] = SB_PRODUCT
     if spec.pricing == "vwap":
         out.update({f"UL_{i}_進場價": None for i in range(1, spec.count + 1)})
