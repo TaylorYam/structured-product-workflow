@@ -51,6 +51,7 @@ from sp_workflow.product_record import (
     DERIVED_COLUMNS,
     FIELDS,
     KINDS,
+    LOOKBACK_FIELD,
     MATURITY_ONLY_TERMS,
     PARTICIPATION_FIELD,
     PRICE_COLUMNS,
@@ -277,8 +278,8 @@ def read_many(conn: psycopg.Connection, tdccs: Sequence[str] | None = None, *, l
         prices: dict[str, list[UnderlyingPrice]] = {}
         for tdcc, *values in sorted(
             conn.execute(
-                "SELECT tdcc, seq, code, initial_price, strike_price, ki_price, ko_price FROM workflow.underlying_price"
-                + where,
+                "SELECT tdcc, seq, code, initial_price, strike_price, ki_price, ko_price, lookback_price"
+                " FROM workflow.underlying_price" + where,
                 params,
             ).fetchall()
         ):
@@ -482,13 +483,13 @@ def _maintenance_draft(tdcc: str, stored: Stored | None, config: ImportConfig, t
 
 def _default_participation(values: dict[str, object]) -> dict[str, object]:
     """BEN 的參與率空白時帶預設值 100（#373、ADR 0029；起單建檔沒有這欄，資料庫已有的值優先）；回傳 `values`。"""
-    if values.get(PARTICIPATION_FIELD) is None and _has_participation(values.get("Product")):
+    if values.get(PARTICIPATION_FIELD) is None and _is_maturity_only(values.get("Product")):
         values[PARTICIPATION_FIELD] = Decimal(DEFAULT_PARTICIPATION)
     return values
 
 
-def _has_participation(product: object) -> bool:
-    """這種商品有參與率（只在到期判定的 BEN）。"""
+def _is_maturity_only(product: object) -> bool:
+    """只在到期判定的商品（BEN）：有參與率（#373），可以有回顧期間（#374）。"""
     name = product_name(product)
     return name is not None and PRODUCT_RULES[name].maturity_only
 
@@ -576,6 +577,13 @@ def _value_problems(
         problems["Tenor (m)"] = "至少 1"
     if filled(TRADE_FIELD) and filled(STRIKE_FIELD) and values[STRIKE_FIELD] < values[TRADE_FIELD]:
         problems[STRIKE_FIELD] = "不能早於 Trade date"
+    if filled(LOOKBACK_FIELD):  # 回顧結束日（#374）：只有 BEN，回顧期間在交易日之後、最終比價日之前結束
+        if product is not None and not _is_maturity_only(product):
+            problems[LOOKBACK_FIELD] = f"{product} 沒有回顧期間，要空白"
+        elif filled(TRADE_FIELD) and values[LOOKBACK_FIELD] <= values[TRADE_FIELD]:
+            problems[LOOKBACK_FIELD] = "要晚於 Trade date"
+        elif filled("Final valuation date") and values[LOOKBACK_FIELD] >= values["Final valuation date"]:
+            problems[LOOKBACK_FIELD] = "要早於 Final valuation date"
     underlyings = [values.get(name) is not None for name in UNDERLYINGS]
     if any(later and not earlier for earlier, later in zip(underlyings, underlyings[1:], strict=False)):
         gap = UNDERLYINGS[underlyings.index(False)]
@@ -589,6 +597,16 @@ def _value_problems(
             hint = "；還不確定就把 Barrier Type 也先空著" if allow_blank else ""
             problems["KI Barrier (%)"] = f"有 KI 時必填{hint}"
     return problems
+
+
+def _lookback_fixed(values: Mapping[str, object], stored: Stored | None) -> dict[str, str]:
+    """比價已經算出回顧期初價格（#374）的商品，回顧結束日不能再改或清掉：執行價已經照它重算、留了紀錄，
+    改了之後價格要怎麼回復還沒決定（保守做法，ADR 0029）。"""
+    if stored is None or all(p.lookback is None for p in stored.prices):
+        return {}
+    if same_value(values.get(LOOKBACK_FIELD), stored.fields.get(LOOKBACK_FIELD)):
+        return {}
+    return {LOOKBACK_FIELD: "已經算出回顧期初價格、重算了執行價，不能再改；要改請找開發者"}
 
 
 def _raise_problems(prefix: str, problems: Mapping[str, str], trades: TradeRowsDraft | None) -> None:
@@ -726,6 +744,7 @@ def _import_one(conn: psycopg.Connection, draft: Draft, config: ImportConfig, im
     values = _keep_database_values(draft, stored)
     edits = _field_edits(draft.original, values)
     found = _blocking(draft, config, Mode.IMPORT, values)
+    found.update(_lookback_fixed(values, stored))
     if found:
         return _Outcome(ImportLine(tdcc, ImportResult.SKIPPED, describe(found)), values, previous, edits)
     product = _product_for(values, draft, stored, config, Mode.IMPORT)
@@ -801,6 +820,7 @@ def write(
         if refused:
             raise TermsError(f"{tdcc}：{refused}")
         found = _blocking(draft, config, mode)
+        found.update(_lookback_fixed(values, stored))
         if locked_product:
             assert stored is not None
             for name in _FIXED_IN_CORRECTION:

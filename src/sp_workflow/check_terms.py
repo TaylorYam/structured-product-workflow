@@ -133,6 +133,7 @@ class UnderlyingPrice:
     strike: Decimal | None = None  # 執行價
     ki: Decimal | None = None  # 下限價
     ko: Decimal | None = None  # KO 價
+    lookback: Decimal | None = None  # 回顧期初價格（#374）：比價在回顧期間結束後寫入，有值時執行價由它算
 
 
 @dataclass(frozen=True)
@@ -292,19 +293,15 @@ def _underlying_price(
         return blank, f"股價檔（取價日 {price_date}）沒有{column}"
     if raw <= 0:
         return blank, f"股價檔（取價日 {price_date}）的{column} {raw} 不是正數"
-    ki = (
-        None
-        if product.barrier_type == NO_BARRIER or product.ki_pct is None
-        else _round(raw * product.ki_pct / _HUNDRED)
-    )
+    ki = None if product.barrier_type == NO_BARRIER or product.ki_pct is None else price_at(raw, product.ki_pct)
     return (
         UnderlyingPrice(
             n,
             code,
-            initial=_round(raw),
-            strike=_round(raw * product.strike_pct / _HUNDRED),
+            initial=round_price(raw),
+            strike=price_at(raw, product.strike_pct),
             ki=ki,
-            ko=_round(raw * product.ko_pct / _HUNDRED),
+            ko=price_at(raw, product.ko_pct),
         ),
         "",
     )
@@ -351,8 +348,14 @@ def _distinct(values: Iterable[Any]) -> list[Any]:
     return list(dict.fromkeys(values))
 
 
-def _round(value: Decimal) -> Decimal:
+def round_price(value: Decimal) -> Decimal:
+    """價格 half-up 到小數第 4 位（四個價格、回顧期初價格共用，#374）。"""
     return value.quantize(_PRICE, rounding=ROUND_HALF_UP)
+
+
+def price_at(base: Decimal, pct: Decimal) -> Decimal:
+    """基準價格 × 比例(%)（執行價、下限價、KO 價；回顧執行價 = 回顧期初價格 × 執行價(%)，#374）。"""
+    return round_price(base * pct / _HUNDRED)
 
 
 def _text(value: Decimal) -> str:
@@ -509,6 +512,8 @@ def _recalculate(
         old = stored.get(product.tdcc)
         if vwap_from is not None and _pricing(product.initial_pricing) == VWAP:
             calc = _keep_vwap(calc, product, vwap_from, () if old is None else old.prices)
+        if old is not None:
+            calc = _keep_lookback(calc, product, old.prices)
         changed = not _same(calc, old)
         if changed:
             _write(conn, product.tdcc, calc)
@@ -547,11 +552,30 @@ def _keep_vwap(
     return replace(calc, status=TO_CONFIRM, prices=tuple(prices), reason=reason)
 
 
+def _keep_lookback(calc: Calculation, product: ProductTerms, old: Sequence[UnderlyingPrice]) -> Calculation:
+    """比價寫過回顧期初價格的標的（#374，同一位置同一標的）保留它，執行價 = 回顧期初價格 × 執行價(%)；
+    其他價格照算。標的改了、或更正後進場價比回顧期初價格低（回顧期初價格不會高於進場價）的不保留，
+    由下一次比價重算（回顧結束日空白卻有回顧期初價格時比價待確認，`observation`）。"""
+    kept = {p.seq: p for p in old if p.lookback is not None}
+    if not kept:
+        return calc
+    prices = []
+    for price in calc.prices:
+        was = kept.get(price.seq)
+        if was is None or was.code != price.code or (price.initial is not None and price.initial < was.lookback):
+            prices.append(price)
+            continue
+        assert was.lookback is not None
+        strike = price.strike if product.strike_pct is None else price_at(was.lookback, product.strike_pct)
+        prices.append(replace(price, strike=strike, lookback=was.lookback))
+    return replace(calc, prices=tuple(prices))
+
+
 def _kept_or_derived(
     initial: Decimal, kept: Decimal | None, pct: Decimal, pct_before: Decimal | None, same: bool = True
 ) -> Decimal | None:
     """比例沒改時保留 TS 回填的價格，改了由進場價重算。"""
-    return kept if same and pct == pct_before else _round(initial * pct / _HUNDRED)
+    return kept if same and pct == pct_before else price_at(initial, pct)
 
 
 def release_differences(
@@ -652,8 +676,8 @@ def _stored(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, Calcula
     """上一次算的結果（分公司配置是資料庫目前的）。"""
     prices: dict[str, list[UnderlyingPrice]] = {}
     for tdcc, *values in conn.execute(
-        "SELECT tdcc, seq, code, initial_price, strike_price, ki_price, ko_price FROM workflow.underlying_price"
-        " WHERE tdcc = ANY(%s) ORDER BY tdcc, seq",
+        "SELECT tdcc, seq, code, initial_price, strike_price, ki_price, ko_price, lookback_price"
+        " FROM workflow.underlying_price WHERE tdcc = ANY(%s) ORDER BY tdcc, seq",
         (list(tdccs),),
     ):
         prices.setdefault(tdcc, []).append(UnderlyingPrice(*values))
@@ -706,9 +730,10 @@ def _write(conn: psycopg.Connection, tdcc: str, calc: Calculation) -> None:
     conn.execute("DELETE FROM workflow.underlying_price WHERE tdcc = %s", (tdcc,))
     with conn.cursor() as cur:
         cur.executemany(
-            "INSERT INTO workflow.underlying_price (tdcc, seq, code, initial_price, strike_price, ki_price, ko_price)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            [(tdcc, p.seq, p.code, p.initial, p.strike, p.ki, p.ko) for p in calc.prices],
+            "INSERT INTO workflow.underlying_price"
+            " (tdcc, seq, code, initial_price, strike_price, ki_price, ko_price, lookback_price)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+            [(tdcc, p.seq, p.code, p.initial, p.strike, p.ki, p.ko, p.lookback) for p in calc.prices],
         )
     if calc.allocation is not None:
         conn.execute("DELETE FROM workflow.branch_allocation WHERE tdcc = %s", (tdcc,))
