@@ -97,12 +97,14 @@ from sp_workflow.order_terms import OrderRow, collect_orders
 from sp_workflow.preparation import PrepareReceipt, prepare_batch
 from sp_workflow.product_backfill import ProductBackfillError, ProductBackfillReceipt, backfill_products
 from sp_workflow.product_export import ExportReceipt, export_products, export_summary
+from sp_workflow.product_record import plain
 from sp_workflow.product_terms import (
     BatchReceipt,
     Draft,
     ImportConfig,
     MissingProduct,
     Receipt,
+    Stored,
     TermsError,
     draft_from,
     load_import_config,
@@ -281,6 +283,16 @@ class Opened:
     draft: Draft
     config: ImportConfig
     trades: TradeRowsDraft | None = None
+    lookback: str = ""  # 比價算出的回顧期初價格（#374，只能看、不能改）；沒有時空字串
+
+
+def lookback_text(stored: Stored | None) -> str:
+    """畫面上的回顧期初價格（#374）：「UL_1 代碼 價格、…」；還沒算出時空字串。"""
+    if stored is None:
+        return ""
+    return "、".join(
+        f"UL_{p.seq} {p.code} {format(plain(p.lookback), 'f')}" for p in stored.prices if p.lookback is not None
+    )
 
 
 def _recalculate_after_import(conn: psycopg.Connection, paths: ConfigPaths) -> Recalc:
@@ -554,7 +566,7 @@ def open_product(settings: ConnectionSettings, tdcc: str, paths: ConfigPaths) ->
         product = trade_product(conn, tdcc)
     if stored is None and not trades.rows:
         raise TermsError(f"{tdcc}：交易明細和商品條件都沒有這檔，不能在這裡新增")
-    return Opened(draft_from(tdcc, stored, config, trade_product=product), config, trades)
+    return Opened(draft_from(tdcc, stored, config, trade_product=product), config, trades, lookback_text(stored))
 
 
 def save_product(

@@ -293,19 +293,15 @@ def _underlying_price(
         return blank, f"股價檔（取價日 {price_date}）沒有{column}"
     if raw <= 0:
         return blank, f"股價檔（取價日 {price_date}）的{column} {raw} 不是正數"
-    ki = (
-        None
-        if product.barrier_type == NO_BARRIER or product.ki_pct is None
-        else _round(raw * product.ki_pct / _HUNDRED)
-    )
+    ki = None if product.barrier_type == NO_BARRIER or product.ki_pct is None else price_at(raw, product.ki_pct)
     return (
         UnderlyingPrice(
             n,
             code,
-            initial=_round(raw),
-            strike=_round(raw * product.strike_pct / _HUNDRED),
+            initial=round_price(raw),
+            strike=price_at(raw, product.strike_pct),
             ki=ki,
-            ko=_round(raw * product.ko_pct / _HUNDRED),
+            ko=price_at(raw, product.ko_pct),
         ),
         "",
     )
@@ -352,8 +348,14 @@ def _distinct(values: Iterable[Any]) -> list[Any]:
     return list(dict.fromkeys(values))
 
 
-def _round(value: Decimal) -> Decimal:
+def round_price(value: Decimal) -> Decimal:
+    """價格 half-up 到小數第 4 位（四個價格、回顧期初價格共用，#374）。"""
     return value.quantize(_PRICE, rounding=ROUND_HALF_UP)
+
+
+def price_at(base: Decimal, pct: Decimal) -> Decimal:
+    """基準價格 × 比例(%)（執行價、下限價、KO 價；回顧執行價 = 回顧期初價格 × 執行價(%)，#374）。"""
+    return round_price(base * pct / _HUNDRED)
 
 
 def _text(value: Decimal) -> str:
@@ -552,17 +554,19 @@ def _keep_vwap(
 
 def _keep_lookback(calc: Calculation, product: ProductTerms, old: Sequence[UnderlyingPrice]) -> Calculation:
     """比價寫過回顧期初價格的標的（#374，同一位置同一標的）保留它，執行價 = 回顧期初價格 × 執行價(%)；
-    其他價格照算。標的改了的不保留，回顧結束日還在時由下一次比價重算。"""
+    其他價格照算。標的改了、或更正後進場價比回顧期初價格低（回顧期初價格不會高於進場價）的不保留，
+    由下一次比價重算（回顧結束日空白卻有回顧期初價格時比價待確認，`observation`）。"""
     kept = {p.seq: p for p in old if p.lookback is not None}
-    if not kept or product.strike_pct is None:
+    if not kept:
         return calc
     prices = []
     for price in calc.prices:
         was = kept.get(price.seq)
-        if was is None or was.code != price.code:
+        if was is None or was.code != price.code or (price.initial is not None and price.initial < was.lookback):
             prices.append(price)
             continue
-        strike = _round(was.lookback * product.strike_pct / _HUNDRED)  # type: ignore[operator]
+        assert was.lookback is not None
+        strike = price.strike if product.strike_pct is None else price_at(was.lookback, product.strike_pct)
         prices.append(replace(price, strike=strike, lookback=was.lookback))
     return replace(calc, prices=tuple(prices))
 
@@ -571,7 +575,7 @@ def _kept_or_derived(
     initial: Decimal, kept: Decimal | None, pct: Decimal, pct_before: Decimal | None, same: bool = True
 ) -> Decimal | None:
     """比例沒改時保留 TS 回填的價格，改了由進場價重算。"""
-    return kept if same and pct == pct_before else _round(initial * pct / _HUNDRED)
+    return kept if same and pct == pct_before else price_at(initial, pct)
 
 
 def release_differences(

@@ -255,7 +255,8 @@ def load_positions(
     tdccs = [row[0] for row in rows]
     prices: dict[str, list[tuple]] = defaultdict(list)
     for tdcc, *values in conn.execute(
-        "SELECT tdcc, seq, code, initial_price, strike_price, ki_price, price_basis_date"
+        # lookback BEN（#374）的表現用回顧期初價格算，執行價已經是回顧執行價
+        "SELECT tdcc, seq, code, coalesce(lookback_price, initial_price), strike_price, ki_price, price_basis_date"
         " FROM workflow.underlying_price WHERE tdcc = ANY(%s) ORDER BY tdcc, seq",
         (tdccs,),
     ):

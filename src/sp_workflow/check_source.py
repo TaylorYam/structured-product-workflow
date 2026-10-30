@@ -41,7 +41,7 @@ from openpyxl.cell.cell import Cell
 
 from fcn_checker.config import RISK_LEVEL_PENDING
 from fcn_checker.rating_formats import AGENCY_KEYS, RATING_FIELDS
-from sp_workflow.check_terms import DONE
+from sp_workflow.check_terms import DONE, price_at
 from sp_workflow.credit_ratings import RatingRows, load_rows
 from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdatedError, connect
 from sp_workflow.file_tools import save_book, table_book
@@ -203,6 +203,14 @@ def _row(
             key = f"underlying_{i}_{column}"
             if not code or (col == "ki" and no_ki):
                 values[key] = empty
+            elif (
+                col == "strike"
+                and price is not None
+                and price.lookback is not None
+                and price.initial is not None
+                and p["strike_pct"] is not None
+            ):
+                values[key] = price_at(price.initial, p["strike_pct"])  # lookback（#374）：核對比的是 TS 的期初執行價
             else:
                 values[key] = None if price is None else getattr(price, col)  # VWAP 還沒回填時空白，核對通過後回填
     extra: dict[str, Any] = {fmt.issuer_column: p["issuer"], "UF": p["upfront_pct"]}

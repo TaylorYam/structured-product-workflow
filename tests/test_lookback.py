@@ -59,8 +59,9 @@ def ben(**changes) -> Terms:
         "trade_date": TRADE,
         "lookback_end": END,
         "strike_pct": D(80),
+        "underlyings": (A, B),
     }
-    return Terms("147199990001", "Period End", NO_KI, autocall=(FINAL,), underlyings=(A, B), **{**values, **changes})
+    return Terms("147199990001", "Period End", NO_KI, autocall=(FINAL,), **{**values, **changes})
 
 
 def days(code: str, last: dt.date = FINAL) -> list[dt.date]:
@@ -159,10 +160,32 @@ def test_a_backfilled_product_with_a_different_strike_is_not_overwritten() -> No
     outcome = run(ben(keep_strike=True), prices, through=END)
 
     assert outcome.status == TO_CONFIRM
-    assert outcome.reason == "回顧執行價和資料庫的執行價不同，沒有覆寫：UL_1 AAA UW 算出 56、資料庫 80"
+    assert outcome.reason == (
+        "回顧執行價和資料庫的執行價不同，沒有覆寫：UL_1 AAA UW 算出 56、資料庫 80"
+        "（資料庫的執行價才對時，清掉回顧結束日就照它比價）"
+    )
     assert outcome.lookback == ()
     same = replace(ben(keep_strike=True), underlyings=(Underlying(1, A.code, D(100), D(56), None, D(100)), B))
     assert run(same, prices, through=END).status == ON_BOOK
+
+
+def test_without_a_new_low_the_stored_strike_stays() -> None:
+    """期間內沒有比進場價低：回顧期初價格 = 進場價，執行價照資料庫的（不因重算進位而改動）。"""
+    stored = Underlying(1, A.code, D(100), D("79.9999"), None, D(100))
+
+    outcome = run(ben(underlyings=(stored, B)), closes(), through=END)
+
+    assert [(u.lookback, u.strike) for u in outcome.lookback] == [(D(100), D("79.9999")), (D(100), D(80))]
+
+
+def test_a_cleared_lookback_end_with_lookback_prices_is_to_confirm() -> None:
+    computed = replace(A, strike=D(56), lookback=D(70))
+
+    outcome = run(ben(lookback_end=None, underlyings=(computed, B)), closes())
+
+    assert outcome.status == TO_CONFIRM
+    assert outcome.reason.startswith("沒有回顧結束日，但資料庫有回顧期初價格")
+    assert outcome.events == ()
 
 
 def test_a_lookback_end_outside_the_tenor_is_to_confirm() -> None:
@@ -338,6 +361,32 @@ def test_the_lookback_end_cannot_change_after_it_was_used(pg) -> None:
 
     with pytest.raises(TermsError, match="已經算出回顧期初價格、重算了執行價，不能再改"):
         write(pg, draft, CONFIG, user="tester")
+
+
+@pytest.mark.db
+def test_the_reference_sheet_keeps_the_term_sheet_strike_and_the_screen_shows_the_lookback(pg, tmp_path) -> None:
+    """核對比的是 TS（期初價格與期初執行價）；回顧期初價格只在人工維護畫面顯示。"""
+    import openpyxl
+
+    from fcn_checker.check_config import DEFAULTS
+    from fcn_checker.config import load_issuer_prefixes, load_reference_format
+    from sp_workflow.check_source import export_reference
+    from sp_workflow.product_terms import read
+    from sp_workflow.window_actions import lookback_text
+
+    seed(pg)
+    write_closes(pg, END, {MIDDLE: "70"})
+    observe_all(pg, CALENDAR, user="tester")
+    path = tmp_path / "參考條件.xlsx"
+    fmt = load_reference_format(DEFAULTS.reference_format)
+
+    export_reference(pg, [T1], fmt, path, prefixes=load_issuer_prefixes(DEFAULTS.issuer_prefixes))
+
+    rows = list(openpyxl.load_workbook(path).active.iter_rows(values_only=True))
+    row = dict(zip(rows[0], rows[1], strict=True))
+    assert (D(str(row["UL_1_進場價"])), D(str(row["UL_1_執行價"]))) == (D(100), D(80))
+    assert lookback_text(read(pg, T1)) == "UL_1 AAA UW 70、UL_2 BBB UN 100"
+    assert lookback_text(None) == ""
 
 
 @pytest.mark.db

@@ -483,12 +483,12 @@ def _maintenance_draft(tdcc: str, stored: Stored | None, config: ImportConfig, t
 
 def _default_participation(values: dict[str, object]) -> dict[str, object]:
     """BEN 的參與率空白時帶預設值 100（#373、ADR 0029；起單建檔沒有這欄，資料庫已有的值優先）；回傳 `values`。"""
-    if values.get(PARTICIPATION_FIELD) is None and _maturity_only(values.get("Product")):
+    if values.get(PARTICIPATION_FIELD) is None and _is_maturity_only(values.get("Product")):
         values[PARTICIPATION_FIELD] = Decimal(DEFAULT_PARTICIPATION)
     return values
 
 
-def _maturity_only(product: object) -> bool:
+def _is_maturity_only(product: object) -> bool:
     """只在到期判定的商品（BEN）：有參與率（#373），可以有回顧期間（#374）。"""
     name = product_name(product)
     return name is not None and PRODUCT_RULES[name].maturity_only
@@ -578,7 +578,7 @@ def _value_problems(
     if filled(TRADE_FIELD) and filled(STRIKE_FIELD) and values[STRIKE_FIELD] < values[TRADE_FIELD]:
         problems[STRIKE_FIELD] = "不能早於 Trade date"
     if filled(LOOKBACK_FIELD):  # 回顧結束日（#374）：只有 BEN，回顧期間在交易日之後、最終比價日之前結束
-        if product is not None and not _maturity_only(product):
+        if product is not None and not _is_maturity_only(product):
             problems[LOOKBACK_FIELD] = f"{product} 沒有回顧期間，要空白"
         elif filled(TRADE_FIELD) and values[LOOKBACK_FIELD] <= values[TRADE_FIELD]:
             problems[LOOKBACK_FIELD] = "要晚於 Trade date"

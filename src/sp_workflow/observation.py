@@ -45,11 +45,12 @@ import getpass
 import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from fcn_checker.products import PRODUCT_RULES
 from sp_workflow.check_terms import NO_BARRIER as NO_KI
+from sp_workflow.check_terms import price_at, round_price
 from sp_workflow.lifecycle import (
     DELIVERY,
     KO,
@@ -84,8 +85,6 @@ DAILY_TYPES = frozenset(("Daily", "Daily Memory"))
 EKI, AKI, MKI = "EKI", "AKI", "MKI"
 NO_KI_TEXT = "-"  # 沒有 KI 寫一槓，和有 KI 的代碼一眼分開
 MKI_KI = "MKI (manual)"  # MKI 不比（比價日 1～12 不是每一期，ADR 0020），KI 欄提醒人工追蹤
-_PRICE = Decimal("0.0001")
-_HUNDRED = Decimal(100)
 MISSING_CLOSE = re.compile(
     r"^UL_\d+ (?P<code>.+?)：(?P<day>\d{4}-\d{2}-\d{2}) 沒有收盤價"
 )  # 等股價的原因，`observe` 寫的
@@ -174,6 +173,10 @@ def observe(
         return Outcome(status, reason, shown, ki=_ki_text(terms, touch), lookback=fixed)
 
     lookback = terms.lookback_end
+    if lookback is None and any(u.lookback is not None for u in terms.underlyings):
+        return result(
+            TO_CONFIRM, "沒有回顧結束日，但資料庫有回顧期初價格（回顧結束日被清掉了？），執行價可能還是回顧執行價"
+        )
     if lookback is not None:
         problem = _lookback_problem(terms)
         if problem:
@@ -200,8 +203,8 @@ def observe(
         return result(TO_CONFIRM, "；".join(f"{name}：收盤價表沒有這個代碼" for name in unknown))
     last = min(final, through)
     span = (first, last)
-    if lookback is not None and terms.trade_date is not None:  # 回顧觀察期間也要在假日表範圍內
-        span = (min(first, terms.trade_date), max(last, lookback))
+    if lookback is not None and terms.trade_date is not None:  # 回顧觀察期間也要在假日表範圍內（last 已過回顧結束日）
+        span = (min(first, terms.trade_date), last)
     for code, market in markets.items():
         assert market is not None
         if not market.covers(*span):
@@ -218,7 +221,8 @@ def observe(
     mismatch = _basis_problem(terms, closes, book)
     if mismatch:
         return result(TO_CONFIRM, mismatch)
-    jump = _first_jump(terms, jumps, base, max(last, lookback or last))
+    since = min(base, terms.trade_date) if lookback is not None and terms.trade_date else base  # 回顧期間從交易日起
+    jump = _first_jump(terms, jumps, since, last)
     if lookback is not None:
         if jump is not None and jump.day <= lookback:
             return result(TO_CONFIRM, _jump_reason(terms, jump))
@@ -315,19 +319,22 @@ def _lookback_prices(
             if price is None:
                 return (), WAIT_PRICES, f"{u.name}：{day} 沒有收盤價（回顧期間）"
             lows.append(price * book.factor(u.code, u.basis or base, day))
-        low = _round(min(lows))
-        strike = _round(low * terms.strike_pct / _HUNDRED)
+        if min(lows) >= u.initial:  # 期間內沒有比進場價低：回顧期初價格就是進場價，執行價照舊（不因進位改動）
+            low, strike = u.initial, u.strike
+        else:
+            low = round_price(min(lows))
+            strike = price_at(low, terms.strike_pct)
         if terms.keep_strike and strike != u.strike:
             different.append(f"{u.name} 算出 {_text(strike)}、資料庫 {_text(u.strike)}")
         fixed.append(replace(u, strike=strike, lookback=low))
     if different:
-        return (), TO_CONFIRM, f"回顧執行價和資料庫的執行價不同，沒有覆寫：{'；'.join(different)}"
+        return (
+            (),
+            TO_CONFIRM,
+            f"回顧執行價和資料庫的執行價不同，沒有覆寫：{'；'.join(different)}"
+            "（資料庫的執行價才對時，清掉回顧結束日就照它比價）",
+        )
     return tuple(fixed), "", ""
-
-
-def _round(value: Decimal) -> Decimal:
-    """價格 half-up 到小數第 4 位（同核對條件，`check_terms`）。"""
-    return value.quantize(_PRICE, rounding=ROUND_HALF_UP)
 
 
 def price_jumps(
@@ -682,7 +689,8 @@ def _load_terms(
 def _load_closes(conn: psycopg.Connection, terms: Collection[Terms]) -> dict[str, dict[dt.date, Decimal]]:
     """比價會用到的代碼的收盤價（從最早的 Strike date 前 10 天起：核對價格基準用 Strike date 前後的收盤價）。"""
     codes = sorted({u.code for t in terms for u in t.underlyings})
-    starts = [d for t in terms for d in (t.strike_date, *t.autocall[:1], t.trade_date) if d is not None]
+    starts = [d for t in terms for d in (t.strike_date, *t.autocall[:1]) if d is not None]
+    starts += [t.trade_date for t in terms if t.lookback_end is not None and t.trade_date is not None]  # 回顧期間
     closes: dict[str, dict[dt.date, Decimal]] = {}
     if not codes or not starts:
         return closes
@@ -696,7 +704,8 @@ def _load_closes(conn: psycopg.Connection, terms: Collection[Terms]) -> dict[str
 
 def _write_lookback(conn: psycopg.Connection, terms: Terms, fixed: Sequence[Underlying], user: str | None) -> None:
     """回顧期初價格與回顧執行價（#374）和資料庫不同的標的寫進 `workflow.underlying_price`，原值與新值記在
-    `workflow.backfill_log`（同核對寫回的紀錄，來源寫比價與回顧結束日）。"""
+    `workflow.backfill_log`（同核對寫回的紀錄；`result_file` 沒有核對結果檔，寫「比價：回顧期間至 …」）。
+    在 `observe_all` 的 transaction 裡執行。"""
     stored = {u.seq: u for u in terms.underlyings}
     note = f"比價：回顧期間至 {terms.lookback_end}"
     who = user or getpass.getuser()
