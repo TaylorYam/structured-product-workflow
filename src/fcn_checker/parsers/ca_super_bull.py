@@ -15,7 +15,7 @@ from typing import NamedTuple
 
 from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
-from ..standard_fields import ScenarioParam, ScenarioPrice
+from ..standard_fields import Money, ScenarioParam, ScenarioPrice
 from ..text import squash
 from . import ca, price_table
 from .common import Hit, Mention, capture_group, dec, derived, exactly_one, number, one
@@ -278,9 +278,12 @@ S2_RETURN = (
     rf"（平均年化報酬率[:：]{SPCT}）"
 )
 S3_ASSUMED = rf"假設於期末訂價日(?:(?:表現最差的)?連結標的為(.+?)，|連結標的)收盤價為{NUM}{U}，低於其執行價。"
-S3_SHARES = rf"每單位面額/{WHO}的?執行價\*{EQ}{NUM}/{NUM}{EQ}{NUM}股"
-S3_REMAINDER = rf"整數股數{EQ}{NUM}股，畸零股數{EQ}{NUM}股，剩餘金額{EQ}{NUM}{MUL}{NUM}{EQ}{NUM}{U}"
-S3_RETURN = rf"{EQ}\(\({NUM}{MUL}{NUM}\+{NUM}\)/{NUM}\)-1{EQ}{SPCT}\(平均年化報酬率[:：]{SPCT}\)"
+# 跨幣別（第 16 項有匯率行，workflow #424）：股數「N / (K x R)」、剩餘金額「P x F x R」、報酬率「W x P x R」多乘匯率 R
+FX = rf"(?:{MUL}{NUM})?"
+S3_SHARES = rf"每單位面額/{WHO}的?執行價\*{EQ}{NUM}/(\()?{NUM}{FX}(?(2)\)){EQ}{NUM}股"
+S3_REMAINDER = rf"整數股數{EQ}{NUM}股，畸零股數{EQ}{NUM}股，剩餘金額{EQ}{NUM}{MUL}{NUM}{FX}{EQ}{NUM}{U}"
+S3_RETURN = rf"{EQ}\(\({NUM}{MUL}{NUM}{FX}\+{NUM}\)/{NUM}\)-1{EQ}{SPCT}\(平均年化報酬率[:：]{SPCT}\)"
+FX_LINE = rf"({ca.CCY})/({ca.CCY})=([\d,.]+)"
 
 
 class Assumed(NamedTuple):
@@ -299,7 +302,8 @@ class AutocallCalc(NamedTuple):
 
 
 class BestPayout(NamedTuple):
-    """情境二「＝N × [100% + 100% x (P / K - 100%)]＝N x (100% + r%) = A」。"""
+    """情境二「＝N × [100% + 100% x (P / K - 100%)]＝N x (100% + r%) = A」。`currencies` 是 N、N、A 旁的幣別字（計價幣別
+    的金額；P、K 是標的報價幣別的股價，不算金額，workflow #424）。"""
 
     denomination: Decimal
     close: Decimal
@@ -307,14 +311,16 @@ class BestPayout(NamedTuple):
     denomination_again: Decimal  # 「＝N x (100% + r%)」再寫一次的面額
     pct: Decimal
     amount: Decimal
+    currencies: tuple[str, str, str]
 
 
 class SharesCalc(NamedTuple):
-    """情境三「每單位面額/執行價* = N / K = S 股」。"""
+    """情境三「每單位面額/執行價* = N / K = S 股」；跨幣別「N / (K x R)」的匯率 R（同幣別為 None）。"""
 
     denomination: Decimal
     strike: Decimal
     shares: Decimal
+    fx: Decimal | None = None
 
 
 class RemainderCalc(NamedTuple):
@@ -326,10 +332,11 @@ class RemainderCalc(NamedTuple):
     fraction_again: Decimal  # 「P x F」再寫一次的畸零股數
     amount: Decimal
     currency: str
+    fx: Decimal | None = None  # 跨幣別「P x F x R」的匯率
 
 
 class WorseProfitReturn(NamedTuple):
-    """情境三「= ((W x P + R) / N) - 1 = r% (平均年化報酬率:y%)」。"""
+    """情境三「= ((W x P + R) / N) - 1 = r% (平均年化報酬率:y%)」；跨幣別「W x P x 匯率」的匯率在 `fx`。"""
 
     whole: Decimal
     close: Decimal
@@ -337,6 +344,7 @@ class WorseProfitReturn(NamedTuple):
     divisor: Decimal
     pct: Decimal
     annualized: Decimal
+    fx: Decimal | None = None
 
 
 @dataclass
@@ -359,6 +367,15 @@ class SbScenarios:
     @property
     def found(self) -> bool:
         return all(self.titles)
+
+
+def _opt(x: str | None) -> Decimal | None:
+    return None if x is None else dec(x)
+
+
+def remainder_calc(m: re.Match[str]) -> RemainderCalc:
+    """`S3_REMAINDER` 的比對結果（CA BEN 共用）。"""
+    return RemainderCalc(dec(m[1]), dec(m[2]), dec(m[3]), dec(m[4]), dec(m[6]), m[7], _opt(m[5]))
 
 
 def _return(m: re.Match[str]) -> ProfitReturn:
@@ -392,18 +409,22 @@ def _scenarios(ti: TextIndex) -> SbScenarios:
     out.autocall_return = find(1, S1_RETURN, _return)
     out.best_assumed = find(2, S2_ASSUMED, lambda m: Assumed(m[1], dec(m[2])))
     out.best = find(
-        2, S2_AMOUNT, lambda m: BestPayout(dec(m[1]), dec(m[3]), dec(m[5]), dec(m[7]), Decimal(m[9]), dec(m[10]))
+        2,
+        S2_AMOUNT,
+        lambda m: BestPayout(
+            dec(m[1]), dec(m[3]), dec(m[5]), dec(m[7]), Decimal(m[9]), dec(m[10]), (m[2], m[8], m[11])
+        ),
     )
     out.best_return = find(2, S2_RETURN, _return)
     out.worse_assumed = find(3, S3_ASSUMED, lambda m: Assumed(m[1], dec(m[2])))
-    out.shares = find(3, S3_SHARES, lambda m: SharesCalc(dec(m[1]), dec(m[2]), dec(m[3])))
-    out.remainder = find(
-        3, S3_REMAINDER, lambda m: RemainderCalc(dec(m[1]), dec(m[2]), dec(m[3]), dec(m[4]), dec(m[5]), m[6])
-    )
+    out.shares = find(3, S3_SHARES, lambda m: SharesCalc(dec(m[1]), dec(m[3]), dec(m[5]), _opt(m[4])))
+    out.remainder = find(3, S3_REMAINDER, remainder_calc)
     out.worse_return = find(
         3,
         S3_RETURN,
-        lambda m: WorseProfitReturn(dec(m[1]), dec(m[2]), dec(m[3]), dec(m[4]), Decimal(m[5]), Decimal(m[6])),
+        lambda m: WorseProfitReturn(
+            dec(m[1]), dec(m[2]), dec(m[4]), dec(m[5]), Decimal(m[6]), Decimal(m[7]), _opt(m[3])
+        ),
     )
     return out
 
@@ -438,8 +459,8 @@ def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> SbScenarios
         "scenario_table", ca.table_region(art16, "自動提前出場紅利：", "情境分析一"), ca.SCENARIO_TABLE
     )
     fields["scenario_reprint_table"] = price_table.at("scenario_reprint_table", scenario_table, ca.SCENARIO_TABLE)
-    # 標的報價幣別和計價幣別不同時，情境價格表後多一行匯率（`美元/日圓=150.00`），由規則轉人工覆核（workflow #335）
-    fx = [ln for ln in art16 if re.fullmatch(rf"{ca.CCY}/{ca.CCY}=[\d,.]+", squash(ln.text))]
+    # 標的報價幣別和計價幣別不同時，情境價格表後多一行匯率（`美元/日圓=150.00`；規則核對幣別，workflow #335、#424）
+    fx = [ln for ln in art16 if re.fullmatch(FX_LINE, squash(ln.text))]
     fields["scenario_fx"] = ParsedField.present("scenario_fx", [squash(ln.text) for ln in fx], fx)
     fields["scenario_params"] = standard_fields.occurrences(
         "scenario_params",
@@ -462,6 +483,14 @@ def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> SbScenarios
         prices.append(ScenarioPrice(place, row, "strike", strike))
     fields["scenario_prices"] = standard_fields.occurrences("scenario_prices", prices)
     return sc
+
+
+def _best_amounts(best: Hit[BestPayout]) -> ParsedField:
+    """情境二以計價幣別寫的金額（面額、再寫一次的面額、到期給付金額）各自的幣別字。"""
+    b, evidence = best.value, tuple(Evidence.of(ln) for ln in best.lines)
+    amounts = (b.denomination, b.denomination_again, b.amount)
+    found = tuple(Money(f"{x:,} {c}", c, evidence) for x, c in zip(amounts, b.currencies, strict=True))
+    return ParsedField.present("scenario2_currency", found, list(best.lines))
 
 
 # ---------------------------------------------------------------- 讀出
@@ -514,10 +543,14 @@ def read(lines: Sequence[Line]) -> CaSuperBullTermSheet:
     ]
 
     # 幣別出處：第 9 項 (b)(i) 寫「以計價幣別支付剩餘金額」（沒有幣別字）；基本假設初始投資金額後接出場紅利；情境三
-    # 只有剩餘金額是計價幣別的金額（CA FCN 不列入剩餘金額那行），改取它的幣別字
-    remainder = scenarios.remainder
+    # 只有剩餘金額是計價幣別的金額（CA FCN 不列入剩餘金額那行），改取它的幣別字；情境二只取面額與到期給付金額（算式
+    # 裡的期末訂價、執行價是標的報價幣別的股價，跨幣別時和計價幣別不同，workflow #424）
+    remainder, best = scenarios.remainder, scenarios.best
     replaced = {
         "scenario_investment_currency": fields["scenario_investment_currency"],
+        "scenario2_currency": _best_amounts(best)
+        if best is not None
+        else ParsedField.missing("scenario2_currency", "第 16 項情境分析二找不到到期給付金額算式"),
         "scenario3_currency": ParsedField.present("scenario3_currency", remainder.value.currency, list(remainder.lines))
         if remainder is not None
         else ParsedField.missing("scenario3_currency", "第 16 項情境分析三找不到剩餘金額算式"),

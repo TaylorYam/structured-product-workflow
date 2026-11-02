@@ -7,10 +7,12 @@
 
 from __future__ import annotations
 
+import re
 from decimal import ROUND_DOWN, Decimal
 
-from ..parsers.ca_super_bull import WORDS, CaSuperBullTermSheet
-from ..schema import CheckResult
+from ..parsers.ca_super_bull import FX_LINE, WORDS, CaSuperBullTermSheet
+from ..parsers.common import dec
+from ..schema import CheckResult, ParsedField
 from ..schema import CheckStatus as S
 from . import ca, kit, super_bull
 from .kit import Check, IssuerContext
@@ -27,8 +29,8 @@ NOT_COVERED = [
     *(x for x in ca.NOT_COVERED if x["rule_id"] not in ("doc.scenario_calculations", "doc.template_variants")),
     {
         "rule_id": "doc.template_variants",
-        "description": "只支援現行版範本（舊版轉人工覆核、不能放行）；境外人民幣、標的報價幣別和計價幣別不同、觀察日表各列出場價"
-        "或紅利不同轉人工覆核",
+        "description": "只支援現行版範本（舊版轉人工覆核、不能放行）；境外人民幣、跨幣別卻沒有匯率行或匯率行幣別不符、觀察日表"
+        "各列出場價或紅利不同轉人工覆核；跨幣別情境三的假設匯率本身不核對",
     },
     {
         "rule_id": "doc.super_bull_skipped",
@@ -49,8 +51,9 @@ def _ts(ctx: IssuerContext) -> CaSuperBullTermSheet:
 
 
 def scope(ctx: IssuerContext) -> CheckResult:
-    """境外人民幣、標的報價幣別和計價幣別不同（第 16 項有匯率行）轉人工覆核；觀察日表各列出場價須等於價格表表頭 KO%
-    （不同轉人工覆核，各列紅利不同由出場紅利歧義處理）。"""
+    """境外人民幣轉人工覆核；標的報價幣別和計價幣別不同時，第 16 項要剛好一行匯率 `{標的幣別}/{計價幣別}=R`，同幣別不能
+    有匯率行（不符轉人工覆核，workflow #424）；觀察日表各列出場價須等於價格表表頭 KO%（不同轉人工覆核，各列紅利不同由
+    出場紅利歧義處理）。"""
     f = ctx.ts.f
     cz, table, ko, fx = f("currency_zh"), f("ko_table"), f("ko_pct"), f("scenario_fx")
     check = kit.doc_check(ctx, "doc.template_variant", "template_variant", "Super Bull 型態", cz, table, ko, fx)
@@ -59,8 +62,7 @@ def scope(ctx: IssuerContext) -> CheckResult:
     issues = []
     if ctx.std.currency_zh_to_iso.get(cz.value) == "CNH":
         issues.append(f"計價幣別是{cz.value}（境外人民幣轉人工覆核）")
-    if fx.value:
-        issues.append(f"第 16 項有匯率 {'、'.join(fx.value)}（標的報價幣別和計價幣別不同，轉人工覆核）")
+    issues += _fx_issues(cz.value, fx.value, ctx.ts.f("underlying_prices"))
     rows = [str(n) for n, r in enumerate(table.value, start=1) if r["ko"] != ko.value]
     if rows:
         issues.append(f"觀察日表第 {'、'.join(rows)} 列的自動提前出場價不等於價格表表頭 KO% {ko.value}%")
@@ -73,6 +75,30 @@ def scope(ctx: IssuerContext) -> CheckResult:
         message="；".join(issues),
         fail_message="；請人工核對",
     )
+
+
+def _fx_issues(currency: str, lines: list[str], prices: ParsedField) -> list[str]:
+    """跨幣別的匯率行：標的報價幣別（價格表幣別字）和計價幣別不同時剛好一行 `{標的幣別}/{計價幣別}=R`，相同時沒有。"""
+    quotes = {r.currency for r in prices.value} if prices.ok else set()
+    if len(quotes) != 1:
+        return ["讀不到價格表的標的報價幣別，無法判斷第 16 項匯率行"] if lines else []
+    quote = quotes.pop()
+    if quote == currency:
+        return [f"標的報價幣別和計價幣別都是{currency}，第 16 項卻有匯率 {'、'.join(lines)}"] if lines else []
+    if len(lines) != 1:
+        found = f"有 {len(lines)} 行（{'、'.join(lines)}）" if lines else "沒有匯率行"
+        return [f"標的報價幣別{quote}和計價幣別{currency}不同，第 16 項要剛好一行匯率，{found}"]
+    m = re.fullmatch(FX_LINE, lines[0])
+    if m is None or (m[1], m[2]) != (quote, currency):
+        return [f"第 16 項匯率 {lines[0]} 應寫成 {quote}/{currency}=…（標的報價幣別/計價幣別）"]
+    return []
+
+
+def scenario_fx(ctx: IssuerContext) -> Decimal | None:
+    """第 16 項匯率行的匯率 R（沒有匯率行、或不只一行時為 None；行數與幣別由 `scope` 核對）。"""
+    fx = ctx.ts.f("scenario_fx")
+    m = re.fullmatch(FX_LINE, fx.value[0]) if fx.ok and len(fx.value) == 1 else None
+    return dec(m[3]) if m is not None else None
 
 
 # ---------------------------------------------------------------- 出場紅利、沒有配息、到期公式（核對規則 §3.3、§3.5）
@@ -170,7 +196,7 @@ def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
     return [
         *_autocall(cases[0], sc, n, bonus.value, k.value),
         *_best(cases[1], sc, n, tenor.value),
-        *worse(cases[2], sc, n, tenor.value),
+        *worse(cases[2], sc, n, tenor.value, scenario_fx(ctx)),
     ]
 
 
@@ -256,9 +282,23 @@ def _best(c: super_bull.Scenario, sc, n: Decimal, tenor: int) -> list[CheckResul
     return out
 
 
-def worse(c: super_bull.Scenario, sc, n: Decimal, tenor: int) -> list[CheckResult]:
+def _fx_issue(what: str, got: Decimal | None, want: Decimal | None) -> list[str]:
+    """情境三算式的匯率要等於第 16 項匯率行（同幣別兩邊都沒有）。"""
+    if got == want:
+        return []
+    if want is None:
+        return [f"{what}乘了匯率 {got}，但第 16 項沒有匯率行"]
+    if got is None:
+        return [f"{what}沒有乘第 16 項匯率 {want}"]
+    return [f"{what}的匯率 {got} 和第 16 項匯率 {want} 不同"]
+
+
+def worse(c: super_bull.Scenario, sc, n: Decimal, tenor: int, fx: Decimal | None = None) -> list[CheckResult]:
     """情境三：假設收盤價 P < 執行價 K；股數 = 面額 ÷ K 無條件去位到 3 位；整數股數、畸零股數；剩餘金額 = 畸零股數 × P；
-    報酬率 = (整數股數 × P + 剩餘金額) ÷ 面額 − 1；年化 = 未四捨五入的報酬率 × 12 ÷ 天期。"""
+    報酬率 = (整數股數 × P + 剩餘金額) ÷ 面額 − 1；年化 = 未四捨五入的報酬率 × 12 ÷ 天期。
+    跨幣別（第 16 項有匯率 R，workflow #424）：股數 = 面額 ÷ (K × R)、剩餘金額與報酬率的 P 都乘 R；R 是試算值，只核對三個
+    算式寫的 R 等於匯率行。"""
+    rate = fx or Decimal(1)
     out = []
     assumed = sc.worse_assumed.value.close if sc.worse_assumed is not None else None
     s = sc.shares.value if sc.shares is not None else None
@@ -272,10 +312,12 @@ def worse(c: super_bull.Scenario, sc, n: Decimal, tenor: int) -> list[CheckResul
     if s is None:
         out.append(c.unread("shares", "找不到「每單位面額/…執行價* = N / K = S 股」"))
     else:
-        expected = (n / s.strike).quantize(Decimal("0.001"), ROUND_DOWN)
+        expected = (n / (s.strike * rate)).quantize(Decimal("0.001"), ROUND_DOWN)
         issues = [] if s.denomination == n else [f"算式中的面額 {s.denomination} 不等於第一章面額 {n}"]
+        issues += _fx_issue("股數算式", s.fx, fx)
+        divisor = f"({s.strike} × {fx})" if fx is not None else f"{s.strike}"
         if s.shares != expected:
-            issues.append(f"股數 {s.shares} 應為 {n} / {s.strike} 無條件去位到 3 位 = {expected}")
+            issues.append(f"股數 {s.shares} 應為 {n} / {divisor} 無條件去位到 3 位 = {expected}")
         out.append(c.calc("shares", issues, sc.shares, expected=expected, actual=s.shares))
     shares = s.shares if s is not None else None
     if sc.remainder is None:
@@ -291,9 +333,11 @@ def worse(c: super_bull.Scenario, sc, n: Decimal, tenor: int) -> list[CheckResul
                 issues.append(f"畸零股數 {rm.fraction}、{rm.fraction_again} 應為 {shares} - {whole} = {shares - whole}")
         if assumed is not None and rm.close != assumed:
             issues.append(f"剩餘金額算式的收盤價 {rm.close} 和假設句 {assumed} 不同")
-        expected = kit.shown(rm.fraction * rm.close, rm.amount)
+        issues += _fx_issue("剩餘金額算式", rm.fx, fx)
+        expected = kit.shown(rm.fraction * rm.close * rate, rm.amount)
+        times_fx = f" × {fx}" if fx is not None else ""
         if not within_tolerance(rm.amount, expected):
-            issues.append(f"剩餘金額 {rm.amount} 應為 {rm.close} × {rm.fraction} = {expected}")
+            issues.append(f"剩餘金額 {rm.amount} 應為 {rm.close} × {rm.fraction}{times_fx} = {expected}")
         out.append(c.calc("remainder", issues, sc.remainder, expected=expected, actual=rm.amount))
     if sc.worse_return is None:
         out += [
@@ -314,10 +358,14 @@ def worse(c: super_bull.Scenario, sc, n: Decimal, tenor: int) -> list[CheckResul
                 issues.append(f"報酬率算式的{what} {got} 和前面的 {want} 不同")
     if w.divisor != n:
         issues.append(f"報酬率算式的投資金額 {w.divisor} 不等於第一章面額 {n}")
-    total = (w.whole * w.close + w.remainder) / w.divisor * 100 - 100
+    issues += _fx_issue("報酬率算式", w.fx, fx)
+    total = (w.whole * w.close * rate + w.remainder) / w.divisor * 100 - 100
     expected = kit.shown(total, w.pct)
+    times_fx = f" × {fx}" if fx is not None else ""
     if not within_tolerance(w.pct, expected):
-        issues.append(f"報酬率 {w.pct}% 應為 (({w.whole} × {w.close} + {w.remainder}) / {w.divisor}) - 1 = {expected}%")
+        issues.append(
+            f"報酬率 {w.pct}% 應為 (({w.whole} × {w.close}{times_fx} + {w.remainder}) / {w.divisor}) - 1 = {expected}%"
+        )
     out.append(c.calc("return", issues, sc.worse_return, expected=expected, actual=w.pct))
     annualized = kit.shown(total * 12 / tenor, w.annualized)
     issues = (

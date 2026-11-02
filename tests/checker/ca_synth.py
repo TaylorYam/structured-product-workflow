@@ -724,11 +724,14 @@ def _article16_sb(d: _Doc, s: SbSpec) -> None:
         f"年化報酬率：{ann2}%）",
     )
     p3 = (k * Decimal("0.6")).quantize(Q2, ROUND_HALF_UP)
-    shares = (denom / k).quantize(Decimal("0.001"), ROUND_DOWN)
+    rate = Decimal(s.fx.split("=")[1]) if s.fx else Decimal(1)  # 跨幣別：股數、剩餘金額、報酬率乘匯率（workflow #424）
+    times = f" x {rate}" if s.fx else ""
+    shares = (denom / (k * rate)).quantize(Decimal("0.001"), ROUND_DOWN)
     whole = int(shares)
     frac = shares - whole
-    rem = (frac * p3).quantize(Q2, ROUND_HALF_UP)
-    total = (whole * p3 + rem) / denom * 100 - 100
+    rem = (frac * p3 * rate).quantize(Q2, ROUND_HALF_UP)
+    total = (whole * p3 * rate + rem) / denom * 100 - 100
+    strike = f"({k:,.4f}{times})" if s.fx else f"{k:,.4f}"
     named = f"表現最差的連結標的為{u.name}，" if s.count > 1 else "連結標的"
     d.text(36, "情境分析三：較差情況")
     d.text(
@@ -738,12 +741,12 @@ def _article16_sb(d: _Doc, s: SbSpec) -> None:
     )
     d.text(
         36,
-        f"• 到期給付金額{s.worst}單位數為：每單位面額/{s.worst}的執行價* = {s.denom:,} / {k:,.4f} = {shares} 股",
+        f"• 到期給付金額{s.worst}單位數為：每單位面額/{s.worst}的執行價* = {s.denom:,} / {strike} = {shares} 股",
     )
-    d.text(36, f"整數股數＝{whole} 股，畸零股數＝{frac} 股，剩餘金額＝{p3:,.2f} x {frac}＝{rem:,.2f} {ccy}")
+    d.text(36, f"整數股數＝{whole} 股，畸零股數＝{frac} 股，剩餘金額＝{p3:,.2f} x {frac}{times}＝{rem:,.2f} {ccy}")
     d.text(36, "• 報酬率計算為：")
     d.text(36, "((整數股數×期末訂價*+剩餘金額)/每單位面額初始投資金額)-1")
-    d.text(36, f"= (({whole} x {p3:,.2f} + {rem:,.2f}) / {s.denom:,}) - 1")
+    d.text(36, f"= (({whole} x {p3:,.2f}{times} + {rem:,.2f}) / {s.denom:,}) - 1")
     annualized = (total * 12 / s.tenor).quantize(Q2, ROUND_HALF_UP)
     d.text(36, f"= {total.quantize(Q2, ROUND_HALF_UP)}% (平均年化報酬率:{annualized}%)")
     d.text(36, "*在必要時，依期末匯率轉換為計價貨幣。")
