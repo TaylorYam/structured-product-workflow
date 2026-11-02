@@ -27,7 +27,8 @@ TEMPLATE_ID = "barc-zh-pd"
 # 5：情境重印價格表與假設值交成共用情境規則的標準欄位（Issue #294）
 # 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 # 7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings，並確認文件寫明沒有保證機構（Issue #243）
-PARSER_VERSION = "7"
+# 8：封面與 §5 計價幣別取第一個逗號或括號前（「人民幣，於香港銀行同業市場進行交易之貨幣」，workflow #415）
+PARSER_VERSION = "8"
 # 發行機構信用評等（#243）：評等寫在評等機構前面 `A+（標準普爾長期債務信用評等）/A1（穆迪長期債務信用評等）/AA-（惠譽…）`。
 # 第一章第 3 項在發行機構名稱後面（`；` 之後，接第 4 項商品之發行評等）；第二章 (7) 信用評等接 (8) 財務報告
 RATINGS = (
@@ -145,6 +146,12 @@ def product_code(lines: Sequence[Line]) -> ParsedField:
 def _isin(text: str) -> str | None:
     v = squash(text)
     return v if re.fullmatch(r"[A-Z]{2}[A-Z0-9]{9}[0-9]", v) else None
+
+
+def _currency_word(text: str) -> str:
+    """封面與 §5 計價幣別的幣別字：人民幣後面可能接說明，取第一個逗號或括號前（同投資人須知）：
+    「人民幣，於香港銀行同業市場進行交易之貨幣」（#415）、「人民幣(本商品以人民幣支付…)」。"""
+    return re.split(r"[，,(（]", squash(text), maxsplit=1)[0]
 
 
 def _cover_value(lines: list[Line], label: str) -> list[tuple[str, list[Line]]]:
@@ -771,7 +778,7 @@ def read(lines: Sequence[Line]) -> BarcTermSheet:
 
     flds["product_code"] = product_code(all_lines)
     flds["isin"] = _cover_field("isin", all_lines, "ISIN", _isin)
-    flds["currency_zh"] = _cover_field("currency_zh", all_lines, "計價幣別", lambda s: squash(s))
+    flds["currency_zh"] = _cover_field("currency_zh", all_lines, "計價幣別", _currency_word)
     flds["name_zh"] = _cover_field("name_zh", all_lines, "商品中文名稱")
     flds["name_en"] = _cover_field("name_en", all_lines, "商品英文名稱", lambda s: re.sub(r"\s+", " ", s).strip())
     flds["approval_date"] = _cover_field("approval_date", all_lines, "受託或銷售機構審查通過之日期", parse_date)
@@ -795,8 +802,8 @@ def read(lines: Sequence[Line]) -> BarcTermSheet:
     flds["issue_price_pct"] = _issue_price(doc, arts.get(6))
     flds["art1_name"] = _article_value(doc, arts.get(1), "商品名稱", "art1_name")
     art5 = _article_value(doc, arts.get(5), "計價幣別", "art5_currency")
-    if art5.ok:  # 人民幣後面可能接付款帳戶說明：「人民幣(本商品以人民幣支付…)」
-        art5.value = re.split(r"[(（]", art5.value, maxsplit=1)[0]
+    if art5.ok:
+        art5.value = _currency_word(art5.value)
     flds["art5_currency"] = art5
     flds["underlyings"] = _underlyings(doc, arts.get(10))
     flds["monthly_coupon_pct"], flds["coupon_pa_pct"] = _coupon(doc, arts.get(14))

@@ -504,6 +504,19 @@ def test_two_letter_symbol_right_below_the_exchange_code_of_the_row_above():
     assert table.value.tickers == ["NVDA UQ", "MU UQ"]
 
 
+def test_code_header_merged_with_the_exchange_column_and_symbol_wrapped():
+    """代碼欄表頭和右邊的交易所欄擷取成同一行（NOMURA「彭博代碼 交易所 關連交易所」，#415）：代碼欄涵蓋到交易所欄；
+    代號換行（`NVDA` / `UW Equity`）時同一行的交易所名稱不夾進代碼。代號沒換行的列照舊。"""
+    lines = [ln for ln in header(code=False)] + [cell(1, 100, (150, "彭博代碼 交易所"))]
+    lines += [*row(1, 150, 1, "甲公司", None, ROW1), centered(1, 172, 150, "NVDA"), centered(1, 213, 150, "那斯達克")]
+    lines += [centered(1, 172, 161, "UW Equity")]
+    lines += [*row(1, 180, 2, "乙公司", None, ROW2), centered(1, 172, 180, "TSM UN"), centered(1, 213, 180, "紐約")]
+    lines += [centered(1, 172, 191, "Equity")]
+    table = read("t", lines, SPEC)
+    assert table.ok, table.note
+    assert table.value.tickers == ["NVDA UW", "TSM UN"]
+
+
 def test_text_columns_are_read_per_row():
     """其他文字欄（HSBC 的幣別、交易所）：每列讀出該欄的文字，格內換行接回（`US` / `D`、`NASDA` / `Q`）；
     沒有宣告必要的文字欄表頭沒有時略過。"""

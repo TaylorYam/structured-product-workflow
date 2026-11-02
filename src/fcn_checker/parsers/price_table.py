@@ -728,7 +728,10 @@ def _row(
         raise _Unreadable(ordered, f"{spec.where}第 {k} 列各格的幣別字不同")
     ticker = None
     if spec.code is not None:
-        hits = TICKER.findall(_code_text(sorted(by_col.get("code", []), key=_reading)))
+        # 彭博代碼都是英數字：代碼欄表頭和右邊的交易所欄擷取成同一行時（NOMURA，#415），代碼欄會涵蓋到交易所名稱，
+        # 沒有英數字的詞不算進代碼，不然代號換行（`NVDA` / `UW Equity`）時中文夾在代號和交易所碼中間
+        words = [w for w in by_col.get("code", []) if re.search(r"[A-Za-z0-9]", w.text)]
+        hits = TICKER.findall(_code_text(sorted(words, key=_reading)))
         if len(hits) != 1:
             raise _Unreadable(ordered, f"{spec.where}第 {k} 列讀不到彭博代碼")
         ticker = f"{hits[0][0]} {hits[0][1]}"

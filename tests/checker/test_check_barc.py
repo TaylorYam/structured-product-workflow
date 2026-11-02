@@ -479,6 +479,18 @@ def test_underlying_currency_in_the_physical_settlement_formula_is_not_checked(t
     assert problems(report) == set()
 
 
+def test_rmb_with_the_hong_kong_interbank_wording_is_cnh(tmp_path):
+    """封面與 §5 寫「人民幣，於香港銀行同業市場進行交易之貨幣」（§5 後面再接付款帳戶說明）：取第一個逗號前的幣別字，
+    和投資人須知一樣（OOS 回報包，#415）。"""
+    spec = Spec(currency_zh="人民幣", tenor=12, annual=Decimal("10.00"), monthly=Decimal("0.8333"))
+    hk = "人民幣，於香港銀行同業市場進行交易之貨幣"
+    account = "(本商品以人民幣支付之金額僅得以轉帳方式轉入以人民幣計價並於香港依相關香港法規開立及維護之銀行帳戶)"
+    edits = [Edit("人民幣", hk, "ts.cover.currency"), Edit("計價幣別：人民幣", f"計價幣別：{hk}{account}", "ts.art5")]
+    report = check(tmp_path, spec, edits=edits)
+    assert problems(report) == set()
+    assert report.status == PASS
+
+
 def test_currency_without_a_sample_is_reviewed_once_at_the_cover(tmp_path):
     """沒有樣本的幣別寫法（例：澳元）：對照表沒有，封面幣別轉人工覆核一次；其他出處寫同一個字不重複報。"""
     report = check(tmp_path, Spec(currency_zh="澳元", currency_iso="AUD"))
