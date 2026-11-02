@@ -17,7 +17,7 @@
 |---|---|---|
 | Product | `product` | 不和說明書比；= `DACN` 才能用 DACN 範本（§1） |
 | Coupon p.a. (%) | `coupon_pa_pct` | 第 8 項 `（相當於年配息率Y%）`（FCN 是 `(年率 Y%)`）；第 8 項配息率 X = 年利率 ÷ 12 四捨五入到 4 位（同 FCN） |
-| 配息門檻(%) | `coupon_barrier_pct` | 第 8 項 n(i) 定義 `…所有連結標的收盤價皆大於或等於其執行價…` → = 第 8 項 `執行價：連結標的期初價格的X%`。表上**沒有這欄**（舊 Excel）→ 拿說明書的配息門檻和 `K(%)` 比；**有這欄但該列空白或 `-`** → 轉人工覆核（共用 `field.coupon_barrier_pct`，workflow #368、ADR 0030） |
+| 配息門檻(%) | `coupon_barrier_pct` | 第 8 項 n(i) 定義 `…所有連結標的收盤價皆大於或等於其執行價…` → = 第 8 項 `執行價：連結標的期初價格的X%`。表上**沒有這欄**（舊 Excel）→ 拿說明書的配息門檻和 `K(%)` 比；**有這欄但該列空白或 `-`** → 也和 `K(%)` 比（2026-11-02 使用者決定，DACN-409-01）（共用 `field.coupon_barrier_pct`，workflow #368、ADR 0030） |
 | Non-Call(月) | `first_callable_period` | 同 FCN D 型（日期表第一個有起始日的期別 − 1）；另核 = 第 8 項配息公式的保證期數（`第1個` → 1、`第1~2個` → 2） |
 | KO(Freq)／KO(memo)／KI(Freq)／K(%)／KO(%)／KI(%)／各價格 | 同 FCN | 同 FCN（10 份樣本：`D`、`Y`、`-` 或 `AM`） |
 

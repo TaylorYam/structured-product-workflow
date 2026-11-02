@@ -16,7 +16,7 @@
 | Excel 欄 | 標準欄位 | 說明書來源（見[範本規格](../templates/dbs-zh-dacn.md)） |
 |---|---|---|
 | Product | `product` | 不和說明書比；= `DACN` 才能用 DACN 範本（§1） |
-| 配息門檻(%) | `coupon_barrier_pct` | 表1 表頭 `區間下限價格 (期初價格的X%)`（累積日數定義比的是 `其區間下限價格`，範本規格 §4.1）。表上**沒有這欄**（舊 Excel）→ 拿說明書的配息門檻和 `K(%)` 比；**有這欄但該列空白或 `-`** → 轉人工覆核（共用 `field.coupon_barrier_pct`，workflow #368、ADR 0030） |
+| 配息門檻(%) | `coupon_barrier_pct` | 表1 表頭 `區間下限價格 (期初價格的X%)`（累積日數定義比的是 `其區間下限價格`，範本規格 §4.1）。表上**沒有這欄**（舊 Excel）→ 拿說明書的配息門檻和 `K(%)` 比；**有這欄但該列空白或 `-`** → 也和 `K(%)` 比（2026-11-02 使用者決定，DACN-409-01）（共用 `field.coupon_barrier_pct`，workflow #368、ADR 0030） |
 | Non-Call(月) | `first_callable_period` | 同 FCN（強制贖回 `自動提前出場決定日: 從第k個觀察期間結束日` 的 k）；另核 = 配息 `利率：1) 對於第1個觀察期間而言` 的保證期數 |
 | Coupon p.a. (%)／KO(Freq)／KO(memo)／KI(Freq)／K(%)／KO(%)／KI(%)／各價格 | 同 FCN | 同 FCN（7 份樣本：`D`、`Y`、`-` 或 `AM`；年利率 = `最大利率值：…（即y%/12）` 的 y） |
 

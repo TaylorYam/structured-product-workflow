@@ -16,7 +16,7 @@
 | Excel 欄 | 標準欄位 | 說明書來源（見[範本規格](../templates/natixis-zh-dacn.md)） |
 |---|---|---|
 | Product | `product` | 不和說明書比；= `DACN` 才能用 DACN 範本（§1） |
-| 配息門檻(%) | `coupon_barrier_pct` | 第 9 項價格表 `配息界限價格(每日觀察)/執行價格 (期初進場價格之X%)` 欄頭的 X（= `K(%)`）。表上**沒有這欄**（舊 Excel）→ 拿說明書的配息門檻和 `K(%)` 比；**有這欄但該列空白或 `-`** → 轉人工覆核（共用 `field.coupon_barrier_pct`，workflow #368、ADR 0030） |
+| 配息門檻(%) | `coupon_barrier_pct` | 第 9 項價格表 `配息界限價格(每日觀察)/執行價格 (期初進場價格之X%)` 欄頭的 X（= `K(%)`）。表上**沒有這欄**（舊 Excel）→ 拿說明書的配息門檻和 `K(%)` 比；**有這欄但該列空白或 `-`** → 也和 `K(%)` 比（2026-11-02 使用者決定，DACN-409-01）（共用 `field.coupon_barrier_pct`，workflow #368、ADR 0030） |
 | Non-Call(月) | `first_callable_period` | 同 FCN D 型（第 12 項 `從第k個配息觀察期間結束日` 的 k）；另核 = 日期表 `固定配息金額` 的期數 |
 | Coupon p.a. (%) | `coupon_pa_pct` | 同 FCN：第 13 項 `月配息率：x% (即年利率y%)` 的 y；月配息率 x = y ÷ 12 四捨五入到 4 位 |
 | KO(Freq)／KO(memo)／KI(Freq)／K(%)／KO(%)／KI(%)／各價格 | 同 FCN | 同 FCN（7 份樣本：`D`、`Y`、`AM`／`D`／`-`）；表上 `UL_n_執行價` 也是配息界限價格 |

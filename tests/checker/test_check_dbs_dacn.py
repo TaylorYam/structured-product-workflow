@@ -180,15 +180,23 @@ def test_product_must_match_the_template_family(tmp_path, spec, product):
         assert item.unsupported_variant and item.release_problem
 
 
-@pytest.mark.parametrize(
-    ("value", "status"),
-    [(75.0, S.MISMATCH), (None, S.REVIEW_REQUIRED), ("-", S.REVIEW_REQUIRED)],
-    ids=["differs", "blank", "empty-value"],
-)
-def test_coupon_barrier_column(tmp_path, value, status):
-    """表上有配息門檻欄：說明書配息門檻（表1 區間下限價格的 %）和它比；空白或空值寫法轉人工覆核（DACN 一定要有值）。"""
-    r = check(tmp_path, headers=WITH_BARRIER, **{"配息門檻(%)": value})
-    only(r, "field.coupon_barrier_pct", status)
+def test_coupon_barrier_column(tmp_path):
+    """表上有配息門檻欄：說明書配息門檻（表1 區間下限價格的 %）和它比；不同時判不一致。"""
+    r = check(tmp_path, headers=WITH_BARRIER, **{"配息門檻(%)": 75.0})
+    only(r, "field.coupon_barrier_pct", S.MISMATCH)
+
+
+@pytest.mark.parametrize("value", [None, "-"], ids=["blank", "empty-value"])
+def test_a_blank_barrier_cell_is_compared_with_the_strike(tmp_path, value):
+    """表上有配息門檻欄、但該列空白或空值寫法：和沒有這欄一樣和 K(%) 比（2026-11-02 使用者決定，DACN-409-01）；
+    K(%) 和說明書相同通過，不同時配息門檻與執行價一起判錯。"""
+    r = check(tmp_path / "same", headers=WITH_BARRIER, **{"配息門檻(%)": value})
+    assert r.status == S.PASS, problems(r)
+    barrier = rule(r, "field.coupon_barrier_pct")[0]
+    assert barrier.status == S.PASS and "該列配息門檻空白，和 K(%) 比" in barrier.message, barrier.message
+    r = check(tmp_path / "differs", headers=WITH_BARRIER, **{"配息門檻(%)": value, "K(%)": 75.0})
+    assert flagged(r, "field.coupon_barrier_pct", S.MISMATCH), problems(r)
+    assert flagged(r, "field.strike_pct", S.MISMATCH)
 
 
 def test_without_the_column_the_barrier_is_compared_with_the_strike(tmp_path):
