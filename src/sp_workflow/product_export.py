@@ -120,7 +120,7 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
 
     存續是最新一筆還有效的事件（沒有是在庫）；承作總額是交易明細加總，交易列照順序往右排成分公司／FC／金額，
     組數是交易最多那一檔的筆數（至少 `MIN_TRADE_GROUPS`）。資料庫沒有的值（含私銀註記、新加坡註記、Lookback 期間，
-    DACN 以外商品的配息門檻，#367）寫 `-`。
+    DACN、BEN 以外商品的配息門檻，#367、#406；BEN 預設沒有 KO 的 KO(%)、KO價）寫 `-`。
     總表是 Excel 表格，後面接用公式從總表即時計算的在庫部位分析分頁（#293）。
     """
     with _snapshot(conn), conn.cursor(row_factory=dict_row) as cur:  # 商品、事件、比價日、價格、交易列讀同一個時間點

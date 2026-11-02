@@ -153,9 +153,11 @@ BEN_TERMS = {
     "Product": "BEN",
     "Guaranteed Periods (m)": 6,
     "KO Type": "Period End",
+    "KO Barrier (%)": None,  # 預設沒有 KO（#406）
     "Barrier Type": "NONE",
     "KI Barrier (%)": None,
     "Participation (%)": Decimal(100),
+    "Coupon Barrier (%)": Decimal(80),  # 紅利門檻，預設 = 執行價（#406）
 }
 
 
@@ -172,14 +174,28 @@ BEN_TERMS = {
         ),
         ({"Participation (%)": None}, {"Participation (%)": "BEN 必填（一般 100、Digital 0）"}),
         ({"Participation (%)": Decimal(-1)}, {"Participation (%)": "不能是負數"}),
+        ({"KO Barrier (%)": Decimal(100)}, {}),  # 真的有 KO 才填（比價待確認，#406）
+        ({"Coupon Barrier (%)": Decimal(100)}, {}),  # 紅利門檻可以和執行價不同
+        ({"Coupon Barrier (%)": None}, {"Coupon Barrier (%)": "必填"}),
         (
-            {"Product": "FCN", "Guaranteed Periods (m)": 1, "KO Type": "Daily Memory"},
+            {
+                "Product": "FCN",
+                "Guaranteed Periods (m)": 1,
+                "KO Type": "Daily Memory",
+                "KO Barrier (%)": Decimal(100),
+                "Coupon Barrier (%)": None,
+            },
             {"Participation (%)": "FCN 沒有參與率，要空白"},
+        ),
+        (
+            {"Product": "FCN", "Guaranteed Periods (m)": 1, "KO Type": "Daily Memory", "Participation (%)": None},
+            {"KO Barrier (%)": "必填", "Coupon Barrier (%)": "FCN 沒有配息門檻，要空白"},
         ),
     ],
 )
 def test_ben_field_checks(changes, expected) -> None:
-    """BEN 只在到期判定（#373、ADR 0029）：Non-Call = 天期、Period End、NONE，參與率必填；其他商品沒有參與率。"""
+    """BEN 只在到期判定（#373、ADR 0029）：Non-Call = 天期、Period End、NONE，參與率必填；其他商品沒有參與率。
+    BEN 的 KO% 可以空白、配息門檻（紅利門檻）必填（#406）；FCN 的 KO% 仍必填。"""
     draft = draft_of(order_row())
     draft.values.update({**BEN_TERMS, **changes})
 
@@ -245,6 +261,18 @@ def test_changing_the_product_sets_or_clears_the_default_coupon_barrier() -> Non
     assert (draft.values["Coupon Barrier (%)"], problems(draft, CONFIG)) == (Decimal(80), {})
     assert draft.set_value("Product", "FCN") == ["Coupon Barrier (%)"]
     assert draft.values["Coupon Barrier (%)"] is None
+
+
+@pytest.mark.parametrize(("barrier", "expected"), [(Decimal(100), Decimal(100)), (None, Decimal(90))])
+def test_a_ben_bonus_barrier_from_the_ko_column_is_kept(barrier, expected) -> None:
+    """BEN 起單建檔 KO 欄搬來的紅利門檻（#406）：和執行價不同也照原值（K 90、KO 100 → 100），不換成預設值；
+    KO 欄空白時帶執行價。改執行價時不等於執行價的紅利門檻不跟著改。"""
+    changes = {**BEN_TERMS, "Strike (%)": Decimal(90), "Coupon Barrier (%)": barrier}
+    draft = draft_of(order_row(changes=changes))
+
+    assert draft.values["Coupon Barrier (%)"] == expected
+    assert draft.set_value("Strike (%)", Decimal(85)) == ([] if barrier else ["Coupon Barrier (%)"])
+    assert draft.values["Coupon Barrier (%)"] == (expected if barrier else Decimal(85))
 
 
 def test_mistyped_fields_block_only_that_product() -> None:
@@ -352,7 +380,8 @@ def test_an_express_row_imports_with_no_non_call(pg, tmp_path: Path) -> None:
 
 @pytest.mark.db
 def test_a_ben_row_imports_with_the_fixed_terms_and_keeps_a_digital_participation(pg, tmp_path: Path) -> None:
-    """BEN（#373、ADR 0029）：起單建檔填什麼都存 Non-Call = 天期、Period End、NONE，參與率預設 100；
+    """BEN（#373、ADR 0029）：起單建檔填什麼都存 Non-Call = 天期、Period End、NONE，參與率預設 100，
+    KO 欄存成配息門檻、KO% 空白（#406）；
     作業人員改成 0（Digital）之後重新匯入起單資料，參與率照資料庫的值、不回到 100。"""
     lines = [sheet_line(A, {"Product": "ben", "Guaranteed Periods (m)": 1, "KO Type": "Daily Memory"})]
     path = write_sheet(tmp_path / "起單建檔_20261015.xlsx", lines)
@@ -363,6 +392,7 @@ def test_a_ben_row_imports_with_the_fixed_terms_and_keeps_a_digital_participatio
     p = product(pg, A)
     assert (p["product"], p["non_call_months"], p["tenor_months"], p["ko_type"]) == ("BEN", 6, 6, "Period End")
     assert (p["barrier_type"], p["ki_freq"], p["ki_pct"], p["participation_pct"]) == ("NONE", "-", None, 100)
+    assert (p["ko_pct"], p["coupon_barrier_pct"]) == (None, 100)  # KO 欄是配息門檻（#406）
     pg.execute("UPDATE workflow.product SET participation_pct = 0 WHERE tdcc = %s", (A,))
     (draft,) = _drafts(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg)
     assert draft.values["Participation (%)"] == 0

@@ -87,6 +87,8 @@ BEN = {
     "KO Type": "Period End",
     "Barrier Type": "NONE",
     "KI Barrier (%)": None,
+    "KO Barrier (%)": None,
+    "Coupon Barrier (%)": Decimal(80),
 }
 
 

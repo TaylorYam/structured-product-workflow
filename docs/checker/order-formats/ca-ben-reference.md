@@ -20,7 +20,8 @@ BEN 沿用 FCN 那組欄（ADR 0029）：`Coupon p.a. (%)` 存紅利、`Non-Call
 | Coupon p.a. (%) | `coupon_pa_pct` | 紅利（不年化）：第 9 項 `紅利率：X%。`。Digital 舊總表存紅利水準 − 100（Digital 轉人工，只記錄；BEN-377-03） |
 | 參與率(%) | `participation_pct` | 第 9 項 `參與率：X%。`（CA 明寫，Bonus 樣本 100）。沒有這欄或空白 → 轉人工覆核（同 HSBC、MS BEN） |
 | K(%) | `strike_pct` | 第 9 項價格表表頭 `執行價 (期初訂價之X% )` |
-| KO(%) | `ko_pct` | 說明書沒有 KO：照來源存、不核對（ADR 0029） |
+| KO(%) | `ko_pct` | BEN 預設沒有 KO：KO 欄改存配息門檻、KO% 空白（ADR 0029、workflow #406）；作業人員填了 KO% 也不核對（比價待確認） |
+| 配息門檻(%) | `coupon_barrier_pct` | 紅利門檻：第 9 項到期（2）與 Bonus 公式是期末訂價大於或等於執行價就領紅利，由到期公式與 K% 推得 = 執行價 %（workflow #406）；共用規則 `field.coupon_barrier_pct` 和表上比，表上沒有這欄（舊 Excel）時和 `K(%)` 比，有這欄但空白或 `-` 轉人工覆核 |
 | KI(%) | `ki_pct` | 無 KI，表上必須是 `-` |
 | KO(Freq) | `ko_observation` | 固定 `P`（ADR 0029 起單匯入一律存 `Period End`） |
 | KO(memo) | `ko_memory` | 固定 `N` |

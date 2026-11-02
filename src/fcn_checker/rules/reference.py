@@ -685,9 +685,9 @@ def _product(ctx: Context) -> tuple[str | None, OrderValue | None]:
 
 
 def coupon_barrier(ctx: Context) -> list[CheckResult]:
-    """配息門檻 %（要配息門檻的商品，`PRODUCT_RULES` 的 `has_coupon_barrier`：DACN，workflow #368、ADR 0030）：說明書配息門檻
-    = 表上「配息門檻(%)」，依說明書顯示位數四捨五入後比；表上沒有這欄（舊 Excel）時和「K(%)」比；有這欄但該列空白或是空值
-    寫法轉人工覆核（DACN 一定要有值）。其他商品不產生結果。"""
+    """配息門檻 %（要配息門檻的商品，`PRODUCT_RULES` 的 `has_coupon_barrier`：DACN，workflow #368、ADR 0030；BEN 的紅利門檻，
+    workflow #406、ADR 0029）：說明書配息門檻 = 表上「配息門檻(%)」，依說明書顯示位數四捨五入後比；表上沒有這欄（舊 Excel）
+    時和「K(%)」比；有這欄但該列空白或是空值寫法轉人工覆核（DACN、BEN 一定要有值）。其他商品不產生結果。"""
     product, _ = _product(ctx)
     rule = PRODUCT_RULES.get(product) if product else None
     if rule is None or not rule.has_coupon_barrier:

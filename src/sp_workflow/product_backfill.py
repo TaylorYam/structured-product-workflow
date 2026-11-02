@@ -8,8 +8,9 @@
   KO(Freq)＋KO(memo) → KO Type、KI(Freq) → Barrier Type、UF → Upfront / NotePrice；沒有 Non-Call 的商品
   （FCN_Express）Non-Call 一律存 0（舊表寫 1）；舊表沒有期初定價日，照舊商品存交易日；期初定價空白照樣匯入、
   結果寫出來，之後在人工維護補。ISIN、單位面額用表上的值。只在到期判定的商品（BEN，#373、ADR 0029）KO Type 一律
-  Period End（舊表的 KO(memo) 不看），參與率帶 100（`product_terms.draft_from`；Digital 由作業人員在人工維護改 0），Non-Call 照舊表、要等於天期。
-  要配息門檻的商品（DACN，#367）用表上的配息門檻，舊表沒有這欄（或空白）時帶執行價。
+  Period End（舊表的 KO(memo) 不看），參與率帶 100（`product_terms.draft_from`；Digital 由作業人員在人工維護改 0），Non-Call 照舊表、要等於天期；
+  舊表 BEN 的 KO 欄是紅利門檻：存配息門檻、KO% 與各標的 KO 價空白（預設沒有 KO，#406）。
+  要配息門檻的商品（DACN，#367；BEN）用表上的配息門檻，舊表沒有這欄（或空白）時 BEN 用 KO 欄，再沒有帶執行價。
 - 價格與比價日：UL_1～UL_5 的四個價格寫進 `workflow.underlying_price`，核對條件寫一筆「完成」；比價日 1～12 照搬
   （比價日_1 是第一個觀察日，沒有 Non-Call 的商品不能空白）。
 - 分公司配置：分公司_1～7 與承作金額寫進 `workflow.branch_allocation`。交易明細列（含 FC）不在這裡寫，
@@ -158,7 +159,7 @@ def backfill_products(
                 (record,) = rows
                 cells = extra.get(record.row, {})
                 values, problems = _values(record, cells, fmt)
-                problems += [*_price_problems(record, fmt), *date_problems(record, fmt)]
+                problems += [*_price_problems(record, fmt, values["Product"]), *date_problems(record, fmt)]
                 product = PRODUCT_RULES[values["Product"]]
                 if not product.has_non_call and cell_value(record, autocall_date_key(1), fmt) is None:
                     problems.append(f"比價日_1 空白：{product.name} 沒有 Non-Call，比價日_1 是第一個觀察日")
@@ -264,11 +265,16 @@ def _values(record: OrderRecord, cells: Mapping[str, Any], fmt: ReferenceFormat)
     values["Tenor (m)"] = _whole(value("tenor_months"))
     values["Guaranteed Periods (m)"] = _whole(value("first_callable_period")) if product.has_non_call else 0
     barrier = _number(value("coupon_barrier_pct"))  # 舊表沒有這欄（#367）
+    if product.maturity_only:  # BEN 舊表的 KO 欄是紅利門檻：存配息門檻，KO% 空白（預設沒有 KO，#406）
+        ko_barrier, values["KO Barrier (%)"] = values["KO Barrier (%)"], None
+        barrier = ko_barrier if barrier is None else barrier
     values[COUPON_BARRIER_FIELD] = default_coupon_barrier(values) if barrier is None else barrier
     return values, problems
 
 
-def _price_problems(record: OrderRecord, fmt: ReferenceFormat) -> list[str]:
+def _price_problems(record: OrderRecord, fmt: ReferenceFormat, product: object) -> list[str]:
+    """UL_1～UL_5 的價格問題；只在到期判定的商品（BEN）沒有 KO，KO 價不看（#406）。"""
+    ignored = _ignored_prices(product)
     problems = []
     for i in range(1, len(UNDERLYINGS) + 1):
         prices = {label: cell_value(record, price_key(i, col), fmt) for col, _, label in PRICES}
@@ -277,11 +283,23 @@ def _price_problems(record: OrderRecord, fmt: ReferenceFormat) -> list[str]:
                 problems.append(f"UL_{i} 沒有代碼，卻有價格")
             continue
         for label, price in prices.items():
+            if label in ignored:
+                continue
             if price is None and label in REQUIRED_PRICES:
                 problems.append(f"UL_{i} {label}是空白")
             elif price is not None and not isinstance(price, Decimal):
                 problems.append(f"UL_{i} {label}不是數字（{price}）")
     return problems
+
+
+def _ignored_prices(product: object) -> frozenset[str]:
+    """不讀的價格（`PRICES` 的名稱）：只在到期判定的商品（BEN）是 KO 價，舊表那格是紅利門檻價（#406）。"""
+    rule = PRODUCT_RULES.get(product_name(product) or "")
+    return (
+        frozenset(label for col, _, label in PRICES if col == "ko")
+        if rule is not None and rule.maturity_only
+        else frozenset()
+    )
 
 
 def _allocation(cells: Mapping[str, Any]) -> tuple[list[tuple[str, Decimal]], list[str]]:
@@ -330,13 +348,17 @@ def _write(
         (tdcc, DONE, f"{note}（價格由表上補入）"),
     )
     columns = read(conn, tdcc).columns  # 代碼用商品條件存的寫法
+    ignored = _ignored_prices(columns["product"])
     for i in range(1, len(UNDERLYINGS) + 1):
         code = columns[f"underlying_{i}"]
         if code is not None:
+            prices = (
+                None if label in ignored else cell_value(record, price_key(i, col), fmt) for col, _, label in PRICES
+            )
             conn.execute(
                 "INSERT INTO workflow.underlying_price"
                 " (tdcc, seq, code, initial_price, strike_price, ki_price, ko_price) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                (tdcc, i, code, *(cell_value(record, price_key(i, col), fmt) for col, _, _ in PRICES)),
+                (tdcc, i, code, *prices),
             )
     write_dates(conn, tdcc, record, fmt)
     with conn.cursor() as cur:

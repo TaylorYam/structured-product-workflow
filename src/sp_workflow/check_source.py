@@ -184,7 +184,7 @@ def _row(
         "final_valuation_date": p["final_valuation_date"],
         "maturity_date": p["maturity_date"],
         "initial_pricing": p["initial_pricing"],
-        "ko_pct": p["ko_pct"],
+        "ko_pct": empty if p["ko_pct"] is None else p["ko_pct"],  # BEN 預設沒有 KO（#406）
         "ko_observation": p["ko_freq"],
         "ko_memory": p["ko_memory"],
         "strike_pct": p["strike_pct"],
@@ -210,7 +210,7 @@ def _row(
         price = prices.get(i)
         for col, column in PRICE_COLUMNS.items():
             key = f"underlying_{i}_{column}"
-            if not code or (col == "ki" and no_ki):
+            if not code or (col == "ki" and no_ki) or (col == "ko" and p["ko_pct"] is None):  # BEN 預設沒有 KO
                 values[key] = empty
             elif (
                 col == "strike"

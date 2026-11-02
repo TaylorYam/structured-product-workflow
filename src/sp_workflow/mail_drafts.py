@@ -329,7 +329,7 @@ def render_body(tdcc: str, product: dict[str, Any], branches: Sequence[str], ris
         *((f"BBG Code {i}", p[f"underlying_{i}"] or "") for i in range(1, 6)),
         ("Strike (%)", _pct(p["strike_pct"])),
         ("KO Type", p["ko_type"]),
-        ("KO Barrier (%)", _pct(p["ko_pct"])),
+        ("KO Barrier (%)", _pct(p["ko_pct"]) if p["ko_pct"] is not None else "-"),  # BEN 預設沒有 KO（#406）
         ("Coupon p.a. (%)", _pct(p["coupon_pct"])),
         ("Upfront / NotePrice (%)", _pct(invert_upfront(p["upfront_pct"]))),
         ("Tenor (m)", str(p["tenor_months"])),
@@ -537,7 +537,7 @@ class OutlookDrafter:
             product["underlying_5"] or "",
             product["strike_pct"],
             product["ko_type"],
-            product["ko_pct"],
+            product["ko_pct"] if product["ko_pct"] is not None else "-",
             product["coupon_pct"],
             invert_upfront(product["upfront_pct"]),
             product["tenor_months"],

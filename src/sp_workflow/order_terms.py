@@ -20,8 +20,10 @@
   假日表確定不了（標的交易所不在表上、日期超出範圍）時留空，由作業人員填。
 - 只在到期判定的商品（BEN，`fcn_checker.products.ProductRule.maturity_only`，#373、ADR 0029）不管起單建檔填什麼，
   Guaranteed Periods (m) = Tenor (m)、KO Type = Period End、Barrier Type = NONE、KI Barrier (%) 空白。
+  起單建檔 BEN 的 KO Barrier (%) 填的是紅利門檻：改放配息門檻、KO% 空白（預設沒有 KO，#406）。
   參與率（%）起單建檔沒有這欄，預設值在 `product_terms.draft_from` 帶（資料庫已有的值優先）。
-- 配息門檻（DACN，#367）起單建檔也沒有這欄，預設值在 `product_terms.draft_from` 帶（資料庫已有、不是預設值的值優先）。
+- 配息門檻（DACN，#367）起單建檔也沒有這欄，預設值在 `product_terms.draft_from` 帶（資料庫已有、不是預設值的值優先）；
+  BEN 的 KO 欄空白時同樣帶預設值（執行價）。
 """
 
 from __future__ import annotations
@@ -66,6 +68,7 @@ PENDING = OrderReview.PENDING
 NOT_FOUND = OrderReview.NOT_FOUND
 
 TDCC_FIELD = "TDCC"
+KO_FIELD = "KO Barrier (%)"
 NEXT_OPEN = "明日開盤價"  # 交易日隔一個營業日的開盤價（#101）
 
 _OFF_SHEET = (STRIKE_FIELD, PARTICIPATION_FIELD, LOOKBACK_FIELD, COUPON_BARRIER_FIELD)  # 起單建檔沒有的欄
@@ -226,7 +229,9 @@ def _row_for(
 
 
 def _maturity_only(values: dict[str, object], notes: dict[str, str], conflicts: set[str]) -> None:
-    """只在到期判定的商品（BEN）：不會提前出場、沒有 KI 的那幾欄一律照規則填，起單建檔的值與問題都不算。"""
+    """只在到期判定的商品（BEN）：不會提前出場、沒有 KI 的那幾欄一律照規則填，起單建檔的值與問題都不算。
+    KO Barrier (%) 是紅利門檻：值、讀不懂與好幾列不同的問題都移到配息門檻，KO% 空白（#406）。"""
+    _move(KO_FIELD, COUPON_BARRIER_FIELD, values, notes, conflicts)
     fixed = {
         "Guaranteed Periods (m)": values.get("Tenor (m)"),  # 天期好幾列不同時是空白，天期填好前要作業人員填
         **MATURITY_ONLY_TERMS,
@@ -236,6 +241,16 @@ def _maturity_only(values: dict[str, object], notes: dict[str, str], conflicts: 
         values[name] = value
         notes.pop(name, None)
         conflicts.discard(name)
+
+
+def _move(source: str, target: str, values: dict[str, object], notes: dict[str, str], conflicts: set[str]) -> None:
+    """把一欄的值與問題搬到另一欄，原本那欄空白、沒有問題。"""
+    values[target], values[source] = values.get(source), None
+    if source in notes:
+        notes[target] = notes.pop(source)
+    if source in conflicts:
+        conflicts.discard(source)
+        conflicts.add(target)
 
 
 def unknown_issuer(tdcc: str) -> str:

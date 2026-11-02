@@ -22,6 +22,7 @@ from sp_workflow.product_record import (
     fields_of,
     invert_upfront,
     missing_fields,
+    required_fields,
 )
 
 DENOMINATIONS = {"USD": Decimal(10000), "JPY": Decimal(1000000)}
@@ -121,6 +122,19 @@ def test_missing_fields_name_blank_required_fields_and_their_derived_codes() -> 
     assert missing_fields(columns_of(dict.fromkeys(FIELDS), None, DENOMINATIONS)) == list(REQUIRED)
 
 
+def test_a_ben_needs_a_bonus_barrier_but_no_ko() -> None:
+    """BEN 預設沒有 KO（#406、ADR 0029）：KO% 不必填，配息門檻（紅利門檻）必填；FCN 的 KO% 仍必填、沒有配息門檻。"""
+    ben = columns_of(
+        {**VALUES, "Product": BEN, "KO Barrier (%)": None, "Coupon Barrier (%)": None}, "HSBC", DENOMINATIONS
+    )
+
+    assert "KO Barrier (%)" not in required_fields(BEN) and required_fields(BEN)[-1] == "Coupon Barrier (%)"
+    assert missing_fields(ben) == ["Coupon Barrier (%)"]
+    assert missing_fields({**ben, "coupon_barrier_pct": Decimal(80)}) == []
+    assert required_fields(FCN) == REQUIRED
+    assert missing_fields({**columns_of(VALUES, "Barclays", DENOMINATIONS), "ko_pct": None}) == ["KO Barrier (%)"]
+
+
 @pytest.mark.parametrize(
     ("text", "name"),
     [
@@ -165,7 +179,7 @@ def test_ben_non_call_must_equal_the_tenor(months, tenor, problem) -> None:
     """BEN 只在到期判定（#373）：Non-Call 要等於天期；不知道天期時只看至少 1。"""
     rule = PRODUCT_RULES[BEN]
 
-    assert (rule.maturity_only, rule.final_date_callable) == (True, False)
+    assert (rule.maturity_only, rule.final_date_callable, rule.has_coupon_barrier) == (True, False, True)
     assert rule.non_call_problem(months, tenor) == problem
     assert PRODUCT_RULES[FCN].non_call_problem(3, 6) == ""
 

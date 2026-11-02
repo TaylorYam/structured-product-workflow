@@ -7,7 +7,8 @@
 - KO：收盤價 ≥ KO 價。非記憶式要同一個觀察日所有標的都達標；記憶式每檔標的在任一觀察日達標就記住，全部記過即 KO。
   D 型的觀察日是第一個比價日（資料庫最早的比價日；沒有 Non-Call 的 FCN_Express 是比價日_1，#302）起到最終比價日止、所有標的市場都開市的日子；P 型只看各期比價日。
   Non-Call 等於天期的商品不會提前出場，不觀察 KO。最終比價日不算 KO 的商品種類（Super Bull、BEN，`ProductRule.final_date_callable`，
-  #310、ADR 0028）即使比價日裡有最終比價日，那天也只做到期判定。
+  #310、ADR 0028）即使比價日裡有最終比價日，那天也只做到期判定。BEN 預設沒有 KO（KO% 空白）；填了 KO% 的 BEN 有 KO 機制，
+  待確認、由人判斷會不會提前出場（#406、ADR 0029）。
 - KI：EKI 只在最終比價日，收盤價 < 下限價；AKI 自 Strike date 之後、該標的市場的每個交易日；
   MKI（每期觀察）不比，KI 欄寫「MKI (manual)」，KO 照比、比價狀態照 KO 算；最終比價日沒有 KO 時待確認（#196）。
 - 比價狀態、已比到、原因只講 KO（#196、ADR 0022）：已比到第一個比價日之前、不觀察 KO 的都空白；KI 另寫一欄
@@ -125,6 +126,7 @@ class Terms:
     lookback_end: dt.date | None = None  # 回顧結束日：有值是 lookback 商品（#374）
     strike_pct: Decimal | None = None  # 執行價(%)：回顧執行價 = 回顧期初價格 × 它
     keep_strike: bool = False  # 已鎖住的歷史回補商品：回顧執行價和資料庫的不同時待確認、不覆寫（#374）
+    manual_ko: bool = False  # 只在到期判定的商品（BEN）填了 KO%：真的有 KO，會不會提前出場由人判斷（#406）
 
 
 @dataclass(frozen=True)
@@ -423,6 +425,8 @@ def _maturity(
 
 def _terms_problem(terms: Terms, calendar: TradingCalendar) -> str:
     """比價前先確認條件齊全；有問題時回傳待確認的原因。"""
+    if terms.manual_ko:
+        return "BEN 有填 KO%（有 KO 機制），會不會提前出場要人工判斷"
     if not terms.underlyings:
         return "核對條件沒有標的價格"
     if terms.ko_type not in KO_TYPES:
@@ -629,7 +633,7 @@ def _load_terms(
     rows = conn.execute(  # 鎖住＝`locked_at` 有值（同 `product_terms.locked`）
         "SELECT p.tdcc, p.ko_type, p.barrier_type, p.strike_date, p.final_valuation_date,"
         " p.non_call_months, p.tenor_months, p.locked_at IS NOT NULL, c.status, c.reason, p.product,"
-        " p.trade_date, p.lookback_end_date, p.strike_pct, p.source"
+        " p.trade_date, p.lookback_end_date, p.strike_pct, p.source, p.ko_pct"
         " FROM workflow.product p JOIN workflow.check_terms c ON c.tdcc = p.tdcc ORDER BY p.tdcc"
     ).fetchall()
     locked = {row[0]: row[7] for row in rows}
@@ -664,6 +668,7 @@ def _load_terms(
             lookback_end,
             strike_pct,
             is_locked and source == ProductSource.BACKFILL,
+            ko_pct is not None and product in PRODUCT_RULES and PRODUCT_RULES[product].maturity_only,
         )
         for (
             tdcc,
@@ -681,6 +686,7 @@ def _load_terms(
             lookback_end,
             strike_pct,
             source,
+            ko_pct,
         ) in done  # fmt: skip
     ]
     return terms, locked, not_done

@@ -227,6 +227,33 @@ def test_ben_rows_get_the_fixed_maturity_only_terms(tmp_path: Path) -> None:
     assert [row.values[name] for name in fixed] == [6, "Period End", "NONE", None, None]
 
 
+@pytest.mark.parametrize(("ko", "barrier"), [(Decimal(90), Decimal(90)), (None, None)])
+def test_a_ben_ko_column_is_its_bonus_barrier(tmp_path: Path, ko, barrier) -> None:
+    """起單建檔 BEN 的 KO Barrier (%) 是紅利門檻（#406、ADR 0029）：放進配息門檻、KO% 空白（預設沒有 KO）；
+    KO 欄空白時配息門檻也空白（預設值在 draft_from 帶執行價）。FCN 的 KO 欄照舊。"""
+    path = write_sheet(tmp_path / "s.xlsx", [sheet_line(A, {"Product": "BEN", "KO Barrier (%)": ko})])
+
+    (row,) = read(path, A)
+
+    assert (row.values["KO Barrier (%)"], row.values["Coupon Barrier (%)"]) == (None, barrier)
+    (fcn,) = read(write_sheet(tmp_path / "f.xlsx", [sheet_line(A)]), A)
+    assert (fcn.values["KO Barrier (%)"], fcn.values["Coupon Barrier (%)"]) == (Decimal(100), None)
+
+
+def test_different_ben_ko_lines_leave_the_bonus_barrier_for_the_operator(tmp_path: Path) -> None:
+    """好幾列的 KO 欄不同：問題跟著搬到配息門檻（#406）。"""
+    ben = {"Product": "BEN", "KO Barrier (%)": Decimal(90)}
+    path = write_sheet(
+        tmp_path / "s.xlsx", [sheet_line(A, ben), sheet_line(A, {**ben, "KO Barrier (%)": Decimal(100)})]
+    )
+
+    (row,) = read(path, A)
+
+    assert row.conflicts == {"Coupon Barrier (%)"}
+    assert row.notes == {"Coupon Barrier (%)": "這檔有 2 列，這欄不同：第 3 列「90」、第 4 列「100」；請填正確的值"}
+    assert (row.values["KO Barrier (%)"], row.values["Coupon Barrier (%)"]) == (None, None)
+
+
 @pytest.mark.parametrize(
     ("make", "message"),
     [

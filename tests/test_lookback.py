@@ -215,9 +215,11 @@ BEN = {
     "Product": "BEN",
     "Guaranteed Periods (m)": 6,
     "KO Type": "Period End",
+    "KO Barrier (%)": None,
     "Barrier Type": "NONE",
     "KI Barrier (%)": None,
     "Participation (%)": D(100),
+    "Coupon Barrier (%)": D(80),
 }
 
 
@@ -238,6 +240,17 @@ def test_the_lookback_end_date_is_checked() -> None:
     }
 
 
+def test_a_ben_with_a_ko_pct_is_to_confirm() -> None:
+    """BEN 預設沒有 KO；填了 KO% 的有 KO 機制，提前出場由人判斷（#406、ADR 0029）。"""
+    outcome = run(ben(manual_ko=True), closes())
+
+    assert (outcome.status, outcome.reason, outcome.events) == (
+        TO_CONFIRM,
+        "BEN 有填 KO%（有 KO 機制），會不會提前出場要人工判斷",
+        (),
+    )
+
+
 # ---------------------------------------------------------------- 資料庫
 
 T1 = "147199990001"
@@ -248,15 +261,15 @@ def seed(pg, *, locked: bool = True, source: str = ProductSource.MANUAL, lookbac
     seed_products(pg, [inventory(T1, [("台北", 10000)], **{"KI(Freq)": "-", "KO(memo)": "N"})])
     pg.execute(
         "UPDATE workflow.product SET product = 'BEN', trade_date = %s, strike_date = %s, final_valuation_date = %s,"
-        " non_call_months = tenor_months, ko_type = 'Period End', ko_freq = 'P', strike_pct = 80,"
-        " participation_pct = 100, lookback_end_date = %s, locked_at = %s, source = %s WHERE tdcc = %s",
+        " non_call_months = tenor_months, ko_type = 'Period End', ko_freq = 'P', strike_pct = 80, ko_pct = NULL,"
+        " coupon_barrier_pct = 80, participation_pct = 100, lookback_end_date = %s, locked_at = %s, source = %s WHERE tdcc = %s",
         (TRADE, TRADE, FINAL, lookback, dt.datetime(2026, 11, 3, tzinfo=dt.UTC) if locked else None, source, T1),
     )
     pg.execute("INSERT INTO workflow.check_terms (tdcc, status) VALUES (%s, '完成')", (T1,))
     for seq, code in ((1, "AAA UW"), (2, "BBB UN")):
         pg.execute(
             "INSERT INTO workflow.underlying_price (tdcc, seq, code, initial_price, strike_price, ki_price, ko_price)"
-            " VALUES (%s, %s, %s, 100, 80, NULL, 100)",
+            " VALUES (%s, %s, %s, 100, 80, NULL, NULL)",
             (T1, seq, code),
         )
     pg.execute("INSERT INTO workflow.autocall_date (tdcc, slot, value) VALUES (%s, 1, %s)", (T1, FINAL))
@@ -309,6 +322,21 @@ def test_observe_all_writes_the_lookback_prices_once_and_logs_them(pg) -> None:
     ]
     observe_all(pg, CALENDAR, user="tester")
     assert len(logs(pg)) == 3, "再比一次沒有改變，不再記"
+
+
+@pytest.mark.db
+def test_observe_all_sends_a_ben_with_a_ko_pct_to_confirm(pg) -> None:
+    """資料庫的 BEN 有 KO% → 待確認（#406）；清掉 KO% 照常比。"""
+    seed(pg)
+    write_closes(pg, MIDDLE, {})
+    pg.execute("UPDATE workflow.product SET ko_pct = 100 WHERE tdcc = %s", (T1,))
+
+    observe_all(pg, CALENDAR, user="tester")
+
+    assert status(pg) == (TO_CONFIRM, "BEN 有填 KO%（有 KO 機制），會不會提前出場要人工判斷")
+    pg.execute("UPDATE workflow.product SET ko_pct = NULL WHERE tdcc = %s", (T1,))
+    observe_all(pg, CALENDAR, user="tester")
+    assert status(pg) == (ON_BOOK, f"回顧期間（至 {END}）")
 
 
 @pytest.mark.db
