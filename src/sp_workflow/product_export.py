@@ -24,6 +24,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from psycopg.rows import dict_row
 
+from sp_workflow.daily_import import FC_LABEL_SQL
 from sp_workflow.file_tools import MAX_WIDTH, excel_value, save_export, save_rows, table_book, text_cell
 from sp_workflow.lifecycle import Lifecycle, lifecycle_status
 from sp_workflow.summary_analysis import add_analysis_sheets, enable_spill, summary_table
@@ -118,8 +119,10 @@ def trade_columns(groups: int) -> tuple[str, ...]:
 def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
     """商品總表（#291）：所有商品一檔一列、依 TDCC 排序，欄位照新商品總表；只讀資料庫。
 
-    存續是最新一筆還有效的事件（沒有是在庫）；承作總額是交易明細加總，交易列照順序往右排成分公司／FC／金額，
-    組數是交易最多那一檔的筆數（至少 `MIN_TRADE_GROUPS`）。資料庫沒有的值（含私銀註記、新加坡註記、Lookback 期間，
+    存續是最新一筆還有效的事件（沒有是在庫）；承作總額是交易明細加總，交易列照順序往右排成分公司／FC／金額
+    （有 FC2 時 FC 寫「FC1／FC2」、金額不拆，#420），組數是交易最多那一檔的筆數（至少 `MIN_TRADE_GROUPS`）。
+    新加坡註記照交易明細的新加坡欄（#420）：有一列 Y 就是 Y、有值但都不是 Y 是 N。
+    資料庫沒有的值（含私銀註記、沒有新加坡欄的舊資料、Lookback 期間，
     DACN、BEN 以外商品的配息門檻，#367、#406；BEN 預設沒有 KO 的 KO(%)、KO價）寫 `-`。
     總表是 Excel 表格，後面接用公式從總表即時計算的在庫部位分析分頁（#293）。
     """
@@ -137,14 +140,19 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
         ):
             prices.setdefault(tdcc, {})[seq] = tuple(values)
         trades: dict[str, list[tuple[str, str, Decimal]]] = {}
-        for tdcc, branch, fc, amount in conn.execute(
-            "SELECT tdcc, branch, fc_name, amount FROM workflow.trade_row ORDER BY tdcc, row_seq"
+        singapore: dict[str, str] = {}  # 新加坡註記（#420）：有一列 Y 就是 Y，有值但都不是 Y 是 N；沒有值的不放（寫 -）
+        for tdcc, branch, fc, amount, mark in conn.execute(
+            f"SELECT tdcc, branch, {FC_LABEL_SQL}, amount, upper(trim(singapore)) FROM workflow.trade_row"
+            " ORDER BY tdcc, row_seq"
         ):
             trades.setdefault(tdcc, []).append((branch, fc, amount))
+            if mark:
+                singapore[tdcc] = "Y" if "Y" in (mark, singapore.get(tdcc)) else "N"
     groups = max([MIN_TRADE_GROUPS, *(len(trades.get(tdcc, ())) for tdcc in tdccs)])
     columns = (*SUMMARY_COLUMNS, *trade_columns(groups))
     rows = [
         _summary_cells(p, statuses[t], autocall.get(t, {}), prices.get(t, {}), trades.get(t, []))
+        | ({"新加坡註記": singapore[t]} if t in singapore else {})
         for p, t in zip(products, tdccs, strict=True)
     ]
     book = _summary_book(columns, [[cells.get(column) for column in columns] for cells in rows])

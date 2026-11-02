@@ -26,8 +26,8 @@ from sp_workflow.mailbox import Mailbox, is_pb, load_mailbox
 if TYPE_CHECKING:
     import psycopg
 
-FIELDS = tuple(TRADE_FIELDS)  # 畫面的欄（交易明細的表頭），依交易明細的順序
-FC_FIELD, NOTE_FIELD = "FC/PB", "備註"
+FIELDS = tuple(TRADE_FIELDS)  # 畫面的欄（交易明細新版面的表頭，#420；不顯示舊版的前台主管/投專），依交易明細的順序
+FC_FIELDS, NOTE_FIELD = ("FC1", "FC2"), "備註"  # FC1、FC2 都比對信箱（#420）
 # 核對條件會用到的欄（分公司配置、交叉比對）：已鎖住的商品只有這幾欄改了才重算
 CHECK_TERM_FIELDS = frozenset(name for name, column in TRADE_FIELDS.items() if column in CHECK_TRADE_COLUMNS)
 CANCEL_NOTE = "寫 Cancel 或「取消」的列每日匯入不存資料庫；這裡只改值，不能刪除列"
@@ -101,15 +101,15 @@ def trade_problems(trades: TradeRowsDraft) -> dict[tuple[int, str], str]:
 
 
 def trade_notes(trades: TradeRowsDraft) -> dict[tuple[int, str], str]:
-    """不擋存檔的提示：改了的 FC 名字對不到信箱（照每日匯入：大小寫不同算同一人、先查別名、PB 不比）。"""
+    """不擋存檔的提示：改了的 FC1、FC2 名字對不到信箱（照每日匯入：大小寫不同算同一人、先查別名、PB 不比）。"""
     note = UNMATCHED_NOTE if trades.mailbox.people else MAILBOX_EMPTY_NOTE
-    edited = ((seq, after) for seq, name, _, after in trades.edits() if name == FC_FIELD)
-    return {(seq, FC_FIELD): note for seq, after in edited if _unmatched(trades.mailbox, after)}
+    edited = ((seq, name, after) for seq, name, _, after in trades.edits() if name in FC_FIELDS)
+    return {(seq, name): note for seq, name, after in edited if _unmatched(trades.mailbox, after)}
 
 
 def unmatched_names(mailbox: Mailbox, changes: Iterable[TradeEdit]) -> tuple[str, ...]:
     """改了的格子（`edits`）裡對不到信箱的 FC 名字，依名字排、不重複。"""
-    names = (after for _, name, _, after in changes if name == FC_FIELD)
+    names = (after for _, name, _, after in changes if name in FC_FIELDS)
     return tuple(sorted({str(name) for name in names if _unmatched(mailbox, name)}))
 
 

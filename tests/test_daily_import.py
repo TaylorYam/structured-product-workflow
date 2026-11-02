@@ -18,6 +18,7 @@ from db_synth import (
     PRICE_DATE,
     csv_price,
     inventory,
+    legacy_trade,
     price,
     seed_mailbox,
     seed_products,
@@ -30,6 +31,7 @@ from sp_workflow.daily_import import (
     BLOCKED,
     CANCELLED,
     DIFFERENT,
+    LEGACY_TRADE_HEADERS,
     MAILBOX_EMPTY,
     NAME_UNMATCHED,
     NEW_TRADES,
@@ -328,6 +330,89 @@ def test_wrong_header_rejects_the_whole_file(pg, tmp_path: Path, mailbox) -> Non
         import_daily(daily, pg)
 
     assert count(pg, "workflow.import_run") == 0
+
+
+def stored_people(pg) -> list[tuple]:
+    return pg.execute(
+        "SELECT tdcc, row_seq, fc_name, fc2_name, singapore, supervisor FROM workflow.trade_row ORDER BY tdcc, row_seq"
+    ).fetchall()
+
+
+def test_new_layout_stores_fc2_and_singapore(pg, tmp_path: Path, mailbox) -> None:
+    """#420：新版面的 FC1 存 fc_name、FC2 存 fc2_name、新加坡存 singapore；沒有前台主管/投專，留空白。"""
+    daily = write_daily(
+        tmp_path / "d.xlsx",
+        [trade(A, "Amy", "北區", 1, fc2="Ben", singapore="Y"), trade(A, "Ben", "南區", 1, number=None)],
+    )
+
+    receipt = import_daily(daily, pg)
+
+    assert kinds(receipt, A) == [NEW_TRADES]
+    assert stored_people(pg) == [(A, 1, "Amy", "Ben", "Y", None), (A, 2, "Ben", None, "N", None)]
+
+
+def test_legacy_layout_still_imports(pg, tmp_path: Path, mailbox) -> None:
+    """#420：舊版面（FC/PB、前台主管/投專）照樣可以匯入，回補舊的交易清單用；FC2、新加坡留空白。"""
+    daily = write_daily(
+        tmp_path / "d.xlsx",
+        [legacy_trade(trade(A, "Amy", "北區", 1), supervisor="PB")],
+        trade_headers=LEGACY_TRADE_HEADERS,
+    )
+
+    receipt = import_daily(daily, pg, prices=False)
+
+    assert kinds(receipt, A) == [NEW_TRADES]
+    assert stored_people(pg) == [(A, 1, "Amy", None, None, "PB")]
+
+
+def test_each_layout_compares_only_its_own_columns(pg, tmp_path: Path, mailbox) -> None:
+    """#420：「已存在／內容不同」只比這份檔案那一版有的欄：舊版不比 FC2、新加坡；前台主管/投專已停用，兩版都不比。"""
+    new = trade(A, "Amy", "北區", 1, fc2="Ben", singapore="Y")
+    old = trade(B, "Amy", "北區", 1, singapore=None)  # 新版檔的新加坡有值時和舊版存的空白不同，照實列出
+    import_daily(write_daily(tmp_path / "1.xlsx", [new]), pg)
+    import_daily(
+        write_daily(tmp_path / "2.xlsx", [legacy_trade(old, supervisor="PB")], trade_headers=LEGACY_TRADE_HEADERS),
+        pg,
+    )
+
+    legacy_again = import_daily(
+        write_daily(tmp_path / "3.xlsx", [legacy_trade(new, supervisor="PB")], trade_headers=LEGACY_TRADE_HEADERS), pg
+    )
+    new_again = import_daily(write_daily(tmp_path / "4.xlsx", [old]), pg)
+
+    assert kinds(legacy_again, A) == [UNCHANGED] and kinds(new_again, B) == [UNCHANGED]
+    changed = import_daily(write_daily(tmp_path / "5.xlsx", [new | {"FC2": "Amy"}]), pg)
+    assert kinds(changed, A) == [DIFFERENT]
+
+
+def test_unmatched_fc2_names_are_listed_too(pg, tmp_path: Path, mailbox) -> None:
+    """#420：FC2 也比對信箱；PB 不比。"""
+    daily = write_daily(
+        tmp_path / "d.xlsx",
+        [trade(A, "Amy", "北區", 1, fc2="Zoe"), trade(C, "Amy", "北區", 1, fc2="PB")],
+    )
+
+    receipt = import_daily(daily, pg)
+
+    assert [(line.tdcc, line.detail) for line in receipt.lines if line.kind == NAME_UNMATCHED] == [(A, "Zoe")]
+
+
+def test_fc1_is_required(pg, tmp_path: Path, mailbox) -> None:
+    daily = write_daily(tmp_path / "d.xlsx", [trade(A, None, "北區", 1, fc2="Ben")])
+
+    receipt = import_daily(daily, pg)
+
+    assert kinds(receipt, A) == [BLOCKED] and "FC1 沒有值" in receipt.lines[0].detail
+
+
+def test_a_header_matching_neither_layout_is_explained_against_the_new_one(pg, tmp_path: Path, mailbox) -> None:
+    """#420：表頭不是新版也不是舊版時整份不匯入，訊息照新版指出哪一欄不同。"""
+    headers = list(LEGACY_TRADE_HEADERS)
+    headers[-1] = "建檔人員"
+    daily = write_daily(tmp_path / "d.xlsx", [], trade_headers=headers)
+
+    with pytest.raises(DailyImportError, match="G 欄應為「FC1」，實際是「FC/PB」"):
+        import_daily(daily, pg)
 
 
 @pytest.mark.parametrize("missing", [daily_import.TRADE_SHEET, daily_import.PRICE_SHEET])

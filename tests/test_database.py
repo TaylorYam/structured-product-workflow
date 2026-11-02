@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from db_synth import inventory, seed_products
+from db_synth import inventory, seed_products, trade_row
 from sp_workflow import database
 from sp_workflow.database import (
     VERSION_TABLE,
@@ -551,4 +551,18 @@ def test_ben_ko_becomes_its_coupon_barrier(pg) -> None:
     assert pg.execute("SELECT tdcc, ko_price FROM workflow.underlying_price ORDER BY tdcc").fetchall() == [
         (ben, None),
         (fcn, 100),
+    ]
+
+
+@pytest.mark.db
+def test_trade_rows_gain_fc2_and_singapore(pg) -> None:
+    """資料表版本 0036（#420）：交易明細新版面多了 FC2、新加坡；舊的交易列兩欄空白，前台主管/投專照舊保留。"""
+    _database_before(pg, 36)
+    trade_row(pg, A, dt.date(2026, 10, 15))
+    pg.execute("UPDATE workflow.trade_row SET supervisor = 'PB'")
+
+    assert apply_migrations(pg)[0] == "0036_trade_row_fc2_singapore.sql"
+
+    assert pg.execute("SELECT fc_name, fc2_name, singapore, supervisor FROM workflow.trade_row").fetchall() == [
+        ("Amy", None, None, "PB")
     ]

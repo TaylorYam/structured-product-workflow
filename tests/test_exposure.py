@@ -276,7 +276,7 @@ def test_export_is_one_sheet_of_every_product(seeded, tmp_path: Path) -> None:
     assert header == (
         *("狀態", "TDCC", "剩餘天數", "最終比價日", "商品", "最差表現標的", "最差表現"),
         *("K%", "KI%", "KI種類", "面額", "幣別", "發行機構"),
-        *("分公司1", "FC1", "面額1", "分公司2", "FC2", "面額2", "分公司3", "FC3", "面額3"),
+        *("分公司_1", "FC_1", "面額_1", "分公司_2", "FC_2", "面額_2", "分公司_3", "FC_3", "面額_3"),
     ), "交易明細最多的 A 有三筆"
     every = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}
     a = every[A]
@@ -284,12 +284,12 @@ def test_export_is_one_sheet_of_every_product(seeded, tmp_path: Path) -> None:
         "跌破K", 23, "FCN", None, "USD", "XBANK"
     )  # fmt: skip
     assert (a["最差表現標的"], a["最差表現"], a["K%"], a["KI%"], a["面額"]) == ("AAA UW", 72, 80, 65, 180000)
-    assert [a[f"{name}{n}"] for n in (1, 2, 3) for name in ("分公司", "FC", "面額")] == [
+    assert [a[f"{name}_{n}"] for n in (1, 2, 3) for name in ("分公司", "FC", "面額")] == [
         *("台北", "Amy", 100000),
         *("台中", "Amy", 50000),
         *("台中", "Ben", 30000),
     ], "依面額大到小"
-    assert [every[B][name] for name in ("分公司1", "FC1", "面額1", "分公司2")] == ["台中", "Ben", 200000, None]
+    assert [every[B][name] for name in ("分公司_1", "FC_1", "面額_1", "分公司_2")] == ["台中", "Ben", 200000, None]
     assert (every[B]["狀態"], every[C]["狀態"], every[PENDING]["狀態"]) == ("跌破K", "跌破KI", UNKNOWN)
     assert every[C]["最差表現標的"] == "DDD JT", "最差不一定是選定標的"
     assert (every[B]["KI種類"], every[C]["KI種類"]) == ("EKI", "EKI"), "沒有 KI 的才留空（#360）"
@@ -323,7 +323,7 @@ def test_intact_status_is_blank_and_unfilled(seeded, tmp_path: Path) -> None:
 
     every = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}
     assert (every[OTHER]["狀態"], every[OTHER]["最差表現標的"]) == (None, "BBB UN"), "BBB −5% 還在執行價之上"
-    assert every[OTHER]["分公司1"] == "台北" and every[OTHER]["FC1"] == "-"
+    assert every[OTHER]["分公司_1"] == "台北" and every[OTHER]["FC_1"] == "-"
     sheet = openpyxl.load_workbook(path)["全部商品"]
     [row] = [r for r in range(2, sheet.max_row + 1) if sheet.cell(r, 2).value == OTHER]
     assert sheet.cell(row, 1).fill.fill_type is None
@@ -351,7 +351,7 @@ def test_hotspots_list_every_broken_product_whatever_it_links(seeded, tmp_path: 
     )
     assert (every[C]["最差表現標的"], every[C]["幣別"]) == ("DDD JT", "JPY"), "連結什麼標的都算"
     header, *_ = book["全部商品"].iter_rows(values_only=True, max_row=1)
-    assert header[-3:] == ("分公司3", "FC3", "面額3"), "格式同標的曝險分析"
+    assert header[-3:] == ("分公司_3", "FC_3", "面額_3"), "格式同標的曝險分析"
 
 
 @pytest.mark.db
@@ -365,6 +365,18 @@ def test_no_hotspots_still_writes_the_header(seeded, tmp_path: Path) -> None:
 
 
 @pytest.mark.db
+def test_a_second_fc_is_shown_beside_the_first(seeded, tmp_path: Path) -> None:
+    """#420：交易列有 FC2 時 FC 寫「FC1／FC2」，面額不拆。"""
+    seeded.execute("UPDATE workflow.trade_row SET fc2_name = 'Pat' WHERE tdcc = %s", (B,))
+    path = tmp_path / "曝險.xlsx"
+
+    export_exposure(seeded, ["AAA UW"], UNTIL, path, today=DAY)
+
+    b = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}[B]
+    assert (b["FC_1"], b["面額_1"]) == ("Ben／Pat", 200000)
+
+
+@pytest.mark.db
 def test_products_without_trade_rows_use_the_branch_allocation(seeded, tmp_path: Path) -> None:
     seeded.execute("DELETE FROM workflow.trade_row WHERE tdcc = %s", (B,))
     path = tmp_path / "曝險.xlsx"
@@ -372,7 +384,7 @@ def test_products_without_trade_rows_use_the_branch_allocation(seeded, tmp_path:
     export_exposure(seeded, ["AAA UW"], UNTIL, path, today=DAY)
 
     b = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}[B]
-    assert (b["分公司1"], b["FC1"], b["面額1"], b["分公司2"]) == ("台北", "-", 1, None)
+    assert (b["分公司_1"], b["FC_1"], b["面額_1"], b["分公司_2"]) == ("台北", "-", 1, None)
 
 
 @pytest.mark.db

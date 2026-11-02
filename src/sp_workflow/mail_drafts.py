@@ -4,8 +4,8 @@
 1. 資料庫有這檔的商品條件（沒有缺信裡要用的必填欄，#114）與交易列；
 2. 根目錄底下找得到剛好一個商品資料夾，裡面有 `<TDCC>_TS.pdf` 與 `<TDCC>_IIS.pdf`
    （準備與放回工具只會以標準檔名放回核對通過的文件，所以這就代表核對通過）；
-3. 交易列上的 FC（略過 PB）都對得到信箱（不分大小寫、別名）。
-只有 PB 承作時「不需寄送」；每日匯入略過的不支援商品標「不支援的商品類型」。符合的一檔建一封草稿：收件人是 FC，副本是信箱的固定副本（已在收件人的不重複）。
+3. 交易列上的 FC1、FC2（#420；略過 PB）都對得到信箱（不分大小寫、別名）。
+只有 PB 承作時「不需寄送」；每日匯入略過的不支援商品標「不支援的商品類型」。符合的一檔建一封草稿：收件人是 FC1、FC2，副本是信箱的固定副本（已在收件人的不重複）。
 風險等級寫自算風險等級（#239、ADR 0023，回填的是 RR4）；待算或還沒算過時寫「待確認」，照樣建草稿，結果清單的原因寫出來，
 請寄出前補上（不自動寫 RR4，以免 2026-10-30 以後交易的商品寫錯等級）。
 只建草稿、不寄出；同一檔重跑會再建一封；某一檔出錯只影響那一檔。結果寫成 `寄信草稿清單_<日期時間>.xlsx`，
@@ -214,9 +214,10 @@ def _draft_one(
         stored = read(conn, tdcc)
         product = None if stored is None else stored.columns
         branches = [] if stored is None else [branch for branch, _ in stored.branches]
-        fc_names = [n for (n,) in conn.execute(
-            "SELECT fc_name FROM workflow.trade_row WHERE tdcc = %s ORDER BY row_seq", (tdcc,)
-        )]  # fmt: skip
+        # FC1、FC2 都是收件人（#420）：依交易列順序，每列先 FC1 再 FC2
+        fc_names = [n for row in conn.execute(
+            "SELECT fc_name, fc2_name FROM workflow.trade_row WHERE tdcc = %s ORDER BY row_seq", (tdcc,)
+        ) for n in row if n is not None]  # fmt: skip
         other = conn.execute("SELECT product FROM workflow.other_product WHERE tdcc = %s", (tdcc,)).fetchone()
         risk = risk_level_of(conn, tdcc)
     if product is None and not fc_names and other is not None:

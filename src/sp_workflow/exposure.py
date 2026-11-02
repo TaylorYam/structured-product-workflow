@@ -18,7 +18,7 @@
   其他是高於執行價。分類只用在視窗的匯出結果檔數。
 - 全部商品（#354、#358）：一檔一列。狀態只標跌破KI（跌破下限價或比價已記 AKI 觸及）、跌破K，那一格填淺紅色，
   未跌破留空；已比價、無法計算照分類。最差表現用 100 為基數（100 + 表現 %，例 −26.1% → 73.9）。
-  後面接交易明細的分公司1、FC1、面額1、分公司2…，依面額大到小；沒有交易明細的用庫存的分公司配置（FC 寫 `-`）。
+  後面接交易明細的分公司_1、FC_1、面額_1、分公司_2…，依面額大到小；沒有交易明細的用庫存的分公司配置（FC 寫 `-`）。
   版面照作業人員的範本（#360）：表頭分基本資料、表現、交易明細三種底色，全部置中，沒有 KI 的 KI種類 留空。
 - 只讀資料庫，不改任何資料。
 
@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING
 from openpyxl.styles import Alignment, PatternFill
 
 from sp_workflow.check_terms import NO_BARRIER
+from sp_workflow.daily_import import FC_LABEL_SQL
 from sp_workflow.file_tools import excel_value, save_export, table_book, text_cell
 from sp_workflow.lifecycle import IN_STOCK, lifecycle_status
 from sp_workflow.status import CheckTerms
@@ -294,10 +295,11 @@ def load_positions(
 
 
 def _holdings(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, list[Holding]]:
-    """交易明細逐筆；沒有交易明細的商品用庫存的分公司配置。"""
+    """交易明細逐筆（有 FC2 時 FC 寫「FC1／FC2」、金額不拆，#420）；沒有交易明細的商品用庫存的分公司配置。"""
     found: dict[str, list[Holding]] = defaultdict(list)
     for tdcc, branch, fc, amount in conn.execute(
-        "SELECT tdcc, branch, fc_name, amount FROM workflow.trade_row WHERE tdcc = ANY(%s) ORDER BY tdcc, row_seq",
+        f"SELECT tdcc, branch, {FC_LABEL_SQL}, amount FROM workflow.trade_row WHERE tdcc = ANY(%s)"
+        " ORDER BY tdcc, row_seq",
         (list(tdccs),),
     ):
         found[tdcc].append(Holding(branch, fc, amount))
@@ -356,11 +358,12 @@ _COLUMNS = (
 
 
 def _holding_columns(n: int) -> tuple[_Column, ...]:
-    """第 n 組交易明細：分公司n、FCn、面額n。"""
+    """第 n 組交易明細：分公司_n、FC_n、面額_n（同商品總表的寫法，和交易明細新版面的 FC1、FC2 欄分開，#420）。
+    有 FC2 時 FC 寫「FC1／FC2」，欄寬放得下兩個名字。"""
     return (
-        _Column(f"分公司{n}", 12, HOLDING_FILL),
-        _Column(f"FC{n}", 7.9, HOLDING_FILL),
-        _Column(f"面額{n}", 11, HOLDING_FILL, MONEY),
+        _Column(f"分公司_{n}", 12, HOLDING_FILL),
+        _Column(f"FC_{n}", 12, HOLDING_FILL),
+        _Column(f"面額_{n}", 11, HOLDING_FILL, MONEY),
     )
 
 
