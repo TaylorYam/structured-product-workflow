@@ -227,6 +227,34 @@ def test_participation_is_not_checked_for_other_products(tmp_path):
     assert all(x.rule_id != "field.participation_pct" for x in ts.report.results)
 
 
+WITH_BARRIER = [*HEADERS, "配息門檻(%)"]
+
+
+@pytest.mark.parametrize(
+    ("spec", "headers", "value", "status"),
+    [
+        (M0, WITH_BARRIER, 90.0, S.PASS),
+        (D0, WITH_BARRIER, 100.0, S.PASS),
+        (M0, HEADERS, None, S.PASS),
+        (M0, WITH_BARRIER, 100.0, S.MISMATCH),
+        (M0, WITH_BARRIER, None, S.REVIEW_REQUIRED),
+        (M0, WITH_BARRIER, "-", S.REVIEW_REQUIRED),
+    ],
+    ids=["maxi-K", "digital-K", "no-column", "differs", "blank", "empty-value"],
+)
+def test_the_bonus_barrier_is_the_strike(tmp_path, spec, headers, value, status):
+    """紅利門檻（workflow #406）：到期公式「≥ 執行價」就領紅利，說明書配息門檻 = K%，和表上「配息門檻(%)」比；
+    舊 Excel 沒有這欄時和 K(%) 比；空白或空值寫法轉人工覆核。BEN 沒有 KO 的 KO(%) 寫 `-` 不影響。"""
+    r = check(tmp_path, spec, headers=headers, **{"配息門檻(%)": value, "KO(%)": "-"})
+    barrier = rule(r, "field.coupon_barrier_pct")[0]
+    assert barrier.status == status, problems(r)
+    assert ("沒有配息門檻欄" in barrier.message) == (headers is HEADERS)
+    if status == S.PASS:
+        assert r.status == S.PASS, problems(r)
+    else:
+        assert {x for x, _, _ in problems(r)} == {"field.coupon_barrier_pct"}, problems(r)
+
+
 @pytest.mark.parametrize(
     "spec",
     [

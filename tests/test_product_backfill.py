@@ -197,10 +197,16 @@ def test_ben_rows_get_period_end_and_a_participation_of_100(pg, tmp_path: Path) 
     }
     columns = read(pg, B).columns
     assert (columns["product"], columns["non_call_months"], columns["ko_type"]) == ("BEN", 5, "Period End")
-    assert (columns["ko_pct"], columns["strike_pct"], columns["participation_pct"]) == (100, 90, 100)
-    assert (columns["barrier_type"], columns["coupon_pct"]) == ("NONE", Decimal("20.2"))
+    assert (columns["ko_pct"], columns["strike_pct"], columns["participation_pct"]) == (None, 90, 100)
+    assert (columns["coupon_barrier_pct"], columns["barrier_type"], columns["coupon_pct"]) == (
+        100,
+        "NONE",
+        Decimal("20.2"),
+    )
     dates = dict(pg.execute("SELECT slot, value FROM workflow.autocall_date WHERE tdcc = %s", (A,)).fetchall())
     assert {slot: day for slot, day in dates.items() if day} == {5: FINAL}
+    ko_prices = pg.execute("SELECT ko_price FROM workflow.underlying_price WHERE tdcc = %s", (A,)).fetchall()
+    assert ko_prices and all(price is None for (price,) in ko_prices)
 
 
 @pytest.mark.db

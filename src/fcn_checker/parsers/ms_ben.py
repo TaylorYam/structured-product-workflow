@@ -19,7 +19,7 @@ from ..standard_fields import ScenarioParam, ScenarioPrice
 from ..text import squash
 from . import money, ms, ms_scenario, ms_tables, price_table
 from .common import Hit, Mention, dec, derived, exactly_one, hits, one
-from .hsbc_ben import Delivery, maturity_only
+from .hsbc_ben import Delivery, bonus_barrier, maturity_only
 from .hsbc_super_bull import Pnl, RemainderCalc, SharesCalc, ValueCalc
 from .layout import Document, Span, TextIndex, capture, parse_date
 from .super_bull import ProfitReturn
@@ -676,6 +676,7 @@ def read(lines: Sequence[Line]) -> MsBenTermSheet:
             )
         )
     participation = [Mention.of_field("第 16 項假設「參與率：X%」", fields["participation_assumed"])]
+    bonus_barrier(fields)
     return MsBenTermSheet(fields, base.full_text, doc, sec, [], kind, scenarios, bonus, participation)
 
 

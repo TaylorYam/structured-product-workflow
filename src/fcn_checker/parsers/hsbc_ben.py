@@ -230,6 +230,18 @@ def maturity_only(fields: dict[str, ParsedField], no_ko: ParsedField) -> None:
     )
 
 
+def bonus_barrier(fields: dict[str, ParsedField]) -> None:
+    """紅利門檻（標準欄位 `coupon_barrier_pct`，各上手 BEN 共用，workflow #406）：到期公式是「最差表現標的 ≥ 執行價」
+    就領紅利，紅利門檻 = 執行價 %，由到期公式（`maturity_formula`）與執行價（`strike_pct`）推得。"""
+    formula, strike = fields["maturity_formula"], fields["strike_pct"]
+    bad = next((p for p in (formula, strike) if not p.ok), None)
+    fields["coupon_barrier_pct"] = (
+        derived("coupon_barrier_pct", bad)
+        if bad is not None
+        else ParsedField("coupon_barrier_pct", FieldStatus.PRESENT, strike.value, [*formula.evidence, *strike.evidence])
+    )
+
+
 def _ki_type(fields: dict[str, ParsedField], kind: Kind, art11: list[Line], whole: TextIndex) -> None:
     """無 KI（核對規則 §3.5）：全文沒有「觸及」、價格表沒有觸及不保本價格欄、第 11 條(1) 交股句直接比執行價，三者都成立。"""
     problems = []
@@ -618,4 +630,5 @@ def read(lines: Sequence[Line]) -> HsbcBenTermSheet:
                 "第 18 條情境分析一)「(100% + x%)」", scenarios.digital, lambda v: v.bonus, scenarios.titles[0]
             )
         )
+    bonus_barrier(fields)
     return HsbcBenTermSheet(fields, base.full_text, doc, base.scenarios, base.scenario_index, kind, scenarios, mentions)

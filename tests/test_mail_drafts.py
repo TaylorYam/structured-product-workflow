@@ -453,7 +453,8 @@ def test_express_gets_a_draft_like_fcn(db, tmp_path: Path, root: Path, out: Path
 @pytest.mark.parametrize("product", ["Super Bull", "BEN"])
 def test_super_bull_and_ben_get_a_draft_like_fcn(db, tmp_path: Path, root: Path, out: Path, product) -> None:
     """Super Bull（#310）、BEN（#373）和 FCN 一樣寄：主旨帶出商品種類，沒有 KI 的 KI Barrier 寫 -，不寫參與率。"""
-    terms = inventory(A, [("北區", 1)], Product=product, **{"KI(Freq)": "-", "KI(%)": "-"})
+    ben = {"KO(%)": None, "配息門檻(%)": 80} if product == "BEN" else {}  # BEN 的 KO 欄是配息門檻（#406）
+    terms = inventory(A, [("北區", 1)], Product=product, **{"KI(Freq)": "-", "KI(%)": "-", **ben})
     load(db, tmp_path, [trade(A, "Amy", "北區", 1, product=product)], [terms])
     risk(db, A, "RR4")
     passed_folder(root, A)

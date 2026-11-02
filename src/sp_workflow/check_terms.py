@@ -301,7 +301,7 @@ def _underlying_price(
             initial=round_price(raw),
             strike=price_at(raw, product.strike_pct),
             ki=ki,
-            ko=price_at(raw, product.ko_pct),
+            ko=None if product.ko_pct is None else price_at(raw, product.ko_pct),  # BEN 預設沒有 KO（#406）
         ),
         "",
     )
@@ -572,9 +572,11 @@ def _keep_lookback(calc: Calculation, product: ProductTerms, old: Sequence[Under
 
 
 def _kept_or_derived(
-    initial: Decimal, kept: Decimal | None, pct: Decimal, pct_before: Decimal | None, same: bool = True
+    initial: Decimal, kept: Decimal | None, pct: Decimal | None, pct_before: Decimal | None, same: bool = True
 ) -> Decimal | None:
-    """比例沒改時保留 TS 回填的價格，改了由進場價重算。"""
+    """比例沒改時保留 TS 回填的價格，改了由進場價重算；比例空白（BEN 預設沒有 KO，#406）時價格也空白。"""
+    if pct is None:
+        return None
     return kept if same and pct == pct_before else price_at(initial, pct)
 
 

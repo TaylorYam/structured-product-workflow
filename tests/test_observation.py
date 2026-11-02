@@ -499,14 +499,15 @@ def test_observe_all_reads_the_final_date_rule_from_the_product_type(pg) -> None
 @pytest.mark.db
 @pytest.mark.parametrize(("close", "event"), [("100", MATURITY), ("70", DELIVERY)])
 def test_a_ben_only_settles_at_maturity(pg, close, event) -> None:
-    """BEN（#373、ADR 0029）：Non-Call = 天期、比價日只放最終比價日；那天全部 ≥ KO 價是到期還本、不是 KO，
+    """BEN（#373、ADR 0029）：Non-Call = 天期、比價日只放最終比價日；KO% 空白（#406）；最差標的 ≥ 執行價是到期還本、不是 KO，
     最差標的 < 執行價是接股。"""
     seed(pg, T1)
     pg.execute(
         "UPDATE workflow.product SET product = 'BEN', non_call_months = tenor_months, ko_type = 'Period End',"
-        " ko_freq = 'P', participation_pct = 100 WHERE tdcc = %s",
+        " ko_freq = 'P', participation_pct = 100, coupon_barrier_pct = strike_pct, ko_pct = NULL WHERE tdcc = %s",
         (T1,),
     )
+    pg.execute("UPDATE workflow.underlying_price SET ko_price = NULL WHERE tdcc = %s", (T1,))
     pg.execute("UPDATE workflow.autocall_date SET value = NULL WHERE tdcc = %s AND value <> %s", (T1, FINAL))
     write_closes(pg, us_closes(FINAL, {START: "120", FINAL: close}))
 
@@ -532,13 +533,14 @@ def test_a_dacn_is_observed_like_fcn(pg, day, closes) -> None:
 
 @pytest.mark.db
 def test_a_ben_waits_for_the_final_valuation_date(pg) -> None:
-    """BEN（#373）到期前不觀察 KO：即使收盤價 ≥ KO 價，狀態仍是在庫、原因「還沒到最終比價日」。"""
+    """BEN（#373）到期前不觀察 KO：即使收盤價高於進場價，狀態仍是在庫、原因「還沒到最終比價日」。"""
     seed(pg, T1)
     pg.execute(
         "UPDATE workflow.product SET product = 'BEN', non_call_months = tenor_months, ko_type = 'Period End',"
-        " ko_freq = 'P', participation_pct = 100 WHERE tdcc = %s",
+        " ko_freq = 'P', participation_pct = 100, coupon_barrier_pct = strike_pct, ko_pct = NULL WHERE tdcc = %s",
         (T1,),
     )
+    pg.execute("UPDATE workflow.underlying_price SET ko_price = NULL WHERE tdcc = %s", (T1,))
     pg.execute("UPDATE workflow.autocall_date SET value = NULL WHERE tdcc = %s AND value <> %s", (T1, FINAL))
     write_closes(pg, us_closes(KO_DAY, {KO_DAY: "120"}))
 

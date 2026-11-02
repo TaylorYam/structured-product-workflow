@@ -360,12 +360,29 @@ def test_the_export_carries_the_participation(pg, tmp_path) -> None:
     fcn, ben = barc_spec(), barc_spec(product_code=OTHER)
     seed(pg, fcn)
     seed(pg, ben, product="BEN")
-    pg.execute("UPDATE workflow.product SET participation_pct = 0 WHERE tdcc = %s", (OTHER,))
+    pg.execute(  # BEN 要配息門檻（#406）
+        "UPDATE workflow.product SET participation_pct = 0, coupon_barrier_pct = strike_pct WHERE tdcc = %s", (OTHER,)
+    )
 
     sheet, _ = export(pg, tmp_path, pdfs_of(tmp_path, fcn, ben))
 
     rows = {r.product_code.value: r.get("participation_pct").value for r in load_reference_sheet(sheet, FMT).rows}
     assert rows == {fcn.product_code: None, OTHER: 0}
+
+
+@pytest.mark.db
+def test_the_export_carries_the_bonus_barrier_of_ben(pg, tmp_path) -> None:
+    """BEN 的紅利門檻（#406）：配息門檻欄帶資料庫的值，沒有 KO 的 KO(%) 寫空值；FCN 的配息門檻寫 `-`。"""
+    fcn, ben = barc_spec(), barc_spec(product_code=OTHER)
+    seed(pg, fcn)
+    seed(pg, ben, product="BEN")
+    pg.execute("UPDATE workflow.product SET ko_pct = NULL, coupon_barrier_pct = 90 WHERE tdcc = %s", (OTHER,))
+
+    sheet, _ = export(pg, tmp_path, pdfs_of(tmp_path, fcn, ben))
+
+    rows = {r.product_code.value: r for r in load_reference_sheet(sheet, FMT).rows}
+    assert {code: r.get("coupon_barrier_pct").value for code, r in rows.items()} == {fcn.product_code: "-", OTHER: 90}
+    assert rows[OTHER].get("ko_pct").value == "-"
 
 
 @pytest.mark.db

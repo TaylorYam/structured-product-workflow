@@ -332,3 +332,30 @@ def test_scenario_errors_mismatch(tmp_path, spec, edits, field):
 
 def test_return_amount_status_is_a_mismatch():
     assert ca_ben_rules.RETURN_AMOUNT_STATUS == S.MISMATCH
+
+
+WITH_BARRIER = [*HEADERS, "配息門檻(%)"]
+
+
+@pytest.mark.parametrize(
+    ("spec", "headers", "value", "status"),
+    [
+        (B0, WITH_BARRIER, 100.0, S.PASS),
+        (BenSpec(strike=Decimal("90.00"), ko=Decimal("90.00")), WITH_BARRIER, 90.0, S.PASS),
+        (B0, HEADERS, None, S.PASS),
+        (B0, WITH_BARRIER, 90.0, S.MISMATCH),
+        (B0, WITH_BARRIER, "-", S.REVIEW_REQUIRED),
+    ],
+    ids=["k100", "k90", "no-column", "differs", "empty-value"],
+)
+def test_the_bonus_barrier_is_the_strike(tmp_path, spec, headers, value, status):
+    """紅利門檻（workflow #406）：第 9 項期末訂價「≥ 執行價」就領紅利，說明書配息門檻 = K%，和表上「配息門檻(%)」比；
+    舊 Excel 沒有這欄時和 K(%) 比；空值寫法轉人工覆核。BEN 沒有 KO 的 KO(%) 寫 `-` 不影響。"""
+    r = check(tmp_path, spec, headers=headers, **{"配息門檻(%)": value, "KO(%)": "-"})
+    barrier = rule(r, "field.coupon_barrier_pct")[0]
+    assert barrier.status == status, problems(r)
+    assert ("沒有配息門檻欄" in barrier.message) == (headers is HEADERS)
+    if status == S.PASS:
+        assert r.status == S.PASS, problems(r)
+    else:
+        assert {x for x, _, _ in problems(r)} == {"field.coupon_barrier_pct"}, problems(r)

@@ -199,7 +199,8 @@ def test_express_is_in_the_summary_like_fcn(pg, tmp_path: Path) -> None:
 
 @pytest.mark.db
 def test_ben_is_in_the_summary_without_the_participation(pg, tmp_path: Path) -> None:
-    """BEN 和 FCN 在同一張總表（#373、ADR 0029）：Product 寫 BEN，總表沒有參與率欄。"""
+    """BEN 和 FCN 在同一張總表（#373、ADR 0029）：Product 寫 BEN，總表沒有參與率欄；
+    沒有 KO 的 KO(%) 寫 -，配息門檻（紅利門檻）接在 Coupon 後面（#406）。"""
     ben = order_row(
         A,
         {
@@ -209,6 +210,8 @@ def test_ben_is_in_the_summary_without_the_participation(pg, tmp_path: Path) -> 
             "KO Type": "Period End",
             "Barrier Type": "NONE",
             "KI Barrier (%)": None,
+            "KO Barrier (%)": None,
+            "Coupon Barrier (%)": Decimal(90),
         },
     )
     receipt = write_batch(pg, _drafts([ben], CONFIG, pg), CONFIG, user="tester")
@@ -219,6 +222,7 @@ def test_ben_is_in_the_summary_without_the_participation(pg, tmp_path: Path) -> 
 
     (a,) = as_dicts(path)
     assert (a["Product"], a["Non-Call(月)"]) == ("BEN", 6)
+    assert (a["KO(%)"], a["配息門檻(%)"]) == ("-", 90)
     assert not [name for name in a if "參與率" in name or "Participation" in name]
 
 

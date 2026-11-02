@@ -517,3 +517,38 @@ def test_chinese_ki_is_cleared_for_the_english_codes(pg) -> None:
     assert pg.execute("SELECT status, reason, ki FROM workflow.pricing_status").fetchall() == [
         ("在庫", "Non-call period", None)
     ]
+
+
+@pytest.mark.db
+def test_ben_ko_becomes_its_coupon_barrier(pg) -> None:
+    """資料表版本 0035（#406、ADR 0029）：BEN 的 KO(%) 改存配息門檻（沒有時帶執行價），KO(%)、KO 價清成空白；
+    其他商品不動。"""
+    ben, ben_without_ko, fcn = A, "029199990002", "029199990003"
+    _database_before(pg, 35)
+    seed_products(
+        pg,
+        [
+            inventory(ben, [("台北", 100000)], Product="BEN", **{"KO(%)": 100, "K(%)": 90}),
+            inventory(ben_without_ko, [("台北", 100000)], Product="BEN", **{"KO(%)": None, "K(%)": 80}),
+            inventory(fcn, [("台北", 100000)]),
+        ],
+    )
+    for tdcc in (ben, fcn):
+        pg.execute("INSERT INTO workflow.check_terms (tdcc, status) VALUES (%s, '完成')", (tdcc,))
+        pg.execute(
+            "INSERT INTO workflow.underlying_price (tdcc, seq, code, initial_price, strike_price, ki_price, ko_price)"
+            " VALUES (%s, 1, 'AAA UW', 100, 80, NULL, 100)",
+            (tdcc,),
+        )
+
+    assert apply_migrations(pg)[0] == "0035_ben_coupon_barrier.sql"
+
+    assert pg.execute("SELECT tdcc, ko_pct, coupon_barrier_pct FROM workflow.product ORDER BY tdcc").fetchall() == [
+        (ben, None, 100),
+        (ben_without_ko, None, 80),
+        (fcn, 100, None),
+    ]
+    assert pg.execute("SELECT tdcc, ko_price FROM workflow.underlying_price ORDER BY tdcc").fetchall() == [
+        (ben, None),
+        (fcn, 100),
+    ]
