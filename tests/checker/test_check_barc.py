@@ -481,7 +481,7 @@ def test_underlying_currency_in_the_physical_settlement_formula_is_not_checked(t
 
 def test_rmb_with_the_hong_kong_interbank_wording_is_cnh(tmp_path):
     """封面與 §5 寫「人民幣，於香港銀行同業市場進行交易之貨幣」（§5 後面再接付款帳戶說明）：取第一個逗號前的幣別字，
-    和投資人須知一樣（OOS 回報包，#415）。"""
+    和投資人須知一樣（OOS 回報包，workflow #415）。"""
     spec = Spec(currency_zh="人民幣", tenor=12, annual=Decimal("10.00"), monthly=Decimal("0.8333"))
     hk = "人民幣，於香港銀行同業市場進行交易之貨幣"
     account = "(本商品以人民幣支付之金額僅得以轉帳方式轉入以人民幣計價並於香港依相關香港法規開立及維護之銀行帳戶)"

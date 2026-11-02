@@ -504,17 +504,22 @@ def test_two_letter_symbol_right_below_the_exchange_code_of_the_row_above():
     assert table.value.tickers == ["NVDA UQ", "MU UQ"]
 
 
-def test_code_header_merged_with_the_exchange_column_and_symbol_wrapped():
-    """代碼欄表頭和右邊的交易所欄擷取成同一行（NOMURA「彭博代碼 交易所 關連交易所」，#415）：代碼欄涵蓋到交易所欄；
-    代號換行（`NVDA` / `UW Equity`）時同一行的交易所名稱不夾進代碼。代號沒換行的列照舊。"""
-    lines = [ln for ln in header(code=False)] + [cell(1, 100, (150, "彭博代碼 交易所"))]
+def test_code_header_merged_with_the_exchange_columns_and_symbol_wrapped(monkeypatch):
+    """代碼欄表頭和右邊兩欄擷取成同一行（NOMURA「彭博代碼 交易所 關連交易所」，workflow #415）：代碼欄涵蓋到交易所欄；
+    代號換行（`NVDA` / `UW Equity`）時同一行的交易所名稱不夾進代碼，不論交易所名稱是另外幾行，還是和代號擷取成
+    同一行、依字座標切開。代號沒換行的列照舊。"""
+    for k in ("initial", "strike", "ko", "ki"):
+        monkeypatch.setitem(X, k, X[k] + 80)
+    lines = [*header(code=False), cell(1, 100, (150, "彭博代碼 交易所 關連交易")), centered(1, 254, 112, "所")]
     lines += [*row(1, 150, 1, "甲公司", None, ROW1), centered(1, 172, 150, "NVDA"), centered(1, 213, 150, "那斯達克")]
-    lines += [centered(1, 172, 161, "UW Equity")]
-    lines += [*row(1, 180, 2, "乙公司", None, ROW2), centered(1, 172, 180, "TSM UN"), centered(1, 213, 180, "紐約")]
-    lines += [centered(1, 172, 191, "Equity")]
+    lines += [centered(1, 254, 150, "所有交易"), centered(1, 172, 161, "UW Equity")]
+    lines += [*row(1, 180, 2, "乙公司", None, ROW2), cell(1, 180, (160, "QCOM 那斯達克 所有交易"))]
+    lines += [centered(1, 172, 191, "UW Equity")]
+    lines += [*row(1, 210, 3, "丙公司", None, ROW1), cell(1, 210, (155, "TSM UN 紐約證券 所有交易"))]
+    lines += [centered(1, 172, 221, "Equity")]
     table = read("t", lines, SPEC)
     assert table.ok, table.note
-    assert table.value.tickers == ["NVDA UW", "TSM UN"]
+    assert table.value.tickers == ["NVDA UW", "QCOM UW", "TSM UN"]
 
 
 def test_text_columns_are_read_per_row():
