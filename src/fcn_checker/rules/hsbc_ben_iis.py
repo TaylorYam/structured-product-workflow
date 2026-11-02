@@ -5,21 +5,18 @@
 from __future__ import annotations
 
 from ..schema import CheckResult, Item
-from ..schema import CheckStatus as S
 from . import super_bull
-from .hsbc_ben import FINAL_EDITION_STATUS
+from .hsbc_ben import FINAL_EDITION_STATUS, flagged_result
 from .iis import IisIssuerContext
 from .kit import Check
 
 
 def run_all(ctx: IisIssuerContext) -> list[CheckResult]:
     """第二「收益分配事項：請見產品說明書第一章第11 項之說明。」：固定寫法，找不到或不同 → 不一致；標題沒有「(最終版)」→
-    `FINAL_EDITION_STATUS`（暫定做法，同說明書）。"""
+    `FINAL_EDITION_STATUS`（BEN-375-06，2026-11-02 使用者確認視為正常，同說明書）。"""
     final = ctx.sheet.f("final_edition")
     check = Check("iis.final_edition", "final_edition", Item.expected("標題「(最終版)」"), ctx.document)
     return [
         super_bull.fixed("iis.no_coupon", "no_coupon", "第二 收益分配事項", ctx.sheet.f("no_coupon"), ctx.document),
-        check.result(S.PASS, evidence=final.evidence, message="範本固定寫法")
-        if final.ok
-        else check.result(FINAL_EDITION_STATUS, evidence=final.evidence, reason="value_mismatch", message=final.note),
+        flagged_result(check, final, FINAL_EDITION_STATUS),
     ]

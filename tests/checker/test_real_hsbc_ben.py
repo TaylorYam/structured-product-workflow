@@ -1,8 +1,8 @@
 """本機 HSBC BEN 真實樣本（Issue #375）；交易資料不進 Git，CI 自動略過。測試碼不含真實商品代號或數值。
 
 樣本為說明書＋投資人須知成對（`real_data.BEN`）。斷言與探勘結論一致（docs/checker/templates/hsbc-zh-ben.md §10、
-hsbc-zh-ben-iis.md §5）：27 份說明書與 27 份投資人須知都是現行版、辨識成 HSBC BEN（Maxi 24、Digital 3）；除了 Digital 的殘留
-註記與 Word 排版少的 (最終版)，每個欄位都讀得到；沒有一份被認成 HSBC FCN 或 Super Bull。整批核對的試跑結果記在 PR。
+hsbc-zh-ben-iis.md §5）：27 份說明書與 27 份投資人須知都是現行版、辨識成 HSBC BEN（Maxi 24、Digital 3）；除了 Word 排版少的
+(最終版)（視為正常），每個欄位都讀得到（Digital 的註3 是範本固定寫法）；沒有一份被認成 HSBC FCN 或 Super Bull。整批核對的試跑結果記在 PR。
 """
 
 from collections import Counter
@@ -49,7 +49,7 @@ def test_samples_are_current_hsbc_ben(documents):
 
 
 def test_every_field_of_the_samples_is_read(documents):
-    """讀不到的只有已知的兩種（範本規格 §1、§2）：Digital 標的表後的殘留註記、Word 排版沒有 (最終版)。"""
+    """讀不到的只有 Word 排版沒有 (最終版)（範本規格 §1，視為正常）；Digital 標的表後的註3 是範本固定寫法（BEN-375-04）。"""
     unread = Counter(
         (iis, name)
         for iis, _, _, sheet in documents
@@ -57,7 +57,7 @@ def test_every_field_of_the_samples_is_read(documents):
         for name, pf in sheet.fields.items()
         if pf.status not in READ
     )
-    assert unread == Counter({(False, "template_residue"): 3, (False, "final_edition"): 2, (True, "final_edition"): 2})
+    assert unread == Counter({(False, "final_edition"): 2, (True, "final_edition"): 2})
 
 
 def test_samples_follow_the_ben_terms(documents):

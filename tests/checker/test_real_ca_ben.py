@@ -2,7 +2,7 @@
 
 樣本為說明書＋投資人須知成對（`real_data.BEN`）。斷言與探勘結論一致（docs/checker/templates/ca-zh-ben.md §1、
 ca-zh-ben-iis.md §5）：5 份說明書是現行版 2、KO 價欄版與早期版各 1（不支援的範本版本）、Digital 1；投資人須知 Bonus 4 份都是
-現行版、Digital 1。現行版每個欄位都讀得到，只有 1 份 13.(6) 配息日改寫成參照第 9 項（待使用者確認，詳見本機疑慮記錄）；
+現行版、Digital 1。現行版每個欄位都讀得到（1 份 13.(6) 配息日參照第 9 項，也算沒有配息，2026-11-02 使用者確認）；
 沒有一份被認成 CA FCN 或 Super Bull。整批核對的試跑結果記在 PR。
 """
 
@@ -61,7 +61,7 @@ def test_samples_are_ca_ben_current_old_or_digital(documents):
 
 
 def test_every_field_of_the_current_samples_is_read(documents):
-    """讀不到的只有 1 份說明書 13.(6) 配息日改寫成參照第 9 項（待使用者確認，詳見本機疑慮記錄）。"""
+    """每個欄位都讀得到（13.(6) 配息日參照第 9 項的寫法也算沒有配息，BEN-377-08 2026-11-02 使用者確認）。"""
     unread = Counter(
         (iis, name)
         for iis, _, _, sheet in documents
@@ -69,7 +69,7 @@ def test_every_field_of_the_current_samples_is_read(documents):
         for name, pf in sheet.fields.items()
         if pf.status not in READ
     )
-    assert unread == Counter({(False, "no_coupon_art13"): 1})
+    assert unread == Counter()
 
 
 def test_current_samples_follow_the_ben_terms(documents):

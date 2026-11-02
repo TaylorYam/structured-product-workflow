@@ -19,14 +19,14 @@ from .ca_super_bull import NAMES, RETURN_MESSAGES, worse
 from .kit import Check, IssuerContext
 from .super_bull import AMOUNT_TOLERANCE, within_tolerance
 
-# ---------------------------------------------------------------- 待使用者確認的暫定做法（核對規則 §9.2，詳見本機疑慮記錄）
+# ---------------------------------------------------------------- 2026-11-02 使用者確認的做法（核對規則 §9.2，詳見本機疑慮記錄）
 # 每項只在這裡改；說明書端另有 parsers/ca_ben.py 的 `_current`／OLD_VERSION（BEN-377-01、02）、DIGITAL（BEN-377-03）、
 # FORMULA（括號照樣本，BEN-377-06）、NO_COUPON_DATE（BEN-377-08），投資人須知端另有 parsers/ca_ben_iis.py 的
 # NAME_ZH_MARK／NAME_ZH_NOT 與英文 Bonus＋Note（BEN-377-04）。
 
-# BEN-377-07：有樣本的 Bonus 型態（2 檔標的、K% 100、美元）；其他型態轉人工覆核（待樣本驗證）
+# BEN-377-07：有樣本的 Bonus 型態（2 檔標的、美元）；其他型態轉人工覆核（待樣本驗證）。K% 不是 100 沒有樣本，2026-11-02
+# 使用者確認照規則推得核對（待樣本驗證）
 SAMPLED_UNDERLYINGS = range(2, 3)
-SAMPLED_STRIKE_PCTS = frozenset({Decimal(100)})
 SAMPLED_CURRENCIES = frozenset({"USD"})
 # BEN-377-05：情境報酬率行重寫的金額 ≠ 到期給付金額 → 不一致（作業人員確認後人工放行）
 RETURN_AMOUNT_STATUS = S.MISMATCH
@@ -36,7 +36,7 @@ NOT_COVERED = [
     {
         "rule_id": "doc.template_variants",
         "description": "只支援現行版 Bonus 範本（KO 價欄版、早期版、Digital 轉人工覆核、不能放行）；境外人民幣、標的報價幣別和"
-        "計價幣別不同轉人工覆核；1 檔或 3 檔以上標的、K% 不是 100、非美元轉人工覆核（待樣本驗證）",
+        "計價幣別不同轉人工覆核；1 檔或 3 檔以上標的、非美元轉人工覆核（待樣本驗證）",
     },
     {
         "rule_id": "doc.ben_skipped",
@@ -62,11 +62,11 @@ def _fixed(ctx: IssuerContext, rid: str, field: str, name: str) -> CheckResult:
 
 
 def scope(ctx: IssuerContext) -> CheckResult:
-    """境外人民幣、標的報價幣別和計價幣別不同（第 16 項有匯率行）轉人工覆核；沒有樣本的型態（標的數、K%、幣別不在
-    `SAMPLED_*`）轉人工覆核（待樣本驗證）。"""
+    """境外人民幣、標的報價幣別和計價幣別不同（第 16 項有匯率行）轉人工覆核；沒有樣本的型態（標的數、幣別不在
+    `SAMPLED_*`）轉人工覆核（待樣本驗證）；K% 不限（BEN-377-07）。"""
     f = ctx.ts.f
-    cz, uls, k, fx = f("currency_zh"), f("underlyings"), f("strike_pct"), f("scenario_fx")
-    check = kit.doc_check(ctx, "doc.template_variant", "template_variant", "BEN 型態", cz, uls, k, fx)
+    cz, uls, fx = f("currency_zh"), f("underlyings"), f("scenario_fx")
+    check = kit.doc_check(ctx, "doc.template_variant", "template_variant", "BEN 型態", cz, uls, fx)
     if (problem := check.blocked) is not None:
         return problem
     issues, unsampled = [], []
@@ -79,8 +79,6 @@ def scope(ctx: IssuerContext) -> CheckResult:
         issues.append(f"第 16 項有匯率 {'、'.join(fx.value)}（標的報價幣別和計價幣別不同，轉人工覆核）")
     if len(uls.value) not in SAMPLED_UNDERLYINGS:
         unsampled.append(f"有 {len(uls.value)} 檔標的")
-    if k.value not in SAMPLED_STRIKE_PCTS:
-        unsampled.append(f"執行價 {k.value}%")
     if unsampled:
         issues.append("、".join(unsampled) + "：沒有樣本，待樣本驗證")
     return check.compare(

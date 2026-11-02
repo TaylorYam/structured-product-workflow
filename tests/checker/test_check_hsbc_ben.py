@@ -10,6 +10,7 @@ import pytest
 
 from fcn_checker.extraction import extract_lines
 from fcn_checker.issuers import HSBC, HSBC_BEN, HSBC_SUPER_BULL
+from fcn_checker.parsers import hsbc_ben
 from fcn_checker.schema import CheckStatus as S
 from harness import check_all, flagged, iis_path
 from harness import field_problems as problems
@@ -243,19 +244,46 @@ def test_shapes_without_samples_need_review(tmp_path, spec):
     assert "待樣本驗證" in result.message
 
 
-def test_residue_note_after_the_digital_table_is_a_mismatch(tmp_path):
-    """Digital 標的表後的方括號殘留註記（待使用者確認，暫定判不一致、人工放行）；價格表照常讀到。"""
+def statuses(report, rid):
+    return {x.status for x in rule(report, rid)}
+
+
+def test_the_digital_note_after_the_table_is_the_template_wording(tmp_path):
+    """BEN-375-04（2026-11-02 使用者確認）：Digital 單一標的表後的註3 是範本固定寫法，通過；價格表照常讀到。"""
     r = check(tmp_path, BenSpec(kind="digital", count=1, residue=True))
+    assert r.status == S.PASS, problems(r)
+    assert statuses(r, "doc.template_residue") == {S.PASS}
+
+
+@pytest.mark.parametrize(
+    ("kind", "count", "old", "new"),
+    [
+        ("digital", 1, "可替換為其他標的", "可替換為其他標的或現金"),
+        ("digital", 1, hsbc_ben.DIGITAL_NOTE, "註3：[標的待定]"),
+    ],
+    ids=["digital-other-wording", "digital-other-bracket"],
+)
+def test_other_bracket_residue_is_a_mismatch(tmp_path, kind, count, old, new):
+    """註3 寫法不同或其他方括號殘留 → 不一致（作業人員確認後人工放行）。"""
+    r = check(tmp_path, BenSpec(kind=kind, count=count, residue=True), edits=[Edit(old, new, "ts.art12")])
     assert flagged(r, "doc.template_residue", S.MISMATCH), problems(r)
     assert not flagged(r, "field.underlyings")
 
 
-def test_word_layout_without_final_edition_is_a_mismatch(tmp_path):
-    """Word 排版（條號與標籤同一行、標題沒有 (最終版)）：條款照常讀到；少 (最終版) 兩份都判不一致（待使用者確認）。"""
+def test_the_digital_note_in_a_maxi_is_a_mismatch(tmp_path):
+    """Maxi 沒有註3：Maxi 表後出現同一句仍判不一致。"""
+    r = check(tmp_path, BenSpec(residue=True))
+    assert flagged(r, "doc.template_residue", S.MISMATCH), problems(r)
+
+
+def test_word_layout_without_final_edition_passes(tmp_path):
+    """Word 排版（條號與標籤同一行、標題沒有 (最終版)）：條款照常讀到；少 (最終版) 視為正常（BEN-375-06，2026-11-02 使用者
+    確認）。"""
     ts, iis = check_pair(tmp_path, BenSpec(word=True, inline_articles_from=1))
-    assert flagged(ts.report, "doc.final_edition", S.MISMATCH), problems(ts.report)
-    assert flagged(iis.report, "iis.final_edition", S.MISMATCH), problems(iis.report)
-    others = [x for x in ts.report.results if x.status != S.PASS and x.rule_id != "doc.final_edition"]
+    assert statuses(ts.report, "doc.final_edition") == {S.PASS}, problems(ts.report)
+    assert statuses(iis.report, "iis.final_edition") == {S.PASS}, problems(iis.report)
+    assert "視為正常" in rule(ts.report, "doc.final_edition")[0].message
+    others = [x for x in ts.report.results if x.status != S.PASS]
     assert all(x.status == S.NOT_APPLICABLE for x in others), problems(ts.report)
 
 
