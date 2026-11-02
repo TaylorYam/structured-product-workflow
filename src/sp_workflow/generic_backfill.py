@@ -111,7 +111,7 @@ class _Fill:
     column: int
     expected: Any  # ISIN、日期、價格或空值寫法
     overwrite: bool  # VWAP 的價格欄：已有不同值時以資料庫覆寫
-    over_empty: bool = False  # 比價日：表上是空值寫法、資料庫有日期時覆寫並列出（#418）
+    overwrite_dash: bool = False  # 比價日：表上是空值寫法（`-`）、資料庫有日期時覆寫並列出（#418）
 
 
 def backfill_generic(conn: psycopg.Connection, source: Path, target: Path, fmt: ReferenceFormat) -> GenericReceipt:
@@ -181,7 +181,7 @@ def _fill_row(
     fills: list[_Fill] = []
     reasons: list[str] = []
     if stored.isin:
-        fills.append(_Fill(columns["isin"], stored.isin, False))
+        fills.append(_Fill(columns["isin"], stored.isin, overwrite=False))
     else:
         reasons.append("資料庫還沒有 ISIN")
     if stored.autocall is None:
@@ -189,7 +189,8 @@ def _fill_row(
     else:
         for n in range(1, SLOTS + 1):
             day = stored.autocall.get(n)
-            fills.append(_Fill(columns[autocall_date_key(n)], empty if day is None else day, False, day is not None))
+            column = columns[autocall_date_key(n)]
+            fills.append(_Fill(column, empty if day is None else day, overwrite=False, overwrite_dash=day is not None))
     if fmt.initial_pricing_values.get(value("initial_pricing")) == VWAP:
         fills += _vwap_fills(value, columns, stored, empty, reasons)
     filled = 0
@@ -199,7 +200,7 @@ def _fill_row(
         current = None if cell.data_type == "e" else normalize_cell(cell.value)  # 錯誤值（#VALUE!）算空白
         if current is not None and current == f.expected:
             continue
-        if f.over_empty and current == empty:
+        if f.overwrite_dash and current == empty:  # 覆寫：往下寫入
             overwritten.append(f"{headers[f.column]} 表上是 {empty}，改成資料庫的 {_shown(f.expected)}")
         elif current is not None and not f.overwrite:
             reasons.append(f"{headers[f.column]} 表上是 {_shown(current)}、資料庫是 {_shown(f.expected)}，保留原值")
@@ -230,7 +231,7 @@ def _vwap_fills(
         else:
             for col, _ in PRICE_COLUMNS:
                 amount = getattr(price, col)
-                fills.append(_Fill(columns[price_key(i, col)], empty if amount is None else amount, True))
+                fills.append(_Fill(columns[price_key(i, col)], empty if amount is None else amount, overwrite=True))
     return fills
 
 
