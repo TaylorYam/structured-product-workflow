@@ -797,12 +797,15 @@ def _article16_ben(d: _Doc, s: BenSpec) -> None:
         d.text(36, f"＝{a:,.2f} {ccy}  / {s.denom:,} )  - 100% ＝{r}%（平均年化報酬率：{ann}%）")
     k = price(u.initial, s.strike)
     p3 = (u.initial * s.worse / 100).quantize(Q2, ROUND_HALF_UP)
-    shares = (denom / k).quantize(Decimal("0.001"), ROUND_DOWN)
+    rate = Decimal(s.fx.split("=")[1]) if s.fx else Decimal(1)  # 跨幣別：股數、剩餘金額、報酬率乘匯率（workflow #428）
+    times = f" x {rate}" if s.fx else ""
+    shares = (denom / (k * rate)).quantize(Decimal("0.001"), ROUND_DOWN)
     whole = int(shares)
     frac = shares - whole
-    rem = (frac * p3).quantize(Q2, ROUND_HALF_UP)
-    total = (whole * p3 + rem) / denom * 100 - 100
+    rem = (frac * p3 * rate).quantize(Q2, ROUND_HALF_UP)
+    total = (whole * p3 * rate + rem) / denom * 100 - 100
     annualized = (total * 12 / s.tenor).quantize(Q2, ROUND_HALF_UP)
+    strike = f"({k:,.4f}{times})" if s.fx else f"{k:,.4f}"
     d.section = "art16.s3"
     d.text(36, "情境分析三：較差情況")
     d.text(36, "於期末訂價日，最差表現之連結標的收盤價低於執行價")
@@ -813,12 +816,12 @@ def _article16_ben(d: _Doc, s: BenSpec) -> None:
     )
     d.text(
         36,
-        f"• 到期給付最差表現之連結標的單位數為：每單位面額/表現最差連結標的的執行價* = {s.denom:,} / {k:,.4f} = {shares} 股",
+        f"• 到期給付最差表現之連結標的單位數為：每單位面額/表現最差連結標的的執行價* = {s.denom:,} / {strike} = {shares} 股",
     )
-    d.text(36, f"整數股數＝{whole} 股，畸零股數＝{frac} 股，剩餘金額＝{p3:,.2f} x {frac}＝{rem:,.2f} {ccy}")
+    d.text(36, f"整數股數＝{whole} 股，畸零股數＝{frac} 股，剩餘金額＝{p3:,.2f} x {frac}{times}＝{rem:,.2f} {ccy}")
     d.text(36, "• 報酬率計算為：")
     d.text(36, "((整數股數×期末訂價*+剩餘金額)/每單位面額初始投資金額)-100%")
-    d.text(36, f"= (({whole} x {p3:,.2f} + {rem:,.2f} ) / {s.denom:,}) - 100%")
+    d.text(36, f"= (({whole} x {p3:,.2f}{times} + {rem:,.2f} ) / {s.denom:,}) - 100%")
     d.text(36, f"= {total.quantize(Q2, ROUND_HALF_UP)}% (平均年化報酬率:{annualized}%)")
     d.text(36, "*在必要時，依期末匯率轉換為計價貨幣。")
     d.text(36, "※ 請注意：情境分析之結果不保證未來績效，亦不代表連結標的未來表現。")

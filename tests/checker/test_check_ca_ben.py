@@ -183,9 +183,11 @@ def test_misnamed_iis_is_still_ben_and_the_name_mismatches(tmp_path, edit, name)
         (BenSpec(count=3), "有 3 檔標的"),
         (BenSpec(currency_zh="日圓", market="JT"), "計價幣別是日圓"),
         (BenSpec(currency_zh="人民幣", currency_iso="CNH"), "境外人民幣"),
-        (BenSpec(fx="美元/日圓=150.00"), "第 16 項有匯率"),
+        (BenSpec(fx="美元/日圓=150.00"), "都是美元，第 16 項卻有匯率"),
+        (BenSpec(currency_zh="日圓", fx="日圓/美元=150.00"), "應寫成 美元/日圓=…"),
+        (BenSpec(currency_zh="日圓"), "要剛好一行匯率，沒有匯率行"),
     ],
-    ids=["single", "three", "jpy", "cnh", "fx"],
+    ids=["single", "three", "jpy", "cnh", "fx-same-currency", "fx-reversed", "fx-missing"],
 )
 def test_unsampled_shapes_need_review(tmp_path, spec, words):
     report = check(tmp_path, spec)
@@ -193,6 +195,33 @@ def test_unsampled_shapes_need_review(tmp_path, spec, words):
     assert variant.status == S.REVIEW_REQUIRED, problems(report)
     assert words in variant.message
     assert report.status == S.REVIEW_REQUIRED
+
+
+YEN_ON_US = BenSpec(currency_zh="日圓", fx="美元/日圓=150.00")  # 日圓計價、美股標的（跨幣別，workflow #428）
+
+
+def test_yen_note_on_us_shares_recomputes_scenario_three_with_the_rate(tmp_path):
+    """跨幣別且匯率行符合時直接開放（2026-11-02 使用者決定）：情境三股數 N / (K x R)、剩餘金額與報酬率乘 R 重算；
+    情境一、二代入行的美元股價不當成金額比幣別。"""
+    report = check(tmp_path, YEN_ON_US)
+    assert report.status == S.PASS, problems(report)
+    calc = [x.status for x in rule(report, "doc.scenario_calculations") if x.field.startswith("情境三")]
+    assert calc == [S.PASS] * 5
+
+
+@pytest.mark.parametrize(
+    ("edit", "field"),
+    [
+        (Edit("x 150.00)", "x 151.00)", "ts.art16.s3"), "情境三_shares"),
+        (Edit("x 150.00＝", "x 151.00＝", "ts.art16.s3"), "情境三_remainder"),
+        (Edit("x 150.00 +", "x 151.00 +", "ts.art16.s3"), "情境三_return"),
+    ],
+    ids=["shares", "remainder", "return"],
+)
+def test_scenario_three_rate_different_from_the_fx_line_is_a_mismatch(tmp_path, edit, field):
+    report = check(tmp_path, YEN_ON_US, edits=[edit])
+    [x] = rule(report, "doc.scenario_calculations", field)
+    assert x.status == S.MISMATCH and "和第 16 項匯率 150.00 不同" in x.message, problems(report)
 
 
 def test_sampled_shape_constants_are_the_bonus_samples():
