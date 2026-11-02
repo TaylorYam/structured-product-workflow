@@ -574,7 +574,12 @@ class OutlookDrafter:
 
 
 def _excel_date(value: dt.date) -> dt.datetime:
-    return dt.datetime.combine(value, dt.time.min)
+    """寫進 Excel 儲存格（COM）的日期：當天 00:00，標成 UTC。
+
+    pywin32 會把沒有時區的 datetime 當本機時間換成 UTC 再交給 Excel，台北（UTC+8）的午夜會變成前一天 16:00，
+    範本顯示成 yyyy/m/d 就早一天（#411）；標成 UTC 就不會被換算。
+    """
+    return dt.datetime.combine(value, dt.time.min, tzinfo=dt.UTC)
 
 
 # ---------- 結果清單 ----------
