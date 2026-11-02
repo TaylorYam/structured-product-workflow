@@ -17,7 +17,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
 from ..orders.reference import UNDERLYING_SLOTS
-from ..products import BEN, FCN, PRODUCT_RULES, product_name
+from ..products import BEN, DACN, FCN, PRODUCT_RULES, product_name
 from ..schema import CheckResult, DocKind, Evidence, FieldStatus, Item, OrderValue, ParsedField
 from ..schema import CheckStatus as S
 from ..standard_fields import AutocallSchedule, Occurrence
@@ -687,7 +687,8 @@ def _product(ctx: Context) -> tuple[str | None, OrderValue | None]:
 def coupon_barrier(ctx: Context) -> list[CheckResult]:
     """配息門檻 %（要配息門檻的商品，`PRODUCT_RULES` 的 `has_coupon_barrier`：DACN，workflow #368、ADR 0030；BEN 的紅利門檻，
     workflow #406、ADR 0029）：說明書配息門檻 = 表上「配息門檻(%)」，依說明書顯示位數四捨五入後比；表上沒有這欄（舊 Excel）
-    時和「K(%)」比；有這欄但該列空白或是空值寫法轉人工覆核（DACN、BEN 一定要有值）。其他商品不產生結果。"""
+    時和「K(%)」比。有這欄但該列空白或是空值寫法：DACN 也改和「K(%)」比（2026-11-02 使用者決定，DACN-409-01）；BEN 轉人工覆核
+    （BEN 一定要有值）。其他商品不產生結果。"""
     product, _ = _product(ctx)
     rule = PRODUCT_RULES.get(product) if product else None
     if rule is None or not rule.has_coupon_barrier:
@@ -695,16 +696,19 @@ def coupon_barrier(ctx: Context) -> list[CheckResult]:
     rid, key, name = "field.coupon_barrier_pct", "coupon_barrier_pct", "配息門檻 %"
     pf = standard_field(ctx, key)
     ov = ctx.sheet_field(key)
-    if ov is None:  # 舊 Excel 沒有配息門檻欄：和執行價比（workflow #366 決定 3）
+    blank = ov is not None and (ov.value is None or ov.value == ctx.fmt.empty_value)
+    if blank and product != DACN:
+        why = f"{product} 要有配息門檻，{ctx.sheet_source}該列配息門檻空白"
+        return [order_review(rid, key, ov, pf, "order_missing", why, name=name)]
+    # 沒有配息門檻欄（舊 Excel，workflow #366 決定 3）或 DACN 該列空白（DACN-409-01）：和執行價比
+    if ov is None or blank:
         v, ov_k, problem = order_value(ctx, "strike_pct", rid, key, pf, to_decimal, "數字", name="K(%)")
         if problem:
             return [problem]
         check = Check(rid, key, Item.sheet(name, [ov_k]), ctx.document, ov=(ov_k,), expected=v).needs(pf)
-        message = f"{ctx.sheet_source}沒有配息門檻欄，和 K(%) 比"
+        why = "該列配息門檻空白" if blank else "沒有配息門檻欄"
+        message = f"{ctx.sheet_source}{why}，和 K(%) 比"
     else:
-        if ov.value is None or ov.value == ctx.fmt.empty_value:
-            why = f"{product} 要有配息門檻，{ctx.sheet_source}該列配息門檻空白"
-            return [order_review(rid, key, ov, pf, "order_missing", why, name=name)]
         v, ov, problem = order_value(ctx, key, rid, key, pf, to_decimal, "數字", name=name)
         if problem:
             return [problem]

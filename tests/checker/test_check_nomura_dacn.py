@@ -137,11 +137,15 @@ def test_other_term_sheet_wording_is_not_supported(tmp_path, edits):
     assert ts.status_label == "不支援的範本版本" and ts.release_problem
 
 
-def test_trade_date_before_june_2026_is_not_supported(tmp_path):
-    ts, _ = check_pair(tmp_path, DacnSpec(trade_date=dt.date(2026, 5, 4), issue_date=dt.date(2026, 5, 11)))
-    detect = rule(ts.report, "template.detect")[0]
-    assert (detect.status, detect.reason_code) == (S.REVIEW_REQUIRED, "template_unsupported")
-    assert "2026-06-01" in detect.message
+def test_trade_date_before_june_2026_with_current_wording_is_checked(tmp_path):
+    """交易日早於 2026-06-01、寫法和現行版相同 → 照現行版範本辨識、照常核對（版本只看寫法，2026-11-02 使用者決定，workflow #409）。"""
+    old = DacnSpec(trade_date=dt.date(2026, 5, 4), issue_date=dt.date(2026, 5, 11), approval=dt.date(2025, 12, 18))
+    ts, iis = check_pair(tmp_path, old)
+    assert ts.report.template == NOMURA_DACN.template_id
+    assert iis.report.template == NOMURA_DACN.iis.template_id
+    for item in (ts, iis):
+        assert rule(item.report, "template.detect")[0].status == S.PASS
+        assert item.report.status == S.PASS, problems(item.report)
 
 
 def test_other_investor_sheet_wording_is_not_supported(tmp_path):
@@ -163,15 +167,23 @@ def test_product_must_match_the_template_family(tmp_path, spec, product):
         assert item.unsupported_variant and item.release_problem
 
 
-@pytest.mark.parametrize(
-    ("value", "status"),
-    [(75.0, S.MISMATCH), (None, S.REVIEW_REQUIRED), ("-", S.REVIEW_REQUIRED)],
-    ids=["differs", "blank", "empty-value"],
-)
-def test_coupon_barrier_column(tmp_path, value, status):
-    """表上有配息門檻欄：說明書配息門檻（= 執行價 %）和它比；空白或空值寫法轉人工覆核（DACN 一定要有值）。"""
-    r = check(tmp_path, headers=WITH_BARRIER, **{"配息門檻(%)": value})
-    only(r, "field.coupon_barrier_pct", status)
+def test_coupon_barrier_column(tmp_path):
+    """表上有配息門檻欄：說明書配息門檻（= 執行價 %）和它比；不同時判不一致。"""
+    r = check(tmp_path, headers=WITH_BARRIER, **{"配息門檻(%)": 75.0})
+    only(r, "field.coupon_barrier_pct", S.MISMATCH)
+
+
+@pytest.mark.parametrize("value", [None, "-"], ids=["blank", "empty-value"])
+def test_a_blank_barrier_cell_is_compared_with_the_strike(tmp_path, value):
+    """表上有配息門檻欄、但該列空白或空值寫法：和沒有這欄一樣和 K(%) 比（2026-11-02 使用者決定，DACN-409-01）；
+    K(%) 和說明書相同通過，不同時配息門檻與執行價一起判錯。"""
+    r = check(tmp_path / "same", headers=WITH_BARRIER, **{"配息門檻(%)": value})
+    assert r.status == S.PASS, problems(r)
+    barrier = rule(r, "field.coupon_barrier_pct")[0]
+    assert barrier.status == S.PASS and "該列配息門檻空白，和 K(%) 比" in barrier.message, barrier.message
+    r = check(tmp_path / "differs", headers=WITH_BARRIER, **{"配息門檻(%)": value, "K(%)": 75.0})
+    assert flagged(r, "field.coupon_barrier_pct", S.MISMATCH), problems(r)
+    assert flagged(r, "field.strike_pct", S.MISMATCH)
 
 
 def test_without_the_column_the_barrier_is_compared_with_the_strike(tmp_path):
@@ -230,7 +242,7 @@ def test_guaranteed_periods_must_equal_non_call(tmp_path):
     "spec",
     [
         DacnSpec(ki="D"),
-        DacnSpec(ki="P"),  # KI 每期觀察（MKI）：流程各階段都不支援、人工處理，待 #386 決定
+        DacnSpec(ki="P"),  # KI 每期觀察（MKI）：流程各階段都不支援、維持人工（2026-11-02 使用者決定，#386）
         DacnSpec(memory=False),
         DacnSpec(ko_obs="P"),
         DacnSpec(currency_zh="澳幣"),

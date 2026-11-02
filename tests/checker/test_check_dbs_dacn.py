@@ -136,12 +136,15 @@ def test_other_term_sheet_wording_is_not_supported(tmp_path, edit):
     assert ts.status_label == "不支援的範本版本" and ts.release_problem
 
 
-def test_trade_date_before_june_2026_is_not_supported(tmp_path):
-    ts, iis = check_pair(tmp_path, DacnSpec(trade_date=dt.date(2026, 5, 4), issue_date=dt.date(2026, 5, 11)))
+def test_trade_date_before_june_2026_with_current_wording_is_checked(tmp_path):
+    """交易日早於 2026-06-01、寫法和現行版相同 → 照現行版範本辨識、照常核對（版本只看寫法，2026-11-02 使用者決定，workflow #409）。"""
+    old = DacnSpec(trade_date=dt.date(2026, 5, 4), issue_date=dt.date(2026, 5, 11), approval=dt.date(2025, 12, 18))
+    ts, iis = check_pair(tmp_path, old)
+    assert ts.report.template == DBS_DACN.template_id
+    assert iis.report.template == DBS_DACN.iis.template_id
     for item in (ts, iis):
-        detect = rule(item.report, "template.detect")[0]
-        assert (detect.status, detect.reason_code) == (S.REVIEW_REQUIRED, "template_unsupported")
-        assert "2026-06-01" in detect.message
+        assert rule(item.report, "template.detect")[0].status == S.PASS
+        assert item.report.status == S.PASS, problems(item.report)
 
 
 def test_other_investor_sheet_wording_is_not_supported(tmp_path):
@@ -177,15 +180,23 @@ def test_product_must_match_the_template_family(tmp_path, spec, product):
         assert item.unsupported_variant and item.release_problem
 
 
-@pytest.mark.parametrize(
-    ("value", "status"),
-    [(75.0, S.MISMATCH), (None, S.REVIEW_REQUIRED), ("-", S.REVIEW_REQUIRED)],
-    ids=["differs", "blank", "empty-value"],
-)
-def test_coupon_barrier_column(tmp_path, value, status):
-    """表上有配息門檻欄：說明書配息門檻（表1 區間下限價格的 %）和它比；空白或空值寫法轉人工覆核（DACN 一定要有值）。"""
-    r = check(tmp_path, headers=WITH_BARRIER, **{"配息門檻(%)": value})
-    only(r, "field.coupon_barrier_pct", status)
+def test_coupon_barrier_column(tmp_path):
+    """表上有配息門檻欄：說明書配息門檻（表1 區間下限價格的 %）和它比；不同時判不一致。"""
+    r = check(tmp_path, headers=WITH_BARRIER, **{"配息門檻(%)": 75.0})
+    only(r, "field.coupon_barrier_pct", S.MISMATCH)
+
+
+@pytest.mark.parametrize("value", [None, "-"], ids=["blank", "empty-value"])
+def test_a_blank_barrier_cell_is_compared_with_the_strike(tmp_path, value):
+    """表上有配息門檻欄、但該列空白或空值寫法：和沒有這欄一樣和 K(%) 比（2026-11-02 使用者決定，DACN-409-01）；
+    K(%) 和說明書相同通過，不同時配息門檻與執行價一起判錯。"""
+    r = check(tmp_path / "same", headers=WITH_BARRIER, **{"配息門檻(%)": value})
+    assert r.status == S.PASS, problems(r)
+    barrier = rule(r, "field.coupon_barrier_pct")[0]
+    assert barrier.status == S.PASS and "該列配息門檻空白，和 K(%) 比" in barrier.message, barrier.message
+    r = check(tmp_path / "differs", headers=WITH_BARRIER, **{"配息門檻(%)": value, "K(%)": 75.0})
+    assert flagged(r, "field.coupon_barrier_pct", S.MISMATCH), problems(r)
+    assert flagged(r, "field.strike_pct", S.MISMATCH)
 
 
 def test_without_the_column_the_barrier_is_compared_with_the_strike(tmp_path):
@@ -266,7 +277,7 @@ def test_variants_without_samples_need_review(tmp_path, spec):
 
 
 def test_periodic_ki_wording_is_not_read(tmp_path):
-    """KI 每期觀察（MKI，#386 待決定）：DBS 範本只認「於定價日」的下限觸發事件，改成每期觀察的寫法讀不到 KI 型態，
+    """KI 每期觀察（MKI，2026-11-02 使用者決定維持人工，#386）：DBS 範本只認「於定價日」的下限觸發事件，改成每期觀察的寫法讀不到 KI 型態，
     轉人工覆核，不會自動通過。"""
     edit = Edit("於定價日的參考價格", "於任一觀察期間結束日的參考價格", "ts.basic.maturity")
     r = check(tmp_path, AM, edits=[edit])

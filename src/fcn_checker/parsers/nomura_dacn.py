@@ -3,12 +3,12 @@
 第 15 項 (1)）。
 
 依第 7 項的每日計息定義辨識商品家族（不看標題，workflow #366 決定 10）；只支援現行版範本：認得出是 Nomura DACN、但現行版的
-固定寫法任一段不同或交易日早於 2026-06-01 時，辨識交出「不支援的範本版本」（範本規格 §1、§8）。
+固定寫法任一段不同時，辨識交出「不支援的範本版本」（範本規格 §1、§8）。
+版本只看寫法、不看交易日早晚（2026-11-02 使用者決定，workflow #409）。
 """
 
 from __future__ import annotations
 
-import datetime as dt
 import re
 from collections.abc import Sequence
 from decimal import Decimal
@@ -22,9 +22,9 @@ from .common import Hit, Mention, derived, hits, one
 from .layout import TextIndex, capture, parse_date
 
 TEMPLATE_ID = "nomura-zh-dacn-pd"
-PARSER_VERSION = "1"
-OLD_VERSION = "Nomura DACN 說明書的寫法和現行版（2026-06 以後）不同"
-FIRST_SUPPORTED = dt.date(2026, 6, 1)  # 交易日早於這天的是舊版範本（沒有樣本，範本規格 §1；待使用者確認）
+# 2：拿掉交易日早於 2026-06-01 的條件，版本只看寫法（2026-11-02 使用者決定，workflow #409）
+PARSER_VERSION = "2"
+OLD_VERSION = "Nomura DACN 說明書的寫法和現行版不同"
 NAME_EN_MARKS = ("Autocall Daily Range Accrual Notes", f"issued by {nomura.ISSUER_EN}")
 NAME_ZH_MARK = "計價每日計息("
 # 範本規格 §2.1 的四段固定寫法（去空白後逐字相等；原文的「没」（U+6CA1）和「沒」視為同一字，見 `same_chars`）
@@ -98,11 +98,8 @@ def version_problems(sk: nomura.Skeleton, art7: str) -> list[str]:
     if NAME_ZH_MARK not in sk.zh:
         out.append(f"商品中文名稱沒有「{NAME_ZH_MARK}」")
     m = re.search(TRADE_DATE, TextIndex(sk.article(11)).text)
-    trade = parse_date(m[1]) if m else None
-    if trade is None:
+    if m is None or parse_date(m[1]) is None:  # 只看寫法，不看早晚
         out.append("第 11 項 (2) 讀不到交易日")
-    elif trade < FIRST_SUPPORTED:
-        out.append(f"交易日 {trade} 早於 {FIRST_SUPPORTED}（只支援現行版範本）")
     return out
 
 

@@ -3,12 +3,12 @@
 各情境的期別。
 
 依第 8 項的 n(i)／N(i) 定義與「×配息率×[n(i)/N(i)]」配息公式辨識商品家族（不看標題，workflow #366 決定 10）；只支援現行版範本：
-認得出是 SG DACN、但現行版的固定寫法任一段不同或訂價日早於 2026-06-01 時，辨識交出「不支援的範本版本」（範本規格 §1、§8）。
+認得出是 SG DACN、但現行版的固定寫法任一段不同時，辨識交出「不支援的範本版本」（範本規格 §1、§8）。
+版本只看寫法、不看訂價日早晚（2026-11-02 使用者決定，workflow #409）。
 """
 
 from __future__ import annotations
 
-import datetime as dt
 import re
 from collections.abc import Sequence
 from decimal import Decimal
@@ -23,9 +23,9 @@ from .common import Mention, derived
 from .layout import TextIndex, capture, join_text, parse_date
 
 TEMPLATE_ID = "sg-zh-dacn-pd"
-PARSER_VERSION = "1"
-OLD_VERSION = "SG DACN 說明書的寫法和現行版（2026-06 以後）不同"
-FIRST_SUPPORTED = dt.date(2026, 6, 1)  # 訂價日早於這天的是舊版範本（沒有樣本，範本規格 §1；待使用者確認）
+# 2：拿掉訂價日早於 2026-06-01 的條件，版本只看寫法（2026-11-02 使用者決定，workflow #409）
+PARSER_VERSION = "2"
+OLD_VERSION = "SG DACN 說明書的寫法和現行版不同"
 NAME_EN_TAIL = "Range Accrual Equity Linked Notes (Non Principal Guaranteed and Unsecured)"
 NAME_ZH_MARK = "區間累積配息"
 FAMILY = "×配息率×[n(i)/N(i)]"  # 商品家族：計息期的配息公式（範本規格 §8 條件 5）
@@ -100,11 +100,8 @@ def version_problems(sk: sg.Skeleton, art8: str) -> list[str]:
     if NAME_ZH_MARK not in sk.zh:
         out.append(f"商品中文名稱沒有「{NAME_ZH_MARK}」")
     m = re.search(TRADE_DATE, TextIndex(sk.article(12)).text)
-    trade = parse_date(m[1]) if m else None
-    if trade is None:
+    if m is None or parse_date(m[1]) is None:  # 只看寫法，不看早晚
         out.append("第 12 項讀不到訂價日")
-    elif trade < FIRST_SUPPORTED:
-        out.append(f"訂價日 {trade} 早於 {FIRST_SUPPORTED}（只支援現行版範本）")
     return out
 
 

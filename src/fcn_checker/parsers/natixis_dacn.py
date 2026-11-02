@@ -3,12 +3,12 @@
 保證期數與各情境配息算式的保證期／計息期。
 
 依第 13 項的「變動配息金額」公式與 n 定義（配息界限價格）辨識商品家族（不看標題，workflow #366 決定 10）；只支援現行版範本：
-認得出是 Natixis DACN、但現行版特徵任一項不成立或交易日早於 2026-06-01 時，辨識交出「不支援的範本版本」（範本規格 §1、§8）。
+認得出是 Natixis DACN、但現行版特徵任一項不成立時，辨識交出「不支援的範本版本」（範本規格 §1、§8）。
+版本只看寫法、不看交易日早晚（2026-11-02 使用者決定，workflow #409）。
 """
 
 from __future__ import annotations
 
-import datetime as dt
 import re
 from collections.abc import Sequence
 from dataclasses import replace
@@ -23,16 +23,17 @@ from .common import Mention
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "natixis-zh-dacn-pd"
-PARSER_VERSION = "1"
-OLD_VERSION = "Natixis DACN 說明書的寫法和現行版（2026-06 以後）不同"
-FIRST_SUPPORTED = dt.date(2026, 6, 1)  # 交易日早於這天的是舊版範本（沒有樣本，範本規格 §1；待使用者確認）
+# 2：拿掉交易日早於 2026-06-01 的條件，版本只看寫法（2026-11-02 使用者決定，workflow #409）
+PARSER_VERSION = "2"
+OLD_VERSION = "Natixis DACN 說明書的寫法和現行版不同"
 NAME_EN_MARK = "Autocallable Daily Range Accrual Note Linked to Basket of Equities"
 NAME_ZH_MARK = "區間計息(自動提前到期)"
 # 商品家族（範本規格 §8 條件 2）：第 13 項的變動配息金額公式與 n 定義
 FAMILY = ("「變動配息金額」=", "所有連結標的收盤價皆高於或等於配息界限價格之配息觀察日天數")
 _FIXED = re.escape("「固定配息金額」=配息觀察期間結束日持有之商品單位數x每單位商品面額x月配息率")
 _N_TOTAL = re.escape("N係指相關配息觀察期間內的總配息觀察日天數；n係指該相關配息觀察期間內截至")
-# 範本規格 §2.1 的七段固定寫法（去空白後依序出現）；第 6 段現行版寫「配息界線價格」，更正成「界限」也收（待使用者確認）
+# 範本規格 §2.1 的七段固定寫法（去空白後依序出現）；第 6 段現行版寫「配息界線價格」，更正成「界限」也收
+# （2026-11-02 使用者決定維持；錯字不通知上手）
 WORDINGS = (
     ("第 13 項 a. 固定配息金額", _FIXED),
     (
@@ -149,11 +150,8 @@ def version_problems(sk: natixis.Skeleton, art13: str, table: ParsedField, art12
     if DATE_HEAD not in art12:
         out.append("第 12 項日期表沒有「配息金額」欄")
     m = re.search(TRADE_DATE, art12)
-    trade = parse_date(m[1]) if m else None
-    if trade is None:
+    if m is None or parse_date(m[1]) is None:  # 只看寫法，不看早晚
         out.append("第 12 項讀不到交易日")
-    elif trade < FIRST_SUPPORTED:
-        out.append(f"交易日 {trade} 早於 {FIRST_SUPPORTED}（只支援現行版範本）")
     return out
 
 
