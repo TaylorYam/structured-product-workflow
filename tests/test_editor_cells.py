@@ -113,13 +113,13 @@ def test_fixed_order_cells_say_why_they_cannot_change() -> None:
 
 
 def test_trade_cells_mark_edits_problems_and_unmatched_names() -> None:
-    trades = maintenance_trades({"金額": Decimal(120000), "分公司": None, "FC/PB": "Zed"})
+    trades = maintenance_trades({"金額": Decimal(120000), "分公司": None, "FC1": "Zed"})
 
     states = trade_cell_states(trades)
 
     assert states[(1, "金額")] == CellState(Tone.DIFFERENT, "資料庫是 100000", offer_database=True)
     assert states[(1, "分公司")] == CellState(Tone.PROBLEM, "必填")
-    assert states[(1, "FC/PB")] == CellState(Tone.PROBLEM, f"{UNMATCHED_NOTE}；資料庫是 Amy", offer_database=True)
+    assert states[(1, "FC1")] == CellState(Tone.PROBLEM, f"{UNMATCHED_NOTE}；資料庫是 Amy", offer_database=True)
     assert states[(1, "幣別")] == CellState()
 
 

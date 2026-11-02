@@ -96,16 +96,18 @@ def test_lifecycle_status_is_exported(pg, tmp_path: Path) -> None:
 # ---------------------------------------------------------------- 商品總表（#291）
 
 
-def add_trades(pg, tdcc: str, rows: list[tuple[str, str, int]]) -> None:
+def add_trades(pg, tdcc: str, rows: list[tuple]) -> None:
+    """交易列：(分公司, FC1, 金額) 或再加 (FC2, 新加坡)（#420）。"""
     (run_id,) = pg.execute(
         "INSERT INTO workflow.import_run (daily_file_name, daily_sha256, summary) VALUES ('每日更新.xlsx', 'x', '{}')"
         " RETURNING run_id"
     ).fetchone()
-    for seq, (branch, fc, amount) in enumerate(rows, start=1):
+    for seq, (branch, fc, amount, *more) in enumerate(rows, start=1):
+        fc2, singapore = (*more, None, None)[:2]
         pg.execute(
-            "INSERT INTO workflow.trade_row (tdcc, row_seq, trade_date, product, currency, amount, fc_name, branch,"
-            " first_run_id) VALUES (%s, %s, '2026-10-15', 'FCN', 'USD', %s, %s, %s, %s)",
-            (tdcc, seq, amount, fc, branch, run_id),
+            "INSERT INTO workflow.trade_row (tdcc, row_seq, trade_date, product, currency, amount, fc_name, fc2_name,"
+            " singapore, branch, first_run_id) VALUES (%s, %s, '2026-10-15', 'FCN', 'USD', %s, %s, %s, %s, %s, %s)",
+            (tdcc, seq, amount, fc, fc2, singapore, branch, run_id),
         )
 
 
@@ -179,6 +181,22 @@ def test_summary_rows_follow_the_new_summary_columns(pg, tmp_path: Path) -> None
     assert (a["UL_2"], a["UL_2_進場價"], a["UL_3"]) == ("BBB UN", "-", "-"), "有代碼沒價格寫 -"
     assert {a[c] for c in ("私銀註記", "新加坡註記", "Lookback 期間")} == {"-"}
     assert all(value is not None for row in (a, b) for value in row.values()), "沒有空白格"
+
+
+@pytest.mark.db
+def test_the_summary_shows_fc2_and_the_singapore_mark(pg, tmp_path: Path) -> None:
+    """#420：有 FC2 的交易組寫「FC1／FC2」、金額不拆；新加坡註記有一列 Y 就是 Y，都不是 Y 是 N，沒有值（舊資料）是 -。"""
+    import_order(pg, A)
+    import_order(pg, B)
+    add_trades(pg, A, [("台北", "Amy", 100000, "Ben", "N"), ("台中", "Pat", 50000, None, " y ")])
+    add_trades(pg, B, [("台北", "Amy", 100000, None, "N"), ("台中", "Pat", 50000)])
+    path = tmp_path / "商品總表.xlsx"
+
+    export_summary(pg, path)
+
+    a, b = as_dicts(path)
+    assert [a[c] for c in ("FC_1", "金額_1", "FC_2", "承作總額")] == ["Amy／Ben", 100000, "Pat", 150000]
+    assert (a["新加坡註記"], b["新加坡註記"]) == ("Y", "N")
 
 
 @pytest.mark.db

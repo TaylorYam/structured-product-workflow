@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING
 from openpyxl.styles import Alignment, PatternFill
 
 from sp_workflow.check_terms import NO_BARRIER
+from sp_workflow.daily_import import FC_LABEL_SQL
 from sp_workflow.file_tools import excel_value, save_export, table_book, text_cell
 from sp_workflow.lifecycle import IN_STOCK, lifecycle_status
 from sp_workflow.status import CheckTerms
@@ -294,10 +295,11 @@ def load_positions(
 
 
 def _holdings(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, list[Holding]]:
-    """交易明細逐筆；沒有交易明細的商品用庫存的分公司配置。"""
+    """交易明細逐筆（有 FC2 時 FC 寫「FC1／FC2」、金額不拆，#420）；沒有交易明細的商品用庫存的分公司配置。"""
     found: dict[str, list[Holding]] = defaultdict(list)
     for tdcc, branch, fc, amount in conn.execute(
-        "SELECT tdcc, branch, fc_name, amount FROM workflow.trade_row WHERE tdcc = ANY(%s) ORDER BY tdcc, row_seq",
+        f"SELECT tdcc, branch, {FC_LABEL_SQL}, amount FROM workflow.trade_row WHERE tdcc = ANY(%s)"
+        " ORDER BY tdcc, row_seq",
         (list(tdccs),),
     ):
         found[tdcc].append(Holding(branch, fc, amount))

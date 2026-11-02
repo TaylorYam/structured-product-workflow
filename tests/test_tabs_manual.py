@@ -308,7 +308,7 @@ def grid_row(widget: tk.Misc) -> int:
 def test_trade_rows_are_listed_under_the_terms(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
 
-    editor = opened_with(window, maintenance_draft(), opened_trades({}, {"編號": None, "FC/PB": "Ben"}))
+    editor = opened_with(window, maintenance_draft(), opened_trades({}, {"編號": None, "FC1": "Ben"}))
 
     assert sorted({seq for seq, _ in editor.rows}) == [1, 2]
     shown = [editor.rows[(1, name)].var.get() for name in ("交易日期", "金額", "UF")]
@@ -316,9 +316,9 @@ def test_trade_rows_are_listed_under_the_terms(master, tmp_path: Path) -> None:
     assert editor.rows[(2, "編號")].var.get() == ""
     last_term = window.manual.editor.rows[FIELDS[-1]].label
     assert grid_row(editor.rows[(1, "編號")].label) > grid_row(last_term), "在商品條件底下"
-    fc = editor.rows[(2, "FC/PB")]
+    fc = editor.rows[(2, "FC1")]
     assert fc.label.cget("background") == SURFACE, "沒改的名字照資料庫的，不比對信箱"
-    type_trade(editor, (2, "FC/PB"), "Zed")
+    type_trade(editor, (2, "FC1"), "Zed")
     assert fc.label.cget("background") == PROBLEM_BG and fc.note.cget("text").startswith(UNMATCHED_NOTE)
 
 
@@ -365,7 +365,7 @@ def test_opening_another_product_replaces_the_trade_rows(master, tmp_path: Path)
     first = opened_with(window, maintenance_draft(), opened_trades({}, {}))
     old = first.rows[(2, "金額")].input
 
-    editor = opened_with(window, maintenance_draft(tdcc=B_TDCC), opened_trades({"FC/PB": "Amy"}))
+    editor = opened_with(window, maintenance_draft(tdcc=B_TDCC), opened_trades({"FC1": "Amy"}))
     master.update_idletasks()
 
     assert sorted(editor.rows) == [(1, name) for name in sorted(editor.trades.rows[0].values)]

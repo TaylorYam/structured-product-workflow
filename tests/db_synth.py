@@ -24,7 +24,18 @@ KO_TYPES = {
 BARRIER_TYPES = {"-": "NONE", "AM": "EKI", "D": "AKI", "P": "MKI"}
 
 
-def trade(tdcc: str, fc: str, branch: str, amount: int, *, number: int | None = 1, product: str = "FCN") -> dict:
+def trade(
+    tdcc: str,
+    fc: str,
+    branch: str,
+    amount: int,
+    *,
+    number: int | None = 1,
+    product: str = "FCN",
+    fc2: str | None = None,
+    singapore: str | None = "N",
+) -> dict:
+    """交易明細新版面（#420）的一列；舊版面用 `legacy_trade` 換欄名。"""
     return {
         "編號": number,
         "交易日期": dt.datetime(2026, 10, 15),
@@ -32,13 +43,21 @@ def trade(tdcc: str, fc: str, branch: str, amount: int, *, number: int | None = 
         "TDCC": tdcc,
         "幣別": "USD",
         "金額": amount,
-        "FC/PB": fc,
+        "FC1": fc,
+        "FC2": fc2,
         "分公司": branch,
+        "新加坡": singapore,
         "UF": 0.0215,
         "期初價格": "收盤價",
         "募集": "N",
         "起單人員": "A",
     }
+
+
+def legacy_trade(row: dict, supervisor: str | None = None) -> dict:
+    """新版面的一列換成舊版面（#420 之前）：FC1 → FC/PB，沒有 FC2、新加坡，多了前台主管/投專。"""
+    legacy = {k: v for k, v in row.items() if k not in ("FC1", "FC2", "新加坡")}
+    return {**legacy, "FC/PB": row["FC1"], "前台主管/投專": supervisor}
 
 
 def price(code: str, close: float | None = 100.5, *, name: str = "虛構公司", open_: float | None = 99.25) -> tuple:
@@ -65,7 +84,7 @@ def write_daily(
     ws.title = daily_import.TRADE_SHEET
     ws.append(list(trade_headers))
     for t in trades:
-        ws.append([t.get(h) for h in TRADE_HEADERS])
+        ws.append([t.get(h) for h in trade_headers])
     bbg = wb.create_sheet(daily_import.PRICE_SHEET)
     bbg.append([None, "=TODAY()", price_date])
     bbg.append([None, *price_headers])

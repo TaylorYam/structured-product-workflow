@@ -43,7 +43,7 @@ def trades(*rows: dict[str, object], mailbox: Mailbox = MAILBOX) -> TradeRowsDra
         ("交易日期", dt.datetime(2026, 10, 16), dt.date(2026, 10, 16)),
         ("金額", "1,234.56789", Decimal("1234.5679")),
         ("UF", "0.0215", Decimal("0.021500")),
-        ("FC/PB", "  Amy ", "Amy"),
+        ("FC1", "  Amy ", "Amy"),
         ("募集", "-", None),
         ("備註", "", None),
     ],
@@ -71,7 +71,7 @@ def test_bad_formats_say_why(header, raw, message) -> None:
 
 
 def test_blank_required_fields_block() -> None:
-    draft = trades({}, {"金額": None, "分公司": None, "前台主管/投專": None})
+    draft = trades({}, {"金額": None, "分公司": None, "FC2": None})
 
     assert trade_problems(draft) == {(2, "金額"): "必填", (2, "分公司"): "必填"}
 
@@ -90,24 +90,33 @@ def test_a_cancel_note_blocks_because_rows_cannot_be_deleted(note) -> None:
 
 
 def test_changed_fc_names_not_in_the_mailbox_are_noted_but_do_not_block() -> None:
-    draft = trades({"FC/PB": "amy"}, {"FC/PB": "Zed"}, {"FC/PB": "pb"})
+    draft = trades({"FC1": "amy"}, {"FC1": "Zed"}, {"FC1": "pb"})
 
     assert trade_problems(draft) == {}
-    assert trade_notes(draft) == {(2, "FC/PB"): UNMATCHED_NOTE}, "大小寫不同算同一人；PB 不比"
+    assert trade_notes(draft) == {(2, "FC1"): UNMATCHED_NOTE}, "大小寫不同算同一人；PB 不比"
+    assert unmatched_names(draft.mailbox, draft.edits()) == ("Zed",)
+
+
+def test_changed_fc2_names_are_checked_like_fc1() -> None:
+    """#420：FC2 改過的名字也比對信箱，只提示、不擋存檔；清空 FC2 不提示。"""
+    draft = trades({"FC2": "Zed"}, {"FC2": "amy"}, {"FC2": "PB"})
+
+    assert trade_problems(draft) == {}
+    assert trade_notes(draft) == {(1, "FC2"): UNMATCHED_NOTE}
     assert unmatched_names(draft.mailbox, draft.edits()) == ("Zed",)
 
 
 def test_an_empty_mailbox_cannot_match_names() -> None:
-    draft = trades({"FC/PB": "Ben"}, mailbox=Mailbox((), {}))
+    draft = trades({"FC1": "Ben"}, mailbox=Mailbox((), {}))
 
-    assert trade_notes(draft) == {(1, "FC/PB"): "信箱還沒有任何人員，FC 名字無法比對"}
+    assert trade_notes(draft) == {(1, "FC1"): "信箱還沒有任何人員，FC 名字無法比對"}
 
 
 def test_unchanged_cells_keep_the_database_values_without_blocking_or_noting() -> None:
     """以前匯入的列（例如備註寫了取消、FC 不在信箱）不擋這次改別的欄；只看改了的格子。"""
     draft = trades({"募集": "Y"})
-    draft.rows[0].stored.update({"備註": "此筆取消", "前台主管/投專": None, "FC/PB": "Zed"})
-    draft.rows[0].values.update({"備註": "此筆取消", "FC/PB": "Zed"})
+    draft.rows[0].stored.update({"備註": "此筆取消", "FC2": None, "FC1": "Zed"})
+    draft.rows[0].values.update({"備註": "此筆取消", "FC1": "Zed"})
 
     assert trade_problems(draft) == {} and trade_notes(draft) == {}
     assert unmatched_names(draft.mailbox, draft.edits()) == ()
@@ -194,7 +203,7 @@ def test_trade_rows_open_in_row_order_with_the_mailbox(pg, tmp_path) -> None:
         **TRADE,
         "編號": None,
         "金額": Decimal("50000.0000"),
-        "FC/PB": "Ben",
+        "FC1": "Ben",
         "分公司": "台中",
     }
     assert trades.rows[0].values == trades.rows[0].stored and trades.edits() == []
@@ -377,7 +386,7 @@ def test_trade_problems_block_a_locked_product_too(pg, tmp_path) -> None:
 def test_an_unmatched_fc_name_is_saved_and_reported(pg, tmp_path) -> None:
     import_product(pg, tmp_path)
     draft, trades = opened(pg)
-    trades.rows[1].values["FC/PB"] = "Zed"
+    trades.rows[1].values["FC1"] = "Zed"
 
     receipt = write(pg, draft, CONFIG, trades=trades, user="operator1")
 

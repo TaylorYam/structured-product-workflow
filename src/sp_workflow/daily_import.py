@@ -6,6 +6,8 @@
   「只匯交易明細」（`prices=False`，回補時用）不讀 `BBG_Data`、不動股價，沒有這張工作表也可以。
   商品條件改由「匯入起單資料」建立（#86），每日匯入不再寫商品條件、也不做分公司對帳。
 - `交易明細` 第 1 列是欄名，必須和交易清單月份工作表的欄名與順序完全相同；不同就整份不匯入。
+  2026-11 起是新版面（#420：`FC1`、`FC2`、`新加坡`）；舊版面（`FC/PB`、`前台主管/投專`）照樣可以匯入，
+  這份檔案沒有的欄存空白，「已存在／內容不同」只比這一版有的欄。FC1、FC2 都比對信箱。
   只收 Product 為支援的商品種類（`fcn_checker.products.PRODUCT_RULES`：FCN、FCN_Express、Super Bull、BEN、DACN，#302、#310、#373、#367）的列，商品種類存設定的寫法；
   其他略過並計數，略過的 TDCC 與 Product 記在 `workflow.other_product`。
   以 TDCC 為單位、第一次寫入為準：資料庫已有的交易不重複寫入，內容不同只列出差異、不覆蓋。
@@ -41,7 +43,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple, NoReturn
 
 import openpyxl
 from openpyxl.utils import get_column_letter
@@ -68,7 +70,13 @@ if TYPE_CHECKING:
 TRADE_SHEET = "交易明細"
 PRICE_SHEET = "BBG_Data"
 
+# 交易明細新版面（#420，2026-11 起）：FC/PB 改名 FC1、多了 FC2，前台主管/投專 換成 新加坡
 TRADE_HEADERS = (
+    "編號", "交易日期", "Product", "TDCC", "幣別", "金額", "FC1", "FC2", "分公司", "新加坡",
+    "UF", "期初價格", "備註", "募集", "TS/IIS 核對", "核對TS/IIS人員", "起單人員",
+)  # fmt: skip
+# 舊版面（#420 之前）：照樣可以匯入，回補舊的交易清單用
+LEGACY_TRADE_HEADERS = (
     "編號", "交易日期", "Product", "TDCC", "幣別", "金額", "FC/PB", "分公司", "前台主管/投專",
     "UF", "期初價格", "備註", "募集", "TS/IIS 核對", "核對TS/IIS人員", "起單人員",
 )  # fmt: skip
@@ -115,14 +123,25 @@ _RETIRED_SUCCESS_KINDS = frozenset(("新增商品", "補上空白"))
 
 _FULL_TDCC = re.compile(rf"[0-9]{{{sheet_cells.TDCC_DIGITS}}}")
 
-# 交易明細的欄 → `workflow.trade_row` 的欄（Product 只收支援的商品種類、TDCC 是哪一檔，不在這裡）；人工維護可以改這些欄（#116）
+# 交易明細新版面的欄 → `workflow.trade_row` 的欄（Product 只收支援的商品種類、TDCC 是哪一檔，不在這裡）；
+# 人工維護可以改這些欄（#116、#420）
 TRADE_FIELDS = {
-    "編號": "number", "交易日期": "trade_date", "幣別": "currency", "金額": "amount", "FC/PB": "fc_name",
-    "分公司": "branch", "前台主管/投專": "supervisor", "UF": "uf", "期初價格": "initial_pricing", "備註": "note",
-    "募集": "raised", "TS/IIS 核對": "ts_iis_checked", "核對TS/IIS人員": "checker", "起單人員": "originator",
+    "編號": "number", "交易日期": "trade_date", "幣別": "currency", "金額": "amount", "FC1": "fc_name",
+    "FC2": "fc2_name", "分公司": "branch", "新加坡": "singapore", "UF": "uf", "期初價格": "initial_pricing",
+    "備註": "note", "募集": "raised", "TS/IIS 核對": "ts_iis_checked", "核對TS/IIS人員": "checker",
+    "起單人員": "originator",
 }  # fmt: skip
-TRADE_REQUIRED = ("交易日期", "幣別", "金額", "FC/PB", "分公司")
-_TRADE_COLUMNS = ("product", *TRADE_FIELDS.values())  # 寫入、比對資料庫的交易列用的欄
+# 舊版面的欄（#420）：沒有 FC2、新加坡，多了前台主管/投專
+LEGACY_TRADE_FIELDS = {
+    **{header: column for header, column in TRADE_FIELDS.items() if header not in ("FC1", "FC2", "新加坡")},
+    "FC/PB": "fc_name", "前台主管/投專": "supervisor",
+}  # fmt: skip
+TRADE_REQUIRED = ("交易日期", "幣別", "金額", "FC1", "分公司")
+# 報表上一列交易的 FC（#420）：FC2 是共同經手、金額不拆，有 FC2 時寫成「FC1／FC2」
+FC_LABEL_SQL = "concat_ws('／', fc_name, fc2_name)"
+_REQUIRED_COLUMNS = frozenset(TRADE_FIELDS[header] for header in TRADE_REQUIRED)
+# 寫入資料庫的交易列用的欄：兩版的欄都寫，這份檔案沒有的欄寫空白
+_TRADE_COLUMNS = ("product", *dict.fromkeys([*TRADE_FIELDS.values(), *LEGACY_TRADE_FIELDS.values()]))
 
 
 class DailyImportError(OperatorError):
@@ -202,9 +221,26 @@ class _Prices:
     problems: list[ImportLine] = field(default_factory=list)  # 股價不是數字、股價衝突
 
 
+@dataclass(frozen=True)
+class _Layout:
+    """交易明細的一種版面（#420）：表頭 → `workflow.trade_row` 的欄。"""
+
+    headers: tuple[str, ...]
+    fields: Mapping[str, str]
+
+    @property
+    def compared(self) -> tuple[str, ...]:
+        """「已存在／內容不同」比對的欄：這一版有的欄（舊版不比 FC2、新加坡；新版不比前台主管/投專）。"""
+        return ("product", *self.fields.values())
+
+
+_LAYOUTS = (_Layout(TRADE_HEADERS, TRADE_FIELDS), _Layout(LEGACY_TRADE_HEADERS, LEGACY_TRADE_FIELDS))
+
+
 @dataclass
 class _Parsed:
     prices: _Prices | None  # 只匯交易明細時是 None
+    layout: _Layout = _LAYOUTS[0]  # 交易明細是哪一版（#420）
     trades: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     blocked: list[ImportLine] = field(default_factory=list)
     cancelled_lines: list[ImportLine] = field(default_factory=list)
@@ -360,36 +396,43 @@ def _read_daily(path: Path, *, prices: bool) -> _Parsed:
         for sheet in (TRADE_SHEET, PRICE_SHEET) if prices else (TRADE_SHEET,):
             if sheet not in wb.sheetnames:
                 raise DailyImportError(f"每日更新缺少工作表「{sheet}」")
-        trade_rows = _rows_with_header(wb[TRADE_SHEET], TRADE_HEADERS)
-        parsed = _Parsed(_read_prices(wb[PRICE_SHEET]) if prices else None)
+        layout, trade_rows = _trade_rows(wb[TRADE_SHEET])
+        parsed = _Parsed(_read_prices(wb[PRICE_SHEET]) if prices else None, layout)
     finally:
         wb.close()
     _parse_trades(trade_rows, parsed)
     return parsed
 
 
-def _rows_with_header(sheet: Any, expected: Sequence[str]) -> list[_SheetRow]:
-    """檢查第 1 列欄名和順序完全相同（後面多出的空白欄不算），回傳 (列號, {欄名: 值})。"""
+def _trade_rows(sheet: Any) -> tuple[_Layout, list[_SheetRow]]:
+    """交易明細：第 1 列欄名和新版或舊版（#420）的欄名、順序完全相同（後面多出的空白欄不算），
+    回傳是哪一版與 (列號, {欄名: 值})；兩版都不同時照新版指出哪一欄不同、整份不匯入。"""
     rows = sheet.iter_rows(values_only=True)
     header = [sheet_cells.text(v) for v in next(rows, ())]
     while header and header[-1] is None:
         header.pop()
-    if tuple(header) != tuple(expected):
-        for i, want in enumerate(expected):
-            got = header[i] if i < len(header) else None
-            if got != want:
-                where = openpyxl.utils.get_column_letter(i + 1)
-                raise DailyImportError(
-                    f"「{sheet.title}」的欄名和來源表不同，整份不匯入：{where} 欄應為「{want}」，實際是「{got or '空白'}」"
-                )
-        raise DailyImportError(f"「{sheet.title}」在「{expected[-1]}」之後還有其他欄，整份不匯入")
-    width = len(expected)
+    layout = next((layout for layout in _LAYOUTS if tuple(header) == layout.headers), None)
+    if layout is None:
+        _header_mismatch(sheet.title, header, TRADE_HEADERS)
+    width = len(layout.headers)
     result = []
     for number, row in enumerate(rows, 2):
         values = (tuple(row) + (None,) * width)[:width]
         if any(sheet_cells.text(v) is not None for v in values):
-            result.append(_SheetRow(number, dict(zip(expected, values, strict=True))))
-    return result
+            result.append(_SheetRow(number, dict(zip(layout.headers, values, strict=True))))
+    return layout, result
+
+
+def _header_mismatch(title: str, header: Sequence[str | None], expected: Sequence[str]) -> NoReturn:
+    """欄名和 `expected` 不同：丟 `DailyImportError`，指出第一個不同的欄。"""
+    for i, want in enumerate(expected):
+        got = header[i] if i < len(header) else None
+        if got != want:
+            where = openpyxl.utils.get_column_letter(i + 1)
+            raise DailyImportError(
+                f"「{title}」的欄名和來源表不同，整份不匯入：{where} 欄應為「{want}」，實際是「{got or '空白'}」"
+            )
+    raise DailyImportError(f"「{title}」在「{expected[-1]}」之後還有其他欄，整份不匯入")
 
 
 def _read_prices(sheet: Any) -> _Prices:
@@ -548,7 +591,7 @@ def _parse_trades(rows: Iterable[_SheetRow], parsed: _Parsed) -> None:
             parsed.blocked.append(ImportLine(sheet_cells.tdcc_or_raw(row["TDCC"]), BLOCKED, f"{where}：{exc}"))
             continue
         try:
-            trade = _trade(row, product)
+            trade = _trade(row, product, parsed.layout)
             groups[tdcc].append(trade)
         except ValueError as exc:
             errors[tdcc].append(f"{where}：{exc}")
@@ -572,14 +615,16 @@ def _remember_fcn(parsed: _Parsed, row: Mapping[str, Any]) -> None:
     parsed.fcn_tdccs[tdcc] = parsed.fcn_tdccs.get(tdcc, False) or not is_cancel_note(row["備註"])
 
 
-def _trade(row: Mapping[str, Any], product: str) -> dict[str, Any]:
-    trade: dict[str, Any] = {"product": product}
-    for header, column in TRADE_FIELDS.items():
+def _trade(row: Mapping[str, Any], product: str, layout: _Layout) -> dict[str, Any]:
+    """一列交易 → `workflow.trade_row` 的欄（`_TRADE_COLUMNS`）；這一版沒有的欄是空白。"""
+    trade: dict[str, Any] = dict.fromkeys(_TRADE_COLUMNS)
+    trade["product"] = product
+    for header, column in layout.fields.items():
         try:
             value = trade_value(header, row[header])
         except ValueError as exc:
             raise ValueError(f"{header}：{exc}") from exc
-        if value is None and header in TRADE_REQUIRED:
+        if value is None and column in _REQUIRED_COLUMNS:
             raise ValueError(f"{header} 沒有值")
         trade[column] = value
     return trade
@@ -657,9 +702,10 @@ def _jsonable(price: Price) -> dict[str, Any]:
 
 def _write_trades(conn: psycopg.Connection, parsed: _Parsed, run_id: int) -> list[ImportLine]:
     lines = []
+    compared = parsed.layout.compared
     for tdcc, trades in parsed.trades.items():
         stored = conn.execute(
-            f"SELECT {', '.join(_TRADE_COLUMNS)} FROM workflow.trade_row WHERE tdcc = %s ORDER BY row_seq", (tdcc,)
+            f"SELECT {', '.join(compared)} FROM workflow.trade_row WHERE tdcc = %s ORDER BY row_seq", (tdcc,)
         ).fetchall()
         if not stored:
             columns = ("tdcc", "row_seq", *_TRADE_COLUMNS, "first_run_id")
@@ -670,9 +716,7 @@ def _write_trades(conn: psycopg.Connection, parsed: _Parsed, run_id: int) -> lis
                 )
             lines.append(ImportLine(tdcc, NEW_TRADES, f"{len(trades)} 列"))
         elif len(stored) != len(trades) or any(
-            (s != t[c])
-            for row, t in zip(stored, trades, strict=False)
-            for s, c in zip(row, _TRADE_COLUMNS, strict=True)
+            (s != t[c]) for row, t in zip(stored, trades, strict=False) for s, c in zip(row, compared, strict=True)
         ):
             lines.append(
                 ImportLine(tdcc, DIFFERENT, f"交易列和資料庫不同（資料庫 {len(stored)} 列、這次 {len(trades)} 列）")
@@ -704,7 +748,12 @@ def _unmatched_names(parsed: _Parsed, mailbox: Mailbox) -> list[ImportLine]:
     lines = []
     for tdcc, trades in parsed.trades.items():
         names = sorted(
-            {t["fc_name"] for t in trades if not is_pb(t["fc_name"]) and mailbox.match(t["fc_name"]) is None}
+            {
+                name
+                for t in trades
+                for name in (t["fc_name"], t["fc2_name"])
+                if name is not None and not is_pb(name) and mailbox.match(name) is None
+            }
         )
         if names:
             lines.append(ImportLine(tdcc, NAME_UNMATCHED, "、".join(names)))

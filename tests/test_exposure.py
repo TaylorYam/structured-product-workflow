@@ -365,6 +365,18 @@ def test_no_hotspots_still_writes_the_header(seeded, tmp_path: Path) -> None:
 
 
 @pytest.mark.db
+def test_a_second_fc_is_shown_beside_the_first(seeded, tmp_path: Path) -> None:
+    """#420：交易列有 FC2 時 FC 寫「FC1／FC2」，面額不拆。"""
+    seeded.execute("UPDATE workflow.trade_row SET fc2_name = 'Pat' WHERE tdcc = %s", (B,))
+    path = tmp_path / "曝險.xlsx"
+
+    export_exposure(seeded, ["AAA UW"], UNTIL, path, today=DAY)
+
+    b = {row["TDCC"]: row for row in sheet_rows(path, "全部商品")}[B]
+    assert (b["FC1"], b["面額1"]) == ("Ben／Pat", 200000)
+
+
+@pytest.mark.db
 def test_products_without_trade_rows_use_the_branch_allocation(seeded, tmp_path: Path) -> None:
     seeded.execute("DELETE FROM workflow.trade_row WHERE tdcc = %s", (B,))
     path = tmp_path / "曝險.xlsx"

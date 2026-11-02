@@ -278,6 +278,33 @@ def test_same_fc_twice_and_a_fixed_cc_who_is_a_recipient_appear_once(db, tmp_pat
     assert drafter.drafts[0].to == ("amy@example.com", "pat@example.com") and drafter.drafts[0].cc == ()
 
 
+def test_fc2_is_a_recipient_too(db, tmp_path: Path, root: Path, out: Path) -> None:
+    """#420：FC1、FC2 都是收件人（依交易列順序、每列先 FC1 再 FC2、不重複）；FC1 是 PB 時照樣寄給 FC2。"""
+    load(
+        db,
+        tmp_path,
+        [trade(A, "PB", "北區", 1, fc2="Pat"), trade(A, "Amy", "南區", 1, number=None, fc2="pat")],
+        [inventory(A, [("北區", 1), ("南區", 1)])],
+    )
+    passed_folder(root, A)
+
+    (receipt, drafter) = run(db, root, out, A)
+
+    assert receipt.outcomes[0].status == DRAFTED
+    assert drafter.drafts[0].to == ("pat@example.com", "amy@example.com")
+
+
+def test_an_unmatched_fc2_holds_the_draft(db, tmp_path: Path, root: Path, out: Path) -> None:
+    """#420：FC2 對不到信箱和 FC1 一樣不建草稿。"""
+    load(db, tmp_path, [trade(A, "Amy", "北區", 1, fc2="Zoe")], [inventory(A, [("北區", 1)])])
+    passed_folder(root, A)
+
+    receipt, drafter = run(db, root, out, A)
+
+    assert receipt.outcomes[0].status == PENDING and receipt.outcomes[0].reason == "名字對不到信箱：Zoe"
+    assert drafter.drafts == []
+
+
 @pytest.mark.parametrize(
     ("setup", "reason"),
     [
