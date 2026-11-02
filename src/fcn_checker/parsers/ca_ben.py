@@ -25,6 +25,7 @@ from .ca_super_bull import (
     RemainderCalc,
     SharesCalc,
     WorseProfitReturn,
+    remainder_calc,
     worst_row,
 )
 from .common import Hit, Mention, capture_group, dec, derived, exactly_one, number, one
@@ -394,9 +395,7 @@ def _scenarios(ti: TextIndex) -> BenScenarios:
         out.returns[n] = find(n, RETURN, lambda m: ProfitReturn(dec(m[1]), dec(m[3]), Decimal(m[4]), Decimal(m[5])))
     out.worse_assumed = find(3, S3_ASSUMED, lambda m: Assumed(m[1], dec(m[2])))
     out.shares = find(3, S3_SHARES, lambda m: SharesCalc(dec(m[1]), dec(m[2]), dec(m[3])))
-    out.remainder = find(
-        3, S3_REMAINDER, lambda m: RemainderCalc(dec(m[1]), dec(m[2]), dec(m[3]), dec(m[4]), dec(m[5]), m[6])
-    )
+    out.remainder = find(3, S3_REMAINDER, remainder_calc)
     out.worse_return = find(
         3,
         S3_RETURN,

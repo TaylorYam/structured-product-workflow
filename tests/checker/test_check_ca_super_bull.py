@@ -177,11 +177,46 @@ def test_offshore_renminbi_needs_review(tmp_path):
     assert flagged(r, "doc.template_variant", S.REVIEW_REQUIRED), problems(r)
 
 
-def test_underlying_quoted_in_another_currency_needs_review(tmp_path):
-    """第 16 項有匯率行（標的報價幣別和計價幣別不同）轉人工覆核，同境外人民幣（workflow #335）。"""
-    r = check(tmp_path, S0, pdf_spec=SbSpec(fx="美元/日圓=150.00"))
+YEN_ON_US = SbSpec(currency_zh="日圓", fx="美元/日圓=150.00")  # 日圓計價、美股標的（跨幣別，workflow #424）
+
+
+def test_yen_note_on_us_shares_recomputes_scenario_three_with_the_rate(tmp_path):
+    """跨幣別：第 16 項匯率行 `美元/日圓=R`，情境三股數 N / (K x R)、剩餘金額與報酬率都乘 R，照算式重算後通過；情境二
+    算式裡的美元股價不當成金額比幣別。"""
+    r = check(tmp_path, YEN_ON_US)
+    assert r.status == S.PASS, problems(r)
+    assert [x.status for x in rule(r, "doc.scenario_calculations") if x.field.startswith("情境三")] == [S.PASS] * 5
+
+
+@pytest.mark.parametrize(
+    ("edit", "field"),
+    [
+        (Edit("x 150.00)", "x 151.00)", "ts.art16"), "情境三_shares"),
+        (Edit("x 150.00＝", "x 151.00＝", "ts.art16"), "情境三_remainder"),
+        (Edit("x 150.00 +", "x 151.00 +", "ts.art16"), "情境三_return"),
+    ],
+    ids=["shares", "remainder", "return"],
+)
+def test_scenario_three_rate_different_from_the_fx_line_is_a_mismatch(tmp_path, edit, field):
+    r = check(tmp_path, YEN_ON_US, edits=[edit])
+    [x] = rule(r, "doc.scenario_calculations", field)
+    assert x.status == S.MISMATCH and "和第 16 項匯率 150.00 不同" in x.message, problems(r)
+
+
+@pytest.mark.parametrize(
+    ("spec", "pdf_spec", "message"),
+    [
+        (YEN_ON_US, replace(YEN_ON_US, fx="日圓/美元=150.00"), "應寫成 美元/日圓=…"),
+        (S0, SbSpec(fx="美元/日圓=150.00"), "都是美元，第 16 項卻有匯率"),
+        (YEN_ON_US, replace(YEN_ON_US, fx=""), "要剛好一行匯率，沒有匯率行"),
+    ],
+    ids=["reversed", "same-currency", "missing"],
+)
+def test_fx_line_not_matching_the_currencies_needs_review(tmp_path, spec, pdf_spec, message):
+    """匯率行要剛好一行 `{標的報價幣別}/{計價幣別}=R`；同幣別不能有匯率行（workflow #335、#424）。"""
+    r = check(tmp_path, spec, pdf_spec=pdf_spec)
     [variant] = rule(r, "doc.template_variant")
-    assert variant.status == S.REVIEW_REQUIRED and "美元/日圓=150.00" in variant.message, problems(r)
+    assert variant.status == S.REVIEW_REQUIRED and message in variant.message, problems(r)
 
 
 def test_row_ko_price_different_from_the_header_needs_review(tmp_path):
