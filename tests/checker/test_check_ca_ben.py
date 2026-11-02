@@ -295,7 +295,10 @@ def test_art13_coupon_date_may_refer_to_article9(tmp_path):
     ref = "(6) 配息日：詳見第9 項「本商品主要給付項目及其計算方式」。"
     report = check(tmp_path, edits=(Edit("(6) 配息日：本商品持有期間並無配息金額。", ref, "ts.art13"),))
     assert report.status == S.PASS, problems(report)
-    other = check(tmp_path / "x", edits=(Edit("(6) 配息日：本商品持有期間並無配息金額。", "(6) 配息日：詳見第10 項。", "ts.art13"),))
+    other = check(
+        tmp_path / "x",
+        edits=(Edit("(6) 配息日：本商品持有期間並無配息金額。", "(6) 配息日：詳見第10 項。", "ts.art13"),),
+    )
     assert S.MISMATCH in statuses(other, "doc.no_coupon"), problems(other)
 
 

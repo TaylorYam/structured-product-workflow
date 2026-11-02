@@ -39,7 +39,7 @@ from .layout import TextIndex
 
 TEMPLATE_ID = "hsbc-zh-ben-pd"
 PARSER_VERSION = "1"
-# 待使用者確認 BEN-375-08：版本依內容判斷、不看交易日；現行版特徵（`current_problems`）對不上 → 不支援的範本版本
+# 2026-11-02 使用者確認 BEN-375-08：版本依內容判斷、不看交易日；現行版特徵（`current_problems`）對不上 → 不支援的範本版本
 OLD_VERSION = "HSBC BEN 說明書的寫法和現行版不同"
 # BEN-375-04（2026-11-02 使用者確認）：Digital（單一標的）第 12 條 (1) 表後的這句當範本固定寫法，不判不一致
 DIGITAL_NOTE = "註3：[連結標的可替換為其他標的，由投資人與受託或銷售機構最終決定（其價格由計算代理機構決定）]"
@@ -51,7 +51,7 @@ NAME_MARKS: dict[Kind, tuple[str, str]] = {
     "maxi": ("紅利表現股權連結", "BonusEnhancedNotes"),
     "digital": ("紅利配息股權連結", "ReverseConvertiblewithDigitalCouponNotes"),
 }
-# 第 11 條開頭（沒有 KO、沒有定期配息的明確句，範本規格 §2）。待使用者確認：沒有 KO 只由這句、第 11 條沒有自動提前、第 15 條
+# 第 11 條開頭（沒有 KO、沒有定期配息的明確句，範本規格 §2）。2026-11-02 使用者確認：沒有 KO 只由這句、第 11 條沒有自動提前、第 15 條
 # 沒有自動提前贖回決定日判定（`_no_autocall`），通用風險段的「自動提前到期」不看
 OPENING: dict[Kind, str] = {
     "maxi": r"主要給付項目及其計算方式[:：]本商品主要給付項目為商品到期贖回金額\(1\)",
@@ -69,7 +69,7 @@ DELIVERY: dict[Kind, str] = {
     "maxi": r"\(ii\)若最差表現連結標的，其期末股價〔小於〕執行價[:：]以實物給付最差表現連結標的之股份數" + STOCK_UNITS,
     "digital": r"如連結標的，其期末股價〔小於〕其執行價[:：]以實物給付連結標的之股份數" + STOCK_UNITS,
 }
-# 待使用者確認 BEN-375-02：說明書不寫參與率，由第 11 條(1) 到期公式（`FORMULA`）推得；公式不是這兩種 → 讀不到、轉人工
+# 2026-11-02 使用者確認 BEN-375-02：說明書不寫參與率，由第 11 條(1) 到期公式（`FORMULA`）推得；公式不是這兩種 → 讀不到、轉人工
 PARTICIPATION: dict[Kind, Decimal] = {"maxi": Decimal(100), "digital": Decimal(0)}
 # Digital 第 11 條(2) 配息金額：≥ 執行價付面額 × 紅利、< 執行價沒有紅利
 DIGITAL_COUPON = (
@@ -77,10 +77,10 @@ DIGITAL_COUPON = (
     rf"以現金給付每單位面額{MUL}紅利配息率"
 )
 DIGITAL_NO_COUPON = r"如最差表現連結標的，其期末股價於最後評價日〔小於〕其執行價，則無紅利配息。"
-# 紅利：Maxi 第 11 條定義段「紅利配息率為X%」、Digital 第 11 條(2)「紅利配息率：X% %」（待使用者確認 BEN-375-05：多的 % 只比數值）
+# 紅利：Maxi 第 11 條定義段「紅利配息率為X%」、Digital 第 11 條(2)「紅利配息率：X% %」（2026-11-02 使用者確認 BEN-375-05：多的 % 只比數值）
 BONUS = r"紅利配息率[為:：]" + PCT + "%?"
 STRIKE = rf"執行價為期初股價{MUL}" + PCT
-# 第 16 條：Maxi「本商品不適用」；Digital 說明句（待使用者確認 BEN-375-05：當固定寫法核對）
+# 第 16 條：Maxi「本商品不適用」；Digital 說明句（2026-11-02 使用者確認 BEN-375-05：當固定寫法核對）
 ART16: dict[Kind, str] = {
     "maxi": r"配息資料及其計算公式[:：]本商品不適用",
     "digital": r"配息資料及其計算公式[:：]請見上述第一章第11項之說明[,，]本商品於到期時連同到期贖回金額及應付之紅利配息"

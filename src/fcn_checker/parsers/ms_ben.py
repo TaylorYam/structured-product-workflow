@@ -26,7 +26,7 @@ from .super_bull import ProfitReturn
 
 TEMPLATE_ID = "ms-zh-ben-pd"
 PARSER_VERSION = "1"
-# 待使用者確認 BEN-376-05：版本依內容判斷、不看交易日；現行版特徵（`current_problems`）對不上 → 不支援的範本版本
+# 2026-11-02 使用者確認 BEN-376-05：版本依內容判斷、不看交易日；現行版特徵（`current_problems`）對不上 → 不支援的範本版本
 OLD_VERSION = "MS BEN 說明書的寫法和現行版不同"
 ISSUER_ZH = "英商摩根士丹利發行"
 NAME_EN = "MorganStanley&Co.InternationalPlcissuanceof"
@@ -34,7 +34,7 @@ Kind = Literal["maxi", "digital"]
 KIND_LABEL = {"maxi": "一般 BEN（紅利表現）", "digital": "Digital"}
 # 第一章條號：§19 的小節誤印成 20.1～20.4、沒有 §20 標題（範本原樣，18 份樣本都這樣），條號到 28
 ARTICLES = (*range(1, 20), *range(21, 29))
-# 型態 → 中文名稱、英文名稱（去空白）的辨識寫法（範本規格 §8 條件 2、3）。待使用者確認 BEN-376-03：Digital 名稱太通用，
+# 型態 → 中文名稱、英文名稱（去空白）的辨識寫法（範本規格 §8 條件 2、3）。2026-11-02 使用者確認 BEN-376-03：Digital 名稱太通用，
 # 另要 §10／§15 Digital 公式、參與率 0 與 Product BEN 都成立才認（`current_problems`、共用 `template.product_family`）
 NAME_ZH: dict[Kind, str] = {
     "maxi": r"紅利表現結構型商品",
@@ -51,7 +51,7 @@ PCT = r"(\d+(?:\.\d+)?)%"
 
 OPENING = "主要給付項目及其計算方式：主要給付項目為到期贖回金額："  # §10 開頭：沒有 KO、沒有定期配息的明確句
 TITLE15 = "到期贖回計算公式、最低保證贖回率及參與率："
-# §15(1) 開頭：Digital（單一標的）也寫「籃子中表現最差的連結標的」（待使用者確認 BEN-376-04：當固定句、不判錯）
+# §15(1) 開頭：Digital（單一標的）也寫「籃子中表現最差的連結標的」（2026-11-02 使用者確認 BEN-376-04：當固定句、不判錯）
 HEAD15 = "（1）於到期日，視期末定價日時籃子中表現最差的連結標的之收盤價而定，每單位商品將依據下列情形（a）或（b）在到期日贖回："
 SUBJECT: dict[Kind, str] = {"maxi": "籃子中表現最差的連結標的", "digital": "該連結標的"}
 UNITS: dict[Kind, tuple[str, str]] = {
@@ -65,7 +65,7 @@ LOOKBACK_INITIAL_DEF = (
     "任何共同預定交易日之最低收盤價。"
 )
 LOOKBACK_STRIKE_DEF = r"回顧執行價：就任何連結標的而言，即為該連結標的回顧期初價格乘以" + PCT + "。"
-# 一般 BEN 最差表現定義：lookback 版仍寫期初價格（待使用者確認 BEN-376-01：照抄當固定句，不判錯）
+# 一般 BEN 最差表現定義：lookback 版仍寫期初價格（2026-11-02 使用者確認 BEN-376-01：照抄當固定句，不判錯；到期一律用回顧期初價格選，#404）
 WORST_DEF = (
     "籃子中表現最差的連結標的：若籃子中連結標的在期末定價日時收盤價除以其期初價格的數值，比一籃子中其他連結標的有關的數值"
     "為低，則就期末定價日該連結標的為籃子中表現最差的連結標的。倘於該日籃子內超過一個連結標的有相同的最低數值，則由決定代理"

@@ -19,7 +19,7 @@ from .ca_super_bull import NAMES, RETURN_MESSAGES, worse
 from .kit import Check, IssuerContext
 from .super_bull import AMOUNT_TOLERANCE, within_tolerance
 
-# ---------------------------------------------------------------- 待使用者確認的暫定做法（核對規則 §9.2，詳見本機疑慮記錄）
+# ---------------------------------------------------------------- 2026-11-02 使用者確認的做法（核對規則 §9.2，詳見本機疑慮記錄）
 # 每項只在這裡改；說明書端另有 parsers/ca_ben.py 的 `_current`／OLD_VERSION（BEN-377-01、02）、DIGITAL（BEN-377-03）、
 # FORMULA（括號照樣本，BEN-377-06）、NO_COUPON_DATE（BEN-377-08），投資人須知端另有 parsers/ca_ben_iis.py 的
 # NAME_ZH_MARK／NAME_ZH_NOT 與英文 Bonus＋Note（BEN-377-04）。

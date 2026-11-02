@@ -20,7 +20,7 @@ from .layout import TextIndex
 TEMPLATE_ID = "ca-zh-ben-iis"
 PARSER_VERSION = "1"
 OLD_VERSION = "CA BEN 投資人須知寫法和現行版不同"
-# BEN-377-04（待使用者確認）：名稱寫錯（中文多「固定配息」、英文多「Autocall」）仍辨識成 CA BEN，再由名稱規則判不一致；
+# BEN-377-04（2026-11-02 使用者確認）：名稱寫錯（中文多「固定配息」、英文多「Autocall」）仍辨識成 CA BEN，再由名稱規則判不一致；
 # 所以中文只要有 `NAME_ZH_MARK`、沒有 `NAME_ZH_NOT`，英文只要有 Bonus 與 Note（或 Digital Coupon Note）
 NAME_ZH_MARK = "紅利結構型商品(無擔保)(不保本)"
 NAME_ZH_NOT = ("自動提前出場", "連結表現")
