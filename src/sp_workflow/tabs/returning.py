@@ -161,13 +161,13 @@ class ReturnTab(Tab):
 
     def _filled(self, receipt: GenericReceipt) -> None:
         for line in receipt.lines:
-            self.add_row(
-                (line.tdcc, line.product, str(line.filled), "；".join(line.reasons)), problem=bool(line.reasons)
-            )
+            why = "；".join((*line.reasons, *line.overwritten))  # 比價日「-」改成資料庫日期也列出，但不算問題（#418）
+            self.add_row((line.tdcc, line.product, str(line.filled), why), problem=bool(line.reasons))
         kpis = (
             ("回填（格）", receipt.cells, False),
             ("資料庫沒有（檔）", receipt.not_found, receipt.not_found > 0),
             ("有格子沒填或不一致（檔）", receipt.with_reasons, receipt.with_reasons > 0),
+            ("比價日「-」改成資料庫日期（檔）", receipt.with_overwrites, False),
         )
         self.finish(
             kpis,
