@@ -240,6 +240,9 @@ def _draft(pdf: Path, sheet: ReferenceSheet, config: CheckConfig) -> _Draft:
 
     detected, template_result = (detect if out.kind == DocKind.TERM_SHEET else detect_iis)(lines, registry)
     if detected is None:  # 範本不符或多重命中：原因碼就是配對問題的值
+        # 參考條件表該列的商品種類沒開放給這家上手時，照不支援樣態報「還沒開放」，不報範本不符（workflow #426）
+        if (unopened := _unopened_by_file_code(pdf, sheet, issuer.code, config)) is not None:
+            return out.stop(PairingProblem.UNSUPPORTED_VARIANT, unopened)
         return out.stop(PairingProblem(template_result.reason_code), template_result)
     out.template = template_result
     if detected.code != issuer.code:
@@ -385,6 +388,23 @@ def _counterpart(d: _Draft) -> tuple[PairingProblem, CheckResult]:
     return problem, _review("batch.counterpart", "counterpart", Item.note(missing.value), problem, msg)
 
 
+def _unopened_result(issuer: str, product: str) -> CheckResult:
+    msg = f"{issuer} 還沒開放「{product}」自動核對（{SOURCE} Product）；請人工核對，不能人工放行"
+    return _review("batch.variant", "variant", _VARIANT_ITEM, PairingProblem.UNSUPPORTED_VARIANT, msg)
+
+
+def _unopened_by_file_code(pdf: Path, sheet: ReferenceSheet, issuer: str, config: CheckConfig) -> CheckResult | None:
+    """範本辨識不到時，以檔名的商品代號查參考條件表：恰好一列、且 Product 沒開放給這家上手（#302）時回傳「還沒開放」的
+    結果；其他情況 None，照範本辨識的結果（workflow #426）。"""
+    code = file_code(pdf)
+    rows = sheet.find(code) if code is not None else []
+    if len(rows) != 1:
+        return None
+    value = rows[0].get("product")
+    product = unopened_product(value.value if value else None, opened_products(config.auto_check_products, issuer))
+    return None if product is None else _unopened_result(issuer, product)
+
+
 def _variant(d: _Draft) -> CheckResult | None:
     """對到列後的樣態：參考條件表該列、這份與同商品另一份讀出的條件，任一邊是不支援樣態就人工覆核（不能放行）。
 
@@ -394,8 +414,7 @@ def _variant(d: _Draft) -> CheckResult | None:
     product_value = d.row.get("product") if d.row is not None else None
     product = unopened_product(product_value.value if product_value else None, d.opened_products)
     if product is not None:
-        msg = f"{d.issuer} 還沒開放「{product}」自動核對（{SOURCE} Product）；請人工核對，不能人工放行"
-        return _review("batch.variant", "variant", _VARIANT_ITEM, PairingProblem.UNSUPPORTED_VARIANT, msg)
+        return _unopened_result(str(d.issuer), product)
     if (family := _product_family(d, product_value.value if product_value else None)) is not None:
         return family
     docs = [x for x in (d, d.partner) if x is not None and x.terms is not None and x.problem is None]

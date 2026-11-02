@@ -312,3 +312,9 @@ def test_variants_without_samples_need_review(tmp_path, spec):
     result = rule(r, "doc.template_variant")[0]
     assert (result.status, result.reason_code) == (S.REVIEW_REQUIRED, "template_variant_unverified")
     assert "待樣本驗證" in result.message
+
+
+def test_jpy_is_supported(tmp_path):
+    """日圓計價：OOS 回報包第一份樣本寫法同美元版，開放（2026-11-02 使用者決定，workflow #426）。"""
+    ts, iis = check_pair(tmp_path, DacnSpec(currency_zh="日圓"))
+    assert (ts.status, iis.status) == (S.PASS, S.PASS), (problems(ts.report), problems(iis.report))

@@ -7,12 +7,12 @@ from pathlib import Path
 
 import pytest
 
-from barc_synth import Spec, build_pdf
+from barc_synth import Spec, build_not_barc_pdf, build_pdf
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.saving import run_batch
 from fcn_checker.schema import CheckStatus
 from fcn_checker.variants import load_auto_check_products
-from harness import CONFIG, ISSUER_PREFIXES, load_config, with_iis
+from harness import CONFIG, ISSUER_PREFIXES, check_all, load_config, with_iis
 from reference_synth import build_reference_sheet, reference_row
 
 REVIEW = CheckStatus.REVIEW_REQUIRED
@@ -115,3 +115,36 @@ def test_opening_a_product_for_the_issuer_lets_it_through(tmp_path):
     outcome = run(tmp_path, {"Product": "FCN_Express"})  # 設定檔開放 BARC（#304）
 
     assert not any(r.rule_id == "batch.variant" for i in outcome.items for r in i.report.results)
+
+
+# ---------------------------------------------------------------- 範本辨識不到（workflow #426）
+
+
+def run_unknown_template(tmp_path: Path, rows: list[dict]):
+    """檔名是 BARC 的商品代號、內容不是任何已支援範本的說明書，參考條件表放 `rows`。"""
+    spec = Spec()
+    pdf = build_not_barc_pdf(tmp_path / f"{spec.product_code}_TS.pdf")
+    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", rows)
+    [item] = check_all(sheet, [pdf]).items
+    return item
+
+
+def test_an_unknown_template_whose_product_is_not_opened_is_an_unsupported_variant(tmp_path):
+    """SG BEN 回報包：範本辨識不到，但參考條件表該列 Product 沒開放給這家上手，照不支援樣態報「還沒開放」，不報範本不符。"""
+    item = run_unknown_template(tmp_path, [reference_row(Spec(), Product="BEN")])
+
+    assert item.unsupported_variant
+    assert item.problem_messages == (
+        "目前樣態不支援自動核對：BARC 還沒開放「BEN」自動核對（參考條件表 Product）；請人工核對，不能人工放行",
+    )
+    assert not any(r.rule_id == "template.detect" for r in item.report.results)
+    assert item.release_problem == "上手不支援這個樣態，沒有範本可以核對，不能人工放行"
+
+
+@pytest.mark.parametrize("rows", [[{"Product": "FCN"}], [{"Product": None}], []], ids=["fcn", "blank", "no-row"])
+def test_an_unknown_template_is_still_reported_when_the_product_is_opened_or_missing(tmp_path, rows):
+    item = run_unknown_template(tmp_path, [reference_row(Spec(), **changes) for changes in rows])
+
+    assert not item.unsupported_variant
+    [r] = [r for r in item.report.results if r.rule_id == "template.detect"]
+    assert (r.status, r.reason_code) == (REVIEW, "template_unknown")

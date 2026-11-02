@@ -29,10 +29,11 @@ NOT_COVERED = [
     {
         "rule_id": "doc.template_variants",
         "description": "依規則推得、待樣本驗證（轉人工覆核）：KO 每期觀察、非記憶式、無自動提前出場、單一標的、KI 每日／每期觀察、"
-        "非美元計價、保證期數不是 1 或 2；寫法和現行版不同的範本不支援（不看交易日早晚）",
+        "美元與日圓以外的計價、保證期數不是 1 或 2；寫法和現行版不同的範本不支援（不看交易日早晚）",
     },
 ]
 SUPPORTED_GUARANTEED = (1, 2)
+SUPPORTED_CURRENCIES = ("USD", "JPY")  # 日圓：OOS 回報包第一份樣本（2026-11-02 使用者決定開放，workflow #426）
 # 第 15 項情境（範本規格 §4.3）：編號、標題，以及計息期算式（none：沒有；next：第 g+1 期；rest：第 g+1～天期）
 SCENARIOS = (
     ("一", "較佳情況(A)", "none"),
@@ -49,7 +50,7 @@ def _period_text(span: tuple[int, int]) -> str:
 
 
 def template_variant(ctx: IssuerContext) -> CheckResult:
-    """沒有樣本的型態轉人工覆核（核對規則 §3.1）：樣本只有 KO 每日觀察＋記憶式、多標的、KI 無或到期觀察、美元、保證 1 或 2 期。
+    """沒有樣本的型態轉人工覆核（核對規則 §3.1）：樣本只有 KO 每日觀察＋記憶式、多標的、KI 無或到期觀察、美元或日圓、保證 1 或 2 期。
     讀不到的欄位由各自的規則轉人工，這裡不重複報。"""
     f = ctx.ts.f
     issues = []
@@ -63,7 +64,7 @@ def template_variant(ctx: IssuerContext) -> CheckResult:
         issues.append("單一標的")
     if ki is not None and ki not in ("none", "AM"):
         issues.append(f"KI {kit.KI_LABEL[ki]}")
-    if cz.ok and ctx.std.currency_zh_to_iso.get(cz.value) != "USD":
+    if cz.ok and ctx.std.currency_zh_to_iso.get(cz.value) not in SUPPORTED_CURRENCIES:
         issues.append(f"{cz.value}計價")
     if g.ok and g.value not in SUPPORTED_GUARANTEED:
         issues.append(f"保證 {g.value} 期")
@@ -74,7 +75,7 @@ def template_variant(ctx: IssuerContext) -> CheckResult:
         fail=S.REVIEW_REQUIRED,
         reason="template_variant_unverified",
         message="、".join(issues),
-        fail_message="待樣本驗證（SG DACN 樣本只有 KO 每日觀察＋記憶式、多標的、無 KI 或到期觀察、美元、保證 1 或 2 期），"
+        fail_message="待樣本驗證（SG DACN 樣本只有 KO 每日觀察＋記憶式、多標的、無 KI 或到期觀察、美元或日圓、保證 1 或 2 期），"
         "請人工核對",
     )
 

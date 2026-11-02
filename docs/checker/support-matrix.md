@@ -31,7 +31,7 @@
 
 ## 開放自動核對的商品種類
 
-下表是 `config/issuer_prefixes.toml` 的 `[auto_check_products]`（白名單，#302、ADR 0027）。參考條件表 Product 欄（不分大小寫）沒列、或沒開放給該上手的商品，照不支援樣態處理：兩份都停止條件核對、不回填、不能人工放行，請人工核對。Product 空白或表上沒有這欄時照 FCN。
+下表是 `config/issuer_prefixes.toml` 的 `[auto_check_products]`（白名單，#302、ADR 0027）。參考條件表 Product 欄（不分大小寫）沒列、或沒開放給該上手的商品，照不支援樣態處理：兩份都停止條件核對、不回填、不能人工放行，請人工核對。Product 空白或表上沒有這欄時照 FCN。說明書或投資人須知辨識不到已支援的範本時，仍以檔名的商品代號查參考條件表：恰好一列、且 Product 沒開放給檔名上手編號對應的上手，同樣照不支援樣態處理，錯訊寫「還沒開放」而不是範本不符（workflow #426）。
 
 | 商品種類 | 開放的上手 |
 |---|---|
@@ -49,7 +49,7 @@ KI 每期觀察（MKI）的 DACN 在流程各階段都不支援、全程人工�
 
 Nomura DACN 的文件（workflow #368 已實作）：[說明書範本](templates/nomura-zh-dacn.md)、[投資人須知範本](templates/nomura-zh-dacn-iis.md)、[參考條件表對照](order-formats/nomura-dacn-reference.md)、[核對規則](rules/nomura-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工）。
 
-SG DACN 的文件（workflow #369 已實作）：[說明書範本](templates/sg-zh-dacn.md)、[投資人須知範本](templates/sg-zh-dacn-iis.md)、[參考條件表對照](order-formats/sg-dacn-reference.md)、[核對規則](rules/sg-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工；保證 1 期、2 期都支援）。
+SG DACN 的文件（workflow #369 已實作）：[說明書範本](templates/sg-zh-dacn.md)、[投資人須知範本](templates/sg-zh-dacn-iis.md)、[參考條件表對照](order-formats/sg-dacn-reference.md)、[核對規則](rules/sg-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工；美元與日圓計價、保證 1 期、2 期都支援）。
 
 DBS DACN 的文件（workflow #370 已實作）：[說明書範本](templates/dbs-zh-dacn.md)、[投資人須知範本](templates/dbs-zh-dacn-iis.md)、[參考條件表對照](order-formats/dbs-dacn-reference.md)、[核對規則](rules/dbs-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工；DBS 不支援樣態照舊）。
 
