@@ -395,14 +395,17 @@ def test_an_unmatched_fc_name_is_saved_and_reported(pg, tmp_path) -> None:
 
 @pytest.mark.db
 def test_the_daily_import_shows_existing_once_the_database_matches_excel(pg, tmp_path) -> None:
-    """Excel 後來補了欄：每日匯入照舊不覆蓋（內容不同）；人工改到一樣之後，同一份每日更新顯示「已存在」。"""
+    """Excel 後來補了欄：每日匯入照舊不覆蓋（內容不同）；人工改到一樣之後，同一份每日更新顯示「已存在」。
+    新版面的 FC2、新加坡也一樣（#420）。"""
     seed_mailbox(pg)
     import_trades(pg, tmp_path, daily_rows())
     later = daily_rows()
-    later[1].update({"募集": "Y", "TS/IIS 核對": "V", "核對TS/IIS人員": "Pat", "金額": 50000.5})
+    later[1].update(
+        {"募集": "Y", "TS/IIS 核對": "V", "核對TS/IIS人員": "Pat", "金額": 50000.5, "FC2": "Amy", "新加坡": "Y"}
+    )
     assert [line.kind for line in import_trades(pg, tmp_path, later, "later.xlsx").lines] == [DIFFERENT]
     draft, trades = opened(pg)
-    typed = {"募集": "Y", "TS/IIS 核對": "V", "核對TS/IIS人員": "Pat", "金額": "50,000.50"}
+    typed = {"募集": "Y", "TS/IIS 核對": "V", "核對TS/IIS人員": "Pat", "金額": "50,000.50", "FC2": "Amy", "新加坡": "Y"}
     trades.rows[1].values.update({name: trade_value(name, text) for name, text in typed.items()})
     write(pg, draft, CONFIG, trades=trades, user="operator1")
 

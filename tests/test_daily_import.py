@@ -366,7 +366,7 @@ def test_legacy_layout_still_imports(pg, tmp_path: Path, mailbox) -> None:
 
 
 def test_each_layout_compares_only_its_own_columns(pg, tmp_path: Path, mailbox) -> None:
-    """#420：「已存在／內容不同」只比這份檔案那一版有的欄：舊版不比 FC2、新加坡，新版不比前台主管/投專。"""
+    """#420：「已存在／內容不同」只比這份檔案那一版有的欄：舊版不比 FC2、新加坡；前台主管/投專已停用，兩版都不比。"""
     new = trade(A, "Amy", "北區", 1, fc2="Ben", singapore="Y")
     old = trade(B, "Amy", "北區", 1, singapore=None)  # 新版檔的新加坡有值時和舊版存的空白不同，照實列出
     import_daily(write_daily(tmp_path / "1.xlsx", [new]), pg)
@@ -376,7 +376,7 @@ def test_each_layout_compares_only_its_own_columns(pg, tmp_path: Path, mailbox) 
     )
 
     legacy_again = import_daily(
-        write_daily(tmp_path / "3.xlsx", [legacy_trade(new)], trade_headers=LEGACY_TRADE_HEADERS), pg
+        write_daily(tmp_path / "3.xlsx", [legacy_trade(new, supervisor="PB")], trade_headers=LEGACY_TRADE_HEADERS), pg
     )
     new_again = import_daily(write_daily(tmp_path / "4.xlsx", [old]), pg)
 

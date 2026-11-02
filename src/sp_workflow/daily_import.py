@@ -7,7 +7,7 @@
   商品條件改由「匯入起單資料」建立（#86），每日匯入不再寫商品條件、也不做分公司對帳。
 - `交易明細` 第 1 列是欄名，必須和交易清單月份工作表的欄名與順序完全相同；不同就整份不匯入。
   2026-11 起是新版面（#420：`FC1`、`FC2`、`新加坡`）；舊版面（`FC/PB`、`前台主管/投專`）照樣可以匯入，
-  這份檔案沒有的欄存空白，「已存在／內容不同」只比這一版有的欄。FC1、FC2 都比對信箱。
+  這份檔案沒有的欄存空白，「已存在／內容不同」只比這一版有的欄（已停用的前台主管/投專不比）。FC1、FC2 都比對信箱。
   只收 Product 為支援的商品種類（`fcn_checker.products.PRODUCT_RULES`：FCN、FCN_Express、Super Bull、BEN、DACN，#302、#310、#373、#367）的列，商品種類存設定的寫法；
   其他略過並計數，略過的 TDCC 與 Product 記在 `workflow.other_product`。
   以 TDCC 為單位、第一次寫入為準：資料庫已有的交易不重複寫入，內容不同只列出差異、不覆蓋。
@@ -137,6 +137,8 @@ LEGACY_TRADE_FIELDS = {
     "FC/PB": "fc_name", "前台主管/投專": "supervisor",
 }  # fmt: skip
 TRADE_REQUIRED = ("交易日期", "幣別", "金額", "FC1", "分公司")
+# 不比對的欄（#420）：前台主管/投專已停用，新版匯入時空白；舊版檔回補時比它只會多出「內容不同」
+_UNCOMPARED_COLUMNS = frozenset(("supervisor",))
 # 報表上一列交易的 FC（#420）：FC2 是共同經手、金額不拆，有 FC2 時寫成「FC1／FC2」
 FC_LABEL_SQL = "concat_ws('／', fc_name, fc2_name)"
 _REQUIRED_COLUMNS = frozenset(TRADE_FIELDS[header] for header in TRADE_REQUIRED)
@@ -229,9 +231,9 @@ class _Layout:
     fields: Mapping[str, str]
 
     @property
-    def compared(self) -> tuple[str, ...]:
-        """「已存在／內容不同」比對的欄：這一版有的欄（舊版不比 FC2、新加坡；新版不比前台主管/投專）。"""
-        return ("product", *self.fields.values())
+    def compared_columns(self) -> tuple[str, ...]:
+        """「已存在／內容不同」比對的欄：這一版有的欄（舊版不比 FC2、新加坡），前台主管/投專兩版都不比。"""
+        return ("product", *(column for column in self.fields.values() if column not in _UNCOMPARED_COLUMNS))
 
 
 _LAYOUTS = (_Layout(TRADE_HEADERS, TRADE_FIELDS), _Layout(LEGACY_TRADE_HEADERS, LEGACY_TRADE_FIELDS))
@@ -702,7 +704,7 @@ def _jsonable(price: Price) -> dict[str, Any]:
 
 def _write_trades(conn: psycopg.Connection, parsed: _Parsed, run_id: int) -> list[ImportLine]:
     lines = []
-    compared = parsed.layout.compared
+    compared = parsed.layout.compared_columns
     for tdcc, trades in parsed.trades.items():
         stored = conn.execute(
             f"SELECT {', '.join(compared)} FROM workflow.trade_row WHERE tdcc = %s ORDER BY row_seq", (tdcc,)

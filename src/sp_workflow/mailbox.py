@@ -58,7 +58,7 @@ def name_key(name: str) -> str:
 
 
 def is_pb(name: str) -> bool:
-    """交易列的 FC/PB 是 PB（私銀）：不寄信，但交易列照存。"""
+    """交易列的 FC1、FC2（舊版面的 FC/PB，#420）是 PB（私銀）：不寄信，但交易列照存。"""
     return name.strip().upper() == PB
 
 

@@ -197,6 +197,9 @@ def test_the_summary_shows_fc2_and_the_singapore_mark(pg, tmp_path: Path) -> Non
     a, b = as_dicts(path)
     assert [a[c] for c in ("FC_1", "金額_1", "FC_2", "承作總額")] == ["Amy／Ben", 100000, "Pat", 150000]
     assert (a["新加坡註記"], b["新加坡註記"]) == ("Y", "N")
+    pg.execute("UPDATE workflow.trade_row SET singapore = NULL WHERE tdcc = %s", (B,))
+    export_summary(pg, path)
+    assert as_dicts(path)[1]["新加坡註記"] == "-", "舊資料沒有新加坡欄"
 
 
 @pytest.mark.db
