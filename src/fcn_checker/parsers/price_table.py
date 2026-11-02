@@ -517,6 +517,18 @@ def _pct_only(cell: list[Line], spec: TableSpec) -> bool:
     )
 
 
+def _pct_rest(cell: list[Line], head: list[Line], spec: TableSpec) -> bool:
+    """和欄名分開的表頭百分比那一格：本身就是百分比，或接在欄名後面才湊成（例：`轉換價（即期初價格的` /
+    `60.00%）`，workflow #421）。"""
+    if _pct_only(cell, spec):
+        return True
+    return (
+        spec.pct is not None
+        and not any(w in _text(cell) for w in _words(spec))
+        and re.search(spec.pct, _text(head) + _text(cell)) is not None
+    )
+
+
 def _keyword_lines(cells: list[list[Line]], spec: TableSpec) -> list[Line]:
     return [ln for c in cells if _has_keyword(c, spec) for ln in c]
 
@@ -534,7 +546,7 @@ def _columns(
         out[col.key] = _one(hit, col.word, header, spec)
         if spec.pct is not None:
             m = re.search(spec.pct, _text(out[col.key]))
-            below = [c for c in cells if _pct_only(c, spec) and _below(c, out[col.key], cells, spec)]
+            below = [c for c in cells if _pct_rest(c, out[col.key], spec) and _below(c, out[col.key], cells, spec)]
             if m is None and len(below) == 1:  # 百分比和欄名分開：歸到正上方的欄名
                 out[col.key] = sorted(out[col.key] + below[0], key=_reading)
                 m = re.search(spec.pct, _text(out[col.key]))
