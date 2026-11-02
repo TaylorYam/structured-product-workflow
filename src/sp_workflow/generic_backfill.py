@@ -7,6 +7,8 @@ ELN 通用回補格式的版面同核對結果檔「回填後」（沒有分公�
   資料庫空白的價格，例如 KI 型態 NONE 的下限價，寫空值寫法）。
 - 每格沿用核對回填的決策（`fcn_checker.backfill`）：表上空白（含 `#VALUE!` 這類錯誤值）→ 回填；已有相同值 → 不動；
   已有不同值 → 保留原值、原因寫出來；VWAP 的價格欄已有不同值時以資料庫覆寫。日期沿用表上既有日期格的顯示格式。
+- 例外（#418）：`比價日_n` 表上是空值寫法（`-`）、資料庫有日期時以資料庫覆寫（回補表常照每日觀察的填法在每期觀察商品的
+  中間期別先寫 `-`），覆寫的格子另外列出（`GenericLine.overwritten`），不算不一致。
 - 資料庫找不到這檔（例如 FCN_Stepdown 這類還不支援的商品）、還沒有那一項（還沒核對寫回）或標的代號對不到 → 那幾格維持空白，
   原因寫出來。
 - 回填的格子在合併儲存格裡時先拆開那一塊。
@@ -65,12 +67,13 @@ class GenericBackfillError(OperatorError):
 
 @dataclass(frozen=True)
 class GenericLine:
-    """表上一列的結果：回填（含 VWAP 覆寫）幾格，維持空白或不一致的原因。"""
+    """表上一列的結果：回填（含覆寫）幾格，維持空白或不一致的原因，以及比價日「-」改成資料庫日期的格子（#418）。"""
 
     tdcc: str
     product: str
     filled: int
     reasons: tuple[str, ...]
+    overwritten: tuple[str, ...] = ()
 
     @property
     def found(self) -> bool:
@@ -95,6 +98,11 @@ class GenericReceipt:
         """找得到、但有格子沒填或不一致的列。"""
         return sum(line.found and bool(line.reasons) for line in self.lines)
 
+    @property
+    def with_overwrites(self) -> int:
+        """有比價日「-」改成資料庫日期的列（#418）。"""
+        return sum(bool(line.overwritten) for line in self.lines)
+
 
 @dataclass(frozen=True)
 class _Fill:
@@ -103,6 +111,7 @@ class _Fill:
     column: int
     expected: Any  # ISIN、日期、價格或空值寫法
     overwrite: bool  # VWAP 的價格欄：已有不同值時以資料庫覆寫
+    over_empty: bool = False  # 比價日：表上是空值寫法、資料庫有日期時覆寫並列出（#418）
 
 
 def backfill_generic(conn: psycopg.Connection, source: Path, target: Path, fmt: ReferenceFormat) -> GenericReceipt:
@@ -180,16 +189,19 @@ def _fill_row(
     else:
         for n in range(1, SLOTS + 1):
             day = stored.autocall.get(n)
-            fills.append(_Fill(columns[autocall_date_key(n)], empty if day is None else day, False))
+            fills.append(_Fill(columns[autocall_date_key(n)], empty if day is None else day, False, day is not None))
     if fmt.initial_pricing_values.get(value("initial_pricing")) == VWAP:
         fills += _vwap_fills(value, columns, stored, empty, reasons)
     filled = 0
+    overwritten: list[str] = []
     for f in fills:
         cell = sheet.cell(row=row, column=f.column)
         current = None if cell.data_type == "e" else normalize_cell(cell.value)  # 錯誤值（#VALUE!）算空白
         if current is not None and current == f.expected:
             continue
-        if current is not None and not f.overwrite:
+        if f.over_empty and current == empty:
+            overwritten.append(f"{headers[f.column]} 表上是 {empty}，改成資料庫的 {_shown(f.expected)}")
+        elif current is not None and not f.overwrite:
             reasons.append(f"{headers[f.column]} 表上是 {_shown(current)}、資料庫是 {_shown(f.expected)}，保留原值")
             continue
         cell = _writable(sheet, row, f.column)
@@ -197,7 +209,7 @@ def _fill_row(
         if isinstance(f.expected, dt.date):
             cell.number_format = dates
         filled += 1
-    return GenericLine(tdcc, product, filled, tuple(reasons))
+    return GenericLine(tdcc, product, filled, tuple(reasons), tuple(overwritten))
 
 
 def _vwap_fills(

@@ -205,6 +205,7 @@ def test_generic_backfill_asks_for_files_and_shows_its_own_columns(
             GenericLine("147000000001", "FCN", 13, ()),
             GenericLine("147000000002", "BEN", 0, (NOT_FOUND,)),
             GenericLine("147000000003", "FCN", 11, ("ISIN Code 表上是 X、資料庫是 Y，保留原值",)),
+            GenericLine("147000000004", "FCN", 14, (), ("比價日_2 表上是 -，改成資料庫的 2027-01-06",)),
         )
         return GenericReceipt(out, lines)
 
@@ -216,10 +217,16 @@ def test_generic_backfill_asks_for_files_and_shows_its_own_columns(
     assert saving[0]["initialdir"] == str(source.parent) and saving[0]["initialfile"] == "ELN通用_回填.xlsx"
     assert [page.table.heading(c, "text") for c in page.table["columns"]] == ["TDCC", "Product", "回填（格）", "原因"]
     assert page.copier.rows()[1] == ["147000000002", "BEN", "0", NOT_FOUND]
+    assert page.copier.rows()[3] == ["147000000004", "FCN", "14", "比價日_2 表上是 -，改成資料庫的 2027-01-06"]
+    tags = [page.table.item(i, "tags") for i in page.table.get_children()]
+    assert [bool(t) for t in tags] == [False, True, True, False], (
+        "比價日「-」改成資料庫日期列出來，但不標成問題（#418）"
+    )
     assert page.kpis.values == (
-        ("回填（格）", 24, False),
+        ("回填（格）", 38, False),
         ("資料庫沒有（檔）", 1, True),
         ("有格子沒填或不一致（檔）", 1, True),
+        ("比價日「-」改成資料庫日期（檔）", 1, False),
     )
     assert page.next_button.winfo_manager() == "", "回填通用不是放回，收起帶到寄信草稿的下一步"
     assert page.memory.load()["generic_backfill"] == str(source.parent), "記住選檔的資料夾"

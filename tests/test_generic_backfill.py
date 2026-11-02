@@ -145,6 +145,38 @@ def test_existing_values_are_kept_unless_vwap_prices(pg, tmp_path: Path) -> None
 
 
 @pytest.mark.db
+def test_compare_dates_written_as_dash_take_the_database_dates_and_are_listed(pg, tmp_path: Path) -> None:
+    """比價日表上是 `-`、資料庫有日期：以資料庫覆寫並列出（每期觀察商品的中間期別，#418）；表上是日期、資料庫是 `-`
+    或不同日期照舊保留原值。"""
+    filled(pg, A)
+    filled(pg, B)
+    source = write_sheet(
+        tmp_path / "通用.xlsx",
+        [
+            sheet_row(A, **{"比價日_1": "-", "比價日_2": dt.datetime(2026, 12, 1), "比價日_6": "-"}),
+            sheet_row(B, **{"比價日_6": dt.datetime(2027, 5, 1)}),
+        ],
+    )
+
+    receipt = backfill_generic(pg, source, tmp_path / "out.xlsx", FMT)
+
+    a, b = (next(line for line in receipt.lines if line.tdcc == t) for t in (A, B))
+    assert (a.filled, a.reasons) == (12, ("比價日_2 表上是 2026-12-01、資料庫是 -，保留原值",))
+    assert a.overwritten == ("比價日_1 表上是 -，改成資料庫的 2026-11-23", "比價日_6 表上是 -，改成資料庫的 2027-04-22")
+    assert (b.filled, b.reasons, b.overwritten) == (
+        12,
+        ("比價日_6 表上是 2027-05-01、資料庫是 2027-04-22，保留原值",),
+        (),
+    )
+    assert (receipt.with_reasons, receipt.with_overwrites) == (2, 1)
+    out = read_back(tmp_path / "out.xlsx")
+    assert out[A]["比價日_1"] == dt.datetime(2026, 11, 23) and out[A]["比價日_6"] == dt.datetime(2027, 4, 22)
+    assert out[A]["比價日_2"] == dt.datetime(2026, 12, 1) and out[B]["比價日_6"] == dt.datetime(2027, 5, 1)
+    sheet = openpyxl.load_workbook(tmp_path / "out.xlsx").active
+    assert sheet["L2"].number_format == "mm-dd-yy", "覆寫的日期沿用表上既有日期格的顯示格式"
+
+
+@pytest.mark.db
 def test_missing_database_data_leaves_cells_blank(pg, tmp_path: Path) -> None:
     filled(pg, A, isin=None, vwap=True, prices=False)
     pg.execute("DELETE FROM workflow.autocall_date WHERE tdcc = %s", (A,))
