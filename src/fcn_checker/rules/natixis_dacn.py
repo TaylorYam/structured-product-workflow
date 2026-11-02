@@ -30,8 +30,8 @@ NOT_COVERED = [
     },
     {
         "rule_id": "doc.template_variants",
-        "description": "依規則推得、待樣本驗證（轉人工覆核）：KO 每期觀察、非記憶式、單一標的、KI 每期觀察（workflow Issue #386）、"
-        "美元與日圓以外的幣別、保證期數不是 1；2026-06 以前或寫法不同的範本不支援",
+        "description": "依規則推得、待樣本驗證（轉人工覆核）：KO 每期觀察、非記憶式、單一標的、KI 每期觀察（維持人工，workflow #386）、"
+        "美元與日圓以外的幣別、保證期數不是 1；寫法和現行版不同的範本不支援（不看交易日早晚）",
     },
 ]
 SUPPORTED_CURRENCIES = ("USD", "JPY")

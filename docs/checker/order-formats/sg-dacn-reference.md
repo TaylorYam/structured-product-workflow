@@ -5,7 +5,7 @@
 
 ## 1. 結構
 
-和 SG FCN 相同（商品代號前 3 碼 `037`，`發行機構` 欄寫 `SG`）。商品種類看 `Product` = `DACN`：辨識到的範本是 `sg-zh-dacn-pd`／`sg-zh-dacn-iis` 時，該列 Product 必須是 `DACN`；Product 是 `DACN`、文件卻是 SG FCN 範本（或反過來）→ 商品種類不一致，轉人工覆核（共用 `template.product_family`）。下單信主旨寫 `FCN` 不影響（以交易明細／起單建檔的 Product 為準，workflow #366；本機疑慮記錄）。
+和 SG FCN 相同（商品代號前 3 碼 `037`，`發行機構` 欄寫 `SG`）。商品種類看 `Product` = `DACN`：辨識到的範本是 `sg-zh-dacn-pd`／`sg-zh-dacn-iis` 時，該列 Product 必須是 `DACN`；Product 是 `DACN`、文件卻是 SG FCN 範本（或反過來）→ 商品種類不一致，轉人工覆核（共用 `template.product_family`）。下單信主旨寫 `FCN` 不影響（以交易明細／起單建檔的 Product 為準，workflow #366；2026-11-02 使用者決定，不通知上手）。
 
 開放自動核對：`config/issuer_prefixes.toml` `[auto_check_products]` 的 `DACN` 加 `SG`（workflow #369）。
 
@@ -42,4 +42,4 @@
 ## 6. 探勘時發現的表上狀況（2026-10-30）
 
 - 10 份樣本的舊總表欄位（代號、ISIN、幣別、面額、各日期、天期、K／KO／KI %、KO／KI 型態、記憶式、Non-Call、比價日、年利率、各標的代號與進場價／執行價／下限價／KO 價）全部和說明書一致；表上價格四捨五入到 4 位後相等。
-- `期初定價`：開盤價 5 份、VWAP 2 份、收盤價 3 份；說明書都只寫「於訂價日之價格」（同 SG FCN；本機疑慮記錄）。
+- `期初定價`：開盤價 5 份、VWAP 2 份、收盤價 3 份；說明書都只寫「於訂價日之價格」（同 SG FCN；2026-11-02 使用者決定：VWAP 時各標的價格以說明書回填、不同值覆寫，#122）。

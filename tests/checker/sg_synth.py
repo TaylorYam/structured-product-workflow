@@ -98,6 +98,7 @@ class Spec(ProductSpec):
     units: int = 10  # 情境假設的單位數
     legacy: bool = False  # 舊版面：數字與單位、年月日之間有空白
     trustee_code: str | None = None  # 受託或銷售機構商品代號；None 同商品代號，"" 空白
+    approval: dt.date = APPROVAL  # 封面受託或銷售機構審查通過之日期
     fx: Decimal | None = None  # quanto：最終匯率定價（每一日圓兌商品幣別）
     agent_head: str = "虛構甲"  # 總代理人負責人（不核對）
     label_row: int | None = None  # 日期表「（最終評價日）」「（到期日）」標在哪一期；None 為末列（範本寫法）
@@ -825,7 +826,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         "受託或銷售機構之名稱、電話及地址",
         [f"{DIST['name']}（下稱「玉山證券」）", f"地址：{ADDRESS_COVER}", f"電話：{PHONE}"],
     )
-    d.pair("受託或銷售機構審查通過之日期及文號", [s.date(APPROVAL)])
+    d.pair("受託或銷售機構審查通過之日期及文號", [s.date(s.approval)])
     d.text(28, "本商品之投資風險警語：")
     d.text(28, "一、" + WARNING, 58)
     d.text(28, "二、本商品係複雜的金融商品，必須經過符合資格的人員解說後再進行投資。", 58)

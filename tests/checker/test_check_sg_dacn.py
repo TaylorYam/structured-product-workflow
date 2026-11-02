@@ -9,6 +9,7 @@ from pathlib import Path
 import fitz
 import pytest
 
+from fcn_checker.backfill import BackfillAction
 from fcn_checker.extraction import extract_lines
 from fcn_checker.issuers import SG, SG_DACN
 from fcn_checker.schema import CheckStatus as S
@@ -147,11 +148,31 @@ def test_other_term_sheet_wording_is_not_supported(tmp_path, edits):
     assert ts.status_label == "不支援的範本版本" and ts.release_problem
 
 
-def test_trade_date_before_june_2026_is_not_supported(tmp_path):
-    ts, _ = check_pair(tmp_path, DacnSpec(trade_date=dt.date(2026, 5, 4), issue_date=dt.date(2026, 5, 11)))
-    detect = rule(ts.report, "template.detect")[0]
-    assert (detect.status, detect.reason_code) == (S.REVIEW_REQUIRED, "template_unsupported")
-    assert "2026-06-01" in detect.message
+def test_trade_date_before_june_2026_with_current_wording_is_checked(tmp_path):
+    """訂價日早於 2026-06-01、寫法和現行版相同 → 照現行版範本辨識、照常核對（版本只看寫法，2026-11-02 使用者決定，workflow #409）。"""
+    old = DacnSpec(trade_date=dt.date(2026, 5, 4), issue_date=dt.date(2026, 5, 11), approval=dt.date(2025, 12, 18))
+    ts, iis = check_pair(tmp_path, old)
+    assert ts.report.template == SG_DACN.template_id
+    assert iis.report.template == SG_DACN.iis.template_id
+    for item in (ts, iis):
+        assert rule(item.report, "template.detect")[0].status == S.PASS
+        assert item.report.status == S.PASS, problems(item.report)
+
+
+def test_vwap_prices_are_filled_and_overwritten_from_the_term_sheet(tmp_path):
+    """期初定價 VWAP（說明書只寫「於訂價日之價格」）：表上價格不比對，兩份通過後各標的價格以說明書回填、不同值覆寫，
+    同 SG FCN（Issue #122；2026-11-02 使用者決定，DACN-369-01）。"""
+    ts, iis = check_pair(tmp_path, 期初定價="VWAP", UL_1_進場價=1.0, UL_2_進場價=None)
+    assert ts.report.status == S.PASS, problems(ts.report)
+    assert iis.report.status == S.PASS, problems(iis.report)
+    assert ts.fills_sheet
+    assert not [x for x in ts.report.results if x.rule_id == "field.underlying_prices"]  # 價格欄不比對
+    assert rule(ts.report, "backfill.underlying_prices")[0].status == S.PASS
+    cells = {d.column: d for d in ts.report.backfill}
+    first, second, third = D0.underlyings
+    assert (cells["UL_1_進場價"].expected, cells["UL_1_進場價"].action) == (first.initial, BackfillAction.OVERWRITE)
+    assert (cells["UL_2_進場價"].expected, cells["UL_2_進場價"].action) == (second.initial, BackfillAction.FILL)
+    assert (cells["UL_3_進場價"].expected, cells["UL_3_進場價"].action) == (third.initial, BackfillAction.MATCH)
 
 
 def test_other_investor_sheet_wording_is_not_supported(tmp_path):
@@ -269,7 +290,7 @@ def test_scenario_titles_and_periods(tmp_path, edit, status):
     "spec",
     [
         DacnSpec(ki="D"),
-        DacnSpec(ki="P"),  # KI 每期觀察（MKI）：流程各階段都不支援、人工處理，待 #386 決定
+        DacnSpec(ki="P"),  # KI 每期觀察（MKI）：流程各階段都不支援、維持人工（2026-11-02 使用者決定，#386）
         DacnSpec(memory=False),
         DacnSpec(ko_obs="P"),
         DacnSpec(currency_zh="澳幣"),

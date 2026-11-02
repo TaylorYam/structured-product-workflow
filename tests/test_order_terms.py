@@ -52,7 +52,7 @@ def test_the_order_sheet_has_no_coupon_barrier(tmp_path: Path) -> None:
 
 
 def test_a_dacn_with_periodic_ki_is_flagged(tmp_path: Path) -> None:
-    """MKI（每期觀察 KI）的 DACN 目前不支援（#386 待決定）：Barrier Type 讀不進來、標紅待確認，要人工處理。"""
+    """MKI（每期觀察 KI）的 DACN 不支援、維持人工（2026-11-02 使用者決定，#386）：Barrier Type 讀不進來、標紅待確認，要人工處理。"""
     path = write_sheet(tmp_path / "s.xlsx", [sheet_line(A, {"Product": "DACN", "Barrier Type": "MKI"})])
 
     (row,) = read(path, A)

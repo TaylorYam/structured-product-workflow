@@ -29,7 +29,7 @@ NOT_COVERED = [
     {
         "rule_id": "doc.template_variants",
         "description": "依規則推得、待樣本驗證（轉人工覆核）：KO 每期觀察、非記憶式、單一標的、KI 每日／每期觀察、非美元計價、"
-        "保證期數或 Non-Call 不是 1；2026-06 以前或寫法不同的範本不支援",
+        "保證期數或 Non-Call 不是 1；寫法和現行版不同的範本不支援（不看交易日早晚）",
     },
 ]
 Q2 = Decimal("0.01")

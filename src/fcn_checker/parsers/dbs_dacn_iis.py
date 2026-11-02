@@ -17,7 +17,8 @@ from .common import derived
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "dbs-zh-dacn-iis"
-PARSER_VERSION = "1"
+# 2：拿掉交易日早於 2026-06-01 的條件，版本只看寫法（同說明書，2026-11-02 使用者決定，workflow #409）
+PARSER_VERSION = "2"
 OLD_VERSION = "DBS DACN 投資人須知的寫法和現行版不同"
 RATE = (
     r"利率：對於第1(?:~\d{1,2})?個觀察期間而言，利率為最大利率值。對於其後每個觀察期間而言，利率將根據以下公式決定："
@@ -54,11 +55,8 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     if en is None or "RangeAccrualMemoryDailyKnock-Out" not in en[1]:
         missing.append(f"英文名稱沒有「{dbs_dacn.NAME_EN_MARK}」")
     m = re.search(r"交易日：" + dbs.D + "；", ti.text)
-    trade = parse_date(m[1]) if m else None
-    if trade is None:
+    if m is None or parse_date(m[1]) is None:  # 只看寫法，不看早晚
         missing.append("商品簡介讀不到交易日")
-    elif trade < dbs_dacn.FIRST_SUPPORTED:
-        missing.append(f"交易日 {trade} 早於 {dbs_dacn.FIRST_SUPPORTED}（只支援現行版範本）")
     if missing:
         return DetectionResult(False, missing, evidence, unsupported=f"{OLD_VERSION}：{'；'.join(missing)}")
     return DetectionResult(True, [], evidence)

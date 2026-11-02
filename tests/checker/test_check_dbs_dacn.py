@@ -136,12 +136,15 @@ def test_other_term_sheet_wording_is_not_supported(tmp_path, edit):
     assert ts.status_label == "不支援的範本版本" and ts.release_problem
 
 
-def test_trade_date_before_june_2026_is_not_supported(tmp_path):
-    ts, iis = check_pair(tmp_path, DacnSpec(trade_date=dt.date(2026, 5, 4), issue_date=dt.date(2026, 5, 11)))
+def test_trade_date_before_june_2026_with_current_wording_is_checked(tmp_path):
+    """交易日早於 2026-06-01、寫法和現行版相同 → 照現行版範本辨識、照常核對（版本只看寫法，2026-11-02 使用者決定，workflow #409）。"""
+    old = DacnSpec(trade_date=dt.date(2026, 5, 4), issue_date=dt.date(2026, 5, 11), approval=dt.date(2025, 12, 18))
+    ts, iis = check_pair(tmp_path, old)
+    assert ts.report.template == DBS_DACN.template_id
+    assert iis.report.template == DBS_DACN.iis.template_id
     for item in (ts, iis):
-        detect = rule(item.report, "template.detect")[0]
-        assert (detect.status, detect.reason_code) == (S.REVIEW_REQUIRED, "template_unsupported")
-        assert "2026-06-01" in detect.message
+        assert rule(item.report, "template.detect")[0].status == S.PASS
+        assert item.report.status == S.PASS, problems(item.report)
 
 
 def test_other_investor_sheet_wording_is_not_supported(tmp_path):
@@ -266,7 +269,7 @@ def test_variants_without_samples_need_review(tmp_path, spec):
 
 
 def test_periodic_ki_wording_is_not_read(tmp_path):
-    """KI 每期觀察（MKI，#386 待決定）：DBS 範本只認「於定價日」的下限觸發事件，改成每期觀察的寫法讀不到 KI 型態，
+    """KI 每期觀察（MKI，2026-11-02 使用者決定維持人工，#386）：DBS 範本只認「於定價日」的下限觸發事件，改成每期觀察的寫法讀不到 KI 型態，
     轉人工覆核，不會自動通過。"""
     edit = Edit("於定價日的參考價格", "於任一觀察期間結束日的參考價格", "ts.basic.maturity")
     r = check(tmp_path, AM, edits=[edit])

@@ -148,7 +148,7 @@ def test_fcn_ko_prorate_clause_is_not_taken_for_dacn(tmp_path):
 
 
 def test_corrected_spelling_of_the_barrier_is_accepted(tmp_path):
-    """第 13 項 b. 的「配息界線價格」（樣本的錯字）更正成「界限」也是現行版（待使用者確認）。"""
+    """第 13 項 b. 的「配息界線價格」（樣本的錯字）更正成「界限」也是現行版（2026-11-02 使用者決定：維持，錯字不通知上手）。"""
     ts, _ = check_pair(tmp_path, edits=[Edit("配息界線價格", "配息界限價格", "ts.art13")])
     assert ts.report.template == NATIXIS_DACN.template_id
     assert ts.report.status == S.PASS, problems(ts.report)
@@ -173,11 +173,15 @@ def test_other_term_sheet_wording_is_not_supported(tmp_path, edits):
     assert ts.status_label == "不支援的範本版本" and ts.release_problem
 
 
-def test_trade_date_before_june_2026_is_not_supported(tmp_path):
-    ts, _ = check_pair(tmp_path, DacnSpec(trade_date=dt.date(2026, 5, 4), issue_date=dt.date(2026, 5, 11)))
-    detect = rule(ts.report, "template.detect")[0]
-    assert (detect.status, detect.reason_code) == (S.REVIEW_REQUIRED, "template_unsupported")
-    assert "2026-06-01" in detect.message
+def test_trade_date_before_june_2026_with_current_wording_is_checked(tmp_path):
+    """交易日早於 2026-06-01、寫法和現行版相同 → 照現行版範本辨識、照常核對（版本只看寫法，2026-11-02 使用者決定，workflow #409）。"""
+    old = DacnSpec(trade_date=dt.date(2026, 5, 4), issue_date=dt.date(2026, 5, 11), approval=dt.date(2025, 12, 18))
+    ts, iis = check_pair(tmp_path, old)
+    assert ts.report.template == NATIXIS_DACN.template_id
+    assert iis.report.template == NATIXIS_DACN.iis.template_id
+    for item in (ts, iis):
+        assert rule(item.report, "template.detect")[0].status == S.PASS
+        assert item.report.status == S.PASS, problems(item.report)
 
 
 @pytest.mark.parametrize(

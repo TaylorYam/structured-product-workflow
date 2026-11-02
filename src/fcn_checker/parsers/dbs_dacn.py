@@ -4,12 +4,12 @@
 `於第a~b個觀察期間`，KI 到期觀察多一個 `於到期較佳情況`。
 
 依商品基本資料累積日數定義的 `其區間下限價格` 辨識商品家族（不看標題，workflow #366 決定 10）；只支援現行版範本：認得出是
-DBS DACN、但現行版的固定寫法任一段不同或交易日早於 2026-06-01 時，辨識交出「不支援的範本版本」（範本規格 §1、§8）。
+DBS DACN、但現行版的固定寫法任一段不同時，辨識交出「不支援的範本版本」（範本規格 §1、§8）。
+版本只看寫法、不看交易日早晚（2026-11-02 使用者決定，workflow #409）。
 """
 
 from __future__ import annotations
 
-import datetime as dt
 import re
 from collections.abc import Sequence
 from dataclasses import replace
@@ -22,9 +22,9 @@ from .common import derived
 from .layout import TextIndex, capture, parse_date
 
 TEMPLATE_ID = "dbs-zh-dacn-pd"
-PARSER_VERSION = "1"
-OLD_VERSION = "DBS DACN 說明書的寫法和現行版（2026-06 以後）不同"
-FIRST_SUPPORTED = dt.date(2026, 6, 1)  # 交易日早於這天的是舊版範本（沒有樣本，範本規格 §1；待使用者確認）
+# 2：拿掉交易日早於 2026-06-01 的條件，版本只看寫法（2026-11-02 使用者決定，workflow #409）
+PARSER_VERSION = "2"
+OLD_VERSION = "DBS DACN 說明書的寫法和現行版不同"
 NAME_ZH_MARK = "區間累計配息記憶型每日觀察自動提前出場"
 NAME_EN_MARK = "Range Accrual Memory Daily Knock-Out"
 ACCRUAL_LABEL = "累積日數："
@@ -108,11 +108,8 @@ def version_problems(sk: dbs.Skeleton, basic: str) -> list[str]:
     if en is None or squash(NAME_EN_MARK) not in en[1]:
         out.append(f"商品英文名稱沒有「{NAME_EN_MARK}」")
     m = re.search(r"(?<!劃)(?<!定)交易日：" + dbs.D, basic)
-    trade = parse_date(m[1]) if m else None
-    if trade is None:
+    if m is None or parse_date(m[1]) is None:  # 只看寫法，不看早晚
         out.append("商品基本資料讀不到交易日")
-    elif trade < FIRST_SUPPORTED:
-        out.append(f"交易日 {trade} 早於 {FIRST_SUPPORTED}（只支援現行版範本）")
     return out
 
 
