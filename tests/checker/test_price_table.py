@@ -893,6 +893,42 @@ def test_ubs_two_header_cells_in_one_line_with_percentages_on_the_next_page():
     }
 
 
+def test_ubs_header_percentage_line_starting_after_the_word_before_the_number():
+    """UBS 表頭「轉換價（即期初價格的」/「60.00%）」：「的」留在上一行，下一行只有數字和 %（OOS 回報包，workflow #421）：
+    接在欄名後才湊成「的X%」，仍歸到該欄；另兩欄「的」在下一行的寫法不變。"""
+    lines = [
+        cell(1, 100, (40.0, "籃子中連結標的股")),
+        cell(1, 112, (65.0, "票名稱")),
+        cell(1, 100, (160.0, "期初價格")),
+        cell(1, 100, (240.0, "轉換價（即期初價格的")),
+        cell(1, 112, (275.0, "60.00%）")),
+        cell(1, 100, (370.0, "下限價 （即期初價格")),
+        cell(1, 112, (393.0, "的50.00%）")),
+        cell(1, 100, (490.0, "提前出場價 （即期初")),
+        cell(1, 112, (500.0, "價格的110.00%）")),
+        cell(1, 140, (60.0, "虛構甲公司")),
+        centered(1, 182, 140, "20.0000 美元"),
+        centered(1, 295, 140, "12.0000 美元"),
+        centered(1, 421, 140, "10.0000 美元"),
+        centered(1, 541, 140, "22.0000 美元"),
+        cell(1, 165, (60.0, "虛構乙公司")),
+        centered(1, 182, 165, "50.0000 美元"),
+        centered(1, 295, 165, "30.0000 美元"),
+        centered(1, 421, 165, "25.0000 美元"),
+        centered(1, 541, 165, "55.0000 美元"),
+    ]
+    table = read("underlying_table", lines, ubs.PRICE_TABLE)
+    assert table.ok, table.note
+    assert table.value.pcts == {"strike": Decimal("60.00"), "ki": Decimal("50.00"), "ko": Decimal("110.00")}
+    assert table.value.names == ["虛構甲公司", "虛構乙公司"]
+    assert table.value.prices[0] == {
+        "initial": Decimal("20.0000"),
+        "strike": Decimal("12.0000"),
+        "ki": Decimal("10.0000"),
+        "ko": Decimal("22.0000"),
+    }
+
+
 def test_gs_header_at_the_page_bottom_and_a_ticker_above_the_first_row_on_the_next_page():
     """表頭在上一頁頁底（代碼欄「彭博代 / 碼(i)」比價格欄的格高），下一頁頁首是第 1 列比列號高的代碼 `ZAAA`：代碼屬於
     第 1 列，不接到上一頁代碼欄的表頭（只有百分比的續行才接上一頁該欄最下面的一行；OOS 回歸，Issue #295）。"""

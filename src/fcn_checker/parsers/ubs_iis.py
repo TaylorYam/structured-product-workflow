@@ -1,6 +1,6 @@
 """UBS 中文投資人須知（docs/checker/templates/ubs-zh-iis.md）：段名＋標籤定位，句型在去空白的全文上讀。
 
-依 6 份真實樣本建立（同說明書 UB1–UB6；只支援新版，舊版「股權結構型債券」辨識失敗）。A4 版面、每頁頁底「第N頁，共4頁」
+依 6 份真實樣本建立（同說明書 UB1–UB6；只支援新版，舊版辨識失敗：看段落，商品種類「股權結構型債券」只在欄位核對列不一致）。A4 版面、每頁頁底「第N頁，共4頁」
 （有的「第N 頁」）。第 1 頁「商品中文名稱：…（下稱“本商品”）；商品英文名稱：…；商品種類：…。」同一段，接著「警語」
 1.～10.、刊印日期（「刋」／「刊」）。段名「相關機構」「商品事項」前面可能有「一、」「二、」。範本沒有商品代號、ISIN、
 交易日、期末訂價日、面額、價格表、%、配息率與 KO／KI 條文（收益分配只寫參照說明書），這些欄位不交出、不核對。
@@ -22,7 +22,8 @@ from .layout import TextIndex, parse_date
 TEMPLATE_ID = "ubs-zh-iis"
 # 2：警語的受託機構名稱（Issue #306）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 4：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
-PARSER_VERSION = "4"
+# 5：新舊版看段落；新版版面寫舊版商品種類「股權結構型債券」照新版讀（workflow #421）
+PARSER_VERSION = "5"
 # 發行機構信用評等（#240）：商品簡介 4. `…其長期債務信用評等為穆迪（Moody's）Aa2，標準普爾（Standard & Poor's）為A+，…。`
 RATINGS = (
     ratings.RatingPlace(
@@ -77,6 +78,7 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     zh = re.search(r"商品中文名稱[:：](.+?)[（(]下稱", text)
     en = re.search(r"商品英文名稱[:：](.+?)；商品種類", text)
     kind = re.search(r"商品種類[:：](.+?)。", text)
+    old = kind is not None and kind[1] == ubs.OLD_PRODUCT_TYPE
     failed = []
     for ok, message in (
         (
@@ -91,12 +93,16 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
             en is not None and en[1].startswith("UBS") and squash(ubs.NAME_EN_MARK) in en[1],
             f"英文名稱不是以「UBS」開頭或沒有「{ubs.NAME_EN_MARK}」",
         ),
+        # 新舊版看段落（舊版沒有「相關機構之權利、義務及責任」）；新版版面寫舊版商品種類時照新版讀，
+        # 商品種類交給欄位核對列不一致（workflow #421）
         (
-            kind is not None and kind[1] == ubs.PRODUCT_TYPE,
-            f"商品種類不是新版「{ubs.PRODUCT_TYPE}」"
-            + ("（舊版範本「股權結構型債券」不支援）" if kind is not None and kind[1] == ubs.OLD_PRODUCT_TYPE else ""),
+            kind is not None and kind[1] in (ubs.PRODUCT_TYPE, ubs.OLD_PRODUCT_TYPE),
+            f"商品種類不是「{ubs.PRODUCT_TYPE}」",
         ),
-        (iis.in_order(text, SECTIONS), "段落標題不完整或順序不符：" + "、".join(SECTIONS)),
+        (
+            iis.in_order(text, SECTIONS),
+            "段落標題不完整或順序不符：" + "、".join(SECTIONS) + ("（舊版範本不支援）" if old else ""),
+        ),
         (
             re.search(r"警語.+本投資人須知[刋刊]印日期[:：].+相關機構", text) is not None,
             "警語與相關機構之間沒有刊印日期",

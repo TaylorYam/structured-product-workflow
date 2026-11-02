@@ -55,10 +55,23 @@ def test_observation_in_brackets_is_the_same_name(tmp_path):
 
 
 def test_old_template_is_not_supported(tmp_path):
-    edit = Edit(f"商品種類：{PRODUCT_TYPE}。", "商品種類：股權結構型債券。", "iis.cover")
-    r = check_iis(tmp_path, edits=[edit]).report
+    """舊版（商品種類「股權結構型債券」、沒有「相關機構之權利、義務及責任」段）辨識失敗並寫出原因。"""
+    edits = [
+        Edit(f"商品種類：{PRODUCT_TYPE}。", "商品種類：股權結構型債券。", "iis.cover"),
+        Edit("相關機構之權利、義務及責任", "其他事項", "iis.rest"),
+    ]
+    r = check_iis(tmp_path, edits=edits).report
     assert r.template != UBS.iis.template_id
     assert "舊版範本" in rule(r, "template.detect")[0].message
+
+
+def test_new_layout_with_the_old_product_type_is_a_mismatch(tmp_path):
+    """新版版面寫舊版商品種類「股權結構型債券」：照新版讀，商品種類列不一致（workflow #421）。"""
+    edit = Edit(f"商品種類：{PRODUCT_TYPE}。", "商品種類：股權結構型債券。", "iis.cover")
+    r = check_iis(tmp_path, edits=[edit]).report
+    assert r.template == UBS.iis.template_id
+    assert r.status == S.MISMATCH
+    assert {x.rule_id for x in r.results if x.status != S.PASS} == {"standard.product_type"}
 
 
 def test_issuing_branch_other_than_london_needs_review(tmp_path):
