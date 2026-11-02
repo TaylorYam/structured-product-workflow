@@ -22,7 +22,7 @@ DATE_COLUMNS = {
 }
 
 
-def product() -> dict:
+def sample_template_product() -> dict:
     return {
         "trade_date": dt.date(2026, 10, 28),
         "issue_date": dt.date(2026, 11, 4),
@@ -82,15 +82,15 @@ def test_template_dates_are_utc_midnight_of_the_database_date(tmp_path: Path) ->
     win32com = types.SimpleNamespace(DispatchEx=lambda name: excel)
     template = tmp_path / "template.xlsx"
     template.write_bytes(b"not opened")
-    p = product()
+    p = sample_template_product()
 
     _, _, _, temp_dir = OutlookDrafter._open_template(win32com, template, "000000000000", p, ("北區",), "RR4")
+    shutil.rmtree(temp_dir)
 
     for column, field in DATE_COLUMNS.items():
         written = sheet.values[(2, column)]
         assert written == dt.datetime.combine(p[field], dt.time.min, tzinfo=dt.UTC), field
         assert written.utcoffset() == dt.timedelta(0), field
-    shutil.rmtree(temp_dir)
 
 
 @pytest.mark.skipif(
@@ -101,7 +101,7 @@ def test_real_excel_shows_the_database_dates() -> None:
     import pythoncom
     import win32com.client
 
-    p = product()
+    p = sample_template_product()
     pythoncom.CoInitialize()
     excel = workbook = temp_dir = None
     try:
