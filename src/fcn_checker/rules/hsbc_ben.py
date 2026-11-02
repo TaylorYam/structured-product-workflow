@@ -19,16 +19,17 @@ from .hsbc_super_bull import NAMES, annualized_of_pnl, cents, pnl_check, worse
 from .kit import Check, IssuerContext
 from .super_bull import within_tolerance
 
-# ---------------------------------------------------------------- 待使用者確認的暫定做法（核對規則 §9，詳見本機疑慮記錄）
-# 每項只在這裡改；說明書端另有 parsers/hsbc_ben.py 的 PARTICIPATION、ART16、BONUS、OLD_VERSION（見該檔）。
+# ---------------------------------------------------------------- 2026-11-02 使用者確認的做法（核對規則 §9，詳見本機疑慮記錄）
+# 每項只在這裡改；說明書端另有 parsers/hsbc_ben.py 的 PARTICIPATION、ART16、BONUS、OLD_VERSION、DIGITAL_NOTE（見該檔）。
 
 # BEN-375-03：有樣本的標的數與幣別；其他型態轉人工覆核（待樣本驗證）
 SAMPLED_UNDERLYINGS: dict[Kind, range] = {"maxi": range(2, 4), "digital": range(1, 2)}
 SAMPLED_CURRENCIES = frozenset({"USD"})
-# BEN-375-04：Digital 標的表後的方括號殘留註記 → 不一致（作業人員確認後人工放行）
+# BEN-375-04：第 12 條 (1) 表後的方括號殘留註記 → 不一致（作業人員確認後人工放行）；Digital 的註3 是範本固定寫法，
+# 由 parser 的 `DIGITAL_NOTE` 認得、不算殘留
 RESIDUE_STATUS = S.MISMATCH
-# BEN-375-06：封面（投資人須知標題）沒有「(最終版)」的 Word 排版 → 不一致（作業人員確認後人工放行）
-FINAL_EDITION_STATUS = S.MISMATCH
+# BEN-375-06：封面（投資人須知標題）沒有「(最終版)」的 Word 排版 → 視為正常（通過）
+FINAL_EDITION_STATUS = S.PASS
 
 NOT_COVERED = [
     *(x for x in hsbc.NOT_COVERED if x["rule_id"] not in ("doc.scenario_complex", "doc.scenario_other_annualized")),
@@ -58,11 +59,17 @@ def _fixed(ctx: IssuerContext, rid: str, field: str, name: str) -> CheckResult:
 
 
 def _flagged(ctx: IssuerContext, rid: str, field: str, name: str, status: S) -> CheckResult:
-    """寫法不在範本規格內但條款可讀（殘留註記、沒有 (最終版)）：沒有 → 通過；有 → `status`（暫定做法，見上方設定）。"""
+    """寫法不在範本規格內但條款可讀（殘留註記、沒有 (最終版)）：沒有 → 通過；有 → `status`（見上方設定）。"""
     pf = ctx.ts.f(field)
-    check = Check(rid, field, Item.expected(name), ctx.document)
+    return flagged_result(Check(rid, field, Item.expected(name), ctx.document), pf, status)
+
+
+def flagged_result(check: Check, pf, status: S) -> CheckResult:
+    """`_flagged` 的結果（投資人須知的 (最終版) 共用）：讀到 → 範本固定寫法；讀不到且 `status` 是通過 → 視為正常。"""
     if pf.ok:
         return check.result(S.PASS, evidence=pf.evidence, message="範本固定寫法")
+    if status == S.PASS:
+        return check.result(S.PASS, evidence=pf.evidence, message=f"{pf.note}（視為正常）")
     return check.result(status, evidence=pf.evidence, reason="value_mismatch", message=pf.note)
 
 

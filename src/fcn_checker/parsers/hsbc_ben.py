@@ -41,6 +41,8 @@ TEMPLATE_ID = "hsbc-zh-ben-pd"
 PARSER_VERSION = "1"
 # 待使用者確認 BEN-375-08：版本依內容判斷、不看交易日；現行版特徵（`current_problems`）對不上 → 不支援的範本版本
 OLD_VERSION = "HSBC BEN 說明書的寫法和現行版不同"
+# BEN-375-04（2026-11-02 使用者確認）：Digital（單一標的）第 12 條 (1) 表後的這句當範本固定寫法，不判不一致
+DIGITAL_NOTE = "註3：[連結標的可替換為其他標的，由投資人與受託或銷售機構最終決定（其價格由計算代理機構決定）]"
 ISSUER_ZH = "香港上海滙豐銀行"
 Kind = Literal["maxi", "digital"]
 KIND_LABEL = {"maxi": "Maxi（紅利表現）", "digital": "Digital（紅利配息）"}
@@ -286,10 +288,15 @@ def _table_lines(lines: list[Line]) -> list[Line]:
     return body[: notes[0]] if notes else body
 
 
-def _residue(lines: list[Line]) -> ParsedField:
-    """第 12 條 (1) 的方括號殘留註記（Digital 樣本的 `註3：[…]`，核對規則 §3.5）：有 → 不合法（規則判不一致）。"""
+def _residue(lines: list[Line], kind: Kind) -> ParsedField:
+    """第 12 條 (1) 的方括號殘留註記（核對規則 §3.5）：Digital 的 `DIGITAL_NOTE` 是範本固定寫法（讀到）；其他方括號 → 不合法
+    （規則判不一致）。"""
     ti = TextIndex(lines)
-    m = re.search(r"\[[^\]]*\]", ti.text)
+    text = ti.text
+    if kind == "digital":
+        note = squash(DIGITAL_NOTE)
+        text = text.replace(note, " " * len(note))  # 長度不變，證據行的位置照舊
+    m = re.search(r"\[[^\]]*\]", text)
     if m is not None:
         return ParsedField.invalid(
             "template_residue", ti.lines_for(m.start(), m.end()), "第 12 條(1) 標的表有方括號殘留註記（範本殘留）"
@@ -567,7 +574,7 @@ def read(lines: Sequence[Line]) -> HsbcBenTermSheet:
         else None,
     )
     fields["main_price_table"] = price_table.at("main_price_table", fields["price_table"], PRICE_TABLE)
-    fields["template_residue"] = _residue(sub(12, 1))
+    fields["template_residue"] = _residue(sub(12, 1), kind)
 
     # 第 11 條、沒有 KO（第 15 條）、無 KI
     _article11(fields, kind, article(11), article(11) if kind == "maxi" else sub(11, 2))

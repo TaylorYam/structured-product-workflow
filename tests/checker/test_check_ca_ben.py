@@ -181,12 +181,11 @@ def test_misnamed_iis_is_still_ben_and_the_name_mismatches(tmp_path, edit, name)
     [
         (BenSpec(count=1), "有 1 檔標的"),
         (BenSpec(count=3), "有 3 檔標的"),
-        (BenSpec(strike=Decimal("90.00"), ko=Decimal("90.00")), "執行價 90.00%"),
         (BenSpec(currency_zh="日圓", market="JT"), "計價幣別是日圓"),
         (BenSpec(currency_zh="人民幣", currency_iso="CNH"), "境外人民幣"),
         (BenSpec(fx="美元/日圓=150.00"), "第 16 項有匯率"),
     ],
-    ids=["single", "three", "k90", "jpy", "cnh", "fx"],
+    ids=["single", "three", "jpy", "cnh", "fx"],
 )
 def test_unsampled_shapes_need_review(tmp_path, spec, words):
     report = check(tmp_path, spec)
@@ -198,8 +197,14 @@ def test_unsampled_shapes_need_review(tmp_path, spec, words):
 
 def test_sampled_shape_constants_are_the_bonus_samples():
     assert list(ca_ben_rules.SAMPLED_UNDERLYINGS) == [2]
-    assert ca_ben_rules.SAMPLED_STRIKE_PCTS == {Decimal(100)}
     assert ca_ben_rules.SAMPLED_CURRENCIES == {"USD"}
+
+
+@pytest.mark.parametrize("strike", [Decimal("90.00"), Decimal("75.00")], ids=["k90", "k75"])
+def test_strike_below_100_is_checked_by_the_rules(tmp_path, strike):
+    """BEN-377-07（2026-11-02 使用者確認）：K% 不是 100 不再轉人工，照規則推得核對（情境、價格表依 K% 重算）。"""
+    for item in check_pair(tmp_path, BenSpec(strike=strike, ko=strike)):
+        assert item.report.status == S.PASS, problems(item.report)
 
 
 # ---------------------------------------------------------------- 樣態與 Product（共用規則）
@@ -283,6 +288,15 @@ def test_missing_participation_column_needs_review(tmp_path):
 def test_fixed_wordings_mismatch(tmp_path, old, new, where, rid):
     report = check(tmp_path, edits=(Edit(old, new, where),))
     assert S.MISMATCH in statuses(report, rid), problems(report)
+
+
+def test_art13_coupon_date_may_refer_to_article9(tmp_path):
+    """BEN-377-08（2026-11-02 使用者確認）：13.(6) 寫「詳見第9 項…」也算沒有配息。"""
+    ref = "(6) 配息日：詳見第9 項「本商品主要給付項目及其計算方式」。"
+    report = check(tmp_path, edits=(Edit("(6) 配息日：本商品持有期間並無配息金額。", ref, "ts.art13"),))
+    assert report.status == S.PASS, problems(report)
+    other = check(tmp_path / "x", edits=(Edit("(6) 配息日：本商品持有期間並無配息金額。", "(6) 配息日：詳見第10 項。", "ts.art13"),))
+    assert S.MISMATCH in statuses(other, "doc.no_coupon"), problems(other)
 
 
 def test_iis_formula_mismatch(tmp_path):

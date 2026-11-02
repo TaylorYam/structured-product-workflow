@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from pathlib import Path
 
+from fcn_checker.parsers import hsbc_ben
 from fcn_checker.parsers.super_bull import add_months
 from harness import STANDARD, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
@@ -686,7 +687,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             table("art12.table")
             w.section = "art12"
             if ben and s.residue:  # Digital 樣本表後的範本殘留註記
-                line("註3：[連結標的可能依發行條件被替換]")
+                line(hsbc_ben.DIGITAL_NOTE)
             sub(2)
             line("標的說明")
         if k == 13:

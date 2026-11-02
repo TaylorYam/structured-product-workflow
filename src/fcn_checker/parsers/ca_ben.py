@@ -59,8 +59,9 @@ DIGITAL_FORMULA = "每單位面額x紅利水準。"
 PARTICIPATION = r"參與率：" + ca.PCT + "。"
 BONUS = r"紅利率：" + ca.PCT + "。"
 NO_KO = "提前出場"
-# BEN-377-08（待使用者確認）：13.(6) 只收這句；1 份現行版樣本寫「詳見第9 項…」→ `doc.no_coupon` 不一致、人工放行
+# BEN-377-08（2026-11-02 使用者確認）：13.(6) 這兩種寫法都算沒有配息（第 9 項 (1) 已明寫持有期間並無配息金額）
 NO_COUPON_DATE = "(6)配息日：" + NO_COUPON
+NO_COUPON_DATE_REF = "(6)配息日：詳見第9項「本商品主要給付項目及其計算方式」。"
 ART15_TITLE = "15.到期贖回計算公式，包含保證配息率及參與率："
 MIN_RATE = "(4)最低保證配息率：不適用，" + NO_COUPON
 ART15_PARTICIPATION = r"\(5\)參與率：" + ca.PCT + "。?"
@@ -479,7 +480,10 @@ def read(lines: Sequence[Line]) -> CaBenTermSheet:
 
     # 13.(6)、15.(4)(5)：沒有配息、參與率
     fields["no_coupon_art13"] = exactly_one(
-        "no_coupon_art13", art13, re.escape(NO_COUPON_DATE), f"第 13 項沒有「{NO_COUPON_DATE}」"
+        "no_coupon_art13",
+        art13,
+        "|".join(map(re.escape, (NO_COUPON_DATE, NO_COUPON_DATE_REF))),
+        f"第 13 項沒有「{NO_COUPON_DATE}」或「{NO_COUPON_DATE_REF}」",
     )
     art15 = TextIndex(article(15))
     fields["no_coupon_art15"] = exactly_one(
