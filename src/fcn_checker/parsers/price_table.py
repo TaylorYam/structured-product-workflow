@@ -53,6 +53,10 @@ SYMBOL = re.compile(r"[A-Z0-9][A-Z0-9./-]*")
 EXCHANGE = re.compile(r"[A-Z]{2}(?:\s+(?:Equity|EQUITY))?")
 TICKER_START = re.compile(r"^[A-Z0-9][A-Z0-9./-]*\s+[A-Z]{2}(?![A-Za-z0-9])")
 TICKER = re.compile(r"(?<![A-Za-z0-9])([A-Z0-9][A-Z0-9./-]*)\s+([A-Z]{2})(?![A-Za-z0-9])")
+# 代碼欄裡可能是彭博代碼的一個詞：有英數字。代碼欄表頭和右邊的交易所欄擷取成同一行時（NOMURA「彭博代碼 交易所
+# 關連交易所」，workflow #415），代碼欄涵蓋到交易所名稱；純中文的詞不算進代碼，不然代號換行（`NVDA` / `UW Equity`）
+# 時中文夾在代號和交易所碼中間
+TICKER_WORD = re.compile(r"[A-Za-z0-9]")
 NUMBER_CHARS = "0123456789,."
 NEAR = 20.0  # 和任何表頭格都不重疊的行，離表頭格幾 pt 內仍算那一欄
 SAME_COLUMN = 0.25  # 同一欄上下兩行的 x 重疊至少是較窄那一行的幾成
@@ -728,9 +732,7 @@ def _row(
         raise _Unreadable(ordered, f"{spec.where}第 {k} 列各格的幣別字不同")
     ticker = None
     if spec.code is not None:
-        # 彭博代碼都是英數字：代碼欄表頭和右邊的交易所欄擷取成同一行時（NOMURA，#415），代碼欄會涵蓋到交易所名稱，
-        # 沒有英數字的詞不算進代碼，不然代號換行（`NVDA` / `UW Equity`）時中文夾在代號和交易所碼中間
-        words = [w for w in by_col.get("code", []) if re.search(r"[A-Za-z0-9]", w.text)]
+        words = [w for w in by_col.get("code", []) if TICKER_WORD.search(w.text)]
         hits = TICKER.findall(_code_text(sorted(words, key=_reading)))
         if len(hits) != 1:
             raise _Unreadable(ordered, f"{spec.where}第 {k} 列讀不到彭博代碼")
