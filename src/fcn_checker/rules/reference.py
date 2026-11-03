@@ -16,9 +16,9 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from ..fields import PRICE_FIELDS
+from ..fields import COUPON_BARRIER_FIELD, PARTICIPATION_FIELD, PRICE_FIELDS
 from ..orders.reference import UNDERLYING_SLOTS
-from ..products import BEN, DACN, FCN, PRODUCT_RULES, product_name
+from ..products import FCN, PRODUCT_RULES, product_name, rule_or_fcn
 from ..schema import CheckResult, DocKind, Evidence, FieldStatus, Item, OrderValue, ParsedField
 from ..schema import CheckStatus as S
 from ..standard_fields import AutocallSchedule, Occurrence
@@ -406,11 +406,11 @@ PARTICIPATION = FieldCheck(
 
 
 def participation(ctx: Context) -> list[CheckResult]:
-    """參與率(%)：只有 Product 是 BEN 的列才比（其他商品沒有結果）；= 說明書的參與率（HSBC 由到期公式推得）。表上沒有這欄
-    或空白 → 轉人工覆核（舊的 Excel 參考條件表可能沒有這欄；資料庫匯出的 BEN 一定有值，ADR 0029）。"""
-    ov = ctx.order.get("product")
-    text = ov.value if ov is not None else None
-    if not (isinstance(text, str) and product_name(text) == BEN):
+    """參與率(%)：只有 Product 的規則有參與率（BEN）的列才比（其他商品沒有結果，#435 問商品規則）；= 說明書的參與率
+    （HSBC 由到期公式推得）。表上沒有這欄或空白 → 轉人工覆核（舊的 Excel 參考條件表可能沒有這欄；資料庫匯出的 BEN 一定有值，
+    ADR 0029）。"""
+    product, _ = _product(ctx)
+    if not rule_or_fcn(product).has_term(PARTICIPATION_FIELD):
         return []
     return [PARTICIPATION.check(ctx)]
 
@@ -681,19 +681,19 @@ def _product(ctx: Context) -> tuple[str | None, OrderValue | None]:
 
 
 def coupon_barrier(ctx: Context) -> list[CheckResult]:
-    """配息門檻 %（要配息門檻的商品，`PRODUCT_RULES` 的 `has_coupon_barrier`：DACN，workflow #368、ADR 0030；BEN 的紅利門檻，
+    """配息門檻 %（商品規則有配息門檻的商品，`ProductRule.has_term`：DACN，workflow #368、ADR 0030；BEN 的紅利門檻，
     workflow #406、ADR 0029）：說明書配息門檻 = 表上「配息門檻(%)」，依說明書顯示位數四捨五入後比；表上沒有這欄（舊 Excel）
-    時和「K(%)」比。有這欄但該列空白或是空值寫法：DACN 也改和「K(%)」比（2026-11-02 使用者決定，DACN-409-01）；BEN 轉人工覆核
-    （BEN 一定要有值）。其他商品不產生結果。"""
+    時和「K(%)」比。有這欄但該列空白或是空值寫法：規則說和 K(%) 比的（`blank_coupon_barrier_uses_strike`：DACN，
+    2026-11-02 使用者決定，DACN-409-01）改和「K(%)」比，其他（BEN 一定要有值）轉人工覆核。其他商品不產生結果。"""
     product, _ = _product(ctx)
-    rule = PRODUCT_RULES.get(product) if product else None
-    if rule is None or not rule.has_coupon_barrier:
+    rule = rule_or_fcn(product)
+    if not rule.has_term(COUPON_BARRIER_FIELD):
         return []
     rid, key, name = "field.coupon_barrier_pct", "coupon_barrier_pct", "配息門檻 %"
     pf = standard_field(ctx, key)
     ov = ctx.sheet_field(key)
     blank = ov is not None and (ov.value is None or ov.value == ctx.fmt.empty_value)
-    if blank and product != DACN:
+    if blank and not rule.blank_coupon_barrier_uses_strike():
         why = f"{product} 要有配息門檻，{ctx.sheet_source}該列配息門檻空白"
         return [order_review(rid, key, ov, pf, "order_missing", why, name=name)]
     # 沒有配息門檻欄（舊 Excel，workflow #366 決定 3）或 DACN 該列空白（DACN-409-01）：和執行價比

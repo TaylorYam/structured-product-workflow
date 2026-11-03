@@ -1,5 +1,6 @@
 """自動核對的商品種類（#302）：上手編號對照設定檔的 `[auto_check_products]`，以及批量核對攔下沒開放的商品種類
-（參考條件表 Product 欄；同不支援樣態：不跑規則、不能人工放行）；商品規則回答商品條件的問題（#434）。"""
+（參考條件表 Product 欄；同不支援樣態：不跑規則、不能人工放行）；商品規則回答商品條件的問題（#434）、
+比價政策與核對樣態的問題（#435）。"""
 
 from __future__ import annotations
 
@@ -18,10 +19,10 @@ from fcn_checker.fields import (
     PARTICIPATION_FIELD,
 )
 from fcn_checker.ingestion import IngestionError
-from fcn_checker.products import BEN, DACN, FCN, FCN_EXPRESS, PRODUCT_RULES, SUPER_BULL
+from fcn_checker.products import BEN, DACN, FCN, FCN_EXPRESS, PRODUCT_RULES, SUPER_BULL, rule_or_fcn
 from fcn_checker.saving import run_batch
 from fcn_checker.schema import CheckStatus
-from fcn_checker.variants import load_auto_check_products
+from fcn_checker.variants import load_auto_check_products, product_terms_text
 from harness import CONFIG, ISSUER_PREFIXES, check_all, load_config, with_iis
 from reference_synth import build_reference_sheet, reference_row
 
@@ -216,3 +217,50 @@ def test_defaults_and_moved_terms(name):
     assert rule.default_coupon_barrier(Decimal(80)) == (Decimal(80) if barrier else None)
     assert rule.moved_fields() == ({KO_BARRIER_FIELD: COUPON_BARRIER_FIELD} if ben else {})
     assert rule.ignored_prices() == (frozenset({"ko"}) if ben else frozenset())
+
+
+@pytest.mark.parametrize("name", ALL)
+def test_observation_policy(name):
+    rule = PRODUCT_RULES[name]
+    ben = name == BEN
+    assert rule.final_date_can_ko() == (name not in (SUPER_BULL, BEN))
+    assert rule.non_call_is_tenor() == ben
+    assert rule.ko_needs_review(Decimal(100)) == ben
+    assert not rule.ko_needs_review(None)
+    # Non-Call 涵蓋整個天期就不會提前出場，任何商品都一樣；空白時當作會
+    assert rule.no_early_exit(12, 12) and rule.no_early_exit(13, 12)
+    assert not rule.no_early_exit(11, 12)
+    assert not rule.no_early_exit(None, 12) and not rule.no_early_exit(12, None)
+
+
+def test_a_tenor_non_call_product_must_match_the_tenor_and_then_never_exits_early():
+    rule = PRODUCT_RULES[BEN]
+    assert rule.non_call_problem(12, 12) == "" and rule.no_early_exit(12, 12)
+    assert rule.non_call_problem(6, 12) == "BEN 不會提前出場，要等於天期（12）"
+
+
+@pytest.mark.parametrize("name", ALL)
+def test_check_terms(name):
+    rule = PRODUCT_RULES[name]
+    assert rule.blank_coupon_barrier_uses_strike() == (name == DACN)
+    assert rule.only_periodic_no_ki() == (name in (SUPER_BULL, BEN))
+
+
+@pytest.mark.parametrize(
+    ("name", "text"),
+    [
+        (SUPER_BULL, "KO(Freq) P、KO(memo) N、KI(Freq) -"),
+        (BEN, "KO(Freq) P、KO(memo) N、KI(Freq) -、Non-Call = 天期"),
+        (FCN, ""),
+        (DACN, ""),
+        ("FCN_Stepdown", ""),
+    ],
+)
+def test_variant_terms_follow_the_rule(name, text):
+    assert product_terms_text(name) == text
+
+
+@pytest.mark.parametrize("product", ["FCN_Stepdown", None, 3, ""])
+def test_unsupported_products_follow_fcn(product):
+    assert rule_or_fcn(product) is PRODUCT_RULES[FCN]
+    assert rule_or_fcn(SUPER_BULL) is PRODUCT_RULES[SUPER_BULL]
