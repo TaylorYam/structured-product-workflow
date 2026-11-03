@@ -10,6 +10,8 @@
 - `missing_fields`：資料庫商品條件缺哪幾個必填欄（#114）。
 - `has_coupon_barrier`／`default_coupon_barrier`：商品種類要不要配息門檻；起單建檔、舊總表沒有配息門檻，要配息門檻的商品（DACN、BEN）預設帶執行價（#367、#406）。
 - `PRICE_COLUMNS`：標的價格（核對用的鍵 → `workflow.underlying_price` 的欄）；核對讀資料庫與核對寫回共用（#203）。
+- `UnderlyingPrice`：一個標的的價格（一列 `workflow.underlying_price`，含價格基準日）；`round_price`／`price_at`：
+  價格的進位與「基準價格 × 比例(%)」（核對條件、比價與 `product_store` 共用，#437）。
 - `same_value`：兩個值一樣嗎（數字不分 int 與 Decimal、不看小數位數）；商品條件寫入與核對寫回共用（#203）。
 
 `REQUIRED` 與欄位對照放在這裡、不放在 `product_terms`：`check_terms` 也要用，
@@ -25,7 +27,8 @@ from __future__ import annotations
 import datetime as dt
 import json
 from collections.abc import Mapping, Sequence
-from decimal import Decimal, InvalidOperation
+from dataclasses import dataclass
+from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from enum import Enum
 from typing import Any
 
@@ -115,6 +118,38 @@ _MATURITY_ONLY_OPTIONAL = ("KO Barrier (%)",)
 
 # 資料庫商品欄位
 PRICE_COLUMNS = {"initial": "initial_price", "strike": "strike_price", "ki": "ki_price", "ko": "ko_price"}
+_PRICE = Decimal("0.0001")
+_HUNDRED = Decimal(100)
+
+
+@dataclass(frozen=True)
+class UnderlyingPrice:
+    """一個標的的價格（`workflow.underlying_price` 的一列）：核對條件算出、比價寫回顧期初價格、拆股換算價格基準日。"""
+
+    seq: int  # 1～5
+    code: str
+    initial: Decimal | None = None  # 進場價
+    strike: Decimal | None = None  # 執行價（lookback 比價寫過回顧期初價格之後是回顧執行價，#374）
+    ki: Decimal | None = None  # 下限價
+    ko: Decimal | None = None  # KO 價
+    lookback: Decimal | None = None  # 回顧期初價格（#374）：比價在回顧期間結束後寫入，有值時執行價由它算
+    basis: dt.date | None = None  # 價格基準日（ADR 0025）：四個價格含到這天生效的拆股；None 是 Strike date
+
+    @property
+    def effective_initial(self) -> Decimal | None:
+        """有效期初價格：lookback 算出回顧期初價格就用它，否則進場價（表現的分母，#374、#404）。"""
+        return self.initial if self.lookback is None else self.lookback
+
+
+def round_price(value: Decimal) -> Decimal:
+    """價格 half-up 到小數第 4 位（四個價格、回顧期初價格共用，#374）。"""
+    return value.quantize(_PRICE, rounding=ROUND_HALF_UP)
+
+
+def price_at(base: Decimal, pct: Decimal) -> Decimal:
+    """基準價格 × 比例(%)（執行價、下限價、KO 價；回顧執行價 = 回顧期初價格 × 執行價(%)，#374）。"""
+    return round_price(base * pct / _HUNDRED)
+
 
 PRODUCT_COLUMNS = (
     "product", "issuer", "currency", "trade_date", "issue_date", "final_valuation_date", "maturity_date",
@@ -171,7 +206,6 @@ REQUIRED_COLUMNS = tuple(column for columns in _REQUIRED_STORED.values() for col
 
 _PCT = Decimal("0.000001")
 _AMOUNT = Decimal("0.0001")
-_HUNDRED = Decimal(100)
 
 
 def columns_of(

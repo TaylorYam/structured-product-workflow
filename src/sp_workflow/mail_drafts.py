@@ -43,7 +43,7 @@ from sp_workflow.product_record import (
     invert_upfront,
     missing_fields,
 )
-from sp_workflow.product_terms import read
+from sp_workflow.product_store import read
 from sp_workflow.risk_level import RiskLevel, risk_level_of
 
 if TYPE_CHECKING:

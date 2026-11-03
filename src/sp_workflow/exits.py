@@ -21,7 +21,8 @@ from sp_workflow.close_prices import latest_close_date
 from sp_workflow.file_tools import save_rows
 from sp_workflow.lifecycle import EXIT_EVENTS, exits_on
 from sp_workflow.observation import missing_close
-from sp_workflow.product_terms import ImportConfig, issuer_code
+from sp_workflow.product_store import issuer_code
+from sp_workflow.product_terms import ImportConfig
 from sp_workflow.status import OrderReview, Pricing
 
 if TYPE_CHECKING:
@@ -71,7 +72,7 @@ class ExitExport:
 def load_exits(conn: psycopg.Connection, config: ImportConfig, day: dt.date | None = None) -> ExitList:
     """`day`（沒有時用最新的收盤日）還有效的出場事件，來源不限。在同一個 transaction 裡讀。
 
-    商品條件還是自己讀；要改讀法時先看能不能用 `product_terms.read_many`（#204）。
+    商品條件還是自己讀；要改讀法時先看能不能用 `product_store.read_many`（#204）。
     """
     with conn.transaction():
         if day is None:
@@ -81,7 +82,7 @@ def load_exits(conn: psycopg.Connection, config: ImportConfig, day: dt.date | No
         events = exits_on(conn, day)
         products = {
             tdcc: (issuer, product, locked)
-            for tdcc, issuer, product, locked in conn.execute(  # 鎖住＝`locked_at` 有值（同 `product_terms.locked`）
+            for tdcc, issuer, product, locked in conn.execute(  # 鎖住＝`locked_at` 有值（同 `product_store.locked`）
                 "SELECT tdcc, issuer, product, locked_at IS NOT NULL FROM workflow.product WHERE tdcc = ANY(%s)",
                 ([e.tdcc for e in events],),
             )

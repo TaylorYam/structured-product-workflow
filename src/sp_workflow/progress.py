@@ -11,7 +11,7 @@
 同一套事實確認一次還是待寄信（`still_pending_mail`，#205）。
 比價狀態（#170、ADR 0020）照 `workflow.pricing_status` 帶出：狀態、原因、已比到的日期（只講 KO）與 KI 欄（#196、ADR 0022）；
 還沒比過的空白。
-只讀資料庫；商品條件與標的價格經 `product_terms.read_many` 讀（#204），匯出 Excel 用 `file_tools.save_rows`。
+只讀資料庫；商品條件與標的價格經 `product_store.read_many` 讀（#204），匯出 Excel 用 `file_tools.save_rows`。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
@@ -28,7 +28,8 @@ from sp_workflow.database import require_in_transaction
 from sp_workflow.file_tools import save_rows
 from sp_workflow.lifecycle import Objection, lifecycle_status, open_objections
 from sp_workflow.product_record import PRICING_FIELD, REQUIRED, missing_fields
-from sp_workflow.product_terms import ImportConfig, issuer_code, locked, read_many
+from sp_workflow.product_store import issuer_code, locked, read_many
+from sp_workflow.product_terms import ImportConfig
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource, Progress
 from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP, SENT_STEP
 

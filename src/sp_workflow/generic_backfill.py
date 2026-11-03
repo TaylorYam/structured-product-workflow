@@ -2,7 +2,7 @@
 
 ELN 通用回補格式的版面同核對結果檔「回填後」（沒有分公司欄）。表頭依參考條件表格式找（只看第一張工作表、`TDCC Code`
 那一列，`fcn_checker.orders.reference.locate`），欄位依欄名對、不看欄位字母；缺回填要用的欄時整份不處理。
-- 每列以 TDCC 讀資料庫（`product_terms.read_many`）：`ISIN Code` ← ISIN；`比價日_1`～`比價日_12` ← 比價日（不需要填的
+- 每列以 TDCC 讀資料庫（`product_store.read_many`）：`ISIN Code` ← ISIN；`比價日_1`～`比價日_12` ← 比價日（不需要填的
   期別寫空值寫法）；`期初定價` 是 VWAP 的列，`UL_n` 四個價格欄 ← 資料庫同代號標的的價格（依代號配對、不看順序；
   資料庫空白的價格，例如 KI 型態 NONE 的下限價，寫空值寫法）。
 - 每格沿用核對回填的決策（`fcn_checker.backfill`）：表上空白（含 `#VALUE!` 這類錯誤值）→ 回填；已有相同值 → 不動；
@@ -44,7 +44,7 @@ from fcn_checker.orders.reference import (
 from fcn_checker.rules.reference import PRICE_COLUMNS, VWAP
 from sp_workflow.database import OperatorError
 from sp_workflow.file_tools import save_export
-from sp_workflow.product_terms import Stored, read_many
+from sp_workflow.product_store import Stored, read_many
 
 if TYPE_CHECKING:
     import psycopg

@@ -72,7 +72,8 @@ from sp_workflow.product_record import (
     default_coupon_barrier,
     invert_upfront,
 )
-from sp_workflow.product_terms import create_backfilled, read, read_many
+from sp_workflow.product_store import read, read_many
+from sp_workflow.product_terms import create_backfilled
 
 if TYPE_CHECKING:
     import psycopg

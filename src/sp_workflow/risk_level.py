@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any
 from sp_workflow.credit_ratings import GUARANTOR, ISSUER, MOODYS, RatingRows, load_rows
 from sp_workflow.database import require_in_transaction
 from sp_workflow.product_record import plain
+from sp_workflow.product_store import issuer_code
 from sp_workflow.sheet_cells import bbg_code
 from sp_workflow.status import Risk
 
@@ -346,7 +347,7 @@ def _number(value: Decimal) -> str:
 def recalculate_risk(conn: psycopg.Connection, tdccs: Sequence[str], config: ImportConfig) -> dict[str, RiskLevel]:
     """算這幾檔（還沒鎖住的），和上一次不同的寫入；在呼叫端的 transaction 裡（商品條件列已由核對條件重算鎖住）。
 
-    上手代碼用 `product_terms.issuer_code`（TDCC 前三碼，查不到時用發行機構的寫法反查），
+    上手代碼用 `product_store.issuer_code`（TDCC 前三碼，查不到時用發行機構的寫法反查），
     指數清單用 `config.index_underlyings`，ETF 清單見 `etf_list`。
     """
     require_in_transaction(conn)
@@ -381,8 +382,6 @@ def fill_missing_locked(conn: psycopg.Connection, config: ImportConfig, tdccs: S
 
 def _assess_all(conn: psycopg.Connection, tdccs: Sequence[str], config: ImportConfig) -> dict[str, RiskLevel]:
     """這幾檔的風險等級（依 TDCC），不寫入。"""
-    from sp_workflow.product_terms import issuer_code  # product_terms 會 import check_terms，那邊再 import 這裡
-
     if not tdccs:
         return {}
     terms = [

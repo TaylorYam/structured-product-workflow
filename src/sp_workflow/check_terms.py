@@ -32,11 +32,14 @@ import getpass
 import json
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from sp_workflow.database import OperatorError, require_in_transaction
-from sp_workflow.product_record import missing_fields, plain
+from sp_workflow.product_record import UnderlyingPrice, missing_fields, plain, price_at, round_price
+from sp_workflow.product_store import BLANK as _BLANK
+from sp_workflow.product_store import CURRENCY, TRADE_DATE, UF, Difference, locked, read, read_many
+from sp_workflow.risk_level import RiskLevel, fill_missing_locked, recalculate_risk
 from sp_workflow.status import CheckTerms
 
 if TYPE_CHECKING:
@@ -46,7 +49,6 @@ if TYPE_CHECKING:
 
     from fcn_checker.trading_calendar import Market, TradingCalendar
     from sp_workflow.product_terms import ImportConfig
-    from sp_workflow.risk_level import RiskLevel
 
 # 狀態
 DONE = CheckTerms.DONE
@@ -55,14 +57,9 @@ WAIT_TRADES = CheckTerms.WAIT_TRADES
 TO_CONFIRM = CheckTerms.TO_CONFIRM
 STATUSES = tuple(CheckTerms)  # 畫面列出各狀態檔數的順序
 
-# 交叉比對的項目
-CURRENCY, TRADE_DATE, UF = "幣別", "交易日", "UF"
-
 CLOSE, OPEN, VWAP = "收盤價", "開盤價", "VWAP"
 NO_BARRIER = "NONE"
-_PRICE = Decimal("0.0001")
 _HUNDRED = Decimal(100)
-_BLANK = "空白"
 
 
 class CheckTermsError(OperatorError):
@@ -123,41 +120,6 @@ class Quote:
     last_close: Decimal | None
     last_open: Decimal | None
     conflict: bool = False
-
-
-@dataclass(frozen=True)
-class UnderlyingPrice:
-    seq: int  # 1～5
-    code: str
-    initial: Decimal | None = None  # 進場價
-    strike: Decimal | None = None  # 執行價
-    ki: Decimal | None = None  # 下限價
-    ko: Decimal | None = None  # KO 價
-    lookback: Decimal | None = None  # 回顧期初價格（#374）：比價在回顧期間結束後寫入，有值時執行價由它算
-
-
-@dataclass(frozen=True)
-class Difference:
-    """交易明細和起單資料的一個差異；`released` 是作業人員放行過同樣的差異。"""
-
-    item: str  # 幣別／交易日／UF
-    order_value: str
-    trade_value: str  # 交易列之間不一樣時以「、」分隔
-    released: bool = False
-
-    @property
-    def key(self) -> tuple[str, str, str]:
-        return self.item, self.order_value, self.trade_value
-
-    def values_text(self) -> str:
-        """兩邊的值；UF 另外寫出交易明細換算成百分點的值。"""
-        shown = self.trade_value
-        if self.item == UF:
-            shown += f"（換算 {_uf_points(self.trade_value)}）"
-        return f"起單資料 {self.order_value}、交易明細 {shown}"
-
-    def describe(self) -> str:
-        return f"{self.item}不一致：{self.values_text()}"
 
 
 @dataclass(frozen=True)
@@ -348,23 +310,8 @@ def _distinct(values: Iterable[Any]) -> list[Any]:
     return list(dict.fromkeys(values))
 
 
-def round_price(value: Decimal) -> Decimal:
-    """價格 half-up 到小數第 4 位（四個價格、回顧期初價格共用，#374）。"""
-    return value.quantize(_PRICE, rounding=ROUND_HALF_UP)
-
-
-def price_at(base: Decimal, pct: Decimal) -> Decimal:
-    """基準價格 × 比例(%)（執行價、下限價、KO 價；回顧執行價 = 回顧期初價格 × 執行價(%)，#374）。"""
-    return round_price(base * pct / _HUNDRED)
-
-
 def _text(value: Decimal) -> str:
     return format(plain(value), "f")
-
-
-def _uf_points(trade_value: str) -> str:
-    """交易明細的 UF（比例）換成百分點，給錯訊看。"""
-    return "、".join(t if t == _BLANK else _text(Decimal(t) * _HUNDRED) for t in trade_value.split("、"))
 
 
 # ---------- 資料庫 ----------
@@ -423,8 +370,6 @@ def recalculate(conn: psycopg.Connection, config: ImportConfig, *, tdccs: Collec
 
     `config` 用到交易所假日表（價格）、上手編號對照與發行機構寫法（評等查哪家上手）和指數清單（風險等級）。
     """
-    from sp_workflow.risk_level import fill_missing_locked, recalculate_risk
-
     with conn.transaction():
         products = _products(conn, tdccs, unlocked=True)
         lines = [line for line, _, _ in _recalculate(conn, products, config.calendar)]
@@ -472,15 +417,10 @@ def recalculate_corrected(
 
 
 def _products(conn: psycopg.Connection, tdccs: Collection[str] | None, *, unlocked: bool = False) -> list[ProductTerms]:
-    """這幾檔（None：全部）計算用的商品條件，依 TDCC 排、鎖住商品條件列（`product_terms.read_many`）。
+    """這幾檔（None：全部）計算用的商品條件，依 TDCC 排、鎖住商品條件列（`product_store.read_many`）。
 
-    `unlocked`：只要還沒鎖住的（`product_terms.locked`）。讀到的每一檔都鎖到 transaction 結束，包括已鎖住的。
+    `unlocked`：只要還沒鎖住的（`product_store.locked`）。讀到的每一檔都鎖到 transaction 結束，包括已鎖住的。
     """
-    from sp_workflow.product_terms import (  # product_terms 也 import 這裡（寫入後重算），避免循環 import
-        locked,
-        read_many,
-    )
-
     stored = read_many(conn, None if tdccs is None else list(tdccs), lock=True)
     return [_product(s.tdcc, s.columns) for s in stored.values() if not (unlocked and locked(s))]
 
@@ -592,8 +532,6 @@ def release_differences(
 
     資料在這之間變了的話，放行的是舊的差異，新的差異照樣待確認。商品已鎖住或不在資料庫時丟 `CheckTermsError`。
     """
-    from sp_workflow.product_terms import locked, read  # 同 `_products`，避免循環 import
-
     with conn.transaction():
         found = read(conn, tdcc, lock=True)
         if found is None:
