@@ -563,7 +563,8 @@ def underlying_prices(ctx: Context) -> list[CheckResult]:
         slot = slots[i - 1] if i <= len(slots) else i  # 表上第幾檔（不看順序的上手依代號配對）
         ev = list(row.evidence)
         pending: list[tuple[Check, Decimal, Decimal]] = []  # 這檔可比對的價格欄：(結果身分, 表上值（4 位）, 說明書值)
-        for col, zh in ((pf.key, pf.label) for pf in PRICE_FIELDS):
+        for pf in PRICE_FIELDS:
+            col, zh = pf.key, pf.label
             field, name = f"{label} {zh}", price_item(slot, col)
             ov = ctx.order.price(slot, col)
             check = _column(ctx, rid, field, name, ov)

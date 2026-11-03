@@ -215,10 +215,11 @@ def _row(
                 values[key] = found.original_strike(i)  # lookback（#374）：核對比的是 TS 的期初執行價
             else:
                 values[key] = None if price is None else getattr(price, col)  # VWAP 還沒回填時空白，核對通過後回填
-    names = fmt.extra
-    extra: dict[str, Any] = {fmt.issuer_column: p["issuer"], names.upfront: p["upfront_pct"]}
-    extra[names.trade_date] = p["trade_date"]
-    for (branch_column, amount_column), (branch, amount) in zip(names.branch_columns(), found.branches, strict=False):
+    extra_columns = fmt.extra  # UF、交易日期、分公司欄（#433）
+    extra: dict[str, Any] = {fmt.issuer_column: p["issuer"], extra_columns.upfront: p["upfront_pct"]}
+    extra[extra_columns.trade_date] = p["trade_date"]
+    branch_columns = extra_columns.branch_columns()
+    for (branch_column, amount_column), (branch, amount) in zip(branch_columns, found.branches, strict=False):
         extra[branch_column], extra[amount_column] = branch, amount
     row = {}
     for header in headers:

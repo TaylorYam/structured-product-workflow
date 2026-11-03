@@ -131,7 +131,8 @@ def _prices(ctx: Context) -> list[CheckResult]:
         ev = list(row.evidence)
         # 和參考條件表比的價格欄：(結果身分, 表上值（4 位）, 投資人須知值)，整檔一起判斷是否疑似分割調整
         pending: list[tuple[Check, Decimal, Decimal]] = []
-        for col, zh in ((pf.key, pf.label) for pf in PRICE_FIELDS):
+        for pf in PRICE_FIELDS:
+            col, zh = pf.key, pf.label
             doc_v = row.prices.get(col)
             if doc_v is None:  # 價格表沒有這一欄（例：無 KI）
                 continue

@@ -6,7 +6,7 @@
 - `header`：參考條件表欄名 `UL_{i}_{header}` 的後半（例：UL_1_進場價；欄名本身在 `config/reference_sheet.toml`）。
 - `label`：核對結果與錯訊用的中文（KO 價中間有空白）。
 
-這個 module 不 import 任何東西，兩個套件都能 import（`fcn_checker` 只在 `cli`、`panel` 延遲 import `sp_workflow`）。
+這個 module 不 import 兩個套件的任何 module，兩個套件都能 import（`fcn_checker` 只在 `cli`、`panel` 延遲 import `sp_workflow`）。
 作業人員指定版面的輸出檔（商品總表、曝險表）的表頭文字不跟這裡，只用 `key` 對到價格。
 """
 
