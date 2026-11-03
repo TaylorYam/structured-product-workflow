@@ -569,15 +569,27 @@ class PanelSession:
 
         核對結果檔沒寫成時照樣寫回（#443），訊息先說結果檔沒寫成的原因。"""
         assert self.database is not None
-        failed = receipt.result_file_error
+        file_error = receipt.result_file_error
         try:
             written = self.database.write_back(outcome.batch, receipt)
             self.write_back_error = ""
-            self.message = f"核對結果檔沒寫成：{failed}；{written}" if failed else written
+            self.message = f"核對結果檔沒寫成：{file_error}；{written}" if file_error else written
         except Exception as e:  # 連線中斷等：不影響已經寫好的核對結果檔
             self.write_back_error = str(e).splitlines()[0] if str(e) else type(e).__name__
-            result = "核對結果檔也沒寫成；排除後再儲存一次，或" if failed else "核對結果檔已存好；排除後"
+            result = (
+                f"核對結果檔也沒寫成：{file_error}；排除後再儲存一次，或" if file_error else "核對結果檔已存好；排除後"
+            )
             self.message = f"寫回資料庫失敗：{self.write_back_error}。{result}按「重新寫回資料庫」。"
+
+    def saved_text(self, receipt: SaveReceipt) -> str:
+        """儲存後狀態列的文字：收據，資料庫來源再加寫回的結果。核對結果檔沒寫成時寫回的訊息已經帶原因，
+        取代收據的第一行放在最前面（#443）。"""
+        lines = receipt.summary.splitlines()
+        if not (self.use_database and receipt.sources_unchanged):
+            return "\n".join(lines)
+        if receipt.result_file_error:
+            return "\n".join([self.message, *lines[1:]])
+        return "\n".join([*lines, self.message])
 
     @property
     def can_export_bundle(self) -> bool:

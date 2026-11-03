@@ -71,12 +71,12 @@ class SaveReceipt:
     def summary(self) -> str:
         if self.cancelled:
             return "已取消儲存，核對結果仍保留。"
-        failed = self.result_file_error
+        file_error = self.result_file_error
         if self.output:
             lines = [f"核對結果檔：{self.output}"]
         else:
-            lines = [f"核對結果檔沒寫成：{failed}" if failed else "核對結果檔：未儲存"]
-        lines.extend(e.message for e in self.errors if not (failed and e.rule_id == RESULT_FILE_RULE))
+            lines = [f"核對結果檔沒寫成：{file_error}" if file_error else "核對結果檔：未儲存"]
+        lines.extend(e.message for e in self.errors if not (file_error and e.rule_id == RESULT_FILE_RULE))
         return "\n".join(lines)
 
 

@@ -654,6 +654,8 @@ def test_a_result_file_that_cannot_be_written_still_backfills_and_locks(pg, tmp_
     assert receipt.result_file_error and receipt.summary.startswith("核對結果檔沒寫成：")
     assert session.message.startswith(f"核對結果檔沒寫成：{receipt.result_file_error}；已寫回資料庫：1 檔回填並鎖住")
     assert session.write_back_error == "" and session.has_unsaved_result
+    status = session.saved_text(receipt)  # 畫面的狀態列：原因只出現一次，寫回的結果在最前面
+    assert status.startswith(session.message) and status.count(receipt.result_file_error) == 1
     isin, locked_at = pg.execute(
         "SELECT isin, locked_at FROM workflow.product WHERE tdcc = %s", (spec.product_code,)
     ).fetchone()
@@ -702,6 +704,7 @@ def test_a_failed_write_back_keeps_the_result_file_and_can_be_retried(tmp_path) 
     receipt = session.save(tmp_path / "out", now=NOW)
 
     assert receipt.output is not None and receipt.output.exists()
+    assert session.saved_text(receipt) == f"{receipt.summary}\n{session.message}"
     assert session.write_back_error == "server closed the connection unexpectedly"
     assert "寫回資料庫失敗" in session.message and "重新寫回資料庫" in session.message
     assert session.retry_write_back() == "已寫回資料庫"
@@ -724,7 +727,10 @@ def test_a_failed_result_file_and_a_failed_write_back_say_both(tmp_path) -> None
     receipt = session.save(blocked, now=NOW)
 
     assert receipt.output is None and database.attempts == 1
-    assert session.message.startswith("寫回資料庫失敗：server closed the connection unexpectedly。核對結果檔也沒寫成")
+    assert session.message.startswith(
+        f"寫回資料庫失敗：server closed the connection unexpectedly。核對結果檔也沒寫成：{receipt.result_file_error}；"
+    )
+    assert session.saved_text(receipt).count(receipt.result_file_error) == 1
     assert session.retry_write_back().startswith(f"核對結果檔沒寫成：{receipt.result_file_error}；已寫回資料庫")
 
 
