@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 import openpyxl
 
-from fcn_checker.fields import PRICE_FIELDS, PRICE_SQL
+from fcn_checker.fields import BARRIER_TYPE_FIELD, KO_TYPE_FIELD, NON_CALL_FIELD, PRICE_FIELDS, PRICE_SQL
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.orders.reference import (
     autocall_date_key,
@@ -70,6 +70,7 @@ from sp_workflow.product_record import (
     UPFRONT_FIELD,
     default_coupon_barrier,
     invert_upfront,
+    product_rule,
 )
 from sp_workflow.product_store import read, read_many
 from sp_workflow.product_terms import create_backfilled
@@ -247,19 +248,19 @@ def _values(record: OrderRecord, cells: Mapping[str, Any], fmt: ReferenceFormat)
         values[name] = value(underlying_key(n))
     ko = (value("ko_observation"), value("ko_memory"))
     fixed = product.fixed_choices()  # BEN 的 KO Type 一律 Period End，不看表上的 KO 欄（#373）
-    values["KO Type"] = fixed["KO Type"] if "KO Type" in fixed else _KO_TYPES.get(ko)  # type: ignore[arg-type]
-    if values["KO Type"] is None:
+    values[KO_TYPE_FIELD] = fixed[KO_TYPE_FIELD] if KO_TYPE_FIELD in fixed else _KO_TYPES.get(ko)  # type: ignore[arg-type]
+    if values[KO_TYPE_FIELD] is None:
         problems.append(f"KO(Freq)／KO(memo) 看不懂（{ko[0]}／{ko[1]}）")
     ki = value("ki_type") or fmt.empty_value  # 空值寫法「-」就是沒有 KI
-    values["Barrier Type"] = _BARRIER_TYPES.get(ki)
-    if values["Barrier Type"] is None:
+    values[BARRIER_TYPE_FIELD] = _BARRIER_TYPES.get(ki)
+    if values[BARRIER_TYPE_FIELD] is None:
         problems.append(f"KI(Freq)「{ki}」目前不支援")
     uf = cells.get(fmt.extra.upfront)
     uf = None if uf in (None, fmt.empty_value) else _number(uf)
     values[UPFRONT_FIELD] = invert_upfront(uf) if isinstance(uf, Decimal) else uf
     values["Tenor (m)"] = _whole(value("tenor_months"))
     non_call = product.fixed_non_call()  # 沒有 Non-Call 的商品一定是 0
-    values["Guaranteed Periods (m)"] = _whole(value("first_callable_period")) if non_call is None else non_call
+    values[NON_CALL_FIELD] = _whole(value("first_callable_period")) if non_call is None else non_call
     barrier = _number(value("coupon_barrier_pct"))  # 舊表沒有這欄（#367）
     for source, target in product.moved_fields().items():  # BEN 舊表的 KO 欄是紅利門檻：存配息門檻，KO% 空白（#406）
         moved, values[source] = values[source], None
@@ -291,7 +292,7 @@ def _price_problems(record: OrderRecord, fmt: ReferenceFormat, product: object) 
 
 def _ignored_prices(product: object) -> frozenset[str]:
     """不讀的價格（價格的鍵；問商品規則：BEN 舊表的 KO 價那格是紅利門檻價，#406）。"""
-    rule = PRODUCT_RULES.get(product_name(product) or "")
+    rule = product_rule(product)
     return frozenset() if rule is None else rule.ignored_prices()
 
 

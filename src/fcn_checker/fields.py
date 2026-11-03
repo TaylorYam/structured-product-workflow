@@ -1,4 +1,9 @@
-"""標的價格欄位的字彙：核對（`fcn_checker`）與流程（`sp_workflow`）共用的唯一宣告（#433）。
+"""欄位字彙：核對（`fcn_checker`）與流程（`sp_workflow`）共用的唯一宣告。
+
+- 標的價格欄（#433）：`PRICE_FIELDS`、`PRICE_COLUMNS`、`PRICE_SQL`。
+- 商品條件畫面的欄名（#434）：商品規則（`fcn_checker.products`）回答固定、必填、要空白、空白怎麼補時用的名字。
+
+標的價格欄：
 
 每檔標的有四個價格：進場價、執行價、下限價、KO 價。同一個價格在各處的名字：
 - `key`：價格的鍵（`OrderRecord.price`、說明書價格表 `PriceRow.prices`、`UnderlyingPrice` 的屬性）。

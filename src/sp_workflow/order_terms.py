@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING
 
 import openpyxl
 
-from fcn_checker.products import PRODUCT_RULES, ProductRule, product_name
+from fcn_checker.products import ProductRule
 from sp_workflow.database import OperatorError
 from sp_workflow.preparation import is_tdcc, parse_tdccs
 from sp_workflow.product_record import (
@@ -57,6 +57,7 @@ from sp_workflow.product_record import (
     UPFRONT_FIELD,
     FieldKind,
     plain,
+    product_rule,
 )
 from sp_workflow.status import OrderReview
 
@@ -218,7 +219,7 @@ def _row_for(
     values[PARTICIPATION_FIELD] = None  # 起單建檔沒有這欄；BEN 的預設值在 `product_terms.draft_from` 帶
     values[LOOKBACK_FIELD] = None  # 起單建檔沒有這欄；資料庫已有的值由 `product_terms.draft_from` 帶
     values[COUPON_BARRIER_FIELD] = None  # 起單建檔沒有這欄；DACN 的預設值在 `product_terms.draft_from` 帶
-    rule = PRODUCT_RULES.get(product_name(values.get("Product")) or "")
+    rule = product_rule(values.get("Product"))
     if rule is not None:
         _apply_rule(rule, values, notes, conflicts)
     if not issuer:

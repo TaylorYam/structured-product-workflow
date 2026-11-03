@@ -45,6 +45,7 @@ from fcn_checker.backfill_values import (
     Target,
     UnderlyingPrice,
 )
+from fcn_checker.fields import NON_CALL_FIELD
 from fcn_checker.products import PRODUCT_RULES, SUPPORTED_PRODUCTS, product_name
 from sp_workflow import import_run
 from sp_workflow.check_terms import CalcLine, recalculate, recalculate_corrected
@@ -110,7 +111,6 @@ _TYPES: dict[FieldKind, tuple[type, ...]] = {
     FieldKind.DATE: (dt.date,),
 }
 
-_NON_CALL_FIELD = "Guaranteed Periods (m)"
 _CONFLICT = "起單建檔裡這檔有好幾列、這欄不同，要填正確的值（正確是空白的話請改起單建檔後重新讀取）"
 # 人工維護可以空白的必填欄（#115）：資料庫的商品種類不可空白（ADR 0016）
 _BLANK_ALLOWED = frozenset((*REQUIRED, COUPON_BARRIER_FIELD)) - {"Product"}
@@ -451,10 +451,10 @@ def _value_problems(
     if filled("Currency") and values["Currency"] not in config.denominations:
         problems["Currency"] = "這個幣別沒有單位面額預設值"
     rule = None if product is None else PRODUCT_RULES[product]  # 商品種類不支援時下面依商品種類的檢查都不看
-    if rule is not None and filled(_NON_CALL_FIELD):  # Non-Call 依商品種類（#302）
+    if rule is not None and filled(NON_CALL_FIELD):  # Non-Call 依商品種類（#302）
         tenor = values["Tenor (m)"] if filled("Tenor (m)") else None
-        if problem := rule.non_call_problem(values[_NON_CALL_FIELD], tenor):
-            problems[_NON_CALL_FIELD] = problem
+        if problem := rule.non_call_problem(values[NON_CALL_FIELD], tenor):
+            problems[NON_CALL_FIELD] = problem
     if rule is not None:  # 固定的選項（BEN，#373）、參與率（BEN 必填，其他要空白）、配息門檻（沒有的商品要空白）
         for name in rule.fixed_choices():
             if filled(name) and (problem := rule.fixed_choice_problem(name, values[name])):
