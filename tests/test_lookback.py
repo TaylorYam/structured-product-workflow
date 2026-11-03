@@ -406,26 +406,22 @@ def test_the_lookback_end_cannot_change_after_it_was_used(pg) -> None:
 @pytest.mark.db
 def test_the_reference_sheet_keeps_the_term_sheet_strike_and_the_screen_shows_the_lookback(pg, tmp_path) -> None:
     """核對比的是 TS（期初價格與期初執行價）；回顧期初價格只在人工維護畫面顯示。"""
-    import openpyxl
-
     from fcn_checker.check_config import DEFAULTS
     from fcn_checker.config import load_issuer_prefixes, load_reference_format
-    from sp_workflow.check_source import export_reference
+    from sp_workflow.check_source import conditions
     from sp_workflow.product_store import lookback_text
     from sp_workflow.product_terms import read
 
     seed(pg)
     write_closes(pg, END, {MIDDLE: "70"})
     observe_all(pg, CALENDAR, user="tester")
-    path = tmp_path / "參考條件.xlsx"
     fmt = load_reference_format(DEFAULTS.reference_format)
 
-    export_reference(pg, [T1], fmt, path, prefixes=load_issuer_prefixes(DEFAULTS.issuer_prefixes))
+    source = conditions(pg, [T1], fmt, prefixes=load_issuer_prefixes(DEFAULTS.issuer_prefixes))
 
-    rows = list(openpyxl.load_workbook(path).active.iter_rows(values_only=True))
-    row = dict(zip(rows[0], rows[1], strict=True))
-    assert (D(str(row["UL_1_進場價"])), D(str(row["UL_1_執行價"]))) == (D(100), D(80))
-    assert row["回顧結束日"].date() == END  # #376：說明書的回顧結束日和它比
+    (row,) = source.sheet.rows
+    assert (row.get("underlying_1_initial_price").value, row.get("underlying_1_strike_price").value) == (D(100), D(80))
+    assert row.get("lookback_end_date").value == END  # #376：說明書的回顧結束日和它比
     assert lookback_text(read(pg, T1)) == "UL_1 AAA UW 70、UL_2 BBB UN 100"
     assert lookback_text(None) == ""
 

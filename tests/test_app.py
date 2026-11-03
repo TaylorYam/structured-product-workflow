@@ -23,7 +23,6 @@ from fcn_checker.saving import SaveReceipt
 from fcn_checker.ui import Background
 from sp_workflow import app
 from sp_workflow.app import PanelWindow
-from sp_workflow.check_source import EXPORT_FOLDER
 from sp_workflow.database import DatabaseError, SchemaOutdatedError
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.tabs.base import DatabaseLogin, RootFolder
@@ -766,8 +765,7 @@ def test_database_source_uses_the_settings_the_shell_logged_in_with(master, tmp_
     asked = []
     monkeypatch.setattr(simpledialog, "askstring", lambda *a, **k: asked.append(a[1]) or "secret")
     db = DatabaseLogin(master, tmp_path / ".env")
-    source = app._check_database(db, tmp_path)
-    assert source.folder == tmp_path.resolve() / "runtime" / EXPORT_FOLDER
+    source = app._check_database(db)
     assert db.current() is None, "還沒登入"
 
     assert db.log_in()
@@ -787,7 +785,7 @@ def test_outdated_schema_is_not_a_login_problem(master, tmp_path, monkeypatch) -
     no_password_env(tmp_path)
     monkeypatch.setattr(simpledialog, "askstring", lambda *a, **k: "secret")
     db = DatabaseLogin(master, tmp_path / ".env")
-    source = app._check_database(db, tmp_path)
+    source = app._check_database(db)
     assert db.log_in()
 
     db.after_run(SchemaOutdatedError("資料庫的資料表還沒建立或不是最新版本，請先執行 spw-db-migrate。"))

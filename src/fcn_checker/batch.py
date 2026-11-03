@@ -20,7 +20,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from pathlib import Path
@@ -33,11 +33,11 @@ from . import __version__
 from .backfill import BackfillAction
 from .backfill_values import BackfillValue, released_denomination
 from .check_config import CheckConfig
+from .condition_source import ConditionSource
 from .config import ReferenceFormat
 from .identification import Identification, PairingProblem, identify, unexpected_result
 from .ingestion import IngestionError, SourceSnapshot, error_result
 from .messages import STATUS_ZH, Problem, problems
-from .orders.reference import load_reference_sheet
 from .schema import CheckReport, CheckResult, CheckStatus, DocKind, Evidence, overall_status
 from .single_check import Paired, PairedIis, check_document, check_investor_sheet
 
@@ -227,11 +227,18 @@ class BatchItem:
 @dataclass
 class BatchOutcome:
     items: list[BatchItem]
-    reference_sheet: Path
+    source: ConditionSource | Path  # 核對的條件來源（#445）；整批錯誤、沒讀到條件時是使用者選的檔案（或「資料庫」）
     reference_format: ReferenceFormat | None = None
     errors: list[CheckResult] = field(default_factory=list)  # 整批錯誤（設定檔、參考條件表）；寫檔錯誤在儲存收據
     snapshot: SourceSnapshot | None = None  # 核對前取的來源快照；核對紀錄的 hash 取自它，儲存前據此確認來源未變更
     metadata: dict[str, Any] = field(default_factory=dict)  # 整批執行 metadata（程式版本、設定檔與參考條件表 hash）
+
+    @property
+    def reference_sheet(self) -> Path | None:
+        """Excel 參考條件表的檔案；資料庫來源沒有檔案（None）。"""
+        if isinstance(self.source, ConditionSource):
+            return self.source.path
+        return self.source
 
     @property
     def status(self) -> CheckStatus:
@@ -317,27 +324,26 @@ class BatchPreview:
     """預覽：每份 PDF 的辨識結果（含讀出結果與對到的參考條件表列，核對直接沿用）；另帶核對要沿用的核對設定與來源快照。"""
 
     rows: tuple[PreviewRow, ...]
-    reference_sheet: Path
+    source: ConditionSource  # 核對的條件來源：型別化的列＋憑證（#445）
     snapshot: SourceSnapshot  # 讀取前取的來源快照（設定檔的 hash 取自核對設定）
     config: CheckConfig = field(compare=False, repr=False)
 
 
 def preview_batch(
     config: CheckConfig,
-    reference_sheet: Path,
+    source: Path | ConditionSource,
     term_sheets: Sequence[Path],
-    *,
-    absent: Mapping[str, str] | None = None,
 ) -> BatchPreview:
     """唯讀預覽：讀取前先取來源快照，再辨識並讀出每份說明書（核對直接沿用）；參考條件表本身有問題時丟出 IngestionError。
 
-    `absent` 是參考條件表沒有某個商品代號的原因（資料庫來源產生的表，#68），配對不到時寫進結果。"""
-    reference_sheet, term_sheets = Path(reference_sheet), tuple(map(Path, term_sheets))
-    snapshot = SourceSnapshot.take((reference_sheet, *term_sheets), taken=config.files)
-    sheet = load_reference_sheet(reference_sheet, config.reference_format)
-    sheet.absent = dict(absent or {})
-    rows = tuple(PreviewRow(ident) for ident in identify(term_sheets, sheet, config))
-    return BatchPreview(rows, reference_sheet, snapshot, config)
+    `source` 是 Excel 參考條件表的檔案，或已讀好的條件來源（資料庫來源，#445：表上沒有某檔的原因在裡面，配對不到時寫進結果）。"""
+    term_sheets = tuple(map(Path, term_sheets))
+    files = (Path(source),) if isinstance(source, Path | str) else source.files
+    snapshot = SourceSnapshot.take((*files, *term_sheets), taken=config.files)
+    if not isinstance(source, ConditionSource):
+        source = ConditionSource.excel(Path(source), config.reference_format)
+    rows = tuple(PreviewRow(ident) for ident in identify(term_sheets, source.sheet, config))
+    return BatchPreview(rows, source, snapshot, config)
 
 
 # ---------------------------------------------------------------- 核對
@@ -387,7 +393,7 @@ def check_batch(preview: BatchPreview) -> BatchOutcome:
         "program_version": __version__,
         "extractor": f"PyMuPDF {fitz.VersionBind}",
         "excel_reader": f"openpyxl {openpyxl.__version__}",
-        "inputs": {"reference_sheet": snapshot.meta(preview.reference_sheet)},
+        "inputs": {"reference_sheet": preview.source.meta(snapshot)},
         **config.record(),
     }
     items: dict[Identification, BatchItem] = {}
@@ -405,11 +411,10 @@ def check_batch(preview: BatchPreview) -> BatchOutcome:
     for item in items.values():  # 同商品另一份的核對項目：辨識結果已互相引用，這裡只對應到項目
         if item.identification.partner is not None:
             item.partner = items[item.identification.partner]
-    return BatchOutcome(
-        list(items.values()), preview.reference_sheet, config.reference_format, snapshot=snapshot, metadata=meta
-    )
+    return BatchOutcome(list(items.values()), preview.source, config.reference_format, snapshot=snapshot, metadata=meta)
 
 
-def failed_batch(reference_sheet: Path, e: IngestionError) -> BatchOutcome:
+def failed_batch(source: Path | ConditionSource, e: IngestionError) -> BatchOutcome:
     """設定檔或參考條件表本身有問題、沒有核對任何說明書的整批錯誤（CLI 用）。"""
-    return BatchOutcome([], Path(reference_sheet), errors=[error_result("input.batch", "批量輸入", e)])
+    source = source if isinstance(source, ConditionSource) else Path(source)
+    return BatchOutcome([], source, errors=[error_result("input.batch", "批量輸入", e)])

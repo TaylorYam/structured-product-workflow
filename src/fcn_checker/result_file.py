@@ -73,8 +73,9 @@ def tdcc_code(identification: Identification) -> str | None:
     return identification.product_code or name_code(identification.pdf)
 
 
-def output_path(out_dir: Path, reference_sheet: Path, now: dt.datetime) -> Path:
-    return out_dir / f"{reference_sheet.stem}_核對結果_{now:%Y%m%d-%H%M%S}.xlsx"
+def output_path(out_dir: Path, stem: str, now: dt.datetime) -> Path:
+    """`stem` 是條件來源的檔名開頭（Excel：參考條件表檔名；資料庫：`參考條件表_資料庫`）。"""
+    return out_dir / f"{stem}_核對結果_{now:%Y%m%d-%H%M%S}.xlsx"
 
 
 def open_reference(path: Path) -> Workbook:

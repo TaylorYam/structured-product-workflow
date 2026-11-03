@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TypeVar
@@ -23,6 +23,7 @@ from openpyxl.workbook.workbook import Workbook
 from . import reporting, result_file
 from .batch import BatchItem, BatchOutcome, check_batch, failed_batch, preview_batch
 from .check_config import CheckConfig
+from .condition_source import ConditionSource
 from .ingestion import IngestionError, error_result
 from .schema import CheckResult, CheckStatus, overall_status
 
@@ -95,7 +96,7 @@ def save_batch(outcome: BatchOutcome, out_dir: Path, *, root: Path, now: dt.date
     wb = _attempt(errors, RESULT_FILE_RULE, "核對結果檔", lambda: _open_unchanged_reference(outcome))
     if wb is not None:  # 來源核對後被改過（或讀不到）時，核對結果檔與核對紀錄都不寫
         to_fill = tuple(i for i in outcome.items if i.fills_sheet)
-        out = result_file.output_path(Path(out_dir), outcome.reference_sheet, now)
+        out = result_file.output_path(Path(out_dir), _source(outcome).stem, now)
         output = _attempt(errors, RESULT_FILE_RULE, "核對結果檔", lambda: _fill_and_save(wb, outcome, to_fill, out))
         if output is not None:
             filled = to_fill
@@ -135,10 +136,15 @@ def _record_item(item: BatchItem, filled: bool) -> reporting.RecordItem:
 
 
 def _open_unchanged_reference(outcome: BatchOutcome) -> Workbook:
-    """確認整份來源快照仍一致後，開啟參考條件表準備回填；任何來源變更或讀不到時丟出 IngestionError。"""
+    """確認整份來源快照仍一致後開啟參考條件表（資料庫來源是記憶體中排好的表）；來源已變更或讀不到時丟出 IngestionError。"""
     if outcome.snapshot is None or not outcome.snapshot.still_valid():
         raise IngestionError("source_changed", "參考條件表、說明書或設定檔在核對後已變更或無法讀取，請重新核對後再儲存")
-    return result_file.open_reference(outcome.reference_sheet)
+    return _source(outcome).workbook()
+
+
+def _source(outcome: BatchOutcome) -> ConditionSource:
+    assert isinstance(outcome.source, ConditionSource)  # 有核對結果的整批一定有讀好的條件來源
+    return outcome.source
 
 
 def _attempt(errors: list[CheckResult], rule_id: str, what: str, step: Callable[[], T]) -> T | None:
@@ -152,19 +158,18 @@ def _attempt(errors: list[CheckResult], rule_id: str, what: str, step: Callable[
 
 def run_batch(
     config: CheckConfig,
-    reference_sheet: Path,
+    reference_sheet: Path | ConditionSource,
     term_sheets: Sequence[Path],
     out_dir: Path,
     *,
     root: Path,
     now: dt.datetime | None = None,
-    absent: Mapping[str, str] | None = None,
 ) -> tuple[BatchOutcome, SaveReceipt]:
     """預覽、核對後立即儲存（CLI 使用）。參考條件表本身有問題、或讀取期間來源被改過時回傳整批錯誤、不核對任何說明書。
 
-    `absent` 同 `preview_batch`（資料庫來源，#68）。"""
+    `reference_sheet` 是 Excel 參考條件表，或已讀好的條件來源（資料庫來源，#445）。"""
     try:
-        outcome = check_batch(preview_batch(config, reference_sheet, term_sheets, absent=absent))
+        outcome = check_batch(preview_batch(config, reference_sheet, term_sheets))
     except IngestionError as e:
         if e.reason_code == "source_changed":  # CLI 沒有預覽可重新載入
             e = IngestionError(e.reason_code, "參考條件表、說明書或設定檔在核對期間已變更或無法讀取，請重新核對")

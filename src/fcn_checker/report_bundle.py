@@ -26,7 +26,6 @@ import time
 from collections.abc import Sequence
 from pathlib import Path
 
-import openpyxl
 from openpyxl.styles import Alignment, Font
 from openpyxl.utils import get_column_letter
 from openpyxl.workbook.workbook import Workbook
@@ -34,6 +33,7 @@ from openpyxl.worksheet.datavalidation import DataValidation
 
 from . import reporting
 from .batch import BatchItem, BatchOutcome, Category
+from .condition_source import ConditionSource
 from .config import ReferenceFormat
 from .ingestion import IngestionError
 from .orders.reference import header_columns, locate
@@ -68,8 +68,9 @@ def reportable(outcome: BatchOutcome) -> tuple[BatchItem, ...]:
     return tuple(i for i in outcome.items if not i.fillable and not _known_unsupported(i))
 
 
-def bundle_path(out_dir: Path, reference_sheet: Path, now: dt.datetime) -> Path:
-    return out_dir / f"{reference_sheet.stem}_回報包_{now:%Y%m%d-%H%M%S}"
+def bundle_path(out_dir: Path, stem: str, now: dt.datetime) -> Path:
+    """`stem` 是條件來源的檔名開頭（Excel：參考條件表檔名；資料庫：`參考條件表_資料庫`）。"""
+    return out_dir / f"{stem}_回報包_{now:%Y%m%d-%H%M%S}"
 
 
 def export_bundle(outcome: BatchOutcome, out_dir: Path, *, root: Path, now: dt.datetime | None = None) -> Path:
@@ -86,15 +87,17 @@ def export_bundle(outcome: BatchOutcome, out_dir: Path, *, root: Path, now: dt.d
         raise IngestionError(
             "source_changed", "參考條件表、說明書或設定檔在核對後已變更或無法讀取，請重新核對後再匯出回報包"
         )
+    source = outcome.source
+    assert isinstance(source, ConditionSource)  # 有核對項目的整批一定有讀好的條件來源
     now = now or dt.datetime.now()
     members = _members(outcome, failing)
     pdfs = _pdf_copies(members)
     files = {
         REPORT_FILE: _report_book(outcome, failing, pdfs, now),
-        REFERENCE_FILE: _reference_extract(outcome.reference_sheet, rfmt, members),
+        REFERENCE_FILE: _reference_extract(source, rfmt, members),
         RECORD_FILE: reporting.record_bytes(_record(outcome, members), Path(root), now),
     }
-    target = bundle_path(Path(out_dir), outcome.reference_sheet, now)
+    target = bundle_path(Path(out_dir), source.stem, now)
     _write_folder(target, files, pdfs)
     return target
 
@@ -237,7 +240,7 @@ def _summary_sheet(
     """各類別的份數（以 PDF 計）；不支援樣態另列一列、不算進需人工覆核；「未通過」= 不一致＋需人工覆核＋執行錯誤。"""
     items = outcome.items
     counted = [i for i in items if not i.unsupported_variant]  # 不支援樣態另列，不算進各類別
-    ws.append(("參考條件表", outcome.reference_sheet.name))
+    ws.append(("參考條件表", outcome.source.name))  # Excel 檔名，資料庫來源寫「資料庫」
     ws.append(("匯出時間", f"{now:%Y-%m-%d %H:%M:%S}"))
     ws.append(("PDF 總數", len(items)))
     for c in Category:
@@ -252,12 +255,10 @@ def _summary_sheet(
     ws.column_dimensions["B"].width = 40
 
 
-def _reference_extract(reference_sheet: Path, rfmt: ReferenceFormat, members: Sequence[BatchItem]) -> bytes:
-    """參考條件表只留這些商品的列與認得的欄；只有第一張工作表，表頭以上各列與資料列的位置照原表版面，值與數字格式照原表。"""
-    try:
-        wb = openpyxl.load_workbook(reference_sheet, data_only=True)
-    except Exception as e:
-        raise IngestionError("reference_unreadable", f"參考條件表無法開啟（可能已損毀或不是 Excel）：{e}") from e
+def _reference_extract(source: ConditionSource, rfmt: ReferenceFormat, members: Sequence[BatchItem]) -> bytes:
+    """參考條件表只留這些商品的列與認得的欄；只有第一張工作表，表頭以上各列與資料列的位置照原表版面，值與數字格式照原表。
+    資料庫來源從記憶體中排好的表擷取（#445）。"""
+    wb = source.workbook()
     layout = locate(wb, rfmt)
     src = wb[layout.sheet]
     known = {*rfmt.import_format.columns, *rfmt.columns, rfmt.issuer_column}

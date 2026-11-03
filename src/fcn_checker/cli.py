@@ -89,8 +89,8 @@ def _run(args: argparse.Namespace) -> tuple[BatchOutcome, SaveReceipt]:
             args.review_standard, args.reference_format, args.issuer_prefixes, args.exchange_holidays
         ).load()
         if args.database:
-            reference, absent = args.source.export(args.term_sheets, config.reference_format)
-            return run_batch(config, reference, args.term_sheets, args.out, root=Path.cwd(), absent=absent)
+            source = args.source.conditions(args.term_sheets, config.reference_format)
+            return run_batch(config, source, args.term_sheets, args.out, root=Path.cwd())
     except IngestionError as e:  # 設定檔有問題或讀不到資料庫：整批錯誤，不核對任何說明書
         outcome = failed_batch(reference, e)
         return outcome, SaveReceipt.nothing_to_save(outcome)
@@ -98,7 +98,7 @@ def _run(args: argparse.Namespace) -> tuple[BatchOutcome, SaveReceipt]:
 
 
 def _database_source(args: argparse.Namespace):
-    """流程資料庫的來源（sp_workflow）；`.env` 沒有密碼時在這裡問。產生的參考條件表放在輸出資料夾。"""
+    """流程資料庫的來源（sp_workflow）；`.env` 沒有密碼時在這裡問。核對條件直接從資料庫讀成列，不產生檔案（#445）。"""
     from getpass import getpass
 
     from sp_workflow.check_source import WorkflowDatabase
@@ -107,7 +107,7 @@ def _database_source(args: argparse.Namespace):
     settings = settings_from_env(args.env_file or default_env_path())
     if settings.password is None:
         settings = settings.with_password(getpass(f"{settings.user}@{settings.host} 的資料庫密碼（不顯示）："))
-    return WorkflowDatabase(lambda: settings, args.out, issuer_prefixes=args.issuer_prefixes)
+    return WorkflowDatabase(lambda: settings, issuer_prefixes=args.issuer_prefixes)
 
 
 def main(argv: list[str] | None = None) -> int:

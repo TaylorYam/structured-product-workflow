@@ -10,6 +10,8 @@
 「哪些是回填欄位」只在這裡宣告（`ROW_FIELDS` 加上期初定價 VWAP 時的價格欄）；TS、IIS 打勾不是回填值
 （資料庫那邊改成鎖住，Excel 那邊照決策打勾）。人工放行時的單位面額（ADR 0008）也由這裡從核對結果交出。
 這個 module 不 import openpyxl。
+注意：`ProductTerm.column`、`CheckedMark.column` 是建立時給的欄位，`UnderlyingPrice.column` 是由 `key` 推出的 property
+（`PRICE_COLUMNS[key]`）；`match` 兩種寫法都能取，讀程式時別當成同一種。
 """
 
 from __future__ import annotations

@@ -11,7 +11,7 @@ PANEL 操作員讀到的預覽列、結果清單列、結果明細、回填決�
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple, Protocol
@@ -29,6 +29,7 @@ from .batch import (
     preview_batch,
 )
 from .check_config import CONFIG_DIR, DEFAULTS, ConfigPaths
+from .condition_source import ConditionSource
 from .config import ReferenceFormat, load_review_standard
 from .ingestion import IngestionError, SourceSnapshot
 from .issuers import REGISTRY, Issuer
@@ -287,8 +288,8 @@ class DatabaseSource(Protocol):
     登入（需要時問密碼）是外殼的事：外殼取得連線設定後才建來源，兩個方法都可以在背景執行緒呼叫（#129）。
     """
 
-    def export(self, term_sheets: Sequence[Path], fmt: ReferenceFormat) -> tuple[Path, Mapping[str, str]]:
-        """依 PDF 檔名的 TDCC 從資料庫產生參考條件表，回傳 (檔案, {沒有列的 TDCC: 原因})。"""
+    def conditions(self, term_sheets: Sequence[Path], fmt: ReferenceFormat) -> ConditionSource:
+        """依 PDF 檔名的 TDCC 從資料庫讀出核對條件（型別化的列、表上沒有某檔的原因與憑證；不寫檔，#445）。"""
         ...
 
     def write_back(self, batch: BatchOutcome, receipt: SaveReceipt) -> str:
@@ -453,8 +454,8 @@ class PanelSession:
             config = self.paths.load(self.registry)  # 設定檔有問題時在這裡回報
             if self.use_database:
                 assert self.database is not None
-                reference, absent = self.database.export(self.term_sheets, config.reference_format)
-                preview = preview_batch(config, reference, self.term_sheets, absent=absent)
+                source = self.database.conditions(self.term_sheets, config.reference_format)
+                preview = preview_batch(config, source, self.term_sheets)
             else:
                 preview = preview_batch(config, self.reference_sheet, self.term_sheets)
             if not preview.snapshot.still_valid():

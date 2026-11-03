@@ -69,7 +69,7 @@ from fcn_checker.ui import (
     enable_windows_dpi_awareness,
     set_windows_app_id,
 )
-from sp_workflow.check_source import EXPORT_FOLDER, WorkflowDatabase
+from sp_workflow.check_source import WorkflowDatabase
 from sp_workflow.database import default_env_path
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.preparation import LIST_NAME, PrepareReceipt
@@ -579,15 +579,14 @@ def build_window(
 ) -> PanelWindow:
     """依啟動參數組視窗（#129）：資料庫登入 → 核對的資料庫來源 → 建好就帶著它的核對工作階段 → 視窗。"""
     db = DatabaseLogin(master, default_env_path(args.install_root))
-    session = session_from_args(args, _check_database(db, args.install_root))
+    session = session_from_args(args, _check_database(db))
     memory = _memory_under(args.install_root)
     return PanelWindow(master, memory, db, session, start_on_check=start_on_check, background=background)
 
 
-def _check_database(db: DatabaseLogin, install_root: Path | None) -> WorkflowDatabase:
-    """核對分頁從資料庫讀條件（#68）：用視窗登入過的連線設定；產生的參考條件表放在根目錄的 runtime/ 底下。"""
-    folder = Path(install_root or ".").resolve() / "runtime" / EXPORT_FOLDER  # 根目錄和 PanelSession 一樣
-    return WorkflowDatabase(db.current, folder, on_failure=db.forget_password)
+def _check_database(db: DatabaseLogin) -> WorkflowDatabase:
+    """核對分頁從資料庫讀條件（#68）：用視窗登入過的連線設定；核對條件不寫檔（#445）。"""
+    return WorkflowDatabase(db.current, on_failure=db.forget_password)
 
 
 def main(argv: list[str] | None = None, *, start_on_check: bool = False) -> None:
