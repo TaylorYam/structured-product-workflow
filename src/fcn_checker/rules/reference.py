@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
+from ..fields import PRICE_FIELDS
 from ..orders.reference import UNDERLYING_SLOTS
 from ..products import BEN, DACN, FCN, PRODUCT_RULES, product_name
 from ..schema import CheckResult, DocKind, Evidence, FieldStatus, Item, OrderValue, ParsedField
@@ -56,12 +57,6 @@ PCT_TOLERANCE = "依說明書顯示位數四捨五入後比對"
 NON_CALL_MESSAGE = "Non-Call(月) = 第一個可以提前出場的期別（FCN 最小為 1；FCN_Express 為 0，從第 1 期期始日開始比價）"
 OBS_LABEL = {"D": "期間每日觀察", "P": "期末定日觀察"}
 UNDERLYINGS = "標的"  # UL_1～UL_5 合起來核對，項目用這個名稱
-PRICE_COLUMNS = (  # 價格欄（`OrderRecord.price` 的鍵）與核對結果欄位用的中文
-    ("initial", "進場價"),
-    ("strike", "執行價"),
-    ("ki", "下限價"),
-    ("ko", "KO 價"),
-)
 VWAP = "vwap"  # 期初定價為 VWAP：價格欄不比對，核對通過後以說明書覆寫（Issue #122）
 
 
@@ -568,7 +563,8 @@ def underlying_prices(ctx: Context) -> list[CheckResult]:
         slot = slots[i - 1] if i <= len(slots) else i  # 表上第幾檔（不看順序的上手依代號配對）
         ev = list(row.evidence)
         pending: list[tuple[Check, Decimal, Decimal]] = []  # 這檔可比對的價格欄：(結果身分, 表上值（4 位）, 說明書值)
-        for col, zh in PRICE_COLUMNS:
+        for pf in PRICE_FIELDS:
+            col, zh = pf.key, pf.label
             field, name = f"{label} {zh}", price_item(slot, col)
             ov = ctx.order.price(slot, col)
             check = _column(ctx, rid, field, name, ov)

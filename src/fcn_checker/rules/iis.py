@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
+from ..fields import PRICE_FIELDS
 from ..investor_sheet import IisSheet, read_iis
 from ..schema import CheckResult, DocKind, Item, ParsedField
 from ..schema import CheckStatus as S
@@ -130,7 +131,8 @@ def _prices(ctx: Context) -> list[CheckResult]:
         ev = list(row.evidence)
         # 和參考條件表比的價格欄：(結果身分, 表上值（4 位）, 投資人須知值)，整檔一起判斷是否疑似分割調整
         pending: list[tuple[Check, Decimal, Decimal]] = []
-        for col, zh in reference.PRICE_COLUMNS:
+        for pf in PRICE_FIELDS:
+            col, zh = pf.key, pf.label
             doc_v = row.prices.get(col)
             if doc_v is None:  # 價格表沒有這一欄（例：無 KI）
                 continue

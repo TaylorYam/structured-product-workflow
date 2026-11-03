@@ -234,6 +234,22 @@ class ImportFormat:
 
 
 @dataclass(frozen=True)
+class ExtraColumns:
+    """參考條件表的額外欄（#433）：不是標準欄位、核對不比，流程端（資料庫來源、回補）直接讀寫格子；欄名只在設定檔宣告。"""
+
+    upfront: str  # UF
+    trade_date: str  # 交易日期（匯入格式的欄名；資料庫來源寫交易日）
+    inventory_status: str  # 庫存狀態（舊商品補資料讀）
+    branch: str  # 第 n 組分公司的欄名樣板，{n} 換成第幾組
+    branch_amount: str  # 第 n 組承作金額的欄名樣板
+    branches: int  # 分公司組數
+
+    def branch_columns(self) -> tuple[tuple[str, str], ...]:
+        """各組（分公司, 承作金額）的欄名，依組別順序。"""
+        return tuple((self.branch.format(n=n), self.branch_amount.format(n=n)) for n in range(1, self.branches + 1))
+
+
+@dataclass(frozen=True)
 class ReferenceFormat:
     """參考條件表（多列表格）的版面與欄位對照，所有上手共用。"""
 
@@ -251,6 +267,7 @@ class ReferenceFormat:
     ko_memory_values: dict[str, bool]
     ki_type_values: dict[str, str]
     initial_pricing_values: dict[str, str]  # 期初定價：開盤價／收盤價／VWAP → open／close／vwap
+    extra: ExtraColumns  # 額外欄：UF、交易日期、庫存狀態、分公司（#433）
     # 標的不看順序的上手代號：表上 UL_n 與說明書同一組代號就相符，價格與 VWAP 回填依代號配對（Citi，Issue #220）
     underlyings_any_order: tuple[str, ...] = ()
     # 只在某商品種類不看順序的上手：商品種類（參考條件表 Product 的寫法）→ 上手代號（HSBC Super Bull，#314）
@@ -656,6 +673,7 @@ def load_reference_format(path: Path) -> ReferenceFormat:
             ko_memory_values={k: bool(v) for k, v in d["values"]["ko_memory"].items()},
             ki_type_values=dict(d["values"]["ki_type"]),
             initial_pricing_values=dict(d["values"]["initial_pricing"]),
+            extra=_extra_columns(d["extra_columns"]),
             underlyings_any_order=tuple(str(c) for c in d.get("underlyings", {}).get("any_order_issuers", [])),
             underlyings_any_order_products={
                 str(p): tuple(str(c) for c in codes)
@@ -676,6 +694,34 @@ def _import_format(d: dict[str, Any]) -> ImportFormat:
         fallbacks={str(k): str(v) for k, v in d["fallbacks"].items()},
         columns=tuple(str(h) for h in d["columns"]),
     )
+
+
+def _extra_columns(d: dict[str, Any]) -> ExtraColumns:
+    extra = ExtraColumns(
+        upfront=_extra_name(d["upfront"], "upfront"),
+        trade_date=_extra_name(d["trade_date"], "trade_date"),
+        inventory_status=_extra_name(d["inventory_status"], "inventory_status"),
+        branch=_extra_name(d["branch"], "branch", template=True),
+        branch_amount=_extra_name(d["branch_amount"], "branch_amount", template=True),
+        branches=int(d["branches"]),
+    )
+    if extra.branches < 1:
+        raise _fail("參考條件表格式設定檔 [extra_columns] branches 須至少 1")
+    return extra
+
+
+def _extra_name(v: Any, key: str, *, template: bool = False) -> str:
+    """額外欄的欄名；樣板（分公司欄）要有 {n}，而且只有 {n}。"""
+    if not _text(v):
+        raise _fail(f"參考條件表格式設定檔 [extra_columns] {key} 須是一段不空白的文字")
+    if template:
+        try:
+            ok = "{n}" in v and v.format(n=1) != v
+        except (KeyError, IndexError, ValueError):
+            ok = False
+        if not ok:
+            raise _fail(f"參考條件表格式設定檔 [extra_columns] {key} 須有 {{n}}（第幾組），不能有其他 {{}}")
+    return v
 
 
 def _check_column_settings(fmt: ReferenceFormat) -> None:

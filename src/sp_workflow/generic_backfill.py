@@ -30,6 +30,7 @@ from openpyxl.cell.cell import Cell, MergedCell
 from openpyxl.worksheet.worksheet import Worksheet
 
 from fcn_checker.backfill import SLOTS, date_format
+from fcn_checker.fields import PRICE_COLUMNS
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.orders.reference import (
     UNDERLYING_SLOTS,
@@ -41,7 +42,7 @@ from fcn_checker.orders.reference import (
     price_key,
     underlying_key,
 )
-from fcn_checker.rules.reference import PRICE_COLUMNS, VWAP
+from fcn_checker.rules.reference import VWAP
 from sp_workflow.database import OperatorError
 from sp_workflow.file_tools import save_export
 from sp_workflow.product_store import Stored, read_many
@@ -56,7 +57,7 @@ _FILLED_FIELDS = ("isin", *(autocall_date_key(n) for n in range(1, SLOTS + 1)))
 _VWAP_FIELDS = tuple(
     key
     for i in range(1, UNDERLYING_SLOTS + 1)
-    for key in (underlying_key(i), *(price_key(i, c) for c, _ in PRICE_COLUMNS))
+    for key in (underlying_key(i), *(price_key(i, c) for c in PRICE_COLUMNS))
 )
 REQUIRED_FIELDS = ("product_code", *_FILLED_FIELDS, "initial_pricing", *_VWAP_FIELDS)  # 缺任何一欄整份不處理
 
@@ -229,7 +230,7 @@ def _vwap_fills(
         elif price.initial is None:
             reasons.append(f"UL_{i} {code} 資料庫還沒有 VWAP 價格")
         else:
-            for col, _ in PRICE_COLUMNS:
+            for col in PRICE_COLUMNS:
                 amount = getattr(price, col)
                 fills.append(_Fill(columns[price_key(i, col)], empty if amount is None else amount, overwrite=True))
     return fills

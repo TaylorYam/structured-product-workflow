@@ -15,6 +15,7 @@ from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal, InvalidOperation
 from typing import Any, NamedTuple, Protocol
 
 from ..config import IssuerStandard, ReferenceFormat, ReviewStandard
+from ..fields import PRICE_FIELDS
 from ..investor_sheet import IisSheet
 from ..orders.reference import OrderRecord
 from ..schema import CheckResult, DocKind, Evidence, FieldStatus, Item, OrderValue, ParsedField
@@ -111,7 +112,7 @@ class IssuerContext(_IssuerStandardOf):
 
 # ---------------------------------------------------------------- 兩家上手共用的項目名稱
 
-PRICE_ITEM = {"initial": "進場價", "strike": "執行價", "ko": "KO價", "ki": "下限價"}  # 同 Excel 欄名 UL_n_<名稱>
+PRICE_ITEM = {pf.key: pf.header for pf in PRICE_FIELDS}  # 同 Excel 欄名 UL_n_<名稱>
 PRICE_LABEL = {"strike": "執行價", "ko": "KO 價", "ki": "下限價（觸及生效價）"}  # 價格推算結果的欄位與說明書內部規則用
 HEADER_PCT_ITEM = {
     "strike": "價格表執行價格欄頭百分比",

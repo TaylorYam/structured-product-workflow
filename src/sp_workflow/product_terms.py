@@ -35,6 +35,7 @@ from decimal import Decimal
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from fcn_checker.fields import PRICE_COLUMNS
 from fcn_checker.products import PRODUCT_RULES, SUPPORTED_PRODUCTS, product_name
 from sp_workflow import import_run
 from sp_workflow.check_terms import CalcLine, recalculate, recalculate_corrected
@@ -51,7 +52,6 @@ from sp_workflow.product_record import (
     LOOKBACK_FIELD,
     MATURITY_ONLY_TERMS,
     PARTICIPATION_FIELD,
-    PRICE_COLUMNS,
     PRICING_FIELD,
     PRODUCT_COLUMNS,
     REQUIRED,

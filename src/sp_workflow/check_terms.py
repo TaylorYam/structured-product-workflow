@@ -35,6 +35,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from fcn_checker.fields import PRICE_FIELDS, PRICE_SQL
 from sp_workflow.database import OperatorError, require_in_transaction
 from sp_workflow.product_record import UnderlyingPrice, missing_fields, plain, price_at, round_price
 from sp_workflow.product_store import BLANK as _BLANK
@@ -378,9 +379,6 @@ def recalculate(conn: psycopg.Connection, config: ImportConfig, *, tdccs: Collec
     return CalcReceipt(tuple(replace(line, risk=risks[line.tdcc]) for line in lines))
 
 
-_PRICE_NAMES = (("進場價", "initial"), ("執行價", "strike"), ("下限價", "ki"), ("KO價", "ko"))  # 更正紀錄的項目名
-
-
 def recalculate_corrected(
     conn: psycopg.Connection,
     config: ImportConfig,
@@ -410,9 +408,9 @@ def recalculate_corrected(
     changes = []
     for seq in sorted(old.keys() | new.keys()):
         was, now = old.get(seq, UnderlyingPrice(seq, "")), new.get(seq, UnderlyingPrice(seq, ""))
-        for name, attr in _PRICE_NAMES:
-            if getattr(was, attr) != getattr(now, attr):
-                changes.append((f"UL_{seq}_{name}", getattr(was, attr), getattr(now, attr)))
+        for pf in PRICE_FIELDS:  # 更正紀錄的項目名同參考條件表的欄名（UL_n_進場價…）
+            if getattr(was, pf.key) != getattr(now, pf.key):
+                changes.append((f"UL_{seq}_{pf.header}", getattr(was, pf.key), getattr(now, pf.key)))
     return line, tuple(changes)
 
 
@@ -616,7 +614,7 @@ def _stored(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, Calcula
     """上一次算的結果（分公司配置是資料庫目前的）。"""
     prices: dict[str, list[UnderlyingPrice]] = {}
     for tdcc, *values in conn.execute(
-        "SELECT tdcc, seq, code, initial_price, strike_price, ki_price, ko_price, lookback_price"
+        f"SELECT tdcc, seq, code, {PRICE_SQL}, lookback_price"
         " FROM workflow.underlying_price WHERE tdcc = ANY(%s) ORDER BY tdcc, seq",
         (list(tdccs),),
     ):
@@ -671,7 +669,7 @@ def _write(conn: psycopg.Connection, tdcc: str, calc: Calculation) -> None:
     with conn.cursor() as cur:
         cur.executemany(
             "INSERT INTO workflow.underlying_price"
-            " (tdcc, seq, code, initial_price, strike_price, ki_price, ko_price, lookback_price)"
+            f" (tdcc, seq, code, {PRICE_SQL}, lookback_price)"
             " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
             [(tdcc, p.seq, p.code, p.initial, p.strike, p.ki, p.ko, p.lookback) for p in calc.prices],
         )

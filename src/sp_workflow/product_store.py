@@ -10,7 +10,7 @@ import 這裡，不必再用函式內的 import 繞開循環。對外：
   只在這裡回答一次。
 - `CheckTermsState`：上一次算的核對條件（含交叉比對的差異 `Difference`）。
 - `issuer_code`：TDCC 前三碼 → 上手代號（對照沒有時用資料庫的發行機構寫法反查）。
-標的價格一列的型別 `UnderlyingPrice` 在 `product_record`（旁邊是 `PRICE_COLUMNS`）。
+標的價格一列的型別 `UnderlyingPrice` 在 `product_record`；價格欄的名字在 `fcn_checker.fields`（#433）。
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from decimal import Decimal
 from functools import cached_property
 from typing import TYPE_CHECKING, Protocol, cast
 
+from fcn_checker.fields import PRICE_SQL
 from sp_workflow.database import require_in_transaction
 from sp_workflow.product_record import PRODUCT_COLUMNS, UnderlyingPrice, fields_of, plain, price_at
 from sp_workflow.status import ProductSource
@@ -158,7 +159,7 @@ def read_many(conn: psycopg.Connection, tdccs: Sequence[str] | None = None, *, l
         prices: dict[str, list[UnderlyingPrice]] = {}
         for tdcc, *values in sorted(
             conn.execute(
-                "SELECT tdcc, seq, code, initial_price, strike_price, ki_price, ko_price, lookback_price,"
+                f"SELECT tdcc, seq, code, {PRICE_SQL}, lookback_price,"
                 " price_basis_date FROM workflow.underlying_price" + where,
                 params,
             ).fetchall()

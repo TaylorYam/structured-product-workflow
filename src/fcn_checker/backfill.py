@@ -32,10 +32,11 @@ import openpyxl
 from openpyxl.workbook.workbook import Workbook
 
 from .config import ReferenceFormat
+from .fields import PRICE_COLUMNS
 from .ingestion import IngestionError
 from .orders.reference import OrderRecord, autocall_date_key, locate, price_key
 from .rules.kit import Context, doc_review, result
-from .rules.reference import PRICE_COLUMNS, is_vwap, sheet_slots, standard_field
+from .rules.reference import is_vwap, sheet_slots, standard_field
 from .schema import CheckReport, CheckResult, FieldStatus, Item, OrderValue, ParsedField
 from .schema import CheckStatus as S
 from .standard_fields import AutocallSchedule, not_provided
@@ -291,7 +292,7 @@ def underlying_prices(ctx: Context) -> tuple[CheckResult | None, list[CellDecisi
     rid, key, table = "backfill.underlying_prices", "underlying_prices", standard_field(ctx, "underlying_prices")
     row, empty = ctx.order, ctx.fmt.empty_value
     n = max(row.underlying_slots, len(table.value) if table.ok else 0)  # 表上的標的數（UL_1～UL_5）
-    keys = [price_key(i, col) for i in range(1, n + 1) for col, _ in PRICE_COLUMNS]
+    keys = [price_key(i, col) for i in range(1, n + 1) for col in PRICE_COLUMNS]
     ovs = [row.get(k) for k in keys]
     item = Item.group(PRICES, ovs)
     missing = _missing_columns(row, keys)
@@ -303,7 +304,7 @@ def underlying_prices(ctx: Context) -> tuple[CheckResult | None, list[CellDecisi
     decisions = []
     for i in range(1, n + 1):
         prices = by_slot[i].prices if i in by_slot else {}
-        for col, _ in PRICE_COLUMNS:
+        for col in PRICE_COLUMNS:
             d = _decide(row, price_key(i, col), prices.get(col, empty))
             if d.action == BackfillAction.MISMATCH:
                 d = replace(d, action=BackfillAction.OVERWRITE)

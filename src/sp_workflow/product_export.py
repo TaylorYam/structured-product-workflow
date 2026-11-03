@@ -24,6 +24,7 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 from psycopg.rows import dict_row
 
+from fcn_checker.fields import PRICE_COLUMNS, PRICE_SQL
 from sp_workflow.daily_import import FC_LABEL_SQL
 from sp_workflow.file_tools import MAX_WIDTH, excel_value, save_export, save_rows, table_book, text_cell
 from sp_workflow.lifecycle import Lifecycle, lifecycle_status
@@ -93,7 +94,8 @@ PRODUCT_FIELDS = {
     "天期(月)": "tenor_months",
     "Non-Call(月)": "non_call_months",
 }  # fmt: skip  # 總表欄名 → workflow.product 的欄，照欄名取值
-UL_FIELDS = ("進場價", "執行價", "下限價", "KO價")
+# 價格的鍵（`fcn_checker.fields`）→ 總表欄名 UL_n_<名稱> 的後半；表頭文字是總表自己的版面（#360），不跟參考條件表
+UL_FIELDS = {"initial": "進場價", "strike": "執行價", "ki": "下限價", "ko": "KO價"}
 _UNDERLYINGS = tuple(f"underlying_{n}" for n in range(1, 6))
 SUMMARY_COLUMNS = (
     "存續狀態", "事件發生日", "事件標的",
@@ -101,7 +103,7 @@ SUMMARY_COLUMNS = (
     "交易日", "期初定價日", "發行日", *(f"比價日_{i}" for i in range(1, 13)), "最終比價日", "到期日",
     "期初定價", "KO(%)", "KO(Freq)", "KO(memo)", "K(%)", "KI(%)", "KI(Freq)", "UF", "Coupon p.a. (%)", "配息門檻(%)",
     "天期(月)", "Non-Call(月)", "Lookback 期間",
-    *(name for n in range(1, 6) for name in (f"UL_{n}", *(f"UL_{n}_{field}" for field in UL_FIELDS))),
+    *(name for n in range(1, 6) for name in (f"UL_{n}", *(f"UL_{n}_{field}" for field in UL_FIELDS.values()))),
 )  # fmt: skip
 FROZEN = f"{get_column_letter(SUMMARY_COLUMNS.index('TDCC Code') + 2)}2"  # 凍結表頭與 TDCC 以左的欄
 
@@ -134,11 +136,9 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
         autocall: dict[str, dict[int, dt.date | None]] = {}
         for tdcc, slot, value in conn.execute("SELECT tdcc, slot, value FROM workflow.autocall_date"):
             autocall.setdefault(tdcc, {})[slot] = value
-        prices: dict[str, dict[int, tuple[object, ...]]] = {}
-        for tdcc, seq, *values in conn.execute(
-            "SELECT tdcc, seq, initial_price, strike_price, ki_price, ko_price FROM workflow.underlying_price"
-        ):
-            prices.setdefault(tdcc, {})[seq] = tuple(values)
+        prices: dict[str, dict[int, dict[str, object]]] = {}
+        for tdcc, seq, *values in conn.execute(f"SELECT tdcc, seq, {PRICE_SQL} FROM workflow.underlying_price"):
+            prices.setdefault(tdcc, {})[seq] = dict(zip(PRICE_COLUMNS, values, strict=True))
         trades: dict[str, list[tuple[str, str, Decimal]]] = {}
         singapore: dict[str, str] = {}  # 新加坡註記（#420）：有一列 Y 就是 Y，有值但都不是 Y 是 N；沒有值的不放（寫 -）
         for tdcc, branch, fc, amount, mark in conn.execute(
@@ -165,7 +165,7 @@ def _summary_cells(
     product: dict[str, object],
     lifecycle: Lifecycle,
     autocall: dict[int, dt.date | None],
-    prices: dict[int, tuple[object, ...]],
+    prices: dict[int, dict[str, object]],
     trades: list[tuple[str, str, Decimal]],
 ) -> dict[str, object]:
     """一檔的總表格子（總表欄名 → 值）；沒放的欄寫 `-`。"""
@@ -178,7 +178,7 @@ def _summary_cells(
     for seq, field in enumerate(_UNDERLYINGS, start=1):
         if product[field]:
             cells[f"UL_{seq}"] = product[field]
-            cells.update(zip((f"UL_{seq}_{name}" for name in UL_FIELDS), prices.get(seq, ()), strict=False))
+            cells.update({f"UL_{seq}_{UL_FIELDS[key]}": value for key, value in prices.get(seq, {}).items()})
     if trades:
         cells["承作總額"] = sum(amount for _, _, amount in trades)
     for n, (branch, fc, amount) in enumerate(trades, start=1):

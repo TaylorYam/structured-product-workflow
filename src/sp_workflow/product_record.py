@@ -9,7 +9,6 @@
 - `columns_of`／`fields_of`：畫面的值 ↔ 資料庫的欄（KO／KI 代碼、UF 反轉、單位面額預設）。
 - `missing_fields`：資料庫商品條件缺哪幾個必填欄（#114）。
 - `has_coupon_barrier`／`default_coupon_barrier`：商品種類要不要配息門檻；起單建檔、舊總表沒有配息門檻，要配息門檻的商品（DACN、BEN）預設帶執行價（#367、#406）。
-- `PRICE_COLUMNS`：標的價格（核對用的鍵 → `workflow.underlying_price` 的欄）；核對讀資料庫與核對寫回共用（#203）。
 - `UnderlyingPrice`：一個標的的價格（一列 `workflow.underlying_price`，含價格基準日）；`round_price`／`price_at`：
   價格的進位與「基準價格 × 比例(%)」（核對條件、比價與 `product_store` 共用，#437）。
 - `same_value`：兩個值一樣嗎（數字不分 int 與 Decimal、不看小數位數）；商品條件寫入與核對寫回共用（#203）。
@@ -116,8 +115,7 @@ _COUPON_BARRIER_REQUIRED = (COUPON_BARRIER_FIELD,)
 # 只在到期判定的商品（BEN）不必填的欄：預設沒有 KO，KO% 空白；真的有 KO 才填（#406、ADR 0029）
 _MATURITY_ONLY_OPTIONAL = ("KO Barrier (%)",)
 
-# 資料庫商品欄位
-PRICE_COLUMNS = {"initial": "initial_price", "strike": "strike_price", "ki": "ki_price", "ko": "ko_price"}
+# 資料庫商品欄位（標的價格的欄在 `fcn_checker.fields`，#433）
 _PRICE = Decimal("0.0001")
 _HUNDRED = Decimal(100)
 
