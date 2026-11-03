@@ -1,6 +1,6 @@
 """讀商品條件（#204、#437）：資料庫裡一檔商品的條件、核對條件、標的價格、比價日、分公司配置與鎖住狀態。
 
-「一檔商品的條件怎麼讀」只有這裡知道；寫入在 `product_terms`（ADR 0013 的核對寫回也經過它）。這個 module 不 import
+「一檔商品的條件怎麼讀」只有這裡知道，讀取端各自從 `Stored` 轉成自己的形狀（#438）；寫入在 `product_terms`（ADR 0013 的核對寫回也經過它）。這個 module 不 import
 寫入端與算核對條件、風險等級的 module（`product_terms`、`check_terms`、`risk_level`），所以它們都可以在 module 開頭
 import 這裡，不必再用函式內的 import 繞開循環。對外：
 - `read_many`：資料庫裡這幾檔（或全部）商品的 `Stored`，caller 自己挑要的欄；`read` 是只讀一檔的寫法。`lock=True` 時
@@ -8,6 +8,11 @@ import 這裡，不必再用函式內的 import 繞開循環。對外：
 - `locked`：已鎖住了沒（`locked_at` 有值：TS 核對通過，或 migration 0006 之前就在資料庫）。
 - `Stored` 的有效期初價格、有效執行價、原始執行價：lookback（#374）之後比價改寫了執行價，「這檔的執行價是多少」
   只在這裡回答一次；人工維護畫面顯示的回顧期初價格文字是 `lookback_text`（#446）。
+  價格基準日（`Stored.price_basis`，ADR 0025）也是：比價與曝險換算收盤價都問它（#438）。
+- 不讀整檔條件的具名查詢（SQL 照原本的呼叫端搬來；`locked_tdccs` 是風險等級補算那句的鎖住條件，#438）：`lock_product` 只鎖一檔的商品條件列（存續事件）；
+  `locked_tdccs` 已鎖住的商品（風險等級補算）；`incomplete_locked` 已鎖住、還缺標的價格或比價日的商品（舊商品補資料）；
+  `underlying_codes` 各檔連結的標的代碼（曝險分析）；`observed_exits_using` 拆股影響的已出場商品；`terms_imported` 每檔
+  商品條件匯入的時間（作業進度）。
 - `CheckTermsState`：上一次算的核對條件（含交叉比對的差異 `Difference`）。
 - `issuer_code`：TDCC 前三碼 → 上手代號（對照沒有時用資料庫的發行機構寫法反查）。
 標的價格一列的型別 `UnderlyingPrice` 在 `product_record`；價格欄的名字在 `fcn_checker.fields`（#433）。
@@ -103,6 +108,11 @@ class Stored:
         """畫面的欄 → 值（`product_record.fields_of`）；用到才換算（進度頁一次讀全部商品，不需要）。"""
         return fields_of(self.columns)
 
+    @property
+    def underlyings(self) -> tuple[str | None, ...]:
+        """UL_1～UL_5 的代碼（空白的是 None）。"""
+        return tuple(self.columns[f"underlying_{n}"] for n in range(1, 6))
+
     def price(self, seq: int) -> UnderlyingPrice | None:
         """第幾個標的的價格；沒有這個標的的價格時 None。"""
         return next((p for p in self.prices if p.seq == seq), None)
@@ -117,6 +127,13 @@ class Stored:
         重算核對條件時保留；比價、曝險用這個。"""
         price = self.price(seq)
         return None if price is None else price.strike
+
+    def price_basis(self, seq: int) -> dt.date | None:
+        """價格基準日（ADR 0025）：這個標的的價格含到哪天生效的拆股；拆股登記沒調整過時是 Strike date，都沒有時 None。
+        比價與曝險換算收盤價都從這天起算（#438）。"""
+        price = self.price(seq)
+        basis = None if price is None else price.basis
+        return basis or cast("dt.date | None", self.columns.get("strike_date"))
 
     def original_strike(self, seq: int) -> Decimal | None:
         """原始執行價：TS 寫的期初執行價。lookback 寫過回顧期初價格的標的是進場價 × 執行價(%)，其他同有效執行價；
@@ -209,6 +226,75 @@ def read(conn: psycopg.Connection, tdcc: str, *, lock: bool = False) -> Stored |
     return read_many(conn, [tdcc], lock=lock).get(tdcc)
 
 
+def lock_product(conn: psycopg.Connection, tdcc: str) -> bool:
+    """只鎖住這檔的商品條件列、不讀條件（同 `read(…, lock=True)` 的鎖，到呼叫端的 transaction 結束）；回傳資料庫有沒有
+    這檔。寫存續事件時同一檔一個一個來（`lifecycle`）。"""
+    require_in_transaction(conn)
+    return conn.execute("SELECT 1 FROM workflow.product WHERE tdcc = %s FOR UPDATE", (tdcc,)).fetchone() is not None
+
+
+def locked_tdccs(conn: psycopg.Connection, tdccs: Sequence[str] | None = None) -> list[str]:
+    """已鎖住的商品（`tdccs` 有值時只看這幾檔），依 TDCC 排；不讀條件、不鎖列（`locked` 的 SQL 寫法）。"""
+    where, params = ("", ()) if tdccs is None else (" AND tdcc = ANY(%s)", (list(tdccs),))
+    return [
+        tdcc
+        for (tdcc,) in conn.execute(
+            "SELECT tdcc FROM workflow.product WHERE locked_at IS NOT NULL" + where + " ORDER BY tdcc", params
+        )
+    ]
+
+
+def underlying_codes(conn: psycopg.Connection) -> list[tuple[str, str]]:
+    """每檔商品連結的標的代碼（TDCC, 代碼），不重複、不含空白的欄；曝險分析選標的用（`exposure.load_choices`）。"""
+    columns = ", ".join(f"underlying_{n}" for n in range(1, 6))
+    return conn.execute(
+        f"SELECT DISTINCT tdcc, code FROM workflow.product, unnest(ARRAY[{columns}]) AS code WHERE code IS NOT NULL"
+    ).fetchall()
+
+
+def observed_exits_using(conn: psycopg.Connection, code: str, day: dt.date, observed: str) -> list[str]:
+    """用到 `code`、Strike date 早於 `day`、有還有效的存續事件而且全部來自 `observed`（比價）的商品，依 TDCC 排；
+    拆股登記改了要重新比價的已出場商品（`stock_splits.affected_exits`）。"""
+    rows = conn.execute(
+        "SELECT p.tdcc FROM workflow.product p"
+        " WHERE p.strike_date < %(day)s"
+        " AND EXISTS (SELECT 1 FROM workflow.underlying_price u WHERE u.tdcc = p.tdcc AND u.code = %(code)s)"
+        " AND EXISTS (SELECT 1 FROM workflow.product_event e WHERE e.tdcc = p.tdcc AND e.superseded_at IS NULL)"
+        " AND NOT EXISTS (SELECT 1 FROM workflow.product_event e WHERE e.tdcc = p.tdcc AND e.superseded_at IS NULL"
+        "                 AND e.source <> %(auto)s)"
+        " ORDER BY p.tdcc",
+        {"day": day, "code": code, "auto": observed},
+    )
+    return [tdcc for (tdcc,) in rows]
+
+
+def incomplete_locked(conn: psycopg.Connection) -> list[str]:
+    """已鎖住、還沒有標的價格或比價日的商品（舊商品補資料要補的，`legacy_backfill`），依 TDCC 排。"""
+    return [
+        tdcc
+        for (tdcc,) in conn.execute(
+            "SELECT p.tdcc FROM workflow.product p WHERE p.locked_at IS NOT NULL AND ("
+            " NOT EXISTS (SELECT 1 FROM workflow.underlying_price u WHERE u.tdcc = p.tdcc)"
+            " OR NOT EXISTS (SELECT 1 FROM workflow.autocall_date a WHERE a.tdcc = p.tdcc)) ORDER BY p.tdcc"
+        )
+    ]
+
+
+def terms_imported(conn: psycopg.Connection) -> dict[str, dt.datetime | None]:
+    """每檔商品條件匯入的時間（作業進度顯示，#186）：Order 匯入、清單更新、歷史回補（#303，鎖住的時間）或最後一次
+    人工維護存檔。"""
+    return dict(
+        conn.execute(
+            "SELECT p.tdcc, CASE p.source WHEN 'Order' THEN o.imported_at WHEN '清單更新' THEN r.imported_at"
+            " WHEN '歷史回補' THEN p.locked_at"
+            " ELSE (SELECT max(c.corrected_at) FROM workflow.term_correction c WHERE c.tdcc = p.tdcc) END"
+            " FROM workflow.product p"
+            " LEFT JOIN workflow.order_import o ON o.import_id = p.order_import_id"
+            " LEFT JOIN workflow.import_run r ON r.run_id = p.first_run_id"
+        ).fetchall()
+    )
+
+
 def _locked_reason(source: str, locked_at: dt.datetime | None) -> str:
     if locked_at is None:
         return ""
@@ -222,7 +308,8 @@ def _locked_reason(source: str, locked_at: dt.datetime | None) -> str:
 def locked(stored: Stored | None) -> bool:
     """這檔已鎖住（`workflow.product.locked_at` 有值）；資料庫沒有這檔時 False。
 
-    只用 SQL 篩選的地方（例：`risk_level.fill_missing_locked` 的 `locked_at IS NOT NULL`）照同一個定義。
+    只用 SQL 篩選的地方（`locked_tdccs`、`incomplete_locked` 的 `locked_at IS NOT NULL`，寫入端
+    `product_terms.missing_products` 的 `locked_at IS NULL`）照同一個定義。
     """
     return stored is not None and bool(stored.locked_reason)
 

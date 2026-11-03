@@ -41,6 +41,7 @@ from sp_workflow import import_run
 from sp_workflow.check_terms import DONE
 from sp_workflow.database import OperatorError
 from sp_workflow.lifecycle import KO, MATURITY, LifecycleError, current_events_of, record_legacy
+from sp_workflow.product_store import incomplete_locked, locked, read_many
 
 if TYPE_CHECKING:
     import psycopg
@@ -49,7 +50,6 @@ if TYPE_CHECKING:
     from fcn_checker.orders.reference import OrderRecord
 
 SLOTS = 12
-UNDERLYINGS = 5
 # 必填的價格（價格的鍵，`fcn_checker.fields`）；下限價在沒有 KI 時本來就空白
 REQUIRED_PRICES = frozenset(("initial", "strike", "ko"))
 FILLED, EXISTING, SKIPPED = "已補", "已存在", "不匯入"
@@ -230,21 +230,22 @@ def _read(path: Path, fmt: ReferenceFormat) -> tuple[list[OrderRecord], dict[int
 def _products(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, _Product]:
     """表上的商品與資料庫裡所有已鎖住、還缺價格或比價日的商品；鎖住列，避免同時有人改。
 
-    商品條件還是自己讀；要改讀法時先看能不能用 `product_store.read_many`（#204）。
+    商品條件經 `product_store.read_many`（#438）；鎖住之後再看一次缺不缺，讀之間有人補上的不算。
     """
-    codes = ", ".join(f"p.underlying_{i}" for i in range(1, UNDERLYINGS + 1))
-    rows = conn.execute(  # 鎖住＝`locked_at` 有值（同 `product_store.locked`）
-        f"SELECT p.tdcc, p.locked_at IS NOT NULL, {codes},"
-        " EXISTS (SELECT 1 FROM workflow.underlying_price u WHERE u.tdcc = p.tdcc),"
-        " EXISTS (SELECT 1 FROM workflow.autocall_date a WHERE a.tdcc = p.tdcc),"
-        " (SELECT c.status FROM workflow.check_terms c WHERE c.tdcc = p.tdcc), p.final_valuation_date"
-        " FROM workflow.product p WHERE p.tdcc = ANY(%s) OR (p.locked_at IS NOT NULL AND ("
-        " NOT EXISTS (SELECT 1 FROM workflow.underlying_price u WHERE u.tdcc = p.tdcc)"
-        " OR NOT EXISTS (SELECT 1 FROM workflow.autocall_date a WHERE a.tdcc = p.tdcc)))"
-        " ORDER BY p.tdcc FOR UPDATE OF p",
-        (list(tdccs),),
-    ).fetchall()
-    return {row[0]: _Product(row[1], tuple(row[2 : 2 + UNDERLYINGS]), *row[2 + UNDERLYINGS :]) for row in rows}
+    listed = set(tdccs)
+    found = read_many(conn, sorted(listed | set(incomplete_locked(conn))), lock=True)
+    return {
+        tdcc: _Product(
+            locked(s),
+            s.underlyings,
+            bool(s.prices),
+            s.autocall is not None,
+            None if s.check is None else s.check.status,
+            s.columns["final_valuation_date"],
+        )
+        for tdcc, s in found.items()
+        if tdcc in listed or (locked(s) and (not s.prices or s.autocall is None))
+    }
 
 
 # ---------- 檢查 ----------

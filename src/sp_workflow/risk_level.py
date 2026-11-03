@@ -44,7 +44,7 @@ from typing import TYPE_CHECKING, Any
 from sp_workflow.credit_ratings import GUARANTOR, ISSUER, MOODYS, RatingRows, load_rows
 from sp_workflow.database import require_in_transaction
 from sp_workflow.product_record import plain
-from sp_workflow.product_store import issuer_code
+from sp_workflow.product_store import Stored, issuer_code, locked_tdccs, read_many
 from sp_workflow.sheet_cells import bbg_code
 from sp_workflow.status import Risk
 
@@ -344,19 +344,20 @@ def _number(value: Decimal) -> str:
 # ---------- 資料庫 ----------
 
 
-def recalculate_risk(conn: psycopg.Connection, tdccs: Sequence[str], config: ImportConfig) -> dict[str, RiskLevel]:
-    """算這幾檔（還沒鎖住的），和上一次不同的寫入；在呼叫端的 transaction 裡（商品條件列已由核對條件重算鎖住）。
+def recalculate_risk(conn: psycopg.Connection, found: Sequence[Stored], config: ImportConfig) -> dict[str, RiskLevel]:
+    """算這幾檔（還沒鎖住的，核對條件重算鎖住商品條件列時讀好的 `Stored`），和上一次不同的寫入；在呼叫端的
+    transaction 裡。
 
     上手代碼用 `product_store.issuer_code`（TDCC 前三碼，查不到時用發行機構的寫法反查），
     指數清單用 `config.index_underlyings`，ETF 清單見 `etf_list`。
     """
     require_in_transaction(conn)
-    stored = risk_levels(conn, list(tdccs))
-    found = _assess_all(conn, tdccs, config)
-    for tdcc, risk in found.items():
+    stored = risk_levels(conn, [s.tdcc for s in found])
+    assessed = _assess_all(conn, found, config)
+    for tdcc, risk in assessed.items():
         if stored.get(tdcc) != risk:
             _write(conn, tdcc, risk)
-    return found
+    return assessed
 
 
 def fill_missing_locked(conn: psycopg.Connection, config: ImportConfig, tdccs: Sequence[str] | None = None) -> int:
@@ -366,37 +367,31 @@ def fill_missing_locked(conn: psycopg.Connection, config: ImportConfig, tdccs: S
     更正不重算風險等級），寫入用 `ON CONFLICT DO NOTHING`：別的連線同時補了同一檔時以先寫的為準。
     """
     require_in_transaction(conn)
-    where, params = ("", ()) if tdccs is None else (" AND p.tdcc = ANY(%s)", (list(tdccs),))
-    missing = [
-        tdcc
-        for (tdcc,) in conn.execute(
-            "SELECT p.tdcc FROM workflow.product p LEFT JOIN workflow.risk_level r USING (tdcc)"
-            " WHERE p.locked_at IS NOT NULL AND r.tdcc IS NULL" + where + " ORDER BY p.tdcc",
-            params,
-        )
-    ]
-    for tdcc, risk in _assess_all(conn, missing, config).items():
+    candidates = locked_tdccs(conn, tdccs)
+    have = {t for (t,) in conn.execute("SELECT tdcc FROM workflow.risk_level WHERE tdcc = ANY(%s)", (candidates,))}
+    missing = [tdcc for tdcc in candidates if tdcc not in have]
+    for tdcc, risk in _assess_all(conn, list(read_many(conn, missing).values()), config).items():
         _write(conn, tdcc, risk, overwrite=False)
     return len(missing)
 
 
-def _assess_all(conn: psycopg.Connection, tdccs: Sequence[str], config: ImportConfig) -> dict[str, RiskLevel]:
-    """這幾檔的風險等級（依 TDCC），不寫入。"""
-    if not tdccs:
+def _assess_all(conn: psycopg.Connection, found: Sequence[Stored], config: ImportConfig) -> dict[str, RiskLevel]:
+    """這幾檔（依 TDCC 排好的 `Stored`）的風險等級，不寫入。"""
+    if not found:
         return {}
-    terms = [
-        RiskTerms(tdcc, issuer_code(tdcc, issuer, config), trade_date, tenor, tuple(underlyings))
-        for tdcc, issuer, trade_date, tenor, *underlyings in conn.execute(
-            "SELECT tdcc, issuer, trade_date, tenor_months, underlying_1, underlying_2, underlying_3, underlying_4,"
-            " underlying_5 FROM workflow.product WHERE tdcc = ANY(%s) ORDER BY tdcc",
-            (list(tdccs),),
-        )
-    ]
+    terms = [_terms(s, config) for s in found]
     price_dates = [d for (d,) in conn.execute("SELECT DISTINCT price_date FROM workflow.price_import ORDER BY 1")]
     volatilities = _volatilities(conn, terms, price_dates)
     ratings = load_rows(conn)
     etfs = etf_list(conn, config)
     return {t.tdcc: assess(t, price_dates, volatilities, ratings, config.index_underlyings, etfs) for t in terms}
+
+
+def _terms(found: Stored, config: ImportConfig) -> RiskTerms:
+    """資料庫裡的這檔 → 算風險等級要用的欄位。"""
+    p = found.columns
+    issuer = issuer_code(found.tdcc, p["issuer"], config)
+    return RiskTerms(found.tdcc, issuer, p["trade_date"], p["tenor_months"], found.underlyings)
 
 
 def etf_list(conn: psycopg.Connection, config: ImportConfig) -> frozenset[str]:

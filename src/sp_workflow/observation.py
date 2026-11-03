@@ -49,7 +49,6 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from fcn_checker.fields import PRICE_SQL
 from fcn_checker.products import PRODUCT_RULES
 from sp_workflow.check_terms import NO_BARRIER as NO_KI
 from sp_workflow.lifecycle import (
@@ -66,6 +65,8 @@ from sp_workflow.lifecycle import (
     replace_auto_events,
 )
 from sp_workflow.product_record import KO_TYPES, plain, price_at, round_price
+from sp_workflow.product_store import Stored, read_many
+from sp_workflow.product_store import locked as is_locked
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource
 from sp_workflow.stock_splits import STRIKE_CLOSE_DAYS, Jump, SplitBook, in_range, load_splits, refresh_basis
 
@@ -101,7 +102,9 @@ class Underlying:
     strike: Decimal | None  # 執行價
     ki: Decimal | None  # 下限價
     ko: Decimal | None  # KO 價
-    basis: dt.date | None = None  # 價格基準日：四個價格含到這天生效的拆股；None 是 Strike date（#275）
+    basis: dt.date | None = (
+        None  # 價格基準日：四個價格含到這天生效的拆股（#275）；`from_stored` 帶 `Stored.price_basis`，None 是 Strike date
+    )
     lookback: Decimal | None = None  # 回顧期初價格（#374）；有值時到期的表現用它算
 
     @property
@@ -127,6 +130,32 @@ class Terms:
     strike_pct: Decimal | None = None  # 執行價(%)：回顧執行價 = 回顧期初價格 × 它
     keep_strike: bool = False  # 已鎖住的歷史回補商品：回顧執行價和資料庫的不同時待確認、不覆寫（#374）
     manual_ko: bool = False  # 只在到期判定的商品（BEN）填了 KO%：真的有 KO，會不會提前出場由人判斷（#406）
+
+    @classmethod
+    def from_stored(cls, found: Stored) -> Terms:
+        """資料庫裡的這檔（`product_store.Stored`）→ 比價條件。標的的價格基準日用 `Stored.price_basis`。"""
+        p = found.columns
+        product, non_call, tenor = p["product"], p["non_call_months"], p["tenor_months"]
+        rule = PRODUCT_RULES.get(product)
+        return cls(
+            found.tdcc,
+            p["ko_type"],
+            p["barrier_type"],
+            p["strike_date"],
+            p["final_valuation_date"],
+            tuple(sorted(d for d in (found.autocall or {}).values() if d is not None)),
+            tuple(
+                Underlying(u.seq, u.code, u.initial, u.strike, u.ki, u.ko, found.price_basis(u.seq), u.lookback)
+                for u in found.prices
+            ),
+            non_call is not None and tenor is not None and non_call >= tenor,
+            rule is None or rule.final_date_callable,
+            p["trade_date"],
+            p["lookback_end_date"],
+            p["strike_pct"],
+            is_locked(found) and found.source == ProductSource.BACKFILL,
+            p["ko_pct"] is not None and rule is not None and rule.maturity_only,
+        )
 
 
 @dataclass(frozen=True)
@@ -626,69 +655,14 @@ def _events_text(events: Sequence[StoredEvent]) -> str:
 def _load_terms(
     conn: psycopg.Connection,
 ) -> tuple[list[Terms], dict[str, bool], dict[str, tuple[str, str | None]]]:
-    """核對條件完成的商品的比價條件、每檔是否鎖住，以及核對條件不是完成的 {TDCC: (狀態, 原因)}。
+    """核對條件完成的商品的比價條件、每檔是否鎖住，以及核對條件不是完成的 {TDCC: (狀態, 原因)}（算過核對條件的商品）。
 
-    商品條件還是自己讀；要改讀法時先看能不能用 `product_store.read_many`（#204）。
+    商品條件經 `product_store.read_many`（#438）。
     """
-    rows = conn.execute(  # 鎖住＝`locked_at` 有值（同 `product_store.locked`）
-        "SELECT p.tdcc, p.ko_type, p.barrier_type, p.strike_date, p.final_valuation_date,"
-        " p.non_call_months, p.tenor_months, p.locked_at IS NOT NULL, c.status, c.reason, p.product,"
-        " p.trade_date, p.lookback_end_date, p.strike_pct, p.source, p.ko_pct"
-        " FROM workflow.product p JOIN workflow.check_terms c ON c.tdcc = p.tdcc ORDER BY p.tdcc"
-    ).fetchall()
-    locked = {row[0]: row[7] for row in rows}
-    not_done = {row[0]: (row[8], row[9]) for row in rows if row[8] != CheckTerms.DONE}
-    done = [row for row in rows if row[8] == CheckTerms.DONE]
-    tdccs = [row[0] for row in done]
-    underlyings: dict[str, list[Underlying]] = {}
-    for tdcc, seq, code, initial, strike, ki, ko, basis, lookback in conn.execute(
-        f"SELECT tdcc, seq, code, {PRICE_SQL}, price_basis_date, lookback_price"
-        " FROM workflow.underlying_price WHERE tdcc = ANY(%s) ORDER BY tdcc, seq",
-        (tdccs,),
-    ):
-        underlyings.setdefault(tdcc, []).append(Underlying(seq, code, initial, strike, ki, ko, basis, lookback))
-    autocall: dict[str, list[dt.date]] = {}
-    for tdcc, value in conn.execute(
-        "SELECT tdcc, value FROM workflow.autocall_date WHERE tdcc = ANY(%s) AND value IS NOT NULL ORDER BY tdcc, value",
-        (tdccs,),
-    ):
-        autocall.setdefault(tdcc, []).append(value)
-    terms = [
-        Terms(
-            tdcc,
-            ko_type,
-            barrier,
-            strike_date,
-            final,
-            tuple(autocall.get(tdcc, ())),
-            tuple(underlyings.get(tdcc, ())),
-            non_call is not None and tenor is not None and non_call >= tenor,
-            product not in PRODUCT_RULES or PRODUCT_RULES[product].final_date_callable,
-            trade_date,
-            lookback_end,
-            strike_pct,
-            is_locked and source == ProductSource.BACKFILL,
-            ko_pct is not None and product in PRODUCT_RULES and PRODUCT_RULES[product].maturity_only,
-        )
-        for (
-            tdcc,
-            ko_type,
-            barrier,
-            strike_date,
-            final,
-            non_call,
-            tenor,
-            is_locked,
-            _,
-            _,
-            product,
-            trade_date,
-            lookback_end,
-            strike_pct,
-            source,
-            ko_pct,
-        ) in done  # fmt: skip
-    ]
+    found = [s for s in read_many(conn).values() if s.check is not None]
+    locked = {s.tdcc: is_locked(s) for s in found}
+    not_done = {s.tdcc: (s.check.status, s.check.reason or None) for s in found if s.check.status != CheckTerms.DONE}
+    terms = [Terms.from_stored(s) for s in found if s.check.status == CheckTerms.DONE]
     return terms, locked, not_done
 
 
