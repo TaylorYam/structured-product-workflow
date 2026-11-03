@@ -19,10 +19,10 @@
 - 回填：ISIN、發行日、比價日_1～12（空值寫法存成空白）、回顧結束日（已算出回顧期初價格的不改）、
   期初定價 VWAP 時各標的四個價格；人工放行的說明書
   若單位面額和資料庫不同，改成 TS 的值。每個改變的原值記在 `workflow.backfill_log`。寫入、紀錄與鎖住都經過
-  `product_terms.backfill`／`lock_checked`（#203），和商品條件寫入共用同一把鎖（`product_terms.read(…, lock=True)`）。
+  `product_terms.backfill`／`lock_checked`（#203），和商品條件寫入共用同一把鎖（`product_store.read(…, lock=True)`）。
 - 寫回在同一個 transaction 裡，失敗時什麼都不寫；核對結果檔已經存好，可以重新寫回（使用者 2026-10-21 確認）。
 - 信用評等（#240）：每列帶出交易日當時的發行機構、保證機構評等（三家評等機構各一欄，評等表 `credit_ratings` 依生效日查），
-  核對規則從參考條件表讀，不直接讀資料庫（ADR 0013）。上手代號和風險等級同一個 `product_terms.issuer_code`
+  核對規則從參考條件表讀，不直接讀資料庫（ADR 0013）。上手代號和風險等級同一個 `product_store.issuer_code`
   （TDCC 前三碼，查不到再用發行機構寫法反查）。評等表沒有這個機構（或沒有該家評等）時那幾欄空白。
   評等在核對後改了也算條件改了（不回填、不鎖住），但只看有做評等核對的上手（`Issuer.ratings`）；
   核對時的參考條件表沒有評等欄（v18 以前產生的）不算改了。
@@ -44,12 +44,13 @@ from openpyxl.cell.cell import Cell
 
 from fcn_checker.config import RISK_LEVEL_PENDING
 from fcn_checker.rating_formats import AGENCY_KEYS, RATING_FIELDS
-from sp_workflow.check_terms import DONE, price_at
+from sp_workflow.check_terms import DONE
 from sp_workflow.credit_ratings import RatingRows, load_rows
 from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdatedError, connect
 from sp_workflow.file_tools import save_book, table_book
 from sp_workflow.product_record import PRICE_COLUMNS, missing_fields, same_value
-from sp_workflow.product_terms import Stored, backfill, lock_checked, locked, read, read_many
+from sp_workflow.product_store import Stored, issuer_code, locked, read, read_many
+from sp_workflow.product_terms import backfill, lock_checked
 from sp_workflow.risk_level import PENDING, RiskLevel, risk_level_of, risk_levels
 
 if TYPE_CHECKING:
@@ -85,7 +86,7 @@ class CheckSourceError(Exception):
 
 @dataclass(frozen=True)
 class IssuerCodes:
-    """找上手代號用的兩張對照（`product_terms.IssuerLookup`）：上手編號對照與參考條件表格式的發行機構寫法。"""
+    """找上手代號用的兩張對照（`product_store.IssuerLookup`）：上手編號對照與參考條件表格式的發行機構寫法。"""
 
     issuer_prefixes: Mapping[str, str]  # TDCC 前三碼 → 上手代號
     issuer_names: Mapping[str, str]  # 上手代號 → 發行機構的寫法
@@ -95,8 +96,6 @@ class IssuerCodes:
         return cls(prefixes, fmt.issuer_values)
 
     def code(self, tdcc: str, issuer: str) -> str:
-        from sp_workflow.product_terms import issuer_code  # product_terms 牽涉很多模組，用到才載入
-
         return issuer_code(tdcc, issuer, self)
 
 
@@ -212,14 +211,8 @@ def _row(
             key = f"underlying_{i}_{column}"
             if not code or (col == "ki" and no_ki) or (col == "ko" and p["ko_pct"] is None):  # BEN 預設沒有 KO
                 values[key] = empty
-            elif (
-                col == "strike"
-                and price is not None
-                and price.lookback is not None
-                and price.initial is not None
-                and p["strike_pct"] is not None
-            ):
-                values[key] = price_at(price.initial, p["strike_pct"])  # lookback（#374）：核對比的是 TS 的期初執行價
+            elif col == "strike":
+                values[key] = found.original_strike(i)  # lookback（#374）：核對比的是 TS 的期初執行價
             else:
                 values[key] = None if price is None else getattr(price, col)  # VWAP 還沒回填時空白，核對通過後回填
     extra: dict[str, Any] = {fmt.issuer_column: p["issuer"], "UF": p["upfront_pct"]}

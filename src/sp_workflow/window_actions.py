@@ -98,18 +98,17 @@ from sp_workflow.preparation import PrepareReceipt, prepare_batch
 from sp_workflow.product_backfill import ProductBackfillError, ProductBackfillReceipt, backfill_products
 from sp_workflow.product_export import ExportReceipt, export_products, export_summary
 from sp_workflow.product_record import plain
+from sp_workflow.product_store import Stored, read
 from sp_workflow.product_terms import (
     BatchReceipt,
     Draft,
     ImportConfig,
     MissingProduct,
     Receipt,
-    Stored,
     TermsError,
     draft_from,
     load_import_config,
     missing_products,
-    read,
     write,
     write_batch,
 )

@@ -51,7 +51,6 @@ from typing import TYPE_CHECKING
 
 from fcn_checker.products import PRODUCT_RULES
 from sp_workflow.check_terms import NO_BARRIER as NO_KI
-from sp_workflow.check_terms import price_at, round_price
 from sp_workflow.lifecycle import (
     DELIVERY,
     KO,
@@ -65,7 +64,7 @@ from sp_workflow.lifecycle import (
     current_events_of,
     replace_auto_events,
 )
-from sp_workflow.product_record import KO_TYPES, plain
+from sp_workflow.product_record import KO_TYPES, plain, price_at, round_price
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource
 from sp_workflow.stock_splits import STRIKE_CLOSE_DAYS, Jump, SplitBook, in_range, load_splits, refresh_basis
 
@@ -628,9 +627,9 @@ def _load_terms(
 ) -> tuple[list[Terms], dict[str, bool], dict[str, tuple[str, str | None]]]:
     """核對條件完成的商品的比價條件、每檔是否鎖住，以及核對條件不是完成的 {TDCC: (狀態, 原因)}。
 
-    商品條件還是自己讀；要改讀法時先看能不能用 `product_terms.read_many`（#204）。
+    商品條件還是自己讀；要改讀法時先看能不能用 `product_store.read_many`（#204）。
     """
-    rows = conn.execute(  # 鎖住＝`locked_at` 有值（同 `product_terms.locked`）
+    rows = conn.execute(  # 鎖住＝`locked_at` 有值（同 `product_store.locked`）
         "SELECT p.tdcc, p.ko_type, p.barrier_type, p.strike_date, p.final_valuation_date,"
         " p.non_call_months, p.tenor_months, p.locked_at IS NOT NULL, c.status, c.reason, p.product,"
         " p.trade_date, p.lookback_end_date, p.strike_pct, p.source, p.ko_pct"
