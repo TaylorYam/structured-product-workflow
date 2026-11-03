@@ -10,7 +10,8 @@ from __future__ import annotations
 import re
 from decimal import Decimal
 
-from ..parsers.ca_super_bull import FX_LINE, WORDS, CaSuperBullTermSheet
+from ..parsers.ca_super_bull import WORDS, CaSuperBullTermSheet
+from ..parsers.ca_variants import FX_LINE
 from ..parsers.common import dec
 from ..schema import CheckResult, ParsedField
 from ..schema import CheckStatus as S

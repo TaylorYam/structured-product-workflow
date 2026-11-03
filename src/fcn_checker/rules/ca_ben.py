@@ -11,7 +11,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from ..parsers.ca_ben import CaBenTermSheet
-from ..parsers.ca_super_bull import worst_row
+from ..parsers.ca_variants import worst_row
 from ..schema import CheckResult
 from ..schema import CheckStatus as S
 from . import ben, ca, delivery, kit, super_bull

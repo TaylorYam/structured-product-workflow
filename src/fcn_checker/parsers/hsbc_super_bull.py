@@ -365,7 +365,7 @@ def _scenarios(ti: hsbc.ScenarioIndex) -> SbScenarios:
 
 def worst_row(name: str | None, prices: ParsedField) -> int | None:
     """情境寫的最差標的（「（中文名稱）」，HSBC BEN 同）→ 價格表第幾檔：單一標的為第 1 檔；名稱去空白後要和價格表那一列
-    完全相同（CA 的 `ca_super_bull.worst_row` 只比開頭），對不到或多列相同為 None（共用規則轉人工覆核）。"""
+    完全相同（CA 的 `ca_variants.worst_row` 只比開頭），對不到或多列相同為 None（共用規則轉人工覆核）。"""
     if not prices.ok:
         return None
     if len(prices.value) == 1:
