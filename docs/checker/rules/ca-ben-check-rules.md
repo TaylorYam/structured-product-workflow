@@ -52,7 +52,7 @@
 | `coupon_barrier_pct` | 共用 `field.coupon_barrier_pct` | 紅利門檻（workflow #406）：第 9 項到期（2）與 Bonus 公式是「≥ 執行價」就領紅利，交出 = K%，和參考條件表「配息門檻(%)」比；表上沒有這欄（舊 Excel）時和 `K(%)` 比，有這欄但空白或 `-` 轉人工覆核 |
 | `ko_pct`、KO 價 | 不適用 | 說明書沒有 KO；表上值不看（ADR 0029） |
 | `ki_type`、`ki_pct`、下限價 | 共用 | 無 KI：KI(Freq) `-`、KI(%) `-`、`UL_n_下限價` `-` 或空白 |
-| Non-Call | 共用 `field.*`＋`field.non_call_product` | = 天期（`PRODUCT_RULES` 的 BEN `maturity_only`） |
+| Non-Call | 共用 `field.*`＋`field.non_call_product` | = 天期（`PRODUCT_RULES` 的 BEN：`ProductRule.non_call_is_tenor`） |
 | 比價日 | 共用 `backfill.compare_dates` | 只有 `比價日_{天期}` = 13.(4) 期末訂價日，其他 `-` |
 
 ### 3.3 紅利與參與率

@@ -23,7 +23,7 @@ from .config import ReferenceFormat, load_toml
 from .ingestion import IngestionError
 from .investor_sheet import IisSheet, read_iis
 from .orders.reference import OrderRecord
-from .products import BEN, PRODUCT_RULES, SUPER_BULL
+from .products import ProductRule, rule_or_fcn
 from .rules.kit import read_standard, to_int
 from .rules.reference import VWAP
 from .schema import ParsedField
@@ -215,22 +215,26 @@ def unopened_product(product: Any, opened: frozenset[str]) -> str | None:
 
 
 # 商品種類限定的樣態（#309 決策、ADR 0028；所有上手共用）：參考條件表欄 → （樣態條件, 允許值, 允許值的寫法）。
-# 該列 Product 是這種商品、任一欄不是允許值 → 不支援樣態。Super Bull 只支援 KO 每期觀察、非記憶式、無 KI
-# （起單建檔 KO Type = Period End、Barrier Type = NONE）；BEN 同樣，另要 Non-Call = 天期（`ProductRule.maturity_only`，
-# ADR 0029、#375）。
+# 該列 Product 的規則限定樣態、任一欄不是允許值 → 不支援樣態。哪些商品限定問商品規則（#435）：
+# `ProductRule.only_periodic_no_ki`（Super Bull、BEN：KO 每期觀察、非記憶式、無 KI，起單建檔 KO Type = Period End、
+# Barrier Type = NONE）、`ProductRule.non_call_is_tenor`（BEN 另要 Non-Call = 天期，ADR 0029、#375）。
 _PERIODIC_NO_KI = (
     ("KO(Freq)", "ko_observation", "P", "P"),
     ("KO(memo)", "ko_memory", False, "N"),
     ("KI(Freq)", "ki_type", "none", "-"),
 )
-PRODUCT_TERMS: dict[str, tuple[tuple[str, str, Any, str], ...]] = {SUPER_BULL: _PERIODIC_NO_KI, BEN: _PERIODIC_NO_KI}
+
+
+def _product_terms(rule: ProductRule) -> tuple[tuple[str, str, Any, str], ...]:
+    """這種商品限定的樣態條件（`_PERIODIC_NO_KI` 的格式）；不限定的商品種類（不支援的照 FCN）為空。"""
+    return _PERIODIC_NO_KI if rule.only_periodic_no_ki() else ()
 
 
 def product_terms_text(product: str) -> str:
     """這種商品支援的樣態寫法（錯訊用），例：KO(Freq) P、KO(memo) N、KI(Freq) -。"""
-    out = [f"{col} {shown}" for col, _, _, shown in PRODUCT_TERMS.get(product, ())]
-    rule = PRODUCT_RULES.get(product)
-    return "、".join([*out, "Non-Call = 天期"] if rule is not None and rule.maturity_only else out)
+    rule = rule_or_fcn(product)
+    out = [f"{col} {shown}" for col, _, _, shown in _product_terms(rule)]
+    return "、".join([*out, "Non-Call = 天期"] if rule.non_call_is_tenor() else out)
 
 
 def product_terms_problems(product: str, row: OrderRecord, terms: Terms | None) -> list[str]:
@@ -242,10 +246,10 @@ def product_terms_problems(product: str, row: OrderRecord, terms: Terms | None) 
         return raw if raw not in (None, "") else "空白"
 
     out = []
-    for col, attr, want, _ in PRODUCT_TERMS.get(product, ()):
+    rule = rule_or_fcn(product)
+    for col, attr, want, _ in _product_terms(rule):
         if terms is None or getattr(terms, attr) != want:
             out.append(f"{col}「{shown(attr)}」")
-    rule = PRODUCT_RULES.get(product)
-    if rule is not None and rule.maturity_only and (terms is None or terms.first_callable != terms.tenor):
+    if rule.non_call_is_tenor() and (terms is None or terms.first_callable != terms.tenor):
         out.append(f"Non-Call「{shown('first_callable_period')}」（天期「{shown('tenor_months')}」）")
     return out

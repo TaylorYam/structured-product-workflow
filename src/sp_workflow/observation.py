@@ -6,9 +6,9 @@
   先假設收盤價不會事後更正。
 - KO：收盤價 ≥ KO 價。非記憶式要同一個觀察日所有標的都達標；記憶式每檔標的在任一觀察日達標就記住，全部記過即 KO。
   D 型的觀察日是第一個比價日（資料庫最早的比價日；沒有 Non-Call 的 FCN_Express 是比價日_1，#302）起到最終比價日止、所有標的市場都開市的日子；P 型只看各期比價日。
-  Non-Call 等於天期的商品不會提前出場，不觀察 KO。最終比價日不算 KO 的商品種類（Super Bull、BEN，`ProductRule.final_date_callable`，
+  Non-Call 等於天期的商品不會提前出場，不觀察 KO（`ProductRule.no_early_exit`）。最終比價日不算 KO 的商品種類（Super Bull、BEN，`ProductRule.final_date_can_ko`，
   #310、ADR 0028）即使比價日裡有最終比價日，那天也只做到期判定。BEN 預設沒有 KO（KO% 空白）；填了 KO% 的 BEN 有 KO 機制，
-  待確認、由人判斷會不會提前出場（#406、ADR 0029）。
+  待確認、由人判斷會不會提前出場（`ProductRule.ko_needs_review`，#406、ADR 0029）。比價政策都問商品規則，不支援的商品種類照 FCN（#435）。
 - KI：EKI 只在最終比價日，收盤價 < 下限價；AKI 自 Strike date 之後、該標的市場的每個交易日；
   MKI（每期觀察）不比，KI 欄寫「MKI (manual)」，KO 照比、比價狀態照 KO 算；最終比價日沒有 KO 時待確認（#196）。
 - 比價狀態、已比到、原因只講 KO（#196、ADR 0022）：已比到第一個比價日之前、不觀察 KO 的都空白；KI 另寫一欄
@@ -49,7 +49,7 @@ from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from fcn_checker.products import PRODUCT_RULES
+from fcn_checker.products import rule_or_fcn
 from sp_workflow.check_terms import NO_BARRIER as NO_KI
 from sp_workflow.lifecycle import (
     DELIVERY,
@@ -137,7 +137,7 @@ class Terms:
         """資料庫裡的這檔（`product_store.Stored`）→ 比價條件。標的的價格基準日用 `Stored.price_basis`。"""
         p = found.columns
         product, non_call, tenor = p["product"], p["non_call_months"], p["tenor_months"]
-        rule = PRODUCT_RULES.get(product)
+        rule = rule_or_fcn(product)  # 比價政策問商品規則；不支援的商品種類照 FCN（#435）
         return cls(
             found.tdcc,
             p["ko_type"],
@@ -149,13 +149,13 @@ class Terms:
                 Underlying(u.seq, u.code, u.initial, u.strike, u.ki, u.ko, found.price_basis(u.seq), u.lookback)
                 for u in found.prices
             ),
-            non_call is not None and tenor is not None and non_call >= tenor,
-            rule is None or rule.final_date_callable,
+            rule.no_early_exit(non_call, tenor),
+            rule.final_date_can_ko(),
             p["trade_date"],
             p["lookback_end_date"],
             p["strike_pct"],
             is_locked(found) and found.source == ProductSource.BACKFILL,
-            p["ko_pct"] is not None and rule is not None and rule.maturity_only,
+            rule.ko_needs_review(p["ko_pct"]),
         )
 
 
