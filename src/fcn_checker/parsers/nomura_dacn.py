@@ -17,8 +17,8 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, Line, ParsedField
 from ..standard_fields import ScenarioParam
 from ..text import squash
-from . import nomura
-from .common import Hit, Mention, derived, hits, one
+from . import dacn, nomura
+from .common import Hit, Mention, hits, one
 from .layout import TextIndex, capture, parse_date
 
 TEMPLATE_ID = "nomura-zh-dacn-pd"
@@ -118,7 +118,9 @@ def read(lines: Sequence[Line]) -> nomura.NomuraTermSheet:
     fields["coupon_pa_pct"] = annual
     for name in ("coupon_period_pct", "monthly_coupon_pct", "coupon_art15"):
         fields[name] = standard_fields.absent(name, "每期配息率（範本只寫公式「年化配息率/12」）")
-    fields["coupon_barrier_pct"] = _coupon_barrier(t7, fields["strike_pct"])
+    # 實際日數比的是「其各自執行價」→ 配息門檻 = 標的表表頭執行價 %（範本規格 §4.1）；證據掛定義句與表頭
+    lns, missing = _found("coupon_barrier_pct", t7, ACTUAL_DAYS, "實際日數定義")
+    fields["coupon_barrier_pct"] = missing or dacn.barrier_from_strike(lns, fields["strike_pct"])
     fields["guaranteed_periods"] = _guaranteed(t7)
     mentions = _article15(nomura.article_lines(doc, 15))
     _article14(fields, nomura.article_lines(doc, 14))
@@ -131,16 +133,6 @@ def _found(name: str, t7: TextIndex, text: str, what: str) -> tuple[list[Line], 
     if a < 0:
         return [], ParsedField.missing(name, f"第 7 項找不到{what}的現行版寫法")
     return t7.lines_for(a, a + len(text)), None
-
-
-def _coupon_barrier(t7: TextIndex, strike: ParsedField) -> ParsedField:
-    """實際日數比的是「其各自執行價」→ 配息門檻 = 標的表表頭執行價 %（範本規格 §4.1）；證據掛定義句與表頭。"""
-    name = "coupon_barrier_pct"
-    lns, missing = _found(name, t7, ACTUAL_DAYS, "實際日數定義")
-    if missing is not None:
-        return missing
-    pf = derived(name, strike, strike.value)
-    return ParsedField(name, pf.status, pf.value, [*map(Evidence.of, lns), *pf.evidence], note=pf.note)
 
 
 def _guaranteed(t7: TextIndex) -> ParsedField:
@@ -197,7 +189,7 @@ def _one_in(
     if lo < 0:
         return ParsedField.missing(name, f"找不到第 14 項「情境{k}（」段落")
     hi = sections[nxt] if sections[nxt] >= 0 else len(t14.text)
-    hit = one(nomura._in_section(t14, found, lo, hi))
+    hit = one(nomura.in_section(t14, found, lo, hi))
     if hit is None:
         note = f"第 14 項情境{k}「{what}」缺漏、重複或不在範本規格內"
         return ParsedField.invalid(name, t14.lines_for(lo, min(hi, lo + 1)), note)

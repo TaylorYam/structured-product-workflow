@@ -18,8 +18,8 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, Line, ParsedField
 from ..standard_fields import ScenarioParam
 from ..text import squash
-from . import money, sg
-from .common import Mention, derived
+from . import dacn, money, sg
+from .common import Mention
 from .layout import TextIndex, capture, join_text, parse_date
 
 TEMPLATE_ID = "sg-zh-dacn-pd"
@@ -130,7 +130,13 @@ def read(lines: Sequence[Line]) -> sg.SgTermSheet:
     fields["monthly_coupon_pct"] = capture("monthly_coupon_pct", t8, MONTHLY, Decimal, whole_match=True)
     fields["coupon_pa_pct"] = capture("coupon_pa_pct", t8, ANNUAL, Decimal, whole_match=True)
     fields["prorate_range"] = standard_fields.absent("prorate_range", "配息按比例條款（DACN 改寫 n(i) 只算到出場當日）")
-    fields["coupon_barrier_pct"] = _coupon_barrier(t8, fields["strike_pct"])
+    # n(i) 比的是「其執行價」→ 配息門檻 = 執行價 %（範本規格 §4.1）；證據掛定義句與「執行價：」行
+    m = next(iter(t8.finditer(ACCRUED)), None)
+    fields["coupon_barrier_pct"] = (
+        ParsedField.missing("coupon_barrier_pct", "第 8 項找不到 n(i) 定義的現行版寫法")
+        if m is None
+        else dacn.barrier_from_strike(t8.lines_for(m.start(), m.end()), fields["strike_pct"])
+    )
     fields["guaranteed_periods"], fields["accrual_ranges"] = _periods(t8)
     _scenarios(fields, base.scenarios)
     mentions = [Mention.of_field("第 8 項配息率", fields["monthly_coupon_pct"])]
@@ -152,17 +158,6 @@ def _cover_title(cover: list[Line]) -> ParsedField:
     if not title:
         return ParsedField.missing(name, f"找不到封面標題名稱（「{sg.COVER_TITLE}」到代號句之間）")
     return ParsedField.present(name, join_text(title).strip(), title)
-
-
-def _coupon_barrier(t8: TextIndex, strike: ParsedField) -> ParsedField:
-    """n(i) 比的是「其執行價」→ 配息門檻 = 執行價 %（範本規格 §4.1）；證據掛定義句與「執行價：」行。"""
-    name = "coupon_barrier_pct"
-    m = next(iter(t8.finditer(ACCRUED)), None)
-    if m is None:
-        return ParsedField.missing(name, "第 8 項找不到 n(i) 定義的現行版寫法")
-    pf = derived(name, strike, strike.value)
-    lns = t8.lines_for(m.start(), m.end())
-    return ParsedField(name, pf.status, pf.value, [*map(Evidence.of, lns), *pf.evidence], note=pf.note)
 
 
 def _periods(t8: TextIndex) -> tuple[ParsedField, ParsedField]:
