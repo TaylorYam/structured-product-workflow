@@ -20,6 +20,7 @@ from sp_workflow.exposure import (
     UNKNOWN,
     WATCH,
     Holding,
+    KiTouch,
     Leg,
     Position,
     assess,
@@ -43,7 +44,12 @@ def leg(seq: int, code: str, close: str | None, *, initial: str = "100", strike:
 
 def position(barrier: str | None, *legs: Leg, ki_text: str = "", terms: str | None = "完成") -> Position:
     holdings = (Holding("台北", "Amy", D(100000)),)
-    return Position("147199990001", "FCN", "XBANK", "USD", UNTIL, barrier, ki_text, terms, None, legs, holdings)
+    # 比價寫 KI 欄時一併存觸及的日期與代碼（#442）：`AKI hit 2026-10-01 UL_1 AAA UW` → 2026-10-01、AAA UW
+    words = ki_text.split()
+    touch = KiTouch(dt.date.fromisoformat(words[2]), " ".join(words[4:])) if " hit " in ki_text else None
+    return Position(
+        "147199990001", "FCN", "XBANK", "USD", UNTIL, barrier, ki_text, terms, None, legs, holdings, ki_touch=touch
+    )
 
 
 @pytest.mark.parametrize(

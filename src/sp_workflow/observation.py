@@ -12,7 +12,7 @@
 - KI：EKI 只在最終比價日，收盤價 < 下限價；AKI 自 Strike date 之後、該標的市場的每個交易日；
   MKI（每期觀察）不比，KI 欄寫「MKI (manual)」，KO 照比、比價狀態照 KO 算；最終比價日沒有 KO 時待確認（#196）。
 - 比價狀態、已比到、原因只講 KO（#196、ADR 0022）：已比到第一個比價日之前、不觀察 KO 的都空白；KI 另寫一欄
-  （沒有 KI 寫 `-`，其他是英文代碼 EKI、AKI、MKI (manual)，觸及時 `AKI hit 日期 標的`，#198），每日觀察 KI 照樣每天比，
+  （沒有 KI 寫 `-`，其他是英文代碼 EKI、AKI、MKI (manual)，觸及時 `<KI 種類> hit 日期 標的`，#198），每日觀察 KI 照樣每天比，
   缺它要的價格照樣等股價。
 - 到期（最終比價日，沒有 KO）：沒有 KI，或 KI 曾觸及，且最差表現的標的（最終收盤價 ÷ 進場價最低）收盤價 < 執行價
   → 接股（記最差標的）；否則到期還本。事件日一律是觸價或判定的那個觀察日。
@@ -45,7 +45,7 @@ import datetime as dt
 import getpass
 import re
 from collections.abc import Collection, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
@@ -69,6 +69,7 @@ from sp_workflow.product_store import Stored, read_many
 from sp_workflow.product_store import locked as is_locked
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource
 from sp_workflow.stock_splits import STRIKE_CLOSE_DAYS, Jump, SplitBook, in_range, load_splits, refresh_basis
+from sp_workflow.underlying_pricing import KiTouch, Leg, converted, worst
 
 if TYPE_CHECKING:
     import psycopg
@@ -168,6 +169,8 @@ class Outcome:
     events: tuple[AutoEvent, ...] = ()
     ki: str = ""
     lookback: tuple[Underlying, ...] = ()  # 回顧期間結束後算出回顧期初價格與執行價的標的（#374），`observe_all` 寫入
+    # KI 第一次觸及（#442）：`ki` 的字由它產生，所以不另外比
+    ki_touch: KiTouch | None = field(default=None, compare=False)
 
 
 def observe(
@@ -195,13 +198,13 @@ def observe(
     ko_start = callable_[0] if daily and not no_autocall else None
     aki = terms.barrier_type == AKI
     ko_first = None if no_autocall else callable_[0]  # 第一個比價日；之前是 Non-call 期間
-    touch: tuple[dt.date, Underlying] | None = None  # KI 第一次觸及的日期與標的
+    touch: KiTouch | None = None  # KI 第一次觸及的日期與標的
     fixed: tuple[Underlying, ...] = ()  # 回顧期間結束後的標的（回顧期初價格、回顧執行價，#374）
 
     def result(status: str, reason: str, day: dt.date | None = None) -> Outcome:
         """還沒出場的結果：已比到只算 KO 觀察（第一個比價日之前、不觀察 KO 的都空白，#196）。"""
         shown = day if day is not None and ko_first is not None and day >= ko_first else None
-        return Outcome(status, reason, shown, ki=_ki_text(terms, touch), lookback=fixed)
+        return Outcome(status, reason, shown, ki=_ki_text(terms, touch), lookback=fixed, ki_touch=touch)
 
     lookback = terms.lookback_end
     if lookback is None and any(u.lookback is not None for u in terms.underlyings):
@@ -290,16 +293,17 @@ def observe(
             if price is None:
                 for_ki = "" if ko_day or is_final else "（每日觀察 KI）"
                 return result(WAIT_PRICES, f"{u.name}：{day} 沒有收盤價{for_ki}", _before(day, first))
-            prices[u.code] = price * book.factor(u.code, u.basis or base, day)
+            prices[u.code] = converted(book, u.code, price, u.basis or base, day)
         if aki and touch is None:
             hit_ki = [u for u in terms.underlyings if u.code in prices and u.ki is not None and prices[u.code] < u.ki]
             if hit_ki:
-                touch = (day, hit_ki[0])
+                touch = KiTouch(day, hit_ki[0].code)
         if ko_day:
             hit = {u.code for u in terms.underlyings if u.ko is not None and prices[u.code] >= u.ko}
             remembered |= hit
             if (memory and remembered == set(markets)) or (not memory and hit == set(markets)):
-                return Outcome(EXITED, f"KO {day}", day, (AutoEvent(KO, day),), _ki_text(terms, touch), fixed)
+                ki = _ki_text(terms, touch)
+                return Outcome(EXITED, f"KO {day}", day, (AutoEvent(KO, day),), ki, fixed, touch)
         if is_final:
             return replace(_maturity(terms, prices, touch, day), lookback=fixed)
         day += dt.timedelta(days=1)
@@ -349,7 +353,7 @@ def _lookback_prices(
             price = closes.get(u.code, {}).get(day)
             if price is None:
                 return (), WAIT_PRICES, f"{u.name}：{day} 沒有收盤價（回顧期間）"
-            lows.append(price * book.factor(u.code, u.basis or base, day))
+            lows.append(converted(book, u.code, price, u.basis or base, day))
         if min(lows) >= u.initial:  # 期間內沒有比進場價低：回顧期初價格就是進場價，執行價照舊（不因進位改動）
             low, strike = u.initial, u.strike
         else:
@@ -393,10 +397,10 @@ def _basis_problem(terms: Terms, closes: Mapping[str, Mapping[dt.date, Decimal]]
         if close is None:
             problems.append(f"{u.name}：收盤價表沒有 {strike} 前後的收盤價，推不出價格是不是已經含拆股")
             continue
-        converted = close * book.factor(u.code, u.basis or strike, strike)
-        if not in_range(u.initial / converted):
+        based = converted(book, u.code, close, u.basis or strike, strike)
+        if not in_range(u.initial / based):
             problems.append(
-                f"{u.name}：進場價 {u.initial} 跟 {strike} 的收盤價（換到價格基準後 {converted:.6g}）對不起來，"
+                f"{u.name}：進場價 {u.initial} 跟 {strike} 的收盤價（換到價格基準後 {based:.6g}）對不起來，"
                 "拆股登記的比例或商品的價格可能有誤"
             )
     return "；".join(problems)
@@ -422,34 +426,37 @@ def _waiting(ko_first: dt.date | None, final: dt.date) -> str:
     return f"Non-call period（第一個比價日 {ko_first}）"
 
 
-def _ki_text(terms: Terms, touch: tuple[dt.date, Underlying] | None = None) -> str:
-    """進度頁 KI 欄（#196）：KI 種類的英文代碼（#198），觸及時加第一次觸及的日期與標的。"""
+def _ki_text(terms: Terms, touch: KiTouch | None = None) -> str:
+    """進度頁 KI 欄（#196）：KI 種類的英文代碼（#198），觸及時加第一次觸及的日期與標的；由觸及的結構產生（#442），
+    曝險讀結構、不解析這段字。"""
     if terms.barrier_type == NO_KI:
         return NO_KI_TEXT
     if terms.barrier_type == MKI:
         return MKI_KI
     if touch is not None:
-        return f"{terms.barrier_type} hit {touch[0]} {touch[1].name}"
+        return f"{terms.barrier_type} hit {touch.day} {_name(terms, touch.code)}"
     return terms.barrier_type
 
 
-def _maturity(
-    terms: Terms, prices: Mapping[str, Decimal], touch: tuple[dt.date, Underlying] | None, day: dt.date
-) -> Outcome:
-    """最終比價日沒有 KO：依 KI 與最差表現判定接股或到期還本。"""
+def _maturity(terms: Terms, prices: Mapping[str, Decimal], touch: KiTouch | None, day: dt.date) -> Outcome:
+    """最終比價日沒有 KO：依 KI 與最差表現判定接股或到期還本（表現、跌破、最差一檔由 `underlying_pricing` 算）。"""
     if terms.barrier_type == MKI:
         return Outcome(TO_CONFIRM, f"每期觀察 KI，最終比價日 {day} 沒有 KO，要人工判定接股或到期還本", day, ki=MKI_KI)
-    if terms.barrier_type == EKI:
-        hit_ki = [u for u in terms.underlyings if u.ki is not None and prices[u.code] < u.ki]
-        touch = (day, hit_ki[0]) if hit_ki else None
-    ki = _ki_text(terms, touch)
     # 最差表現：最終收盤價 ÷ 進場價（lookback 用回顧期初價格，#374；2026-11-02 使用者決定，#404）
-    worst = min(terms.underlyings, key=lambda u: (prices[u.code] / (u.lookback or u.initial), u.seq))  # type: ignore[operator]
+    legs = [
+        Leg(u.seq, u.code, u.lookback or u.initial, u.strike, u.ki, prices[u.code], u.ko) for u in terms.underlyings
+    ]
+    if terms.barrier_type == EKI:
+        hit_ki = [leg for leg in legs if leg.below_ki]
+        touch = KiTouch(day, hit_ki[0].code) if hit_ki else None
+    ki = _ki_text(terms, touch)
+    lowest = worst(legs)
     knocked = terms.barrier_type == NO_KI or touch is not None
-    assert worst.strike is not None
-    if knocked and prices[worst.code] < worst.strike:
-        return Outcome(EXITED, f"接股 {worst.code} {day}", day, (AutoEvent(DELIVERY, day, worst.code),), ki)
-    return Outcome(EXITED, f"到期還本 {day}", day, (AutoEvent(MATURITY, day),), ki)
+    assert lowest is not None and lowest.strike is not None
+    if knocked and lowest.below_strike:
+        event = AutoEvent(DELIVERY, day, lowest.code)
+        return Outcome(EXITED, f"接股 {lowest.code} {day}", day, (event,), ki, ki_touch=touch)
+    return Outcome(EXITED, f"到期還本 {day}", day, (AutoEvent(MATURITY, day),), ki, ki_touch=touch)
 
 
 def _terms_problem(terms: Terms, calendar: TradingCalendar) -> str:
@@ -520,6 +527,7 @@ class Observed:
     observed_through: dt.date | None
     locked: bool
     ki: str = ""  # 進度頁 KI 欄（#196）
+    ki_touch: KiTouch | None = None  # KI 第一次觸及（#442），存進比價狀態給曝險讀
 
 
 @dataclass(frozen=True)
@@ -584,6 +592,7 @@ def observe_all(
                         before.observed_through if before else None,
                         locked[t.tdcc],
                         before.ki if before and before.ki else _ki_text(t),
+                        before.ki_touch if before and before.ki else None,
                     )
                 )
                 continue
@@ -603,9 +612,23 @@ def observe_all(
                         )
                 except LifecycleError as exc:  # 例如比價中有人登記了顧客贖回
                     errors.append((t.tdcc, str(exc)))
-                    outcome = Outcome(TO_CONFIRM, f"自動事件寫不進去：{exc}", outcome.observed_through, ki=outcome.ki)
+                    outcome = Outcome(
+                        TO_CONFIRM,
+                        f"自動事件寫不進去：{exc}",
+                        outcome.observed_through,
+                        ki=outcome.ki,
+                        ki_touch=outcome.ki_touch,
+                    )
             results.append(
-                Observed(t.tdcc, outcome.status, outcome.reason, outcome.observed_through, locked[t.tdcc], outcome.ki)
+                Observed(
+                    t.tdcc,
+                    outcome.status,
+                    outcome.reason,
+                    outcome.observed_through,
+                    locked[t.tdcc],
+                    outcome.ki,
+                    outcome.ki_touch,
+                )
             )
         exited = current_events_of(conn, [tdcc for tdcc in not_done if tdcc in stored])
         for tdcc, (status, reason) in not_done.items():
@@ -613,17 +636,27 @@ def observe_all(
                 before = stored[tdcc]
                 results.append(
                     Observed(
-                        tdcc, EXITED, _exit_reason(exited[tdcc]), before.observed_through, locked[tdcc], before.ki or ""
+                        tdcc,
+                        EXITED,
+                        _exit_reason(exited[tdcc]),
+                        before.observed_through,
+                        locked[tdcc],
+                        before.ki or "",
+                        before.ki_touch,
                     )
                 )
             elif tdcc in stored:
                 text = f"核對條件{status}，這次沒有比價" + (f"：{reason}" if reason else "")
                 before = stored[tdcc]
-                results.append(Observed(tdcc, TO_CONFIRM, text, before.observed_through, locked[tdcc], before.ki or ""))
+                results.append(
+                    Observed(
+                        tdcc, TO_CONFIRM, text, before.observed_through, locked[tdcc], before.ki or "", before.ki_touch
+                    )
+                )
         written = 0
         for r in results:
             if stored.get(r.tdcc) != StoredStatus(
-                r.status, r.reason or None, r.observed_through, r.locked, r.ki or None
+                r.status, r.reason or None, r.observed_through, r.locked, r.ki or None, r.ki_touch
             ):
                 _write_status(conn, r)
                 written += 1
@@ -722,23 +755,36 @@ class StoredStatus:
     observed_through: dt.date | None
     locked: bool
     ki: str | None
+    ki_touch: KiTouch | None = None  # KI 第一次觸及的日期與代碼（#442）
 
 
 def _stored_status(conn: psycopg.Connection) -> dict[str, StoredStatus]:
     return {
-        tdcc: StoredStatus(*row)
-        for tdcc, *row in conn.execute(
-            "SELECT tdcc, status, reason, observed_through, locked, ki FROM workflow.pricing_status"
+        tdcc: StoredStatus(*row, None if touch_day is None else KiTouch(touch_day, touch_code))
+        for tdcc, *row, touch_day, touch_code in conn.execute(
+            "SELECT tdcc, status, reason, observed_through, locked, ki, ki_touch_date, ki_touch_code"
+            " FROM workflow.pricing_status"
         )
     }
 
 
 def _write_status(conn: psycopg.Connection, r: Observed) -> None:
+    touch = r.ki_touch
     conn.execute(
-        "INSERT INTO workflow.pricing_status (tdcc, status, reason, observed_through, locked, ki)"
-        " VALUES (%s, %s, %s, %s, %s, %s)"
+        "INSERT INTO workflow.pricing_status"
+        " (tdcc, status, reason, observed_through, locked, ki, ki_touch_date, ki_touch_code)"
+        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)"
         " ON CONFLICT (tdcc) DO UPDATE SET status = EXCLUDED.status, reason = EXCLUDED.reason,"
         " observed_through = EXCLUDED.observed_through, locked = EXCLUDED.locked, ki = EXCLUDED.ki,"
-        " calculated_at = now()",
-        (r.tdcc, r.status, r.reason or None, r.observed_through, r.locked, r.ki or None),
+        " ki_touch_date = EXCLUDED.ki_touch_date, ki_touch_code = EXCLUDED.ki_touch_code, calculated_at = now()",
+        (
+            r.tdcc,
+            r.status,
+            r.reason or None,
+            r.observed_through,
+            r.locked,
+            r.ki or None,
+            None if touch is None else touch.day,
+            None if touch is None else touch.code,
+        ),
     )
