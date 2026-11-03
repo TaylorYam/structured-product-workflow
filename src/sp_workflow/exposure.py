@@ -42,7 +42,7 @@ from sp_workflow.check_terms import NO_BARRIER
 from sp_workflow.daily_import import FC_LABEL_SQL
 from sp_workflow.file_tools import excel_value, save_export, table_book, text_cell
 from sp_workflow.lifecycle import IN_STOCK, lifecycle_status
-from sp_workflow.product_store import Stored, read_many, underlying_codes
+from sp_workflow.product_store import read_many, underlying_codes
 from sp_workflow.status import CheckTerms
 from sp_workflow.stock_splits import SplitBook, load_splits
 
@@ -245,9 +245,9 @@ def load_positions(
         for s in read_many(conn).values()
         if (final := s.columns["final_valuation_date"]) is not None
         and final <= until
-        and (wanted is None or any(code in wanted for code in _codes(s)))
+        and (wanted is None or any(code in wanted for code in s.underlyings))
     ]
-    due.sort(key=lambda s: s.columns["final_valuation_date"])  # 同一天依 TDCC
+    due.sort(key=lambda s: (s.columns["final_valuation_date"], s.tdcc))
     statuses = lifecycle_status(conn, [s.tdcc for s in due])
     found = [s for s in due if statuses[s.tdcc].status == IN_STOCK]
     tdccs = [s.tdcc for s in found]
@@ -286,11 +286,6 @@ def load_positions(
             )
         )
     return positions
-
-
-def _codes(found: Stored) -> tuple[str | None, ...]:
-    """這檔的 UL_1～UL_5（空白的是 None）。"""
-    return tuple(found.columns[f"underlying_{n}"] for n in range(1, MAX_LEGS + 1))
 
 
 def _holdings(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, list[Holding]]:

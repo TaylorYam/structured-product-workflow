@@ -102,7 +102,9 @@ class Underlying:
     strike: Decimal | None  # 執行價
     ki: Decimal | None  # 下限價
     ko: Decimal | None  # KO 價
-    basis: dt.date | None = None  # 價格基準日：四個價格含到這天生效的拆股；None 是 Strike date（#275）
+    basis: dt.date | None = (
+        None  # 價格基準日：四個價格含到這天生效的拆股（#275）；`from_stored` 帶 `Stored.price_basis`，None 是 Strike date
+    )
     lookback: Decimal | None = None  # 回顧期初價格（#374）；有值時到期的表現用它算
 
     @property

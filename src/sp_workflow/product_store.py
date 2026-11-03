@@ -9,7 +9,7 @@ import 這裡，不必再用函式內的 import 繞開循環。對外：
 - `Stored` 的有效期初價格、有效執行價、原始執行價：lookback（#374）之後比價改寫了執行價，「這檔的執行價是多少」
   只在這裡回答一次；人工維護畫面顯示的回顧期初價格文字是 `lookback_text`（#446）。
   價格基準日（`Stored.price_basis`，ADR 0025）也是：比價與曝險換算收盤價都問它（#438）。
-- 不讀整檔條件的具名查詢（SQL 照原本的呼叫端搬來，#438）：`lock_product` 只鎖一檔的商品條件列（存續事件）；
+- 不讀整檔條件的具名查詢（SQL 照原本的呼叫端搬來；`locked_tdccs` 是風險等級補算那句的鎖住條件，#438）：`lock_product` 只鎖一檔的商品條件列（存續事件）；
   `locked_tdccs` 已鎖住的商品（風險等級補算）；`incomplete_locked` 已鎖住、還缺標的價格或比價日的商品（舊商品補資料）；
   `underlying_codes` 各檔連結的標的代碼（曝險分析）；`observed_exits_using` 拆股影響的已出場商品；`terms_imported` 每檔
   商品條件匯入的時間（作業進度）。
@@ -107,6 +107,11 @@ class Stored:
     def fields(self) -> dict[str, object]:
         """畫面的欄 → 值（`product_record.fields_of`）；用到才換算（進度頁一次讀全部商品，不需要）。"""
         return fields_of(self.columns)
+
+    @property
+    def underlyings(self) -> tuple[str | None, ...]:
+        """UL_1～UL_5 的代碼（空白的是 None）。"""
+        return tuple(self.columns[f"underlying_{n}"] for n in range(1, 6))
 
     def price(self, seq: int) -> UnderlyingPrice | None:
         """第幾個標的的價格；沒有這個標的的價格時 None。"""

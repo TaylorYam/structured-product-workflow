@@ -368,7 +368,7 @@ def fill_missing_locked(conn: psycopg.Connection, config: ImportConfig, tdccs: S
     """
     require_in_transaction(conn)
     candidates = locked_tdccs(conn, tdccs)
-    have = risk_levels(conn, candidates)
+    have = {t for (t,) in conn.execute("SELECT tdcc FROM workflow.risk_level WHERE tdcc = ANY(%s)", (candidates,))}
     missing = [tdcc for tdcc in candidates if tdcc not in have]
     for tdcc, risk in _assess_all(conn, list(read_many(conn, missing).values()), config).items():
         _write(conn, tdcc, risk, overwrite=False)
@@ -388,11 +388,10 @@ def _assess_all(conn: psycopg.Connection, found: Sequence[Stored], config: Impor
 
 
 def _terms(found: Stored, config: ImportConfig) -> RiskTerms:
+    """資料庫裡的這檔 → 算風險等級要用的欄位。"""
     p = found.columns
-    underlyings = tuple(p[f"underlying_{n}"] for n in range(1, 6))
-    return RiskTerms(
-        found.tdcc, issuer_code(found.tdcc, p["issuer"], config), p["trade_date"], p["tenor_months"], underlyings
-    )
+    issuer = issuer_code(found.tdcc, p["issuer"], config)
+    return RiskTerms(found.tdcc, issuer, p["trade_date"], p["tenor_months"], found.underlyings)
 
 
 def etf_list(conn: psycopg.Connection, config: ImportConfig) -> frozenset[str]:

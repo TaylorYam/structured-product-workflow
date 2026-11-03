@@ -50,7 +50,6 @@ if TYPE_CHECKING:
     from fcn_checker.orders.reference import OrderRecord
 
 SLOTS = 12
-UNDERLYINGS = 5
 # 必填的價格（價格的鍵，`fcn_checker.fields`）；下限價在沒有 KI 時本來就空白
 REQUIRED_PRICES = frozenset(("initial", "strike", "ko"))
 FILLED, EXISTING, SKIPPED = "已補", "已存在", "不匯入"
@@ -238,7 +237,7 @@ def _products(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, _Prod
     return {
         tdcc: _Product(
             locked(s),
-            tuple(s.columns[f"underlying_{i}"] for i in range(1, UNDERLYINGS + 1)),
+            s.underlyings,
             bool(s.prices),
             s.autocall is not None,
             None if s.check is None else s.check.status,

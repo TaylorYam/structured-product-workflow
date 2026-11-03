@@ -16,10 +16,12 @@ import pytest
 
 from db_synth import check_terms, inventory, seed_products
 from sp_workflow.exposure import load_positions
-from sp_workflow.observation import _load_terms
+from sp_workflow.observation import _load_closes, _load_terms, observe
 from sp_workflow.product_record import UnderlyingPrice
 from sp_workflow.product_store import CheckTermsState, Difference, Stored, read
+from sp_workflow.status import Pricing
 from sp_workflow.stock_splits import Split, SplitBook, add_split, load_splits
+from test_observation import CALENDAR
 
 A = "000000000001"
 SRC = Path(__file__).resolve().parents[1] / "src" / "sp_workflow"
@@ -157,36 +159,44 @@ def test_no_function_level_imports_of_the_writer_or_risk_level(name: str) -> Non
     assert not set(nested) & {"sp_workflow.product_terms", "sp_workflow.risk_level"}
 
 
+# ---------- 比價與曝險的價格基準日 ----------
+
+
 @pytest.mark.db
 def test_observation_and_exposure_convert_closes_from_the_same_basis(pg) -> None:
-    """沒有價格基準日（拆股登記沒調整過價格）時，比價與曝險都從 Strike date 換算收盤價（#438）。"""
+    """沒有價格基準日（拆股登記沒調整過價格）時，比價與曝險都從 Strike date 換算收盤價（#438）。
+
+    1 拆 2 之後收盤 50：換回 Strike date 的基準是 100，在執行價 80 之上 → 到期還本；沒換算就會變成接股。"""
     strike, split_day, day = dt.date(2026, 5, 20), dt.date(2026, 8, 3), dt.date(2026, 10, 28)
-    seed_products(pg, [inventory(A, [("台北", 1)], UL_1="AAA UW", UL_2=None)])
+    seed_products(pg, [inventory(A, [("台北", 1)], UL_1="AAA UW", UL_2=None, **{"KI(Freq)": "-", "KO(memo)": "N"})])
     pg.execute(
-        "UPDATE workflow.product SET barrier_type = 'NONE', final_valuation_date = '2026-11-20', strike_date = %s"
-        " WHERE tdcc = %s",
-        (strike, A),
+        "UPDATE workflow.product SET barrier_type = 'NONE', ko_type = 'Period End', strike_date = %s,"
+        " final_valuation_date = %s WHERE tdcc = %s",
+        (strike, day, A),
     )
     check_terms(pg, A)
     pg.execute(
         "INSERT INTO workflow.underlying_price (tdcc, seq, code, initial_price, strike_price, ko_price)"
-        " VALUES (%s, 1, 'AAA UW', 100, 80, 100)",
+        " VALUES (%s, 1, 'AAA UW', 100, 80, 150)",
         (A,),
     )
+    pg.execute("INSERT INTO workflow.autocall_date (tdcc, slot, value) VALUES (%s, 1, %s)", (A, day))
     add_split(pg, Split("AAA UW", split_day, 1, 2), user="tester")
     (import_id,) = pg.execute(
         "INSERT INTO workflow.close_price_import (source, file_name, file_sha256, imported_by, summary)"
         " VALUES ('歷史收盤價', 'x.xlsx', 'x', 'tester', '{}') RETURNING import_id"
     ).fetchone()
-    pg.execute(
-        "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES (%s, 'AAA UW', 50, %s)",
-        (day, import_id),
-    )
+    for close_day, close in ((strike, 100), (day, 50)):
+        pg.execute(
+            "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES (%s, 'AAA UW', %s, %s)",
+            (close_day, close, import_id),
+        )
     book = SplitBook(load_splits(pg))
 
     (position,) = load_positions(pg, ["AAA UW"], dt.date(2026, 11, 30))
     (terms,), _, _ = _load_terms(pg)
-    (underlying,) = terms.underlyings
+    outcome = observe(terms, _load_closes(pg, [terms]), CALENDAR, day, book)
 
-    assert underlying.basis == strike
-    assert position.legs[0].close == Decimal(50) * book.factor("AAA UW", underlying.basis, day) == Decimal(100)
+    assert terms.underlyings[0].basis == strike
+    assert position.legs[0].close == Decimal(50) * book.factor("AAA UW", strike, day) == Decimal(100)
+    assert (outcome.status, outcome.reason) == (Pricing.EXITED, f"到期還本 {day}")
