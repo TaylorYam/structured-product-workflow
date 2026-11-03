@@ -1,6 +1,7 @@
 """CA BEN 中文產品說明書（docs/checker/templates/ca-zh-ben.md）：版面、封面、價格表、標的表與第二章以後同 CA FCN
 （parsers/ca.py），先照 FCN 讀出，再改讀 BEN 不同的條目（第 9 項沒有配息、沒有 KO 與 KI、Bonus 公式、參與率與紅利率；
-13.(6)、15.(4)(5) 沒有配息與參與率；16.(3) 紅利率與情境一～三）。
+13.(6)、15.(4)(5) 沒有配息與參與率；16.(3) 紅利率與情境一～三）。第 16 項基本假設、情境價格表與匯率行、情境三交股算式和
+CA Super Bull 共用 parsers/ca_variants.py，BEN 的用字宣告在 `VARIANT`（workflow #441）。
 
 只支援現行版 Bonus 範本；認得出是 CA BEN、但現行版特徵不齊（KO 價欄版、早期版、更早沒有樣本的寫法）或是 Digital 時，辨識
 交出「不支援的範本版本」（範本規格 §1、§8；使用者確認的做法 BEN-377-01～03 只在這裡改）。
@@ -16,22 +17,12 @@ from typing import NamedTuple
 
 from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
-from ..standard_fields import AutocallSchedule, Money, ScenarioParam, ScenarioPrice
+from ..standard_fields import Money, ScenarioPrice
 from ..text import squash
-from . import ben, ca, price_table
-from .ca_super_bull import (
-    FX,
-    S3_REMAINDER,
-    Assumed,
-    RemainderCalc,
-    SharesCalc,
-    WorseProfitReturn,
-    opt_dec,
-    remainder_calc,
-    worst_row,
-)
-from .common import Hit, Mention, capture_group, dec, derived, exactly_one, number, one
-from .layout import TextIndex, capture
+from . import ben, ca, ca_variants, price_table
+from .ca_variants import EQ, MUL, NUM, SPCT, Assumed, L, R, RemainderCalc, SharesCalc, U, WorseProfitReturn, worst_row
+from .common import Hit, Mention, dec, derived, exactly_one
+from .layout import TextIndex
 from .super_bull import ProfitReturn
 
 TEMPLATE_ID = "ca-zh-ben-pd"
@@ -247,29 +238,7 @@ def _no_autocall(fields: dict[str, ParsedField], art13: TextIndex, whole: TextIn
         )
     else:
         fields["no_autocall"] = ParsedField("no_autocall", FieldStatus.PRESENT, True, list(opening.evidence))
-    no_ko = fields["no_autocall"]
-    fields["ko_pct"] = (
-        ParsedField("ko_pct", FieldStatus.NOT_APPLICABLE, evidence=list(no_ko.evidence), note="BEN 沒有 KO")
-        if no_ko.ok
-        else derived("ko_pct", no_ko)
-    )
-    fields["ko_observation"] = derived("ko_observation", no_ko, "P")
-    fields["ko_memory"] = derived("ko_memory", no_ko, False)
-    fields["schedule_table"] = standard_fields.absent("schedule_table", "日期表（BEN 不會提前出場）")
-    tenor, final = fields["tenor_months"], fields["final_valuation_date"]
-    bad = next((p for p in (no_ko, tenor, final) if not p.ok), None)
-    if bad is not None:
-        fields["first_callable_period"] = derived("first_callable_period", bad)
-        fields["autocall_schedule"] = derived("autocall_schedule", bad)
-        return
-    ev = [*no_ko.evidence, *tenor.evidence, *final.evidence]
-    fields["first_callable_period"] = ParsedField("first_callable_period", FieldStatus.PRESENT, tenor.value, ev)
-    fields["autocall_schedule"] = ParsedField(
-        "autocall_schedule",
-        FieldStatus.PRESENT,
-        AutocallSchedule("P", tenor.value, tenor.value, {tenor.value: final.value}, listed=True),
-        ev,
-    )
+    ben.maturity_only(fields, fields["no_autocall"])
 
 
 def _article9(fields: dict[str, ParsedField], art9: list[Line]) -> None:
@@ -310,23 +279,24 @@ def _article9(fields: dict[str, ParsedField], art9: list[Line]) -> None:
 # ---------------------------------------------------------------- 第 16 項情境（範本規格 §5）
 
 
-EQ = ca.EQ
-MUL = "[×xX*]"
-NUM = r"([\d,]+(?:\.\d+)?)"
-SPCT = r"(-?\d+(?:\.\d+)?)%"
-U = f"({ca.CCY})"
-L, R = "[（(]", "[）)]"
-TITLES = ("情境分析一：較佳情況", "情境分析二：一般情況", "情境分析三：較差情況")
 ASSUMED = rf"假設於期末訂價日，最差表現的連結標的為(.+?)，收盤價為{NUM}{U}，高於其執行價。"
 # 「＝N × [100%+最大值（B%，Q% x（P / I - 100%))]」；「＝N × [100%+最大值（B%，r%) = A」
 CALC = rf"{EQ}{NUM}{MUL}\[100%\+最大值{L}{ca.PCT}，{ca.PCT}{MUL}{L}{NUM}{U}/{NUM}{U}-100%{R}{R}\]"
 AMOUNT = rf"{EQ}{NUM}{MUL}\[100%\+最大值{L}{ca.PCT}，{SPCT}{R}{EQ}{NUM}{U}"
 # 「＝A / N ) - 100% ＝r%（平均年化報酬率：y%）」：左括號樣本缺一個，可有可無
 RETURN = rf"{EQ}\(?{NUM}{U}/{NUM}\)-100%{EQ}{SPCT}{L}平均年化報酬率[:：]{SPCT}{R}"
-S3_ASSUMED = rf"假設於期末訂價日表現最差的連結標的為(.+?)，收盤價為{NUM}{U}。"
-# 跨幣別（第 16 項有匯率行，workflow #428）：股數「N / (K x R)」、報酬率「W x P x R」多乘匯率 R（剩餘金額同 Super Bull）
-S3_SHARES = rf"每單位面額/表現最差連結標的的執行價\*{EQ}{NUM}/(\()?{NUM}{FX}(?(2)\)){EQ}{NUM}股"
-S3_RETURN = rf"{EQ}\(\({NUM}{MUL}{NUM}{FX}\+{NUM}\)/{NUM}\)-100%{EQ}{SPCT}{L}平均年化報酬率[:：]{SPCT}{R}"
+# 第 16 項基本假設與情境三（算式在 parsers/ca_variants.py，跨幣別同 CA Super Bull，workflow #428）：紅利標籤「紅利率：」；
+# 情境三假設句一定寫名稱、收盤價後沒寫「低於其執行價」；股數「每單位面額/表現最差連結標的的執行價*」；報酬率「-100%」、
+# 全形或半形括號
+VARIANT = ca_variants.Variant(
+    bonus_label="紅利率：",
+    scenario_table=SCENARIO_TABLE,
+    worst="表現最差的連結標的為(.+?)，",
+    below_strike="",
+    strike_of="表現最差連結標的的",
+    minus="-100%",
+    annualized_parens=(L, R),
+)
 
 
 class BonusCalc(NamedTuple):
@@ -352,7 +322,7 @@ class BonusAmount(NamedTuple):
 @dataclass
 class BenScenarios:
     """情境一～三的算式；找不到、或在情境裡有多處時為 None（由規則轉人工覆核）。`titles` 為三個情境標題的原文行（找不到
-    標題時三個情境都空）。情境三的欄位名稱同 CA Super Bull（交股算式共用規則 `rules/ca_super_bull.worse`）。"""
+    標題時三個情境都空）。情境三的欄位名稱同 CA Super Bull（交股算式共用規則 `rules/delivery.worse`）。"""
 
     titles: tuple[list[Line], list[Line], list[Line]]
     assumed: dict[int, Hit[Assumed] | None]
@@ -371,43 +341,19 @@ class BenScenarios:
 
 
 def _scenarios(ti: TextIndex) -> BenScenarios:
-    """以標題切出情境一～三（到「※請注意」為止），在各自範圍內找算式；情境要剛好這三個（核對規則 §3.7）。"""
-    starts = [ti.text.find(t) for t in TITLES]
-    bounds = [*starts, ti.text.find("※請注意", max(starts))]
-    empty = BenScenarios(([], [], []), {}, {}, {}, {}, {})
-    if not (all(x >= 0 for x in bounds) and bounds == sorted(bounds)):
-        return empty
-    if len(re.findall(r"情境分析[一二三四五六七八九十]+：", ti.text)) != len(TITLES):
-        return empty
-    titles = tuple(ti.lines_for(s, s + len(t)) for s, t in zip(starts, TITLES, strict=True))
-
-    def find(n: int, pattern: str, convert):
-        lo, hi = bounds[n - 1], bounds[n]
-        return one(
-            [
-                Hit(convert(m), tuple(ti.lines_for(m.start(), m.end())))
-                for m in ti.finditer(pattern)
-                if lo <= m.start() < hi
-            ]
-        )
-
-    out = BenScenarios(titles, {}, {}, {}, {}, {})  # type: ignore[arg-type]
+    """以標題切出情境一～三（`ca_variants.sections`），在各自範圍內找算式；情境三的算式由 `ca_variants` 依 `VARIANT` 讀。"""
+    sec = ca_variants.sections(ti)
+    if sec is None:
+        return BenScenarios(([], [], []), {}, {}, {}, {}, {})
+    find = sec.find
+    out = BenScenarios(sec.titles, {}, {}, {}, {}, {})
     for n in (1, 2):
         out.assumed[n] = find(n, ASSUMED, lambda m: Assumed(m[1], dec(m[2])))
         out.calc[n] = find(n, CALC, lambda m: BonusCalc(dec(m[1]), Decimal(m[2]), Decimal(m[3]), dec(m[4]), dec(m[6])))
         out.amount[n] = find(n, AMOUNT, lambda m: BonusAmount(dec(m[1]), Decimal(m[2]), Decimal(m[3]), dec(m[4]), m[5]))
         out.returns[n] = find(n, RETURN, lambda m: ProfitReturn(dec(m[1]), dec(m[3]), Decimal(m[4]), Decimal(m[5])))
         out.return_currency[n] = find(n, RETURN, lambda m: m[2])
-    out.worse_assumed = find(3, S3_ASSUMED, lambda m: Assumed(m[1], dec(m[2])))
-    out.shares = find(3, S3_SHARES, lambda m: SharesCalc(dec(m[1]), dec(m[3]), dec(m[5]), opt_dec(m[4])))
-    out.remainder = find(3, S3_REMAINDER, remainder_calc)
-    out.worse_return = find(
-        3,
-        S3_RETURN,
-        lambda m: WorseProfitReturn(
-            dec(m[1]), dec(m[2]), dec(m[4]), dec(m[5]), Decimal(m[6]), Decimal(m[7]), opt_dec(m[3])
-        ),
-    )
+    out.worse_assumed, out.shares, out.remainder, out.worse_return = sec.worse(VARIANT)
     return out
 
 
@@ -427,33 +373,8 @@ def _bonus_amounts(sc: BenScenarios, n: int) -> ParsedField:
 
 
 def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> BenScenarios:
-    """基本假設（天期、面額、初始投資金額、紅利率）、情境價格表、情境一～三的算式（範本規格 §5）。"""
-    ti = TextIndex(art16)
-    where = "第 16 項基本假設"
-    tenor = capture("scenario_tenor", ti, r"基本假設天期：(\d+)個月", int, whole_match=True)
-    denom = rf"每單位面額：([\d,]+)({ca.CCY})初始投資金額"
-    denomination = capture("scenario_denomination", ti, denom, number, whole_match=True)
-    fields["scenario_denomination_currency"] = capture_group(art16, denom, 2, "scenario_denomination_currency")
-    invest = rf"初始投資金額：([\d,]+)({ca.CCY})紅利率："
-    investment = capture_group(art16, invest, 1, "scenario_initial_investment", number)
-    fields["scenario_investment_currency"] = capture_group(art16, invest, 2, "scenario_investment_currency")
-    fields["bonus_assumed"] = capture_group(art16, r"紅利率：" + ca.PCT, 1, "bonus_assumed", Decimal)
-    scenario_table = price_table.read(
-        "scenario_table", ca.table_region(art16, "紅利率：", "情境分析一"), SCENARIO_TABLE
-    )
-    fields["scenario_reprint_table"] = price_table.at("scenario_reprint_table", scenario_table, SCENARIO_TABLE)
-    # 標的報價幣別和計價幣別不同時，情境價格表後多一行匯率（`美元/日圓=150.00`），由規則轉人工覆核（同 CA Super Bull）
-    fx = [ln for ln in art16 if re.fullmatch(rf"{ca.CCY}/{ca.CCY}=[\d,.]+", squash(ln.text))]
-    fields["scenario_fx"] = ParsedField.present("scenario_fx", [squash(ln.text) for ln in fx], fx)
-    fields["scenario_params"] = standard_fields.occurrences(
-        "scenario_params",
-        [
-            ScenarioParam("scenario_tenor", where, tenor),
-            ScenarioParam("scenario_denomination", where, denomination),
-            ScenarioParam("scenario_initial_investment", where, investment),
-        ],
-    )
-    sc = _scenarios(ti)
+    """基本假設（天期、面額、初始投資金額、紅利率）與情境價格表（`ca_variants.basics`）、情境一～三的算式（範本規格 §5）。"""
+    sc = _scenarios(ca_variants.basics(fields, art16, VARIANT))
     prices = fields["underlying_prices"]
     out = []
     for n in (1, 2):
@@ -462,10 +383,8 @@ def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> BenScenario
         row = worst_row(assumed.value.name, prices) if assumed is not None else None
         initial = Mention.of_optional_hit(place, sc.calc.get(n), lambda v: v.initial, sc.titles[n - 1])
         out.append(ScenarioPrice(place, row, "initial", initial.parsed(f"scenario{n}_initial")))
-    place = "第一章第 16 項情境分析三股數算式的"
-    row = worst_row(sc.worse_assumed.value.name, prices) if sc.worse_assumed is not None else None
-    strike = Mention.of_optional_hit(place, sc.shares, lambda v: v.strike, sc.titles[2])
-    out.append(ScenarioPrice(place, row, "strike", strike.parsed("scenario3_strike")))
+    worse = ca_variants.Worse(sc.worse_assumed, sc.shares, sc.remainder, sc.worse_return)
+    out.append(ca_variants.worse_price(worse, sc.titles[2], prices))
     fields["scenario_prices"] = standard_fields.occurrences("scenario_prices", out)
     return sc
 
@@ -538,9 +457,7 @@ def read(lines: Sequence[Line]) -> CaBenTermSheet:
     replaced = {
         "scenario_investment_currency": fields["scenario_investment_currency"],
         **{f"scenario{n}_currency": _bonus_amounts(scenarios, n) for n in (1, 2)},
-        "scenario3_currency": ParsedField.present("scenario3_currency", remainder.value.currency, list(remainder.lines))
-        if remainder is not None
-        else ParsedField.missing("scenario3_currency", "第 16 項情境分析三找不到剩餘金額算式"),
+        "scenario3_currency": ca_variants.worse_currency(remainder),
     }
     fields["currency_others"] = standard_fields.occurrences(
         "currency_others",

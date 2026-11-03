@@ -175,7 +175,7 @@ Super Bull 沒有配息表，觀察日表只列觀察日；共用日期表檢查
 
 | 內容 | 位置 |
 |---|---|
-| 範本辨識與讀出 | CA 的 Super Bull 說明書與投資人須知 parser（沿用 `parsers/ca.py`、`ca_iis.py` 的版面、價格表、標的表、共用段落與 `read`，覆寫第 9 項、15.、16. 的 Super Bull 段落；同 BNP Super Bull 的做法）；`ca-zh-pd`／`ca-zh-iis` 辨識確認排除 `連結表現`／`Performance` |
+| 範本辨識與讀出 | CA 的 Super Bull 說明書與投資人須知 parser（沿用 `parsers/ca.py`、`ca_iis.py` 的版面、價格表、標的表、共用段落與 `read`，覆寫第 9 項、15.、16. 的 Super Bull 段落；第 16 項基本假設、情境價格表與匯率行、情境三交股算式和 CA BEN 共用 `parsers/ca_variants.py`（Super Bull 的用字宣告在 `ca_super_bull.VARIANT`，workflow #441）；同 BNP Super Bull 的做法）；`ca-zh-pd`／`ca-zh-iis` 辨識確認排除 `連結表現`／`Performance` |
 | 上手註冊 | CA 的範本依商品家族分開辨識（`Template.products`，同 BNP） |
 | 規則 | §3.3～§3.5、§3.7 的 CA Super Bull 規則；能和 BNP Super Bull 共用的（月數、順序、報酬率與年化）抽到 `parsers/super_bull.py`、`rules/super_bull.py`（workflow #326），月數容許差距是參數（BNP 0～7 天晚、CA ±7 天）；情境算式各上手寫法不同，留在各自的規則；情境三交股算式在 `rules/delivery.py`（CA 寫法，和 CA BEN 同一份；workflow #439） |
 | 設定 | `[auto_check_products]` 的 `"Super Bull"` 加 `CA`；審查標準 `[issuer.ca.product_names."Super Bull"]` |
