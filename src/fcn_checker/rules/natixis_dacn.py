@@ -9,8 +9,7 @@
 from __future__ import annotations
 
 from ..schema import CheckResult
-from ..schema import CheckStatus as S
-from . import kit, natixis
+from . import dacn, kit, natixis
 from .kit import IssuerContext
 
 ISSUER = natixis.ISSUER
@@ -34,53 +33,17 @@ NOT_COVERED = [
         "美元與日圓以外的幣別、保證期數不是 1；寫法和現行版不同的範本不支援（不看交易日早晚）",
     },
 ]
-SUPPORTED_CURRENCIES = ("USD", "JPY")
-SUPPORTED_KI = ("none", "AM", "D")
-SUPPORTED_GUARANTEED = (1,)
+SAMPLED = dacn.Sampled(
+    "Natixis DACN 樣本只有 KO 每日觀察＋記憶式、多標的、KI 無／到期／每日觀察、美元或日圓、保證 1 期",
+    (
+        dacn.ko("ko_observation"),
+        dacn.baskets,
+        dacn.ki(("none", "AM", "D")),
+        dacn.currency(("USD", "JPY")),
+        dacn.guaranteed((1,)),
+    ),
+)
 GUARANTEED, ACCRUAL = "固定", "變動"
-
-
-def template_variant(ctx: IssuerContext) -> CheckResult:
-    """沒有樣本的型態轉人工覆核（核對規則 §3.1）：樣本只有 KO 每日觀察＋記憶式、多標的、KI 無／到期／每日觀察、美元或日圓、
-    保證 1 期。讀不到的欄位由各自的規則轉人工，這裡不重複報。"""
-    f = ctx.ts.f
-    issues = []
-    obs, memory, uls, ki = f("ko_observation"), f("ko_memory"), f("underlyings"), kit.doc_ki(f("ki_type"))
-    cz, g = f("currency_zh"), f("guaranteed_periods")
-    if obs.ok and obs.value != "D":
-        issues.append("KO 每期觀察")
-    if memory.ok and not memory.value:
-        issues.append("非記憶式")
-    if uls.ok and len(uls.value) < 2:
-        issues.append("單一標的")
-    if ki is not None and ki not in SUPPORTED_KI:
-        issues.append(f"KI {kit.KI_LABEL[ki]}")
-    if cz.ok and ctx.std.currency_zh_to_iso.get(cz.value) not in SUPPORTED_CURRENCIES:
-        issues.append(f"{cz.value}計價")
-    if g.ok and g.value not in SUPPORTED_GUARANTEED:
-        issues.append(f"保證 {g.value} 期")
-    return kit.doc_check(ctx, "doc.template_variant", "template_variant", "DACN 型態").compare(
-        None,
-        None,
-        ok=not issues,
-        fail=S.REVIEW_REQUIRED,
-        reason="template_variant_unverified",
-        message="、".join(issues),
-        fail_message="待樣本驗證（Natixis DACN 樣本只有 KO 每日觀察＋記憶式、多標的、KI 無／到期／每日觀察、美元或日圓、"
-        "保證 1 期），請人工核對",
-    )
-
-
-def guaranteed_periods(ctx: IssuerContext) -> CheckResult:
-    """第 12 項日期表的保證期數（連續「固定配息金額」的列數）= Non-Call（核對規則 §3.5）。"""
-    f = ctx.ts.f
-    g, k = f("guaranteed_periods"), f("first_callable_period")
-    return kit.doc_check(ctx, "doc.guaranteed_periods", "guaranteed_periods", "日期表保證期數", k, g).compare(
-        k.value,
-        g.value,
-        evidence=list(g.evidence),
-        fail_message="第 12 項日期表「固定配息金額」的期數須等於第一個可提前到期期（Non-Call）",
-    )
 
 
 def _show(kinds: tuple[str, ...]) -> str:
@@ -124,8 +87,8 @@ def scenario_terms(ctx: IssuerContext) -> CheckResult:
 def run_all(ctx: IssuerContext) -> list[CheckResult]:
     """說明書內部規則：只用讀出結果、審查標準與宣告的參考條件表欄位（交易日）。"""
     return [
-        template_variant(ctx),
-        guaranteed_periods(ctx),
+        dacn.template_variant(ctx, SAMPLED),
+        dacn.guaranteed_periods(ctx, 12, source="日期表「固定配息金額」", name="日期表保證期數", call="提前到期"),
         scenario_terms(ctx),
         *natixis.run_all(ctx),
     ]

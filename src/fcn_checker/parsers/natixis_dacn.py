@@ -18,7 +18,7 @@ from typing import NamedTuple
 from ..schema import DetectionResult, Evidence, Line, ParsedField
 from ..standard_fields import ScenarioParam
 from ..text import squash
-from . import natixis, price_table
+from . import dacn, natixis, price_table
 from .common import Mention
 from .layout import TextIndex, parse_date
 
@@ -172,25 +172,17 @@ def read(lines: Sequence[Line]) -> natixis.NatixisTermSheet:
     doc = base.document
     arts = doc.articles(1)
     fields = dict(base.fields)
-    fields["coupon_barrier_pct"] = _coupon_barrier(fields["underlying_table"])
+    # 配息門檻 = 第 9 項價格表「配息界限價格(每日觀察)/執行價格」欄頭 %（範本規格 §4.1；說明書沒有配息界限價格的定義句）
+    fields["coupon_barrier_pct"] = dacn.barrier_from_head(
+        fields["underlying_table"],
+        "strike",
+        f"第 9 項價格表「{BARRIER_HEAD}」欄頭沒有寫 %",
+        head_mark=BARRIER_HEAD,
+        no_mark=f"第 9 項價格表執行價格欄的欄頭沒有「{BARRIER_HEAD}」，讀不到配息門檻",
+    )
     fields["guaranteed_periods"], fields["coupon_kinds"] = _coupon_kinds(doc.span_lines(arts.get(12)))
     fields["scenario_coupon_rows"] = _scenario_rows(doc.span_lines(arts.get(16)))
     return natixis.NatixisTermSheet(fields, base.full_text, doc)
-
-
-def _coupon_barrier(table: ParsedField) -> ParsedField:
-    """配息門檻 = 第 9 項價格表「配息界限價格(每日觀察)/執行價格」欄頭 %（範本規格 §4.1；說明書沒有配息界限價格的定義句）。"""
-    name = "coupon_barrier_pct"
-    if not table.ok:
-        return ParsedField(name, table.status, None, list(table.evidence), note=table.note)
-    value = table.value
-    head, pct = value.heads.get("strike", ""), value.pcts.get("strike")
-    lines = list(value.head_lines.get("strike", ()))
-    if BARRIER_HEAD not in head:
-        return ParsedField.invalid(name, lines, f"第 9 項價格表執行價格欄的欄頭沒有「{BARRIER_HEAD}」，讀不到配息門檻")
-    if pct is None:
-        return ParsedField.invalid(name, lines, f"第 9 項價格表「{BARRIER_HEAD}」欄頭沒有寫 %")
-    return ParsedField.present(name, pct, lines)
 
 
 def _coupon_kinds(art12: list[Line]) -> tuple[ParsedField, ParsedField]:

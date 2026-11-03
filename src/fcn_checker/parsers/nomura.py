@@ -866,7 +866,7 @@ def _article14(fields: dict[str, ParsedField], art14: list[Line], put: Callable)
         if lo < 0:
             fields["coupon_pa_pct"] = ParsedField.missing("coupon_pa_pct", f"找不到第 14 項「情境{k}（」段落")
             return
-        hit = one(_in_section(t14, found, lo, hi))
+        hit = one(in_section(t14, found, lo, hi))
         if hit is None:
             fields["coupon_pa_pct"] = ParsedField.invalid(
                 "coupon_pa_pct", art14, f"第 14 項情境{k}「本情境中年化報酬率為Y%」缺漏、重複或不在範本規格內"
@@ -894,7 +894,7 @@ def _scenario3_currency(art14: list[Line]) -> Occurrence:
     )
 
 
-def _in_section(ti: TextIndex, found: list[Hit], lo: int, hi: int) -> list[Hit]:
+def in_section(ti: TextIndex, found: list[Hit], lo: int, hi: int) -> list[Hit]:
     """`found` 中原文行落在 `ti.text[lo:hi]` 的那幾處（`lo` < 0 表示找不到這一段）。"""
     if lo < 0:
         return []

@@ -182,9 +182,9 @@
 
 | 內容 | 位置 |
 |---|---|
-| 範本辨識與讀出 | `parsers/nomura_dacn.py`、`parsers/nomura_dacn_iis.py`：沿用 `parsers/nomura.py`、`nomura_iis.py` 的版面、封面、標的表、日期表、第二章以後與 `read`，覆寫配息段落（同 HSBC Super Bull 先照 FCN 讀出再改讀的做法）；`nomura.py`、`nomura_iis.py` 的辨識加「沒有每日計息公式」條件（parser 版本各 +1） |
+| 範本辨識與讀出 | `parsers/nomura_dacn.py`、`parsers/nomura_dacn_iis.py`：沿用 `parsers/nomura.py`、`nomura_iis.py` 的版面、封面、標的表、日期表、第二章以後與 `read`，覆寫配息段落（同 HSBC Super Bull 先照 FCN 讀出再改讀的做法）；`nomura.py`、`nomura_iis.py` 的辨識加「沒有每日計息公式」條件（parser 版本各 +1）；配息門檻 % 用 DACN 共用的 `parsers/dacn.py` 讀法（workflow #440） |
 | 上手註冊 | `issuers.py` 登記 `NOMURA_DACN`（`products=frozenset({DACN})`，上手代號同 `NOMURA`） |
-| 規則 | `rules/nomura_dacn.py`（§3.1 型態、§3.3 第 15 項與情境二、§3.5，其餘沿用 `rules/nomura.py`）、`rules/nomura_dacn_iis.py`（§3.9）；`rules/reference.py` 新增共用 `field.coupon_barrier_pct`（§3.4） |
+| 規則 | `rules/nomura_dacn.py`（§3.1 型態宣告、§3.3 第 15 項與情境二，其餘沿用 `rules/nomura.py`；§3.1 型態檢查與 §3.5 保證期數由 DACN 共用的 `rules/dacn.py` 執行，workflow #440）、`rules/nomura_dacn_iis.py`（§3.9）；`rules/reference.py` 新增共用 `field.coupon_barrier_pct`（§3.4） |
 | 設定 | `[auto_check_products]` 的 `DACN` 加 `NOMURA`；審查標準 `[issuer.nomura.product_names.DACN]`（版本 +1） |
 | 測試 | 合成 PDF（沿用 `tests/checker/nomura_synth.py` 加 DACN 段落）；§7 的反例；本機真實樣本辨識與讀取測試（環境變數指向本機樣本，不進 repo）；試跑（§6） |
 

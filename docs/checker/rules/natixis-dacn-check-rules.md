@@ -177,9 +177,9 @@
 
 | 內容 | 位置 |
 |---|---|
-| 範本辨識與讀出 | `parsers/natixis_dacn.py`、`parsers/natixis_dacn_iis.py`：沿用 `parsers/natixis.py`、`natixis_iis.py` 的版面、封面、價格表、日期表、第二章以後與 `read`（價格表欄的關鍵字、情境配息算式的讀法由參數交入），另讀配息門檻、保證期數與情境各列的保證期／計息期；`natixis.py`、`natixis_iis.py` 的辨識拆出共用骨架，FCN 另加「沒有 `變動配息金額`」條件，頁尾英文名稱第二行也收 `Principal Protected, …`（parser 版本各 +1） |
+| 範本辨識與讀出 | `parsers/natixis_dacn.py`、`parsers/natixis_dacn_iis.py`：沿用 `parsers/natixis.py`、`natixis_iis.py` 的版面、封面、價格表、日期表、第二章以後與 `read`（價格表欄的關鍵字、情境配息算式的讀法由參數交入），另讀配息門檻、保證期數與情境各列的保證期／計息期；`natixis.py`、`natixis_iis.py` 的辨識拆出共用骨架，FCN 另加「沒有 `變動配息金額`」條件，頁尾英文名稱第二行也收 `Principal Protected, …`（parser 版本各 +1）；配息門檻 % 用 DACN 共用的 `parsers/dacn.py` 讀法（workflow #440） |
 | 上手註冊 | `issuers.py` 登記 `NATIXIS_DACN`（`products=frozenset({DACN})`，上手代號同 `NATIXIS`） |
-| 規則 | `rules/natixis_dacn.py`（§3.1 型態、§3.5、§3.8 保證期與計息期，其餘沿用 `rules/natixis.py`）、`rules/natixis_dacn_iis.py`（§3.9）；配息門檻用共用 `field.coupon_barrier_pct` |
+| 規則 | `rules/natixis_dacn.py`（§3.1 型態宣告、§3.8 保證期與計息期；§3.1 型態檢查與 §3.5 保證期數由 DACN 共用的 `rules/dacn.py` 執行，workflow #440；其餘沿用 `rules/natixis.py`）、`rules/natixis_dacn_iis.py`（§3.9）；配息門檻用共用 `field.coupon_barrier_pct` |
 | 設定 | `[auto_check_products]` 的 `DACN` 加 `NATIXIS`；審查標準 `[issuer.natixis.product_names.DACN]`（版本 +1） |
 | 測試 | 合成 PDF（沿用 Natixis 合成樣本加 DACN 段落）；§7 的反例；本機真實樣本辨識與讀取測試（環境變數指向本機樣本，不進 repo）；試跑（§6） |
 

@@ -15,9 +15,9 @@ from collections.abc import Sequence
 from dataclasses import replace
 from decimal import Decimal
 
-from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
+from ..schema import DetectionResult, Line, ParsedField
 from ..text import squash
-from . import dbs, price_table
+from . import dacn, dbs, price_table
 from .common import derived
 from .layout import TextIndex, capture, parse_date
 
@@ -127,7 +127,14 @@ def read(lines: Sequence[Line]) -> dbs.DbsTermSheet:
     fields["main_price_table"] = price_table.at("main_price_table", table, PRICE_TABLE)
     fields["ki_type"] = dbs.ki_type(TextIndex(basic, separate_digits=True), table)
     dbs.table_fields(fields)
-    fields["coupon_barrier_pct"] = _coupon_barrier(TextIndex(basic), table)
+    # 累積日數比的是「其區間下限價格」→ 配息門檻 = 表1 `區間下限價格 (期初價格的X%)` 的 X（範本規格 §3、§4.1）；證據掛
+    # 定義句與表頭
+    definition = _accrual_definition(TextIndex(basic))
+    fields["coupon_barrier_pct"] = (
+        ParsedField.missing("coupon_barrier_pct", f"商品基本資料找不到比「{dbs.RANGE_MARK}」的累積日數定義")
+        if definition is None
+        else dacn.barrier_from_head(table, "barrier", f"表1「{BARRIER}」表頭讀不到 (期初價格的X%)", definition)
+    )
     fields["range_upper"] = derived(
         "range_upper", table, [r.texts.get("upper", "") for r in table.value.rows] if table.ok else None
     )
@@ -137,22 +144,11 @@ def read(lines: Sequence[Line]) -> dbs.DbsTermSheet:
     return dbs.DbsTermSheet(fields, base.full_text)
 
 
-def _coupon_barrier(ti: TextIndex, table: ParsedField) -> ParsedField:
-    """累積日數比的是「其區間下限價格」→ 配息門檻 = 表1 `區間下限價格 (期初價格的X%)` 的 X（範本規格 §3、§4.1）；證據掛
-    定義句與表頭。"""
-    name = "coupon_barrier_pct"
+def _accrual_definition(ti: TextIndex) -> list[Line] | None:
+    """商品基本資料比「其區間下限價格」的累積日數定義句（`累積日數：` 到該處）；找不到為 None。"""
     a = ti.text.find(ACCRUAL_LABEL)
     b = ti.text.find(dbs.RANGE_MARK, a) if a >= 0 else -1
-    if b < 0:
-        return ParsedField.missing(name, f"商品基本資料找不到比「{dbs.RANGE_MARK}」的累積日數定義")
-    if not table.ok:
-        return derived(name, table)
-    pct = table.value.pcts.get("barrier")
-    head = list(table.value.head_lines.get("barrier", ()))
-    if pct is None:
-        return ParsedField.invalid(name, head, f"表1「{BARRIER}」表頭讀不到 (期初價格的X%)")
-    lines = ti.lines_for(a, b + len(dbs.RANGE_MARK))
-    return ParsedField(name, FieldStatus.PRESENT, pct, [*map(Evidence.of, lines), *map(Evidence.of, head)])
+    return ti.lines_for(a, b + len(dbs.RANGE_MARK)) if b >= 0 else None
 
 
 def _scenario(fields: dict[str, ParsedField], sec: list[Line]) -> None:

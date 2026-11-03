@@ -10,8 +10,7 @@ from __future__ import annotations
 from decimal import ROUND_HALF_UP, Decimal
 
 from ..schema import CheckResult, FieldStatus, ParsedField
-from ..schema import CheckStatus as S
-from . import kit, nomura
+from . import dacn, kit, nomura
 from .kit import IssuerContext
 
 ISSUER = nomura.ISSUER
@@ -33,39 +32,17 @@ NOT_COVERED = [
     },
 ]
 Q2 = Decimal("0.01")
-
-
-def template_variant(ctx: IssuerContext) -> CheckResult:
-    """沒有樣本的型態轉人工覆核（核對規則 §3.1）：樣本只有 KO 每日觀察＋記憶式、多標的、KI 無或到期觀察、美元、
-    保證期數 1、Non-Call 1。讀不到的欄位由各自的規則轉人工，這裡不重複報。"""
-    f = ctx.ts.f
-    issues = []
-    wording, memory, uls, ki = f("ko_wording"), f("ko_memory"), f("underlyings"), kit.doc_ki(f("ki_type"))
-    cz, g, k = f("currency_zh"), f("guaranteed_periods"), f("first_callable_period")
-    if wording.ok and wording.value[0] != "D":
-        issues.append("KO 每期觀察")
-    if memory.ok and not memory.value:
-        issues.append("非記憶式")
-    if uls.ok and len(uls.value) < 2:
-        issues.append("單一標的")
-    if ki is not None and ki not in ("none", "AM"):
-        issues.append(f"KI {kit.KI_LABEL[ki]}")
-    if cz.ok and ctx.std.currency_zh_to_iso.get(cz.value) != "USD":
-        issues.append(f"{cz.value}計價")
-    if g.ok and g.value != 1:
-        issues.append(f"保證 {g.value} 期")
-    if k.ok and k.value != 1:
-        issues.append(f"Non-Call {k.value}")
-    return kit.doc_check(ctx, "doc.template_variant", "template_variant", "DACN 型態").compare(
-        None,
-        None,
-        ok=not issues,
-        fail=S.REVIEW_REQUIRED,
-        reason="template_variant_unverified",
-        message="、".join(issues),
-        fail_message="待樣本驗證（Nomura DACN 樣本只有 KO 每日觀察＋記憶式、多標的、無 KI 或到期觀察、美元、Non-Call 1），"
-        "請人工核對",
-    )
+SAMPLED = dacn.Sampled(
+    "Nomura DACN 樣本只有 KO 每日觀察＋記憶式、多標的、無 KI 或到期觀察、美元、Non-Call 1",
+    (
+        dacn.ko(kind=lambda v: v[0]),
+        dacn.baskets,
+        dacn.ki(("none", "AM")),
+        dacn.currency(("USD",)),
+        dacn.guaranteed((1,)),
+        dacn.non_call((1,)),
+    ),
+)
 
 
 def coupon_mentions(ctx: IssuerContext) -> list[CheckResult]:
@@ -86,18 +63,6 @@ def coupon_mentions(ctx: IssuerContext) -> list[CheckResult]:
             )
         )
     return out
-
-
-def guaranteed_periods(ctx: IssuerContext) -> CheckResult:
-    """配息公式的保證期數 = 第 7 項 KO 起日推得的 Non-Call（核對規則 §3.5）。"""
-    f = ctx.ts.f
-    g, k = f("guaranteed_periods"), f("first_callable_period")
-    return kit.doc_check(ctx, "doc.guaranteed_periods", "guaranteed_periods", "配息公式保證期數", k, g).compare(
-        k.value,
-        g.value,
-        evidence=list(g.evidence),
-        fail_message="第 7 項配息公式保證全額配息的期數須等於第一個可提前出場期（Non-Call）",
-    )
 
 
 def scenario_return(ctx: IssuerContext) -> CheckResult:
@@ -127,9 +92,9 @@ def scenario_return(ctx: IssuerContext) -> CheckResult:
 def run_all(ctx: IssuerContext) -> list[CheckResult]:
     """說明書內部規則：只用讀出結果與審查標準。"""
     return [
-        template_variant(ctx),
+        dacn.template_variant(ctx, SAMPLED),
         *coupon_mentions(ctx),
-        guaranteed_periods(ctx),
+        dacn.guaranteed_periods(ctx, 7),
         scenario_return(ctx),
         *nomura.document_info(ctx),
         *nomura.periods(ctx),

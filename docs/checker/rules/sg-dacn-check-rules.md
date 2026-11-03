@@ -173,9 +173,9 @@
 
 | 內容 | 位置 |
 |---|---|
-| 範本辨識與讀出 | `parsers/sg_dacn.py`、`parsers/sg_dacn_iis.py`：沿用 `parsers/sg.py`、`sg_iis.py` 的版面、封面、標的表、日期表、第二章以後與 `read`，覆寫配息段落、封面標題（DACN 名稱較長，換成兩行）與情境標準欄位（同 Nomura DACN 先照 FCN 讀出再改讀的做法）；`sg.py`、`sg_iis.py` 的辨識拆出共用骨架（`skeleton`），FCN 另加「沒有 n(i)／N(i)」條件（parser 版本各 +1） |
+| 範本辨識與讀出 | `parsers/sg_dacn.py`、`parsers/sg_dacn_iis.py`：沿用 `parsers/sg.py`、`sg_iis.py` 的版面、封面、標的表、日期表、第二章以後與 `read`，覆寫配息段落、封面標題（DACN 名稱較長，換成兩行）與情境標準欄位（同 Nomura DACN 先照 FCN 讀出再改讀的做法）；`sg.py`、`sg_iis.py` 的辨識拆出共用骨架（`skeleton`），FCN 另加「沒有 n(i)／N(i)」條件（parser 版本各 +1）；配息門檻 % 用 DACN 共用的 `parsers/dacn.py` 讀法（workflow #440） |
 | 上手註冊 | `issuers.py` 登記 `SG_DACN`（`products=frozenset({DACN})`，上手代號同 `SG`） |
-| 規則 | `rules/sg_dacn.py`（§3.1 型態、§3.5、§3.8 情境種類與期別，其餘沿用 `rules/sg.py`；`schedule` 的按比例條款在 DACN 交不適用時略過）、`rules/sg_dacn_iis.py`（§3.9）；配息門檻用共用 `field.coupon_barrier_pct` |
+| 規則 | `rules/sg_dacn.py`（§3.1 型態宣告、§3.5 計息範圍、§3.8 情境種類與期別；§3.1 型態檢查與 §3.5 保證期數由 DACN 共用的 `rules/dacn.py` 執行，workflow #440，其餘沿用 `rules/sg.py`；`schedule` 的按比例條款在 DACN 交不適用時略過）、`rules/sg_dacn_iis.py`（§3.9）；配息門檻用共用 `field.coupon_barrier_pct` |
 | 設定 | `[auto_check_products]` 的 `DACN` 加 `SG`；審查標準 `[issuer.sg.product_names.DACN]`（版本 +1） |
 | 測試 | 合成 PDF（沿用 `tests/checker/sg_synth.py` 加 DACN 段落）；§7 的反例；本機真實樣本辨識與讀取測試（環境變數指向本機樣本，不進 repo）；試跑（§6） |
 

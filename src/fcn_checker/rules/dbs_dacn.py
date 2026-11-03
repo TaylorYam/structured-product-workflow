@@ -13,7 +13,7 @@ from decimal import ROUND_HALF_UP
 from ..parsers import dbs_dacn
 from ..schema import CheckResult
 from ..schema import CheckStatus as S
-from . import dbs, kit
+from . import dacn, dbs, kit
 from .kit import Q4, IssuerContext
 
 ISSUER = dbs.ISSUER
@@ -43,34 +43,26 @@ TITLES = {  # KI 型態 → 情境二～四應有的標題（依序，範本規�
 }
 
 
-def template_variant(ctx: IssuerContext) -> CheckResult:
-    """沒有樣本的型態轉人工覆核（核對規則 §3.1）：樣本只有美元計價、非 Quanto、多標的、保證 1 期、Non-Call 1、區間上限
-    `不適用`。讀不到的欄位由各自的規則轉人工，這裡不重複報。"""
-    f = ctx.ts.f
-    issues = []
-    cz, uls, rows = f("currency_zh"), f("underlyings"), f("underlying_prices")
-    g, k, upper = f("guaranteed_periods"), f("first_callable_period"), f("range_upper")
-    if cz.ok and ctx.std.currency_zh_to_iso.get(cz.value) != "USD":
-        issues.append(f"{cz.value}計價")
-    if cz.ok and rows.ok and any(r.currency and r.currency != cz.value for r in rows.value):
-        issues.append("Quanto（標的報價幣別和計價幣別不同）")
-    if uls.ok and len(uls.value) < 2:
-        issues.append("單一標的")
-    if g.ok and g.value != 1:
-        issues.append(f"保證 {g.value} 期")
-    if k.ok and k.value != 1:
-        issues.append(f"Non-Call {k.value}")
-    if upper.ok and any(x != dbs_dacn.NOT_APPLICABLE for x in upper.value):
-        issues.append(f"區間上限價格不是「{dbs_dacn.NOT_APPLICABLE}」")
-    return kit.doc_check(ctx, "doc.template_variant", "template_variant", "DACN 型態").compare(
-        None,
-        None,
-        ok=not issues,
-        fail=S.REVIEW_REQUIRED,
-        reason="template_variant_unverified",
-        message="、".join(issues),
-        fail_message="待樣本驗證（DBS DACN 樣本只有美元計價、多標的、保證 1 期、Non-Call 1、無區間上限），請人工核對",
+def range_upper(ctx: IssuerContext) -> list[str]:
+    """區間上限價格每列都是「不適用」。"""
+    upper = ctx.ts.f("range_upper")
+    return (
+        [f"區間上限價格不是「{dbs_dacn.NOT_APPLICABLE}」"]
+        if upper.ok and any(x != dbs_dacn.NOT_APPLICABLE for x in upper.value)
+        else []
     )
+
+
+SAMPLED = dacn.Sampled(
+    "DBS DACN 樣本只有美元計價、多標的、保證 1 期、Non-Call 1、無區間上限",
+    (
+        dacn.currency(("USD",), quanto=True),
+        dacn.baskets,
+        dacn.guaranteed((1,)),
+        dacn.non_call((1,)),
+        range_upper,
+    ),
+)
 
 
 def coupon_barrier(ctx: IssuerContext) -> list[CheckResult]:
@@ -163,7 +155,7 @@ def scenario_periods(ctx: IssuerContext) -> list[CheckResult]:
 def run_all(ctx: IssuerContext) -> list[CheckResult]:
     """說明書內部規則：只用讀出結果與審查標準。"""
     return [
-        template_variant(ctx),
+        dacn.template_variant(ctx, SAMPLED),
         *coupon_barrier(ctx),
         *scenario_periods(ctx),
         *dbs.run_all(ctx),

@@ -174,9 +174,9 @@
 
 | 內容 | 位置 |
 |---|---|
-| 範本辨識與讀出 | `parsers/dbs_dacn.py`、`parsers/dbs_dacn_iis.py`：沿用 `parsers/dbs.py`、`dbs_iis.py` 的版面、封面、表A、強制贖回、到期贖回、情境與第二章以後，價格表多宣告區間下限／上限兩欄，覆寫情境一出場期、情境範圍與投資人須知 KI 型態（同 Nomura DACN 先照 FCN 讀出再改讀的做法）；`dbs.py`、`dbs_iis.py` 的辨識拆出共用骨架（`skeleton`），FCN 另加「沒有 `其區間下限價格`」條件（parser 版本各 +1）；共用價格表讀法（`parsers/price_table.py`）接回窄欄裡幣別字在前、數字在任意位置換行的價格（`美元` ／ `1,05` ／ `9.22` ／ `05`） |
+| 範本辨識與讀出 | `parsers/dbs_dacn.py`、`parsers/dbs_dacn_iis.py`：沿用 `parsers/dbs.py`、`dbs_iis.py` 的版面、封面、表A、強制贖回、到期贖回、情境與第二章以後，價格表多宣告區間下限／上限兩欄，覆寫情境一出場期、情境範圍與投資人須知 KI 型態（同 Nomura DACN 先照 FCN 讀出再改讀的做法）；`dbs.py`、`dbs_iis.py` 的辨識拆出共用骨架（`skeleton`），FCN 另加「沒有 `其區間下限價格`」條件（parser 版本各 +1）；共用價格表讀法（`parsers/price_table.py`）接回窄欄裡幣別字在前、數字在任意位置換行的價格（`美元` ／ `1,05` ／ `9.22` ／ `05`）；配息門檻 % 用 DACN 共用的 `parsers/dacn.py` 讀法（workflow #440） |
 | 上手註冊 | `issuers.py` 登記 `DBS_DACN`（`products=frozenset({DACN})`，上手代號同 `DBS`） |
-| 規則 | `rules/dbs_dacn.py`（§3.1 型態、§3.4 表1 配息門檻價格、§3.5 情境種類與範圍，其餘沿用 `rules/dbs.py`）、`rules/dbs_dacn_iis.py`（§3.8）；配息門檻 % 用共用 `field.coupon_barrier_pct`；情境價格表區間下限欄用共用 `scenario.reprint`（`rules/scenario.py` 的欄名加 `barrier`） |
+| 規則 | `rules/dbs_dacn.py`（§3.1 型態宣告（型態檢查由 DACN 共用的 `rules/dacn.py` 執行，workflow #440）、§3.4 表1 配息門檻價格、§3.5 情境種類與範圍，其餘沿用 `rules/dbs.py`）、`rules/dbs_dacn_iis.py`（§3.8）；配息門檻 % 用共用 `field.coupon_barrier_pct`；情境價格表區間下限欄用共用 `scenario.reprint`（`rules/scenario.py` 的欄名加 `barrier`） |
 | 設定 | `[auto_check_products]` 的 `DACN` 加 `DBS`；審查標準 `[issuer.dbs.product_names.DACN]`（版本 +1） |
 | 測試 | 合成 PDF（`tests/checker/dbs_synth.py` 的 `DacnSpec`）；§7 的反例（`tests/checker/test_check_dbs_dacn.py`）；價格表換行接回（`tests/checker/test_price_table.py`）；本機真實樣本辨識與讀取測試（`tests/checker/test_real_dbs_dacn.py`，`FCN_DACN_DIR` 指向本機樣本，不進 repo）；試跑（§6） |
 
