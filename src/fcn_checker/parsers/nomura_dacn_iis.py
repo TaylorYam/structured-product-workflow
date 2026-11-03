@@ -31,7 +31,7 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     if ACCRUAL not in coupon:
         failed.append(f"收益分配事項沒有每日計息的「{ACCRUAL}」")
     if failed:
-        return DetectionResult(False, failed, evidence)
+        return DetectionResult(False, failed, evidence, claimed=ACCRUAL in coupon)
     missing = []
     if nomura_dacn.FORMULA not in coupon:
         missing.append("收益分配事項的配息公式 (i)(ii) 和現行版不同")

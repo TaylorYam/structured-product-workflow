@@ -46,7 +46,7 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     if sg_dacn.FAMILY not in payout:
         failed.append(f"收益分配事項沒有區間累積配息的「{sg_dacn.FAMILY}」")
     if failed:
-        return DetectionResult(False, failed, evidence)
+        return DetectionResult(False, failed, evidence, claimed=sg_dacn.IIS_MARK in payout)
     missing, at = [], 0
     for where, pattern in WORDINGS:
         m = re.compile(pattern).search(payout, at)

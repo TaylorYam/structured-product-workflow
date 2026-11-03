@@ -125,7 +125,7 @@
 
 新上手要碰的檔只有：`parsers/<上手>.py`、`parsers/<上手>_iis.py`、`rules/<上手>.py`、`rules/<上手>_iis.py`（有範本專屬檢查才需要）、`issuers.py` 的一個 `Template` 與 `REGISTRY` 一筆 `Issuer`、三個設定檔（`review_standard.toml` 的 `[issuer.<上手>]`、`issuer_prefixes.toml`、`reference_sheet.toml`）、合成測試與文件。
 
-已上線上手新增商品家族（例：Super Bull、BEN、DACN）時是「加一個範本物件＋兩段 TOML」：家族的 parser、規則（與投資人須知）各一檔，在 `issuers.py` 加一個 `Template`（`products` 寫該商品種類）放進該上手 `Issuer` 範本清單的前面（由專到泛：商品家族在前、FCN 最後），再在 `config/issuer_prefixes.toml` 的 `[auto_check_products]` 開放該上手、在 `config/review_standard.toml` 加 `[issuer.<上手>.product_names.<商品種類>]`。辨識時同一家上手由專到泛取第一個命中的範本（較專的範本認得出家族但版本不支援時停在那裡），所以**不改**同上手 FCN 的 parser、不寫「不是某家族才算 FCN」的反向條件；`tests/checker/test_issuer_registry.py` 會檢查每個家族的合成文件在該上手剛好命中自己的範本、兩份 TOML 都有登記（Issue #436）。共用的 `config.py`、`rules/review_standard.py` 不在清單裡；需要新的「一種基準」（所有上手都可能用到的新欄位）時才在 `ISSUER_FIELDS` 加一個欄位，另開 Issue。
+已上線上手新增商品家族（例：Super Bull、BEN、DACN）時是「加一個範本物件＋兩段 TOML」：家族的 parser、規則（與投資人須知）各一檔，在 `issuers.py` 加一個 `Template`（`products` 寫該商品種類）放進該上手 `Issuer` 範本清單的前面（由專到泛：商品家族在前、FCN 最後），再在 `config/issuer_prefixes.toml` 的 `[auto_check_products]` 開放該上手、在 `config/review_standard.toml` 加 `[issuer.<上手>.product_names.<商品種類>]`。辨識時同一家上手由專到泛取第一個命中的範本（較專的範本認得出家族但版本不支援、或文件有該家族的標記寫法但不符家族範本（`DetectionResult.claimed`）時停在那裡），所以**不改**同上手 FCN 的 parser、不寫「不是某家族才算 FCN」的反向條件；`tests/checker/test_issuer_registry.py` 會檢查每個家族的合成文件在該上手剛好命中自己的範本、兩份 TOML 都有登記（Issue #436）。共用的 `config.py`、`rules/review_standard.py` 不在清單裡；需要新的「一種基準」（所有上手都可能用到的新欄位）時才在 `ISSUER_FIELDS` 加一個欄位，另開 Issue。
 
 ### 6.2a 新上手要提供什麼、哪些自動沿用（[ADR 0009](adr/0009-shared-rules-defined-per-rule.md)）
 

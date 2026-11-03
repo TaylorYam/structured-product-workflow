@@ -138,7 +138,7 @@ K% 都低於 100（不等於 KO%）。未涵蓋（待樣本驗證）：KO 每期
 - 英文名稱含 `Autocall Daily Range Accrual Notes` 與 `issued by Nomura International Funding Pte. Ltd.`；中文名稱含 `計價每日計息(`；
 - 第 11 項 (2) 讀得到交易日（只看寫法、不看早晚；2026-11-02 使用者決定）。
 
-和 `nomura-zh-pd` 互斥：`nomura-zh-pd` 的辨識另加條件「第 7 項沒有 `實際日數：`、`總日數：` 定義」（每日計息公式的說明書不會被認成 FCN，即使英文名稱寫成 `Autocall Fixed Coupon Notes`）。名稱是 DACN、但第 7 項沒有每日計息公式的說明書兩邊都不符 → 範本未知、轉人工覆核。
+和 `nomura-zh-pd` 的關係：同一家上手由專到泛（#436）：先試本上手的商品家族範本、不符才試 FCN 範本（`nomura-zh-pd` 不再另加「沒有本家族寫法」的條件）；本範本認得出商品家族（骨架與家族條件成立）但版本不支援時停在本範本、報「範本版本不支援」，不退回 FCN 範本；本家族的標記是「第 7 項有 `實際日數：` 或 `總日數：`」：有標記、但家族條件不成立的文件也停在本範本（範本未知、轉人工覆核），不退回 FCN 範本，和以前 FCN 範本自己排除的結果相同。名稱是 DACN、但第 7 項沒有每日計息公式的說明書兩邊都不符 → 範本未知、轉人工覆核。
 
 負面測試：Nomura FCN 樣本（NR1–NR8）不應被判定為本範本；其他上手的 DACN 樣本（SG、DBS、Natixis…）不含 `Nomura International Funding Pte. Ltd.` 封面，不應被判定為本範本；Nomura DACN 投資人須知（`_IIS`）不應被判定為說明書範本。
 

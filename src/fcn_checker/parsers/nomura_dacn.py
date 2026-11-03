@@ -21,7 +21,7 @@ from . import dacn, nomura
 from .common import Hit, Mention, hits, one
 from .layout import TextIndex, capture, parse_date
 
-# 每日計息第 7 項的定義標籤（去空白，範本規格 §8 條件 6）
+# 每日計息第 7 項的定義標籤（去空白，範本規格 §8 條件 6）；有其中之一就是本家族的標記（不符本範本時仍認領文件、同一家不退回 FCN 範本，#436）
 ACCRUAL_LABELS = ("實際日數：", "總日數：")
 
 TEMPLATE_ID = "nomura-zh-dacn-pd"
@@ -82,7 +82,8 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     if not is_accrual(art7):
         failed.append("第 7 項沒有每日計息的「實際日數：」「總日數：」定義與「×實際日數/總日數」配息公式")
     if failed:
-        return DetectionResult(False, failed, sk.evidence)
+        claimed = any(label in art7 for label in ACCRUAL_LABELS)
+        return DetectionResult(False, failed, sk.evidence, claimed=claimed)
     missing = version_problems(sk, art7)
     if missing:
         return DetectionResult(False, missing, sk.evidence, unsupported=f"{OLD_VERSION}：{'；'.join(missing)}")

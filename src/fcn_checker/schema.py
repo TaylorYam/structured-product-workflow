@@ -293,3 +293,5 @@ class DetectionResult:
     evidence: list[Evidence] = field(default_factory=list)
     # 認得出是這家上手、但不支援的範本版本（例：BNP Super Bull 舊版）：說明寫在這裡，辨識轉人工覆核、不能人工放行
     unsupported: str = ""
+    # 文件有本商品家族的標記寫法、但不符本範本：同一家上手較泛的範本（FCN）不再試（#436，取代 FCN parser 以前的反向條件）
+    claimed: bool = False

@@ -68,7 +68,8 @@ def load_config(
 
 
 def registry_of(*templates: Template) -> tuple[Issuer, ...]:
-    """只登記 `templates` 的上手清單（照給的順序，同代號的放在同一家）；上手的設定照 `REGISTRY`（註冊表沒有的代號用預設值）。"""
+    """只登記 `templates` 的上手清單（照給的順序，同代號的放在同一家，所以同一家要照由專到泛、FCN 最後給）；上手的設定照
+    `REGISTRY`（註冊表沒有的代號用預設值）。"""
     grouped: dict[str, list[Template]] = {}
     for t in templates:
         grouped.setdefault(t.code, []).append(t)

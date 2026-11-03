@@ -789,10 +789,11 @@ def _detect(
 
 def _pick(detections: Sequence[_Detection]) -> _Detection | None:
     """同一家上手由專到泛取第一個命中的範本（`detections` 是登記順序、FCN 在前，所以倒著看）；較專的範本認得出商品家族、
-    但版本不支援（`DetectionResult.unsupported`）時停在那裡，不退回較泛的範本。"""
+    但版本不支援（`DetectionResult.unsupported`）或文件有該家族的標記寫法（`DetectionResult.claimed`）時停在那裡，
+    不退回較泛的範本。"""
     for hit in reversed(detections):
         if hit[1].matched:
             return hit
-        if hit[1].unsupported:
+        if hit[1].unsupported or hit[1].claimed:
             return None
     return None

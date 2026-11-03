@@ -28,7 +28,8 @@ OLD_VERSION = "DBS DACN 說明書的寫法和現行版不同"
 NAME_ZH_MARK = "區間累計配息記憶型每日觀察自動提前出場"
 NAME_EN_MARK = "Range Accrual Memory Daily Knock-Out"
 ACCRUAL_LABEL = "累積日數："
-# 區間累計配息累積日數定義的比較對象（去空白，範本規格 §8 條件 6）
+# 區間累計配息累積日數定義的比較對象（去空白，範本規格 §8 條件 6）；說明書商品基本資料、投資人須知收益分配事項有它
+# 就是本家族的標記（不符本範本時仍認領文件、同一家不退回 FCN 範本，#436）
 RANGE_MARK = "其區間下限價格"
 # 範本規格 §2.1 的三段固定寫法（去空白後逐字相等；乘號原文是數學粗體 X（U+1D417），比對前換成 X，見 `same_chars`）
 RATE = (
@@ -82,7 +83,7 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     if not is_range_accrual(basic):
         failed.append(f"商品基本資料沒有比「{RANGE_MARK}」的累積日數定義（不是區間累計配息 DACN）")
     if failed:
-        return DetectionResult(False, failed, sk.evidence)
+        return DetectionResult(False, failed, sk.evidence, claimed=RANGE_MARK in basic)
     missing = version_problems(sk, basic)
     if missing:
         return DetectionResult(False, missing, sk.evidence, unsupported=f"{OLD_VERSION}：{'；'.join(missing)}")

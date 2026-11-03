@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib
 import tomllib
+from dataclasses import replace
 from pathlib import Path
 
 import fitz
@@ -125,3 +126,42 @@ def test_ca_calendar_step_leaves_real_super_bull_and_ben_unchanged(family):
         assert by_code("CA").with_calendar(ts, CONFIG.exchange_calendar) is ts
         seen += 1
     assert seen > 0
+
+
+# 各家族範本的標記（以前 FCN parser 的反向條件）：FCN 合成文件哪一種、標記寫法。Nomura 投資人須知的標記就是家族條件本身
+# （有標記就命中或版本不支援），不會有「有標記、不符家族範本」的文件，不列
+CLAIM_MARKS = [
+    ("NOMURA", "nomura_synth", "pd", "實際日數："),
+    ("SG", "sg_synth", "pd", "n(i)(i="),
+    ("SG", "sg_synth", "iis", "[n(i)/N(i)]"),
+    ("NATIXIS", "natixis_synth", "pd", "配息界限價格"),
+    ("NATIXIS", "natixis_synth", "iis", "「變動配息金額」"),
+    ("DBS", "dbs_synth", "pd", "其區間下限價格"),
+    ("DBS", "dbs_synth", "iis", "其區間下限價格"),
+]
+
+
+@pytest.mark.parametrize(("code", "module", "kind", "mark"), CLAIM_MARKS)
+def test_family_mark_keeps_the_document_from_falling_back_to_fcn(tmp_path, code, module, kind, mark):
+    """FCN 文件加上家族標記、但不符家族範本：FCN 範本本身仍命中（母 parser 不寫反向條件），但同一家停在家族範本
+    （`claimed`），整個註冊表沒有命中、範本未知——和 #436 以前 FCN parser 自己排除的結果相同。"""
+    synth = importlib.import_module(module)
+    spec = synth.Spec()
+    pdf = synth.build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", spec)
+    lines = _lines(pdf if kind == "pd" else iis_path(pdf))
+    issuer = by_code(code)
+    *families, general = issuer.templates
+    detector = (lambda t: t.detect) if kind == "pd" else (lambda t: t.iis.detect)
+    find = detect if kind == "pd" else detect_iis
+    assert detector(general)(lines).matched
+    # 把標記加在某一行後面，找到「落在家族條件看的段落、FCN 仍命中」的那一行
+    for i, line in enumerate(lines):
+        marked = [*lines[:i], replace(line, text=line.text + mark), *lines[i + 1 :]]
+        family = [detector(t)(marked) for t in families]
+        if any(d.claimed for d in family) and detector(general)(marked).matched:
+            break
+    else:
+        pytest.fail(f"{code} {kind}：找不到能放標記的行")
+    assert not any(d.matched or d.unsupported for d in family)
+    got, result = find(marked)
+    assert got is None and result.reason_code == "template_unknown", result.message

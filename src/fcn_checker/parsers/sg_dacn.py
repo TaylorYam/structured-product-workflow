@@ -22,7 +22,7 @@ from . import dacn, money, sg
 from .common import Mention
 from .layout import TextIndex, capture, join_text, parse_date
 
-# 區間累積配息第 8 項的 n(i)、N(i) 定義（範本規格 §8 條件 5）
+# 區間累積配息第 8 項的 n(i)、N(i) 定義（範本規格 §8 條件 5）；有其中之一就是本家族的標記（不符本範本時仍認領文件、同一家不退回 FCN 範本，#436）
 ACCRUAL_DEFINITIONS = ("n(i)(i=", "N(i)(i=")
 
 TEMPLATE_ID = "sg-zh-dacn-pd"
@@ -32,6 +32,8 @@ OLD_VERSION = "SG DACN 說明書的寫法和現行版不同"
 NAME_EN_TAIL = "Range Accrual Equity Linked Notes (Non Principal Guaranteed and Unsecured)"
 NAME_ZH_MARK = "區間累積配息"
 FAMILY = "×配息率×[n(i)/N(i)]"  # 商品家族：計息期的配息公式（範本規格 §8 條件 5）
+# 投資人須知收益分配事項有它就是本家族的標記（不符本範本時仍認領文件、同一家不退回 FCN 範本，#436）
+IIS_MARK = "[n(i)/N(i)]"
 # 範本規格 §2.1 的五段固定寫法（去空白後依序出現；a、b、g、T 是數字）
 FORMULA = r"第1(?:~(\d+))?個配息金額＝每單位面額×配息率第(\d+)~(\d+)個配息金額＝每單位面額×配息率×\[n\(i\)/N\(i\)\]"
 ACCRUED = r"n\(i\)\(i=(\d+)-(\d+)\)=" + re.escape(
@@ -79,7 +81,8 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     if not is_accrual(art8):
         failed.append(f"第 8 項沒有區間累積配息的「n(i)(i=」「N(i)(i=」定義與「{FAMILY}」配息公式")
     if failed:
-        return DetectionResult(False, failed, sk.evidence)
+        claimed = any(x in art8 for x in ACCRUAL_DEFINITIONS)
+        return DetectionResult(False, failed, sk.evidence, claimed=claimed)
     missing = version_problems(sk, art8)
     if missing:
         return DetectionResult(False, missing, sk.evidence, unsupported=f"{OLD_VERSION}：{'；'.join(missing)}")

@@ -30,6 +30,9 @@ NAME_EN_MARK = "Autocallable Daily Range Accrual Note Linked to Basket of Equiti
 NAME_ZH_MARK = "區間計息(自動提前到期)"
 # 商品家族（範本規格 §8 條件 2）：第 13 項的變動配息金額公式與 n 定義
 FAMILY = ("「變動配息金額」=", "所有連結標的收盤價皆高於或等於配息界限價格之配息觀察日天數")
+# 區間計息才有的寫法：說明書全文、投資人須知貳、商品事項有其中之一就是本家族的標記（不符本範本時仍認領文件、同一家不退回 FCN 範本，#436）；
+# FCN KO 那一期按比例條款也有「x (n/N)」，所以不能只看 n、N
+MARKS = ("「變動配息金額」", "配息界限價格")
 _FIXED = re.escape("「固定配息金額」=配息觀察期間結束日持有之商品單位數x每單位商品面額x月配息率")
 _N_TOTAL = re.escape("N係指相關配息觀察期間內的總配息觀察日天數；n係指該相關配息觀察期間內截至")
 # 範本規格 §2.1 的七段固定寫法（去空白後依序出現）；第 6 段現行版寫「配息界線價格」，更正成「界限」也收
@@ -104,6 +107,11 @@ VARIANT = natixis.Variant(TABLE, COUPON_ROW, coupon_terms, annualized_cases=1)
 # ---------------------------------------------------------------- 辨識
 
 
+def has_mark(text: str) -> bool:
+    """去空白的文字裡有區間計息的標記寫法（`MARKS`）。"""
+    return any(m in text for m in MARKS)
+
+
 def is_accrual(art13: str) -> bool:
     """商品家族（區間計息，範本規格 §8 條件 2）。"""
     return all(x in art13 for x in FAMILY)
@@ -124,7 +132,8 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     if not is_accrual(art13):
         failed.append(f"第 13 項沒有區間計息的「{FAMILY[0]}」公式與「{FAMILY[1]}」定義")
     if failed:
-        return DetectionResult(False, failed, sk.evidence)
+        claimed = has_mark(TextIndex(doc.lines).text)
+        return DetectionResult(False, failed, sk.evidence, claimed=claimed)
     table = natixis.underlying_table("underlying_table", doc.span_lines(arts.get(9)), TABLE)
     missing = version_problems(sk, art13, table, text(12))
     if missing:

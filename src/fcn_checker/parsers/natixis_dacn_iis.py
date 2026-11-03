@@ -62,7 +62,7 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
         family = natixis_dacn.FAMILY
         failed.append(f"貳、商品事項沒有區間計息的「{family[0]}」公式與「{family[1]}」定義")
     if failed:
-        return DetectionResult(False, failed, sk.evidence)
+        return DetectionResult(False, failed, sk.evidence, claimed=natixis_dacn.has_mark(product))
     missing, at = [], 0
     for where, pattern in WORDINGS:
         m = re.compile(pattern).search(product, at)
