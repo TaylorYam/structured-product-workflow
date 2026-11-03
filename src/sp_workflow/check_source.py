@@ -37,12 +37,12 @@ import getpass
 import json
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from openpyxl.cell.cell import Cell
 
+from fcn_checker.backfill_values import ROW_FIELDS
 from fcn_checker.config import RISK_LEVEL_PENDING
 from fcn_checker.fields import PRICE_COLUMNS
 from fcn_checker.rating_formats import AGENCY_KEYS, RATING_FIELDS
@@ -74,8 +74,6 @@ PRODUCT_FIELD = "product"  # 參考條件表的商品種類（#302；決定能�
 PARTICIPATION_FIELD = "participation_pct"  # 參考條件表的參與率（#373；只有 BEN 有，不在匯入格式裡，排在風險等級後面）
 COUPON_BARRIER_FIELD = "coupon_barrier_pct"  # 參考條件表的配息門檻（#367；不在匯入格式裡，排在參與率後面）
 LOOKBACK_FIELD = "lookback_end_date"  # 參考條件表的回顧結束日（#376；回填欄位，不在匯入格式裡，排在參與率後面）
-DENOMINATION_RULE = "field.denomination"
-DENOMINATION_COLUMN = "單位面額"
 
 
 class CheckSourceError(Exception):
@@ -356,8 +354,9 @@ def write_back(
             if _absent_reason(current) or _changed(now, checked_rows.get(tdcc), fmt, rated=rated):
                 stale.append(tdcc)
                 continue
-            for column, new in [*_backfill_values(item, fmt), *_released_denomination(item)]:
-                changes += _write_value(conn, tdcc, column, new, fmt, result_file, user)
+            for v in item.backfill_values:  # 型別化的回填值（#444）：照目標寫表，值有改變時記原值
+                changed = backfill(conn, tdcc, v.target, v.value, item=v.label, result_file=result_file, user=user)
+                changes += int(changed)
             lock_checked(conn, tdcc)
             done.append(tdcc)
     return WriteBackReceipt(tuple(done), tuple(already), saved, changes, tuple(stale))
@@ -371,10 +370,10 @@ def _changed(current: Mapping[str, Any], checked: Any, fmt: ReferenceFormat, *, 
     """
     if checked is None:
         return True
-    skip = {"isin", "issue_date", LOOKBACK_FIELD, *CHECKED_FIELDS}
+    skip = {target.field for target in ROW_FIELDS}  # 回填欄位只在 backfill_values 宣告（#444）
     for header, value in current.items():
         std = fmt.columns.get(header)
-        if std is None or std in skip or std.startswith("autocall_date_"):
+        if std is None or std in skip:
             continue
         if std in RATING_FIELDS and not (rated and checked.has(std)):
             continue
@@ -407,48 +406,6 @@ def _save_result(conn: psycopg.Connection, item: BatchItem, filled: bool, result
             user,
         ),
     )
-
-
-def _backfill_values(item: BatchItem, fmt: ReferenceFormat) -> list[tuple[str, Any]]:
-    """說明書這次要寫進「回填後」的格子（回填與 VWAP 覆寫）：(欄名, 值)；TS、IIS 打勾不算（改成鎖住）。"""
-    from fcn_checker.backfill import WRITE_ACTIONS
-
-    return [
-        (d.column, d.expected)
-        for d in item.report.backfill
-        if d.action in WRITE_ACTIONS and fmt.columns.get(d.column) not in CHECKED_FIELDS
-    ]
-
-
-def _released_denomination(item: BatchItem) -> list[tuple[str, Any]]:
-    """人工放行的說明書，單位面額和資料庫不同時寫入 TS 的值（ADR 0008）。"""
-    from fcn_checker.schema import CheckStatus
-
-    if not item.released:
-        return []
-    found = {
-        r.actual
-        for r in item.report.results
-        if r.rule_id == DENOMINATION_RULE and r.status != CheckStatus.PASS and r.actual is not None
-    }
-    if len(found) != 1:
-        return []
-    (value,) = found
-    try:
-        return [(DENOMINATION_COLUMN, Decimal(str(value)))]
-    except ArithmeticError:
-        return []
-
-
-def _write_value(
-    conn: psycopg.Connection, tdcc: str, column: str, new: Any, fmt: ReferenceFormat, result_file: str, user: str
-) -> int:
-    """把一格寫進商品資料（`product_terms.backfill`，值有改變時記原值）；回傳改了幾個值（0 或 1）。"""
-    std = "denomination" if column == DENOMINATION_COLUMN else fmt.columns.get(column)
-    if std is None:
-        return 0
-    value = None if new == fmt.empty_value else new
-    return int(backfill(conn, tdcc, std, value, item=column, result_file=result_file, user=user))
 
 
 # ---------- 核對分頁與 fcn-batch 用的資料庫來源 ----------

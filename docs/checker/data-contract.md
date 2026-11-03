@@ -52,13 +52,15 @@
 
 狀態為 `PASS`、`MISMATCH`、`REVIEW_REQUIRED`、`NOT_APPLICABLE`、`ERROR`。整體優先序 `ERROR > REVIEW_REQUIRED > MISMATCH > PASS`；PANEL 顯示順序則是 ERROR、不一致、人工覆核、通過、不適用，兩者用途不同。
 
-`CheckReport` 包含 `status`、`template`、`results`、`not_covered`、`metadata`、`backfill`、`backfill_certain`。未涵蓋範圍不算已核對；回填確定性是內部值，不寫進紀錄。
+`CheckReport` 包含 `status`、`template`、`results`、`not_covered`、`metadata`、`backfill`、`backfill_values`、`backfill_certain`。未涵蓋範圍不算已核對；回填確定性是內部值，不寫進紀錄。
 
 `BatchItem`（`batch.py`）是一份 PDF 的辨識結果＋核對報告的 view，不是另一份資料：只存這份 PDF 的路徑、`report`、`identification`、同商品另一份 `partner` 與當次人工放行旗標；上手、商品代號、參考條件表列、文件種類、不支援與否都直接讀 `identification`，類別、狀態、`fillable`、`fills_sheet` 只看辨識結果與核對報告（含放行），不複製欄位、不回頭翻核對結果的原因碼。預覽列 `PreviewRow` 同樣只讀辨識結果。新增要顯示或判斷的資訊時加在 `Identification` 或 `CheckReport`，`BatchItem` 只加讀取它們的 property。
 
 ## 4. 回填與人工放行
 
-`CellDecision` 有 `column`、`cell`、`sheet_value`、`expected`、`action`，動作為 `fill`、`match`、`mismatch`、`overwrite`。只有 VWAP 價格按規則覆寫，其他回填欄已有不同值時保留原值並阻擋回填。
+`CellDecision` 有 `column`、`cell`、`sheet_value`、`expected`、`action`、`target`，動作為 `fill`、`match`、`mismatch`、`overwrite`。只有 VWAP 價格按規則覆寫，其他回填欄已有不同值時保留原值並阻擋回填。
+
+回填值（`fcn_checker.backfill_values`，#444）：`target` 是寫到哪個標準欄位，型別為 `ProductTerm`（ISIN、發行日、回顧結束日；人工放行時的單位面額）、`AutocallSlot`（比價日_1～12）、`UnderlyingPrice`（第幾檔標的的哪個價格，價格的鍵見 `fields.PRICE_FIELDS`）或 `CheckedMark`（TS、IIS）。核對時把動作是 `fill`、`overwrite` 的決策（TS、IIS 打勾除外）轉成 `BackfillValue`（`target`、`value`、`label`）放進 `CheckReport.backfill_values`：空值寫法轉成 None，`label` 是參考條件表欄名（回填紀錄給人看）。`BatchItem.backfill_values` 再加人工放行時說明書的單位面額。資料庫寫回只讀回填值、照 `target` 的型別寫表；核對結果檔照決策的 `cell` 排版。回填欄位（`ROW_FIELDS`，加上期初定價 VWAP 時的價格）只在 `backfill_values` 宣告。
 
 `BatchOutcome` 保存核對與當次人工放行；放行不改原始判定，只影響能否視為通過。兩份均通過或放行才回填；配對問題、回填不確定或衝突不能越過。現行紀錄只有 `manual_release` 旗標，沒有操作者、放行時間與理由的完整簽核欄位。
 

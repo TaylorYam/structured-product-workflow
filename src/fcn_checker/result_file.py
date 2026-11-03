@@ -9,30 +9,37 @@
   應改為（對的值有明確來源時寫出正確寫法，其他空白；見 `messages.fix_message`，Issue #339）。
 
 檔名 `<參考條件表檔名>_核對結果_<YYYYMMDD-HHMMSS>.xlsx`，寫到指定資料夾，不覆蓋既有檔案。
+
+這裡是回填的 Excel adapter（#444）：參考條件表以讀值開啟（`open_reference`）、不改動；「回填後」每格先看回填決策
+有沒有寫到那一格（回填與 VWAP 覆寫，日期沿用表上既有日期格式 `date_format`），沒有才取表上的值。
 """
 
 from __future__ import annotations
 
 import datetime as dt
 import io
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
+import openpyxl
 from openpyxl.styles import Alignment
 from openpyxl.utils import column_index_from_string, get_column_letter
 from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.dimensions import ColumnDimension
 from openpyxl.worksheet.worksheet import Worksheet
 
+from .backfill import WRITE_ACTIONS
 from .config import ReferenceFormat
 from .identification import Identification, name_code
-from .ingestion import write_new
+from .ingestion import IngestionError, write_new
 from .messages import Problem
 from .orders.reference import SheetLayout, header_columns, header_names, locate
 
 FILLED_SHEET = "回填後"
 ERROR_SHEET = "錯誤清單"
+FALLBACK_DATE_FORMAT = "yyyy/m/d"
 ERROR_COLUMNS = (("TDCC Code", 16), ("PDF 檔名", 40), ("PDF 頁碼", 10), ("錯訊", 100), ("應改為", 60))  # 表頭與欄寬
 
 
@@ -70,30 +77,69 @@ def output_path(out_dir: Path, reference_sheet: Path, now: dt.datetime) -> Path:
     return out_dir / f"{reference_sheet.stem}_核對結果_{now:%Y%m%d-%H%M%S}.xlsx"
 
 
-def save(wb: Workbook, rfmt: ReferenceFormat, keep: Iterable[int], errors: Sequence[ErrorRow], out: Path) -> Path:
+def open_reference(path: Path) -> Workbook:
+    """以讀值（data_only，公式格取 Excel 上次算好的值）開啟參考條件表；來源是否與核對時相同由批量入口以來源快照確認。"""
+    try:
+        return openpyxl.load_workbook(path, data_only=True)
+    except Exception as e:
+        raise IngestionError("reference_unreadable", f"參考條件表無法開啟（可能已損毀或不是 Excel）：{e}") from e
+
+
+def date_format(ws: Any, first_data_row: int) -> str:
+    """沿用表上既有日期格的顯示格式；回填通用（`sp_workflow.generic_backfill`，#364）也用。"""
+    for row in ws.iter_rows(min_row=first_data_row):
+        for c in row:
+            if isinstance(c.value, dt.datetime):
+                return c.number_format
+    return FALLBACK_DATE_FORMAT
+
+
+def save(
+    wb: Workbook,
+    rfmt: ReferenceFormat,
+    decisions: Iterable[Any],
+    keep: Iterable[int],
+    errors: Sequence[ErrorRow],
+    out: Path,
+) -> Path:
     """寫出核對結果檔並回傳路徑；檔案已存在（不覆蓋）或無法寫入時丟出 IngestionError。
 
-    `wb` 是已回填的參考條件表（讀值開啟）；`keep` 是要留在「回填後」的資料列號。
+    `wb` 是參考條件表（`open_reference` 讀值開啟，這裡不改它的值）；`decisions` 是要回填的說明書的回填決策
+    （`backfill.CellDecision`）；`keep` 是要留在「回填後」的資料列號。
     """
-    write_new(out, _build(wb, rfmt, keep, errors), "核對結果檔")
+    write_new(out, _build(wb, rfmt, decisions, keep, errors), "核對結果檔")
     return out
 
 
-def _build(wb: Workbook, rfmt: ReferenceFormat, keep: Iterable[int], errors: Sequence[ErrorRow]) -> bytes:
+def _build(
+    wb: Workbook, rfmt: ReferenceFormat, decisions: Iterable[Any], keep: Iterable[int], errors: Sequence[ErrorRow]
+) -> bytes:
     layout = locate(wb, rfmt)
+    src = wb[layout.sheet]
+    for merged in list(src.merged_cells.ranges):  # 合併儲存格拆開，每格照一般儲存格讀（Issue #203）
+        src.unmerge_cells(str(merged))
+    filled = {d.cell: d.expected for d in decisions if d.action in WRITE_ACTIONS}
     out = Workbook()
     ws = out.active
     ws.title = FILLED_SHEET
-    _filled_sheet(ws, wb[layout.sheet], layout, rfmt, sorted(set(keep)))
+    _filled_sheet(ws, src, layout, rfmt, sorted(set(keep)), filled)
     _error_sheet(out.create_sheet(ERROR_SHEET), errors)
     buf = io.BytesIO()
     out.save(buf)
     return buf.getvalue()
 
 
-def _filled_sheet(ws: Worksheet, src: Worksheet, layout: SheetLayout, rfmt: ReferenceFormat, rows: list[int]) -> None:
-    """照匯入格式寫「回填後」：每格取參考條件表 `rows` 各列對應欄的值與顯示格式。"""
+def _filled_sheet(
+    ws: Worksheet,
+    src: Worksheet,
+    layout: SheetLayout,
+    rfmt: ReferenceFormat,
+    rows: list[int],
+    filled: Mapping[str, Any],
+) -> None:
+    """照匯入格式寫「回填後」：每格取回填值（`filled`：格子位置 → 值）或參考條件表 `rows` 各列對應欄的值與顯示格式。"""
     imp = rfmt.import_format
+    date_fmt = date_format(src, layout.first_data_row)
     by_header = {h: cols[0] for h, cols in header_columns(src, layout).items()}  # 欄名 → 欄號（重複時取第一個）
     names = header_names(rfmt)
     sources = [None if h == imp.checked_column else _source(h, by_header, rfmt, names) for h in imp.columns]
@@ -112,8 +158,11 @@ def _filled_sheet(ws: Worksheet, src: Worksheet, layout: SheetLayout, rfmt: Refe
                 ws.cell(r_out, k, rfmt.checked_value)
             elif col is not None:
                 cell = src.cell(r_src, col)
-                target = ws.cell(r_out, k, cell.value)
+                value = filled.get(cell.coordinate, cell.value)
+                target = ws.cell(r_out, k, value)
                 target.number_format = cell.number_format
+                if cell.coordinate in filled and isinstance(value, dt.date):
+                    target.number_format = date_fmt
                 if target.data_type == "f":  # 讀值開啟不會有公式：「=」開頭的是文字，照文字寫
                     target.data_type = "s"
     dims = _dim_columns(src, src.max_column)

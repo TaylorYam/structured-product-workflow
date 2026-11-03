@@ -29,7 +29,7 @@ import openpyxl
 from openpyxl.cell.cell import Cell, MergedCell
 from openpyxl.worksheet.worksheet import Worksheet
 
-from fcn_checker.backfill import SLOTS, date_format
+from fcn_checker.backfill import SLOTS
 from fcn_checker.fields import PRICE_COLUMNS
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.orders.reference import (
@@ -42,6 +42,7 @@ from fcn_checker.orders.reference import (
     price_key,
     underlying_key,
 )
+from fcn_checker.result_file import date_format
 from fcn_checker.rules.reference import VWAP
 from sp_workflow.database import OperatorError
 from sp_workflow.file_tools import save_export

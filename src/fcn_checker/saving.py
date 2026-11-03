@@ -3,7 +3,7 @@
 `save_batch` 是唯一的儲存進入點，內部順序只在這裡：
 1. 以來源快照確認參考條件表、說明書、設定檔都與核對時相同，開啟參考條件表（變更或讀不到時兩個檔都不寫）
 2. 依每份 PDF 的類別決定列入錯誤清單的文件，以及要回填的說明書（說明書與同商品投資人須知都通過或人工放行）
-3. 回填（backfill.py）→ 照匯入格式產生核對結果檔（result_file.py）
+3. 照匯入格式產生核對結果檔（result_file.py）：「回填後」帶上回填決策寫的值，參考條件表不改
 4. 核對結果檔處理完後寫核對紀錄（reporting.py），才記得到核對結果檔路徑與是否已回填
 
 批量核對結果本身不被儲存改寫；同一份結果可以存很多次，每次都有自己的收據。
@@ -20,11 +20,10 @@ from typing import TypeVar
 
 from openpyxl.workbook.workbook import Workbook
 
-from . import backfill, reporting, result_file
+from . import reporting, result_file
 from .batch import BatchItem, BatchOutcome, check_batch, failed_batch, preview_batch
 from .check_config import CheckConfig
 from .ingestion import IngestionError, error_result
-from .orders.reference import locate
 from .schema import CheckResult, CheckStatus, overall_status
 
 T = TypeVar("T")
@@ -116,17 +115,11 @@ def save_batch(outcome: BatchOutcome, out_dir: Path, *, root: Path, now: dt.date
 
 
 def _fill_and_save(wb: Workbook, outcome: BatchOutcome, to_fill: Sequence[BatchItem], out: Path) -> Path:
-    """回填（寫進記憶體中的參考條件表），再照匯入格式寫出核對結果檔。
-
-    「回填後」重新產生、只帶值（Issue #203）：合併儲存格先拆開，回填值才寫得進去。"""
-    rfmt = outcome.reference_format
-    ws = wb[locate(wb, rfmt).sheet]
-    for merged in list(ws.merged_cells.ranges):
-        ws.unmerge_cells(str(merged))
-    backfill.apply(wb, rfmt, [i.report for i in to_fill])
+    """照匯入格式寫出核對結果檔：「回填後」是要回填的說明書那幾列，帶上它們的回填決策（Issue #203、#444）。"""
+    decisions = [d for i in to_fill for d in i.report.backfill]
     keep = [i.reference_row for i in to_fill if i.reference_row]
     error_rows = [row for i in outcome.items if not i.fillable for row in _error_rows(i)]
-    return result_file.save(wb, rfmt, keep, error_rows, out)
+    return result_file.save(wb, outcome.reference_format, decisions, keep, error_rows, out)
 
 
 def _status(outcome: BatchOutcome, errors: Sequence[CheckResult]) -> CheckStatus:
@@ -145,7 +138,7 @@ def _open_unchanged_reference(outcome: BatchOutcome) -> Workbook:
     """確認整份來源快照仍一致後，開啟參考條件表準備回填；任何來源變更或讀不到時丟出 IngestionError。"""
     if outcome.snapshot is None or not outcome.snapshot.still_valid():
         raise IngestionError("source_changed", "參考條件表、說明書或設定檔在核對後已變更或無法讀取，請重新核對後再儲存")
-    return backfill.open_reference(outcome.reference_sheet)
+    return result_file.open_reference(outcome.reference_sheet)
 
 
 def _attempt(errors: list[CheckResult], rule_id: str, what: str, step: Callable[[], T]) -> T | None:

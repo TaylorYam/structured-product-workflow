@@ -31,6 +31,7 @@ import openpyxl
 
 from . import __version__
 from .backfill import BackfillAction
+from .backfill_values import BackfillValue, released_denomination
 from .check_config import CheckConfig
 from .config import ReferenceFormat
 from .identification import Identification, PairingProblem, identify, unexpected_result
@@ -156,6 +157,13 @@ class BatchItem:
         """儲存時回填並列入「回填後」：說明書與同商品投資人須知都通過或人工放行（ADR 0007）。"""
         partner = self.partner
         return self.kind == DocKind.TERM_SHEET and self.fillable and partner is not None and partner.fillable
+
+    @property
+    def backfill_values(self) -> tuple[BackfillValue, ...]:
+        """寫回資料庫的回填值（#444）：核對交出的回填值；人工放行時另加說明書的單位面額（ADR 0008）。
+        要不要寫回看 `fills_sheet`。"""
+        denomination = released_denomination(self.report) if self.released else None
+        return (*self.report.backfill_values, *((denomination,) if denomination is not None else ()))
 
     @property
     def not_filled_reason(self) -> str:

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .backfill import CellDecision
+    from .backfill_values import BackfillValue
 
 
 class FieldStatus(StrEnum):
@@ -281,6 +282,7 @@ class CheckReport:
     not_covered: list[dict[str, str]]
     metadata: dict[str, Any] = field(default_factory=dict)
     backfill: list[CellDecision] = field(default_factory=list)  # 回填決策
+    backfill_values: tuple[BackfillValue, ...] = ()  # 回填決策中要寫進「回填後」的值，以標準欄位定址（#444）
     backfill_certain: bool = False  # 有回填決策且回填規則全部通過（能否人工放行看它；不寫進核對紀錄）
 
 
