@@ -566,3 +566,41 @@ def test_trade_rows_gain_fc2_and_singapore(pg) -> None:
     assert pg.execute("SELECT fc_name, fc2_name, singapore, supervisor FROM workflow.trade_row").fetchall() == [
         ("Amy", None, None, "PB")
     ]
+
+
+@pytest.mark.db
+def test_ki_touch_is_backfilled_from_the_ki_text(pg) -> None:
+    """資料表版本 0037（#442）：比價狀態加 KI 觸及的日期與代碼，既有列由 KI 欄的文字回填；沒觸及的兩欄空白。"""
+    import psycopg
+
+    _database_before(pg, 37)
+    texts = {
+        "029199990001": "AKI hit 2026-10-01 UL_1 AAA UW",
+        "029199990002": "EKI hit 2026-10-02 UL_2 9999 JT",
+        "029199990003": "AKI",
+        "029199990004": "MKI (manual)",
+        "029199990005": "-",
+        "029199990006": None,
+    }
+    seed_products(pg, [inventory(tdcc, [("台北", 100000)]) for tdcc in texts])
+    for tdcc, ki in texts.items():
+        pg.execute(
+            "INSERT INTO workflow.pricing_status (tdcc, status, reason, observed_through, locked, ki)"
+            " VALUES (%s, '在庫', NULL, NULL, true, %s)",
+            (tdcc, ki),
+        )
+
+    assert apply_migrations(pg)[0] == "0037_pricing_ki_touch.sql"
+
+    assert pg.execute(
+        "SELECT tdcc, ki, ki_touch_date, ki_touch_code FROM workflow.pricing_status ORDER BY tdcc"
+    ).fetchall() == [
+        ("029199990001", texts["029199990001"], dt.date(2026, 10, 1), "AAA UW"),
+        ("029199990002", texts["029199990002"], dt.date(2026, 10, 2), "9999 JT"),
+        ("029199990003", "AKI", None, None),
+        ("029199990004", "MKI (manual)", None, None),
+        ("029199990005", "-", None, None),
+        ("029199990006", None, None, None),
+    ]
+    with pytest.raises(psycopg.errors.CheckViolation):
+        pg.execute("UPDATE workflow.pricing_status SET ki_touch_code = NULL WHERE tdcc = '029199990001'")

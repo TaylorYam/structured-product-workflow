@@ -45,6 +45,8 @@ from sp_workflow.lifecycle import IN_STOCK, lifecycle_status
 from sp_workflow.product_store import read_many, underlying_codes
 from sp_workflow.status import CheckTerms
 from sp_workflow.stock_splits import SplitBook, load_splits
+from sp_workflow.underlying_pricing import KiTouch, Leg, converted
+from sp_workflow.underlying_pricing import worst as lowest
 
 if TYPE_CHECKING:
     import psycopg
@@ -59,7 +61,7 @@ FIXED = "已比價"  # 最終比價日早於分析日、還在庫（#352）
 CATEGORIES = (DELIVER, WATCH, NEAR, MANUAL, SAFE, FIXED, UNKNOWN)
 NEAR_BUFFER = Decimal("0.10")  # 接近執行價的門檻（距執行價，#347）
 MKI = "MKI"
-AKI_HIT = "AKI hit"  # 比價寫的 KI 欄：`AKI hit 日期 標的`（observation._ki_text）
+AKI = "AKI"
 NO_FC = "-"
 MAX_LEGS = 5  # 一檔最多連結幾個標的
 KI_BROKEN = "跌破KI"  # 全部商品的狀態（#354）
@@ -82,30 +84,6 @@ class Choice:
 def ticker_of(code: str) -> str:
     """股票代號：彭博代碼的第一段（`GOOG UW` → `GOOG`）。"""
     return code.split()[0] if code.split() else code
-
-
-@dataclass(frozen=True)
-class Leg:
-    """一檔商品的一個標的：條件價格與換回價格基準的最新收盤價。"""
-
-    seq: int
-    code: str
-    initial: Decimal | None
-    strike: Decimal | None
-    ki: Decimal | None
-    close: Decimal | None  # 換回價格基準的收盤價或試算價
-
-    @property
-    def performance(self) -> Decimal | None:
-        """收盤價 ÷ 進場價 − 1；缺價格時 None。"""
-        if self.close is None or not self.initial:
-            return None
-        return self.close / self.initial - 1
-
-    @property
-    def to_strike(self) -> Decimal | None:
-        """距執行價：收盤價 ÷ 執行價 − 1（負的是已低於執行價）；缺價格時 None。"""
-        return None if self.close is None or not self.strike else self.close / self.strike - 1
 
 
 @dataclass(frozen=True)
@@ -134,6 +112,12 @@ class Position:
     holdings: tuple[Holding, ...]
     strike_pct: Decimal | None = None  # 執行價 (%)
     ki_pct: Decimal | None = None  # 下限價 (%)
+    ki_touch: KiTouch | None = None  # 比價記下的 KI 觸及（#442）；沒觸及或還沒比過是 None
+
+    @property
+    def aki_touched(self) -> bool:
+        """比價已記下 AKI 觸及（每日觀察，觸及之後回到下限價之上也算）；EKI 只在最終比價日比，不看這個。"""
+        return self.barrier_type == AKI and self.ki_touch is not None
 
 
 @dataclass(frozen=True)
@@ -158,7 +142,7 @@ class Assessed:
         w, p = self.worst, self.position
         if w is None or w.close is None or w.to_strike is None:
             return UNKNOWN
-        if p.ki_text.startswith(AKI_HIT) or (p.barrier_type != NO_BARRIER and w.ki is not None and w.close < w.ki):
+        if p.aki_touched or (p.barrier_type != NO_BARRIER and w.below_ki):
             return KI_BROKEN
         return K_BROKEN if w.to_strike < 0 else INTACT
 
@@ -169,8 +153,8 @@ def assess(position: Position, today: dt.date | None = None) -> Assessed:
     def unknown(reason: str) -> Assessed:
         return Assessed(position, UNKNOWN, None, reason)
 
-    priced = all(leg.performance is not None and leg.strike is not None for leg in position.legs)
-    worst = min(position.legs, key=lambda leg: (leg.performance, leg.seq)) if position.legs and priced else None
+    priced = all(leg.strike is not None for leg in position.legs)
+    worst = lowest(position.legs) if priced else None
     final = position.final_date
     if today is not None and final is not None and final < today:
         return Assessed(position, FIXED, worst, f"{final} 已比價，結果以最終比價日為準，不用最新收盤價判斷")
@@ -191,11 +175,7 @@ def assess(position: Position, today: dt.date | None = None) -> Assessed:
     if to_strike >= 0:
         near = to_strike <= NEAR_BUFFER
         return Assessed(position, NEAR if near else SAFE, worst, "距執行價 10% 以內" if near else "")
-    knocked = (
-        position.barrier_type == NO_BARRIER
-        or (worst.ki is not None and worst.close < worst.ki)
-        or position.ki_text.startswith(AKI_HIT)
-    )
+    knocked = position.barrier_type == NO_BARRIER or worst.below_ki or position.aki_touched
     if not knocked:
         return Assessed(position, WATCH, worst, "低於執行價，但還在下限價之上")
     return Assessed(position, DELIVER, worst)
@@ -251,21 +231,26 @@ def load_positions(
     statuses = lifecycle_status(conn, [s.tdcc for s in due])
     found = [s for s in due if statuses[s.tdcc].status == IN_STOCK]
     tdccs = [s.tdcc for s in found]
-    ki_texts = dict(
-        conn.execute("SELECT tdcc, ki FROM workflow.pricing_status WHERE tdcc = ANY(%s)", (tdccs,)).fetchall()
-    )
+    kis = {
+        tdcc: (ki, None if touched is None else KiTouch(touched, code))
+        for tdcc, ki, touched, code in conn.execute(
+            "SELECT tdcc, ki, ki_touch_date, ki_touch_code FROM workflow.pricing_status WHERE tdcc = ANY(%s)",
+            (tdccs,),
+        )
+    }
     holdings = _holdings(conn, tdccs)
     latest = _latest_closes(conn, {u.code for s in found for u in s.prices})
     book = SplitBook(load_splits(conn))
     positions = []
     for s in found:
         p = s.columns
+        ki, touch = kis.get(s.tdcc, ("", None))
         legs = []
         for u in s.prices:
             day, close = (today, trial[u.code]) if u.code in trial else latest.get(u.code, (None, None))
             base = s.price_basis(u.seq)
             if close is not None and day is not None and base is not None:
-                close = close * book.factor(u.code, base, day)
+                close = converted(book, u.code, close, base, day)
             # lookback BEN（#374）的表現用回顧期初價格算，執行價已經是回顧執行價
             legs.append(Leg(u.seq, u.code, s.effective_initial(u.seq), s.effective_strike(u.seq), u.ki, close))
         positions.append(
@@ -276,13 +261,14 @@ def load_positions(
                 p["currency"],
                 p["final_valuation_date"],
                 p["barrier_type"],
-                ki_texts.get(s.tdcc) or "",
+                ki or "",
                 None if s.check is None else s.check.status,
                 None if s.check is None else s.check.reason or None,
                 tuple(legs),
                 tuple(holdings.get(s.tdcc, ())),
                 p["strike_pct"],
                 p["ki_pct"],
+                touch,
             )
         )
     return positions
