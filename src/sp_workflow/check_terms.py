@@ -39,7 +39,7 @@ from fcn_checker.fields import PRICE_FIELDS, PRICE_SQL
 from sp_workflow.database import OperatorError, require_in_transaction
 from sp_workflow.product_record import UnderlyingPrice, missing_fields, plain, price_at, round_price
 from sp_workflow.product_store import BLANK as _BLANK
-from sp_workflow.product_store import CURRENCY, TRADE_DATE, UF, Difference, locked, read, read_many
+from sp_workflow.product_store import CURRENCY, TRADE_DATE, UF, Difference, Stored, locked, read, read_many
 from sp_workflow.risk_level import RiskLevel, fill_missing_locked, recalculate_risk
 from sp_workflow.status import CheckTerms
 
@@ -372,9 +372,9 @@ def recalculate(conn: psycopg.Connection, config: ImportConfig, *, tdccs: Collec
     `config` 用到交易所假日表（價格）、上手編號對照與發行機構寫法（評等查哪家上手）和指數清單（風險等級）。
     """
     with conn.transaction():
-        products = _products(conn, tdccs, unlocked=True)
-        lines = [line for line, _, _ in _recalculate(conn, products, config.calendar)]
-        risks = recalculate_risk(conn, [p.tdcc for p in products], config)
+        stored = _products(conn, tdccs, unlocked=True)
+        lines = [line for line, _, _ in _recalculate(conn, stored, config.calendar)]
+        risks = recalculate_risk(conn, stored, config)
         fill_missing_locked(conn, config, None if tdccs is None else list(tdccs))
     return CalcReceipt(tuple(replace(line, risk=risks[line.tdcc]) for line in lines))
 
@@ -396,13 +396,13 @@ def recalculate_corrected(
     （`CHECK_TRADE_COLUMNS`，#116），條件沒改也重算（分公司配置、交叉比對）。在呼叫端的 transaction 裡執行。
     """
     require_in_transaction(conn)
-    if conn.execute("SELECT 1 FROM workflow.check_terms WHERE tdcc = %s", (tdcc,)).fetchone() is None:
+    found = _products(conn, [tdcc])
+    if not found or found[0].check is None:
         return None
     before = _product(tdcc, previous)
-    products = _products(conn, [tdcc])
-    if products == [before] and not trades_changed:
+    if [_product(s.tdcc, s.columns) for s in found] == [before] and not trades_changed:
         return None
-    ((line, stored, calc),) = _recalculate(conn, products, config.calendar, vwap_from=before)
+    ((line, stored, calc),) = _recalculate(conn, found, config.calendar, vwap_from=before)
     old = {p.seq: p for p in stored.prices} if stored is not None else {}
     new = {p.seq: p for p in calc.prices}
     changes = []
@@ -414,29 +414,31 @@ def recalculate_corrected(
     return line, tuple(changes)
 
 
-def _products(conn: psycopg.Connection, tdccs: Collection[str] | None, *, unlocked: bool = False) -> list[ProductTerms]:
-    """這幾檔（None：全部）計算用的商品條件，依 TDCC 排、鎖住商品條件列（`product_store.read_many`）。
+def _products(conn: psycopg.Connection, tdccs: Collection[str] | None, *, unlocked: bool = False) -> list[Stored]:
+    """這幾檔（None：全部）資料庫裡的條件，依 TDCC 排、鎖住商品條件列（`product_store.read_many`）。
 
     `unlocked`：只要還沒鎖住的（`product_store.locked`）。讀到的每一檔都鎖到 transaction 結束，包括已鎖住的。
     """
     stored = read_many(conn, None if tdccs is None else list(tdccs), lock=True)
-    return [_product(s.tdcc, s.columns) for s in stored.values() if not (unlocked and locked(s))]
+    return [s for s in stored.values() if not (unlocked and locked(s))]
 
 
 def _recalculate(
     conn: psycopg.Connection,
-    products: Sequence[ProductTerms],
+    found: Sequence[Stored],
     calendar: TradingCalendar,
     *,
     vwap_from: ProductTerms | None = None,
 ) -> list[tuple[CalcLine, Calculation | None, Calculation]]:
-    """算這幾檔，和上一次不同的寫入；回傳 (結果, 上一次算的, 這次算的)。`vwap_from` 見 `recalculate_corrected`。"""
+    """算這幾檔（`_products` 讀的），和上一次不同的寫入；回傳 (結果, 上一次算的, 這次算的)。`vwap_from` 見
+    `recalculate_corrected`。"""
+    products = [_product(s.tdcc, s.columns) for s in found]
     keys = [p.tdcc for p in products]
     trades = _trades(conn, keys)
     price_dates = [d for (d,) in conn.execute("SELECT DISTINCT price_date FROM workflow.price_import ORDER BY 1")]
     quotes = _quotes(conn, products, price_dates)
     released = _released(conn, keys)
-    stored = _stored(conn, keys)
+    stored = {s.tdcc: calc for s in found if (calc := _stored(s)) is not None}
     lines = []
     for product in products:
         calc = calculate(
@@ -610,35 +612,19 @@ def _released(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, set[t
     return found
 
 
-def _stored(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, Calculation]:
-    """上一次算的結果（分公司配置是資料庫目前的）。"""
-    prices: dict[str, list[UnderlyingPrice]] = {}
-    for tdcc, *values in conn.execute(
-        f"SELECT tdcc, seq, code, {PRICE_SQL}, lookback_price"
-        " FROM workflow.underlying_price WHERE tdcc = ANY(%s) ORDER BY tdcc, seq",
-        (list(tdccs),),
-    ):
-        prices.setdefault(tdcc, []).append(UnderlyingPrice(*values))
-    allocations: dict[str, list[tuple[str, Decimal]]] = {}
-    for tdcc, branch, amount in conn.execute(
-        "SELECT tdcc, branch, amount FROM workflow.branch_allocation WHERE tdcc = ANY(%s) ORDER BY tdcc, seq",
-        (list(tdccs),),
-    ):
-        allocations.setdefault(tdcc, []).append((branch, amount))
-    return {
-        tdcc: Calculation(
-            status,
-            reason or "",
-            price_date,
-            tuple(prices.get(tdcc, ())),
-            tuple(allocations.get(tdcc, ())),
-            tuple(Difference(*d) for d in differences or ()),
-        )
-        for tdcc, status, reason, price_date, differences in conn.execute(
-            "SELECT tdcc, status, reason, price_date, differences FROM workflow.check_terms WHERE tdcc = ANY(%s)",
-            (list(tdccs),),
-        )
-    }
+def _stored(found: Stored) -> Calculation | None:
+    """上一次算的結果（分公司配置是資料庫目前的）；還沒算過時 None。標的價格不帶價格基準日：基準日由拆股登記算
+    （`stock_splits.refresh_basis`），不是核對條件算的，不拿來比有沒有變。"""
+    if found.check is None:
+        return None
+    return Calculation(
+        found.check.status,
+        found.check.reason,
+        found.check.price_date,
+        tuple(replace(p, basis=None) for p in found.prices),
+        found.branches,
+        found.check.differences,
+    )
 
 
 def _same(calc: Calculation, stored: Calculation | None) -> bool:

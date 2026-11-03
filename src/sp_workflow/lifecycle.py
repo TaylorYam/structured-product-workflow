@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from sp_workflow.database import OperatorError
+from sp_workflow.product_store import lock_product
 from sp_workflow.status import Lifecycle
 
 if TYPE_CHECKING:
@@ -270,7 +271,7 @@ def resolve_objection(conn: psycopg.Connection, objection_id: int, *, user: str 
 
 def _lock_product(conn: psycopg.Connection, tdcc: str) -> None:
     """鎖住這檔的商品列，同時寫同一檔的事件時一個一個來。"""
-    if conn.execute("SELECT 1 FROM workflow.product WHERE tdcc = %s FOR UPDATE", (tdcc,)).fetchone() is None:
+    if not lock_product(conn, tdcc):
         raise LifecycleError(f"資料庫沒有 {tdcc} 的商品條件")
 
 

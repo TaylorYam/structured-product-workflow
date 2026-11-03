@@ -28,6 +28,7 @@ from sp_workflow import sheet_cells
 from sp_workflow.database import OperatorError
 from sp_workflow.lifecycle import OBSERVATION
 from sp_workflow.product_record import to_json
+from sp_workflow.product_store import observed_exits_using
 
 if TYPE_CHECKING:
     import psycopg
@@ -194,18 +195,9 @@ def load_splits(conn: psycopg.Connection) -> tuple[Split, ...]:
 def affected_exits(conn: psycopg.Connection, split: Split) -> list[str]:
     """這筆登記改了之後要重新比價的已出場商品：用到這個代碼、生效日在 Strike date 之後、還有效的事件全部來自比價。
 
-    生效日以前的出場也算：價格已經是上手調整過的標的，生效日以前的收盤價也要換算（#275、ADR 0025）。"""
-    rows = conn.execute(
-        "SELECT p.tdcc FROM workflow.product p"
-        " WHERE p.strike_date < %(day)s"
-        " AND EXISTS (SELECT 1 FROM workflow.underlying_price u WHERE u.tdcc = p.tdcc AND u.code = %(code)s)"
-        " AND EXISTS (SELECT 1 FROM workflow.product_event e WHERE e.tdcc = p.tdcc AND e.superseded_at IS NULL)"
-        " AND NOT EXISTS (SELECT 1 FROM workflow.product_event e WHERE e.tdcc = p.tdcc AND e.superseded_at IS NULL"
-        "                 AND e.source <> %(auto)s)"
-        " ORDER BY p.tdcc",
-        {"day": split.effective_date, "code": split.code, "auto": OBSERVATION},
-    )
-    return [tdcc for (tdcc,) in rows]
+    生效日以前的出場也算：價格已經是上手調整過的標的，生效日以前的收盤價也要換算（#275、ADR 0025）。
+    查詢在 `product_store.observed_exits_using`（#438）。"""
+    return observed_exits_using(conn, split.code, split.effective_date, OBSERVATION)
 
 
 def refresh_basis(conn: psycopg.Connection, book: SplitBook) -> int:

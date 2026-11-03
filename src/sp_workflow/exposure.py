@@ -42,6 +42,7 @@ from sp_workflow.check_terms import NO_BARRIER
 from sp_workflow.daily_import import FC_LABEL_SQL
 from sp_workflow.file_tools import excel_value, save_export, table_book, text_cell
 from sp_workflow.lifecycle import IN_STOCK, lifecycle_status
+from sp_workflow.product_store import Stored, read_many, underlying_codes
 from sp_workflow.status import CheckTerms
 from sp_workflow.stock_splits import SplitBook, load_splits
 
@@ -61,7 +62,6 @@ MKI = "MKI"
 AKI_HIT = "AKI hit"  # 比價寫的 KI 欄：`AKI hit 日期 標的`（observation._ki_text）
 NO_FC = "-"
 MAX_LEGS = 5  # 一檔最多連結幾個標的
-_UNDERLYING_COLUMNS = ", ".join(f"underlying_{n}" for n in range(1, MAX_LEGS + 1))  # workflow.product 的連結標的
 KI_BROKEN = "跌破KI"  # 全部商品的狀態（#354）
 K_BROKEN = "跌破K"
 INTACT = ""  # 未跌破留空（#358）
@@ -206,10 +206,7 @@ def assess(position: Position, today: dt.date | None = None) -> Assessed:
 
 def load_choices(conn: psycopg.Connection) -> list[Choice]:
     """在庫商品連結的標的，照股票代號合併各交易所的代碼，依代號排序。"""
-    rows = conn.execute(
-        f"SELECT DISTINCT tdcc, code FROM workflow.product, unnest(ARRAY[{_UNDERLYING_COLUMNS}]) AS code"
-        " WHERE code IS NOT NULL"
-    ).fetchall()
+    rows = underlying_codes(conn)
     statuses = lifecycle_status(conn, [tdcc for tdcc, _ in rows])
     by_code: dict[str, set[str]] = defaultdict(set)
     for tdcc, code in rows:
@@ -242,56 +239,58 @@ def load_positions(
     """
     trial = trial or {}
     today = today or dt.date.today()
-    wanted = None if codes is None else sorted(set(codes))
-    rows = conn.execute(
-        "SELECT p.tdcc, p.product, p.issuer, p.currency, p.final_valuation_date, p.barrier_type, p.strike_date,"
-        " s.ki, c.status, c.reason, p.strike_pct, p.ki_pct FROM workflow.product p"
-        " LEFT JOIN workflow.pricing_status s ON s.tdcc = p.tdcc LEFT JOIN workflow.check_terms c ON c.tdcc = p.tdcc"
-        f" WHERE p.final_valuation_date <= %s AND (%s::text[] IS NULL OR ARRAY[{_UNDERLYING_COLUMNS}] && %s::text[])"
-        " ORDER BY p.final_valuation_date, p.tdcc",
-        (until, wanted, wanted),
-    ).fetchall()
-    statuses = lifecycle_status(conn, [row[0] for row in rows])
-    rows = [row for row in rows if statuses[row[0]].status == IN_STOCK]
-    tdccs = [row[0] for row in rows]
-    prices: dict[str, list[tuple]] = defaultdict(list)
-    for tdcc, *values in conn.execute(
-        # lookback BEN（#374）的表現用回顧期初價格算，執行價已經是回顧執行價
-        "SELECT tdcc, seq, code, coalesce(lookback_price, initial_price), strike_price, ki_price, price_basis_date"
-        " FROM workflow.underlying_price WHERE tdcc = ANY(%s) ORDER BY tdcc, seq",
-        (tdccs,),
-    ):
-        prices[tdcc].append(tuple(values))
+    wanted = None if codes is None else set(codes)
+    due = [
+        s
+        for s in read_many(conn).values()
+        if (final := s.columns["final_valuation_date"]) is not None
+        and final <= until
+        and (wanted is None or any(code in wanted for code in _codes(s)))
+    ]
+    due.sort(key=lambda s: s.columns["final_valuation_date"])  # 同一天依 TDCC
+    statuses = lifecycle_status(conn, [s.tdcc for s in due])
+    found = [s for s in due if statuses[s.tdcc].status == IN_STOCK]
+    tdccs = [s.tdcc for s in found]
+    ki_texts = dict(
+        conn.execute("SELECT tdcc, ki FROM workflow.pricing_status WHERE tdcc = ANY(%s)", (tdccs,)).fetchall()
+    )
     holdings = _holdings(conn, tdccs)
-    latest = _latest_closes(conn, {code for values in prices.values() for _, code, *_ in values})
+    latest = _latest_closes(conn, {u.code for s in found for u in s.prices})
     book = SplitBook(load_splits(conn))
     positions = []
-    for row in rows:
-        tdcc, product, issuer, currency, final, barrier, strike_date, ki_text, terms_status, terms_reason = row[:10]
+    for s in found:
+        p = s.columns
         legs = []
-        for seq, code, initial, strike, ki, basis in prices.get(tdcc, ()):
-            day, close = (today, trial[code]) if code in trial else latest.get(code, (None, None))
-            base = basis or strike_date
+        for u in s.prices:
+            day, close = (today, trial[u.code]) if u.code in trial else latest.get(u.code, (None, None))
+            base = s.price_basis(u.seq)
             if close is not None and day is not None and base is not None:
-                close = close * book.factor(code, base, day)
-            legs.append(Leg(seq, code, initial, strike, ki, close))
+                close = close * book.factor(u.code, base, day)
+            # lookback BEN（#374）的表現用回顧期初價格算，執行價已經是回顧執行價
+            legs.append(Leg(u.seq, u.code, s.effective_initial(u.seq), s.effective_strike(u.seq), u.ki, close))
         positions.append(
             Position(
-                tdcc,
-                product,
-                issuer,
-                currency,
-                final,
-                barrier,
-                ki_text or "",
-                terms_status,
-                terms_reason,
+                s.tdcc,
+                p["product"],
+                p["issuer"],
+                p["currency"],
+                p["final_valuation_date"],
+                p["barrier_type"],
+                ki_texts.get(s.tdcc) or "",
+                None if s.check is None else s.check.status,
+                None if s.check is None else s.check.reason or None,
                 tuple(legs),
-                tuple(holdings.get(tdcc, ())),
-                *row[10:],
+                tuple(holdings.get(s.tdcc, ())),
+                p["strike_pct"],
+                p["ki_pct"],
             )
         )
     return positions
+
+
+def _codes(found: Stored) -> tuple[str | None, ...]:
+    """這檔的 UL_1～UL_5（空白的是 None）。"""
+    return tuple(found.columns[f"underlying_{n}"] for n in range(1, MAX_LEGS + 1))
 
 
 def _holdings(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, list[Holding]]:

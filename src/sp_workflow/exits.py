@@ -21,7 +21,7 @@ from sp_workflow.close_prices import latest_close_date
 from sp_workflow.file_tools import save_rows
 from sp_workflow.lifecycle import EXIT_EVENTS, exits_on
 from sp_workflow.observation import missing_close
-from sp_workflow.product_store import issuer_code
+from sp_workflow.product_store import issuer_code, locked, read_many
 from sp_workflow.product_terms import ImportConfig
 from sp_workflow.status import OrderReview, Pricing
 
@@ -70,9 +70,8 @@ class ExitExport:
 
 
 def load_exits(conn: psycopg.Connection, config: ImportConfig, day: dt.date | None = None) -> ExitList:
-    """`day`（沒有時用最新的收盤日）還有效的出場事件，來源不限。在同一個 transaction 裡讀。
-
-    商品條件還是自己讀；要改讀法時先看能不能用 `product_store.read_many`（#204）。
+    """`day`（沒有時用最新的收盤日）還有效的出場事件，來源不限。在同一個 transaction 裡讀；商品條件經
+    `product_store.read_many`（#438）。
     """
     with conn.transaction():
         if day is None:
@@ -80,29 +79,23 @@ def load_exits(conn: psycopg.Connection, config: ImportConfig, day: dt.date | No
         if day is None:
             return ExitList(None, ())
         events = exits_on(conn, day)
-        products = {
-            tdcc: (issuer, product, locked)
-            for tdcc, issuer, product, locked in conn.execute(  # 鎖住＝`locked_at` 有值（同 `product_store.locked`）
-                "SELECT tdcc, issuer, product, locked_at IS NOT NULL FROM workflow.product WHERE tdcc = ANY(%s)",
-                ([e.tdcc for e in events],),
-            )
-        }
+        products = read_many(conn, [e.tdcc for e in events])
         stopped = conn.execute(
             "SELECT tdcc, reason FROM workflow.pricing_status WHERE status = %s ORDER BY tdcc", (Pricing.WAIT_PRICES,)
         ).fetchall()
     rows = []
     for e in events:
-        issuer, product, locked = products[e.tdcc]
+        stored = products[e.tdcc]
         rows.append(
             ExitRow(
                 e.tdcc,
-                issuer_code(e.tdcc, issuer, config),
-                product or "",
+                issuer_code(e.tdcc, stored.columns["issuer"], config),
+                stored.columns["product"] or "",
                 e.event,
                 day,
                 e.underlying or "",
                 e.source,
-                locked,
+                locked(stored),
                 e.recorded_at,
             )
         )

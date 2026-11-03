@@ -1,5 +1,5 @@
-"""讀商品條件（`sp_workflow.product_store`，#437）：`Stored` 的有效期初價格、有效執行價、原始執行價，
-`read_many` 帶出的價格基準日與核對條件的差異，和這個 module 不 import 寫入端。
+"""讀商品條件（`sp_workflow.product_store`，#437、#438）：`Stored` 的有效期初價格、有效執行價、原始執行價與價格基準日，
+`read_many` 帶出的價格基準日與核對條件的差異，比價與曝險換算收盤價用同一個基準日，和這個 module 不 import 寫入端。
 
 `read_many` 其餘的讀法（指定 TDCC、全部、鎖）在 test_product_terms。資料全部虛構。
 """
@@ -15,17 +15,22 @@ from pathlib import Path
 import pytest
 
 from db_synth import check_terms, inventory, seed_products
+from sp_workflow.exposure import load_positions
+from sp_workflow.observation import _load_terms
 from sp_workflow.product_record import UnderlyingPrice
 from sp_workflow.product_store import CheckTermsState, Difference, Stored, read
+from sp_workflow.stock_splits import Split, SplitBook, add_split, load_splits
 
 A = "000000000001"
 SRC = Path(__file__).resolve().parents[1] / "src" / "sp_workflow"
 
 
-def stored(*prices: UnderlyingPrice, strike_pct: Decimal | None = Decimal(80)) -> Stored:
+def stored(
+    *prices: UnderlyingPrice, strike_pct: Decimal | None = Decimal(80), strike_date: dt.date | None = None
+) -> Stored:
     return Stored(
         tdcc=A,
-        columns={"strike_pct": strike_pct},
+        columns={"strike_pct": strike_pct, "strike_date": strike_date},
         source="Order",
         isin=None,
         locked_at=None,
@@ -80,6 +85,19 @@ def test_missing_underlying_has_no_prices() -> None:
 
     assert s.price(2) is None
     assert answers(s, 2) == (None, None, None)
+
+
+def test_price_basis_is_the_split_basis_else_the_strike_date() -> None:
+    strike = dt.date(2026, 5, 20)
+    split = dt.date(2026, 8, 3)
+    s = stored(
+        UnderlyingPrice(1, "AAA UW", Decimal(100), Decimal(80), basis=split),  # 價格已含 8/3 的拆股
+        UnderlyingPrice(2, "BBB UW", Decimal(50), Decimal(40)),
+        strike_date=strike,
+    )
+
+    assert (s.price_basis(1), s.price_basis(2), s.price_basis(3)) == (split, strike, strike)
+    assert stored(UnderlyingPrice(1, "AAA UW")).price_basis(1) is None, "沒有基準日也沒有 Strike date"
 
 
 # ---------- read_many 帶出的欄 ----------
@@ -137,3 +155,38 @@ def test_no_function_level_imports_of_the_writer_or_risk_level(name: str) -> Non
     ]
 
     assert not set(nested) & {"sp_workflow.product_terms", "sp_workflow.risk_level"}
+
+
+@pytest.mark.db
+def test_observation_and_exposure_convert_closes_from_the_same_basis(pg) -> None:
+    """沒有價格基準日（拆股登記沒調整過價格）時，比價與曝險都從 Strike date 換算收盤價（#438）。"""
+    strike, split_day, day = dt.date(2026, 5, 20), dt.date(2026, 8, 3), dt.date(2026, 10, 28)
+    seed_products(pg, [inventory(A, [("台北", 1)], UL_1="AAA UW", UL_2=None)])
+    pg.execute(
+        "UPDATE workflow.product SET barrier_type = 'NONE', final_valuation_date = '2026-11-20', strike_date = %s"
+        " WHERE tdcc = %s",
+        (strike, A),
+    )
+    check_terms(pg, A)
+    pg.execute(
+        "INSERT INTO workflow.underlying_price (tdcc, seq, code, initial_price, strike_price, ko_price)"
+        " VALUES (%s, 1, 'AAA UW', 100, 80, 100)",
+        (A,),
+    )
+    add_split(pg, Split("AAA UW", split_day, 1, 2), user="tester")
+    (import_id,) = pg.execute(
+        "INSERT INTO workflow.close_price_import (source, file_name, file_sha256, imported_by, summary)"
+        " VALUES ('歷史收盤價', 'x.xlsx', 'x', 'tester', '{}') RETURNING import_id"
+    ).fetchone()
+    pg.execute(
+        "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES (%s, 'AAA UW', 50, %s)",
+        (day, import_id),
+    )
+    book = SplitBook(load_splits(pg))
+
+    (position,) = load_positions(pg, ["AAA UW"], dt.date(2026, 11, 30))
+    (terms,), _, _ = _load_terms(pg)
+    (underlying,) = terms.underlyings
+
+    assert underlying.basis == strike
+    assert position.legs[0].close == Decimal(50) * book.factor("AAA UW", underlying.basis, day) == Decimal(100)

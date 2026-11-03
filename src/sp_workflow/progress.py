@@ -11,7 +11,7 @@
 同一套事實確認一次還是待寄信（`still_pending_mail`，#205）。
 比價狀態（#170、ADR 0020）照 `workflow.pricing_status` 帶出：狀態、原因、已比到的日期（只講 KO）與 KI 欄（#196、ADR 0022）；
 還沒比過的空白。
-只讀資料庫；商品條件與標的價格經 `product_store.read_many` 讀（#204），匯出 Excel 用 `file_tools.save_rows`。
+只讀資料庫；商品條件、核對條件與標的價格經 `product_store.read_many` 讀（#204、#438），匯出 Excel 用 `file_tools.save_rows`。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
@@ -28,7 +28,7 @@ from sp_workflow.database import require_in_transaction
 from sp_workflow.file_tools import save_rows
 from sp_workflow.lifecycle import Objection, lifecycle_status, open_objections
 from sp_workflow.product_record import PRICING_FIELD, REQUIRED, missing_fields
-from sp_workflow.product_store import issuer_code, locked, read_many
+from sp_workflow.product_store import issuer_code, locked, read_many, terms_imported
 from sp_workflow.product_terms import ImportConfig
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource, Progress
 from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP, SENT_STEP
@@ -193,17 +193,9 @@ def _read_facts(conn: psycopg.Connection) -> _AllFacts:
         item["dates"][TRADES_IMPORTED] = imported
         item["has_trades"] = True
         trade_dates[tdcc] = first_trade
-    terms_imported = dict(
-        conn.execute(  # 商品條件匯入的日期：Order 匯入、清單更新、歷史回補（#303）或最後一次人工維護存檔
-            "SELECT p.tdcc, CASE p.source WHEN 'Order' THEN o.imported_at WHEN '清單更新' THEN r.imported_at"
-            " WHEN '歷史回補' THEN p.locked_at"
-            " ELSE (SELECT max(c.corrected_at) FROM workflow.term_correction c WHERE c.tdcc = p.tdcc) END"
-            " FROM workflow.product p"
-            " LEFT JOIN workflow.order_import o ON o.import_id = p.order_import_id"
-            " LEFT JOIN workflow.import_run r ON r.run_id = p.first_run_id"
-        ).fetchall()
-    )
-    for tdcc, stored in read_many(conn).items():
+    imported_at = terms_imported(conn)
+    products = read_many(conn)
+    for tdcc, stored in products.items():
         product = stored.columns
         item = of(tdcc)
         initial_prices = {price.seq: price.initial for price in stored.prices}
@@ -213,17 +205,17 @@ def _read_facts(conn: psycopg.Connection) -> _AllFacts:
             locked_inventory=stored.source in _EXCEL_SOURCES and locked(stored),
             missing=tuple(missing_fields(product, required)),
         )
-        _put(item["dates"], TERMS_IMPORTED, terms_imported.get(tdcc))
+        _put(item["dates"], TERMS_IMPORTED, imported_at.get(tdcc))
         _put(item["dates"], LOCKED, stored.locked_at)
         found.issuers[tdcc] = product["issuer"]
         trade_dates[tdcc] = product["trade_date"] or trade_dates.get(tdcc)
-    for tdcc, status, reason, calculated_at in conn.execute(
-        "SELECT tdcc, status, reason, calculated_at FROM workflow.check_terms"
-    ):
+    for tdcc, stored in products.items():
+        if stored.check is None:
+            continue
         item = of(tdcc)
-        item.update(terms_status=status, terms_reason=reason)
-        if status == CheckTerms.DONE:
-            item["dates"][CHECK_TERMS_DONE] = calculated_at
+        item.update(terms_status=stored.check.status, terms_reason=stored.check.reason or None)
+        if stored.check.status == CheckTerms.DONE:
+            item["dates"][CHECK_TERMS_DONE] = stored.check.calculated_at
     for tdcc, kind, category, checked_at in conn.execute(
         "SELECT tdcc, kind, category, checked_at FROM workflow.check_result"
     ):

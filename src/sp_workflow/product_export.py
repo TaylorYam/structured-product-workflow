@@ -22,12 +22,12 @@ import openpyxl
 from openpyxl.cell.cell import Cell
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
-from psycopg.rows import dict_row
 
-from fcn_checker.fields import PRICE_COLUMNS, PRICE_SQL
+from fcn_checker.fields import PRICE_COLUMNS
 from sp_workflow.daily_import import FC_LABEL_SQL
 from sp_workflow.file_tools import MAX_WIDTH, excel_value, save_export, save_rows, table_book, text_cell
 from sp_workflow.lifecycle import Lifecycle, lifecycle_status
+from sp_workflow.product_store import read_many
 from sp_workflow.summary_analysis import add_analysis_sheets, enable_spill, summary_table
 
 if TYPE_CHECKING:
@@ -128,17 +128,16 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
     DACN、BEN 以外商品的配息門檻，#367、#406；BEN 預設沒有 KO 的 KO(%)、KO價）寫 `-`。
     總表是 Excel 表格，後面接用公式從總表即時計算的在庫部位分析分頁（#293）。
     """
-    with _snapshot(conn), conn.cursor(row_factory=dict_row) as cur:  # 商品、事件、比價日、價格、交易列讀同一個時間點
-        fields = ", ".join([*PRODUCT_FIELDS.values(), *_UNDERLYINGS])
-        products = cur.execute(f"SELECT {fields} FROM {TABLE} ORDER BY tdcc").fetchall()
-        tdccs = [product["tdcc"] for product in products]
+    with _snapshot(conn):  # 商品（含比價日、價格，`product_store.read_many`，#438）、事件、交易列讀同一個時間點
+        found = read_many(conn)
+        products = [{**s.columns, "tdcc": s.tdcc, "isin": s.isin} for s in found.values()]
+        tdccs = list(found)
         statuses = lifecycle_status(conn, tdccs)
-        autocall: dict[str, dict[int, dt.date | None]] = {}
-        for tdcc, slot, value in conn.execute("SELECT tdcc, slot, value FROM workflow.autocall_date"):
-            autocall.setdefault(tdcc, {})[slot] = value
-        prices: dict[str, dict[int, dict[str, object]]] = {}
-        for tdcc, seq, *values in conn.execute(f"SELECT tdcc, seq, {PRICE_SQL} FROM workflow.underlying_price"):
-            prices.setdefault(tdcc, {})[seq] = dict(zip(PRICE_COLUMNS, values, strict=True))
+        autocall = {tdcc: s.autocall for tdcc, s in found.items() if s.autocall is not None}
+        prices = {
+            tdcc: {u.seq: {key: getattr(u, key) for key in PRICE_COLUMNS} for u in s.prices}
+            for tdcc, s in found.items()
+        }
         trades: dict[str, list[tuple[str, str, Decimal]]] = {}
         singapore: dict[str, str] = {}  # 新加坡註記（#420）：有一列 Y 就是 Y，有值但都不是 Y 是 N；沒有值的不放（寫 -）
         for tdcc, branch, fc, amount, mark in conn.execute(
