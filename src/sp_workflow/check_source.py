@@ -39,10 +39,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from fcn_checker.backfill_values import CHECKED_MARKS, LOOKBACK_END_DATE, ROW_FIELDS
-from fcn_checker.condition_source import DATABASE, ConditionSource
+from fcn_checker.condition_source import ConditionSource
 from fcn_checker.config import RISK_LEVEL_PENDING
 from fcn_checker.fields import PRICE_COLUMNS
-from fcn_checker.orders.reference import OrderRecord, Table, table_sheet
+from fcn_checker.orders.reference import OrderRecord, Table
 from fcn_checker.rating_formats import AGENCY_KEYS, RATING_FIELDS
 from sp_workflow.check_terms import DONE
 from sp_workflow.credit_ratings import RatingRows, load_rows
@@ -63,10 +63,10 @@ if TYPE_CHECKING:
 SLOTS = 12
 UNDERLYINGS = 5
 CHECKED_FIELDS = tuple(m.field for m in CHECKED_MARKS)  # TS、IIS 欄（回填欄位宣告在 backfill_values）
-RISK_FIELD = "risk_level"  # 參考條件表的風險等級（#239；不在匯入格式裡，排在最後）
-PARTICIPATION_FIELD = "participation_pct"  # 參考條件表的參與率（#373；只有 BEN 有，不在匯入格式裡，排在風險等級後面）
-COUPON_BARRIER_FIELD = "coupon_barrier_pct"  # 參考條件表的配息門檻（#367；不在匯入格式裡，排在參與率後面）
-LOOKBACK_FIELD = LOOKBACK_END_DATE.field  # 參考條件表的回顧結束日（#376；回填欄位，不在匯入格式裡，排在參與率後面）
+RISK_FIELD = "risk_level"  # 參考條件表的風險等級（#239；不在匯入格式裡；欄序依設定檔，#445）
+PARTICIPATION_FIELD = "participation_pct"  # 參考條件表的參與率（#373；只有 BEN 有，不在匯入格式裡）
+COUPON_BARRIER_FIELD = "coupon_barrier_pct"  # 參考條件表的配息門檻（#367；不在匯入格式裡）
+LOOKBACK_FIELD = LOOKBACK_END_DATE.field  # 參考條件表的回顧結束日（#376；回填欄位，不在匯入格式裡）
 
 
 class CheckSourceError(Exception):
@@ -198,7 +198,7 @@ def _row(found: Stored, fmt: ReferenceFormat, ratings: _Ratings, risk: RiskLevel
 
 def _record(found: Stored, fmt: ReferenceFormat, ratings: _Ratings, risk: RiskLevel | None) -> OrderRecord:
     """一檔商品現在的條件讀成的列：和核對時的列（`conditions`）同一個做法，寫回前比對用。"""
-    (record,) = table_sheet(fmt, DATABASE, Table.of(fmt, [_row(found, fmt, ratings, risk)])).rows
+    (record,) = ConditionSource.database(fmt, Table.of(fmt, [_row(found, fmt, ratings, risk)]), {}).sheet.rows
     return record
 
 

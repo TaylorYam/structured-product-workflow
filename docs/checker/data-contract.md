@@ -70,7 +70,7 @@
 
 `reporting.RECORD_VERSION = 2`；最外層包含 `record_version`、`saved_at`、`status`、`result_file`、`metadata`、`errors`、`items`。
 
-`metadata.inputs.reference_sheet` 是核對的條件來源：Excel 參考條件表記檔名、路徑與 sha256（同來源快照）；資料庫來源（#445，不寫檔）記 `{"source": "資料庫", "sha256": …}`，sha256 依固定序列算：JSON `{"headers": 欄名, "rows": 每列的值, "absent": {TDCC: 沒有列的原因}}`，鍵排序、`ensure_ascii=False`、分隔符 `,`／`:` 不留空白、UTF-8；值照排好的表上的型別寫成固定字串（None、布林、字串照原樣，int 與 `Decimal` 為 `str`，float 為 `repr`，日期與時間為 ISO 字串），`absent` 依 TDCC 排序。同一份資料兩次核對的 sha256 相同，可以比對兩份紀錄是不是核對同一份條件。
+`metadata.inputs.reference_sheet` 是核對的條件來源：Excel 參考條件表記檔名、路徑與 sha256（同來源快照）；資料庫來源（#445，不寫檔）記 `{"source": "資料庫", "sha256": …}`，sha256 依固定序列算：JSON `{"headers": 欄名, "rows": 每列的值, "absent": {TDCC: 沒有列的原因}}`，鍵排序、`ensure_ascii=False`、分隔符 `,`／`:` 不留空白、UTF-8；值先換成核對讀到的樣子（寫進 Excel 再讀回來：數字為 int 或 float、日期為 datetime、空字串為 None），再寫成固定字串（None、布林、字串照原樣，int 為 `str`，float 為 `repr`，日期時間為 ISO 字串），`absent` 依 TDCC 排序。核對讀到同樣的條件，sha256 就相同（資料庫存 75 或 75.0 都一樣），可以比對兩份紀錄是不是核對同一份條件。
 
 每份文件記錄檔名、種類、另一份檔名、上手、商品代號、參考列、`filled`、`manual_release`、未回填原因與單份報告。逐條規則記錄 `field`、`order_source`、項目 `column` 與 `item`；`Decimal` 為十進位字串，日期為 ISO 字串，證據含頁碼、bbox 與原文。
 

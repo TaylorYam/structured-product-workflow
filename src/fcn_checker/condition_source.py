@@ -25,7 +25,7 @@ from openpyxl.workbook.workbook import Workbook
 
 from .config import ReferenceFormat
 from .ingestion import SourceSnapshot
-from .orders.reference import ReferenceSheet, Table, load_reference_sheet, table_sheet
+from .orders.reference import ReferenceSheet, Table, as_read, load_reference_sheet, table_sheet
 
 DATABASE = "資料庫"  # 資料庫來源的名稱（排好的表的工作表名稱、核對紀錄的來源）
 DATABASE_STEM = "參考條件表_資料庫"  # 資料庫來源的核對結果檔、回報包檔名開頭
@@ -69,7 +69,7 @@ class ConditionSource:
     def workbook(self) -> Workbook:
         """排核對結果檔與回報包用的參考條件表（讀值）：Excel 開原檔、資料庫是記憶體中排好的表；讀不到時 IngestionError。"""
         if self.path is not None:
-            from .result_file import open_reference
+            from .result_file import open_reference  # result_file 會 import openpyxl 排版那一套，只有 Excel 來源需要
 
             return open_reference(self.path)
         assert self.table is not None
@@ -78,10 +78,11 @@ class ConditionSource:
 
 def _digest(table: Table, absent: Mapping[str, str]) -> str:
     """表內容的 sha256：固定的序列（docs/checker/data-contract.md §5）—— JSON `{"headers", "rows", "absent"}`，
-    鍵排序、不轉義中文、不留空白；值照表上的型別寫成固定字串（`_canonical`），沒有列的 TDCC（`absent`）依代號排序。"""
+    鍵排序、不轉義中文、不留空白；值取核對讀到的樣子（`as_read`）再寫成固定字串（`_canonical`），所以讀到同樣條件
+    （例：75 與 75.0）就是同一個 hash；沒有列的 TDCC（`absent`）依代號排序。"""
     payload = {
         "headers": list(table.headers),
-        "rows": [[_canonical(v) for v in row] for row in table.rows],
+        "rows": [[_canonical(as_read(v)) for v in row] for row in table.rows],
         "absent": dict(sorted(absent.items())),
     }
     text = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

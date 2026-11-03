@@ -159,6 +159,18 @@ def verdicts(outcome) -> list[tuple[str, Category, tuple[str, ...]]]:
     return sorted((i.term_sheet.name, i.category, i.problem_messages) for i in outcome.items)
 
 
+def decisions(outcome) -> list[tuple]:
+    """回填決策（欄、表上的值、期望值、動作；格子位置依來源的版面不同，不比）與回填值。"""
+    return sorted(
+        (
+            i.term_sheet.name,
+            tuple((d.column, d.sheet_value, d.expected, d.action) for d in i.report.backfill),
+            tuple(i.backfill_values),
+        )
+        for i in outcome.items
+    )
+
+
 # ---------- 讀到的條件與 Excel 相同 ----------
 
 
@@ -190,6 +202,7 @@ def test_database_rows_read_the_same_as_the_excel_reference_sheet(pg, tmp_path, 
     from_db = check_batch(preview_batch(CONFIG, source, pdfs))
     from_excel = check_batch(preview_batch(CONFIG, excel_sheet, pdfs))
     assert verdicts(from_db) == verdicts(from_excel)
+    assert decisions(from_db) == decisions(from_excel)
     assert {c for _, c, _ in verdicts(from_db)} == {Category.PASSED}
 
 

@@ -114,9 +114,11 @@ def test_bundle_extract_from_the_table_equals_the_extract_from_the_saved_workboo
 
 
 def test_digest_is_a_fixed_serialisation_of_the_table() -> None:
-    """憑證的 sha256 依 data-contract §5 的固定序列：同樣的值不同型別寫法（Decimal 的小數位）算不同內容。"""
+    """憑證的 sha256 依 data-contract §5 的固定序列：值取核對讀到的樣子，同樣的條件不同寫法（75 與 75.0）同一個 hash。"""
     table = Table(("A", "B"), ((Decimal("1.10"), dt.date(2030, 1, 7)),))
+    same = Table(("A", "B"), ((1.1, dt.datetime(2030, 1, 7)),))
     from fcn_checker.condition_source import _digest
 
-    expected = '{"absent":{"9":"x"},"headers":["A","B"],"rows":[["1.10","2030-01-07"]]}'
+    expected = '{"absent":{"9":"x"},"headers":["A","B"],"rows":[["1.1","2030-01-07T00:00:00"]]}'
     assert _digest(table, {"9": "x"}) == hashlib.sha256(expected.encode("utf-8")).hexdigest()
+    assert _digest(same, {"9": "x"}) == _digest(table, {"9": "x"})
