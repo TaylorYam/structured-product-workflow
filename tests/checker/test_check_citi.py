@@ -31,6 +31,7 @@ from reference_synth import build_reference_sheet, reference_row
         Spec(ko_obs="P", ki="P", tenor=9, legacy=True),  # 舊文件版面：P 型、KI 每期觀察、價格 4 位、分銷費用單列
         Spec(autocall=False, ki="none", tenor=3, currency_zh="境外人民幣", strike=Decimal("68.85")),  # 無自動提前出場
         Spec(memory=False, count=1, tenor=12, first_callable=11, ko=Decimal("100.00")),  # 單一標的、非記憶式
+        Spec(ko_obs="P", memory=False, tenor=3),  # P 型非記憶式「第t 個觀察日，t = 1-n」（workflow #430）
         Spec(vwap=True, ki="none", ko=Decimal("91.00")),  # 期初定價 VWAP
     ],
     ids=lambda s: (
@@ -273,6 +274,14 @@ def test_ko_observation_start_must_agree_between_articles_12_and_13(tmp_path):
         tmp_path, edits=[Edit(f"於第{zh_number(1)}個配息觀察期間結束日", "於第二個配息觀察期間結束日", "ts.art12")]
     )
     assert rule(r, "field.first_callable_period")[0].status == S.REVIEW_REQUIRED
+
+
+def test_p_type_non_memory_starting_after_the_first_observation_needs_review(tmp_path):
+    """P 型非記憶式「t = 2-n」：P 型第一個可提前出場期不是第 1 期沒有樣本，轉人工覆核（workflow #430）。"""
+    r = check(tmp_path, Spec(ko_obs="P", memory=False, tenor=3), edits=[Edit("t = 1-3", "t = 2-3", "ts.art13")])
+    first = rule(r, "field.first_callable_period")[0]
+    assert first.status == S.REVIEW_REQUIRED
+    assert "不是第 1 期" in first.message
 
 
 def test_last_payment_date_must_be_the_maturity_date(tmp_path):
