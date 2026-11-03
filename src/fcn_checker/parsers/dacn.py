@@ -13,13 +13,13 @@ from collections.abc import Sequence
 from ..schema import Evidence, FieldStatus, Line, ParsedField
 from .common import derived
 
-NAME = "coupon_barrier_pct"
+FIELD = "coupon_barrier_pct"
 
 
 def barrier_from_strike(definition: Sequence[Line], strike: ParsedField) -> ParsedField:
     """計息定義句比的是「執行價」→ 配息門檻 = 執行價 %；證據掛定義句與執行價的出處。"""
-    pf = derived(NAME, strike, strike.value)
-    return ParsedField(NAME, pf.status, pf.value, [*map(Evidence.of, definition), *pf.evidence], note=pf.note)
+    pf = derived(FIELD, strike, strike.value)
+    return ParsedField(FIELD, pf.status, pf.value, [*map(Evidence.of, definition), *pf.evidence], note=pf.note)
 
 
 def barrier_from_head(
@@ -34,12 +34,12 @@ def barrier_from_head(
     """配息門檻 = 價格表 `column` 欄的欄頭 %；證據掛定義句（有的話）與欄頭。價格表讀不到時沿用它的狀態；欄頭沒有 % 時
     讀不到（說明 `no_pct`）。`head_mark` 不空時，欄頭要有這段字（否則讀不到，說明 `no_mark`）。"""
     if not table.ok:
-        return derived(NAME, table)
+        return derived(FIELD, table)
     value = table.value
     lines = list(value.head_lines.get(column, ()))
     if head_mark and head_mark not in value.heads.get(column, ""):
-        return ParsedField.invalid(NAME, lines, no_mark)
+        return ParsedField.invalid(FIELD, lines, no_mark)
     pct = value.pcts.get(column)
     if pct is None:
-        return ParsedField.invalid(NAME, lines, no_pct)
-    return ParsedField(NAME, FieldStatus.PRESENT, pct, [*map(Evidence.of, definition), *map(Evidence.of, lines)])
+        return ParsedField.invalid(FIELD, lines, no_pct)
+    return ParsedField(FIELD, FieldStatus.PRESENT, pct, [*map(Evidence.of, definition), *map(Evidence.of, lines)])

@@ -16,8 +16,8 @@ from ..schema import CheckStatus as S
 from . import kit
 from .kit import IssuerContext
 
-# 一項型態檢查：讀出結果 → 不在樣本內的描述（依序；讀不到的欄位由各自的規則轉人工，這裡不報）
-Variant = Callable[[IssuerContext], list[str]]
+# 型態的一項（Aspect）：讀出結果 → 不在樣本內的描述（依序；讀不到的欄位由各自的規則轉人工，這裡不報）
+Aspect = Callable[[IssuerContext], list[str]]
 
 
 @dataclass(frozen=True)
@@ -26,10 +26,10 @@ class Sampled:
     只有…」）。"""
 
     summary: str
-    checks: Sequence[Variant]
+    checks: Sequence[Aspect]
 
 
-def ko(field: str = "ko_wording", kind: Callable[[Any], str] = lambda v: v) -> Variant:
+def ko(field: str = "ko_wording", kind: Callable[[Any], str] = lambda v: v) -> Aspect:
     """KO 每日觀察＋記憶式：`kind` 把 `field` 的值轉成 `D`／`P`／`none`（無自動提前出場時不看記憶式）。"""
 
     def check(ctx: IssuerContext) -> list[str]:
@@ -52,7 +52,7 @@ def baskets(ctx: IssuerContext) -> list[str]:
     return ["單一標的"] if uls.ok and len(uls.value) < 2 else []
 
 
-def ki(supported: tuple[str, ...]) -> Variant:
+def ki(supported: tuple[str, ...]) -> Aspect:
     """KI 型態（`kit.KI_LABEL` 的代碼）。"""
 
     def check(ctx: IssuerContext) -> list[str]:
@@ -62,7 +62,7 @@ def ki(supported: tuple[str, ...]) -> Variant:
     return check
 
 
-def currency(supported: tuple[str, ...], *, quanto: bool = False) -> Variant:
+def currency(supported: tuple[str, ...], *, quanto: bool = False) -> Aspect:
     """計價幣別（ISO）；`quanto` 另看標的報價幣別和計價幣別相同（表1 每列的幣別）。"""
 
     def check(ctx: IssuerContext) -> list[str]:
@@ -80,7 +80,7 @@ def currency(supported: tuple[str, ...], *, quanto: bool = False) -> Variant:
     return check
 
 
-def guaranteed(supported: tuple[int, ...]) -> Variant:
+def guaranteed(supported: tuple[int, ...]) -> Aspect:
     """配息公式保證全額配息的期數。"""
 
     def check(ctx: IssuerContext) -> list[str]:
@@ -90,7 +90,7 @@ def guaranteed(supported: tuple[int, ...]) -> Variant:
     return check
 
 
-def non_call(supported: tuple[int, ...]) -> Variant:
+def non_call(supported: tuple[int, ...]) -> Aspect:
     """第一個可提前出場期。"""
 
     def check(ctx: IssuerContext) -> list[str]:
