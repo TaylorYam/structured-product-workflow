@@ -62,7 +62,7 @@ def scope(ctx: IssuerContext) -> CheckResult:
     issues = []
     if ctx.std.currency_zh_to_iso.get(cz.value) == "CNH":
         issues.append(f"計價幣別是{cz.value}（境外人民幣轉人工覆核）")
-    issues += _fx_issues(cz.value, fx.value, ctx.ts.f("underlying_prices"))
+    issues += fx_issues(cz.value, fx.value, ctx.ts.f("underlying_prices"))
     rows = [str(n) for n, r in enumerate(table.value, start=1) if r["ko"] != ko.value]
     if rows:
         issues.append(f"觀察日表第 {'、'.join(rows)} 列的自動提前出場價不等於價格表表頭 KO% {ko.value}%")
@@ -77,7 +77,7 @@ def scope(ctx: IssuerContext) -> CheckResult:
     )
 
 
-def _fx_issues(currency: str, lines: list[str], prices: ParsedField) -> list[str]:
+def fx_issues(currency: str, lines: list[str], prices: ParsedField) -> list[str]:
     """跨幣別的匯率行：標的報價幣別（價格表幣別字）和計價幣別不同時剛好一行 `{標的幣別}/{計價幣別}=R`，相同時沒有。"""
     quotes = {r.currency for r in prices.value} if prices.ok else set()
     if len(quotes) != 1:

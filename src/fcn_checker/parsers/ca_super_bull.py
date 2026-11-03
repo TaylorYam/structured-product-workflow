@@ -369,13 +369,14 @@ class SbScenarios:
         return all(self.titles)
 
 
-def _opt(x: str | None) -> Decimal | None:
+def opt_dec(x: str | None) -> Decimal | None:
+    """選填的數字（例：跨幣別算式的匯率；沒寫為 None）。"""
     return None if x is None else dec(x)
 
 
 def remainder_calc(m: re.Match[str]) -> RemainderCalc:
     """`S3_REMAINDER` 的比對結果（CA BEN 共用）。"""
-    return RemainderCalc(dec(m[1]), dec(m[2]), dec(m[3]), dec(m[4]), dec(m[6]), m[7], _opt(m[5]))
+    return RemainderCalc(dec(m[1]), dec(m[2]), dec(m[3]), dec(m[4]), dec(m[6]), m[7], opt_dec(m[5]))
 
 
 def _return(m: re.Match[str]) -> ProfitReturn:
@@ -417,13 +418,13 @@ def _scenarios(ti: TextIndex) -> SbScenarios:
     )
     out.best_return = find(2, S2_RETURN, _return)
     out.worse_assumed = find(3, S3_ASSUMED, lambda m: Assumed(m[1], dec(m[2])))
-    out.shares = find(3, S3_SHARES, lambda m: SharesCalc(dec(m[1]), dec(m[3]), dec(m[5]), _opt(m[4])))
+    out.shares = find(3, S3_SHARES, lambda m: SharesCalc(dec(m[1]), dec(m[3]), dec(m[5]), opt_dec(m[4])))
     out.remainder = find(3, S3_REMAINDER, remainder_calc)
     out.worse_return = find(
         3,
         S3_RETURN,
         lambda m: WorseProfitReturn(
-            dec(m[1]), dec(m[2]), dec(m[4]), dec(m[5]), Decimal(m[6]), Decimal(m[7]), _opt(m[3])
+            dec(m[1]), dec(m[2]), dec(m[4]), dec(m[5]), Decimal(m[6]), Decimal(m[7]), opt_dec(m[3])
         ),
     )
     return out

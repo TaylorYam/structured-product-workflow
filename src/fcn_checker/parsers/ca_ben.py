@@ -16,15 +16,17 @@ from typing import NamedTuple
 
 from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
-from ..standard_fields import AutocallSchedule, ScenarioParam, ScenarioPrice
+from ..standard_fields import AutocallSchedule, Money, ScenarioParam, ScenarioPrice
 from ..text import squash
 from . import ca, price_table
 from .ca_super_bull import (
+    FX,
     S3_REMAINDER,
     Assumed,
     RemainderCalc,
     SharesCalc,
     WorseProfitReturn,
+    opt_dec,
     remainder_calc,
     worst_row,
 )
@@ -323,8 +325,9 @@ AMOUNT = rf"{EQ}{NUM}{MUL}\[100%\+最大值{L}{ca.PCT}，{SPCT}{R}{EQ}{NUM}{U}"
 # 「＝A / N ) - 100% ＝r%（平均年化報酬率：y%）」：左括號樣本缺一個，可有可無
 RETURN = rf"{EQ}\(?{NUM}{U}/{NUM}\)-100%{EQ}{SPCT}{L}平均年化報酬率[:：]{SPCT}{R}"
 S3_ASSUMED = rf"假設於期末訂價日表現最差的連結標的為(.+?)，收盤價為{NUM}{U}。"
-S3_SHARES = rf"每單位面額/表現最差連結標的的執行價\*{EQ}{NUM}/{NUM}{EQ}{NUM}股"
-S3_RETURN = rf"{EQ}\(\({NUM}{MUL}{NUM}\+{NUM}\)/{NUM}\)-100%{EQ}{SPCT}{L}平均年化報酬率[:：]{SPCT}{R}"
+# 跨幣別（第 16 項有匯率行，workflow #428）：股數「N / (K x R)」、報酬率「W x P x R」多乘匯率 R（剩餘金額同 Super Bull）
+S3_SHARES = rf"每單位面額/表現最差連結標的的執行價\*{EQ}{NUM}/(\()?{NUM}{FX}(?(2)\)){EQ}{NUM}股"
+S3_RETURN = rf"{EQ}\(\({NUM}{MUL}{NUM}{FX}\+{NUM}\)/{NUM}\)-100%{EQ}{SPCT}{L}平均年化報酬率[:：]{SPCT}{R}"
 
 
 class BonusCalc(NamedTuple):
@@ -344,6 +347,7 @@ class BonusAmount(NamedTuple):
     bonus: Decimal
     gain: Decimal
     amount: Decimal
+    currency: str
 
 
 @dataclass
@@ -356,6 +360,7 @@ class BenScenarios:
     calc: dict[int, Hit[BonusCalc] | None]
     amount: dict[int, Hit[BonusAmount] | None]
     returns: dict[int, Hit[ProfitReturn] | None]  # 報酬率行「＝A / N ) - 100% ＝r%（平均年化報酬率：y%）」
+    return_currency: dict[int, Hit[str] | None]  # 報酬率行重寫的金額 A 旁的幣別字
     worse_assumed: Hit[Assumed] | None = None
     shares: Hit[SharesCalc] | None = None
     remainder: Hit[RemainderCalc] | None = None
@@ -370,7 +375,7 @@ def _scenarios(ti: TextIndex) -> BenScenarios:
     """以標題切出情境一～三（到「※請注意」為止），在各自範圍內找算式；情境要剛好這三個（核對規則 §3.7）。"""
     starts = [ti.text.find(t) for t in TITLES]
     bounds = [*starts, ti.text.find("※請注意", max(starts))]
-    empty = BenScenarios(([], [], []), {}, {}, {}, {})
+    empty = BenScenarios(([], [], []), {}, {}, {}, {}, {})
     if not (all(x >= 0 for x in bounds) and bounds == sorted(bounds)):
         return empty
     if len(re.findall(r"情境分析[一二三四五六七八九十]+：", ti.text)) != len(TITLES):
@@ -387,21 +392,39 @@ def _scenarios(ti: TextIndex) -> BenScenarios:
             ]
         )
 
-    out = BenScenarios(titles, {}, {}, {}, {})  # type: ignore[arg-type]
+    out = BenScenarios(titles, {}, {}, {}, {}, {})  # type: ignore[arg-type]
     for n in (1, 2):
         out.assumed[n] = find(n, ASSUMED, lambda m: Assumed(m[1], dec(m[2])))
         out.calc[n] = find(n, CALC, lambda m: BonusCalc(dec(m[1]), Decimal(m[2]), Decimal(m[3]), dec(m[4]), dec(m[6])))
-        out.amount[n] = find(n, AMOUNT, lambda m: BonusAmount(dec(m[1]), Decimal(m[2]), Decimal(m[3]), dec(m[4])))
+        out.amount[n] = find(n, AMOUNT, lambda m: BonusAmount(dec(m[1]), Decimal(m[2]), Decimal(m[3]), dec(m[4]), m[5]))
         out.returns[n] = find(n, RETURN, lambda m: ProfitReturn(dec(m[1]), dec(m[3]), Decimal(m[4]), Decimal(m[5])))
+        out.return_currency[n] = find(n, RETURN, lambda m: m[2])
     out.worse_assumed = find(3, S3_ASSUMED, lambda m: Assumed(m[1], dec(m[2])))
-    out.shares = find(3, S3_SHARES, lambda m: SharesCalc(dec(m[1]), dec(m[2]), dec(m[3])))
+    out.shares = find(3, S3_SHARES, lambda m: SharesCalc(dec(m[1]), dec(m[3]), dec(m[5]), opt_dec(m[4])))
     out.remainder = find(3, S3_REMAINDER, remainder_calc)
     out.worse_return = find(
         3,
         S3_RETURN,
-        lambda m: WorseProfitReturn(dec(m[1]), dec(m[2]), dec(m[3]), dec(m[4]), Decimal(m[5]), Decimal(m[6])),
+        lambda m: WorseProfitReturn(
+            dec(m[1]), dec(m[2]), dec(m[4]), dec(m[5]), Decimal(m[6]), Decimal(m[7]), opt_dec(m[3])
+        ),
     )
     return out
+
+
+def _bonus_amounts(sc: BenScenarios, n: int) -> ParsedField:
+    """情境一、二以計價幣別寫的金額（結果行的到期給付金額、報酬率行重寫的金額）各自的幣別字。"""
+    field = f"scenario{n}_currency"
+    amount, ret, cur = sc.amount.get(n), sc.returns.get(n), sc.return_currency.get(n)
+    found = []
+    if amount is not None:
+        found.append((amount.value.amount, amount.value.currency, amount.lines))
+    if ret is not None and cur is not None:
+        found.append((ret.value.amount, cur.value, cur.lines))
+    if not found:
+        return ParsedField.missing(field, f"第 16 項情境分析{ca.SCENARIOS[n - 1]}找不到到期給付金額")
+    money = tuple(Money(f"{x:,} {c}", c, tuple(Evidence.of(ln) for ln in lines)) for x, c, lines in found)
+    return ParsedField.present(field, money, [ln for _, _, lines in found for ln in lines])
 
 
 def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> BenScenarios:
@@ -510,10 +533,12 @@ def read(lines: Sequence[Line]) -> CaBenTermSheet:
             Mention.of_optional_hit(f"{where}代入行「x% x（」", scenarios.calc.get(n), lambda v: v.participation, title)
         )
 
-    # 幣別出處：情境三只有剩餘金額是計價幣別的金額（CA FCN 不列入剩餘金額那行），改取它的幣別字（同 CA Super Bull）
+    # 幣別出處：情境三只有剩餘金額是計價幣別的金額（CA FCN 不列入剩餘金額那行），改取它的幣別字（同 CA Super Bull）；
+    # 情境一、二只取到期給付金額與報酬率行的金額（代入行的期末價、期初訂價是標的報價幣別的股價，workflow #428）
     remainder = scenarios.remainder
     replaced = {
         "scenario_investment_currency": fields["scenario_investment_currency"],
+        **{f"scenario{n}_currency": _bonus_amounts(scenarios, n) for n in (1, 2)},
         "scenario3_currency": ParsedField.present("scenario3_currency", remainder.value.currency, list(remainder.lines))
         if remainder is not None
         else ParsedField.missing("scenario3_currency", "第 16 項情境分析三找不到剩餘金額算式"),

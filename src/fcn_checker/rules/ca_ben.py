@@ -15,7 +15,7 @@ from ..parsers.ca_super_bull import worst_row
 from ..schema import CheckResult
 from ..schema import CheckStatus as S
 from . import ca, kit, super_bull
-from .ca_super_bull import NAMES, RETURN_MESSAGES, worse
+from .ca_super_bull import NAMES, RETURN_MESSAGES, fx_issues, scenario_fx, worse
 from .kit import Check, IssuerContext
 from .super_bull import AMOUNT_TOLERANCE, within_tolerance
 
@@ -62,8 +62,9 @@ def _fixed(ctx: IssuerContext, rid: str, field: str, name: str) -> CheckResult:
 
 
 def scope(ctx: IssuerContext) -> CheckResult:
-    """境外人民幣、標的報價幣別和計價幣別不同（第 16 項有匯率行）轉人工覆核；沒有樣本的型態（標的數、幣別不在
-    `SAMPLED_*`）轉人工覆核（待樣本驗證）；K% 不限（BEN-377-07）。"""
+    """境外人民幣轉人工覆核；跨幣別的匯率行同 CA Super Bull（`ca_super_bull.fx_issues`，workflow #428）；沒有樣本的型態
+    （標的數、同幣別時計價幣別不在 `SAMPLED_*`）轉人工覆核（待樣本驗證）；跨幣別且匯率行符合時直接開放（2026-11-02
+    使用者決定）；K% 不限（BEN-377-07）。"""
     f = ctx.ts.f
     cz, uls, fx = f("currency_zh"), f("underlyings"), f("scenario_fx")
     check = kit.doc_check(ctx, "doc.template_variant", "template_variant", "BEN 型態", cz, uls, fx)
@@ -71,12 +72,12 @@ def scope(ctx: IssuerContext) -> CheckResult:
         return problem
     issues, unsampled = [], []
     iso = ctx.std.currency_zh_to_iso.get(cz.value)
+    fx_problems = fx_issues(cz.value, fx.value, f("underlying_prices"))
+    issues += fx_problems
     if iso == "CNH":
         issues.append(f"計價幣別是{cz.value}（境外人民幣轉人工覆核）")
-    elif iso not in SAMPLED_CURRENCIES:
+    elif iso not in SAMPLED_CURRENCIES and not (fx.value and not fx_problems):
         unsampled.append(f"計價幣別是{cz.value}")
-    if fx.value:
-        issues.append(f"第 16 項有匯率 {'、'.join(fx.value)}（標的報價幣別和計價幣別不同，轉人工覆核）")
     if len(uls.value) not in SAMPLED_UNDERLYINGS:
         unsampled.append(f"有 {len(uls.value)} 檔標的")
     if unsampled:
@@ -184,7 +185,7 @@ def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
     out = []
     for case in (1, 2):
         out += _bonus_case(cases[case - 1], sc, case, n, bonus_pct.value, prices, tenor.value)
-    return [*out, *worse(cases[2], sc, n, tenor.value)]
+    return [*out, *worse(cases[2], sc, n, tenor.value, scenario_fx(ctx))]
 
 
 def _strike_of(sc, case: int, prices) -> Decimal | None:
