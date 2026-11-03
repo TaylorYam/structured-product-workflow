@@ -51,7 +51,6 @@ from typing import TYPE_CHECKING
 
 from fcn_checker.products import PRODUCT_RULES
 from sp_workflow.check_terms import NO_BARRIER as NO_KI
-from sp_workflow.check_terms import price_at, round_price
 from sp_workflow.lifecycle import (
     DELIVERY,
     KO,
@@ -65,7 +64,7 @@ from sp_workflow.lifecycle import (
     current_events_of,
     replace_auto_events,
 )
-from sp_workflow.product_record import KO_TYPES, plain
+from sp_workflow.product_record import KO_TYPES, plain, price_at, round_price
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource
 from sp_workflow.stock_splits import STRIKE_CLOSE_DAYS, Jump, SplitBook, in_range, load_splits, refresh_basis
 

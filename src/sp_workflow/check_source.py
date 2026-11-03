@@ -44,7 +44,7 @@ from openpyxl.cell.cell import Cell
 
 from fcn_checker.config import RISK_LEVEL_PENDING
 from fcn_checker.rating_formats import AGENCY_KEYS, RATING_FIELDS
-from sp_workflow.check_terms import DONE, price_at
+from sp_workflow.check_terms import DONE
 from sp_workflow.credit_ratings import RatingRows, load_rows
 from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdatedError, connect
 from sp_workflow.file_tools import save_book, table_book
@@ -86,7 +86,7 @@ class CheckSourceError(Exception):
 
 @dataclass(frozen=True)
 class IssuerCodes:
-    """找上手代號用的兩張對照（`product_terms.IssuerLookup`）：上手編號對照與參考條件表格式的發行機構寫法。"""
+    """找上手代號用的兩張對照（`product_store.IssuerLookup`）：上手編號對照與參考條件表格式的發行機構寫法。"""
 
     issuer_prefixes: Mapping[str, str]  # TDCC 前三碼 → 上手代號
     issuer_names: Mapping[str, str]  # 上手代號 → 發行機構的寫法
@@ -211,14 +211,8 @@ def _row(
             key = f"underlying_{i}_{column}"
             if not code or (col == "ki" and no_ki) or (col == "ko" and p["ko_pct"] is None):  # BEN 預設沒有 KO
                 values[key] = empty
-            elif (
-                col == "strike"
-                and price is not None
-                and price.lookback is not None
-                and price.initial is not None
-                and p["strike_pct"] is not None
-            ):
-                values[key] = price_at(price.initial, p["strike_pct"])  # lookback（#374）：核對比的是 TS 的期初執行價
+            elif col == "strike":
+                values[key] = found.original_strike(i)  # lookback（#374）：核對比的是 TS 的期初執行價
             else:
                 values[key] = None if price is None else getattr(price, col)  # VWAP 還沒回填時空白，核對通過後回填
     extra: dict[str, Any] = {fmt.issuer_column: p["issuer"], "UF": p["upfront_pct"]}
