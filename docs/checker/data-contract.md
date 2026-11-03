@@ -54,6 +54,8 @@
 
 `CheckReport` 包含 `status`、`template`、`results`、`not_covered`、`metadata`、`backfill`、`backfill_certain`。未涵蓋範圍不算已核對；回填確定性是內部值，不寫進紀錄。
 
+`BatchItem`（`batch.py`）是一份 PDF 的辨識結果＋核對報告的 view，不是另一份資料：只存這份 PDF 的路徑、`report`、`identification`、同商品另一份 `partner` 與當次人工放行旗標；上手、商品代號、參考條件表列、文件種類、不支援與否都直接讀 `identification`，類別、狀態、`fillable`、`fills_sheet` 只看辨識結果與核對報告（含放行），不複製欄位、不回頭翻核對結果的原因碼。預覽列 `PreviewRow` 同樣只讀辨識結果。新增要顯示或判斷的資訊時加在 `Identification` 或 `CheckReport`，`BatchItem` 只加讀取它們的 property。
+
 ## 4. 回填與人工放行
 
 `CellDecision` 有 `column`、`cell`、`sheet_value`、`expected`、`action`，動作為 `fill`、`match`、`mismatch`、`overwrite`。只有 VWAP 價格按規則覆寫，其他回填欄已有不同值時保留原值並阻擋回填。
