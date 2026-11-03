@@ -134,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:  # 非預期錯誤：回報後以 ERROR 結束
         print(f"執行錯誤：{type(e).__name__}: {e}", file=sys.stderr)
         return EXIT[CheckStatus.ERROR]
-    for item in outcome.items:
+    for item in outcome.items:  # 「已回填」指回填進核對結果檔；資料庫寫回的結果另印在最後（#443）
         reason = f"  {item.not_filled_reason}" if item.not_filled_reason else ""
         print(f"{item.status_label}  {item.term_sheet.name}{'  已回填' if receipt.filled(item) else ''}{reason}")
     for e in (*outcome.errors, *receipt.errors):

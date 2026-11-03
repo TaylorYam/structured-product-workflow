@@ -50,6 +50,7 @@ ADR 0006 決定核對改從資料庫讀條件，核對完把 TS 回填的 ISIN�
 - 要回填哪些依核對結果決定（說明書與投資人須知都通過或人工放行），不再看結果檔有沒有寫成；儲存時確認來源與核對時相同才寫回（來源變了照舊什麼都不寫）。
 - 畫面寫「核對結果檔沒寫成：<原因>；已寫回資料庫：N 檔回填並鎖住…」；`fcn-batch --database` 印同樣兩件事，結束碼照舊是錯誤（2）。寫回也失敗時兩件都說，可以重新寫回。
 - 這時 `check_result`、`backfill_log` 的結果檔欄寫「核對結果檔沒寫成」（同比價寫回寫說明文字，不改資料表）。排除後再儲存一次：結果檔寫成，已鎖住的不再回填，核對結果改記新的結果檔。
+- 本機的核對紀錄（`runtime/核對紀錄`）與 `fcn-batch` 逐份的「已回填」仍指「回填進核對結果檔」；結果檔沒寫成時它們都是沒回填，資料庫實際回填了哪些看 `backfill_log`。
 
 ## English
 
@@ -96,3 +97,4 @@ The decision above only covered "a failed write-back still writes the result wor
 - Which products are backfilled follows the check result (term sheet and investor sheet both passed or released), not whether the result workbook was written; the write-back still requires the save to confirm the sources are unchanged (a changed source still writes nothing).
 - The window says 「核對結果檔沒寫成：<reason>；已寫回資料庫：N 檔回填並鎖住…」; `fcn-batch --database` prints the same two facts and still exits with the error code (2). If the write-back fails too, both are reported and the write-back can be retried.
 - In that case the result-file column of `check_result` and `backfill_log` holds 「核對結果檔沒寫成」 (text, as the observation write-back does; no schema change). Saving again after fixing the cause writes the workbook; locked products are not backfilled again, and the check results then record the new workbook.
+- The local check record (`runtime/核對紀錄`) and `fcn-batch`'s per-document 「已回填」 still mean "filled into the result workbook"; when the workbook was not written they show nothing filled, and `backfill_log` shows what the database actually received.
