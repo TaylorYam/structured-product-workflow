@@ -1,4 +1,4 @@
-"""核對讀資料庫（#68、ADR 0013）：資料庫產生的參考條件表與 Excel 核對結果相同、查不到或條件未完成的 TDCC、
+"""核對讀資料庫（#68、ADR 0013）：資料庫排出的核對條件（不寫檔，#445）與 Excel 核對結果相同、查不到或條件未完成的 TDCC、
 回填寫回並鎖住、人工放行改單位面額、VWAP 價格、寫回失敗可以重寫、交易日當時的信用評等（#240）、帶出自算風險等級（#239）。
 
 資料庫測試對真的 PostgreSQL（`pg`，沒有設定 SPW_TEST_DSN 時略過）；PANEL 工作階段的寫回失敗用假的資料庫來源，不需要資料庫。
@@ -12,24 +12,25 @@ from dataclasses import replace
 from decimal import Decimal
 from pathlib import Path
 
-import openpyxl
 import pytest
 
 import barc_synth
 import hsbc_synth
 from barc_synth import SYNTH_ISIN, build_pdf
 from fcn_checker.batch import Category, check_batch, preview_batch
+from fcn_checker.condition_source import ConditionSource
 from fcn_checker.config import RISK_LEVEL_PENDING
+from fcn_checker.identification import file_code
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.issuers import REGISTRY
-from fcn_checker.orders.reference import load_reference_sheet
+from fcn_checker.orders.reference import Table, load_reference_sheet
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.rating_formats import RATING_FIELDS
 from fcn_checker.saving import run_batch, save_batch
 from fcn_checker.schema import CheckStatus
 from harness import CONFIG, cli_root, with_iis
 from reference_synth import REFERENCE_HEADERS, Ratings, build_reference_sheet, issuer_value, price, reference_row
-from sp_workflow.check_source import NO_RESULT_FILE, WorkflowDatabase, export_reference, write_back
+from sp_workflow.check_source import NO_RESULT_FILE, WorkflowDatabase, conditions, write_back
 from sp_workflow.risk_level import BACKFILLED, DONE, PENDING, RiskDetail, RiskLevel
 from sp_workflow.risk_level import _write as write_risk  # 直接寫存好的風險等級（算法另有 tests/test_risk_level.py）
 
@@ -134,16 +135,20 @@ def pdfs_of(tmp_path: Path, *specs: barc_synth.Spec) -> list[Path]:
     return with_iis([build_pdf(tmp_path / f"{s.product_code}_TS.pdf", s) for s in specs])
 
 
-def export(pg, tmp_path: Path, pdfs, name="資料庫.xlsx") -> tuple[Path, dict[str, str]]:
-    from fcn_checker.identification import file_code
-
-    path = tmp_path / name
-    return path, export_reference(pg, [file_code(p) for p in pdfs], FMT, path, prefixes=PREFIXES)
+def from_database(pg, pdfs) -> ConditionSource:
+    """資料庫排出的核對條件（#445：型別化的列＋憑證，不寫檔）。"""
+    return conditions(pg, [file_code(p) for p in pdfs], FMT, prefixes=PREFIXES)
 
 
-def run_from_database(pg, tmp_path: Path, pdfs, *, name="資料庫.xlsx"):
-    sheet, absent = export(pg, tmp_path, pdfs, name)
-    return run_batch(CONFIG, sheet, pdfs, tmp_path / "reports", root=tmp_path, now=NOW, absent=absent)
+def run_from_database(pg, tmp_path: Path, pdfs):
+    return run_batch(CONFIG, from_database(pg, pdfs), pdfs, tmp_path / "reports", root=tmp_path, now=NOW)
+
+
+def table_source(*rows: dict[str, object], headers=REFERENCE_HEADERS) -> ConditionSource:
+    """不連資料庫的資料庫來源：合成的列排成表（欄名 → 值）。"""
+    return ConditionSource.database(
+        FMT, Table(tuple(headers), tuple(tuple(r.get(h) for h in headers) for r in rows)), {}
+    )
 
 
 def by_name(outcome) -> dict[str, object]:
@@ -167,25 +172,38 @@ def test_database_rows_read_the_same_as_the_excel_reference_sheet(pg, tmp_path, 
     spec = barc_spec()
     seed(pg, spec, pricing=pricing)
     pdfs = pdfs_of(tmp_path, spec)
-    db_sheet, absent = export(pg, tmp_path, pdfs)
+    source = from_database(pg, pdfs)
     overrides = {"期初定價": pricing, "風險等級": "RR4", **(VWAP_BLANK if pricing == "VWAP" else {})}
     overrides["配息門檻(%)"] = "-"  # FCN 沒有配息門檻（#367）
     excel_row = reference_row(spec.with_(ratings=BARC_RATINGS), **overrides)
     headers = [*REFERENCE_HEADERS, "風險等級", "參與率(%)", "回顧結束日", "配息門檻(%)"]
     excel_sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [excel_row], headers)
 
-    (db_row,) = load_reference_sheet(db_sheet, FMT).rows
+    (db_row,) = source.sheet.rows
     (xl_row,) = load_reference_sheet(excel_sheet, FMT).rows
 
-    assert absent == {}
+    assert source.sheet.absent == {}
     keys = sorted(set(FMT.columns.values()))
     assert {k: db_row.get(k).value for k in keys} == {k: xl_row.get(k).value for k in keys}
     assert db_row.issuer.value == xl_row.issuer.value
 
-    from_db = check_batch(preview_batch(CONFIG, db_sheet, pdfs, absent=absent))
+    from_db = check_batch(preview_batch(CONFIG, source, pdfs))
     from_excel = check_batch(preview_batch(CONFIG, excel_sheet, pdfs))
     assert verdicts(from_db) == verdicts(from_excel)
     assert {c for _, c, _ in verdicts(from_db)} == {Category.PASSED}
+
+
+@pytest.mark.db
+@pytest.mark.parametrize("pricing", ["收盤價", "VWAP"])
+def test_database_rows_equal_the_rows_of_the_workbook_they_used_to_be_written_to(pg, tmp_path, pricing) -> None:
+    """#445：不寫檔直接讀成的列，和以前「寫成參考條件表檔案再讀」的列逐欄相同（值、欄名、儲存格位置）。"""
+    spec = barc_spec()
+    seed(pg, spec, pricing=pricing)
+    source = from_database(pg, pdfs_of(tmp_path, spec))
+    path = tmp_path / "資料庫.xlsx"
+    source.workbook().save(path)
+
+    assert source.sheet.rows == load_reference_sheet(path, FMT).rows
 
 
 RATING_KEYS = tuple(RATING_FIELDS)  # 發行機構三家、保證機構三家
@@ -207,10 +225,10 @@ def test_exported_ratings_are_the_ones_in_effect_on_the_trade_date(pg, tmp_path)
     )
     pg.execute("UPDATE workflow.product SET trade_date = '2030-01-08' WHERE tdcc = %s", (after.product_code,))
 
-    sheet, absent = export(pg, tmp_path, pdfs_of(tmp_path, before, after, guaranteed))
+    source = from_database(pg, pdfs_of(tmp_path, before, after, guaranteed))
 
-    rows = {r.product_code.value: r for r in load_reference_sheet(sheet, FMT).rows}
-    assert absent == {}
+    rows = {r.product_code.value: r for r in source.sheet.rows}
+    assert source.sheet.absent == {}
     got = {code: tuple(row.get(k).value for k in RATING_KEYS) for code, row in rows.items()}
     assert got == {
         before.product_code: ("A+", "A1", "AA-", None, None, None),
@@ -263,22 +281,6 @@ def test_a_rating_changed_after_checking_is_stale_only_for_issuers_with_rating_c
     assert (result.locked, result.stale) == ((barc.product_code,), ())
 
 
-@pytest.mark.db
-def test_a_checked_sheet_without_rating_columns_is_not_stale(pg, tmp_path) -> None:
-    """核對時的參考條件表沒有評等欄（v18 以前產生的）：評等欄不算改了，照常回填、鎖住。"""
-    spec, outcome, receipt = checked_hsbc(pg, tmp_path)
-    book = openpyxl.load_workbook(outcome.reference_sheet)
-    sheet = book.worksheets[0]
-    rating_headers = {h for h, std in FMT.columns.items() if std in RATING_FIELDS}
-    for col in sorted((c.column for c in sheet[1] if c.value in rating_headers), reverse=True):
-        sheet.delete_cols(col)
-    book.save(outcome.reference_sheet)
-    new_rating(pg, "HSBC", spec)
-
-    result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
-    assert (result.locked, result.stale) == ((spec.product_code,), ())
-
-
 # ---------- 風險等級（#239） ----------
 
 
@@ -300,17 +302,17 @@ def test_the_export_carries_the_self_calculated_risk_level(pg, tmp_path) -> None
         seed(pg, spec, risk=risk)
     pdfs = pdfs_of(tmp_path, *specs.values())
 
-    sheet, absent = export(pg, tmp_path, pdfs)
+    source = from_database(pg, pdfs)
 
-    rows = {r.product_code.value: r.get("risk_level").value for r in load_reference_sheet(sheet, FMT).rows}
-    assert absent == {}
+    rows = {r.product_code.value: r.get("risk_level").value for r in source.sheet.rows}
+    assert source.sheet.absent == {}
     assert rows == {
         specs["RR3"].product_code: "RR3",
         specs[BACKFILLED].product_code: "RR4",
         specs[PENDING].product_code: RISK_LEVEL_PENDING,
         specs[None].product_code: None,
     }
-    outcome = check_batch(preview_batch(CONFIG, sheet, pdfs, absent=absent))
+    outcome = check_batch(preview_batch(CONFIG, source, pdfs))
     ts = {i.product_code: i for i in outcome.items if i.term_sheet.name.endswith("_TS.pdf")}
     assert ts[specs[BACKFILLED].product_code].category == Category.PASSED, "回填的 RR4 照常比對"
     assert rr_results(ts[specs["RR3"].product_code]) == [
@@ -337,25 +339,6 @@ def test_a_risk_level_changed_after_checking_is_not_backfilled_or_locked(pg, tmp
 
 
 @pytest.mark.db
-def test_a_checked_sheet_without_the_risk_level_column_is_not_stale(pg, tmp_path) -> None:
-    """核對時的參考條件表沒有風險等級欄（v19 以前產生的）：風險等級不算改了，照常回填、鎖住。"""
-    spec = barc_spec()
-    seed(pg, spec)
-    outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
-    assert {i.category for i in outcome.items} == {Category.PASSED}
-    book = openpyxl.load_workbook(outcome.reference_sheet)
-    sheet = book.worksheets[0]
-    (col,) = (c.column for c in sheet[1] if c.value == "風險等級")
-    sheet.delete_cols(col)
-    book.save(outcome.reference_sheet)
-    seed_risk(pg, spec.product_code, "RR3")
-
-    result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
-
-    assert (result.locked, result.stale) == ((spec.product_code,), ())
-
-
-@pytest.mark.db
 def test_the_export_carries_the_participation(pg, tmp_path) -> None:
     """參與率（#373）：BEN 帶資料庫的值（Digital 是 0），其他商品空白。"""
     fcn, ben = barc_spec(), barc_spec(product_code=OTHER)
@@ -365,9 +348,9 @@ def test_the_export_carries_the_participation(pg, tmp_path) -> None:
         "UPDATE workflow.product SET participation_pct = 0, coupon_barrier_pct = strike_pct WHERE tdcc = %s", (OTHER,)
     )
 
-    sheet, _ = export(pg, tmp_path, pdfs_of(tmp_path, fcn, ben))
+    source = from_database(pg, pdfs_of(tmp_path, fcn, ben))
 
-    rows = {r.product_code.value: r.get("participation_pct").value for r in load_reference_sheet(sheet, FMT).rows}
+    rows = {r.product_code.value: r.get("participation_pct").value for r in source.sheet.rows}
     assert rows == {fcn.product_code: None, OTHER: 0}
 
 
@@ -379,29 +362,11 @@ def test_the_export_carries_the_bonus_barrier_of_ben(pg, tmp_path) -> None:
     seed(pg, ben, product="BEN")
     pg.execute("UPDATE workflow.product SET ko_pct = NULL, coupon_barrier_pct = 90 WHERE tdcc = %s", (OTHER,))
 
-    sheet, _ = export(pg, tmp_path, pdfs_of(tmp_path, fcn, ben))
+    source = from_database(pg, pdfs_of(tmp_path, fcn, ben))
 
-    rows = {r.product_code.value: r for r in load_reference_sheet(sheet, FMT).rows}
+    rows = {r.product_code.value: r for r in source.sheet.rows}
     assert {code: r.get("coupon_barrier_pct").value for code, r in rows.items()} == {fcn.product_code: "-", OTHER: 90}
     assert rows[OTHER].get("ko_pct").value == "-"
-
-
-@pytest.mark.db
-def test_a_checked_sheet_without_the_participation_column_is_not_stale(pg, tmp_path) -> None:
-    """核對時的參考條件表沒有參與率欄（v21 以前產生的）：不算條件改了，照常回填、鎖住。"""
-    spec = barc_spec()
-    seed(pg, spec)
-    outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
-    assert {i.category for i in outcome.items} == {Category.PASSED}
-    book = openpyxl.load_workbook(outcome.reference_sheet)
-    sheet = book.worksheets[0]
-    (col,) = (c.column for c in sheet[1] if c.value == "參與率(%)")
-    sheet.delete_cols(col)
-    book.save(outcome.reference_sheet)
-
-    result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
-
-    assert (result.locked, result.stale) == ((spec.product_code,), ())
 
 
 # ---------- 配息門檻（#367） ----------
@@ -416,35 +381,27 @@ def test_the_export_carries_the_coupon_barrier_and_dacn_goes_to_manual_review(pg
     pg.execute("UPDATE workflow.product SET coupon_barrier_pct = 75 WHERE tdcc = %s", (dacn.product_code,))
     pdfs = pdfs_of(tmp_path, fcn, dacn)
 
-    sheet, absent = export(pg, tmp_path, pdfs)
+    source = from_database(pg, pdfs)
 
-    rows = {r.product_code.value: r.get("coupon_barrier_pct").value for r in load_reference_sheet(sheet, FMT).rows}
-    assert (absent, rows) == ({}, {fcn.product_code: "-", dacn.product_code: Decimal(75)})
-    outcome = check_batch(preview_batch(CONFIG, sheet, pdfs, absent=absent))
+    rows = {r.product_code.value: r.get("coupon_barrier_pct").value for r in source.sheet.rows}
+    assert (source.sheet.absent, rows) == ({}, {fcn.product_code: "-", dacn.product_code: Decimal(75)})
+    outcome = check_batch(preview_batch(CONFIG, source, pdfs))
     messages = {m for i in outcome.items if i.product_code == dacn.product_code for m in i.problem_messages}
     assert any("還沒開放「DACN」自動核對" in m for m in messages)
 
 
 @pytest.mark.db
-@pytest.mark.parametrize("drop_column", [False, True], ids=["改了", "核對時的表沒有這欄"])
-def test_a_coupon_barrier_changed_after_checking_is_stale(pg, tmp_path, drop_column) -> None:
-    """核對後改了配息門檻：不回填、不鎖住；核對時的表沒有這欄（v22 以前產生的）不算改了。"""
+def test_a_coupon_barrier_changed_after_checking_is_stale(pg, tmp_path) -> None:
+    """核對後改了配息門檻：不回填、不鎖住。"""
     spec = barc_spec()
     seed(pg, spec)
     outcome, receipt = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
     assert {i.category for i in outcome.items} == {Category.PASSED}
-    if drop_column:
-        book = openpyxl.load_workbook(outcome.reference_sheet)
-        sheet = book.worksheets[0]
-        (col,) = (c.column for c in sheet[1] if c.value == "配息門檻(%)")
-        sheet.delete_cols(col)
-        book.save(outcome.reference_sheet)
     pg.execute("UPDATE workflow.product SET coupon_barrier_pct = 75 WHERE tdcc = %s", (spec.product_code,))
 
     result = write_back(pg, outcome, receipt, FMT, prefixes=PREFIXES, user="operator1")
 
-    expected = ((spec.product_code,), ()) if drop_column else ((), (spec.product_code,))
-    assert (result.locked, result.stale) == expected
+    assert (result.locked, result.stale) == ((), (spec.product_code,))
 
 
 # ---------- 查不到、條件未完成 ----------
@@ -479,10 +436,9 @@ def test_the_database_product_type_reaches_the_non_call_check(pg, tmp_path) -> N
     seed(pg, express, product="FCN_Express")
     pdfs = pdfs_of(tmp_path, fcn, express)
 
-    sheet, _ = export(pg, tmp_path, pdfs)
-    outcome, _ = run_from_database(pg, tmp_path, pdfs, name="資料庫2.xlsx")
+    outcome, _ = run_from_database(pg, tmp_path, pdfs)
 
-    rows = {r.product_code.value: r.get("product").value for r in load_reference_sheet(sheet, FMT).rows}
+    rows = {r.product_code.value: r.get("product").value for r in outcome.source.sheet.rows}
     assert rows == {fcn.product_code: "FCN", OTHER: "FCN_Express"}
     items = by_name(outcome)
     assert items[f"{fcn.product_code}_TS.pdf"].category == Category.PASSED
@@ -502,7 +458,7 @@ def test_products_with_blank_required_terms_are_not_checked(pg, tmp_path) -> Non
 
     outcome, _ = run_from_database(pg, tmp_path, pdfs_of(tmp_path, spec))
 
-    assert not load_reference_sheet(outcome.reference_sheet, FMT).rows
+    assert not outcome.source.sheet.rows
     for item in outcome.items:
         assert item.category == Category.REVIEW
         assert any("商品條件缺 Coupon p.a. (%)、Maturity date；補齊後再核對" in m for m in item.problem_messages)
@@ -534,7 +490,7 @@ def test_passing_products_are_backfilled_and_locked(pg, tmp_path) -> None:
     assert {"ISIN Code", "發行日"} <= logged
 
     # 鎖住後再核對：從資料庫讀到回填過的值，沒有要回填的格子，也不再寫回商品資料
-    again, again_receipt = run_from_database(pg, tmp_path, pdfs, name="資料庫2.xlsx")
+    again, again_receipt = run_from_database(pg, tmp_path, pdfs)
     (ts,) = [i for i in again.items if i.term_sheet.name.endswith("_TS.pdf")]
     assert ts.category == Category.PASSED
     assert not [d for d in ts.report.backfill if d.action.value in ("fill", "overwrite")]
@@ -582,8 +538,8 @@ def test_terms_blanked_after_checking_are_not_backfilled_or_locked(pg, tmp_path)
 def test_released_denomination_takes_the_term_sheet_value_and_keeps_the_old_one(pg, tmp_path) -> None:
     spec = barc_spec()
     seed(pg, spec, denomination=spec.denom * 2)
-    sheet, absent = export(pg, tmp_path, pdfs_of(tmp_path, spec))
-    outcome = check_batch(preview_batch(CONFIG, sheet, pdfs_of(tmp_path, spec), absent=absent))
+    pdfs = pdfs_of(tmp_path, spec)
+    outcome = check_batch(preview_batch(CONFIG, from_database(pg, pdfs), pdfs))
     assert {i.category for i in outcome.items} != {Category.PASSED}
     outcome.release(*[i for i in outcome.items if i.category != Category.PASSED])
     receipt = save_batch(outcome, tmp_path / "reports", root=tmp_path, now=NOW)
@@ -621,13 +577,13 @@ def test_vwap_prices_from_the_term_sheet_are_written_back(pg, tmp_path) -> None:
 
 
 class PgDatabase:
-    """資料庫來源接到測試資料庫（`pg`）：PANEL 工作階段走真的匯出與寫回。"""
+    """資料庫來源接到測試資料庫（`pg`）：PANEL 工作階段走真的讀條件與寫回。"""
 
-    def __init__(self, pg, folder: Path) -> None:
-        self.pg, self.folder = pg, folder
+    def __init__(self, pg) -> None:
+        self.pg = pg
 
-    def export(self, term_sheets, fmt):
-        return export(self.pg, self.folder, term_sheets)
+    def conditions(self, term_sheets, fmt):
+        return from_database(self.pg, term_sheets)
 
     def write_back(self, batch, receipt) -> str:
         return write_back(self.pg, batch, receipt, FMT, prefixes=PREFIXES, user="operator1").summary
@@ -642,7 +598,7 @@ def test_a_result_file_that_cannot_be_written_still_backfills_and_locks(pg, tmp_
     pdfs = pdfs_of(tmp_path, spec)
     blocked = tmp_path / "out"
     blocked.write_text("不是資料夾", encoding="utf-8")
-    session = PanelSession(install_root=tmp_path, database=PgDatabase(pg, tmp_path))
+    session = PanelSession(install_root=tmp_path, database=PgDatabase(pg))
     session.select(None, pdfs)
     session.select_source(True)
     session.load_preview()
@@ -675,14 +631,14 @@ def test_a_result_file_that_cannot_be_written_still_backfills_and_locks(pg, tmp_
 
 
 class FakeDatabase:
-    """假的資料庫來源：產生合成參考條件表；寫回第一次失敗、之後成功。"""
+    """假的資料庫來源：交出合成的核對條件；寫回第一次失敗、之後成功。"""
 
-    def __init__(self, sheet: Path) -> None:
-        self.sheet = sheet
+    def __init__(self, source: ConditionSource) -> None:
+        self.source = source
         self.attempts = 0
 
-    def export(self, term_sheets, fmt):
-        return self.sheet, {}
+    def conditions(self, term_sheets, fmt):
+        return self.source
 
     def write_back(self, batch, receipt) -> str:
         self.attempts += 1
@@ -694,7 +650,7 @@ class FakeDatabase:
 def test_a_failed_write_back_keeps_the_result_file_and_can_be_retried(tmp_path) -> None:
     spec = barc_spec()
     pdfs = pdfs_of(tmp_path, spec)
-    database = FakeDatabase(build_reference_sheet(tmp_path / "資料庫.xlsx", [reference_row(spec)]))
+    database = FakeDatabase(table_source(reference_row(spec)))
     session = PanelSession(install_root=tmp_path, database=database)
     session.select(None, pdfs)
     session.select_source(True)
@@ -715,7 +671,7 @@ def test_a_failed_result_file_and_a_failed_write_back_say_both(tmp_path) -> None
     """#443：結果檔寫不出去時照樣寫回；寫回也失敗時兩件都說，可以重新寫回。"""
     spec = barc_spec()
     pdfs = pdfs_of(tmp_path, spec)
-    database = FakeDatabase(build_reference_sheet(tmp_path / "資料庫.xlsx", [reference_row(spec)]))
+    database = FakeDatabase(table_source(reference_row(spec)))
     session = PanelSession(install_root=tmp_path, database=database)
     session.select(None, pdfs)
     session.select_source(True)
@@ -735,16 +691,17 @@ def test_a_failed_result_file_and_a_failed_write_back_say_both(tmp_path) -> None
 
 
 def test_a_changed_source_writes_nothing_back(tmp_path) -> None:
-    """來源在核對後被改過：核對結果檔與核對紀錄都不寫，也不寫回資料庫。"""
+    """說明書在核對後被改過：核對結果檔與核對紀錄都不寫，也不寫回資料庫（資料庫的條件在記憶體裡不會變，
+    核對後資料庫被改由寫回前比對擋下，見上面的測試）。"""
     spec = barc_spec()
-    sheet = build_reference_sheet(tmp_path / "資料庫.xlsx", [reference_row(spec)])
-    database = FakeDatabase(sheet)
+    database = FakeDatabase(table_source(reference_row(spec)))
     session = PanelSession(install_root=tmp_path, database=database)
-    session.select(None, pdfs_of(tmp_path, spec))
+    pdfs = pdfs_of(tmp_path, spec)
+    session.select(None, pdfs)
     session.select_source(True)
     session.load_preview()
     session.start_check()
-    build_reference_sheet(sheet, [reference_row(spec.with_(annual=spec.annual + 1))])
+    build_pdf(pdfs[0], spec.with_(annual=spec.annual + 1))
 
     with pytest.raises(IngestionError, match="已變更"):
         session.save(tmp_path / "out", now=NOW)
@@ -753,7 +710,7 @@ def test_a_changed_source_writes_nothing_back(tmp_path) -> None:
 
 def test_excel_source_never_touches_the_database(tmp_path) -> None:
     spec = barc_spec()
-    database = FakeDatabase(tmp_path / "不該用.xlsx")
+    database = FakeDatabase(table_source())
     session = PanelSession(install_root=tmp_path, database=database)
     session.select(build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [reference_row(spec)]), pdfs_of(tmp_path, spec))
     session.load_preview()
@@ -766,19 +723,11 @@ def test_excel_source_never_touches_the_database(tmp_path) -> None:
 
 def test_database_source_never_asks_for_a_login(tmp_path) -> None:
     """登入由外殼在主執行緒先處理（#129）：資料庫來源沒有 ready()，沒有連線設定時不問、直接說沒有登入。"""
-    source = WorkflowDatabase(lambda: None, tmp_path)
+    source = WorkflowDatabase(lambda: None)
 
     assert not hasattr(source, "ready")
     with pytest.raises(IngestionError, match="沒有登入資料庫"):
-        source.export([tmp_path / f"{OTHER}_TS.pdf"], FMT)
-
-
-def test_new_export_files_never_overwrite_earlier_ones(tmp_path) -> None:
-    source = WorkflowDatabase(lambda: None, tmp_path)
-    first = source._new_path()
-    first.write_text("x", encoding="utf-8")
-
-    assert source._new_path() != first
+        source.conditions([tmp_path / f"{OTHER}_TS.pdf"], FMT)
 
 
 # ---------- fcn-batch --database ----------
@@ -789,7 +738,7 @@ def test_cli_database_source_checks_pdfs_and_writes_back(tmp_path, monkeypatch, 
 
     spec = barc_spec()
     pdfs = pdfs_of(tmp_path, spec)
-    database = FakeDatabase(build_reference_sheet(tmp_path / "資料庫.xlsx", [reference_row(spec)]))
+    database = FakeDatabase(table_source(reference_row(spec)))
     database.attempts = 1  # 寫回直接成功
     monkeypatch.setattr(cli, "_database_source", lambda args: database)
     cli_root(tmp_path, monkeypatch)  # 預設設定檔相對於執行目錄
@@ -806,7 +755,7 @@ def test_cli_database_source_writes_back_when_the_result_file_fails(tmp_path, mo
 
     spec = barc_spec()
     pdfs = pdfs_of(tmp_path, spec)
-    database = FakeDatabase(build_reference_sheet(tmp_path / "資料庫.xlsx", [reference_row(spec)]))
+    database = FakeDatabase(table_source(reference_row(spec)))
     database.attempts = 1  # 寫回直接成功
     monkeypatch.setattr(cli, "_database_source", lambda args: database)
     cli_root(tmp_path, monkeypatch)

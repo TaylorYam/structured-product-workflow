@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
@@ -27,6 +27,7 @@ from ..schema import OrderValue
 SOURCE = "參考條件表"
 OFFLINE_SHEET = "樣本清單"  # 離線建的列（`OrderRecord.offline`）儲存格位置用的工作表名稱
 UNDERLYING_SLOTS = 5  # UL_1～UL_5
+TABLE_FIRST_ROW = 2  # 程式排的表（`Table`）：第 1 列表頭、第 2 列起資料
 
 
 def underlying_key(i: int) -> str:
@@ -60,6 +61,70 @@ def normalize_cell(v: Any) -> Any:
         s = v.strip()
         return s or None
     return v
+
+
+def as_read(v: Any) -> Any:
+    """值寫進 Excel 再讀回來的樣子（openpyxl：數字以 `%.16g` 寫、讀回 int 或 float；日期讀回 datetime；空字串讀回空白）。
+    資料庫來源不經檔案建列時用（#445），讀到的值和 Excel 參考條件表一樣。"""
+    if v is None or isinstance(v, bool):
+        return v
+    if v == "":
+        return None  # openpyxl 不寫空字串，讀回來是空白格
+    if isinstance(v, int | float | Decimal):
+        text = format(float(v), ".16g")  # 同 openpyxl 的 "%.16g" % v（先轉成 float）
+        return float(text) if any(c in text for c in ".Ee") else int(text)
+    if isinstance(v, dt.date) and not isinstance(v, dt.datetime):
+        return dt.datetime.combine(v, dt.time())
+    return v
+
+
+@dataclass(frozen=True)
+class Table:
+    """程式排好的參考條件表（資料庫來源，#445）：欄名與每列的值（照欄名順序），沒有檔案。"""
+
+    headers: tuple[str, ...]
+    rows: tuple[tuple[Any, ...], ...]
+
+    @classmethod
+    def of(cls, fmt: ReferenceFormat, rows: Iterable[Mapping[str, Any]]) -> Table:
+        """每列以標準欄位為鍵（沒有標準欄位的欄，例：UF、交易日期、分公司，以欄名為鍵）；欄照 `table_layout` 排，
+        表上沒有值的欄空白。欄名翻譯只在這裡，資料庫來源只管標準欄位的值。"""
+        headers = table_layout(fmt)
+
+        def cell(row: Mapping[str, Any], header: str) -> Any:
+            std = fmt.columns.get(header)
+            return row.get(std) if std is not None else row.get(header)
+
+        return cls(headers, tuple(tuple(cell(r, h) for h in headers) for r in rows))
+
+    def workbook(self, title: str, date_format: str) -> Workbook:
+        """記憶體中的活頁簿：第 1 列表頭、第 2 列起資料，值照寫進 Excel 再讀回來的樣子，日期用 `date_format`。
+        核對結果檔與回報包照 Excel 參考條件表的方式排版（不存檔）。"""
+        wb = Workbook()
+        ws = wb.active
+        ws.title = title
+        ws.append(list(self.headers))
+        for row in self.rows:
+            ws.append([as_read(v) for v in row])
+            for cell in ws[ws.max_row]:
+                if isinstance(cell.value, dt.date):
+                    cell.number_format = date_format
+        return wb
+
+
+def table_layout(fmt: ReferenceFormat) -> tuple[str, ...]:
+    """程式排的表的欄（資料庫來源，#445）：TS、IIS、發行機構，匯入格式的欄（「TS/IIS完成檢核」除外），再來是格式設定
+    其餘標準欄位的欄（依設定檔順序；同一標準欄位已經有欄的不重複）。設定檔加了新欄就自動排進來。"""
+    names = headers_of(fmt)
+    imp = fmt.import_format
+    out = [names["checked_term_sheet"], names["checked_iis"], fmt.issuer_column]
+    out.extend(c for c in imp.columns if c != imp.checked_column)
+    covered = {fmt.columns[h] for h in out if h in fmt.columns}
+    for header, std in fmt.columns.items():
+        if std not in covered:
+            out.append(header)
+            covered.add(std)
+    return tuple(out)
 
 
 def header_names(fmt: ReferenceFormat) -> dict[str, list[str]]:
@@ -229,40 +294,68 @@ def load_reference_sheet(path: Path, fmt: ReferenceFormat) -> ReferenceSheet:
         raise IngestionError("reference_unreadable", f"參考條件表無法開啟（可能已損毀或不是 Excel）：{e}") from e
     layout = locate(wb, fmt)
     ws = wb[layout.sheet]
+    by_header = header_columns(ws, layout)
+    rows = range(layout.first_data_row, ws.max_row + 1)
+    return ReferenceSheet(layout.sheet, _records(fmt, layout.sheet, by_header, rows, lambda r, c: ws.cell(r, c).value))
+
+
+def table_sheet(
+    fmt: ReferenceFormat, title: str, table: Table, absent: Mapping[str, str] | None = None
+) -> ReferenceSheet:
+    """不經檔案，把排好的表（`Table`：第 1 列表頭、第 2 列起資料）讀成和 Excel 參考條件表一樣的列（資料庫來源，#445）。
+
+    每格先換成寫進 Excel 再讀回來的樣子（`as_read`），所以讀到的值、欄名與儲存格位置都和以前「產生參考條件表檔案再讀」
+    相同。`absent` 是表上沒有某個商品代號的原因。"""
+    by_header: dict[str, list[int]] = {}
+    for col, header in enumerate(table.headers, start=1):
+        by_header.setdefault(header, []).append(col)
+
+    def value(r: int, c: int) -> Any:
+        return as_read(table.rows[r - TABLE_FIRST_ROW][c - 1])
+
+    rows = range(TABLE_FIRST_ROW, TABLE_FIRST_ROW + len(table.rows))
+    return ReferenceSheet(title, _records(fmt, title, by_header, rows, value), dict(absent or {}))
+
+
+def _records(
+    fmt: ReferenceFormat,
+    sheet: str,
+    by_header: Mapping[str, Sequence[int]],
+    rows: Iterable[int],
+    value: Callable[[int, int], Any],
+) -> list[OrderRecord]:
+    """表頭（欄名 → 欄號）與每格的值（`value(列, 欄)`）→ 每列一個 `OrderRecord`；必要欄有問題時整批錯誤。"""
 
     def ref(cell: str) -> str:
-        return f"{layout.sheet}!{cell}"
+        return f"{sheet}!{cell}"
 
-    by_header = header_columns(ws, layout)
     problems = _column_problems(fmt, by_header)
     if problems:
-        raise IngestionError(
-            "reference_columns_invalid", f"參考條件表「{layout.sheet}」{'；'.join(problems)}，整批不核對"
-        )
+        raise IngestionError("reference_columns_invalid", f"參考條件表「{sheet}」{'；'.join(problems)}，整批不核對")
     std_cols = {fmt.columns[h]: cols[0] for h, cols in by_header.items() if h in fmt.columns}
     headers = {cols[0]: h for h, cols in by_header.items()}
     key_col = by_header[fmt.key_column][0]
     issuer_col = by_header[fmt.issuer_column][0] if fmt.issuer_column in by_header else None
 
     declared = headers_of(fmt)
-    rows: list[OrderRecord] = []
-    for r in range(layout.first_data_row, ws.max_row + 1):
-        code = _code(ws.cell(row=r, column=key_col).value)
+    records: list[OrderRecord] = []
+    for r in rows:
+        code = _code(value(r, key_col))
         if code is None:
             continue  # 空白列
         issuer = None
         if issuer_col:
-            issuer_v = normalize_cell(ws.cell(row=r, column=issuer_col).value)
+            issuer_v = normalize_cell(value(r, issuer_col))
             issuer = OrderValue(issuer_v, ref(f"{get_column_letter(issuer_col)}{r}"), fmt.issuer_column)
         fields: dict[str, OrderValue] = {}
         cells: dict[str, str] = {}
         for std, col in std_cols.items():
             cell = f"{get_column_letter(col)}{r}"
-            raw = ws.cell(row=r, column=col).value
-            value = _code(raw) if col == key_col else normalize_cell(raw)
-            fields[std] = OrderValue(value, ref(cell), headers[col])
+            raw = value(r, col)
+            v = _code(raw) if col == key_col else normalize_cell(raw)
+            fields[std] = OrderValue(v, ref(cell), headers[col])
             cells[std] = cell
-        rows.append(
+        records.append(
             OrderRecord(
                 r,
                 OrderValue(code, ref(f"{get_column_letter(key_col)}{r}"), fmt.key_column),
@@ -272,7 +365,7 @@ def load_reference_sheet(path: Path, fmt: ReferenceFormat) -> ReferenceSheet:
                 declared,
             )
         )
-    return ReferenceSheet(layout.sheet, rows)
+    return records
 
 
 def _column_problems(fmt: ReferenceFormat, by_header: Mapping[str, Sequence[int]]) -> list[str]:
