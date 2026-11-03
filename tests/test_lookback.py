@@ -410,8 +410,8 @@ def test_the_reference_sheet_keeps_the_term_sheet_strike_and_the_screen_shows_th
     from fcn_checker.check_config import DEFAULTS
     from fcn_checker.config import load_issuer_prefixes, load_reference_format
     from sp_workflow.check_source import export_reference
+    from sp_workflow.product_store import lookback_text
     from sp_workflow.product_terms import read
-    from sp_workflow.window_actions import lookback_text
 
     seed(pg)
     write_closes(pg, END, {MIDDLE: "70"})

@@ -15,6 +15,7 @@ from sp_workflow.order_terms import format_field
 from sp_workflow.preparation import parse_tdccs
 from sp_workflow.product_export import ExportReceipt, export_name, summary_name
 from sp_workflow.product_record import COUPON_BARRIER_FIELD, REQUIRED
+from sp_workflow.product_store import lookback_text
 from sp_workflow.product_terms import Draft, ImportConfig, MissingProduct, Receipt
 from sp_workflow.status import OrderReview
 from sp_workflow.tabs.base import CELL_COPY_HINT, TITLE, BackgroundFactory, DatabaseLogin, Tab
@@ -312,10 +313,8 @@ class MaintenanceTab(Tab):
     def _opened(self, result: Opened) -> None:
         self.config = result.config
         self._show(result.draft, result.trades)
-        if result.lookback:  # 回顧期初價格由比價寫入，只顯示（#374）
-            self.intro_var.set(
-                f"{self.intro_var.get()}\n回顧期初價格（比價算出，執行價已改成回顧執行價）：{result.lookback}"
-            )
+        if shown := lookback_text(result.stored):  # 回顧期初價格由比價寫入，只顯示（#374）
+            self.intro_var.set(f"{self.intro_var.get()}\n回顧期初價格（比價算出，執行價已改成回顧執行價）：{shown}")
         self.status_var.set(f"已打開 {result.draft.tdcc}（{result.draft.review}），改好按「存檔」。")
 
     def _show(self, draft: Draft, trades: TradeRowsDraft | None) -> None:

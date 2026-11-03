@@ -21,10 +21,10 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, TypeVar
 
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.config import load_reference_format
@@ -75,7 +75,6 @@ from sp_workflow.lifecycle import (
     Objection,
     StoredEvent,
     current_events,
-    lifecycle_status,
     open_objections,
     raise_objection,
     record_redemption,
@@ -97,7 +96,6 @@ from sp_workflow.order_terms import OrderRow, collect_orders
 from sp_workflow.preparation import PrepareReceipt, prepare_batch
 from sp_workflow.product_backfill import ProductBackfillError, ProductBackfillReceipt, backfill_products
 from sp_workflow.product_export import ExportReceipt, export_products, export_summary
-from sp_workflow.product_record import plain
 from sp_workflow.product_store import Stored, read
 from sp_workflow.product_terms import (
     BatchReceipt,
@@ -136,6 +134,8 @@ from sp_workflow.trade_rows import TradeRowsDraft, load_trade_rows, trade_produc
 
 if TYPE_CHECKING:
     import psycopg
+
+_Rows = TypeVar("_Rows")  # 寫完重讀的全部列（`_write_then_reload`）
 
 
 @dataclass(frozen=True)
@@ -282,16 +282,7 @@ class Opened:
     draft: Draft
     config: ImportConfig
     trades: TradeRowsDraft | None = None
-    lookback: str = ""  # 比價算出的回顧期初價格（#374，只能看、不能改）；沒有時空字串
-
-
-def lookback_text(stored: Stored | None) -> str:
-    """畫面上的回顧期初價格（#374）：「UL_1 代碼 價格、…」；還沒算出時空字串。"""
-    if stored is None:
-        return ""
-    return "、".join(
-        f"UL_{p.seq} {p.code} {format(plain(p.lookback), 'f')}" for p in stored.prices if p.lookback is not None
-    )
+    stored: Stored | None = None  # 打開時資料庫存的這檔（比價寫入、只能看的值由畫面取）；還沒有商品條件時 None
 
 
 def _recalculate_after_import(conn: psycopg.Connection, paths: ConfigPaths) -> Recalc:
@@ -565,7 +556,7 @@ def open_product(settings: ConnectionSettings, tdcc: str, paths: ConfigPaths) ->
         product = trade_product(conn, tdcc)
     if stored is None and not trades.rows:
         raise TermsError(f"{tdcc}：交易明細和商品條件都沒有這檔，不能在這裡新增")
-    return Opened(draft_from(tdcc, stored, config, trade_product=product), config, trades, lookback_text(stored))
+    return Opened(draft_from(tdcc, stored, config, trade_product=product), config, trades, stored)
 
 
 def save_product(
@@ -576,19 +567,9 @@ def save_product(
     trades: TradeRowsDraft | None,
     reason: str,
 ) -> Receipt:
-    """人工維護存檔（已鎖住的照更正的規則），商品條件與交易明細一起。
-
-    改了商品條件、這檔已出場時，結果另外寫出存續事件（#169）：已出場的不再比價，事件不會跟著改。
-    """
+    """人工維護存檔（已鎖住的照更正的規則），商品條件與交易明細一起；已出場的提醒見 `Receipt.exited`。"""
     with connect(settings) as conn:
-        receipt = write(conn, draft, config, trades=trades, reason=reason)
-        if receipt.correction_id is None:
-            return receipt
-        latest = lifecycle_status(conn, [receipt.tdcc])[receipt.tdcc].latest
-        if latest is None:
-            return receipt
-        when = latest.event_date or "沒有事件日"
-        return replace(receipt, exited=" ".join(str(p) for p in (latest.event, latest.underlying, when) if p))
+        return write(conn, draft, config, trades=trades, reason=reason)
 
 
 def export_product_terms(settings: ConnectionSettings, path: Path) -> ExportReceipt:
@@ -715,29 +696,33 @@ def load_mailbox_rows(settings: ConnectionSettings) -> MailboxRows:
 
 def save_mailbox_person(settings: ConnectionSettings, before: Person | None, after: Person) -> MailboxRows:
     """新增（before 是 None）或修改一個人；寫不進去時丟 `MailboxError`。"""
-    return _mailbox_change(settings, lambda conn: save_person(conn, before, after))
+    return _write_then_reload(settings, lambda conn: save_person(conn, before, after), load_rows)
 
 
 def delete_mailbox_person(settings: ConnectionSettings, before: Person) -> MailboxRows:
     """刪除一個人與他的別名。"""
-    return _mailbox_change(settings, lambda conn: delete_person(conn, before))
+    return _write_then_reload(settings, lambda conn: delete_person(conn, before), load_rows)
 
 
 def save_mailbox_alias(settings: ConnectionSettings, before: Alias | None, after: Alias) -> MailboxRows:
     """新增（before 是 None）或修改一個別名；寫不進去時丟 `MailboxError`。"""
-    return _mailbox_change(settings, lambda conn: save_alias(conn, before, after))
+    return _write_then_reload(settings, lambda conn: save_alias(conn, before, after), load_rows)
 
 
 def delete_mailbox_alias(settings: ConnectionSettings, before: Alias) -> MailboxRows:
     """刪除一個別名。"""
-    return _mailbox_change(settings, lambda conn: delete_alias(conn, before))
+    return _write_then_reload(settings, lambda conn: delete_alias(conn, before), load_rows)
 
 
-def _mailbox_change(settings: ConnectionSettings, write: Callable[[psycopg.Connection], object]) -> MailboxRows:
-    """寫一筆（自己一個 transaction），再重讀全部人員與別名。"""
+def _write_then_reload(
+    settings: ConnectionSettings,
+    write: Callable[[psycopg.Connection], object],
+    reload: Callable[[psycopg.Connection], _Rows],
+) -> _Rows:
+    """寫一筆（自己一個 transaction），再重讀全部（信箱的人員與別名、發行機構與評等）。"""
     with connect(settings) as conn:
         write(conn)
-        return load_rows(conn)
+        return reload(conn)
 
 
 def load_rating_rows(settings: ConnectionSettings) -> RatingRows:
@@ -748,29 +733,22 @@ def load_rating_rows(settings: ConnectionSettings) -> RatingRows:
 
 def add_rated_entity(settings: ConnectionSettings, entity: Entity, first: Rating) -> RatingRows:
     """新增一個機構和它的第一筆評等；寫不進去時丟 `CreditRatingError`。"""
-    return _rating_change(settings, lambda conn: add_entity(conn, entity, first))
+    return _write_then_reload(settings, lambda conn: add_entity(conn, entity, first), load_ratings)
 
 
 def add_credit_rating(settings: ConnectionSettings, latest: Rating | None, after: Rating) -> RatingRows:
     """新增一筆評等（生效日要比 `latest` 晚）。"""
-    return _rating_change(settings, lambda conn: add_rating(conn, latest, after))
+    return _write_then_reload(settings, lambda conn: add_rating(conn, latest, after), load_ratings)
 
 
 def edit_credit_rating(settings: ConnectionSettings, before: Rating, after: Rating) -> RatingRows:
     """修改最新一筆評等。"""
-    return _rating_change(settings, lambda conn: edit_latest(conn, before, after))
+    return _write_then_reload(settings, lambda conn: edit_latest(conn, before, after), load_ratings)
 
 
 def delete_credit_rating(settings: ConnectionSettings, before: Rating) -> RatingRows:
     """刪除最新一筆評等（至少留一筆）。"""
-    return _rating_change(settings, lambda conn: delete_latest(conn, before))
-
-
-def _rating_change(settings: ConnectionSettings, write: Callable[[psycopg.Connection], object]) -> RatingRows:
-    """寫一筆（自己一個 transaction），再重讀全部機構與評等。"""
-    with connect(settings) as conn:
-        write(conn)
-        return load_ratings(conn)
+    return _write_then_reload(settings, lambda conn: delete_latest(conn, before), load_ratings)
 
 
 def load_split_rows(settings: ConnectionSettings) -> tuple[Split, ...]:

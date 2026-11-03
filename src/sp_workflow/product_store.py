@@ -7,7 +7,7 @@ import 這裡，不必再用函式內的 import 繞開循環。對外：
   鎖住這幾檔的商品條件列，寫入、核對寫回與重算核對條件共用同一把鎖。
 - `locked`：已鎖住了沒（`locked_at` 有值：TS 核對通過，或 migration 0006 之前就在資料庫）。
 - `Stored` 的有效期初價格、有效執行價、原始執行價：lookback（#374）之後比價改寫了執行價，「這檔的執行價是多少」
-  只在這裡回答一次。
+  只在這裡回答一次；人工維護畫面顯示的回顧期初價格文字是 `lookback_text`（#446）。
 - `CheckTermsState`：上一次算的核對條件（含交叉比對的差異 `Difference`）。
 - `issuer_code`：TDCC 前三碼 → 上手代號（對照沒有時用資料庫的發行機構寫法反查）。
 標的價格一列的型別 `UnderlyingPrice` 在 `product_record`；價格欄的名字在 `fcn_checker.fields`（#433）。
@@ -193,6 +193,15 @@ def read_many(conn: psycopg.Connection, tdccs: Sequence[str] | None = None, *, l
             branches=tuple(branches.get(tdcc, ())),
         )
     return found
+
+
+def lookback_text(stored: Stored | None) -> str:
+    """畫面上的回顧期初價格（#374）：「UL_1 代碼 價格、…」；還沒算出時空字串。"""
+    if stored is None:
+        return ""
+    return "、".join(
+        f"UL_{p.seq} {p.code} {format(plain(p.lookback), 'f')}" for p in stored.prices if p.lookback is not None
+    )
 
 
 def read(conn: psycopg.Connection, tdcc: str, *, lock: bool = False) -> Stored | None:
