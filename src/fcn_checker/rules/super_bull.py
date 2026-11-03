@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import datetime as dt
 from collections.abc import Mapping, Sequence
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import NamedTuple
 
 from ..parsers.common import Mention
@@ -127,6 +127,56 @@ def annualized_issues(
     if expected == annualized:
         return expected, []
     return expected, [messages.annualized.format(annualized=annualized, pct=pct, months=months, expected=expected)]
+
+
+# ---------------------------------------------------------------- 損益寫法（HSBC Super Bull、HSBC BEN、MS BEN 交股情境）
+
+
+CENT = Decimal("0.01")
+
+
+def cents(x: Decimal) -> Decimal:
+    """四捨五入（half-up）到 2 位。"""
+    return x.quantize(CENT, ROUND_HALF_UP)
+
+
+def pnl_check(c: Scenario, hit, amount: Decimal | None, n: Decimal) -> CheckResult:
+    """損益「= A - N = 損益」：A = 前面算出的金額、N = 面額、損益 = A − N。"""
+    if hit is None:
+        return c.unread("pnl", "找不到「… - 每單位面額期初投資金額 = A - N = 損益」")
+    p = hit.value
+    issues = []
+    if amount is not None and p.amount != amount:
+        issues.append(f"損益算式的金額 {p.amount} 和前面算出的 {amount} 不同")
+    if p.investment != n:
+        issues.append(f"損益算式的期初投資金額 {p.investment} 不等於第一章面額 {n}")
+    expected = p.amount - p.investment
+    if not within_tolerance(p.pnl, expected):
+        issues.append(f"損益 {p.pnl} 應為 {p.amount} − {p.investment} = {expected}")
+    return c.calc("pnl", issues, hit, expected=expected, actual=p.pnl)
+
+
+def annualized_of(c: Scenario, hit, pct: Decimal, months: int, how: str) -> CheckResult:
+    """年化報酬率 = pct × 12 ÷ months，四捨五入到 2 位後比數值（容許 ±0.01）。"""
+    if hit is None:
+        return c.unread("annualized", "找不到「平均年化報酬率(以簡單平均年化報酬率之方式計算): y%」")
+    expected = cents(pct * 12 / months)
+    issues = [] if within_tolerance(hit.value, expected) else [f"年化報酬率 {hit.value}% 應為 {how} = {expected}%"]
+    return c.calc("annualized", issues, hit, expected=expected, actual=hit.value)
+
+
+def _profit(sc_pnl, n: Decimal) -> Decimal | None:
+    return sc_pnl.value.pnl / n * 100 if sc_pnl is not None else None
+
+
+def annualized_of_pnl(c: Scenario, hit, pnl, n: Decimal, tenor: int, *, round_return: bool = False) -> CheckResult:
+    """年化 = 損益 ÷ 面額 × 12 ÷ 天期；`round_return`：報酬率先四捨五入到 2 位再年化（MS BEN 的寫法，#376）。"""
+    profit = _profit(pnl, n)
+    if profit is None:
+        return c.unread("annualized", "找不到損益算式，無法重算年化報酬率")
+    if round_return:
+        return annualized_of(c, hit, cents(profit), tenor, f"({pnl.value.pnl} ÷ {n} 四捨五入到 2 位) × 12 ÷ {tenor}")
+    return annualized_of(c, hit, profit, tenor, f"{pnl.value.pnl} ÷ {n} × 12 ÷ {tenor}")
 
 
 # ---------------------------------------------------------------- 投資人須知（各上手核對規則 §3.8）

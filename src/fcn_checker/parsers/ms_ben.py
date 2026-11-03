@@ -17,10 +17,9 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import ScenarioParam, ScenarioPrice
 from ..text import squash
-from . import money, ms, ms_scenario, ms_tables, price_table
+from . import ben, money, ms, ms_scenario, ms_tables, price_table
 from .common import Hit, Mention, dec, derived, exactly_one, hits, one
-from .hsbc_ben import Delivery, bonus_barrier, maturity_only
-from .hsbc_super_bull import Pnl, RemainderCalc, SharesCalc, ValueCalc
+from .delivery import Delivery, Pnl, RemainderCalc, SharesCalc, ValueCalc
 from .layout import Document, Span, TextIndex, capture, parse_date
 from .super_bull import ProfitReturn
 
@@ -676,7 +675,7 @@ def read(lines: Sequence[Line]) -> MsBenTermSheet:
             )
         )
     participation = [Mention.of_field("第 16 項假設「參與率：X%」", fields["participation_assumed"])]
-    bonus_barrier(fields)
+    ben.bonus_barrier(fields)
     return MsBenTermSheet(fields, base.full_text, doc, sec, [], kind, scenarios, bonus, participation)
 
 
@@ -698,7 +697,7 @@ def _no_autocall(fields: dict[str, ParsedField], ti10: TextIndex, arts: dict[int
     else:
         fields["no_autocall"] = ParsedField("no_autocall", FieldStatus.PRESENT, True, list(opening.evidence))
     fields["opening_art10"] = derived("opening_art10", opening, True) if opening.ok else opening
-    maturity_only(fields, fields["no_autocall"])
+    ben.maturity_only(fields, fields["no_autocall"])
 
 
 def _ki_type(fields: dict[str, ParsedField], ti15: TextIndex, kind: Kind, lookback: bool, whole: TextIndex) -> None:

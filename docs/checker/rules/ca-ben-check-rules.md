@@ -201,9 +201,9 @@ CA FCN 的情境規則（每期配息、總配息、獲利情境年化 = 年利�
 
 | 內容 | 位置 |
 |---|---|
-| 範本辨識與讀出 | CA 的 BEN 說明書與投資人須知 parser（沿用 `parsers/ca.py`、`ca_iis.py` 與 `ca_super_bull.py`、`ca_super_bull_iis.py` 的版面、價格表、標的表、共用段落與 `read`，覆寫第 9 項、15.、16. 的 BEN 段落；同 HSBC、MS BEN 的做法） |
+| 範本辨識與讀出 | CA 的 BEN 說明書與投資人須知 parser（沿用 `parsers/ca.py`、`ca_iis.py` 與 `ca_super_bull.py`、`ca_super_bull_iis.py` 的版面、價格表、標的表、共用段落與 `read`，覆寫第 9 項、15.、16. 的 BEN 段落；同 HSBC、MS BEN 的做法）；紅利門檻用 `parsers/ben.py`（workflow #439） |
 | 上手註冊 | CA 的範本依商品家族分開辨識（`Issuer.products`，同 CA Super Bull） |
-| 規則 | §3.3、§3.4、§3.7 的 CA BEN 規則；紅利、參與率和 HSBC、MS BEN 相同的部分共用；情境三交股算式和 CA Super Bull 相同的部分共用，不另寫一份 |
+| 規則 | §3.3、§3.4、§3.7 的 CA BEN 規則；沒有 KO、無 KI、固定寫法、紅利與參與率出處用 BEN 共用的 `rules/ben.py`；情境三交股算式用 `rules/delivery.py` 的 CA 寫法（和 CA Super Bull 同一份），不另寫一份（workflow #439） |
 | 設定 | `[auto_check_products]` 的 `BEN` 加 `CA`；審查標準 `[issuer.ca.product_names.BEN]`；§9.2 的暫定決定各放一個設定值或函式 |
 | 測試 | 合成 PDF（Bonus 2 檔、不同天期 1～12 個月、1 個月）；負面測試（CA FCN／FCN_Express／Super Bull／DACN ↔ BEN 說明書與投資人須知、KO 價欄版、早期版、Digital、型態對不上、Product 不一致、樣態不符、沒有樣本的型態、CNH、參考條件表沒有參與率）；本機真實樣本試跑（§6） |
 

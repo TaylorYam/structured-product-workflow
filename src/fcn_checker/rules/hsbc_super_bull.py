@@ -8,17 +8,14 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
+from decimal import Decimal
 
 from ..parsers.hsbc_super_bull import TABLE_NAME, WORDS, HsbcSuperBullTermSheet
 from ..schema import CheckResult, Item
 from ..schema import CheckStatus as S
-from . import hsbc, kit, super_bull
+from . import delivery, hsbc, kit, super_bull
 from .kit import Check, IssuerContext
-from .super_bull import within_tolerance
-
-CENT = Decimal("0.01")
-SHARE_TOLERANCE = Decimal("0.0001")  # 情境三股數（4 位）容許的進位差（核對規則 §3.7）
+from .super_bull import annualized_of, annualized_of_pnl, cents, pnl_check, within_tolerance
 
 NOT_COVERED = [
     *(x for x in hsbc.NOT_COVERED if x["rule_id"] not in ("doc.scenario_complex", "doc.scenario_other_annualized")),
@@ -155,27 +152,12 @@ def observation_order(ctx: IssuerContext) -> list[CheckResult]:
 
 
 RID = super_bull.SCENARIO_RID
-NAMES = {
-    "fx": "期末匯率",
-    "assumed": "期末股價",
-    "redemption": "贖回金額",
-    "shares": "股數",
-    "whole": "交割股數",
-    "fraction": "零股數",
-    "remainder": "剩餘金額",
-    "value": "到期贖回價值",
-    "pnl": "損益",
-    "annualized": "年化報酬率",
-}
+NAMES = {"fx": "期末匯率", "redemption": "贖回金額", **delivery.HSBC_NAMES}
 KEYS = (
     ("redemption", "pnl", "annualized"),
     ("assumed", "redemption", "pnl", "annualized"),
     ("assumed", "shares", "whole", "fraction", "remainder", "value", "pnl", "annualized"),
 )
-
-
-def cents(x: Decimal) -> Decimal:
-    return x.quantize(CENT, ROUND_HALF_UP)
 
 
 def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
@@ -211,37 +193,8 @@ def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
         fx_check,
         *_autocall(cases[0], sc, n, bonus.value, k.value),
         *_best(cases[1], sc, n, tenor.value),
-        *worse(cases[2], sc, n, fx.value, tenor.value),
+        *delivery.worse(cases[2], sc, n, tenor.value, delivery.HSBC, fx.value),
     ]
-
-
-def pnl_check(c: super_bull.Scenario, hit, amount: Decimal | None, n: Decimal) -> CheckResult:
-    """損益「= A - N = 損益」：A = 前面算出的金額、N = 面額、損益 = A − N。"""
-    if hit is None:
-        return c.unread("pnl", "找不到「… - 每單位面額期初投資金額 = A - N = 損益」")
-    p = hit.value
-    issues = []
-    if amount is not None and p.amount != amount:
-        issues.append(f"損益算式的金額 {p.amount} 和前面算出的 {amount} 不同")
-    if p.investment != n:
-        issues.append(f"損益算式的期初投資金額 {p.investment} 不等於第一章面額 {n}")
-    expected = p.amount - p.investment
-    if not within_tolerance(p.pnl, expected):
-        issues.append(f"損益 {p.pnl} 應為 {p.amount} − {p.investment} = {expected}")
-    return c.calc("pnl", issues, hit, expected=expected, actual=p.pnl)
-
-
-def _annualized(c: super_bull.Scenario, hit, pct: Decimal, months: int, how: str) -> CheckResult:
-    """年化報酬率 = pct × 12 ÷ months，四捨五入到 2 位後比數值（容許 ±0.01）。"""
-    if hit is None:
-        return c.unread("annualized", "找不到「平均年化報酬率(以簡單平均年化報酬率之方式計算): y%」")
-    expected = cents(pct * 12 / months)
-    issues = [] if within_tolerance(hit.value, expected) else [f"年化報酬率 {hit.value}% 應為 {how} = {expected}%"]
-    return c.calc("annualized", issues, hit, expected=expected, actual=hit.value)
-
-
-def _profit(sc_pnl, n: Decimal) -> Decimal | None:
-    return sc_pnl.value.pnl / n * 100 if sc_pnl is not None else None
 
 
 def _autocall(c: super_bull.Scenario, sc, n: Decimal, bonus: Decimal, k: int) -> list[CheckResult]:
@@ -259,7 +212,7 @@ def _autocall(c: super_bull.Scenario, sc, n: Decimal, bonus: Decimal, k: int) ->
             issues.append(f"自動提前贖回金額 {a.amount} 應為 {n} × (100% + {bonus}%) = {expected}")
         out.append(c.calc("redemption", issues, sc.autocall, expected=expected, actual=a.amount))
     out.append(pnl_check(c, sc.autocall_pnl, amount, n))
-    out.append(_annualized(c, sc.autocall_annualized, bonus, k, f"{bonus}% × 12 ÷ {k}"))
+    out.append(annualized_of(c, sc.autocall_annualized, bonus, k, f"{bonus}% × 12 ÷ {k}"))
     return out
 
 
@@ -283,98 +236,6 @@ def _best(c: super_bull.Scenario, sc, n: Decimal, tenor: int) -> list[CheckResul
         out.append(c.calc("redemption", issues, sc.best, expected=expected, actual=b.amount))
     out.append(pnl_check(c, sc.best_pnl, amount, n))
     out.append(annualized_of_pnl(c, sc.best_annualized, sc.best_pnl, n, tenor))
-    return out
-
-
-def annualized_of_pnl(
-    c: super_bull.Scenario, hit, pnl, n: Decimal, tenor: int, *, round_return: bool = False
-) -> CheckResult:
-    """年化 = 損益 ÷ 面額 × 12 ÷ 天期；`round_return`：報酬率先四捨五入到 2 位再年化（MS BEN 的寫法，#376）。"""
-    profit = _profit(pnl, n)
-    if profit is None:
-        return c.unread("annualized", "找不到損益算式，無法重算年化報酬率")
-    if round_return:
-        return _annualized(c, hit, cents(profit), tenor, f"({pnl.value.pnl} ÷ {n} 四捨五入到 2 位) × 12 ÷ {tenor}")
-    return _annualized(c, hit, profit, tenor, f"{pnl.value.pnl} ÷ {n} × 12 ÷ {tenor}")
-
-
-def worse(
-    c: super_bull.Scenario, sc, n: Decimal, fx: Decimal, tenor: int, *, round_return: bool = False
-) -> list[CheckResult]:
-    """情境三：期末股價 P < 執行價 K；股數 = 面額 × 匯率 ÷ K（4 位）；交割股數 = 股數無條件捨去；零股數 = 股數 − 交割股數；
-    剩餘金額 = P × 零股數 ÷ 匯率（2 位）；到期贖回價值 = P × 交割股數 ÷ 匯率 + 剩餘金額；損益 = 價值 − 面額；
-    年化 = 損益 ÷ 面額 × 12 ÷ 天期（`round_return` 見 `annualized_of_pnl`）。"""
-    out = []
-    s = sc.shares.value if sc.shares is not None else None
-    rm = sc.remainder.value if sc.remainder is not None else None
-    v = sc.value.value if sc.value is not None else None
-    close_price = rm.close if rm is not None else v.close if v is not None else None
-    if s is None or close_price is None:
-        out.append(c.unread("assumed", "找不到股數或剩餘金額算式，無法比對期末股價和執行價"))
-    else:
-        issues = [] if close_price < s.strike else [f"期末股價 {close_price} 應低於執行價 {s.strike}"]
-        out.append(c.calc("assumed", issues, sc.shares, expected=f"< {s.strike}", actual=close_price))
-    if s is None:
-        out.append(c.unread("shares", "找不到「每單位面額 × 期末匯率 / 最差表現連結標的執行價 = N × 匯率 / K = S 股」"))
-    else:
-        expected = (s.denomination * s.fx / s.strike).quantize(SHARE_TOLERANCE, ROUND_HALF_UP)
-        issues = [] if s.denomination == n else [f"算式中的面額 {s.denomination} 不等於第一章面額 {n}"]
-        if s.fx != fx:
-            issues.append(f"算式中的期末匯率 {s.fx} 和情境假設 {fx} 不同")
-        if abs(s.shares - expected) > SHARE_TOLERANCE:
-            issues.append(f"股數 {s.shares} 應為 {n} × {s.fx} / {s.strike} = {expected}")
-        out.append(c.calc("shares", issues, sc.shares, expected=expected, actual=s.shares))
-    whole = s.shares.to_integral_value(ROUND_DOWN) if s is not None else None
-    if sc.whole is None:
-        out.append(c.unread("whole", "找不到「在此例中為W 股」"))
-    else:
-        issues = (
-            []
-            if whole is None or sc.whole.value == whole
-            else [f"交割股數 {sc.whole.value} 應為股數無條件捨去 = {whole}"]
-        )
-        out.append(c.calc("whole", issues, sc.whole, expected=whole, actual=sc.whole.value))
-    if sc.fraction is None:
-        out.append(c.unread("fraction", "找不到「零股數(即F 股)」"))
-    else:
-        expected = s.shares - whole if s is not None else None
-        issues = (
-            [] if expected is None or sc.fraction.value == expected else [f"零股數 {sc.fraction.value} 應為 {expected}"]
-        )
-        out.append(c.calc("fraction", issues, sc.fraction, expected=expected, actual=sc.fraction.value))
-    if rm is None:
-        out.append(c.unread("remainder", "找不到「期末股價 × 零股數 / 期末匯率 = P × F / 匯率 = R」"))
-    else:
-        expected = cents(rm.close * rm.fraction / rm.fx)
-        issues = []
-        if sc.fraction is not None and rm.fraction != sc.fraction.value:
-            issues.append(f"剩餘金額算式的零股數 {rm.fraction} 和前面的 {sc.fraction.value} 不同")
-        if rm.fx != fx:
-            issues.append(f"剩餘金額算式的期末匯率 {rm.fx} 和情境假設 {fx} 不同")
-        if not within_tolerance(rm.amount, expected):
-            issues.append(f"剩餘金額 {rm.amount} 應為 {rm.close} × {rm.fraction} / {rm.fx} = {expected}")
-        out.append(c.calc("remainder", issues, sc.remainder, expected=expected, actual=rm.amount))
-    amount = None
-    if v is None:
-        out.append(c.unread("value", "找不到「= (P × W / 匯率) + R = V (四捨五入至小數點後第二位)」"))
-    else:
-        amount = v.amount
-        expected = cents(v.close * v.whole / v.fx + v.remainder)
-        issues = []
-        for what, got, want in (
-            ("期末股價", v.close, rm.close if rm else None),
-            ("交割股數", v.whole, sc.whole.value if sc.whole else None),
-            ("剩餘金額", v.remainder, rm.amount if rm else None),
-        ):
-            if want is not None and got != want:
-                issues.append(f"到期贖回價值算式的{what} {got} 和前面的 {want} 不同")
-        if v.fx != fx:
-            issues.append(f"到期贖回價值算式的期末匯率 {v.fx} 和情境假設 {fx} 不同")
-        if not within_tolerance(v.amount, expected):
-            issues.append(f"到期贖回價值 {v.amount} 應為 {v.close} × {v.whole} / {v.fx} + {v.remainder} = {expected}")
-        out.append(c.calc("value", issues, sc.value, expected=expected, actual=v.amount))
-    out.append(pnl_check(c, sc.worse_pnl, amount, n))
-    out.append(annualized_of_pnl(c, sc.worse_annualized, sc.worse_pnl, n, tenor, round_return=round_return))
     return out
 
 

@@ -15,11 +15,9 @@ from decimal import Decimal
 from ..parsers.ms_ben import KIND_LABEL, PARTICIPATION, Kind, MsBenTermSheet
 from ..schema import CheckResult, Item
 from ..schema import CheckStatus as S
-from . import kit, ms, super_bull
-from .hsbc_super_bull import NAMES as DELIVERY_NAMES
-from .hsbc_super_bull import cents, worse
+from . import ben, delivery, kit, ms, super_bull
 from .kit import Check, IssuerContext
-from .super_bull import ReturnMessages, profit_return_issues, within_tolerance
+from .super_bull import ReturnMessages, cents, profit_return_issues, within_tolerance
 
 # ---------------------------------------------------------------- 2026-11-02 使用者確認的做法（核對規則 §9，詳見本機疑慮記錄）
 # 每項只在這裡改；說明書端另有 parsers/ms_ben.py 的 OLD_VERSION（BEN-376-05）、NAME_ZH（BEN-376-03）、HEAD15（BEN-376-04）、
@@ -52,11 +50,6 @@ def _ts(ctx: IssuerContext) -> MsBenTermSheet:
     if not isinstance(ts, MsBenTermSheet):  # 註冊表只把 BEN 讀出結果交給這組規則
         raise TypeError("MS BEN 規則需要 BEN 說明書的讀出結果")
     return ts
-
-
-def _fixed(ctx: IssuerContext, rid: str, field: str, name: str) -> CheckResult:
-    """固定寫法（核對規則 §3.3、§3.5）：讀到 → 通過；找不到或寫法不同 → 不一致。"""
-    return super_bull.fixed(rid, field, name, ctx.ts.f(field), ctx.document)
 
 
 # ---------------------------------------------------------------- 型態、lookback 一致、MS BEN 限定（核對規則 §3.1）
@@ -148,39 +141,25 @@ def bonus(ctx: IssuerContext) -> list[CheckResult]:
     """紅利、參與率的其他出處（§16 假設、一般 BEN 情境二、Digital 情境一二）= §15 的正式值，只比數值。"""
     ts = _ts(ctx)
     return [
-        *super_bull.exit_bonus_mentions(
-            ctx, ts.bonus_mentions, "須等於 §15(1) 的紅利配息率（只比數值）", rid="doc.bonus", label="紅利", key="bonus"
-        ),
-        *super_bull.exit_bonus_mentions(
-            ctx,
-            ts.participation_mentions,
-            "須等於 §15(3) 的參與率（只比數值）",
-            rid="doc.participation",
-            label="參與率",
-            key="participation",
-            main_field="participation_pct",
-        ),
+        *ben.bonus_mentions(ctx, ts.bonus_mentions, "須等於 §15(1) 的紅利配息率（只比數值）"),
+        *ben.participation_mentions(ctx, ts.participation_mentions, "須等於 §15(3) 的參與率（只比數值）"),
     ]
 
 
 def no_autocall(ctx: IssuerContext) -> CheckResult:
     """沒有 KO：§10 開頭固定句、第一章沒有自動提前出場條、全文沒有「自動提前出場」（由 parser 判定；讀不到 → 人工覆核）。"""
-    pf = ctx.ts.f("no_autocall")
-    check = kit.doc_check(ctx, "doc.no_autocall", "no_autocall", "§10 開頭與第一章條號（沒有自動提前出場）", pf)
-    return check.compare(None, None, ok=True, message="沒有 KO：不會提前出場，Non-Call = 天期")
+    return ben.no_autocall(ctx, "§10 開頭與第一章條號（沒有自動提前出場）")
 
 
 def no_ki(ctx: IssuerContext) -> CheckResult:
     """無 KI：全文沒有「觸及」、價格表沒有下限價欄、§15(1)(b) 直接比執行價（由 parser 判定；讀不到 → 人工覆核）。"""
-    pf = ctx.ts.f("ki_type")
-    check = kit.doc_check(ctx, "doc.ki_consistency", "ki_type", "無 KI（全文、價格表、§15(1)(b)）", pf)
-    return check.compare(None, None, ok=True, message="無 KI")
+    return ben.no_ki(ctx, "無 KI（全文、價格表、§15(1)(b)）")
 
 
 def no_coupon(ctx: IssuerContext) -> list[CheckResult]:
     return [
-        _fixed(ctx, "doc.no_coupon", "opening_art10", "§10 開頭「主要給付項目為到期贖回金額：」"),
-        _fixed(ctx, "doc.no_coupon", "no_fixed_coupon", "說明書沒有固定配息"),
+        ben.fixed(ctx, "doc.no_coupon", "opening_art10", "§10 開頭「主要給付項目為到期贖回金額：」"),
+        ben.fixed(ctx, "doc.no_coupon", "no_fixed_coupon", "說明書沒有固定配息"),
     ]
 
 
@@ -190,17 +169,17 @@ def redemption_formula(ctx: IssuerContext) -> list[CheckResult]:
     ts = _ts(ctx)
     rid = "doc.redemption_formula"
     out = [
-        _fixed(ctx, rid, "formula_head", "§15(1) 開頭"),
-        _fixed(ctx, rid, "maturity_formula", "§15(1)(a)(b) 到期公式"),
-        _fixed(ctx, rid, "maturity_formula_art10", "§10(a)(b) 到期公式"),
-        _fixed(ctx, rid, "min_rate", "§15(2) 最低保證贖回率"),
-        _fixed(ctx, rid, "min_rate_assumed", "第 16 項假設最低保證贖回率"),
+        ben.fixed(ctx, rid, "formula_head", "§15(1) 開頭"),
+        ben.fixed(ctx, rid, "maturity_formula", "§15(1)(a)(b) 到期公式"),
+        ben.fixed(ctx, rid, "maturity_formula_art10", "§10(a)(b) 到期公式"),
+        ben.fixed(ctx, rid, "min_rate", "§15(2) 最低保證贖回率"),
+        ben.fixed(ctx, rid, "min_rate_assumed", "第 16 項假設最低保證贖回率"),
     ]
     lookback = ts.f("lookback")
     if lookback.ok and lookback.value:
-        out.append(_fixed(ctx, rid, "lookback_initial_definition", "§15 回顧期初價格定義"))
+        out.append(ben.fixed(ctx, rid, "lookback_initial_definition", "§15 回顧期初價格定義"))
     if ts.kind == "maxi":
-        out.append(_fixed(ctx, rid, "worst_definition", "§15 籃子中表現最差的連結標的定義"))
+        out.append(ben.fixed(ctx, rid, "worst_definition", "§15 籃子中表現最差的連結標的定義"))
     return out
 
 
@@ -216,7 +195,7 @@ def lookback_period(ctx: IssuerContext) -> list[CheckResult]:
         return []
     rid = "doc.lookback_period"
     end, trade, final, uls = f("lookback_end_date"), f("trade_date"), f("final_valuation_date"), f("underlyings")
-    out = [_fixed(ctx, rid, "lookback_start", "§14(9) 回顧觀察期間起點")]
+    out = [ben.fixed(ctx, rid, "lookback_start", "§14(9) 回顧觀察期間起點")]
     order = kit.doc_check(ctx, rid, "lookback_end_date", "回顧結束日（交易日與期末定價日之間）", end, trade, final)
     out.append(
         order.compare(
@@ -258,7 +237,7 @@ def lookback_period(ctx: IssuerContext) -> list[CheckResult]:
 
 
 RID = super_bull.SCENARIO_RID
-NAMES = {**DELIVERY_NAMES, "assumed": "期末收盤價", "redemption": "到期贖回金額", "return": "報酬率"}
+NAMES = {**delivery.HSBC_NAMES, "assumed": "期末收盤價", "redemption": "到期贖回金額", "return": "報酬率"}
 CASH_KEYS = ("assumed", "redemption", "return", "annualized")
 DELIVERY_KEYS = ("assumed", "shares", "whole", "fraction", "remainder", "value", "pnl", "annualized")
 KEYS = (CASH_KEYS, CASH_KEYS, DELIVERY_KEYS)
@@ -303,7 +282,7 @@ def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
         out.append(_assumed(c, sc, case, initial, main.value, rate.value))
         out.append(_redemption(c, sc, case, n, main.value, rate.value))
         out += _return(c, sc, case, n, tenor.value)
-    out += worse(cases[2], sc.delivery, n, Decimal(1), tenor.value, round_return=True)
+    out += delivery.worse(cases[2], sc.delivery, n, tenor.value, delivery.MS, Decimal(1))
     return out
 
 

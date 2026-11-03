@@ -19,6 +19,7 @@ from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Money, ScenarioParam, ScenarioPrice
 from . import hsbc, money, price_table
 from .common import Hit, Mention, dec, derived, exactly_one, one
+from .delivery import Pnl, RemainderCalc, SharesCalc, ValueCalc, pnl
 from .layout import TextIndex
 from .super_bull import Wording, fill_schedule
 
@@ -293,42 +294,6 @@ class BestCalc(NamedTuple):
     amount: Decimal
 
 
-class SharesCalc(NamedTuple):
-    """情境三「= N × 匯率 / K = S 股」。"""
-
-    denomination: Decimal
-    fx: Decimal
-    strike: Decimal
-    shares: Decimal
-
-
-class RemainderCalc(NamedTuple):
-    """情境三「= P × F / 匯率 = R」。"""
-
-    close: Decimal
-    fraction: Decimal
-    fx: Decimal
-    amount: Decimal
-
-
-class ValueCalc(NamedTuple):
-    """情境三「= (P × W / 匯率) + R = V」。"""
-
-    close: Decimal
-    whole: Decimal
-    fx: Decimal
-    remainder: Decimal
-    amount: Decimal
-
-
-class Pnl(NamedTuple):
-    """損益「= A - N = 損益」。"""
-
-    amount: Decimal
-    investment: Decimal
-    pnl: Decimal
-
-
 @dataclass
 class SbScenarios:
     """情境一～三的算式；找不到、或在情境裡有多處時為 None（由規則轉人工覆核）。`titles` 為三個情境標題的原文行
@@ -356,10 +321,6 @@ class SbScenarios:
         return all(self.titles)
 
 
-def _pnl(m: re.Match[str]) -> Pnl:
-    return Pnl(dec(m[1]), dec(m[2]), dec(m[3]))
-
-
 def _scenarios(ti: hsbc.ScenarioIndex) -> SbScenarios:
     """以標題切出情境一～三（到下一個標題或第 18 條結束）；情境要剛好這三個、依序，標題有各自的辨識字（核對規則 §3.7）。"""
     headings = list(ti.finditer(HEADING))
@@ -385,11 +346,11 @@ def _scenarios(ti: hsbc.ScenarioIndex) -> SbScenarios:
         return Decimal(m[1])
 
     out.autocall = find(1, S1_AMOUNT, lambda m: AutocallCalc(dec(m[1]), Decimal(m[2]), dec(m[3])))
-    out.autocall_pnl = find(1, PNL, _pnl)
+    out.autocall_pnl = find(1, PNL, pnl)
     out.autocall_annualized = find(1, ANNUALIZED, annualized)
     out.best_name = find(2, WORST, lambda m: m[1])
     out.best = find(2, S2_AMOUNT, lambda m: BestCalc(dec(m[1]), dec(m[2]), dec(m[3]), dec(m[4])))
-    out.best_pnl = find(2, PNL, _pnl)
+    out.best_pnl = find(2, PNL, pnl)
     out.best_annualized = find(2, ANNUALIZED, annualized)
     out.worse_name = find(3, WORST, lambda m: m[1])
     out.shares = find(3, S3_SHARES, lambda m: SharesCalc(dec(m[1]), dec(m[2]), dec(m[3]), dec(m[4])))
@@ -397,20 +358,21 @@ def _scenarios(ti: hsbc.ScenarioIndex) -> SbScenarios:
     out.fraction = find(3, S3_FRACTION, lambda m: dec(m[1]))
     out.remainder = find(3, S3_REMAINDER, lambda m: RemainderCalc(dec(m[1]), dec(m[2]), dec(m[3]), dec(m[4])))
     out.value = find(3, S3_VALUE, lambda m: ValueCalc(dec(m[1]), Decimal(m[2]), dec(m[3]), dec(m[4]), dec(m[5])))
-    out.worse_pnl = find(3, PNL, _pnl)
+    out.worse_pnl = find(3, PNL, pnl)
     out.worse_annualized = find(3, ANNUALIZED, annualized)
     return out
 
 
-def _worst_row(name: Hit[str] | None, prices: ParsedField) -> int | None:
-    """情境寫的最差標的（「（中文名稱）」）→ 價格表第幾檔：單一標的為第 1 檔；對不到為 None（共用規則轉人工覆核）。"""
+def worst_row(name: str | None, prices: ParsedField) -> int | None:
+    """情境寫的最差標的（「（中文名稱）」，HSBC BEN 同）→ 價格表第幾檔：單一標的為第 1 檔；對不到為 None（共用規則轉人工
+    覆核）。"""
     if not prices.ok:
         return None
     if len(prices.value) == 1:
         return 1
     if name is None:
         return None
-    rows = [n for n, r in enumerate(prices.value, start=1) if r.name and r.name.replace(" ", "") == name.value]
+    rows = [n for n, r in enumerate(prices.value, start=1) if r.name and r.name.replace(" ", "") == name]
     return rows[0] if len(rows) == 1 else None
 
 
@@ -479,7 +441,9 @@ def _article18(fields: dict[str, ParsedField], art18: list[Line]) -> SbScenarios
         strike = Mention.of_optional_hit(place, calc, lambda v: v.strike, sc.titles[n - 1]).parsed(
             f"scenario{n}_strike"
         )
-        prices.append(ScenarioPrice(place, _worst_row(name, fields["underlying_prices"]), "strike", strike))
+        prices.append(
+            ScenarioPrice(place, worst_row(name.value if name else None, fields["underlying_prices"]), "strike", strike)
+        )
     fields["scenario_prices"] = standard_fields.occurrences("scenario_prices", prices)
     return sc
 

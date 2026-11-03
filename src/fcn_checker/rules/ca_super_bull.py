@@ -8,13 +8,13 @@
 from __future__ import annotations
 
 import re
-from decimal import ROUND_DOWN, Decimal
+from decimal import Decimal
 
 from ..parsers.ca_super_bull import FX_LINE, WORDS, CaSuperBullTermSheet
 from ..parsers.common import dec
 from ..schema import CheckResult, ParsedField
 from ..schema import CheckStatus as S
-from . import ca, kit, super_bull
+from . import ca, delivery, kit, super_bull
 from .kit import Check, IssuerContext
 from .super_bull import AMOUNT_TOLERANCE, within_tolerance
 
@@ -196,7 +196,7 @@ def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
     return [
         *_autocall(cases[0], sc, n, bonus.value, k.value),
         *_best(cases[1], sc, n, tenor.value),
-        *worse(cases[2], sc, n, tenor.value, scenario_fx(ctx)),
+        *delivery.worse(cases[2], sc, n, tenor.value, delivery.CA, scenario_fx(ctx)),
     ]
 
 
@@ -279,101 +279,6 @@ def _best(c: super_bull.Scenario, sc, n: Decimal, tenor: int) -> list[CheckResul
     r = sc.best_return.value
     out.append(_profit_return(c, sc.best_return, amount, n))
     out.append(_annualized(c, sc.best_return, r.pct, r.annualized, tenor))
-    return out
-
-
-def _fx_issue(what: str, got: Decimal | None, want: Decimal | None) -> list[str]:
-    """情境三算式的匯率要等於第 16 項匯率行（同幣別兩邊都沒有）。"""
-    if got == want:
-        return []
-    if want is None:
-        return [f"{what}乘了匯率 {got}，但第 16 項沒有匯率行"]
-    if got is None:
-        return [f"{what}沒有乘第 16 項匯率 {want}"]
-    return [f"{what}的匯率 {got} 和第 16 項匯率 {want} 不同"]
-
-
-def worse(c: super_bull.Scenario, sc, n: Decimal, tenor: int, fx: Decimal | None = None) -> list[CheckResult]:
-    """情境三：假設收盤價 P < 執行價 K；股數 = 面額 ÷ K 無條件去位到 3 位；整數股數、畸零股數；剩餘金額 = 畸零股數 × P；
-    報酬率 = (整數股數 × P + 剩餘金額) ÷ 面額 − 1；年化 = 未四捨五入的報酬率 × 12 ÷ 天期。
-    跨幣別（第 16 項有匯率 R，workflow #424）：股數 = 面額 ÷ (K × R)、剩餘金額與報酬率的 P 都乘 R；R 是試算值，只核對三個
-    算式寫的 R 等於匯率行。"""
-    rate = fx or Decimal(1)
-    out = []
-    assumed = sc.worse_assumed.value.close if sc.worse_assumed is not None else None
-    s = sc.shares.value if sc.shares is not None else None
-    if sc.worse_assumed is None:
-        out.append(c.unread("assumed", "找不到「假設於期末訂價日…收盤價為P，低於其執行價」"))
-    elif s is None:
-        out.append(c.unread("assumed", "找不到股數算式，無法比對假設收盤價和執行價"))
-    else:
-        issues = [] if assumed < s.strike else [f"假設收盤價 {assumed} 應低於執行價 {s.strike}"]
-        out.append(c.calc("assumed", issues, sc.worse_assumed, expected=f"< {s.strike}", actual=assumed))
-    if s is None:
-        out.append(c.unread("shares", "找不到「每單位面額/…執行價* = N / K = S 股」"))
-    else:
-        expected = (n / (s.strike * rate)).quantize(Decimal("0.001"), ROUND_DOWN)
-        issues = [] if s.denomination == n else [f"算式中的面額 {s.denomination} 不等於第一章面額 {n}"]
-        issues += _fx_issue("股數算式", s.fx, fx)
-        divisor = f"({s.strike} × {fx})" if fx is not None else f"{s.strike}"
-        if s.shares != expected:
-            issues.append(f"股數 {s.shares} 應為 {n} / {divisor} 無條件去位到 3 位 = {expected}")
-        out.append(c.calc("shares", issues, sc.shares, expected=expected, actual=s.shares))
-    shares = s.shares if s is not None else None
-    if sc.remainder is None:
-        out.append(c.unread("remainder", "找不到「整數股數＝W 股，畸零股數＝F 股，剩餘金額＝P x F＝R」"))
-    else:
-        rm = sc.remainder.value
-        issues = []
-        if shares is not None:
-            whole = Decimal(int(shares))
-            if rm.whole != whole:
-                issues.append(f"整數股數 {rm.whole} 應為 {whole}")
-            if rm.fraction != shares - whole or rm.fraction_again != rm.fraction:
-                issues.append(f"畸零股數 {rm.fraction}、{rm.fraction_again} 應為 {shares} - {whole} = {shares - whole}")
-        if assumed is not None and rm.close != assumed:
-            issues.append(f"剩餘金額算式的收盤價 {rm.close} 和假設句 {assumed} 不同")
-        issues += _fx_issue("剩餘金額算式", rm.fx, fx)
-        expected = kit.shown(rm.fraction * rm.close * rate, rm.amount)
-        times_fx = f" × {fx}" if fx is not None else ""
-        if not within_tolerance(rm.amount, expected):
-            issues.append(f"剩餘金額 {rm.amount} 應為 {rm.close} × {rm.fraction}{times_fx} = {expected}")
-        out.append(c.calc("remainder", issues, sc.remainder, expected=expected, actual=rm.amount))
-    if sc.worse_return is None:
-        out += [
-            c.unread(key, "找不到「= ((W x P + R) / N) - 1 = r% (平均年化報酬率:y%)」")
-            for key in ("return", "annualized")
-        ]
-        return out
-    w = sc.worse_return.value
-    issues = []
-    if sc.remainder is not None:
-        rm = sc.remainder.value
-        for what, got, want in (
-            ("整數股數", w.whole, rm.whole),
-            ("收盤價", w.close, rm.close),
-            ("剩餘金額", w.remainder, rm.amount),
-        ):
-            if got != want:
-                issues.append(f"報酬率算式的{what} {got} 和前面的 {want} 不同")
-    if w.divisor != n:
-        issues.append(f"報酬率算式的投資金額 {w.divisor} 不等於第一章面額 {n}")
-    issues += _fx_issue("報酬率算式", w.fx, fx)
-    total = (w.whole * w.close * rate + w.remainder) / w.divisor * 100 - 100
-    expected = kit.shown(total, w.pct)
-    times_fx = f" × {fx}" if fx is not None else ""
-    if not within_tolerance(w.pct, expected):
-        issues.append(
-            f"報酬率 {w.pct}% 應為 (({w.whole} × {w.close}{times_fx} + {w.remainder}) / {w.divisor}) - 1 = {expected}%"
-        )
-    out.append(c.calc("return", issues, sc.worse_return, expected=expected, actual=w.pct))
-    annualized = kit.shown(total * 12 / tenor, w.annualized)
-    issues = (
-        []
-        if within_tolerance(w.annualized, annualized)
-        else [f"年化報酬率 {w.annualized}% 應為未四捨五入的報酬率 × 12 ÷ {tenor} = {annualized}%"]
-    )
-    out.append(c.calc("annualized", issues, sc.worse_return, expected=annualized, actual=w.annualized))
     return out
 
 

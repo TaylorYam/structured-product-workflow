@@ -14,10 +14,10 @@ from decimal import Decimal
 from ..parsers.hsbc_ben import KIND_LABEL, HsbcBenTermSheet, Kind
 from ..schema import CheckResult, Item
 from ..schema import CheckStatus as S
-from . import hsbc, kit, super_bull
-from .hsbc_super_bull import NAMES, annualized_of_pnl, cents, pnl_check, worse
+from . import ben, delivery, hsbc, kit, super_bull
+from .hsbc_super_bull import NAMES
 from .kit import Check, IssuerContext
-from .super_bull import within_tolerance
+from .super_bull import annualized_of_pnl, cents, pnl_check, within_tolerance
 
 # ---------------------------------------------------------------- 2026-11-02 使用者確認的做法（核對規則 §9，詳見本機疑慮記錄）
 # 每項只在這裡改；說明書端另有 parsers/hsbc_ben.py 的 PARTICIPATION、ART16、BONUS、OLD_VERSION、DIGITAL_NOTE（見該檔）。
@@ -51,11 +51,6 @@ def _ts(ctx: IssuerContext) -> HsbcBenTermSheet:
     if not isinstance(ts, HsbcBenTermSheet):  # 註冊表只把 BEN 讀出結果交給這組規則
         raise TypeError("HSBC BEN 規則需要 BEN 說明書的讀出結果")
     return ts
-
-
-def _fixed(ctx: IssuerContext, rid: str, field: str, name: str) -> CheckResult:
-    """固定寫法（核對規則 §3.3、§3.5）。"""
-    return super_bull.fixed(rid, field, name, ctx.ts.f(field), ctx.document)
 
 
 def _flagged(ctx: IssuerContext, rid: str, field: str, name: str, status: S) -> CheckResult:
@@ -117,39 +112,28 @@ def price_headers(ctx: IssuerContext) -> CheckResult:
 def bonus(ctx: IssuerContext) -> list[CheckResult]:
     """紅利的其他出處（第 18 條假設、Maxi 情境一二「最大值 [x%」、Digital 情境一「(100% + x%%)」）= 第 11 條紅利，只比數值；
     Digital 第 11 條(2) 配息金額兩句固定寫法。"""
-    out = super_bull.exit_bonus_mentions(
-        ctx,
-        _ts(ctx).bonus_mentions,
-        "須等於第 11 條的紅利配息率（只比數值）",
-        rid="doc.bonus",
-        label="紅利",
-        key="bonus",
-    )
+    out = ben.bonus_mentions(ctx, _ts(ctx).bonus_mentions, "須等於第 11 條的紅利配息率（只比數值）")
     if _ts(ctx).kind == "digital":
         out += [
-            _fixed(ctx, "doc.bonus", "digital_coupon", "第 11 條(2) 大於或等於執行價的配息金額"),
-            _fixed(ctx, "doc.bonus", "digital_no_coupon", "第 11 條(2) 小於執行價沒有紅利"),
+            ben.fixed(ctx, "doc.bonus", "digital_coupon", "第 11 條(2) 大於或等於執行價的配息金額"),
+            ben.fixed(ctx, "doc.bonus", "digital_no_coupon", "第 11 條(2) 小於執行價沒有紅利"),
         ]
     return out
 
 
 def no_autocall(ctx: IssuerContext) -> CheckResult:
     """沒有 KO：第 11 條開頭固定句、第 11 條沒有提前贖回、第 15 條沒有自動提前贖回決定日（由 parser 判定；讀不到 → 人工覆核）。"""
-    pf = ctx.ts.f("no_autocall")
-    check = kit.doc_check(ctx, "doc.no_autocall", "no_autocall", "第 11 條開頭與第 15 條（沒有自動提前贖回）", pf)
-    return check.compare(None, None, ok=True, message="沒有 KO：不會提前出場，Non-Call = 天期")
+    return ben.no_autocall(ctx, "第 11 條開頭與第 15 條（沒有自動提前贖回）")
 
 
 def no_ki(ctx: IssuerContext) -> CheckResult:
     """無 KI：全文沒有「觸及」、價格表沒有觸及不保本價格欄、交股句直接比執行價（由 parser 判定；讀不到 → 人工覆核）。"""
-    pf = ctx.ts.f("ki_type")
-    check = kit.doc_check(ctx, "doc.ki_consistency", "ki_type", "無 KI（全文、價格表、第 11 條交股句）", pf)
-    return check.compare(None, None, ok=True, message="無 KI")
+    return ben.no_ki(ctx, "無 KI（全文、價格表、第 11 條交股句）")
 
 
 def no_coupon(ctx: IssuerContext) -> list[CheckResult]:
     return [
-        _fixed(ctx, "doc.no_coupon", field, name)
+        ben.fixed(ctx, "doc.no_coupon", field, name)
         for field, name in (
             ("no_coupon_art16", "第 16 條配息資料"),
             ("no_coupon_art17", "第 17 條 (1) 最低保證配息率"),
@@ -161,9 +145,9 @@ def redemption_formula(ctx: IssuerContext) -> list[CheckResult]:
     """第 11 條(1) 到期公式與交股句、第 17 條 (2) 參與率「本商品不適用」（不當成參與率 0；參與率由公式推得，和參考條件表比是
     共用的 `field.participation_pct`）。"""
     return [
-        _fixed(ctx, "doc.redemption_formula", "maturity_formula", "第 11 條(1) 大於或等於執行價的到期公式"),
-        _fixed(ctx, "doc.redemption_formula", "delivery_formula", "第 11 條(1) 小於執行價交股"),
-        _fixed(ctx, "doc.redemption_formula", "participation_rate", "第 17 條 (2) 參與率"),
+        ben.fixed(ctx, "doc.redemption_formula", "maturity_formula", "第 11 條(1) 大於或等於執行價的到期公式"),
+        ben.fixed(ctx, "doc.redemption_formula", "delivery_formula", "第 11 條(1) 小於執行價交股"),
+        ben.fixed(ctx, "doc.redemption_formula", "participation_rate", "第 17 條 (2) 參與率"),
     ]
 
 
@@ -231,7 +215,7 @@ def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
     for case in (1, 2, 3):
         c = cases[case - 1]
         if case in sc.delivery_cases:
-            out += worse(c, sc.deliveries[case], n, fx.value, tenor.value)
+            out += delivery.worse(c, sc.deliveries[case], n, tenor.value, delivery.HSBC, fx.value)
         elif sc.kind == "maxi":
             row = sc.enhanced_rows.get(case)
             strike = prices.value[row - 1].prices.get("strike") if row is not None else None
