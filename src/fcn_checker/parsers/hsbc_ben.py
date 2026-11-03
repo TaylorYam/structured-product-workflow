@@ -15,10 +15,11 @@ from typing import Literal, NamedTuple
 
 from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
-from ..standard_fields import AutocallSchedule, ScenarioParam, ScenarioPrice
+from ..standard_fields import ScenarioParam, ScenarioPrice
 from ..text import squash
-from . import hsbc, price_table
+from . import ben, hsbc, price_table
 from .common import Hit, Mention, dec, derived, exactly_one, one
+from .delivery import Delivery, Pnl, RemainderCalc, SharesCalc, ValueCalc, pnl
 from .hsbc_super_bull import (
     CCY,
     MUL,
@@ -29,11 +30,8 @@ from .hsbc_super_bull import (
     S3_WHOLE,
     SN,
     N,
-    Pnl,
-    RemainderCalc,
-    SharesCalc,
-    ValueCalc,
     fx_currency,
+    worst_row,
 )
 from .layout import TextIndex
 
@@ -96,6 +94,11 @@ SCENARIO_TABLE = replace(PRICE_TABLE, where="第一章第 18 條情境價格表"
 DIGITAL_SCENARIO_TABLE = replace(SCENARIO_TABLE, texts=tuple(c for c in PRICE_TABLE.texts if c.key != "exchange"))
 # HSBC FCN 才有的欄位（配息表、配息期數、提前贖回表、每日觀察起日、第 1 期整期配息句）：BEN 讀不到，也不交給規則
 FCN_ONLY = ("coupon_table", "coupon_periods", "ko_table", "ko_start", "first_period_full_coupon")
+# 和 parsers/hsbc_super_bull.py 讀法不同、名稱加 `_ben_` 的函式（workflow #439）：第 11 條（沒有 KO、到期公式與紅利，Super Bull
+# 是提前贖回表）、無 KI（全文沒有「觸及」、交股句直接比執行價；Super Bull 看「觸及不保本價」與第 11 條 (2)）、第 18 條假設
+# 的紅利（「紅利配息率為x%」，Super Bull 是「自動提前贖回配息」）、情境價格表（Digital 沒有交易所欄）與情境一～三的算式。
+# 相同的直接共用：損益算式（parsers/delivery.py 的 `pnl`）、最差標的對到價格表第幾檔（`hsbc_super_bull.worst_row`）。`detect`、
+# `read` 是註冊表呼叫的入口，每個範本模組各有一個，不改名。
 
 
 # ---------------------------------------------------------------- 辨識
@@ -200,49 +203,10 @@ def _no_autocall(fields: dict[str, ParsedField], kind: Kind, art11: list[Line], 
         fields["no_autocall"] = ParsedField.invalid("no_autocall", art11[:3], note)
     else:
         fields["no_autocall"] = ParsedField("no_autocall", FieldStatus.PRESENT, True, list(opening.evidence))
-    maturity_only(fields, fields["no_autocall"])
+    ben.maturity_only(fields, fields["no_autocall"])
 
 
-def maturity_only(fields: dict[str, ParsedField], no_ko: ParsedField) -> None:
-    """沒有 KO（`no_ko` 讀得到）的 BEN 交出的 KO 與排程欄位（各上手 BEN 共用）：KO% 不適用、每期觀察、非記憶式、沒有日期表、
-    Non-Call = 天期、比價日只有最後評價日（期末定價日）。"""
-    fields["ko_pct"] = (
-        ParsedField("ko_pct", FieldStatus.NOT_APPLICABLE, evidence=list(no_ko.evidence), note="BEN 沒有 KO")
-        if no_ko.ok
-        else derived("ko_pct", no_ko)
-    )
-    fields["ko_observation"] = derived("ko_observation", no_ko, "P")
-    fields["ko_memory"] = derived("ko_memory", no_ko, False)
-    fields["schedule_table"] = standard_fields.absent("schedule_table", "日期表（BEN 不會提前出場）")
-    tenor, final = fields["tenor_months"], fields["final_valuation_date"]
-    bad = next((p for p in (no_ko, tenor, final) if not p.ok), None)
-    if bad is not None:
-        fields["first_callable_period"] = derived("first_callable_period", bad)
-        fields["autocall_schedule"] = derived("autocall_schedule", bad)
-        return
-    ev = [*no_ko.evidence, *tenor.evidence, *final.evidence]
-    fields["first_callable_period"] = ParsedField("first_callable_period", FieldStatus.PRESENT, tenor.value, ev)
-    fields["autocall_schedule"] = ParsedField(
-        "autocall_schedule",
-        FieldStatus.PRESENT,
-        AutocallSchedule("P", tenor.value, tenor.value, {tenor.value: final.value}, listed=True),
-        ev,
-    )
-
-
-def bonus_barrier(fields: dict[str, ParsedField]) -> None:
-    """紅利門檻（標準欄位 `coupon_barrier_pct`，各上手 BEN 共用，workflow #406）：到期公式是「最差表現標的 ≥ 執行價」
-    就領紅利，紅利門檻 = 執行價 %，由到期公式（`maturity_formula`）與執行價（`strike_pct`）推得。"""
-    formula, strike = fields["maturity_formula"], fields["strike_pct"]
-    bad = next((p for p in (formula, strike) if not p.ok), None)
-    fields["coupon_barrier_pct"] = (
-        derived("coupon_barrier_pct", bad)
-        if bad is not None
-        else ParsedField("coupon_barrier_pct", FieldStatus.PRESENT, strike.value, [*formula.evidence, *strike.evidence])
-    )
-
-
-def _ki_type(fields: dict[str, ParsedField], kind: Kind, art11: list[Line], whole: TextIndex) -> None:
+def _ben_ki_type(fields: dict[str, ParsedField], kind: Kind, art11: list[Line], whole: TextIndex) -> None:
     """無 KI（核對規則 §3.5）：全文沒有「觸及」、價格表沒有觸及不保本價格欄、第 11 條(1) 交股句直接比執行價，三者都成立。"""
     problems = []
     if "觸及" in whole.text:
@@ -261,7 +225,7 @@ def _ki_type(fields: dict[str, ParsedField], kind: Kind, art11: list[Line], whol
     fields["ki_pct"] = ParsedField("ki_pct", FieldStatus.NOT_APPLICABLE, evidence=[Evidence.of(x) for x in art11])
 
 
-def _article11(fields: dict[str, ParsedField], kind: Kind, art11: list[Line], coupon: list[Line]) -> None:
+def _ben_article11(fields: dict[str, ParsedField], kind: Kind, art11: list[Line], coupon: list[Line]) -> None:
     """到期公式、交股句、參與率（由公式推得）、K%、紅利；Digital 另有 (2) 配息金額的兩句固定寫法。"""
     ti = TextIndex(art11)
     label = KIND_LABEL[kind]
@@ -363,19 +327,6 @@ class DigitalCalc(NamedTuple):
 
 
 @dataclass
-class Delivery:
-    """交股情境的算式（欄位名同 Super Bull 情境三，交給 `rules.hsbc_super_bull.worse` 重算）。"""
-
-    shares: Hit[SharesCalc] | None = None
-    whole: Hit[Decimal] | None = None
-    fraction: Hit[Decimal] | None = None
-    remainder: Hit[RemainderCalc] | None = None
-    value: Hit[ValueCalc] | None = None
-    worse_pnl: Hit[Pnl] | None = None
-    worse_annualized: Hit[Decimal] | None = None
-
-
-@dataclass
 class BenScenarios:
     """情境一～三的算式；找不到、或在情境裡有多處時為 None（由規則轉人工覆核）。`titles` 為三個情境標題的原文行（情境不是
     剛好這三個時三個都空）。Maxi：情境一、二是 `enhanced`，情境三交股；Digital：情境一是 `digital`，情境二、三交股。"""
@@ -398,23 +349,9 @@ class BenScenarios:
         return (3,) if self.kind == "maxi" else (2, 3)
 
 
-def _pnl(m: re.Match[str]) -> Pnl:
-    return Pnl(dec(m[1]), dec(m[2]), dec(m[3]))
-
-
-def _worst_row(name: str | None, prices: ParsedField) -> int | None:
-    """情境寫的最差標的（「（中文名稱）」）→ 價格表第幾檔：單一標的為第 1 檔；對不到為 None（共用規則轉人工覆核）。"""
-    if not prices.ok:
-        return None
-    if len(prices.value) == 1:
-        return 1
-    if name is None:
-        return None
-    rows = [n for n, r in enumerate(prices.value, start=1) if r.name and r.name.replace(" ", "") == name]
-    return rows[0] if len(rows) == 1 else None
-
-
-def _scenarios(ti: hsbc.ScenarioIndex, kind: Kind, prices: ParsedField) -> tuple[BenScenarios, dict[int, int | None]]:
+def _ben_scenarios(
+    ti: hsbc.ScenarioIndex, kind: Kind, prices: ParsedField
+) -> tuple[BenScenarios, dict[int, int | None]]:
     """以標題切出情境一～三（到下一個標題或第 18 條結束）；情境要剛好這三個、依序，標題有各自的辨識字（核對規則 §3.7）。
     另回傳每個情境的最差標的是價格表第幾檔。"""
     titles = TITLES[kind]
@@ -443,7 +380,7 @@ def _scenarios(ti: hsbc.ScenarioIndex, kind: Kind, prices: ParsedField) -> tuple
     rows = {}
     for n in (1, 2, 3):
         name = find(n, WORST, lambda m: m[1])
-        rows[n] = _worst_row(name.value if name else None, prices)
+        rows[n] = worst_row(name.value if name else None, prices)
         if n in out.delivery_cases:
             out.deliveries[n] = Delivery(
                 shares=find(n, SHARES, lambda m: SharesCalc(dec(m[1]), dec(m[2]), dec(m[3]), dec(m[4]))),
@@ -451,7 +388,7 @@ def _scenarios(ti: hsbc.ScenarioIndex, kind: Kind, prices: ParsedField) -> tuple
                 fraction=find(n, S3_FRACTION, lambda m: dec(m[1])),
                 remainder=find(n, S3_REMAINDER, lambda m: RemainderCalc(dec(m[1]), dec(m[2]), dec(m[3]), dec(m[4]))),
                 value=find(n, S3_VALUE, lambda m: ValueCalc(dec(m[1]), Decimal(m[2]), dec(m[3]), dec(m[4]), dec(m[5]))),
-                worse_pnl=find(n, PNL, _pnl),
+                worse_pnl=find(n, PNL, pnl),
                 worse_annualized=find(n, ANNUALIZED, annualized),
             )
             continue
@@ -466,12 +403,12 @@ def _scenarios(ti: hsbc.ScenarioIndex, kind: Kind, prices: ParsedField) -> tuple
             out.digital = find(
                 n, DIGITAL_AMOUNT, lambda m: DigitalCalc(Decimal(m[1]), dec(m[2]), Decimal(m[3]), dec(m[4]))
             )
-        out.pnl[n] = find(n, PNL, _pnl)
+        out.pnl[n] = find(n, PNL, pnl)
         out.annualized[n] = find(n, ANNUALIZED, annualized)
     return out, rows
 
 
-def _article18(fields: dict[str, ParsedField], kind: Kind, art18: list[Line]) -> BenScenarios:
+def _ben_article18(fields: dict[str, ParsedField], kind: Kind, art18: list[Line]) -> BenScenarios:
     """基本假設（天期、面額、發行價格、期初投資金額、期末匯率、紅利）、情境價格表、情境一～三的算式（範本規格 §5）。"""
     ti = hsbc.ScenarioIndex(art18)
     first = re.search(HEADING, ti.text)
@@ -486,7 +423,7 @@ def _article18(fields: dict[str, ParsedField], kind: Kind, art18: list[Line]) ->
         return ParsedField.present(code, convert(m[1]), ti.lines_for(m.start(), m.end()))
 
     fields["scenario_fx"] = assumed("scenario_fx", rf"期末匯率為1{CCY}={CCY}{N}", dec)
-    fields["bonus_assumed"] = _assumed_bonus(ti, end)
+    fields["bonus_assumed"] = _ben_assumed_bonus(ti, end)
     params = [
         ScenarioParam("scenario_tenor", where, assumed("scenario_tenor", r"商品天期為(\d+)個月期", int)),
         ScenarioParam(
@@ -501,9 +438,9 @@ def _article18(fields: dict[str, ParsedField], kind: Kind, art18: list[Line]) ->
     ]
     fields["scenario_params"] = standard_fields.occurrences("scenario_params", params)
     spec = SCENARIO_TABLE if kind == "maxi" else DIGITAL_SCENARIO_TABLE
-    fields["scenario_table"] = _scenario_table(art18, ti, end, spec)
+    fields["scenario_table"] = _ben_scenario_table(art18, ti, end, spec)
     fields["scenario_reprint_table"] = price_table.at("scenario_reprint_table", fields["scenario_table"], spec)
-    sc, rows = _scenarios(ti, kind, fields["underlying_prices"])
+    sc, rows = _ben_scenarios(ti, kind, fields["underlying_prices"])
     prices = []
     for n in (1, 2) if kind == "maxi" else ():
         place = f"第 18 條情境分析{'一二'[n - 1]})到期贖回金額算式的"
@@ -517,7 +454,7 @@ def _article18(fields: dict[str, ParsedField], kind: Kind, art18: list[Line]) ->
     return sc
 
 
-def _assumed_bonus(ti: hsbc.ScenarioIndex, end: int) -> ParsedField:
+def _ben_assumed_bonus(ti: hsbc.ScenarioIndex, end: int) -> ParsedField:
     """基本假設「紅利配息率為x%」（Digital「x%%」）：除了 % 數值外還有其他字 → 值為原文，由規則判不一致。"""
     name = "bonus_assumed"
     found = [m for m in ti.finditer(r"紅利配息率為(.+?)(?:\*假設天期|彭博代號)") if m.start() < end]
@@ -529,7 +466,9 @@ def _assumed_bonus(ti: hsbc.ScenarioIndex, end: int) -> ParsedField:
     return ParsedField.present(name, Decimal(single[1]) if single else m[1], lns)
 
 
-def _scenario_table(art18: list[Line], ti: hsbc.ScenarioIndex, end: int, spec: price_table.TableSpec) -> ParsedField:
+def _ben_scenario_table(
+    art18: list[Line], ti: hsbc.ScenarioIndex, end: int, spec: price_table.TableSpec
+) -> ParsedField:
     """情境價格表：基本假設「紅利配息率」（Digital 另有假設天期註記）那一行之後、情境分析一之前。沒有中文名稱欄，Digital 也
     沒有交易所欄；幣別與交易所不比（核對規則 §2），只讀不驗。"""
     anchor = r"紅利配息率為[\d.]+%+(?:\*假設天期將因不同可供選擇之商品天期而異。)?"
@@ -589,9 +528,9 @@ def read(lines: Sequence[Line]) -> HsbcBenTermSheet:
     fields["template_residue"] = _residue(sub(12, 1), kind)
 
     # 第 11 條、沒有 KO（第 15 條）、無 KI
-    _article11(fields, kind, article(11), article(11) if kind == "maxi" else sub(11, 2))
+    _ben_article11(fields, kind, article(11), article(11) if kind == "maxi" else sub(11, 2))
     _no_autocall(fields, kind, article(11), article(15))
-    _ki_type(fields, kind, article(11), base.full_text)
+    _ben_ki_type(fields, kind, article(11), base.full_text)
 
     # 第 16、17 條：沒有定期配息；參與率寫「本商品不適用」（不當成參與率 0）
     ti16, ti17 = TextIndex(article(16)), TextIndex(article(17))
@@ -609,7 +548,7 @@ def read(lines: Sequence[Line]) -> HsbcBenTermSheet:
     )
 
     # 第 18 條情境；期末匯率的幣別字併入承作幣別的其他出處（field.currency）
-    scenarios = _article18(fields, kind, article(18))
+    scenarios = _ben_article18(fields, kind, article(18))
     fields["currency_others"] = standard_fields.occurrences(
         "currency_others", [*fields["currency_others"].value, fx_currency(article(18))]
     )
@@ -630,5 +569,5 @@ def read(lines: Sequence[Line]) -> HsbcBenTermSheet:
                 "第 18 條情境分析一)「(100% + x%)」", scenarios.digital, lambda v: v.bonus, scenarios.titles[0]
             )
         )
-    bonus_barrier(fields)
+    ben.bonus_barrier(fields)
     return HsbcBenTermSheet(fields, base.full_text, doc, base.scenarios, base.scenario_index, kind, scenarios, mentions)

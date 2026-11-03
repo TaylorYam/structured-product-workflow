@@ -18,7 +18,7 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import AutocallSchedule, Money, ScenarioParam, ScenarioPrice
 from ..text import squash
-from . import ca, price_table
+from . import ben, ca, price_table
 from .ca_super_bull import (
     FX,
     S3_REMAINDER,
@@ -31,7 +31,6 @@ from .ca_super_bull import (
     worst_row,
 )
 from .common import Hit, Mention, capture_group, dec, derived, exactly_one, number, one
-from .hsbc_ben import bonus_barrier
 from .layout import TextIndex, capture
 from .super_bull import ProfitReturn
 
@@ -550,5 +549,5 @@ def read(lines: Sequence[Line]) -> CaBenTermSheet:
             for occ in fields["currency_others"].value
         ],
     )
-    bonus_barrier(fields)
+    ben.bonus_barrier(fields)
     return CaBenTermSheet(fields, base.full_text, doc, scenarios, bonus, participation)

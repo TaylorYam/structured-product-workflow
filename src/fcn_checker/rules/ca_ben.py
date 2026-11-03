@@ -3,7 +3,7 @@
 
 名稱、ISIN、幣別與名稱月數沿用 CA FCN（rules/ca.py）；參考條件表欄位（含參與率 `field.participation_pct`）、價格推算、
 情境價格表與基本假設、審查標準與回填是各上手共用的規則。交股情境的算式和 CA Super Bull 情境三共用
-（rules/ca_super_bull.py）。說明書內部規則不讀參考條件表。抓不到或寫法不在範本規格內一律轉人工覆核。
+（rules/delivery.py 的 CA 寫法）。說明書內部規則不讀參考條件表。抓不到或寫法不在範本規格內一律轉人工覆核。
 """
 
 from __future__ import annotations
@@ -14,8 +14,8 @@ from ..parsers.ca_ben import CaBenTermSheet
 from ..parsers.ca_super_bull import worst_row
 from ..schema import CheckResult
 from ..schema import CheckStatus as S
-from . import ca, kit, super_bull
-from .ca_super_bull import NAMES, RETURN_MESSAGES, fx_issues, scenario_fx, worse
+from . import ben, ca, delivery, kit, super_bull
+from .ca_super_bull import NAMES, RETURN_MESSAGES, fx_issues, scenario_fx
 from .kit import Check, IssuerContext
 from .super_bull import AMOUNT_TOLERANCE, within_tolerance
 
@@ -51,11 +51,6 @@ def _ts(ctx: IssuerContext) -> CaBenTermSheet:
     if not isinstance(ts, CaBenTermSheet):  # 註冊表只把 BEN 讀出結果交給這組規則
         raise TypeError("CA BEN 規則需要 BEN 說明書的讀出結果")
     return ts
-
-
-def _fixed(ctx: IssuerContext, rid: str, field: str, name: str) -> CheckResult:
-    """固定寫法（核對規則 §3.4）：讀到 → 通過；找不到或寫法不同 → 不一致。"""
-    return super_bull.fixed(rid, field, name, ctx.ts.f(field), ctx.document)
 
 
 # ---------------------------------------------------------------- CA 限定的型態（核對規則 §3.1）
@@ -98,42 +93,28 @@ def scope(ctx: IssuerContext) -> CheckResult:
 
 def bonus(ctx: IssuerContext) -> list[CheckResult]:
     """紅利的其他出處（基本假設、情境一二兩行「最大值（x%，」）= 第 9 項紅利率，只比數值。"""
-    return super_bull.exit_bonus_mentions(
-        ctx, _ts(ctx).bonus_mentions, "須等於第 9 項的紅利率（只比數值）", rid="doc.bonus", label="紅利", key="bonus"
-    )
+    return ben.bonus_mentions(ctx, _ts(ctx).bonus_mentions, "須等於第 9 項的紅利率（只比數值）")
 
 
 def participation(ctx: IssuerContext) -> list[CheckResult]:
     """參與率的其他出處（15.(5)、情境一二「x% x（」）= 第 9 項參與率，只比數值（和參考條件表比是共用的
     `field.participation_pct`）。"""
-    return super_bull.exit_bonus_mentions(
-        ctx,
-        _ts(ctx).participation_mentions,
-        "須等於第 9 項的參與率（只比數值）",
-        rid="doc.participation",
-        label="參與率",
-        key="participation",
-        main_field="participation_pct",
-    )
+    return ben.participation_mentions(ctx, _ts(ctx).participation_mentions, "須等於第 9 項的參與率（只比數值）")
 
 
 def no_autocall(ctx: IssuerContext) -> CheckResult:
     """沒有 KO：第 9 項開頭句、全文沒有「提前出場」、第 13 項沒有觀察日條（由 parser 判定；讀不到 → 人工覆核）。"""
-    pf = ctx.ts.f("no_autocall")
-    check = kit.doc_check(ctx, "doc.no_autocall", "no_autocall", "第 9 項開頭與全文（沒有自動提前出場）", pf)
-    return check.compare(None, None, ok=True, message="沒有 KO：不會提前出場，Non-Call = 天期")
+    return ben.no_autocall(ctx, "第 9 項開頭與全文（沒有自動提前出場）")
 
 
 def no_ki(ctx: IssuerContext) -> CheckResult:
     """無 KI：全文沒有「界限事件」、價格表沒有下限價欄、到期（1）直接比執行價（由 parser 判定；讀不到 → 人工覆核）。"""
-    pf = ctx.ts.f("ki_type")
-    check = kit.doc_check(ctx, "doc.ki_consistency", "ki_type", "無 KI（全文、價格表、第 9 項到期（1））", pf)
-    return check.compare(None, None, ok=True, message="無 KI")
+    return ben.no_ki(ctx, "無 KI（全文、價格表、第 9 項到期（1））")
 
 
 def no_coupon(ctx: IssuerContext) -> list[CheckResult]:
     return [
-        _fixed(ctx, "doc.no_coupon", field, name)
+        ben.fixed(ctx, "doc.no_coupon", field, name)
         for field, name in (
             ("no_coupon_art9", "第 9 項 (1) 沒有配息"),
             ("no_coupon_art13", "第 13 項 (6) 配息日"),
@@ -144,7 +125,7 @@ def no_coupon(ctx: IssuerContext) -> list[CheckResult]:
 
 def redemption_formula(ctx: IssuerContext) -> list[CheckResult]:
     return [
-        _fixed(ctx, "doc.redemption_formula", field, name)
+        ben.fixed(ctx, "doc.redemption_formula", field, name)
         for field, name in (
             ("delivery_formula", "第 9 項到期（1）小於執行價交股"),
             ("maturity_formula", "第 9 項到期（2）與 Bonus 公式"),
@@ -185,7 +166,7 @@ def scenario_calculations(ctx: IssuerContext) -> list[CheckResult]:
     out = []
     for case in (1, 2):
         out += _bonus_case(cases[case - 1], sc, case, n, bonus_pct.value, prices, tenor.value)
-    return [*out, *worse(cases[2], sc, n, tenor.value, scenario_fx(ctx))]
+    return [*out, *delivery.worse(cases[2], sc, n, tenor.value, delivery.CA, scenario_fx(ctx))]
 
 
 def _strike_of(sc, case: int, prices) -> Decimal | None:
