@@ -49,6 +49,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
+from fcn_checker.fields import PRICE_SQL
 from fcn_checker.products import PRODUCT_RULES
 from sp_workflow.check_terms import NO_BARRIER as NO_KI
 from sp_workflow.lifecycle import (
@@ -641,7 +642,7 @@ def _load_terms(
     tdccs = [row[0] for row in done]
     underlyings: dict[str, list[Underlying]] = {}
     for tdcc, seq, code, initial, strike, ki, ko, basis, lookback in conn.execute(
-        "SELECT tdcc, seq, code, initial_price, strike_price, ki_price, ko_price, price_basis_date, lookback_price"
+        f"SELECT tdcc, seq, code, {PRICE_SQL}, price_basis_date, lookback_price"
         " FROM workflow.underlying_price WHERE tdcc = ANY(%s) ORDER BY tdcc, seq",
         (tdccs,),
     ):

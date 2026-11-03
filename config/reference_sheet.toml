@@ -8,8 +8,8 @@
 # 核對結果檔「回填後」一律照 [import_format]（匯入格式）重新產生，不論表上欄位怎麼排（Issue #203）。
 # 規則說明見 docs/checker/order-formats/reference-sheet.md。
 
-version = 25
-effective_date = 2026-10-30
+version = 26
+effective_date = 2026-11-03
 
 [layout]
 # 只讀第一張工作表（不看名稱）；表頭是前 header_search_rows 列裡有 key_column 欄名的那一列，下一列起是資料（Issue #199）
@@ -59,6 +59,16 @@ columns = [
     "UL_4", "UL_4_進場價", "UL_4_執行價", "UL_4_下限價", "UL_4_KO價", "UL_4_Memo",
     "UL_5", "UL_5_進場價", "UL_5_執行價", "UL_5_下限價", "UL_5_KO價", "UL_5_Memo",
 ]
+
+# 額外欄（#433）：不是標準欄位、不核對（不在 [columns]），流程端直接讀寫格子；欄名只在這裡宣告。
+# 資料庫來源（核對讀資料庫）寫 UF、交易日期、分公司欄；其他商品回補讀 UF 與分公司欄；舊商品補資料讀庫存狀態。
+[extra_columns]
+upfront = "UF"
+trade_date = "交易日期"
+inventory_status = "庫存狀態"  # 「已於 Y/M/D KO」、「到期還本」寫成事件（#154、#189）
+branch = "分公司_{n}"  # 第 n 組分公司，{n} 換成 1～branches
+branch_amount = "分公司_{n}_承作金額"
+branches = 7
 
 # 上手代號 → 該上手在「發行機構」欄的寫法
 [issuer_values]

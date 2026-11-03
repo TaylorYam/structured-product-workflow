@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 import openpyxl
 
+from fcn_checker.fields import PRICE_FIELDS, PRICE_SQL
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.orders.reference import (
     autocall_date_key,
@@ -47,12 +48,10 @@ if TYPE_CHECKING:
     from fcn_checker.config import ReferenceFormat
     from fcn_checker.orders.reference import OrderRecord
 
-STATUS_COLUMN = "庫存狀態"
 SLOTS = 12
 UNDERLYINGS = 5
-PRICES = (("initial", "initial_price", "進場價"), ("strike", "strike_price", "執行價"),
-          ("ki", "ki_price", "下限價"), ("ko", "ko_price", "KO 價"))  # fmt: skip
-REQUIRED_PRICES = frozenset(("進場價", "執行價", "KO 價"))  # 下限價在沒有 KI 時本來就空白
+# 必填的價格（價格的鍵，`fcn_checker.fields`）；下限價在沒有 KI 時本來就空白
+REQUIRED_PRICES = frozenset(("initial", "strike", "ko"))
 FILLED, EXISTING, SKIPPED = "已補", "已存在", "不匯入"
 ERROR_BOOK = "舊商品補資料錯誤_{stamp}.xlsx"
 ERROR_BOOK_COLUMNS = (("TDCC", 16), ("原因", 80), ("表上的列", 10))
@@ -218,7 +217,7 @@ def _read(path: Path, fmt: ReferenceFormat) -> tuple[list[OrderRecord], dict[int
     except IngestionError as exc:
         raise LegacyBackfillError(f"{str(exc).removesuffix('，整批不核對')}，整份不匯入") from exc
     ws = book[layout.sheet]
-    columns = header_columns(ws, layout).get(STATUS_COLUMN)
+    columns = header_columns(ws, layout).get(fmt.extra.inventory_status)
     statuses: dict[int, str] = {}
     if columns:
         for record in sheet.rows:
@@ -274,7 +273,7 @@ def _price_problems(record: OrderRecord, found: _Product, fmt: ReferenceFormat) 
     problems = []
     for i, code in enumerate(found.codes, 1):
         listed = cell_value(record, underlying_key(i), fmt)
-        values = {label: cell_value(record, price_key(i, col), fmt) for col, _, label in PRICES}
+        values = {pf: cell_value(record, price_key(i, pf.key), fmt) for pf in PRICE_FIELDS}
         if code is None:
             if listed is not None or any(v is not None for v in values.values()):
                 problems.append(f"資料庫沒有 UL_{i}，表上卻有代碼或價格")
@@ -283,11 +282,11 @@ def _price_problems(record: OrderRecord, found: _Product, fmt: ReferenceFormat) 
             problems.append(f"表上沒有 UL_{i}（資料庫是 {code}）")
         elif _code(str(listed)) != _code(code):
             problems.append(f"UL_{i} 代碼和資料庫不同（表上 {listed}，資料庫 {code}）")
-        for label, value in values.items():
-            if value is None and label in REQUIRED_PRICES:
-                problems.append(f"UL_{i} {label}是空白")
+        for pf, value in values.items():
+            if value is None and pf.key in REQUIRED_PRICES:
+                problems.append(f"UL_{i} {pf.label}是空白")
             elif value is not None and not isinstance(value, Decimal):
-                problems.append(f"UL_{i} {label}不是數字（{value}）")
+                problems.append(f"UL_{i} {pf.label}不是數字（{value}）")
     return problems
 
 
@@ -335,10 +334,9 @@ def _write_prices(
     for i, code in enumerate(found.codes, 1):
         if code is None:
             continue
-        values = [cell_value(record, price_key(i, col), fmt) for col, _, _ in PRICES]
+        values = [cell_value(record, price_key(i, pf.key), fmt) for pf in PRICE_FIELDS]
         conn.execute(
-            "INSERT INTO workflow.underlying_price (tdcc, seq, code, initial_price, strike_price, ki_price, ko_price)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s)",
+            f"INSERT INTO workflow.underlying_price (tdcc, seq, code, {PRICE_SQL}) VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (tdcc, i, code, *values),
         )
 

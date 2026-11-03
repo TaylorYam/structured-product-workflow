@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 import openpyxl
 
+from fcn_checker.fields import PRICE_FIELDS, PRICE_SQL
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.orders.reference import (
     autocall_date_key,
@@ -50,7 +51,6 @@ from sp_workflow.check_terms import DONE
 from sp_workflow.database import OperatorError
 from sp_workflow.legacy_backfill import (
     EXISTING,
-    PRICES,
     REQUIRED_PRICES,
     SKIPPED,
     BackfillLine,
@@ -83,12 +83,6 @@ if TYPE_CHECKING:
     from sp_workflow.product_terms import ImportConfig
 
 IMPORTED = "已匯入"  # 已存在、不匯入同舊商品補資料
-BRANCHES = 7  # 參考條件表的分公司欄數
-UF_COLUMN = "UF"  # 不是參考條件表的標準欄位（核對不比），直接讀格子
-_EXTRA_COLUMNS = (
-    UF_COLUMN,
-    *(name for n in range(1, BRANCHES + 1) for name in (f"分公司_{n}", f"分公司_{n}_承作金額")),
-)
 ERROR_BOOK = "其他商品回補錯誤_{stamp}.xlsx"
 ERROR_BOOK_COLUMNS = (("TDCC", 16), ("原因", 80), ("表上的列", 10))
 _TDCC = re.compile(r"[0-9]{12}")
@@ -164,7 +158,7 @@ def backfill_products(
                 product = PRODUCT_RULES[values["Product"]]
                 if not product.has_non_call and cell_value(record, autocall_date_key(1), fmt) is None:
                     problems.append(f"比價日_1 空白：{product.name} 沒有 Non-Call，比價日_1 是第一個觀察日")
-                allocation, branch_problems = _allocation(cells)
+                allocation, branch_problems = _allocation(cells, fmt)
                 problems += branch_problems
                 if not problems:
                     found = create_backfilled(
@@ -203,7 +197,8 @@ def backfill_products(
 
 
 def _read(path: Path, fmt: ReferenceFormat) -> tuple[list[OrderRecord], dict[int, dict[str, Any]]]:
-    """參考條件表的每一列與 UF、分公司欄（列號 → 欄名 → 值；表上沒有的欄不在內）。"""
+    """參考條件表的每一列與 UF、分公司欄（列號 → 欄名 → 值；表上沒有的欄不在內）。這幾欄不是標準欄位（核對不比），
+    欄名在格式設定的額外欄（`ReferenceFormat.extra`），直接讀格子。"""
     try:
         sheet = load_reference_sheet(path, fmt)
         book = openpyxl.load_workbook(path, data_only=True)
@@ -212,10 +207,9 @@ def _read(path: Path, fmt: ReferenceFormat) -> tuple[list[OrderRecord], dict[int
         raise ProductBackfillError(f"{str(exc).removesuffix('，整批不核對')}，整份不匯入") from exc
     ws = book[layout.sheet]
     columns = header_columns(ws, layout)
+    wanted = (fmt.extra.upfront, *(name for pair in fmt.extra.branch_columns() for name in pair))
     extra = {
-        record.row: {
-            name: ws.cell(row=record.row, column=columns[name][0]).value for name in _EXTRA_COLUMNS if name in columns
-        }
+        record.row: {name: ws.cell(row=record.row, column=columns[name][0]).value for name in wanted if name in columns}
         for record in sheet.rows
     }
     return sheet.rows, extra
@@ -260,7 +254,7 @@ def _values(record: OrderRecord, cells: Mapping[str, Any], fmt: ReferenceFormat)
     values["Barrier Type"] = _BARRIER_TYPES.get(ki)
     if values["Barrier Type"] is None:
         problems.append(f"KI(Freq)「{ki}」目前不支援")
-    uf = cells.get(UF_COLUMN)
+    uf = cells.get(fmt.extra.upfront)
     uf = None if uf in (None, fmt.empty_value) else _number(uf)
     values[UPFRONT_FIELD] = invert_upfront(uf) if isinstance(uf, Decimal) else uf
     values["Tenor (m)"] = _whole(value("tenor_months"))
@@ -278,41 +272,37 @@ def _price_problems(record: OrderRecord, fmt: ReferenceFormat, product: object) 
     ignored = _ignored_prices(product)
     problems = []
     for i in range(1, len(UNDERLYINGS) + 1):
-        prices = {label: cell_value(record, price_key(i, col), fmt) for col, _, label in PRICES}
+        prices = {pf: cell_value(record, price_key(i, pf.key), fmt) for pf in PRICE_FIELDS}
         if cell_value(record, underlying_key(i), fmt) is None:
             if any(v is not None for v in prices.values()):
                 problems.append(f"UL_{i} 沒有代碼，卻有價格")
             continue
-        for label, price in prices.items():
-            if label in ignored:
+        for pf, price in prices.items():
+            if pf.key in ignored:
                 continue
-            if price is None and label in REQUIRED_PRICES:
-                problems.append(f"UL_{i} {label}是空白")
+            if price is None and pf.key in REQUIRED_PRICES:
+                problems.append(f"UL_{i} {pf.label}是空白")
             elif price is not None and not isinstance(price, Decimal):
-                problems.append(f"UL_{i} {label}不是數字（{price}）")
+                problems.append(f"UL_{i} {pf.label}不是數字（{price}）")
     return problems
 
 
 def _ignored_prices(product: object) -> frozenset[str]:
-    """不讀的價格（`PRICES` 的名稱）：只在到期判定的商品（BEN）是 KO 價，舊表那格是紅利門檻價（#406）。"""
+    """不讀的價格（價格的鍵）：只在到期判定的商品（BEN）是 KO 價，舊表那格是紅利門檻價（#406）。"""
     rule = PRODUCT_RULES.get(product_name(product) or "")
-    return (
-        frozenset(label for col, _, label in PRICES if col == "ko")
-        if rule is not None and rule.maturity_only
-        else frozenset()
-    )
+    return frozenset(("ko",)) if rule is not None and rule.maturity_only else frozenset()
 
 
-def _allocation(cells: Mapping[str, Any]) -> tuple[list[tuple[str, Decimal]], list[str]]:
-    """分公司_1～7 → [(分公司, 承作金額)]（空白與「-」略過）與問題。"""
+def _allocation(cells: Mapping[str, Any], fmt: ReferenceFormat) -> tuple[list[tuple[str, Decimal]], list[str]]:
+    """分公司_1～n（`ReferenceFormat.extra`）→ [(分公司, 承作金額)]（空白與「-」略過）與問題。"""
     allocation, problems = [], []
-    for n in range(1, BRANCHES + 1):
-        branch, amount = cells.get(f"分公司_{n}"), cells.get(f"分公司_{n}_承作金額")
+    for branch_column, amount_column in fmt.extra.branch_columns():
+        branch, amount = cells.get(branch_column), cells.get(amount_column)
         if branch is None or str(branch).strip() in ("", "-"):
             continue
         number = _number(amount)
         if not isinstance(number, Decimal) or number <= 0:
-            problems.append(f"分公司_{n}（{branch}）的承作金額不是正數（{amount}）")
+            problems.append(f"{branch_column}（{branch}）的承作金額不是正數（{amount}）")
             continue
         allocation.append((str(branch).strip(), number))
     return allocation, problems
@@ -354,11 +344,10 @@ def _write(
         code = columns[f"underlying_{i}"]
         if code is not None:
             prices = (
-                None if label in ignored else cell_value(record, price_key(i, col), fmt) for col, _, label in PRICES
+                None if pf.key in ignored else cell_value(record, price_key(i, pf.key), fmt) for pf in PRICE_FIELDS
             )
             conn.execute(
-                "INSERT INTO workflow.underlying_price"
-                " (tdcc, seq, code, initial_price, strike_price, ki_price, ko_price) VALUES (%s, %s, %s, %s, %s, %s, %s)",
+                f"INSERT INTO workflow.underlying_price (tdcc, seq, code, {PRICE_SQL}) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                 (tdcc, i, code, *prices),
             )
     write_dates(conn, tdcc, record, fmt)

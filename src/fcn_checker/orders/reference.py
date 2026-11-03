@@ -20,13 +20,13 @@ from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.worksheet import Worksheet
 
 from ..config import ReferenceFormat
+from ..fields import PRICE_COLUMNS
 from ..ingestion import IngestionError
 from ..schema import OrderValue
 
 SOURCE = "參考條件表"
 OFFLINE_SHEET = "樣本清單"  # 離線建的列（`OrderRecord.offline`）儲存格位置用的工作表名稱
 UNDERLYING_SLOTS = 5  # UL_1～UL_5
-PRICE_FIELDS = {"initial": "initial_price", "strike": "strike_price", "ki": "ki_price", "ko": "ko_price"}
 
 
 def underlying_key(i: int) -> str:
@@ -36,7 +36,7 @@ def underlying_key(i: int) -> str:
 
 def price_key(i: int, col: str) -> str:
     """第 i 檔標的某價格的標準欄位；`col` 為 initial／strike／ki／ko（UL_i_進場價 等）。"""
-    return f"underlying_{i}_{PRICE_FIELDS[col]}"
+    return f"underlying_{i}_{PRICE_COLUMNS[col]}"
 
 
 def autocall_date_key(n: int) -> str:
@@ -122,7 +122,7 @@ class OrderRecord:
     @property
     def underlying_slots(self) -> int:
         """格式設定有幾檔標的的價格欄（UL_1～UL_n）。"""
-        suffix = f"_{PRICE_FIELDS['initial']}"
+        suffix = f"_{PRICE_COLUMNS['initial']}"
         return sum(1 for key in self.headers if key.startswith("underlying_") and key.endswith(suffix))
 
     @classmethod

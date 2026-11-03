@@ -43,12 +43,13 @@ from typing import TYPE_CHECKING, Any
 from openpyxl.cell.cell import Cell
 
 from fcn_checker.config import RISK_LEVEL_PENDING
+from fcn_checker.fields import PRICE_COLUMNS
 from fcn_checker.rating_formats import AGENCY_KEYS, RATING_FIELDS
 from sp_workflow.check_terms import DONE
 from sp_workflow.credit_ratings import RatingRows, load_rows
 from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdatedError, connect
 from sp_workflow.file_tools import save_book, table_book
-from sp_workflow.product_record import PRICE_COLUMNS, missing_fields, same_value
+from sp_workflow.product_record import missing_fields, same_value
 from sp_workflow.product_store import Stored, issuer_code, locked, read, read_many
 from sp_workflow.product_terms import backfill, lock_checked
 from sp_workflow.risk_level import PENDING, RiskLevel, risk_level_of, risk_levels
@@ -66,7 +67,6 @@ SHEET_TITLE = "資料庫"
 DATE_FORMAT = "yyyy/m/d"
 SLOTS = 12
 UNDERLYINGS = 5
-BRANCHES = 7  # 匯入格式的分公司欄數
 CHECKED_FIELDS = ("checked_term_sheet", "checked_iis")
 RISK_FIELD = "risk_level"  # 參考條件表的風險等級（#239；不在匯入格式裡，排在最後）
 PRODUCT_FIELD = "product"  # 參考條件表的商品種類（#302；決定能不能自動核對）
@@ -215,10 +215,11 @@ def _row(
                 values[key] = found.original_strike(i)  # lookback（#374）：核對比的是 TS 的期初執行價
             else:
                 values[key] = None if price is None else getattr(price, col)  # VWAP 還沒回填時空白，核對通過後回填
-    extra: dict[str, Any] = {fmt.issuer_column: p["issuer"], "UF": p["upfront_pct"]}
-    extra["交易日期"] = p["trade_date"]
-    for n, (branch, amount) in enumerate(found.branches[:BRANCHES], 1):
-        extra[f"分公司_{n}"], extra[f"分公司_{n}_承作金額"] = branch, amount
+    names = fmt.extra
+    extra: dict[str, Any] = {fmt.issuer_column: p["issuer"], names.upfront: p["upfront_pct"]}
+    extra[names.trade_date] = p["trade_date"]
+    for (branch_column, amount_column), (branch, amount) in zip(names.branch_columns(), found.branches, strict=False):
+        extra[branch_column], extra[amount_column] = branch, amount
     row = {}
     for header in headers:
         std = fmt.columns.get(header)
