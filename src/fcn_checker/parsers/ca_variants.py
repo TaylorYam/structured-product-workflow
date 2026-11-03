@@ -40,7 +40,7 @@ class Variant:
 
     bonus_label: str  # 基本假設「初始投資金額：…」後接的紅利標籤，也是情境價格表的開頭
     scenario_table: price_table.TableSpec
-    worst: str  # 情境三假設句「假設於期末訂價日…收盤價為」的最差標的寫法（第 1 組是名稱）
+    worst: str  # 情境三假設句「假設於期末訂價日…收盤價為」的最差標的寫法：只能有一個捕捉群組（名稱），後面的收盤價、幣別才是第 2、3 組
     below_strike: str  # 情境三假設句收盤價後的「，低於其執行價」（沒寫為空字串）
     strike_of: str  # 情境三股數算式「每單位面額/…執行價*」的標的寫法
     minus: str  # 情境三報酬率「((W x P + R) / N)」後減的「-1」或「-100%」
