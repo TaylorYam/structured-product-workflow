@@ -115,6 +115,7 @@ def check_document(pairing: Sequence[CheckResult], paired: Paired | None, config
             decisions.extend(cells)
         results.extend(backfill_results)
         report.backfill = decisions
+        report.backfill_values = backfill.values(decisions, ctx.fmt.empty_value)
         report.backfill_certain = bool(decisions) and all(r.status == CheckStatus.PASS for r in backfill_results)
         report.not_covered = [dict(n) for n in paired.template.not_covered]
     report.status = overall_status([r.status for r in results]) if results else CheckStatus.ERROR

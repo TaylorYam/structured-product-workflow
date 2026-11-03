@@ -35,7 +35,16 @@ from decimal import Decimal
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from fcn_checker.fields import PRICE_COLUMNS
+from fcn_checker.backfill_values import (
+    DENOMINATION,
+    ISIN,
+    ISSUE_DATE,
+    LOOKBACK_END_DATE,
+    AutocallSlot,
+    ProductTerm,
+    Target,
+    UnderlyingPrice,
+)
 from fcn_checker.products import PRODUCT_RULES, SUPPORTED_PRODUCTS, product_name
 from sp_workflow import import_run
 from sp_workflow.check_terms import CalcLine, recalculate, recalculate_corrected
@@ -984,54 +993,55 @@ def _field_edits(original: Mapping[str, object], values: Mapping[str, object]) -
 # ---------- 核對寫回（ADR 0013） ----------
 
 
+_BACKFILL_PRODUCT_TERMS = (ISIN, ISSUE_DATE, DENOMINATION)  # 核對寫回會改的 workflow.product 欄（回顧結束日另外處理）
+
+
 def backfill(
-    conn: psycopg.Connection, tdcc: str, column: str, value: object, *, item: str, result_file: str, user: str
+    conn: psycopg.Connection, tdcc: str, target: Target, value: object, *, item: str, result_file: str, user: str
 ) -> bool:
-    """核對寫回一格：`column` 是資料庫的欄（`isin`、`issue_date`、`denomination`、`lookback_end_date`、`autocall_date_<期>`、
-    `underlying_<序>_<價格>`）。已算出回顧期初價格的商品不改回顧結束日（同 `_lookback_fixed`，#374）。值有改變時在 `workflow.backfill_log` 記原值（`item` 是參考條件表的欄名），
-    回傳有沒有改；不認得的欄、沒有這個標的不寫。在呼叫端的 transaction 裡執行，這檔先用 `read(…, lock=True)` 鎖住。
+    """核對寫回一個回填值（`fcn_checker.backfill_values`，#444）：照目標的型別寫 `workflow.product` 的
+    ISIN、發行日、單位面額、回顧結束日，`workflow.autocall_date` 的比價日，或 `workflow.underlying_price` 的價格。
+    已算出回顧期初價格的商品不改回顧結束日（同 `_lookback_fixed`，#374）。值有改變時在 `workflow.backfill_log`
+    記原值（`item` 是參考條件表的欄名），回傳有沒有改；沒有這個標的、TS／IIS 打勾不寫。在呼叫端的 transaction 裡執行，
+    這檔先用 `read(…, lock=True)` 鎖住。
     """
     require_in_transaction(conn)
-    if column in ("isin", "issue_date", "denomination"):
-        (old,) = conn.execute(f"SELECT {column} FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
-        conn.execute(f"UPDATE workflow.product SET {column} = %s WHERE tdcc = %s", (value, tdcc))
-    elif column == "lookback_end_date":
-        (old,) = conn.execute("SELECT lookback_end_date FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
-        (fixed,) = conn.execute(
-            "SELECT count(*) FROM workflow.underlying_price WHERE tdcc = %s AND lookback_price IS NOT NULL", (tdcc,)
-        ).fetchone()
-        if fixed and not same_value(old, value):
+    match target:
+        case _ if target == LOOKBACK_END_DATE:
+            (old,) = conn.execute("SELECT lookback_end_date FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
+            (fixed,) = conn.execute(
+                "SELECT count(*) FROM workflow.underlying_price WHERE tdcc = %s AND lookback_price IS NOT NULL", (tdcc,)
+            ).fetchone()
+            if fixed and not same_value(old, value):
+                return False
+            conn.execute("UPDATE workflow.product SET lookback_end_date = %s WHERE tdcc = %s", (value, tdcc))
+        case ProductTerm(column=column) if target in _BACKFILL_PRODUCT_TERMS:  # 欄名放進 SQL 前只接受這幾個
+            (old,) = conn.execute(f"SELECT {column} FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
+            conn.execute(f"UPDATE workflow.product SET {column} = %s WHERE tdcc = %s", (value, tdcc))
+        case AutocallSlot(slot=slot):
+            found = conn.execute(
+                "SELECT value FROM workflow.autocall_date WHERE tdcc = %s AND slot = %s", (tdcc, slot)
+            ).fetchone()
+            old = None if found is None else found[0]
+            conn.execute(
+                "INSERT INTO workflow.autocall_date (tdcc, slot, value) VALUES (%s, %s, %s)"
+                " ON CONFLICT (tdcc, slot) DO UPDATE SET value = EXCLUDED.value",
+                (tdcc, slot, value),
+            )
+            if found is None and value is None:
+                return False  # 不需要填的期別：記下來就好，不算改值
+        case UnderlyingPrice(seq=seq, column=price):  # `column` 只會是 fields.PRICE_COLUMNS 的四個欄
+            found = conn.execute(
+                f"SELECT {price} FROM workflow.underlying_price WHERE tdcc = %s AND seq = %s", (tdcc, seq)
+            ).fetchone()
+            if found is None:
+                return False  # 沒有這個標的（空值寫法的格子）
+            old = found[0]
+            conn.execute(
+                f"UPDATE workflow.underlying_price SET {price} = %s WHERE tdcc = %s AND seq = %s", (value, tdcc, seq)
+            )
+        case _:
             return False
-        conn.execute("UPDATE workflow.product SET lookback_end_date = %s WHERE tdcc = %s", (value, tdcc))
-    elif column.startswith("autocall_date_"):
-        slot = int(column.rsplit("_", 1)[1])
-        found = conn.execute(
-            "SELECT value FROM workflow.autocall_date WHERE tdcc = %s AND slot = %s", (tdcc, slot)
-        ).fetchone()
-        old = None if found is None else found[0]
-        conn.execute(
-            "INSERT INTO workflow.autocall_date (tdcc, slot, value) VALUES (%s, %s, %s)"
-            " ON CONFLICT (tdcc, slot) DO UPDATE SET value = EXCLUDED.value",
-            (tdcc, slot, value),
-        )
-        if found is None and value is None:
-            return False  # 不需要填的期別：記下來就好，不算改值
-    elif column.startswith("underlying_") and column.endswith("_price"):
-        _, i, *rest = column.split("_")
-        price = "_".join(rest)
-        if price not in PRICE_COLUMNS.values():  # 欄名放進 SQL 前只接受這四個
-            return False
-        found = conn.execute(
-            f"SELECT {price} FROM workflow.underlying_price WHERE tdcc = %s AND seq = %s", (tdcc, int(i))
-        ).fetchone()
-        if found is None:
-            return False  # 沒有這個標的（空值寫法的格子）
-        old = found[0]
-        conn.execute(
-            f"UPDATE workflow.underlying_price SET {price} = %s WHERE tdcc = %s AND seq = %s", (value, tdcc, int(i))
-        )
-    else:
-        return False
     if same_value(old, value):
         return False
     conn.execute(

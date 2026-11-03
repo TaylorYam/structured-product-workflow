@@ -12,6 +12,7 @@ from decimal import Decimal
 import pytest
 
 from db_synth import inventory, seed_products
+from fcn_checker.backfill_values import LOOKBACK_END_DATE
 from fcn_checker.trading_calendar import Market, TradingCalendar
 from order_synth import CONFIG, maintenance_draft, open_terms
 from sp_workflow.check_terms import recalculate
@@ -447,7 +448,7 @@ def test_check_write_back_fills_a_blank_lookback_end_and_logs_it(pg) -> None:
     """#376：說明書的回顧結束日回填空白的資料庫值，原值記在 backfill_log。"""
     seed(pg, locked=False, lookback=None)
     with pg.transaction():
-        changed = backfill(pg, T1, "lookback_end_date", END, item="回顧結束日", result_file="r.xlsx", user="tester")
+        changed = backfill(pg, T1, LOOKBACK_END_DATE, END, item="回顧結束日", result_file="r.xlsx", user="tester")
     assert changed and lookback_end(pg) == END
     assert logs(pg) == [("回顧結束日", None, str(END), "r.xlsx")]
 
@@ -460,6 +461,6 @@ def test_check_write_back_does_not_move_a_lookback_end_already_used(pg) -> None:
     observe_all(pg, CALENDAR, user="tester")
     before = logs(pg)
     with pg.transaction():
-        changed = backfill(pg, T1, "lookback_end_date", MIDDLE, item="回顧結束日", result_file="r.xlsx", user="tester")
+        changed = backfill(pg, T1, LOOKBACK_END_DATE, MIDDLE, item="回顧結束日", result_file="r.xlsx", user="tester")
     assert not changed and lookback_end(pg) == END
     assert logs(pg) == before

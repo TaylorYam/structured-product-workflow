@@ -224,7 +224,7 @@ MS FCN 的情境規則（每期配息、總配息、獲利情境年化 = 年利�
 | 範本辨識與讀出 | MS 的 BEN 說明書與投資人須知 parser（沿用 `parsers/ms.py`、`ms_tables.py`、`ms_iis.py` 的版面、封面、標的表、價格表、費用表與 `read`，覆寫第一章 28 條的條號對照、§10、§14(9)、§15、§16 情境；同 HSBC BEN 的做法）；沒有 KO 的欄位與紅利門檻用 `parsers/ben.py`，交股算式的型別在 `parsers/delivery.py`（workflow #439） |
 | 上手註冊 | MS 的範本依商品家族分開辨識（`Template.products`，同 HSBC Super Bull、BEN） |
 | 規則 | §3.3～§3.5、§3.8 的 MS BEN 規則；沒有 KO、無 KI、固定寫法、紅利與參與率出處用 BEN 共用的 `rules/ben.py`，交股情境用 `rules/delivery.py` 的 HSBC 寫法（報酬率先四捨五入再年化），不另寫一份（workflow #439） |
-| 回顧結束日 | 參考條件表新欄（`config/reference_sheet.toml` 的 `[columns]`、`layout.optional_columns`）；`check_source` 匯出與 `_backfill_values` 寫回 `lookback_end_date`（`product_terms.backfill` 要遵守 #374 的鎖）；新回填規則 `backfill.lookback_end_date` |
+| 回顧結束日 | 參考條件表新欄（`config/reference_sheet.toml` 的 `[columns]`、`layout.optional_columns`）；`check_source` 匯出、回填值（`backfill_values.LOOKBACK_END_DATE`）寫回 `lookback_end_date`（`product_terms.backfill` 要遵守 #374 的鎖）；新回填規則 `backfill.lookback_end_date` |
 | 設定 | `[auto_check_products]` 的 `BEN` 加 `MS`；審查標準 `[issuer.ms.product_names.BEN]`（依型態兩組樣板）；§9 的暫定決定各放一個設定值或函式 |
 | 測試 | 合成 PDF（一般 2、3 檔、Digital 1 檔、有無 lookback、不同天期、K% = 100 與低於 100、1 個月單數 `Month`）；負面測試（MS FCN 新舊版／DACN ↔ BEN 說明書與投資人須知、寫法不同的版本、型態對不上、lookback 混雜、Product 不一致、樣態不符、沒有樣本的型態、非美元、參考條件表沒有參與率或回顧結束日欄）；回填測試（空白回填、不同不覆蓋、已算回顧價格不回填，用本機測試資料庫）；本機真實樣本試跑（§6） |
 

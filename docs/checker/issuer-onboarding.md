@@ -146,7 +146,7 @@
 - 情境分析檢查（`rules/scenario.py`，Issue #294）：情境重印的價格表 = 主價格表、情境假設值 = 說明書正式值（範本沒有正式值時比參考條件表）、較差情境寫出的執行價等 = 價格表（接受 #259 的兩種進位），只讀 `main_price_table`、`scenario_reprint_table`、`scenario_params`、`scenario_prices` 與它們對應的正式值欄位；範本沒有的那一塊交 `absent`（[共用核對規則](rules/shared-check-rules.md) §7）。
 - 連結標的公司介紹檢查（`rules/underlying_notes.py`，Issue #225）：介紹段數 = 標的檔數、每段有中文敘述且不是亂碼，只讀 `underlying_notes`、`underlyings`；上手只在 `read` 呼叫 `parsers/underlying_notes.underlying_notes(行, 切法)` 宣告切法（`Markers` 行首編號、`NameColumn` 名稱欄、`Paragraphs` 段落）（[共用核對規則](rules/shared-check-rules.md) §5.1）。
 - 審查標準規則（`rules/review_standard.py` 的 `review_standard_rules`）：面額預設值、受理申購日、刊印日期、審查日期、負責人、固定警語、風險等級、禁用語、商品名稱、發行機構全名、受託機構資訊、費率、發行價格。上手不同的基準只放在 `config/review_standard.toml` 的 `[issuer.<上手>]`，規則一律讀已解析的 `ctx.issuer_std`，沒有依上手代號的分支。
-- 回填（`backfill.py`）：TS、IIS 打勾，ISIN、發行日、比價日的核對、回填決策與寫入。
+- 回填（`backfill.py`）：TS、IIS 打勾，ISIN、發行日、比價日的核對與回填決策；回填值的型別在 `backfill_values.py`，寫入在核對結果檔（`result_file.py`）與資料庫寫回（`product_terms.backfill`）。
 - 單份核對順序（`single_check.py`）與批量入口、CLI、PANEL。
 
 標準欄位清單（`standard_fields.STANDARD_FIELDS`）就是共用規則會讀的全部說明書欄位，分三組：

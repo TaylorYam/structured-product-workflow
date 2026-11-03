@@ -4,8 +4,8 @@
 - TS、IIS 兩欄的值不取自說明書，一律是打勾寫法（`checked_value`）：寫入就代表兩份都通過或人工放行（Issue #127）。
 - 期初定價為 VWAP 的商品，各標的四個價格欄也是回填欄位，但已有不同值時改為覆寫（Issue #122）。
 - 只寫入呼叫端交來的說明書：批量入口依每份的類別決定（整份 PASS 或人工放行，`BatchItem.fillable`）。
-- 寫入：批量入口以來源快照確認來源與核對時相同後才開檔，回填值寫進記憶體中的工作表（沿用表上既有日期格式）；
-  原檔不動，回填結果由核對結果檔（result_file.py）帶出。
+- 每個決策帶一個目標（`backfill_values.Target`，標準欄位）；寫進「回填後」的決策由 `values` 轉成型別化的回填值（#444），
+  資料庫寫回照值寫表。核對結果檔（result_file.py，Excel adapter）照決策的格子排版，參考條件表原檔不動。
 - 決策的顯示標籤（`BackfillAction.label`）只在這裡定義，PANEL 使用。
 
 比價日填法：
@@ -25,24 +25,29 @@ import datetime as dt
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
-from pathlib import Path
 from typing import Any
 
-import openpyxl
-from openpyxl.workbook.workbook import Workbook
-
-from .config import ReferenceFormat
+from .backfill_values import (
+    AUTOCALL_SLOTS,
+    CHECKED_MARKS,
+    ISIN,
+    ISSUE_DATE,
+    LOOKBACK_END_DATE,
+    SLOTS,
+    BackfillValue,
+    CheckedMark,
+    ProductTerm,
+    Target,
+    UnderlyingPrice,
+)
 from .fields import PRICE_COLUMNS
-from .ingestion import IngestionError
-from .orders.reference import OrderRecord, autocall_date_key, locate, price_key
+from .orders.reference import OrderRecord, price_key
 from .rules.kit import Context, doc_review, result
 from .rules.reference import is_vwap, sheet_slots, standard_field
-from .schema import CheckReport, CheckResult, FieldStatus, Item, OrderValue, ParsedField
+from .schema import CheckResult, FieldStatus, Item, OrderValue, ParsedField
 from .schema import CheckStatus as S
 from .standard_fields import AutocallSchedule, not_provided
 
-SLOTS = 12
-FALLBACK_DATE_FORMAT = "yyyy/m/d"
 COLUMN_MISSING = "backfill_column_missing"
 COMPARE_DATES = "比價日"  # 比價日_1～12 合起來核對，項目用這個名稱
 
@@ -66,18 +71,34 @@ _LABELS = {
 }
 WRITE_ACTIONS = (BackfillAction.FILL, BackfillAction.OVERWRITE)  # 儲存時寫進「回填後」的決策
 PRICES = "各標的價格"  # VWAP 價格欄合起來核對，項目用這個名稱
-CHECKED_FIELDS = ("checked_term_sheet", "checked_iis")  # TS、IIS 欄
+CHECKED_FIELDS = tuple(m.field for m in CHECKED_MARKS)  # TS、IIS 欄
 
 
 @dataclass(frozen=True)
 class CellDecision:
     """回填欄位的一格。"""
 
-    column: str  # Excel 欄名
-    cell: str  # 儲存格位置，例 F4
+    column: str  # Excel 欄名（畫面與回填紀錄給人看）
+    cell: str  # 儲存格位置，例 F4（核對結果檔與畫面）
     sheet_value: Any
     expected: Any  # 日期、空值寫法或 ISIN
     action: BackfillAction
+    target: Target | None = None  # 寫到哪個標準欄位（#444）
+
+    @property
+    def field(self) -> str | None:
+        """標準欄位（例 `isin`、`autocall_date_3`）。"""
+        return None if self.target is None else self.target.field
+
+
+def values(decisions: Sequence[CellDecision], empty: str) -> tuple[BackfillValue, ...]:
+    """要寫進「回填後」的決策（回填與 VWAP 覆寫）轉成回填值，順序不變；空值寫法 `empty` 轉成 None。
+    TS、IIS 打勾不是回填值（資料庫改成鎖住）。"""
+    return tuple(
+        BackfillValue(d.target, None if d.expected == empty else d.expected, d.column)
+        for d in decisions
+        if d.action in WRITE_ACTIONS and d.target is not None and not isinstance(d.target, CheckedMark)
+    )
 
 
 # ---------------------------------------------------------------- 每格決策
@@ -99,8 +120,9 @@ def _column_missing(rid: str, key: str, missing: list[str], ovs: list[OrderValue
     return result(rid, key, S.REVIEW_REQUIRED, ov=ovs, reason=COLUMN_MISSING, message=message, item=item)
 
 
-def _decide(row: OrderRecord, key: str, expected: Any) -> CellDecision:
+def _decide(row: OrderRecord, target: Target, expected: Any) -> CellDecision:
     """呼叫前已確認格式設定與參考條件表都有這一欄。"""
+    key = target.field
     ov = row.get(key)
     value = ov.value if ov else None
     if value is None:
@@ -109,7 +131,7 @@ def _decide(row: OrderRecord, key: str, expected: Any) -> CellDecision:
         action = BackfillAction.MATCH
     else:
         action = BackfillAction.MISMATCH
-    return CellDecision(row.header(key) or key, row.cells[key], value, expected, action)
+    return CellDecision(row.header(key) or key, row.cells[key], value, expected, action, target)
 
 
 def _fill_message(decisions: list[CellDecision]) -> str:
@@ -144,9 +166,10 @@ def expected_slots(sched: AutocallSchedule, tenor: int | None, empty: str) -> li
 
 
 def _single(
-    rid: str, key: str, what: str, name: str, row: OrderRecord, pf: ParsedField
+    rid: str, target: ProductTerm, what: str, name: str, row: OrderRecord, pf: ParsedField
 ) -> tuple[CheckResult, list[CellDecision]]:
     """只有一格的回填欄位：表上值與說明書值比對並決定這一格的處理。項目為該欄（沒有這欄時用 `name`）。"""
+    key = target.field
     ov: OrderValue | None = row.get(key)
     item = Item.column(name, [ov])
     missing = _missing_columns(row, [key])
@@ -154,7 +177,7 @@ def _single(
         return _column_missing(rid, key, missing, [ov], item), []
     if not pf.ok:
         return doc_review(rid, key, pf, ov.value if ov else None, [ov], item=item), []
-    d = _decide(row, key, pf.value)
+    d = _decide(row, target, pf.value)
     ok = d.action != BackfillAction.MISMATCH
     return (
         result(
@@ -174,20 +197,20 @@ def _single(
 
 
 def isin(ctx: Context) -> tuple[CheckResult, list[CellDecision]]:
-    return _single("backfill.isin", "isin", " ISIN ", "ISIN Code", ctx.order, standard_field(ctx, "isin"))
+    return _single("backfill.isin", ISIN, " ISIN ", "ISIN Code", ctx.order, standard_field(ctx, ISIN.field))
 
 
 def issue_date(ctx: Context) -> tuple[CheckResult, list[CellDecision]]:
     """說明書發行日取自標準欄位 `issue_date`（BARC 第一章 §13(3)、HSBC 第一章 §15(2)）。"""
-    key = "issue_date"
-    return _single("backfill.issue_date", key, "發行日", "發行日", ctx.order, standard_field(ctx, key))
+    pf = standard_field(ctx, ISSUE_DATE.field)
+    return _single("backfill.issue_date", ISSUE_DATE, "發行日", "發行日", ctx.order, pf)
 
 
 def compare_dates(ctx: Context) -> tuple[CheckResult, list[CellDecision]]:
     rid, key, sched = "backfill.compare_dates", "compare_dates", standard_field(ctx, "autocall_schedule")
     row = ctx.order
-    keys = [autocall_date_key(n) for n in range(1, SLOTS + 1)]
-    ovs = [row.autocall_date(n) for n in range(1, SLOTS + 1)]
+    keys = [slot.field for slot in AUTOCALL_SLOTS]
+    ovs = [row.autocall_date(slot.slot) for slot in AUTOCALL_SLOTS]
     item = Item.group(COMPARE_DATES, ovs)
     missing = _missing_columns(row, keys)
     if missing:
@@ -210,7 +233,7 @@ def compare_dates(ctx: Context) -> tuple[CheckResult, list[CellDecision]]:
             ),
             [],
         )
-    decisions = [_decide(row, k, e) for k, e in zip(keys, slots, strict=True)]
+    decisions = [_decide(row, slot, e) for slot, e in zip(AUTOCALL_SLOTS, slots, strict=True)]
     final = standard_field(ctx, "final_valuation_date")
     if not final.ok:
         return doc_review(rid, key, final, None, ovs, item=item), decisions
@@ -261,12 +284,12 @@ def lookback_end_date(ctx: Context) -> tuple[CheckResult | None, list[CellDecisi
     """回顧結束日（BEN lookback，#376）：上手沒交這欄（沒有 lookback 範本）時沒有結果。說明書有回顧觀察期間時同其他單格回填
     欄位（表上沒有這欄 → 轉人工覆核）；說明書沒有（不是 lookback）時表上要空白（或空值寫法），有值 → 不一致，表上沒有這欄
     不影響。已算出回顧期初價格的商品寫回時不改值（`sp_workflow.product_terms.backfill`）。"""
-    rid, key, name = "backfill.lookback_end_date", "lookback_end_date", "回顧結束日"
+    rid, key, name = "backfill.lookback_end_date", LOOKBACK_END_DATE.field, "回顧結束日"
     pf, row = standard_field(ctx, key), ctx.order
     if pf == not_provided(key):
         return None, []
     if pf.status != FieldStatus.NOT_APPLICABLE:
-        return _single(rid, key, name, name, row, pf)
+        return _single(rid, LOOKBACK_END_DATE, name, name, row, pf)
     ov = row.get(key)
     if ov is None or ov.value in (None, ctx.fmt.empty_value):
         return None, []
@@ -305,7 +328,7 @@ def underlying_prices(ctx: Context) -> tuple[CheckResult | None, list[CellDecisi
     for i in range(1, n + 1):
         prices = by_slot[i].prices if i in by_slot else {}
         for col in PRICE_COLUMNS:
-            d = _decide(row, price_key(i, col), prices.get(col, empty))
+            d = _decide(row, UnderlyingPrice(i, col), prices.get(col, empty))
             if d.action == BackfillAction.MISMATCH:
                 d = replace(d, action=BackfillAction.OVERWRITE)
             decisions.append(d)
@@ -335,7 +358,7 @@ def checked_marks(ctx: Context) -> tuple[CheckResult, list[CellDecision]]:
     undeclared = [k for k in CHECKED_FIELDS if row.header(k) is None]  # 格式設定沒有欄名
     if undeclared:
         return _column_missing(rid, key, _missing_columns(row, undeclared), ovs, item), []
-    decisions = [_decide(row, k, mark) for k in CHECKED_FIELDS if row.has(k)]
+    decisions = [_decide(row, m, mark) for m in CHECKED_MARKS if row.has(m.field)]
     not_on_sheet = [row.header(k) for k in CHECKED_FIELDS if not row.has(k)]
     bad = [d for d in decisions if d.action == BackfillAction.MISMATCH]
     n = sum(d.action == BackfillAction.FILL for d in decisions)
@@ -362,39 +385,3 @@ def checked_marks(ctx: Context) -> tuple[CheckResult, list[CellDecision]]:
         ),
         decisions,
     )
-
-
-# ---------------------------------------------------------------- 寫入
-
-
-def open_reference(path: Path) -> Workbook:
-    """以讀值（data_only，公式格取 Excel 上次算好的值）開啟參考條件表準備回填；來源是否與核對時相同由批量入口以來源快照確認。"""
-    try:
-        return openpyxl.load_workbook(path, data_only=True)
-    except Exception as e:
-        raise IngestionError("reference_unreadable", f"參考條件表無法開啟（可能已損毀或不是 Excel）：{e}") from e
-
-
-def date_format(ws: Any, first_data_row: int) -> str:
-    """沿用表上既有日期格的顯示格式；回填通用（`sp_workflow.generic_backfill`，#364）也用。"""
-    for row in ws.iter_rows(min_row=first_data_row):
-        for c in row:
-            if isinstance(c.value, dt.datetime):
-                return c.number_format
-    return FALLBACK_DATE_FORMAT
-
-
-def apply(wb: Workbook, rfmt: ReferenceFormat, reports: Sequence[CheckReport]) -> None:
-    """把要回填的說明書（呼叫端已決定：整份 PASS 或人工放行）的「回填」格寫進記憶體中的工作表（原檔不動）。
-    回填格不能在合併儲存格裡（呼叫端先拆開）。"""
-    layout = locate(wb, rfmt)
-    ws = wb[layout.sheet]
-    fmt = date_format(ws, layout.first_data_row)
-    for report in reports:
-        for d in report.backfill:
-            if d.action not in WRITE_ACTIONS:
-                continue
-            cell = ws[d.cell]
-            cell.value = d.expected
-            if isinstance(d.expected, dt.date):
-                cell.number_format = fmt
