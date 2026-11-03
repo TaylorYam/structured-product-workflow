@@ -7,11 +7,12 @@ from decimal import Decimal
 
 import pytest
 
-from fcn_checker.products import BEN, FCN, FCN_EXPRESS, PRODUCT_RULES, product_name
+from fcn_checker.products import BEN, DACN, FCN, FCN_EXPRESS, PRODUCT_RULES, SUPER_BULL, product_name
 from sp_workflow.product_record import (
     COLUMN_FIELDS,
     DERIVED_COLUMNS,
     FIELDS,
+    LISTED,
     LOOKBACK_FIELD,
     PARTICIPATION_FIELD,
     PRODUCT_COLUMNS,
@@ -19,6 +20,7 @@ from sp_workflow.product_record import (
     REQUIRED_COLUMNS,
     UPFRONT_FIELD,
     columns_of,
+    default_coupon_barrier,
     fields_of,
     invert_upfront,
     missing_fields,
@@ -122,17 +124,38 @@ def test_missing_fields_name_blank_required_fields_and_their_derived_codes() -> 
     assert missing_fields(columns_of(dict.fromkeys(FIELDS), None, DENOMINATIONS)) == list(REQUIRED)
 
 
-def test_a_ben_needs_a_bonus_barrier_but_no_ko() -> None:
-    """BEN 預設沒有 KO（#406、ADR 0029）：KO% 不必填，配息門檻（紅利門檻）必填；FCN 的 KO% 仍必填、沒有配息門檻。"""
-    ben = columns_of(
-        {**VALUES, "Product": BEN, "KO Barrier (%)": None, "Coupon Barrier (%)": None}, "HSBC", DENOMINATIONS
+# 商品規則表（#434）：每種商品種類的 (KO% 必填, 配息門檻必填)；必填欄與缺欄都問商品規則
+RULE_TABLE = [
+    (FCN, True, False),
+    (FCN_EXPRESS, True, False),
+    (SUPER_BULL, True, False),
+    (BEN, False, True),  # 預設沒有 KO、紅利門檻存配息門檻（#406）
+    (DACN, True, True),  # 配息門檻（#367）
+]
+
+
+@pytest.mark.parametrize(("product", "needs_ko", "needs_barrier"), RULE_TABLE)
+def test_required_and_missing_fields_follow_the_product_rule(product, needs_ko, needs_barrier) -> None:
+    common = [name for name in REQUIRED if name != "KO Barrier (%)" or needs_ko]
+    expected = (*common, *(("Coupon Barrier (%)",) if needs_barrier else ()))
+    blank = columns_of(
+        {**VALUES, "Product": product, "Guaranteed Periods (m)": 0 if product == FCN_EXPRESS else 3}, "X", DENOMINATIONS
+    )
+    blank = {**blank, "ko_pct": None, "coupon_barrier_pct": None}
+
+    assert required_fields(product) == expected
+    assert missing_fields(blank) == [n for n in ("KO Barrier (%)", "Coupon Barrier (%)") if n in expected]
+    filled = {**blank, "ko_pct": Decimal(100), "coupon_barrier_pct": Decimal(80)}
+    assert missing_fields(filled) == []
+    assert default_coupon_barrier({"Product": product, "Strike (%)": Decimal(80)}) == (
+        Decimal(80) if needs_barrier else None
     )
 
-    assert "KO Barrier (%)" not in required_fields(BEN) and required_fields(BEN)[-1] == "Coupon Barrier (%)"
-    assert missing_fields(ben) == ["Coupon Barrier (%)"]
-    assert missing_fields({**ben, "coupon_barrier_pct": Decimal(80)}) == []
-    assert required_fields(FCN) == REQUIRED
-    assert missing_fields({**columns_of(VALUES, "Barclays", DENOMINATIONS), "ko_pct": None}) == ["KO Barrier (%)"]
+
+def test_unsupported_products_need_the_common_fields() -> None:
+    assert required_fields("FCN_Stepdown") == REQUIRED
+    assert default_coupon_barrier({"Product": "FCN_Stepdown", "Strike (%)": Decimal(80)}) is None
+    assert LISTED == (*REQUIRED, "Coupon Barrier (%)")
 
 
 @pytest.mark.parametrize(

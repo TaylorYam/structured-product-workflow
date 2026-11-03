@@ -63,7 +63,6 @@ from sp_workflow.product_record import (
     COUPON_BARRIER_FIELD,
     KI_CODES,
     KO_CODES,
-    MATURITY_ONLY_TERMS,
     PRICING_FIELD,
     STRIKE_FIELD,
     TRADE_FIELD,
@@ -156,7 +155,7 @@ def backfill_products(
                 values, problems = _values(record, cells, fmt)
                 problems += [*_price_problems(record, fmt, values["Product"]), *date_problems(record, fmt)]
                 product = PRODUCT_RULES[values["Product"]]
-                if not product.has_non_call and cell_value(record, autocall_date_key(1), fmt) is None:
+                if product.fixed_non_call() == 0 and cell_value(record, autocall_date_key(1), fmt) is None:
                     problems.append(f"比價日_1 空白：{product.name} 沒有 Non-Call，比價日_1 是第一個觀察日")
                 allocation, branch_problems = _allocation(cells, fmt)
                 problems += branch_problems
@@ -247,7 +246,8 @@ def _values(record: OrderRecord, cells: Mapping[str, Any], fmt: ReferenceFormat)
     for n, name in enumerate(UNDERLYINGS, 1):
         values[name] = value(underlying_key(n))
     ko = (value("ko_observation"), value("ko_memory"))
-    values["KO Type"] = MATURITY_ONLY_TERMS["KO Type"] if product.maturity_only else _KO_TYPES.get(ko)  # type: ignore[arg-type]
+    fixed = product.fixed_choices()  # BEN 的 KO Type 一律 Period End，不看表上的 KO 欄（#373）
+    values["KO Type"] = fixed["KO Type"] if "KO Type" in fixed else _KO_TYPES.get(ko)  # type: ignore[arg-type]
     if values["KO Type"] is None:
         problems.append(f"KO(Freq)／KO(memo) 看不懂（{ko[0]}／{ko[1]}）")
     ki = value("ki_type") or fmt.empty_value  # 空值寫法「-」就是沒有 KI
@@ -258,11 +258,13 @@ def _values(record: OrderRecord, cells: Mapping[str, Any], fmt: ReferenceFormat)
     uf = None if uf in (None, fmt.empty_value) else _number(uf)
     values[UPFRONT_FIELD] = invert_upfront(uf) if isinstance(uf, Decimal) else uf
     values["Tenor (m)"] = _whole(value("tenor_months"))
-    values["Guaranteed Periods (m)"] = _whole(value("first_callable_period")) if product.has_non_call else 0
+    non_call = product.fixed_non_call()  # 沒有 Non-Call 的商品一定是 0
+    values["Guaranteed Periods (m)"] = _whole(value("first_callable_period")) if non_call is None else non_call
     barrier = _number(value("coupon_barrier_pct"))  # 舊表沒有這欄（#367）
-    if product.maturity_only:  # BEN 舊表的 KO 欄是紅利門檻：存配息門檻，KO% 空白（預設沒有 KO，#406）
-        ko_barrier, values["KO Barrier (%)"] = values["KO Barrier (%)"], None
-        barrier = ko_barrier if barrier is None else barrier
+    for source, target in product.moved_fields().items():  # BEN 舊表的 KO 欄是紅利門檻：存配息門檻，KO% 空白（#406）
+        moved, values[source] = values[source], None
+        if target == COUPON_BARRIER_FIELD and barrier is None:
+            barrier = moved
     values[COUPON_BARRIER_FIELD] = default_coupon_barrier(values) if barrier is None else barrier
     return values, problems
 
@@ -288,9 +290,9 @@ def _price_problems(record: OrderRecord, fmt: ReferenceFormat, product: object) 
 
 
 def _ignored_prices(product: object) -> frozenset[str]:
-    """不讀的價格（價格的鍵）：只在到期判定的商品（BEN）是 KO 價，舊表那格是紅利門檻價（#406）。"""
+    """不讀的價格（價格的鍵；問商品規則：BEN 舊表的 KO 價那格是紅利門檻價，#406）。"""
     rule = PRODUCT_RULES.get(product_name(product) or "")
-    return frozenset(("ko",)) if rule is not None and rule.maturity_only else frozenset()
+    return frozenset() if rule is None else rule.ignored_prices()
 
 
 def _allocation(cells: Mapping[str, Any], fmt: ReferenceFormat) -> tuple[list[tuple[str, Decimal]], list[str]]:

@@ -34,3 +34,15 @@ PRICE_FIELDS = (
 )
 PRICE_COLUMNS = {f.key: f.column for f in PRICE_FIELDS}  # 價格的鍵 → `workflow.underlying_price` 的欄
 PRICE_SQL = ", ".join(PRICE_COLUMNS.values())  # SQL 的四個價格欄（依 `PRICE_FIELDS` 的順序）
+
+# 商品條件畫面的欄名（起單建檔的欄名，`sp_workflow.product_record.FIELDS`）：商品規則（`fcn_checker.products`）
+# 回答哪些欄固定、必填、要空白、空白怎麼補時用這些名字（#434）
+NON_CALL_FIELD = "Guaranteed Periods (m)"
+STRIKE_PCT_FIELD = "Strike (%)"
+KO_TYPE_FIELD = "KO Type"
+KO_BARRIER_FIELD = "KO Barrier (%)"
+BARRIER_TYPE_FIELD = "Barrier Type"
+KI_BARRIER_FIELD = "KI Barrier (%)"
+COUPON_BARRIER_FIELD = "Coupon Barrier (%)"  # 配息門檻（DACN，#367；BEN 的紅利門檻，#406）：起單建檔沒有這欄
+PARTICIPATION_FIELD = "Participation (%)"  # 參與率（%）：只有 BEN 有（#373、ADR 0029）；起單建檔沒有這欄
+LOOKBACK_FIELD = "Lookback end date"  # 回顧結束日：只有 lookback 的 BEN 有（#374、ADR 0029）；起單建檔沒有這欄
