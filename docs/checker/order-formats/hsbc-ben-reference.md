@@ -26,7 +26,7 @@ BEN 沿用 FCN 那組欄（ADR 0029，比照 Super Bull 的 ADR 0028）：`Coupo
 | KO(Freq) | `ko_observation` | 固定 `P`（ADR 0029 起單匯入一律存 `Period End`） |
 | KO(memo) | `ko_memory` | 固定 `N` |
 | KI(Freq) | `ki_type` | 無 KI（全文沒有觸及、§12(1) 沒有觸及價欄）→ `-` |
-| Non-Call(月) | `first_callable_period` | = 天期（`PRODUCT_RULES` 的 BEN `maturity_only`） |
+| Non-Call(月) | `first_callable_period` | = 天期（`PRODUCT_RULES` 的 BEN：`ProductRule.non_call_is_tenor`） |
 | 比價日_1～12 | `autocall_date_n` | 見 §4 |
 | UL_n_執行價 | `underlying_n_strike_price` | §12(1) 價格表的執行價欄 |
 | UL_n_KO價 | `underlying_n_ko_price` | 說明書沒有 KO 價欄：不核對 |

@@ -23,7 +23,7 @@ from .config import ReferenceFormat, load_toml
 from .ingestion import IngestionError
 from .investor_sheet import IisSheet, read_iis
 from .orders.reference import OrderRecord
-from .products import PRODUCT_RULES, ProductRule
+from .products import ProductRule, rule_or_fcn
 from .rules.kit import read_standard, to_int
 from .rules.reference import VWAP
 from .schema import ParsedField
@@ -225,16 +225,16 @@ _PERIODIC_NO_KI = (
 )
 
 
-def _product_terms(rule: ProductRule | None) -> tuple[tuple[str, str, Any, str], ...]:
-    """這種商品限定的樣態條件（`_PERIODIC_NO_KI` 的格式）；不限定或不支援的商品種類為空。"""
-    return _PERIODIC_NO_KI if rule is not None and rule.only_periodic_no_ki() else ()
+def _product_terms(rule: ProductRule) -> tuple[tuple[str, str, Any, str], ...]:
+    """這種商品限定的樣態條件（`_PERIODIC_NO_KI` 的格式）；不限定的商品種類（不支援的照 FCN）為空。"""
+    return _PERIODIC_NO_KI if rule.only_periodic_no_ki() else ()
 
 
 def product_terms_text(product: str) -> str:
     """這種商品支援的樣態寫法（錯訊用），例：KO(Freq) P、KO(memo) N、KI(Freq) -。"""
-    rule = PRODUCT_RULES.get(product)
+    rule = rule_or_fcn(product)
     out = [f"{col} {shown}" for col, _, _, shown in _product_terms(rule)]
-    return "、".join([*out, "Non-Call = 天期"] if rule is not None and rule.non_call_is_tenor() else out)
+    return "、".join([*out, "Non-Call = 天期"] if rule.non_call_is_tenor() else out)
 
 
 def product_terms_problems(product: str, row: OrderRecord, terms: Terms | None) -> list[str]:
@@ -246,10 +246,10 @@ def product_terms_problems(product: str, row: OrderRecord, terms: Terms | None) 
         return raw if raw not in (None, "") else "空白"
 
     out = []
-    rule = PRODUCT_RULES.get(product)
+    rule = rule_or_fcn(product)
     for col, attr, want, _ in _product_terms(rule):
         if terms is None or getattr(terms, attr) != want:
             out.append(f"{col}「{shown(attr)}」")
-    if rule is not None and rule.non_call_is_tenor() and (terms is None or terms.first_callable != terms.tenor):
+    if rule.non_call_is_tenor() and (terms is None or terms.first_callable != terms.tenor):
         out.append(f"Non-Call「{shown('first_callable_period')}」（天期「{shown('tenor_months')}」）")
     return out

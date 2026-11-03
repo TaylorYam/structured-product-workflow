@@ -67,7 +67,8 @@ class ProductRule:
     has_coupon_barrier: bool = False
     # True：參考條件表該列配息門檻空白時和「K(%)」比（DACN，2026-11-02 使用者決定 DACN-409-01）；False 的商品轉人工覆核
     blank_coupon_barrier_is_strike: bool = False
-    # True：核對只支援 KO 每期觀察、非記憶式、無 KI 的樣態（Super Bull，#309 決策、ADR 0028）；只在到期判定的商品本來就是
+    # True：核對只支援 KO 每期觀察、非記憶式、無 KI 的樣態（Super Bull，#309 決策、ADR 0028）。只在到期判定的商品（BEN）
+    # 不必設：它的 KO Type 固定 Period End、Barrier Type 固定 NONE（`fixed_choices`），`only_periodic_no_ki` 由此推得
     periodic_no_ki_only: bool = False
 
     def non_call_problem(self, months: int, tenor: int | None = None) -> str:

@@ -59,7 +59,7 @@ KO 價欄版與早期版是 BEN 範本剛從 Super Bull 改過來時的寫法，
 | `ko_observation`、`ko_memory` | — | 沒有 KO：第 9 項開頭句、全文沒有 `提前出場`、第 13 項沒有觀察日條，三者都成立才判沒有 KO；交出 `P`／`N`（ADR 0029 起單匯入固定值），任一不成立 → 讀不到 |
 | `ki_type` | 第 9 項 | 全文沒有 `界限事件`、價格表沒有下限價欄、到期（1）直接比執行價：三者都成立 → 無 KI；任一不成立 → 讀不到 |
 | 比價日 | 13.(4) 期末訂價日 | 只有 `比價日_{天期}`，其他 `-`（ADR 0029） |
-| `first_callable_period` | 13.(1) 商品年期 | = 天期（`PRODUCT_RULES` 的 BEN `maturity_only`） |
+| `first_callable_period` | 13.(1) 商品年期 | = 天期（`PRODUCT_RULES` 的 BEN：`ProductRule.non_call_is_tenor`） |
 | `monthly_coupon_pct`、`schedule_table` | — | 不適用（沒有配息、沒有觀察日表） |
 
 ## 4. 範本內的變化維度

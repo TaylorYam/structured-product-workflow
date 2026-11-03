@@ -26,7 +26,7 @@ BEN 沿用 FCN 那組欄（ADR 0029）：`Coupon p.a. (%)` 存紅利、`Non-Call
 | KO(Freq) | `ko_observation` | 固定 `P`（ADR 0029 起單匯入一律存 `Period End`） |
 | KO(memo) | `ko_memory` | 固定 `N` |
 | KI(Freq) | `ki_type` | 無 KI → `-` |
-| Non-Call(月) | `first_callable_period` | = 天期（`PRODUCT_RULES` 的 BEN `maturity_only`） |
+| Non-Call(月) | `first_callable_period` | = 天期（`PRODUCT_RULES` 的 BEN：`ProductRule.non_call_is_tenor`） |
 | 比價日_1～12 | `autocall_date_n` | 見 §4 |
 | UL_n_KO價 | `underlying_n_ko_price` | 說明書沒有 KO 價：不核對（舊總表填的是進場價） |
 | UL_n_下限價 | `underlying_n_ki_price` | 無 KI，表上是 `-` 或空白 |

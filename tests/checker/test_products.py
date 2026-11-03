@@ -263,4 +263,8 @@ def test_variant_terms_follow_the_rule(name, text):
 @pytest.mark.parametrize("product", ["FCN_Stepdown", None, 3, ""])
 def test_unsupported_products_follow_fcn(product):
     assert rule_or_fcn(product) is PRODUCT_RULES[FCN]
-    assert rule_or_fcn(SUPER_BULL) is PRODUCT_RULES[SUPER_BULL]
+
+
+@pytest.mark.parametrize("name", ALL)
+def test_supported_products_get_their_own_rule(name):
+    assert rule_or_fcn(name) is PRODUCT_RULES[name]
