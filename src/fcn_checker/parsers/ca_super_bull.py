@@ -358,8 +358,7 @@ def _scenarios(ti: TextIndex) -> SbScenarios:
 
 def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> SbScenarios:
     """基本假設（天期、面額、初始投資金額、出場紅利）與情境價格表（`ca_variants.basics`）、情境一～三的算式（範本規格 §5）。"""
-    ca_variants.basics(fields, art16, VARIANT)
-    sc = _scenarios(TextIndex(art16))
+    sc = _scenarios(ca_variants.basics(fields, art16, VARIANT))
     prices = fields["underlying_prices"]
     place = f"第一章第 16 項情境分析{ca.SCENARIOS[1]}到期給付金額算式的"
     strike = Mention.of_optional_hit(place, sc.best, lambda v: v.strike, sc.titles[1]).parsed("scenario2_strike")

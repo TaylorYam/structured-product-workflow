@@ -374,8 +374,7 @@ def _bonus_amounts(sc: BenScenarios, n: int) -> ParsedField:
 
 def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> BenScenarios:
     """基本假設（天期、面額、初始投資金額、紅利率）與情境價格表（`ca_variants.basics`）、情境一～三的算式（範本規格 §5）。"""
-    ca_variants.basics(fields, art16, VARIANT)
-    sc = _scenarios(TextIndex(art16))
+    sc = _scenarios(ca_variants.basics(fields, art16, VARIANT))
     prices = fields["underlying_prices"]
     out = []
     for n in (1, 2):

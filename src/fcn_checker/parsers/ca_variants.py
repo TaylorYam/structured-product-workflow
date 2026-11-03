@@ -182,8 +182,8 @@ def worst_row(name: str | None, prices: ParsedField) -> int | None:
     )
 
 
-def basics(fields: dict[str, ParsedField], art16: list[Line], v: Variant) -> None:
-    """基本假設（天期、面額、初始投資金額、紅利）、情境價格表與其後的匯率行（範本規格 §5）。"""
+def basics(fields: dict[str, ParsedField], art16: list[Line], v: Variant) -> TextIndex:
+    """基本假設（天期、面額、初始投資金額、紅利）、情境價格表與其後的匯率行（範本規格 §5）；交回第 16 項的文字索引（給情境用）。"""
     ti = TextIndex(art16)
     where = "第 16 項基本假設"
     tenor = capture("scenario_tenor", ti, r"基本假設天期：(\d+)個月", int, whole_match=True)
@@ -209,6 +209,7 @@ def basics(fields: dict[str, ParsedField], art16: list[Line], v: Variant) -> Non
             ScenarioParam("scenario_initial_investment", where, investment),
         ],
     )
+    return ti
 
 
 def worse_price(worse: Worse, title: list[Line], prices: ParsedField) -> ScenarioPrice:
