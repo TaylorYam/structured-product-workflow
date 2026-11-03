@@ -1,7 +1,8 @@
 """核對的資料庫來源（#68、ADR 0006、0008、0012、0013）。
 
 核對規則照舊只讀參考條件表：資料庫來源依 PDF 檔名的 TDCC 從資料庫產生一份同格式的參考條件表（Excel 檔），
-之後的配對、核對、人工放行、核對結果檔與回報包都和 Excel 來源相同。核對結果檔存好之後再寫回資料庫。對外：
+之後的配對、核對、人工放行、核對結果檔與回報包都和 Excel 來源相同。儲存確認來源沒變之後再寫回資料庫
+（核對結果檔寫不出去也照樣寫回，#443）。對外：
 - `export_reference`：產生參考條件表，回傳沒有列的 TDCC 與原因（資料庫沒有這檔、核對條件還沒完成）。
 - `write_back`：保存每份文件最新的核對結果；說明書與投資人須知都通過或人工放行的商品，把回填值寫進商品資料並鎖住。
 - `WorkflowDatabase`：核對分頁與 `fcn-batch --database` 用的資料庫來源（`fcn_checker.panel_workflow.DatabaseSource`）。
@@ -281,6 +282,9 @@ def _date_cell(cell: Cell) -> None:
 
 # ---------- 寫回 ----------
 
+# 核對結果檔沒寫成時，`check_result`、`backfill_log` 的結果檔欄寫這句（#443；同比價寫回寫說明文字的做法）
+NO_RESULT_FILE = "核對結果檔沒寫成"
+
 
 @dataclass(frozen=True)
 class WriteBackReceipt:
@@ -312,18 +316,22 @@ def write_back(
     user: str | None = None,
     registry: Sequence[Issuer] | None = None,
 ) -> WriteBackReceipt:
-    """核對結果檔存好之後寫回資料庫；整次在同一個 transaction 裡，失敗時什麼都不寫。
+    """儲存確認來源沒變之後寫回資料庫；整次在同一個 transaction 裡，失敗時什麼都不寫。
 
+    要回填哪些依核對結果（`BatchItem.fills_sheet`：說明書與投資人須知都通過或人工放行）決定，核對結果檔寫不出去
+    也照樣回填、鎖住（#443：資料庫是正式紀錄，檔案可以重存）；那時核對結果與回填紀錄的結果檔寫 `NO_RESULT_FILE`。
     回填前確認資料庫現在的條件和核對時用的參考條件表（`batch.reference_sheet`）相同、核對條件仍是完成：
     預覽之後重新匯入起單資料或重算過的商品不回填、不鎖住（鎖住的一定是核對過的條件）。
     `registry` 是核對用的上手清單（看哪家有做評等核對；None：預設的 `REGISTRY`）。
     """
     from fcn_checker.orders.reference import load_reference_sheet
 
+    if not receipt.sources_unchanged:
+        raise CheckSourceError("儲存時沒有確認來源與核對時相同，不寫回資料庫")
     checked_rows = {r.product_code.value: r for r in load_reference_sheet(batch.reference_sheet, fmt).rows}
     headers = _headers(fmt)
     user = user or getpass.getuser()
-    result_file = str(receipt.output)
+    result_file = str(receipt.output) if receipt.output is not None else NO_RESULT_FILE
     codes = list(dict.fromkeys(i.product_code for i in batch.items if i.product_code))
     with conn.transaction():
         known = set(read_many(conn, codes))
@@ -331,11 +339,11 @@ def write_back(
         saved = 0
         for item in batch.items:
             if item.product_code in known and item.kind is not None:
-                filled = any(receipt.filled(i) for i in (item, item.partner) if i is not None)  # 這檔商品有回填
+                filled = any(i.fills_sheet for i in (item, item.partner) if i is not None)  # 這檔商品有回填
                 _save_result(conn, item, filled, result_file, user)
                 saved += 1
         done, already, stale, changes = [], [], [], 0
-        for item in receipt.filled_items:
+        for item in (i for i in batch.items if i.fills_sheet):
             tdcc = item.product_code
             if tdcc not in known:
                 continue

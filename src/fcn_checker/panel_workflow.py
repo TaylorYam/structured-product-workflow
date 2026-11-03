@@ -292,7 +292,8 @@ class DatabaseSource(Protocol):
         ...
 
     def write_back(self, batch: BatchOutcome, receipt: SaveReceipt) -> str:
-        """核對結果檔存好之後，把回填值與核對結果寫回資料庫；回傳給作業人員看的一句，失敗時丟出例外。"""
+        """儲存確認來源沒變之後（核對結果檔沒寫成也一樣，#443），把回填值與核對結果寫回資料庫；
+        回傳給作業人員看的一句，失敗時丟出例外。"""
         ...
 
 
@@ -551,27 +552,44 @@ class PanelSession:
             self.invalidate(outcome.batch.snapshot)
             raise IngestionError("source_changed", _SOURCES_CHANGED)
         self._receipt = receipt
-        if self.use_database and receipt.output is not None:
+        if self.use_database and receipt.sources_unchanged:  # 核對結果檔沒寫成也寫回（#443）
             self._write_back(outcome, receipt)
         return receipt
 
     def retry_write_back(self) -> str:
         """寫回資料庫失敗、排除後再寫一次（核對結果檔不重寫）；回傳要顯示的訊息。"""
         outcome, receipt = self.outcome, self.receipt
-        if not self.write_back_error or outcome is None or receipt is None or receipt.output is None:
+        if not self.write_back_error or outcome is None or receipt is None or not receipt.sources_unchanged:
             raise IngestionError("write_back_not_needed", "目前沒有要重新寫回資料庫的核對結果。")
         self._write_back(outcome, receipt)
         return self.message
 
     def _write_back(self, outcome: PanelOutcome, receipt: SaveReceipt) -> None:
-        """寫回資料庫（#68）：失敗時核對結果檔照樣保留，記下原因、可以重新寫回。"""
+        """寫回資料庫（#68）：失敗時核對結果檔照樣保留，記下原因、可以重新寫回。
+
+        核對結果檔沒寫成時照樣寫回（#443），訊息先說結果檔沒寫成的原因。"""
         assert self.database is not None
+        file_error = receipt.result_file_error
         try:
-            self.message = self.database.write_back(outcome.batch, receipt)
+            written = self.database.write_back(outcome.batch, receipt)
             self.write_back_error = ""
+            self.message = f"核對結果檔沒寫成：{file_error}；{written}" if file_error else written
         except Exception as e:  # 連線中斷等：不影響已經寫好的核對結果檔
             self.write_back_error = str(e).splitlines()[0] if str(e) else type(e).__name__
-            self.message = f"寫回資料庫失敗：{self.write_back_error}。核對結果檔已存好；排除後按「重新寫回資料庫」。"
+            result = (
+                f"核對結果檔也沒寫成：{file_error}；排除後再儲存一次，或" if file_error else "核對結果檔已存好；排除後"
+            )
+            self.message = f"寫回資料庫失敗：{self.write_back_error}。{result}按「重新寫回資料庫」。"
+
+    def saved_text(self, receipt: SaveReceipt) -> str:
+        """儲存後狀態列的文字：收據，資料庫來源再加寫回的結果。核對結果檔沒寫成時寫回的訊息已經帶原因，
+        取代收據的第一行放在最前面（#443）。"""
+        lines = receipt.summary.splitlines()
+        if not (self.use_database and receipt.sources_unchanged):
+            return "\n".join(lines)
+        if receipt.result_file_error:
+            return "\n".join([self.message, *lines[1:]])
+        return "\n".join([*lines, self.message])
 
     @property
     def can_export_bundle(self) -> bool:

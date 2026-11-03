@@ -28,6 +28,7 @@ from .orders.reference import locate
 from .schema import CheckResult, CheckStatus, overall_status
 
 T = TypeVar("T")
+RESULT_FILE_RULE = "output.result_file"
 
 
 @dataclass(frozen=True)
@@ -40,6 +41,8 @@ class SaveReceipt:
     errors: tuple[CheckResult, ...] = ()  # 寫檔錯誤（含來源已變更）
     filled_items: tuple[BatchItem, ...] = ()  # 已回填進核對結果檔的說明書
     cancelled: bool = False  # PANEL：使用者取消選資料夾，什麼都沒寫
+    # 來源確認與核對時相同（參考條件表開得起來）：資料庫來源可以寫回，核對結果檔寫不出去也一樣（#443）
+    sources_unchanged: bool = False
 
     @classmethod
     def nothing_to_save(cls, outcome: BatchOutcome) -> SaveReceipt:
@@ -54,6 +57,13 @@ class SaveReceipt:
         return any(e.reason_code == "source_changed" for e in self.errors)
 
     @property
+    def result_file_error(self) -> str:
+        """來源確認過、核對結果檔卻沒寫成的原因（例：輸出資料夾沒權限）；寫成或沒走到寫檔時為空字串。"""
+        if self.output is not None or not self.sources_unchanged:
+            return ""
+        return next((e.message for e in self.errors if e.rule_id == RESULT_FILE_RULE), "")
+
+    @property
     def complete(self) -> bool:
         return not self.cancelled and self.output is not None and not self.errors
 
@@ -61,8 +71,12 @@ class SaveReceipt:
     def summary(self) -> str:
         if self.cancelled:
             return "已取消儲存，核對結果仍保留。"
-        lines = [f"核對結果檔：{self.output}" if self.output else "核對結果檔：未儲存"]
-        lines.extend(e.message for e in self.errors)
+        file_error = self.result_file_error
+        if self.output:
+            lines = [f"核對結果檔：{self.output}"]
+        else:
+            lines = [f"核對結果檔沒寫成：{file_error}" if file_error else "核對結果檔：未儲存"]
+        lines.extend(e.message for e in self.errors if not (file_error and e.rule_id == RESULT_FILE_RULE))
         return "\n".join(lines)
 
 
@@ -71,6 +85,7 @@ def save_batch(outcome: BatchOutcome, out_dir: Path, *, root: Path, now: dt.date
 
     root 是根目錄（CLI 為執行目錄、PANEL 為安裝根目錄）。核對結果檔與核對紀錄用同一個時間戳。
     核對紀錄寫入失敗只記在收據，不影響核對結果檔；寫檔失敗不影響核對結果，可以再儲存一次。
+    來源確認過（`sources_unchanged`）就可以寫回資料庫，核對結果檔沒寫成也一樣（#443：資料庫是正式紀錄）。
     """
     if outcome.reference_format is None or not outcome.items:  # 整批錯誤：沒有可以儲存的結果
         return SaveReceipt.nothing_to_save(outcome)
@@ -78,11 +93,11 @@ def save_batch(outcome: BatchOutcome, out_dir: Path, *, root: Path, now: dt.date
     errors: list[CheckResult] = []
     output = record = None
     filled: tuple[BatchItem, ...] = ()
-    wb = _attempt(errors, "output.result_file", "核對結果檔", lambda: _open_unchanged_reference(outcome))
+    wb = _attempt(errors, RESULT_FILE_RULE, "核對結果檔", lambda: _open_unchanged_reference(outcome))
     if wb is not None:  # 來源核對後被改過（或讀不到）時，核對結果檔與核對紀錄都不寫
         to_fill = tuple(i for i in outcome.items if i.fills_sheet)
         out = result_file.output_path(Path(out_dir), outcome.reference_sheet, now)
-        output = _attempt(errors, "output.result_file", "核對結果檔", lambda: _fill_and_save(wb, outcome, to_fill, out))
+        output = _attempt(errors, RESULT_FILE_RULE, "核對結果檔", lambda: _fill_and_save(wb, outcome, to_fill, out))
         if output is not None:
             filled = to_fill
         batch_record = reporting.BatchRecord(
@@ -95,7 +110,9 @@ def save_batch(outcome: BatchOutcome, out_dir: Path, *, root: Path, now: dt.date
         record = _attempt(
             errors, "output.record", "核對紀錄", lambda: reporting.save_record(batch_record, Path(root), now)
         )
-    return SaveReceipt(_status(outcome, errors), output, record, tuple(errors), filled)
+    return SaveReceipt(
+        _status(outcome, errors), output, record, tuple(errors), filled, sources_unchanged=wb is not None
+    )
 
 
 def _fill_and_save(wb: Workbook, outcome: BatchOutcome, to_fill: Sequence[BatchItem], out: Path) -> Path:

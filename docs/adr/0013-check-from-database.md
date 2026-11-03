@@ -43,6 +43,15 @@ ADR 0006 決定核對改從資料庫讀條件，核對完把 TS 回填的 ISIN�
 - 核對讀資料庫的測試放在 `tests/checker/`（要用合成說明書）並標 `db`；CI 在有 PostgreSQL 的工作依序跑 `pytest -q -m db tests/checker`。
 - Strike date 怎麼和 TS 的定價日比對（ADR 0011 留給 #68）這次沒有改：規則照舊比交易日；需要時另開 Issue。
 
+### 補充：核對結果檔寫不出去時照樣寫回（2026-11-03，#443）
+
+上面只定了「寫回失敗時結果檔照常輸出」，反方向沒定：原本寫回只寫「核對結果檔寫成的那份清單」，所以輸出資料夾沒權限、磁碟滿時資料庫不回填、不鎖住，畫面也沒說資料庫因此沒寫回。使用者 2026-11-03 決定：**資料庫是正式紀錄、檔案可以重存**，所以結果檔寫不出去時照樣回填、鎖住、存核對結果。
+
+- 要回填哪些依核對結果決定（說明書與投資人須知都通過或人工放行），不再看結果檔有沒有寫成；儲存時確認來源與核對時相同才寫回（來源變了照舊什麼都不寫）。
+- 畫面寫「核對結果檔沒寫成：<原因>；已寫回資料庫：N 檔回填並鎖住…」；`fcn-batch --database` 印同樣兩件事，結束碼照舊是錯誤（2）。寫回也失敗時兩件都說，可以重新寫回。
+- 這時 `check_result`、`backfill_log` 的結果檔欄寫「核對結果檔沒寫成」（同比價寫回寫說明文字，不改資料表）。排除後再儲存一次：結果檔寫成，已鎖住的不再回填，核對結果改記新的結果檔。
+- 本機的核對紀錄（`runtime/核對紀錄`）與 `fcn-batch` 逐份的「已回填」仍指「回填進核對結果檔」；結果檔沒寫成時它們都是沒回填，資料庫實際回填了哪些看 `backfill_log`。
+
 ## English
 
 ### Context
@@ -80,3 +89,12 @@ Implementation choices (low risk, reversible):
 - Old locked 清單更新 products have no check terms, so the database source asks the operator to use Excel.
 - The database-source tests live in `tests/checker/` (they need the synthetic term sheets) and are marked `db`; CI runs `pytest -q -m db tests/checker` serially in the job that has PostgreSQL.
 - How the Strike date is compared with the TS pricing date (left to #68 by ADR 0011) is unchanged here: rules still compare the trade date; open an Issue if needed.
+
+### Addendum: write back even when the result workbook cannot be written (2026-11-03, #443)
+
+The decision above only covered "a failed write-back still writes the result workbook", not the reverse: the write-back used only the list of items filled into a successfully written result workbook, so when the output folder was not writable or the disk was full, the database was neither backfilled nor locked and the window did not say so. The user decided on 2026-11-03 that **the database is the record of truth and the file can be saved again**, so a result workbook that cannot be written still gets the backfill, lock, and check results written.
+
+- Which products are backfilled follows the check result (term sheet and investor sheet both passed or released), not whether the result workbook was written; the write-back still requires the save to confirm the sources are unchanged (a changed source still writes nothing).
+- The window says 「核對結果檔沒寫成：<reason>；已寫回資料庫：N 檔回填並鎖住…」; `fcn-batch --database` prints the same two facts and still exits with the error code (2). If the write-back fails too, both are reported and the write-back can be retried.
+- In that case the result-file column of `check_result` and `backfill_log` holds 「核對結果檔沒寫成」 (text, as the observation write-back does; no schema change). Saving again after fixing the cause writes the workbook; locked products are not backfilled again, and the check results then record the new workbook.
+- The local check record (`runtime/核對紀錄`) and `fcn-batch`'s per-document 「已回填」 still mean "filled into the result workbook"; when the workbook was not written they show nothing filled, and `backfill_log` shows what the database actually received.

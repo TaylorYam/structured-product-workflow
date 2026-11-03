@@ -26,9 +26,10 @@ from fcn_checker.orders.reference import load_reference_sheet
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.rating_formats import RATING_FIELDS
 from fcn_checker.saving import run_batch, save_batch
+from fcn_checker.schema import CheckStatus
 from harness import CONFIG, cli_root, with_iis
 from reference_synth import REFERENCE_HEADERS, Ratings, build_reference_sheet, issuer_value, price, reference_row
-from sp_workflow.check_source import WorkflowDatabase, export_reference, write_back
+from sp_workflow.check_source import NO_RESULT_FILE, WorkflowDatabase, export_reference, write_back
 from sp_workflow.risk_level import BACKFILLED, DONE, PENDING, RiskDetail, RiskLevel
 from sp_workflow.risk_level import _write as write_risk  # 直接寫存好的風險等級（算法另有 tests/test_risk_level.py）
 
@@ -619,6 +620,57 @@ def test_vwap_prices_from_the_term_sheet_are_written_back(pg, tmp_path) -> None:
     ]
 
 
+class PgDatabase:
+    """資料庫來源接到測試資料庫（`pg`）：PANEL 工作階段走真的匯出與寫回。"""
+
+    def __init__(self, pg, folder: Path) -> None:
+        self.pg, self.folder = pg, folder
+
+    def export(self, term_sheets, fmt):
+        return export(self.pg, self.folder, term_sheets)
+
+    def write_back(self, batch, receipt) -> str:
+        return write_back(self.pg, batch, receipt, FMT, prefixes=PREFIXES, user="operator1").summary
+
+
+@pytest.mark.db
+def test_a_result_file_that_cannot_be_written_still_backfills_and_locks(pg, tmp_path) -> None:
+    """#443：核對結果檔寫不出去（輸出資料夾的位置被同名檔案擋住）：資料庫照樣回填、鎖住、存核對結果，
+    收據與畫面文字標出結果檔沒寫成。"""
+    spec = barc_spec()
+    seed(pg, spec)
+    pdfs = pdfs_of(tmp_path, spec)
+    blocked = tmp_path / "out"
+    blocked.write_text("不是資料夾", encoding="utf-8")
+    session = PanelSession(install_root=tmp_path, database=PgDatabase(pg, tmp_path))
+    session.select(None, pdfs)
+    session.select_source(True)
+    session.load_preview()
+    session.start_check()
+
+    receipt = session.save(blocked, now=NOW)
+
+    assert receipt.output is None and receipt.record is not None
+    assert receipt.result_file_error and receipt.summary.startswith("核對結果檔沒寫成：")
+    assert session.message.startswith(f"核對結果檔沒寫成：{receipt.result_file_error}；已寫回資料庫：1 檔回填並鎖住")
+    assert session.write_back_error == "" and session.has_unsaved_result
+    status = session.saved_text(receipt)  # 畫面的狀態列：原因只出現一次，寫回的結果在最前面
+    assert status.startswith(session.message) and status.count(receipt.result_file_error) == 1
+    isin, locked_at = pg.execute(
+        "SELECT isin, locked_at FROM workflow.product WHERE tdcc = %s", (spec.product_code,)
+    ).fetchone()
+    assert isin == SYNTH_ISIN and locked_at is not None
+    stored = pg.execute("SELECT kind, filled, result_file FROM workflow.check_result ORDER BY kind").fetchall()
+    assert stored == [("投資人須知", True, NO_RESULT_FILE), ("說明書", True, NO_RESULT_FILE)]
+    assert {f for (f,) in pg.execute("SELECT DISTINCT result_file FROM workflow.backfill_log")} == {NO_RESULT_FILE}
+
+    # 排除後再儲存一次：核對結果檔寫成，已鎖住的不再回填，核對結果改記新的核對結果檔
+    again = session.save(tmp_path / "reports", now=NOW)
+    assert again.output is not None and session.message.startswith("已寫回資料庫：0 檔回填並鎖住")
+    assert f"{spec.product_code} 已鎖住，沒有再回填" in session.message
+    assert {f for (f,) in pg.execute("SELECT result_file FROM workflow.check_result")} == {str(again.output)}
+
+
 # ---------- 寫回失敗（不需要資料庫） ----------
 
 
@@ -652,10 +704,51 @@ def test_a_failed_write_back_keeps_the_result_file_and_can_be_retried(tmp_path) 
     receipt = session.save(tmp_path / "out", now=NOW)
 
     assert receipt.output is not None and receipt.output.exists()
+    assert session.saved_text(receipt) == f"{receipt.summary}\n{session.message}"
     assert session.write_back_error == "server closed the connection unexpectedly"
     assert "寫回資料庫失敗" in session.message and "重新寫回資料庫" in session.message
     assert session.retry_write_back() == "已寫回資料庫"
     assert session.write_back_error == "" and database.attempts == 2
+
+
+def test_a_failed_result_file_and_a_failed_write_back_say_both(tmp_path) -> None:
+    """#443：結果檔寫不出去時照樣寫回；寫回也失敗時兩件都說，可以重新寫回。"""
+    spec = barc_spec()
+    pdfs = pdfs_of(tmp_path, spec)
+    database = FakeDatabase(build_reference_sheet(tmp_path / "資料庫.xlsx", [reference_row(spec)]))
+    session = PanelSession(install_root=tmp_path, database=database)
+    session.select(None, pdfs)
+    session.select_source(True)
+    session.load_preview()
+    session.start_check()
+    blocked = tmp_path / "out"
+    blocked.write_text("不是資料夾", encoding="utf-8")
+
+    receipt = session.save(blocked, now=NOW)
+
+    assert receipt.output is None and database.attempts == 1
+    assert session.message.startswith(
+        f"寫回資料庫失敗：server closed the connection unexpectedly。核對結果檔也沒寫成：{receipt.result_file_error}；"
+    )
+    assert session.saved_text(receipt).count(receipt.result_file_error) == 1
+    assert session.retry_write_back().startswith(f"核對結果檔沒寫成：{receipt.result_file_error}；已寫回資料庫")
+
+
+def test_a_changed_source_writes_nothing_back(tmp_path) -> None:
+    """來源在核對後被改過：核對結果檔與核對紀錄都不寫，也不寫回資料庫。"""
+    spec = barc_spec()
+    sheet = build_reference_sheet(tmp_path / "資料庫.xlsx", [reference_row(spec)])
+    database = FakeDatabase(sheet)
+    session = PanelSession(install_root=tmp_path, database=database)
+    session.select(None, pdfs_of(tmp_path, spec))
+    session.select_source(True)
+    session.load_preview()
+    session.start_check()
+    build_reference_sheet(sheet, [reference_row(spec.with_(annual=spec.annual + 1))])
+
+    with pytest.raises(IngestionError, match="已變更"):
+        session.save(tmp_path / "out", now=NOW)
+    assert database.attempts == 0
 
 
 def test_excel_source_never_touches_the_database(tmp_path) -> None:
@@ -705,6 +798,26 @@ def test_cli_database_source_checks_pdfs_and_writes_back(tmp_path, monkeypatch, 
 
     assert code == 0
     assert "已寫回資料庫" in capsys.readouterr().out
+
+
+def test_cli_database_source_writes_back_when_the_result_file_fails(tmp_path, monkeypatch, capsys) -> None:
+    """#443：`fcn-batch --database` 比照 PANEL：結果檔寫不出去仍寫回，說明兩件事，結束碼是 ERROR。"""
+    from fcn_checker import cli
+
+    spec = barc_spec()
+    pdfs = pdfs_of(tmp_path, spec)
+    database = FakeDatabase(build_reference_sheet(tmp_path / "資料庫.xlsx", [reference_row(spec)]))
+    database.attempts = 1  # 寫回直接成功
+    monkeypatch.setattr(cli, "_database_source", lambda args: database)
+    cli_root(tmp_path, monkeypatch)
+    blocked = tmp_path / "out"
+    blocked.write_text("不是資料夾", encoding="utf-8")
+
+    code = cli.main(["--database", *map(str, pdfs), "--out", str(blocked)])
+
+    out = capsys.readouterr().out
+    assert code == cli.EXIT[CheckStatus.ERROR] and database.attempts == 2
+    assert "核對結果檔沒寫成：" in out and "已寫回資料庫" in out
 
 
 def test_cli_without_database_still_needs_a_reference_sheet(capsys) -> None:

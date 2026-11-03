@@ -837,8 +837,7 @@ class CheckTab(ttk.Frame):
     def _show_receipt(self, receipt: SaveReceipt):
         if self.session.outcome is None:
             self._reset()
-        written = self.session.use_database and receipt.output is not None  # 資料庫來源：另寫寫回的結果
-        self.status.set(receipt.summary + (f"\n{self.session.message}" if written else ""))
+        self.status.set(self.session.saved_text(receipt))  # 資料庫來源：另寫寫回的結果
         if receipt.output is not None and self.on_saved is not None:
             self.on_saved(receipt.output)
 
