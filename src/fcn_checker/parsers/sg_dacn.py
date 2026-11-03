@@ -22,6 +22,9 @@ from . import dacn, money, sg
 from .common import Mention
 from .layout import TextIndex, capture, join_text, parse_date
 
+# 區間累積配息第 8 項的 n(i)、N(i) 定義（範本規格 §8 條件 5）
+ACCRUAL_DEFINITIONS = ("n(i)(i=", "N(i)(i=")
+
 TEMPLATE_ID = "sg-zh-dacn-pd"
 # 2：拿掉訂價日早於 2026-06-01 的條件，版本只看寫法（2026-11-02 使用者決定，workflow #409）
 PARSER_VERSION = "2"
@@ -64,7 +67,7 @@ ACCRUAL_CALC = _CALC + r"[xX×]\(\d+/\d+\)="
 
 def is_accrual(art8: str) -> bool:
     """商品家族（區間累積配息，範本規格 §8 條件 5）：第 8 項有 n(i)、N(i) 兩個定義，且配息公式有「×配息率×[n(i)/N(i)]」。"""
-    return all(x in art8 for x in sg.ACCRUAL_DEFINITIONS) and FAMILY in art8
+    return all(x in art8 for x in ACCRUAL_DEFINITIONS) and FAMILY in art8
 
 
 def detect(lines: Sequence[Line]) -> DetectionResult:

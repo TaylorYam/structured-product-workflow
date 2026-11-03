@@ -25,7 +25,7 @@ TEMPLATE_ID = "natixis-zh-iis"
 # 5：警語的受託機構名稱（Issue #306）；6：說明文字幣別（Issue #318）
 # 7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 8：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
-# 9：辨識另要求貳、商品事項沒有區間計息寫法（和 Natixis DACN 投資人須知互斥，workflow #371）
+# 9：辨識曾另要求貳、商品事項沒有區間計息寫法（workflow #371；#436 起同一家上手由專到泛由上手註冊表決定，版本不變）
 PARSER_VERSION = "9"
 # 發行機構信用評等（#240）：商品簡介 `發行機構之長期債務信用評等(截至本中文投資人須知刊印日期)：長期債務信用評等標準普爾評等A+/…。`
 RATINGS = (
@@ -100,7 +100,7 @@ def body(lines: Sequence[Line]) -> list[Line]:
 
 
 class Skeleton(NamedTuple):
-    """Natixis 投資人須知共用的辨識結果（FCN、DACN 都要成立的條件）：全文索引、中英文名稱（去空白）、不成立的條件與證據。"""
+    """Natixis 投資人須知共用的辨識結果（同上手各商品家族的範本都要成立的條件）：全文索引、中英文名稱（去空白）、不成立的條件與證據。"""
 
     text: TextIndex
     zh: str
@@ -146,14 +146,12 @@ def product_text(ti: TextIndex) -> str:
 
 
 def detect(lines: Sequence[Line]) -> DetectionResult:
-    """範本辨識（範本規格 §6）：骨架（`skeleton`）、英文名稱都成立，且貳、商品事項沒有區間計息寫法（條件 6，和 Natixis DACN
-    投資人須知互斥）才是 Natixis FCN 投資人須知。"""
+    """範本辨識（範本規格 §6）：骨架（`skeleton`）、英文名稱都成立才是 Natixis FCN 投資人須知（同一家的商品家族範本先辨識，
+    見 issuers.py）。"""
     sk = skeleton(lines)
     failed = list(sk.failed)
     if not (sk.en.startswith("Natixis–") and squash(natixis.NAME_EN_MARK) in sk.en):
         failed.append(f"英文名稱沒有「Natixis –」與「{natixis.NAME_EN_MARK}」")
-    if found := natixis.accrual_words(product_text(sk.text)):
-        failed.append(f"貳、商品事項有區間計息（DACN）的寫法「{'」「'.join(found)}」")
     return DetectionResult(not failed, failed, sk.evidence)
 
 

@@ -25,7 +25,7 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 
-from fcn_checker.issuers import BARC, Issuer
+from fcn_checker.issuers import BARC, Issuer, Template
 from fcn_checker.schema import CheckReport
 from harness import STANDARD, check_sheet, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
@@ -650,7 +650,8 @@ def check(
 
 
 def barc_adapter(**overrides: Any) -> Issuer:
-    """依上手 adapter interface 建立以 BARC parser 為底的測試用上手；overrides 換掉其中幾項。"""
+    """依上手 adapter interface 建立以 BARC parser 為底、只有一個範本的測試用上手；overrides 換掉其中幾項（上手的
+    `reference_fields`、`ratings`、`with_calendar`，其餘是範本的欄位）。"""
     from fcn_checker.parsers import barc as parser
     from fcn_checker.rules import barc as rules
 
@@ -666,7 +667,9 @@ def barc_adapter(**overrides: Any) -> Issuer:
         "reference_fields": rules.REFERENCE_FIELDS,
         "iis": BARC.iis,  # 投資人須知照 BARC 範本
     }
-    return Issuer(**{**fields, **overrides})
+    merged = {**fields, **overrides}
+    issuer = {k: merged.pop(k) for k in ("reference_fields", "ratings", "with_calendar") if k in merged}
+    return Issuer(merged["code"], (Template(**merged),), **issuer)
 
 
 # ---------------------------------------------------------------- 投資人須知（docs/checker/templates/barc-zh-iis.md）

@@ -18,7 +18,7 @@ from fcn_checker.issuers import BARC
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.saving import run_batch
 from fcn_checker.schema import CheckStatus
-from harness import CONFIG, REVIEW_STANDARD, ROOT, check_all, cli_root, iis_path, with_iis
+from harness import CONFIG, REVIEW_STANDARD, ROOT, check_all, cli_root, iis_path, registry_of, with_iis
 from pdf_writer import Edit
 from reference_synth import build_reference_sheet, reference_row
 
@@ -484,7 +484,7 @@ def test_iis_rule_message_naming_the_term_sheet_is_kept_as_written(tmp_path):
     spec = Spec()
     ts, iis = pair(tmp_path, spec)
     sheet_ref = build_reference_sheet(tmp_path / "ref.xlsx", [reference_row(spec)])
-    _, sheet = check_all(sheet_ref, [ts, iis], CONFIG.with_registry((barc,))).items
+    _, sheet = check_all(sheet_ref, [ts, iis], CONFIG.with_registry(registry_of(barc))).items
 
     (r,) = [r for r in sheet.report.results if r.rule_id == "iis.fake"]
     assert r.message == message and r.document == DocKind.IIS
@@ -533,7 +533,7 @@ def test_unexpected_error_while_reading_the_iis_names_the_iis(tmp_path):
     spec = Spec()
     ts, iis = pair(tmp_path, spec)
     sheet_ref = build_reference_sheet(tmp_path / "ref.xlsx", [reference_row(spec)])
-    _, sheet = check_all(sheet_ref, [ts, iis], CONFIG.with_registry((barc,))).items
+    _, sheet = check_all(sheet_ref, [ts, iis], CONFIG.with_registry(registry_of(barc))).items
 
     assert problems(sheet) == ["投資人須知：ValueError: 讀出失敗"]
 

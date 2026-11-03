@@ -13,7 +13,7 @@ from barc_synth import Spec, barc_adapter, build_not_barc_pdf, build_pdf, check,
 from fcn_checker.cli import main
 from fcn_checker.issuers import BARC
 from fcn_checker.schema import CheckStatus
-from harness import CONFIG, REVIEW_STANDARD, check_all, cli_root, load_config, load_record, with_iis
+from harness import CONFIG, REVIEW_STANDARD, check_all, cli_root, load_config, load_record, registry_of, with_iis
 from reference_synth import build_reference_sheet, reference_row
 
 PASS, REVIEW = CheckStatus.PASS, CheckStatus.REVIEW_REQUIRED
@@ -49,7 +49,7 @@ def test_two_issuers_detected_requires_review(tmp_path):
     spec = Spec()
     pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", spec)
     sheet = build_reference_sheet(tmp_path / "ref.xlsx", [reference_row(spec)])
-    outcome = check_all(sheet, [pdf], CONFIG.with_registry((BARC, fake)))
+    outcome = check_all(sheet, [pdf], CONFIG.with_registry((*registry_of(BARC), fake)))
     report = outcome.items[0].report
     r = only(report, "template.detect")
     assert (r.status, r.reason_code) == (REVIEW, "template_ambiguous")
@@ -96,12 +96,14 @@ def _check_withholding(tmp_path, names, *, raises=False, issuer="BARC", issuer_r
     import hsbc_synth
     from fcn_checker.issuers import by_code
 
-    base = by_code(issuer)
-    adapter = dataclasses.replace(
-        base,
-        read=lambda lines: _Withheld(base.read(lines), names, raises=raises),
-        rules=base.rules if issuer_rules else lambda ctx: [],
-    )
+    base = by_code(issuer).templates[-1]  # FCN 範本
+    adapter = registry_of(
+        dataclasses.replace(
+            base,
+            read=lambda lines: _Withheld(base.read(lines), names, raises=raises),
+            rules=base.rules if issuer_rules else lambda ctx: [],
+        )
+    )[0]
     tmp_path.mkdir(exist_ok=True)
     if issuer == "BARC":
         spec = Spec()
@@ -172,7 +174,7 @@ def test_read_term_sheet_gives_missing_for_a_field_it_does_not_provide(tmp_path,
     pdf = module.build_pdf(tmp_path / "TS.pdf", module.Spec())
     doc = open_pdf(pdf)
     try:
-        ts = by_code(issuer).read(extract_lines(doc))
+        ts = by_code(issuer).templates[-1].read(extract_lines(doc))
     finally:
         doc.close()
     pf = ts.f("no_such_field")

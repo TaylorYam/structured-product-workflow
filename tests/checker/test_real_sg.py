@@ -22,7 +22,7 @@ from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.schema import CheckStatus as S
 from fcn_checker.standard_fields import Occurrence
 from fcn_checker.text import squash
-from harness import REVIEW_STANDARD, ROOT, STANDARD, check_all
+from harness import REVIEW_STANDARD, ROOT, STANDARD, check_all, registry_of
 from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, rated_check_format, requires
 
 pytestmark = [
@@ -208,7 +208,7 @@ def test_no_other_sample_is_detected_as_an_sg_investor_sheet():
     others = [p for p in pdfs() if p.name not in sg_iis]
     assert len(others) > 40
     for path in others:
-        issuer, _ = detect_iis(_lines(path), (SG,))
+        issuer, _ = detect_iis(_lines(path), registry_of(SG))
         assert issuer is None, path.name
 
 
@@ -219,5 +219,5 @@ def test_no_other_sample_is_detected_as_an_sg_term_sheet(items):
     others = [p for p in pdfs() if p.name not in sg]
     assert len(others) > 40
     for path in others:
-        issuer, _ = detect(_lines(path), (SG,))
+        issuer, _ = detect(_lines(path), registry_of(SG))
         assert issuer is None, path.name

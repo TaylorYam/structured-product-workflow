@@ -30,7 +30,7 @@ TEMPLATE_ID = "natixis-zh-pd"
 # 8：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 # 9：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 10：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
-# 11：辨識另要求沒有區間計息寫法（和 Natixis DACN 互斥）；頁尾英文名稱第二行也收「Principal Protected, …」（workflow #371）
+# 11：辨識曾另要求沒有區間計息寫法（#436 起同一家上手由專到泛由上手註冊表決定，版本不變）；頁尾英文名稱第二行也收「Principal Protected, …」（workflow #371）
 PARSER_VERSION = "11"
 # 發行機構信用評等（#240）：封面「發行機構名稱」下一行 `(長期債務信用評等標準普爾評等A+/穆迪評等A2/惠譽評等A+ (高級優先債務))(截至…)`、第一章第 3 項 `發行機構長期債務信用評等(截至…)：長期債務信用評等…。`、第二章 (7) `信用評等：長期債務信用評等…(截至…)`
 RATINGS = (
@@ -58,10 +58,8 @@ LAYOUT = LayoutSpec(
 )
 ISSUER = "法國外貿銀行"
 NAME_EN_MARK = "Autocallable Fixed Coupon Note Linked to Basket of Equities"
-# 區間計息（DACN）才有的寫法：FCN 範本全文都沒有（範本規格 §8 條件 8；FCN KO 期按比例條款也有「x (n/N)」，不能只看 n、N）
-ACCRUAL_WORDS = ("「變動配息金額」", "配息界限價格")
 ARTICLES = 26  # 第一章條數
-# 頁尾英文名稱第二行：FCN 從「Protected」換行，DACN（名稱較長）從「Principal」換行（workflow #371）
+# 頁尾英文名稱第二行：FCN 從「Protected」換行，名稱較長的區間計息商品從「Principal」換行（workflow #371）
 FOOTER = re.compile(
     r"^(Natixis – .*|(?:Principal )?Protected, Unsecured and Non-Guaranteed\)|第\d+頁/共計?\d+頁"
     r"|C[12] - (?:Inter ?nal|Public) Natixis)$"
@@ -187,8 +185,8 @@ def coupon_pa_terms(ti: TextIndex) -> list[ScenarioParam]:
 
 @dataclass(frozen=True)
 class Variant:
-    """FCN 與 DACN 說明書（parsers/natixis_dacn.py）讀法不同的地方：第 9 項價格表的欄、第 16 項情境各期配息列與其配息率
-    出處、要核對平均年化報酬率的情境（DACN 只有情境一 = 年利率，其他情境假設計息一半天數）。"""
+    """同上手各商品家族說明書（例：parsers/natixis_dacn.py）讀法不同的地方：第 9 項價格表的欄、第 16 項情境各期配息列與其
+    配息率出處、要核對平均年化報酬率的情境（區間計息只有情境一 = 年利率，其他情境假設計息一半天數）。"""
 
     table: price_table.TableSpec
     coupon_row: re.Pattern[str]  # 情境各期配息列（在原文行上找；第 1 組是面額）
@@ -326,7 +324,7 @@ def _row_field(name: str, row: CoverRow | None, pattern: str, convert: Callable 
 
 @dataclass
 class Skeleton:
-    """Natixis 說明書共用的辨識結果（FCN、DACN 都要成立的條件）：版面、封面欄、中英文名稱（去空白）、不成立的條件與證據。"""
+    """Natixis 說明書共用的辨識結果（同上手各商品家族的範本都要成立的條件）：版面、封面欄、中英文名稱（去空白）、不成立的條件與證據。"""
 
     document: Document
     rows: list[CoverRow]
@@ -373,20 +371,13 @@ def skeleton(lines: Sequence[Line]) -> Skeleton:
     return Skeleton(doc, rows, zh, en, failed, [Evidence.of(x) for x in cover[:2]])
 
 
-def accrual_words(text: str) -> list[str]:
-    """去空白全文裡出現的區間計息寫法（`ACCRUAL_WORDS`）。"""
-    return [w for w in ACCRUAL_WORDS if w in text]
-
-
 def detect(lines: Sequence[Line]) -> DetectionResult:
-    """範本辨識（範本規格 §8）：骨架（`skeleton`）、英文名稱（條件 4）都成立，且全文沒有區間計息寫法（條件 8，和 Natixis DACN
-    互斥）才是 Natixis FCN 說明書。"""
+    """範本辨識（範本規格 §8）：骨架（`skeleton`）、英文名稱（條件 4）都成立才是 Natixis FCN 說明書（同一家的商品家族範本
+    先辨識，見 issuers.py）。"""
     sk = skeleton(lines)
     failed = list(sk.failed)
     if not (sk.en.startswith("Natixis–") and squash(NAME_EN_MARK) in sk.en):
         failed.append(f"封面商品英文名稱沒有「Natixis –」與「{NAME_EN_MARK}」")
-    if found := accrual_words(TextIndex(sk.document.lines).text):
-        failed.append(f"有區間計息（DACN）的寫法「{'」「'.join(found)}」")
     return DetectionResult(not failed, failed, sk.evidence)
 
 
@@ -409,7 +400,7 @@ class NatixisTermSheet:
 
 
 def read(lines: Sequence[Line], variant: Variant = FCN) -> NatixisTermSheet:
-    """讀出標準欄位與 Natixis 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）；`variant` 是 FCN／DACN 不同的讀法。"""
+    """讀出標準欄位與 Natixis 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）；`variant` 是各商品家族不同的讀法。"""
     doc = document(lines)
     arts = doc.articles(1)
     fields: dict[str, ParsedField] = {}

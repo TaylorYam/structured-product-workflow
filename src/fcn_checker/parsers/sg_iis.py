@@ -21,7 +21,7 @@ from .layout import TextIndex, parse_date
 TEMPLATE_ID = "sg-zh-iis"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #288）；3：單一評價日寫法「評價日：」（Issue #130）；
 # 4：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
-# 5：辨識加「收益分配事項沒有 [n(i)/N(i)]」，和 SG DACN 投資人須知互斥（workflow #369）
+# 5：辨識曾加「收益分配事項沒有 [n(i)/N(i)]」（workflow #369；#436 起同一家上手由專到泛由上手註冊表決定，版本不變）
 PARSER_VERSION = "5"
 # 保證機構信用評等（#241）：商品簡介 `保證機構之長期債務信用評等：截至本中文投資人須知刋印日期，標準普爾A、穆迪A1、惠譽A+`
 # （後面直接接「本商品之發行評等」）
@@ -50,7 +50,6 @@ SECTIONS = (
 )
 CODES = r"TDCC商品代號\d{12}，受託(?:或銷售)?機構商品代號\d{12}，ISIN為[A-Z]{2}[A-Z0-9]{10}"
 PAYOUT_SECTION = ("收益分配事項，舉例如下：", "贖回價金之計算：")  # 收益分配事項：配息率與 KO／KI 寫法所在的段落
-ACCRUAL = "[n(i)/N(i)]"  # 區間累積配息（DACN）的配息公式（parsers/sg_dacn_iis.py）；FCN 投資人須知不會有
 MATURITY = "■到期贖回金額："  # 收益分配事項裡到期贖回各款的開頭；之前是自動提前出場的寫法
 NO_AUTOCALL = "主要給付項目為配息金額及到期贖回金額："
 KO_D = r"(?:記憶事件)?觀察期間：自" + iis.DATE + r"起（含）起至最終評價日（含）止之每一個預定交易日"
@@ -114,7 +113,7 @@ def names_pattern(en_tail: str) -> str:
 
 
 def skeleton(lines: Sequence[Line]) -> tuple[TextIndex, list[str], list[Evidence]]:
-    """SG 投資人須知骨架（範本規格 §6 條件 1、3、4、5，FCN 與 DACN 共用）：全文索引、不成立的條件與證據。"""
+    """SG 投資人須知骨架（範本規格 §6 條件 1、3、4、5，同上手各商品家族的範本共用）：全文索引、不成立的條件與證據。"""
     ti = TextIndex(lines)
     text = ti.text
     first = squash(lines[0].text) if lines else ""
@@ -137,14 +136,12 @@ def payout_text(ti: TextIndex) -> str:
 
 
 def detect(lines: Sequence[Line]) -> DetectionResult:
-    """範本辨識（範本規格 §6）：骨架、封面名稱都成立，且收益分配事項沒有區間累積配息的 [n(i)/N(i)]（那是 SG DACN）。"""
+    """範本辨識（範本規格 §6）：骨架、封面名稱都成立（同一家的商品家族範本先辨識，見 issuers.py）。"""
     ti, failed, evidence = skeleton(lines)
     if re.match(names_pattern(NAME_EN_TAIL), ti.text) is None:
         failed.append(
             "封面名稱不是「SG ISSUER …（不保本及無擔保）」與「SG ISSUER … (Non Principal Guaranteed and Unsecured)」"
         )
-    if ACCRUAL in payout_text(ti):
-        failed.append(f"收益分配事項有區間累積配息的「{ACCRUAL}」（DACN）")
     return DetectionResult(not failed, failed, evidence)
 
 

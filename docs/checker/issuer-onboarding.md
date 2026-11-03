@@ -110,7 +110,7 @@
 
 | 內容 | 路徑 | 說明 |
 |---|---|---|
-| 上手註冊 | `src/fcn_checker/issuers.py` | 在 `REGISTRY` 登記一筆 `Issuer`，說明書欄位（§6.2a）：識別資料（`code`、`template_id`、`label`、`parser_version`、`not_covered`）、`detect`、`read`、`rules`、`reference_fields`（依規則需要宣告）；另以 `iis` 掛上 `IisTemplate` |
+| 上手註冊 | `src/fcn_checker/issuers.py` | 加一個範本物件 `Template`（§6.2a）：識別資料（`code`、`template_id`、`label`、`parser_version`、`not_covered`）、`detect`、`read`、`rules`，以 `iis` 掛上 `IisTemplate`；新上手再在 `REGISTRY` 登記一筆 `Issuer`（上手的事只寫一次：`code`、範本清單、`reference_fields`（依規則需要宣告）、`ratings`、`with_calendar`） |
 | 上手編號 | `config/issuer_prefixes.toml`、`config/reference_sheet.toml` | 登記商品代號前三碼 → 上手代號，以及該上手在參考條件表「發行機構」欄的寫法（[參考條件表格式](order-formats/reference-sheet.md)） |
 | 支援樣態 | `config/issuer_prefixes.toml` 的 `[unsupported_variants]` | 確認這家上手已依作業人員的「上手支援樣態清單」登記不支援樣態（沒有時寫空清單，沒登記載入設定就報錯）；不支援樣態的商品在辨識時就攔下，不需要範本（Issue #207） |
 | 說明書 parser | `src/fcn_checker/parsers/<上手>.py`（表格可拆檔；數字、推得欄位、`Hit`／`hits`／`one`、`Mention` 用 `parsers/common.py`，不複製） | 範本辨識 `detect`；讀出 `read` 交出 `standard_fields.STANDARD_FIELDS` 的全部標準欄位（含提前出場排程、各出處清單）與該上手規則需要的專屬資料；`TEMPLATE_ID`、`PARSER_VERSION`；提供自己的 `LayoutSpec` |
@@ -123,7 +123,9 @@
 | 合成測試資料 | `tests/checker/<上手>_synth.py` | `Spec` 繼承 `reference_synth.ProductSpec`（補預設商品代號、該上手專屬的文件選項），依該上手版面把規格畫成虛構 PDF（版面文字由規格算出），只用 `tests/checker/pdf_writer.py` 排版；`build_pdf`／`build_iis_pdf` 收 `edits`（`pdf_writer.Edit`，每個至少換到一處）製造錯誤，模組說明列出段落代號；參考條件表列一律 `reference_synth.reference_row(spec)`（不自己產），固定文字取 `harness.STANDARD`，單份核對用 `tests/checker/harness.py`；不引用其他上手合成器 |
 | 測試 | `tests/checker/test_check_<上手>*.py`、`tests/checker/test_real_samples.py` | 合成測試進 CI；真實樣本測試只在本機 |
 
-新上手要碰的檔只有：`parsers/<上手>.py`、`parsers/<上手>_iis.py`、`rules/<上手>.py`、`rules/<上手>_iis.py`（有範本專屬檢查才需要）、`issuers.py` 的 `REGISTRY` 一筆、三個設定檔（`review_standard.toml` 的 `[issuer.<上手>]`、`issuer_prefixes.toml`、`reference_sheet.toml`）、合成測試與文件。共用的 `config.py`、`rules/review_standard.py` 不在清單裡；需要新的「一種基準」（所有上手都可能用到的新欄位）時才在 `ISSUER_FIELDS` 加一個欄位，另開 Issue。
+新上手要碰的檔只有：`parsers/<上手>.py`、`parsers/<上手>_iis.py`、`rules/<上手>.py`、`rules/<上手>_iis.py`（有範本專屬檢查才需要）、`issuers.py` 的一個 `Template` 與 `REGISTRY` 一筆 `Issuer`、三個設定檔（`review_standard.toml` 的 `[issuer.<上手>]`、`issuer_prefixes.toml`、`reference_sheet.toml`）、合成測試與文件。
+
+已上線上手新增商品家族（例：Super Bull、BEN、DACN）時是「加一個範本物件＋兩段 TOML」：家族的 parser、規則（與投資人須知）各一檔，在 `issuers.py` 加一個 `Template`（`products` 寫該商品種類）放進該上手 `Issuer` 範本清單的前面（由專到泛：商品家族在前、FCN 最後），再在 `config/issuer_prefixes.toml` 的 `[auto_check_products]` 開放該上手、在 `config/review_standard.toml` 加 `[issuer.<上手>.product_names.<商品種類>]`。辨識時同一家上手由專到泛取第一個命中的範本（較專的範本認得出家族但版本不支援時停在那裡），所以**不改**同上手 FCN 的 parser、不寫「不是某家族才算 FCN」的反向條件；`tests/checker/test_issuer_registry.py` 會檢查每個家族的合成文件在該上手剛好命中自己的範本、兩份 TOML 都有登記（Issue #436）。共用的 `config.py`、`rules/review_standard.py` 不在清單裡；需要新的「一種基準」（所有上手都可能用到的新欄位）時才在 `ISSUER_FIELDS` 加一個欄位，另開 Issue。
 
 ### 6.2a 新上手要提供什麼、哪些自動沿用（[ADR 0009](adr/0009-shared-rules-defined-per-rule.md)）
 
@@ -228,8 +230,8 @@
 - [ ] 開發者與作業人員各自完成螢光標記（開發者版本先完成）；交集與差異的決定已記錄
 - [ ] 範本規格、參考條件表對照文件與必要設定、核對規則、審查標準差異已合併
 - [ ] 實作 Issue 建立；必要時分階段；樣本不足的型態另開 Issue
-- [ ] 已在 `issuers.py` 登記新上手；既有上手的測試與本機真實樣本測試不變
+- [ ] 已在 `issuers.py` 登記新上手（新增商品家族：加一個範本放在 FCN 前面＋兩段 TOML，`test_issuer_registry.py` 補該家族的合成器）；既有上手的測試與本機真實樣本測試不變
 - [ ] parser、規則、合成測試、本機真實樣本測試完成；驗收門檻全部達成
-- [ ] 信用評等（既有 14 家 #240～#243 都已做；新上手可以晚一點做，但要照這幾步補上，§6.2a）：說明書與投資人須知 parser 宣告 `RATINGS` tuple（只寫保證機構評等的宣告 `GUARANTOR_RATINGS`）並交出 `issuer_ratings`／`guarantor_ratings`、投資人須知 `PROVIDED` 加範本有的評等欄位、`issuers.py` 標 `Issuer.ratings=True`、合成器（`<上手>_synth.py`）照真實寫法畫出評等段落（保證機構評等照 `ProductSpec.guarantor_ratings`）並在 `tests/checker/test_ratings.py` 登記、該上手核對規則與範本規格文件改為核對評等、[共用核對規則](rules/shared-check-rules.md) §10 的上手與段落表加一列；真實樣本以初始評等表比對
+- [ ] 信用評等（既有 14 家 #240～#243 都已做；新上手可以晚一點做，但要照這幾步補上，§6.2a）：說明書與投資人須知 parser 宣告 `RATINGS` tuple（只寫保證機構評等的宣告 `GUARANTOR_RATINGS`）並交出 `issuer_ratings`／`guarantor_ratings`、投資人須知 `PROVIDED` 加範本有的評等欄位、`issuers.py` 的 `Issuer` 標 `ratings=True`、合成器（`<上手>_synth.py`）照真實寫法畫出評等段落（保證機構評等照 `ProductSpec.guarantor_ratings`）並在 `tests/checker/test_ratings.py` 登記、該上手核對規則與範本規格文件改為核對評等、[共用核對規則](rules/shared-check-rules.md) §10 的上手與段落表加一列；真實樣本以初始評等表比對
 - [ ] 文件同步並合併
 - [ ] 試跑並回饋

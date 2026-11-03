@@ -12,7 +12,7 @@ import pytest
 from fcn_checker.extraction import extract_lines
 from fcn_checker.issuers import MS, detect, detect_iis
 from fcn_checker.schema import CheckStatus as S
-from harness import check_all
+from harness import check_all, registry_of
 from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, rated_check_format, requires
 
 pytestmark = [
@@ -89,7 +89,7 @@ def test_no_other_sample_is_detected_as_an_ms_investor_sheet(items):
             lines = extract_lines(doc)
         finally:
             doc.close()
-        issuer, _ = detect_iis(lines, (MS,))
+        issuer, _ = detect_iis(lines, registry_of(MS))
         assert issuer is None, path.name
 
 
@@ -105,5 +105,5 @@ def test_no_other_sample_is_detected_as_an_ms_term_sheet(items):
             lines = extract_lines(doc)
         finally:
             doc.close()
-        issuer, _ = detect(lines, (MS,))
+        issuer, _ = detect(lines, registry_of(MS))
         assert issuer is None, path.name

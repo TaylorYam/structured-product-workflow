@@ -23,7 +23,7 @@ from .layout import TextIndex, parse_date
 TEMPLATE_ID = "dbs-zh-iis"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 4：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
-# 5：辨識加「收益分配事項沒有其區間下限價格」，和 DBS DACN 投資人須知（parsers/dbs_dacn_iis.py）互斥（workflow #370）
+# 5：辨識曾加「收益分配事項沒有其區間下限價格」（workflow #370；#436 起同一家上手由專到泛由上手註冊表決定，版本不變）
 PARSER_VERSION = "5"
 # 發行機構信用評等（#240）：商品簡介 `發行機構長期債務信用評等：截至本中文投資人須知刊印日，發行機構之長期債務信用評等經穆迪(Moody’s)評定為Aa1、…。`
 RATINGS = (
@@ -95,10 +95,8 @@ def body(lines: Sequence[Line]) -> list[Line]:
 
 
 def detect(lines: Sequence[Line]) -> DetectionResult:
-    """範本辨識（範本規格 §6）：全部條件成立才是 DBS 投資人須知；收益分配事項的累積日數比區間下限價格的是 DACN。"""
+    """範本辨識（範本規格 §6）：全部條件成立才是 DBS 投資人須知（同一家的商品家族範本先辨識，見 issuers.py）。"""
     ti, failed, evidence = skeleton(lines)
-    if dbs.RANGE_MARK in coupon_text(ti):
-        failed.append(f"收益分配事項的累積日數比「{dbs.RANGE_MARK}」（是區間累計配息 DACN，不是固定利率 FCN）")
     return DetectionResult(not failed, failed, evidence)
 
 
@@ -109,7 +107,7 @@ def coupon_text(ti: TextIndex) -> str:
 
 
 def skeleton(lines: Sequence[Line]) -> tuple[TextIndex, list[str], list[Evidence]]:
-    """第一行、中英文名稱、代號標籤、相關機構第 1、2 點與段落順序（範本規格 §6 條件 1～5；FCN 與 DACN 共用）：
+    """第一行、中英文名稱、代號標籤、相關機構第 1、2 點與段落順序（範本規格 §6 條件 1～5；同上手各商品家族的範本共用）：
     回傳（內文全文, 不成立的條件, 證據）。"""
     text_lines = body(lines)
     ti = TextIndex(text_lines)
@@ -198,7 +196,7 @@ def _terms(ti: TextIndex, fields: dict[str, ParsedField]) -> None:
 
 
 def prices(fields: dict[str, ParsedField], lines: list[Line], spec: price_table.TableSpec = dbs.IIS_TABLE) -> set[str]:
-    """商品簡介價格表（同說明書表1；DACN 另有區間下限、上限兩欄，`spec`）→ 各標的價格與 K／KO／KI %；回傳額外交出的欄位
+    """商品簡介價格表（同說明書表1；區間累計配息另有區間下限、上限兩欄，`spec`）→ 各標的價格與 K／KO／KI %；回傳額外交出的欄位
     （有下限觸發價格欄時的 ki_pct）。"""
     table = price_table.read("price_table", table_region(lines), spec)
     uls = fields["underlyings"]

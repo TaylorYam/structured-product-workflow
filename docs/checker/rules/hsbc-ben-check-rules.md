@@ -202,7 +202,7 @@ HSBC 說明書不寫參與率（§17(2) `本商品不適用`），由 §11(1) �
 | 內容 | 位置 |
 |---|---|
 | 範本辨識與讀出 | HSBC 的 BEN 說明書與投資人須知 parser（沿用 `parsers/hsbc.py`、`hsbc_iis.py` 的版面、價格表、標的表、共用段落與 `read`，覆寫 §11、§12(1)、§16～§18 的 BEN 段落；同 HSBC Super Bull 的做法）；沒有 KO 時交出的 KO 與排程欄位、紅利門檻用 BEN 共用的 `parsers/ben.py`，交股算式的型別在 `parsers/delivery.py`（workflow #439）；兩種排版（條號與標籤分行或同一行）都要讀；比對固定寫法前先去頁首頁尾 |
-| 上手註冊 | HSBC 的範本依商品家族分開辨識（`Issuer.products`，同 Super Bull） |
+| 上手註冊 | HSBC 的範本依商品家族分開辨識（`Template.products`，同 Super Bull） |
 | 規則 | §3.3～§3.5、§3.7 的 HSBC BEN 規則；沒有 KO、無 KI、固定寫法、紅利出處用 BEN 共用的 `rules/ben.py`，交股情境的算式用 Super Bull 與 BEN 共用的 `rules/delivery.py`（HSBC 寫法），不另寫一份（workflow #439） |
 | 設定 | `[auto_check_products]` 的 `BEN` 加 `HSBC`；審查標準 `[issuer.hsbc.product_names.BEN]`（依型態兩組樣板）；標的不看順序 `any_order_products` 的 `BEN` 加 `HSBC` |
 | 測試 | 合成 PDF（Maxi 2、3 檔、Digital 1 檔、不同天期、K% = 100 與低於 100、兩種排版）；負面測試（HSBC FCN／FCN_Express／Super Bull ↔ BEN 說明書與投資人須知、寫法不同的版本、型態對不上、Product 不一致、樣態不符、沒有樣本的型態、非美元、參考條件表沒有參與率）；本機真實樣本試跑（§6） |

@@ -24,7 +24,7 @@ from fcn_checker.ingestion import IngestionError, sha256_of
 from fcn_checker.issuers import BARC, REGISTRY
 from fcn_checker.saving import run_batch, save_batch
 from fcn_checker.schema import CheckStatus, DetectionResult
-from harness import CONFIG, ISSUER_PREFIXES, REVIEW_STANDARD, check_all, load_config, with_iis
+from harness import CONFIG, ISSUER_PREFIXES, REVIEW_STANDARD, check_all, load_config, registry_of, with_iis
 from pdf_writer import Edit
 from reference_synth import DATE_FORMAT, REFERENCE_FORMAT, REFERENCE_HEADERS, build_reference_sheet, reference_row
 from test_import_format import IMPORT_HEADERS
@@ -289,7 +289,7 @@ def test_issuer_in_prefix_table_without_template_is_unsupported(tmp_path):
         tmp_path,
         [pdf_for(tmp_path, spec)],
         [reference_row(spec, 發行機構="HSBC")],
-        config=CONFIG.with_registry((BARC,)),
+        config=CONFIG.with_registry(registry_of(BARC)),
     )
     item = outcome.items[0]
     assert item.unsupported and item.issuer == "HSBC"
@@ -317,7 +317,9 @@ def test_term_sheet_content_of_another_issuer_requires_review(tmp_path):
         tmp_path,
         [pdf_for(tmp_path, spec)],
         [reference_row(spec)],
-        config=load_config(issuer_prefixes=prefixes_file(tmp_path, "777", "FAKE"), registry=(BARC, other)),
+        config=load_config(
+            issuer_prefixes=prefixes_file(tmp_path, "777", "FAKE"), registry=(*registry_of(BARC), other)
+        ),
     )
     r = only(outcome.items[0], "batch.issuer_prefix")
     assert (r.status, r.reason_code, r.actual) == (REVIEW, "issuer_prefix_mismatch", "BARC")

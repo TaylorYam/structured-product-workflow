@@ -25,7 +25,7 @@ from typing import Any
 from fcn_checker.batch import BatchOutcome, check_batch, preview_batch
 from fcn_checker.check_config import CheckConfig, ConfigPaths
 from fcn_checker.config import RISK_LEVEL
-from fcn_checker.issuers import REGISTRY, Issuer
+from fcn_checker.issuers import REGISTRY, Issuer, Template, by_code
 from fcn_checker.schema import CheckReport, CheckStatus
 from fcn_checker.trading_calendar import Market
 
@@ -65,6 +65,18 @@ def load_config(
     """載入核對設定；預設全部用 repo config，交易所假日表另延長涵蓋範圍（`cover_synthetic_years`）。"""
     paths = ConfigPaths(review_standard, reference_format, issuer_prefixes, exchange_holidays)
     return cover_synthetic_years(paths.load(registry))
+
+
+def registry_of(*templates: Template) -> tuple[Issuer, ...]:
+    """只登記 `templates` 的上手清單（照給的順序，同代號的放在同一家）；上手的設定照 `REGISTRY`（註冊表沒有的代號用預設值）。"""
+    grouped: dict[str, list[Template]] = {}
+    for t in templates:
+        grouped.setdefault(t.code, []).append(t)
+    out = []
+    for code, ts in grouped.items():
+        base = by_code(code)
+        out.append(Issuer(code, tuple(ts)) if base is None else replace(base, templates=tuple(ts)))
+    return tuple(out)
 
 
 def cover_synthetic_years(config: CheckConfig) -> CheckConfig:

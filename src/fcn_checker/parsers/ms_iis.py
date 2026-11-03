@@ -82,7 +82,8 @@ def names(text: str) -> tuple[str | None, str | None]:
 
 
 def detect(lines: Sequence[Line]) -> DetectionResult:
-    """範本辨識：MS 投資人須知的版面，而且是固定配息商品（名稱有「固定配息」「Fixed Coupon」；BEN 另有範本，#376）。"""
+    """範本辨識：MS 投資人須知的版面，而且是固定配息商品（名稱有「固定配息」「Fixed Coupon」，和說明書範本 ms.py 的名稱
+    條件相同；這是 FCN 範本自己的條件，不是排除別的商品家族，#376、#436）。"""
     text = TextIndex(body(lines)).text
     failed = layout_problems(text)
     zh, en = names(text)
