@@ -45,6 +45,7 @@ from fcn_checker.backfill_values import (
     Target,
     UnderlyingPrice,
 )
+from fcn_checker.fields import NON_CALL_FIELD
 from fcn_checker.products import PRODUCT_RULES, SUPPORTED_PRODUCTS, product_name
 from sp_workflow import import_run
 from sp_workflow.check_terms import CalcLine, recalculate, recalculate_corrected
@@ -55,12 +56,10 @@ from sp_workflow.product_record import (
     CHOICES,
     COLUMN_FIELDS,
     COUPON_BARRIER_FIELD,
-    DEFAULT_PARTICIPATION,
     DERIVED_COLUMNS,
     FIELDS,
     KINDS,
     LOOKBACK_FIELD,
-    MATURITY_ONLY_TERMS,
     PARTICIPATION_FIELD,
     PRICING_FIELD,
     PRODUCT_COLUMNS,
@@ -72,8 +71,8 @@ from sp_workflow.product_record import (
     columns_of,
     default_coupon_barrier,
     fields_of,
-    has_coupon_barrier,
     missing_fields,
+    product_rule,
     required_fields,
     same_value,
     to_json,
@@ -112,7 +111,6 @@ _TYPES: dict[FieldKind, tuple[type, ...]] = {
     FieldKind.DATE: (dt.date,),
 }
 
-_NON_CALL_FIELD = "Guaranteed Periods (m)"
 _CONFLICT = "起單建檔裡這檔有好幾列、這欄不同，要填正確的值（正確是空白的話請改起單建檔後重新讀取）"
 # 人工維護可以空白的必填欄（#115）：資料庫的商品種類不可空白（ADR 0016）
 _BLANK_ALLOWED = frozenset((*REQUIRED, COUPON_BARRIER_FIELD)) - {"Product"}
@@ -369,9 +367,11 @@ def _maintenance_draft(tdcc: str, stored: Stored | None, config: ImportConfig, t
 
 
 def _default_participation(values: dict[str, object]) -> dict[str, object]:
-    """BEN 的參與率空白時帶預設值 100（#373、ADR 0029；起單建檔沒有這欄，資料庫已有的值優先）；回傳 `values`。"""
-    if values.get(PARTICIPATION_FIELD) is None and _is_maturity_only(values.get("Product")):
-        values[PARTICIPATION_FIELD] = Decimal(DEFAULT_PARTICIPATION)
+    """參與率空白時帶商品規則的預設值（BEN 100，#373、ADR 0029；起單建檔沒有這欄，資料庫已有的值優先）；回傳 `values`。"""
+    rule = product_rule(values.get("Product"))
+    default = None if rule is None else rule.default_participation()
+    if values.get(PARTICIPATION_FIELD) is None and default is not None:
+        values[PARTICIPATION_FIELD] = default
     return values
 
 
@@ -381,12 +381,6 @@ def _default_coupon_barrier(values: dict[str, object], fields: Mapping[str, obje
     barrier = values.get(COUPON_BARRIER_FIELD)
     if barrier is None or (fields is not None and same_value(barrier, fields.get("Strike (%)"))):
         values[COUPON_BARRIER_FIELD] = default_coupon_barrier(values)
-
-
-def _is_maturity_only(product: object) -> bool:
-    """只在到期判定的商品（BEN）：有參與率（#373），可以有回顧期間（#374）。"""
-    name = product_name(product)
-    return name is not None and PRODUCT_RULES[name].maturity_only
 
 
 # ---------- 檢查 ----------
@@ -456,29 +450,28 @@ def _value_problems(
         problems["Product"] = f"目前只做 {SUPPORTED_PRODUCTS}"
     if filled("Currency") and values["Currency"] not in config.denominations:
         problems["Currency"] = "這個幣別沒有單位面額預設值"
-    if product is not None and filled(_NON_CALL_FIELD):  # Non-Call 依商品種類（#302）；商品種類不支援時不看
+    rule = None if product is None else PRODUCT_RULES[product]  # 商品種類不支援時下面依商品種類的檢查都不看
+    if rule is not None and filled(NON_CALL_FIELD):  # Non-Call 依商品種類（#302）
         tenor = values["Tenor (m)"] if filled("Tenor (m)") else None
-        if problem := PRODUCT_RULES[product].non_call_problem(values[_NON_CALL_FIELD], tenor):
-            problems[_NON_CALL_FIELD] = problem
-    if product is not None and PRODUCT_RULES[product].maturity_only:  # BEN：只在到期判定（#373）
-        for name, fixed in MATURITY_ONLY_TERMS.items():
-            if filled(name) and values[name] != fixed:
-                problems[name] = f"{product} 不會提前出場、沒有 KI，要選 {fixed}"
-        if values.get(PARTICIPATION_FIELD) is None and PARTICIPATION_FIELD not in problems:
-            problems[PARTICIPATION_FIELD] = f"{product} 必填（一般 100、Digital 0）"
-        elif filled(PARTICIPATION_FIELD) and values[PARTICIPATION_FIELD] < 0:
-            problems[PARTICIPATION_FIELD] = "不能是負數"
-    elif product is not None and filled(PARTICIPATION_FIELD):
-        problems[PARTICIPATION_FIELD] = f"{product} 沒有參與率，要空白"
-    if product is not None and filled(COUPON_BARRIER_FIELD) and not has_coupon_barrier(product):
-        problems[COUPON_BARRIER_FIELD] = f"{product} 沒有配息門檻，要空白"
+        if problem := rule.non_call_problem(values[NON_CALL_FIELD], tenor):
+            problems[NON_CALL_FIELD] = problem
+    if rule is not None:  # 固定的選項（BEN，#373）、參與率（BEN 必填，其他要空白）、配息門檻（沒有的商品要空白）
+        for name in rule.fixed_choices():
+            if filled(name) and (problem := rule.fixed_choice_problem(name, values[name])):
+                problems[name] = problem
+        if PARTICIPATION_FIELD not in problems and (
+            problem := rule.participation_problem(values.get(PARTICIPATION_FIELD))  # type: ignore[arg-type]
+        ):
+            problems[PARTICIPATION_FIELD] = problem
+        if filled(COUPON_BARRIER_FIELD) and (problem := rule.blank_problem(COUPON_BARRIER_FIELD)):
+            problems[COUPON_BARRIER_FIELD] = problem
     if filled("Tenor (m)") and values["Tenor (m)"] < 1:
         problems["Tenor (m)"] = "至少 1"
     if filled(TRADE_FIELD) and filled(STRIKE_FIELD) and values[STRIKE_FIELD] < values[TRADE_FIELD]:
         problems[STRIKE_FIELD] = "不能早於 Trade date"
     if filled(LOOKBACK_FIELD):  # 回顧結束日（#374）：只有 BEN，回顧期間在交易日之後、最終比價日之前結束
-        if product is not None and not _is_maturity_only(product):
-            problems[LOOKBACK_FIELD] = f"{product} 沒有回顧期間，要空白"
+        if rule is not None and (problem := rule.blank_problem(LOOKBACK_FIELD)):
+            problems[LOOKBACK_FIELD] = problem
         elif filled(TRADE_FIELD) and values[LOOKBACK_FIELD] <= values[TRADE_FIELD]:
             problems[LOOKBACK_FIELD] = "要晚於 Trade date"
         elif filled("Final valuation date") and values[LOOKBACK_FIELD] >= values["Final valuation date"]:

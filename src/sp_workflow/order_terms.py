@@ -18,9 +18,10 @@
 - Strike date（期初定價日，#101）起單建檔沒有這欄，由期初價格推：期初價格寫「明日開盤價」時，期初價格記成開盤價、
   Strike date = 交易日之後標的市場的下一個營業日（交易所假日表）；其他情況 Strike date = Trade date。
   假日表確定不了（標的交易所不在表上、日期超出範圍）時留空，由作業人員填。
-- 只在到期判定的商品（BEN，`fcn_checker.products.ProductRule.maturity_only`，#373、ADR 0029）不管起單建檔填什麼，
-  Guaranteed Periods (m) = Tenor (m)、KO Type = Period End、Barrier Type = NONE、KI Barrier (%) 空白。
-  起單建檔 BEN 的 KO Barrier (%) 填的是紅利門檻：改放配息門檻、KO% 空白（預設沒有 KO，#406）。
+- 商品規則（`fcn_checker.products.ProductRule`，#434）指定的欄不管起單建檔填什麼都照規則：先把要搬的欄搬走
+  （`moved_fields`：BEN 的 KO Barrier (%) 填的是紅利門檻，改放配息門檻、KO% 空白，#406），再套固定值
+  （`order_overrides`：BEN 的 Guaranteed Periods (m) = Tenor (m)、KO Type = Period End、Barrier Type = NONE、
+  KI Barrier (%) 空白，#373、ADR 0029）。
   參與率（%）起單建檔沒有這欄，預設值在 `product_terms.draft_from` 帶（資料庫已有的值優先）。
 - 配息門檻（DACN，#367）起單建檔也沒有這欄，預設值在 `product_terms.draft_from` 帶（資料庫已有、不是預設值的值優先）；
   BEN 的 KO 欄空白時同樣帶預設值（執行價）。
@@ -38,7 +39,7 @@ from typing import TYPE_CHECKING
 
 import openpyxl
 
-from fcn_checker.products import PRODUCT_RULES, product_name
+from fcn_checker.products import ProductRule
 from sp_workflow.database import OperatorError
 from sp_workflow.preparation import is_tdcc, parse_tdccs
 from sp_workflow.product_record import (
@@ -47,7 +48,6 @@ from sp_workflow.product_record import (
     FIELDS,
     KINDS,
     LOOKBACK_FIELD,
-    MATURITY_ONLY_TERMS,
     OPEN,
     PARTICIPATION_FIELD,
     PRICING_FIELD,
@@ -57,6 +57,7 @@ from sp_workflow.product_record import (
     UPFRONT_FIELD,
     FieldKind,
     plain,
+    product_rule,
 )
 from sp_workflow.status import OrderReview
 
@@ -68,7 +69,6 @@ PENDING = OrderReview.PENDING
 NOT_FOUND = OrderReview.NOT_FOUND
 
 TDCC_FIELD = "TDCC"
-KO_FIELD = "KO Barrier (%)"
 NEXT_OPEN = "明日開盤價"  # 交易日隔一個營業日的開盤價（#101）
 
 _OFF_SHEET = (STRIKE_FIELD, PARTICIPATION_FIELD, LOOKBACK_FIELD, COUPON_BARRIER_FIELD)  # 起單建檔沒有的欄
@@ -219,25 +219,22 @@ def _row_for(
     values[PARTICIPATION_FIELD] = None  # 起單建檔沒有這欄；BEN 的預設值在 `product_terms.draft_from` 帶
     values[LOOKBACK_FIELD] = None  # 起單建檔沒有這欄；資料庫已有的值由 `product_terms.draft_from` 帶
     values[COUPON_BARRIER_FIELD] = None  # 起單建檔沒有這欄；DACN 的預設值在 `product_terms.draft_from` 帶
-    rule = PRODUCT_RULES.get(product_name(values.get("Product")) or "")
-    if rule is not None and rule.maturity_only:
-        _maturity_only(values, notes, conflicts)
+    rule = product_rule(values.get("Product"))
+    if rule is not None:
+        _apply_rule(rule, values, notes, conflicts)
     if not issuer:
         notes[TDCC_FIELD] = unknown_issuer(tdcc)
     status = PENDING if notes else READ
     return OrderRow(tdcc, status, issuer, values, notes, frozenset(conflicts), path, numbers, frozenset(unresolved))
 
 
-def _maturity_only(values: dict[str, object], notes: dict[str, str], conflicts: set[str]) -> None:
-    """只在到期判定的商品（BEN）：不會提前出場、沒有 KI 的那幾欄一律照規則填，起單建檔的值與問題都不算。
-    KO Barrier (%) 是紅利門檻：值、讀不懂與好幾列不同的問題都移到配息門檻，KO% 空白（#406）。"""
-    _move(KO_FIELD, COUPON_BARRIER_FIELD, values, notes, conflicts)
-    fixed = {
-        "Guaranteed Periods (m)": values.get("Tenor (m)"),  # 天期好幾列不同時是空白，天期填好前要作業人員填
-        **MATURITY_ONLY_TERMS,
-        "KI Barrier (%)": None,
-    }
-    for name, value in fixed.items():
+def _apply_rule(rule: ProductRule, values: dict[str, object], notes: dict[str, str], conflicts: set[str]) -> None:
+    """商品規則指定的欄一律照規則填，起單建檔的值與問題都不算：要搬的欄（BEN 的 KO Barrier (%) 是紅利門檻）連同讀不懂、
+    好幾列不同的問題搬過去（#406），再套固定值（BEN 不會提前出場、沒有 KI，#373）。"""
+    for source, target in rule.moved_fields().items():
+        _move(source, target, values, notes, conflicts)
+    # 天期好幾列不同時是空白，Non-Call 跟著空白，天期填好前要作業人員填
+    for name, value in rule.order_overrides(values.get("Tenor (m)")).items():
         values[name] = value
         notes.pop(name, None)
         conflicts.discard(name)
