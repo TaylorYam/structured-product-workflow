@@ -21,6 +21,9 @@ from . import dacn, nomura
 from .common import Hit, Mention, hits, one
 from .layout import TextIndex, capture, parse_date
 
+# 每日計息第 7 項的定義標籤（去空白，範本規格 §8 條件 6）；有其中之一就是本家族的標記（不符本範本時仍認領文件、同一家不退回 FCN 範本，#436）
+ACCRUAL_LABELS = ("實際日數：", "總日數：")
+
 TEMPLATE_ID = "nomura-zh-dacn-pd"
 # 2：拿掉交易日早於 2026-06-01 的條件，版本只看寫法（2026-11-02 使用者決定，workflow #409）
 PARSER_VERSION = "2"
@@ -67,7 +70,7 @@ def same_chars(text: str) -> str:
 
 def is_accrual(art7: str) -> bool:
     """商品家族（每日計息，範本規格 §8 條件 6）：第 7 項有「實際日數：」「總日數：」定義，且配息公式有「×實際日數/總日數」。"""
-    return all(label in art7 for label in nomura.ACCRUAL_LABELS) and "×實際日數/總日數" in art7
+    return all(label in art7 for label in ACCRUAL_LABELS) and "×實際日數/總日數" in art7
 
 
 def detect(lines: Sequence[Line]) -> DetectionResult:
@@ -79,7 +82,8 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     if not is_accrual(art7):
         failed.append("第 7 項沒有每日計息的「實際日數：」「總日數：」定義與「×實際日數/總日數」配息公式")
     if failed:
-        return DetectionResult(False, failed, sk.evidence)
+        claimed = any(label in art7 for label in ACCRUAL_LABELS)
+        return DetectionResult(False, failed, sk.evidence, claimed=claimed)
     missing = version_problems(sk, art7)
     if missing:
         return DetectionResult(False, missing, sk.evidence, unsupported=f"{OLD_VERSION}：{'；'.join(missing)}")

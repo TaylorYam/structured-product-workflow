@@ -26,7 +26,7 @@ TEMPLATE_ID = "sg-zh-pd"
 # 4：重印價格表、情境假設值與較差情境執行價交成共用情境規則的標準欄位（Issue #294）；
 # 5：無自動提前出場的單一評價日寫法（只有配息日欄的日期表、§12「評價日：」，Issue #130）
 # 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）；7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
-# 8：辨識加「第 8 項沒有區間累積配息的 n(i)／N(i) 定義」，和 SG DACN 範本互斥（workflow #369）
+# 8：辨識曾加「第 8 項沒有區間累積配息的 n(i)／N(i) 定義」（workflow #369；#436 起同一家上手由專到泛由上手註冊表決定，版本不變）
 PARSER_VERSION = "8"
 # 保證機構信用評等（#241）：第一章第 3 項 `保證機構名稱及其長期債務信用評等：…，截至…，長期債務信用評等標準普爾A、穆迪A1、惠譽A+。`、
 # 第二章保證機構 (7) `長期債務信用評等：標準普爾A，穆迪A1，惠譽A+。（此處引用之信評為…）`。
@@ -59,8 +59,6 @@ LAYOUT = LayoutSpec(
 COVER_TITLE = "中文產品說明書"
 ISSUER_EN = "SG ISSUER"
 NAME_EN_TAIL = "Fixed Coupon Equity Linked Notes (Non Principal Guaranteed and Unsecured)"
-# 區間累積配息（DACN）的 n(i)、N(i) 定義（parsers/sg_dacn.py）；FCN 範本第 8 項不會有（範本規格 §8 條件 6）
-ACCRUAL_DEFINITIONS = ("n(i)(i=", "N(i)(i=")
 # 頁尾註腳的開頭（註腳編號＋固定文字）；從這一行到頁底都不算內文
 FOOTNOTE = re.compile(
     r"^\d{1,2}\s*(非許可之受讓人|本商品之一切付款|特殊因素指|連結標的中斷日之後果|評價時間指|買賣中斷指|交易所中斷指|提早收盤|持有由SG)"
@@ -123,7 +121,7 @@ def _cover_title_lines(cover: Sequence[Line]) -> tuple[Line | None, Line | None]
 
 @dataclass
 class Skeleton:
-    """SG 說明書骨架（範本規格 §8 條件 1、2、4、5，FCN 與 DACN 共用）：版面、封面兩欄表與不成立的條件。"""
+    """SG 說明書骨架（範本規格 §8 條件 1、2、4、5，同上手各商品家族的範本共用）：版面、封面兩欄表與不成立的條件。"""
 
     doc: Document
     items: dict[str, list[Line]]
@@ -171,16 +169,12 @@ def skeleton(lines: Sequence[Line]) -> Skeleton:
 
 
 def detect(lines: Sequence[Line]) -> DetectionResult:
-    """範本辨識（範本規格 §8）：全部條件成立才是 SG 說明書（兩種版面同一範本）；第 8 項有區間累積配息的 n(i)／N(i)
-    定義是 SG DACN（parsers/sg_dacn.py），不是本範本。"""
+    """範本辨識（範本規格 §8）：全部條件成立才是 SG 說明書（兩種版面同一範本；同一家的商品家族範本先辨識，見 issuers.py）。"""
     sk = skeleton(lines)
     failed = list(sk.failed)
     en = sk.en
     if not (en.startswith(squash(ISSUER_EN)) and squash(NAME_EN_TAIL) in en):
         failed.append(f"商品英文名稱不是 SG ISSUER … {NAME_EN_TAIL}")
-    art8 = TextIndex(sk.article(8)).text
-    if any(x in art8 for x in ACCRUAL_DEFINITIONS):
-        failed.append("第 8 項有區間累積配息的 n(i)／N(i) 定義（DACN）")
     return DetectionResult(not failed, failed, sk.evidence)
 
 

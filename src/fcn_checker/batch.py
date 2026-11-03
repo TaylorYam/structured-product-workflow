@@ -344,15 +344,15 @@ def _item_metadata(pdf: Path, meta: dict[str, Any], snapshot: SourceSnapshot) ->
 
 def _check_one(ident: Identification, config: CheckConfig, meta: dict[str, Any], snapshot: SourceSnapshot) -> BatchItem:
     metadata = _item_metadata(ident.pdf, meta, snapshot)
-    issuer = ident.adapter
+    adapter = ident.adapter
     if ident.pages is not None:
         metadata["inputs"]["term_sheet"]["pages"] = ident.pages
     template = None
-    if issuer is not None:
+    if adapter is not None:
         template, version = (
-            (issuer.template_id, issuer.parser_version)
-            if ident.kind != DocKind.IIS or issuer.iis is None
-            else (issuer.iis.template_id, issuer.iis.parser_version)
+            (adapter.template_id, adapter.parser_version)
+            if ident.kind != DocKind.IIS or adapter.iis is None
+            else (adapter.iis.template_id, adapter.iis.parser_version)
         )
         metadata["parser"] = {"template": template, "version": version}
     if ident.kind == DocKind.IIS:

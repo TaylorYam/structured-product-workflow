@@ -23,7 +23,7 @@ from fcn_checker.saving import run_batch
 from fcn_checker.schema import CheckStatus as S
 from fcn_checker.standard_fields import Occurrence
 from fcn_checker.text import squash
-from harness import CONFIG
+from harness import CONFIG, registry_of
 from real_data import CHECK_FORMAT, TERM_SHEETS, pdfs, rated_check_format, requires
 
 pytestmark = [
@@ -211,7 +211,7 @@ def test_no_other_sample_is_detected_as_a_bnp_investor_sheet():
     others = [p for p in pdfs() if p.name not in bnp_iis]
     assert len(others) > 40
     for path in others:
-        issuer, _ = detect_iis(_lines(path), (BNP,))
+        issuer, _ = detect_iis(_lines(path), registry_of(BNP))
         assert issuer is None, path.name
 
 
@@ -227,5 +227,5 @@ def test_no_other_sample_is_detected_as_a_bnp_term_sheet(items):
             lines = extract_lines(doc)
         finally:
             doc.close()
-        issuer, _ = detect(lines, (BNP,))
+        issuer, _ = detect(lines, registry_of(BNP))
         assert issuer is None, path.name

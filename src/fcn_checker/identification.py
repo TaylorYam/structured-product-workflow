@@ -34,7 +34,7 @@ from .check_config import CheckConfig
 from .extraction import extract_lines
 from .ingestion import IngestionError, error_result, open_pdf
 from .investor_sheet import IisSheet
-from .issuers import Issuer, by_code, detect, detect_iis
+from .issuers import Issuer, Template, by_code, detect, detect_iis
 from .orders.reference import SOURCE, OrderRecord, ReferenceSheet
 from .products import FCN, product_name
 from .rules.kit import doc_review, read_standard
@@ -124,7 +124,8 @@ class Identification:
     partner: Identification | None = field(
         default=None, kw_only=True, repr=False
     )  # 同商品的另一份（說明書 ↔ 投資人須知）
-    adapter: Issuer | None = field(default=None, kw_only=True, repr=False)  # 上手 adapter：範本命中且與檔名一致才有
+    adapter: Template | None = field(default=None, kw_only=True, repr=False)  # 範本 adapter：範本命中且與檔名一致才有
+    issuer_adapter: Issuer | None = field(default=None, kw_only=True, repr=False)  # 範本所屬的上手（同上）
     row: OrderRecord | None = field(default=None, kw_only=True, repr=False)  # 對到的參考條件表列（單份核對用）
     term_sheet: TermSheet | None = field(default=None, kw_only=True, repr=False)  # 說明書讀出結果：同一份只讀一次
     investor_sheet: IisSheet | None = field(default=None, kw_only=True, repr=False)  # 投資人須知讀出結果
@@ -183,7 +184,8 @@ class _Draft:
     pdf: Path
     kind: DocKind | None
     issuer: str | None = None
-    adapter: Issuer | None = None
+    adapter: Template | None = None
+    issuer_adapter: Issuer | None = None
     product_code: ParsedField | None = None
     row: OrderRecord | None = None
     term_sheet: TermSheet | None = None
@@ -232,7 +234,7 @@ def _draft(pdf: Path, sheet: ReferenceSheet, config: CheckConfig) -> _Draft:
         problem = PairingProblem.UNSUPPORTED
         return out.stop(problem, _review("batch.issuer_prefix", "issuer", _ISSUER_ITEM, problem, msg))
     issuer = by_code(out.issuer, registry)
-    if issuer is None or (out.kind == DocKind.IIS and issuer.iis is None):
+    if issuer is None or (out.kind == DocKind.IIS and not issuer.has_iis):
         code = out.issuer
         msg = f"上手編號 {prefix} 對應 {code}，但 {code} 還沒有{what}範本，未支援上手"
         problem = PairingProblem.UNSUPPORTED
@@ -249,12 +251,12 @@ def _draft(pdf: Path, sheet: ReferenceSheet, config: CheckConfig) -> _Draft:
         problem = PairingProblem.PREFIX_MISMATCH
         msg = f"檔名上手編號 {prefix} 對應 {issuer.code}，但{what}內容是 {detected.code} 範本，可能檔名取錯或檔案放錯"
         return out.stop(problem, _review("batch.issuer_prefix", "issuer", _ISSUER_ITEM, problem, msg, detected.code))
-    out.adapter = issuer = detected  # 同一家上手可能有多個範本（商品家族），用辨識到的那個
+    out.adapter, out.issuer_adapter = detected, issuer  # 同一家上手可能有多個範本（商品家族），用辨識到的那個
     try:
-        if issuer.iis is not None and out.kind == DocKind.IIS:
-            out.investor_sheet = issuer.iis.read(lines)
+        if detected.iis is not None and out.kind == DocKind.IIS:
+            out.investor_sheet = detected.iis.read(lines)
         else:
-            out.term_sheet = issuer.read(lines)
+            out.term_sheet = detected.read(lines)
             if issuer.with_calendar is not None:
                 out.term_sheet = issuer.with_calendar(out.term_sheet, config.exchange_calendar)
     except Exception as e:  # 上手讀出失敗：這份轉執行錯誤，不中斷整批（預覽也一樣）
@@ -476,6 +478,7 @@ def _freeze(d: _Draft) -> Identification:
         product_code_evidence=tuple(pc.evidence) if pc is not None else (),
         results=tuple(results),
         adapter=d.adapter,
+        issuer_adapter=d.issuer_adapter,
         row=d.row,
         term_sheet=d.term_sheet,
         investor_sheet=d.investor_sheet,

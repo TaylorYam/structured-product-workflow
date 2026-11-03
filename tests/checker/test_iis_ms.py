@@ -15,7 +15,7 @@ import hsbc_synth
 from fcn_checker.extraction import extract_lines
 from fcn_checker.issuers import MS, detect_iis
 from fcn_checker.parsers import ms as ms_parser
-from harness import ALL_VARIANTS, MISMATCH, NA, PASS, REVIEW, iis_path
+from harness import ALL_VARIANTS, MISMATCH, NA, PASS, REVIEW, iis_path, registry_of
 from ms_synth import DIST, ISSUE, TRADE, WARNING, Spec, build_pdf, check_pair
 from pdf_writer import Edit, zh_date
 
@@ -335,8 +335,8 @@ def test_ms_iis_template_is_not_confused_with_other_templates(tmp_path):
     issuer, r = detect_iis(ms_iis_lines)
     assert issuer is MS and r.actual == "ms-zh-iis"
     assert not ms_parser.detect(ms_iis_lines).matched, "MS 投資人須知不是 MS 說明書"
-    assert detect_iis(lines_of(ts), (MS,))[0] is None, "MS 說明書不是 MS 投資人須知"
+    assert detect_iis(lines_of(ts), registry_of(MS))[0] is None, "MS 說明書不是 MS 投資人須知"
     barc = synth.build_iis_pdf(tmp_path / "029199990001_IIS.pdf", synth.Spec())
     hsbc = hsbc_synth.build_iis_pdf(tmp_path / "325199990001_IIS.pdf", hsbc_synth.Spec())
     for other in (barc, hsbc):
-        assert detect_iis(lines_of(other), (MS,))[0] is None, other.name
+        assert detect_iis(lines_of(other), registry_of(MS))[0] is None, other.name

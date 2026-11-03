@@ -28,6 +28,9 @@ OLD_VERSION = "DBS DACN 說明書的寫法和現行版不同"
 NAME_ZH_MARK = "區間累計配息記憶型每日觀察自動提前出場"
 NAME_EN_MARK = "Range Accrual Memory Daily Knock-Out"
 ACCRUAL_LABEL = "累積日數："
+# 區間累計配息累積日數定義的比較對象（去空白，範本規格 §8 條件 6）；說明書商品基本資料、投資人須知收益分配事項有它
+# 就是本家族的標記（不符本範本時仍認領文件、同一家不退回 FCN 範本，#436）
+RANGE_MARK = "其區間下限價格"
 # 範本規格 §2.1 的三段固定寫法（去空白後逐字相等；乘號原文是數學粗體 X（U+1D417），比對前換成 X，見 `same_chars`）
 RATE = (
     r"利率：1\)對於第1(?:~\d{1,2})?個觀察期間而言，利率為最大利率值；及2\)對於其後每個觀察期間而言，利率將根據以下公式決定："
@@ -68,7 +71,7 @@ def same_chars(text: str) -> str:
 def is_range_accrual(basic: str) -> bool:
     """商品家族（區間累計配息，範本規格 §8 條件 6）：商品基本資料有「累積日數：」定義，且比的是「其區間下限價格」。"""
     a = basic.find(ACCRUAL_LABEL)
-    return a >= 0 and dbs.RANGE_MARK in basic[a:]
+    return a >= 0 and RANGE_MARK in basic[a:]
 
 
 def detect(lines: Sequence[Line]) -> DetectionResult:
@@ -78,9 +81,9 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     basic = sk.text("商品基本資料")
     failed = list(sk.failed)
     if not is_range_accrual(basic):
-        failed.append(f"商品基本資料沒有比「{dbs.RANGE_MARK}」的累積日數定義（不是區間累計配息 DACN）")
+        failed.append(f"商品基本資料沒有比「{RANGE_MARK}」的累積日數定義（不是區間累計配息 DACN）")
     if failed:
-        return DetectionResult(False, failed, sk.evidence)
+        return DetectionResult(False, failed, sk.evidence, claimed=RANGE_MARK in basic)
     missing = version_problems(sk, basic)
     if missing:
         return DetectionResult(False, missing, sk.evidence, unsupported=f"{OLD_VERSION}：{'；'.join(missing)}")
@@ -131,7 +134,7 @@ def read(lines: Sequence[Line]) -> dbs.DbsTermSheet:
     # 定義句與表頭
     definition = _accrual_definition(TextIndex(basic))
     fields["coupon_barrier_pct"] = (
-        ParsedField.missing("coupon_barrier_pct", f"商品基本資料找不到比「{dbs.RANGE_MARK}」的累積日數定義")
+        ParsedField.missing("coupon_barrier_pct", f"商品基本資料找不到比「{RANGE_MARK}」的累積日數定義")
         if definition is None
         else dacn.barrier_from_head(table, "barrier", f"表1「{BARRIER}」表頭讀不到 (期初價格的X%)", definition)
     )
@@ -147,8 +150,8 @@ def read(lines: Sequence[Line]) -> dbs.DbsTermSheet:
 def _accrual_definition(ti: TextIndex) -> list[Line] | None:
     """商品基本資料比「其區間下限價格」的累積日數定義句（`累積日數：` 到該處）；找不到為 None。"""
     a = ti.text.find(ACCRUAL_LABEL)
-    b = ti.text.find(dbs.RANGE_MARK, a) if a >= 0 else -1
-    return ti.lines_for(a, b + len(dbs.RANGE_MARK)) if b >= 0 else None
+    b = ti.text.find(RANGE_MARK, a) if a >= 0 else -1
+    return ti.lines_for(a, b + len(RANGE_MARK)) if b >= 0 else None
 
 
 def _scenario(fields: dict[str, ParsedField], sec: list[Line]) -> None:

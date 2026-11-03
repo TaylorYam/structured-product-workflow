@@ -23,7 +23,7 @@ from fcn_checker.panel_workflow import PanelOutcome
 from fcn_checker.rules import kit
 from fcn_checker.schema import CheckResult, CheckStatus, DocKind, Evidence, Item, ItemSource
 from fcn_checker.standard_fields import not_provided
-from harness import CONFIG, check_all
+from harness import CONFIG, check_all, registry_of
 from pdf_writer import Edit
 from reference_synth import DEFAULT_ULS, REFERENCE_HEADERS, as_headers, build_reference_sheet, reference_row
 
@@ -479,8 +479,8 @@ def test_hsbc_broken_reference_sheet_messages_name_their_items(tmp_path, value):
 
 @pytest.mark.parametrize("issuer", ["BARC", "HSBC"])
 def test_term_sheet_missing_every_field_messages_name_their_items(tmp_path, issuer):
-    base = by_code(issuer)
-    adapter = dataclasses.replace(base, read=lambda lines: _Withheld(base.read(lines)))
+    base = by_code(issuer).templates[-1]  # FCN 範本
+    adapter = registry_of(dataclasses.replace(base, read=lambda lines: _Withheld(base.read(lines))))[0]
     if issuer == "BARC":
         spec = Spec()
         pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", spec)

@@ -177,7 +177,7 @@ Super Bull 沒有配息表，提前贖回表只列決定日；共用日期表檢
 | 內容 | 位置 |
 |---|---|
 | 範本辨識與讀出 | HSBC 的 Super Bull 說明書與投資人須知 parser（沿用 `parsers/hsbc.py`、`hsbc_iis.py` 的版面、價格表、標的表、共用段落與 `read`，覆寫 §11、§12(1) 欄序、§16～§18 的 Super Bull 段落；同 BNP、CA Super Bull 的做法）；`hsbc-zh-iis` 辨識補商品家族條件 |
-| 上手註冊 | HSBC 的範本依商品家族分開辨識（`Issuer.products`，同 BNP、CA） |
+| 上手註冊 | HSBC 的範本依商品家族分開辨識（`Template.products`，同 BNP、CA） |
 | 規則 | §3.3～§3.5、§3.7 的 HSBC Super Bull 規則；和 BNP、CA 相同的部分用 Super Bull 共用模組（#326），不再寫第三份；情境三交股算式在 `rules/delivery.py`（HSBC 寫法，和 HSBC、MS BEN 同一份），損益與年化的寫法在 `rules/super_bull.py`（workflow #439） |
 | 設定 | `[auto_check_products]` 的 `"Super Bull"` 加 `HSBC`；審查標準 `[issuer.hsbc.product_names."Super Bull"]`；標的不看順序只套 HSBC Super Bull |
 | 測試 | 合成 PDF（2、3、4 檔標的、4 與 6 個月、開盤／收盤／VWAP）；負面測試（HSBC FCN／FCN_Express ↔ Super Bull 說明書與投資人須知、寫法不同的版本、Product 不一致、樣態不符、單一標的、非美元、KO% ≠ K%、多個決定日）；本機真實樣本試跑（§6） |

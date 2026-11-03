@@ -18,7 +18,7 @@ import ms_synth
 from fcn_checker.extraction import extract_lines
 from fcn_checker.issuers import SG, detect_iis
 from fcn_checker.parsers import sg as sg_parser
-from harness import MISMATCH, NA, PASS, REVIEW, REVIEW_STANDARD, check_all, iis_path, load_config
+from harness import MISMATCH, NA, PASS, REVIEW, REVIEW_STANDARD, check_all, iis_path, load_config, registry_of
 from pdf_writer import Edit
 from reference_synth import build_reference_sheet, reference_row
 from sg_synth import (
@@ -409,13 +409,13 @@ def test_sg_iis_template_is_not_confused_with_other_templates(tmp_path):
     issuer, r = detect_iis(sg_iis_lines)
     assert issuer is SG and r.actual == "sg-zh-iis"
     assert not sg_parser.detect(sg_iis_lines).matched, "SG 投資人須知不是 SG 說明書"
-    assert detect_iis(lines_of(ts), (SG,))[0] is None, "SG 說明書不是 SG 投資人須知"
+    assert detect_iis(lines_of(ts), registry_of(SG))[0] is None, "SG 說明書不是 SG 投資人須知"
     barc = synth.build_iis_pdf(tmp_path / "029199990001_IIS.pdf", synth.Spec())
     ms_ts = ms_synth.build_pdf(tmp_path / "147199990001_TS.pdf", ms_synth.Spec())
     bnp_ts = bnp_synth.build_pdf(tmp_path / "082199990001_TS.pdf", bnp_synth.Spec())
     hsbc = hsbc_synth.build_iis_pdf(tmp_path / "325199990001_IIS.pdf", hsbc_synth.Spec())
     for other in (barc, hsbc, iis_path(ms_ts), iis_path(bnp_ts)):
-        assert detect_iis(lines_of(other), (SG,))[0] is None, other.name
+        assert detect_iis(lines_of(other), registry_of(SG))[0] is None, other.name
 
 
 def test_a_different_issuer_in_the_institutions_is_not_an_sg_iis(tmp_path):

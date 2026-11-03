@@ -20,6 +20,7 @@ TEMPLATE_ID = "nomura-zh-dacn-iis"
 PARSER_VERSION = "1"
 OLD_VERSION = "Nomura DACN 投資人須知的寫法和現行版不同"
 ISSUED_BY = f"issuedby{nomura_iis.ISSUER}(unsecured)"
+ACCRUAL = "×實際日數/總日數"  # 每日計息配息公式的寫法（去空白，範本規格 §3 條件 2）
 PROVIDED = (nomura_iis.PROVIDED - {"coupon_per_period_pct"}) | {"coupon_pa_pct"}
 
 
@@ -27,10 +28,10 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     """範本辨識（範本規格 §3）：Nomura 投資人須知骨架（條件 1）與每日計息（條件 2）都成立後，現行版特徵全部成立才是本範本。"""
     ti, zh, en, failed, evidence = nomura_iis.skeleton(lines)
     coupon = nomura_iis.coupon_text(ti)
-    if nomura_iis.ACCRUAL not in coupon:
-        failed.append(f"收益分配事項沒有每日計息的「{nomura_iis.ACCRUAL}」")
+    if ACCRUAL not in coupon:
+        failed.append(f"收益分配事項沒有每日計息的「{ACCRUAL}」")
     if failed:
-        return DetectionResult(False, failed, evidence)
+        return DetectionResult(False, failed, evidence, claimed=ACCRUAL in coupon)
     missing = []
     if nomura_dacn.FORMULA not in coupon:
         missing.append("收益分配事項的配息公式 (i)(ii) 和現行版不同")

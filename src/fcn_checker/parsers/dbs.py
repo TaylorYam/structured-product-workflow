@@ -30,7 +30,7 @@ TEMPLATE_ID = "dbs-zh-pd"
 # 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 # 7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 8：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
-# 9：辨識加「商品基本資料的累積日數不比其區間下限價格」，和 DBS DACN（parsers/dbs_dacn.py）互斥（workflow #370）
+# 9：辨識曾加「商品基本資料的累積日數不比其區間下限價格」（workflow #370；#436 起同一家上手由專到泛由上手註冊表決定，版本不變）
 PARSER_VERSION = "9"
 # 發行機構信用評等（#240）：商品基本資料 `…(DBS Bank Ltd)。截至本中文產品說明書刊印日，發行機構之長期債務信用評等經穆迪(Moody’s)評定為Aa1、…。`、相關機構事業概況 (7) `信用評等：截至…`（同一句）
 RATINGS = (
@@ -76,8 +76,6 @@ FULL_RATE = r"利率：1?\)?對於第1(?:~(\d{1,2}))?個觀察期間而言，利
 KI_EVENT = "下限觸發事件：若任一連結標的於定價日的參考價格小於其下限觸發價格，則視為發生下限觸發事件"
 KI_MATURITY = r"\(a\)如果未發生下限觸發事件，將適用現金結算"
 NO_KI_MATURITY = r"\(a\)若表現最差連結標的之最終價格等於或高於其執行價格，將適用現金結算"
-# 區間累計配息（DACN）累積日數定義的比較對象（去空白）：商品基本資料有它就不是 FCN 範本（workflow #370）
-RANGE_MARK = "其區間下限價格"
 # 情境分析（範本規格 §4.9）：各情境的起點（情境三的金額從最終價格表之後的「依上所示」起算）與重複寫出的值（Issue #321）
 SCENARIO_MARKS = ("有利情況：", "於到期最佳情況：", "較差情況：", "依上所示", "最大損失情況：")
 TIMES = "[Xx×]"
@@ -141,7 +139,7 @@ def sections(lines: list[Line]) -> dict[str, list[Line]]:
 
 @dataclass(frozen=True)
 class Skeleton:
-    """說明書骨架的辨識結果（FCN 與 DACN 範本共用，範本規格 §8 條件 1～5）：內文、段落、不成立的條件與證據。"""
+    """說明書骨架的辨識結果（同上手各商品家族的範本共用，範本規格 §8 條件 1～5）：內文、段落、不成立的條件與證據。"""
 
     lines: list[Line]
     secs: dict[str, list[Line]]
@@ -154,11 +152,9 @@ class Skeleton:
 
 
 def detect(lines: Sequence[Line]) -> DetectionResult:
-    """範本辨識（範本規格 §8）：全部條件成立才是 DBS 說明書；累積日數比區間下限價格的是 DACN，不是本範本。"""
+    """範本辨識（範本規格 §8）：全部條件成立才是 DBS 說明書（同一家的商品家族範本先辨識，見 issuers.py）。"""
     sk = skeleton(lines)
     failed = list(sk.failed)
-    if RANGE_MARK in sk.text("商品基本資料"):
-        failed.append(f"商品基本資料的累積日數比「{RANGE_MARK}」（是區間累計配息 DACN，不是固定利率 FCN）")
     return DetectionResult(not failed, failed, sk.evidence)
 
 
@@ -369,7 +365,7 @@ def memory(ti: TextIndex, name: str) -> ParsedField:
 
 def ki_type(ti: TextIndex, table: ParsedField, maturity: str = KI_MATURITY) -> ParsedField:
     """下限觸發事件（範本規格 §4.4）：到期 (a)、下限觸發事件定義、價格表下限觸發價格欄三者須一致（說明書、投資人須知共用）。
-    `maturity` 是 KI 到期觀察的到期贖回寫法（DACN 投資人須知另有 `1.` 編號，workflow #370）。"""
+    `maturity` 是 KI 到期觀察的到期贖回寫法（區間累計配息的投資人須知另有 `1.` 編號，workflow #370）。"""
     am, none = list(ti.finditer(maturity)), list(ti.finditer(NO_KI_MATURITY))
     event = ti.text.count(KI_EVENT)
     has_col = table.ok and "ki" in table.value.columns

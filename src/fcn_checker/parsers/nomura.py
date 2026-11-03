@@ -25,7 +25,7 @@ TEMPLATE_ID = "nomura-zh-pd"
 # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：年利率取自情境、無 KI 要有明確到期贖回款（Issue #297）；
 # 4：日期表標準欄位與共用排程推導（Issue #289）；5：情境設定參數交成共用情境規則的標準欄位（Issue #294）
 # 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）；7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
-# 8：辨識加「第 7 項沒有每日計息的實際日數／總日數定義」，和 Nomura DACN（parsers/nomura_dacn.py）互斥（workflow #368）
+# 8：辨識曾加「第 7 項沒有每日計息的實際日數／總日數定義」（workflow #368；#436 起同一家上手由專到泛由上手註冊表決定，版本不變）
 PARSER_VERSION = "8"
 # 保證機構信用評等（#241）：第一章第 3 項 `保證機構名稱：…保證機構之長期債務信用評等為：穆迪Baa1（Moody's）、標準普爾BBB+
 # （Standard&Poor's）、惠譽A-（Fitch）`（英文名稱在評等後面；後面直接接第 4 項）、第二章保證機構 (7) `信用評等：…`（接 (8) 保證之條件）。
@@ -204,13 +204,9 @@ def _item_field(items: dict[str, CoverItem], label: str, name: str, pattern: str
 # ---------------------------------------------------------------- 辨識
 
 
-# 每日計息（DACN）第 7 項的定義標籤（去空白）：有其中之一就不是 FCN 範本（workflow #368）
-ACCRUAL_LABELS = ("實際日數：", "總日數：")
-
-
 @dataclass(frozen=True)
 class Skeleton:
-    """說明書骨架的辨識結果（FCN 與 DACN 範本共用，範本規格 §8）：版面、封面中英文名稱（去空白），以及兩個範本共同的
+    """說明書骨架的辨識結果（同上手各商品家族的範本共用，範本規格 §8）：版面、封面中英文名稱（去空白），以及各範本共同的
     條件中不成立的那些（英文名稱的條件各範本自己判斷）。"""
 
     doc: Document
@@ -262,14 +258,11 @@ def skeleton(lines: Sequence[Line]) -> Skeleton:
 
 
 def detect(lines: Sequence[Line]) -> DetectionResult:
-    """範本辨識（範本規格 §8）：全部條件成立才是 Nomura 說明書；第 7 項有每日計息定義的是 DACN，不是本範本。"""
+    """範本辨識（範本規格 §8）：全部條件成立才是 Nomura 說明書（同一家的商品家族範本先辨識，見 issuers.py）。"""
     sk = skeleton(lines)
     failed = list(sk.failed)
     if not all(squash(x) in sk.en for x in NAME_EN_MARKS):
         failed.append("商品英文名稱沒有「" + "」「".join(NAME_EN_MARKS) + "」")
-    art7 = TextIndex(sk.article(7)).text
-    if any(label in art7 for label in ACCRUAL_LABELS):
-        failed.append("第 7 項有每日計息的「實際日數：」「總日數：」定義（是 DACN，不是固定配息 FCN）")
     return DetectionResult(not failed, failed, sk.evidence)
 
 

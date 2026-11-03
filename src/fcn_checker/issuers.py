@@ -1,9 +1,13 @@
-"""上手註冊表：每家上手的識別資料、範本辨識、讀出、說明書內部規則與其可讀的參考條件表欄位（ADR 0009），
-以及投資人須知範本（ADR 0007；沒有範本的上手，投資人須知是未支援上手）。
+"""上手註冊表：上手（`Issuer`：代號、信用評等核對、說明書內部規則可讀的參考條件表欄位（ADR 0009）、讀出後的
+交易所假日表推算）底下掛自己的範本（`Template`：一個商品家族的說明書辨識、讀出、說明書內部規則與投資人須知範本，
+ADR 0007；沒有投資人須知範本的上手，投資人須知是未支援上手）。
 
-上手 adapter 只提供這五樣；參考條件表欄位、審查標準、Non-Call／ISIN／發行日／比價日與回填都是各上手共用的規則，
-由單份核對（single_check.py）依序執行。新增上手時在 `REGISTRY` 登記一筆，並在 `config/issuer_prefixes.toml`
-登記上手編號（docs/checker/issuer-onboarding.md §6）；批量入口、CLI 與 PANEL 都由這裡分派。
+範本 adapter 只提供這幾樣；參考條件表欄位、審查標準、Non-Call／ISIN／發行日／比價日與回填都是各上手共用的規則，
+由單份核對（single_check.py）依序執行。「這份文件是哪家上手的哪個範本」：跨上手要求剛好一家命中（零家或多家轉人工覆核），
+同一家之內由專到泛（DACN／Super Bull／BEN 先、FCN 最後）取第一個命中，所以 FCN 範本不必寫「不是 DACN 才算」。
+新增上手在 `REGISTRY` 登記一筆、在 `config/issuer_prefixes.toml` 登記上手編號；新增（上手, 商品家族）只多一個範本物件，
+放在該上手範本清單的前面，並在 `[auto_check_products]` 與審查標準 `[issuer.<x>.product_names.<P>]` 各加一段
+（docs/checker/issuer-onboarding.md §6）；批量入口、CLI 與 PANEL 都由這裡分派。
 """
 
 from __future__ import annotations
@@ -133,33 +137,50 @@ class IisTemplate:
 
 
 @dataclass(frozen=True)
-class Issuer:
-    # 識別資料
-    code: str  # 上手代號（例：BARC），與上手編號對照、參考條件表「發行機構」設定相同
+class Template:
+    """上手的一個說明書範本（一個商品家族）：辨識、讀出、說明書內部規則與同商品的投資人須知範本。"""
+
+    code: str  # 屬於哪家上手（上手代號）；和所在 `Issuer.code` 相同
     template_id: str
     label: str
     parser_version: str
     not_covered: tuple[dict[str, str], ...]  # 「未涵蓋」的固定清單（PANEL「待處理」分頁與核對紀錄）
-    # 辨識：文字行 → 是否為這家上手的範本（含證據）；一次核對中每份說明書只呼叫一次
+    # 辨識：文字行 → 是否為這個範本（含證據）；一次核對中每份說明書只呼叫一次
     detect: Callable[[Sequence[Line]], DetectionResult]
-    # 讀出：文字行 → 標準欄位（standard_fields.STANDARD_FIELDS）＋該上手規則需要的專屬資料；每份只呼叫一次
+    # 讀出：文字行 → 標準欄位（standard_fields.STANDARD_FIELDS）＋該範本規則需要的專屬資料；每份只呼叫一次
     read: Callable[[Sequence[Line]], TermSheet]
-    # 說明書內部規則：只用讀出結果與審查標準，拿不到參考條件表的列與格式設定
+    # 說明書內部規則：只用讀出結果與審查標準，拿不到參考條件表的列與格式設定（可讀的欄位由上手宣告）
     rules: Callable[[IssuerContext], list[CheckResult]]
-    # 說明書內部規則可讀的參考條件表欄位（ADR 0009，須逐一宣告：BARC 月配息率推算的年利率與天期（Issue #54）、
-    # MS 月配息率與年化報酬率的年利率（說明書沒有年利率，Issue #135））
-    reference_fields: tuple[str, ...] = ()
-    # 投資人須知範本；None → 這家上手的投資人須知是未支援上手
+    # 投資人須知範本；None → 這個範本的投資人須知是未支援上手
     iis: IisTemplate | None = None
+    # 範本涵蓋的商品種類（參考條件表 Product 的寫法）：辨識到的範本和該列 Product 不同時轉人工覆核（#311）；Product 空白視為 FCN
+    products: frozenset[str] = frozenset({FCN, FCN_EXPRESS})
+
+
+@dataclass(frozen=True)
+class Issuer:
+    """一家上手：上手的事只寫一次，底下的範本由專到泛排（商品家族在前、FCN 最後）。"""
+
+    code: str  # 上手代號（例：BARC），與上手編號對照、參考條件表「發行機構」設定相同
+    templates: tuple[Template, ...]  # 由專到泛：辨識時同一家取第一個命中的範本
+    # 說明書內部規則可讀的參考條件表欄位（ADR 0009，須逐一宣告：BARC 月配息率推算的年利率與天期（Issue #54）、
+    # MS 月配息率與年化報酬率的年利率（說明書沒有年利率，Issue #135））；這家上手的每個範本共用
+    reference_fields: tuple[str, ...] = ()
     # 說明書與投資人須知的信用評等核對（rules/ratings.py，#240～#243）：parser 交出 `issuer_ratings`／`guarantor_ratings` 的上手才標。
     # 現有 14 家都標了；留著給新上手：上線時評等還沒做的不跑這條規則、不產生結果（docs/checker/issuer-onboarding.md §6.2a）
     ratings: bool = False
     # 讀出後用交易所假日表補上推算的欄位（CA：沒有 Non-Call 時第一個觀察日 = 發行日後下一個一籃子預定交易日，workflow #305）；
-    # None → 不用補
+    # 套在這家上手每個範本的說明書讀出結果上；None → 不用補
     with_calendar: Callable[[TermSheet, TradingCalendar], TermSheet] | None = None
-    # 範本涵蓋的商品種類（參考條件表 Product 的寫法）：辨識到的範本和該列 Product 不同時轉人工覆核（#311）。同一家上手
-    # 依商品家族分成不同範本時各登記一筆（BNP FCN／Super Bull），上手代號相同；Product 空白視為 FCN
-    products: frozenset[str] = frozenset({FCN, FCN_EXPRESS})
+
+    def __post_init__(self) -> None:
+        if not self.templates or any(t.code != self.code for t in self.templates):
+            raise ValueError(f"上手 {self.code} 的範本清單是空的或含別家上手的範本")
+
+    @property
+    def has_iis(self) -> bool:
+        """至少一個範本有投資人須知範本；沒有時這家上手的投資人須知是未支援上手。"""
+        return any(t.iis is not None for t in self.templates)
 
 
 _IIS_SAMPLES = {
@@ -168,7 +189,7 @@ _IIS_SAMPLES = {
     "其他型態的寫法未驗證，範本以外的欄位或寫法會轉人工覆核",
 }
 
-BARC = Issuer(
+BARC = Template(
     code=barc_rules.ISSUER,
     template_id=barc_parser.TEMPLATE_ID,
     label="BARC 中文產品說明書",
@@ -177,8 +198,6 @@ BARC = Issuer(
     detect=lambda lines: barc_parser.detect(barc_parser.document(lines)),
     read=barc_parser.read,
     rules=barc_rules.run_all,
-    reference_fields=barc_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=barc_iis.TEMPLATE_ID,
         label="BARC 中文投資人須知",
@@ -189,7 +208,7 @@ BARC = Issuer(
     ),
 )
 
-HSBC = Issuer(
+HSBC = Template(
     code=hsbc_rules.ISSUER,
     template_id=hsbc_parser.TEMPLATE_ID,
     label="HSBC 中文產品說明書",
@@ -198,7 +217,6 @@ HSBC = Issuer(
     detect=hsbc_parser.detect,
     read=hsbc_parser.read,
     rules=hsbc_rules.run_all,
-    ratings=True,
     iis=IisTemplate(
         template_id=hsbc_iis.TEMPLATE_ID,
         label="HSBC 中文投資人須知",
@@ -209,8 +227,8 @@ HSBC = Issuer(
     ),
 )
 
-# HSBC Super Bull（#314）：和 HSBC FCN 同一家上手、不同範本；依參考條件表 Product 選用（商品種類一致檢查在辨識）
-HSBC_SUPER_BULL = Issuer(
+# HSBC Super Bull（#314）：和 HSBC FCN 同一家上手、不同範本（商品種類須和參考條件表 Product 相同，檢查在辨識）
+HSBC_SUPER_BULL = Template(
     code=hsbc_rules.ISSUER,
     template_id=hsbc_sb_parser.TEMPLATE_ID,
     label="HSBC Super Bull 中文產品說明書",
@@ -219,7 +237,6 @@ HSBC_SUPER_BULL = Issuer(
     detect=hsbc_sb_parser.detect,
     read=hsbc_sb_parser.read,
     rules=hsbc_sb_rules.run_all,
-    ratings=True,
     iis=IisTemplate(
         template_id=hsbc_super_bull_iis.TEMPLATE_ID,
         label="HSBC Super Bull 中文投資人須知",
@@ -232,8 +249,8 @@ HSBC_SUPER_BULL = Issuer(
     products=frozenset({SUPER_BULL}),
 )
 
-# HSBC BEN（#375）：Maxi 與 Digital 同一個範本，依參考條件表 Product 選用（同 Super Bull）
-HSBC_BEN = Issuer(
+# HSBC BEN（#375）：Maxi 與 Digital 同一個範本（同 Super Bull）
+HSBC_BEN = Template(
     code=hsbc_rules.ISSUER,
     template_id=hsbc_ben_parser.TEMPLATE_ID,
     label="HSBC BEN 中文產品說明書",
@@ -242,7 +259,6 @@ HSBC_BEN = Issuer(
     detect=hsbc_ben_parser.detect,
     read=hsbc_ben_parser.read,
     rules=hsbc_ben_rules.run_all,
-    ratings=True,
     iis=IisTemplate(
         template_id=hsbc_ben_iis.TEMPLATE_ID,
         label="HSBC BEN 中文投資人須知",
@@ -255,7 +271,7 @@ HSBC_BEN = Issuer(
     products=frozenset({BEN}),
 )
 
-MS = Issuer(
+MS = Template(
     code=ms_rules.ISSUER,
     template_id=ms_parser.TEMPLATE_ID,
     label="MS 中文產品說明書",
@@ -264,8 +280,6 @@ MS = Issuer(
     detect=ms_parser.detect,
     read=ms_parser.read,
     rules=ms_rules.run_all,
-    reference_fields=ms_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=ms_iis.TEMPLATE_ID,
         label="MS 中文投資人須知",
@@ -277,8 +291,8 @@ MS = Issuer(
     ),
 )
 
-# MS BEN（#376）：一般 BEN 與 Digital（各有 lookback）同一個範本，依參考條件表 Product 選用（同 HSBC BEN）
-MS_BEN = Issuer(
+# MS BEN（#376）：一般 BEN 與 Digital（各有 lookback）同一個範本（同 HSBC BEN）
+MS_BEN = Template(
     code=ms_rules.ISSUER,
     template_id=ms_ben_parser.TEMPLATE_ID,
     label="MS BEN 中文產品說明書",
@@ -287,7 +301,6 @@ MS_BEN = Issuer(
     detect=ms_ben_parser.detect,
     read=ms_ben_parser.read,
     rules=ms_ben_rules.run_all,
-    ratings=True,
     iis=IisTemplate(
         template_id=ms_ben_iis.TEMPLATE_ID,
         label="MS BEN 中文投資人須知",
@@ -300,7 +313,7 @@ MS_BEN = Issuer(
     products=frozenset({BEN}),
 )
 
-BNP = Issuer(
+BNP = Template(
     code=bnp_rules.ISSUER,
     template_id=bnp_parser.TEMPLATE_ID,
     label="BNP 中文產品說明書",
@@ -309,8 +322,6 @@ BNP = Issuer(
     detect=bnp_parser.detect,
     read=bnp_parser.read,
     rules=bnp_rules.run_all,
-    reference_fields=bnp_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=bnp_iis.TEMPLATE_ID,
         label="BNP 中文投資人須知",
@@ -321,8 +332,8 @@ BNP = Issuer(
     ),
 )
 
-# BNP Super Bull（#311）：和 BNP FCN 同一家上手、不同範本；依參考條件表 Product 選用（商品種類一致檢查在辨識）
-BNP_SUPER_BULL = Issuer(
+# BNP Super Bull（#311）：和 BNP FCN 同一家上手、不同範本（商品種類須和參考條件表 Product 相同，檢查在辨識）
+BNP_SUPER_BULL = Template(
     code=bnp_rules.ISSUER,
     template_id=bnp_sb_parser.TEMPLATE_ID,
     label="BNP Super Bull 中文產品說明書",
@@ -331,7 +342,6 @@ BNP_SUPER_BULL = Issuer(
     detect=bnp_sb_parser.detect,
     read=bnp_sb_parser.read,
     rules=bnp_sb_rules.run_all,
-    ratings=True,
     iis=IisTemplate(
         template_id=bnp_super_bull_iis.TEMPLATE_ID,
         label="BNP Super Bull 中文投資人須知",
@@ -344,7 +354,7 @@ BNP_SUPER_BULL = Issuer(
     products=frozenset({SUPER_BULL}),
 )
 
-SG = Issuer(
+SG = Template(
     code=sg_rules.ISSUER,
     template_id=sg_parser.TEMPLATE_ID,
     label="SG 中文產品說明書",
@@ -353,8 +363,6 @@ SG = Issuer(
     detect=sg_parser.detect,
     read=sg_parser.read,
     rules=sg_rules.run_all,
-    reference_fields=sg_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=sg_iis.TEMPLATE_ID,
         label="SG 中文投資人須知",
@@ -366,8 +374,8 @@ SG = Issuer(
     ),
 )
 
-# SG DACN（workflow #369）：和 SG FCN 同一家上手、不同範本（依第 8 項 n(i)／N(i) 區間累積配息公式辨識，兩者互斥）；依參考條件表 Product 選用
-SG_DACN = Issuer(
+# SG DACN（workflow #369）：和 SG FCN 同一家上手、不同範本（依第 8 項 n(i)／N(i) 區間累積配息公式辨識，排在 SG FCN 前面）
+SG_DACN = Template(
     code=sg_rules.ISSUER,
     template_id=sg_dacn_parser.TEMPLATE_ID,
     label="SG DACN 中文產品說明書",
@@ -376,8 +384,6 @@ SG_DACN = Issuer(
     detect=sg_dacn_parser.detect,
     read=sg_dacn_parser.read,
     rules=sg_dacn_rules.run_all,
-    reference_fields=sg_dacn_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=sg_dacn_iis.TEMPLATE_ID,
         label="SG DACN 中文投資人須知",
@@ -390,7 +396,7 @@ SG_DACN = Issuer(
     products=frozenset({DACN}),
 )
 
-CITI = Issuer(
+CITI = Template(
     code=citi_rules.ISSUER,
     template_id=citi_parser.TEMPLATE_ID,
     label="Citi 中文產品說明書",
@@ -399,8 +405,6 @@ CITI = Issuer(
     detect=citi_parser.detect,
     read=citi_parser.read,
     rules=citi_rules.run_all,
-    reference_fields=citi_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=citi_iis.TEMPLATE_ID,
         label="Citi 中文投資人須知",
@@ -412,7 +416,7 @@ CITI = Issuer(
     ),
 )
 
-JPM = Issuer(
+JPM = Template(
     code=jpm_rules.ISSUER,
     template_id=jpm_parser.TEMPLATE_ID,
     label="JPM 中文產品說明書",
@@ -421,8 +425,6 @@ JPM = Issuer(
     detect=jpm_parser.detect,
     read=jpm_parser.read,
     rules=jpm_rules.run_all,
-    reference_fields=jpm_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=jpm_iis.TEMPLATE_ID,
         label="JPM 中文投資人須知",
@@ -434,7 +436,7 @@ JPM = Issuer(
     ),
 )
 
-NOMURA = Issuer(
+NOMURA = Template(
     code=nomura_rules.ISSUER,
     template_id=nomura_parser.TEMPLATE_ID,
     label="Nomura 中文產品說明書",
@@ -443,7 +445,6 @@ NOMURA = Issuer(
     detect=nomura_parser.detect,
     read=nomura_parser.read,
     rules=nomura_rules.run_all,
-    ratings=True,
     iis=IisTemplate(
         template_id=nomura_iis.TEMPLATE_ID,
         label="Nomura 中文投資人須知",
@@ -455,8 +456,8 @@ NOMURA = Issuer(
     ),
 )
 
-# Nomura DACN（workflow #368）：和 Nomura FCN 同一家上手、不同範本（依第 7 項每日計息公式辨識，兩者互斥）；依參考條件表 Product 選用
-NOMURA_DACN = Issuer(
+# Nomura DACN（workflow #368）：和 Nomura FCN 同一家上手、不同範本（依第 7 項每日計息公式辨識，排在 Nomura FCN 前面）
+NOMURA_DACN = Template(
     code=nomura_rules.ISSUER,
     template_id=nomura_dacn_parser.TEMPLATE_ID,
     label="Nomura DACN 中文產品說明書",
@@ -465,7 +466,6 @@ NOMURA_DACN = Issuer(
     detect=nomura_dacn_parser.detect,
     read=nomura_dacn_parser.read,
     rules=nomura_dacn_rules.run_all,
-    ratings=True,
     iis=IisTemplate(
         template_id=nomura_dacn_iis.TEMPLATE_ID,
         label="Nomura DACN 中文投資人須知",
@@ -478,7 +478,7 @@ NOMURA_DACN = Issuer(
     products=frozenset({DACN}),
 )
 
-GS = Issuer(
+GS = Template(
     code=gs_rules.ISSUER,
     template_id=gs_parser.TEMPLATE_ID,
     label="GS 中文產品說明書",
@@ -487,8 +487,6 @@ GS = Issuer(
     detect=gs_parser.detect,
     read=gs_parser.read,
     rules=gs_rules.run_all,
-    reference_fields=gs_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=gs_iis.TEMPLATE_ID,
         label="GS 中文投資人須知",
@@ -500,7 +498,7 @@ GS = Issuer(
     ),
 )
 
-NATIXIS = Issuer(
+NATIXIS = Template(
     code=natixis_rules.ISSUER,
     template_id=natixis_parser.TEMPLATE_ID,
     label="Natixis 中文產品說明書",
@@ -509,8 +507,6 @@ NATIXIS = Issuer(
     detect=natixis_parser.detect,
     read=natixis_parser.read,
     rules=natixis_rules.run_all,
-    reference_fields=natixis_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=natixis_iis.TEMPLATE_ID,
         label="Natixis 中文投資人須知",
@@ -522,9 +518,9 @@ NATIXIS = Issuer(
     ),
 )
 
-# Natixis DACN（workflow #371）：和 Natixis FCN 同一家上手、不同範本（依第 13 項「變動配息金額」公式與配息界限價格辨識，兩者互斥）；
-# 依參考條件表 Product 選用
-NATIXIS_DACN = Issuer(
+# Natixis DACN（workflow #371）：和 Natixis FCN 同一家上手、不同範本（依第 13 項「變動配息金額」公式與配息界限價格辨識，
+# 排在 Natixis FCN 前面）
+NATIXIS_DACN = Template(
     code=natixis_rules.ISSUER,
     template_id=natixis_dacn_parser.TEMPLATE_ID,
     label="Natixis DACN 中文產品說明書",
@@ -533,8 +529,6 @@ NATIXIS_DACN = Issuer(
     detect=natixis_dacn_parser.detect,
     read=natixis_dacn_parser.read,
     rules=natixis_dacn_rules.run_all,
-    reference_fields=natixis_dacn_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=natixis_dacn_iis.TEMPLATE_ID,
         label="Natixis DACN 中文投資人須知",
@@ -547,7 +541,7 @@ NATIXIS_DACN = Issuer(
     products=frozenset({DACN}),
 )
 
-CA = Issuer(
+CA = Template(
     code=ca_rules.ISSUER,
     template_id=ca_parser.TEMPLATE_ID,
     label="CA 中文產品說明書",
@@ -555,10 +549,7 @@ CA = Issuer(
     not_covered=tuple(ca_rules.NOT_COVERED),
     detect=ca_parser.detect,
     read=ca_parser.read,
-    with_calendar=ca_parser.with_calendar,
     rules=ca_rules.run_all,
-    reference_fields=ca_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=ca_iis.TEMPLATE_ID,
         label="CA 中文投資人須知",
@@ -570,8 +561,8 @@ CA = Issuer(
     ),
 )
 
-# CA Super Bull（#312）：和 CA FCN 同一家上手、不同範本；依參考條件表 Product 選用（商品種類一致檢查在辨識）
-CA_SUPER_BULL = Issuer(
+# CA Super Bull（#312）：和 CA FCN 同一家上手、不同範本（商品種類須和參考條件表 Product 相同，檢查在辨識）
+CA_SUPER_BULL = Template(
     code=ca_rules.ISSUER,
     template_id=ca_sb_parser.TEMPLATE_ID,
     label="CA Super Bull 中文產品說明書",
@@ -580,8 +571,6 @@ CA_SUPER_BULL = Issuer(
     detect=ca_sb_parser.detect,
     read=ca_sb_parser.read,
     rules=ca_sb_rules.run_all,
-    reference_fields=ca_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=ca_super_bull_iis.TEMPLATE_ID,
         label="CA Super Bull 中文投資人須知",
@@ -594,7 +583,7 @@ CA_SUPER_BULL = Issuer(
     products=frozenset({SUPER_BULL}),
 )
 
-CA_BEN = Issuer(
+CA_BEN = Template(
     code=ca_rules.ISSUER,
     template_id=ca_ben_parser.TEMPLATE_ID,
     label="CA BEN 中文產品說明書",
@@ -603,8 +592,6 @@ CA_BEN = Issuer(
     detect=ca_ben_parser.detect,
     read=ca_ben_parser.read,
     rules=ca_ben_rules.run_all,
-    reference_fields=ca_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=ca_ben_iis.TEMPLATE_ID,
         label="CA BEN 中文投資人須知",
@@ -617,7 +604,7 @@ CA_BEN = Issuer(
     products=frozenset({BEN}),
 )
 
-BBVA = Issuer(
+BBVA = Template(
     code=bbva_rules.ISSUER,
     template_id=bbva_parser.TEMPLATE_ID,
     label="BBVA 中文產品說明書",
@@ -626,8 +613,6 @@ BBVA = Issuer(
     detect=bbva_parser.detect,
     read=bbva_parser.read,
     rules=bbva_rules.run_all,
-    reference_fields=bbva_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=bbva_iis.TEMPLATE_ID,
         label="BBVA 中文投資人須知",
@@ -639,7 +624,7 @@ BBVA = Issuer(
     ),
 )
 
-DBS = Issuer(
+DBS = Template(
     code=dbs_rules.ISSUER,
     template_id=dbs_parser.TEMPLATE_ID,
     label="DBS 中文產品說明書",
@@ -648,8 +633,6 @@ DBS = Issuer(
     detect=dbs_parser.detect,
     read=dbs_parser.read,
     rules=dbs_rules.run_all,
-    reference_fields=dbs_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=dbs_iis.TEMPLATE_ID,
         label="DBS 中文投資人須知",
@@ -661,9 +644,8 @@ DBS = Issuer(
     ),
 )
 
-# DBS DACN（workflow #370）：和 DBS FCN 同一家上手、不同範本（依累積日數定義的「其區間下限價格」辨識，兩者互斥）；依參考條件表
-# Product 選用
-DBS_DACN = Issuer(
+# DBS DACN（workflow #370）：和 DBS FCN 同一家上手、不同範本（依累積日數定義的「其區間下限價格」辨識，排在 DBS FCN 前面）
+DBS_DACN = Template(
     code=dbs_dacn_rules.ISSUER,
     template_id=dbs_dacn_parser.TEMPLATE_ID,
     label="DBS DACN 中文產品說明書",
@@ -672,8 +654,6 @@ DBS_DACN = Issuer(
     detect=dbs_dacn_parser.detect,
     read=dbs_dacn_parser.read,
     rules=dbs_dacn_rules.run_all,
-    reference_fields=dbs_dacn_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=dbs_dacn_iis.TEMPLATE_ID,
         label="DBS DACN 中文投資人須知",
@@ -686,7 +666,7 @@ DBS_DACN = Issuer(
     products=frozenset({DACN}),
 )
 
-UBS = Issuer(
+UBS = Template(
     code=ubs_rules.ISSUER,
     template_id=ubs_parser.TEMPLATE_ID,
     label="UBS 中文產品說明書",
@@ -695,8 +675,6 @@ UBS = Issuer(
     detect=ubs_parser.detect,
     read=ubs_parser.read,
     rules=ubs_rules.run_all,
-    reference_fields=ubs_rules.REFERENCE_FIELDS,
-    ratings=True,
     iis=IisTemplate(
         template_id=ubs_iis.TEMPLATE_ID,
         label="UBS 中文投資人須知",
@@ -708,31 +686,29 @@ UBS = Issuer(
     ),
 )
 
+
+# 上手：範本由專到泛（商品家族在前、FCN 最後）
 REGISTRY: tuple[Issuer, ...] = (
-    BARC,
-    HSBC,
-    HSBC_SUPER_BULL,
-    HSBC_BEN,
-    MS,
-    MS_BEN,
-    BNP,
-    BNP_SUPER_BULL,
-    SG,
-    SG_DACN,
-    CITI,
-    JPM,
-    NOMURA,
-    NOMURA_DACN,
-    GS,
-    NATIXIS,
-    NATIXIS_DACN,
-    CA,
-    CA_SUPER_BULL,
-    CA_BEN,
-    BBVA,
-    DBS,
-    DBS_DACN,
-    UBS,
+    Issuer(BARC.code, (BARC,), reference_fields=barc_rules.REFERENCE_FIELDS, ratings=True),
+    Issuer(HSBC.code, (HSBC_BEN, HSBC_SUPER_BULL, HSBC), ratings=True),
+    Issuer(MS.code, (MS_BEN, MS), reference_fields=ms_rules.REFERENCE_FIELDS, ratings=True),
+    Issuer(BNP.code, (BNP_SUPER_BULL, BNP), reference_fields=bnp_rules.REFERENCE_FIELDS, ratings=True),
+    Issuer(SG.code, (SG_DACN, SG), reference_fields=sg_rules.REFERENCE_FIELDS, ratings=True),
+    Issuer(CITI.code, (CITI,), reference_fields=citi_rules.REFERENCE_FIELDS, ratings=True),
+    Issuer(JPM.code, (JPM,), reference_fields=jpm_rules.REFERENCE_FIELDS, ratings=True),
+    Issuer(NOMURA.code, (NOMURA_DACN, NOMURA), ratings=True),
+    Issuer(GS.code, (GS,), reference_fields=gs_rules.REFERENCE_FIELDS, ratings=True),
+    Issuer(NATIXIS.code, (NATIXIS_DACN, NATIXIS), reference_fields=natixis_rules.REFERENCE_FIELDS, ratings=True),
+    Issuer(
+        CA.code,
+        (CA_BEN, CA_SUPER_BULL, CA),
+        reference_fields=ca_rules.REFERENCE_FIELDS,
+        ratings=True,
+        with_calendar=ca_parser.with_calendar,  # 只對沒有 Non-Call 的 FCN 有作用；Super Bull、BEN 的 Non-Call ≥ 1，原樣交回
+    ),
+    Issuer(BBVA.code, (BBVA,), reference_fields=bbva_rules.REFERENCE_FIELDS, ratings=True),
+    Issuer(DBS.code, (DBS_DACN, DBS), reference_fields=dbs_rules.REFERENCE_FIELDS, ratings=True),
+    Issuer(UBS.code, (UBS,), reference_fields=ubs_rules.REFERENCE_FIELDS, ratings=True),
 )
 
 
@@ -742,29 +718,32 @@ def by_code(code: str, registry: Sequence[Issuer] = REGISTRY) -> Issuer | None:
 
 TEMPLATE = Item.note("範本")
 
-
-def detect(lines: Sequence[Line], registry: Sequence[Issuer] = REGISTRY) -> tuple[Issuer | None, CheckResult]:
-    """以每家已註冊上手辨識說明書範本；恰好一個命中才回傳該上手，零個或多個命中轉人工覆核。"""
-    return _detect(lines, [(i, i.detect, i.template_id, i.label) for i in registry], "說明書")
+_Candidate = tuple[Template, Callable[[Sequence[Line]], DetectionResult], str, str]
+_Detection = tuple[Template, DetectionResult, str, str]
 
 
-def detect_iis(lines: Sequence[Line], registry: Sequence[Issuer] = REGISTRY) -> tuple[Issuer | None, CheckResult]:
-    """以每家有投資人須知範本的上手辨識投資人須知；恰好一個命中才回傳該上手，零個或多個命中轉人工覆核。"""
-    templates = [(i, i.iis.detect, i.iis.template_id, i.iis.label) for i in registry if i.iis is not None]
-    return _detect(lines, templates, "投資人須知")
+def detect(lines: Sequence[Line], registry: Sequence[Issuer] = REGISTRY) -> tuple[Template | None, CheckResult]:
+    """辨識說明書範本：跨上手剛好一家命中才回傳該範本，零家或多家命中轉人工覆核；同一家之內由專到泛取第一個命中。"""
+    return _detect(lines, [[(t, t.detect, t.template_id, t.label) for t in i.templates] for i in registry], "說明書")
+
+
+def detect_iis(lines: Sequence[Line], registry: Sequence[Issuer] = REGISTRY) -> tuple[Template | None, CheckResult]:
+    """辨識投資人須知範本（回傳同商品的說明書範本，投資人須知範本在它的 `iis`）；規則同 `detect`。"""
+    issuers = [[(t, t.iis.detect, t.iis.template_id, t.iis.label) for t in i.templates if t.iis] for i in registry]
+    return _detect(lines, issuers, "投資人須知")
 
 
 def _detect(
-    lines: Sequence[Line],
-    templates: Sequence[tuple[Issuer, Callable[[Sequence[Line]], DetectionResult], str, str]],
-    what: str,
-) -> tuple[Issuer | None, CheckResult]:
-    detections = [(i, d(lines), tid, label) for i, d, tid, label in templates]
-    hits = [(i, d, tid, label) for i, d, tid, label in detections if d.matched]
+    lines: Sequence[Line], issuers: Sequence[Sequence[_Candidate]], what: str
+) -> tuple[Template | None, CheckResult]:
+    # 每個範本都跑一次；錯訊照登記順序（每家上手 FCN 在前）列出每個範本的結果
+    detections = [[(t, d(lines), tid, label) for t, d, tid, label in reversed(cands)] for cands in issuers]
+    flat = [x for per_issuer in detections for x in per_issuer]
+    hits = [h for per_issuer in detections if (h := _pick(per_issuer)) is not None]
     rid = "template.detect"
     if len(hits) == 1:
-        issuer, det, tid, label = hits[0]
-        return issuer, CheckResult(
+        template, det, tid, label = hits[0]
+        return template, CheckResult(
             rule_id=rid,
             field="template",
             status=CheckStatus.PASS,
@@ -784,20 +763,19 @@ def _detect(
             message="同時符合多個範本，無法確定上手，請人工處理：" + "、".join(label for _, _, _, label in hits),
             item=TEMPLATE,
         )
-    old = [(i, d) for i, d, _, _ in detections if d.unsupported]
+    old = [d for _, d, _, _ in flat if d.unsupported]
     if len(old) == 1:  # 認得出上手、但範本版本不支援
-        _, det = old[0]
         return None, CheckResult(
             rule_id=rid,
             field="template",
             status=CheckStatus.REVIEW_REQUIRED,
             reason_code="template_unsupported",
-            document_evidence=det.evidence,
-            message=f"{det.unsupported}；請人工核對，不能人工放行",
+            document_evidence=old[0].evidence,
+            message=f"{old[0].unsupported}；請人工核對，不能人工放行",
             item=TEMPLATE,
         )
-    evidence: list[Evidence] = [e for _, d, _, _ in detections for e in d.evidence]
-    reasons = "；".join(f"{label}：" + "；".join(d.failed) for _, d, _, label in detections)
+    evidence: list[Evidence] = [e for _, d, _, _ in flat for e in d.evidence]
+    reasons = "；".join(f"{label}：" + "；".join(d.failed) for _, d, _, label in flat)
     return None, CheckResult(
         rule_id=rid,
         field="template",
@@ -807,3 +785,15 @@ def _detect(
         message=f"不是已支援的{what}範本，請人工處理：" + reasons,
         item=TEMPLATE,
     )
+
+
+def _pick(detections: Sequence[_Detection]) -> _Detection | None:
+    """同一家上手由專到泛取第一個命中的範本（`detections` 是登記順序、FCN 在前，所以倒著看）；較專的範本認得出商品家族、
+    但版本不支援（`DetectionResult.unsupported`）或文件有該家族的標記寫法（`DetectionResult.claimed`）時停在那裡，
+    不退回較泛的範本。"""
+    for hit in reversed(detections):
+        if hit[1].matched:
+            return hit
+        if hit[1].unsupported or hit[1].claimed:
+            return None
+    return None

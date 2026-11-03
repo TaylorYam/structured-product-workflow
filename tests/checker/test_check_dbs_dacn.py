@@ -110,10 +110,11 @@ def test_term_sheet_and_investor_sheet_are_not_taken_for_each_other(tmp_path):
     ts_lines, iis_lines = (lines_of(x) for x in (pdf, iis_path(pdf)))
     assert DBS_DACN.detect(ts_lines).matched
     assert DBS_DACN.iis.detect(iis_lines).matched
-    for detect in (DBS_DACN.iis.detect, DBS.iis.detect, DBS.detect):
+    for detect in (DBS_DACN.iis.detect, DBS.iis.detect):
         assert not detect(ts_lines).matched
-    for detect in (DBS_DACN.detect, DBS.detect, DBS.iis.detect):
+    for detect in (DBS_DACN.detect, DBS.detect):
         assert not detect(iis_lines).matched
+    # 同一家 FCN 範本對 DACN 文件不再自己拒絕：由上手註冊表由專到泛決定（test_issuer_registry.py，#436）
 
 
 @pytest.mark.parametrize(

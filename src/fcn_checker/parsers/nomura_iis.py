@@ -19,7 +19,7 @@ from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "nomura-zh-iis"
 # 2：無 KI 要有第四的明確到期贖回款（Issue #297）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
-# 4：辨識加「收益分配事項沒有 ×實際日數/總日數」，和 Nomura DACN 投資人須知（parsers/nomura_dacn_iis.py）互斥（workflow #368）
+# 4：辨識曾加「收益分配事項沒有 ×實際日數/總日數」（workflow #368；#436 起同一家上手由專到泛由上手註冊表決定，版本不變）
 PARSER_VERSION = "4"
 # 保證機構信用評等（#241）：第二商品簡介 4. `…截至本中文投資人須知刊印日期，發行機構未獲評等，保證機構Nomura Holdings, Inc.之
 # 長期債務評等為穆迪Baa1（Moody's）、…。`
@@ -102,12 +102,8 @@ def _cover(text_lines: list[Line]) -> tuple[nomura.RawText, re.Match[str] | None
     return raw, m
 
 
-# 每日計息（DACN）配息公式的寫法（去空白）：收益分配事項有它就不是 FCN 範本（workflow #368）
-ACCRUAL = "×實際日數/總日數"
-
-
 def skeleton(lines: Sequence[Line]) -> tuple[TextIndex, str, str, list[str], list[Evidence]]:
-    """首列、中文名稱、商品種類行、相關機構第 1 點與段落順序（範本規格 §6 條件 1、2 的中文名稱、3～5；FCN 與 DACN 共用）：
+    """首列、中文名稱、商品種類行、相關機構第 1 點與段落順序（範本規格 §6 條件 1、2 的中文名稱、3～5；同上手各商品家族的範本共用）：
     回傳（全文, 封面中文名稱、英文名稱（去空白）, 不成立的條件, 證據）。"""
     lines = body(lines)
     ti = TextIndex(lines)
@@ -143,8 +139,6 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
         failed.append(
             f"封面英文名稱沒有「Autocall Fixed Coupon Notes」或不是以「issued by {nomura.ISSUER_EN} (unsecured)」結尾"
         )
-    if ACCRUAL in coupon_text(ti):
-        failed.append(f"收益分配事項有每日計息的「{ACCRUAL}」（是 DACN，不是固定配息 FCN）")
     return DetectionResult(not failed, failed, evidence)
 
 

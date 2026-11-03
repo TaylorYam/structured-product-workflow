@@ -17,7 +17,7 @@ from bnp_synth import ADDRESS, DIST, GUARANTOR, ISSUER, PHONE, SPLIT, WARNING, S
 from fcn_checker.extraction import extract_lines
 from fcn_checker.issuers import BNP, detect_iis
 from fcn_checker.parsers import bnp as bnp_parser
-from harness import MISMATCH, NA, PASS, REVIEW, REVIEW_STANDARD, iis_path, load_config
+from harness import MISMATCH, NA, PASS, REVIEW, REVIEW_STANDARD, iis_path, load_config, registry_of
 from pdf_writer import Edit, zh_date
 
 S = Spec()
@@ -412,12 +412,12 @@ def test_bnp_iis_template_is_not_confused_with_other_templates(tmp_path):
     issuer, r = detect_iis(bnp_iis_lines)
     assert issuer is BNP and r.actual == "bnp-zh-iis"
     assert not bnp_parser.detect(bnp_iis_lines).matched, "BNP 投資人須知不是 BNP 說明書"
-    assert detect_iis(lines_of(ts), (BNP,))[0] is None, "BNP 說明書不是 BNP 投資人須知"
+    assert detect_iis(lines_of(ts), registry_of(BNP))[0] is None, "BNP 說明書不是 BNP 投資人須知"
     barc = synth.build_iis_pdf(tmp_path / "029199990001_IIS.pdf", synth.Spec())
     ms_ts = ms_synth.build_pdf(tmp_path / "147199990001_TS.pdf", ms_synth.Spec())
     hsbc = hsbc_synth.build_iis_pdf(tmp_path / "325199990001_IIS.pdf", hsbc_synth.Spec())
     for other in (barc, hsbc, iis_path(ms_ts)):
-        assert detect_iis(lines_of(other), (BNP,))[0] is None, other.name
+        assert detect_iis(lines_of(other), registry_of(BNP))[0] is None, other.name
 
 
 def test_a_different_issuer_in_the_institutions_is_not_a_bnp_iis(tmp_path):

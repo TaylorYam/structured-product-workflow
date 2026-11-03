@@ -35,9 +35,10 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     ti, failed, evidence = dbs_iis.skeleton(lines)
     coupon = dbs_dacn.same_chars(dbs_iis.coupon_text(ti))
     if not dbs_dacn.is_range_accrual(coupon):
-        failed.append(f"收益分配事項沒有比「{dbs.RANGE_MARK}」的累積日數定義（不是區間累計配息 DACN）")
+        failed.append(f"收益分配事項沒有比「{dbs_dacn.RANGE_MARK}」的累積日數定義（不是區間累計配息 DACN）")
     if failed:
-        return DetectionResult(False, failed, evidence)
+        claimed = dbs_dacn.RANGE_MARK in dbs_iis.coupon_text(ti)
+        return DetectionResult(False, failed, evidence, claimed=claimed)
     missing = []
     if len(re.findall(RATE, coupon)) != 1:
         missing.append("收益分配事項「利率：…最大利率值 X 累積日數/總日數」和現行版不同")

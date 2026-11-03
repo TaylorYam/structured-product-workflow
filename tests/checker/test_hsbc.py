@@ -17,7 +17,7 @@ from fcn_checker.issuers import HSBC, REGISTRY
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.schema import CheckReport
 from fcn_checker.schema import CheckStatus as S
-from harness import CONFIG, REVIEW_STANDARD, ROOT, STANDARD, check_all, cli_root, load_record, with_iis
+from harness import CONFIG, REVIEW_STANDARD, ROOT, STANDARD, check_all, cli_root, load_record, registry_of, with_iis
 from hsbc_synth import Spec, build_pdf
 from pdf_writer import Edit
 from reference_synth import REFERENCE_HEADERS, as_headers, build_reference_sheet, reference_row
@@ -301,10 +301,10 @@ def test_ambiguous_registry_and_damaged_pdf(tmp_path):
     s = Spec()
     pdf = build_pdf(tmp_path / f"{s.product_code}_TS.pdf", s)
     excel = sheet_for(tmp_path, s)
-    from fcn_checker.issuers import Issuer
+    from fcn_checker.issuers import Issuer, Template
     from fcn_checker.parsers import hsbc as parser
 
-    fake = Issuer(
+    fake = Template(
         code="FAKE",
         template_id="fake-zh-pd",
         label="FAKE 測試範本",
@@ -314,7 +314,7 @@ def test_ambiguous_registry_and_damaged_pdf(tmp_path):
         read=parser.read,
         rules=lambda ctx: [],
     )
-    r = run_check(pdf, excel, registry=(HSBC, fake))
+    r = run_check(pdf, excel, registry=(*registry_of(HSBC), Issuer("FAKE", (fake,))))
     assert any(x.reason_code == "template_ambiguous" for x in r.results)
     pdf.write_bytes(b"broken pdf")
     assert run_check(pdf, excel).status == S.ERROR
@@ -724,7 +724,7 @@ def _check_replaced(tmp_path, **fields):
 
     adapter = dataclasses.replace(HSBC, read=lambda lines: _Replaced(HSBC.read(lines), **fields))
     s = Spec()
-    return run_check(build_pdf(tmp_path / f"{s.product_code}_TS.pdf", s), sheet_for(tmp_path, s), (adapter,))
+    return run_check(build_pdf(tmp_path / f"{s.product_code}_TS.pdf", s), sheet_for(tmp_path, s), registry_of(adapter))
 
 
 def test_hsbc_price_rows_fewer_than_underlyings_require_review(tmp_path):

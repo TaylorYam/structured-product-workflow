@@ -5,7 +5,7 @@
 3. 各上手共用的說明書推算規則（rules/derivation.py：價格推算）
 4. 日期表結構檢查（rules/schedule.py，各上手共用，Issue #289）、情境分析的共用檢查（rules/scenario.py，Issue #294）、
    開始受理贖回日期（rules/redemption.py）、幣別代碼與價格表的標的交易幣別（rules/currency.py，Issue #227）
-   與上手說明書內部規則（Issuer.rules；只拿到讀出結果、審查標準與上手宣告的參考條件表欄位）
+   與範本的說明書內部規則（Template.rules；只拿到讀出結果、審查標準與上手宣告的參考條件表欄位）
 5. 審查標準規則（rules/review_standard.py）、信用評等（rules/ratings.py，上手註冊表標了 `Issuer.ratings` 的上手，#240）
 6. Non-Call(月)、TS、IIS、ISIN、發行日、比價日、VWAP 商品的各標的價格
 7. 回填決策（backfill.py）
@@ -27,7 +27,7 @@ from . import backfill
 from .check_config import CheckConfig
 from .identification import Identification
 from .investor_sheet import IisSheet
-from .issuers import Issuer
+from .issuers import Issuer, Template
 from .orders.reference import OrderRecord
 from .rules import currency, derivation, iis, ratings, redemption, reference, scenario, schedule, underlying_notes
 from .rules.kit import Context, IssuerContext
@@ -41,6 +41,7 @@ class Paired:
     """配對成功的說明書：上手、讀出結果（同一份只讀一次）、對到的參考條件表列；由辨識結果建立。"""
 
     issuer: Issuer
+    template: Template
     ts: TermSheet
     row: OrderRecord
     pages: int | None  # PDF 頁數
@@ -48,9 +49,15 @@ class Paired:
     @classmethod
     def of(cls, ident: Identification) -> Paired | None:
         """有上手、讀出結果、對到的列且規則會跑才算配對成功；否則 None（不執行任何條件規則）。"""
-        if ident.adapter is None or ident.term_sheet is None or ident.row is None or not ident.checked:
+        if (
+            ident.adapter is None
+            or ident.issuer_adapter is None
+            or ident.term_sheet is None
+            or ident.row is None
+            or not ident.checked
+        ):
             return None
-        return cls(ident.adapter, ident.term_sheet, ident.row, ident.pages)
+        return cls(ident.issuer_adapter, ident.adapter, ident.term_sheet, ident.row, ident.pages)
 
 
 def _issuer_context(paired: Paired, config: CheckConfig) -> IssuerContext:
@@ -86,7 +93,7 @@ def check_document(pairing: Sequence[CheckResult], paired: Paired | None, config
         results.extend(scenario.run(issuer_ctx))
         results.extend(redemption.term_sheet(issuer_ctx))
         results.extend(currency.run(ctx, config.exchange_calendar))
-        results.extend(paired.issuer.rules(issuer_ctx))
+        results.extend(paired.template.rules(issuer_ctx))
         results.extend(review_standard_rules(ctx, reference_trade=iis.trade_date(ctx)))
         if paired.issuer.ratings:
             results.extend(ratings.run(ctx))
@@ -109,7 +116,7 @@ def check_document(pairing: Sequence[CheckResult], paired: Paired | None, config
         results.extend(backfill_results)
         report.backfill = decisions
         report.backfill_certain = bool(decisions) and all(r.status == CheckStatus.PASS for r in backfill_results)
-        report.not_covered = [dict(n) for n in paired.issuer.not_covered]
+        report.not_covered = [dict(n) for n in paired.template.not_covered]
     report.status = overall_status([r.status for r in results]) if results else CheckStatus.ERROR
     return report
 
@@ -119,6 +126,7 @@ class PairedIis:
     """配對成功的投資人須知：上手、讀出結果、參考條件表的列，以及同商品說明書的讀出結果（這批沒有時為 None）。"""
 
     issuer: Issuer
+    template: Template
     sheet: IisSheet
     row: OrderRecord
     term_sheet: TermSheet | None
@@ -130,6 +138,7 @@ class PairedIis:
         """配對成功的投資人須知；同商品說明書配對成功（規則有跑）才拿它的讀出結果來比對。"""
         if (
             ident.adapter is None
+            or ident.issuer_adapter is None
             or ident.investor_sheet is None
             or ident.row is None
             or ident.pages is None
@@ -138,7 +147,15 @@ class PairedIis:
             return None
         partner = ident.partner
         term_sheet = partner.term_sheet if partner is not None and partner.checked else None
-        return cls(ident.adapter, ident.investor_sheet, ident.row, term_sheet, ident.pages, ident.product_code or "")
+        return cls(
+            ident.issuer_adapter,
+            ident.adapter,
+            ident.investor_sheet,
+            ident.row,
+            term_sheet,
+            ident.pages,
+            ident.product_code or "",
+        )
 
 
 def check_investor_sheet(pairing: Sequence[CheckResult], paired: PairedIis | None, config: CheckConfig) -> CheckReport:
@@ -159,7 +176,7 @@ def check_investor_sheet(pairing: Sequence[CheckResult], paired: PairedIis | Non
         )
         results.extend(iis.run_all(ctx))
         trade = iis.trade_date(ctx)
-        template = paired.issuer.iis
+        template = paired.template.iis
         if template is not None and template.rules is not None:
             results.extend(template.rules(iis.IisIssuerContext(paired.sheet, paired.term_sheet, trade_date=trade)))
         results.extend(iis_review_standard_rules(ctx, trade=trade))
