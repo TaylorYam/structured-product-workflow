@@ -576,7 +576,7 @@ def test_ki_touch_is_backfilled_from_the_ki_text(pg) -> None:
     _database_before(pg, 37)
     texts = {
         "029199990001": "AKI hit 2026-10-01 UL_1 AAA UW",
-        "029199990002": "EKI hit 2026-10-02 UL_2 7203 JT",
+        "029199990002": "EKI hit 2026-10-02 UL_2 9999 JT",
         "029199990003": "AKI",
         "029199990004": "MKI (manual)",
         "029199990005": "-",
@@ -596,7 +596,7 @@ def test_ki_touch_is_backfilled_from_the_ki_text(pg) -> None:
         "SELECT tdcc, ki, ki_touch_date, ki_touch_code FROM workflow.pricing_status ORDER BY tdcc"
     ).fetchall() == [
         ("029199990001", texts["029199990001"], dt.date(2026, 10, 1), "AAA UW"),
-        ("029199990002", texts["029199990002"], dt.date(2026, 10, 2), "7203 JT"),
+        ("029199990002", texts["029199990002"], dt.date(2026, 10, 2), "9999 JT"),
         ("029199990003", "AKI", None, None),
         ("029199990004", "MKI (manual)", None, None),
         ("029199990005", "-", None, None),

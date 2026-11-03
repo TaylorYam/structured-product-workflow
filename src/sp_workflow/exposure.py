@@ -244,6 +244,7 @@ def load_positions(
     positions = []
     for s in found:
         p = s.columns
+        ki, touch = kis.get(s.tdcc, ("", None))
         legs = []
         for u in s.prices:
             day, close = (today, trial[u.code]) if u.code in trial else latest.get(u.code, (None, None))
@@ -260,14 +261,14 @@ def load_positions(
                 p["currency"],
                 p["final_valuation_date"],
                 p["barrier_type"],
-                kis.get(s.tdcc, ("", None))[0] or "",
+                ki or "",
                 None if s.check is None else s.check.status,
                 None if s.check is None else s.check.reason or None,
                 tuple(legs),
                 tuple(holdings.get(s.tdcc, ())),
                 p["strike_pct"],
                 p["ki_pct"],
-                kis.get(s.tdcc, ("", None))[1],
+                touch,
             )
         )
     return positions
