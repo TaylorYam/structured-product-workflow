@@ -40,6 +40,7 @@ from fcn_checker.products import PRODUCT_RULES, SUPPORTED_PRODUCTS, product_name
 from sp_workflow import import_run
 from sp_workflow.check_terms import CalcLine, recalculate, recalculate_corrected
 from sp_workflow.database import OperatorError, require_in_transaction
+from sp_workflow.lifecycle import lifecycle_status
 from sp_workflow.order_terms import TDCC_FIELD, OrderRow, describe, unknown_issuer
 from sp_workflow.product_record import (
     CHOICES,
@@ -695,7 +696,8 @@ def write(
     必填欄可以空白（格式錯的擋），寫入後重算核對條件；只有交易明細的新建商品條件（來源「人工維護」）。單位面額只有
     幣別改了時換成新幣別的預設值。`trades` 是這檔的交易明細（#116）：改了的格子一起寫入，在
     `workflow.trade_row_correction` 另外留一筆；更正時改到核對條件會用到的欄（分公司配置、交叉比對）條件沒改也重算。
-    商品條件改了在 `workflow.term_correction` 留一筆。沒改任何欄時不寫入；打開之後這檔被改過、鎖住狀態不對、
+    商品條件改了在 `workflow.term_correction` 留一筆，這檔已出場時結果另外寫出存續事件（`Receipt.exited`，#169）。
+    沒改任何欄時不寫入；打開之後這檔被改過、鎖住狀態不對、
     建立了商品條件或交易明細沒了，丟 `TermsError`、不寫入。寫入後 `draft`、`trades` 換成資料庫存的值（同重新打開）。
     起單資料的草稿整批匯入，用 `write_batch`。
     """
@@ -769,8 +771,19 @@ def write(
         else tuple(missing_fields(product))
         if exists
         else required_fields(draft.values.get("Product")),
+        exited="" if correction_id is None else _exited(conn, tdcc),
         **_trade_receipt(trades, trade_changes, trade_id),
     )
+
+
+def _exited(conn: psycopg.Connection, tdcc: str) -> str:
+    """已出場的商品改了條件（#169）：最新的存續事件「事件 標的 事件日」；還沒出場時空字串。已出場的不再比價，
+    事件不會跟著改。"""
+    latest = lifecycle_status(conn, [tdcc])[tdcc].latest
+    if latest is None:
+        return ""
+    when = latest.event_date or "沒有事件日"
+    return " ".join(str(p) for p in (latest.event, latest.underlying, when) if p)
 
 
 def _guard(
