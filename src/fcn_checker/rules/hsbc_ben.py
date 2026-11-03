@@ -2,7 +2,7 @@
 價格表表頭 %、殘留註記、(最終版)、情境分析重算。
 
 名稱與幣別沿用 HSBC FCN（rules/hsbc.py）；參考條件表欄位（含參與率 `field.participation_pct`）、價格推算、情境價格表與基本假設、
-審查標準與回填是各上手共用的規則。交股情境的算式和 HSBC Super Bull 情境三共用（rules/hsbc_super_bull.py）。說明書內部規則
+審查標準與回填是各上手共用的規則。交股情境的算式和 HSBC Super Bull 情境三共用（rules/delivery.py 的 HSBC 寫法）。說明書內部規則
 不讀參考條件表。抓不到或寫法不在範本規格內一律轉人工覆核。
 """
 

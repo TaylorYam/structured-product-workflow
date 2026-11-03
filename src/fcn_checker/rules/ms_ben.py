@@ -3,7 +3,7 @@
 
 名稱、幣別、受託機構商品代號、商品種類沿用 MS FCN（rules/ms.py）；參考條件表欄位（含參與率 `field.participation_pct`）、價格
 推算、重印表與基本假設、審查標準與回填（含回顧結束日 `backfill.lookback_end_date`）是各上手共用的規則。交股情境的算式和 HSBC
-Super Bull 情境三共用（rules/hsbc_super_bull.py，MS 先把報酬率四捨五入到 2 位再年化）。說明書內部規則不讀參考條件表。
+Super Bull 情境三共用（rules/delivery.py 的 `delivery.MS`：MS 先把報酬率四捨五入到 2 位再年化）。說明書內部規則不讀參考條件表。
 抓不到或寫法不在範本規格內一律轉人工覆核。
 """
 

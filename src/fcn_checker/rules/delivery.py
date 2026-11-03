@@ -36,6 +36,11 @@ HSBC_NAMES = {
 }
 
 
+def _v(hit):
+    """讀到的算式的值；找不到（None）時為 None。"""
+    return hit.value if hit is not None else None
+
+
 class Convention(ABC):
     """一種交股情境寫法：股數的位數（`share_places`）、進位（`share_rounding`）、容差（`share_tolerance`）是資料；股數的
     算式、匯率怎麼比、股數之前的假設與之後的步驟由子類別給。"""
@@ -75,7 +80,7 @@ def worse(
     """交股情境 `sc`（讀出的算式，欄位見各寫法）全部重算：`n` 面額、`tenor` 天期、`fx` 情境假設的期末匯率（HSBC 寫法）或
     第 16 項匯率行（CA 寫法，同幣別為 None）。"""
     out = convention.assumed(c, sc)
-    s = sc.shares.value if sc.shares is not None else None
+    s = _v(sc.shares)
     if s is None:
         out.append(c.unread("shares", convention.shares_missing))
     else:
@@ -102,9 +107,9 @@ class HsbcStyle(Convention):
     shares_missing = "找不到「每單位面額 × 期末匯率 / 最差表現連結標的執行價 = N × 匯率 / K = S 股」"
 
     def assumed(self, c: Scenario, sc) -> list[CheckResult]:
-        s = sc.shares.value if sc.shares is not None else None
-        rm = sc.remainder.value if sc.remainder is not None else None
-        v = sc.value.value if sc.value is not None else None
+        s = _v(sc.shares)
+        rm = _v(sc.remainder)
+        v = _v(sc.value)
         close_price = rm.close if rm is not None else v.close if v is not None else None
         if s is None or close_price is None:
             return [c.unread("assumed", "找不到股數或剩餘金額算式，無法比對期末股價和執行價")]
@@ -124,9 +129,9 @@ class HsbcStyle(Convention):
         """交割股數 = 股數無條件捨去；零股數 = 股數 − 交割股數；剩餘金額 = P × 零股數 ÷ 匯率（2 位）；到期贖回價值 =
         P × 交割股數 ÷ 匯率 + 剩餘金額；損益 = 價值 − 面額；年化 = 損益 ÷ 面額 × 12 ÷ 天期。"""
         out = []
-        s = sc.shares.value if sc.shares is not None else None
-        rm = sc.remainder.value if sc.remainder is not None else None
-        v = sc.value.value if sc.value is not None else None
+        s = _v(sc.shares)
+        rm = _v(sc.remainder)
+        v = _v(sc.value)
         whole = s.shares.to_integral_value(ROUND_DOWN) if s is not None else None
         if sc.whole is None:
             out.append(c.unread("whole", "找不到「在此例中為W 股」"))
@@ -213,7 +218,7 @@ class CaStyle(Convention):
     shares_missing = "找不到「每單位面額/…執行價* = N / K = S 股」"
 
     def assumed(self, c: Scenario, sc) -> list[CheckResult]:
-        s = sc.shares.value if sc.shares is not None else None
+        s = _v(sc.shares)
         if sc.worse_assumed is None:
             return [c.unread("assumed", "找不到「假設於期末訂價日…收盤價為P，低於其執行價」")]
         if s is None:

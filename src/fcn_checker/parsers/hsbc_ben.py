@@ -97,7 +97,8 @@ FCN_ONLY = ("coupon_table", "coupon_periods", "ko_table", "ko_start", "first_per
 # 和 parsers/hsbc_super_bull.py 讀法不同、名稱加 `_ben_` 的函式（workflow #439）：第 11 條（沒有 KO、到期公式與紅利，Super Bull
 # 是提前贖回表）、無 KI（全文沒有「觸及」、交股句直接比執行價；Super Bull 看「觸及不保本價」與第 11 條 (2)）、第 18 條假設
 # 的紅利（「紅利配息率為x%」，Super Bull 是「自動提前贖回配息」）、情境價格表（Digital 沒有交易所欄）與情境一～三的算式。
-# 相同的（損益算式、最差標的對到價格表第幾檔）直接用 Super Bull 的。
+# 相同的直接共用：損益算式（parsers/delivery.py 的 `pnl`）、最差標的對到價格表第幾檔（`hsbc_super_bull.worst_row`）。`detect`、
+# `read` 是註冊表呼叫的入口，每個範本模組各有一個，不改名。
 
 
 # ---------------------------------------------------------------- 辨識
