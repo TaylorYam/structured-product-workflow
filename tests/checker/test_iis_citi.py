@@ -39,6 +39,7 @@ VARIANTS = {
     "P、每期 KI、舊文件": Spec(ko_obs="P", ki="P", tenor=9, legacy=True),
     "無自動提前出場、CNH": Spec(autocall=False, ki="none", tenor=3, currency_zh="境外人民幣", strike=Decimal("68.85")),
     "單一標的、非記憶式": Spec(memory=False, count=1, tenor=12, first_callable=11, ko=Decimal("100.00")),
+    "P 非記憶式": Spec(ko_obs="P", memory=False, tenor=3),
     "VWAP": Spec(vwap=True, ki="none", ko=Decimal("91.00")),
 }
 

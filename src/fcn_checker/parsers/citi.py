@@ -26,7 +26,8 @@ TEMPLATE_ID = "citi-zh-pd"
 # 5：假設價格表與情境配息率、年息交成共用情境規則的標準欄位（Issue #294）
 # 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 # 7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #242）
-PARSER_VERSION = "7"
+# 8：P 型非記憶式第 13 項「於第t個觀察日，t=1-n」（workflow #430）
+PARSER_VERSION = "8"
 # 信用評等（#242）：第一章第 3 項發行機構、保證機構各一句 `…；長期債務信用評等為穆迪（Moody’s）A2/標準普爾（S&P）A/惠譽（Fitch）AA-（截至…）`，
 # 第二章發行機構、保證機構 (7) 信用評等同樣寫法（以前一項 (6) 財務狀況分辨是哪個機構）
 RATINGS = (
@@ -655,7 +656,8 @@ def ko_memory(t13: TextIndex, art13: list[Line], has_autocall: bool) -> ParsedFi
 
 
 def _k_in_art13(t13: TextIndex, art13: list[Line], has_autocall: bool) -> ParsedField:
-    """第 13 項 D 型「(即第k個配息觀察期間結束日（含當日）起至期末評價日…)」的 k；P 型「於觀察日，所有連結標的」為 P。"""
+    """第 13 項 D 型「(即第k個配息觀察期間結束日（含當日）起至期末評價日…)」的 k；P 型「於觀察日，所有連結標的」（記憶式）
+    或「於第t個觀察日，t=1-n，所有連結標的」（非記憶式）為 P、k = 1。"""
     name = "ko_k_art13"
     if not has_autocall:
         return standard_fields.absent(name, "自動提前出場觀察日（無自動提前出場）")
@@ -669,6 +671,15 @@ def _k_in_art13(t13: TextIndex, art13: list[Line], has_autocall: bool) -> Parsed
     p = re.search(r"於觀察日，所有連結標的", t13.text)
     if p:
         return ParsedField.present(name, ("P", 1), t13.lines_for(p.start(), p.end()))
+    # P 型非記憶式（OOS 樣本，workflow #430）：「若於第t個觀察日，t=a-n，所有連結標的…」，a 為第一個可提前出場期
+    t = re.search(r"於第t個觀察日，t=(\d+)-(\d+)，所有連結標的", t13.text)
+    if t:
+        lns = t13.lines_for(t.start(), t.end())
+        if t[1] != "1":
+            return ParsedField.invalid(
+                name, lns, f"第 13 項自動提前出場從第 {t[1]} 個觀察日開始：P 型第一個可提前出場期不是第 1 期沒有樣本"
+            )
+        return ParsedField.present(name, ("P", 1), lns)
     return ParsedField.invalid(name, art13, "第 13 項自動提前出場事件的觀察寫法不在範本規格內")
 
 
