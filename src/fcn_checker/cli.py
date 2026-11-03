@@ -125,11 +125,12 @@ def main(argv: list[str] | None = None) -> int:
         if args.database:
             args.source = _database_source(args)
         outcome, receipt = _run(args)
-        if args.database and receipt.output is not None:
+        if args.database and receipt.sources_unchanged:  # 核對結果檔沒寫成也寫回（#443）
             try:
                 write_back = args.source.write_back(outcome, receipt)
-            except Exception as e:  # 寫回失敗只提示：核對結果檔已存好（#68）
-                write_back = f"[警告] 寫回資料庫失敗：{e}；核對結果檔已存好，排除後請重新核對並儲存"
+            except Exception as e:  # 寫回失敗只提示（#68）
+                result = "核對結果檔也沒寫成" if receipt.result_file_error else "核對結果檔已存好"
+                write_back = f"[警告] 寫回資料庫失敗：{e}；{result}，排除後請重新核對並儲存"
     except Exception as e:  # 非預期錯誤：回報後以 ERROR 結束
         print(f"執行錯誤：{type(e).__name__}: {e}", file=sys.stderr)
         return EXIT[CheckStatus.ERROR]
@@ -141,6 +142,8 @@ def main(argv: list[str] | None = None) -> int:
     print(f"整體狀態：{receipt.status.value}（{STATUS_ZH[receipt.status]}）")
     if receipt.output is not None:
         print(f"核對結果檔：{receipt.output}")
+    elif receipt.result_file_error:
+        print(f"核對結果檔沒寫成：{receipt.result_file_error}")
     if receipt.record is not None:
         print(f"核對紀錄：{receipt.record}")
     if write_back:
