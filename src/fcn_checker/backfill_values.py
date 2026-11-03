@@ -54,6 +54,10 @@ class UnderlyingPrice:
     seq: int
     key: str
 
+    def __post_init__(self) -> None:
+        if self.key not in PRICE_COLUMNS:  # 欄名會放進 SQL：只接受四個價格
+            raise ValueError(f"不認得的價格：{self.key}")
+
     @property
     def column(self) -> str:
         """`workflow.underlying_price` 的欄。"""

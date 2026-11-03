@@ -35,7 +35,16 @@ from decimal import Decimal
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from fcn_checker.backfill_values import AutocallSlot, ProductTerm, Target, UnderlyingPrice
+from fcn_checker.backfill_values import (
+    DENOMINATION,
+    ISIN,
+    ISSUE_DATE,
+    LOOKBACK_END_DATE,
+    AutocallSlot,
+    ProductTerm,
+    Target,
+    UnderlyingPrice,
+)
 from fcn_checker.products import PRODUCT_RULES, SUPPORTED_PRODUCTS, product_name
 from sp_workflow import import_run
 from sp_workflow.check_terms import CalcLine, recalculate, recalculate_corrected
@@ -984,11 +993,7 @@ def _field_edits(original: Mapping[str, object], values: Mapping[str, object]) -
 # ---------- 核對寫回（ADR 0013） ----------
 
 
-_BACKFILL_PRODUCT_COLUMNS = (
-    "isin",
-    "issue_date",
-    "denomination",
-)  # 核對寫回會改的 workflow.product 欄（回顧結束日另外處理）
+_BACKFILL_PRODUCT_TERMS = (ISIN, ISSUE_DATE, DENOMINATION)  # 核對寫回會改的 workflow.product 欄（回顧結束日另外處理）
 
 
 def backfill(
@@ -1002,7 +1007,7 @@ def backfill(
     """
     require_in_transaction(conn)
     match target:
-        case ProductTerm(column="lookback_end_date"):
+        case _ if target == LOOKBACK_END_DATE:
             (old,) = conn.execute("SELECT lookback_end_date FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
             (fixed,) = conn.execute(
                 "SELECT count(*) FROM workflow.underlying_price WHERE tdcc = %s AND lookback_price IS NOT NULL", (tdcc,)
@@ -1010,7 +1015,7 @@ def backfill(
             if fixed and not same_value(old, value):
                 return False
             conn.execute("UPDATE workflow.product SET lookback_end_date = %s WHERE tdcc = %s", (value, tdcc))
-        case ProductTerm(column=column) if column in _BACKFILL_PRODUCT_COLUMNS:  # 欄名放進 SQL 前只接受這幾個
+        case ProductTerm(column=column) if target in _BACKFILL_PRODUCT_TERMS:  # 欄名放進 SQL 前只接受這幾個
             (old,) = conn.execute(f"SELECT {column} FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
             conn.execute(f"UPDATE workflow.product SET {column} = %s WHERE tdcc = %s", (value, tdcc))
         case AutocallSlot(slot=slot):

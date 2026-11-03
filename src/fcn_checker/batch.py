@@ -163,7 +163,9 @@ class BatchItem:
         """寫回資料庫的回填值（#444）：核對交出的回填值；人工放行時另加說明書的單位面額（ADR 0008）。
         要不要寫回看 `fills_sheet`。"""
         denomination = released_denomination(self.report) if self.released else None
-        return (*self.report.backfill_values, *((denomination,) if denomination is not None else ()))
+        if denomination is None:
+            return self.report.backfill_values
+        return (*self.report.backfill_values, denomination)
 
     @property
     def not_filled_reason(self) -> str:

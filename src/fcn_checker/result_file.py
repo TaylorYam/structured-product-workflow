@@ -30,7 +30,7 @@ from openpyxl.workbook.workbook import Workbook
 from openpyxl.worksheet.dimensions import ColumnDimension
 from openpyxl.worksheet.worksheet import Worksheet
 
-from .backfill import WRITE_ACTIONS
+from .backfill import WRITE_ACTIONS, CellDecision
 from .config import ReferenceFormat
 from .identification import Identification, name_code
 from .ingestion import IngestionError, write_new
@@ -97,22 +97,25 @@ def date_format(ws: Any, first_data_row: int) -> str:
 def save(
     wb: Workbook,
     rfmt: ReferenceFormat,
-    decisions: Iterable[Any],
+    decisions: Iterable[CellDecision],
     keep: Iterable[int],
     errors: Sequence[ErrorRow],
     out: Path,
 ) -> Path:
     """寫出核對結果檔並回傳路徑；檔案已存在（不覆蓋）或無法寫入時丟出 IngestionError。
 
-    `wb` 是參考條件表（`open_reference` 讀值開啟，這裡不改它的值）；`decisions` 是要回填的說明書的回填決策
-    （`backfill.CellDecision`）；`keep` 是要留在「回填後」的資料列號。
+    `wb` 是參考條件表（`open_reference` 讀值開啟，這裡不改它的值）；`decisions` 是要回填的說明書的回填決策；`keep` 是要留在「回填後」的資料列號。
     """
     write_new(out, _build(wb, rfmt, decisions, keep, errors), "核對結果檔")
     return out
 
 
 def _build(
-    wb: Workbook, rfmt: ReferenceFormat, decisions: Iterable[Any], keep: Iterable[int], errors: Sequence[ErrorRow]
+    wb: Workbook,
+    rfmt: ReferenceFormat,
+    decisions: Iterable[CellDecision],
+    keep: Iterable[int],
+    errors: Sequence[ErrorRow],
 ) -> bytes:
     layout = locate(wb, rfmt)
     src = wb[layout.sheet]

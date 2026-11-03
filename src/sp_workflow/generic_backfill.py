@@ -29,7 +29,7 @@ import openpyxl
 from openpyxl.cell.cell import Cell, MergedCell
 from openpyxl.worksheet.worksheet import Worksheet
 
-from fcn_checker.backfill import SLOTS
+from fcn_checker.backfill_values import SLOTS
 from fcn_checker.fields import PRICE_COLUMNS
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.orders.reference import (

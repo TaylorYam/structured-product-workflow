@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING, Any
 
 from openpyxl.cell.cell import Cell
 
-from fcn_checker.backfill_values import ROW_FIELDS
+from fcn_checker.backfill_values import CHECKED_MARKS, LOOKBACK_END_DATE, ROW_FIELDS
 from fcn_checker.config import RISK_LEVEL_PENDING
 from fcn_checker.fields import PRICE_COLUMNS
 from fcn_checker.rating_formats import AGENCY_KEYS, RATING_FIELDS
@@ -68,12 +68,12 @@ SHEET_TITLE = "資料庫"
 DATE_FORMAT = "yyyy/m/d"
 SLOTS = 12
 UNDERLYINGS = 5
-CHECKED_FIELDS = ("checked_term_sheet", "checked_iis")
+CHECKED_FIELDS = tuple(m.field for m in CHECKED_MARKS)  # TS、IIS 欄（回填欄位宣告在 backfill_values）
 RISK_FIELD = "risk_level"  # 參考條件表的風險等級（#239；不在匯入格式裡，排在最後）
 PRODUCT_FIELD = "product"  # 參考條件表的商品種類（#302；決定能不能自動核對）
 PARTICIPATION_FIELD = "participation_pct"  # 參考條件表的參與率（#373；只有 BEN 有，不在匯入格式裡，排在風險等級後面）
 COUPON_BARRIER_FIELD = "coupon_barrier_pct"  # 參考條件表的配息門檻（#367；不在匯入格式裡，排在參與率後面）
-LOOKBACK_FIELD = "lookback_end_date"  # 參考條件表的回顧結束日（#376；回填欄位，不在匯入格式裡，排在參與率後面）
+LOOKBACK_FIELD = LOOKBACK_END_DATE.field  # 參考條件表的回顧結束日（#376；回填欄位，不在匯入格式裡，排在參與率後面）
 
 
 class CheckSourceError(Exception):
