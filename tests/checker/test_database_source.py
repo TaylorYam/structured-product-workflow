@@ -17,8 +17,8 @@ import pytest
 import barc_synth
 import hsbc_synth
 from barc_synth import SYNTH_ISIN, build_pdf
-from fcn_checker.batch import Category, check_batch, preview_batch
-from fcn_checker.condition_source import ConditionSource
+from fcn_checker.batch import Category, check_batch, failed_batch, preview_batch
+from fcn_checker.condition_source import NO_CONDITIONS, ConditionSource
 from fcn_checker.config import RISK_LEVEL_PENDING
 from fcn_checker.identification import file_code
 from fcn_checker.ingestion import IngestionError
@@ -780,6 +780,39 @@ def test_cli_database_source_writes_back_when_the_result_file_fails(tmp_path, mo
     out = capsys.readouterr().out
     assert code == cli.EXIT[CheckStatus.ERROR] and database.attempts == 2
     assert "核對結果檔沒寫成：" in out and "已寫回資料庫" in out
+
+
+def test_cli_database_source_that_cannot_read_conditions_names_no_file(tmp_path, monkeypatch, capsys) -> None:
+    """#464：資料庫讀不到條件時整批錯誤；條件來源寫固定文字 `NO_CONDITIONS`，不寫一個不存在的「資料庫」檔案路徑。"""
+    from fcn_checker import cli
+
+    class Unreachable:
+        def conditions(self, term_sheets, fmt):
+            raise IngestionError("database_unavailable", "從資料庫讀核對條件失敗：連不上")
+
+    outcomes = []
+    run = cli._run
+    monkeypatch.setattr(cli, "_database_source", lambda args: Unreachable())
+    monkeypatch.setattr(cli, "_run", lambda args: outcomes.append(run(args)) or outcomes[-1])
+    cli_root(tmp_path, monkeypatch)
+
+    code = cli.main(["--database", str(tmp_path / f"{OTHER}_TS.pdf"), "--out", str(tmp_path / "out")])
+
+    outcome, receipt = outcomes[0]
+    out = capsys.readouterr()
+    assert code == cli.EXIT[CheckStatus.ERROR] and receipt.output is None and receipt.record is None
+    assert outcome.source is None and outcome.reference_sheet is None and outcome.source_name == NO_CONDITIONS
+    assert f"條件來源：{NO_CONDITIONS}" in out.out and "從資料庫讀核對條件失敗：連不上" in out.err
+    assert not (tmp_path / "資料庫").exists() and not (tmp_path / "out").exists()
+
+
+def test_failed_batch_names_its_source() -> None:
+    """整批錯誤的條件來源：Excel 是使用者選的檔名；資料庫讀不到條件（None）是固定文字（#464）。"""
+    error = IngestionError("database_unavailable", "連不上")
+
+    assert failed_batch(Path("in/參考條件表.xlsx"), error).source_name == "參考條件表.xlsx"
+    assert failed_batch(None, error).source_name == NO_CONDITIONS
+    assert failed_batch(None, error).reference_sheet is None
 
 
 def test_cli_without_database_still_needs_a_reference_sheet(capsys) -> None:

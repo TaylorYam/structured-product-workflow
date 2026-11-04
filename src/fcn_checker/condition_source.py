@@ -28,6 +28,7 @@ from .ingestion import SourceSnapshot
 from .orders.reference import ReferenceSheet, Table, as_read, load_reference_sheet, table_sheet
 
 DATABASE = "資料庫"  # 資料庫來源的名稱（排好的表的工作表名稱、核對紀錄的來源）
+NO_CONDITIONS = "資料庫讀不到條件"  # 資料庫來源整批錯誤、一筆條件都沒讀到時的來源說明（#464：不寫假的檔案路徑）
 DATABASE_STEM = "參考條件表_資料庫"  # 資料庫來源的核對結果檔、回報包檔名開頭
 DATE_FORMAT = "yyyy/m/d"  # 資料庫來源排表的日期格式（同以前產生的參考條件表）
 
