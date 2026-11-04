@@ -91,7 +91,7 @@ PRODUCT_FIELDS = {
     "最終比價日": "final_valuation_date", "到期日": "maturity_date", "期初定價": "initial_pricing",
     "KO(%)": "ko_pct", "KO(Freq)": "ko_freq", "KO(memo)": "ko_memory", "K(%)": "strike_pct", "KI(%)": "ki_pct",
     "KI(Freq)": "ki_freq", "UF": "upfront_pct", "Coupon p.a. (%)": "coupon_pct", "配息門檻(%)": "coupon_barrier_pct",
-    "天期(月)": "tenor_months",
+    "參與率(%)": "participation_pct", "天期(月)": "tenor_months",
     "Non-Call(月)": "non_call_months",
 }  # fmt: skip  # 總表欄名 → workflow.product 的欄，照欄名取值
 # 價格的鍵（`fcn_checker.fields`）→ 總表欄名 UL_n_<名稱> 的後半；表頭文字是總表自己的版面（#360），不跟參考條件表
@@ -102,7 +102,7 @@ SUMMARY_COLUMNS = (
     "Product", "發行機構", "TDCC Code", "ISIN Code", "單位面額", "承作幣別", "承作總額", "私銀註記", "新加坡註記",
     "交易日", "期初定價日", "發行日", *(f"比價日_{i}" for i in range(1, 13)), "最終比價日", "到期日",
     "期初定價", "KO(%)", "KO(Freq)", "KO(memo)", "K(%)", "KI(%)", "KI(Freq)", "UF", "Coupon p.a. (%)", "配息門檻(%)",
-    "天期(月)", "Non-Call(月)", "Lookback 期間",
+    "參與率(%)", "天期(月)", "Non-Call(月)", "Lookback 期間",
     *(name for n in range(1, 6) for name in (f"UL_{n}", *(f"UL_{n}_{field}" for field in UL_FIELDS.values()))),
 )  # fmt: skip
 FROZEN = f"{get_column_letter(SUMMARY_COLUMNS.index('TDCC Code') + 2)}2"  # 凍結表頭與 TDCC 以左的欄
@@ -124,7 +124,9 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
     存續是最新一筆還有效的事件（沒有是在庫）；承作總額是交易明細加總，交易列照順序往右排成分公司／FC／金額
     （有 FC2 時 FC 寫「FC1／FC2」、金額不拆，#420），組數是交易最多那一檔的筆數（至少 `MIN_TRADE_GROUPS`）。
     新加坡註記照交易明細的新加坡欄（#420）：有一列 Y 就是 Y、有值但都不是 Y 是 N。
-    資料庫沒有的值（含私銀註記、沒有新加坡欄的舊資料、Lookback 期間，
+    參與率（#463）只有 BEN 有；Lookback 期間（#463）是 lookback 商品的回顧期間「交易日~回顧結束日」
+    （`_lookback_period`；沒有交易日寫 -，比價這時也待確認、算不出回顧期間）。
+    資料庫沒有的值（含私銀註記、沒有新加坡欄的舊資料、BEN 以外商品的參與率、沒有回顧結束日的 Lookback 期間，
     DACN、BEN 以外商品的配息門檻，#367、#406；BEN 預設沒有 KO 的 KO(%)、KO價）寫 `-`。
     總表是 Excel 表格，後面接用公式從總表即時計算的在庫部位分析分頁（#293）。
     """
@@ -173,6 +175,8 @@ def _summary_cells(
     cells.update(
         {"存續狀態": lifecycle.status, "事件發生日": event and event.event_date, "事件標的": event and event.underlying}
     )
+    # 回顧期間從交易日起（ADR 0029，比價也這樣算，`observation`）
+    cells["Lookback 期間"] = _lookback_period(product["trade_date"], product["lookback_end_date"])
     cells.update({f"比價日_{slot}": value for slot, value in autocall.items()})
     for seq, field in enumerate(_UNDERLYINGS, start=1):
         if product[field]:
@@ -183,6 +187,18 @@ def _summary_cells(
     for n, (branch, fc, amount) in enumerate(trades, start=1):
         cells.update({f"分公司_{n}": branch, f"FC_{n}": fc, f"金額_{n}": amount})
     return cells
+
+
+def _lookback_period(start: dt.date | None, end: dt.date | None) -> str | None:
+    """回顧期間的文字「yyyy/m/d~yyyy/m/d」（同總表日期欄的寫法；用半形 ~，不和代表沒有值的 - 混淆）；
+    沒有回顧結束日（不是 lookback）或沒有交易日時 None（寫 -）。"""
+    if start is None or end is None:
+        return None
+    return f"{_slash_date(start)}~{_slash_date(end)}"
+
+
+def _slash_date(day: dt.date) -> str:
+    return f"{day.year}/{day.month}/{day.day}"
 
 
 def _summary_book(columns: Sequence[str], rows: Sequence[Sequence[object]]) -> openpyxl.Workbook:

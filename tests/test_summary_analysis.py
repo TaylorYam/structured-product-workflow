@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 import sys
 import zipfile
@@ -10,7 +11,9 @@ from pathlib import Path
 import openpyxl
 import pytest
 
+from order_synth import A, B
 from sp_workflow.file_tools import FileWriteError, save_export
+from sp_workflow.product_export import export_summary
 from sp_workflow.summary_analysis import (
     BRANCH_SHEET,
     ISSUER_SHEET,
@@ -20,6 +23,7 @@ from sp_workflow.summary_analysis import (
     file_formula,
     summary_table,
 )
+from test_product_export import add_trades, import_ben, import_order
 
 HEADER = ["存續狀態", "發行機構", "承作幣別", "承作總額", "分公司_1", "FC_1", "金額_1", "分公司_2", "FC_2", "金額_2"]
 ROWS = [
@@ -178,5 +182,31 @@ def test_excel_shows_no_error_values_without_products(excel, tmp_path: Path) -> 
         excel.CalculateFull()
         for title in (ISSUER_SHEET, BRANCH_SHEET):
             assert not any(text.startswith("#") for row in grid(book, title, 8, 3) for text in row), title
+    finally:
+        book.Close(False)
+
+
+@pytest.mark.db
+@pytest.mark.excel
+def test_excel_totals_of_an_exported_summary_with_participation_and_lookback(pg, excel, tmp_path: Path) -> None:
+    """匯出的總表多了參與率、Lookback 期間（#463）：在庫部位照樣算對（公式用欄名參照，不受加欄影響）。"""
+    import_order(pg, A)
+    add_trades(pg, A, [("台北", "Amy", 100000), ("台中", "Ben", 50000)])
+    import_ben(pg, B, {"Lookback end date": dt.date(2026, 11, 5)})
+    add_trades(pg, B, [("台北", "Cat", 30000)])
+    path = tmp_path / "商品總表.xlsx"
+    export_summary(pg, path)
+
+    book = excel.Workbooks.Open(str(path))
+    try:
+        excel.CalculateFull()
+        assert grid(book, ISSUER_SHEET, 4, 2) == [
+            ["發行機構", "USD"], ["總計", "180,000"], ["Barclays", "150,000"], ["SG", "30,000"]
+        ]  # fmt: skip
+        branches = grid(book, BRANCH_SHEET, 4, 2)
+        assert (branches[:2], sorted(branches[2:])) == (
+            [["分公司", "USD"], ["總計", "180,000"]],
+            [["台中", "50,000"], ["台北", "130,000"]],
+        )
     finally:
         book.Close(False)

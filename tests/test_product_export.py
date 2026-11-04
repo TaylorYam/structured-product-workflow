@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from decimal import Decimal
 from pathlib import Path
 
@@ -179,7 +180,7 @@ def test_summary_rows_follow_the_new_summary_columns(pg, tmp_path: Path) -> None
         100,
     ]
     assert (a["UL_2"], a["UL_2_進場價"], a["UL_3"]) == ("BBB UN", "-", "-"), "有代碼沒價格寫 -"
-    assert {a[c] for c in ("私銀註記", "新加坡註記", "Lookback 期間")} == {"-"}
+    assert {a[c] for c in ("私銀註記", "新加坡註記", "參與率(%)", "Lookback 期間")} == {"-"}, "FCN 沒有參與率、回顧期間"
     assert all(value is not None for row in (a, b) for value in row.values()), "沒有空白格"
 
 
@@ -218,33 +219,86 @@ def test_express_is_in_the_summary_like_fcn(pg, tmp_path: Path) -> None:
     assert b["Product"] == "FCN"
 
 
-@pytest.mark.db
-def test_ben_is_in_the_summary_without_the_participation(pg, tmp_path: Path) -> None:
-    """BEN 和 FCN 在同一張總表（#373、ADR 0029）：Product 寫 BEN，總表沒有參與率欄；
-    沒有 KO 的 KO(%) 寫 -，配息門檻（紅利門檻）接在 Coupon 後面（#406）。"""
-    ben = order_row(
-        A,
-        {
-            **UF_215,
-            "Product": "BEN",
-            "Guaranteed Periods (m)": 6,
-            "KO Type": "Period End",
-            "Barrier Type": "NONE",
-            "KI Barrier (%)": None,
-            "KO Barrier (%)": None,
-            "Coupon Barrier (%)": Decimal(90),
-        },
-    )
-    receipt = write_batch(pg, _drafts([ben], CONFIG, pg), CONFIG, user="tester")
+BEN = {
+    **UF_215,
+    "Product": "BEN",
+    "Guaranteed Periods (m)": 6,
+    "KO Type": "Period End",
+    "Barrier Type": "NONE",
+    "KI Barrier (%)": None,
+    "KO Barrier (%)": None,
+    "Coupon Barrier (%)": Decimal(90),
+}
+
+
+def import_ben(pg, tdcc: str, changes: dict[str, object] | None = None) -> None:
+    receipt = write_batch(pg, _drafts([order_row(tdcc, {**BEN, **(changes or {})})], CONFIG, pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
+
+
+@pytest.mark.db
+def test_ben_is_in_the_summary_with_the_participation(pg, tmp_path: Path) -> None:
+    """BEN 和 FCN 在同一張總表（#373、ADR 0029）：Product 寫 BEN；沒有 KO 的 KO(%) 寫 -，
+    配息門檻（紅利門檻）接在 Coupon 後面（#406），參與率接在配息門檻後面（#463）；其他商品的參與率寫 -。"""
+    import_ben(pg, A)
+    import_order(pg, B)
+    path = tmp_path / "商品總表.xlsx"
+
+    export_summary(pg, path)
+
+    a, b = as_dicts(path)
+    assert (a["Product"], a["Non-Call(月)"]) == ("BEN", 6)
+    assert (a["KO(%)"], a["配息門檻(%)"]) == ("-", 90)
+    assert SUMMARY_COLUMNS.index("參與率(%)") == SUMMARY_COLUMNS.index("配息門檻(%)") + 1
+    assert (a["參與率(%)"], b["參與率(%)"]) == (100, "-"), "BEN 預設 100；FCN 沒有"
+    assert (a["Lookback 期間"], b["Lookback 期間"]) == ("-", "-"), "不是 lookback"
+
+
+@pytest.mark.db
+def test_the_summary_shows_the_lookback_period(pg, tmp_path: Path) -> None:
+    """Lookback 的 BEN（#374、#463）：Lookback 期間寫「交易日~回顧結束日」，起點和比價一樣是交易日（ADR 0029），
+    不是期初定價日。"""
+    import_ben(pg, A, {"Participation (%)": Decimal(0), "Lookback end date": dt.date(2026, 11, 5)})
+    pg.execute("UPDATE workflow.product SET strike_date = '2026-10-16' WHERE tdcc = %s", (A,))
     path = tmp_path / "商品總表.xlsx"
 
     export_summary(pg, path)
 
     (a,) = as_dicts(path)
-    assert (a["Product"], a["Non-Call(月)"]) == ("BEN", 6)
-    assert (a["KO(%)"], a["配息門檻(%)"]) == ("-", 90)
-    assert not [name for name in a if "參與率" in name or "Participation" in name]
+    assert (a["交易日"], a["期初定價日"]) == (dt.datetime(2026, 10, 15), dt.datetime(2026, 10, 16))
+    assert a["Lookback 期間"] == "2026/10/15~2026/11/5", "從交易日起，月日不補零（同日期欄 yyyy/m/d）"
+    assert a["參與率(%)"] == 0, "Digital 的參與率 0 照寫，不是 -"
+
+
+@pytest.mark.db
+def test_the_lookback_period_without_a_trade_date_is_a_dash(pg, tmp_path: Path) -> None:
+    """沒有交易日（未填齊的商品條件）時比價算不出回顧期間（待確認），總表也不另找起點，寫 -（#463）。"""
+    import_ben(pg, A, {"Lookback end date": dt.date(2026, 11, 5)})
+    pg.execute("UPDATE workflow.product SET trade_date = NULL WHERE tdcc = %s", (A,))
+    path = tmp_path / "商品總表.xlsx"
+
+    export_summary(pg, path)
+
+    assert as_dicts(path)[0]["Lookback 期間"] == "-"
+
+
+@pytest.mark.db
+def test_the_analysis_sheets_only_name_summary_columns(pg, tmp_path: Path) -> None:
+    """分析分頁的公式用欄名參照總表（#293），加欄（#463）不會讓參照錯位：參照到的欄名都在總表裡，
+    分公司／FC／金額連在一起、照組排在最後（分公司那塊的第 3n-2 欄是第 n 組的分公司）。"""
+    import_ben(pg, A, {"Lookback end date": dt.date(2026, 11, 5)})
+    add_trades(pg, A, [("台北", "Amy", 100000), ("台中", "Ben", 50000), ("新竹", "Cat", 30000)])
+    path = tmp_path / "商品總表.xlsx"
+
+    export_summary(pg, path)
+
+    book = openpyxl.load_workbook(path)
+    header = [cell.value for cell in book["商品總表"][1]]
+    formulas = "".join(book[title]["A1"].value.text for title in ("發行機構x幣別", "分公司x幣別"))
+    names = set(re.findall(r"總表\[\[?([^\[\]:]+)\]", formulas)) | set(re.findall(r":\[([^\[\]]+)\]\]", formulas))
+    assert names and names <= set(header), names - set(header)
+    assert header[-9:] == list(trade_columns(3)), "交易組在最後、連在一起"
+    assert "總表[[分公司_1]:[金額_3]]" in formulas
 
 
 @pytest.mark.db
@@ -287,8 +341,8 @@ def test_summary_cells_are_centred_with_fonts_by_content(pg, tmp_path: Path) -> 
     assert [fills[n] for n in ("存續狀態", "事件標的", "Product", "新加坡註記", "交易日", "期初定價日", "到期日")] == [
         "F8CBAD", "F8CBAD", "C5E0B4", "C5E0B4", "FFE699", "FFE699", "FFE699"
     ]  # fmt: skip
-    assert [fills[n] for n in ("期初定價", "Lookback 期間", "UL_1", "UL_5_KO價", "分公司_1", "金額_2")] == [
-        "BDD7EE", "BDD7EE", "DBDBDB", "DBDBDB", "F8CBAD", "F8CBAD"
+    assert [fills[n] for n in ("期初定價", "參與率(%)", "Lookback 期間", "UL_1", "UL_5_KO價", "分公司_1", "金額_2")] == [
+        "BDD7EE", "BDD7EE", "BDD7EE", "DBDBDB", "DBDBDB", "F8CBAD", "F8CBAD"
     ]  # fmt: skip
     assert sheet["A1"].font.sz == 10 and cell["存續狀態"].fill.fill_type is None, "表頭 10 號字；資料列不上底色"
     assert {(c.alignment.horizontal, c.alignment.vertical) for row in sheet.iter_rows() for c in row} == {
