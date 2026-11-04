@@ -243,9 +243,7 @@ class BatchOutcome:
 
     @property
     def source_name(self) -> str:
-        """給人看的條件來源：Excel 檔名、「資料庫」；資料庫讀不到條件時是 `NO_CONDITIONS`（#464）。"""
-        if isinstance(self.source, ConditionSource):
-            return self.source.name
+        """給人看的條件來源：Excel 檔名、「資料庫」；資料庫來源沒讀到條件時是 `NO_CONDITIONS`（#464）。"""
         return NO_CONDITIONS if self.source is None else self.source.name
 
     @property
