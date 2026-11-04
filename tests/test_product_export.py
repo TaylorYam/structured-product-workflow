@@ -257,7 +257,7 @@ def test_ben_is_in_the_summary_with_the_participation(pg, tmp_path: Path) -> Non
 @pytest.mark.db
 def test_the_summary_shows_the_lookback_period(pg, tmp_path: Path) -> None:
     """Lookback 的 BEN（#374、#463）：Lookback 期間寫「交易日~回顧結束日」，起點和比價一樣是交易日（ADR 0029），
-    不是期初定價日；沒有交易日（舊資料）時用期初定價日。"""
+    不是期初定價日。"""
     import_ben(pg, A, {"Participation (%)": Decimal(0), "Lookback end date": dt.date(2026, 11, 5)})
     pg.execute("UPDATE workflow.product SET strike_date = '2026-10-16' WHERE tdcc = %s", (A,))
     path = tmp_path / "商品總表.xlsx"
@@ -268,12 +268,18 @@ def test_the_summary_shows_the_lookback_period(pg, tmp_path: Path) -> None:
     assert (a["交易日"], a["期初定價日"]) == (dt.datetime(2026, 10, 15), dt.datetime(2026, 10, 16))
     assert a["Lookback 期間"] == "2026/10/15~2026/11/5", "從交易日起，月日不補零（同日期欄 yyyy/m/d）"
     assert a["參與率(%)"] == 0, "Digital 的參與率 0 照寫，不是 -"
+
+
+@pytest.mark.db
+def test_the_lookback_period_without_a_trade_date_is_a_dash(pg, tmp_path: Path) -> None:
+    """沒有交易日（未填齊的商品條件）時比價算不出回顧期間（待確認），總表也不另找起點，寫 -（#463）。"""
+    import_ben(pg, A, {"Lookback end date": dt.date(2026, 11, 5)})
     pg.execute("UPDATE workflow.product SET trade_date = NULL WHERE tdcc = %s", (A,))
+    path = tmp_path / "商品總表.xlsx"
+
     export_summary(pg, path)
-    assert as_dicts(path)[0]["Lookback 期間"] == "2026/10/16~2026/11/5", "沒有交易日用期初定價日"
-    pg.execute("UPDATE workflow.product SET strike_date = NULL WHERE tdcc = %s", (A,))
-    export_summary(pg, path)
-    assert as_dicts(path)[0]["Lookback 期間"] == "-", "兩個都沒有寫 -"
+
+    assert as_dicts(path)[0]["Lookback 期間"] == "-"
 
 
 @pytest.mark.db

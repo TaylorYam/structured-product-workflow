@@ -125,7 +125,7 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
     （有 FC2 時 FC 寫「FC1／FC2」、金額不拆，#420），組數是交易最多那一檔的筆數（至少 `MIN_TRADE_GROUPS`）。
     新加坡註記照交易明細的新加坡欄（#420）：有一列 Y 就是 Y、有值但都不是 Y 是 N。
     參與率（#463）只有 BEN 有；Lookback 期間（#463）是 lookback 商品的回顧期間「交易日~回顧結束日」
-    （`_lookback_period`；沒有交易日用期初定價日）。
+    （`_lookback_period`；沒有交易日寫 -，比價這時也待確認、算不出回顧期間）。
     資料庫沒有的值（含私銀註記、沒有新加坡欄的舊資料、BEN 以外商品的參與率、沒有回顧結束日的 Lookback 期間，
     DACN、BEN 以外商品的配息門檻，#367、#406；BEN 預設沒有 KO 的 KO(%)、KO價）寫 `-`。
     總表是 Excel 表格，後面接用公式從總表即時計算的在庫部位分析分頁（#293）。
@@ -175,9 +175,8 @@ def _summary_cells(
     cells.update(
         {"存續狀態": lifecycle.status, "事件發生日": event and event.event_date, "事件標的": event and event.underlying}
     )
-    # 回顧期間從交易日起（ADR 0029，比價也這樣算）；沒有交易日（舊資料）用期初定價日
-    start = product["trade_date"] or product["strike_date"]
-    cells["Lookback 期間"] = _lookback_period(start, product["lookback_end_date"])
+    # 回顧期間從交易日起（ADR 0029，比價也這樣算，`observation`）
+    cells["Lookback 期間"] = _lookback_period(product["trade_date"], product["lookback_end_date"])
     cells.update({f"比價日_{slot}": value for slot, value in autocall.items()})
     for seq, field in enumerate(_UNDERLYINGS, start=1):
         if product[field]:
@@ -192,13 +191,13 @@ def _summary_cells(
 
 def _lookback_period(start: dt.date | None, end: dt.date | None) -> str | None:
     """回顧期間的文字「yyyy/m/d~yyyy/m/d」（同總表日期欄的寫法；用半形 ~，不和代表沒有值的 - 混淆）；
-    沒有回顧結束日（不是 lookback）或沒有起點時 None（寫 -）。"""
+    沒有回顧結束日（不是 lookback）或沒有交易日時 None（寫 -）。"""
     if start is None or end is None:
         return None
-    return f"{_date_text(start)}~{_date_text(end)}"
+    return f"{_slash_date(start)}~{_slash_date(end)}"
 
 
-def _date_text(day: dt.date) -> str:
+def _slash_date(day: dt.date) -> str:
     return f"{day.year}/{day.month}/{day.day}"
 
 
