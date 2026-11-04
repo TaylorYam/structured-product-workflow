@@ -33,7 +33,7 @@ from . import __version__
 from .backfill import BackfillAction
 from .backfill_values import BackfillValue, released_denomination
 from .check_config import CheckConfig
-from .condition_source import ConditionSource
+from .condition_source import NO_CONDITIONS, ConditionSource
 from .config import ReferenceFormat
 from .identification import Identification, PairingProblem, identify, unexpected_result
 from .ingestion import IngestionError, SourceSnapshot, error_result
@@ -227,7 +227,8 @@ class BatchItem:
 @dataclass
 class BatchOutcome:
     items: list[BatchItem]
-    source: ConditionSource | Path  # 核對的條件來源（#445）；整批錯誤、沒讀到條件時是使用者選的檔案（或「資料庫」）
+    # 核對的條件來源（#445）；整批錯誤、沒讀到條件時是使用者選的檔案，資料庫來源是 None（沒有檔案，#464）
+    source: ConditionSource | Path | None
     reference_format: ReferenceFormat | None = None
     errors: list[CheckResult] = field(default_factory=list)  # 整批錯誤（設定檔、參考條件表）；寫檔錯誤在儲存收據
     snapshot: SourceSnapshot | None = None  # 核對前取的來源快照；核對紀錄的 hash 取自它，儲存前據此確認來源未變更
@@ -239,6 +240,11 @@ class BatchOutcome:
         if isinstance(self.source, ConditionSource):
             return self.source.path
         return self.source
+
+    @property
+    def source_name(self) -> str:
+        """給人看的條件來源：Excel 檔名、「資料庫」；資料庫來源沒讀到條件時是 `NO_CONDITIONS`（#464）。"""
+        return NO_CONDITIONS if self.source is None else self.source.name
 
     @property
     def status(self) -> CheckStatus:
@@ -414,7 +420,9 @@ def check_batch(preview: BatchPreview) -> BatchOutcome:
     return BatchOutcome(list(items.values()), preview.source, config.reference_format, snapshot=snapshot, metadata=meta)
 
 
-def failed_batch(source: Path | ConditionSource, e: IngestionError) -> BatchOutcome:
-    """設定檔或參考條件表本身有問題、沒有核對任何說明書的整批錯誤（CLI 用）。"""
-    source = source if isinstance(source, ConditionSource) else Path(source)
+def failed_batch(source: Path | ConditionSource | None, e: IngestionError) -> BatchOutcome:
+    """設定檔或參考條件表本身有問題、沒有核對任何說明書的整批錯誤（CLI 用）。
+
+    `source` 是 Excel 參考條件表的檔案或讀好的條件來源；None 是資料庫來源、條件還沒讀到（#464）。"""
+    source = source if isinstance(source, ConditionSource) or source is None else Path(source)
     return BatchOutcome([], source, errors=[error_result("input.batch", "批量輸入", e)])

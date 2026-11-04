@@ -83,7 +83,7 @@ def _utf8_console() -> None:
 
 
 def _run(args: argparse.Namespace) -> tuple[BatchOutcome, SaveReceipt]:
-    reference = Path("資料庫") if args.database else args.reference_sheet
+    reference = None if args.database else args.reference_sheet  # 資料庫讀不到條件時沒有檔案可記（#464）
     try:
         config = ConfigPaths(
             args.review_standard, args.reference_format, args.issuer_prefixes, args.exchange_holidays
@@ -137,6 +137,8 @@ def main(argv: list[str] | None = None) -> int:
     for item in outcome.items:  # 「已回填」指回填進核對結果檔；資料庫寫回的結果另印在最後（#443）
         reason = f"  {item.not_filled_reason}" if item.not_filled_reason else ""
         print(f"{item.status_label}  {item.term_sheet.name}{'  已回填' if receipt.filled(item) else ''}{reason}")
+    if not outcome.items:  # 整批錯誤：說明是哪個條件來源（資料庫來源沒讀到條件時寫固定文字，#464）
+        print(f"條件來源：{outcome.source_name}")
     for e in (*outcome.errors, *receipt.errors):
         print(f"  [ERROR] {e.field}：{e.message}", file=sys.stderr)
     print(f"整體狀態：{receipt.status.value}（{STATUS_ZH[receipt.status]}）")
