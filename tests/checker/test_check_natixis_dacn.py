@@ -344,3 +344,10 @@ def test_periodic_ko_dacn_is_not_supported(tmp_path):
     detect = rule(ts.report, "template.detect")[0]
     assert (detect.status, detect.reason_code) == (S.REVIEW_REQUIRED, "template_unsupported")
     assert "配息金額" in detect.message
+
+
+def test_repeated_comma_between_the_product_code_and_isin_is_read(tmp_path):
+    """封面「TDCC 商品代號為…，，ISIN 為…」逗號重複（OOS 樣本）：照常讀出商品代號與 ISIN，說明書與投資人須知都通過（workflow #476）。"""
+    ts, iis = check_pair(tmp_path, DacnSpec(double_comma=True))
+    assert ts.report.status == S.PASS, problems(ts.report)
+    assert iis.report.status == S.PASS, problems(iis.report)
