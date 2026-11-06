@@ -290,6 +290,12 @@ def table(sheet, width: int) -> list[tuple[object, ...]]:
 def test_export_writes_one_table_per_sheet(seeded, tmp_path: Path) -> None:
     path = tmp_path / "盤勢速報.xlsx"
 
+    (import_id,) = seeded.execute("SELECT max(import_id) FROM workflow.close_price_import").fetchone()
+    seeded.execute(  # 往回 1 個月是 9/28，沒有收盤價；往前最近一筆 9/25
+        "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES ('2026-09-25', 'AAA UW', 90, %s)",
+        (import_id,),
+    )
+
     receipt = export_brief(seeded, ["AAA", "不存在"], path, today=DAY)
 
     assert (receipt.products, receipt.broken, receipt.heatmaps) == (3, 2, ("AAA",))
@@ -313,7 +319,7 @@ def test_export_writes_one_table_per_sheet(seeded, tmp_path: Path) -> None:
     assert tickers[0][2:5] == ("近1月", "近2月", "近3月")
     assert [row[0] for row in tickers[1:]] == ["BBB", "CCC", "AAA", "DDD"], "依連結面額大到小"
     aaa = tickers[3]
-    assert aaa[1:6] == (72, None, None, None, 2), "測試資料只有兩天的收盤價，近 1～3 月留空"
+    assert aaa[1:6] == (72, pytest.approx(-0.2), None, None, 2), "近 1 月 72 ÷ 90 − 1；更早沒有收盤價留空"
     assert aaa[7:10] == (2, pytest.approx(1.65), 0), "AAA 本身在兩檔都跌破K，都還在下限價之上"
     for sheet in book.worksheets:
         assert not sheet.merged_cells.ranges and not sheet.conditional_formatting, "貼到 PPT 不走樣"

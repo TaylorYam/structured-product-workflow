@@ -67,6 +67,7 @@ TOP_HEATMAPS = 5  # 預設畫熱圖的標的數（連結面額前幾名）
 TOP_TICKERS = 10  # 大跌標的列幾個
 TRAILING_MONTHS = (1, 2, 3)  # 大跌標的的近幾個月表現（#469）
 STALE_DAYS = 14  # 往回 N 個月那天之前最多再找幾天的收盤價
+NO_TRAILING = (None,) * len(TRAILING_MONTHS)  # 沒有收盤價的標的
 MAX_MONTHS = 13  # 熱圖最多幾個月份欄，超過的併入「之後」
 BANDS_EACH_SIDE = 7  # 熱圖昨收上下各幾個整數區間，再外面併成「以上／以下」
 
@@ -77,7 +78,6 @@ K_ONLY_ROW = f"{K_BROKEN}（未破KI）"
 MKI_ROW = "MKI 人工確認"
 FIXED_ROW = "已比價（等交割）"
 UNKNOWN_ROW = "無法計算"
-OVERVIEW_ROWS = (KI_BROKEN, K_ONLY_ROW, NEAR_ROW, SAFE_ROW, MKI_ROW, FIXED_ROW, UNKNOWN_ROW)
 OVERVIEW_SHOWN = (SAFE_ROW, NEAR_ROW, K_ONLY_ROW, KI_BROKEN)  # 總覽列出的列，跌破KI 在最下面（#469）
 # 不用最新收盤價判斷跌破的分類：已比價以最終比價日為準、MKI 系統不比、無法計算缺條件或價格
 NOT_JUDGED = (FIXED, MANUAL, UNKNOWN)
@@ -641,7 +641,7 @@ def _tickers(sheet, brief: Brief) -> None:
             (
                 t.ticker,
                 None if q is None else float(q.close),
-                *(None if v is None else float(v) for v in _trailing(q)),
+                *(None if v is None else float(v) for v in (q.trailing if q else NO_TRAILING)),
                 t.products,
                 _millions(t.notional),
                 t.k_count,
@@ -672,19 +672,17 @@ def _tickers(sheet, brief: Brief) -> None:
         rows,
         (None, PRICE, *([PERCENT] * len(TRAILING_MONTHS)), COUNT, MILLIONS, COUNT, MILLIONS, COUNT, MILLIONS),
     )
-    after = 3 + len(TRAILING_MONTHS)  # 連結檔數那一欄
+    headers = [cell.value for cell in sheet[first - 1]]
+    performance_cols = [headers.index(name) + 1 for name in performance]
+    broken_cols = [headers.index(name) + 1 for name in ("跌破K 檔數", "跌破K 面額", "跌破KI 檔數", "跌破KI 面額")]
     for r in range(first, first + len(rows)):
-        for c in range(3, after):
+        for c in performance_cols:
             value = sheet.cell(r, c).value
             if isinstance(value, float) and value < 0:
                 sheet.cell(r, c).font = DOWN_FONT
-        for c in range(after + 2, after + 6):
+        for c in broken_cols:
             if sheet.cell(r, c).value:
                 sheet.cell(r, c).font = DOWN_FONT
-
-
-def _trailing(q: Quote | None) -> tuple[Decimal | None, ...]:
-    return q.trailing if q is not None and q.trailing else (None,) * len(TRAILING_MONTHS)
 
 
 def _hotspots(sheet, brief: Brief) -> None:
