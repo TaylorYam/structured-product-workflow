@@ -69,7 +69,17 @@ EXCHANGE = {
     "JT": "東京證券交易所及其繼承者(如有)",
 }
 QUOTE = {"US": "美元", "JT": "日圓"}  # 標的報價幣別
-PRICING = {"close": "收盤價", "open": "開盤價"}  # 參考條件表「期初定價」（說明書沒寫；VWAP 是 UBS 不支援樣態）
+PRICING = {
+    "close": "收盤價",
+    "open": "開盤價",
+    "vwap": "VWAP",
+}  # 參考條件表「期初定價」（說明書沒寫，workflow #475 開放 VWAP）
+NAME_SUFFIX_EN = (
+    "（Non Principal Guaranteed, Unsecured and Non-guaranteed）"  # 英文名稱可有可無的後綴（OOS 樣本，#475）
+)
+RIGHTS_ITEM = (
+    "• 與投資人有關之發行機構、總代理人及受託機構之權利、義務及責任-根據產品說明書說明，發行機構將支付贖回款項。"
+)
 CN = ("一", "二", "三", "四", "五", "六", "七", "八", "九", "十")
 ZH_NUM = (
     "一 二 三 四 五 六 七 八 九 十 十一 十二 十三 十四 十五 十六 十七 十八 十九 二十 二十一 二十二 二十三 二十四 二十五 二十六"
@@ -118,6 +128,7 @@ class Spec(ProductSpec):
     issue_price_amount: bool = True  # 發行價格「100%，即X幣別」；False 寫「每單位面額之100%」（沒有金額）
     ko_pct_in_clause: bool = False  # 非記憶式多標的的 KO 條款寫出「提前出場價（即期初價格的Y%）」
     long_name: bool = False  # 第 1 檔標的名稱在價格表拆兩行
+    name_suffix_en: str = ""  # 英文名稱結尾多寫的一段（OOS 樣本 `NAME_SUFFIX_EN`，workflow #475）
 
     def __post_init__(self) -> None:
         self.underlyings = underlyings(self.count, self.market, self.long_name)
@@ -156,7 +167,7 @@ class Spec(ProductSpec):
 
     @property
     def name_en(self) -> str:
-        return NAME["en"].format(**self.flags("en"))
+        return NAME["en"].format(**self.flags("en")) + self.name_suffix_en
 
     @staticmethod
     def date(d: dt.date) -> str:
@@ -738,6 +749,7 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
     _fee_table(d)
     d.section = "rest"
     w.line(36, "相關機構之權利、義務及責任")
+    d.text(36, RIGHTS_ITEM, 54)
     d.text(36, "• 投資人之申購及贖回，須經境外發行機構確認後始生效力。", 54)
     d.text(36, f"受託機構聯絡方式：{DIST['name']}；電話：{PHONE}。")
     doc = w.doc

@@ -31,7 +31,8 @@ TEMPLATE_ID = "ubs-zh-pd"
 # 8：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）
 # 9：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 10：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
-PARSER_VERSION = "10"
+# 11：一般交易事項五「申購價金之計算」後的冒號可有可無（workflow #475）
+PARSER_VERSION = "11"
 # 發行機構信用評等（#240）：商品基本資料三 `…其長期債務信用評等為穆迪（Moody's）Aa2/…。`、相關機構事業概況一 `發行機構長期債務信用評等為穆迪（Moody's）Aa2/…。`
 RATINGS = (
     ratings.RatingPlace(
@@ -857,7 +858,7 @@ def _general(fields: dict[str, ParsedField], doc: UbsDocument, put: Callable) ->
     fields.update(fee_rates(fees[: next((i for i, ln in enumerate(fees) if squash(ln.text).startswith("附註")), None)]))
     for name, lns, pattern in (
         ("denomination_ch4", item(4), rf"每單位面額[:：]{AMOUNT}"),
-        ("subscription_amount_ch5", item(5), rf"申購價金之計算[:：]{AMOUNT}"),
+        ("subscription_amount_ch5", item(5), rf"申購價金之計算[:：]?{AMOUNT}"),  # OOS 樣本少冒號（workflow #475）
         ("minimum_subscription", item(4), rf"最低申購金額[:：]{AMOUNT}"),
         ("minimum_additional", item(4), rf"最低累加申購金額[:：]{AMOUNT}"),
         ("minimum_redemption", item(8), rf"最低投資人提前贖回(?:單位數|金額)[:：]{AMOUNT}"),

@@ -754,6 +754,8 @@ ki_zh = "（含觸及下限價事件）"
 ki_en = "Kick-In Event and "
 normalize_brackets = true
 ignore_whitespace_en = true
+# 英文名稱結尾可有可無這一段（OOS 樣本說明書與投資人須知都有，2026-11-06 使用者決定接受，workflow #475）
+optional_suffix_en = "（Non Principal Guaranteed, Unsecured and Non-guaranteed）"
 
 # UBS：最低交易金額（商品基本資料八）與最低申購金額 5 倍，最低累加申購、最低提前贖回、累加提前贖回 1 倍；不分幣別
 # （USD、JPY、AUD 樣本都相同；2026-10-15 確認，Issue #279）。

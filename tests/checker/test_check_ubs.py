@@ -23,7 +23,7 @@ from harness import field_problems as problems
 from harness import results as rule
 from pdf_writer import Edit
 from reference_synth import build_reference_sheet, reference_row
-from ubs_synth import DIST, PHONE, PRODUCT_TYPE, WARNING, Spec, check, check_item
+from ubs_synth import DIST, NAME_SUFFIX_EN, PHONE, PRODUCT_TYPE, WARNING, Spec, check, check_item
 
 MEMORY = "為避免疑慮，即使各股票在不同提前出場觀察日成為鎖定股票，提前出場事件仍被視為發生。"
 VARIANTS = {
@@ -46,6 +46,9 @@ VARIANTS = {
         ki="D", count=4, first_callable=3, tenor=12, pricing="open"
     ),
     "KO 每期記憶式、KI 每期": Spec(ko_obs="P", ki="P"),
+    "KO 每期非記憶式、KI 到期、期初定價 VWAP、英文名稱後綴": Spec(  # OOS 樣本（workflow #475）
+        ko_obs="P", memory=False, ki="AM", pricing="vwap", name_suffix_en=NAME_SUFFIX_EN
+    ),
 }
 
 
@@ -435,3 +438,27 @@ def test_old_template_is_not_supported(tmp_path):
     detect = rule(item.report, "template.detect")[0]
     assert item.report.template != UBS.template_id
     assert detect.status == S.REVIEW_REQUIRED and "舊版範本" in detect.message
+
+
+# ---------------------------------------------------------------- 期初定價 VWAP 與 OOS 樣本寫法（workflow #475）
+
+
+def test_vwap_prices_are_not_compared_and_are_filled_from_the_term_sheet(tmp_path):
+    """期初定價 VWAP：表上標的價格空白也通過，核對後以說明書價格回填（共用規則，Issue #122）。"""
+    spec = Spec(pricing="vwap")
+    r = check(tmp_path, spec, **{f"UL_{i}_進場價": None for i in range(1, 4)})
+    assert r.status == S.PASS, problems(r)
+    cells = {d.column: d for d in r.backfill}
+    assert cells["UL_1_進場價"].expected == spec.underlyings[0].initial
+
+
+def test_subscription_amount_without_a_colon_is_read(tmp_path):
+    """一般交易事項五「申購價金之計算」後少冒號（OOS 樣本）：照常讀出申購價金。"""
+    r = check(tmp_path, edits=[Edit("申購價金之計算：", "申購價金之計算", "ts")])
+    assert r.status == S.PASS, problems(r)
+
+
+def test_another_english_name_suffix_is_a_mismatch(tmp_path):
+    """英文名稱結尾只接受審查標準設定的那一段，其他後綴判不一致。"""
+    r = check(tmp_path, Spec(name_suffix_en="（Unsecured）"))
+    assert ("standard.product_name", "name_en", S.MISMATCH) in problems(r)
