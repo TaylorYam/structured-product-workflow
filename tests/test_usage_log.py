@@ -13,7 +13,7 @@ import pytest
 
 from sp_workflow import app, usage_log
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.usage_log import UsageLog, UsageRecorder, format_summary, read_records, summarize
+from sp_workflow.usage_log import TAB_LABEL, UsageLog, UsageRecorder, format_summary, read_records, summarize
 from window_synth import new_window
 
 DAY = datetime(2026, 11, 9, 9, 30)
@@ -53,6 +53,7 @@ def window(master):
     master.notebook, master.daily, master.orders = notebook, daily, orders
     master.tree = ttk.Treeview(orders, columns=("tdcc",), show="headings")
     master.tree.heading("tdcc", text="TDCC 代號")
+    master.tree.bind("<Double-1>", lambda _event: None)  # 有雙擊功能的表格才進清單
     master.tree.pack()
     master.recorder = UsageRecorder(master, UsageLog(Path(master.folder), clock=lambda: DAY)).install()
     yield master
@@ -83,7 +84,7 @@ def test_a_button_click_is_written_to_the_day_file_with_window_and_tab(window) -
         "window": "FCN Workflow",
         "tab": "1 每日匯入",
         "label": "匯入",
-        "path": str(window.import_button),
+        "path": "!notebook.!frame.!button",
     }
     assert "tab" not in second and second["label"] == "1   每日匯入", "步驟欄不在分頁裡"
 
@@ -118,7 +119,10 @@ def test_switching_tabs_is_logged(window) -> None:
     window.notebook.select(window.daily)
     window.update()
 
-    assert [r["tab"] for r in records(Path(window.folder), "tab")] == ["2 起單條件", "1 每日匯入"]
+    assert [(r["tab"], r["label"]) for r in records(Path(window.folder), "tab")] == [
+        ("2 起單條件", TAB_LABEL),
+        ("1 每日匯入", TAB_LABEL),
+    ]
 
 
 def test_double_clicking_a_table_row_is_logged(window, monkeypatch) -> None:
@@ -131,15 +135,18 @@ def test_double_clicking_a_table_row_is_logged(window, monkeypatch) -> None:
     assert (double["tab"], double["label"]) == ("2 起單條件", "表格雙擊（TDCC 代號）")
 
 
-def test_start_lists_every_button_and_menu_item_once(window) -> None:
+def test_start_lists_every_button_tab_table_and_menu_item_once(window) -> None:
     folder = Path(window.folder)
     (inventory,) = records(folder, "inventory")
     labels = [(item.get("tab"), item["label"]) for item in inventory["items"]]
 
     assert labels == [
+        ("1 每日匯入", TAB_LABEL),
+        ("2 起單條件", TAB_LABEL),
         ("1 每日匯入", "匯入"),
         ("1 每日匯入", "下一步 →"),
         ("2 起單條件", "只看今天"),
+        ("2 起單條件", "表格雙擊（TDCC 代號）"),
         (None, "1   每日匯入"),
         (None, "維護 > 信箱維護…"),
         (None, "維護 > 拆股登記…"),
@@ -154,13 +161,13 @@ def test_another_window_is_listed_on_its_own(window) -> None:
     dialog.withdraw()
     dialog.title("信箱維護")
     ttk.Button(dialog, text="新增人員…").pack()
-    recorder = UsageRecorder(window, UsageLog(Path(window.folder), clock=lambda: DAY))
-
-    recorder.list_window(dialog)
+    try:
+        window.recorder.list_window(dialog)
+    finally:
+        dialog.destroy()
 
     (inventory,) = records(Path(window.folder), "inventory")[-1:]
-    assert [(i["window"], i["label"]) for i in inventory["items"]] == [("信箱維護", "新增人員…")]
-    dialog.destroy()
+    assert inventory["items"] == [{"window": "信箱維護", "label": "新增人員…", "path": "!button"}], "路徑從視窗算起"
 
 
 def test_a_failing_log_never_blocks_the_panel(master, monkeypatch) -> None:
@@ -180,8 +187,9 @@ def test_a_failing_log_never_blocks_the_panel(master, monkeypatch) -> None:
     button.pack()
     errors = []
     monkeypatch.setattr(master._root(), "report_callback_exception", lambda *exc: errors.append(exc))
-    recorder = UsageRecorder(master, BrokenLog(Path(master.folder))).install()
+    recorder = UsageRecorder(master, BrokenLog(Path(master.folder)))
     try:
+        recorder.install()
         click(button)
         tools.invoke(0)
     finally:
@@ -192,11 +200,14 @@ def test_a_failing_log_never_blocks_the_panel(master, monkeypatch) -> None:
 
 def test_uninstall_restores_the_original_bindings(master) -> None:
     before = master.bind_class("TButton", "<ButtonRelease-1>")
-    recorder = UsageRecorder(master, UsageLog(Path(master.folder))).install()
-    assert master.bind_class("TButton", "<ButtonRelease-1>") != before
+    recorder = UsageRecorder(master, UsageLog(Path(master.folder)))
+    try:
+        recorder.install()
+        installed = master.bind_class("TButton", "<ButtonRelease-1>")
+    finally:
+        recorder.uninstall()
 
-    recorder.uninstall()
-
+    assert installed != before
     assert master.bind_class("TButton", "<ButtonRelease-1>") == before
 
 
@@ -241,6 +252,28 @@ def test_summary_puts_never_clicked_items_first_with_counts_per_day(tmp_path: Pa
     table = format_summary(days, rows).splitlines()
     assert table[0] == "window\ttab\tlabel\t2026-11-09\t2026-11-10\ttotal\tpath"
     assert table[1] == "FCN Workflow\t1 每日匯入\t瀏覽…\t0\t0\t0\t.b"
+
+
+def test_summary_matches_reopened_dialogs_rebuilt_rows_and_tabs(tmp_path: Path) -> None:
+    """Tk 自動編號會變：重建的欄位（!button3 → !button27）算同一個；分頁有清單也有切換次數；沒寫到 start 的日子也算。"""
+    folder = tmp_path / "usage"
+    row = {"window": "FCN Workflow", "tab": "2 起單資料", "label": "用資料庫的值"}
+    page = {"window": "FCN Workflow", "tab": "8 進度", "label": TAB_LABEL}
+    unopened = {"window": "FCN Workflow", "tab": "9 出場清單", "label": TAB_LABEL}
+    inventory = [{**row, "path": "!frame3.!editor.!button3"}, page, unopened]
+    write_day(folder, "2026-11-09", {"kind": "start"}, {"kind": "inventory", "items": inventory})
+    write_day(
+        folder, "2026-11-10", {"kind": "click", **row, "path": "!frame3.!editor.!button27"}, {"kind": "tab", **page}
+    )
+
+    days, rows = summarize(read_records(folder))
+
+    assert days == ["2026-11-09", "2026-11-10"]
+    assert [(r.tab, r.label, r.total) for r in rows] == [
+        ("9 出場清單", TAB_LABEL, 0),
+        ("2 起單資料", "用資料庫的值", 1),
+        ("8 進度", TAB_LABEL, 1),
+    ]
 
 
 def test_summary_command_prints_the_table(tmp_path: Path, capsys) -> None:

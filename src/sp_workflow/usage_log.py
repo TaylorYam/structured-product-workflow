@@ -4,7 +4,10 @@
 
 - 按鈕、核取方塊、選項按鈕（ttk 與 tk）：放開滑鼠時游標還在按鈕上、按鈕沒停用，才算按到（`click`）。
 - 視窗上方選單的每個項目（`menu`）、分頁切換（`tab`）、表格雙擊一列（`double`）。
-- 清單（`inventory`）：視窗建好、切到某一頁、另開視窗時掃一次看得到的按鈕與選單項目，用來比對沒按過的。
+- 清單（`inventory`）：視窗建好、切到某一頁、另開視窗時掃一次看得到的按鈕、選單項目、分頁與能雙擊的表格，用來比對沒用過的。
+
+路徑（`path`）從所在視窗算起；彙整時去掉 Tk 自動編號的數字，重開的對話框、換一檔重建的欄位才對得起來。
+按鈕文字會變的（例如「人工放行…」↔「取消放行」）以按下當時的文字記。
 
 只記介面上的名稱，不記商品、客戶或檔案內容；存在 `.local/usage/YYYY-MM-DD.jsonl`，一行一筆，寫不進去就略過。
 彙整：`python -m sp_workflow.usage_log <資料夾>`。
@@ -13,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sys
 import tkinter as tk
 from collections import defaultdict
@@ -24,6 +28,7 @@ from tkinter import ttk
 from typing import Any
 
 FOLDER_NAME = "usage"
+TAB_LABEL = "（切到這一頁）"
 BUTTON_CLASSES = ("TButton", "Button", "TCheckbutton", "Checkbutton", "TRadiobutton", "Radiobutton")
 _CLASS_BINDINGS = (
     *((name, "<ButtonPress-1>") for name in BUTTON_CLASSES),
@@ -70,6 +75,7 @@ class UsageRecorder:
     _mapped: set[str] = field(default_factory=set)
     _current_tabs: dict[str, str] = field(default_factory=dict)
     _original_bindings: dict[tuple[str, str], str] = field(default_factory=dict)
+    _handler_ids: list[str] = field(default_factory=list)
     _original_menu_commands: list[tuple[tk.Menu, int, str]] = field(default_factory=list)
 
     def install(self) -> UsageRecorder:
@@ -82,7 +88,7 @@ class UsageRecorder:
         }
         for class_name, sequence in _CLASS_BINDINGS:
             self._original_bindings[(class_name, sequence)] = self.root.bind_class(class_name, sequence)
-            self.root.bind_class(class_name, sequence, handlers[sequence], add="+")
+            self._handler_ids.append(self.root.bind_class(class_name, sequence, handlers[sequence], add="+"))
         self._wrap_menus()
         _quiet(self.log.write)("start")
         _quiet(self.list_window)(self.root)
@@ -92,9 +98,14 @@ class UsageRecorder:
         for (class_name, sequence), script in self._original_bindings.items():
             self.root.tk.call("bind", class_name, sequence, script)
         self._original_bindings.clear()
+        for handler in self._handler_ids:
+            self.root._root().deletecommand(handler)  # bind_class 把指令登記在 Tk 本身
+        self._handler_ids.clear()
         for menu, index, command in self._original_menu_commands:
             if menu.winfo_exists():
+                wrapper = str(menu.entrycget(index, "command"))
                 menu.entryconfigure(index, command=command)
+                menu.deletecommand(wrapper)
         self._original_menu_commands.clear()
 
     # 按鈕：按下時記住，放開時游標還在按鈕上才算（拖出去放開不算）；按鈕的功能可能先把視窗關掉，所以按下時就先記下名稱
@@ -116,16 +127,14 @@ class UsageRecorder:
             return
         self._current_tabs[str(notebook)] = page
         page_widget = notebook.nametowidget(page)
-        self.log.write("tab", window=_window_title(notebook), tab=_tab_of(page_widget))
+        self.log.write("tab", window=_window_title(notebook), tab=_tab_of(page_widget), label=TAB_LABEL)
         self.list_window(page_widget)
 
     def _double(self, event: tk.Event) -> None:
         tree = event.widget
         if not isinstance(tree, ttk.Treeview) or tree.identify_region(event.x, event.y) not in ("cell", "tree"):
             return
-        columns = tree["columns"]
-        heading = tree.heading(columns[0], "text") if columns else tree.heading("#0", "text")
-        self.log.write("double", **_describe(tree, label=f"表格雙擊（{heading}）"))
+        self.log.write("double", **_describe(tree, label=_table_label(tree)))
 
     def _mapped_window(self, event: tk.Event) -> None:
         window = event.widget
@@ -134,8 +143,17 @@ class UsageRecorder:
             window.after_idle(lambda: window.winfo_exists() and _quiet(self.list_window)(window))
 
     def list_window(self, top: tk.Misc) -> None:
-        """把 `top` 底下看得到的按鈕（與主視窗的選單項目）記成清單；這次開視窗已記過的不重複記。"""
-        items = [_describe(widget) for widget in _walk(top) if _is_button(widget) and _label(widget)]
+        """把 `top` 底下的按鈕、分頁、能雙擊的表格（與主視窗的選單項目）記成清單；這次開視窗已記過的不重複記。"""
+        items = []
+        for widget in _walk(top):
+            if _is_button(widget) and _label(widget):
+                items.append(_describe(widget))
+            elif isinstance(widget, ttk.Notebook):
+                for page in widget.tabs():
+                    page_widget = widget.nametowidget(page)
+                    items.append({"window": _window_title(widget), "tab": _tab_of(page_widget), "label": TAB_LABEL})
+            elif isinstance(widget, ttk.Treeview) and widget.bind("<Double-1>"):
+                items.append(_describe(widget, label=_table_label(widget)))
         if top is self.root:
             items += [{"window": _window_title(self.root), "label": label} for label, _menu, _i in self._menu_items()]
         fresh = []
@@ -227,6 +245,12 @@ def _label(widget: tk.Misc) -> str:
         return ""
 
 
+def _table_label(tree: ttk.Treeview) -> str:
+    columns = tree["columns"]
+    heading = tree.heading(columns[0], "text") if columns else tree.heading("#0", "text")
+    return f"表格雙擊（{heading}）"
+
+
 def _window_title(widget: tk.Misc) -> str:
     return widget.winfo_toplevel().title()
 
@@ -251,7 +275,8 @@ def _describe(widget: tk.Misc, *, label: str | None = None) -> dict[str, Any]:
     if tab is not None:
         fields["tab"] = tab
     fields["label"] = _label(widget) if label is None else label
-    fields["path"] = str(widget)  # 同一頁有同名按鈕（例如兩個「瀏覽…」）時用來區分
+    # 同一頁有同名按鈕（例如兩個「選擇…」）時用來區分；從所在視窗算起，重開的對話框路徑才一樣
+    fields["path"] = str(widget).removeprefix(str(widget.winfo_toplevel())).lstrip(".")
     return fields
 
 
@@ -269,8 +294,12 @@ def read_records(folder: Path) -> Iterator[dict[str, Any]]:
                 yield record
 
 
+_AUTO_NUMBER = re.compile(r"(?<=[^.\d])\d+(?=\.|$)")  # Tk 自動命名的編號：!button23 → !button
+
+
 def _key(item: dict[str, Any]) -> tuple[str, str, str, str]:
-    return (item.get("window", ""), item.get("tab") or "", item.get("label", ""), item.get("path", ""))
+    path = _AUTO_NUMBER.sub("", str(item.get("path", "")))
+    return (item.get("window", ""), item.get("tab") or "", item.get("label", ""), path)
 
 
 @dataclass(frozen=True)
@@ -287,18 +316,21 @@ class UsageRow:
 
 
 def summarize(records: Iterable[dict[str, Any]]) -> tuple[list[str], list[UsageRow]]:
-    """回傳（有開面板的日子, 每個按鈕／選單項目每天按幾次）；沒按過的排最前面，其次依次數由少到多。"""
+    """回傳（有紀錄的日子, 每個按鈕、選單項目、分頁、表格每天用幾次）；沒用過的排最前面，其次依次數由少到多。
+
+    比對時去掉路徑裡 Tk 自動編號的數字：重開的對話框、重建的欄位算同一個；同一處的同名按鈕合在一起算。
+    """
     days: set[str] = set()
     counts: dict[tuple[str, str, str, str], dict[str, int]] = defaultdict(dict)
     for record in records:
         day = str(record.get("time", ""))[:10]
         kind = record.get("kind")
-        if kind == "start":
+        if day:
             days.add(day)
-        elif kind == "inventory":
+        if kind == "inventory":
             for item in record.get("items", []):
                 counts.setdefault(_key(item), {})
-        elif kind in ("click", "menu", "double"):
+        elif kind in ("click", "menu", "double", "tab"):
             per_day = counts[_key(record)]
             per_day[day] = per_day.get(day, 0) + 1
     rows = [UsageRow(*key, per_day=per_day) for key, per_day in counts.items()]
@@ -318,7 +350,8 @@ def main(argv: list[str] | None = None) -> None:
     args = sys.argv[1:] if argv is None else argv
     if len(args) != 1:
         raise SystemExit("用法：python -m sp_workflow.usage_log <.local/usage 資料夾>")
-    sys.stdout.reconfigure(encoding="utf-8")  # type: ignore[union-attr]
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     print(format_summary(*summarize(read_records(Path(args[0])))))
 
 
