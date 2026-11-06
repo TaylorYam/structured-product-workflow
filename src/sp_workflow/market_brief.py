@@ -1,5 +1,5 @@
-"""盤勢速報（#467、#469、#471）：美股大跌隔天給主管看的全局曝險 Excel——總覽、大跌標的、重災區，與幾個大標的的
-「執行價 × 最終比價月份」熱圖。作業人員把每個分頁的表格複製到 PPT，一頁一張投影片。
+"""盤勢速報（#467、#469、#471、#473）：美股大跌隔天給主管看的全局曝險 Excel——總覽、大跌標的、重災區，與幾個大標的的
+「執行價 × 最終比價日」熱圖。作業人員把每個分頁的表格複製到 PPT，一頁一張投影片。
 
 - 範圍：全部在庫且存續的商品（同 `exposure.load_positions`，不設最終比價日截止），用收盤價表最新的收盤價；
   最差標的照 `exposure.assess`。只呈現目前狀態（檔數、面額、距離），不放任何預估金額（#352）。
@@ -15,9 +15,12 @@
   大跌標的的近 1／2／3 個月表現（#469）= 昨收 ÷ 往回 N 個月那天（或之前最近一筆，最多再往前 `STALE_DAYS` 天）
   的收盤價 − 1，中間有拆股時舊價格先換到目前的價格基準（`SplitBook.factor`）。
   一個標的的「跌破K」看商品裡這個標的本身（不是最差標的）：收盤價低於它的執行價。
+- 重災區（#473）：全部有判斷的商品依最差標的距執行價（+10% 以上、+10%～0 與總覽同一個判斷，再往下每 10% 一組）
+  × 距最終比價日分組，合計檔數對得上總覽三列加總；超過 180 天的都併進「6–12個月」。
 - 熱圖（「市價格 × 最終比價日」，#471）：連結這個標的、最終比價日不早於今天的商品，依這個標的的執行價換算成的市價格分區間（拆股換到目前的價格基準：
   執行價 × 原始收盤價 ÷ 換回價格基準的收盤價），橫的是最終比價月份；昨收所在的區間在昨收處切開，昨收線以上
   是執行價高於昨收（已跌破K）。
+- 字型（#473）：活頁簿預設微軟正黑體，格子用 Calibri 覆蓋——中文顯示微軟正黑體，英文、數字是 Calibri。
 - 版面：每個分頁 A1 是標題、A3 起是一塊連續的表格，不合併儲存格、旁邊不放東西、不用條件式格式（顏色是固定底色），
   欄寬與列數控制在一張 16:9 投影片內，關掉格線；複製表格貼到 PPT 不用再調整。
 - 只讀資料庫，不改任何資料。
@@ -76,15 +79,18 @@ NEAR_ROW = "距K 10% 內"
 SAFE_ROW = "高於K 10% 以上"
 OVERVIEW_SHOWN = (SAFE_ROW, NEAR_ROW, K_BROKEN)  # 總覽列出的列，跌破K 在最下面（#469、#471）
 
-# 重災區：最差標的距執行價（負的是低於），下界（含）→ 列名；依序比
+# 重災區的列（#473）：還沒跌破的兩列跟總覽同一個判斷，跌破的再依最差標的距執行價（負的是低於）下界（含）分組
+SAFE_BUCKET = "+10% 以上"
+NEAR_BUCKET = "+10%～0"
 DISTANCE_BUCKETS = (
-    (Decimal("-0.10"), "距K 0～-10%"),
-    (Decimal("-0.20"), "距K -10～-20%"),
-    (Decimal("-0.30"), "距K -20～-30%"),
-    (None, "距K -30% 以下"),
+    (Decimal("-0.10"), "0～-10%"),
+    (Decimal("-0.20"), "-10～-20%"),
+    (Decimal("-0.30"), "-20～-30%"),
+    (None, "-30% 以下"),
 )
-# 重災區：距最終比價日幾天以內 → 欄名
-DUE_BUCKETS = ((30, "1個月內"), (90, "1–3個月"), (180, "3–6個月"), (365, "6–12個月"), (None, "12個月以上"))
+HOTSPOT_ROWS = (SAFE_BUCKET, NEAR_BUCKET, *(label for _, label in DISTANCE_BUCKETS))
+# 重災區：距最終比價日幾天以內 → 欄名；超過 180 天的都併進最後一欄（#473 拿掉「12個月以上」）
+DUE_BUCKETS = ((30, "1個月內"), (90, "1–3個月"), (180, "3–6個月"), (None, "6–12個月"))
 
 
 # ---------------------------------------------------------------- 資料
@@ -321,10 +327,15 @@ def broken(exposures: Iterable[Exposure]) -> list[Exposure]:
     return [e for e in exposures if (distance := k_distance(e)) is not None and distance < 0]
 
 
-def distance_bucket(e: Exposure) -> str:
-    """跌破K 的商品依最差標的距執行價分組。"""
+def distance_bucket(e: Exposure) -> str | None:
+    """重災區的哪一列：依最差標的距執行價分組（#473 也列還沒跌破的）；不判斷的不列（None）。"""
+    row = overview_row(e)
+    if row is None:
+        return None
+    if row != K_BROKEN:
+        return SAFE_BUCKET if row == SAFE_ROW else NEAR_BUCKET
     to_strike = k_distance(e)
-    assert to_strike is not None and to_strike < 0, "只分跌破K 的商品"
+    assert to_strike is not None
     for low, label in DISTANCE_BUCKETS:
         if low is None or to_strike >= low:
             return label
@@ -483,7 +494,10 @@ def _strike_on(leg: Leg, close: Decimal | None, raw: Decimal | None) -> Decimal:
 
 # ---------------------------------------------------------------- 匯出
 
-FONT_NAME = "微軟正黑體"
+# 字型（#473）：活頁簿預設（Normal 樣式）是微軟正黑體，格子用 Calibri 覆蓋；Calibri 沒有中文字，
+# Excel 會用微軟正黑體顯示中文——英文、數字是 Calibri，中文是微軟正黑體
+DEFAULT_FONT_NAME = "微軟正黑體"
+FONT_NAME = "Calibri"
 HEADER_FILL = PatternFill("solid", fgColor="1F4E79")  # 表頭深藍
 HEADER_FONT = Font(name=FONT_NAME, size=11, bold=True, color="FFFFFF")
 BODY_FONT = Font(name=FONT_NAME, size=11)
@@ -495,6 +509,7 @@ BROKEN_FILL = PatternFill("solid", fgColor="FFC7CE")  # 跌破：淺紅（同曝
 THIN = Side(style="thin", color="BFBFBF")
 THICK = Side(style="thick", color="000000")
 CENTER = Alignment(horizontal="center", vertical="center")
+HEADER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)  # 表頭可用 \n 換兩行
 ROW_HEIGHT = 20  # 點；20 列約 5.6 吋，放得進 16:9 投影片
 MILLIONS = '[=0]"-";[<0.05]"<0.1M";0.0"M"'  # 面額（百萬）：0 寫 -，很小寫 <0.1M
 COUNT = '[=0]"-";#,##0'
@@ -548,6 +563,7 @@ def export_brief(
 
 def write_brief(brief: Brief, tickers: Sequence[str], path: Path) -> None:
     book = openpyxl.Workbook()
+    _default_font(book)
     book.remove(book.active)
     _overview(book.create_sheet("總覽"), brief)
     _tickers(book.create_sheet("大跌標的"), brief)
@@ -555,6 +571,15 @@ def write_brief(brief: Brief, tickers: Sequence[str], path: Path) -> None:
     for ticker in tickers:
         _heatmap(book.create_sheet(_sheet_name(f"熱圖_{ticker}")), heatmap(brief, ticker))
     save_export(book, path)
+
+
+def _default_font(book) -> None:
+    """活頁簿預設字型改微軟正黑體（openpyxl 沒有公開的設定方式，改 Normal 樣式與第 0 號字型）。"""
+    font = Font(name=DEFAULT_FONT_NAME, size=11)
+    book._fonts[0] = font  # noqa: SLF001
+    for style in book._named_styles:  # noqa: SLF001
+        if style.name == "Normal":
+            style.font = font
 
 
 def _sheet_name(name: str) -> str:
@@ -589,9 +614,10 @@ def _table(sheet, headers: Sequence[str], rows: Sequence[Sequence[object]], form
     top = 3
     for c, header in enumerate(headers, start=1):
         cell = sheet.cell(top, c, header)
-        cell.fill, cell.font, cell.alignment = HEADER_FILL, HEADER_FONT, CENTER
+        cell.fill, cell.font, cell.alignment = HEADER_FILL, HEADER_FONT, HEADER_ALIGN
         cell.border = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
-    sheet.row_dimensions[top].height = ROW_HEIGHT + 4
+    lines = max(header.count("\n") + 1 for header in headers)
+    sheet.row_dimensions[top].height = ROW_HEIGHT + 4 + 11 * (lines - 1)
     for r, values in enumerate(rows, start=top + 1):
         sheet.row_dimensions[r].height = ROW_HEIGHT
         for c, (value, fmt) in enumerate(zip(values, formats, strict=True), start=1):
@@ -653,9 +679,10 @@ def _tickers(sheet, brief: Brief) -> None:
     _start(
         sheet,
         f"連結面額前 {TOP_TICKERS} 大標的｜{_day(brief.close_day)} 收盤｜面額單位 M USD",
-        (11, 11, *([9] * len(TRAILING_MONTHS)), 11, 11, 12, 12),
+        (11, 11, *([12] * len(TRAILING_MONTHS)), 11, 11, 12, 12),
     )
-    performance = [f"近{n}月" for n in TRAILING_MONTHS]
+    performance = [f"標的價格\n近{n}月表現" for n in TRAILING_MONTHS]
+    broken_heads = ("跌破執行價\n檔數", "跌破執行價\n面額")
     first = _table(
         sheet,
         (
@@ -664,15 +691,14 @@ def _tickers(sheet, brief: Brief) -> None:
             *performance,
             "連結檔數",
             "連結面額",
-            "跌破K 檔數",
-            "跌破K 面額",
+            *broken_heads,
         ),
         rows,
         (None, PRICE, *([PERCENT] * len(TRAILING_MONTHS)), COUNT, MILLIONS, COUNT, MILLIONS),
     )
     headers = [cell.value for cell in sheet[first - 1]]
     performance_cols = [headers.index(name) + 1 for name in performance]
-    broken_cols = [headers.index(name) + 1 for name in ("跌破K 檔數", "跌破K 面額")]
+    broken_cols = [headers.index(name) + 1 for name in broken_heads]
     for r in range(first, first + len(rows)):
         for c in performance_cols:
             value = sheet.cell(r, c).value
@@ -685,12 +711,14 @@ def _tickers(sheet, brief: Brief) -> None:
 
 def _hotspots(sheet, brief: Brief) -> None:
     hit = broken(brief.exposures)
-    distance_rows = [label for _, label in DISTANCE_BUCKETS]
+    distance_rows = list(HOTSPOT_ROWS)
     due_cols = [label for _, label in DUE_BUCKETS]
     count: dict[tuple[str, str], int] = defaultdict(int)
     amount: dict[tuple[str, str], Decimal] = defaultdict(Decimal)
-    for e in hit:
-        keys = [distance_bucket(e), "合計"]
+    for e in brief.exposures:
+        if (bucket := distance_bucket(e)) is None:
+            continue  # 不判斷的不列，合計因此等於總覽三列加總
+        keys = [bucket, "合計"]
         due = due_bucket(e.result.position.final_date, brief.today)
         for key in keys:
             for col in (due, "合計"):
@@ -698,14 +726,14 @@ def _hotspots(sheet, brief: Brief) -> None:
                 amount[(key, col)] += e.amount
 
     def text(key: tuple[str, str]) -> str:
-        return "-" if not count[key] else f"{_m(amount[key])}M（{count[key]}檔）"
+        return "-" if not count[key] else f"{_m(amount[key])}M（{count[key]:,}檔）"
 
     names = [*distance_rows, "合計"]
     rows = [(name, *(text((name, col)) for col in [*due_cols, "合計"])) for name in names]
     total = sum((e.amount for e in hit), Decimal(0))
     _start(
         sheet,
-        f"重災區：最差標的跌破K｜{len(hit)} 檔、{_m(total)}M USD｜依距K × 距最終比價日",
+        f"重災區：最差標的跌破執行價｜{len(hit):,} 檔、{_m(total)}M USD｜依距執行價 × 距最終比價日",
         (20, *([19] * len(due_cols)), 22),
     )
     first = _table(sheet, ("最差標的距K", *due_cols, "合計"), rows, [None] * (len(due_cols) + 2))
@@ -721,13 +749,11 @@ def _hotspots(sheet, brief: Brief) -> None:
 
 
 def _heatmap(sheet, h: Heatmap) -> None:
-    q = h.row.quote
     labels = [band.label() for band in h.bands]
     month_names = [f"{y}/{m:02d}" for y, m in h.months] + (["之後"] if h.later else [])
-    close = "昨收 —" if q is None else f"昨收 {q.close:,.2f}" + ("" if q.change is None else f"（{q.change:+.1%}）")
-    title = (
-        f"市價格 × 最終比價日 熱圖：{h.row.ticker}｜{close}｜連結 {h.products} 檔 {_m(h.notional)}M"
-        f"｜跌破K {h.k_count} 檔 {_m(h.k_notional)}M"
+    title = (  # #473：照作業人員改的標題，不放昨收
+        f"執行價 × 最終比價日 熱圖：{h.row.ticker}｜連結 {h.products:,} 檔 {_m(h.notional)}M"
+        f"｜目前跌破執行價 共{h.k_count:,} 檔 {_m(h.k_notional)}M USD"
     )
     _start(sheet, title, (22, *([10.5] * len(month_names))))
     rows = [
