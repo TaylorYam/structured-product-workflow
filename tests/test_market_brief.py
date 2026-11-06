@@ -222,6 +222,19 @@ def test_mki_is_judged_by_the_strike_and_unknown_is_not() -> None:
     assert (row.products, row.k_count) == (2, 1), "檔數照算，無法計算的不算跌破"
 
 
+def test_missing_ki_terms_do_not_stop_judging_by_the_strike() -> None:
+    # EKI 沒有下限價：曝險分析歸無法計算，只看 K 照樣判斷
+    no_ki = exposure("1", leg(1, "AAA UW", "70", ki=None), barrier="EKI")
+    # MKI 缺收盤價：算不出來，任何地方都不算跌破
+    no_close = exposure("2", leg(1, "AAA UW", "70"), leg(2, "BBB UN", None), barrier="MKI")
+
+    assert no_ki.result.category == "無法計算"
+    assert overview_row(no_ki) == "跌破K"
+    assert overview_row(no_close) is None
+    rows = {r.ticker: r for r in ticker_rows([no_ki, no_close], {})}
+    assert rows["AAA"].k_count == 1, "缺收盤價那檔的 AAA 雖然低於執行價，整檔不判斷就不算"
+
+
 def test_other_exchange_strikes_are_scaled_to_the_main_close() -> None:
     # 主代碼 AAA UW 昨收 90；另一個交易所 AAA GY 價格尺度不同（收盤 45、執行價 40，距執行價 +12.5%）
     main = exposure("1", leg(1, "AAA UW", "90"))

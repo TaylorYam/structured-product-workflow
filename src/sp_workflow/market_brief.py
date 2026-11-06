@@ -5,7 +5,8 @@
   最差標的照 `exposure.assess`。只呈現目前狀態（檔數、面額、距離），不放任何預估金額（#352）。
 - 只看執行價（#471）：一檔的狀態只看最差標的收盤價距執行價（`k_distance`）——低於是跌破K、0～10% 是距K 10% 內、
   10% 以上是高於K 10% 以上；KI（AKI 觸及、低於下限價）不另外分類，MKI 也照執行價判斷。
-  已比價（結果以最終比價日為準）、無法計算（核對條件未完成或缺價格）不判斷。
+  已比價（結果以最終比價日為準）、核對條件未完成、缺進場價／執行價／收盤價的不判斷；缺 KI 型態或下限價
+  （`assess` 歸無法計算）不影響，照執行價判斷（`k_worst`）。
 - 面額：交易明細（沒有時用庫存的分公司配置）合計，依商品幣別用最新的 `XXXUSD` 匯率折成 USD（收盤價表與每日價格
   取日期新的那筆），單位 M（百萬）。缺匯率的幣別不計入面額、列在 `Brief.missing_fx` 給視窗提示；檔數照算。
 - 總覽（#469、#471）：只列高於K 10% 以上、距K 10% 內、跌破K 三列，跌破K 在最下面；
@@ -45,15 +46,16 @@ from sp_workflow.exposure import (
     FIXED,
     K_BROKEN,
     NEAR_BUFFER,
-    UNKNOWN,
     Assessed,
     assess,
     load_positions,
     ticker_of,
 )
 from sp_workflow.file_tools import excel_value, save_export
+from sp_workflow.status import CheckTerms
 from sp_workflow.stock_splits import SplitBook, load_splits
 from sp_workflow.underlying_pricing import Leg
+from sp_workflow.underlying_pricing import worst as lowest
 
 if TYPE_CHECKING:
     import psycopg
@@ -73,8 +75,6 @@ BANDS_EACH_SIDE = 7  # 熱圖昨收上下各幾個整數區間，再外面併成
 NEAR_ROW = "距K 10% 內"
 SAFE_ROW = "高於K 10% 以上"
 OVERVIEW_SHOWN = (SAFE_ROW, NEAR_ROW, K_BROKEN)  # 總覽列出的列，跌破K 在最下面（#469、#471）
-# 不用最新收盤價判斷的分類：已比價以最終比價日為準、無法計算缺條件或價格
-NOT_JUDGED = (FIXED, UNKNOWN)
 
 # 重災區：最差標的距執行價（負的是低於），下界（含）→ 列名；依序比
 DISTANCE_BUCKETS = (
@@ -273,21 +273,37 @@ def ticker_rows(exposures: Sequence[Exposure], quotes: Mapping[str, Quote]) -> l
             row.products += 1
             row.notional += e.amount
             legs = [leg for leg in position.legs if ticker_of(leg.code) == ticker]
-            if judged(e) and any(leg.below_strike for leg in legs):
+            if below_strike(e, legs):
                 row.k_count += 1
                 row.k_notional += e.amount
     return sorted(rows.values(), key=lambda r: (-r.notional, r.ticker))
 
 
+def k_worst(e: Exposure) -> Leg | None:
+    """只看執行價時的最差標的（#471）：已比價、核對條件未完成、任一標的缺進場價／執行價／收盤價時 None。
+    不管 KI：MKI、缺 KI 型態或下限價的商品照樣判斷。"""
+    p = e.result.position
+    if e.result.category == FIXED or p.terms_status != CheckTerms.DONE:
+        return None
+    if any(leg.strike is None for leg in p.legs):
+        return None
+    return lowest(p.legs)
+
+
 def judged(e: Exposure) -> bool:
-    """用最新收盤價判斷的商品：已比價、無法計算不算（#471 起 MKI 也照執行價判斷）。"""
-    return e.result.category not in NOT_JUDGED
+    """用最新收盤價、照執行價判斷的商品。"""
+    return k_worst(e) is not None
+
+
+def below_strike(e: Exposure, legs: Iterable[Leg]) -> bool:
+    """判斷的商品裡，`legs`（某個標的本身的那幾個）有一個收盤價低於它的執行價。"""
+    return judged(e) and any(leg.below_strike for leg in legs)
 
 
 def k_distance(e: Exposure) -> Decimal | None:
-    """最差標的收盤價距執行價（負的是低於）；不判斷或缺價格時 None。"""
-    worst = e.result.worst
-    return worst.to_strike if judged(e) and worst is not None else None
+    """最差標的收盤價距執行價（負的是低於）；不判斷時 None。"""
+    worst = k_worst(e)
+    return None if worst is None else worst.to_strike
 
 
 def overview_row(e: Exposure) -> str | None:
@@ -448,7 +464,7 @@ def heatmap(brief: Brief, ticker: str) -> Heatmap:
         r = next(i for i, band in enumerate(bands) if band.holds(strike))
         c = months.index(month) if month in months else len(months)
         cells[(r, c)] += e.amount
-        if judged(e) and leg.below_strike:
+        if below_strike(e, [leg]):
             k_count += 1
             k_notional += e.amount
     notional = sum((e.amount for _, _, e, _ in entries), Decimal(0))
@@ -595,6 +611,8 @@ def _overview(sheet, brief: Brief) -> None:
     amounts: dict[str, Decimal] = defaultdict(Decimal)
     for e in brief.exposures:
         row = overview_row(e)
+        if row is None:
+            continue  # 不判斷的不列，但算在佔比的分母裡
         counts[row] += 1
         amounts[row] += e.amount
     rows = [
