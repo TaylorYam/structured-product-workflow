@@ -68,6 +68,7 @@ class ProductNameTemplate:
     )
     express_en: str = ""
     ignore_prefix_en: bool = False  # 英文名稱只比結尾：前面多的字不核對（HSBC Super Bull 的「Maxi 」，#314）
+    optional_suffix_en: str = ""  # 英文名稱結尾可有可無的一段（UBS「（Non Principal Guaranteed, …）」，workflow #475）
     digital_zh: str = ""  # {payoff_zh}／{payoff_en}：參與率 0（BEN Digital）時填入，其他填 enhanced_*（HSBC BEN，#375）
     digital_en: str = ""
     enhanced_zh: str = ""
@@ -410,6 +411,7 @@ def _product_name(n: dict[str, Any], where: str) -> ProductNameTemplate:
         express_zh=n.get("express_zh", ""),
         express_en=n.get("express_en", ""),
         ignore_prefix_en=bool(n.get("ignore_prefix_en", False)),
+        optional_suffix_en=n.get("optional_suffix_en", ""),
         digital_zh=n.get("digital_zh", ""),
         digital_en=n.get("digital_en", ""),
         enhanced_zh=n.get("enhanced_zh", ""),

@@ -74,7 +74,7 @@ Natixis DACN 的文件（workflow #371 已實作）：[說明書範本](template
 | CA | KI 每期觀察 |
 | BBVA | KO 每期觀察＋非記憶式、KI 每日觀察、KI 每期觀察、Non-Call = 天期 |
 | DBS | 期初定價 VWAP、KO 每日觀察＋非記憶式、KO 每期觀察＋記憶式、KO 每期觀察＋非記憶式、KI 每日觀察、KI 每期觀察、Non-Call = 天期 |
-| UBS | 期初定價 VWAP、Non-Call = 天期 |
+| UBS | Non-Call = 天期（期初定價 VWAP 2026-11-06 開放，workflow #475） |
 
 ## 共用限制與維護
 

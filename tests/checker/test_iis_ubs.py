@@ -74,6 +74,21 @@ def test_new_layout_with_the_old_product_type_is_a_mismatch(tmp_path):
     assert {x.rule_id for x in r.results if x.status != S.PASS} == {"standard.product_type"}
 
 
+def test_rights_item_without_its_section_heading_is_the_new_template(tmp_path):
+    """沒有「相關機構之權利、義務及責任」段名、直接寫權利義務那一項，商品種類是新版寫法：照新版讀（OOS 樣本，workflow #475）。"""
+    r = check_iis(tmp_path, edits=[Edit("相關機構之權利、義務及責任", "", "iis.rest")]).report
+    assert r.template == UBS.iis.template_id
+    assert r.status == S.PASS, problems(r)
+
+
+def test_fee_table_without_its_lead_sentence_is_read(tmp_path):
+    """費用表前沒有「投資人同意下列相關費用：」（OOS 樣本）：以表頭定位，費率照常核對。"""
+    lead = "本商品係複委託平台項下之投資標的，投資人同意下列相關費用："
+    r = check_iis(tmp_path, edits=[Edit(lead, "", "iis.fees")]).report
+    assert r.status == S.PASS, problems(r)
+    assert {x.status for x in rule(r, "standard.fees")} == {S.PASS}
+
+
 def test_issuing_branch_other_than_london_needs_review(tmp_path):
     r = check_iis(tmp_path, edits=[Edit("經由倫敦分行發行。", "經由香港分行發行。", "iis.org")]).report
     assert rule(r, "iis.issuing_branch")[0].status == S.REVIEW_REQUIRED

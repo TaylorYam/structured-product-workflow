@@ -934,6 +934,9 @@ def _product_name(ctx: Context) -> list[CheckResult]:
                 norm = squash
                 tol = "忽略所有空白與換行"
         same = norm(expected) == norm(pf.value)
+        if lang == "en" and tpl.optional_suffix_en:  # 結尾可有可無的一段（UBS，workflow #475）
+            same = same or norm(expected + tpl.optional_suffix_en) == norm(pf.value)
+            tol += f"；結尾的「{tpl.optional_suffix_en}」可有可無"
         if lang == "en" and tpl.ignore_prefix_en:  # 前面多的字不核對（HSBC Super Bull 的「Maxi 」）
             same = norm(pf.value).endswith(norm(expected))
             tol += "；名稱前面多的字不核對"

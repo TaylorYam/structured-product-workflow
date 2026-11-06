@@ -53,7 +53,7 @@ GS = ["ko_periodic_memory", "ko_periodic", "ki_periodic", "non_call_equals_tenor
 JPM = ["ki_periodic"]
 NATIXIS = []
 NOMURA = []
-UBS = ["vwap", "non_call_equals_tenor"]
+UBS = ["non_call_equals_tenor"]  # 期初定價 VWAP 已有 OOS 樣本、改為支援（workflow #475）
 BBVA = ["ko_periodic", "ki_daily", "ki_periodic", "non_call_equals_tenor"]
 DBS = ["vwap", "ko_daily", "ko_periodic_memory", "ko_periodic", "ki_daily", "ki_periodic", "non_call_equals_tenor"]
 

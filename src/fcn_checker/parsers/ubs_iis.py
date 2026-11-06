@@ -23,7 +23,8 @@ TEMPLATE_ID = "ubs-zh-iis"
 # 2：警語的受託機構名稱（Issue #306）；3：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #240）
 # 4：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
 # 5：新舊版看段落；新版版面寫舊版商品種類「股權結構型債券」照新版讀（workflow #421）
-PARSER_VERSION = "5"
+# 6：沒有權利義務段名的新版版面、費用表沒有前導句（workflow #475）
+PARSER_VERSION = "6"
 # 發行機構信用評等（#240）：商品簡介 4. `…其長期債務信用評等為穆迪（Moody's）Aa2，標準普爾（Standard & Poor's）為A+，…。`
 RATINGS = (
     ratings.RatingPlace(
@@ -31,6 +32,9 @@ RATINGS = (
     ),
 )
 SECTIONS = ("警語", "相關機構", "商品事項", "商品風險揭露", "相關機構之權利、義務及責任")
+# 新版另一種版面沒有最後一段的段名，直接寫這一項（OOS 樣本，workflow #475）；舊版也有這一項，只在商品種類是新版寫法時算新版
+RIGHTS_ITEM = "與投資人有關之發行機構、總代理人及受託機構之權利、義務及責任"
+FEE_HEADER = "費用項目費率（百分比）"  # 費用表表頭（去空白）
 NOISE = re.compile(iis.PAGE_OF)
 D = ubs.D
 TICKER = r"彭博代碼[:：]([A-Z0-9][A-Z0-9./-]*?)([A-Z]{2})）"  # 去空白後「ABCUW）」：最後兩個大寫字母是交易所碼
@@ -94,13 +98,15 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
             f"英文名稱不是以「UBS」開頭或沒有「{ubs.NAME_EN_MARK}」",
         ),
         # 新舊版看段落（舊版沒有「相關機構之權利、義務及責任」）；新版版面寫舊版商品種類時照新版讀，
-        # 商品種類交給欄位核對列不一致（workflow #421）
+        # 商品種類交給欄位核對列不一致（workflow #421）。沒有段名、直接寫權利義務那一項的版面，商品種類是新版寫法才算新版
+        # （舊版也是這樣，workflow #475）
         (
             kind is not None and kind[1] in (ubs.PRODUCT_TYPE, ubs.OLD_PRODUCT_TYPE),
             f"商品種類不是「{ubs.PRODUCT_TYPE}」",
         ),
         (
-            iis.in_order(text, SECTIONS),
+            iis.in_order(text, SECTIONS)
+            or (kind is not None and kind[1] == ubs.PRODUCT_TYPE and iis.in_order(text, (*SECTIONS[:-1], RIGHTS_ITEM))),
             "段落標題不完整或順序不符：" + "、".join(SECTIONS) + ("（舊版範本不支援）" if old else ""),
         ),
         (
@@ -204,6 +210,8 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         ],
     )
     a = ti.text.find("投資人同意下列相關費用")
+    if a < 0:  # OOS 樣本沒有這句前導句，從表頭定位（workflow #475）
+        a = ti.text.find(FEE_HEADER)
     if a < 0:
         fields.update(
             {

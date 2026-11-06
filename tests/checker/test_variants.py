@@ -71,7 +71,7 @@ def test_repo_table_registers_every_issuer_with_the_operator_list():
         assert table[code] == {V.KI_PERIODIC}, code
     for code in ("BNP", "SG", "CITI", "NATIXIS", "NOMURA"):
         assert table[code] == frozenset(), code
-    assert table["UBS"] == {V.VWAP, V.NON_CALL_EQUALS_TENOR}
+    assert table["UBS"] == {V.NON_CALL_EQUALS_TENOR}
     assert table["DBS"] == set(Variant)
 
 
