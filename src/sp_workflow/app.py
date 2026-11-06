@@ -70,6 +70,7 @@ from fcn_checker.ui import (
     enable_windows_dpi_awareness,
     set_windows_app_id,
 )
+from sp_workflow import usage_log
 from sp_workflow.check_source import WorkflowDatabase
 from sp_workflow.database import default_env_path
 from sp_workflow.local_settings import FolderMemory
@@ -618,6 +619,8 @@ def main(argv: list[str] | None = None, *, start_on_check: bool = False) -> None
     window = build_window(master, args, start_on_check=start_on_check)
     window.restore_size()
     apply_window_icon(master)
+    # 使用紀錄（#479）：跟上次選的資料夾同一個 .local/；選單要先建好才包得到
+    usage_log.install(master, window.memory.path.parent / usage_log.FOLDER_NAME)
     master.mainloop()
 
 
