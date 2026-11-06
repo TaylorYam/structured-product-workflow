@@ -9,10 +9,9 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from sp_workflow.exposure import KI_BROKEN, Holding, Leg, Position, assess
+from sp_workflow.exposure import Holding, KiTouch, Leg, Position, assess
 from sp_workflow.lifecycle import KO, AutoEvent, replace_auto_events
 from sp_workflow.market_brief import (
-    ABOVE_STRIKE_BUCKET,
     MAX_MONTHS,
     Band,
     Brief,
@@ -123,7 +122,7 @@ def exposure(
 
 def test_ticker_rows_merge_exchange_codes_and_look_at_their_own_leg() -> None:
     exposures = [
-        exposure("1", leg(1, "AAA UW", "72"), leg(2, "BBB UN", "60")),  # AAA 跌破K、BBB 跌破KI
+        exposure("1", leg(1, "AAA UW", "72"), leg(2, "BBB UN", "85")),  # AAA 跌破K、BBB 沒有
         exposure("2", leg(1, "AAA UQ", "90"), usd="3000000"),  # 同一個代號、另一個交易所
         exposure("3", leg(1, "AAA UW", "90"), usd="0"),  # AAA UW 連結較多，昨收用它
     ]
@@ -134,23 +133,44 @@ def test_ticker_rows_merge_exchange_codes_and_look_at_their_own_leg() -> None:
     aaa = rows["AAA"]
     assert aaa.codes == ("AAA UW", "AAA UQ")
     assert (aaa.products, aaa.notional) == (3, D(4000000))
-    assert (aaa.k_count, aaa.k_notional, aaa.ki_count) == (1, D(1000000), 0), "只看 AAA 本身，BBB 跌破KI 不算 AAA 的"
+    assert (aaa.k_count, aaa.k_notional) == (1, D(1000000)), "只看 AAA 本身"
     assert aaa.quote == Quote(DAY, D(72), D(80)) and aaa.quote.change == D("-0.1")
-    assert (rows["BBB"].ki_count, rows["BBB"].ki_notional) == (1, D(1000000))
+    assert rows["BBB"].k_count == 0, "同一檔 AAA 跌破K，不算 BBB 的"
     assert list(rows) == ["AAA", "BBB"], "依面額大到小"
 
 
 def test_overview_rows_and_hotspot_buckets() -> None:
     near = exposure("1", leg(1, "AAA UW", "85"))
     broke_k = exposure("2", leg(1, "AAA UW", "70"))
-    broke_ki = exposure("3", leg(1, "AAA UW", "50"))
+    below_ki = exposure("3", leg(1, "AAA UW", "50"))  # 也低於下限價 65，只看 K 一樣是跌破K（#471）
+    touched = Exposure(
+        assess(
+            Position(
+                "4",
+                "FCN",
+                "XBANK",
+                "USD",
+                dt.date(2026, 11, 20),
+                "AKI",
+                "",
+                "完成",
+                None,
+                (leg(1, "AAA UW", "95"),),
+                (Holding("台北", "Amy", D(1)),),
+                ki_touch=KiTouch(DAY, "AAA UW"),
+            ),
+            DAY,
+        ),
+        D(1),
+    )
 
     assert overview_row(near) == "距K 10% 內"
-    assert overview_row(broke_k) == "跌破K（未破KI）"
-    assert overview_row(broke_ki) == KI_BROKEN
+    assert overview_row(broke_k) == "跌破K"
+    assert overview_row(below_ki) == "跌破K"
+    assert overview_row(touched) == "高於K 10% 以上", "AKI 已觸及但目前高於K，只看 K"
+    assert broken([near, broke_k, below_ki, touched]) == [broke_k, below_ki]
     assert distance_bucket(broke_k) == "距K -10～-20%", "70 ÷ 80 − 1 = −12.5%"
-    assert distance_bucket(broke_ki) == "距K -30% 以下"
-    assert distance_bucket(near) == ABOVE_STRIKE_BUCKET
+    assert distance_bucket(below_ki) == "距K -30% 以下"
     assert due_bucket(DAY + dt.timedelta(days=30), DAY) == "1個月內"
     assert due_bucket(DAY + dt.timedelta(days=31), DAY) == "1–3個月"
     assert due_bucket(DAY + dt.timedelta(days=400), DAY) == "12個月以上"
@@ -173,8 +193,8 @@ def test_heatmap_puts_strikes_in_todays_price_basis() -> None:
     assert h.bands[row].low > h.line, "執行價高於昨收，在線之上"
 
 
-def test_mki_is_left_for_manual_review_not_judged_by_the_latest_close() -> None:
-    mki = exposure("1", leg(1, "AAA UW", "50"), barrier="MKI")  # 收盤價低於下限價，但 MKI 系統不比
+def test_mki_is_judged_by_the_strike_and_unknown_is_not() -> None:
+    mki = exposure("1", leg(1, "AAA UW", "50"), barrier="MKI")  # KI 不看了，執行價可以比（#471）
     pending = Exposure(
         assess(
             Position(
@@ -195,10 +215,24 @@ def test_mki_is_left_for_manual_review_not_judged_by_the_latest_close() -> None:
         D(1),
     )
 
-    assert overview_row(mki) == "MKI 人工確認"
-    assert broken([mki, pending]) == [], "MKI 與無法計算都不列重災區"
+    assert overview_row(mki) == "跌破K"
+    assert overview_row(pending) is None, "核對條件未完成不判斷"
+    assert broken([mki, pending]) == [mki]
     row = ticker_rows([mki, pending], {})[0]
-    assert (row.products, row.k_count, row.ki_count) == (2, 0, 0), "檔數照算，跌破不用最新收盤價判斷"
+    assert (row.products, row.k_count) == (2, 1), "檔數照算，無法計算的不算跌破"
+
+
+def test_missing_ki_terms_do_not_stop_judging_by_the_strike() -> None:
+    # EKI 沒有下限價：曝險分析歸無法計算，只看 K 照樣判斷
+    no_ki = exposure("1", leg(1, "AAA UW", "70", ki=None), barrier="EKI")
+    # MKI 缺收盤價：算不出來，任何地方都不算跌破
+    no_close = exposure("2", leg(1, "AAA UW", "70"), leg(2, "BBB UN", None), barrier="MKI")
+
+    assert no_ki.result.category == "無法計算"
+    assert overview_row(no_ki) == "跌破K"
+    assert overview_row(no_close) is None
+    rows = {r.ticker: r for r in ticker_rows([no_ki, no_close], {})}
+    assert rows["AAA"].k_count == 1, "缺收盤價那檔的 AAA 雖然低於執行價，整檔不判斷就不算"
 
 
 def test_other_exchange_strikes_are_scaled_to_the_main_close() -> None:
@@ -303,25 +337,24 @@ def test_export_writes_one_table_per_sheet(seeded, tmp_path: Path) -> None:
     book = openpyxl.load_workbook(path)
     assert book.sheetnames == ["總覽", "大跌標的", "重災區", "熱圖_AAA"], "沒有重災區前 15 檔（#469）"
     overview = book["總覽"]
-    assert overview["A1"].value.startswith("盤勢總覽｜2026/10/28 收盤｜在庫 3 檔、連結 4 個標的")
+    assert overview["A1"].value.startswith(
+        "盤勢總覽｜ELN 商品依表現最差標的距執行價（K）分類｜2026/10/28 收盤｜在庫 3 檔、連結 4 個標的"
+    )
+    assert overview["A3"].value == "ELN商品表現最差標的"
     rows = {row[0]: row[1:3] for row in table(overview, 3)[1:]}
-    assert rows[KI_BROKEN] == (1, pytest.approx(0.65)), "1 億日圓 × 0.0065 = 65 萬美元"
-    assert rows["跌破K（未破KI）"] == (1, pytest.approx(1.0))
+    assert rows["跌破K"] == (2, pytest.approx(1.65)), "A 1.0M ＋ C 1 億日圓 × 0.0065 = 0.65M（C 低於下限價也只算跌破K）"
     assert rows["高於K 10% 以上"] == (1, pytest.approx(2.0))
-    assert [row[0] for row in table(overview, 1)[1:]] == [
-        "高於K 10% 以上",
-        "距K 10% 內",
-        "跌破K（未破KI）",
-        KI_BROKEN,
-    ], "四列，跌破KI 在最下面（#469）"
-    assert table(overview, 4)[4][3] == pytest.approx(0.65 / 3.65), "佔比的分母是全部在庫面額"
-    tickers = table(book["大跌標的"], 11)
+    assert [row[0] for row in table(overview, 1)[1:]] == ["高於K 10% 以上", "距K 10% 內", "跌破K"], "只看 K（#471）"
+    assert table(overview, 4)[3][3] == pytest.approx(1.65 / 3.65), "佔比的分母是全部在庫面額"
+    tickers = table(book["大跌標的"], 9)
     assert tickers[0][2:5] == ("近1月", "近2月", "近3月")
     assert [row[0] for row in tickers[1:]] == ["BBB", "CCC", "AAA", "DDD"], "依連結面額大到小"
     aaa = tickers[3]
     assert aaa[1:6] == (72, pytest.approx(-0.2), None, None, 2), "近 1 月 72 ÷ 90 − 1；更早沒有收盤價留空"
-    assert aaa[7:10] == (2, pytest.approx(1.65), 0), "AAA 本身在兩檔都跌破K，都還在下限價之上"
+    assert aaa[7:9] == (2, pytest.approx(1.65)), "AAA 本身在兩檔都跌破K"
     for sheet in book.worksheets:
+        texts = [str(v) for row in sheet.iter_rows(values_only=True) for v in row if v is not None]
+        assert not [t for t in texts if "KI" in t], f"{sheet.title} 不出現 KI（#471）"
         assert not sheet.merged_cells.ranges and not sheet.conditional_formatting, "貼到 PPT 不走樣"
         assert sheet.sheet_view.showGridLines is False
 
@@ -333,9 +366,9 @@ def test_heatmap_sheet_draws_the_close_line(seeded, tmp_path: Path) -> None:
 
     sheet = openpyxl.load_workbook(path)["熱圖_AAA"]
 
-    assert sheet["A1"].value.startswith("價格 x 到期月份 熱圖：AAA｜昨收 72.00（-28.0%）｜連結 2 檔 1.7M")
+    assert sheet["A1"].value.startswith("市價格 × 最終比價日 熱圖：AAA｜昨收 72.00（-28.0%）｜連結 2 檔 1.7M")
     grid = table(sheet, 2)
-    assert grid[0] == ("執行價區間", "2026/11")
+    assert grid[0] == ("市價格＼最終比價日", "2026/11")
     assert grid[1:] == [("80-85", pytest.approx(1.65)), ("75-80", 0), ("72-75", 0), ("70-72", 0)]
     line_row = 3 + 3  # 表頭第 3 列，72-75 是第 3 格資料
     assert sheet.cell(line_row, 1).border.bottom.style == "thick"
