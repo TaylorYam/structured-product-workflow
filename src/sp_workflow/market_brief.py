@@ -1,11 +1,15 @@
-"""盤勢速報（#467）：美股大跌隔天給主管看的全局曝險 Excel——總覽、大跌標的、重災區、重災區前 15 檔，與幾個大標的的
+"""盤勢速報（#467、#469）：美股大跌隔天給主管看的全局曝險 Excel——總覽、大跌標的、重災區，與幾個大標的的
 「執行價 × 最終比價月份」熱圖。作業人員把每個分頁的表格複製到 PPT，一頁一張投影片。
 
 - 範圍：全部在庫且存續的商品（同 `exposure.load_positions`，不設最終比價日截止），用收盤價表最新的收盤價；
   分類、狀態、最差標的照 `exposure.assess`。只呈現目前狀態（檔數、面額、距離），不放任何預估金額（#352）。
 - 面額：交易明細（沒有時用庫存的分公司配置）合計，依商品幣別用最新的 `XXXUSD` 匯率折成 USD（收盤價表與每日價格
   取日期新的那筆），單位 M（百萬）。缺匯率的幣別不計入面額、列在 `Brief.missing_fx` 給視窗提示；檔數照算。
-- 標的：照股票代號合併各交易所的代碼（同 `exposure.Choice`）。昨收、漲跌% 用連結最多那個代碼最新兩筆收盤價。
+- 總覽（#469）：只列高於K 10% 以上、距K 10% 內、跌破K（未破KI）、跌破KI 四列，跌破KI 在最下面；
+  面額佔比的分母仍是全部在庫面額（MKI、已比價、無法計算不列，但算在分母裡）。
+- 標的：照股票代號合併各交易所的代碼（同 `exposure.Choice`）。昨收用連結最多那個代碼最新的收盤價；
+  大跌標的的近 1／2／3 個月表現（#469）= 昨收 ÷ 往回 N 個月那天（或之前最近一筆，最多再往前 `STALE_DAYS` 天）
+  的收盤價 − 1，中間有拆股時舊價格先換到目前的價格基準（`SplitBook.factor`）。
   一個標的的「跌破K／跌破KI」看商品裡這個標的本身（不是最差標的）：收盤價低於執行價／下限價（AKI 比價已記觸及、
   觸及的就是這個代碼也算跌破KI）。
 - 熱圖：連結這個標的、最終比價日不早於今天的商品，依這個標的的執行價分區間（拆股換到目前的價格基準：
@@ -20,11 +24,13 @@
 
 from __future__ import annotations
 
+import bisect
+import calendar
 import datetime as dt
 import math
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -48,6 +54,7 @@ from sp_workflow.exposure import (
     ticker_of,
 )
 from sp_workflow.file_tools import excel_value, save_export
+from sp_workflow.stock_splits import SplitBook, load_splits
 from sp_workflow.underlying_pricing import Leg
 
 if TYPE_CHECKING:
@@ -58,7 +65,8 @@ BLANK_CURRENCY = "（幣別空白）"
 MILLION = Decimal(1_000_000)
 TOP_HEATMAPS = 5  # 預設畫熱圖的標的數（連結面額前幾名）
 TOP_TICKERS = 10  # 大跌標的列幾個
-TOP_HOTSPOTS = 15  # 重災區前幾檔
+TRAILING_MONTHS = (1, 2, 3)  # 大跌標的的近幾個月表現（#469）
+STALE_DAYS = 14  # 往回 N 個月那天之前最多再找幾天的收盤價
 MAX_MONTHS = 13  # 熱圖最多幾個月份欄，超過的併入「之後」
 BANDS_EACH_SIDE = 7  # 熱圖昨收上下各幾個整數區間，再外面併成「以上／以下」
 
@@ -69,8 +77,8 @@ K_ONLY_ROW = f"{K_BROKEN}（未破KI）"
 MKI_ROW = "MKI 人工確認"
 FIXED_ROW = "已比價（等交割）"
 UNKNOWN_ROW = "無法計算"
-TOTAL_ROW = "在庫合計"
 OVERVIEW_ROWS = (KI_BROKEN, K_ONLY_ROW, NEAR_ROW, SAFE_ROW, MKI_ROW, FIXED_ROW, UNKNOWN_ROW)
+OVERVIEW_SHOWN = (SAFE_ROW, NEAR_ROW, K_ONLY_ROW, KI_BROKEN)  # 總覽列出的列，跌破KI 在最下面（#469）
 # 不用最新收盤價判斷跌破的分類：已比價以最終比價日為準、MKI 系統不比、無法計算缺條件或價格
 NOT_JUDGED = (FIXED, MANUAL, UNKNOWN)
 
@@ -103,11 +111,12 @@ class Exposure:
 
 @dataclass(frozen=True)
 class Quote:
-    """一個代碼最新兩筆收盤價。"""
+    """一個代碼最新兩筆收盤價，與近 `TRAILING_MONTHS` 個月的表現（拆股已換算；缺歷史收盤價時 None）。"""
 
     day: dt.date
     close: Decimal
     previous: Decimal | None = None
+    trailing: tuple[Decimal | None, ...] = ()
 
     @property
     def change(self) -> Decimal | None:
@@ -159,7 +168,7 @@ def load_brief(conn: psycopg.Connection, today: dt.date | None = None) -> Brief:
         conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         positions = load_positions(conn, None, dt.date.max, today=today)
         codes = {leg.code for p in positions for leg in p.legs}
-        quotes = _quotes(conn, codes)
+        quotes = _with_trailing(conn, _quotes(conn, codes), SplitBook(load_splits(conn)))
         currencies = {p.currency or BLANK_CURRENCY for p in positions} - {USD}
         rates = _usd_rates(conn, currencies - {BLANK_CURRENCY})
     missing = frozenset(c for c in currencies if c not in rates)
@@ -191,6 +200,46 @@ def _quotes(conn: psycopg.Connection, codes: Iterable[str]) -> dict[str, Quote]:
         else:
             found[code] = Quote(day, close)
     return found
+
+
+def months_before(day: dt.date, n: int) -> dt.date:
+    """往回 n 個月的同一天；那個月沒有這一天時取月底（例：5/31 往回 3 個月 → 2/28）。"""
+    index = day.year * 12 + day.month - 1 - n
+    year, month = divmod(index, 12)
+    month += 1
+    return dt.date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
+
+
+def trailing_returns(
+    code: str, quote: Quote, history: Sequence[tuple[dt.date, Decimal]], book: SplitBook
+) -> tuple[Decimal | None, ...]:
+    """近 `TRAILING_MONTHS` 個月的表現：昨收 ÷ 往回 N 個月那天（或之前 `STALE_DAYS` 天內最近一筆）的收盤價 − 1。
+    舊收盤價先換到昨收那天的價格基準（拆股）。`history` 依日期排序。"""
+    days = [day for day, _ in history]
+    found: list[Decimal | None] = []
+    for n in TRAILING_MONTHS:
+        target = months_before(quote.day, n)
+        i = bisect.bisect_right(days, target) - 1
+        if i < 0 or (target - days[i]).days > STALE_DAYS or not history[i][1]:
+            found.append(None)
+            continue
+        day, close = history[i]
+        found.append(quote.close / (close * book.factor(code, quote.day, day)) - 1)
+    return tuple(found)
+
+
+def _with_trailing(conn: psycopg.Connection, quotes: dict[str, Quote], book: SplitBook) -> dict[str, Quote]:
+    if not quotes:
+        return quotes
+    since = min(months_before(q.day, max(TRAILING_MONTHS)) for q in quotes.values()) - dt.timedelta(days=STALE_DAYS)
+    history: dict[str, list[tuple[dt.date, Decimal]]] = defaultdict(list)
+    for code, day, close in conn.execute(
+        "SELECT code, close_date, close FROM workflow.close_price WHERE code = ANY(%s) AND close_date >= %s"
+        " ORDER BY code, close_date",
+        (sorted(quotes), since),
+    ):
+        history[code].append((day, close))
+    return {code: replace(q, trailing=trailing_returns(code, q, history[code], book)) for code, q in quotes.items()}
 
 
 def _usd_rates(conn: psycopg.Connection, currencies: Iterable[str]) -> dict[str, Decimal]:
@@ -492,7 +541,7 @@ def brief_name(now: dt.datetime | None = None) -> str:
 def export_brief(
     conn: psycopg.Connection, tickers: Sequence[str], path: Path, *, today: dt.date | None = None
 ) -> BriefReceipt:
-    """讀資料、寫成 Excel：總覽、大跌標的、重災區、重災區前 15 檔，與 `tickers` 每個一頁熱圖（依傳入順序）。"""
+    """讀資料、寫成 Excel：總覽、大跌標的、重災區，與 `tickers` 每個一頁熱圖（依傳入順序）。"""
     brief = load_brief(conn, today)
     known = {r.ticker for r in brief.rows}
     chosen = [t for t in dict.fromkeys(tickers) if t in known]
@@ -506,7 +555,6 @@ def write_brief(brief: Brief, tickers: Sequence[str], path: Path) -> None:
     _overview(book.create_sheet("總覽"), brief)
     _tickers(book.create_sheet("大跌標的"), brief)
     _hotspots(book.create_sheet("重災區"), brief)
-    _top_hotspots(book.create_sheet(f"重災區前{TOP_HOTSPOTS}檔"), brief)
     for ticker in tickers:
         _heatmap(book.create_sheet(_sheet_name(f"熱圖_{ticker}")), heatmap(brief, ticker))
     save_export(book, path)
@@ -570,9 +618,8 @@ def _overview(sheet, brief: Brief) -> None:
         amounts[row] += e.amount
     rows = [
         (name, counts[name], _millions(amounts[name]), float(amounts[name] / total) if total else 0.0)
-        for name in OVERVIEW_ROWS
+        for name in OVERVIEW_SHOWN
     ]
-    rows.append((TOTAL_ROW, len(brief.exposures), _millions(total), 1.0 if total else 0.0))
     _start(
         sheet,
         f"盤勢總覽｜{_day(brief.close_day)} 收盤｜在庫 {len(brief.exposures)} 檔、連結 {len(brief.rows)} 個標的",
@@ -584,9 +631,6 @@ def _overview(sheet, brief: Brief) -> None:
         if name in (KI_BROKEN, K_ONLY_ROW):
             for c in range(1, 5):
                 sheet.cell(r, c).fill = BROKEN_FILL
-        if name == TOTAL_ROW:
-            for c in range(1, 5):
-                sheet.cell(r, c).fill, sheet.cell(r, c).font = TOTAL_FILL, BOLD_FONT
 
 
 def _tickers(sheet, brief: Brief) -> None:
@@ -597,7 +641,7 @@ def _tickers(sheet, brief: Brief) -> None:
             (
                 t.ticker,
                 None if q is None else float(q.close),
-                None if q is None or q.change is None else float(q.change),
+                *(None if v is None else float(v) for v in _trailing(q)),
                 t.products,
                 _millions(t.notional),
                 t.k_count,
@@ -609,21 +653,38 @@ def _tickers(sheet, brief: Brief) -> None:
     _start(
         sheet,
         f"連結面額前 {TOP_TICKERS} 大標的｜{_day(brief.close_day)} 收盤｜面額單位 M USD",
-        (12, 12, 11, 12, 13, 13, 13, 14, 14),
+        (11, 11, *([9] * len(TRAILING_MONTHS)), 11, 11, 12, 12, 13, 13),
     )
+    performance = [f"近{n}月" for n in TRAILING_MONTHS]
     first = _table(
         sheet,
-        ("標的", "昨收", "漲跌%", "連結檔數", "連結面額", "跌破K 檔數", "跌破K 面額", "跌破KI 檔數", "跌破KI 面額"),
+        (
+            "標的",
+            "昨收",
+            *performance,
+            "連結檔數",
+            "連結面額",
+            "跌破K 檔數",
+            "跌破K 面額",
+            "跌破KI 檔數",
+            "跌破KI 面額",
+        ),
         rows,
-        (None, PRICE, PERCENT, COUNT, MILLIONS, COUNT, MILLIONS, COUNT, MILLIONS),
+        (None, PRICE, *([PERCENT] * len(TRAILING_MONTHS)), COUNT, MILLIONS, COUNT, MILLIONS, COUNT, MILLIONS),
     )
+    after = 3 + len(TRAILING_MONTHS)  # 連結檔數那一欄
     for r in range(first, first + len(rows)):
-        change = sheet.cell(r, 3).value
-        if isinstance(change, float) and change < 0:
-            sheet.cell(r, 3).font = DOWN_FONT
-        for c in (6, 7, 8, 9):
+        for c in range(3, after):
+            value = sheet.cell(r, c).value
+            if isinstance(value, float) and value < 0:
+                sheet.cell(r, c).font = DOWN_FONT
+        for c in range(after + 2, after + 6):
             if sheet.cell(r, c).value:
                 sheet.cell(r, c).font = DOWN_FONT
+
+
+def _trailing(q: Quote | None) -> tuple[Decimal | None, ...]:
+    return q.trailing if q is not None and q.trailing else (None,) * len(TRAILING_MONTHS)
 
 
 def _hotspots(sheet, brief: Brief) -> None:
@@ -665,40 +726,6 @@ def _hotspots(sheet, brief: Brief) -> None:
         if name in ("合計", "其中跌破KI"):
             for c in range(1, len(due_cols) + 3):
                 sheet.cell(r, c).fill, sheet.cell(r, c).font = TOTAL_FILL, BOLD_FONT
-
-
-def _top_hotspots(sheet, brief: Brief) -> None:
-    hit = sorted(broken(brief.exposures), key=lambda e: (-e.amount, e.result.position.tdcc))[:TOP_HOTSPOTS]
-    rows = []
-    for e in hit:
-        p, w = e.result.position, e.result.worst
-        rows.append(
-            (
-                e.result.status,
-                p.tdcc,
-                p.product,
-                w and w.code,
-                None if w is None or w.performance is None else float(w.performance),
-                None if w is None or w.to_strike is None else float(w.to_strike),
-                None if p.final_date is None else p.final_date,
-                None if p.final_date is None else (p.final_date - brief.today).days,
-                _millions(e.amount),
-                p.currency,
-            )
-        )
-    _start(
-        sheet,
-        f"重災區面額前 {TOP_HOTSPOTS} 檔｜{_day(brief.close_day)} 收盤｜面額單位 M USD",
-        (9, 18, 12, 14, 11, 10, 14, 11, 11, 8),
-    )
-    first = _table(
-        sheet,
-        ("狀態", "TDCC", "商品", "最差標的", "最差表現", "距K", "最終比價日", "剩餘天數", "面額", "幣別"),
-        rows,
-        (None, None, None, None, PERCENT, PERCENT, "yyyy/mm/dd", COUNT, MILLIONS, None),
-    )
-    for r in range(first, first + len(rows)):
-        sheet.cell(r, 1).fill = BROKEN_FILL
 
 
 def _heatmap(sheet, h: Heatmap) -> None:
