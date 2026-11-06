@@ -26,11 +26,14 @@ from sp_workflow.market_brief import (
     heat_fill,
     heatmap,
     month_columns,
+    months_before,
     nice_step,
     overview_row,
     plan_bands,
     ticker_rows,
+    trailing_returns,
 )
+from sp_workflow.stock_splits import Split, SplitBook
 from test_exposure import closes, seed, trades
 
 D = Decimal
@@ -225,6 +228,36 @@ def test_heatmap_title_counts_only_what_is_drawn() -> None:
     assert h.row.products == 2, "大跌標的的連結檔數仍含已比價"
 
 
+def test_months_before_clips_to_the_month_end() -> None:
+    assert months_before(dt.date(2026, 5, 31), 3) == dt.date(2026, 2, 28)
+    assert months_before(dt.date(2026, 1, 15), 2) == dt.date(2025, 11, 15)
+
+
+def test_trailing_returns_use_the_close_on_or_before_each_month_back() -> None:
+    quote = Quote(dt.date(2026, 11, 5), D(90))
+    history = [
+        (dt.date(2026, 8, 5), D(60)),  # 3 個月前
+        (dt.date(2026, 9, 30), D(100)),
+        (dt.date(2026, 10, 2), D(120)),  # 10/5 之前最近一筆 → 近 1 月
+    ]
+
+    one, two, three = trailing_returns("AAA UW", quote, history, SplitBook())
+
+    assert one == D("-0.25"), "10/5 之前最近一筆是 10/2 的 120"
+    assert two is None, "9/5 之前最近一筆是 8/5，超過 14 天，不用"
+    assert three == D("0.5")
+
+
+def test_trailing_returns_convert_old_closes_across_a_split() -> None:
+    # 10/1 起 1 拆 2：8/5 的 200 換到目前的基準是 100
+    book = SplitBook([Split("AAA UW", dt.date(2026, 10, 1), 1, 2)])
+    quote = Quote(dt.date(2026, 11, 5), D(90))
+
+    *_, three = trailing_returns("AAA UW", quote, [(dt.date(2026, 8, 5), D(200))], book)
+
+    assert three == D("-0.1")
+
+
 def test_default_name() -> None:
     assert brief_name(dt.datetime(2026, 11, 6, 8, 30)) == "盤勢速報_20261106_0830.xlsx"
 
@@ -257,24 +290,37 @@ def table(sheet, width: int) -> list[tuple[object, ...]]:
 def test_export_writes_one_table_per_sheet(seeded, tmp_path: Path) -> None:
     path = tmp_path / "盤勢速報.xlsx"
 
+    (import_id,) = seeded.execute("SELECT max(import_id) FROM workflow.close_price_import").fetchone()
+    seeded.execute(  # 往回 1 個月是 9/28，沒有收盤價；往前最近一筆 9/25
+        "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES ('2026-09-25', 'AAA UW', 90, %s)",
+        (import_id,),
+    )
+
     receipt = export_brief(seeded, ["AAA", "不存在"], path, today=DAY)
 
     assert (receipt.products, receipt.broken, receipt.heatmaps) == (3, 2, ("AAA",))
     assert receipt.missing_fx == frozenset()
     book = openpyxl.load_workbook(path)
-    assert book.sheetnames == ["總覽", "大跌標的", "重災區", "重災區前15檔", "熱圖_AAA"]
+    assert book.sheetnames == ["總覽", "大跌標的", "重災區", "熱圖_AAA"], "沒有重災區前 15 檔（#469）"
     overview = book["總覽"]
     assert overview["A1"].value.startswith("盤勢總覽｜2026/10/28 收盤｜在庫 3 檔、連結 4 個標的")
     rows = {row[0]: row[1:3] for row in table(overview, 3)[1:]}
     assert rows[KI_BROKEN] == (1, pytest.approx(0.65)), "1 億日圓 × 0.0065 = 65 萬美元"
     assert rows["跌破K（未破KI）"] == (1, pytest.approx(1.0))
     assert rows["高於K 10% 以上"] == (1, pytest.approx(2.0))
-    assert rows["在庫合計"] == (3, pytest.approx(3.65))
-    tickers = table(book["大跌標的"], 9)
+    assert [row[0] for row in table(overview, 1)[1:]] == [
+        "高於K 10% 以上",
+        "距K 10% 內",
+        "跌破K（未破KI）",
+        KI_BROKEN,
+    ], "四列，跌破KI 在最下面（#469）"
+    assert table(overview, 4)[4][3] == pytest.approx(0.65 / 3.65), "佔比的分母是全部在庫面額"
+    tickers = table(book["大跌標的"], 11)
+    assert tickers[0][2:5] == ("近1月", "近2月", "近3月")
     assert [row[0] for row in tickers[1:]] == ["BBB", "CCC", "AAA", "DDD"], "依連結面額大到小"
     aaa = tickers[3]
-    assert aaa[1:4] == (72, pytest.approx(-0.28), 2)
-    assert aaa[5:8] == (2, pytest.approx(1.65), 0), "AAA 本身在兩檔都跌破K，都還在下限價之上"
+    assert aaa[1:6] == (72, pytest.approx(-0.2), None, None, 2), "近 1 月 72 ÷ 90 − 1；更早沒有收盤價留空"
+    assert aaa[7:10] == (2, pytest.approx(1.65), 0), "AAA 本身在兩檔都跌破K，都還在下限價之上"
     for sheet in book.worksheets:
         assert not sheet.merged_cells.ranges and not sheet.conditional_formatting, "貼到 PPT 不走樣"
         assert sheet.sheet_view.showGridLines is False
