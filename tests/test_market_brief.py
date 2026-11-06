@@ -169,11 +169,14 @@ def test_overview_rows_and_hotspot_buckets() -> None:
     assert overview_row(below_ki) == "跌破K"
     assert overview_row(touched) == "高於K 10% 以上", "AKI 已觸及但目前高於K，只看 K"
     assert broken([near, broke_k, below_ki, touched]) == [broke_k, below_ki]
-    assert distance_bucket(broke_k) == "距K -10～-20%", "70 ÷ 80 − 1 = −12.5%"
-    assert distance_bucket(below_ki) == "距K -30% 以下"
+    assert distance_bucket(broke_k) == "-10～-20%", "70 ÷ 80 − 1 = −12.5%"
+    assert distance_bucket(below_ki) == "-30% 以下"
+    assert distance_bucket(near) == "+10%～0", "還沒跌破的也列，跟總覽同一個判斷（#473）"
+    assert distance_bucket(touched) == "+10% 以上"
     assert due_bucket(DAY + dt.timedelta(days=30), DAY) == "1個月內"
     assert due_bucket(DAY + dt.timedelta(days=31), DAY) == "1–3個月"
-    assert due_bucket(DAY + dt.timedelta(days=400), DAY) == "12個月以上"
+    assert due_bucket(DAY + dt.timedelta(days=181), DAY) == "6–12個月"
+    assert due_bucket(DAY + dt.timedelta(days=400), DAY) == "6–12個月", "沒有 12個月以上，併進最後一欄（#473）"
 
 
 def test_heatmap_puts_strikes_in_todays_price_basis() -> None:
@@ -347,11 +350,31 @@ def test_export_writes_one_table_per_sheet(seeded, tmp_path: Path) -> None:
     assert [row[0] for row in table(overview, 1)[1:]] == ["高於K 10% 以上", "距K 10% 內", "跌破K"], "只看 K（#471）"
     assert table(overview, 4)[3][3] == pytest.approx(1.65 / 3.65), "佔比的分母是全部在庫面額"
     tickers = table(book["大跌標的"], 9)
-    assert tickers[0][2:5] == ("近1月", "近2月", "近3月")
+    assert tickers[0][2:5] == ("標的價格\n近1月表現", "標的價格\n近2月表現", "標的價格\n近3月表現")
+    assert tickers[0][7:9] == ("跌破執行價\n檔數", "跌破執行價\n面額")
+    assert book["大跌標的"]["C3"].alignment.wrap_text, "表頭兩行"
     assert [row[0] for row in tickers[1:]] == ["BBB", "CCC", "AAA", "DDD"], "依連結面額大到小"
     aaa = tickers[3]
     assert aaa[1:6] == (72, pytest.approx(-0.2), None, None, 2), "近 1 月 72 ÷ 90 − 1；更早沒有收盤價留空"
     assert aaa[7:9] == (2, pytest.approx(1.65)), "AAA 本身在兩檔都跌破K"
+    hotspots = book["重災區"]
+    assert (
+        hotspots["A1"].value == "重災區：最差標的跌破執行價｜2 檔、1.7M USD｜依距執行價 × 距最終比價日｜面額單位 M USD"
+    )
+    grid = table(hotspots, 6)
+    assert grid[0] == ("最差標的距K", "1個月內", "1–3個月", "3–6個月", "6–12個月", "合計")
+    assert [row[0] for row in grid[1:]] == [
+        "+10% 以上",
+        "+10%～0",
+        "0～-10%",
+        "-10～-20%",
+        "-20～-30%",
+        "-30% 以下",
+        "合計",
+    ]
+    assert grid[-1][-1] == "3.7（3檔）", "合計對得上總覽三列加總（#473）"
+    assert overview["A1"].font.name == "Calibri", "英文、數字用 Calibri"
+    assert book._fonts[0].name == "微軟正黑體", "活頁簿預設字型是微軟正黑體，中文用它顯示"  # noqa: SLF001
     for sheet in book.worksheets:
         texts = [str(v) for row in sheet.iter_rows(values_only=True) for v in row if v is not None]
         assert not [t for t in texts if "KI" in t], f"{sheet.title} 不出現 KI（#471）"
@@ -366,7 +389,8 @@ def test_heatmap_sheet_draws_the_close_line(seeded, tmp_path: Path) -> None:
 
     sheet = openpyxl.load_workbook(path)["熱圖_AAA"]
 
-    assert sheet["A1"].value.startswith("市價格 × 最終比價日 熱圖：AAA｜昨收 72.00（-28.0%）｜連結 2 檔 1.7M")
+    assert sheet["A1"].value.startswith("執行價 × 最終比價日 熱圖：AAA｜連結 2 檔 1.7M｜目前跌破執行價 共")
+    assert "昨收" not in sheet["A1"].value, "#473 標題不放昨收"
     grid = table(sheet, 2)
     assert grid[0] == ("市價格＼最終比價日", "2026/11")
     assert grid[1:] == [("80-85", pytest.approx(1.65)), ("75-80", 0), ("72-75", 0), ("70-72", 0)]
