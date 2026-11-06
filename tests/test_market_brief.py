@@ -358,7 +358,9 @@ def test_export_writes_one_table_per_sheet(seeded, tmp_path: Path) -> None:
     assert aaa[1:6] == (72, pytest.approx(-0.2), None, None, 2), "近 1 月 72 ÷ 90 − 1；更早沒有收盤價留空"
     assert aaa[7:9] == (2, pytest.approx(1.65)), "AAA 本身在兩檔都跌破K"
     hotspots = book["重災區"]
-    assert hotspots["A1"].value == "重災區：最差標的跌破執行價｜2 檔、1.7M USD｜依距執行價 × 距最終比價日"
+    assert (
+        hotspots["A1"].value == "重災區：最差標的跌破執行價｜2 檔、1.7M USD｜依距執行價 × 距最終比價日｜面額單位 M USD"
+    )
     grid = table(hotspots, 6)
     assert grid[0] == ("最差標的距K", "1個月內", "1–3個月", "3–6個月", "6–12個月", "合計")
     assert [row[0] for row in grid[1:]] == [
@@ -370,7 +372,7 @@ def test_export_writes_one_table_per_sheet(seeded, tmp_path: Path) -> None:
         "-30% 以下",
         "合計",
     ]
-    assert grid[-1][-1] == "3.7M（3檔）", "合計對得上總覽三列加總（#473）"
+    assert grid[-1][-1] == "3.7（3檔）", "合計對得上總覽三列加總（#473）"
     assert overview["A1"].font.name == "Calibri", "英文、數字用 Calibri"
     assert book._fonts[0].name == "微軟正黑體", "活頁簿預設字型是微軟正黑體，中文用它顯示"  # noqa: SLF001
     for sheet in book.worksheets:

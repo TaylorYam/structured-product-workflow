@@ -726,14 +726,14 @@ def _hotspots(sheet, brief: Brief) -> None:
                 amount[(key, col)] += e.amount
 
     def text(key: tuple[str, str]) -> str:
-        return "-" if not count[key] else f"{_m(amount[key])}M（{count[key]:,}檔）"
+        return "-" if not count[key] else f"{_m(amount[key])}（{count[key]:,}檔）"  # 單位 M USD 寫在標題（#473）
 
     names = [*distance_rows, "合計"]
     rows = [(name, *(text((name, col)) for col in [*due_cols, "合計"])) for name in names]
     total = sum((e.amount for e in hit), Decimal(0))
     _start(
         sheet,
-        f"重災區：最差標的跌破執行價｜{len(hit):,} 檔、{_m(total)}M USD｜依距執行價 × 距最終比價日",
+        f"重災區：最差標的跌破執行價｜{len(hit):,} 檔、{_m(total)}M USD｜依距執行價 × 距最終比價日｜面額單位 M USD",
         (20, *([19] * len(due_cols)), 22),
     )
     first = _table(sheet, ("最差標的距K", *due_cols, "合計"), rows, [None] * (len(due_cols) + 2))
