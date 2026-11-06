@@ -105,6 +105,7 @@ class Spec(ProductSpec):
     market: str = "US"  # 標的市場：US 美股、JT 日股
     pricing: str = "close"  # 參考條件表期初定價（說明書沒寫）
     old: bool = False  # 舊版：封面寫「受託機構」、TDCC 行有空白的「受託機構商品代號為」
+    double_comma: bool = False  # 封面 TDCC 行商品代號後的逗號重複（OOS 樣本「…，，ISIN 為」，workflow #476）
     split_numbers: bool = False  # 連結標的表界限／執行價格從小數點後拆行（`1,234.56` / `00`）
     approval: dt.date = APPROVAL
     iis_pages: int = 4
@@ -340,7 +341,7 @@ def _cover(d: _Doc, s: Spec) -> None:
     code = (
         f"TDCC 商品代號為 {s.product_code} ，受託機構商品代號為 ，ISIN 為 {ISIN}"
         if s.old
-        else f"TDCC 商品代號為 {s.product_code}，ISIN 為 {ISIN}"
+        else f"TDCC 商品代號為 {s.product_code}{'，，' if s.double_comma else '，'}ISIN 為 {ISIN}"
     )
     w.line(150, code, gap=24)
     dl = s.distributor
