@@ -25,7 +25,7 @@ import math
 from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from decimal import ROUND_HALF_UP, Decimal
+from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -35,9 +35,11 @@ from openpyxl.utils import get_column_letter
 
 from sp_workflow.check_terms import NO_BARRIER
 from sp_workflow.exposure import (
+    BROKEN,
     FIXED,
     K_BROKEN,
     KI_BROKEN,
+    MANUAL,
     NEAR_BUFFER,
     UNKNOWN,
     Assessed,
@@ -52,6 +54,7 @@ if TYPE_CHECKING:
     import psycopg
 
 USD = "USD"
+BLANK_CURRENCY = "（幣別空白）"
 MILLION = Decimal(1_000_000)
 TOP_HEATMAPS = 5  # 預設畫熱圖的標的數（連結面額前幾名）
 TOP_TICKERS = 10  # 大跌標的列幾個
@@ -62,10 +65,14 @@ BANDS_EACH_SIDE = 7  # 熱圖昨收上下各幾個整數區間，再外面併成
 # 總覽的列
 NEAR_ROW = "距K 10% 內"
 SAFE_ROW = "高於K 10% 以上"
+K_ONLY_ROW = f"{K_BROKEN}（未破KI）"
+MKI_ROW = "MKI 人工確認"
 FIXED_ROW = "已比價（等交割）"
 UNKNOWN_ROW = "無法計算"
 TOTAL_ROW = "在庫合計"
-OVERVIEW_ROWS = (KI_BROKEN, f"{K_BROKEN}（未破KI）", NEAR_ROW, SAFE_ROW, FIXED_ROW, UNKNOWN_ROW)
+OVERVIEW_ROWS = (KI_BROKEN, K_ONLY_ROW, NEAR_ROW, SAFE_ROW, MKI_ROW, FIXED_ROW, UNKNOWN_ROW)
+# 不用最新收盤價判斷跌破的分類：已比價以最終比價日為準、MKI 系統不比、無法計算缺條件或價格
+NOT_JUDGED = (FIXED, MANUAL, UNKNOWN)
 
 # 重災區：最差標的距執行價（負的是低於），下界（含）→ 列名；依序比
 DISTANCE_BUCKETS = (
@@ -132,15 +139,14 @@ class Brief:
     rows: tuple[TickerRow, ...]
     raw_closes: Mapping[str, Decimal]  # 代碼 → 最新原始收盤價（熱圖把執行價換到目前價格基準用）
     missing_fx: frozenset[str] = frozenset()
-    fx_day: dt.date | None = None  # 用到的匯率最舊的日期；全是 USD 時 None
 
     @property
     def close_day(self) -> dt.date | None:
         days = [r.quote.day for r in self.rows if r.quote is not None]
         return max(days) if days else None
 
-    def default_heatmaps(self, n: int = TOP_HEATMAPS) -> list[str]:
-        return [r.ticker for r in self.rows[:n]]
+    def default_heatmaps(self) -> list[str]:
+        return [r.ticker for r in self.rows[:TOP_HEATMAPS]]
 
 
 # ---------------------------------------------------------------- 讀資料庫
@@ -154,22 +160,20 @@ def load_brief(conn: psycopg.Connection, today: dt.date | None = None) -> Brief:
         positions = load_positions(conn, None, dt.date.max, today=today)
         codes = {leg.code for p in positions for leg in p.legs}
         quotes = _quotes(conn, codes)
-        currencies = {p.currency for p in positions if p.currency and p.currency != USD}
-        rates = _usd_rates(conn, currencies)
+        currencies = {p.currency or BLANK_CURRENCY for p in positions} - {USD}
+        rates = _usd_rates(conn, currencies - {BLANK_CURRENCY})
     missing = frozenset(c for c in currencies if c not in rates)
     exposures = []
     for p in positions:
         result = assess(p, today)
-        rate = Decimal(1) if p.currency == USD else rates.get(p.currency, (None, None))[1]
+        rate = Decimal(1) if p.currency == USD else rates.get(p.currency or BLANK_CURRENCY)
         exposures.append(Exposure(result, None if rate is None else result.notional * rate))
-    fx_days = [rates[c][0] for c in currencies if c in rates]
     return Brief(
         today,
         tuple(exposures),
         tuple(ticker_rows(exposures, quotes)),
         {code: q.close for code, q in quotes.items()},
         missing,
-        min(fx_days) if fx_days else None,
     )
 
 
@@ -189,8 +193,8 @@ def _quotes(conn: psycopg.Connection, codes: Iterable[str]) -> dict[str, Quote]:
     return found
 
 
-def _usd_rates(conn: psycopg.Connection, currencies: Iterable[str]) -> dict[str, tuple[dt.date, Decimal]]:
-    """幣別 → (日期, 1 單位折幾 USD)：`XXXUSD` 在收盤價表或每日價格日期最新的一筆。"""
+def _usd_rates(conn: psycopg.Connection, currencies: Iterable[str]) -> dict[str, Decimal]:
+    """幣別 → 1 單位折幾 USD：`XXXUSD` 在收盤價表或每日價格日期最新的一筆。"""
     pairs = {f"{c}USD": c for c in currencies}
     if not pairs:
         return {}
@@ -202,7 +206,7 @@ def _usd_rates(conn: psycopg.Connection, currencies: Iterable[str]) -> dict[str,
         " WHERE rate > 0 ORDER BY code, day DESC",
         (list(pairs), list(pairs)),
     ).fetchall()
-    return {pairs[code]: (day, rate) for code, day, rate in rows}
+    return {pairs[code]: rate for code, _, rate in rows}
 
 
 # ---------------------------------------------------------------- 彙整
@@ -229,8 +233,8 @@ def ticker_rows(exposures: Sequence[Exposure], quotes: Mapping[str, Quote]) -> l
             row.products += 1
             row.notional += e.amount
             legs = [leg for leg in position.legs if ticker_of(leg.code) == ticker]
-            if e.result.category == FIXED:
-                continue  # 已比價的結果以最終比價日為準，不用最新收盤價判斷跌破
+            if e.result.category in NOT_JUDGED:
+                continue  # 同總覽：已比價、MKI、無法計算不用最新收盤價判斷跌破
             if any(leg.below_strike for leg in legs):
                 row.k_count += 1
                 row.k_notional += e.amount
@@ -249,23 +253,26 @@ def _below_ki(result: Assessed, leg: Leg) -> bool:
 
 
 def overview_row(e: Exposure) -> str:
-    """總覽的哪一列：跌破的照狀態；未跌破的看最差標的距執行價。"""
+    """總覽的哪一列：已比價、MKI 先分出來；跌破的照狀態；未跌破的看最差標的距執行價。"""
     r = e.result
     if r.category == FIXED:
         return FIXED_ROW
+    if r.category == MANUAL:
+        return MKI_ROW  # MKI 每期觀察，系統不比，不用最新收盤價判斷跌破（同曝險分析）
     status = r.status
     if status == KI_BROKEN:
         return KI_BROKEN
     if status == K_BROKEN:
-        return OVERVIEW_ROWS[1]
+        return K_ONLY_ROW
     if status == UNKNOWN or r.worst is None or r.worst.to_strike is None:
         return UNKNOWN_ROW
     return NEAR_ROW if r.worst.to_strike <= NEAR_BUFFER else SAFE_ROW
 
 
 def broken(exposures: Iterable[Exposure]) -> list[Exposure]:
-    """重災區：目前跌破K、跌破KI 的商品（已比價、無法計算不算）。"""
-    return [e for e in exposures if e.result.category != FIXED and e.result.status in (K_BROKEN, KI_BROKEN)]
+    """重災區：目前跌破K、跌破KI 的商品（狀態同重災區掃描 #362，已比價、無法計算的狀態不是跌破）；
+    MKI 歸總覽的人工確認，不列。"""
+    return [e for e in exposures if e.result.category != MANUAL and e.result.status in BROKEN]
 
 
 def distance_bucket(e: Exposure) -> str:
@@ -335,7 +342,7 @@ def plan_bands(strikes: Sequence[Decimal], close: Decimal | None) -> tuple[list[
         return [], None
     center = close if close is not None else sorted(strikes)[len(strikes) // 2]
     step = nice_step(center)
-    base = (center / step).to_integral_value(rounding="ROUND_FLOOR") * step  # 中心所在那格的下界
+    base = (center / step).to_integral_value(rounding=ROUND_FLOOR) * step  # 中心所在那格的下界
     low_needed = min(strikes)
     high_needed = max(strikes)
     below = 0
@@ -374,47 +381,58 @@ def month_columns(months: Iterable[tuple[int, int]]) -> tuple[list[tuple[int, in
 
 @dataclass(frozen=True)
 class Heatmap:
-    ticker: str
     row: TickerRow
     bands: list[Band]
     line: Decimal | None  # 昨收線的價位（在這價位之上的區間是執行價高於昨收）
     months: list[tuple[int, int]]
     later: bool  # 有「之後」欄
     cells: dict[tuple[int, int], Decimal] = field(default_factory=dict)  # (列, 欄) → 面額 USD
+    products: int = 0  # 畫進熱圖的檔數與面額（標題用，跟格子加總一致）
+    notional: Decimal = Decimal(0)
+    k_count: int = 0  # 其中這個標的本身低於執行價
+    k_notional: Decimal = Decimal(0)
 
 
 def heatmap(brief: Brief, ticker: str) -> Heatmap:
-    """一個標的的熱圖：連結它、最終比價日不早於今天的商品，依它的執行價（換到目前價格基準）× 最終比價月份加總面額。"""
+    """一個標的的熱圖：連結它、最終比價日不早於今天的商品，依它的執行價 × 最終比價月份加總面額。
+
+    執行價換成跟昨收同一個尺度（`_strike_on`）：拆股換到目前的價格基準；同一個代號在別的交易所掛牌、
+    價格尺度不同（例：不同幣別）時，照那個代碼自己距執行價的比例換到昨收那個代碼的價格。
+    """
     row = next(r for r in brief.rows if r.ticker == ticker)
-    entries: list[tuple[Decimal, tuple[int, int], Decimal]] = []
+    close = row.quote.close if row.quote else None
+    entries: list[tuple[Decimal, tuple[int, int], Exposure, Leg]] = []
     for e in brief.exposures:
         p = e.result.position
         if p.final_date is None or p.final_date < brief.today:
             continue
-        for leg in p.legs:
-            if ticker_of(leg.code) != ticker or leg.strike is None:
-                continue
-            entries.append(
-                (_strike_now(leg, brief.raw_closes.get(leg.code)), (p.final_date.year, p.final_date.month), e.amount)
-            )
-            break  # 一檔同一個標的只算一次
-    close = row.quote.close if row.quote else None
-    bands, line = plan_bands([strike for strike, _, _ in entries], close)
-    months, later = month_columns(month for _, month, _ in entries)
+        leg = next((x for x in p.legs if ticker_of(x.code) == ticker and x.strike is not None), None)
+        if leg is not None:  # 一檔同一個標的只算一次
+            strike = _strike_on(leg, close, brief.raw_closes.get(leg.code))
+            entries.append((strike, (p.final_date.year, p.final_date.month), e, leg))
+    bands, line = plan_bands([strike for strike, *_ in entries], close)
+    months, later = month_columns(month for _, month, *_ in entries)
     cells: dict[tuple[int, int], Decimal] = defaultdict(Decimal)
-    for strike, month, amount in entries:
+    k_count, k_notional = 0, Decimal(0)
+    for strike, month, e, leg in entries:
         r = next(i for i, band in enumerate(bands) if band.holds(strike))
         c = months.index(month) if month in months else len(months)
-        cells[(r, c)] += amount
-    return Heatmap(ticker, row, bands, line, months, later, dict(cells))
+        cells[(r, c)] += e.amount
+        if e.result.category not in NOT_JUDGED and leg.below_strike:
+            k_count += 1
+            k_notional += e.amount
+    notional = sum((e.amount for _, _, e, _ in entries), Decimal(0))
+    return Heatmap(row, bands, line, months, later, dict(cells), len(entries), notional, k_count, k_notional)
 
 
-def _strike_now(leg: Leg, raw: Decimal | None) -> Decimal:
-    """執行價換到目前的價格基準：收盤價換回價格基準時乘的倍數，執行價反過來除（拆股，ADR 0025）。"""
+def _strike_on(leg: Leg, close: Decimal | None, raw: Decimal | None) -> Decimal:
+    """執行價換到昨收的尺度：執行價 × 昨收 ÷ 這個代碼換回價格基準的收盤價（同代碼時就是拆股換算，ADR 0025）。
+    沒有昨收時照這個代碼自己的原始收盤價換；都沒有收盤價時用資料庫的執行價。"""
     assert leg.strike is not None
-    if raw is None or not leg.close:
+    scale = close if close is not None else raw
+    if scale is None or not leg.close:
         return leg.strike
-    return leg.strike * raw / leg.close
+    return leg.strike * scale / leg.close
 
 
 # ---------------------------------------------------------------- 匯出
@@ -563,7 +581,7 @@ def _overview(sheet, brief: Brief) -> None:
     first = _table(sheet, ("狀態", "檔數", "面額（M USD）", "面額佔比"), rows, (None, COUNT, MILLIONS, SHARE))
     for r in range(first, first + len(rows)):
         name = sheet.cell(r, 1).value
-        if name in (KI_BROKEN, OVERVIEW_ROWS[1]):
+        if name in (KI_BROKEN, K_ONLY_ROW):
             for c in range(1, 5):
                 sheet.cell(r, c).fill = BROKEN_FILL
         if name == TOTAL_ROW:
@@ -689,8 +707,8 @@ def _heatmap(sheet, h: Heatmap) -> None:
     month_names = [f"{y}/{m:02d}" for y, m in h.months] + (["之後"] if h.later else [])
     close = "昨收 —" if q is None else f"昨收 {q.close:,.2f}" + ("" if q.change is None else f"（{q.change:+.1%}）")
     title = (
-        f"價格 x 到期月份 熱圖：{h.ticker}｜{close}｜連結 {h.row.products} 檔 {_m(h.row.notional)}M"
-        f"｜跌破K {h.row.k_count} 檔 {_m(h.row.k_notional)}M"
+        f"價格 x 到期月份 熱圖：{h.row.ticker}｜{close}｜連結 {h.products} 檔 {_m(h.notional)}M"
+        f"｜跌破K {h.k_count} 檔 {_m(h.k_notional)}M"
     )
     _start(sheet, title, (16, *([10.5] * len(month_names))))
     rows = [

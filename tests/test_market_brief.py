@@ -19,6 +19,7 @@ from sp_workflow.market_brief import (
     Exposure,
     Quote,
     brief_name,
+    broken,
     distance_bucket,
     due_bucket,
     export_brief,
@@ -167,6 +168,61 @@ def test_heatmap_puts_strikes_in_todays_price_basis() -> None:
     row = next(i for i, band in enumerate(h.bands) if band.holds(D(40)))
     assert h.cells == {(row, 0): D(1000000), (row, 2): D(500000)}
     assert h.bands[row].low > h.line, "執行價高於昨收，在線之上"
+
+
+def test_mki_is_left_for_manual_review_not_judged_by_the_latest_close() -> None:
+    mki = exposure("1", leg(1, "AAA UW", "50"), barrier="MKI")  # 收盤價低於下限價，但 MKI 系統不比
+    pending = Exposure(
+        assess(
+            Position(
+                "2",
+                "FCN",
+                "XBANK",
+                "USD",
+                dt.date(2026, 11, 20),
+                "EKI",
+                "",
+                "待確認",
+                None,
+                (leg(1, "AAA UW", "50"),),
+                (Holding("台北", "Amy", D(1)),),
+            ),
+            DAY,
+        ),
+        D(1),
+    )
+
+    assert overview_row(mki) == "MKI 人工確認"
+    assert broken([mki, pending]) == [], "MKI 與無法計算都不列重災區"
+    row = ticker_rows([mki, pending], {})[0]
+    assert (row.products, row.k_count, row.ki_count) == (2, 0, 0), "檔數照算，跌破不用最新收盤價判斷"
+
+
+def test_other_exchange_strikes_are_scaled_to_the_main_close() -> None:
+    # 主代碼 AAA UW 昨收 90；另一個交易所 AAA GY 價格尺度不同（收盤 45、執行價 40，距執行價 +12.5%）
+    main = exposure("1", leg(1, "AAA UW", "90"))
+    other = exposure("2", leg(1, "AAA GY", "45", strike="40"))
+    third = exposure("3", leg(1, "AAA UW", "90"))
+    quotes = {"AAA UW": Quote(DAY, D(90)), "AAA GY": Quote(DAY, D(45))}
+    brief = Brief(
+        DAY, (main, other, third), tuple(ticker_rows([main, other, third], quotes)), {"AAA UW": D(90), "AAA GY": D(45)}
+    )
+
+    h = heatmap(brief, "AAA")
+
+    strike_80 = next(i for i, band in enumerate(h.bands) if band.holds(D(80)))
+    assert h.cells == {(strike_80, 0): D(3000000)}, "AAA GY 的執行價換成 40 × 90 ÷ 45 = 80，跟 AAA UW 同一格"
+
+
+def test_heatmap_title_counts_only_what_is_drawn() -> None:
+    drawn = exposure("1", leg(1, "AAA UW", "72"))
+    past = exposure("2", leg(1, "AAA UW", "72"), final=DAY - dt.timedelta(days=1), usd="5000000")
+    brief = Brief(DAY, (drawn, past), tuple(ticker_rows([drawn, past], {"AAA UW": Quote(DAY, D(72))})), {})
+
+    h = heatmap(brief, "AAA")
+
+    assert (h.products, h.notional, h.k_count, h.k_notional) == (1, D(1000000), 1, D(1000000))
+    assert h.row.products == 2, "大跌標的的連結檔數仍含已比價"
 
 
 def test_default_name() -> None:
