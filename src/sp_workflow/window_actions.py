@@ -91,6 +91,7 @@ from sp_workflow.mailbox import (
     save_alias,
     save_person,
 )
+from sp_workflow.market_brief import Brief, BriefReceipt, export_brief, load_brief
 from sp_workflow.observation import ObservationReceipt, observe_all
 from sp_workflow.order_terms import OrderRow, collect_orders
 from sp_workflow.preparation import PrepareReceipt, prepare_batch
@@ -683,6 +684,18 @@ def export_hotspot_scan(settings: ConnectionSettings, until: dt.date, path: Path
     """重災區掃描：最終比價日不晚於 `until` 的全部在庫商品裡，目前跌破K、跌破KI 的寫成 Excel（#362）。只讀資料庫。"""
     with connect(settings) as conn:
         return export_hotspots(conn, until, path)
+
+
+def load_market_brief(settings: ConnectionSettings) -> Brief:
+    """盤勢速報（#467）：全部在庫且存續的商品與連結的標的，給視窗列出、預設選熱圖標的。只讀資料庫。"""
+    with connect(settings) as conn:
+        return load_brief(conn)
+
+
+def export_market_brief(settings: ConnectionSettings, tickers: Sequence[str], path: Path) -> BriefReceipt:
+    """盤勢速報（#467）寫成 Excel；`tickers` 每個一頁熱圖。只讀資料庫。"""
+    with connect(settings) as conn:
+        return export_brief(conn, tickers, path)
 
 
 # ---------- 信箱維護 ----------
