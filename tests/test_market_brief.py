@@ -337,7 +337,10 @@ def test_export_writes_one_table_per_sheet(seeded, tmp_path: Path) -> None:
     book = openpyxl.load_workbook(path)
     assert book.sheetnames == ["總覽", "大跌標的", "重災區", "熱圖_AAA"], "沒有重災區前 15 檔（#469）"
     overview = book["總覽"]
-    assert overview["A1"].value.startswith("盤勢總覽｜2026/10/28 收盤｜在庫 3 檔、連結 4 個標的")
+    assert overview["A1"].value.startswith(
+        "盤勢總覽｜ELN 商品依表現最差標的距執行價（K）分類｜2026/10/28 收盤｜在庫 3 檔、連結 4 個標的"
+    )
+    assert overview["A3"].value == "ELN商品表現最差標的"
     rows = {row[0]: row[1:3] for row in table(overview, 3)[1:]}
     assert rows["跌破K"] == (2, pytest.approx(1.65)), "A 1.0M ＋ C 1 億日圓 × 0.0065 = 0.65M（C 低於下限價也只算跌破K）"
     assert rows["高於K 10% 以上"] == (1, pytest.approx(2.0))
@@ -363,9 +366,9 @@ def test_heatmap_sheet_draws_the_close_line(seeded, tmp_path: Path) -> None:
 
     sheet = openpyxl.load_workbook(path)["熱圖_AAA"]
 
-    assert sheet["A1"].value.startswith("價格 x 最終比價月份 熱圖：AAA｜昨收 72.00（-28.0%）｜連結 2 檔 1.7M")
+    assert sheet["A1"].value.startswith("市價格 × 最終比價日 熱圖：AAA｜昨收 72.00（-28.0%）｜連結 2 檔 1.7M")
     grid = table(sheet, 2)
-    assert grid[0] == ("執行價區間", "2026/11")
+    assert grid[0] == ("市價格＼最終比價日", "2026/11")
     assert grid[1:] == [("80-85", pytest.approx(1.65)), ("75-80", 0), ("72-75", 0), ("70-72", 0)]
     line_row = 3 + 3  # 表頭第 3 列，72-75 是第 3 格資料
     assert sheet.cell(line_row, 1).border.bottom.style == "thick"

@@ -15,7 +15,7 @@
   大跌標的的近 1／2／3 個月表現（#469）= 昨收 ÷ 往回 N 個月那天（或之前最近一筆，最多再往前 `STALE_DAYS` 天）
   的收盤價 − 1，中間有拆股時舊價格先換到目前的價格基準（`SplitBook.factor`）。
   一個標的的「跌破K」看商品裡這個標的本身（不是最差標的）：收盤價低於它的執行價。
-- 熱圖：連結這個標的、最終比價日不早於今天的商品，依這個標的的執行價分區間（拆股換到目前的價格基準：
+- 熱圖（「市價格 × 最終比價日」，#471）：連結這個標的、最終比價日不早於今天的商品，依這個標的的執行價換算成的市價格分區間（拆股換到目前的價格基準：
   執行價 × 原始收盤價 ÷ 換回價格基準的收盤價），橫的是最終比價月份；昨收所在的區間在昨收處切開，昨收線以上
   是執行價高於昨收（已跌破K）。
 - 版面：每個分頁 A1 是標題、A3 起是一塊連續的表格，不合併儲存格、旁邊不放東西、不用條件式格式（顏色是固定底色），
@@ -621,10 +621,13 @@ def _overview(sheet, brief: Brief) -> None:
     ]
     _start(
         sheet,
-        f"盤勢總覽｜{_day(brief.close_day)} 收盤｜在庫 {len(brief.exposures)} 檔、連結 {len(brief.rows)} 個標的",
-        (22, 12, 18, 14),
+        f"盤勢總覽｜ELN 商品依表現最差標的距執行價（K）分類｜{_day(brief.close_day)} 收盤"
+        f"｜在庫 {len(brief.exposures)} 檔、連結 {len(brief.rows)} 個標的",
+        (24, 12, 18, 14),
     )
-    first = _table(sheet, ("狀態", "檔數", "面額（M USD）", "面額佔比"), rows, (None, COUNT, MILLIONS, SHARE))
+    first = _table(
+        sheet, ("ELN商品表現最差標的", "檔數", "面額（M USD）", "面額佔比"), rows, (None, COUNT, MILLIONS, SHARE)
+    )
     for r in range(first, first + len(rows)):
         name = sheet.cell(r, 1).value
         if name == K_BROKEN:
@@ -723,15 +726,15 @@ def _heatmap(sheet, h: Heatmap) -> None:
     month_names = [f"{y}/{m:02d}" for y, m in h.months] + (["之後"] if h.later else [])
     close = "昨收 —" if q is None else f"昨收 {q.close:,.2f}" + ("" if q.change is None else f"（{q.change:+.1%}）")
     title = (
-        f"價格 x 最終比價月份 熱圖：{h.row.ticker}｜{close}｜連結 {h.products} 檔 {_m(h.notional)}M"
+        f"市價格 × 最終比價日 熱圖：{h.row.ticker}｜{close}｜連結 {h.products} 檔 {_m(h.notional)}M"
         f"｜跌破K {h.k_count} 檔 {_m(h.k_notional)}M"
     )
-    _start(sheet, title, (16, *([10.5] * len(month_names))))
+    _start(sheet, title, (22, *([10.5] * len(month_names))))
     rows = [
         (label, *(_millions(h.cells.get((r, c), Decimal(0))) for c in range(len(month_names))))
         for r, label in enumerate(labels)
     ]
-    first = _table(sheet, ("執行價區間", *month_names), rows, (None, *([MILLIONS] * len(month_names))))
+    first = _table(sheet, ("市價格＼最終比價日", *month_names), rows, (None, *([MILLIONS] * len(month_names))))
     top = max(h.cells.values(), default=Decimal(0))
     for (r, c), value in h.cells.items():
         if fill := heat_fill(value, top):
