@@ -12,6 +12,7 @@ from tkinter import messagebox
 import pytest
 
 import sp_workflow.tabs.ratings as screen
+from sp_workflow import app
 from sp_workflow.credit_ratings import GUARANTOR, INITIAL, ISSUER, Entity, Rating, RatingRows
 from sp_workflow.tabs.ratings import EntityForm, RatingForm
 from window_synth import new_window
@@ -31,8 +32,7 @@ def opened(master, tmp_path: Path, monkeypatch, immediate):
         monkeypatch.setattr(screen, name, lambda settings, *args, name=name: calls.append((name, *args)) or ROWS)
     monkeypatch.setattr(screen, "load_rating_rows", lambda settings: ROWS)
     window = new_window(master, tmp_path, background=immediate, logged_in=True)
-    window.open_ratings()
-    return window, window.ratings, calls
+    return window, window.open_window(app.RATINGS), calls
 
 
 def values(table) -> list[tuple]:
@@ -40,7 +40,7 @@ def values(table) -> list[tuple]:
 
 
 def test_menu_opens_one_window_listing_current_ratings_and_history(opened) -> None:
-    window, ratings, _ = opened
+    _, ratings, _ = opened
 
     assert values(ratings.entities) == [
         ("ABC", "發行機構", "Abc Bank", "A", "A2", "—", "2030-06-01"),
@@ -51,8 +51,6 @@ def test_menu_opens_one_window_listing_current_ratings_and_history(opened) -> No
     ratings.update()
     assert values(ratings.history) == [("2030-06-01", "A", "A2", "—"), ("最初", "A+", "A1", "—")], "新的在上面"
     assert ratings.status_var.get() == "上手 2 家、機構 2 個、評等 3 筆。"
-    window.open_ratings()
-    assert window.ratings is ratings, "已經開著就拉到前面，不重開"
 
 
 def test_add_edit_and_delete_ratings_of_the_picked_entity(opened, monkeypatch) -> None:

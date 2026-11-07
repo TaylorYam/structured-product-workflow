@@ -7,18 +7,15 @@
 
 from __future__ import annotations
 
-import datetime as dt
 import tkinter as tk
 from collections.abc import Callable, Sequence
 from tkinter import messagebox, ttk
 
-from fcn_checker.date_picker import DateEntry, parse_day
-from fcn_checker.ui import DANGER, Background, FitTreeview, Scrollbar, WrapLabel
+from fcn_checker.ui import Background, FitTreeview, Scrollbar, WrapLabel
 from sp_workflow.credit_ratings import (
     AGENCIES,
     INITIAL,
     ROLES,
-    CreditRatingError,
     Entity,
     Rating,
     RatingRows,
@@ -26,8 +23,9 @@ from sp_workflow.credit_ratings import (
     entity_from,
     rating_from,
 )
-from sp_workflow.database import ConnectionSettings, OperatorError
-from sp_workflow.tabs.base import TITLE, ActionRunner, BackgroundFactory, DatabaseLogin
+from sp_workflow.database import ConnectionSettings
+from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, SideWindow
+from sp_workflow.tabs.forms import Form, ask_form, read_day
 from sp_workflow.window_actions import (
     add_credit_rating,
     add_rated_entity,
@@ -54,13 +52,11 @@ def _ratings(rating: Rating | None) -> tuple[str, str, str]:
     return (rating.sp or "—", rating.moodys or "—", rating.fitch or "—")
 
 
-class RatingsWindow(tk.Toplevel):
+class RatingsWindow(SideWindow):
     """評等維護視窗：打開時讀一次，之後每次存檔後重讀；處理中按鈕不能按。"""
 
     def __init__(self, parent: tk.Misc, db: DatabaseLogin, *, background: BackgroundFactory = Background) -> None:
-        super().__init__(parent)
-        self.title(f"{TITLE} — 發行機構評等")
-        self.background = background(self)
+        super().__init__(parent, db, background, "發行機構評等", "1180x560")
         self.rows = RatingRows((), ())
         frame = ttk.Frame(self, padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
@@ -91,13 +87,9 @@ class RatingsWindow(tk.Toplevel):
                 self.buttons.append(button)
         self.entities.bind("<<TreeviewSelect>>", lambda _: self._show_history())
         self.entities.bind("<Double-1>", lambda _: self.add_rating())
-        self.status_var = tk.StringVar()
-        self.runner = ActionRunner(db, self.background, self.status_var, self._busy, parent=self)
         WrapLabel(frame, textvariable=self.status_var, wraplength=1000, justify="left").grid(
             row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0)
         )
-        self.protocol("WM_DELETE_WINDOW", self.close)
-        self.geometry("1180x560")
 
     def _section(
         self, frame: ttk.Frame, column: int, title: str, columns: Sequence[tuple[str, str, int]]
@@ -119,10 +111,6 @@ class RatingsWindow(tk.Toplevel):
         return table, buttons
 
     # ---------- 讀與顯示 ----------
-
-    @property
-    def working(self) -> bool:
-        return self.runner.working
 
     def refresh(self, notice: str = "") -> None:
         """重新讀資料庫；`notice` 是剛存好的那一筆，寫在狀態列。"""
@@ -241,97 +229,11 @@ class RatingsWindow(tk.Toplevel):
         """存檔後重讀並停在同一個機構；寫不進去（`CreditRatingError`）時原因寫在狀態列並跳出來。"""
         self.runner.run_action(action, "存檔中…", lambda rows: self._show(rows, f"已存：{done}。", keep=entity.key))
 
-    def _busy(self, busy: bool) -> None:
-        for button in self.buttons:
-            button.configure(state=tk.DISABLED if busy else tk.NORMAL)
 
-    def close(self) -> None:
-        self.background.close()
-        self.destroy()
-
-
-class Form(tk.Toplevel):
-    """新增、修改用的小視窗：按確定（或 Enter）時讀輸入，有錯寫在視窗裡、不關；取消（或 Esc）關掉。
-
-    拆股登記（`tabs.splits`）也用；`read` 丟的 `OperatorError`（評等、拆股的錯誤）寫在視窗裡。"""
-
-    def __init__(self, parent: tk.Misc, title: str) -> None:
-        super().__init__(parent)
-        self.title(title)
-        self.transient(parent)
-        self.result: object = None
-        self.body = ttk.Frame(self, padding=16)
-        self.body.pack(fill=tk.BOTH, expand=True)
-        self.body.columnconfigure(1, weight=1)
-        self.error_var = tk.StringVar()
-        self.fields: list[tk.Widget] = []
-        self.row = 0
-
-    def entry(self, label: str, value: str, width: int = 40) -> tk.StringVar:
-        var = tk.StringVar(value=value)
-        ttk.Label(self.body, text=label).grid(row=self.row, column=0, sticky="w", pady=(0, 8), padx=(0, 12))
-        field = ttk.Entry(self.body, textvariable=var, width=width)
-        field.grid(row=self.row, column=1, sticky="w" if width < 40 else "ew", pady=(0, 8))
-        self.fields.append(field)
-        self.row += 1
-        return var
-
-    def rating_fields(self, before: Rating | None) -> list[tk.StringVar]:
-        values = (before.sp, before.moodys, before.fitch) if before else (None, None, None)
-        return [self.entry(agency, value or "", width=10) for agency, value in zip(AGENCIES, values, strict=True)]
-
-    def day_field(self, label: str, value: str) -> tk.StringVar:
-        var = tk.StringVar(value=value)
-        ttk.Label(self.body, text=label).grid(row=self.row, column=0, sticky="w", pady=(0, 8), padx=(0, 12))
-        day = DateEntry(self.body, var, width=14)
-        day.grid(row=self.row, column=1, sticky="w", pady=(0, 8))
-        self.fields.append(day.entry)
-        self.row += 1
-        return var
-
-    def note(self, text: str) -> None:
-        WrapLabel(self.body, text=text, wraplength=400, justify="left").grid(
-            row=self.row, column=0, columnspan=2, sticky="w", pady=(0, 4)
-        )
-        self.row += 1
-
-    def finish_layout(self) -> None:
-        ttk.Label(self.body, textvariable=self.error_var, foreground=DANGER).grid(
-            row=self.row, column=0, columnspan=2, sticky="w"
-        )
-        buttons = ttk.Frame(self.body)
-        buttons.grid(row=self.row + 1, column=0, columnspan=2, sticky="e", pady=(12, 0))
-        ttk.Button(buttons, text="確定", command=self.confirm).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(buttons, text="取消", command=self.destroy).pack(side=tk.LEFT)
-        self.bind("<Escape>", lambda _: self.destroy())
-        self.bind("<Return>", lambda _: self.confirm())
-        self.update_idletasks()  # 置中在評等視窗上
-        top = self.master.winfo_toplevel()
-        x = top.winfo_rootx() + (top.winfo_width() - self.winfo_width()) // 2
-        y = top.winfo_rooty() + (top.winfo_height() - self.winfo_height()) // 3
-        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
-        self.fields[0].focus_set()
-
-    def read(self) -> object:
-        raise NotImplementedError
-
-    def confirm(self) -> None:
-        try:
-            self.result = self.read()
-        except OperatorError as exc:
-            self.error_var.set(str(exc))
-            return
-        self.destroy()
-
-
-def read_day(text: str, *, blank: dt.date | None = None) -> dt.date:
-    """生效日欄：YYYY-MM-DD；`blank` 有值時空白（或「最初」）就是它。"""
-    if blank is not None and text.strip() in ("", "最初"):
-        return blank
-    day = parse_day(text)
-    if day is None:
-        raise CreditRatingError("生效日請填 YYYY-MM-DD（可以點右邊的小月曆）。")
-    return day
+def rating_fields(form: Form, before: Rating | None) -> list[tk.StringVar]:
+    """三家評等各一格（標準普爾、穆迪、惠譽），先帶入 before。"""
+    values = (before.sp, before.moodys, before.fitch) if before else (None, None, None)
+    return [form.entry(agency, value or "", width=10) for agency, value in zip(AGENCIES, values, strict=True)]
 
 
 class RatingForm(Form):
@@ -349,14 +251,14 @@ class RatingForm(Form):
         self.initial = before is not None and before.effective_date == INITIAL
         if self.initial:
             self.day_var = tk.StringVar(value="最初")
-            ttk.Label(self.body, text="生效日").grid(row=self.row, column=0, sticky="w", pady=(0, 8), padx=(0, 12))
+            self.label("生效日")
             ttk.Label(self.body, text="最初（第一批評等，不能改）").grid(
                 row=self.row, column=1, sticky="w", pady=(0, 8)
             )
             self.row += 1
         else:
             self.day_var = self.day_field("生效日", before.effective_date.isoformat() if before else "")
-        self.agency_vars = self.rating_fields(before or latest)
+        self.agency_vars = rating_fields(self, before or latest)
         self.note("沒有該家評等就留空，三家至少填一家；格式像 AA-、A+（標普、惠譽）或 Aa2、A1（穆迪）。")
         self.finish_layout()
 
@@ -371,7 +273,7 @@ class EntityForm(Form):
     def __init__(self, parent: tk.Misc) -> None:
         super().__init__(parent, "新增機構")
         self.issuer_var = self.entry("上手代碼", "", width=12)
-        ttk.Label(self.body, text="角色").grid(row=self.row, column=0, sticky="w", pady=(0, 8), padx=(0, 12))
+        self.label("角色")
         self.role_var = tk.StringVar(value=ROLES[0])
         ttk.Combobox(self.body, textvariable=self.role_var, values=list(ROLES), state="readonly", width=10).grid(
             row=self.row, column=1, sticky="w", pady=(0, 8)
@@ -379,7 +281,7 @@ class EntityForm(Form):
         self.row += 1
         self.name_var = self.entry("名稱", "")
         self.day_var = self.day_field("生效日", "")
-        self.agency_vars = self.rating_fields(None)
+        self.agency_vars = rating_fields(self, None)
         self.note("上手代碼同上手編號對照（BARC、CITI…）。生效日空白表示不設起始日（最初）。")
         self.finish_layout()
 
@@ -387,12 +289,6 @@ class EntityForm(Form):
         entity = entity_from(self.issuer_var.get(), self.role_var.get(), self.name_var.get())
         day = read_day(self.day_var.get(), blank=INITIAL)
         return entity, rating_from(entity.issuer, entity.role, day, *(v.get() for v in self.agency_vars))
-
-
-def ask_form(form: Form) -> object:
-    form.grab_set()
-    form.master.wait_window(form)
-    return form.result
 
 
 def ask_rating(parent: tk.Misc, entity: Entity, before: Rating | None, latest: Rating | None = None) -> Rating | None:

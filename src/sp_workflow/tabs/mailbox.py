@@ -10,10 +10,11 @@ import tkinter as tk
 from collections.abc import Callable, Sequence
 from tkinter import messagebox, ttk
 
-from fcn_checker.ui import DANGER, Background, FitTreeview, Scrollbar, WrapLabel
+from fcn_checker.ui import Background, FitTreeview, Scrollbar, WrapLabel
 from sp_workflow.database import ConnectionSettings
-from sp_workflow.mailbox import Alias, MailboxError, MailboxRows, Person, alias_from, person_from
-from sp_workflow.tabs.base import TITLE, ActionRunner, BackgroundFactory, DatabaseLogin
+from sp_workflow.mailbox import Alias, MailboxRows, Person, alias_from, person_from
+from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, SideWindow
+from sp_workflow.tabs.forms import Form, ask_form
 from sp_workflow.window_actions import (
     delete_mailbox_alias,
     delete_mailbox_person,
@@ -26,13 +27,11 @@ PEOPLE_COLUMNS = (("name", "名字", 140), ("email", "信箱", 220), ("unit", "�
 ALIAS_COLUMNS = (("alias", "別名", 160), ("person", "人員", 140))
 
 
-class MailboxWindow(tk.Toplevel):
+class MailboxWindow(SideWindow):
     """信箱維護視窗：打開時讀一次，之後每次存檔後重讀；處理中按鈕不能按。"""
 
     def __init__(self, parent: tk.Misc, db: DatabaseLogin, *, background: BackgroundFactory = Background) -> None:
-        super().__init__(parent)
-        self.title(f"{TITLE} — 信箱維護")
-        self.background = background(self)
+        super().__init__(parent, db, background, "信箱維護", "1000x560")
         self.rows = MailboxRows((), ())
         frame = ttk.Frame(self, padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
@@ -66,13 +65,9 @@ class MailboxWindow(tk.Toplevel):
                 self.buttons.append(button)
         self.people.bind("<Double-1>", lambda _: self.edit_person())
         self.aliases.bind("<Double-1>", lambda _: self.edit_alias())
-        self.status_var = tk.StringVar()
-        self.runner = ActionRunner(db, self.background, self.status_var, self._busy, parent=self)
         WrapLabel(frame, textvariable=self.status_var, wraplength=900, justify="left").grid(
             row=3, column=0, columnspan=2, sticky="ew", pady=(10, 0)
         )
-        self.protocol("WM_DELETE_WINDOW", self.close)
-        self.geometry("1000x560")
 
     def _section(
         self, frame: ttk.Frame, column: int, title: str, columns: Sequence[tuple[str, str, int]]
@@ -94,10 +89,6 @@ class MailboxWindow(tk.Toplevel):
         return table, buttons
 
     # ---------- 讀與顯示 ----------
-
-    @property
-    def working(self) -> bool:
-        return self.runner.working
 
     def refresh(self, notice: str = "") -> None:
         """重新讀資料庫；`notice` 是剛存好的那一筆，寫在狀態列。"""
@@ -216,122 +207,52 @@ class MailboxWindow(tk.Toplevel):
         """存檔後重讀；寫不進去（`MailboxError`）時原因寫在狀態列並跳出來。"""
         self.runner.run_action(action, "存檔中…", lambda rows: self._show(rows, f"已存：{done}。"))
 
-    def _busy(self, busy: bool) -> None:
-        for button in self.buttons:
-            button.configure(state=tk.DISABLED if busy else tk.NORMAL)
 
-    def close(self) -> None:
-        self.background.close()
-        self.destroy()
-
-
-class _Form(tk.Toplevel):
-    """新增、修改用的小視窗：按確定（或 Enter）時讀輸入，有錯寫在視窗裡、不關；取消（或 Esc）關掉。"""
-
-    def __init__(self, parent: tk.Misc, title: str) -> None:
-        super().__init__(parent)
-        self.title(title)
-        self.transient(parent)
-        self.result: object = None
-        self.body = ttk.Frame(self, padding=16)
-        self.body.pack(fill=tk.BOTH, expand=True)
-        self.body.columnconfigure(1, weight=1)
-        self.error_var = tk.StringVar()
-        self.fields: list[tk.Widget] = []
-
-    def entry(self, row: int, label: str, value: str) -> tk.StringVar:
-        var = tk.StringVar(value=value)
-        ttk.Label(self.body, text=label).grid(row=row, column=0, sticky="w", pady=(0, 8), padx=(0, 12))
-        field = ttk.Entry(self.body, textvariable=var, width=40)
-        field.grid(row=row, column=1, sticky="ew", pady=(0, 8))
-        self.fields.append(field)
-        return var
-
-    def finish_layout(self, row: int) -> None:
-        ttk.Label(self.body, textvariable=self.error_var, foreground=DANGER).grid(
-            row=row, column=0, columnspan=2, sticky="w"
-        )
-        buttons = ttk.Frame(self.body)
-        buttons.grid(row=row + 1, column=0, columnspan=2, sticky="e", pady=(12, 0))
-        ttk.Button(buttons, text="確定", command=self.confirm).pack(side=tk.LEFT, padx=(0, 8))
-        ttk.Button(buttons, text="取消", command=self.destroy).pack(side=tk.LEFT)
-        self.bind("<Escape>", lambda _: self.destroy())
-        self.bind("<Return>", lambda _: self.confirm())
-        self.update_idletasks()  # 置中在信箱維護視窗上
-        top = self.master.winfo_toplevel()
-        x = top.winfo_rootx() + (top.winfo_width() - self.winfo_width()) // 2
-        y = top.winfo_rooty() + (top.winfo_height() - self.winfo_height()) // 3
-        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
-        self.fields[0].focus_set()
-
-    def read(self) -> object:
-        raise NotImplementedError
-
-    def confirm(self) -> None:
-        try:
-            self.result = self.read()
-        except MailboxError as exc:
-            self.error_var.set(str(exc))
-            return
-        self.destroy()
-
-
-class PersonForm(_Form):
+class PersonForm(Form):
     def __init__(self, parent: tk.Misc, before: Person | None) -> None:
         super().__init__(parent, "修改人員" if before else "新增人員")
-        self.name_var = self.entry(0, "名字", before.name if before else "")
-        self.email_var = self.entry(1, "信箱", before.email if before else "")
-        self.unit_var = self.entry(2, "單位", (before.unit or "") if before else "")
+        self.name_var = self.entry("名字", before.name if before else "")
+        self.email_var = self.entry("信箱", before.email if before else "")
+        self.unit_var = self.entry("單位", (before.unit or "") if before else "")
         self.cc_var = tk.BooleanVar(value=bool(before and before.fixed_cc))
         ttk.Checkbutton(self.body, text="固定副本（每封寄信草稿都副本給他）", variable=self.cc_var).grid(
-            row=3, column=1, sticky="w", pady=(0, 8)
+            row=self.row, column=1, sticky="w", pady=(0, 8)
         )
+        self.row += 1
         if before:
             note = "改名時他的別名會跟著改。名字不分大小寫不能和別人重複。"
         else:
             note = "名字要和交易明細上的 FC 名字一樣（不分大小寫）；寫法不同時另加別名。"
-        WrapLabel(self.body, text=note, wraplength=380, justify="left").grid(
-            row=4, column=0, columnspan=2, sticky="w", pady=(0, 4)
-        )
-        self.finish_layout(5)
+        self.note(note, wraplength=380)
+        self.finish_layout()
 
     def read(self) -> Person:
         return person_from(self.name_var.get(), self.email_var.get(), self.unit_var.get(), self.cc_var.get())
 
 
-class AliasForm(_Form):
+class AliasForm(Form):
     def __init__(self, parent: tk.Misc, before: Alias | None, names: Sequence[str]) -> None:
         super().__init__(parent, "修改別名" if before else "新增別名")
-        self.alias_var = self.entry(0, "別名", before.alias if before else "")
-        ttk.Label(self.body, text="人員").grid(row=1, column=0, sticky="w", pady=(0, 8), padx=(0, 12))
+        self.alias_var = self.entry("別名", before.alias if before else "")
+        self.label("人員")
         self.person_var = tk.StringVar(value=before.person_name if before else "")
         self.person_box = ttk.Combobox(self.body, textvariable=self.person_var, values=list(names), state="readonly")
-        self.person_box.grid(row=1, column=1, sticky="ew", pady=(0, 8))
-        WrapLabel(
-            self.body,
-            text="別名是交易明細上的另一種寫法（不分大小寫），比對時先查別名。",
-            wraplength=380,
-            justify="left",
-        ).grid(row=2, column=0, columnspan=2, sticky="w", pady=(0, 4))
-        self.finish_layout(3)
+        self.person_box.grid(row=self.row, column=1, sticky="ew", pady=(0, 8))
+        self.row += 1
+        self.note("別名是交易明細上的另一種寫法（不分大小寫），比對時先查別名。", wraplength=380)
+        self.finish_layout()
 
     def read(self) -> Alias:
         return alias_from(self.alias_var.get(), self.person_var.get())
 
 
-def _ask(form: _Form) -> object:
-    form.grab_set()
-    form.master.wait_window(form)
-    return form.result
-
-
 def ask_person(parent: tk.Misc, before: Person | None) -> Person | None:
     """新增（before 是 None）或修改一個人的輸入；取消時 None。"""
-    found = _ask(PersonForm(parent, before))
+    found = ask_form(PersonForm(parent, before))
     return found if isinstance(found, Person) else None
 
 
 def ask_alias(parent: tk.Misc, before: Alias | None, names: Sequence[str]) -> Alias | None:
     """新增或修改一個別名的輸入；人員從信箱裡的名字選。取消時 None。"""
-    found = _ask(AliasForm(parent, before, names))
+    found = ask_form(AliasForm(parent, before, names))
     return found if isinstance(found, Alias) else None

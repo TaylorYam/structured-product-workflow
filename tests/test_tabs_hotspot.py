@@ -12,8 +12,9 @@ from tkinter import filedialog, messagebox
 import pytest
 
 import sp_workflow.tabs.hotspot as screen
+from sp_workflow import app
 from sp_workflow.exposure import HotspotReceipt
-from sp_workflow.tabs.exposure import MEMORY_KEY, one_month_later
+from sp_workflow.tabs.base import ANALYSIS_FOLDER_KEY, one_month_later
 from window_synth import new_window
 
 
@@ -27,16 +28,13 @@ def opened(master, tmp_path: Path, monkeypatch, immediate):
 
     monkeypatch.setattr(screen, "export_hotspot_scan", export)
     window = new_window(master, tmp_path, background=immediate, logged_in=True)
-    window.open_hotspots()
-    return window, window.hotspots, calls
+    return window, window.open_window(app.HOTSPOTS), calls
 
 
 def test_menu_opens_one_window(opened) -> None:
-    window, hotspots, _ = opened
+    _, hotspots, _ = opened
 
     assert hotspots.until_var.get() == one_month_later(dt.date.today()).isoformat(), "預設今天起一個月"
-    window.open_hotspots()
-    assert window.hotspots is hotspots, "已經開著就拉到前面，不重開"
 
 
 def test_export_asks_for_a_file_and_scans(opened, monkeypatch, tmp_path: Path) -> None:
@@ -51,7 +49,7 @@ def test_export_asks_for_a_file_and_scans(opened, monkeypatch, tmp_path: Path) -
     assert calls == [(dt.date(2030, 4, 4), target)]
     assert asked[0]["initialfile"].startswith("重災區掃描_")
     assert hotspots.status_var.get() == f"已匯出 37 檔（跌破K 31、跌破KI 6；截止日內在庫 155 檔）：{target}"
-    assert hotspots.memory.load()[MEMORY_KEY] == str(target.parent), "跟標的曝險分析記同一個資料夾"
+    assert hotspots.memory.load()[ANALYSIS_FOLDER_KEY] == str(target.parent), "跟標的曝險分析記同一個資料夾"
 
 
 def test_cancelled_save_does_nothing(opened, monkeypatch) -> None:
@@ -72,14 +70,6 @@ def test_a_bad_cutoff_date_is_refused(opened, monkeypatch) -> None:
     hotspots.export()
 
     assert infos == ["最終比價日截止請填 YYYY-MM-DD（可以點右邊的小月曆）。"] and not calls
-
-
-def test_closing_the_main_window_closes_it(opened) -> None:
-    window, hotspots, _ = opened
-
-    window.close()
-
-    assert not hotspots.winfo_exists()
 
 
 def test_status_line_shows_both_counts(opened, tmp_path: Path) -> None:

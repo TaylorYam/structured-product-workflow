@@ -14,9 +14,8 @@ from tkinter import messagebox, ttk
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import Background, FitTreeview, Scrollbar, WrapLabel
 from sp_workflow.stock_splits import Split, split_from
-from sp_workflow.tabs.base import TITLE, ActionRunner, BackgroundFactory, DatabaseLogin
-from sp_workflow.tabs.daily import events_text, observation_text
-from sp_workflow.tabs.ratings import Form, ask_form, read_day
+from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, SideWindow, events_text, observation_text
+from sp_workflow.tabs.forms import Form, ask_form, read_day
 from sp_workflow.window_actions import SplitResult, add_stock_split, delete_stock_split, load_split_rows
 
 COLUMNS = (
@@ -29,7 +28,7 @@ COLUMNS = (
 )
 
 
-class SplitsWindow(tk.Toplevel):
+class SplitsWindow(SideWindow):
     """拆股登記視窗：打開時讀一次，之後每次存檔後重讀；處理中按鈕不能按。"""
 
     def __init__(
@@ -40,10 +39,8 @@ class SplitsWindow(tk.Toplevel):
         *,
         background: BackgroundFactory = Background,
     ) -> None:
-        super().__init__(parent)
-        self.title(f"{TITLE} — 拆股登記")
+        super().__init__(parent, db, background, "拆股登記", "980x520")
         self.config_paths = config_paths
-        self.background = background(self)
         self.splits: tuple[Split, ...] = ()
         frame = ttk.Frame(self, padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
@@ -80,19 +77,11 @@ class SplitsWindow(tk.Toplevel):
             button = ttk.Button(buttons, text=text, command=command)
             button.pack(side=tk.LEFT, padx=(0, 8))
             self.buttons.append(button)
-        self.status_var = tk.StringVar()
-        self.runner = ActionRunner(db, self.background, self.status_var, self._busy, parent=self)
         WrapLabel(frame, textvariable=self.status_var, wraplength=900, justify="left").grid(
             row=2, column=0, sticky="ew", pady=(10, 0)
         )
-        self.protocol("WM_DELETE_WINDOW", self.close)
-        self.geometry("980x520")
 
     # ---------- 讀與顯示 ----------
-
-    @property
-    def working(self) -> bool:
-        return self.runner.working
 
     def refresh(self) -> None:
         self.runner.run_action(load_split_rows, "讀取拆股登記中…", self._show)
@@ -174,14 +163,6 @@ class SplitsWindow(tk.Toplevel):
             "刪除並重新比價中…",
             lambda r: self._saved(r, done),
         )
-
-    def _busy(self, busy: bool) -> None:
-        for button in self.buttons:
-            button.configure(state=tk.DISABLED if busy else tk.NORMAL)
-
-    def close(self) -> None:
-        self.background.close()
-        self.destroy()
 
 
 class SplitForm(Form):

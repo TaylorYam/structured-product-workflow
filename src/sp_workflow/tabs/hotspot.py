@@ -15,12 +15,19 @@ from fcn_checker.date_picker import DateEntry, parse_day
 from fcn_checker.ui import Background, WrapLabel
 from sp_workflow.exposure import BROKEN, HotspotReceipt, hotspot_name
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.tabs.base import TITLE, ActionRunner, BackgroundFactory, DatabaseLogin
-from sp_workflow.tabs.exposure import MEMORY_KEY, follow_width, one_month_later
+from sp_workflow.tabs.base import (
+    ANALYSIS_FOLDER_KEY,
+    TITLE,
+    BackgroundFactory,
+    DatabaseLogin,
+    SideWindow,
+    follow_width,
+    one_month_later,
+)
 from sp_workflow.window_actions import export_hotspot_scan
 
 
-class HotspotWindow(tk.Toplevel):
+class HotspotWindow(SideWindow):
     """重災區掃描視窗；處理中按鈕不能按。"""
 
     def __init__(
@@ -32,10 +39,8 @@ class HotspotWindow(tk.Toplevel):
         background: BackgroundFactory = Background,
         today: dt.date | None = None,
     ) -> None:
-        super().__init__(parent)
-        self.title(f"{TITLE} — 重災區掃描")
+        super().__init__(parent, db, background, "重災區掃描", "600x220")
         self.memory = memory
-        self.background = background(self)
         frame = ttk.Frame(self, padding=16)
         frame.pack(fill=tk.BOTH, expand=True)
         frame.columnconfigure(0, weight=1)
@@ -56,17 +61,10 @@ class HotspotWindow(tk.Toplevel):
         DateEntry(bottom, self.until_var, width=14).pack(side=tk.LEFT)
         self.export_button = ttk.Button(bottom, text="匯出 Excel…", command=self.export)
         self.export_button.pack(side=tk.RIGHT)
-        self.status_var = tk.StringVar()
-        self.runner = ActionRunner(db, self.background, self.status_var, self._busy, parent=self)
+        self.buttons = [self.export_button]
         status = WrapLabel(frame, textvariable=self.status_var, wraplength=500, justify="left")
         status.grid(row=2, column=0, sticky="ew", pady=(12, 0))
         follow_width(status)
-        self.protocol("WM_DELETE_WINDOW", self.close)
-        self.geometry("600x220")
-
-    @property
-    def working(self) -> bool:
-        return self.runner.working
 
     def export(self) -> None:
         if self.working:
@@ -77,7 +75,7 @@ class HotspotWindow(tk.Toplevel):
             return
         chosen = filedialog.asksaveasfilename(
             title="匯出重災區掃描",
-            initialdir=self.memory.load().get(MEMORY_KEY) or None,  # 跟標的曝險分析存在同一個資料夾
+            initialdir=self.memory.load().get(ANALYSIS_FOLDER_KEY) or None,  # 跟標的曝險分析存在同一個資料夾
             initialfile=hotspot_name(),
             defaultextension=".xlsx",
             filetypes=[("Excel 活頁簿", "*.xlsx")],
@@ -86,7 +84,7 @@ class HotspotWindow(tk.Toplevel):
         if not chosen:
             return
         path = Path(chosen)
-        self.memory.remember(**{MEMORY_KEY: str(path.parent)})
+        self.memory.remember(**{ANALYSIS_FOLDER_KEY: str(path.parent)})
         self.runner.run_action(
             lambda settings: export_hotspot_scan(settings, until, path), "掃描並匯出中…", self._exported
         )
@@ -94,10 +92,3 @@ class HotspotWindow(tk.Toplevel):
     def _exported(self, receipt: HotspotReceipt) -> None:
         counts = "、".join(f"{status} {receipt.counts.get(status, 0)}" for status in BROKEN)
         self.status_var.set(f"已匯出 {receipt.count} 檔（{counts}；截止日內在庫 {receipt.scanned} 檔）：{receipt.path}")
-
-    def _busy(self, busy: bool) -> None:
-        self.export_button.configure(state=tk.DISABLED if busy else tk.NORMAL)
-
-    def close(self) -> None:
-        self.background.close()
-        self.destroy()

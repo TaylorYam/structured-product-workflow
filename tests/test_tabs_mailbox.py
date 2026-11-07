@@ -11,6 +11,7 @@ from tkinter import messagebox
 import pytest
 
 import sp_workflow.tabs.mailbox as screen
+from sp_workflow import app
 from sp_workflow.mailbox import Alias, MailboxError, MailboxRows, Person
 from sp_workflow.tabs.mailbox import AliasForm, PersonForm
 from window_synth import new_window
@@ -27,8 +28,7 @@ def opened(master, tmp_path: Path, monkeypatch, immediate):
         monkeypatch.setattr(screen, name, lambda settings, *args, name=name: calls.append((name, *args)) or ROWS)
     monkeypatch.setattr(screen, "load_mailbox_rows", lambda settings: ROWS)
     window = new_window(master, tmp_path, background=immediate, logged_in=True)
-    window.open_mailbox()
-    return window, window.mailbox, calls
+    return window, window.open_window(app.MAILBOX), calls
 
 
 def values(table) -> list[tuple]:
@@ -36,7 +36,7 @@ def values(table) -> list[tuple]:
 
 
 def test_menu_opens_one_window_listing_people_and_aliases(opened) -> None:
-    window, mailbox, _ = opened
+    _, mailbox, _ = opened
 
     assert values(mailbox.people) == [
         ("Amy", "amy@example.com", "FC", "", "Amie、A. Lin"),
@@ -44,8 +44,6 @@ def test_menu_opens_one_window_listing_people_and_aliases(opened) -> None:
     ]
     assert values(mailbox.aliases) == [("Amie", "Amy"), ("A. Lin", "Amy")]
     assert mailbox.status_var.get() == "人員 2 位（固定副本 1 位）、別名 2 個。"
-    window.open_mailbox()
-    assert window.mailbox is mailbox, "已經開著就拉到前面，不重開"
 
 
 def test_add_edit_and_delete_a_person(opened, monkeypatch) -> None:
@@ -134,14 +132,6 @@ def test_no_fixed_cc_is_pointed_out(opened, monkeypatch) -> None:
     mailbox.refresh()
 
     assert mailbox.status_var.get() == "人員 1 位（固定副本 0 位）、別名 0 個。沒有任何固定副本，寄信草稿會停下來。"
-
-
-def test_closing_the_main_window_closes_the_mailbox_window(opened) -> None:
-    window, mailbox, _ = opened
-
-    window.close()
-
-    assert not mailbox.winfo_exists()
 
 
 def test_person_form_reads_trimmed_input_and_shows_errors(master) -> None:

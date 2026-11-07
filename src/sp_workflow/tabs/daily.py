@@ -22,10 +22,18 @@ from sp_workflow.daily_import import ImportReceipt, PriceCsvReceipt, PriceSummar
 from sp_workflow.eln_whitelist import WhitelistImport
 from sp_workflow.legacy_backfill import EXISTING, FILLED, SKIPPED
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.observation import EXITED, ON_BOOK, UNLOCKED, WAIT_PRICES, ObservationReceipt, Observed
+from sp_workflow.observation import UNLOCKED, ObservationReceipt, Observed
 from sp_workflow.product_backfill import IMPORTED
-from sp_workflow.status import Pricing
-from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, Tab, ask_csv, ask_excel
+from sp_workflow.tabs.base import (
+    TITLE,
+    BackgroundFactory,
+    DatabaseLogin,
+    Tab,
+    ask_csv,
+    ask_excel,
+    events_text,
+    observation_text,
+)
 from sp_workflow.tabs.recalc import Releaser, recalc_text
 from sp_workflow.window_actions import (
     DailyResult,
@@ -519,28 +527,6 @@ def _observation_kpis(observation: Observation) -> list[tuple[str, int, bool]]:
         return [("比價沒有跑", 1, True)] if observation.error else []
     unfinished = len(receipt.unfinished())
     return [("存續事件有變（檔）", len(receipt.changes), False), ("比價沒完成（檔）", unfinished, unfinished > 0)]
-
-
-def observation_text(observation: Observation, saved: str = "匯入") -> str:
-    """完成訊息裡的比價一句（#155）；`saved` 是比價前寫好的東西（拆股登記用「登記」）。"""
-    receipt = observation.receipt
-    if receipt is None and not observation.error:
-        return "比價：這次沒有跑。"
-    if receipt is None:
-        return f"比價：沒有跑，{observation.error}。{saved}已經完成，修好後按「維護 → 重新比價全部」。"
-    through = "收盤價表還沒有資料" if receipt.through is None else f"比到 {receipt.through:%Y-%m-%d}"
-    counts = "、".join(
-        f"{status} {receipt.count(status)}" for status in (ON_BOOK, EXITED, WAIT_PRICES, Pricing.TO_CONFIRM)
-    )
-    text = f"比價：{through}，共 {len(receipt.results)} 檔（{counts}）；存續事件有變 {len(receipt.changes)} 檔"
-    if receipt.errors:
-        text += f"；寫不進去 {len(receipt.errors)} 檔"
-    return text + "。"
-
-
-def events_text(events: Sequence[tuple[str, str, str | None]]) -> str:
-    texts = [" ".join(part for part in (event, underlying, day) if part) for event, day, underlying in events]
-    return "、".join(texts) or "沒有"
 
 
 def _observed_detail(r: Observed) -> str:

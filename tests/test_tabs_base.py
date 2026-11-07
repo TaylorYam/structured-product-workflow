@@ -10,7 +10,7 @@ import pytest
 
 from fcn_checker.ui import Scrollbar
 from sp_workflow.database import DatabaseError
-from sp_workflow.tabs.base import ActionRunner, DatabaseLogin
+from sp_workflow.tabs.base import ActionRunner, DatabaseLogin, SideWindow, SideWindows
 from window_synth import HeldBackground, new_window
 
 
@@ -222,6 +222,95 @@ def test_a_failing_result_handler_does_not_leave_the_buttons_disabled(master, tm
         runner.background.run_all()
 
     assert busy == [True, False] and runner.working is False, "可以再開始下一件"
+
+
+# ---------------------------------------------------------------- 選單另開的子視窗（`SideWindow`、`SideWindows`，#481）
+
+
+class FakeSide(SideWindow):
+    """一個假子視窗：一顆按鈕，打開時讀一次（記下讀了幾次）。"""
+
+    def __init__(self, parent, db: DatabaseLogin, background) -> None:
+        super().__init__(parent, db, background, "假視窗", "300x200")
+        self.refreshed = 0
+        self.button = ttk.Button(self, text="做事")
+        self.button.pack()
+        self.buttons.append(self.button)
+
+    def refresh(self) -> None:
+        self.refreshed += 1
+
+
+def fake_side(master, tmp_path: Path, background=HeldBackground) -> FakeSide:
+    env = tmp_path / ".env"
+    env.write_text("PGDATABASE=spw_fake\nPGUSER=operator1\nPGPASSWORD=fake\n", "utf-8")
+    return FakeSide(master, DatabaseLogin(master, env), background)
+
+
+def test_side_window_title_and_close_protocol(master, tmp_path: Path) -> None:
+    side = fake_side(master, tmp_path)
+
+    assert side.title() == "FCN Workflow — 假視窗"
+    assert side.protocol("WM_DELETE_WINDOW"), "按右上角叉叉走 close"
+    side.close()
+    assert side.background.closed and not side.winfo_exists(), "先停背景執行器再關"
+
+
+def test_side_window_disables_its_buttons_while_working(master, tmp_path: Path) -> None:
+    side = fake_side(master, tmp_path)
+
+    side.runner.run_action(lambda settings: 1, "處理中…", lambda r: side.status_var.set(f"完成 {r}"))
+
+    assert side.working and str(side.button.cget("state")) == "disabled"
+    assert side.status_var.get() == "處理中…"
+    side.background.run_all()
+    assert not side.working and str(side.button.cget("state")) == "normal"
+    assert side.status_var.get() == "完成 1"
+
+
+def test_side_window_errors_pop_up_over_it(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    side = fake_side(master, tmp_path, immediate)
+    parents = []
+    monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: parents.append(k.get("parent")))
+
+    def fail(settings):
+        raise DatabaseError("連不上資料庫")
+
+    side.runner.run_action(fail, "處理中…", lambda r: pytest.fail("出錯不交回"))
+
+    assert parents == [side] and side.status_var.get() == "連不上資料庫"
+
+
+def test_registry_brings_an_open_window_to_the_front(master, tmp_path: Path) -> None:
+    windows = SideWindows()
+    built: list[FakeSide] = []
+
+    def build() -> FakeSide:
+        built.append(fake_side(master, tmp_path))
+        return built[-1]
+
+    first = windows.open("假視窗…", build)
+    again = windows.open("假視窗…", build)
+
+    assert again is first and len(built) == 1, "已經開著就拉到前面，不重開"
+    assert first.refreshed == 1, "只在打開時讀一次"
+    assert windows.get("假視窗…") is first and windows.get("別的…") is None
+    first.close()
+    assert windows.get("假視窗…") is None, "關掉後不算開著"
+    reopened = windows.open("假視窗…", build)
+    assert reopened is not first and reopened.refreshed == 1, "關掉後再開是新的一個"
+
+
+def test_closing_the_main_window_closes_open_side_windows(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    side = window.side_windows.open("假視窗…", lambda: fake_side(master, tmp_path))
+    closed = fake_side(master, tmp_path)
+    window.side_windows.open("關掉的…", lambda: closed)
+    closed.close()
+
+    window.close()
+
+    assert not side.winfo_exists() and side.background.closed, "關主視窗一起關"
 
 
 # ---------------------------------------------------------------- macOS 質感的結果表與捲軸

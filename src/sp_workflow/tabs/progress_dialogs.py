@@ -14,6 +14,7 @@ from tkinter import ttk
 from fcn_checker.date_picker import DateEntry
 from fcn_checker.ui import WrapLabel
 from sp_workflow.lifecycle import Objection, StoredEvent
+from sp_workflow.tabs.forms import center_over
 
 
 def tdcc_list(tdccs: Sequence[str], limit: int = 10) -> str:
@@ -117,11 +118,7 @@ class FormDialog(tk.Toplevel):
         ttk.Button(buttons, text="取消", command=self.destroy).pack(side="left")
         self.bind("<Escape>", lambda _: self.destroy())
         self.bind("<Return>", lambda _: self.confirm())
-        self.update_idletasks()  # 置中在主視窗上
-        top = parent.winfo_toplevel()
-        x = top.winfo_rootx() + (top.winfo_width() - self.winfo_width()) // 2
-        y = top.winfo_rooty() + (top.winfo_height() - self.winfo_height()) // 3
-        self.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        center_over(self, parent)  # 置中在主視窗上
         if fields:
             fields[0].focus_set()
         self.grab_set()
