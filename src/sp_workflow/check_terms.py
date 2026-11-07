@@ -458,7 +458,9 @@ def _recalculate(
         old = stored.get(product.tdcc)
         if vwap_from is not None and _pricing(product.initial_pricing) == VWAP:
             calc = _keep_vwap(calc, product, vwap_from, () if old is None else old.prices)
-        calc = replace(calc, prices=carry_over(calc.prices, was.prices, product.strike_pct))  # 比價寫的欄（#374、#491）
+        calc = replace(
+            calc, prices=carry_over(calc.prices, was.prices, product.strike_pct)
+        )  # 比價與拆股登記寫的欄（#374、#491）
         changed = not _same(calc, old)
         if changed:
             _write(conn, product.tdcc, calc)

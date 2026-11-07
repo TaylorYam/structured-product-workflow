@@ -91,7 +91,7 @@ from sp_workflow.trade_rows import (
     unmatched_names,
     write_trade_rows,
 )
-from sp_workflow.underlying_prices import write_price
+from sp_workflow.underlying_prices import backfill_price
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -1024,7 +1024,7 @@ def backfill(
             if found is None and value is None:
                 return False  # 不需要填的期別：記下來就好，不算改值
         case UnderlyingPrice(seq=seq, column=price):  # `column` 只會是 fields.PRICE_COLUMNS 的四個欄
-            found, old = write_price(conn, tdcc, seq, price, value)
+            found, old = backfill_price(conn, tdcc, seq, price, value)
             if not found:
                 return False  # 沒有這個標的（空值寫法的格子）
         case _:

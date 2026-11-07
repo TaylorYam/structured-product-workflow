@@ -2,11 +2,12 @@
 
 同一列的欄由三方各自擁有，照舊（ADR 0012、0025、0029）：
 - 四個價格與代碼：核對條件重算（`check_terms`，整檔重寫 `write_prices`）、舊商品補資料與歷史回補（新建列 `add_prices`）、
-  核對寫回 TS 回填的單一價格（`product_terms.backfill` → `write_price`）。
+  核對寫回 TS 回填的單一價格（`product_terms.backfill` → `backfill_price`）。
 - 回顧期初價格與回顧執行價：比價在回顧期間結束後寫（`observation` → `write_lookback`，#374）。
 - 價格基準日：比價前依拆股登記推（`stock_splits.refresh_basis` → `write_basis`，ADR 0025）。
 
-重寫四個價格時別人的欄怎麼保留只在 `carry_over` 一處決定：同一位置同一標的保留回顧期初價格（執行價照它重算）與價格基準日。
+重寫四個價格時別人的欄只在這裡保留，同一位置同一標的才保留：回顧期初價格（執行價照它重算）由 `carry_over` 在比較
+「有沒有變」之前帶上；價格基準日由 `write_prices` 照寫入當下的資料庫保留（比價可能在這之間推了新的）。
 讀在 `product_store`（`Stored.prices`）。寫入都在呼叫端的 transaction 裡執行。
 """
 
@@ -34,7 +35,7 @@ def carry_over(
 ) -> tuple[UnderlyingPrice, ...]:
     """核對條件重算出的價格 `prices` 加上舊列 `old` 裡別人擁有、要保留的欄，同一位置同一標的才保留：
 
-    - 價格基準日（拆股登記推的，#491）。
+    - 價格基準日（拆股登記推的，#491）：讓重算的結果和上一次的比得起來；寫入時 `write_prices` 再照資料庫的保留。
     - 比價寫過的回顧期初價格（#374），執行價 = 回顧期初價格 × 執行價(%)（執行價(%) 空白時照算出的）。重算後進場價比
       回顧期初價格低的不保留（回顧期初價格不會高於進場價），由下一次比價重算（回顧結束日空白卻有回顧期初價格時比價待確認，
       `observation`）。
@@ -57,10 +58,16 @@ def carry_over(
 
 
 def write_prices(conn: psycopg.Connection, tdcc: str, prices: Sequence[UnderlyingPrice]) -> None:
-    """整檔重寫這檔的標的價格（核對條件重算）：每一列照 `prices` 寫，含回顧期初價格與價格基準日（先用 `carry_over` 帶上舊的）。"""
+    """整檔重寫這檔的標的價格（核對條件重算）：四個價格、代碼與回顧期初價格照 `prices` 寫（回顧期初價格先用 `carry_over`
+    帶上）；價格基準日不是重算的欄，同一位置同一標的照資料庫原本的保留，新的或換了標的的位置空白，由下一次比價推（#491）。"""
     require_in_transaction(conn)
-    conn.execute("DELETE FROM workflow.underlying_price WHERE tdcc = %s", (tdcc,))
-    _insert(conn, tdcc, prices)
+    basis = {
+        (seq, code): day
+        for seq, code, day in conn.execute(
+            "DELETE FROM workflow.underlying_price WHERE tdcc = %s RETURNING seq, code, price_basis_date", (tdcc,)
+        )
+    }
+    _insert(conn, tdcc, [replace(p, basis=basis.get((p.seq, p.code))) for p in prices])
 
 
 def add_prices(conn: psycopg.Connection, tdcc: str, prices: Sequence[UnderlyingPrice]) -> None:
@@ -69,7 +76,7 @@ def add_prices(conn: psycopg.Connection, tdcc: str, prices: Sequence[UnderlyingP
     _insert(conn, tdcc, prices)
 
 
-def write_price(
+def backfill_price(
     conn: psycopg.Connection, tdcc: str, seq: int, column: str, value: Decimal | None
 ) -> tuple[bool, Decimal | None]:
     """改一個標的的一個價格（核對寫回 TS 回填的值，`product_terms.backfill`）；回傳 (有沒有這個標的, 原值)，
