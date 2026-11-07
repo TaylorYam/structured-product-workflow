@@ -125,9 +125,9 @@ class ReviewStandard:
             distributor_address_equivalents=self.distributor_address_equivalents,
             distributor_name_equivalents=self.distributor_name_equivalents,
             **{
-                key.field(name): dict(v[name]) if isinstance(v[name], dict) else v[name]
+                key.attribute(name): dict(v[name]) if isinstance(v[name], dict) else v[name]
                 for name, key in ISSUER_KEYS.items()
-                if key.attr is not None
+                if key.view
             },
         )
 
@@ -298,10 +298,12 @@ class IssuerKey:
 
     read: Callable[[Any, str], Any]  # 收（值, 位置）回傳解析後的值；不合法時丟 config_invalid
     default: Any = None  # 上手表沒寫時的值；SHARED → 共用值；None → 該上手沒有這項基準
-    attr: str | None = ""  # IssuerStandard 的欄位；"" 同鍵名，None 不直接對到欄位（只用來組 fixed_warnings）
+    attr: str | None = None  # IssuerStandard 的欄位名稱；None → 同鍵名
     legacy: tuple[str, ...] | None = None  # 舊版面（每種基準一個表、底下分上手）的表；沒有 → 新版面才有的鍵
+    view: bool = True  # False → 不直接填進 IssuerStandard（fixed_warning_openings／variants 只用來組 fixed_warnings）
 
-    def field(self, name: str) -> str:
+    def attribute(self, name: str) -> str:
+        """這個鍵（名稱 `name`）在 `IssuerStandard` 的欄位名稱。"""
         return self.attr or name
 
 
@@ -319,8 +321,8 @@ ISSUER_KEYS: dict[str, IssuerKey] = {
         _positive_int, SHARED, legacy=("risk", "fixed_warning_occurrences_by_issuer")
     ),
     # 固定警語開頭句的其他寫法、其他完整寫法（組成 IssuerStandard.fixed_warnings）
-    "fixed_warning_openings": IssuerKey(_texts, (), None, ("risk", "fixed_warning_openings")),
-    "fixed_warning_variants": IssuerKey(_texts, (), None, ("risk", "fixed_warning_variants")),
+    "fixed_warning_openings": IssuerKey(_texts, (), legacy=("risk", "fixed_warning_openings"), view=False),
+    "fixed_warning_variants": IssuerKey(_texts, (), legacy=("risk", "fixed_warning_variants"), view=False),
     # 風險等級的寫法；沒有 → 【{level}】
     "risk_level_formats": IssuerKey(_level_formats, ("【" + RISK_LEVEL + "】",), legacy=("risk", "level_formats")),
     # 投資人須知的固定警語次數；沒有 → 轉人工覆核

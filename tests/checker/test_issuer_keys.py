@@ -23,7 +23,7 @@ NOT_FROM_KEYS = {
 
 
 def test_every_issuer_key_has_one_issuer_standard_field_and_back():
-    from_keys = [key.field(name) for name, key in ISSUER_KEYS.items() if key.attr is not None]
+    from_keys = [key.attribute(name) for name, key in ISSUER_KEYS.items() if key.view]
     assert len(from_keys) == len(set(from_keys))
     assert set(from_keys) | NOT_FROM_KEYS == {f.name for f in dataclasses.fields(IssuerStandard)}
     assert not set(from_keys) & NOT_FROM_KEYS
@@ -54,8 +54,8 @@ def test_an_issuer_without_a_table_gets_the_defaults_and_shared_values():
     assert other.osu_clients is True and other.distributor_name_exempt == ()
     assert other.distributor_name == std.distributor_name
     for name, key in ISSUER_KEYS.items():
-        if key.attr is not None and key.default is not SHARED:
-            assert getattr(other, key.field(name)) == key.default, name
+        if key.view and key.default is not SHARED:
+            assert getattr(other, key.attribute(name)) == key.default, name
 
 
 def test_table_values_are_copied_so_issuer_standards_do_not_share_dicts():
