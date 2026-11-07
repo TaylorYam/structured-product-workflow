@@ -98,7 +98,7 @@ HSBC 說明書不寫參與率（§17(2) `本商品不適用`），由 §11(1) �
 
 只有**商品名稱樣板**不同（依 Product 選樣板，見[審查標準](review-standard.md) §2.2；設定 `[issuer.hsbc.product_names.BEN]`，同 Super Bull）。BEN 有兩種型態，樣板依範本辨識出的型態選：
 
-- Maxi 中文：`香港上海滙豐銀行{天期}個月{幣別中文}計價紅利表現股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）`；英文：`Bonus Enhanced Notes (Non Guaranteed, Unsecured)`，前面的 `Maxi ` 不核對（比照 #314 的 `ignore_prefix_en = true`；樣本都有 `Maxi`）。
+- Maxi 中文：`香港上海滙豐銀行{天期}個月{幣別中文}計價紅利表現股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）`；英文：`Bonus Enhanced Notes (Non Guaranteed, Unsecured)`，前面的 `Maxi ` 不核對（比照 #314，英文樣板開頭寫 `*`；樣本都有 `Maxi`）。
 - Digital 中文：`香港上海滙豐銀行{天期}個月{幣別中文}計價紅利配息股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）`；英文：`Reverse Convertible with Digital Coupon Notes (Non Guaranteed, Unsecured)`。
 - 投資人須知沒有「（以下簡稱「本商品」）」，同 FCN。只有天期、幣別兩個佔位符；比對方式（英文忽略所有空白、中文括號全半形不計）同 HSBC FCN。
 

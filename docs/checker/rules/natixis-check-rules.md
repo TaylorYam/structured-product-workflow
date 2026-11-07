@@ -110,7 +110,7 @@
 - 中文：`法國外貿銀行{tenor}個月{ccy_zh}計價固定配息(自動提前到期)連結一籃子標的結構型商品(不保本、無擔保及無保證機構)`。
 - 英文：`Natixis – {tenor}-Month {ccy} – Autocallable Fixed Coupon Note Linked to Basket of Equities (Non-Principal Protected, Unsecured and Non-Guaranteed)`。
 - **只有天期、幣別兩個佔位符**：不分標的數（單一標的也寫「一籃子」／`Basket of Equities`，NX8 確認）、記憶式、KO／KI 型態、Non-Call。`memory_zh`／`memory_en` 設空字串。
-- 名稱截到 `(下稱「本商品」)` 之前；中文、英文都忽略空白（`ignore_whitespace_en = true`）、括號統一（`normalize_brackets = true`）。
+- 名稱截到 `(下稱「本商品」)` 之前；中文、英文都忽略空白（`normalize_en = ["whitespace"]`）、括號統一（`normalize_zh = ["brackets"]`）。
 - **連字號**：封面英文名稱寫 `Non-Principal`（= 樣板）；第一章第 1 項、投資人須知寫 `Non Principal`（沒有連字號），視為一致（2026-10-15 確認）。建議實作：第一章第 1 項與投資人須知讀出英文名稱時，把 `(Non Principal` 正規化成 `(Non-Principal` 再交出（證據保留原文）；封面不正規化，封面寫錯仍判不一致。
 
 **發行機構名稱**（`issuer.natixis.issuer_name`）：`法國外貿銀行`；封面、第一章第 3 項、第二章 1.(1)、投資人須知壹 1. 都只寫中文。2026-10-15 確認 Natixis 只有這一個發行主體；其他寫法判不一致或轉人工覆核。

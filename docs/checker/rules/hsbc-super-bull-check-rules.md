@@ -92,7 +92,7 @@ Super Bull 沒有配息表，提前贖回表只列決定日；共用日期表檢
 只有**商品名稱樣板**不同（依 Product 選樣板，見[審查標準](review-standard.md) §2.2；設定 `[issuer.hsbc.product_names."Super Bull"]`，同 BNP、CA）：
 
 - 中文：`香港上海滙豐銀行{天期}個月{幣別中文}計價自動提前贖回股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）`（投資人須知沒有「（以下簡稱「本商品」）」，同 FCN）
-- 英文：`SuperBull Notes (Non Guaranteed, Unsecured)`；名稱前面多的字（例：`Maxi `）**不核對**（#314 已確認：SB-HS01 有 `Maxi`、其他 3 檔標的的沒有，看不出規則）。設定 `ignore_prefix_en = true`：英文只比結尾，前面多的字不核對（[審查標準](review-standard.md) §2.2）。
+- 英文：`SuperBull Notes (Non Guaranteed, Unsecured)`；名稱前面多的字（例：`Maxi `）**不核對**（#314 已確認：SB-HS01 有 `Maxi`、其他 3 檔標的的沒有，看不出規則）。英文樣板開頭寫 `*`：英文只比結尾，前面多的字不核對（[審查標準](review-standard.md) §2.2）。
 - 只有天期、幣別兩個佔位符；比對方式（英文忽略所有空白、中文括號全半形不計）同 HSBC FCN。
 
 ### 3.7 情境分析（§18；#309 決策：照 FCN 重算核對）

@@ -114,7 +114,7 @@
 
 - 中文：`Nomura International Funding Pte. Ltd.發行{tenor}個月{ccy_zh}計價固定配息({memory_zh}自動提前出場){underlying_zh}結構型商品(無擔保)`——`memory_zh = "記憶式"`；`single_zh = "股票連結"`、`basket_zh = "連結一籃子股票"`（連結 ETF 也寫股票）。**不分 KI、Non-Call**（NR2 Non-Call = 天期也寫 `(自動提前出場)`）。
 - 英文：`{tenor}-Month {ccy} Autocall Fixed Coupon Notes {memory_en}linked to {underlying_en} issued by Nomura International Funding Pte. Ltd. (unsecured)`——`memory_en = "with Memory Knock-Out "`；`single_en = "a Single Stock"`、`basket_en = "a basket of stocks"`。
-- 封面名稱截到 `(ISIN No.` 之前（後面的 ISIN／代號括號不屬於名稱）；中文忽略空白（NR1 `4 個月`），英文忽略所有空白（`ignore_whitespace_en = true`）。第一章第 1 項英文名稱寫法不同，見 §3.5。
+- 封面名稱截到 `(ISIN No.` 之前（後面的 ISIN／代號括號不屬於名稱）；中文忽略空白（NR1 `4 個月`），英文忽略所有空白（`normalize_en = ["whitespace"]`）。第一章第 1 項英文名稱寫法不同，見 §3.5。
 
 **發行機構全名**（`issuer.nomura.issuer_name`）：`Nomura International Funding Pte. Ltd.`；封面、第二章 1.(1) 兩處相同；第一章沒有出處。2026-10-15 確認 Nomura 目前只有這一個發行主體；其他寫法判不一致或轉人工覆核。
 

@@ -119,7 +119,7 @@
   - `{autocall_en}`：有自動提前出場 `Autocall `（記憶式同，不設 `autocall_memory_en`）
   - `{underlying_en}`：`single_en = "Single Underlying"`、`basket_en = "the Worst Performing Underlying in the basket"`
   - `{ccy}` 直接用 ISO 代碼（CNH 寫 `CNH`，不需要 `ccy_aliases`）
-- 比對：中文忽略空白、括號全半形；英文忽略多餘空白（PDF 換行可能黏字時比照 HSBC `ignore_whitespace_en`）。
+- 比對：中文忽略空白、括號全半形；英文忽略多餘空白（PDF 換行可能黏字時比照 HSBC `normalize_en = ["whitespace"]`）。
 
 **發行機構全名**（`issuer.citi.issuer_name`）：`Citigroup Global Markets Holdings Inc.`；封面、第一章 §3（`issuer_name_ch1`）、第二章 §1(1) 三處相同；封面的 `(“CGMHI”)` 不算名稱。
 
