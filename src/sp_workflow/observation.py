@@ -594,7 +594,9 @@ def observe_all(
             # 已出場：不再比價（ADR 0020），已比到的日期與 KI 沿用上一次；沒存過 KI 的寫 KI 種類（#198）
             if events and not again:
                 results.append(
-                    _carried(stored.get(t.tdcc), t.tdcc, EXITED, _exit_reason(events), locked[t.tdcc], _ki_text(t))
+                    _carried(
+                        stored.get(t.tdcc), t.tdcc, EXITED, _exit_reason(events), locked[t.tdcc], _ki_text(t) or ""
+                    )
                 )
                 continue
             outcome = observe(t, closes, calendar, through, book, jumps)
@@ -651,12 +653,15 @@ def _carried(
 ) -> Observed:
     """這次沒比價的商品（已出場、核對條件不是完成）：已比到的日期與 KI 沿用上一次的比價狀態 `before`。
 
-    `ki_kind`：已出場、這次照條件沒比的商品給 KI 種類（`_ki_text`）；上一次沒存 KI 時寫它、KI 觸及不沿用（#198）。
+    `ki_kind`：已出場、這次照條件沒比的商品給 KI 種類（`_ki_text`，空白時空字串）；上一次沒存 KI 時寫它、KI 觸及不沿用
+    （#198）。None：照存的沿用（核對條件不是完成的商品）。
     """
     if before is None:
-        return Observed(tdcc, status, reason, None, locked, ki_kind or "")
+        return Observed(tdcc=tdcc, status=status, reason=reason, observed_through=None, locked=locked, ki=ki_kind or "")
     if ki_kind is not None and not before.ki:
-        return Observed(tdcc, status, reason, before.observed_through, locked, ki_kind)
+        return Observed(
+            tdcc=tdcc, status=status, reason=reason, observed_through=before.observed_through, locked=locked, ki=ki_kind
+        )
     return replace(before, status=status, reason=reason, locked=locked)
 
 
@@ -748,13 +753,13 @@ def _stored_status(conn: psycopg.Connection) -> dict[str, Observed]:
     相等就不重寫。"""
     return {
         tdcc: Observed(
-            tdcc,
-            status,
-            reason or "",
-            observed_through,
-            locked,
-            ki or "",
-            None if touch_day is None else KiTouch(touch_day, touch_code),
+            tdcc=tdcc,
+            status=status,
+            reason=reason or "",
+            observed_through=observed_through,
+            locked=locked,
+            ki=ki or "",
+            ki_touch=None if touch_day is None else KiTouch(touch_day, touch_code),
         )
         for tdcc, status, reason, observed_through, locked, ki, touch_day, touch_code in conn.execute(
             "SELECT tdcc, status, reason, observed_through, locked, ki, ki_touch_date, ki_touch_code"
