@@ -147,11 +147,15 @@ class NameTemplate:
         """預期名稱。天期 1 個月時英文 `{tenor} Months`／`{tenor}Months` 改成單數 `Month`（只接受單數，Issue #343）。"""
         p = split(getattr(self, lang))
         body = re.sub(r"(\{tenor\}\s*)Months\b", r"\1Month", p.body) if values.get("tenor") == 1 else p.body
-        return Expected(body.format(**values), p.optional.format(**values), p.any_prefix)
+        return Expected(body.format_map(values), p.optional.format_map(values), p.any_prefix)
+
+    def ccy_text(self, iso: str) -> str:
+        """{ccy} 的寫法：ISO 代碼，`ccy_aliases` 有寫時用別名（例：DBS 人民幣寫 RMB）；DBS、GS 的幣別代碼規則也用。"""
+        return self.ccy_aliases.get(iso, iso)
 
     def values(self, *, tenor: int, ccy_zh: str, iso: str, flags: Mapping[str, bool]) -> dict[str, Any]:
         """佔位符的值：天期、幣別，與依旗標（`FLAGS` 加 memory；樣板沒用到的旗標不在 `flags` 裡）選的字樣。"""
-        out: dict[str, Any] = {"tenor": tenor, "ccy_zh": ccy_zh, "ccy": self.ccy_aliases.get(iso, iso)}
+        out: dict[str, Any] = {"tenor": tenor, "ccy_zh": ccy_zh, "ccy": self.ccy_text(iso)}
         for flag in FLAGS:
             for lang in LANGS:
                 out[f"{flag}_{lang}"] = getattr(self, f"{flag}_{lang}") if flags.get(flag) else ""
