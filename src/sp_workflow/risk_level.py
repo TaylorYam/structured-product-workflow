@@ -448,8 +448,7 @@ def _volatilities(
 
 
 def write_risk_level(conn: psycopg.Connection, tdcc: str, risk: RiskLevel, *, overwrite: bool = True) -> None:
-    """寫一檔的風險等級；`overwrite` 是 False 時已經有的不動（補已鎖住的商品）。重算時由 `recalculate_risk` 呼叫；
-    測試也用它直接寫存好的風險等級（#497）。"""
+    """寫一檔的風險等級；`overwrite` 是 False 時已經有的不動（補已鎖住的商品）。"""
     detail = None if risk.detail is None else json.dumps(_detail_json(risk.detail), ensure_ascii=False)
     conflict = (
         " ON CONFLICT (tdcc) DO UPDATE SET status = EXCLUDED.status, risk_level = EXCLUDED.risk_level,"

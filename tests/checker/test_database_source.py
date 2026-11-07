@@ -33,10 +33,7 @@ from harness import CONFIG, cli_root, with_iis
 from reference_synth import REFERENCE_HEADERS, Ratings, build_reference_sheet, issuer_value, price, reference_row
 from sp_workflow.check_source import NO_RESULT_FILE, WorkflowDatabase, conditions, write_back
 from sp_workflow.product_record import UnderlyingPrice
-from sp_workflow.risk_level import BACKFILLED, DONE, PENDING, RiskDetail, RiskLevel
-from sp_workflow.risk_level import (
-    write_risk_level as write_risk,  # 直接寫存好的風險等級（算法另有 tests/test_risk_level.py）
-)
+from sp_workflow.risk_level import BACKFILLED, DONE, PENDING, RiskDetail, RiskLevel, write_risk_level
 
 NOW = dt.datetime(2030, 2, 3, 4, 5, 6)
 FMT = CONFIG.reference_format
@@ -65,7 +62,7 @@ def seed_risk(pg, tdcc: str, risk: str | None) -> None:
         found = RiskLevel(BACKFILLED, "RR4", "缺 ZZA UN 的 200 日波動率")
     else:
         found = RiskLevel(DONE, risk, total=RISK_DETAIL.total, detail=RISK_DETAIL)
-    write_risk(pg, tdcc, found)
+    write_risk_level(pg, tdcc, found)
 
 
 def seed(
@@ -123,7 +120,9 @@ def seed(
         [
             UnderlyingPrice(i, u.ticker)
             if vwap
-            else UnderlyingPrice(i, u.ticker, u.initial, price(u.initial, spec.strike), None, price(u.initial, spec.ko))
+            else UnderlyingPrice(
+                i, u.ticker, initial=u.initial, strike=price(u.initial, spec.strike), ko=price(u.initial, spec.ko)
+            )
             for i, u in enumerate(spec.underlyings, 1)
         ],
         status=status,

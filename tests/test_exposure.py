@@ -210,7 +210,10 @@ def seed(pg, tdcc: str, codes: list[str], *, barrier: str = "NONE", final=dt.dat
     seed_observable(
         pg,
         tdcc,
-        [UnderlyingPrice(seq, code, Decimal(100), Decimal(80), ki, Decimal(100)) for seq, code in enumerate(codes, 1)],
+        [
+            UnderlyingPrice(seq, code, initial=Decimal(100), strike=Decimal(80), ki=ki, ko=Decimal(100))
+            for seq, code in enumerate(codes, 1)
+        ],
     )
 
 

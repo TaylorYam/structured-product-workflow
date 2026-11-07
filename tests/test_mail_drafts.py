@@ -32,11 +32,8 @@ from sp_workflow.mail_drafts import (
     template_values,
 )
 from sp_workflow.mailbox import Person
-from sp_workflow.risk_level import DONE, RiskDetail, RiskLevel
+from sp_workflow.risk_level import DONE, RiskDetail, RiskLevel, write_risk_level
 from sp_workflow.risk_level import PENDING as RISK_PENDING
-from sp_workflow.risk_level import (
-    write_risk_level as write_risk,  # 測試直接寫存好的風險等級（算法另有 test_risk_level）
-)
 from synth import snapshot
 from test_mail_excel_dates import sample_template_product
 
@@ -101,7 +98,7 @@ def risk(db, tdcc: str, level: str | None, reason: str = "缺 AAA UW 的 200 日
         RiskLevel(DONE, level, total=detail.total, detail=detail) if level else RiskLevel(RISK_PENDING, None, reason)
     )
     with db.transaction():
-        write_risk(db, tdcc, found)
+        write_risk_level(db, tdcc, found)
 
 
 def run(db, root: Path, out: Path, text: str, drafter=None):
