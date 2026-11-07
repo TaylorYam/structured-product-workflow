@@ -17,6 +17,7 @@ from sp_workflow.mailbox import (
     alias_from,
     delete_alias,
     delete_person,
+    is_pb,
     load_mailbox,
     load_rows,
     person_from,
@@ -40,6 +41,11 @@ def test_match_goes_through_an_alias() -> None:
 
 def test_match_ignores_case_and_surrounding_spaces() -> None:
     assert MAILBOX.match("ben") == BEN and MAILBOX.match(" BEN ") == BEN
+
+
+@pytest.mark.parametrize("name", ["PB", " pb ", "Pb"])
+def test_pb_is_recognized_however_it_is_typed(name) -> None:
+    assert is_pb(name)
 
 
 def test_match_does_not_guess() -> None:
