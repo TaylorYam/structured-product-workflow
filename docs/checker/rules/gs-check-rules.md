@@ -107,7 +107,7 @@
 
 - 中文：`{tenor}個月英商高盛國際公司{ccy_zh}計價固定配息{memory_zh}自動提前出場股權連結結構型商品（無擔保）（不保本）`——`memory_zh = "記憶式"`。**不分 KI、標的數、Non-Call**。
 - 英文：`{tenor} Months {ccy} {memory_en}Autocallable Fixed Coupon Equity Linked Notes by Goldman Sachs International (Unsecured) (Non-principal protected)`——`memory_en = "Memory "`；`ccy_aliases = { CNH = "CNY" }`（同 SG）。
-- 名稱截到 `（TDCC`／`(TDCC Product Code` 之前；中文、英文都忽略空白（`ignore_whitespace_en = true`）。
+- 名稱截到 `（TDCC`／`(TDCC Product Code` 之前；中文、英文都忽略空白（`normalize_en = ["whitespace"]`）。
 
 **發行機構全名**（`issuer.gs.issuer_name`）：`英商高盛國際公司（Goldman Sachs International）`；第 1 頁第 7 項、第一章第 3 項、第二章 1.(1) 三處相同。2026-10-15 確認 GS 目前只有這一個發行主體；其他寫法判不一致或轉人工覆核。投資人須知一. 1. 只寫中文，比中文部分（同 HSBC）。
 

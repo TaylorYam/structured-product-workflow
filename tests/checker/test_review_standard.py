@@ -241,8 +241,8 @@ def test_english_name_is_singular_only_for_a_one_month_tenor(tmp_path, tenor, wr
 def test_months_templates_take_the_singular_for_one_month(issuer, one, three):
     """所有用 `{tenor} Months`／`{tenor}Months` 的樣板天期 1 時改單數；寫 `-Month` 的上手不受影響（Issue #343）。"""
     tpl = load_config().review_standard.for_issuer(issuer).product_name
-    assert one in tpl.template("en", 1).format_map(_Filled(tenor=1, ccy="USD"))
-    assert three in tpl.template("en", 3).format_map(_Filled(tenor=3, ccy="USD"))
+    assert one in tpl.expected("en", _Filled(tenor=1, ccy="USD")).name
+    assert three in tpl.expected("en", _Filled(tenor=3, ccy="USD")).name
 
 
 def test_missing_issuer_name_requires_review(tmp_path):

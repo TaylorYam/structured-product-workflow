@@ -70,10 +70,10 @@
 - **商品名稱樣板**（`issuer.hsbc.product_name`，依 8 份樣本推得）：
   - 中文：`香港上海滙豐銀行{天期}個月{幣別中文}計價{記憶式}自動提前到期固定配息股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）`
   - 英文：`{Maxi }{Daily }{Memory }Autocallable Fixed Coupon Notes (Non Guaranteed, Unsecured)`；`Maxi ` 標的數 ≥ 2、`Daily ` 提前出場每日觀察、`Memory ` 記憶式。
-  - 英文名稱在 PDF 換行處常黏字，比對時忽略所有空白（`ignore_whitespace_en`）；中文括號全半形不計。
-- **Super Bull 商品名稱樣板**（`issuer.hsbc.product_names."Super Bull"`，workflow #314；參考條件表 Product 是 Super Bull 時用這個樣板，其他照 `issuer.hsbc.product_name`）：中文 `香港上海滙豐銀行{天期}個月{幣別中文}計價自動提前贖回股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）`（沒有 `固定配息`），英文 `SuperBull Notes (Non Guaranteed, Unsecured)`；英文名稱前面多的字（例：`Maxi `）不核對（看不出規則，#314 使用者確認；設定 `ignore_prefix_en = true`：英文只比結尾，錯訊容差註明「名稱前面多的字不核對」）；比對方式同 FCN。其他審查標準和 HSBC FCN 相同（[HSBC Super Bull 核對規則](hsbc-super-bull-check-rules.md) §3.6）。
+  - 英文名稱在 PDF 換行處常黏字，比對時忽略所有空白（`normalize_en = ["whitespace"]`）；中文括號全半形不計。
+- **Super Bull 商品名稱樣板**（`issuer.hsbc.product_names."Super Bull"`，workflow #314；參考條件表 Product 是 Super Bull 時用這個樣板，其他照 `issuer.hsbc.product_name`）：中文 `香港上海滙豐銀行{天期}個月{幣別中文}計價自動提前贖回股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）`（沒有 `固定配息`），英文 `SuperBull Notes (Non Guaranteed, Unsecured)`；英文名稱前面多的字（例：`Maxi `）不核對（看不出規則，#314 使用者確認；英文樣板開頭寫 `*`：英文只比結尾，錯訊容差註明「名稱前面多的字不核對」）；比對方式同 FCN。其他審查標準和 HSBC FCN 相同（[HSBC Super Bull 核對規則](hsbc-super-bull-check-rules.md) §3.6）。
 - **BEN 商品名稱樣板**（`issuer.hsbc.product_names.BEN`，workflow #375 規格、實作另開；參考條件表 Product 是 BEN 時用這個樣板）：HSBC BEN 有兩種型態，依範本辨識出的型態選樣板（[HSBC BEN 核對規則](hsbc-ben-check-rules.md) §3.6）。作業人員獨立標記先略過，2026-10-30 使用者決定。
-  - Maxi：中文 `香港上海滙豐銀行{天期}個月{幣別中文}計價紅利表現股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）`，英文 `Bonus Enhanced Notes (Non Guaranteed, Unsecured)`；英文名稱前面的 `Maxi ` 不核對（比照 Super Bull 的 `ignore_prefix_en = true`）。
+  - Maxi：中文 `香港上海滙豐銀行{天期}個月{幣別中文}計價紅利表現股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）`，英文 `Bonus Enhanced Notes (Non Guaranteed, Unsecured)`；英文名稱前面的 `Maxi ` 不核對（比照 Super Bull，英文樣板開頭寫 `*`）。
   - Digital：中文 `香港上海滙豐銀行{天期}個月{幣別中文}計價紅利配息股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）`，英文 `Reverse Convertible with Digital Coupon Notes (Non Guaranteed, Unsecured)`。
   - 比對方式同 FCN；其他審查標準和 HSBC FCN 相同。
 
@@ -102,6 +102,17 @@
 | `{express_zh}`／`{express_en}` | 說明書推得的第一個可提前出場期為 0（沒有 Non-Call，FCN_Express）時填入 `express_zh`／`express_en`，否則空白；提前出場排程讀不到時轉人工覆核（CA「Fixed Coupon Express Autocall Note」、HSBC「Autocallable Express Fixed Coupon Notes」的 `Express `，workflow #305、#306） |
 | `{payoff_zh}`／`{payoff_en}` | BEN 的到期給付型態：說明書參與率為 0（Digital）時填入 `digital_zh`／`digital_en`，否則填 `enhanced_zh`／`enhanced_en`；參與率讀不到時轉人工覆核（HSBC「紅利表現」／「紅利配息」，workflow #375） |
 | `{ccy}` 的別名 | 樣板的 `ccy_aliases`（ISO 代碼 → 名稱用的代碼）：SG 英文名稱把 CNH 寫成 CNY（Issue #194）；GS、BNP 同（BNP 境外人民幣版，Issue #345）；DBS 寫 RMB（Issue #296） |
+
+樣板語法與比對前的正規化（`src/fcn_checker/name_template.py`，Issue #488 由四個開關改寫）：
+
+| 寫法 | 意思 | 舊寫法（version 39 以前） |
+|---|---|---|
+| 樣板開頭 `*` | 名稱前面多的字不核對，只比結尾；容差說明加「名稱前面多的字不核對」 | `ignore_prefix_en = true` |
+| 樣板結尾 `[…]` | 這一段可有可無；容差說明加「結尾的「…」可有可無」 | `optional_suffix_en = "…"` |
+| `normalize_zh = ["brackets"]` | 中文全形／半形括號不計（中文一律忽略空白）；不寫也是這個預設 | `normalize_brackets = true` |
+| `normalize_en = ["whitespace"]` | 英文忽略所有空白與換行；不寫時連續空白視為一個 | `ignore_whitespace_en = true` |
+
+`*`、`[`、`]` 是保留字，只能用在上表兩個位置（各最多一處、`[…]` 不能巢狀）；寫錯位置或還用舊鍵時，載入審查標準就回報設定錯誤並寫出新寫法。
 
 樣板設 `single_unsupported = true` 時，標的只有 1 檔的名稱轉人工覆核（沒有樣本、寫法未知；`single_*` 可不設，DBS，Issue #280）。樣板出現上表以外的佔位符，或用了 `{underlying_*}` 卻沒設定 `single_*`（`single_unsupported` 時免設）／`basket_*` 時，載入審查標準就回報設定錯誤（`config_invalid`，整批不核對），不會在核對途中才出錯。`issuer.<上手>.risk_level_formats`、`issuer.<上手>.fixed_warning_openings`、`issuer_name_ignore` 寫法有誤時同樣在載入時回報。
 
@@ -216,7 +227,7 @@ OOS 中 HSBC 週五交易、下週一刊印，以及受理申購從交易日前�
 - **固定警語**（`issuer.jpm.fixed_warning`，2026-10-15 確認視為正確）：`【RR4】`、`【證券交易所交易證券】` 無【】；4 處 `受託機構` 寫 `受託或銷售機構`；OSU 段改寫成 `…投資本商品之專業投資人(包括OSU客戶)以下稱「投資人」)。`（括號不成對，照原文）；結尾多一句 `本商品風險等級(Product Risk Rating)由受託機構釐定及提供，發行機構及總代理人不對此評級之準確性負任何責任。`。說明書出現 3 次（封面 1.、第 I 部分第 2 項、第 III 部分 6.(1)）；投資人須知 1 次（`issuer.jpm.iis_fixed_warning_occurrences = 1`）。
 - **風險等級寫法**（`issuer.jpm.risk_level_formats`）：沒有【】，寫在 `風險程度等級為`、`歸類為` 之後（同 MS 的無括號寫法）。
 - **禁用語允許片語**（`wording.allowed_phrases`，所有上手生效）：加入「受託投資/受託買賣」（警語 7.，說明書 2 次、投資人須知 1 次）。本機全部樣本只有 JPM 有這個寫法，其他上手結果不變。
-- **商品名稱樣板**（`issuer.jpm.product_name`）：中文 `摩根大通{天期}個月{幣別中文}計價連結股權固定配息可自動提前出場結構型商品(無擔保)(不保本)(下稱「本商品」)`；英文 `JPMorgan {天期}Months {幣別代碼} Link to Equity Securities Callable Fixed Coupon Note (Unsecured)(Non-Principal Protected)`。**不分記憶式、KI、標的數**，不用 `{autocall_*}`、`{underlying_*}` 佔位符；英文忽略空白比對（`ignore_whitespace_en`）。
+- **商品名稱樣板**（`issuer.jpm.product_name`）：中文 `摩根大通{天期}個月{幣別中文}計價連結股權固定配息可自動提前出場結構型商品(無擔保)(不保本)(下稱「本商品」)`；英文 `JPMorgan {天期}Months {幣別代碼} Link to Equity Securities Callable Fixed Coupon Note (Unsecured)(Non-Principal Protected)`。**不分記憶式、KI、標的數**，不用 `{autocall_*}`、`{underlying_*}` 佔位符；英文忽略空白比對（`normalize_en = ["whitespace"]`）。
 - **發行機構全名**（`issuer.jpm.issuer_name`）：`荷蘭商J.P. Morgan Structured Products B.V.`；封面（`發行機構註冊地：` 句內）、第 II 部分 1.(1) 兩處相同；第 I 部分沒有出處。JPM 目前只有這一個發行主體（2026-10-15 確認）。
 - **保證機構名稱**（`issuer.jpm.guarantor_name`）：cover、ch2 = `美商摩根大通銀行股份有限公司(JPMorgan Chase Bank, N.A.)`；ch1（第 I 部分第 3 項簡稱）= `美商摩根大通銀行股份有限公司`；地址不核對。投資人須知相關機構 2. 用 cover、警語 5. 用 ch1。
 - **總代理人名稱**（`issuer.jpm.agent_name`，cover／ch2）：`美商摩根大通銀行股份有限公司台北分公司`；地址電話、負責人不核對。
@@ -235,7 +246,7 @@ OOS 中 HSBC 週五交易、下週一刊印，以及受理申購從交易日前�
 - **審查通過日期**（`distributor.approval_dates`，所有上手生效）：加入 **2025-06-24**（2026-10-15 作業人員確認是受託機構真實的歷次審查日期；Nomura 2025 年的兩份樣本寫這一天）。比現有最早一筆早，PANEL 只能加較晚的日期，所以直接改設定檔。交易日早於 2025-12-18 的既有上手樣本從「轉人工覆核（`approval_date_not_configured`）」改成和 2025-06-24 比：本機其他上手樣本只有 2 份結果改變（SG、MS 各 1 份 2025 年下半年交易、寫 2025-06-24 的說明書，由轉人工覆核改為通過），其餘不變。
 - **固定警語**（`issuer.nomura.fixed_warning`，2026-10-15 確認視為正確）：= SG 版本（無【】、有「*」、結尾有句號）。說明書只出現 **2 次**（封面(一)、第三章 6.(1)；第一章第 2 項只寫等級）——新增上手別的說明書次數設定 `issuer.nomura.fixed_warning_occurrences = 2`（沒列出的上手沿用 `fixed_warning_occurrences = 3`）；投資人須知 1 次（`issuer.nomura.iis_fixed_warning_occurrences = 1`）。
 - **風險等級寫法**（`issuer.nomura.risk_level_formats`）：沒有【】，寫在 `風險程度等級為`、`歸類為` 之後；另有 `商品風險程度：RR4`（說明書第一章第 2 項）、`本商品風險程度：RR4`（投資人須知第二 3.）。
-- **商品名稱樣板**（`issuer.nomura.product_name`）：中文 `Nomura International Funding Pte. Ltd.發行{天期}個月{幣別中文}計價固定配息({記憶式}自動提前出場){標的}結構型商品(無擔保)`（`memory_zh = "記憶式"`；`single_zh = "股票連結"`、`basket_zh = "連結一籃子股票"`）；英文 `{天期}-Month {幣別代碼} Autocall Fixed Coupon Notes {記憶式}linked to {標的} issued by Nomura International Funding Pte. Ltd. (unsecured)`（`memory_en = "with Memory Knock-Out "`；`single_en = "a Single Stock"`、`basket_en = "a basket of stocks"`）。不分 KI、Non-Call；英文忽略空白比對（`ignore_whitespace_en`）。封面名稱後的 `(ISIN No. … / TDCC…)` 不屬於名稱。
+- **商品名稱樣板**（`issuer.nomura.product_name`）：中文 `Nomura International Funding Pte. Ltd.發行{天期}個月{幣別中文}計價固定配息({記憶式}自動提前出場){標的}結構型商品(無擔保)`（`memory_zh = "記憶式"`；`single_zh = "股票連結"`、`basket_zh = "連結一籃子股票"`）；英文 `{天期}-Month {幣別代碼} Autocall Fixed Coupon Notes {記憶式}linked to {標的} issued by Nomura International Funding Pte. Ltd. (unsecured)`（`memory_en = "with Memory Knock-Out "`；`single_en = "a Single Stock"`、`basket_en = "a basket of stocks"`）。不分 KI、Non-Call；英文忽略空白比對（`normalize_en = ["whitespace"]`）。封面名稱後的 `(ISIN No. … / TDCC…)` 不屬於名稱。
 - **DACN 商品名稱樣板**（`issuer.nomura.product_names.DACN`，workflow #368 已實作；參考條件表 Product 是 DACN 時用這個樣板，其他照 `issuer.nomura.product_name`）：中文 `Nomura International Funding Pte. Ltd.發行{天期}個月{幣別中文}計價每日計息({記憶式}自動提前出場){標的}結構型商品(無擔保)`（`固定配息` 改成 `每日計息`）；英文 `{天期}-Month {幣別代碼} Autocall Daily Range Accrual Notes {記憶式}linked to {標的} issued by Nomura International Funding Pte. Ltd. (unsecured)`；記憶式、標的的寫法與比對方式同 FCN 樣板。其他審查標準和 Nomura FCN 相同（[Nomura DACN 核對規則](nomura-dacn-check-rules.md) §3.7）。作業人員獨立標記先略過，2026-10-30 使用者決定。
 - **發行機構全名**（`issuer.nomura.issuer_name`）：`Nomura International Funding Pte. Ltd.`（只有英文名）；封面、第二章 1.(1) 兩處相同；第一章沒有出處。Nomura 目前只有這一個發行主體（2026-10-15 確認）。
 - **保證機構名稱**（`issuer.nomura.guarantor_name`）：cover = ch1 = ch2 = `Nomura Holdings, Inc.`；地址電話不核對。投資人須知第一 2. 用 cover。
@@ -340,7 +351,7 @@ OOS 多家上手的舊範本寫「受託投資」（SG 投資人須知警語七�
 細節見 [UBS 核對規則](ubs-check-rules.md) §3.2、§3.6。審查通過日期、負責人、風險等級（預設【RRn】寫法）、受託機構名稱、電話（`+886-2-5556-1313` 已在 `phone_equivalents`）與地址（= `distributor.address`，`(營業活動所在地)` 不屬於地址）、費率、發行價格、面額預設值、刊印日期規則與 BARC 相同。不同的有：
 
 - **固定警語**（`issuer.ubs.fixed_warning`，2026-10-15 確認視為正確）：= 共用版本（`risk.fixed_warning`）只差 3 處：開頭 `本商品風險程度為【RR4】`（少「等級」）、`連結標的為證券交易所交易證券`（沒有【】）、`再綜合評量`（共用版「在綜合」）；有「*」、有 OSU 客戶段、5 處都寫 `受託機構`。說明書 3 次（第 1 頁警語 1.、商品基本資料二、投資風險警語段第一點；沿用 `fixed_warning_occurrences = 3`）；投資人須知 1 次（警語 1.；`issuer.ubs.iis_fixed_warning_occurrences = 1`）。新版文件每頁有私用區字元 U+F020，可能夾在警語中間，比對前刪除。
-- **商品名稱樣板**（`issuer.ubs.product_name`）：中文 `瑞銀{ko_observation_zh}{memory_zh}提前出場固定配息連結股票（不保本）{ki_zh}（無擔保）（無保證機構）結構型商品`；英文 `UBS {ko_observation_en} {memory_en}Callable Variable Maturity Equity Linked Notes with {ki_en}Fixed Coupon`。觀察方式 `每日觀察`／`定期觀察`（`Daily`／`Periodic`）**要和 KO 型態一致**、記憶式 `記憶式`（`Memory `）、KI `（含觸及下限價事件）`（`Kick-In Event and `）；不分幣別、天期、標的數。需要新佔位符 `{ko_observation_*}`、`{ki_*}`（§2.3）。中英文都忽略空白、括號統一、句尾 `。` 忽略；**`瑞銀（定期觀察）`／`瑞銀（每日觀察）`（觀察方式加括號）視為等價寫法**（2026-10-15 確認）。名稱後的 `（下稱“本商品”）` 不屬於名稱。英文名稱結尾的 `（Non Principal Guaranteed, Unsecured and Non-guaranteed）` 可有可無（OOS 樣本說明書與投資人須知都有；`optional_suffix_en`，2026-11-06 使用者決定，workflow #475）；其他後綴判不一致。
+- **商品名稱樣板**（`issuer.ubs.product_name`）：中文 `瑞銀{ko_observation_zh}{memory_zh}提前出場固定配息連結股票（不保本）{ki_zh}（無擔保）（無保證機構）結構型商品`；英文 `UBS {ko_observation_en} {memory_en}Callable Variable Maturity Equity Linked Notes with {ki_en}Fixed Coupon`。觀察方式 `每日觀察`／`定期觀察`（`Daily`／`Periodic`）**要和 KO 型態一致**、記憶式 `記憶式`（`Memory `）、KI `（含觸及下限價事件）`（`Kick-In Event and `）；不分幣別、天期、標的數。需要新佔位符 `{ko_observation_*}`、`{ki_*}`（§2.3）。中英文都忽略空白、括號統一、句尾 `。` 忽略；**`瑞銀（定期觀察）`／`瑞銀（每日觀察）`（觀察方式加括號）視為等價寫法**（2026-10-15 確認）。名稱後的 `（下稱“本商品”）` 不屬於名稱。英文名稱結尾的 `（Non Principal Guaranteed, Unsecured and Non-guaranteed）` 可有可無（OOS 樣本說明書與投資人須知都有；英文樣板結尾寫成 `[…]`，2026-11-06 使用者決定，workflow #475）；其他後綴判不一致。
 - **發行機構全名**（`issuer.ubs.issuer_name`）：`瑞士銀行`；第 1 頁四、（後接 `（下稱…）`）、商品基本資料三、相關機構事業概況一、(一)（後接 `（UBS AG）`）、投資人須知相關機構都相同。**發行分行**（`倫敦分行`）由 UBS 專屬規則另外核對：`經由瑞士境外之倫敦分行`、`經由倫敦分行`、`透過其倫敦分行` 等價，其他分行轉人工覆核（2026-10-15 確認 UBS 只有倫敦分行）。
 - **發行人（瑞士商瑞士銀行台北分行）**：**不核對**（2026-10-15 確認）。範本**沒有保證機構與總代理人**，不設 `issuer.ubs.guarantor_name`、`issuer.ubs.agent_name`；固定警語、費用表、特別記載事項的「總代理人」字樣照原文放行。
 - **商品種類**（`issuer.ubs.product_type`）：`股權結構型商品`（舊版 `股權結構型債券` 不支援，範本辨識失敗）。

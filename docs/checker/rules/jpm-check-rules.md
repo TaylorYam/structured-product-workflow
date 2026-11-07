@@ -111,7 +111,7 @@
 
 - 中文：`摩根大通{tenor}個月{ccy_zh}計價連結股權固定配息可自動提前出場結構型商品(無擔保)(不保本)(下稱「本商品」)`——**不分記憶式、KI、標的數、Non-Call**（JP5 Non-Call = 天期也寫「可自動提前出場」），不需要 `{autocall_*}`、`{underlying_*}` 佔位符。
 - 英文：`JPMorgan {tenor}Months {ccy} Link to Equity Securities Callable Fixed Coupon Note (Unsecured)(Non-Principal Protected)`；`{tenor}` 與 `Months` 之間沒有空白（`6Months`、`12Months`），`{ccy}` 為 ISO 代碼。
-- 比對：中文忽略空白、括號全半形；英文忽略所有空白（跨行處可能多空白，例 `(Non- Principal Protected)`；`ignore_whitespace_en = true`）。
+- 比對：中文忽略空白、括號全半形；英文忽略所有空白（跨行處可能多空白，例 `(Non- Principal Protected)`；`normalize_en = ["whitespace"]`）。
 
 **發行機構全名**（`issuer.jpm.issuer_name`）：`荷蘭商J.P. Morgan Structured Products B.V.`；封面（`發行機構註冊地：` 句內）、第 II 部分 1.(1) 兩處相同。2026-10-15 確認 JPM 目前只有這一個發行主體；其他寫法判不一致或轉人工覆核。
 

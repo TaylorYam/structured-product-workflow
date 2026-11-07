@@ -7,8 +7,8 @@
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
 # 規則說明見 docs/checker/rules/review-standard.md。
 
-version = 39
-effective_date = 2026-10-30
+version = 40
+effective_date = 2026-11-08
 
 [distributor]
 # 受託或銷售機構審查通過之日期（說明書封面 p1）：歷次日期都保留，由舊到新。
@@ -187,6 +187,10 @@ pages = 4
 # [issuer.<上手>.product_name]：商品名稱樣板（佔位符見 docs/checker/rules/review-standard.md）；沒有 → 轉人工覆核。
 #   所有上手：天期 1 個月時，英文樣板的 `{tenor} Months`／`{tenor}Months` 改成單數 `Month` 比對（只接受單數；
 #   BARC、MS、BNP、JPM、GS 適用，寫 `-Month` 的上手不受影響；2026-10-19 確認，Issue #343）。
+#   樣板語法：開頭 `*` 表示名稱前面多的字不核對（只比結尾）；結尾 `[…]` 表示這一段可有可無；`*`、`[`、`]` 只能用在這兩處。
+#   比對前的正規化：normalize_zh = ["brackets"]（全形／半形括號不計；中文一律忽略空白；不寫也是這個預設）、
+#   normalize_en = ["whitespace"]（忽略所有空白與換行；不寫時連續空白視為一個）。舊鍵 normalize_brackets、
+#   ignore_whitespace_en、ignore_prefix_en、optional_suffix_en 已改成上面的寫法（Issue #488），出現時載入報錯。
 # [issuer.<上手>.guarantor_name]：保證機構名稱，分出處 cover 封面、ch1 第一章、ch2 第二章，各自為固定值；忽略空白後逐字
 #   相等。地址不核對。沒有 → 不核對（沒有保證機構的範本）。
 # [issuer.<上手>.agent_name]：總代理人名稱，分出處 cover 封面、ch2 第二章第 3 項(1)；忽略空白後逐字相等。地址電話、負責人
@@ -207,7 +211,7 @@ en = "{tenor} Months {ccy} {memory_en}Autocallable Equity Linked Note issued by 
 memory_zh = "記憶式"
 memory_en = "Memory "
 # 半形／全形括號差異不視為錯誤（比對前統一為全形）
-normalize_brackets = true
+normalize_zh = ["brackets"]
 
 [issuer.hsbc]
 issuer_name = "香港商香港上海滙豐銀行股份有限公司（THE HONGKONG AND SHANGHAI BANKING CORPORATION LIMITED）"
@@ -234,37 +238,35 @@ memory_en = "Memory "
 maxi_en = "Maxi "
 daily_en = "Daily "
 express_en = "Express "  # 沒有 Non-Call（FCN_Express）時填入，中文相同（workflow #306，2 份樣本）
-normalize_brackets = true
+normalize_zh = ["brackets"]
 # 英文名稱在 PDF 換行處常黏字（例 CouponNotes），比對時忽略所有空白
-ignore_whitespace_en = true
+normalize_en = ["whitespace"]
 
 [issuer.hsbc.product_names."Super Bull"]
 # HSBC Super Bull 商品名稱（現行版 5 份說明書推得，2026-10-28 規格確認，#314）：「自動提前贖回股權連結」／「SuperBull Notes」，
 # 只依天期、幣別；參考條件表 Product 是 Super Bull 時用這個樣板，其他照 [issuer.hsbc.product_name]。
-# 英文名稱前面多的字（例：Maxi ）不核對（看不出規則，#314 使用者確認）：只比結尾（ignore_prefix_en）。
+# 英文名稱前面多的字（例：Maxi ）不核對（看不出規則，#314 使用者確認）：英文樣板開頭的 * 表示只比結尾。
 zh = "香港上海滙豐銀行{tenor}個月{ccy_zh}計價自動提前贖回股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）"
-en = "SuperBull Notes (Non Guaranteed, Unsecured)"
+en = "*SuperBull Notes (Non Guaranteed, Unsecured)"
 memory_zh = ""
 memory_en = ""
-normalize_brackets = true
-ignore_whitespace_en = true
-ignore_prefix_en = true
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
 
 [issuer.hsbc.product_names.BEN]
 # HSBC BEN 商品名稱（現行版 27 份說明書推得，2026-10-30 規格確認，#375）：Maxi「紅利表現股權連結」／「Bonus Enhanced Notes」，
 # Digital「紅利配息股權連結」／「Reverse Convertible with Digital Coupon Notes」；依說明書推得的參與率選（0 是 Digital）。
-# 參考條件表 Product 是 BEN 時用這個樣板。英文名稱前面多的「Maxi 」不核對（比照 #314）：只比結尾（ignore_prefix_en）。
+# 參考條件表 Product 是 BEN 時用這個樣板。英文名稱前面多的「Maxi 」不核對（比照 #314）：英文樣板開頭的 *。
 zh = "香港上海滙豐銀行{tenor}個月{ccy_zh}計價紅利{payoff_zh}股權連結（無保證機構無擔保）（不保本）結構型商品（以下簡稱「本商品」）"
-en = "{payoff_en} (Non Guaranteed, Unsecured)"
+en = "*{payoff_en} (Non Guaranteed, Unsecured)"
 memory_zh = ""
 memory_en = ""
 enhanced_zh = "表現"
 enhanced_en = "Bonus Enhanced Notes"
 digital_zh = "配息"
 digital_en = "Reverse Convertible with Digital Coupon Notes"
-normalize_brackets = true
-ignore_whitespace_en = true
-ignore_prefix_en = true
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
 
 [issuer.ms]
 issuer_name = "英商摩根士丹利國際股份有限公司(Morgan Stanley & Co. International Plc.)"
@@ -289,9 +291,9 @@ single_zh = "股票或指數股票型基金"
 single_en = "Shares or ETFs"
 basket_zh = "一籃子股票與/或指數股票型基金"
 basket_en = "Worst of Shares and/or ETFs"
-normalize_brackets = true
+normalize_zh = ["brackets"]
 # 英文名稱在 PDF 換行處常黏字（例 Noteslinked），比對時忽略所有空白
-ignore_whitespace_en = true
+normalize_en = ["whitespace"]
 
 [issuer.ms.product_names.BEN]
 # MS BEN 商品名稱（現行版 18 份說明書推得，2026-10-30 規格確認，#376）：一般 BEN「紅利表現結構型商品」／「Bonus Enhanced Notes」，
@@ -309,8 +311,8 @@ enhanced_zh = "紅利表現結構型商品"
 enhanced_en = "Bonus Enhanced Notes"
 digital_zh = "結構型商品"
 digital_en = "Equity Linked Notes"
-normalize_brackets = true
-ignore_whitespace_en = true
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
 
 [issuer.bnp]
 # BNP：只有英文法人名；封面第 5 項、第一章第 3 項、第二章第 1 項(1) 三處寫法相同（2026-10-13 確認）。
@@ -342,9 +344,9 @@ basket_en = "a Basket of Shares/ETIs"
 autocall_zh = "自動提前贖回"
 autocall_en = "Early Redeemable "
 ccy_aliases = { CNH = "CNY" }
-normalize_brackets = true
+normalize_zh = ["brackets"]
 # 英文名稱在 PDF 換行處常黏字，比對時忽略所有空白
-ignore_whitespace_en = true
+normalize_en = ["whitespace"]
 
 # BNP：保證機構三處寫法不同（2026-10-13 確認）；地址不核對。投資人須知（2026-10-14 確認，Issue #197）：寫全名的相關機構
 # 第 3 點用 cover，寫簡稱的警語 5 兩處與「信用風險」用 ch1。
@@ -372,8 +374,8 @@ single_en = "a Single Share/ETI"
 basket_zh = "一籃子"
 basket_en = "a Basket of Shares/ETIs"
 ccy_aliases = { CNH = "CNY" }
-normalize_brackets = true
-ignore_whitespace_en = true
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
 
 [issuer.sg]
 # SG：只有英文法人名；封面與第二章第 1 項(1) 兩處相同，第一章沒有出處（第 3 項寫的是保證機構；2026-10-13 確認）。
@@ -405,9 +407,9 @@ autocall_zh = "可自動提前出場"
 autocall_memory_zh = "（記憶式自動提前出場）"
 autocall_en = "Autocallable "
 ccy_aliases = { CNH = "CNY" }
-normalize_brackets = true
+normalize_zh = ["brackets"]
 # 英文名稱在 PDF 換行處常黏字，比對時忽略所有空白
-ignore_whitespace_en = true
+normalize_en = ["whitespace"]
 
 [issuer.sg.product_names.DACN]
 # SG DACN 商品名稱（現行版說明書推得，2026-10-30 規格，workflow #369）：「固定配息」改「區間累積配息」、英文
@@ -420,8 +422,8 @@ autocall_zh = "可自動提前出場"
 autocall_memory_zh = "（記憶式自動提前出場）"
 autocall_en = "Autocallable "
 ccy_aliases = { CNH = "CNY" }
-normalize_brackets = true
-ignore_whitespace_en = true
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
 
 # SG：三處皆同一寫法（2026-10-13 確認）；地址電話不核對。
 [issuer.sg.guarantor_name]
@@ -473,9 +475,9 @@ single_zh = "單一連結標的"
 basket_zh = "一籃子連結標的中表現最差"
 single_en = "Single Underlying"
 basket_en = "the Worst Performing Underlying in the basket"
-normalize_brackets = true
+normalize_zh = ["brackets"]
 # 英文名稱在 PDF 換行處可能黏字，比對時忽略所有空白
-ignore_whitespace_en = true
+normalize_en = ["whitespace"]
 
 # Citi：封面、第一章第 3 項、第二章第 2 項(1) 三處皆同一寫法（2026-10-14 確認，Issue #220）；地址不核對。
 [issuer.citi.guarantor_name]
@@ -509,9 +511,9 @@ zh = "摩根大通{tenor}個月{ccy_zh}計價連結股權固定配息可自動�
 en = "JPMorgan {tenor}Months {ccy} Link to Equity Securities Callable Fixed Coupon Note (Unsecured)(Non-Principal Protected)"
 memory_zh = ""
 memory_en = ""
-normalize_brackets = true
+normalize_zh = ["brackets"]
 # 英文名稱跨行處可能多空白（例：(Non- Principal Protected)），比對時忽略所有空白
-ignore_whitespace_en = true
+normalize_en = ["whitespace"]
 
 # JPM：封面、第 II 部分 2.(2) 全名；第 I 部分第 3 項簡稱（2026-10-15 確認，Issue #233）；地址不核對。
 # 投資人須知：相關機構 2. 用 cover，警語 5. 用 ch1。
@@ -555,9 +557,9 @@ single_zh = "股票連結"
 basket_zh = "連結一籃子股票"
 single_en = "a Single Stock"
 basket_en = "a basket of stocks"
-normalize_brackets = true
+normalize_zh = ["brackets"]
 # 英文名稱有雙空白（Knock-Out  linked），比對時忽略所有空白
-ignore_whitespace_en = true
+normalize_en = ["whitespace"]
 
 [issuer.nomura.product_names.DACN]
 # Nomura DACN 商品名稱（現行版 11 份說明書推得，2026-10-30 規格，workflow #368）：「固定配息」改「每日計息」、英文
@@ -570,8 +572,8 @@ single_zh = "股票連結"
 basket_zh = "連結一籃子股票"
 single_en = "a Single Stock"
 basket_en = "a basket of stocks"
-normalize_brackets = true
-ignore_whitespace_en = true
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
 
 # Nomura：封面、第一章第 3 項、第二章 2.(1) 三處皆同一寫法（2026-10-15 確認，Issue #239）；地址電話不核對。
 # 投資人須知：第一 2. 用 cover。
@@ -607,8 +609,8 @@ en = "{tenor} Months {ccy} {memory_en}Autocallable Fixed Coupon Equity Linked No
 memory_zh = "記憶式"
 memory_en = "Memory "
 ccy_aliases = { CNH = "CNY" }
-normalize_brackets = true
-ignore_whitespace_en = true
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
 
 # GS：最低申購為單位面額的倍數依承作幣別（USD 5 倍、JPY／CNH 1 倍；沒列的幣別轉人工覆核），最低加購、最低贖回、
 # 增加贖回單位 1 倍（2026-10-15 確認，Issue #248）。說明書寫單位數，parser 換算成金額。
@@ -640,8 +642,8 @@ zh = "法國外貿銀行{tenor}個月{ccy_zh}計價固定配息(自動提前到�
 en = "Natixis – {tenor}-Month {ccy} – Autocallable Fixed Coupon Note Linked to Basket of Equities (Non-Principal Protected, Unsecured and Non-Guaranteed)"
 memory_zh = ""
 memory_en = ""
-normalize_brackets = true
-ignore_whitespace_en = true
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
 
 [issuer.natixis.product_names.DACN]
 # Natixis DACN 商品名稱（現行版 7 份說明書推得，2026-10-30 規格，workflow #371）：「固定配息」改「區間計息」、英文
@@ -650,8 +652,8 @@ zh = "法國外貿銀行{tenor}個月{ccy_zh}計價區間計息(自動提前到�
 en = "Natixis – {tenor}-Month {ccy} – Autocallable Daily Range Accrual Note Linked to Basket of Equities (Non-Principal Protected, Unsecured and Non-Guaranteed)"
 memory_zh = ""
 memory_en = ""
-normalize_brackets = true
-ignore_whitespace_en = true
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
 
 [issuer.ca]
 # CA：只有英文法人名；封面、第一章第 3 項、第二章 1.(1)、投資人須知一、1. 都相同；目前只有這一個發行主體
@@ -680,8 +682,8 @@ en = "Crédit Agricole CIB Financial Solutions {ccy} {tenor}-Month Fixed Coupon 
 memory_zh = ""
 memory_en = ""
 express_en = "Express "  # 沒有 Non-Call（FCN_Express）時英文名稱多「Express」，中文相同（workflow #305，2 份樣本）
-normalize_brackets = true
-ignore_whitespace_en = true
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
 
 [issuer.ca.product_names."Super Bull"]
 # CA Super Bull 商品名稱（現行版 32 份說明書推得，2026-10-28 規格確認，#312）：「連結表現自動提前出場」／「Performance Autocall
@@ -690,8 +692,8 @@ zh = "Crédit Agricole CIB Financial Solutions {tenor} 個月{ccy_zh}計價連�
 en = "Crédit Agricole CIB Financial Solutions {ccy} {tenor}-Month Performance Autocall Note (Unsecured)(Non-principal protected)"
 memory_zh = ""
 memory_en = ""
-normalize_brackets = true
-ignore_whitespace_en = true
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
 
 [issuer.ca.product_names.BEN]
 # CA BEN 商品名稱（現行版 Bonus 樣本推得，2026-10-30 規格確認，#377）：「紅利結構型商品」／「Bonus Note」，只依天期、幣別；
@@ -700,8 +702,8 @@ zh = "Crédit Agricole CIB Financial Solutions {tenor} 個月{ccy_zh}計價紅�
 en = "Crédit Agricole CIB Financial Solutions {ccy} {tenor}-Month Bonus Note (Unsecured)(Non-principal protected)"
 memory_zh = ""
 memory_en = ""
-normalize_brackets = true
-ignore_whitespace_en = true
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
 
 [issuer.bbva]
 # BBVA：中文國籍前綴＋英文法人名；第二章 1.(1)(a)、投資人須知一、 1. 相同；第一章 3.(1) 沒有「荷蘭商」，parser 補上後比對
@@ -723,8 +725,8 @@ zh = "BBVA GLOBAL MARKETS, B.V. {tenor} 個月期{ccy_zh}計價自動提前贖�
 en = "BBVA GLOBAL MARKETS, B.V. {ccy} {tenor}-month Autocallable Basket of Equity Linked Notes (Non Principal Guaranteed and Unsecured)"
 memory_zh = ""
 memory_en = ""
-normalize_brackets = true
-ignore_whitespace_en = true
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
 
 [issuer.ubs]
 # UBS：名稱本身「瑞士銀行」（第 1 頁四、後接「（下稱…）」、相關機構事業概況後接「（UBS AG）」，都不屬於名稱）；
@@ -743,7 +745,8 @@ product_type = "股權結構型商品"
 # 商品名稱格式（依 5 份新版 UBS 說明書推得，2026-10-15 確認，Issue #279）：依 KO 觀察方式（每日／定期觀察，要和條文一致）、
 # 記憶式、有無 KI 變化；不分幣別、天期、標的數。「瑞銀（定期觀察）」括號版與句尾「。」由 parser 正規化。
 zh = "瑞銀{ko_observation_zh}{memory_zh}提前出場固定配息連結股票（不保本）{ki_zh}（無擔保）（無保證機構）結構型商品"
-en = "UBS {ko_observation_en} {memory_en}Callable Variable Maturity Equity Linked Notes with {ki_en}Fixed Coupon"
+# 英文結尾 [ ] 內這一段可有可無（OOS 樣本說明書與投資人須知都有，2026-11-06 使用者決定接受，workflow #475）
+en = "UBS {ko_observation_en} {memory_en}Callable Variable Maturity Equity Linked Notes with {ki_en}Fixed Coupon[（Non Principal Guaranteed, Unsecured and Non-guaranteed）]"
 memory_zh = "記憶式"
 memory_en = "Memory "
 daily_zh = "每日觀察"
@@ -752,10 +755,8 @@ periodic_zh = "定期觀察"
 periodic_en = "Periodic"
 ki_zh = "（含觸及下限價事件）"
 ki_en = "Kick-In Event and "
-normalize_brackets = true
-ignore_whitespace_en = true
-# 英文名稱結尾可有可無這一段（OOS 樣本說明書與投資人須知都有，2026-11-06 使用者決定接受，workflow #475）
-optional_suffix_en = "（Non Principal Guaranteed, Unsecured and Non-guaranteed）"
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
 
 # UBS：最低交易金額（商品基本資料八）與最低申購金額 5 倍，最低累加申購、最低提前贖回、累加提前贖回 1 倍；不分幣別
 # （USD、JPY、AUD 樣本都相同；2026-10-15 確認，Issue #279）。
@@ -801,9 +802,9 @@ basket_en = "Worst of Basket "
 single_unsupported = true
 # 人民幣在英文名稱與計價幣別括號內都寫 RMB（1 份 OOS 樣本，2026-10-16 確認，Issue #296）
 ccy_aliases = { CNH = "RMB" }
-normalize_brackets = true
+normalize_zh = ["brackets"]
 # 英文名稱跨行處可能多空白，比對時忽略所有空白
-ignore_whitespace_en = true
+normalize_en = ["whitespace"]
 
 [issuer.dbs.product_names.DACN]
 # DBS DACN 商品名稱（現行版 7 份說明書推得，2026-10-30 規格，workflow #370）：「固定利率」改「區間累計配息」、英文「Fixed
@@ -820,8 +821,8 @@ basket_zh = "一籃子中表現最差"
 basket_en = "Worst of Basket "
 single_unsupported = true
 ccy_aliases = { CNH = "RMB" }
-normalize_brackets = true
-ignore_whitespace_en = true
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
 
 # DBS：最低申購為單位面額的倍數依承作幣別（USD 5、AUD 7、JPY 8 單位；沒列的幣別轉人工覆核），最低加購、最低贖回、
 # 增加贖回單位 1 倍（2026-10-15 確認，Issue #280）。說明書寫單位數與金額，parser 交出金額。CNH 4 單位（1 份 OOS 樣本，

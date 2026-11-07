@@ -115,7 +115,7 @@
 - 中文：`Crédit Agricole CIB Financial Solutions {tenor} 個月{ccy_zh}計價固定配息自動提前出場結構型商品(無擔保) (不保本)`。
 - 英文：`Crédit Agricole CIB Financial Solutions {ccy} {tenor}-Month Fixed Coupon Autocall Note (Unsecured)(Non-principal protected)`。
 - **只有天期、幣別兩個佔位符**：不分標的數、記憶式、KO／KI 型態、Non-Call。`memory_zh`／`memory_en` 設空字串。
-- 名稱截到 `(ISIN：` 之前（`(ISIN：…)` 不算名稱，ISIN 另外比對）；中文、英文都忽略空白（`ignore_whitespace_en = true`）、括號統一（`normalize_brackets = true`）。
+- 名稱截到 `(ISIN：` 之前（`(ISIN：…)` 不算名稱，ISIN 另外比對）；中文、英文都忽略空白（`normalize_en = ["whitespace"]`）、括號統一（`normalize_zh = ["brackets"]`）。
 
 **發行機構名稱**（`issuer.ca.issuer_name`）：`Crédit Agricole CIB Financial Solutions`；封面、第一章第 3 項、第二章 1.(1)、投資人須知一、1. 都只寫英文。2026-10-15 確認 CA 只有這一個發行主體；其他寫法判不一致或轉人工覆核。
 

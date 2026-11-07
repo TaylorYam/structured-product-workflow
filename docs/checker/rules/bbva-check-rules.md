@@ -115,7 +115,7 @@
 - 中文：`BBVA GLOBAL MARKETS, B.V. {tenor} 個月期{ccy_zh}計價自動提前贖回連結一籃子股票結構型商品 (無擔保及不保本)`。
 - 英文：`BBVA GLOBAL MARKETS, B.V. {ccy} {tenor}-month Autocallable Basket of Equity Linked Notes (Non Principal Guaranteed and Unsecured)`（`Non Principal` 沒有連字號，第 1 頁與投資人須知相同）。
 - **只有天期、幣別兩個佔位符**：不分標的數（單一標的 BV3 也寫「一籃子」／`Basket of`）、記憶式、KO／KI 型態、Non-Call。`memory_zh`／`memory_en` 設空字串。
-- 中文截到 `(下稱「本商品」)` 之前、英文截到 `(the "Product")` 之前；中文、英文都忽略空白（`ignore_whitespace_en = true`）、括號統一（`normalize_brackets = true`）。
+- 中文截到 `(下稱「本商品」)` 之前、英文截到 `(the "Product")` 之前；中文、英文都忽略空白（`normalize_en = ["whitespace"]`）、括號統一（`normalize_zh = ["brackets"]`）。
 
 **發行機構名稱**（`issuer.bbva.issuer_name`）：`荷蘭商BBVA GLOBAL MARKETS, B.V.`（第二章 1.(1)(a)、投資人須知一、 1.）；第一章 3.(1) 寫 `BBVA GLOBAL MARKETS, B.V.`（沒有「荷蘭商」）也算一致（2026-10-15 確認）。實作：parser 讀第一章 3.(1) 時沒有「荷蘭商」就補上再交出 `issuer_name_ch1`（證據保留原文），和固定值比；其他出處仍須等於固定值。第 1 頁沒有發行機構名稱欄，`issuer_name_cover` 交 `absent`，共用規則對不適用的出處不產生結果。2026-10-15 確認 BBVA 只有這一個發行主體；其他寫法判不一致或轉人工覆核。
 

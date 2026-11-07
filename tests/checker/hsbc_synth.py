@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from pathlib import Path
 
+from fcn_checker.name_template import split
 from fcn_checker.parsers import hsbc_ben
 from fcn_checker.parsers.super_bull import add_months
 from harness import STANDARD, iis_path
@@ -196,7 +197,7 @@ class SbSpec(Spec):
 
     @property
     def en(self):
-        return ("Maxi " if self.maxi else "") + SB_NAME["en"]
+        return ("Maxi " if self.maxi else "") + split(SB_NAME["en"]).body  # 樣板開頭的 * 不寫出
 
     @property
     def k(self) -> Decimal:
@@ -254,8 +255,8 @@ class BenSpec(Spec):
     @property
     def en(self):
         if self.digital:
-            return BEN_NAME["en"].format(payoff_en=BEN_NAME["digital_en"])
-        return "Maxi " + BEN_NAME["en"].format(payoff_en=BEN_NAME["enhanced_en"])
+            return split(BEN_NAME["en"]).body.format(payoff_en=BEN_NAME["digital_en"])
+        return "Maxi " + split(BEN_NAME["en"]).body.format(payoff_en=BEN_NAME["enhanced_en"])
 
     @property
     def k(self) -> Decimal:

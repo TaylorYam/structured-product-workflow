@@ -25,6 +25,7 @@ from typing import Any
 
 import fitz
 
+from fcn_checker.name_template import split
 from harness import CONFIG, STANDARD, check_all, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used
 from reference_synth import (
@@ -167,7 +168,7 @@ class Spec(ProductSpec):
 
     @property
     def name_en(self) -> str:
-        return NAME["en"].format(**self.flags("en")) + self.name_suffix_en
+        return split(NAME["en"]).body.format(**self.flags("en")) + self.name_suffix_en  # 樣板結尾的 […] 不寫出
 
     @staticmethod
     def date(d: dt.date) -> str:
