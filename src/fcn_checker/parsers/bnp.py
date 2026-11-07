@@ -16,7 +16,7 @@ from ..standard_fields import Occurrence, ScenarioParam, ScenarioPrice
 from ..text import squash
 from . import bnp_scenario, bnp_tables, money, price_table, ratings, schedule
 from .common import NUM, Hit, Mention, derived, fee_rates_by_pattern, number
-from .fields_builder import FieldsBuilder, ParsedTermSheet
+from .fields_builder import FieldsBuilder, ParsedTermSheet, occurrence_of
 from .layout import Document, LayoutSpec, Span, TextIndex, capture, join_text, parse_date
 from .underlying_notes import Markers, underlying_notes
 
@@ -636,12 +636,7 @@ def _currency_occurrences(
     occ, art_label = Occurrence, ch1.label
     scenario_item = art_label("scenario")
     out = [
-        occ(
-            "denomination_currency",
-            "denomination_currency",
-            f"第一章{art_label('denomination')}商品面額",
-            fields["denomination_currency"],
-        ),
+        occurrence_of(fields, "denomination_currency", f"第一章{art_label('denomination')}商品面額"),
         occ(
             "coupon_currency_art15",
             "coupon_currency",
@@ -660,30 +655,10 @@ def _currency_occurrences(
             f"第一章{art_label('maturity')}到期贖回金額",
             fields["currency_art17"],
         ),
-        occ(
-            "minimum_subscription_currency",
-            "minimum_subscription_currency",
-            "第四章第 4 項最低申購金額",
-            fields["minimum_subscription_currency"],
-        ),
-        occ(
-            "minimum_additional_currency",
-            "minimum_additional_currency",
-            "第四章第 4 項最低加購金額",
-            fields["minimum_additional_currency"],
-        ),
-        occ(
-            "minimum_redemption_currency",
-            "minimum_redemption_currency",
-            "第四章第 8 項最低贖回金額",
-            fields["minimum_redemption_currency"],
-        ),
-        occ(
-            "redemption_increment_currency",
-            "redemption_increment_currency",
-            "第四章第 8 項增加贖回之單位",
-            fields["redemption_increment_currency"],
-        ),
+        occurrence_of(fields, "minimum_subscription_currency", "第四章第 4 項最低申購金額"),
+        occurrence_of(fields, "minimum_additional_currency", "第四章第 4 項最低加購金額"),
+        occurrence_of(fields, "minimum_redemption_currency", "第四章第 8 項最低贖回金額"),
+        occurrence_of(fields, "redemption_increment_currency", "第四章第 8 項增加贖回之單位"),
         occ(
             "scenario_denomination_currency",
             "scenario_denomination_currency",

@@ -33,7 +33,6 @@
   6. 投資人須知範本 `iis`（[ADR 0007](0007-iis-paired-with-term-sheet.md)）。
 - **推導在讀出階段完成**：提前出場排程等從說明書推得的標準欄位，在 `read` 交出，因為預覽辨識（例：不支援樣態）就要讀到它們。多家相同的推導寫成共用函式，由 adapter 呼叫（例：Issue #289 的排程推導）；共用推導與標準欄位的形狀是同一份契約。
 - **範本沒有與沒交出分開**：範本本身沒有的欄位交出 `absent`（不適用），共用規則不比對、出處清單不產生結果。該交卻沒交出的欄位是 `not_provided`，相關規則轉人工覆核並寫出欄位名稱。
-  - 修訂（Issue #487）：多家範本都可能沒有的欄位，集合明示宣告在 `standard_fields.MAY_BE_ABSENT`（附 absent 的預設說明）。說明書 parser 經 `parsers.fields_builder` 收尾時，這些欄位沒交出就視同 `absent`；說法不同的上手自己交出 absent 保留原字樣。其他沒交出的欄位仍是 `not_provided`。這是修訂，不是推翻：哪些欄位可以沒有仍是明示宣告，只是從各家各寫一行改成宣告一次。`tests/checker/test_fields_builder.py` 確認每個說明書範本都交出這些欄位。
 - **共用規則只實作一次，語意逐條定義**：
   - 共用規則有：參考條件表欄位與 Non-Call（`rules/reference.py`）、說明書推算（`rules/derivation.py`）、日期表結構（`rules/schedule.py`，Issue #289）、情境分析的重印價格表、情境假設值與較差情境價格（`rules/scenario.py`，Issue #294）、審查標準（`rules/review_standard.py`）、回填（`backfill.py`）、投資人須知（`rules/iis.py`）。
   - 每條規則的語意由[共用核對規則](../rules/shared-check-rules.md)（投資人須知見 [iis-check-rules.md](../rules/iis-check-rules.md)、審查標準見 [review-standard.md](../rules/review-standard.md)）定義，不以任何一家上手為準。

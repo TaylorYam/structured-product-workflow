@@ -845,7 +845,7 @@ def read(lines: Sequence[Line]) -> BarcTermSheet:
         all_lines, Markers(r"標的資產\d+：")
     )  # 連結標的公司介紹：標的資產k：（Issue #225）
     flds.update(ratings.fields(all_lines, RATINGS, no_guarantor_places=NO_GUARANTOR))
-    return BarcTermSheet(flds.build(), TextIndex(all_lines), doc, mentions, header_pcts)
+    return BarcTermSheet(flds.build(), TextIndex(all_lines), doc, coupon_mentions=mentions, header_pcts=header_pcts)
 
 
 def _scenario_params(flds: dict[str, ParsedField], s16: TextIndex, repeats: list[Mention]) -> list[ScenarioParam]:

@@ -6,7 +6,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 
@@ -16,8 +16,8 @@ from ..standard_fields import ScenarioParam, ScenarioPrice
 from ..text import full_brackets, squash
 from . import money, ms_scenario, ms_tables, ms_wording, price_table, ratings, schedule
 from .common import NO_AUTOCALL_KO_PCT, NUM, Hit, Mention, derived, fee_rates, ko_at_initial, number
-from .fields_builder import FieldsBuilder, ParsedTermSheet
-from .layout import Document, LayoutSpec, TextIndex, capture, join_text, parse_date
+from .fields_builder import FieldsBuilder, ParsedTermSheet, occurrence_of
+from .layout import Document, LayoutSpec, TextIndex, join_text, parse_date
 from .underlying_notes import Markers, underlying_notes
 
 TEMPLATE_ID = "ms-zh-pd"
@@ -186,16 +186,13 @@ def read(lines: Sequence[Line]) -> MsTermSheet:
     doc = document(lines)
     arts = doc.articles(1)
     items = cover_items(doc.before_chapter1())
-    fields = FieldsBuilder()
+    fields = FieldsBuilder(unify_brackets=True)  # 條款句全形、半形括號混用
 
     def article(n: int) -> list[Line]:
         return doc.span_lines(arts.get(n))
 
     def sub(n: int, k: int) -> list[Line]:
         return doc.span_lines(doc.subitems(arts.get(n)).get(k))
-
-    def put(name: str, lns: list[Line], pattern: str, convert: Callable = lambda x: x) -> None:
-        fields[name] = capture(name, TextIndex(lns, unify_brackets=True), pattern, convert, whole_match=True)
 
     # 封面
     fields["product_code"] = _item(items, 1, "product_code", "商品代號", r"(\d{12})")
@@ -228,7 +225,7 @@ def read(lines: Sequence[Line]) -> MsTermSheet:
             fields[key] = ParsedField(key, FieldStatus.INVALID, evidence=list(distributor.evidence), note=note)
         else:
             fields[key] = derived(key, distributor, parts[k].strip() if parts else None)
-    put("print_date", doc.before_chapter1(), r"中文產品說明書刊印日期：" + D, parse_date)
+    fields.put("print_date", doc.before_chapter1(), r"中文產品說明書刊印日期：" + D, parse_date)
 
     # 第一章
     art1 = article(1)
@@ -236,24 +233,24 @@ def read(lines: Sequence[Line]) -> MsTermSheet:
     fields["name_art1"] = (
         ParsedField.present("name_art1", m1[1].strip(), art1) if m1 else ParsedField.missing("name_art1")
     )
-    put("issuer_name_ch1", article(3), r"本商品發行機構為(.+?)，")
-    put("currency_art5", article(5), r"計價幣別：(.+?)（[A-Z]{3}）")
-    put("denomination", article(6), r"每單位商品面額：\D*?" + NUM + r"元", number)
-    put("denomination_currency", article(6), rf"每單位商品面額：({money.CURRENCY}){money.NUMBER}元")
-    put("issue_price_pct", article(7), r"發行價格：商品面額之(\d+(?:\.\d+)?)%", Decimal)
+    fields.put("issuer_name_ch1", article(3), r"本商品發行機構為(.+?)，")
+    fields.put("currency_art5", article(5), r"計價幣別：(.+?)（[A-Z]{3}）")
+    fields.put("denomination", article(6), r"每單位商品面額：\D*?" + NUM + r"元", number)
+    fields.put("denomination_currency", article(6), rf"每單位商品面額：({money.CURRENCY}){money.NUMBER}元")
+    fields.put("issue_price_pct", article(7), r"發行價格：商品面額之(\d+(?:\.\d+)?)%", Decimal)
     fields["underlyings_art11"] = ms_tables.underlying_table(article(11))
     fields["underlying_names_art11"] = ms_tables.underlying_names(article(11))
-    put("tenor_months", sub(14, 1), r"商品年期：(\d+)個月期", int)
-    put("trade_date", sub(14, 2), r"交易日：" + D, parse_date)
-    put("issue_date", sub(14, 3), r"發行日：" + D, parse_date)
-    put("maturity_date", sub(14, 4), r"到期日：" + D, parse_date)
-    put("final_valuation_date", sub(14, 5), r"期末定價日\*?：" + D, parse_date)
+    fields.put("tenor_months", sub(14, 1), r"商品年期：(\d+)個月期", int)
+    fields.put("trade_date", sub(14, 2), r"交易日：" + D, parse_date)
+    fields.put("issue_date", sub(14, 3), r"發行日：" + D, parse_date)
+    fields.put("maturity_date", sub(14, 4), r"到期日：" + D, parse_date)
+    fields.put("final_valuation_date", sub(14, 5), r"期末定價日\*?：" + D, parse_date)
     fields["date_table"] = ms_tables.date_table(sub(14, 6))
     art15 = article(15)
-    put("monthly_coupon_pct", art15, r"固定配息率（(\d+(?:\.\d+)?)%）", Decimal)
-    put("coupon_formula_pct", art15, r"\{(\d+(?:\.\d+)?)%×n（j）/N（j）\}", Decimal)
+    fields.put("monthly_coupon_pct", art15, r"固定配息率（(\d+(?:\.\d+)?)%）", Decimal)
+    fields.put("coupon_formula_pct", art15, r"\{(\d+(?:\.\d+)?)%×n（j）/N（j）\}", Decimal)
     # 「j 係為a 至N 的數字」；1 個月期只寫「j 係為1 的數字」，讀成 a = N（Issue #343）
-    put("coupon_range", art15, r"(j係為\d+(?:至\d+)?的數字)", _coupon_range)
+    fields.put("coupon_range", art15, r"(j係為\d+(?:至\d+)?的數字)", _coupon_range)
     art16 = article(16)
     fields["ki_type"] = _ki_type(art16)
     region = ms_tables.price_region(art16, ("（1）最低保證贖回率",))
@@ -272,26 +269,26 @@ def read(lines: Sequence[Line]) -> MsTermSheet:
 
     # 第二章
     ch2 = doc.chapter_lines(2)
-    put("issuer_name_ch2", ch2, r"1\.發行機構（1）事業名稱：(.+?)，係依")
+    fields.put("issuer_name_ch2", ch2, r"1\.發行機構（1）事業名稱：(.+?)，係依")
     trustee = _trustee_block(ch2)
-    put("distributor_name_ch2", trustee, r"◎事業名稱：(.+?)◎")
-    put("distributor_address_ch2", trustee, r"◎營業所在地：(.+?)◎")
-    put("chairman", trustee, r"◎負責人姓名：(.+)$")
+    fields.put("distributor_name_ch2", trustee, r"◎事業名稱：(.+?)◎")
+    fields.put("distributor_address_ch2", trustee, r"◎營業所在地：(.+?)◎")
+    fields.put("chairman", trustee, r"◎負責人姓名：(.+)$")
 
     # 第四章：條號縮排不固定（第 1 項有時與子項同欄），以各項的標籤定位
     ch4 = doc.chapter_lines(4)
-    put("redemption_start", ch4, r"（1）開始受理贖回日期：" + D, parse_date)
+    fields.put("redemption_start", ch4, r"（1）開始受理贖回日期：" + D, parse_date)
     fields.update(fee_rates(ch4, ms_tables.FEE_TABLE))
-    put("minimum_subscription", ch4, r"最低申購金額為[^，。]*，即\D{0,4}?" + NUM + r"元", number)
-    put("minimum_additional", ch4, r"並以\D{0,4}?" + NUM + r"元(?:（[^）]*）)?為最低加購單位", number)
-    put("minimum_redemption", ch4, r"最低贖回金額為[^，。]*，即\D{0,4}?" + NUM + r"元", number)
-    put("redemption_increment", ch4, r"並以\D{0,4}?" + NUM + r"元(?:（[^）]*）)?為累加贖回單位", number)
-    put("issue_price_ch4", ch4, r"發行價格（商品面額的(\d+(?:\.\d+)?)%）", Decimal)
+    fields.put("minimum_subscription", ch4, r"最低申購金額為[^，。]*，即\D{0,4}?" + NUM + r"元", number)
+    fields.put("minimum_additional", ch4, r"並以\D{0,4}?" + NUM + r"元(?:（[^）]*）)?為最低加購單位", number)
+    fields.put("minimum_redemption", ch4, r"最低贖回金額為[^，。]*，即\D{0,4}?" + NUM + r"元", number)
+    fields.put("redemption_increment", ch4, r"並以\D{0,4}?" + NUM + r"元(?:（[^）]*）)?為累加贖回單位", number)
+    fields.put("issue_price_ch4", ch4, r"發行價格（商品面額的(\d+(?:\.\d+)?)%）", Decimal)
     ccy, amount = money.CURRENCY, money.NUMBER
-    put("minimum_subscription_currency", ch4, rf"最低申購金額為[^，。]*，即({ccy}){amount}元")
-    put("minimum_additional_currency", ch4, rf"並以({ccy}){amount}元(?:（[^）]*）)?為最低加購單位")
-    put("minimum_redemption_currency", ch4, rf"最低贖回金額為[^，。]*，即({ccy}){amount}元")
-    put("redemption_increment_currency", ch4, rf"並以({ccy}){amount}元(?:（[^）]*）)?為累加贖回單位")
+    fields.put("minimum_subscription_currency", ch4, rf"最低申購金額為[^，。]*，即({ccy}){amount}元")
+    fields.put("minimum_additional_currency", ch4, rf"並以({ccy}){amount}元(?:（[^）]*）)?為最低加購單位")
+    fields.put("minimum_redemption_currency", ch4, rf"最低贖回金額為[^，。]*，即({ccy}){amount}元")
+    fields.put("redemption_increment_currency", ch4, rf"並以({ccy}){amount}元(?:（[^）]*）)?為累加贖回單位")
 
     fields.occur("minimum_subscription", "第四章第 4 項最低申購金額")
     fields.occur("minimum_additional", "第四章第 4 項最低加購單位")
@@ -322,36 +319,11 @@ def currency_occurrences(
     算式用標的幣別，不算）。"""
     occ = standard_fields.Occurrence
     out = [
-        occ(
-            "denomination_currency",
-            "denomination_currency",
-            "第一章第 6 項每單位商品面額",
-            fields["denomination_currency"],
-        ),
-        occ(
-            "minimum_subscription_currency",
-            "minimum_subscription_currency",
-            "第四章第 4 項最低申購金額",
-            fields["minimum_subscription_currency"],
-        ),
-        occ(
-            "minimum_additional_currency",
-            "minimum_additional_currency",
-            "第四章第 4 項最低加購單位",
-            fields["minimum_additional_currency"],
-        ),
-        occ(
-            "minimum_redemption_currency",
-            "minimum_redemption_currency",
-            "第四章第 8 項最低贖回金額",
-            fields["minimum_redemption_currency"],
-        ),
-        occ(
-            "redemption_increment_currency",
-            "redemption_increment_currency",
-            "第四章第 8 項累加贖回單位",
-            fields["redemption_increment_currency"],
-        ),
+        occurrence_of(fields, "denomination_currency", "第一章第 6 項每單位商品面額"),
+        occurrence_of(fields, "minimum_subscription_currency", "第四章第 4 項最低申購金額"),
+        occurrence_of(fields, "minimum_additional_currency", "第四章第 4 項最低加購單位"),
+        occurrence_of(fields, "minimum_redemption_currency", "第四章第 8 項最低贖回金額"),
+        occurrence_of(fields, "redemption_increment_currency", "第四章第 8 項累加贖回單位"),
     ]
     name, where = "scenario_denomination_currency", f"第 {article} 項假設總投資金額"
     hit = scenarios.denomination_currency

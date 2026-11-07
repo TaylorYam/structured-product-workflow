@@ -34,7 +34,8 @@ def present(name: str, value: object = "x") -> ParsedField:
     return ParsedField.present(name, value, [])
 
 
-def test_occurrence_lists_are_one_list_per_code_and_known_codes():
+def test_occurrence_lists_map_known_codes_to_the_five_lists():
+    """一個代號只屬於一張清單由 `standard_fields` 匯入時檢查（重複就丟 ValueError）；這裡確認對到的清單與代號。"""
     assert set(OCCURRENCE_LISTS) <= set(OCCURRENCE_NAMES)
     assert set(OCCURRENCE_LISTS.values()) == {
         "print_dates",
@@ -131,7 +132,7 @@ SYNTH_SPECS = [
 
 
 def test_synth_specs_cover_every_term_sheet_template():
-    assert len(SYNTH_SPECS) == sum(len(issuer.templates) for issuer in REGISTRY)
+    assert len(set(SYNTH_SPECS)) == len(SYNTH_SPECS) == sum(len(issuer.templates) for issuer in REGISTRY)
 
 
 @pytest.mark.parametrize(("module", "spec_name"), SYNTH_SPECS)

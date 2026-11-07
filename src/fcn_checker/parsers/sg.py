@@ -18,7 +18,7 @@ from ..standard_fields import Occurrence, ScenarioParam, ScenarioPrice
 from ..text import squash
 from . import money, price_table, ratings, schedule, sg_scenario, sg_tables
 from .common import NO_AUTOCALL_KO_PCT, NUM, Hit, Mention, derived, fee_rates_by_pattern, ko_at_initial, number
-from .fields_builder import FieldsBuilder, ParsedTermSheet
+from .fields_builder import FieldsBuilder, ParsedTermSheet, occurrence_of
 from .layout import Document, LayoutSpec, TextIndex, capture, join_text, parse_date
 from .underlying_notes import Markers, underlying_notes
 
@@ -662,28 +662,11 @@ def _currency_occurrences(fields: dict[str, ParsedField], scenarios: sg_scenario
     §15 假設總投資金額各一處；§15 每個情境一處（股價、實體交付算式、現金結算總報酬率算式與匯率不算）。"""
     occ = Occurrence
     out = [
-        occ(
-            "denomination_currency", "denomination_currency", "第一章第 5 項每單位面額", fields["denomination_currency"]
-        ),
+        occurrence_of(fields, "denomination_currency", "第一章第 5 項每單位面額"),
         occ("currency_art8", "payment_currency", "第一章第 8 項「以…為計價單位給付」", fields["currency_art8"]),
-        occ(
-            "minimum_subscription_currency",
-            "minimum_subscription_currency",
-            "第四章第 4 項最低申購金額",
-            fields["minimum_subscription_currency"],
-        ),
-        occ(
-            "minimum_additional_currency",
-            "minimum_additional_currency",
-            "第四章第 4 項最低加購金額",
-            fields["minimum_additional_currency"],
-        ),
-        occ(
-            "minimum_redemption_currency",
-            "minimum_redemption_currency",
-            "第四章第 8 項最低贖回金額",
-            fields["minimum_redemption_currency"],
-        ),
+        occurrence_of(fields, "minimum_subscription_currency", "第四章第 4 項最低申購金額"),
+        occurrence_of(fields, "minimum_additional_currency", "第四章第 4 項最低加購金額"),
+        occurrence_of(fields, "minimum_redemption_currency", "第四章第 8 項最低贖回金額"),
         occ(
             "scenario_total_currency",
             "scenario_investment_currency",
