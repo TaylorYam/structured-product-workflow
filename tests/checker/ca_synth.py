@@ -15,18 +15,15 @@ tests/checker/test_iis_ca.py 直接以擷取後的行測正規化。
 from __future__ import annotations
 
 import datetime as dt
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 
-import fitz
-
 from fcn_checker.parsers.super_bull import add_months
 from harness import CONFIG, STANDARD, check_all, iis_path
-from pdf_writer import FONT, Edit, PdfWriter, require_used
+from pdf_writer import FONT, Edit, FlowDoc, FlowLayout, require_used, text_width
 from reference_synth import (
     FITCH,
     MOODYS,
@@ -265,68 +262,13 @@ class BenSpec(Spec):
         return BEN_NAME["en"].format(tenor=self.tenor, ccy=self.ccy)
 
 
-def _tokens(text: str) -> list[str]:
-    return re.findall(r"[\x21-\x7e]+|\s|.", text)
+LAYOUT = FlowLayout(chapter_gap=18)
 
 
-def _width(text: str, size: float) -> float:
-    return sum(fitz.get_text_length(c, fontname="helv", fontsize=size) if ord(c) < 256 else size for c in text)
-
-
-class _Doc:
-    """逐行排版；文字依目前段落代號（`section`）套用改字，超過寬度時換行（英數字不拆開）。"""
-
-    def __init__(self, edits: Sequence[Edit], used: set[Edit], kind: str = "ts", width: float = 560):
-        self.w = PdfWriter(edits, kind, used)
-        self.section = "cover"
-        self.width = width
-
-    @property
-    def section(self) -> str:
-        return self.w.section
-
-    @section.setter
-    def section(self, value: str) -> None:
-        self.w.section = value
-
-    def text(self, x: float, text: str, cont: float | None = None, gap: float = 13, size: float = 10) -> None:
-        text = self.w.edit(text)
-        if not text:
-            return
-        nxt = cont if cont is not None else x
-        cur, used, here = "", 0.0, x
-        with self.w.verbatim():
-            for tok in _tokens(text):
-                tw = _width(tok, size)
-                if used + tw > self.width - here and cur.strip():
-                    self.w.line(here, cur.strip(), size=size, gap=gap)
-                    cur, used, here = "", 0.0, nxt
-                    if tok.isspace():
-                        continue
-                cur += tok
-                used += tw
-            self.w.line(here, cur.strip(), size=size, gap=gap)
-
-    def chapter(self, zh: str, name: str) -> None:
-        self.w.new_page()
-        self.section = f"ch{zh}"
-        self.w.line(36, f"第{zh}章、{name}", gap=18)
-
-    def article(self, n: int, title: str) -> None:
-        if self.section == "cover" or self.section.startswith("art") or self.section == "ch一":
-            self.section = f"art{n}"
-        self.text(36, f"{n}. {title}", 54)
-
-    def centered_row(self, cells: Sequence[tuple[float, str]], gap: float, size: float = 8) -> None:
-        """一列表格，每格置中於欄中心 x。"""
-        self.w.row([(cx - _width(t, size) / 2, t) for cx, t in cells], gap=gap, size=size)
-
-    def furnish(self, label: str) -> fitz.Document:
-        """每頁頁底頁碼（真實文件的頁碼，擷取時排除）。"""
-        doc = self.w.doc
-        for p, page in enumerate(doc):
-            page.insert_text((272, 818), label.format(n=p + 1, m=len(doc)), fontname=FONT, fontsize=9)
-        return doc
+def _article(d: FlowDoc, n: int, title: str) -> None:
+    if d.section == "cover" or d.section.startswith("art") or d.section == "ch一":
+        d.section = f"art{n}"
+    d.text(36, f"{n}. {title}", 54)
 
 
 def _warnings(s: Spec, doc: str = "本中文產品說明書") -> list[str]:
@@ -353,7 +295,7 @@ def _warnings(s: Spec, doc: str = "本中文產品說明書") -> list[str]:
 # ---------------------------------------------------------------- 說明書
 
 
-def _cover(d: _Doc, s: Spec) -> None:
+def _cover(d: FlowDoc, s: Spec) -> None:
     w = d.w
     w.line(257, "中文產品說明書", size=14, gap=22)
     for t in (
@@ -384,7 +326,7 @@ def _cover(d: _Doc, s: Spec) -> None:
 HEAD_X = {"name": 130, "initial": 250, "strike": 340, "ki": 420, "ko": 500}  # 價格欄寬要夠，相鄰兩格不能擠成一行
 
 
-def _price_table(d: _Doc, s: Spec, *, index: bool) -> None:
+def _price_table(d: FlowDoc, s: Spec, *, index: bool) -> None:
     """價格表：表頭三行（欄名、「(期初訂價之」、「X% )」），欄序 K → KI → KO；每檔一列，價格後接報價幣別字。"""
     cols = [("strike", "執行價", s.strike)]
     if s.ki != "none":
@@ -419,8 +361,8 @@ def _price_table(d: _Doc, s: Spec, *, index: bool) -> None:
             cx, text = next(c for c in cells if c[0] == x["initial"])
             cells.remove((cx, text))
             number, quote = text.rsplit(" ", 1)
-            d.w.put(cx - _width(number + " " + quote[0], 8) / 2, d.w.y - up, number + " " + quote[0], 8)
-            d.w.put(cx - _width(quote[1:], 8) / 2, d.w.y + down, quote[1:], 8)
+            d.w.put(cx - text_width(number + " " + quote[0], 8) / 2, d.w.y - up, number + " " + quote[0], 8)
+            d.w.put(cx - text_width(quote[1:], 8) / 2, d.w.y + down, quote[1:], 8)
             d.centered_row(cells, gap=24 if index else 16)  # 置中換行的那一列較高（真實樣本列距 24）
             continue
         if s.wrap_currency:  # 每格價格的幣別字最後一字換到下一行，這一列兩行高
@@ -436,7 +378,7 @@ def _price_table(d: _Doc, s: Spec, *, index: bool) -> None:
         d.centered_row(cells, gap=16)
 
 
-def _article9(d: _Doc, s: Spec) -> None:
+def _article9(d: FlowDoc, s: Spec) -> None:
     d.text(36, "(1) 本商品主要給付項目為「自動提前出場贖回金額」或「到期贖回金額」及「配息金額」。")
     d.text(36, "計算方式：")
     d.text(36, "(a) 「配息金額」：於各配息期(i)：每單位（張）商品面額x「配息率」；")
@@ -522,7 +464,7 @@ def _article9(d: _Doc, s: Spec) -> None:
         d.text(36, "界限事件觀察期間：從期初訂價日(含)至期末訂價日(含) 。")
 
 
-def _article9_sb(d: _Doc, s: SbSpec) -> None:
+def _article9_sb(d: FlowDoc, s: SbSpec) -> None:
     """Super Bull 第 9 項（範本規格 §2、§4.1）：沒有配息、(a) 面額 x (100%+紅利)、四欄觀察日表、(b) 到期兩款、價格表。"""
     d.text(36, "(1) 本商品主要給付項目為「自動提前出場贖回金額」或「到期贖回金額」。本商品持有期間並無配息金額。")
     d.text(36, "計算方式：")
@@ -571,7 +513,7 @@ BEN_FORMULA = (
 )
 
 
-def _ben_maturity(d: _Doc, s: BenSpec, x: float) -> None:
+def _ben_maturity(d: FlowDoc, s: BenSpec, x: float) -> None:
     """BEN 到期（1）交股、（2）領回與 Bonus 公式（括號不對稱照樣本）。"""
     d.text(
         x,
@@ -582,7 +524,7 @@ def _ben_maturity(d: _Doc, s: BenSpec, x: float) -> None:
     d.text(x, BEN_FORMULA)
 
 
-def _article9_ben(d: _Doc, s: BenSpec) -> None:
+def _article9_ben(d: FlowDoc, s: BenSpec) -> None:
     """BEN 第 9 項（範本規格 §2）：沒有配息、沒有 KO 的開頭句、到期（1）（2）與 Bonus 公式、參與率與紅利率、價格表只有執行價。"""
     d.text(36, "(1) 本商品主要給付項目為「到期贖回金額」，持有期間並無配息金額。")
     d.text(
@@ -602,7 +544,7 @@ def _article9_ben(d: _Doc, s: BenSpec) -> None:
     d.text(36, "期末訂價：連結標的於期末訂價日之收盤價，由計算代理機構決定。")
 
 
-def _article10(d: _Doc, s: Spec) -> None:
+def _article10(d: FlowDoc, s: Spec) -> None:
     d.text(36, "連結標的資產：")
     d.section = "art10.table"
     d.centered_row([(105, "連結標的"), (240, "彭博代碼"), (375, "交易所")], gap=16)
@@ -612,7 +554,7 @@ def _article10(d: _Doc, s: Spec) -> None:
     d.text(36, "相對權重：不適用。")
 
 
-def _article16(d: _Doc, s: Spec) -> None:
+def _article16(d: FlowDoc, s: Spec) -> None:
     for t in (
         "(1)投資收益計算方法：請參見上述第一章第9 項。",
         "(3)以情境分析解說最大可能獲利、損失及其他狀況之年化平均報酬率：",
@@ -669,7 +611,7 @@ def _article16(d: _Doc, s: Spec) -> None:
     d.text(36, "※ 請注意：情境分析之結果不保證未來績效，亦不代表連結標的未來表現。")
 
 
-def _article16_sb(d: _Doc, s: SbSpec) -> None:
+def _article16_sb(d: FlowDoc, s: SbSpec) -> None:
     """Super Bull 第 16 項 (3)（範本規格 §5）：基本假設多出場紅利、情境一出場、情境二到期漲 10%、情境三交股；數字依算式算出。"""
     ccy, quote, denom = s.currency_zh, s.quote, Decimal(s.denom)
     bonus = s.annual
@@ -753,7 +695,7 @@ def _article16_sb(d: _Doc, s: SbSpec) -> None:
     d.text(36, "※ 請注意：情境分析之結果不保證未來績效，亦不代表連結標的未來表現。")
 
 
-def _article16_ben(d: _Doc, s: BenSpec) -> None:
+def _article16_ben(d: FlowDoc, s: BenSpec) -> None:
     """BEN 第 16 項 (3)（範本規格 §5）：基本假設多紅利率、情境一（漲幅 > 紅利）、二（漲幅 < 紅利）、三交股；數字依算式算出。
     段落代號：情境 `ts.art16.s1`～`ts.art16.s3`。"""
     ccy, quote, denom = s.currency_zh, s.quote, Decimal(s.denom)
@@ -851,7 +793,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     used: set[Edit] = set()
     if iis and path.stem.endswith("_TS"):
         build_iis_pdf(iis_path(path), s, edits=edits, used=used)
-    d = _Doc(edits, used)
+    d = LAYOUT.doc(edits, used)
     _cover(d, s)
 
     d.chapter("一", "商品基本資料")
@@ -859,33 +801,33 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     for n in range(1, 26):
         title = ARTICLE_TITLES.get(n, f"第{n}項說明（不核對）")
         if n == 1:
-            d.article(n, f"{title}{s.name_zh} (ISIN：{ISIN} ) 。")
+            _article(d, n, f"{title}{s.name_zh} (ISIN：{ISIN} ) 。")
         elif n == 2:
-            d.article(n, title + WARNING_CH1)
+            _article(d, n, title + WARNING_CH1)
         elif n == 3:
-            d.article(n, f"{title}{ISSUER}。")
+            _article(d, n, f"{title}{ISSUER}。")
             d.text(
                 36,
                 "保證機構名稱及其長期債務信用評等：虛構銀行。截至本中文產品說明書刊印日期，其長期債務信用評等為"
                 + ratings_text(s.guarantor_ratings),  # 真實樣本沒有句號，直接接第 4 項
             )
         elif n == 5:
-            d.article(n, f"{title}{s.currency_zh}({s.ccy}) 。")
+            _article(d, n, f"{title}{s.currency_zh}({s.ccy}) 。")
         elif n == 6:
-            d.article(n, f"{title}每單位(張)商品面額為{s.money(s.denom)}({s.ccy}) 。")
+            _article(d, n, f"{title}每單位(張)商品面額為{s.money(s.denom)}({s.ccy}) 。")
             d.text(36, f"發行價格：每單位(張)商品面額的100%，即{s.money(s.denom)}({s.ccy})。")
         elif n == 9:
-            d.article(n, title)
+            _article(d, n, title)
             (_article9_ben if isinstance(s, BenSpec) else _article9_sb if isinstance(s, SbSpec) else _article9)(d, s)
         elif n == 10:
-            d.article(n, title)
+            _article(d, n, title)
             _article10(d, s)
         elif n == 11:
-            d.article(n, title)
+            _article(d, n, title)
             d.w.row([(79, "連結標的"), (361, "簡介")], gap=16)
             write_notes(d.w, s.underlyings, "column", x=45, note_x=200, heading=None, width=34)
         elif n == 13:
-            d.article(n, title)
+            _article(d, n, title)
             for t in (
                 f"(1) 商品年期：{s.tenor} 個月。",
                 f"(2) 期初訂價日：{s.date(s.trade_date)}。",
@@ -901,7 +843,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             ):
                 d.text(36, t)
         elif n == 15:
-            d.article(n, title)
+            _article(d, n, title)
             d.text(36, "(1)到期贖回計算公式：請參見上述第一章第9 項。")
             d.text(36, f"(3)提前贖回金額即為公平市值贖回金額，此公平市值贖回金額可能低於100%{s.currency_zh}投資本金。")
             if isinstance(s, BenSpec):
@@ -913,10 +855,10 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             else:
                 d.text(36, f"(4)最低保證配息率：{guaranteed}配息 {s.monthly}%。")
         elif n == 16:
-            d.article(n, title)
+            _article(d, n, title)
             (_article16_ben if isinstance(s, BenSpec) else _article16_sb if isinstance(s, SbSpec) else _article16)(d, s)
         else:
-            d.article(n, title)
+            _article(d, n, title)
 
     d.chapter("二", "相關機構事業概況")
     d.text(36, "1. 發行機構：")
@@ -1034,7 +976,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     d.text(36, "通知以書面為之。")
     d.chapter("七", "股權連結商品的額外條款及條件")
     d.text(36, "1. 中斷日：不核對。")
-    doc = d.furnish("第{n} 頁，共{m}頁")
+    doc = d.number_pages("第{n} 頁，共{m}頁", (272, 818))
     d.w.flush()
     doc.save(path)
     doc.close()
@@ -1047,7 +989,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """CA 中文投資人須知（docs/checker/templates/ca-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
-    d = _Doc(edits, set() if used is None else used, "iis", width=565)
+    d = LAYOUT.doc(edits, set() if used is None else used, "iis", right=565)
     w = d.w
 
     dt_ = s.date
@@ -1182,7 +1124,7 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
     return w.save(path)
 
 
-def _iis_payments(d: _Doc, s: Spec) -> None:
+def _iis_payments(d: FlowDoc, s: Spec) -> None:
     """投資人須知二、2. 收益分配事項（FCN）。"""
     d.text(30, "(a) 「配息金額」：於各配息期(i)：每單位（張）商品面額x「配息率」；")
     d.text(30, f"配息率{s.monthly}%，換算年利率為{s.annual}%")
@@ -1214,7 +1156,7 @@ def _iis_payments(d: _Doc, s: Spec) -> None:
         d.text(30, f"(ii) 若發生界限事件：交付連結標的單位數，及以{s.currency_zh}支付剩餘金額（如有）。")
 
 
-def _iis_payments_sb(d: _Doc, s: SbSpec) -> None:
+def _iis_payments_sb(d: FlowDoc, s: SbSpec) -> None:
     """投資人須知二、2. 收益分配事項（Super Bull，投資人須知範本規格 §2；到期段原文標號寫成第二個 (a)）。"""
     d.text(30, "本商品主要給付項目為「自動提前出場贖回金額」或「到期贖回金額」。本商品持有期間並無配息金額。")
     d.text(
@@ -1242,7 +1184,7 @@ def _iis_payments_sb(d: _Doc, s: SbSpec) -> None:
     d.text(30, "詳細請參見中文產品說明書第一章第9 項之說明。")
 
 
-def _iis_payments_ben(d: _Doc, s: BenSpec) -> None:
+def _iis_payments_ben(d: FlowDoc, s: BenSpec) -> None:
     """投資人須知二、2. 收益分配事項（BEN，投資人須知範本規格 §2；開頭「之的」照樣本）。"""
     d.text(30, "本商品主要給付項目為「到期贖回金額」，持有期間並無配息金額。")
     d.text(

@@ -11,6 +11,7 @@ import hsbc_synth
 from barc_synth import Spec, build_pdf
 from fcn_checker.identification import PairingProblem
 from fcn_checker.ingestion import IngestionError
+from fcn_checker.issuers import REGISTRY
 from fcn_checker.saving import run_batch
 from fcn_checker.schema import CheckStatus
 from fcn_checker.variants import Terms, Variant, load_unsupported_variants, unsupported
@@ -64,15 +65,19 @@ def test_unsupported_lists_each_banned_variant_with_every_source_in_variant_orde
 # ---------------------------------------------------------------- 上手支援樣態表
 
 
-def test_repo_table_registers_every_issuer_with_the_operator_list():
+def test_repo_table_registers_every_issuer_with_legal_variants():
+    """結構斷言：註冊表的每家上手都有上手編號、都登記在支援樣態表，值都是合法樣態。
+
+    每家不支援哪些樣態依作業人員清單（`config/issuer_prefixes.toml`），不在這裡逐家寫死。
+    """
     table = CONFIG.unsupported_variants
-    assert set(table) == set(CONFIG.issuer_prefixes.values())
-    for code in ("BARC", "HSBC", "MS", "CA", "JPM"):
-        assert table[code] == {V.KI_PERIODIC}, code
-    for code in ("BNP", "SG", "CITI", "NATIXIS", "NOMURA"):
-        assert table[code] == frozenset(), code
-    assert table["UBS"] == {V.NON_CALL_EQUALS_TENOR}
-    assert table["DBS"] == set(Variant)
+    prefixed = set(CONFIG.issuer_prefixes.values())
+    registered = {issuer.code for issuer in REGISTRY}
+    assert registered - prefixed == set(), "註冊表有範本、上手編號對照卻沒有的上手"
+    assert set(table) == prefixed
+    for code, banned in table.items():
+        assert isinstance(banned, frozenset), code
+        assert all(isinstance(v, Variant) for v in banned), code
 
 
 def prefixes_with(tmp_path: Path, old: str, new: str) -> Path:

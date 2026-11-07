@@ -16,7 +16,6 @@ DACN（`DacnSpec`，docs/checker/templates/natixis-zh-dacn.md、natixis-zh-dacn-
 from __future__ import annotations
 
 import datetime as dt
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
@@ -26,7 +25,7 @@ from typing import Any
 import fitz
 
 from harness import CONFIG, STANDARD, check_all, iis_path
-from pdf_writer import FONT, Edit, PdfWriter, require_used
+from pdf_writer import FONT, Edit, FlowDoc, FlowLayout, require_used, text_width, tokens
 from reference_synth import (
     FITCH,
     MOODYS,
@@ -214,99 +213,53 @@ class DacnSpec(Spec):
         return DACN_NAME["en"].format(tenor=self.tenor, ccy=self.ccy)
 
 
-def _tokens(text: str) -> list[str]:
-    return re.findall(r"[\x21-\x7e]+|\s|.", text)
+LAYOUT = FlowLayout(right=565, gap=12, table_size=7)
 
 
-def _width(text: str, size: float) -> float:
-    return sum(fitz.get_text_length(c, fontname="helv", fontsize=size) if ord(c) < 256 else size for c in text)
+def _article(d: FlowDoc, n: int, title: str) -> None:
+    if d.section == "cover" or d.section.startswith("art") or d.section == "ch一":
+        d.section = f"art{n}"
+    d.text(54, f"{n}. {title}", 72)
 
 
-class _Doc:
-    """逐行排版；文字依目前段落代號（`section`）套用改字，超過寬度時換行（英數字不拆開）。"""
-
-    def __init__(self, edits: Sequence[Edit], used: set[Edit], kind: str = "ts", width: float = 565):
-        self.w = PdfWriter(edits, kind, used)
-        self.section = "cover"
-        self.width = width
-
-    @property
-    def section(self) -> str:
-        return self.w.section
-
-    @section.setter
-    def section(self, value: str) -> None:
-        self.w.section = value
-
-    def text(self, x: float, text: str, cont: float | None = None, gap: float = 12, size: float = 10) -> None:
-        text = self.w.edit(text)
-        if not text:
-            return
-        nxt = cont if cont is not None else x
-        cur, used, here = "", 0.0, x
-        with self.w.verbatim():
-            for tok in _tokens(text):
-                tw = _width(tok, size)
-                if used + tw > self.width - here and cur.strip():
-                    self.w.line(here, cur.strip(), size=size, gap=gap)
-                    cur, used, here = "", 0.0, nxt
-                    if tok.isspace():
-                        continue
-                cur += tok
-                used += tw
-            self.w.line(here, cur.strip(), size=size, gap=gap)
-
-    def chapter(self, zh: str, name: str) -> None:
-        self.w.new_page()
-        self.section = f"ch{zh}"
-        self.w.line(36, f"第{zh}章、{name}", gap=16)
-
-    def article(self, n: int, title: str) -> None:
-        if self.section == "cover" or self.section.startswith("art") or self.section == "ch一":
-            self.section = f"art{n}"
-        self.text(54, f"{n}. {title}", 72)
-
-    def labeled(self, label: list[str], values: list[str]) -> None:
-        """封面一列「標籤：值」：值在 x 241 逐行，標籤（可拆兩行）放在值的中間。"""
-        lines = []
-        for v in values:
-            v = self.w.edit(v)
-            cur = ""
-            for tok in _tokens(v):
-                if _width(cur + tok, 10) > 320 and cur.strip():
-                    lines.append(cur.strip())
-                    cur = "" if tok.isspace() else tok
-                else:
-                    cur += tok
-            if cur.strip():
+def _labeled(d: FlowDoc, label: list[str], values: list[str]) -> None:
+    """封面一列「標籤：值」：值在 x 241 逐行，標籤（可拆兩行）放在值的中間。"""
+    lines = []
+    for v in values:
+        v = d.w.edit(v)
+        cur = ""
+        for tok in tokens(v):
+            if text_width(cur + tok, 10) > 320 and cur.strip():
                 lines.append(cur.strip())
-        h = 12 * max(len(lines), len(label)) + 6
-        self.w.need(h)
-        top = self.w.y
-        mid = top + 12 * (len(lines) - 1) / 2
-        for k, t in enumerate(label):
-            self.w.put(41, mid + 12 * (k - (len(label) - 1) / 2), t)
-        with self.w.verbatim():
-            for k, t in enumerate(lines):
-                self.w.put(241, top + 12 * k, t)
-        self.w.y = top + h
+                cur = "" if tok.isspace() else tok
+            else:
+                cur += tok
+        if cur.strip():
+            lines.append(cur.strip())
+    h = 12 * max(len(lines), len(label)) + 6
+    d.w.need(h)
+    top = d.w.y
+    mid = top + 12 * (len(lines) - 1) / 2
+    for k, t in enumerate(label):
+        d.w.put(41, mid + 12 * (k - (len(label) - 1) / 2), t)
+    with d.w.verbatim():
+        for k, t in enumerate(lines):
+            d.w.put(241, top + 12 * k, t)
+    d.w.y = top + h
 
-    def centered_row(self, cells: Sequence[tuple[float, str]], gap: float, size: float = 7) -> None:
-        """一列表格，每格置中於欄中心 x。"""
-        self.w.row([(cx - _width(t, size) / 2, t) for cx, t in cells], gap=gap, size=size)
 
-    def furnish(self, s: Spec) -> fitz.Document:
-        """每頁頁底：英文名稱兩行、頁碼「第N頁/共計M頁」、分類標記（真實文件的頁尾，擷取時排除）。"""
-        doc = self.w.doc
-        en = s.name_en_inner
-        # DACN 名稱較長，頁尾第二行從「Principal Protected, …」開始（FCN 從「Protected, …」）
-        cut = en.index("(Non Principal") + len("(Non" if s.dacn else "(Non Principal")
-        for p, page in enumerate(doc):
-            page.insert_text((36, 796), en[:cut], fontname=FONT, fontsize=8)  # en dash 要用 CJK 字型才畫得出來
-            page.insert_text((36, 808), en[cut:].strip(), fontname=FONT, fontsize=8)
-            page.insert_text((486, 820), f"第{p + 1}頁/共計{len(doc)}頁", fontname=FONT, fontsize=8)
-            page.insert_text((20, 832), "C2 - Inter nal Natixis", fontname="helv", fontsize=3)
-        return doc
+def _furnish(d: FlowDoc, s: Spec) -> fitz.Document:
+    """每頁頁底：英文名稱兩行、頁碼「第N頁/共計M頁」、分類標記（真實文件的頁尾，擷取時排除）。"""
+    doc = d.w.doc
+    en = s.name_en_inner
+    # DACN 名稱較長，頁尾第二行從「Principal Protected, …」開始（FCN 從「Protected, …」）
+    cut = en.index("(Non Principal") + len("(Non" if s.dacn else "(Non Principal")
+    for p, page in enumerate(doc):
+        page.insert_text((36, 796), en[:cut], fontname=FONT, fontsize=8)  # en dash 要用 CJK 字型才畫得出來
+        page.insert_text((36, 808), en[cut:].strip(), fontname=FONT, fontsize=8)
+        page.insert_text((486, 820), f"第{p + 1}頁/共計{len(doc)}頁", fontname=FONT, fontsize=8)
+        page.insert_text((20, 832), "C2 - Inter nal Natixis", fontname="helv", fontsize=3)
+    return doc
 
 
 def _warnings(s: Spec) -> list[str]:
@@ -331,7 +284,7 @@ def _warnings(s: Spec) -> list[str]:
 # ---------------------------------------------------------------- 說明書
 
 
-def _cover(d: _Doc, s: Spec) -> None:
+def _cover(d: FlowDoc, s: Spec) -> None:
     w = d.w
     w.line(252, "中文產品說明書", gap=18)
     w.line(200, "(適用於專業投資人及OSU 客戶)", gap=18)
@@ -360,7 +313,7 @@ def _cover(d: _Doc, s: Spec) -> None:
         ([f"{dl}之名稱、電話及地", "址："], [f"{dl}：{DIST['name']}", f"電話： {PHONE}", f"地址：{ADDRESS}"]),
         ([f"{dl}審查通過之日期及", "文號："], [s.date(s.approval)]),
     ):
-        d.labeled(label, values)
+        _labeled(d, label, values)
     w.line(36, "本商品之投資風險警語：", gap=16)
     d.section = "warn"
     for k, t in enumerate(_warnings(s), 1):
@@ -383,7 +336,7 @@ def _heads(s: Spec, *, codes: bool) -> list[tuple[float, list[str]]]:
     return cols
 
 
-def _table(d: _Doc, s: Spec, *, codes: bool) -> None:
+def _table(d: FlowDoc, s: Spec, *, codes: bool) -> None:
     """連結標的表（`codes`）或情境價格表：表頭每欄拆成多行置中；每檔一列，欄序 KO → KI → K。"""
     cols = _heads(s, codes=codes)
     d.w.need(90 + 40 * s.count)
@@ -424,7 +377,7 @@ def _table(d: _Doc, s: Spec, *, codes: bool) -> None:
         d.centered_row(second, gap=16, size=8)
 
 
-def _article12(d: _Doc, s: Spec) -> None:
+def _article12(d: FlowDoc, s: Spec) -> None:
     d.text(90, "(1) 商品年期：" + f"{s.tenor} 個月(惟受第一章第14、18 項及第三章第1(9)項所述事件之限制)", 117)
     d.text(90, f"(2) 交易日/期初進場日：{s.date(s.trade_date)}，並依「中斷日」進行調整。", 117)
     d.text(90, f"(3) 發行日：{s.date(s.issue_date)}", 117)
@@ -501,7 +454,7 @@ def _article12(d: _Doc, s: Spec) -> None:
     d.text(90, f"({n}) 最終評價日：{s.date(s.final_date)}，並依「中斷日」進行調整。", 117)
 
 
-def _article15(d: _Doc, s: Spec) -> None:
+def _article15(d: FlowDoc, s: Spec) -> None:
     d.text(72, "(1) 若自動提前到期事件未發生，則持有至到期日贖回之公式如下：")
     d.text(
         72,
@@ -547,7 +500,7 @@ def _article15(d: _Doc, s: Spec) -> None:
     )
 
 
-def _article16(d: _Doc, s: Spec) -> None:
+def _article16(d: FlowDoc, s: Spec) -> None:
     ko = (
         f"從第{CN[s.first_callable - 1]}個配息觀察期間結束日(含)到最終評價日({s.ko_final})之每一預定交易日每日觀察，並依「中斷日」進行調整"
         if s.ko_obs == "D"
@@ -725,13 +678,13 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     used: set[Edit] = set()
     if iis and path.stem.endswith("_TS"):
         build_iis_pdf(iis_path(path), s, edits=edits, used=used)
-    d = _Doc(edits, used)
+    d = LAYOUT.doc(edits, used)
     _cover(d, s)
 
     d.chapter("一", "商品基本資料")
     d.text(36, "本商品係依據基本公開說明書以英國法下之歐洲中期債券之全球無記名債券形式，以面額100%發行。")
     for n in range(1, 27):
-        d.article(n, article_title(n))
+        _article(d, n, article_title(n))
         if n == 1:
             d.text(72, f"{s.name_zh}(下稱「本商品」)")
             d.text(72, s.name_en_inner)
@@ -897,7 +850,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
     d.chapter("五", "特別記載事項")
     d.text(36, "1. 本商品於任何時候皆不得直接或間接於美國境內募集或銷售。")
-    doc = d.furnish(s)
+    doc = _furnish(d, s)
     d.w.flush()
     doc.save(path)
     doc.close()
@@ -910,7 +863,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """Natixis 中文投資人須知（docs/checker/templates/natixis-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
-    d = _Doc(edits, set() if used is None else used, "iis", width=585)
+    d = LAYOUT.doc(edits, set() if used is None else used, "iis", right=585)
     w = d.w
     dt_ = s.date_iis
     dl = s.distributor

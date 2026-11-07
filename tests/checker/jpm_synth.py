@@ -18,10 +18,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-import fitz
-
 from harness import CONFIG, STANDARD, check_all, iis_path
-from pdf_writer import FONT, Edit, PdfWriter, require_used
+from pdf_writer import FONT, Edit, FlowDoc, FlowLayout, PdfWriter, require_used, split_digits
 from reference_synth import (
     FITCH,
     MOODYS,
@@ -134,72 +132,39 @@ class Spec(ProductSpec):
         return f"{Decimal(x):,.0f}{self.currency_zh}"
 
 
-class _Doc:
-    """逐行排版；文字依目前段落代號（`section`）套用改字，超過寬度時換行（數字不拆開）。"""
+LAYOUT = FlowLayout(right=555, keep_width=True, split=split_digits, chapter_fmt="{n}. {name}", chapter_x=20)
 
-    def __init__(self, edits: Sequence[Edit], used: set[Edit], kind: str = "ts"):
-        self.w = PdfWriter(edits, kind, used)
-        self.section = "cover"
 
-    @property
-    def section(self) -> str:
-        return self.w.section
+def _bullet(d: FlowDoc, text: str, x: float = 35) -> None:
+    d.w.line(x, "●")
+    d.text(x + 17, text)
 
-    @section.setter
-    def section(self, value: str) -> None:
-        self.w.section = value
 
-    def text(self, x: float, text: str, cont: float | None = None) -> None:
-        text = self.w.edit(text)
-        if not text:
-            return
-        width, cur, used, first = 555 - x, "", 0.0, True
-        with self.w.verbatim():
-            for ch in text:
-                cw = fitz.get_text_length(ch, fontname="helv", fontsize=10) if ord(ch) < 256 else 10
-                if used + cw > width and cur and not (cur[-1] in "0123456789,." and ch in "0123456789,."):
-                    self.w.line(x if first else (cont if cont is not None else x), cur)
-                    cur, used, first = "", 0.0, False
-                cur += ch
-                used += cw
-            self.w.line(x if first else (cont if cont is not None else x), cur)
+def _article(d: FlowDoc, n: int, title: str) -> None:
+    """第 I 部分各條段落代號 art{n}；條號 x 15，9 以前獨立一行、標題下一行 x 35，10 以後同一行。"""
+    if d.section.startswith("art") or d.section in ("cover", "chI"):
+        d.section = f"art{n}"
+    if n < 10:
+        d.w.line(15, f"{n}.")
+        d.text(35, title)
+    else:
+        d.text(15, f"{n}. {title}", 35)
 
-    def cell(self, x: float, text: str) -> None:
-        self.w.line(x, text, gap=13)
 
-    def bullet(self, text: str, x: float = 35) -> None:
-        self.w.line(x, "●")
-        self.text(x + 17, text)
-
-    def chapter(self, roman: str, name: str) -> None:
-        self.w.new_page()
-        self.section = f"ch{roman}"
-        self.w.line(20, f"{roman}. {name}", gap=16)
-
-    def article(self, n: int, title: str) -> None:
-        """第 I 部分各條段落代號 art{n}；條號 x 15，9 以前獨立一行、標題下一行 x 35，10 以後同一行。"""
-        if self.section.startswith("art") or self.section in ("cover", "chI"):
-            self.section = f"art{n}"
-        if n < 10:
-            self.w.line(15, f"{n}.")
-            self.text(35, title)
-        else:
-            self.text(15, f"{n}. {title}", 35)
-
-    def pair(self, label: str, values: Sequence[str]) -> None:
-        """封面兩欄表的一項：標籤 x 20、第一個值同一列 x 190，其餘值接在下面。"""
-        self.w.need(13)
-        with self.w.verbatim():
-            self.w.put(20, self.w.y, self.w.edit(label))
-        for v in values:
-            self.text(190, v)
+def _pair(d: FlowDoc, label: str, values: Sequence[str]) -> None:
+    """封面兩欄表的一項：標籤 x 20、第一個值同一列 x 190，其餘值接在下面。"""
+    d.w.need(13)
+    with d.w.verbatim():
+        d.w.put(20, d.w.y, d.w.edit(label))
+    for v in values:
+        d.text(190, v)
 
 
 # 標的表各欄的左緣（真實樣本的欄序：列號、名稱、彭博代碼、交易所、期初價格、執行價、自動提前出場價、觸碰價）
 TABLE_X = {"i": 40, "name": 60, "code": 150, "exchange": 200, "initial": 290, "strike": 365, "ko": 440, "ki": 515}
 
 
-def _price_table(d: _Doc, s: Spec, *, iis: bool = False) -> None:
+def _price_table(d: FlowDoc, s: Spec, *, iis: bool = False) -> None:
     """第 9 項標的表（8 號字，投資人須知商品簡介同一張表）：表頭一列（名稱欄拆兩行；投資人須知「自動提前出場價(i)」
     拆成「自動提前」／「出場價(i)」）；每檔一列，價格下一行是幣別字（真實樣本）。`iis_ticker_wrap` 時投資人須知的
     彭博代碼拆成代號／交易所碼兩行。"""
@@ -231,10 +196,10 @@ def _price_table(d: _Doc, s: Spec, *, iis: bool = False) -> None:
         d.w.row(tail, gap=16, size=8)
 
 
-def _payoff(d: _Doc, s: Spec, x: float, *, iis: bool = False) -> None:
+def _payoff(d: FlowDoc, s: Spec, x: float, *, iis: bool = False) -> None:
     """第 8 項（投資人須知贖回價金之計算同句型）：自動提前出場與到期贖回；`iis` 的每日觀察一律寫「評價日(t)」。"""
     a, k, n, worst = s.annual, s.first_callable, s.tenor, s.worst
-    d.bullet("於自動提前出場贖回金額付款日，發行機構將依下列計算公式以計價幣別給付：", x)
+    _bullet(d, "於自動提前出場贖回金額付款日，發行機構將依下列計算公式以計價幣別給付：", x)
     if s.ko_obs == "D":
         d.text(x, "自動提前出場贖回金額：每單位面額 x 100% + 自動提前出場配息金額")
         d.text(x, f"自動提前出場配息金額：每單位面額 x {a:.2f}% x 1/12 x n/N")
@@ -260,7 +225,7 @@ def _payoff(d: _Doc, s: Spec, x: float, *, iis: bool = False) -> None:
         when = f"於任一評價日(t)(t={k}-{n})" if k < n else f"於任一評價日(t)(t={k})"
     d.text(x, f"自動提前出場評價日：{when}，並應受中斷日效果條款之影響。")
     d.text(x, f"自動提前出場價：{s.ko:.2f}% x 期初價格")
-    d.bullet("於到期日，發行機構將依下列計算公式以計價幣別給付：", x)
+    _bullet(d, "於到期日，發行機構將依下列計算公式以計價幣別給付：", x)
     d.text(x, "到期贖回金額：若未發生自動提前出場事件，到期日依下列方式贖回：")
     if s.ki == "none":
         d.text(x, f"(1) 若於最後評價日時{worst}之股票收盤價大於或等於其執行價：每單位面額 x 100%")
@@ -284,7 +249,7 @@ def _payoff(d: _Doc, s: Spec, x: float, *, iis: bool = False) -> None:
         d.text(x, f"觸碰價：{s.ki_pct:.2f}% x 期初價格")
 
 
-def _dates(d: _Doc, s: Spec) -> None:
+def _dates(d: FlowDoc, s: Spec) -> None:
     d.text(25, f"(1) 商品期間：{s.tenor}個月")
     d.text(25, f"(2) 交易日/期初評價日：{jdate(s.trade_date)}")
     d.text(25, f"(3) 發行日：{jdate(s.issue_date)}，若該日非為相關結算系統之營業日，則發行日為次一營業日。")
@@ -319,7 +284,7 @@ def _dates(d: _Doc, s: Spec) -> None:
     d.section = "art12"
 
 
-def _scenario(d: _Doc, s: Spec) -> None:
+def _scenario(d: FlowDoc, s: Spec) -> None:
     d.text(25, "(3) 以情境分析解說最大可能獲利、損失及其他狀況之平均年化報酬率：")
     d.text(35, f"假設原計價幣別本金為{s.money(s.denom)}，若未發生第I部分第17項所定情形為前提：")
     d.section = "art15.table"
@@ -386,7 +351,7 @@ def _warnings(*, iis: bool = False) -> list[str]:
     ]
 
 
-def _fee_cells(d: _Doc) -> None:
+def _fee_cells(d: FlowDoc) -> None:
     for t in (
         "費用項目",
         "費率（百分比）",
@@ -426,7 +391,7 @@ def _page_marks(w: PdfWriter) -> None:
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """JPM 中文投資人須知（docs/checker/templates/jpm-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
-    d = _Doc(edits, set() if used is None else used, "iis")
+    d = LAYOUT.doc(edits, set() if used is None else used, "iis")
     w = d.w
     trustee = s.product_code if s.trustee_code is None else s.trustee_code
     w.line(250, "中文投資人須知", gap=14)
@@ -450,24 +415,25 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
     d.section = "summary"
     w.line(15, "二、境外結構型商品事項(詳細內容及名詞定義請見中文產品說明書)")
     w.line(15, "1. 商品簡介：")
-    d.bullet("受託對象：專業投資人及OSU客戶")
-    d.bullet("本商品風險程度：參考列載於本投資人須知封面的「風險警語」部份第一項")
-    d.bullet("保證機構之長期債務信用評等：" + ratings_text(s.guarantor_ratings))
-    d.bullet("本商品之發行評等：專業投資人不適用")
-    d.bullet(f"計價幣別：{s.currency_zh}")
-    d.bullet("原計價幣別本金保本率：不保本")
-    d.bullet("原計價幣別本金達成100%保本之各項條件：不適用，本商品不保本。")
-    d.bullet("連結標的資產：")
+    _bullet(d, "受託對象：專業投資人及OSU客戶")
+    _bullet(d, "本商品風險程度：參考列載於本投資人須知封面的「風險警語」部份第一項")
+    _bullet(d, "保證機構之長期債務信用評等：" + ratings_text(s.guarantor_ratings))
+    _bullet(d, "本商品之發行評等：專業投資人不適用")
+    _bullet(d, f"計價幣別：{s.currency_zh}")
+    _bullet(d, "原計價幣別本金保本率：不保本")
+    _bullet(d, "原計價幣別本金達成100%保本之各項條件：不適用，本商品不保本。")
+    _bullet(d, "連結標的資產：")
     _price_table(d, s, iis=True)
-    d.bullet(
+    _bullet(
+        d,
         f"商品年期：{s.tenor}個月；交易日/期初評價日：{jdate(s.trade_date)}；發行日：{jdate(s.issue_date)}，"
-        f"若該日非為相關結算系統之營業日，則發行日為次一營業日；最後評價日：{jdate(s.final_date)}"
+        f"若該日非為相關結算系統之營業日，則發行日為次一營業日；最後評價日：{jdate(s.final_date)}",
     )
-    d.bullet(f"到期日：{jdate(s.maturity_date)}，為最後評價日後第3營業日。")
-    d.bullet(f"開始受理贖回日期：{REDEMPTION_START}")
+    _bullet(d, f"到期日：{jdate(s.maturity_date)}，為最後評價日後第3營業日。")
+    _bullet(d, f"開始受理贖回日期：{REDEMPTION_START}")
     d.section = "coupon"
     w.line(15, "2. 收益分配事項:(詳細說明及相關名詞定義請見中文產品說明書)")
-    d.bullet("於配息支付日(t)，發行機構將依下列計算公式以計價幣別給付：")
+    _bullet(d, "於配息支付日(t)，發行機構將依下列計算公式以計價幣別給付：")
     d.text(35, f"配息金額：每單位面額 x {s.annual:.2f}% x 1/12")
     d.section = "redeem"
     w.line(15, "3. 贖回價金之計算:(詳細說明及相關名詞定義請見中文產品說明書)")
@@ -501,25 +467,26 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     used: set[Edit] = set()  # 說明書與投資人須知共用：改字換到哪一份都算
     if iis and path.stem.endswith("_TS"):
         build_iis_pdf(iis_path(path), s, edits=edits, used=used)
-    d = _Doc(edits, used)
+    d = LAYOUT.doc(edits, used)
     w = d.w
     trustee = s.product_code if s.trustee_code is None else s.trustee_code
     w.line(250, "中文產品說明書", gap=16)
-    d.pair("商品代號：", [f"TDCC商品代號為{s.product_code}、受託機構商品代號為{trustee}"])
-    d.pair("國際證券編碼(ISIN)：", ["XS1999900002"])
-    d.pair("商品中文名稱：", [f"{s.name_zh}(下稱「本商品」)"])
-    d.pair("商品英文名稱：", [s.name_en])
-    d.pair("商品種類：", [PRODUCT_TYPE])
-    d.pair("發行機構註冊地：", [f"發行機構為{ISSUER}，依荷蘭法律設立登記之公司"])
-    d.pair("計價幣別：", [s.currency_zh])
-    d.pair("總代理人之名稱、電話及地址：", [f"{AGENT}、電話：(02) 0000-0000", "地址：臺北市信義區虛構路1號"])
-    d.pair("保證機構之名稱及地址：", [GUARANTOR["cover"], "地址：1 Fictional Street, Columbus"])
-    d.pair(
+    _pair(d, "商品代號：", [f"TDCC商品代號為{s.product_code}、受託機構商品代號為{trustee}"])
+    _pair(d, "國際證券編碼(ISIN)：", ["XS1999900002"])
+    _pair(d, "商品中文名稱：", [f"{s.name_zh}(下稱「本商品」)"])
+    _pair(d, "商品英文名稱：", [s.name_en])
+    _pair(d, "商品種類：", [PRODUCT_TYPE])
+    _pair(d, "發行機構註冊地：", [f"發行機構為{ISSUER}，依荷蘭法律設立登記之公司"])
+    _pair(d, "計價幣別：", [s.currency_zh])
+    _pair(d, "總代理人之名稱、電話及地址：", [f"{AGENT}、電話：(02) 0000-0000", "地址：臺北市信義區虛構路1號"])
+    _pair(d, "保證機構之名稱及地址：", [GUARANTOR["cover"], "地址：1 Fictional Street, Columbus"])
+    _pair(
+        d,
         "受託機構之名稱、電話及地址：",
         [f"{DIST['name']}、電話：{PHONE}", f"地址：{DIST['address']}(營業活動所在地)"],
     )
-    d.pair("受託機構審查通過之日期及文號：", [jdate(APPROVAL)])
-    d.pair("公會審查通過之日期及文號：", ["專業投資人不適用"])
+    _pair(d, "受託機構審查通過之日期及文號：", [jdate(APPROVAL)])
+    _pair(d, "公會審查通過之日期及文號：", ["專業投資人不適用"])
     w.line(20, "商品之投資風險警語：")
     warnings = _warnings()
     for n, t in enumerate(warnings, 1):
@@ -543,12 +510,12 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         15: "投資收益計算方法，包含本金虧損之機率及以情境分析解說最大可能獲利、損失及其他狀況之平均年化報酬率：",
     }
     for n in range(1, 27):
-        d.article(n, titles.get(n, f"第{n}項說明（不核對）"))
+        _article(d, n, titles.get(n, f"第{n}項說明（不核對）"))
         if n == 5:
             d.text(35, f"每單位面額：{s.money(s.denom)}")
             d.text(35, f"計價幣別：{s.currency_zh}")
         elif n == 8:
-            d.bullet("於配息支付日(t)，發行機構將依下列計算公式以計價幣別給付：")
+            _bullet(d, "於配息支付日(t)，發行機構將依下列計算公式以計價幣別給付：")
             d.text(35, f"配息金額：每單位面額 x {s.annual:.2f}% x 1/12")
             _payoff(d, s, 35)
         elif n == 9:
@@ -591,7 +558,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     ):
         d.text(25, f"({n}) {title}")
         for t in (f"事業名稱：{name}", f"設立日期：{since}", f"營業所在地：{place}", f"負責人姓名：{head}"):
-            d.bullet(t)
+            _bullet(d, t)
     d.w.line(15, "4.")
     d.text(32, "交易架構說明：不核對。")
 
@@ -606,8 +573,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     d.chapter("IV", "一般交易事項")
     d.w.line(15, "1.")
     d.text(32, "商品開始受理申購、受理贖回日期及後續受理贖回日期")
-    d.bullet(f"開始受理申購日期：{jdate(s.trade_date)}")
-    d.bullet(f"開始受理贖回日期：{REDEMPTION_START}")
+    _bullet(d, f"開始受理申購日期：{jdate(s.trade_date)}")
+    _bullet(d, f"開始受理贖回日期：{REDEMPTION_START}")
     d.w.line(15, "2.")
     d.text(32, "投資人應負擔的各項費用及金額或計算基準之表列")
     d.text(32, "本商品係特定金錢信託/受託買賣項下之投資標的，投資人同意下列相關費用：")
