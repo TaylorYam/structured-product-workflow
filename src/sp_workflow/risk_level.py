@@ -103,6 +103,11 @@ class RiskTerms:
     tenor_months: int | None
     underlyings: tuple[str | None, ...]  # UL_1～UL_5
 
+    def price_date(self, price_dates: Sequence[dt.date]) -> dt.date | None:
+        """這檔用哪一份股價檔（`price_file_on`）；沒有交易日或交易日以前（含）沒有股價檔時 None。
+        `assess` 與讀波動率的 `_volatilities` 都問這裡，取價日只在一處決定（#496）。"""
+        return None if self.trade_date is None else price_file_on(self.trade_date, price_dates)
+
 
 @dataclass(frozen=True)
 class Volatility:
@@ -228,7 +233,7 @@ def assess(
         problems.append("缺標的")
     elif not first:
         problems.append("缺 UL_1（標的種類看第一檔標的）")
-    price_date = None if trade_date is None else price_file_on(trade_date, price_dates)
+    price_date = terms.price_date(price_dates)
     if trade_date is not None and price_date is None:
         problems.append(f"沒有取價日在交易日 {trade_date} 以前（含）的股價檔")
     found: list[tuple[str, Decimal]] = []
@@ -426,7 +431,7 @@ def _volatilities(
     wanted = {
         (price_date, code)
         for t in terms
-        if t.trade_date is not None and (price_date := price_file_on(t.trade_date, price_dates)) is not None
+        if (price_date := t.price_date(price_dates)) is not None
         for code in t.underlyings
         if code
     }

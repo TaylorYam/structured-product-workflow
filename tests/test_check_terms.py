@@ -194,6 +194,13 @@ def test_without_a_later_price_file_it_waits_for_prices() -> None:
     assert result.reason == "還沒有取價日比 Strike date 2026-10-16 晚的股價檔"
 
 
+def test_the_terms_choose_the_price_file_for_the_calculation_and_the_quote_loader() -> None:
+    """#496：`calculate` 與讀股價的 `_quotes` 都問 `ProductTerms.price_date`。"""
+    assert product(strike_date=FRI).price_date([THU, FRI, MON, TUE]) == MON, "Strike date 當天的不算"
+    assert product(strike_date=FRI).price_date([THU, FRI]) is None
+    assert product(strike_date=None).price_date([MON]) is None
+
+
 def test_next_day_open_uses_the_file_after_the_strike_date() -> None:
     """明日開盤價（#101）：交易日週四、Strike date 週五，用週一的檔。"""
     found = {

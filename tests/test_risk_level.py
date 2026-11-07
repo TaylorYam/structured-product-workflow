@@ -303,6 +303,16 @@ def test_the_price_file_is_the_trade_date_one_else_the_latest_before() -> None:
     assert before.price_date == sept_3 and before.level == "RR4", "取交易日以前最近的一份，不用之後的"
 
 
+def test_the_terms_choose_the_price_file_for_the_assessment_and_the_volatility_loader() -> None:
+    """#496：`assess` 與讀波動率的 `_volatilities` 都問 `RiskTerms.price_date`。"""
+    sept_3, sept_8 = dt.date(2026, 9, 3), dt.date(2026, 9, 8)
+
+    assert terms().price_date([sept_3, TRADE, sept_8]) == TRADE
+    assert terms().price_date([sept_3, sept_8]) == sept_3
+    assert terms().price_date([sept_8]) is None
+    assert terms(trade_date=None).price_date([sept_3]) is None
+
+
 # ---------- 算不出來：回填與待算 ----------
 
 
