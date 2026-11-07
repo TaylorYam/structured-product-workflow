@@ -102,6 +102,11 @@ class ProductTerms:
     upfront_pct: Decimal | None  # 百分點（起單建檔的價格 98.01 → 1.99）
     missing: tuple[str, ...] = ()  # 空白的必填欄（畫面的欄名，依 `product_record.REQUIRED` 的順序）
 
+    def price_date(self, price_dates: Sequence[dt.date]) -> dt.date | None:
+        """這檔用哪一份股價檔（`price_file_after`）；沒有 Strike date 或還沒有比它晚的股價檔時 None。
+        `calculate` 與讀股價的 `_quotes` 都問這裡，取價日只在一處決定（#496）。"""
+        return None if self.strike_date is None else price_file_after(self.strike_date, price_dates)
+
 
 @dataclass(frozen=True)
 class TradeRow:
@@ -161,7 +166,7 @@ def calculate(
     elif product.strike_date is None:
         problems.append("沒有 Strike date，找不到股價檔")
     else:
-        price_date = price_file_after(product.strike_date, price_dates)
+        price_date = product.price_date(price_dates)
         if price_date is None:
             waiting_prices = True
             notes.append(f"還沒有取價日比 Strike date {product.strike_date} 晚的股價檔")
@@ -584,7 +589,7 @@ def _quotes(
     wanted = {
         (price_date, code)
         for p in products
-        if p.strike_date is not None and (price_date := price_file_after(p.strike_date, price_dates)) is not None
+        if (price_date := p.price_date(price_dates)) is not None
         for code in p.underlyings
         if code
     }

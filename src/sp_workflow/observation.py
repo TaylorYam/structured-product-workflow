@@ -51,6 +51,7 @@ from typing import TYPE_CHECKING
 
 from fcn_checker.products import rule_or_fcn
 from sp_workflow.check_terms import NO_BARRIER as NO_KI
+from sp_workflow.close_prices import latest_close_date
 from sp_workflow.lifecycle import (
     DELIVERY,
     KO,
@@ -139,23 +140,32 @@ class Terms:
         product, non_call, tenor = p["product"], p["non_call_months"], p["tenor_months"]
         rule = rule_or_fcn(product)  # 比價政策問商品規則；不支援的商品種類照 FCN（#435）
         return cls(
-            found.tdcc,
-            p["ko_type"],
-            p["barrier_type"],
-            p["strike_date"],
-            p["final_valuation_date"],
-            tuple(sorted(d for d in (found.autocall or {}).values() if d is not None)),
-            tuple(
-                Underlying(u.seq, u.code, u.initial, u.strike, u.ki, u.ko, found.price_basis(u.seq), u.lookback)
+            tdcc=found.tdcc,
+            ko_type=p["ko_type"],
+            barrier_type=p["barrier_type"],
+            strike_date=p["strike_date"],
+            final_date=p["final_valuation_date"],
+            autocall=tuple(sorted(d for d in (found.autocall or {}).values() if d is not None)),
+            underlyings=tuple(
+                Underlying(
+                    seq=u.seq,
+                    code=u.code,
+                    initial=u.initial,
+                    strike=u.strike,
+                    ki=u.ki,
+                    ko=u.ko,
+                    basis=found.price_basis(u.seq),
+                    lookback=u.lookback,
+                )
                 for u in found.prices
             ),
-            rule.no_early_exit(non_call, tenor),
-            rule.final_date_can_ko(),
-            p["trade_date"],
-            p["lookback_end_date"],
-            p["strike_pct"],
-            is_locked(found) and found.source == ProductSource.BACKFILL,
-            rule.ko_needs_review(p["ko_pct"]),
+            no_autocall=rule.no_early_exit(non_call, tenor),
+            final_date_callable=rule.final_date_can_ko(),
+            trade_date=p["trade_date"],
+            lookback_end=p["lookback_end_date"],
+            strike_pct=p["strike_pct"],
+            keep_strike=is_locked(found) and found.source == ProductSource.BACKFILL,
+            manual_ko=rule.ko_needs_review(p["ko_pct"]),
         )
 
 
@@ -519,7 +529,7 @@ def _seq(terms: Terms, code: str) -> int:
 
 @dataclass(frozen=True)
 class Observed:
-    """一檔比價後的狀態（給完成訊息看）。"""
+    """一檔比價後的狀態（給完成訊息看）；`workflow.pricing_status` 一列讀回來也是它（`_stored_status`）。"""
 
     tdcc: str
     status: str
@@ -567,7 +577,7 @@ def observe_all(
     還沒出場的比價狀態改成待確認（事件不動）。
     """
     with conn.transaction():
-        (through,) = conn.execute("SELECT max(close_date) FROM workflow.close_price").fetchone()
+        through = latest_close_date(conn)
         book = SplitBook(load_splits(conn))
         refresh_basis(conn, book)  # 價格基準日依目前的拆股登記（#275）
         terms, locked, not_done = _load_terms(conn)
@@ -583,17 +593,8 @@ def observe_all(
             again = t.tdcc in revisit and all(e.source == OBSERVATION for e in events)
             # 已出場：不再比價（ADR 0020），已比到的日期與 KI 沿用上一次；沒存過 KI 的寫 KI 種類（#198）
             if events and not again:
-                before = stored.get(t.tdcc)
                 results.append(
-                    Observed(
-                        t.tdcc,
-                        EXITED,
-                        _exit_reason(events),
-                        before.observed_through if before else None,
-                        locked[t.tdcc],
-                        before.ki if before and before.ki else _ki_text(t),
-                        before.ki_touch if before and before.ki else None,
-                    )
+                    _carried(stored.get(t.tdcc), t.tdcc, EXITED, _exit_reason(events), locked[t.tdcc], _ki_text(t))
                 )
                 continue
             outcome = observe(t, closes, calendar, through, book, jumps)
@@ -633,34 +634,30 @@ def observe_all(
         exited = current_events_of(conn, [tdcc for tdcc in not_done if tdcc in stored])
         for tdcc, (status, reason) in not_done.items():
             if exited.get(tdcc):  # 已出場的商品，核對條件後來不是完成也不影響
-                before = stored[tdcc]
-                results.append(
-                    Observed(
-                        tdcc,
-                        EXITED,
-                        _exit_reason(exited[tdcc]),
-                        before.observed_through,
-                        locked[tdcc],
-                        before.ki or "",
-                        before.ki_touch,
-                    )
-                )
+                results.append(_carried(stored[tdcc], tdcc, EXITED, _exit_reason(exited[tdcc]), locked[tdcc]))
             elif tdcc in stored:
                 text = f"核對條件{status}，這次沒有比價" + (f"：{reason}" if reason else "")
-                before = stored[tdcc]
-                results.append(
-                    Observed(
-                        tdcc, TO_CONFIRM, text, before.observed_through, locked[tdcc], before.ki or "", before.ki_touch
-                    )
-                )
+                results.append(_carried(stored[tdcc], tdcc, TO_CONFIRM, text, locked[tdcc]))
         written = 0
         for r in results:
-            if stored.get(r.tdcc) != StoredStatus(
-                r.status, r.reason or None, r.observed_through, r.locked, r.ki or None, r.ki_touch
-            ):
+            if stored.get(r.tdcc) != r:
                 _write_status(conn, r)
                 written += 1
     return ObservationReceipt(through, tuple(results), tuple(changes), written, tuple(errors))
+
+
+def _carried(
+    before: Observed | None, tdcc: str, status: str, reason: str, locked: bool, ki_kind: str | None = None
+) -> Observed:
+    """這次沒比價的商品（已出場、核對條件不是完成）：已比到的日期與 KI 沿用上一次的比價狀態 `before`。
+
+    `ki_kind`：已出場、這次照條件沒比的商品給 KI 種類（`_ki_text`）；上一次沒存 KI 時寫它、KI 觸及不沿用（#198）。
+    """
+    if before is None:
+        return Observed(tdcc, status, reason, None, locked, ki_kind or "")
+    if ki_kind is not None and not before.ki:
+        return Observed(tdcc, status, reason, before.observed_through, locked, ki_kind)
+    return replace(before, status=status, reason=reason, locked=locked)
 
 
 def _exit_reason(events: Sequence[StoredEvent]) -> str:
@@ -746,22 +743,20 @@ def _text(value: Decimal | None) -> str | None:
     return None if value is None else format(plain(value), "f")
 
 
-@dataclass(frozen=True)
-class StoredStatus:
-    """`workflow.pricing_status` 裡一檔上一次的比價狀態（#209：欄位命名，不用索引取值）。"""
-
-    status: str
-    reason: str | None
-    observed_through: dt.date | None
-    locked: bool
-    ki: str | None
-    ki_touch: KiTouch | None = None  # KI 第一次觸及的日期與代碼（#442）
-
-
-def _stored_status(conn: psycopg.Connection) -> dict[str, StoredStatus]:
+def _stored_status(conn: psycopg.Connection) -> dict[str, Observed]:
+    """`workflow.pricing_status` 裡各檔上一次的比價狀態，和這次的 `Observed` 同一個型別（空白的原因、KI 是空字串），
+    相等就不重寫。"""
     return {
-        tdcc: StoredStatus(*row, None if touch_day is None else KiTouch(touch_day, touch_code))
-        for tdcc, *row, touch_day, touch_code in conn.execute(
+        tdcc: Observed(
+            tdcc,
+            status,
+            reason or "",
+            observed_through,
+            locked,
+            ki or "",
+            None if touch_day is None else KiTouch(touch_day, touch_code),
+        )
+        for tdcc, status, reason, observed_through, locked, ki, touch_day, touch_code in conn.execute(
             "SELECT tdcc, status, reason, observed_through, locked, ki, ki_touch_date, ki_touch_code"
             " FROM workflow.pricing_status"
         )

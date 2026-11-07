@@ -42,6 +42,9 @@ from sp_workflow.observation import (
     observe,
     observe_all,
 )
+from sp_workflow.product_record import UnderlyingPrice
+from sp_workflow.product_store import Stored
+from sp_workflow.status import ProductSource
 from sp_workflow.stock_splits import Split, SplitBook, add_split, affected_exits, delete_split
 
 COVERED = (dt.date(2026, 1, 1), dt.date(2027, 12, 31))
@@ -387,6 +390,85 @@ def _text(event: AutoEvent) -> str:
     if event.event == DELIVERY:
         return f"接股 {event.underlying} {event.event_date}"
     return f"{event.event} {event.event_date}"
+
+
+# ---------------------------------------------------------------- 資料庫的這檔 → 比價條件（#496）
+
+
+def stored_product(product: str, **columns) -> Stored:
+    """手建的 `Stored`：每個欄位的值都不一樣，對調任兩欄都看得出來。"""
+    values = {
+        "product": product,
+        "ko_type": "Daily",
+        "barrier_type": AKI,
+        "strike_date": STRIKE,
+        "final_valuation_date": FINAL,
+        "trade_date": dt.date(2026, 10, 30),
+        "lookback_end_date": dt.date(2026, 11, 6),
+        "strike_pct": D(80),
+        "ko_pct": D(105),
+        "non_call_months": 3,
+        "tenor_months": 12,
+        **columns,
+    }
+    return Stored(
+        tdcc="147199990009",
+        columns=values,
+        source=ProductSource.ORDER,
+        isin=None,
+        locked_at=None,
+        locked_reason="",
+        check=None,
+        prices=(
+            UnderlyingPrice(1, "AAA UW", D(101), D(82), D(63), D(104), lookback=D(99), basis=dt.date(2026, 11, 9)),
+            UnderlyingPrice(2, "7203 JT", D(2001), D(1602), D(1303), D(2004)),
+        ),
+        autocall={1: START, 2: None, 3: dt.date(2026, 11, 30), 4: FINAL},
+        branches=(),
+    )
+
+
+def test_from_stored_puts_every_column_in_its_place() -> None:
+    found = Terms.from_stored(stored_product("FCN"))
+
+    assert found == Terms(
+        tdcc="147199990009",
+        ko_type="Daily",
+        barrier_type=AKI,
+        strike_date=STRIKE,
+        final_date=FINAL,
+        autocall=(START, dt.date(2026, 11, 30), FINAL),  # 空白的不算、由早到晚
+        underlyings=(
+            Underlying(1, "AAA UW", D(101), D(82), D(63), D(104), dt.date(2026, 11, 9), D(99)),
+            Underlying(2, "7203 JT", D(2001), D(1602), D(1303), D(2004), STRIKE),  # 基準日空白：Strike date
+        ),
+        no_autocall=False,
+        final_date_callable=True,
+        trade_date=dt.date(2026, 10, 30),
+        lookback_end=dt.date(2026, 11, 6),
+        strike_pct=D(80),
+        keep_strike=False,
+        manual_ko=False,
+    )
+    first, second = found.underlyings
+    assert (first.initial, first.strike, first.ki, first.ko, first.lookback) == (D(101), D(82), D(63), D(104), D(99))
+    assert (second.initial, second.strike, second.ki, second.ko) == (D(2001), D(1602), D(1303), D(2004))
+
+
+def test_from_stored_asks_the_product_rule_and_the_lock() -> None:
+    ben = stored_product("BEN", non_call_months=12)  # 只在到期判定、Non-Call 等於天期、填了 KO%
+    locked = replace(ben, source=ProductSource.BACKFILL, locked_at=dt.datetime(2026, 11, 1), locked_reason="已鎖住")
+
+    found = Terms.from_stored(locked)
+
+    assert (found.no_autocall, found.final_date_callable, found.manual_ko, found.keep_strike) == (
+        True,
+        False,
+        True,
+        True,
+    )
+    assert Terms.from_stored(replace(locked, source=ProductSource.ORDER)).keep_strike is False, "只有歷史回補的"
+    assert Terms.from_stored(stored_product("BEN", ko_pct=None)).manual_ko is False
 
 
 # ---------------------------------------------------------------- 資料庫
