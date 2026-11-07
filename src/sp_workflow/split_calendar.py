@@ -7,7 +7,7 @@
   寫入走 `stock_splits.add_split`（一筆一個 transaction、留紀錄），備註以 `AUTO_NOTE` 開頭。
 - 對齊（`align`）：行事曆的日期不一定是收盤價表第一次出現新股數價格的那天（日股常晚一個營業日）。
   生效日在最近 `ALIGN_DAYS` 天內的自動登記，生效日當天沒有對應的價格斷層、但前後 `ALIGN_TRADING_DAYS` 個收盤日內
-  恰好有一個套用這次拆股就消失的斷層時，把生效日改到那一天（刪掉重登，各留紀錄）。人工登記的不動。
+  恰好有一個套用這次拆股就消失的斷層時，把生效日改到那一天（刪掉重登在同一個 transaction，各留紀錄）。人工登記的不動。
 畫面在 `sp_workflow.tabs.daily`（每日匯入的結果）；動作在 `window_actions.run_daily_import`。
 """
 
@@ -48,6 +48,7 @@ MAX_RATIO = 1000  # 前後股數比例超過這個不收：多半是現金收購
 NEARBY_DAYS = 7  # 同一個代碼生效日前後幾天內已經有登記就不再登記
 ALIGN_DAYS = 30  # 生效日在最近幾天內的自動登記才對齊
 ALIGN_TRADING_DAYS = 3  # 對齊時找生效日前後幾個收盤日內的斷層
+CLOSE_WINDOW_DAYS = 15  # 對齊時讀生效日前後幾天的收盤價（涵蓋前後 3 個收盤日與連假）
 TIMEOUT = 20  # 秒
 PAGE = 100
 MAX_PAGES = 30
@@ -101,6 +102,16 @@ class CalendarReceipt:
     skipped: tuple[Skipped, ...] = ()
     errors: tuple[str, ...] = ()
     revisit: tuple[str, ...] = ()
+
+    def plus(self, other: CalendarReceipt) -> CalendarReceipt:
+        """兩份結果合成一份（登記在前、對齊在後）。"""
+        return CalendarReceipt(
+            self.registered + other.registered,
+            self.moved + other.moved,
+            self.skipped + other.skipped,
+            self.errors + other.errors,
+            tuple(dict.fromkeys(self.revisit + other.revisit)),
+        )
 
 
 # ---------- 抓行事曆（網路） ----------
@@ -269,7 +280,8 @@ def candidates(
 ) -> tuple[list[Split], list[Skipped]]:
     """要自動登記的拆股與略過的：`codes` 是收盤價表、商品有的代碼 → (市場, 代號)。
 
-    同一個代碼前後 `NEARBY_DAYS` 天內已經有登記的直接不收（每天都會再抓到，不列出）。"""
+    同一個代碼前後 `NEARBY_DAYS` 天內已經有登記的、比例異常的（前後相同、超過 `MAX_RATIO` 倍）直接不收、不列出
+    （每天都會再抓到）；只有兩個來源不一致的列出來給作業人員判斷。"""
     by_key: dict[tuple[str, str], list[Announced]] = {}
     for item in fetched.announced:
         by_key.setdefault(item.key, []).append(item)
@@ -285,10 +297,7 @@ def candidates(
                 listed = "、".join(f"{a.source} {a.effective_date} {_ratio(a)}" for a in group)
                 skipped.append(Skipped(code, f"行事曆不一致（{listed}），請人工確認後登記"))
                 continue
-            if first.shares_before == first.shares_after or _too_far(first):
-                skipped.append(
-                    Skipped(code, f"{first.source} 寫 {first.effective_date} {_ratio(first)}，比例異常，沒有登記")
-                )
+            if first.shares_before == first.shares_after or _extreme_ratio(first):
                 continue
             sources = "、".join(dict.fromkeys(a.source for a in group))
             note = f"{AUTO_NOTE}：{sources} 行事曆（{fetched.fetched_on} 抓取）"
@@ -316,7 +325,7 @@ def _registered_near(existing: Sequence[Split], code: str, day: dt.date) -> bool
     return any(s.code == code and abs((s.effective_date - day).days) <= NEARBY_DAYS for s in existing)
 
 
-def _too_far(item: Announced) -> bool:
+def _extreme_ratio(item: Announced) -> bool:
     return max(item.shares_before, item.shares_after) > MAX_RATIO * min(item.shares_before, item.shares_after)
 
 
@@ -359,20 +368,21 @@ def register(
 # ---------- 對齊價格斷層 ----------
 
 
-def misaligned(split: Split, others: SplitBook, closes: Mapping[dt.date, Decimal]) -> dt.date | None:
-    """自動登記的生效日要改到哪天；不用改（或看不出來）是 None。
+def gap_day(split: Split, others: SplitBook, closes: Mapping[dt.date, Decimal]) -> dt.date | None:
+    """自動登記的生效日要改到的那天（價格斷層的日子）；不用改或看不出來是 None。
 
-    `others` 是這個代碼其他的登記；`closes` 是生效日前後的收盤價。套用這次拆股就消失的斷層恰好一個、
-    又不在生效日當天、而且在前後 `ALIGN_TRADING_DAYS` 個收盤日內，才改到那一天。"""
+    `others` 是這個代碼其他的登記；`closes` 是生效日前後的收盤價。生效日（不是收盤日時是之後第一個收盤日）
+    前後 `ALIGN_TRADING_DAYS` 個收盤日內，套用這次拆股就消失的斷層恰好一個、又不在那個收盤日，才改到斷層那天。"""
     days = sorted(closes)
-    matching = [j.day for j in others.jumps(split.code, closes) if in_range(j.ratio * split.factor)]
-    if split.effective_date in matching or len(matching) != 1:
+    position = sum(d < split.effective_date for d in days)  # 生效日之後第一個收盤日在 days 裡的位置
+    matching = [
+        j.day
+        for j in others.jumps(split.code, closes)
+        if in_range(j.ratio * split.factor) and abs(days.index(j.day) - position) <= ALIGN_TRADING_DAYS
+    ]
+    if len(matching) != 1 or (position < len(days) and days[position] == matching[0]):
         return None
-    (day,) = matching
-    position = sum(d < split.effective_date for d in days)  # 生效日（或之後第一個收盤日）在 days 裡的位置
-    if abs(days.index(day) - position) > ALIGN_TRADING_DAYS:
-        return None
-    return day
+    return matching[0]
 
 
 def align(conn: psycopg.Connection, today: dt.date, *, user: str | None = None) -> CalendarReceipt:
@@ -388,21 +398,17 @@ def align(conn: psycopg.Connection, today: dt.date, *, user: str | None = None) 
         ):
             continue
         others = SplitBook(s for s in splits if s.code == split.code and s != split)
-        day = misaligned(split, others, _closes_around(conn, split.code, split.effective_date))
+        day = gap_day(split, others, _closes_around(conn, split.code, split.effective_date))
         if day is None:
             continue
         after = replace(
             split, effective_date=day, note=f"{split.note}；依收盤價斷層從 {split.effective_date} 改到 {day}"
         )
         try:
-            delete_split(conn, split, user=user)
+            with conn.transaction():  # 刪掉、重登一起成功或一起不做
+                delete_split(conn, split, user=user)
+                add_split(conn, after, user=user)
         except StockSplitError as exc:
-            skipped.append(Skipped(split.code, str(exc)))
-            continue
-        try:
-            add_split(conn, after, user=user)
-        except StockSplitError as exc:
-            add_split(conn, split, user=user)  # 改不過去就放回原本那一筆
             skipped.append(Skipped(split.code, f"生效日想改到 {day} 但沒改成：{exc}"))
             continue
         moved.append(Moved(split, after))
@@ -413,7 +419,7 @@ def align(conn: psycopg.Connection, today: dt.date, *, user: str | None = None) 
 def _closes_around(conn: psycopg.Connection, code: str, day: dt.date) -> dict[dt.date, Decimal]:
     rows = conn.execute(
         "SELECT close_date, close FROM workflow.close_price WHERE code = %s AND close_date BETWEEN %s AND %s",
-        (code, day - dt.timedelta(days=ALIGN_DAYS // 2), day + dt.timedelta(days=ALIGN_DAYS // 2)),
+        (code, day - dt.timedelta(days=CLOSE_WINDOW_DAYS), day + dt.timedelta(days=CLOSE_WINDOW_DAYS)),
     ).fetchall()
     return dict(rows)
 
@@ -421,26 +427,18 @@ def _closes_around(conn: psycopg.Connection, code: str, day: dt.date) -> dict[dt
 # ---------- 每日匯入用 ----------
 
 
-def update(
+def register_and_align(
     conn: psycopg.Connection, fetched: Fetched, calendar: TradingCalendar, *, user: str | None = None
 ) -> CalendarReceipt:
     """先登記行事曆上的新拆股，再對齊最近的自動登記；兩段合成一份結果。"""
-    added = register(conn, fetched, calendar, user=user)
-    aligned = align(conn, fetched.fetched_on, user=user)
-    return CalendarReceipt(
-        added.registered,
-        aligned.moved,
-        added.skipped + aligned.skipped,
-        added.errors,
-        tuple(dict.fromkeys(added.revisit + aligned.revisit)),
-    )
+    return register(conn, fetched, calendar, user=user).plus(align(conn, fetched.fetched_on, user=user))
 
 
 def summary(receipt: CalendarReceipt) -> str:
     """每日匯入結果畫面的一段。"""
     lines = []
     if receipt.registered:
-        listed = "、".join(f"{s.code} {s.effective_date} {s.label}" for s in receipt.registered)
+        listed = "、".join(f"{s.code} {s.effective_date} {s.label}，{_sources(s)}" for s in receipt.registered)
         lines.append(f"拆股行事曆：新登記 {len(receipt.registered)} 筆（{listed}）。")
     if receipt.moved:
         listed = "、".join(
@@ -450,6 +448,11 @@ def summary(receipt: CalendarReceipt) -> str:
     lines += [f"拆股行事曆：{s.code} {s.reason}" for s in receipt.skipped]
     lines += [f"拆股行事曆：{e}" for e in receipt.errors]
     return "\n".join(lines) or "拆股行事曆：沒有新的拆股。"
+
+
+def _sources(split: Split) -> str:
+    """自動登記備註裡的來源（例：Yahoo、Nasdaq）。"""
+    return (split.note or "").removeprefix(f"{AUTO_NOTE}：").split(" 行事曆", 1)[0]
 
 
 def _first_line(exc: BaseException) -> str:

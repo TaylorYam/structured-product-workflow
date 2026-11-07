@@ -29,7 +29,7 @@ from sp_workflow.split_calendar import (
     align,
     candidates,
     fetch,
-    misaligned,
+    gap_day,
     parse_nasdaq,
     parse_yahoo,
     register,
@@ -140,7 +140,7 @@ def test_both_sources_agreeing_make_one_entry_per_code() -> None:
     assert skipped == []
 
 
-def test_disagreements_and_odd_ratios_are_listed_not_registered() -> None:
+def test_disagreements_are_listed_and_odd_ratios_dropped() -> None:
     fetched = Fetched(
         TODAY,
         (
@@ -151,19 +151,19 @@ def test_disagreements_and_odd_ratios_are_listed_not_registered() -> None:
         ),
     )
 
-    adds, skipped = candidates(
-        fetched, {"AAA UW": ("US", "AAA"), "1234 JT": ("JP", "1234"), "BBB UN": ("US", "BBB")}, []
-    )
+    adds, skipped = candidates(fetched, CODES, [])
 
-    assert adds == []
+    assert adds == [], "現金收購少數股東、前後相同的不收"
     assert skipped == [
-        Skipped("1234 JT", "Yahoo 寫 2026-11-20 3124872 合 1，比例異常，沒有登記"),
+        Skipped(
+            "AAA UQ",
+            "行事曆不一致（Yahoo 2026-11-20 1 拆 8、Nasdaq 2026-11-21 1 拆 8），請人工確認後登記",
+        ),
         Skipped(
             "AAA UW",
             "行事曆不一致（Yahoo 2026-11-20 1 拆 8、Nasdaq 2026-11-21 1 拆 8），請人工確認後登記",
         ),
-        Skipped("BBB UN", "Yahoo 寫 2026-11-20 1 拆 1，比例異常，沒有登記"),
-    ]
+    ], "只列不一致的；比例異常的不列（每天都會再抓到）"
 
 
 def test_anything_already_registered_nearby_is_left_alone() -> None:
@@ -238,19 +238,35 @@ def closes(*values: int) -> dict[dt.date, Decimal]:
 def test_a_split_registered_a_day_late_moves_to_the_gap() -> None:
     split = Split("AAA UW", WEEK[3], 1, 5, AUTO_NOTE)
 
-    assert misaligned(split, SplitBook(), closes(100, 101, 20, 21, 20)) == WEEK[2]
-    assert misaligned(split, SplitBook(), closes(100, 101, 102, 20, 21)) is None, "斷層就在生效日"
-    assert misaligned(split, SplitBook(), closes(100, 101)) is None, "還沒有生效日附近的收盤價"
-    assert misaligned(split, SplitBook(), closes(100, 101, 50, 51, 50)) is None, "斷層比例跟這次拆股對不起來"
-    assert misaligned(Split("AAA UW", dt.date(2026, 11, 26), 1, 5), SplitBook(), closes(100, 20, 21, 20, 21)) is None, (
+    assert gap_day(split, SplitBook(), closes(100, 101, 20, 21, 20)) == WEEK[2]
+    assert gap_day(split, SplitBook(), closes(100, 101, 102, 20, 21)) is None, "斷層就在生效日"
+    assert gap_day(split, SplitBook(), closes(100, 101)) is None, "還沒有生效日附近的收盤價"
+    assert gap_day(split, SplitBook(), closes(100, 101, 50, 51, 50)) is None, "斷層比例跟這次拆股對不起來"
+    assert gap_day(Split("AAA UW", dt.date(2026, 11, 26), 1, 5), SplitBook(), closes(100, 20, 21, 20, 21)) is None, (
         "斷層離生效日超過 3 個收盤日"
+    )
+
+
+def test_only_gaps_within_three_closes_count() -> None:
+    split = Split("AAA UW", WEEK[3], 1, 5, AUTO_NOTE)
+    days = [MON - dt.timedelta(days=7) + dt.timedelta(days=i) for i in range(5)] + WEEK  # 前一週 + 這一週
+    prices = dict(zip(days, map(D, (100, 40, 41, 40, 41, 40, 41, 8, 8, 8)), strict=True))
+
+    assert gap_day(split, SplitBook(), prices) == WEEK[2], "前一週真的大跌（離生效日 6 個收盤日）不影響"
+
+
+def test_a_weekend_effective_date_matches_the_next_close() -> None:
+    sunday = MON - dt.timedelta(days=1)
+
+    assert gap_day(Split("AAA UW", sunday, 1, 5, AUTO_NOTE), SplitBook(), closes(20, 21, 20)) is None, (
+        "生效日是週日、斷層在週一：換算一樣，不用改"
     )
 
 
 def test_a_split_registered_early_also_moves() -> None:
     split = Split("AAA UW", WEEK[1], 1, 5, AUTO_NOTE)
 
-    assert misaligned(split, SplitBook(), closes(100, 101, 20, 21, 20)) == WEEK[2]
+    assert gap_day(split, SplitBook(), closes(100, 101, 20, 21, 20)) == WEEK[2]
 
 
 # ---------- 資料庫 ----------
@@ -324,7 +340,7 @@ def test_daily_import_registers_before_observing(pg, pg_settings, tmp_path: Path
     assert [(s.code, s.effective_date) for s in load_splits(pg)] == [("AAA UW", DAY)]
     assert result.observation.receipt is not None
     assert summary(result.splits).splitlines() == [
-        "拆股行事曆：新登記 1 筆（AAA UW 2026-11-20 1 拆 8）。",
+        "拆股行事曆：新登記 1 筆（AAA UW 2026-11-20 1 拆 8，Yahoo）。",
         "拆股行事曆：Nasdaq 沒抓到",
     ]
 
@@ -340,6 +356,32 @@ def test_trades_only_import_does_not_fetch(pg, pg_settings, tmp_path: Path, monk
     monkeypatch.setattr(split_calendar, "fetch", no_network)
 
     assert run_daily_import(pg_settings, daily, PATHS, prices=False).splits is None
+
+
+@pytest.mark.db
+def test_a_failed_registration_keeps_the_import_and_observes(pg, pg_settings, tmp_path: Path, monkeypatch) -> None:
+    seed_mailbox(pg)
+    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 100000)], [price("AAA UW")])
+    monkeypatch.setattr(
+        split_calendar,
+        "fetch",
+        lambda today, opener=None: Fetched(today, (Announced(("US", "AAA"), DAY, 1, 8, YAHOO),), ("Nasdaq 沒抓到",)),
+    )
+
+    def broken(conn, fetched, calendar, *, user=None):
+        split_calendar.register(conn, fetched, calendar, user=user)
+        raise RuntimeError("壞掉")
+
+    monkeypatch.setattr(split_calendar, "register_and_align", broken)
+
+    result = run_daily_import(pg_settings, daily, PATHS, prices=True)
+
+    assert result.splits == CalendarReceipt(
+        errors=("Nasdaq 沒抓到", "自動登記沒有完成，這次沒有登記（RuntimeError：壞掉）")
+    )
+    assert load_splits(pg) == (), "整段一個 transaction：已經寫的那筆也收回"
+    assert pg.execute("SELECT count(*) FROM workflow.trade_row").fetchone()[0] == 1, "匯入照樣保留"
+    assert result.observation.receipt is not None, "照常比價"
 
 
 def test_summary_when_nothing_changed() -> None:

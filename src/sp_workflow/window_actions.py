@@ -341,7 +341,7 @@ def run_daily_import(settings: ConnectionSettings, daily: Path, paths: ConfigPat
     with connect(settings) as conn:
         receipt = import_daily(daily, conn, prices=prices, calendar=calendar)
         recalc = _recalculate_after_import(conn, paths)
-        if receipt.closes is None or calendar is None or fetched is None:
+        if receipt.closes is None or calendar is None or fetched is None:  # fetched 跟 calendar 一起有無；寫給型別檢查
             return DailyResult(receipt, recalc)
         splits = _split_calendar(conn, fetched, calendar)
         return DailyResult(receipt, recalc, _observe_after_write(conn, calendar, splits.revisit), splits)
@@ -350,13 +350,15 @@ def run_daily_import(settings: ConnectionSettings, daily: Path, paths: ConfigPat
 def _split_calendar(
     conn: psycopg.Connection, fetched: split_calendar.Fetched, calendar: TradingCalendar
 ) -> split_calendar.CalendarReceipt:
-    """依拆股行事曆自動登記、對齊（#509）；資料庫出錯時不丟出（匯入已經寫好），原因放在結果裡。"""
-    import psycopg
-
+    """依拆股行事曆自動登記、對齊（#509），整段一個 transaction：出任何錯都整段不寫、不丟出（匯入已經寫好），
+    原因放在結果裡，接著照常比價。"""
     try:
-        return split_calendar.update(conn, fetched, calendar)
-    except psycopg.Error as exc:
-        return split_calendar.CalendarReceipt(errors=(*fetched.errors, f"自動登記失敗：{_first_line(exc)}"))
+        with conn.transaction():
+            return split_calendar.register_and_align(conn, fetched, calendar)
+    except Exception as exc:  # 程式錯誤也不能讓已經寫好的匯入跟著失敗
+        return split_calendar.CalendarReceipt(
+            errors=(*fetched.errors, f"自動登記沒有完成，這次沒有登記（{type(exc).__name__}：{_first_line(exc)}）")
+        )
 
 
 def run_price_csv(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> PriceCsvResult:

@@ -376,7 +376,7 @@ def test_daily_import_lists_splits_from_the_calendar(master, tmp_path: Path) -> 
     receipt = replace(
         result.receipt, closes=CloseSummary(3, dt.date(2026, 10, 21), dt.date(2026, 10, 21), 1, 1, 0, 0, 0)
     )
-    split = Split("AAA UW", dt.date(2026, 11, 20), 1, 8, "自動登記")
+    split = Split("AAA UW", dt.date(2026, 11, 20), 1, 8, "自動登記：Yahoo、Nasdaq 行事曆（2026-11-08 抓取）")
     moved = Moved(Split("BBB JT", dt.date(2026, 10, 22), 1, 5), Split("BBB JT", dt.date(2026, 10, 21), 1, 5))
     splits = CalendarReceipt((split,), (moved,), errors=("Nasdaq 拆股行事曆沒抓到（URLError：timed out）",))
 
@@ -384,7 +384,7 @@ def test_daily_import_lists_splits_from_the_calendar(master, tmp_path: Path) -> 
 
     status = window.daily.status_var.get()
     assert (
-        "拆股行事曆：新登記 1 筆（AAA UW 2026-11-20 1 拆 8）。\n"
+        "拆股行事曆：新登記 1 筆（AAA UW 2026-11-20 1 拆 8，Yahoo、Nasdaq）。\n"
         "拆股行事曆：依收盤價斷層改了生效日 1 筆（BBB JT 2026-10-22 → 2026-10-21）。\n"
         "拆股行事曆：Nasdaq 拆股行事曆沒抓到（URLError：timed out）\n比價：比到 2026-10-21"
     ) in status

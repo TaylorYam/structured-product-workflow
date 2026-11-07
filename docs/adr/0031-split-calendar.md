@@ -19,9 +19,9 @@ ADR 0024 的拆股登記全部靠人工，實際上多半是生效後比價出�
 ### 決策（2026-11-08 使用者確認：自動登記）
 
 - **時機**：「1 每日匯入」有寫收盤價時，連資料庫之前抓兩個行事曆（Yahoo 抓今天前 10 天到後 120 天），寫完收盤價、比價之前登記與對齊，再照常比價全部。只匯交易明細、讀不到假日表時不抓。用標準函式庫呼叫，不加新的套件。
-- **登記**：只收收盤價表或商品有的代碼；代碼依假日表的交易所碼對到行事曆（美國交易所碼 → 代號、`JT` → `.T`、`HK` → 去掉前導 0 的數字）。前後股數相同、比例超過 1000 倍（現金收購少數股東）的不收並列出；同一個代碼生效日前後 7 天內已經有登記（人工或自動、不管比例）就不收、不列出；兩個來源同一次拆股的日期或比例不同時不登記、列出差異。寫入用既有的 `add_split`，登記人是執行匯入的 Windows 使用者，備註「自動登記：<來源> 行事曆（抓取日）」。
-- **對齊價格斷層**：生效日在最近 30 天內的自動登記，若生效日當天沒有對應的斷層、但前後 3 個收盤日內恰好有一個「套用這次拆股就消失」的斷層，就把生效日改到那一天（刪掉重登，各留紀錄），備註加「依收盤價斷層從 X 改到 Y」。人工登記的不動。
-- **失敗**：任一個來源抓不到只寫原因；登記或對齊時資料庫出錯也不影響已經寫好的匯入。結果在每日匯入的完成訊息與「自動拆股登記（筆）」。
+- **登記**：只收收盤價表或商品有的代碼；代碼依假日表的交易所碼對到行事曆（美國交易所碼 → 代號、`JT` → `.T`、`HK` → 去掉前導 0 的數字）。前後股數相同、比例超過 1000 倍（現金收購少數股東）的，以及同一個代碼生效日前後 7 天內已經有登記（人工或自動、不管比例）的不收、不列出（每天都會再抓到）；兩個來源同一次拆股的日期或比例不同時不登記、列出差異。寫入用既有的 `add_split`，登記人是執行匯入的 Windows 使用者，備註「自動登記：<來源> 行事曆（抓取日）」。
+- **對齊價格斷層**：生效日在最近 30 天內的自動登記，若生效日（不是收盤日時是之後第一個收盤日）沒有對應的斷層、但前後 3 個收盤日內恰好有一個「套用這次拆股就消失」的斷層，就把生效日改到那一天（刪掉重登在同一個 transaction，各留紀錄），備註加「依收盤價斷層從 X 改到 Y」。人工登記的不動。
+- **失敗**：任一個來源抓不到只寫原因；登記與對齊整段一個 transaction，出任何錯都整段不寫，已經寫好的匯入保留、照常比價。結果在每日匯入的完成訊息與「自動拆股登記（筆）」。
 
 ### 考慮過的替代方案
 
@@ -51,9 +51,9 @@ Under ADR 0024 every split is registered by hand, and in practice an entry is us
 ### Decision (confirmed by the user 2026-11-08: register automatically)
 
 - **When**: when 「1 每日匯入」 writes closes, both calendars are fetched before connecting to the database (Yahoo from 10 days before to 120 days after today); registration and alignment run after the closes are written and before observation, which then runs as usual. Trades-only imports and a missing holiday calendar skip the fetch. The standard library is used; no new dependency.
-- **Registration**: only codes in the close table or a product; codes map to calendar symbols by the holiday calendar's exchange code (US exchange codes → symbol, `JT` → `.T`, `HK` → the number without leading zeros). Equal share counts and ratios over 1000 (cash-out consolidations) are skipped and listed; a code already registered within 7 days of the effective date (by hand or automatically, any ratio) is skipped silently; when the two sources disagree on the date or ratio of the same split it is not registered and the difference is listed. Writes use the existing `add_split`, recorded by the Windows user running the import, with the note 「自動登記：<source> 行事曆（fetch date）」.
-- **Aligning to the price gap**: for automatic entries effective within the last 30 days, when there is no matching gap on the effective date but exactly one gap within 3 closes either side disappears once the split is applied, the effective date moves to that day (delete and re-add, each logged) and the note gains 「依收盤價斷層從 X 改到 Y」. Manual entries are untouched.
-- **Failures**: an unreachable source only adds a reason; a database error while registering or aligning leaves the already-written import intact. Results appear in the daily import message and the 「自動拆股登記（筆）」 figure.
+- **Registration**: only codes in the close table or a product; codes map to calendar symbols by the holiday calendar's exchange code (US exchange codes → symbol, `JT` → `.T`, `HK` → the number without leading zeros). Equal share counts, ratios over 1000 (cash-out consolidations), and a code already registered within 7 days of the effective date (by hand or automatically, any ratio) are skipped silently, since they are fetched again every day; when the two sources disagree on the date or ratio of the same split it is not registered and the difference is listed. Writes use the existing `add_split`, recorded by the Windows user running the import, with the note 「自動登記：<source> 行事曆（fetch date）」.
+- **Aligning to the price gap**: for automatic entries effective within the last 30 days, when there is no matching gap on the effective date (or the first close after it when it is not a close date) but exactly one gap within 3 closes either side disappears once the split is applied, the effective date moves to that day (delete and re-add in one transaction, each logged) and the note gains 「依收盤價斷層從 X 改到 Y」. Manual entries are untouched.
+- **Failures**: an unreachable source only adds a reason; registration and alignment run in one transaction, so any error writes none of it, while the already-written import is kept and observation runs as usual. Results appear in the daily import message and the 「自動拆股登記（筆）」 figure.
 
 ### Alternatives considered
 
