@@ -1,6 +1,7 @@
 """每日匯入：把每日更新（`交易明細`＋`BBG_Data`）匯入最小 FCN 資料庫（#32、#87、ADR 0003、0008）。
 
-對外是 `import_daily` 與回補股價用的 `import_price_csv`（#112）；交易明細的欄與解讀規則（`TRADE_FIELDS`、
+對外是 `import_daily` 與回補股價用的 `import_price_csv`（#112）；兩者先用讀取端 `read_daily`／`read_price_csv`
+把檔案讀成 `DailyFile`／`DailyPrices`（不碰資料庫，#484），寫入端只吃這兩個型別、不再回頭看工作表或欄名；交易明細的欄與解讀規則（`TRADE_FIELDS`、
 `TRADE_REQUIRED`、`trade_value`、`is_cancel_note`）也給人工維護修改交易明細用（#116），兩邊存進去的值一樣。規則：
 - 需要 `交易明細`、`BBG_Data` 兩張工作表，少一張就整份不匯入；`清單更新` 已停用，檔案裡有也不讀（#87）。
   「只匯交易明細」（`prices=False`，回補時用）不讀 `BBG_Data`、不動股價，沒有這張工作表也可以。
@@ -213,8 +214,8 @@ class _SheetRow:
 
 
 @dataclass
-class _Prices:
-    """BBG_Data 讀出來的股價：值一樣的重複列只留一筆；值不一樣的代碼記成衝突（各組不同的值）。"""
+class DailyPrices:
+    """BBG_Data 或回補股價 CSV 讀出來的股價：值一樣的重複列只留一筆；值不一樣的代碼記成衝突（各組不同的值）。"""
 
     price_date: dt.date
     rows: dict[str, Price] = field(default_factory=dict)
@@ -224,7 +225,7 @@ class _Prices:
 
 
 @dataclass(frozen=True)
-class _Layout:
+class TradeLayout:
     """交易明細的一種版面（#420）：表頭 → `workflow.trade_row` 的欄。"""
 
     headers: tuple[str, ...]
@@ -236,13 +237,17 @@ class _Layout:
         return ("product", *(column for column in self.fields.values() if column not in _UNCOMPARED_COLUMNS))
 
 
-_LAYOUTS = (_Layout(TRADE_HEADERS, TRADE_FIELDS), _Layout(LEGACY_TRADE_HEADERS, LEGACY_TRADE_FIELDS))
+_LAYOUTS = (TradeLayout(TRADE_HEADERS, TRADE_FIELDS), TradeLayout(LEGACY_TRADE_HEADERS, LEGACY_TRADE_FIELDS))
 
 
 @dataclass
-class _Parsed:
-    prices: _Prices | None  # 只匯交易明細時是 None
-    layout: _Layout = _LAYOUTS[0]  # 交易明細是哪一版（#420）
+class DailyFile:
+    """`read_daily` 讀出的一份每日更新：交易明細依 TDCC 分好、擋下與取消的列已列出，股價在 `prices`。
+
+    不連資料庫就能得到；「已存在／內容不同」、比對信箱與寫入都是寫入端（`import_daily`）的事。"""
+
+    prices: DailyPrices | None  # 只匯交易明細時是 None
+    layout: TradeLayout = _LAYOUTS[0]  # 交易明細是哪一版（#420）
     trades: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     blocked: list[ImportLine] = field(default_factory=list)
     cancelled_lines: list[ImportLine] = field(default_factory=list)
@@ -262,7 +267,7 @@ def import_daily(
     `prices=False`：只匯交易明細，不讀 BBG_Data、不動股價（回補時股價改用 `import_price_csv`）。
     有 `calendar`（交易所假日表）時同時寫前一個交易日的收盤價（#280）；沒有時收盤價不存。
     """
-    parsed = _read_daily(daily_book, prices=prices)
+    parsed = read_daily(daily_book, prices=prices)
     sha256 = sha256_file(daily_book)
 
     previous: bytes | None = None
@@ -313,7 +318,7 @@ def import_price_csv(path: Path, conn: psycopg.Connection, calendar: TradingCale
     """回補股價（#112）：匯入一份 `MarketData_YYYYMMDD.csv`。整份有問題時丟 `DailyImportError`、不寫入任何資料。
 
     有 `calendar`（交易所假日表）時同時寫 CSV 那一天的收盤價（#153）；沒有時收盤價不存。"""
-    close_date, prices = _read_price_csv(path)
+    close_date, prices = read_price_csv(path)
     sha256 = sha256_file(path)
     previous: bytes | None = None
     written = False
@@ -392,21 +397,26 @@ def latest_import(conn: psycopg.Connection) -> ImportInfo | None:
 # ---------- 每日更新 ----------
 
 
-def _read_daily(path: Path, *, prices: bool) -> _Parsed:
+def read_daily(path: Path, *, prices: bool) -> DailyFile:
+    """讀取端（#484）：讀一份每日更新，不連資料庫。`prices=False` 只讀交易明細（`DailyFile.prices` 是 None）。
+
+    整份不能匯入時丟 `DailyImportError`：缺工作表、交易明細的欄名兩版都不同、BBG_Data 的取價日不是日期、
+    欄名不對或沒有任何股價。個別列的問題（擋下、取消、股價不是數字、代碼衝突）不丟，記在回傳值裡。
+    """
     wb = _open(path)
     try:
         for sheet in (TRADE_SHEET, PRICE_SHEET) if prices else (TRADE_SHEET,):
             if sheet not in wb.sheetnames:
                 raise DailyImportError(f"每日更新缺少工作表「{sheet}」")
         layout, trade_rows = _trade_rows(wb[TRADE_SHEET])
-        parsed = _Parsed(_read_prices(wb[PRICE_SHEET]) if prices else None, layout)
+        parsed = DailyFile(_read_prices(wb[PRICE_SHEET]) if prices else None, layout)
     finally:
         wb.close()
     _parse_trades(trade_rows, parsed)
     return parsed
 
 
-def _trade_rows(sheet: Any) -> tuple[_Layout, list[_SheetRow]]:
+def _trade_rows(sheet: Any) -> tuple[TradeLayout, list[_SheetRow]]:
     """交易明細：第 1 列欄名和新版或舊版（#420）的欄名、順序完全相同（後面多出的空白欄不算），
     回傳是哪一版與 (列號, {欄名: 值})；兩版都不同時照新版指出哪一欄不同、整份不匯入。"""
     rows = sheet.iter_rows(values_only=True)
@@ -437,12 +447,12 @@ def _header_mismatch(title: str, header: Sequence[str | None], expected: Sequenc
     raise DailyImportError(f"「{title}」在「{expected[-1]}」之後還有其他欄，整份不匯入")
 
 
-def _read_prices(sheet: Any) -> _Prices:
+def _read_prices(sheet: Any) -> DailyPrices:
     """BBG_Data：取價日、欄名不對，或沒有任何股價，就整份不匯入（ADR 0008、#87）。"""
     width = PRICE_FIRST_COLUMN - 1 + len(PRICE_HEADERS)
     rows = [(tuple(row) + (None,) * width)[:width] for row in sheet.iter_rows(max_col=width, values_only=True)]
     blank = (None,) * width
-    prices = _Prices(_price_date(rows[PRICE_DATE_ROW - 1] if len(rows) >= PRICE_DATE_ROW else blank))
+    prices = DailyPrices(_price_date(rows[PRICE_DATE_ROW - 1] if len(rows) >= PRICE_DATE_ROW else blank))
     _check_price_headers(rows[PRICE_HEADER_ROW - 1] if len(rows) >= PRICE_HEADER_ROW else blank)
     for number, row in enumerate(rows[PRICE_FIRST_ROW - 1 :], PRICE_FIRST_ROW):
         _add_price(prices, number, row[PRICE_FIRST_COLUMN - 1 :], PRICE_SHEET, PRICE_HEADERS[2:])
@@ -454,7 +464,7 @@ def _read_prices(sheet: Any) -> _Prices:
     return prices
 
 
-def _list_conflicts(prices: _Prices) -> None:
+def _list_conflicts(prices: DailyPrices) -> None:
     prices.problems += [
         ImportLine(
             "", PRICE_CONFLICT, f"{code}：同一個代碼有 {prices.row_counts[code]} 列、值不同，價格沒有存，算價格時不能用"
@@ -463,8 +473,11 @@ def _list_conflicts(prices: _Prices) -> None:
     ]
 
 
-def _read_price_csv(path: Path) -> tuple[dt.date, _Prices]:
-    """回補股價 CSV（#112）：回傳 (收盤那一天, 股價)；股價的取價日是下一天。欄名、取價日不對或沒有股價就整份不匯入。"""
+def read_price_csv(path: Path) -> tuple[dt.date, DailyPrices]:
+    """讀取端（#112、#484）：讀一份回補股價 CSV，不連資料庫；回傳 (收盤那一天, 股價)，股價的取價日是下一天。
+
+    整份不能匯入時丟 `DailyImportError`：打不開、不是 UTF-8、欄名不對、取價日不是日期或不是同一天、沒有任何股價。
+    個別列的問題（不是數字、代碼衝突）不丟，記在 `DailyPrices.problems`。"""
     try:
         text = path.read_text(encoding="utf-8-sig")
     except UnicodeDecodeError as exc:
@@ -506,7 +519,7 @@ def _read_price_csv(path: Path) -> tuple[dt.date, _Prices]:
         raise DailyImportError(f"股價 CSV 的取價日不只一天：{shown}，整份不匯入；一個 CSV 只放一天")
 
     close_date = next(iter(dates))
-    prices = _Prices(close_date + PRICE_CSV_DATE_SHIFT)
+    prices = DailyPrices(close_date + PRICE_CSV_DATE_SHIFT)
     labels = (*PRICE_CSV_HEADERS[3:5], "1日前收盤價", *PRICE_CSV_HEADERS[5:7])
     for number, row in found:
         code, name, close, open_, volatility, market_cap = row[1:7]
@@ -536,7 +549,7 @@ def _check_price_headers(row: Sequence[Any]) -> None:
             )
 
 
-def _add_price(prices: _Prices, number: int, values: Sequence[Any], source: str, labels: Sequence[str]) -> None:
+def _add_price(prices: DailyPrices, number: int, values: Sequence[Any], source: str, labels: Sequence[str]) -> None:
     """一列股價（代碼、公司名稱，再依 `Price` 價格欄的順序）；代碼空白的列略過。
     同一個代碼再出現時，值一樣不重複算，值不一樣記成衝突。`source`、`labels` 是訊息裡的來源與價格欄名。"""
     code = sheet_cells.text(values[0], dash_is_none=False)
@@ -564,7 +577,7 @@ def _add_price(prices: _Prices, number: int, values: Sequence[Any], source: str,
         prices.conflicts[code] = [prices.rows.pop(code), found]
 
 
-def _parse_trades(rows: Iterable[_SheetRow], parsed: _Parsed) -> None:
+def _parse_trades(rows: Iterable[_SheetRow], parsed: DailyFile) -> None:
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     errors: dict[str, list[str]] = defaultdict(list)
     for sheet_row in rows:
@@ -606,7 +619,7 @@ def _parse_trades(rows: Iterable[_SheetRow], parsed: _Parsed) -> None:
         parsed.blocked.append(ImportLine(tdcc, BLOCKED, "；".join(errors[tdcc])))
 
 
-def _remember_fcn(parsed: _Parsed, row: Mapping[str, Any]) -> None:
+def _remember_fcn(parsed: DailyFile, row: Mapping[str, Any]) -> None:
     """記下這列的 FCN TDCC（#90）；同一檔只要有一列沒取消就帶。
 
     只收剛好 12 個半形數字（#93，同「3 準備」）：Excel 存成數字、前面的 0 掉了的不補 0，不帶。
@@ -617,7 +630,7 @@ def _remember_fcn(parsed: _Parsed, row: Mapping[str, Any]) -> None:
     parsed.fcn_tdccs[tdcc] = parsed.fcn_tdccs.get(tdcc, False) or not is_cancel_note(row["備註"])
 
 
-def _trade(row: Mapping[str, Any], product: str, layout: _Layout) -> dict[str, Any]:
+def _trade(row: Mapping[str, Any], product: str, layout: TradeLayout) -> dict[str, Any]:
     """一列交易 → `workflow.trade_row` 的欄（`_TRADE_COLUMNS`）；這一版沒有的欄是空白。"""
     trade: dict[str, Any] = dict.fromkeys(_TRADE_COLUMNS)
     trade["product"] = product
@@ -651,7 +664,13 @@ class _DailyCloses(NamedTuple):
 
 
 def _write_daily_closes(
-    conn: psycopg.Connection, prices: _Prices, calendar: TradingCalendar, *, file_name: str, sha256: str, run_id: int
+    conn: psycopg.Connection,
+    prices: DailyPrices,
+    calendar: TradingCalendar,
+    *,
+    file_name: str,
+    sha256: str,
+    run_id: int,
 ) -> _DailyCloses:
     """BBG_Data 的最新收盤價記到前一個交易日（#280）；CSV、歷史收盤價已有的不取代。"""
     found = closes_from_daily(
@@ -676,7 +695,7 @@ def _write_daily_closes(
     return _DailyCloses(summary, found.unknown, found.uncovered, found.conflicts)
 
 
-def _write_prices(conn: psycopg.Connection, prices: _Prices, run_id: int) -> PriceSummary:
+def _write_prices(conn: psycopg.Connection, prices: DailyPrices, run_id: int) -> PriceSummary:
     """股價依取價日存入：同一個取價日整天取代（#87）；衝突的代碼價格留空，各組不同的值記在 conflict_rows。"""
     count = len(prices.rows) + len(prices.conflicts)
     conn.execute(
@@ -702,7 +721,7 @@ def _jsonable(price: Price) -> dict[str, Any]:
     return {name: str(v) if isinstance(v, Decimal) else v for name, v in price._asdict().items()}
 
 
-def _write_trades(conn: psycopg.Connection, parsed: _Parsed, run_id: int) -> list[ImportLine]:
+def _write_trades(conn: psycopg.Connection, parsed: DailyFile, run_id: int) -> list[ImportLine]:
     lines = []
     compared = parsed.layout.compared_columns
     for tdcc, trades in parsed.trades.items():
@@ -728,14 +747,14 @@ def _write_trades(conn: psycopg.Connection, parsed: _Parsed, run_id: int) -> lis
     return lines
 
 
-def _remember_other(parsed: _Parsed, tdcc: Any, product: Any) -> None:
+def _remember_other(parsed: DailyFile, tdcc: Any, product: Any) -> None:
     try:
         parsed.other_products.setdefault(sheet_cells.tdcc(tdcc), sheet_cells.text(product) or "（空白）")
     except ValueError:
         pass  # TDCC 不完整的列只計數
 
 
-def _write_other_products(conn: psycopg.Connection, parsed: _Parsed, run_id: int) -> None:
+def _write_other_products(conn: psycopg.Connection, parsed: DailyFile, run_id: int) -> None:
     with conn.cursor() as cur:
         cur.executemany(
             "INSERT INTO workflow.other_product (tdcc, product, first_run_id) VALUES (%s, %s, %s)"
@@ -744,7 +763,7 @@ def _write_other_products(conn: psycopg.Connection, parsed: _Parsed, run_id: int
         )
 
 
-def _unmatched_names(parsed: _Parsed, mailbox: Mailbox) -> list[ImportLine]:
+def _unmatched_names(parsed: DailyFile, mailbox: Mailbox) -> list[ImportLine]:
     if not mailbox.people:
         return [ImportLine("", MAILBOX_EMPTY, "mailbox.person 沒有任何人員，FC 名字無法比對")] if parsed.trades else []
     lines = []

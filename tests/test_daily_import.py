@@ -1,11 +1,10 @@
 """每日匯入（#32、#35、#87）：虛構的每日更新（交易明細＋BBG_Data），對真的 PostgreSQL 匯入；
-信箱直接寫進資料庫。資料全部虛構。"""
+信箱直接寫進資料庫。這裡只留寫入資料庫的端到端測試，只看解讀規則的在 test_daily_read（#484）。資料全部虛構。"""
 
 from __future__ import annotations
 
 import datetime as dt
 import json
-import re
 from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
@@ -28,16 +27,12 @@ from db_synth import (
 )
 from sp_workflow import daily_import
 from sp_workflow.daily_import import (
-    BLOCKED,
-    CANCELLED,
     DIFFERENT,
     LEGACY_TRADE_HEADERS,
     MAILBOX_EMPTY,
     NAME_UNMATCHED,
     NEW_TRADES,
     PRICE_CONFLICT,
-    PRICE_CSV_HEADERS,
-    PRICE_HEADERS,
     PRICE_NOT_NUMBER,
     TRADE_HEADERS,
     UNCHANGED,
@@ -47,7 +42,6 @@ from sp_workflow.daily_import import (
     latest_import,
 )
 from sp_workflow.file_tools import FileWriteError
-from sp_workflow.mailbox import is_pb
 
 pytestmark = pytest.mark.db
 
@@ -94,14 +88,6 @@ def test_new_trades_and_people_are_written(pg, tmp_path: Path, mailbox) -> None:
     assert (summary[1]["price_date"], summary[1]["price_count"]) == ("2026-10-16", 1)
 
 
-def test_tdcc_loses_no_leading_zero(pg, tmp_path: Path, mailbox) -> None:
-    daily = write_daily(tmp_path / "d.xlsx", [trade(int(A), "Amy", "北區", 1)])
-
-    import_daily(daily, pg)
-
-    assert pg.execute("SELECT DISTINCT tdcc FROM workflow.trade_row").fetchall() == [(A,)]
-
-
 def test_other_products_are_skipped_and_counted(pg, tmp_path: Path, mailbox) -> None:
     daily = write_daily(
         tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1), trade(D, "Amy", "北區", 1, product="FCN_Stepdown")]
@@ -114,45 +100,6 @@ def test_other_products_are_skipped_and_counted(pg, tmp_path: Path, mailbox) -> 
     assert pg.execute("SELECT tdcc, product FROM workflow.other_product").fetchall() == [(D, "FCN_Stepdown")]
 
 
-def test_express_rows_are_imported_like_fcn(pg, tmp_path: Path, mailbox) -> None:
-    """FCN_Express 和 FCN 一樣寫進交易明細列（#302）：商品種類照設定的寫法存，列給起單資料頁，不記成其他商品。"""
-    daily = write_daily(
-        tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1, product="fcn_express"), trade(B, "Amy", "北區", 1)]
-    )
-
-    receipt = import_daily(daily, pg)
-
-    assert (receipt.skipped_trade_rows, receipt.fcn_trade_rows, receipt.fcn_tdccs) == (0, 2, (A, B))
-    assert pg.execute("SELECT tdcc, product FROM workflow.trade_row ORDER BY tdcc").fetchall() == [
-        (A, "FCN_Express"),
-        (B, "FCN"),
-    ]
-    assert count(pg, "workflow.other_product") == 0
-
-
-@pytest.mark.parametrize(("written", "stored"), [("SUPER BULL", "Super Bull"), (" ben ", "BEN")])
-def test_super_bull_and_ben_rows_are_imported_like_fcn(pg, tmp_path: Path, mailbox, written, stored) -> None:
-    """Super Bull（#310）、BEN（#373）和 FCN 一樣寫進交易明細列：大小寫、空白不同也照設定的寫法存，不記成其他商品。"""
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1, product=written)])
-
-    receipt = import_daily(daily, pg)
-
-    assert (receipt.skipped_trade_rows, receipt.fcn_tdccs) == (0, (A,))
-    assert pg.execute("SELECT tdcc, product FROM workflow.trade_row").fetchall() == [(A, stored)]
-    assert count(pg, "workflow.other_product") == 0
-
-
-def test_dacn_rows_are_imported_like_fcn(pg, tmp_path: Path, mailbox) -> None:
-    """DACN 和 FCN 一樣寫進交易明細列（#367），不記成其他商品。"""
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1, product="dacn")])
-
-    receipt = import_daily(daily, pg)
-
-    assert (receipt.skipped_trade_rows, receipt.fcn_tdccs) == (0, (A,))
-    assert pg.execute("SELECT tdcc, product FROM workflow.trade_row").fetchall() == [(A, "DACN")]
-    assert count(pg, "workflow.other_product") == 0
-
-
 def test_latest_import_describes_the_newest_run(pg, tmp_path: Path, mailbox) -> None:
     assert latest_import(pg) is None
     import_daily(write_daily(tmp_path / "1.xlsx", []), pg)
@@ -161,11 +108,6 @@ def test_latest_import_describes_the_newest_run(pg, tmp_path: Path, mailbox) -> 
     info = latest_import(pg)
 
     assert (info.run_id, info.file_name, len(info.sha256)) == (2, "2.xlsx", 64)
-
-
-@pytest.mark.parametrize("name", ["PB", " pb ", "Pb"])
-def test_pb_is_recognized_however_it_is_typed(name) -> None:
-    assert is_pb(name)
 
 
 def test_importing_the_same_file_again_adds_nothing(pg, tmp_path: Path, mailbox) -> None:
@@ -189,59 +131,6 @@ def test_changed_trades_are_reported_not_overwritten(pg, tmp_path: Path, mailbox
     assert pg.execute("SELECT amount FROM workflow.trade_row").fetchone() == (Decimal("1"),)
 
 
-def test_a_bad_trade_row_blocks_all_rows_of_that_product(pg, tmp_path: Path, mailbox) -> None:
-    bad = trade(A, "Ben", "南區", 1, number=None)
-    bad["金額"] = None
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1), bad, trade(B, "Amy", "北區", 1)])
-
-    receipt = import_daily(daily, pg)
-
-    assert kinds(receipt, A) == [BLOCKED] and "金額 沒有值" in receipt.lines[0].detail
-    assert pg.execute("SELECT DISTINCT tdcc FROM workflow.trade_row").fetchall() == [(B,)]
-
-
-def test_cancel_note_is_skipped(pg, tmp_path: Path, mailbox) -> None:
-    cancelled = trade(A, "Ben", "南區", 100000, number=None)
-    cancelled["備註"] = "此筆取消"
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 300000), cancelled])
-
-    receipt = import_daily(daily, pg)
-
-    assert receipt.cancelled_trade_rows == 1
-    assert CANCELLED in kinds(receipt, A)
-    assert pg.execute(
-        "SELECT row_seq, fc_name, amount FROM workflow.trade_row WHERE tdcc = %s ORDER BY row_seq", (A,)
-    ).fetchall() == [(1, "Amy", Decimal("300000"))]
-
-
-def test_fcn_tdccs_are_listed_for_the_order_tab_in_first_seen_order(pg, tmp_path: Path, mailbox) -> None:
-    """#90：依第一次出現的順序、不重複；非 FCN、整檔都取消的不列；有一列沒取消就列。
-    #93：只列剛好 12 碼的 TDCC；存成數字、前面的 0 掉了的照樣匯入資料庫，但不列。"""
-    cancelled_b = trade(B, "Amy", "北區", 1)
-    cancelled_b["備註"] = "Cancel"
-    cancelled_c = trade(C, "Amy", "北區", 1, number=None)
-    cancelled_c["備註"] = "此筆取消"
-    daily = write_daily(
-        tmp_path / "d.xlsx",
-        [
-            trade(C, "Amy", "北區", 1),
-            trade(D, "Amy", "北區", 1, product="FCN_Stepdown"),
-            trade(A, "Amy", "北區", 1),
-            cancelled_b,
-            cancelled_c,
-            trade("14700000000X", "Amy", "北區", 1),
-            trade(A, "Ben", "南區", 1, number=None),
-            trade(int(B), "Ben", "南區", 1),
-        ],
-    )
-
-    receipt = import_daily(daily, pg)
-
-    assert receipt.fcn_tdccs == (C, A)
-    assert receipt.fcn_trade_rows == 7, "非 FCN 不算，取消與 TDCC 不完整的列都算"
-    assert NEW_TRADES in kinds(receipt, B), "前面的 0 掉了的 TDCC 匯入資料庫照舊"
-
-
 def test_reimporting_the_same_file_still_lists_its_fcn_tdccs(pg, tmp_path: Path, mailbox) -> None:
     """#90：資料庫已有的（「已存在」）照樣列，因為讀 Order 不靠資料庫。"""
     daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)])
@@ -250,14 +139,6 @@ def test_reimporting_the_same_file_still_lists_its_fcn_tdccs(pg, tmp_path: Path,
     again = import_daily(daily, pg)
 
     assert UNCHANGED in kinds(again, A) and again.fcn_tdccs == (A,)
-
-
-def test_no_fcn_trades_leaves_nothing_to_hand_over(pg, tmp_path: Path, mailbox) -> None:
-    daily = write_daily(tmp_path / "d.xlsx", [trade(D, "Amy", "北區", 1, product="FCN_Stepdown")])
-
-    receipt = import_daily(daily, pg)
-
-    assert (receipt.fcn_trade_rows, receipt.fcn_tdccs) == (0, ())
 
 
 def test_unmatched_fc_names_are_listed_and_pb_is_not(pg, tmp_path: Path, mailbox) -> None:
@@ -338,31 +219,17 @@ def stored_people(pg) -> list[tuple]:
     ).fetchall()
 
 
-def test_new_layout_stores_fc2_and_singapore(pg, tmp_path: Path, mailbox) -> None:
-    """#420：新版面的 FC1 存 fc_name、FC2 存 fc2_name、新加坡存 singapore；沒有前台主管/投專，留空白。"""
+def test_new_layout_columns_are_stored(pg, tmp_path: Path, mailbox) -> None:
+    """#420：寫入端把新版面的 FC1、FC2、新加坡存進 fc_name、fc2_name、singapore，前台主管/投專留空白
+    （讀出來的值見 `test_daily_read`）。"""
     daily = write_daily(
         tmp_path / "d.xlsx",
         [trade(A, "Amy", "北區", 1, fc2="Ben", singapore="Y"), trade(A, "Ben", "南區", 1, number=None)],
     )
 
-    receipt = import_daily(daily, pg)
+    import_daily(daily, pg)
 
-    assert kinds(receipt, A) == [NEW_TRADES]
     assert stored_people(pg) == [(A, 1, "Amy", "Ben", "Y", None), (A, 2, "Ben", None, "N", None)]
-
-
-def test_legacy_layout_still_imports(pg, tmp_path: Path, mailbox) -> None:
-    """#420：舊版面（FC/PB、前台主管/投專）照樣可以匯入，回補舊的交易清單用；FC2、新加坡留空白。"""
-    daily = write_daily(
-        tmp_path / "d.xlsx",
-        [legacy_trade(trade(A, "Amy", "北區", 1), supervisor="PB")],
-        trade_headers=LEGACY_TRADE_HEADERS,
-    )
-
-    receipt = import_daily(daily, pg, prices=False)
-
-    assert kinds(receipt, A) == [NEW_TRADES]
-    assert stored_people(pg) == [(A, 1, "Amy", None, None, "PB")]
 
 
 def test_each_layout_compares_only_its_own_columns(pg, tmp_path: Path, mailbox) -> None:
@@ -397,37 +264,6 @@ def test_unmatched_fc2_names_are_listed_too(pg, tmp_path: Path, mailbox) -> None
     assert [(line.tdcc, line.detail) for line in receipt.lines if line.kind == NAME_UNMATCHED] == [(A, "Zoe")]
 
 
-def test_fc1_is_required(pg, tmp_path: Path, mailbox) -> None:
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, None, "北區", 1, fc2="Ben")])
-
-    receipt = import_daily(daily, pg)
-
-    assert kinds(receipt, A) == [BLOCKED] and "FC1 沒有值" in receipt.lines[0].detail
-
-
-def test_a_header_matching_neither_layout_is_explained_against_the_new_one(pg, tmp_path: Path, mailbox) -> None:
-    """#420：表頭不是新版也不是舊版時整份不匯入，訊息照新版指出哪一欄不同。"""
-    headers = list(LEGACY_TRADE_HEADERS)
-    headers[-1] = "建檔人員"
-    daily = write_daily(tmp_path / "d.xlsx", [], trade_headers=headers)
-
-    with pytest.raises(DailyImportError, match="G 欄應為「FC1」，實際是「FC/PB」"):
-        import_daily(daily, pg)
-
-
-@pytest.mark.parametrize("missing", [daily_import.TRADE_SHEET, daily_import.PRICE_SHEET])
-def test_missing_sheet_rejects_the_whole_file(pg, tmp_path: Path, mailbox, missing) -> None:
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [price("AAA UW")])
-    wb = openpyxl.load_workbook(daily)
-    del wb[missing]
-    wb.save(daily)
-
-    with pytest.raises(DailyImportError, match=f"缺少工作表「{missing}」"):
-        import_daily(daily, pg)
-
-    assert count(pg, "workflow.import_run") == 0
-
-
 def test_failure_halfway_leaves_nothing_behind(pg, tmp_path: Path, mailbox, monkeypatch) -> None:
     daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [price("AAA UW")])
 
@@ -443,17 +279,6 @@ def test_failure_halfway_leaves_nothing_behind(pg, tmp_path: Path, mailbox, monk
 
 
 # ---------------------------------------------------------------- 清單更新停用（#87）
-
-
-def test_an_inventory_sheet_is_ignored(pg, tmp_path: Path, mailbox) -> None:
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [price("AAA UW")])
-    wb = openpyxl.load_workbook(daily)
-    wb.create_sheet("清單更新").append(["這張工作表不讀"])
-    wb.save(daily)
-
-    receipt = import_daily(daily, pg)
-
-    assert kinds(receipt, A) == [NEW_TRADES] and count(pg, "workflow.product") == 0
 
 
 def test_trades_of_products_already_in_the_database_are_imported_as_before(pg, tmp_path: Path, mailbox) -> None:
@@ -570,19 +395,6 @@ def test_prices_are_stored_by_price_date(pg, tmp_path: Path, mailbox) -> None:
     ]
 
 
-def test_codes_keep_their_case_and_exchange(pg, tmp_path: Path, mailbox) -> None:
-    import_daily(write_daily(tmp_path / "d.xlsx", [], [price("aaa uw"), price("AAA UQ")]), pg)
-
-    assert [row[1] for row in prices_in(pg)] == ["AAA UQ", "aaa uw"]
-
-
-def test_duplicate_codes_with_the_same_values_count_once(pg, tmp_path: Path, mailbox) -> None:
-    receipt = import_daily(write_daily(tmp_path / "d.xlsx", [], [price("AAA UW"), price("AAA UW")]), pg)
-
-    assert receipt.prices.count == 1 and receipt.prices.conflicts == ()
-    assert not [line for line in receipt.lines if line.problem]
-
-
 def test_duplicate_codes_with_different_values_are_conflicts(pg, tmp_path: Path, mailbox) -> None:
     receipt = import_daily(
         write_daily(tmp_path / "d.xlsx", [], [price("AAA UW", 100), price("BBB UN"), price("AAA UW", 101)]), pg
@@ -595,28 +407,6 @@ def test_duplicate_codes_with_different_values_are_conflicts(pg, tmp_path: Path,
     conflict = pg.execute("SELECT last_close, conflict_rows FROM workflow.daily_price WHERE code = 'AAA UW'").fetchone()
     assert conflict[0] is None and [row["last_close"] for row in conflict[1]] == ["100", "101"]
     assert pg.execute("SELECT conflict_count FROM workflow.price_import").fetchone() == (1,)
-
-
-def test_a_conflict_counts_every_row_of_the_code(pg, tmp_path: Path, mailbox) -> None:
-    """三列以上：訊息寫實際的列數，conflict_rows 只記不同的值。"""
-    rows = [price("AAA UW", 100), price("AAA UW", 101), price("AAA UW", 100), price("AAA UW", 102)]
-
-    receipt = import_daily(write_daily(tmp_path / "d.xlsx", [], rows), pg)
-
-    assert [line.detail for line in receipt.lines if line.kind == PRICE_CONFLICT] == [
-        "AAA UW：同一個代碼有 4 列、值不同，價格沒有存，算價格時不能用"
-    ]
-    stored = pg.execute("SELECT conflict_rows FROM workflow.daily_price").fetchone()[0]
-    assert [row["last_close"] for row in stored] == ["100", "101", "102"]
-
-
-def test_a_price_that_is_not_a_number_is_stored_blank_and_listed(pg, tmp_path: Path, mailbox) -> None:
-    receipt = import_daily(write_daily(tmp_path / "d.xlsx", [], [price("AAA UW", "#N/A N/A")]), pg)
-
-    assert [(line.kind, line.detail) for line in receipt.lines if line.problem] == [
-        (PRICE_NOT_NUMBER, "BBG_Data第 4 列 AAA UW：最新收盤價(值)「#N/A N/A」不是數字，存成空白")
-    ]
-    assert prices_in(pg)[0][3] is None
 
 
 def test_reimporting_a_price_date_replaces_that_day(pg, tmp_path: Path, mailbox) -> None:
@@ -636,51 +426,6 @@ def test_reimporting_a_price_date_replaces_that_day(pg, tmp_path: Path, mailbox)
         (other_day.date(),),
         (PRICE_DATE.date(),),
     ], "每次匯入都留紀錄"
-
-
-@pytest.mark.parametrize("value", [None, "2026/10/16", 20261016])
-def test_a_price_date_that_is_not_a_date_rejects_the_whole_file(pg, tmp_path: Path, mailbox, value) -> None:
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [price("AAA UW")], price_date=value)
-
-    with pytest.raises(DailyImportError, match="C1 應為取價日（日期）"):
-        import_daily(daily, pg)
-
-    assert count(pg, "workflow.import_run") == 0 and count(pg, "workflow.trade_row") == 0
-
-
-def test_wrong_price_headers_reject_the_whole_file(pg, tmp_path: Path, mailbox) -> None:
-    headers = list(PRICE_HEADERS)
-    headers[2], headers[3] = headers[3], headers[2]
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [price("AAA UW")], price_headers=headers)
-
-    with pytest.raises(DailyImportError, match="D2 應為「最新收盤價\\(值\\)」，實際是「最新開盤價\\(值\\)」"):
-        import_daily(daily, pg)
-
-    assert count(pg, "workflow.import_run") == 0
-
-
-def test_a_price_sheet_without_headers_rejects_the_whole_file(pg, tmp_path: Path, mailbox) -> None:
-    """只有 C1 的 BBG_Data：不能當成「沒有股價」把那一天清空。"""
-    import_daily(write_daily(tmp_path / "1.xlsx", [], [price("AAA UW")]), pg)
-    daily = write_daily(tmp_path / "2.xlsx", [trade(A, "Amy", "北區", 1)], [price("AAA UW")])
-    wb = openpyxl.load_workbook(daily)
-    wb[daily_import.PRICE_SHEET].delete_rows(2, 10)
-    wb.save(daily)
-
-    with pytest.raises(DailyImportError, match="B2 應為「代碼\\(值\\)」，實際是「空白」"):
-        import_daily(daily, pg)
-
-    assert count(pg, "workflow.daily_price") == 1 and count(pg, "workflow.trade_row") == 0
-
-
-def test_a_price_sheet_without_prices_rejects_the_whole_file(pg, tmp_path: Path, mailbox) -> None:
-    """有欄名但沒有任何代碼：多半是取價沒有完成，不清空那一天已存的股價。"""
-    import_daily(write_daily(tmp_path / "1.xlsx", [], [price("AAA UW")]), pg)
-
-    with pytest.raises(DailyImportError, match="沒有任何股價"):
-        import_daily(write_daily(tmp_path / "2.xlsx", [trade(A, "Amy", "北區", 1)], [("", "代碼空白")]), pg)
-
-    assert count(pg, "workflow.daily_price") == 1 and count(pg, "workflow.import_run") == 1
 
 
 # ---------------------------------------------------------------- 回補股價 CSV 與只匯交易明細（#112）
@@ -717,28 +462,6 @@ def test_the_latest_import_skips_price_csvs(pg, tmp_path: Path, mailbox) -> None
     assert latest_import(pg).file_name == "每日更新.xlsx"
 
 
-def test_a_quoted_line_break_stays_in_one_price_csv_row(pg, tmp_path: Path, mailbox) -> None:
-    source = tmp_path / "m.csv"
-    lines = [",".join(PRICE_CSV_HEADERS), '2026-10-15,AAA UW,"虛構\n公司",101,100,31.5,12345.6,USD,12345.6']
-    source.write_bytes(("\r\n".join(lines) + "\r\n").encode("utf-8-sig"))
-
-    receipt = import_price_csv(source, pg)
-
-    assert receipt.prices.count == 1 and receipt.lines == ()
-    assert [(row[1], row[2], row[3]) for row in prices_in(pg)] == [("AAA UW", "虛構\n公司", Decimal("101"))]
-
-
-@pytest.mark.parametrize("value", ["NaN", "Infinity", "-inf"])
-def test_nan_and_infinity_are_not_prices(pg, tmp_path: Path, mailbox, value) -> None:
-    """NaN、Infinity 會讓算價格中斷：當成不是數字，存成空白並列出來（CSV 與 BBG_Data 都一樣）。"""
-    other_day = csv_price("AAA UW", value, day="2026-10-18")  # 存成 10-19，不和 BBG_Data 的 10-16 同一天
-    csv_receipt = import_price_csv(write_price_csv(tmp_path / "m.csv", [other_day]), pg)
-    daily_receipt = import_daily(write_daily(tmp_path / "d.xlsx", [], [price("BBB UN", value)]), pg)
-
-    assert [line.kind for line in csv_receipt.lines + daily_receipt.lines] == [PRICE_NOT_NUMBER, PRICE_NOT_NUMBER]
-    assert [(row[1], row[3]) for row in prices_in(pg)] == [("AAA UW", None), ("BBB UN", None)]
-
-
 def test_a_price_csv_replaces_the_day_it_is_stored_as(pg, tmp_path: Path, mailbox) -> None:
     """回補時先用 BBG_Data 匯進了錯的價格（取價日 10-16）：10-15 收盤的 CSV 整天取代它。"""
     import_daily(write_daily(tmp_path / "d.xlsx", [], [price("AAA UW", 200), price("BBB UN")]), pg)
@@ -765,39 +488,15 @@ def test_price_csv_problems_are_listed_and_kept_in_the_error_book(pg, tmp_path: 
     ]
 
 
-@pytest.mark.parametrize(
-    ("rows", "headers", "message"),
-    [
-        ([csv_price("AAA UW")], ("取價日", "代碼", "公司名稱", "開盤價"), "第 4 欄應為「收盤價」，實際是「開盤價」"),
-        ([csv_price("AAA UW")], (*PRICE_CSV_HEADERS, "備註"), "之後還有其他欄"),
-        ([csv_price("AAA UW", day="2026/10/32")], PRICE_CSV_HEADERS, "第 2 列的取價日「2026/10/32」不是日期"),
-        ([csv_price("AAA UW", day="")], PRICE_CSV_HEADERS, "第 2 列的取價日「空白」不是日期"),
-        (
-            [csv_price("AAA UW"), csv_price("BBB UN", day="2026-10-16")],
-            PRICE_CSV_HEADERS,
-            "取價日不只一天：2026-10-15（第 2 列起）、2026-10-16（第 3 列起）",
-        ),
-        ([["2026-10-15", ""]], PRICE_CSV_HEADERS, "沒有任何股價"),
-    ],
-)
-def test_a_bad_price_csv_changes_nothing(pg, tmp_path: Path, mailbox, rows, headers, message) -> None:
+def test_a_bad_price_csv_changes_nothing(pg, tmp_path: Path, mailbox) -> None:
+    """整份不匯入的 CSV 不動已存的股價、不留紀錄；各種壞掉的寫法與訊息在 test_daily_read 測（#484）。"""
     import_daily(write_daily(tmp_path / "d.xlsx", [], [price("AAA UW")]), pg)
-    source = write_price_csv(tmp_path / "m.csv", rows, headers=headers)
+    rows = [csv_price("AAA UW"), csv_price("BBB UN", day="2026-10-16")]
 
-    with pytest.raises(DailyImportError, match=re.escape(message)):
-        import_price_csv(source, pg)
+    with pytest.raises(DailyImportError, match="取價日不只一天"):
+        import_price_csv(write_price_csv(tmp_path / "m.csv", rows), pg)
 
     assert count(pg, "workflow.import_run") == 1 and count(pg, "workflow.daily_price") == 1
-
-
-def test_a_price_csv_that_is_not_utf8_changes_nothing(pg, tmp_path: Path, mailbox) -> None:
-    source = tmp_path / "m.csv"
-    source.write_bytes(",".join(PRICE_CSV_HEADERS).encode("big5"))
-
-    with pytest.raises(DailyImportError, match="不是 UTF-8"):
-        import_price_csv(source, pg)
-
-    assert count(pg, "workflow.import_run") == 0
 
 
 def test_trades_only_leaves_prices_alone(pg, tmp_path: Path, mailbox) -> None:
@@ -815,11 +514,3 @@ def test_trades_only_leaves_prices_alone(pg, tmp_path: Path, mailbox) -> None:
     assert count(pg, "workflow.price_import") == 1
     summary = pg.execute("SELECT summary FROM workflow.import_run ORDER BY run_id DESC LIMIT 1").fetchone()[0]
     assert (summary["price_date"], summary["price_count"]) == (None, None)
-
-
-def test_trades_only_ignores_a_stale_price_sheet(pg, tmp_path: Path, mailbox) -> None:
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [price("AAA UW")], price_date="壞掉的")
-
-    receipt = import_daily(daily, pg, prices=False)
-
-    assert kinds(receipt, A) == [NEW_TRADES] and count(pg, "workflow.daily_price") == 0
