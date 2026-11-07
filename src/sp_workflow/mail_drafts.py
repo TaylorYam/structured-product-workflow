@@ -64,8 +64,8 @@ class MailDraftError(OperatorError):
     """整批無法建立草稿（資料庫、信箱或路徑有問題）；訊息是給作業人員看的中文。"""
 
 
-class MailTemplateError(MailDraftError):
-    """沒有寄信格式範本可用（沒傳範本，或內建範本遺失）；不退回 HTML 內文（#499）。"""
+class MailTemplateError(OperatorError):
+    """建這一檔草稿時沒有寄信格式範本可用（沒傳範本，或內建範本遺失）；不退回 HTML 內文（#499）。"""
 
 
 @dataclass(frozen=True)
@@ -106,7 +106,7 @@ MAIL_TEMPLATE_ENV = "SPW_MAIL_TEMPLATE"
 BUNDLED_MAIL_TEMPLATE = Path(__file__).resolve().parent / "assets" / "TS IIS信件寄送格式.xlsx"
 
 
-def mail_template_from_env(env_path: Path) -> Path | None:
+def mail_template_from_env(env_path: Path) -> Path:
     """寄信格式範本：`.env` 的 SPW_MAIL_TEMPLATE；#279 起未設定時回內建範本 `BUNDLED_MAIL_TEMPLATE`（不是 None）。"""
     values = load_env_file(env_path)  # 設定檔有問題時丟 `DatabaseError`
     raw = values.get(MAIL_TEMPLATE_ENV)
@@ -457,7 +457,10 @@ class OutlookDrafter:
         selection.TypeText(BODY_INTRO)
         selection.TypeParagraph()
         selection.TypeParagraph()
-        ranges = ("A1:G2", "A4:P5")
+        ranges = tuple(
+            f"A{row - 1}:{get_column_letter(len(columns))}{row}"
+            for row, columns in ((SUMMARY_ROW, SUMMARY_COLUMNS), (TERMS_ROW, TERMS_COLUMNS))
+        )  # 表頭列加值列：A1:G2、A4:P5
         if branch_count:
             ranges += (f"A7:{get_column_letter(branch_count)}8",)
         for address in ranges:
