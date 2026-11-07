@@ -27,6 +27,7 @@ from sp_workflow.check_terms import (
 )
 from sp_workflow.daily_import import import_daily
 from sp_workflow.product_terms import write_batch
+from sp_workflow.stock_splits import Split, SplitBook, refresh_basis
 from sp_workflow.window_actions import _drafts
 
 CALENDAR = CONFIG.calendar
@@ -463,3 +464,33 @@ def test_locked_products_are_not_recalculated(pg, tmp_path) -> None:
     assert stored(pg) == (None, [], [(1, "原本", Decimal("1.0000"))])
     with pytest.raises(CheckTermsError, match="已鎖住"):
         release_differences(pg, A, [Difference("UF", "1", "2")], CONFIG, user="operator1")
+
+
+@pytest.mark.db
+def test_recalculation_keeps_the_price_basis_date_of_the_same_underlying(pg, tmp_path) -> None:
+    """#491：基準日由拆股登記推（`refresh_basis`），重算改寫四個價格時同一位置同一標的保留，不必等下一次比價。"""
+    import_trades_and_prices(pg, tmp_path, [trade(A, "Amy", "台北", 100000)], [price("AAA UW", 100.5), price("BBB UN")])
+    import_order(pg)
+    recalculate(pg, CONFIG)
+    (import_id,) = pg.execute(
+        "INSERT INTO workflow.close_price_import (source, file_name, file_sha256, imported_by, summary)"
+        " VALUES ('歷史收盤價', 'closes.xlsx', 'x', 'tester', '{}') RETURNING import_id"
+    ).fetchone()
+    pg.execute(  # Strike date 的收盤價是拆股前的十倍：進場價已經是上手調整過 1 拆 10 的
+        "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES (%s, 'AAA UW', 1005, %s)",
+        (THU, import_id),
+    )
+    assert refresh_basis(pg, SplitBook([Split("AAA UW", MON, 1, 10)])) == 1
+    basis = "SELECT seq, code, price_basis_date FROM workflow.underlying_price WHERE tdcc = %s ORDER BY seq"
+
+    import_order(pg, **{"Upfront / NotePrice (%)": Decimal("98.1")})  # 起單重新匯入（不比價）：有變的重算
+    line = recalculate(pg, CONFIG).line_of(A)
+
+    assert line is not None and line.changed
+    assert pg.execute(basis, (A,)).fetchall() == [(1, "AAA UW", MON), (2, "BBB UN", None)]
+
+    pg.execute("UPDATE workflow.product SET underlying_1 = 'BBB UN', underlying_2 = 'AAA UW' WHERE tdcc = %s", (A,))
+    assert recalculate(pg, CONFIG).line_of(A).changed
+    assert pg.execute(basis, (A,)).fetchall() == [(1, "BBB UN", None), (2, "AAA UW", None)], (
+        "換了位置或標的不沿用：由下一次比價推"
+    )
