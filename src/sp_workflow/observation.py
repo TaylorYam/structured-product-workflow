@@ -50,7 +50,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from fcn_checker.products import rule_or_fcn
-from sp_workflow.close_prices import latest_close_date
+from sp_workflow.close_prices import CloseSeries, latest_close_date, load_closes
 from sp_workflow.lifecycle import (
     DELIVERY,
     KO,
@@ -707,20 +707,14 @@ def _load_terms(
     return terms, locked, not_done
 
 
-def _load_closes(conn: psycopg.Connection, terms: Collection[Terms]) -> dict[str, dict[dt.date, Decimal]]:
+def _load_closes(conn: psycopg.Connection, terms: Collection[Terms]) -> CloseSeries:
     """比價會用到的代碼的收盤價（從最早的 Strike date 前 10 天起：核對價格基準用 Strike date 前後的收盤價）。"""
     codes = sorted({u.code for t in terms for u in t.underlyings})
     starts = [d for t in terms for d in (t.strike_date, *t.autocall[:1]) if d is not None]
     starts += [t.trade_date for t in terms if t.lookback_end is not None and t.trade_date is not None]  # 回顧期間
-    closes: dict[str, dict[dt.date, Decimal]] = {}
     if not codes or not starts:
-        return closes
-    for code, day, price in conn.execute(
-        "SELECT code, close_date, close FROM workflow.close_price WHERE code = ANY(%s) AND close_date >= %s",
-        (codes, min(starts) - dt.timedelta(days=STRIKE_CLOSE_DAYS)),
-    ):
-        closes.setdefault(code, {})[day] = price
-    return closes
+        return CloseSeries({})
+    return load_closes(conn, codes, since=min(starts) - dt.timedelta(days=STRIKE_CLOSE_DAYS))
 
 
 def _write_lookback(conn: psycopg.Connection, terms: Terms, fixed: Sequence[Underlying], user: str | None) -> None:

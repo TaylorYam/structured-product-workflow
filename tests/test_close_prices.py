@@ -12,7 +12,7 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from db_synth import csv_price, price, write_daily, write_price_csv
+from db_synth import csv_price, price, seed_closes, write_daily, write_price_csv
 from fcn_checker.trading_calendar import Market, TradingCalendar
 from sp_workflow import close_prices
 from sp_workflow.close_prices import (
@@ -487,3 +487,27 @@ def test_a_history_that_cannot_be_opened_writes_nothing(pg, tmp_path: Path) -> N
         import_history(source, pg, CALENDAR, now=NOW)
 
     assert count(pg, "workflow.close_price_import") == 0
+
+
+# ---------------------------------------------------------------- 讀取端（#494）
+
+D1, D2, D3 = dt.date(2026, 10, 14), dt.date(2026, 10, 15), dt.date(2026, 10, 16)
+
+
+def test_read_side_answers_latest_recent_ranges_and_existence(pg) -> None:
+    seed_closes(pg, {"AAA UW": {D1: "10", D2: "11", D3: "12"}, "BBB UN": {D2: "20"}})
+
+    assert close_prices.latest_closes(pg, ["AAA UW", "BBB UN", "ZZZ UW"]) == {
+        "AAA UW": (D3, Decimal("12")),
+        "BBB UN": (D2, Decimal("20")),
+    }
+    assert close_prices.recent_closes(pg, ["AAA UW", "BBB UN", "ZZZ UW"], 2) == {
+        "AAA UW": [(D3, Decimal("12")), (D2, Decimal("11"))],
+        "BBB UN": [(D2, Decimal("20"))],
+    }
+    series = close_prices.load_closes(pg, ["AAA UW", "BBB UN", "ZZZ UW"], since=D2)
+    assert dict(series) == {"AAA UW": {D2: Decimal("11"), D3: Decimal("12")}, "BBB UN": {D2: Decimal("20")}}
+    assert series.history("AAA UW") == [(D2, Decimal("11")), (D3, Decimal("12"))] and series.history("ZZZ UW") == []
+    assert list(close_prices.load_closes(pg, ["AAA UW"])["AAA UW"]) == [D1, D2, D3], "since 是 None 時全部、由舊到新"
+    assert close_prices.latest_close_date(pg) == D3
+    assert close_prices.has_closes(pg, "AAA UW") and not close_prices.has_closes(pg, "ZZZ UW")

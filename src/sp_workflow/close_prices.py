@@ -13,6 +13,10 @@
 不能確認是不是交易日（休市日常帶著前一天的價格），也不存、列出來，補了假日表再匯（`is_uncovered`）。
 交易所不在假日表的代碼照存，由比價標待確認。同一（收盤日、代碼）再匯入整筆取代，值改了的舊值留在
 `workflow.close_price_change`，每次匯入一筆 `workflow.close_price_import`。
+讀取端（#494）：比價、曝險、盤勢速報與拆股都從這裡讀收盤價，不自己寫 SQL——`latest_closes`（最新一筆）、
+`recent_closes`（最新 n 筆）、`load_closes`（區間序列 `CloseSeries`，某日前幾天內最近一筆用 `SplitBook.strike_close`）、
+`latest_close_date`、`has_closes`。換到價格基準只有一種寫法：`underlying_pricing.converted`（`SplitBook.factor`）。
+盤勢速報的匯率另外合併每日價格（`market_brief._usd_rates`），不走這裡。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
@@ -21,7 +25,7 @@ from __future__ import annotations
 import datetime as dt
 import getpass
 from collections import defaultdict
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
@@ -127,6 +131,60 @@ def latest_closes(conn: psycopg.Connection, codes: Iterable[str]) -> dict[str, t
         (sorted(set(codes)),),
     ).fetchall()
     return {code: (day, close) for code, day, close in rows}
+
+
+def recent_closes(conn: psycopg.Connection, codes: Iterable[str], n: int) -> dict[str, list[tuple[dt.date, Decimal]]]:
+    """每個代碼收盤價表最新的 `n` 筆：代碼 → [(收盤日, 收盤價)…]，新的在前；沒有收盤價的代碼不在裡面。"""
+    rows = conn.execute(
+        "SELECT code, close_date, close FROM (SELECT code, close_date, close,"
+        " row_number() OVER (PARTITION BY code ORDER BY close_date DESC) AS k FROM workflow.close_price"
+        " WHERE code = ANY(%s)) AS recent WHERE k <= %s ORDER BY code, close_date DESC",
+        (sorted(set(codes)), n),
+    ).fetchall()
+    found: dict[str, list[tuple[dt.date, Decimal]]] = defaultdict(list)
+    for code, day, close in rows:
+        found[code].append((day, close))
+    return dict(found)
+
+
+@dataclass(frozen=True)
+class CloseSeries(Mapping[str, Mapping[dt.date, Decimal]]):
+    """`load_closes` 讀出的收盤價：代碼 → {收盤日: 收盤價}（日期由舊到新）；沒有收盤價的代碼不在裡面。
+
+    本身是 `Mapping`，`observation.observe` 的 `closes` 直接用；某日前幾天內最近一筆用 `SplitBook.strike_close`。"""
+
+    by_code: Mapping[str, Mapping[dt.date, Decimal]]
+
+    def __getitem__(self, code: str) -> Mapping[dt.date, Decimal]:
+        return self.by_code[code]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self.by_code)
+
+    def __len__(self) -> int:
+        return len(self.by_code)
+
+    def history(self, code: str) -> list[tuple[dt.date, Decimal]]:
+        """一個代碼的 (收盤日, 收盤價)，由舊到新；沒有收盤價是空的。"""
+        return list(self.by_code.get(code, {}).items())
+
+
+def load_closes(conn: psycopg.Connection, codes: Iterable[str], *, since: dt.date | None = None) -> CloseSeries:
+    """這些代碼的收盤價（`since` 起；None 是全部），依代碼、日期排序。"""
+    found: dict[str, dict[dt.date, Decimal]] = {}
+    for code, day, close in conn.execute(
+        "SELECT code, close_date, close FROM workflow.close_price WHERE code = ANY(%s)"
+        " AND (%s::date IS NULL OR close_date >= %s) ORDER BY code, close_date",
+        (sorted(set(codes)), since, since),
+    ):
+        found.setdefault(code, {})[day] = close
+    return CloseSeries(found)
+
+
+def has_closes(conn: psycopg.Connection, code: str) -> bool:
+    """收盤價表有沒有這個代碼（拆股登記檢查代碼打錯用）。"""
+    (found,) = conn.execute("SELECT EXISTS (SELECT 1 FROM workflow.close_price WHERE code = %s)", (code,)).fetchone()
+    return bool(found)
 
 
 def latest_close_date(conn: psycopg.Connection) -> dt.date | None:

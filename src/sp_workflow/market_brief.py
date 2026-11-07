@@ -43,7 +43,7 @@ from typing import TYPE_CHECKING
 
 from openpyxl.styles import Border, PatternFill, Side
 
-from sp_workflow.close_prices import latest_closes
+from sp_workflow.close_prices import load_closes, recent_closes
 from sp_workflow.exposure import (
     K_BROKEN,
     NEAR_BUFFER,
@@ -55,7 +55,7 @@ from sp_workflow.exposure import (
 from sp_workflow.file_tools import save_export
 from sp_workflow.slide_table import BOLD_FONT, BROKEN_FILL, Column, font, slide_book, write_slide
 from sp_workflow.stock_splits import SplitBook, load_splits
-from sp_workflow.underlying_pricing import Leg
+from sp_workflow.underlying_pricing import Leg, converted
 
 if TYPE_CHECKING:
     import psycopg
@@ -181,17 +181,12 @@ def load_brief(conn: psycopg.Connection, today: dt.date | None = None) -> Brief:
 
 
 def _quotes(conn: psycopg.Connection, codes: Iterable[str]) -> dict[str, Quote]:
-    """每個代碼最新的收盤價（同曝險分析，`latest_closes`），加上它前一筆（視窗的漲跌% 用）。"""
-    latest = latest_closes(conn, codes)
-    previous = dict(
-        conn.execute(
-            "SELECT DISTINCT ON (c.code) c.code, c.close FROM workflow.close_price AS c"
-            " JOIN unnest(%s::text[], %s::date[]) AS latest (code, day) ON c.code = latest.code"
-            " AND c.close_date < latest.day ORDER BY c.code, c.close_date DESC",
-            (list(latest), [day for day, _ in latest.values()]),
-        ).fetchall()
-    )
-    return {code: Quote(day, close, previous.get(code)) for code, (day, close) in latest.items()}
+    """每個代碼最新的收盤價（同曝險分析的 `latest_closes`），加上它前一筆（視窗的漲跌% 用）。"""
+    quotes = {}
+    for code, rows in recent_closes(conn, codes, 2).items():
+        (day, close), previous = rows[0], rows[1:]
+        quotes[code] = Quote(day, close, previous[0][1] if previous else None)
+    return quotes
 
 
 def months_before(day: dt.date, n: int) -> dt.date:
@@ -216,7 +211,7 @@ def trailing_returns(
             found.append(None)
             continue
         day, close = history[i]
-        found.append(quote.close / (close * book.factor(code, quote.day, day)) - 1)
+        found.append(quote.close / converted(book, code, close, quote.day, day) - 1)
     return tuple(found)
 
 
@@ -224,14 +219,10 @@ def _with_trailing(conn: psycopg.Connection, quotes: dict[str, Quote], book: Spl
     if not quotes:
         return quotes
     since = min(months_before(q.day, max(TRAILING_MONTHS)) for q in quotes.values()) - dt.timedelta(days=STALE_DAYS)
-    history: dict[str, list[tuple[dt.date, Decimal]]] = defaultdict(list)
-    for code, day, close in conn.execute(
-        "SELECT code, close_date, close FROM workflow.close_price WHERE code = ANY(%s) AND close_date >= %s"
-        " ORDER BY code, close_date",
-        (sorted(quotes), since),
-    ):
-        history[code].append((day, close))
-    return {code: replace(q, trailing=trailing_returns(code, q, history[code], book)) for code, q in quotes.items()}
+    series = load_closes(conn, quotes, since=since)
+    return {
+        code: replace(q, trailing=trailing_returns(code, q, series.history(code), book)) for code, q in quotes.items()
+    }
 
 
 def _usd_rates(conn: psycopg.Connection, currencies: Iterable[str]) -> dict[str, Decimal]:
@@ -457,7 +448,10 @@ def heatmap(brief: Brief, ticker: str) -> Heatmap:
 
 def _strike_on(leg: Leg, close: Decimal | None, raw: Decimal | None) -> Decimal:
     """執行價換到昨收的尺度：執行價 × 昨收 ÷ 這個代碼換回價格基準的收盤價（同代碼時就是拆股換算，ADR 0025）。
-    沒有昨收時照這個代碼自己的原始收盤價換；都沒有收盤價時用資料庫的執行價。"""
+    沒有昨收時照這個代碼自己的原始收盤價換；都沒有收盤價時用資料庫的執行價。
+
+    不改成 `converted`：昨收可能是同一個代號在別的交易所的代碼（價格尺度不同，例：不同幣別），
+    這裡要的是兩個代碼之間的比例，不只是拆股倍數（#494）。"""
     assert leg.strike is not None
     scale = close if close is not None else raw
     if scale is None or not leg.close:
