@@ -27,6 +27,8 @@ from db_synth import (
 )
 from sp_workflow import daily_import
 from sp_workflow.daily_import import (
+    BLOCKED,
+    CANCELLED,
     DIFFERENT,
     LEGACY_TRADE_HEADERS,
     MAILBOX_EMPTY,
@@ -279,6 +281,28 @@ def test_failure_halfway_leaves_nothing_behind(pg, tmp_path: Path, mailbox, monk
 
 
 # ---------------------------------------------------------------- 清單更新停用（#87）
+
+
+def test_blocked_and_cancelled_rows_reach_the_receipt_and_are_not_written(pg, tmp_path: Path, mailbox) -> None:
+    """讀取端擋下、取消的列（解讀規則見 test_daily_read）交到結果、不寫進資料庫；整檔都取消的 TDCC 不帶到起單資料頁。"""
+    bad = trade(A, "Ben", "南區", 1, number=None)
+    bad["金額"] = None
+    cancelled = trade(B, "Ben", "南區", 2, number=None)
+    cancelled["備註"] = "此筆取消"
+    all_cancelled = trade(C, "Amy", "北區", 1)
+    all_cancelled["備註"] = "Cancel"
+    daily = write_daily(
+        tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1), bad, trade(B, "Amy", "北區", 1), cancelled, all_cancelled]
+    )
+
+    receipt = import_daily(daily, pg)
+
+    assert kinds(receipt, A) == [BLOCKED] and kinds(receipt, C) == [CANCELLED]
+    assert sorted(kinds(receipt, B)) == sorted([CANCELLED, NEW_TRADES])
+    assert receipt.cancelled_trade_rows == 2 and receipt.fcn_tdccs == (A, B)
+    assert pg.execute("SELECT tdcc, row_seq, fc_name FROM workflow.trade_row ORDER BY tdcc, row_seq").fetchall() == [
+        (B, 1, "Amy")
+    ]
 
 
 def test_trades_of_products_already_in_the_database_are_imported_as_before(pg, tmp_path: Path, mailbox) -> None:

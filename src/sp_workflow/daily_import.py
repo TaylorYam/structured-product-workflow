@@ -400,7 +400,7 @@ def latest_import(conn: psycopg.Connection) -> ImportInfo | None:
 def read_daily(path: Path, *, prices: bool) -> DailyFile:
     """讀取端（#484）：讀一份每日更新，不連資料庫。`prices=False` 只讀交易明細（`DailyFile.prices` 是 None）。
 
-    整份不能匯入時丟 `DailyImportError`：缺工作表、交易明細的欄名兩版都不同、BBG_Data 的取價日不是日期、
+    整份不能匯入時丟 `DailyImportError`：打不開、缺工作表、交易明細的欄名兩版都不同、BBG_Data 的取價日不是日期、
     欄名不對或沒有任何股價。個別列的問題（擋下、取消、股價不是數字、代碼衝突）不丟，記在回傳值裡。
     """
     wb = _open(path)

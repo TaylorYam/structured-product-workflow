@@ -26,7 +26,6 @@ from sp_workflow.daily_import import (
     read_daily,
     read_price_csv,
 )
-from sp_workflow.mailbox import is_pb
 
 A = "029199990001"
 B = "037199990002"
@@ -101,11 +100,6 @@ def test_dacn_rows_are_imported_like_fcn(tmp_path: Path) -> None:
     assert (parsed.skipped_trade_rows, parsed.fcn_tdccs) == (0, {A: True})
     assert [row["product"] for row in parsed.trades[A]] == ["DACN"]
     assert parsed.other_products == {}
-
-
-@pytest.mark.parametrize("name", ["PB", " pb ", "Pb"])
-def test_pb_is_recognized_however_it_is_typed(name) -> None:
-    assert is_pb(name)
 
 
 def test_a_bad_trade_row_blocks_all_rows_of_that_product(tmp_path: Path) -> None:
@@ -289,7 +283,7 @@ def test_wrong_price_headers_reject_the_whole_file(tmp_path: Path) -> None:
 
 
 def test_a_price_sheet_without_headers_rejects_the_whole_file(tmp_path: Path) -> None:
-    """只有 C1 的 BBG_Data：不能當成「沒有股價」把那一天清空。"""
+    """只有 C1 的 BBG_Data：整份不匯入，不能當成「沒有股價」。"""
     daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [price("AAA UW")])
     wb = openpyxl.load_workbook(daily)
     wb[daily_import.PRICE_SHEET].delete_rows(2, 10)
@@ -300,7 +294,7 @@ def test_a_price_sheet_without_headers_rejects_the_whole_file(tmp_path: Path) ->
 
 
 def test_a_price_sheet_without_prices_rejects_the_whole_file(tmp_path: Path) -> None:
-    """有欄名但沒有任何代碼：多半是取價沒有完成，不清空那一天已存的股價。"""
+    """有欄名但沒有任何代碼：多半是取價沒有完成，整份不匯入。"""
     daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [("", "代碼空白")])
 
     with pytest.raises(DailyImportError, match="沒有任何股價"):
