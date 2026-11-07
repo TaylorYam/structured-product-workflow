@@ -223,6 +223,7 @@ FEE_ITEMS = {
     "其他費用": None,
 }
 FEE_CHECKED = ("申購費用", "提前贖回費用", "分銷費用")  # 範本核對的三項
+EXACT_ROWS = {label: label for label in FEE_ROWS}  # 左欄開頭剛好是七列的列名（不認投資人須知的「贖回費用」等簡寫）
 
 
 class FeeGrid(NamedTuple):
@@ -323,7 +324,7 @@ def titled_grid(lines: list[Line]) -> FeeGrid | str:
         return "費用表表頭不完整"
     return FeeGrid(
         seg,
-        lambda ln: ln.x1 <= item.x1 + 80 and ln.x0 < item.x0,
+        lambda ln: ln.x1 <= item.x1 + 80 and ln.x0 < item.x0 and ln.text.startswith(FEE_ROWS),  # 原文（不去空白）比列名
         lambda top, fee: lambda ln: item.x1 < ln.x0 < when.x0 - 15,
     )
 
@@ -341,42 +342,53 @@ class LabelEdge:
 # 一列的範圍：(表的行, 各列首行, 第幾列, 費率欄的行) → 這一列費率欄的行（依閱讀順序）
 
 
-def rows_by_position(lines: list[Line], tops: list[Line], k: int, in_column: Callable[[Line], bool]) -> list[Line]:
-    """從列首那一行到下一個列首之前（可跨頁；y 容差 3），依頁、y、x 排序（擷取時欄位文字可能交錯）。"""
-    top, bottom = tops[k], tops[k + 1] if k + 1 < len(tops) else None
-    return sorted(
-        (
-            ln
-            for ln in lines
-            if in_column(ln)
-            and (ln.page, ln.y0 + 3) >= (top.page, top.y0)
-            and (bottom is None or (ln.page, ln.y0 + 3) < (bottom.page, bottom.y0))
-        ),
-        key=lambda x: (x.page, x.y0, x.x0),
-    )
+@dataclass(frozen=True)
+class ByPosition:
+    """從列首那一行到下一個列首之前（可跨頁；y 容差 3），依頁、y 排序（擷取時欄位文字可能交錯）；`by_x` 時同一 y 再依
+    x 排（Nomura 的費率欄只有一欄寬，同 y 照擷取順序）。"""
+
+    by_x: bool = True
+
+    def __call__(self, lines: list[Line], tops: list[Line], k: int, in_column: Callable[[Line], bool]) -> list[Line]:
+        top, bottom = tops[k], tops[k + 1] if k + 1 < len(tops) else None
+        return sorted(
+            (
+                ln
+                for ln in lines
+                if in_column(ln)
+                and (ln.page, ln.y0 + 3) >= (top.page, top.y0)
+                and (bottom is None or (ln.page, ln.y0 + 3) < (bottom.page, bottom.y0))
+            ),
+            key=(lambda x: (x.page, x.y0, x.x0)) if self.by_x else (lambda x: (x.page, x.y0)),
+        )
 
 
 @dataclass(frozen=True)
 class SamePage:
-    """同一頁、從列首 y 往上 `above` 起到同頁下一個列首 y 往上 `below` 之前；同頁沒有下一列時到列首往下 `tail`
-    （None：到頁尾）。行照擷取順序。"""
+    """同一頁、從列首 y 往上 1 起到同頁最近的下一個列首 y 往上 1 之前；同頁沒有下一列時到列首往下 `tail`。行照擷取順序
+    （MS、HSBC）。"""
 
-    above: float
-    below: float
-    tail: float | None
+    tail: float
 
     def __call__(self, lines: list[Line], tops: list[Line], k: int, in_column: Callable[[Line], bool]) -> list[Line]:
         top = tops[k]
         nexts = [ln.y0 for ln in tops if ln.page == top.page and ln.y0 > top.y0 + 1]
-        bottom = min(nexts) if nexts else (None if self.tail is None else top.y0 + self.tail)
-        return [
-            ln
-            for ln in lines
-            if ln.page == top.page
-            and in_column(ln)
-            and top.y0 - self.above <= ln.y0
-            and (bottom is None or ln.y0 < bottom - self.below)
-        ]
+        bottom = min(nexts) if nexts else top.y0 + self.tail
+        return [ln for ln in lines if ln.page == top.page and in_column(ln) and top.y0 - 1 <= ln.y0 < bottom - 1]
+
+
+def next_row_on_page(lines: list[Line], tops: list[Line], k: int, in_column: Callable[[Line], bool]) -> list[Line]:
+    """同一頁、從列首 y 往上 3 起到下一個列首 y 往上 3 之前；下一個列首在別頁（或沒有）時到頁尾。行照擷取順序
+    （Barclays）。"""
+    top, nxt = tops[k], tops[k + 1] if k + 1 < len(tops) else None
+    return [
+        ln
+        for ln in lines
+        if ln.page == top.page
+        and in_column(ln)
+        and top.y0 - 3 <= ln.y0
+        and (nxt is None or nxt.page != top.page or ln.y0 < nxt.y0 - 3)
+    ]
 
 
 def rows_in_order(lines: list[Line], tops: list[Line], k: int, in_column: Callable[[Line], bool]) -> list[Line]:
@@ -450,7 +462,7 @@ class FeeTable:
     `last` 時重複的列取最後一列，Barclays）。"""
 
     grid: Callable[[list[Line]], FeeGrid | str] = rate_header_grid
-    band: Callable[[list[Line], list[Line], int, Callable[[Line], bool]], list[Line]] = rows_by_position
+    band: Callable[[list[Line], list[Line], int, Callable[[Line], bool]], list[Line]] = ByPosition()
     rate: Callable[[str, str, str, Line, list[Line]], ParsedField] = OneRate()
     rows: Mapping[str, str | None] = field(default_factory=lambda: FEE_ITEMS)
     fees: tuple[str, ...] | None = None

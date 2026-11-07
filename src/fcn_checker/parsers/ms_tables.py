@@ -11,7 +11,7 @@ from dataclasses import replace
 from ..schema import Line, ParsedField
 from ..text import full_brackets, squash
 from . import price_table as price_table_module
-from .common import FEE_CHECKED, FEE_ROWS, EachRate, FeeTable, SamePage, item_header_grid
+from .common import EXACT_ROWS, FEE_CHECKED, EachRate, FeeTable, SamePage, item_header_grid
 from .layout import DATE_RE, TextIndex, join_text, parse_date
 
 # 日期表：標題 → 表型；表頭（去空白、括號統一全形）
@@ -194,9 +194,9 @@ def underlying_names(lines: list[Line]) -> ParsedField:
 # 第四章費用表：費率欄依同一頁表頭「費用項目」「收取時點」定位，每一處區間都算、只引費率所在的行
 FEE_TABLE = FeeTable(
     grid=item_header_grid,
-    band=SamePage(above=1, below=1, tail=100),
+    band=SamePage(tail=100),
     rate=EachRate(missing="費率欄找不到費率區間"),
-    rows={label: label for label in FEE_ROWS},
+    rows=EXACT_ROWS,
     fees=FEE_CHECKED,
     duplicate="費用列錨點缺漏／重複",
 )

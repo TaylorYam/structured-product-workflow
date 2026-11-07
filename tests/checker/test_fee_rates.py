@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from fcn_checker.parsers.common import (
+    EXACT_ROWS,
     FEE_CHECKED,
     FEE_ROWS,
     EachRate,
@@ -63,7 +64,7 @@ def test_without_the_rate_header_every_fee_is_missing():
 NOMURA_LIKE = FeeTable(
     grid=nearest_column_grid,
     rate=PrefixedRate({"申購費用": "申購價金的", "提前贖回費用": "投資人提前贖回價金的", "分銷費用": "申購價金的"}),
-    rows={label: label for label in FEE_ROWS},
+    rows=EXACT_ROWS,
     fees=FEE_CHECKED,
 )
 
@@ -79,9 +80,9 @@ def test_prefixed_rate_requires_the_whole_cell_to_be_prefix_plus_range():
 
 FIXED = FeeTable(
     grid=FixedColumns(edge=100, lo=140, hi=230),
-    band=SamePage(above=1, below=1, tail=100),
+    band=SamePage(tail=100),
     rate=EachRate(),
-    rows={label: label for label in FEE_ROWS},
+    rows=EXACT_ROWS,
     fees=FEE_CHECKED,
     duplicate="費用列錨點缺漏／重複",
 )

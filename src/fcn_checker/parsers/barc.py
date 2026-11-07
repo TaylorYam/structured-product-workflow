@@ -18,7 +18,17 @@ from ..standard_fields import ScenarioParam
 from ..text import squash
 from . import barc_schedule as schedule
 from . import money, price_table, ratings
-from .common import FEE_ROWS, EachRate, FeeTable, SamePage, by_value, derived, fee_rates, titled_grid
+from .common import (
+    EXACT_ROWS,
+    FEE_ROWS,
+    EachRate,
+    FeeTable,
+    by_value,
+    derived,
+    fee_rates,
+    next_row_on_page,
+    titled_grid,
+)
 from .layout import Document, LayoutSpec, Span, TextIndex, capture, join_text, parse_date
 from .underlying_notes import Markers, underlying_notes
 
@@ -567,11 +577,11 @@ def _distributor_cover(lines: list[Line]) -> dict[str, ParsedField]:
 # 第四章「投資人應負擔的各項費用」表：七個費用項目都交出，費率欄每一處區間都引整列；重複的列取最後一列
 FEE_TABLE = FeeTable(
     grid=titled_grid,
-    band=SamePage(above=3, below=3, tail=None),
+    band=next_row_on_page,
     rate=EachRate(
         r"([\d.]+%~[\d.]+%)", missing="「{fee}」沒有費率區間", ambiguous="說明書中出現多個不同的值", row=True
     ),
-    rows={label: label for label in FEE_ROWS},
+    rows=EXACT_ROWS,
     fees=FEE_ROWS,
     unlisted="費用表找不到「{fee}」",
     last=True,

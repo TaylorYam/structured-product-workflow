@@ -18,8 +18,9 @@ from ..standard_fields import Occurrence, ScenarioParam
 from ..text import squash
 from . import iis, money, price_table, ratings, schedule
 from .common import (
+    EXACT_ROWS,
     FEE_CHECKED,
-    FEE_ROWS,
+    ByPosition,
     FeeTable,
     Hit,
     Mention,
@@ -94,8 +95,9 @@ WARNING_HEAD = "◎本商品之投資風險警語"
 # （例：`投資人提前` / `贖回價金的` / `0%~5%`），費率欄各行由上到下接起來 = 前綴＋區間
 FEE_TABLE = FeeTable(
     grid=nearest_column_grid,
+    band=ByPosition(by_x=False),
     rate=PrefixedRate({"申購費用": "申購價金的", "提前贖回費用": "投資人提前贖回價金的", "分銷費用": "申購價金的"}),
-    rows={label: label for label in FEE_ROWS},
+    rows=EXACT_ROWS,
     fees=FEE_CHECKED,
 )
 # 第 14 項百分比表的欄（表頭文字 → 欄）；欄位順序以表頭出現位置為準

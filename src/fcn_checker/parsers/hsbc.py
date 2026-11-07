@@ -13,7 +13,7 @@ from ..standard_fields import ScenarioParam, ScenarioPrice
 from ..text import full_brackets, squash
 from . import hsbc_tables as tables
 from . import money, price_table, ratings, schedule
-from .common import FEE_CHECKED, FEE_ROWS, EachRate, FeeTable, FixedColumns, SamePage, derived, fee_rates
+from .common import EXACT_ROWS, FEE_CHECKED, EachRate, FeeTable, FixedColumns, SamePage, derived, fee_rates
 from .layout import Document, LayoutSpec, TextIndex, capture, parse_date
 from .underlying_notes import Paragraphs, underlying_notes
 
@@ -61,9 +61,9 @@ SCENARIO_TABLE = replace(PRICE_TABLE, where="第一章第 18 條情境價格表"
 # 第四章費用表：左欄 x < 100、費率欄固定在 x 150～230；每一處區間都算、只引費率所在的行
 FEE_TABLE = FeeTable(
     grid=FixedColumns(edge=100, lo=150, hi=230),
-    band=SamePage(above=1, below=1, tail=100),
+    band=SamePage(tail=100),
     rate=EachRate(),
-    rows={label: label for label in FEE_ROWS},
+    rows=EXACT_ROWS,
     fees=FEE_CHECKED,
     duplicate="費用列錨點缺漏／重複",
 )

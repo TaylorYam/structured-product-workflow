@@ -49,7 +49,6 @@ LAYOUT = LayoutSpec(
     CHAPTER_NAMES,
 )
 D = r"(\d{4}年\d{1,2}月\d{1,2}日)"
-FEES = ("申購費用", "提前贖回費用", "分銷費用")
 
 
 def document(lines: Sequence[Line]) -> Document:

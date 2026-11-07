@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from ..schema import DetectionResult, Evidence, Line, ParsedField
 from ..text import squash
 from . import iis, ms_wording, ratings
+from .common import fee_rates_by_pattern
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "ms-zh-iis"
@@ -286,11 +287,11 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
             ),
         ),
     )
-    for label, pattern in (
-        ("申購費用", r"申購費用[^%]{0,20}?"),
-        ("提前贖回費用", r"提前贖回費用[^%]{0,20}?"),
-        ("分銷費用", r"分銷費用[^%]{0,60}?"),  # 列首另有「（如屬發行機構或發行人給予…應單獨列示）」
-    ):
-        put(f"fee_{label}", pattern + iis.RATE)
+    fee_patterns = {
+        "申購費用": r"申購費用[^%]{0,20}?" + iis.RATE,
+        "提前贖回費用": r"提前贖回費用[^%]{0,20}?" + iis.RATE,
+        "分銷費用": r"分銷費用[^%]{0,60}?" + iis.RATE,  # 列首另有「（如屬發行機構或發行人給予…應單獨列示）」
+    }
+    fields.update(fee_rates_by_pattern(ti.lines, fee_patterns, whole_match=False))
     fields.update(ratings.fields(full.lines, RATINGS, no_guarantor_places=(ratings.NAME_NO_GUARANTOR,)))
     return iis.IisSheet(fields, full, frozenset(provided))

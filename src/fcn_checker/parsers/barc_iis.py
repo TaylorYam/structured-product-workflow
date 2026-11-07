@@ -15,7 +15,7 @@ from decimal import Decimal
 from ..schema import DetectionResult, Evidence, Line, ParsedField
 from ..text import squash
 from . import barc, iis, money, price_table, ratings
-from .common import derived
+from .common import derived, fee_rates_by_pattern
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "barc-zh-iis"
@@ -241,11 +241,11 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
             ),
         ),
     )
-    for label, pattern in (
-        ("申購費用", r"申購費用[^%]{0,20}?"),
-        ("提前贖回費用", r"提前贖回費用[^%]{0,20}?"),
-        ("分銷費用", r"分銷費用[^%]{0,60}?"),
-    ):
-        put(f"fee_{label}", pattern + iis.RATE)
+    fee_patterns = {
+        "申購費用": r"申購費用[^%]{0,20}?" + iis.RATE,
+        "提前贖回費用": r"提前贖回費用[^%]{0,20}?" + iis.RATE,
+        "分銷費用": r"分銷費用[^%]{0,60}?" + iis.RATE,
+    }
+    fields.update(fee_rates_by_pattern(ti.lines, fee_patterns, whole_match=False))
     fields.update(ratings.fields(ti.lines, RATINGS, no_guarantor_places=NO_GUARANTOR))
     return iis.IisSheet(fields, ti, frozenset(provided))

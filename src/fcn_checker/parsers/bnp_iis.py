@@ -17,7 +17,7 @@ from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence
 from ..text import squash
 from . import bnp, bnp_tables, iis, money, ratings
-from .common import FEE_ROWS, FeeTable, LabelEdge, OneRate, fee_rates, rows_in_order
+from .common import EXACT_ROWS, FeeTable, LabelEdge, OneRate, fee_rates, rows_in_order
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "bnp-zh-iis"
@@ -59,7 +59,7 @@ FEE_TABLE = FeeTable(
     grid=LabelEdge(60),
     band=rows_in_order,
     rate=OneRate(iis.RATE, note="費用表「{fee}」列的費率不是剛好一個區間", with_label=True),
-    rows={label: label for label in FEE_ROWS},
+    rows=EXACT_ROWS,
     fees=iis.FEES,
     duplicate="費用表「{fee}」列重複",
     unlisted="費用表找不到「{fee}」列",
