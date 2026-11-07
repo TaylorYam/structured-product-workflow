@@ -1,6 +1,6 @@
 """讀商品條件（#204、#437）：資料庫裡一檔商品的條件、核對條件、標的價格、比價日、分公司配置與鎖住狀態。
 
-「一檔商品的條件怎麼讀」只有這裡知道，讀取端各自從 `Stored` 轉成自己的形狀（#438）；寫入在 `product_terms`（ADR 0013 的核對寫回也經過它）。這個 module 不 import
+「一檔商品的條件怎麼讀」只有這裡知道，讀取端各自從 `Stored` 轉成自己的形狀（#438）；寫入在 `product_terms`（ADR 0013 的核對寫回也經過它），標的價格只由 `underlying_prices` 寫（#492）。這個 module 不 import
 寫入端與算核對條件、風險等級的 module（`product_terms`、`check_terms`、`risk_level`），所以它們都可以在 module 開頭
 import 這裡，不必再用函式內的 import 繞開循環。對外：
 - `read_many`：資料庫裡這幾檔（或全部）商品的 `Stored`，caller 自己挑要的欄；`read` 是只讀一檔的寫法。`lock=True` 時

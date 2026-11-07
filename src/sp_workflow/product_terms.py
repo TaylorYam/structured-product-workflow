@@ -91,6 +91,7 @@ from sp_workflow.trade_rows import (
     unmatched_names,
     write_trade_rows,
 )
+from sp_workflow.underlying_prices import backfill_price
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -1002,9 +1003,8 @@ def backfill(
     match target:
         case _ if target == LOOKBACK_END_DATE:
             (old,) = conn.execute("SELECT lookback_end_date FROM workflow.product WHERE tdcc = %s", (tdcc,)).fetchone()
-            (fixed,) = conn.execute(
-                "SELECT count(*) FROM workflow.underlying_price WHERE tdcc = %s AND lookback_price IS NOT NULL", (tdcc,)
-            ).fetchone()
+            stored = read(conn, tdcc)
+            fixed = stored is not None and any(p.lookback is not None for p in stored.prices)
             if fixed and not same_value(old, value):
                 return False
             conn.execute("UPDATE workflow.product SET lookback_end_date = %s WHERE tdcc = %s", (value, tdcc))
@@ -1024,15 +1024,9 @@ def backfill(
             if found is None and value is None:
                 return False  # 不需要填的期別：記下來就好，不算改值
         case UnderlyingPrice(seq=seq, column=price):  # `column` 只會是 fields.PRICE_COLUMNS 的四個欄
-            found = conn.execute(
-                f"SELECT {price} FROM workflow.underlying_price WHERE tdcc = %s AND seq = %s", (tdcc, seq)
-            ).fetchone()
-            if found is None:
+            found, old = backfill_price(conn, tdcc, seq, price, value)
+            if not found:
                 return False  # 沒有這個標的（空值寫法的格子）
-            old = found[0]
-            conn.execute(
-                f"UPDATE workflow.underlying_price SET {price} = %s WHERE tdcc = %s AND seq = %s", (value, tdcc, seq)
-            )
         case _:
             return False
     if same_value(old, value):

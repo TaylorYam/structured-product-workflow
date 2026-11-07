@@ -35,7 +35,7 @@ from typing import TYPE_CHECKING, Any
 
 import openpyxl
 
-from fcn_checker.fields import BARRIER_TYPE_FIELD, KO_TYPE_FIELD, NON_CALL_FIELD, PRICE_FIELDS, PRICE_SQL
+from fcn_checker.fields import BARRIER_TYPE_FIELD, KO_TYPE_FIELD, NON_CALL_FIELD, PRICE_FIELDS
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.orders.reference import (
     autocall_date_key,
@@ -68,12 +68,14 @@ from sp_workflow.product_record import (
     TRADE_FIELD,
     UNDERLYINGS,
     UPFRONT_FIELD,
+    UnderlyingPrice,
     default_coupon_barrier,
     invert_upfront,
     product_rule,
 )
 from sp_workflow.product_store import read, read_many
 from sp_workflow.product_terms import create_backfilled
+from sp_workflow.underlying_prices import add_prices
 
 if TYPE_CHECKING:
     import psycopg
@@ -343,16 +345,16 @@ def _write(
     )
     columns = read(conn, tdcc).columns  # 代碼用商品條件存的寫法
     ignored = _ignored_prices(columns["product"])
+    prices = []
     for i in range(1, len(UNDERLYINGS) + 1):
         code = columns[f"underlying_{i}"]
         if code is not None:
-            prices = (
-                None if pf.key in ignored else cell_value(record, price_key(i, pf.key), fmt) for pf in PRICE_FIELDS
-            )
-            conn.execute(
-                f"INSERT INTO workflow.underlying_price (tdcc, seq, code, {PRICE_SQL}) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-                (tdcc, i, code, *prices),
-            )
+            values = {
+                pf.key: None if pf.key in ignored else cell_value(record, price_key(i, pf.key), fmt)
+                for pf in PRICE_FIELDS
+            }
+            prices.append(UnderlyingPrice(i, code, **values))
+    add_prices(conn, tdcc, prices)
     write_dates(conn, tdcc, record, fmt)
     with conn.cursor() as cur:
         cur.executemany(

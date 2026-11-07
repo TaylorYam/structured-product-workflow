@@ -200,10 +200,13 @@ def test_refresh_basis_writes_only_changes_and_clears_codes_without_splits(pg) -
     pg.execute("UPDATE workflow.close_price SET close = 100")
 
     book = SplitBook([Split("AAA UW", DAY, 1, 100)])
-    assert refresh_basis(pg, book) == 1
-    assert refresh_basis(pg, book) == 0, "沒變就不寫"
+    with pg.transaction():
+        assert refresh_basis(pg, book) == 1
+    with pg.transaction():
+        assert refresh_basis(pg, book) == 0, "沒變就不寫"
     basis = "SELECT tdcc, price_basis_date FROM workflow.underlying_price ORDER BY tdcc"
     assert pg.execute(basis).fetchall() == [(T1, None), (T2, DAY)]
 
-    assert refresh_basis(pg, SplitBook()) == 1, "拆股刪掉了：清成空白"
+    with pg.transaction():
+        assert refresh_basis(pg, SplitBook()) == 1, "拆股刪掉了：清成空白"
     assert pg.execute(basis).fetchall() == [(T1, None), (T2, None)]

@@ -28,9 +28,11 @@ from sp_workflow.observation import (
     observe,
     observe_all,
 )
+from sp_workflow.product_record import UnderlyingPrice
 from sp_workflow.product_terms import TermsError, backfill, problems, write
 from sp_workflow.status import ProductSource
 from sp_workflow.stock_splits import Split, SplitBook
+from sp_workflow.underlying_prices import add_prices
 
 D = Decimal
 COVERED = (dt.date(2026, 1, 1), dt.date(2027, 12, 31))
@@ -267,11 +269,11 @@ def seed(pg, *, locked: bool = True, source: str = ProductSource.MANUAL, lookbac
         (TRADE, TRADE, FINAL, lookback, dt.datetime(2026, 11, 3, tzinfo=dt.UTC) if locked else None, source, T1),
     )
     pg.execute("INSERT INTO workflow.check_terms (tdcc, status) VALUES (%s, '完成')", (T1,))
-    for seq, code in ((1, "AAA UW"), (2, "BBB UN")):
-        pg.execute(
-            "INSERT INTO workflow.underlying_price (tdcc, seq, code, initial_price, strike_price, ki_price, ko_price)"
-            " VALUES (%s, %s, %s, 100, 80, NULL, NULL)",
-            (T1, seq, code),
+    with pg.transaction():
+        add_prices(
+            pg,
+            T1,
+            [UnderlyingPrice(seq, code, Decimal(100), Decimal(80)) for seq, code in ((1, "AAA UW"), (2, "BBB UN"))],
         )
     pg.execute("INSERT INTO workflow.autocall_date (tdcc, slot, value) VALUES (%s, 1, %s)", (T1, FINAL))
 

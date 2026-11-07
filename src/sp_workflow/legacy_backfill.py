@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any
 
 import openpyxl
 
-from fcn_checker.fields import PRICE_FIELDS, PRICE_SQL
+from fcn_checker.fields import PRICE_FIELDS
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.orders.reference import (
     autocall_date_key,
@@ -41,7 +41,9 @@ from sp_workflow import import_run
 from sp_workflow.check_terms import DONE
 from sp_workflow.database import OperatorError
 from sp_workflow.lifecycle import KO, MATURITY, LifecycleError, current_events_of, record_legacy
+from sp_workflow.product_record import UnderlyingPrice
 from sp_workflow.product_store import incomplete_locked, locked, read_many
+from sp_workflow.underlying_prices import add_prices
 
 if TYPE_CHECKING:
     import psycopg
@@ -332,14 +334,13 @@ def _code(code: str) -> str:
 def _write_prices(
     conn: psycopg.Connection, tdcc: str, record: OrderRecord, found: _Product, fmt: ReferenceFormat
 ) -> None:
+    prices = []
     for i, code in enumerate(found.codes, 1):
         if code is None:
             continue
-        values = [cell_value(record, price_key(i, pf.key), fmt) for pf in PRICE_FIELDS]
-        conn.execute(
-            f"INSERT INTO workflow.underlying_price (tdcc, seq, code, {PRICE_SQL}) VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (tdcc, i, code, *values),
-        )
+        values = {pf.key: cell_value(record, price_key(i, pf.key), fmt) for pf in PRICE_FIELDS}
+        prices.append(UnderlyingPrice(i, code, **values))
+    add_prices(conn, tdcc, prices)
 
 
 def write_dates(conn: psycopg.Connection, tdcc: str, record: OrderRecord, fmt: ReferenceFormat) -> None:

@@ -70,6 +70,7 @@ from sp_workflow.product_store import Stored, read_many
 from sp_workflow.product_store import locked as is_locked
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource
 from sp_workflow.stock_splits import STRIKE_CLOSE_DAYS, Jump, SplitBook, in_range, load_splits, refresh_basis
+from sp_workflow.underlying_prices import write_lookback
 from sp_workflow.underlying_pricing import KiTouch, Leg, converted, worst
 
 if TYPE_CHECKING:
@@ -726,10 +727,7 @@ def _write_lookback(conn: psycopg.Connection, terms: Terms, fixed: Sequence[Unde
         was = stored[u.seq]
         if (was.lookback, was.strike) == (u.lookback, u.strike):
             continue
-        conn.execute(
-            "UPDATE workflow.underlying_price SET lookback_price = %s, strike_price = %s WHERE tdcc = %s AND seq = %s",
-            (u.lookback, u.strike, terms.tdcc, u.seq),
-        )
+        write_lookback(conn, terms.tdcc, u.seq, u.lookback, u.strike)
         with conn.cursor() as cur:
             cur.executemany(
                 "INSERT INTO workflow.backfill_log (tdcc, item, old_value, new_value, result_file, written_by)"

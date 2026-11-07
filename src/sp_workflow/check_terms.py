@@ -35,13 +35,14 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
-from fcn_checker.fields import PRICE_FIELDS, PRICE_SQL
+from fcn_checker.fields import PRICE_FIELDS
 from sp_workflow.database import OperatorError, require_in_transaction
 from sp_workflow.product_record import UnderlyingPrice, missing_fields, plain, price_at, round_price
 from sp_workflow.product_store import BLANK as _BLANK
 from sp_workflow.product_store import CURRENCY, TRADE_DATE, UF, Difference, Stored, locked, read, read_many
 from sp_workflow.risk_level import RiskLevel, fill_missing_locked, recalculate_risk
 from sp_workflow.status import CheckTerms
+from sp_workflow.underlying_prices import carry_over, write_prices
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -445,7 +446,7 @@ def _recalculate(
     released = _released(conn, keys)
     stored = {s.tdcc: calc for s in found if (calc := _stored(s)) is not None}
     lines = []
-    for product in products:
+    for was, product in zip(found, products, strict=True):
         calc = calculate(
             product,
             trades.get(product.tdcc, []),
@@ -457,8 +458,9 @@ def _recalculate(
         old = stored.get(product.tdcc)
         if vwap_from is not None and _pricing(product.initial_pricing) == VWAP:
             calc = _keep_vwap(calc, product, vwap_from, () if old is None else old.prices)
-        if old is not None:
-            calc = _keep_lookback(calc, product, old.prices)
+        calc = replace(
+            calc, prices=carry_over(calc.prices, was.prices, product.strike_pct)
+        )  # 比價與拆股登記寫的欄（#374、#491）
         changed = not _same(calc, old)
         if changed:
             _write(conn, product.tdcc, calc)
@@ -495,25 +497,6 @@ def _keep_vwap(
     problem = f"更正後 {'、'.join(blank)} 沒有 TS 回填的價格"  # 價格空白，不能算完成
     reason = "；".join(filter(None, (problem, calc.reason)))
     return replace(calc, status=TO_CONFIRM, prices=tuple(prices), reason=reason)
-
-
-def _keep_lookback(calc: Calculation, product: ProductTerms, old: Sequence[UnderlyingPrice]) -> Calculation:
-    """比價寫過回顧期初價格的標的（#374，同一位置同一標的）保留它，執行價 = 回顧期初價格 × 執行價(%)；
-    其他價格照算。標的改了、或更正後進場價比回顧期初價格低（回顧期初價格不會高於進場價）的不保留，
-    由下一次比價重算（回顧結束日空白卻有回顧期初價格時比價待確認，`observation`）。"""
-    kept = {p.seq: p for p in old if p.lookback is not None}
-    if not kept:
-        return calc
-    prices = []
-    for price in calc.prices:
-        was = kept.get(price.seq)
-        if was is None or was.code != price.code or (price.initial is not None and price.initial < was.lookback):
-            prices.append(price)
-            continue
-        assert was.lookback is not None
-        strike = price.strike if product.strike_pct is None else price_at(was.lookback, product.strike_pct)
-        prices.append(replace(price, strike=strike, lookback=was.lookback))
-    return replace(calc, prices=tuple(prices))
 
 
 def _kept_or_derived(
@@ -618,15 +601,15 @@ def _released(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, set[t
 
 
 def _stored(found: Stored) -> Calculation | None:
-    """上一次算的結果（分公司配置是資料庫目前的）；還沒算過時 None。標的價格不帶價格基準日：基準日由拆股登記算
-    （`stock_splits.refresh_basis`），不是核對條件算的，不拿來比有沒有變。"""
+    """上一次算的結果（分公司配置是資料庫目前的）；還沒算過時 None。標的價格含比價寫的回顧期初價格與價格基準日，
+    這次算的也由 `underlying_prices.carry_over` 帶上，所以只有核對條件算的欄會造成「有變」。"""
     if found.check is None:
         return None
     return Calculation(
         found.check.status,
         found.check.reason,
         found.check.price_date,
-        tuple(replace(p, basis=None) for p in found.prices),
+        found.prices,
         found.branches,
         found.check.differences,
     )
@@ -656,23 +639,7 @@ def _write(conn: psycopg.Connection, tdcc: str, calc: Calculation) -> None:
             None if differences is None else json.dumps(differences, ensure_ascii=False),
         ),
     )
-    # 價格基準日不是核對條件算的（`stock_splits.refresh_basis`）：同一位置同一標的保留，新的或換了標的的由下一次比價推（#491）
-    basis = {
-        (seq, code): day
-        for seq, code, day in conn.execute(
-            "DELETE FROM workflow.underlying_price WHERE tdcc = %s RETURNING seq, code, price_basis_date", (tdcc,)
-        )
-    }
-    with conn.cursor() as cur:
-        cur.executemany(
-            "INSERT INTO workflow.underlying_price"
-            f" (tdcc, seq, code, {PRICE_SQL}, lookback_price, price_basis_date)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
-            [
-                (tdcc, p.seq, p.code, p.initial, p.strike, p.ki, p.ko, p.lookback, basis.get((p.seq, p.code)))
-                for p in calc.prices
-            ],
-        )
+    write_prices(conn, tdcc, calc.prices)
     if calc.allocation is not None:
         conn.execute("DELETE FROM workflow.branch_allocation WHERE tdcc = %s", (tdcc,))
         with conn.cursor() as cur:
