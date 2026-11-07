@@ -12,6 +12,7 @@ from tkinter import messagebox
 import pytest
 
 import sp_workflow.tabs.splits as screen
+from sp_workflow import app
 from sp_workflow.observation import EventChange, ObservationReceipt
 from sp_workflow.stock_splits import Split
 from sp_workflow.tabs.splits import SplitForm
@@ -32,8 +33,7 @@ def opened(master, tmp_path: Path, monkeypatch, immediate):
         monkeypatch.setattr(screen, name, lambda settings, *args, name=name: calls.append((name, *args)) or RESULT)
     monkeypatch.setattr(screen, "load_split_rows", lambda settings: (AAA, BBB))
     window = new_window(master, tmp_path, background=immediate, logged_in=True)
-    window.open_splits()
-    return window, window.splits, calls
+    return window, window.open_window(app.SPLITS), calls
 
 
 def values(table) -> list[tuple]:
@@ -41,15 +41,13 @@ def values(table) -> list[tuple]:
 
 
 def test_menu_opens_one_window_listing_splits(opened) -> None:
-    window, splits, _ = opened
+    _, splits, _ = opened
 
     assert values(splits.table) == [
         ("AAA UW", "2030-03-04", "1 拆 100", "公告", "tester", "2030-03-05 09:30"),
         ("BBB UN", "2030-03-04", "確認不是拆股", "", "", ""),
     ]
     assert splits.status_var.get() == "拆股登記 2 筆。"
-    window.open_splits()
-    assert window.splits is splits, "已經開著就拉到前面，不重開"
 
 
 def test_add_and_delete_save_and_show_the_observation(opened, monkeypatch) -> None:

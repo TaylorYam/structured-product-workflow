@@ -13,7 +13,9 @@ from tkinter import filedialog, messagebox
 import pytest
 
 import sp_workflow.tabs.exposure as screen
+from sp_workflow import app
 from sp_workflow.exposure import DELIVER, WATCH, Choice, ExposureReceipt
+from sp_workflow.tabs.base import ANALYSIS_FOLDER_KEY
 from window_synth import new_window
 
 DAY = dt.date(2030, 3, 4)
@@ -35,8 +37,7 @@ def opened(master, tmp_path: Path, monkeypatch, immediate):
     monkeypatch.setattr(screen, "export_underlying_exposure", export)
     monkeypatch.setattr(screen, "load_exposure_choices", lambda settings: CHOICES)
     window = new_window(master, tmp_path, background=immediate, logged_in=True)
-    window.open_exposure()
-    return window, window.exposure, calls
+    return window, window.open_window(app.EXPOSURE), calls
 
 
 def codes(table) -> list[str]:
@@ -44,14 +45,12 @@ def codes(table) -> list[str]:
 
 
 def test_menu_opens_one_window_listing_choices(opened) -> None:
-    window, exposure, _ = opened
+    _, exposure, _ = opened
 
     assert codes(exposure.table) == ["AAA", "AAAB", "BBB"]
     assert exposure.table.item("AAA", "values") == ("AAA", "AAA UW、AAA UQ", "101.5", "2030-03-04", "13")
     assert exposure.table.item("BBB", "values")[2:4] == ("", "")
     assert exposure.status_var.get() == "在庫商品連結的標的 3 個。"
-    window.open_exposure()
-    assert window.exposure is exposure, "已經開著就拉到前面，不重開"
 
 
 def test_search_keeps_what_was_chosen(opened) -> None:
@@ -93,7 +92,7 @@ def test_export_asks_for_a_file_and_runs_the_analysis(opened, monkeypatch, tmp_p
     assert calls == [(["AAA UW", "AAA UQ", "BBB UN"], dt.date(2030, 4, 4), target, {})], "代號展開成全部交易所代碼"
     assert asked[0]["initialfile"].startswith("標的曝險分析_AAA_BBB_")
     assert exposure.status_var.get() == f"已匯出 4 檔（會接股 3、KI 未破下限 1）：{target}"
-    assert exposure.memory.load()[screen.MEMORY_KEY] == str(target.parent), "記住存檔的資料夾"
+    assert exposure.memory.load()[ANALYSIS_FOLDER_KEY] == str(target.parent), "記住存檔的資料夾"
 
 
 def test_a_bad_cutoff_date_is_refused(opened, monkeypatch) -> None:

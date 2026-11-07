@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import calendar
 import datetime as dt
 import tkinter as tk
 from decimal import Decimal, InvalidOperation
@@ -19,7 +18,15 @@ from fcn_checker.date_picker import DateEntry, parse_day
 from fcn_checker.ui import Background, FitTreeview, Scrollbar, WrapLabel
 from sp_workflow.exposure import CATEGORIES, Choice, ExposureReceipt, export_name
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.tabs.base import TITLE, ActionRunner, BackgroundFactory, DatabaseLogin
+from sp_workflow.tabs.base import (
+    ANALYSIS_FOLDER_KEY,
+    TITLE,
+    BackgroundFactory,
+    DatabaseLogin,
+    SideWindow,
+    follow_width,
+    one_month_later,
+)
 from sp_workflow.window_actions import export_underlying_exposure, load_exposure_choices
 
 COLUMNS = (
@@ -29,22 +36,10 @@ COLUMNS = (
     ("day", "收盤日", 100),
     ("count", "在庫檔數", 80),
 )
-MEMORY_KEY = "exposure_export"
 TRIALS_PER_ROW = 5  # 試算價一列放幾個代號，選很多檔時換列
 
 
-def one_month_later(day: dt.date) -> dt.date:
-    """下個月的同一天；下個月沒有這一天時取月底（例：1/31 → 2/28）。"""
-    year, month = (day.year + 1, 1) if day.month == 12 else (day.year, day.month + 1)
-    return dt.date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
-
-
-def follow_width(label: WrapLabel) -> None:
-    """說明文字照實際寬度換行：固定的斷行寬度比視窗寬時，文字被裁掉、旁邊的按鈕被擠扁（#349）。"""
-    label.bind("<Configure>", lambda event: label.configure(wraplength=max(300, event.width)))
-
-
-class ExposureWindow(tk.Toplevel):
+class ExposureWindow(SideWindow):
     """標的曝險分析視窗：打開時讀一次可選的標的；處理中按鈕不能按。"""
 
     def __init__(
@@ -56,10 +51,8 @@ class ExposureWindow(tk.Toplevel):
         background: BackgroundFactory = Background,
         today: dt.date | None = None,
     ) -> None:
-        super().__init__(parent)
-        self.title(f"{TITLE} — 標的曝險分析")
+        super().__init__(parent, db, background, "標的曝險分析", "820x620")
         self.memory = memory
-        self.background = background(self)
         self.choices: tuple[Choice, ...] = ()
         self.chosen: list[str] = []  # 選的股票代號，依選的先後
         self._showing = False  # 重畫表時不把畫面上的選取當成使用者改選
@@ -122,20 +115,12 @@ class ExposureWindow(tk.Toplevel):
         self.export_button = ttk.Button(bottom, text="匯出 Excel…", command=self.export)
         self.export_button.pack(side=tk.RIGHT)
         self.buttons = [self.refresh_button, self.clear_button, self.export_button]
-        self.status_var = tk.StringVar()
-        self.runner = ActionRunner(db, self.background, self.status_var, self._busy, parent=self)
         status = WrapLabel(frame, textvariable=self.status_var, wraplength=600, justify="left")
         status.grid(row=4, column=0, sticky="ew", pady=(10, 0))
         follow_width(status)
         self._show_chosen()
-        self.protocol("WM_DELETE_WINDOW", self.close)
-        self.geometry("820x620")
 
     # ---------- 讀與顯示 ----------
-
-    @property
-    def working(self) -> bool:
-        return self.runner.working
 
     def refresh(self) -> None:
         self.runner.run_action(load_exposure_choices, "讀取在庫商品連結的標的中…", self._loaded)
@@ -240,7 +225,7 @@ class ExposureWindow(tk.Toplevel):
         trial = {code: prices[ticker] for ticker in prices for code in by_ticker.get(ticker, ())}
         chosen = filedialog.asksaveasfilename(
             title="匯出標的曝險分析",
-            initialdir=self.memory.load().get(MEMORY_KEY) or None,
+            initialdir=self.memory.load().get(ANALYSIS_FOLDER_KEY) or None,
             initialfile=export_name(self.chosen, trial=bool(prices)),
             defaultextension=".xlsx",
             filetypes=[("Excel 活頁簿", "*.xlsx")],
@@ -249,7 +234,7 @@ class ExposureWindow(tk.Toplevel):
         if not chosen:
             return
         path = Path(chosen)
-        self.memory.remember(**{MEMORY_KEY: str(path.parent)})
+        self.memory.remember(**{ANALYSIS_FOLDER_KEY: str(path.parent)})
         used = "、".join(f"{ticker} {price}" for ticker, price in prices.items())
         self.runner.run_action(
             lambda settings: export_underlying_exposure(settings, codes, until, path, trial),
@@ -261,11 +246,3 @@ class ExposureWindow(tk.Toplevel):
         counts = "、".join(f"{c} {receipt.counts[c]}" for c in CATEGORIES if receipt.counts.get(c))
         used = f"；試算價 {trial}" if trial else ""
         self.status_var.set(f"已匯出 {receipt.count} 檔（{counts or '沒有符合的商品'}{used}）：{receipt.path}")
-
-    def _busy(self, busy: bool) -> None:
-        for button in self.buttons:
-            button.configure(state=tk.DISABLED if busy else tk.NORMAL)
-
-    def close(self) -> None:
-        self.background.close()
-        self.destroy()

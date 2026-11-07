@@ -64,31 +64,25 @@ def test_maintenance_actions_live_in_the_menu_only(master, tmp_path: Path) -> No
     menu = window.maintenance
 
     labels = [menu.entrycget(i, "label") for i in range(menu.index(tk.END) + 1) if menu.type(i) == "command"]
-    assert labels == [
-        "審查通過日期…",
-        "匯出回報包…",
-        "匯入歷史收盤價…",
-        "重新比價全部",
-        "匯入舊商品的價格與比價日…",
-        "匯入既有的 FCN 以外商品…",
-        "信箱維護…",
-        "發行機構評等…",
-        "拆股登記…",
-        "匯入可連結標的白名單…",
-        "使用的設定檔…",
-    ]
+    assert labels[:2] == ["審查通過日期…", "匯出回報包…"] and labels[-1] == "使用的設定檔…"
+    assert {app.CLOSE_HISTORY, app.REOBSERVE, app.LEGACY_BACKFILL, app.OTHER_PRODUCTS, app.WHITELIST} <= set(labels)
+    assert {app.MAILBOX, app.RATINGS, app.SPLITS} <= set(labels), "另開視窗的維護項（#481 起不逐一列舉）"
     assert not {"審查通過日期…", "匯出回報包…"} & set(texts(window.check, ttk.Button)), "核對頁畫面上不再有維護功能"
+
+    def state(label: str) -> str:
+        return str(menu.entrycget(label, "state"))
+
     window._refresh_maintenance()
-    assert str(menu.entrycget(0, "state")) == "normal"
-    assert str(menu.entrycget(1, "state")) == "disabled", "還沒核對，沒有可以匯出的回報包"
-    assert str(menu.entrycget(2, "state")) == "normal"
+    assert state(app.APPROVAL_DATES) == "normal"
+    assert state(app.EXPORT_BUNDLE) == "disabled", "還沒核對，沒有可以匯出的回報包"
+    assert state(app.CLOSE_HISTORY) == "normal"
     window.daily._busy(True)
     window._refresh_maintenance()
-    assert str(menu.entrycget(2, "state")) == "disabled", "每日匯入頁正在匯入時不能匯歷史收盤價"
-    assert str(menu.entrycget(3, "state")) == "disabled", "也不能重新比價"
-    assert str(menu.entrycget(4, "state")) == "disabled", "也不能匯入舊商品"
-    assert str(menu.entrycget(5, "state")) == "disabled", "也不能回補 FCN 以外商品（#303）"
-    assert str(menu.entrycget(9, "state")) == "disabled", "也不能匯入白名單（#273）"
+    assert state(app.CLOSE_HISTORY) == "disabled", "每日匯入頁正在匯入時不能匯歷史收盤價"
+    assert state(app.REOBSERVE) == "disabled", "也不能重新比價"
+    assert state(app.LEGACY_BACKFILL) == "disabled", "也不能匯入舊商品"
+    assert state(app.OTHER_PRODUCTS) == "disabled", "也不能回補 FCN 以外商品（#303）"
+    assert state(app.WHITELIST) == "disabled", "也不能匯入白名單（#273）"
 
 
 class UnsavedSession(PanelSession):

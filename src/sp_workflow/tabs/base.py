@@ -1,12 +1,15 @@
 """分頁共用的基底（#138 從 `sp_workflow.app` 搬出）：分頁版面 `Tab`、視窗頂端的根目錄、各分頁共用的資料庫登入與選檔對話框。
 
-背景動作只有一種寫法 `ActionRunner`（#206）：分頁、放行差異與信箱維護各持有一個，登入、停用按鈕、背景執行、
+背景動作只有一種寫法 `ActionRunner`（#206）：分頁、放行差異與各子視窗各持有一個，登入、停用按鈕、背景執行、
 顯示錯誤都在這裡；背景執行器由視窗傳入（`BackgroundFactory`，測試傳 `fcn_checker.ui.ImmediateBackground`）。
+選單另開的子視窗繼承 `SideWindow`，外殼用登記簿 `SideWindows` 開與關（#481）；表單小視窗的底座在 `tabs.forms`。
 這裡不 import 其他分頁 module；分頁 module 與視窗外殼都從這裡 import。
 """
 
 from __future__ import annotations
 
+import calendar
+import datetime as dt
 import os
 import subprocess
 import sys
@@ -15,7 +18,7 @@ from collections.abc import Callable, Sequence
 from concurrent.futures import Future
 from pathlib import Path
 from tkinter import filedialog, messagebox, simpledialog, ttk
-from typing import TypeVar
+from typing import TYPE_CHECKING, TypeVar
 
 from fcn_checker.ui import (
     CODE_FONT,
@@ -42,8 +45,13 @@ from sp_workflow.database import (
     settings_from_env,
 )
 from sp_workflow.local_settings import FolderMemory
+from sp_workflow.observation import EXITED, ON_BOOK, WAIT_PRICES
 from sp_workflow.preparation import parse_tdccs
+from sp_workflow.status import Pricing
 from sp_workflow.step_records import Recorded
+
+if TYPE_CHECKING:
+    from sp_workflow.window_actions import Observation
 
 TITLE = "FCN Workflow"
 R = TypeVar("R")
@@ -434,6 +442,112 @@ class ActionRunner:
             messagebox.showerror(TITLE, message)
         else:
             messagebox.showerror(TITLE, message, parent=self.parent)
+
+
+class SideWindow(tk.Toplevel):
+    """選單另開的子視窗（信箱維護、評等、拆股、三個分析視窗）共用的生命週期（#481）。
+
+    建好標題（「FCN Workflow — 後綴」）、尺寸、狀態列文字 `status_var`、背景動作 `runner`（錯誤訊息跳在這個視窗上）
+    與關閉協定；子類別只排版與寫自己的動作，處理中要停用的按鈕放進 `buttons`。
+    打開後外殼呼叫一次 `refresh`（要讀資料庫的視窗覆寫），關閉時 `close` 先停背景執行器再關視窗。
+    """
+
+    def __init__(
+        self, parent: tk.Misc, db: DatabaseLogin, background: BackgroundFactory, title: str, size: str
+    ) -> None:
+        super().__init__(parent)
+        self.title(f"{TITLE} — {title}")
+        self.db = db
+        self.background = background(self)
+        self.status_var = tk.StringVar()
+        self.runner = ActionRunner(db, self.background, self.status_var, self._busy, parent=self)
+        self.buttons: list[ttk.Button] = []
+        self.protocol("WM_DELETE_WINDOW", self.close)
+        self.geometry(size)
+
+    @property
+    def working(self) -> bool:
+        """正在背景做事（一次只跑一件）。"""
+        return self.runner.working
+
+    def refresh(self) -> None:
+        """打開時讀一次；不用先讀資料的視窗不覆寫。"""
+
+    def _busy(self, busy: bool) -> None:
+        for button in self.buttons:
+            button.configure(state=tk.DISABLED if busy else tk.NORMAL)
+
+    def close(self) -> None:
+        self.background.close()
+        self.destroy()
+
+
+class SideWindows:
+    """外殼的子視窗登記簿（#481）：名稱（選單項）→ 目前開著的視窗；一個名稱同時只開一個。"""
+
+    def __init__(self) -> None:
+        self._windows: dict[str, SideWindow] = {}
+
+    def get(self, name: str) -> SideWindow | None:
+        """開著的那個視窗；沒開過或已經關掉時 None。"""
+        window = self._windows.get(name)
+        return window if window is not None and bool(window.winfo_exists()) else None
+
+    def open(self, name: str, factory: Callable[[], SideWindow]) -> SideWindow:
+        """已經開著就拉到前面、不重開；否則用 factory 建一個並讀一次（`refresh`）。"""
+        window = self.get(name)
+        if window is not None:
+            window.deiconify()
+            window.lift()
+            window.focus_set()
+            return window
+        window = self._windows[name] = factory()
+        window.refresh()
+        return window
+
+    def close_all(self) -> None:
+        """關主視窗時把開著的子視窗一起關掉。"""
+        for name in list(self._windows):
+            window = self.get(name)
+            if window is not None:
+                window.close()
+        self._windows.clear()
+
+
+ANALYSIS_FOLDER_KEY = "exposure_export"  # 三個分析視窗（曝險、重災區、盤勢速報）匯出時記同一個資料夾
+
+
+def one_month_later(day: dt.date) -> dt.date:
+    """下個月的同一天；下個月沒有這一天時取月底（例：1/31 → 2/28）。"""
+    year, month = (day.year + 1, 1) if day.month == 12 else (day.year, day.month + 1)
+    return dt.date(year, month, min(day.day, calendar.monthrange(year, month)[1]))
+
+
+def follow_width(label: WrapLabel) -> None:
+    """說明文字照實際寬度換行：固定的斷行寬度比視窗寬時，文字被裁掉、旁邊的按鈕被擠扁（#349）。"""
+    label.bind("<Configure>", lambda event: label.configure(wraplength=max(300, event.width)))
+
+
+def observation_text(observation: Observation, saved: str = "匯入") -> str:
+    """完成訊息裡的比價一句（#155）；`saved` 是比價前寫好的東西（拆股登記用「登記」）。"""
+    receipt = observation.receipt
+    if receipt is None and not observation.error:
+        return "比價：這次沒有跑。"
+    if receipt is None:
+        return f"比價：沒有跑，{observation.error}。{saved}已經完成，修好後按「維護 → 重新比價全部」。"
+    through = "收盤價表還沒有資料" if receipt.through is None else f"比到 {receipt.through:%Y-%m-%d}"
+    counts = "、".join(
+        f"{status} {receipt.count(status)}" for status in (ON_BOOK, EXITED, WAIT_PRICES, Pricing.TO_CONFIRM)
+    )
+    text = f"比價：{through}，共 {len(receipt.results)} 檔（{counts}）；存續事件有變 {len(receipt.changes)} 檔"
+    if receipt.errors:
+        text += f"；寫不進去 {len(receipt.errors)} 檔"
+    return text + "。"
+
+
+def events_text(events: Sequence[tuple[str, str, str | None]]) -> str:
+    texts = [" ".join(part for part in (event, underlying, day) if part) for event, day, underlying in events]
+    return "、".join(texts) or "沒有"
 
 
 class RootFolder:

@@ -31,7 +31,7 @@ from sp_workflow.exposure import (
     load_choices,
 )
 from sp_workflow.lifecycle import KO, AutoEvent, replace_auto_events
-from sp_workflow.tabs.exposure import one_month_later
+from sp_workflow.tabs.base import one_month_later
 
 D = Decimal
 DAY = dt.date(2026, 10, 28)

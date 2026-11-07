@@ -75,7 +75,7 @@ from sp_workflow.check_source import WorkflowDatabase
 from sp_workflow.database import default_env_path
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.preparation import LIST_NAME, PrepareReceipt
-from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, RootFolder
+from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, RootFolder, SideWindow, SideWindows
 from sp_workflow.tabs.daily import DailyImportTab
 from sp_workflow.tabs.exits import ExitListTab
 from sp_workflow.tabs.exposure import ExposureWindow
@@ -233,13 +233,16 @@ class PanelWindow:
         self.session = session
         self.db = db
         self.background = background
-        self.mailbox: MailboxWindow | None = None  # 「信箱維護…」開著時的視窗（#158）
-        self.ratings: RatingsWindow | None = None  # 「發行機構評等…」開著時的視窗（#237）
-        self.splits: SplitsWindow | None = None  # 「拆股登記…」開著時的視窗（#270）
-        self.exposure: ExposureWindow | None = None  # 「標的曝險分析…」開著時的視窗（#345）
-        self.hotspots: HotspotWindow | None = None  # 「重災區掃描…」開著時的視窗（#362）
-        self.market_brief: MarketBriefWindow | None = None  # 「盤勢速報…」開著時的視窗（#467）
         self.memory = memory
+        self.side_windows = SideWindows()  # 選單另開的子視窗：選單項 → 開著的視窗（#481）
+        self._side_factories: dict[str, Callable[[], SideWindow]] = {
+            MAILBOX: lambda: MailboxWindow(master, db, background=background),  # #158
+            RATINGS: lambda: RatingsWindow(master, db, background=background),  # #237
+            SPLITS: lambda: SplitsWindow(master, db, lambda: self.session.paths, background=background),  # #270
+            EXPOSURE: lambda: ExposureWindow(master, db, memory, background=background),  # #345
+            HOTSPOTS: lambda: HotspotWindow(master, db, memory, background=background),  # #362
+            MARKET_BRIEF: lambda: MarketBriefWindow(master, db, memory, background=background),  # #467
+        }
         self.size = WindowSize(memory.path.with_name(WINDOW_FILE))
         master.title(TITLE)
         self.pixels = apply_style(master)
@@ -351,9 +354,8 @@ class PanelWindow:
         menu.add_command(label=REOBSERVE, command=self._reobserve)
         menu.add_command(label=LEGACY_BACKFILL, command=self._import_legacy)
         menu.add_command(label=OTHER_PRODUCTS, command=self._import_other_products)
-        menu.add_command(label=MAILBOX, command=self.open_mailbox)
-        menu.add_command(label=RATINGS, command=self.open_ratings)
-        menu.add_command(label=SPLITS, command=self.open_splits)
+        for label in (MAILBOX, RATINGS, SPLITS):
+            menu.add_command(label=label, command=lambda name=label: self.open_window(name))
         menu.add_command(label=WHITELIST, command=self._import_whitelist)
         menu.add_separator()
         menu.add_command(label="使用的設定檔…", command=self.check.show_config_paths)
@@ -365,9 +367,8 @@ class PanelWindow:
         """「分析」選單：唯讀的資料分析，另開視窗（#345）。"""
         bar = self.master.nametowidget(self.master["menu"])
         menu = tk.Menu(bar, tearoff=False)
-        menu.add_command(label=EXPOSURE, command=self.open_exposure)
-        menu.add_command(label=HOTSPOTS, command=self.open_hotspots)
-        menu.add_command(label=MARKET_BRIEF, command=self.open_market_brief)
+        for label in (EXPOSURE, HOTSPOTS, MARKET_BRIEF):
+            menu.add_command(label=label, command=lambda name=label: self.open_window(name))
         bar.add_cascade(label="分析", menu=menu)
 
     def _go_menu(self) -> tk.Menu:
@@ -422,64 +423,9 @@ class PanelWindow:
         self.notebook.select(self.daily.frame)  # 比價的進度與結果顯示在每日匯入頁
         self.daily.reobserve()
 
-    def open_mailbox(self) -> None:
-        """另開信箱維護視窗並讀一次；已經開著就拉到前面，不重開（#158）。"""
-        if self._mailbox_open():
-            self.mailbox.deiconify()
-            self.mailbox.lift()
-            self.mailbox.focus_set()
-            return
-        self.mailbox = MailboxWindow(self.master, self.db, background=self.background)
-        self.mailbox.refresh()
-
-    def open_ratings(self) -> None:
-        """另開發行機構評等視窗並讀一次；已經開著就拉到前面，不重開（#237）。"""
-        if self._ratings_open():
-            self.ratings.deiconify()
-            self.ratings.lift()
-            self.ratings.focus_set()
-            return
-        self.ratings = RatingsWindow(self.master, self.db, background=self.background)
-        self.ratings.refresh()
-
-    def open_splits(self) -> None:
-        """另開拆股登記視窗並讀一次；已經開著就拉到前面，不重開（#270）。"""
-        if self._splits_open():
-            self.splits.deiconify()
-            self.splits.lift()
-            self.splits.focus_set()
-            return
-        self.splits = SplitsWindow(self.master, self.db, lambda: self.session.paths, background=self.background)
-        self.splits.refresh()
-
-    def open_exposure(self) -> None:
-        """另開標的曝險分析視窗並讀一次；已經開著就拉到前面，不重開（#345）。"""
-        if self._exposure_open():
-            self.exposure.deiconify()
-            self.exposure.lift()
-            self.exposure.focus_set()
-            return
-        self.exposure = ExposureWindow(self.master, self.db, self.memory, background=self.background)
-        self.exposure.refresh()
-
-    def open_hotspots(self) -> None:
-        """另開重災區掃描視窗；已經開著就拉到前面，不重開（#362）。"""
-        if self._hotspots_open():
-            self.hotspots.deiconify()
-            self.hotspots.lift()
-            self.hotspots.focus_set()
-            return
-        self.hotspots = HotspotWindow(self.master, self.db, self.memory, background=self.background)
-
-    def open_market_brief(self) -> None:
-        """另開盤勢速報視窗並讀一次；已經開著就拉到前面，不重開（#467）。"""
-        if self._market_brief_open():
-            self.market_brief.deiconify()
-            self.market_brief.lift()
-            self.market_brief.focus_set()
-            return
-        self.market_brief = MarketBriefWindow(self.master, self.db, self.memory, background=self.background)
-        self.market_brief.refresh()
+    def open_window(self, label: str) -> SideWindow:
+        """另開選單項 label 的子視窗並讀一次；已經開著就拉到前面，不重開（#158、#481）。"""
+        return self.side_windows.open(label, self._side_factories[label])
 
     def restore_size(self) -> None:
         """照上次的大小顯示；第一次開啟時在 Windows 最大化。"""
@@ -500,24 +446,6 @@ class PanelWindow:
             return _CloseWarning("人工維護頁有改過、還沒存檔的內容，關閉後會不見。", self.manual.frame)
         return None
 
-    def _mailbox_open(self) -> bool:
-        return self.mailbox is not None and bool(self.mailbox.winfo_exists())
-
-    def _ratings_open(self) -> bool:
-        return self.ratings is not None and bool(self.ratings.winfo_exists())
-
-    def _splits_open(self) -> bool:
-        return self.splits is not None and bool(self.splits.winfo_exists())
-
-    def _exposure_open(self) -> bool:
-        return self.exposure is not None and bool(self.exposure.winfo_exists())
-
-    def _hotspots_open(self) -> bool:
-        return self.hotspots is not None and bool(self.hotspots.winfo_exists())
-
-    def _market_brief_open(self) -> bool:
-        return self.market_brief is not None and bool(self.market_brief.winfo_exists())
-
     def close(self) -> None:
         """核對頁還在處理或有還沒存檔的核對結果時先問一次；關閉前記住視窗大小。"""
         warning = self._close_warning()
@@ -534,18 +462,7 @@ class PanelWindow:
         self.check.close()
         for page in self.pages:
             page.background.close()
-        if self._mailbox_open():
-            self.mailbox.close()
-        if self._ratings_open():
-            self.ratings.close()
-        if self._splits_open():
-            self.splits.close()
-        if self._exposure_open():
-            self.exposure.close()
-        if self._hotspots_open():
-            self.hotspots.close()
-        if self._market_brief_open():
-            self.market_brief.close()
+        self.side_windows.close_all()
         self.master.destroy()
 
 
