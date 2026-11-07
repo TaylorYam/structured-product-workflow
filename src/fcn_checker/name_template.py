@@ -22,7 +22,7 @@ import re
 import string
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 from .ingestion import IngestionError
 from .products import SUPPORTED_PRODUCTS, product_name
@@ -39,6 +39,7 @@ PLACEHOLDERS = frozenset(
     | {f"{f}_{lang}" for f in (*FLAGS, "underlying", "ko_observation") for lang in LANGS}
 )
 NORMALIZE = {"zh": {"brackets"}, "en": {"whitespace"}}  # normalize_<語言> 可用的值
+DEFAULT_NORMALIZE_ZH = frozenset({"brackets"})  # normalize_zh 沒寫時的預設
 ANY_PREFIX = "*"
 _OPTIONAL = re.compile(r"\[([^\[\]]*)\]\Z")
 # 舊版開關（審查標準 version 39 以前）→ 新寫法；出現時載入報錯並提示改寫
@@ -73,13 +74,28 @@ def _fail(message: str) -> IngestionError:
     return IngestionError("config_invalid", message)
 
 
-@dataclass(frozen=True)
-class Parts:
+class Parts(NamedTuple):
     """一個語言的樣板拆開：`*` 開頭、主體、結尾可有可無的一段（沒有為空字串）。"""
 
     any_prefix: bool
     body: str
     optional: str
+
+
+def split(tpl: str) -> Parts:
+    """樣板 → `Parts`；`*`、`[`、`]` 不在語法位置時留在主體裡（由載入時的 `_syntax` 擋下）。"""
+    any_prefix = tpl.startswith(ANY_PREFIX)
+    body = tpl[1:] if any_prefix else tpl
+    m = _OPTIONAL.search(body)
+    return Parts(any_prefix, body[: m.start()] if m else body, m[1] if m else "")
+
+
+class Expected(NamedTuple):
+    """預期名稱（不含 `*` 與可有可無的一段）與結尾可有可無的一段，都已填入佔位符；`any_prefix` 為樣板開頭有 `*`。"""
+
+    name: str
+    optional: str
+    any_prefix: bool
 
 
 @dataclass(frozen=True)
@@ -90,7 +106,7 @@ class NameTemplate:
     en: str
     memory_zh: str
     memory_en: str
-    normalize_zh: frozenset[str] = frozenset({"brackets"})
+    normalize_zh: frozenset[str] = DEFAULT_NORMALIZE_ZH
     normalize_en: frozenset[str] = frozenset()
     maxi_zh: str = ""
     maxi_en: str = ""
@@ -123,23 +139,15 @@ class NameTemplate:
     enhanced_zh: str = ""
     enhanced_en: str = ""
 
-    def parts(self, lang: str) -> Parts:
-        tpl = getattr(self, lang)
-        any_prefix = tpl.startswith(ANY_PREFIX)
-        body = tpl[1:] if any_prefix else tpl
-        m = _OPTIONAL.search(body)
-        return Parts(any_prefix, body[: m.start()] if m else body, m[1] if m else "")
-
     def placeholders(self, lang: str) -> frozenset[str]:
         """樣板（zh／en，含可有可無的一段）用到的佔位符名稱。"""
         return frozenset(name for _, name, _, _ in string.Formatter().parse(getattr(self, lang)) if name is not None)
 
-    def expected(self, lang: str, values: Mapping[str, Any]) -> tuple[str, str]:
-        """預期名稱與結尾可有可無的一段（都已填入佔位符）。天期 1 個月時英文 `{tenor} Months`／`{tenor}Months` 改成單數
-        `Month`（只接受單數，Issue #343）。"""
-        p = self.parts(lang)
+    def expected(self, lang: str, values: Mapping[str, Any]) -> Expected:
+        """預期名稱。天期 1 個月時英文 `{tenor} Months`／`{tenor}Months` 改成單數 `Month`（只接受單數，Issue #343）。"""
+        p = split(getattr(self, lang))
         body = re.sub(r"(\{tenor\}\s*)Months\b", r"\1Month", p.body) if values.get("tenor") == 1 else p.body
-        return body.format(**values), p.optional.format(**values)
+        return Expected(body.format(**values), p.optional.format(**values), p.any_prefix)
 
     def values(self, *, tenor: int, ccy_zh: str, iso: str, flags: Mapping[str, bool]) -> dict[str, Any]:
         """佔位符的值：天期、幣別，與依旗標（`FLAGS` 加 memory；樣板沒用到的旗標不在 `flags` 裡）選的字樣。"""
@@ -150,7 +158,9 @@ class NameTemplate:
         for lang in LANGS:
             if flags.get("autocall"):  # 會提前出場且記憶式時改用 autocall_memory_*（SG「（記憶式自動提前出場）」）
                 special = getattr(self, f"autocall_memory_{lang}")
-                out[f"autocall_{lang}"] = special if flags["memory"] and special else getattr(self, f"autocall_{lang}")
+                out[f"autocall_{lang}"] = (
+                    special if flags.get("memory") and special else getattr(self, f"autocall_{lang}")
+                )
             if "maxi" in flags:
                 out[f"underlying_{lang}"] = getattr(self, f"{'basket' if flags['maxi'] else 'single'}_{lang}")
             if "daily" in flags:
@@ -159,10 +169,9 @@ class NameTemplate:
                 out[f"payoff_{lang}"] = getattr(self, f"{'digital' if flags['digital'] else 'enhanced'}_{lang}")
         return out
 
-    def matches(self, lang: str, expected: tuple[str, str], actual: str) -> tuple[bool, str]:
-        """實際名稱是否符合預期（`expected()` 的結果），與容差說明。"""
-        body, optional = expected
-        p = self.parts(lang)
+    def matches(self, lang: str, expected: Expected, actual: str) -> tuple[bool, str]:
+        """實際名稱是否符合預期，與容差說明。`*` 與 `[…]` 並用時，結尾是預期名稱或加上可有可無那一段都算。"""
+        body, optional, any_prefix = expected
         if lang == "zh":
             brackets = "brackets" in self.normalize_zh
             norm = (lambda s: full_brackets(squash(s))) if brackets else squash
@@ -176,7 +185,7 @@ class NameTemplate:
             wants.append(norm(body + optional))
             tol += f"；結尾的「{optional}」可有可無"
         got = norm(actual)
-        if p.any_prefix:
+        if any_prefix:
             tol += "；名稱前面多的字不核對"
             return any(got.endswith(w) for w in wants), tol
         return got in wants, tol
@@ -184,12 +193,10 @@ class NameTemplate:
 
 def _syntax(tpl: str, where: str) -> None:
     """`*` 只能在開頭、`[…]` 只能在結尾，各最多一處、不能巢狀。"""
-    body = tpl[1:] if tpl.startswith(ANY_PREFIX) else tpl
-    if ANY_PREFIX in body:
+    _, body, optional = split(tpl)
+    if ANY_PREFIX in body + optional:
         raise _fail(f"審查標準商品名稱樣板 {where} 的「*」只能放在開頭（名稱前面多的字不核對）")
-    m = _OPTIONAL.search(body)
-    rest = body[: m.start()] if m else body
-    if "[" in rest or "]" in rest:
+    if "[" in body or "]" in body:
         raise _fail(f"審查標準商品名稱樣板 {where} 的「[…]」只能有一段、放在結尾（可有可無的一段），不能巢狀")
 
 
@@ -217,7 +224,7 @@ def load(n: dict[str, Any], where: str) -> NameTemplate:
         en=n["en"],
         memory_zh=n["memory_zh"],
         memory_en=n["memory_en"],
-        normalize_zh=_normalize(n, "zh", where, frozenset({"brackets"})),
+        normalize_zh=_normalize(n, "zh", where, DEFAULT_NORMALIZE_ZH),
         normalize_en=_normalize(n, "en", where, frozenset()),
         ccy_aliases=dict(n.get("ccy_aliases", {})),
         single_unsupported=bool(n.get("single_unsupported", False)),

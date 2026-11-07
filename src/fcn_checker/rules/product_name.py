@@ -3,7 +3,7 @@
 
 from __future__ import annotations
 
-from ..products import product_name
+from .. import products
 from ..schema import CheckResult, FieldStatus, Item, ParsedField
 from ..schema import CheckStatus as S
 from .kit import Check, Context, standard_field
@@ -85,7 +85,7 @@ def check(ctx: Context) -> list[CheckResult]:
     rid, issuer = "standard.product_name", ctx.issuer
     items = {"name_zh": Item.standard("中文商品名稱"), "name_en": Item.standard("英文商品名稱")}
     product = ctx.order.get("product")
-    tpl = ctx.issuer_std.product_name_for(product_name(product.value) if product is not None else None)
+    tpl = ctx.issuer_std.product_name_for(products.product_name(product.value) if product is not None else None)
     if tpl is None:
         return [
             Check(rid, field, items[field], ctx.document)
@@ -123,7 +123,8 @@ def check(ctx: Context) -> list[CheckResult]:
             )
             continue
         lang = "zh" if field == "name_zh" else "en"
-        flags, bad = _name_flags(ctx, tpl.placeholders(lang))
+        used = tpl.placeholders(lang)
+        flags, bad = _name_flags(ctx, used)
         if bad is not None:
             out.append(check.review(bad))
             continue
@@ -140,11 +141,10 @@ def check(ctx: Context) -> list[CheckResult]:
         flags["memory"] = bool(mem.value)
         expected = tpl.expected(lang, tpl.values(tenor=tenor.value, ccy_zh=cz.value, iso=iso, flags=flags))
         same, tol = tpl.matches(lang, expected, pf.value)
-        used = tpl.placeholders(lang)
         facts = "".join(text for group, text in _MESSAGE_FACTS if {f"{group}_zh", f"{group}_en"} & used)
         out.append(
             check.compare(
-                expected[0],
+                expected.name,
                 pf.value,
                 ok=same,
                 tolerance=tol,
