@@ -28,6 +28,7 @@ from pdf_writer import FONT, Edit, FlowDoc, FlowLayout, require_used, text_width
 from reference_synth import (
     FITCH,
     MOODYS,
+    PRICING,
     SP,
     UL,
     ProductSpec,
@@ -66,11 +67,6 @@ EXCHANGE = {
     "JT": "東京證券交易所及其繼承者(如有)",
 }
 QUOTE = {"US": "美元", "JT": "日圓"}  # 標的報價幣別
-PRICING = {
-    "close": "收盤價",
-    "open": "開盤價",
-    "vwap": "VWAP",
-}  # 參考條件表「期初定價」（說明書沒寫，workflow #475 開放 VWAP）
 NAME_SUFFIX_EN = (
     "（Non Principal Guaranteed, Unsecured and Non-guaranteed）"  # 英文名稱可有可無的後綴（OOS 樣本，#475）
 )
@@ -648,7 +644,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """UBS 中文投資人須知（docs/checker/templates/ubs-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
-    d = LAYOUT.doc(edits, set() if used is None else used, "iis", right=565)
+    d = LAYOUT.doc(edits, used, "iis", right=565)
     w = d.w
     w.line(217, "中文投資人須知", size=14, gap=20)
     d.text(36, f"商品中文名稱：{s.name_zh}（下稱“本商品”）；商品英文名稱：{s.name_en}；商品種類：{PRODUCT_TYPE}。", 36)
@@ -719,7 +715,7 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
 def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
     """與 `spec` 一致的參考條件表列：期初定價依 `pricing`。`overrides` 以 Excel 欄名覆寫。"""
     out = reference_row(spec)
-    out["期初定價"] = PRICING[spec.pricing]
+    out["期初定價"] = PRICING[spec.pricing]  # 說明書沒寫期初定價（workflow #475 開放 VWAP）
     out.update(overrides)
     return out
 

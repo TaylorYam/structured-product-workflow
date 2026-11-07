@@ -34,6 +34,7 @@ from reference_synth import (
     Ratings,
     price,
     reference_row,
+    set_pricing,
     weekday_on_or_after,
     write_notes,
 )
@@ -58,7 +59,6 @@ TICKERS = {
 }
 EXCHANGE = {"UN": "紐約證券交易所", "UW": "那斯達克交易所", "JT": "東京證券交易所"}
 QUOTE = {"US": "美元", "JT": "日圓"}  # 標的報價幣別
-PRICING = {"close": "收盤價", "open": "開盤價", "vwap": "VWAP"}  # 參考條件表「期初定價」
 CN = ("一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二")
 
 
@@ -262,12 +262,6 @@ class BenSpec(Spec):
 
 
 LAYOUT = FlowLayout(chapter_gap=18)
-
-
-def _article(d: FlowDoc, n: int, title: str) -> None:
-    if d.section == "cover" or d.section.startswith("art") or d.section == "ch一":
-        d.section = f"art{n}"
-    d.text(36, f"{n}. {title}", 54)
 
 
 def _warnings(s: Spec, doc: str = "本中文產品說明書") -> list[str]:
@@ -800,33 +794,33 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     for n in range(1, 26):
         title = ARTICLE_TITLES.get(n, f"第{n}項說明（不核對）")
         if n == 1:
-            _article(d, n, f"{title}{s.name_zh} (ISIN：{ISIN} ) 。")
+            d.article(n, f"{title}{s.name_zh} (ISIN：{ISIN} ) 。")
         elif n == 2:
-            _article(d, n, title + WARNING_CH1)
+            d.article(n, title + WARNING_CH1)
         elif n == 3:
-            _article(d, n, f"{title}{ISSUER}。")
+            d.article(n, f"{title}{ISSUER}。")
             d.text(
                 36,
                 "保證機構名稱及其長期債務信用評等：虛構銀行。截至本中文產品說明書刊印日期，其長期債務信用評等為"
                 + ratings_text(s.guarantor_ratings),  # 真實樣本沒有句號，直接接第 4 項
             )
         elif n == 5:
-            _article(d, n, f"{title}{s.currency_zh}({s.ccy}) 。")
+            d.article(n, f"{title}{s.currency_zh}({s.ccy}) 。")
         elif n == 6:
-            _article(d, n, f"{title}每單位(張)商品面額為{s.money(s.denom)}({s.ccy}) 。")
+            d.article(n, f"{title}每單位(張)商品面額為{s.money(s.denom)}({s.ccy}) 。")
             d.text(36, f"發行價格：每單位(張)商品面額的100%，即{s.money(s.denom)}({s.ccy})。")
         elif n == 9:
-            _article(d, n, title)
+            d.article(n, title)
             (_article9_ben if isinstance(s, BenSpec) else _article9_sb if isinstance(s, SbSpec) else _article9)(d, s)
         elif n == 10:
-            _article(d, n, title)
+            d.article(n, title)
             _article10(d, s)
         elif n == 11:
-            _article(d, n, title)
+            d.article(n, title)
             d.w.row([(79, "連結標的"), (361, "簡介")], gap=16)
             write_notes(d.w, s.underlyings, "column", x=45, note_x=200, heading=None, width=34)
         elif n == 13:
-            _article(d, n, title)
+            d.article(n, title)
             for t in (
                 f"(1) 商品年期：{s.tenor} 個月。",
                 f"(2) 期初訂價日：{s.date(s.trade_date)}。",
@@ -842,7 +836,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             ):
                 d.text(36, t)
         elif n == 15:
-            _article(d, n, title)
+            d.article(n, title)
             d.text(36, "(1)到期贖回計算公式：請參見上述第一章第9 項。")
             d.text(36, f"(3)提前贖回金額即為公平市值贖回金額，此公平市值贖回金額可能低於100%{s.currency_zh}投資本金。")
             if isinstance(s, BenSpec):
@@ -854,10 +848,10 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             else:
                 d.text(36, f"(4)最低保證配息率：{guaranteed}配息 {s.monthly}%。")
         elif n == 16:
-            _article(d, n, title)
+            d.article(n, title)
             (_article16_ben if isinstance(s, BenSpec) else _article16_sb if isinstance(s, SbSpec) else _article16)(d, s)
         else:
-            _article(d, n, title)
+            d.article(n, title)
 
     d.chapter("二", "相關機構事業概況")
     d.text(36, "1. 發行機構：")
@@ -988,7 +982,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """CA 中文投資人須知（docs/checker/templates/ca-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
-    d = LAYOUT.doc(edits, set() if used is None else used, "iis", right=565)
+    d = LAYOUT.doc(edits, used, "iis", right=565)
     w = d.w
 
     dt_ = s.date
@@ -1202,14 +1196,12 @@ def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
     """與 `spec` 一致的參考條件表列：期初定價依 `pricing`（VWAP 時進場價空白）、Super Bull 的 Product 填 `Super Bull`。
     `overrides` 以 Excel 欄名覆寫。"""
     out = reference_row(spec)
-    out["期初定價"] = PRICING[spec.pricing]
+    set_pricing(out, spec.pricing, spec.count)
     if isinstance(spec, BenSpec):
         out["Product"] = BEN_PRODUCT
         out["參與率(%)"] = float(spec.participation)
     elif isinstance(spec, SbSpec):
         out["Product"] = SB_PRODUCT
-    if spec.pricing == "vwap":
-        out.update({f"UL_{i}_進場價": None for i in range(1, spec.count + 1)})
     out.update(overrides)
     return out
 

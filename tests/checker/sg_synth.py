@@ -24,6 +24,7 @@ from typing import Any
 from harness import STANDARD, SynthChecks, iis_path
 from pdf_writer import FONT, Edit, FlowDoc, FlowLayout, require_used, split_digits
 from reference_synth import (
+    DACN_PRODUCT,
     FITCH,
     MOODYS,
     NO_RATINGS,
@@ -34,12 +35,12 @@ from reference_synth import (
     price,
     quote_currency,
     reference_row,
+    set_dacn,
     weekday_on_or_after,
     write_notes,
 )
 
 NAME = STANDARD["issuer"]["sg"]["product_name"]
-DACN_PRODUCT = "DACN"
 DACN_NAME = STANDARD["issuer"]["sg"]["product_names"][DACN_PRODUCT]
 WARNING = STANDARD["issuer"]["sg"]["fixed_warning"]
 WARNING_CH1 = STANDARD["issuer"]["sg"]["fixed_warning_variants"][0]
@@ -270,7 +271,7 @@ def _sub(d: FlowDoc, n: int, text: str, x: float = 50) -> None:
 
 
 def _pair(d: FlowDoc, label: str, values: Sequence[str]) -> None:
-    """封面兩欄表的一項：標籤 x 100 與第一個值同一列，其餘值接在下面（x 270）。"""
+    """封面兩欄表的一項：標籤 x 60 與第一個值同一列，其餘值接在下面（x 270）。"""
     values = [v for v in values if v]
     d.w.need(13 * max(1, len(values)))
     with d.w.verbatim():
@@ -1170,8 +1171,7 @@ def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
     """與 `spec` 一致的參考條件表列；DACN 的 Product 寫 DACN、「配息門檻(%)」= 執行價 %（表頭沒有這欄時不會寫出）。"""
     out = reference_row(spec)
     if isinstance(spec, DacnSpec):
-        out["Product"] = DACN_PRODUCT
-        out["配息門檻(%)"] = float(spec.strike if spec.barrier is None else spec.barrier)
+        set_dacn(out, spec.strike, spec.barrier)
     out.update(overrides)
     return out
 

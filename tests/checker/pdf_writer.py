@@ -2,7 +2,7 @@
 
 各上手的合成器（tests/checker/*_synth.py）都只透過這裡的公開工具排版：`PdfWriter` 逐行寫字；`FlowDoc` 在其上
 依段落代號改字、超寬自動換行，各家的差別（右邊界、行距、續行縮排、換行規則、章名寫法…）都寫在 `FlowLayout`。
-條號、封面兩欄表、頁尾等各家獨有的版面由各合成器自行寫成函式。
+第一章各條「N. 標題」同一段的寫法用 `FlowDoc.article`；其他條號寫法、封面兩欄表、頁尾等各家獨有的版面由各合成器自行寫成函式。
 """
 
 from __future__ import annotations
@@ -282,6 +282,8 @@ class FlowLayout:
     chapter_fmt: str = "第{n}章、{name}"  # 章名一行的寫法；段落代號為 ch{n}
     chapter_x: float = 36
     chapter_gap: float = 16
+    article_x: float = 36  # `article` 條號與標題一行的 x
+    article_cont: float = 54  # `article` 標題換行時續行 x
 
     def doc(self, edits: Sequence[Edit], used: set[Edit] | None = None, kind: str = "ts", **changes: float) -> FlowDoc:
         return FlowDoc(edits, used, kind, replace(self, **changes) if changes else self)
@@ -349,6 +351,18 @@ class FlowDoc:
         title = lay.chapter_fmt.format(n=n, name=name)
         self.chapters.append((len(self.w.doc) - 1, title))
         self.w.line(lay.chapter_x, title, gap=lay.chapter_gap)
+
+    def enter_article(self, n: int, first_chapter: str = "ch一") -> None:
+        """進入第一章第 `n` 條：目前段落在第一章內（封面、第一章章名 `first_chapter`、前一條或其下層）時段落代號改為
+        art{n}；其他章的條沿用章的代號（ch二…）。"""
+        s = self.section
+        if s == "cover" or s.startswith("art") or s == first_chapter:
+            self.section = f"art{n}"
+
+    def article(self, n: int, title: str) -> None:
+        """一條「{n}. {title}」寫成一段（x `article_x`、續行 `article_cont`）；段落代號見 `enter_article`。"""
+        self.enter_article(n)
+        self.text(self.layout.article_x, f"{n}. {title}", self.layout.article_cont)
 
     def number_pages(
         self, label: str, at: tuple[float, float], *, fontname: str = FONT, size: float = 9

@@ -32,6 +32,7 @@ from reference_synth import (
     Ratings,
     price,
     reference_row,
+    set_pricing,
     weekday_on_or_after,
     write_notes,
 )
@@ -75,7 +76,6 @@ TICKERS = {  # 依代號排序（GS 說明書的順序）
 }
 EXCHANGE = {"UN": "紐約證券交易所", "UW": "納斯達克全球精選市場", "JT": "東京證券交易所"}
 QUOTE = {"US": "美元", "JT": "日圓"}  # 標的報價幣別
-PRICING = {"close": "收盤價", "open": "開盤價", "vwap": "VWAP"}  # 參考條件表「期初定價」
 ZH_NUM = ("一", "二", "三", "四", "五", "六", "七", "八", "九")
 
 
@@ -180,13 +180,16 @@ class Spec(ProductSpec):
         return f"{Decimal(x):,.0f}{' ' if space else ''}{self.currency_zh}"
 
 
-LAYOUT = FlowLayout(right=545, keep_width=True, row_gap=15, chapter_fmt="第{n}章:{name}", chapter_x=72, chapter_gap=20)
-
-
-def _article(d: FlowDoc, n: int, title: str) -> None:
-    if d.section == "cover" or d.section.startswith("art") or d.section == "ch一":
-        d.section = f"art{n}"
-    d.text(72, f"{n}. {title}", 86)
+LAYOUT = FlowLayout(
+    right=545,
+    keep_width=True,
+    row_gap=15,
+    chapter_fmt="第{n}章:{name}",
+    chapter_x=72,
+    chapter_gap=20,
+    article_x=72,
+    article_cont=86,
+)
 
 
 def _furnish(d: FlowDoc) -> fitz.Document:
@@ -559,7 +562,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         17: "投資收益計算方法–包含本金虧損之機率及以不同之情境分析解說之平均年化報酬率:",
     }
     for n in range(1, 37):
-        _article(d, n, titles.get(n, f"第{n}項說明（不核對）"))
+        d.article(n, titles.get(n, f"第{n}項說明（不核對）"))
         if n == 9:
             _article9(d, s)
         elif n == 10:
@@ -699,7 +702,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """GS 中文投資人須知（docs/checker/templates/gs-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
-    d = LAYOUT.doc(edits, set() if used is None else used, "iis", right=590)
+    d = LAYOUT.doc(edits, used, "iis", right=590)
     w = d.w
     li = "利"  # 真實文件是相容字 U+F9DD；內建 CJK 字型畫不出來，合成文件寫標準字（相容字轉換由本機真實樣本測試涵蓋）
     w.line(374, f"中文投資人須知刊印日期: {s.date(s.trade_date)}", gap=12)
@@ -865,9 +868,7 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
 def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
     """與 `spec` 一致的參考條件表列：期初定價依 `pricing`（VWAP 時進場價空白）。`overrides` 以 Excel 欄名覆寫。"""
     out = reference_row(spec)
-    out["期初定價"] = PRICING[spec.pricing]
-    if spec.pricing == "vwap":
-        out.update({f"UL_{i}_進場價": None for i in range(1, spec.count + 1)})
+    set_pricing(out, spec.pricing, spec.count)
     out.update(overrides)
     return out
 

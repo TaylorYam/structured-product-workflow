@@ -28,6 +28,7 @@ import fitz
 from harness import STANDARD, SynthChecks, iis_path
 from pdf_writer import Edit, FlowDoc, FlowLayout, require_used
 from reference_synth import (
+    DACN_PRODUCT,
     FITCH,
     MOODYS,
     NO_RATINGS,
@@ -37,12 +38,13 @@ from reference_synth import (
     Ratings,
     price,
     reference_row,
+    set_dacn,
+    set_pricing,
     ul_note,
     weekday_on_or_after,
 )
 
 NAME = STANDARD["issuer"]["nomura"]["product_name"]
-DACN_PRODUCT = "DACN"
 DACN_NAME = STANDARD["issuer"]["nomura"]["product_names"][DACN_PRODUCT]
 WARNING = STANDARD["issuer"]["nomura"]["fixed_warning"]
 ISSUER = STANDARD["issuer"]["nomura"]["issuer_name"]
@@ -225,8 +227,7 @@ LAYOUT = FlowLayout(right=540, keep_width=True, row_gap=15, chapter_fmt="{n}、{
 
 def _article(d: FlowDoc, n: int, title: str) -> None:
     """第一章條號：1.～9. 獨立一行（標題在下一行），10. 以後與標題同一行；其他章一律獨立一行。"""
-    if d.section == "cover" or d.section.startswith("art") or d.section == "ch一":
-        d.section = f"art{n}"
+    d.enter_article(n)
     if n >= 10 and d.section.startswith("art"):
         d.text(45, f"{n}. {title}", 70)
         return
@@ -799,7 +800,7 @@ def _page_marks(doc: fitz.Document, x: float) -> None:
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """Nomura 中文投資人須知（docs/checker/templates/nomura-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
-    d = LAYOUT.doc(edits, set() if used is None else used, "iis", right=575)
+    d = LAYOUT.doc(edits, used, "iis", right=575)
     w = d.w
     worst = "表現最差之連結標的" if s.basket else "連結標的"
     indiv = "個別" if s.basket else ""
@@ -983,11 +984,9 @@ def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
     """與 `spec` 一致的參考條件表列；VWAP 時表上「期初定價」為 VWAP、進場價空白（NR6）。`overrides` 以 Excel 欄名覆寫。"""
     out = reference_row(spec)
     if isinstance(spec, DacnSpec):
-        out["Product"] = DACN_PRODUCT
-        out["配息門檻(%)"] = float(spec.strike if spec.barrier is None else spec.barrier)
+        set_dacn(out, spec.strike, spec.barrier)
     if spec.vwap:
-        out["期初定價"] = "VWAP"
-        out.update({f"UL_{i}_進場價": None for i in range(1, spec.count + 1)})
+        set_pricing(out, "vwap", spec.count)
     out.update(overrides)
     return out
 

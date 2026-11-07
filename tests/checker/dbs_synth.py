@@ -29,6 +29,7 @@ from typing import Any
 from harness import STANDARD, SynthChecks, iis_path
 from pdf_writer import FONT, Edit, FlowDoc, FlowLayout, require_used, text_width
 from reference_synth import (
+    DACN_PRODUCT,
     FITCH,
     MOODYS,
     SP,
@@ -37,12 +38,12 @@ from reference_synth import (
     Ratings,
     price,
     reference_row,
+    set_dacn,
     weekday_on_or_after,
     write_notes,
 )
 
 NAME = STANDARD["issuer"]["dbs"]["product_name"]
-DACN_PRODUCT = "DACN"
 DACN_NAME = STANDARD["issuer"]["dbs"]["product_names"][DACN_PRODUCT]
 RATING_NAMES = {MOODYS: "穆迪(Moody's)", SP: "標準普爾(S&P) ", FITCH: "惠譽(Fitch) "}
 
@@ -823,7 +824,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """DBS 中文投資人須知（docs/checker/templates/dbs-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
-    d = LAYOUT.doc(edits, set() if used is None else used, "iis", right=575)
+    d = LAYOUT.doc(edits, used, "iis", right=575)
     w = d.w
     w.line(226, "中文投資人須知(最終版本)", size=12, gap=16)
     d.text(
@@ -983,8 +984,7 @@ def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
     （表頭沒有這欄時不會寫出）。"""
     out = reference_row(spec)
     if isinstance(spec, DacnSpec):
-        out["Product"] = DACN_PRODUCT
-        out["配息門檻(%)"] = float(spec.barrier_pct)
+        set_dacn(out, spec.strike, spec.barrier)
     out.update(overrides)
     return out
 

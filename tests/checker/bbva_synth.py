@@ -34,6 +34,7 @@ from reference_synth import (
     Ratings,
     price,
     reference_row,
+    set_pricing,
     weekday_on_or_after,
     write_notes,
 )
@@ -56,9 +57,6 @@ TICKERS = ("ZBA UW", "ZBB UN", "ZBC UW", "ZBD UW")
 def ratings_text(r: Ratings, rated: str = "信用評等") -> str:
     """評等寫法（#242）：`標準普爾信用評等A+、穆迪信用評等A2`；第二章發行機構只寫名稱（`rated=""`）。"""
     return "、".join(f"{a}{rated}{v}" for a, v in r.stated(SP, MOODYS, FITCH))
-
-
-PRICING = {"close": "收盤價", "open": "開盤價", "vwap": "VWAP"}  # 參考條件表「期初定價」
 
 
 def underlyings(count: int) -> tuple[UL, ...]:
@@ -188,13 +186,9 @@ def _split(text: str, first: float, rest: float, size: float) -> list[str]:
     return out
 
 
-LAYOUT = FlowLayout(split=_split, chapter_fmt="{n}、{name}", chapter_x=28, chapter_gap=18)
-
-
-def _article(d: FlowDoc, n: int, title: str) -> None:
-    if d.section.startswith("art") or d.section == "ch一":
-        d.section = f"art{n}"
-    d.text(28, f"{n}. {title}", 50)
+LAYOUT = FlowLayout(
+    split=_split, chapter_fmt="{n}、{name}", chapter_x=28, chapter_gap=18, article_x=28, article_cont=50
+)
 
 
 # ---------------------------------------------------------------- 說明書
@@ -566,7 +560,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             title += WARNING
         elif n == 5:
             title += s.currency_zh
-        _article(d, n, title)
+        d.article(n, title)
         if n == 3:
             d.text(50, f"(1) 發行機構：{ISSUER_EN}")
             d.text(50, f"發行機構信用評等：{ratings_text(s.ratings)}")
@@ -698,7 +692,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """BBVA 中文投資人須知（docs/checker/templates/bbva-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
-    d = LAYOUT.doc(edits, set() if used is None else used, "iis")
+    d = LAYOUT.doc(edits, used, "iis")
     w = d.w
     di = s.date_iis
     w.line(226, "(僅適用於專業投資人)", gap=16)
@@ -846,9 +840,7 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
 def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
     """與 `spec` 一致的參考條件表列：期初定價依 `pricing`（VWAP 時進場價空白）。`overrides` 以 Excel 欄名覆寫。"""
     out = reference_row(spec)
-    out["期初定價"] = PRICING[spec.pricing]
-    if spec.pricing == "vwap":
-        out.update({f"UL_{i}_進場價": None for i in range(1, spec.count + 1)})
+    set_pricing(out, spec.pricing, spec.count)
     out.update(overrides)
     return out
 

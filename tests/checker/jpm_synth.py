@@ -141,8 +141,7 @@ def _bullet(d: FlowDoc, text: str, x: float = 35) -> None:
 
 def _article(d: FlowDoc, n: int, title: str) -> None:
     """第 I 部分各條段落代號 art{n}；條號 x 15，9 以前獨立一行、標題下一行 x 35，10 以後同一行。"""
-    if d.section.startswith("art") or d.section in ("cover", "chI"):
-        d.section = f"art{n}"
+    d.enter_article(n, "chI")
     if n < 10:
         d.w.line(15, f"{n}.")
         d.text(35, title)
@@ -390,7 +389,7 @@ def _page_marks(w: PdfWriter) -> None:
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """JPM 中文投資人須知（docs/checker/templates/jpm-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
-    d = LAYOUT.doc(edits, set() if used is None else used, "iis")
+    d = LAYOUT.doc(edits, used, "iis")
     w = d.w
     trustee = s.product_code if s.trustee_code is None else s.trustee_code
     w.line(250, "中文投資人須知", gap=14)

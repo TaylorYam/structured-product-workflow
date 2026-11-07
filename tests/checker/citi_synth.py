@@ -431,7 +431,7 @@ def _scenarios(d: FlowDoc, s: Spec) -> None:
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """Citi 中文投資人須知（docs/checker/templates/citi-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
-    d = LAYOUT.doc(edits, set() if used is None else used, "iis")
+    d = LAYOUT.doc(edits, used, "iis")
     w = d.w
     unit, worst = s.currency_zh, ("表現最差連結標的" if s.count > 1 else "連結標的")
     trustee = (s.product_code if s.trustee_code is None else s.trustee_code) or "[ ]"

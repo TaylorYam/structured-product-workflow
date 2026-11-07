@@ -27,6 +27,7 @@ import fitz
 from harness import STANDARD, SynthChecks, iis_path
 from pdf_writer import FONT, Edit, FlowDoc, FlowLayout, require_used, text_width, tokens
 from reference_synth import (
+    DACN_PRODUCT,
     FITCH,
     MOODYS,
     SP,
@@ -35,6 +36,8 @@ from reference_synth import (
     Ratings,
     price,
     reference_row,
+    set_dacn,
+    set_pricing,
     weekday_on_or_after,
     write_notes,
 )
@@ -43,7 +46,6 @@ NAME = STANDARD["issuer"]["natixis"]["product_name"]
 WARNING = STANDARD["issuer"]["natixis"]["fixed_warning"]
 ISSUER = STANDARD["issuer"]["natixis"]["issuer_name"]
 PRODUCT_TYPE = STANDARD["issuer"]["natixis"]["product_type"]
-DACN_PRODUCT = "DACN"
 DACN_NAME = STANDARD["issuer"]["natixis"]["product_names"][DACN_PRODUCT]
 
 
@@ -64,7 +66,6 @@ TICKERS = {
 }
 EXCHANGE = {"UN": "紐約證券交易所", "UW": "那斯達克股票交易所", "JT": "東京證券交易所"}
 QUOTE = {"US": "美元", "JT": "日圓"}  # 標的報價幣別
-PRICING = {"close": "收盤價", "open": "開盤價", "vwap": "VWAP"}  # 參考條件表「期初定價」
 CN = ("一", "二", "三", "四", "五", "六", "七", "八", "九", "十", "十一", "十二")
 
 
@@ -212,13 +213,7 @@ class DacnSpec(Spec):
         return DACN_NAME["en"].format(tenor=self.tenor, ccy=self.ccy)
 
 
-LAYOUT = FlowLayout(right=565, gap=12, table_size=7)
-
-
-def _article(d: FlowDoc, n: int, title: str) -> None:
-    if d.section == "cover" or d.section.startswith("art") or d.section == "ch一":
-        d.section = f"art{n}"
-    d.text(54, f"{n}. {title}", 72)
+LAYOUT = FlowLayout(right=565, gap=12, table_size=7, article_x=54, article_cont=72)
 
 
 def _labeled(d: FlowDoc, label: list[str], values: list[str]) -> None:
@@ -683,7 +678,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     d.chapter("一", "商品基本資料")
     d.text(36, "本商品係依據基本公開說明書以英國法下之歐洲中期債券之全球無記名債券形式，以面額100%發行。")
     for n in range(1, 27):
-        _article(d, n, article_title(n))
+        d.article(n, article_title(n))
         if n == 1:
             d.text(72, f"{s.name_zh}(下稱「本商品」)")
             d.text(72, s.name_en_inner)
@@ -862,7 +857,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """Natixis 中文投資人須知（docs/checker/templates/natixis-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
-    d = LAYOUT.doc(edits, set() if used is None else used, "iis", right=585)
+    d = LAYOUT.doc(edits, used, "iis", right=585)
     w = d.w
     dt_ = s.date_iis
     dl = s.distributor
@@ -1004,12 +999,9 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
 def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
     """與 `spec` 一致的參考條件表列：期初定價依 `pricing`（VWAP 時進場價空白）。`overrides` 以 Excel 欄名覆寫。"""
     out = reference_row(spec)
-    out["期初定價"] = PRICING[spec.pricing]
+    set_pricing(out, spec.pricing, spec.count)
     if isinstance(spec, DacnSpec):
-        out["Product"] = DACN_PRODUCT
-        out["配息門檻(%)"] = float(spec.strike if spec.barrier is None else spec.barrier)
-    if spec.pricing == "vwap":
-        out.update({f"UL_{i}_進場價": None for i in range(1, spec.count + 1)})
+        set_dacn(out, spec.strike, spec.barrier)
     out.update(overrides)
     return out
 
