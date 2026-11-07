@@ -25,9 +25,11 @@ if TYPE_CHECKING:
     from sp_workflow.product_store import Stored
 
 NO_KI = "NONE"  # Barrier Type：沒有 KI
-PARTICIPATION_FIELD = "participation_pct"  # 參考條件表的參與率（#373；只有 BEN 有，不在匯入格式裡）
-COUPON_BARRIER_FIELD = "coupon_barrier_pct"  # 參考條件表的配息門檻（#367；不在匯入格式裡）
-LOOKBACK_FIELD = LOOKBACK_END_DATE.field  # 參考條件表的回顧結束日（#376；回填欄位，不在匯入格式裡）
+PARTICIPATION_KEY = (
+    "participation_pct"  # 參考條件表的標準欄位（不是畫面的欄名）：參與率（#373；只有 BEN 有，不在匯入格式裡）
+)
+COUPON_BARRIER_KEY = "coupon_barrier_pct"  # 參考條件表的配息門檻（#367；不在匯入格式裡）
+LOOKBACK_KEY = LOOKBACK_END_DATE.field  # 參考條件表的回顧結束日（#376；回填欄位，不在匯入格式裡）
 
 _KO_TYPES = {codes: name for name, codes in KO_CODES.items()}  # (KO(Freq), KO(memo)) → KO Type
 _BARRIER_TYPES = {code: name for name, code in KI_CODES.items()}  # KI(Freq) → Barrier Type
@@ -107,11 +109,11 @@ def sheet_values(found: Stored, empty: str) -> dict[str, Any]:
         "ki_pct": empty if no_ki else p["ki_pct"],
         "ki_type": p["ki_freq"],
         "coupon_pa_pct": p["coupon_pct"],
-        COUPON_BARRIER_FIELD: empty if p["coupon_barrier_pct"] is None else p["coupon_barrier_pct"],
+        COUPON_BARRIER_KEY: empty if p["coupon_barrier_pct"] is None else p["coupon_barrier_pct"],
         "tenor_months": p["tenor_months"],
         "first_callable_period": p["non_call_months"],
-        PARTICIPATION_FIELD: p["participation_pct"],
-        LOOKBACK_FIELD: p["lookback_end_date"],
+        PARTICIPATION_KEY: p["participation_pct"],
+        LOOKBACK_KEY: p["lookback_end_date"],
     }
     if found.autocall is not None:
         for slot in range(1, SLOTS + 1):
