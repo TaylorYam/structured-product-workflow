@@ -14,6 +14,7 @@ from ..text import full_brackets, squash
 from . import hsbc_tables as tables
 from . import money, price_table, ratings, schedule
 from .common import EXACT_ROWS, FEE_CHECKED, EachRate, FeeTable, FixedColumns, SamePage, derived, fee_rates
+from .fields_builder import FieldsBuilder, ParsedTermSheet
 from .layout import Document, LayoutSpec, TextIndex, capture, parse_date
 from .underlying_notes import Paragraphs, underlying_notes
 
@@ -124,15 +125,10 @@ class ScenarioIndex(TextIndex):
 
 
 @dataclass
-class HsbcTermSheet:
-    fields: dict[str, ParsedField]
-    full_text: TextIndex
+class HsbcTermSheet(ParsedTermSheet):
     document: Document
     scenarios: list[Line]
     scenario_index: ScenarioIndex  # 第 18 條情境文字（保留相鄰數字行的邊界）
-
-    def f(self, name: str) -> ParsedField:
-        return standard_fields.lookup(self.fields, name)
 
 
 def checked_price_table(name: str, lines: list[Line], spec: price_table.TableSpec) -> ParsedField:
@@ -331,10 +327,7 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
     doc = document(lines)
     art = doc.articles(1)
     cover = doc.before_chapter1()
-    fields = {}
-
-    def put(name, lns, pattern, convert=lambda x: x):
-        fields[name] = capture(name, TextIndex(lns), pattern, convert, whole_match=True)
+    fields = FieldsBuilder()
 
     def article(n):
         return doc.span_lines(art.get(n))
@@ -352,37 +345,37 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
         return s
 
     fields["product_code"] = product_code(lines)
-    put("name_zh", cover, r"商品代號/商品中文名稱[:：]\d{12}/(.+?)商品英文名稱[:：]")
-    put("name_en", cover, r"商品英文名稱[:：](.+?)商品種類[:：]")
-    put("name_title", cover, r"^(香港上海滙豐銀行.+?結構型商品)")
-    put("name_en_title", cover, r"結構型商品(.+?)中文產品說明書")
-    put("currency_zh", cover, r"計價幣別[:：](.+?)發行機構[:：]")
-    put("issuer_name_cover", cover, r"發行機構[:：](.+?)電話[:：]", legal_name)
-    put("approval_date", cover, r"\[受託或銷售機構\]審查通過之日期[:：]" + D, parse_date)
-    put("print_date_review", cover, r"\(參考性審閱版\)內容，刊印日期[:：]" + D, parse_date)
-    put("print_date_final", cover, r"\(最終版\)刊印日期(?:預定為|為)?[:：]" + D, parse_date)
-    put("distributor_name_cover", cover, r"受託或銷售機構之名稱、電話及地址[:：](.+?)電話[:：]")
-    put("distributor_phone_cover", cover, r"受託或銷售機構之名稱、電話及地址[:：].+?電話[:：]([+\d-]+)")
-    put(
+    fields.put("name_zh", cover, r"商品代號/商品中文名稱[:：]\d{12}/(.+?)商品英文名稱[:：]")
+    fields.put("name_en", cover, r"商品英文名稱[:：](.+?)商品種類[:：]")
+    fields.put("name_title", cover, r"^(香港上海滙豐銀行.+?結構型商品)")
+    fields.put("name_en_title", cover, r"結構型商品(.+?)中文產品說明書")
+    fields.put("currency_zh", cover, r"計價幣別[:：](.+?)發行機構[:：]")
+    fields.put("issuer_name_cover", cover, r"發行機構[:：](.+?)電話[:：]", legal_name)
+    fields.put("approval_date", cover, r"\[受託或銷售機構\]審查通過之日期[:：]" + D, parse_date)
+    fields.put("print_date_review", cover, r"\(參考性審閱版\)內容，刊印日期[:：]" + D, parse_date)
+    fields.put("print_date_final", cover, r"\(最終版\)刊印日期(?:預定為|為)?[:：]" + D, parse_date)
+    fields.put("distributor_name_cover", cover, r"受託或銷售機構之名稱、電話及地址[:：](.+?)電話[:：]")
+    fields.put("distributor_phone_cover", cover, r"受託或銷售機構之名稱、電話及地址[:：].+?電話[:：]([+\d-]+)")
+    fields.put(
         "distributor_address_cover",
         cover,
         r"受託或銷售機構之名稱、電話及地址[:：].+?電話[:：][+\d-]+(.+?)(?:\(營業活動所在地\))?公會審查",
     )
-    put("name_art1", article(1), r"商品名稱[:：](.+)$")
+    fields.put("name_art1", article(1), r"商品名稱[:：](.+)$")
     # 只讀幣別字：人民幣商品後面接「人民幣計價債券之說明事項：…」段落（Issue #180）；讀不到認得的幣別字時為缺漏
-    put("currency_art5", article(5), rf"計價幣別[:：]({CURRENCY_WORD})")
-    put("denomination", article(6), r"每單位面額[:：].+?" + N + r"元", number)
-    put("minimum_trade", article(7), r"最低交易金額[:：].+?" + N + r"元", number)
+    fields.put("currency_art5", article(5), rf"計價幣別[:：]({CURRENCY_WORD})")
+    fields.put("denomination", article(6), r"每單位面額[:：].+?" + N + r"元", number)
+    fields.put("minimum_trade", article(7), r"最低交易金額[:：].+?" + N + r"元", number)
     ccy, amount = money.CURRENCY, money.NUMBER
-    put("denomination_currency", article(6), rf"每單位面額[:：]({ccy}){amount}元")
-    put("minimum_trade_currency", article(7), rf"最低交易金額[:：]({ccy}){amount}元")
-    put("issue_price_pct", article(10), r"發行價格[:：]" + N + "%", number)
-    put("coupon_pa_pct", sub(11, 1), r"固定配息率=" + N + r"%×1/12", number)
-    put("coupon_periods", sub(11, 1), r"配息期數=(\d+)", int)
-    put("ko_pct", sub(11, 2), r"自動提前到期價格為期初股價×" + N + "%", number)
-    put("strike_pct", sub(11, 3), r"執行價為期初股價×" + N + "%", number)
-    put("ki_pct", sub(11, 3), r"觸及不保本價格為期初股價×" + N + "%", number)
-    put(
+    fields.put("denomination_currency", article(6), rf"每單位面額[:：]({ccy}){amount}元")
+    fields.put("minimum_trade_currency", article(7), rf"最低交易金額[:：]({ccy}){amount}元")
+    fields.put("issue_price_pct", article(10), r"發行價格[:：]" + N + "%", number)
+    fields.put("coupon_pa_pct", sub(11, 1), r"固定配息率=" + N + r"%×1/12", number)
+    fields.put("coupon_periods", sub(11, 1), r"配息期數=(\d+)", int)
+    fields.put("ko_pct", sub(11, 2), r"自動提前到期價格為期初股價×" + N + "%", number)
+    fields.put("strike_pct", sub(11, 3), r"執行價為期初股價×" + N + "%", number)
+    fields.put("ki_pct", sub(11, 3), r"觸及不保本價格為期初股價×" + N + "%", number)
+    fields.put(
         "ki_type",
         sub(11, 3),
         r"觸及不保本事件決定日為(最後評價日|每個預定交易日)",
@@ -401,7 +394,7 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
         )
     if fields["ko_observation"].status == FieldStatus.INVALID and "自動提前到期決定日自動提前到期金額付款日" in ko.text:
         fields["ko_observation"] = ParsedField.present("ko_observation", "P", sub(11, 2))
-    put("ko_start", sub(11, 2), r"自動提前到期決定日為自" + D + r"\(含\)起每個預定交易日", parse_date)
+    fields.put("ko_start", sub(11, 2), r"自動提前到期決定日為自" + D + r"\(含\)起每個預定交易日", parse_date)
     redemption = TextIndex(sub(11, 3)).text
     no_ki = (
         "觸及不保本" not in redemption
@@ -421,31 +414,26 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
     fields["price_table"] = checked_price_table("price_table", sub(12, 1), PRICE_TABLE)
     fields["underlyings"] = price_table.underlyings(fields["price_table"])
     fields["underlying_prices"] = _standard_prices(fields["price_table"])
-    put("tenor_months", sub(15, 1), r"為(\d+)個月", int)
+    fields.put("tenor_months", sub(15, 1), r"為(\d+)個月", int)
     for name, n, pattern in [
         ("issue_date", 2, r"發行日[:：]" + D),
         ("maturity_date", 3, r"目前表定為" + D),
         ("final_valuation_date", 5, r"最後評價日[:：]" + D),
         ("trade_date", 6, r"交易日[:：]" + D),
     ]:
-        put(name, sub(15, n), pattern, parse_date)
-    put("isin", article(27), r"ISIN[:：]([A-Z]{2}[A-Z0-9]{10})")
+        fields.put(name, sub(15, n), pattern, parse_date)
+    fields.put("isin", article(27), r"ISIN[:：]([A-Z]{2}[A-Z0-9]{10})")
     ch2 = doc.chapter_lines(2)
     # 第三章警語 (9) 重寫一次封面警語 9 的兩個刊印日期（每處 = 封面，doc.print_date）
-    put("print_date_review_ch3", doc.chapter_lines(3), r"\(參考性審閱版\)內容，刊印日期[:：]" + D, parse_date)
-    put("print_date_final_ch3", doc.chapter_lines(3), r"\(最終版\)刊印日期(?:預定為|為)?[:：]" + D, parse_date)
-    put("issuer_name_ch2", ch2, r"發行機構[:：]\(1\)事業名稱[:：](.+?\))", legal_name)
-    fields["issuer_name_ch1"] = standard_fields.absent("issuer_name_ch1", "第一章只寫中文的發行機構名稱")
-    fields["distributor_phone_ch4"] = standard_fields.absent("distributor_phone_ch4", "第四章受託機構電話")
-    fields.update(standard_fields.absent_all(standard_fields.DISTRIBUTOR_OTHERS, "受託機構的其他出處"))
-    fields["initial_pricing"] = standard_fields.absent("initial_pricing", "期初定價（收盤價／VWAP）字樣")
-    fields["issue_price_others"] = standard_fields.absent("issue_price_others", "發行價格的其他出處")
+    fields.put("print_date_review_ch3", doc.chapter_lines(3), r"\(參考性審閱版\)內容，刊印日期[:：]" + D, parse_date)
+    fields.put("print_date_final_ch3", doc.chapter_lines(3), r"\(最終版\)刊印日期(?:預定為|為)?[:：]" + D, parse_date)
+    fields.put("issuer_name_ch2", ch2, r"發行機構[:：]\(1\)事業名稱[:：](.+?\))", legal_name)
     for name, pattern in [
         ("distributor_name_ch2", r"事業名稱[:：](.+?)\(b\)"),
         ("distributor_address_ch2", r"營業所在地[:：](.+?)\(d\)"),
         ("chairman", r"負責人姓名[:：](.+?)(?:結算機構|$)"),
     ]:
-        put(name, ch2, r"受託或銷售機構[:：].*?" + pattern)
+        fields.put(name, ch2, r"受託或銷售機構[:：].*?" + pattern)
     ch4 = doc.chapter_lines(4)
     for name, pattern, convert in [
         ("subscription_start", r"商品開始受理申購日[:：]" + D, parse_date),
@@ -455,74 +443,23 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
         ("minimum_subscription_currency", rf"最低申購金額[:：]({ccy}){amount}元", str),
         ("minimum_additional_currency", rf"最低加購金額[:：]({ccy}){amount}元", str),
     ]:
-        put(name, ch4, pattern, convert)
+        fields.put(name, ch4, pattern, convert)
     fields.update(fee_rates(ch4, FEE_TABLE))
-    occ = standard_fields.Occurrence
-    fields["min_amounts"] = standard_fields.occurrences(
-        "min_amounts",
-        [
-            occ("minimum_trade", "minimum_trade", "第一章第 7 條最低交易金額", fields["minimum_trade"]),
-            occ("minimum_subscription", "minimum_subscription", "第四章最低申購金額", fields["minimum_subscription"]),
-            occ("minimum_additional", "minimum_additional", "第四章最低加購金額", fields["minimum_additional"]),
-        ],
-    )
-    fields["subscription_dates"] = standard_fields.occurrences(
-        "subscription_dates",
-        [
-            occ("subscription_start", "subscription_start", "第四章商品開始受理申購日", fields["subscription_start"]),
-            occ("subscription_end", "subscription_end", "第四章商品申購結束受理日", fields["subscription_end"]),
-        ],
-    )
-    fields["print_dates"] = standard_fields.occurrences(
-        "print_dates",
-        [
-            occ(
-                "print_date_review",
-                "print_date_review",
-                "封面刊印日期（參考性審閱版）",
-                fields["print_date_review"],
-            ),
-            occ("print_date_final", "print_date_final", "封面刊印日期（最終版）", fields["print_date_final"]),
-            occ(
-                "print_date_review_ch3",
-                "print_date_review",
-                "第三章刊印日期（參考性審閱版）",
-                fields["print_date_review_ch3"],
-            ),
-            occ("print_date_final_ch3", "print_date_final", "第三章刊印日期（最終版）", fields["print_date_final_ch3"]),
-        ],
-    )
+    fields.occur("minimum_trade", "第一章第 7 條最低交易金額")
+    fields.occur("minimum_subscription", "第四章最低申購金額")
+    fields.occur("minimum_additional", "第四章最低加購金額")
+    fields.occur("subscription_start", "第四章商品開始受理申購日")
+    fields.occur("subscription_end", "第四章商品申購結束受理日")
+    fields.occur("print_date_review", "封面刊印日期（參考性審閱版）")
+    fields.occur("print_date_final", "封面刊印日期（最終版）")
+    fields.occur("print_date_review_ch3", "第三章刊印日期（參考性審閱版）", code="print_date_review")
+    fields.occur("print_date_final_ch3", "第三章刊印日期（最終版）", code="print_date_final")
     scenarios = article(18)
-    fields["currency_others"] = standard_fields.occurrences(
-        "currency_others",
-        [
-            occ(
-                "denomination_currency",
-                "denomination_currency",
-                "第一章第 6 條每單位面額",
-                fields["denomination_currency"],
-            ),
-            occ(
-                "minimum_trade_currency",
-                "minimum_trade_currency",
-                "第一章第 7 條最低交易金額",
-                fields["minimum_trade_currency"],
-            ),
-            occ(
-                "minimum_subscription_currency",
-                "minimum_subscription_currency",
-                "第四章最低申購金額",
-                fields["minimum_subscription_currency"],
-            ),
-            occ(
-                "minimum_additional_currency",
-                "minimum_additional_currency",
-                "第四章最低加購金額",
-                fields["minimum_additional_currency"],
-            ),
-            *_scenario_currencies(scenarios),
-        ],
-    )
+    fields.occur("denomination_currency", "第一章第 6 條每單位面額")
+    fields.occur("minimum_trade_currency", "第一章第 7 條最低交易金額")
+    fields.occur("minimum_subscription_currency", "第四章最低申購金額")
+    fields.occur("minimum_additional_currency", "第四章最低加購金額")
+    fields.add(*_scenario_currencies(scenarios))
     ti = TextIndex(scenarios)
     start = list(ti.finditer(r"配息期數=\d+，且假設"))
     end = list(ti.finditer(r"\*假設天期"))
@@ -544,7 +481,7 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
         doc.lines, Paragraphs()
     )  # 連結標的公司介紹：沒有編號與名稱，依段落（Issue #225）
     fields.update(ratings.fields(doc.lines, RATINGS, no_guarantor_places=(ratings.NAME_NO_GUARANTOR,)))
-    return HsbcTermSheet(fields, TextIndex(doc.lines), doc, scenarios, ScenarioIndex(scenarios))
+    return HsbcTermSheet(fields.build(), TextIndex(doc.lines), doc, scenarios, ScenarioIndex(scenarios))
 
 
 def _first_period_full_coupon(lines: list[Line]) -> ParsedField:

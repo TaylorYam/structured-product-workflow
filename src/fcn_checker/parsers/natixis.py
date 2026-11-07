@@ -20,6 +20,7 @@ from ..standard_fields import OCCURRENCE_NAMES, Occurrence, ScenarioParam, Scena
 from ..text import squash
 from . import money, price_table, ratings, schedule
 from .common import RawText, by_value, capture_group, derived, fee_rates, number
+from .fields_builder import FieldsBuilder, ParsedTermSheet
 from .layout import Document, LayoutSpec, Span, TextIndex, capture, parse_date
 from .underlying_notes import NameColumn, underlying_notes
 
@@ -392,55 +393,47 @@ def _value(rows: list[CoverRow], label: str) -> str:
 
 
 @dataclass
-class NatixisTermSheet:
-    fields: dict[str, ParsedField]
-    full_text: TextIndex
+class NatixisTermSheet(ParsedTermSheet):
     document: Document
-
-    def f(self, name: str) -> ParsedField:
-        return standard_fields.lookup(self.fields, name)
 
 
 def read(lines: Sequence[Line], variant: Variant = FCN) -> NatixisTermSheet:
     """讀出標準欄位與 Natixis 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）；`variant` 是各商品家族不同的讀法。"""
     doc = document(lines)
     arts = doc.articles(1)
-    fields: dict[str, ParsedField] = {}
+    fields = FieldsBuilder()
 
     def article(n: int) -> list[Line]:
         return doc.span_lines(arts.get(n))
-
-    def put(name: str, lns: list[Line], pattern: str, convert: Callable = lambda x: x) -> None:
-        fields[name] = capture(name, TextIndex(lns), pattern, convert, whole_match=True)
 
     _cover(fields, doc.before_chapter1())
 
     # 第一章
     art1 = article(1)
-    put("name_art1_zh", art1, r"1\.商品名稱：(.+?)\(下稱「本商品」\)")
+    fields.put("name_art1_zh", art1, r"1\.商品名稱：(.+?)\(下稱「本商品」\)")
     raw1 = RawText(art1)
     fields["name_art1_en"] = raw1.capture(
         "name_art1_en", r"\(下稱「本商品」\)\s*(Natixis.+?)\s*$", lambda x: non_principal(x.strip())
     )
-    put("issuer_name_ch1", article(3), r"發行機構：(.+?)發行機構長期")
+    fields.put("issuer_name_ch1", article(3), r"發行機構：(.+?)發行機構長期")
     art5 = article(5)
-    put("currency_art5", art5, rf"\(1\)計價幣別：({ZH_CCY})\([A-Z]{{3}}\)")
-    put("currency_art5_iso", art5, rf"\(1\)計價幣別：{ZH_CCY}\(([A-Z]{{3}})\)")
+    fields.put("currency_art5", art5, rf"\(1\)計價幣別：({ZH_CCY})\([A-Z]{{3}}\)")
+    fields.put("currency_art5_iso", art5, rf"\(1\)計價幣別：{ZH_CCY}\(([A-Z]{{3}})\)")
     denom = rf"\(2\)每單位商品面額：([\d,]+)({CCY})"
-    put("denomination", art5, denom, number)
+    fields.put("denomination", art5, denom, number)
     fields["denomination_currency"] = capture_group(art5, denom, 2, "denomination_currency")
-    put("issue_price_pct", art5, r"\(3\)發行價格：" + PCT, Decimal)
+    fields.put("issue_price_pct", art5, r"\(3\)發行價格：" + PCT, Decimal)
 
     table = underlying_table("underlying_table", article(9), variant.table)
     fields["underlying_table"] = table
     fields["main_price_table"] = price_table.at("main_price_table", table, variant.table)
 
     art12 = article(12)
-    put("tenor_months", art12, r"商品年期：(\d+)個月", int)
-    put("trade_date", art12, r"交易日/期初進場日：" + D, parse_date)
-    put("issue_date", art12, r"\(3\)發行日：" + D, parse_date)
-    put("maturity_date", art12, r"到期日：最終評價日後的第.{1,2}個營業日，即" + D, parse_date)
-    put("final_valuation_date", art12, r"最終評價日：" + D, parse_date)
+    fields.put("tenor_months", art12, r"商品年期：(\d+)個月", int)
+    fields.put("trade_date", art12, r"交易日/期初進場日：" + D, parse_date)
+    fields.put("issue_date", art12, r"\(3\)發行日：" + D, parse_date)
+    fields.put("maturity_date", art12, r"到期日：最終評價日後的第.{1,2}個營業日，即" + D, parse_date)
+    fields.put("final_valuation_date", art12, r"最終評價日：" + D, parse_date)
     _article12(fields, art12)
 
     fields["coupon_pa_pct"] = capture_group(article(13), COUPON, 2, "coupon_pa_pct", Decimal)
@@ -448,21 +441,21 @@ def read(lines: Sequence[Line], variant: Variant = FCN) -> NatixisTermSheet:
 
     art14 = article(14)
     fields["ko_memory"] = ko_memory(TextIndex(art14), art14)
-    put("ko_def_pct", art14, KO_DEF, Decimal)
-    put("autocall_redemption_pct", art14, AUTOCALL_REDEMPTION, Decimal)
+    fields.put("ko_def_pct", art14, KO_DEF, Decimal)
+    fields.put("autocall_redemption_pct", art14, AUTOCALL_REDEMPTION, Decimal)
     art15 = article(15)
     ti15 = TextIndex(art15)
-    put("strike_def_pct", art15, STRIKE_DEF, Decimal)
-    put("ki_def_pct", art15, KI_DEF, Decimal)
+    fields.put("strike_def_pct", art15, STRIKE_DEF, Decimal)
+    fields.put("ki_def_pct", art15, KI_DEF, Decimal)
     fields["ki_type"] = ki_type(fields["ki_day_rule"], ti15, art15)
-    put("maturity_redemption_pct", art15, MATURITY_REDEMPTION, Decimal)
+    fields.put("maturity_redemption_pct", art15, MATURITY_REDEMPTION, Decimal)
     _table_fields(fields, table)
     _schedule(fields)
     assumed = _article16(fields, article(16), variant)
     scenario_currencies = _scenarios(fields, article(16), art15, assumed, variant)
 
     _chapter2(fields, doc)
-    _chapter4(fields, doc, put)
+    _chapter4(fields, doc)
     _occurrences(fields)
     wording = [  # 說明文字的幣別字（Issue #318）；依型態可有可無的句子沒有就不核對
         occ
@@ -470,9 +463,7 @@ def read(lines: Sequence[Line], variant: Variant = FCN) -> NatixisTermSheet:
         if not optional or any(TextIndex(article(n)).finditer(pattern))
         for occ in money.currency_words(article(n), pattern, field, "wording_currency", where)
     ]
-    fields["currency_others"] = standard_fields.occurrences(
-        "currency_others", [*fields["currency_others"].value, *wording, *scenario_currencies]
-    )
+    fields.add(*wording, *scenario_currencies)
     fields["distributor_names_others"] = _distributor_names(doc)
     fields["initial_pricing"] = standard_fields.absent(
         "initial_pricing", "說明書沒有寫期初定價方式（開盤價／收盤價／VWAP）"
@@ -481,7 +472,7 @@ def read(lines: Sequence[Line], variant: Variant = FCN) -> NatixisTermSheet:
         doc.lines, NameColumn()
     )  # 連結標的公司介紹：左欄名稱、右欄介紹（Issue #225）
     fields.update(ratings.fields(doc.lines, RATINGS, no_guarantor_places=(ratings.NAME_NO_GUARANTOR,)))
-    return NatixisTermSheet(fields, TextIndex(doc.lines), doc)
+    return NatixisTermSheet(fields.build(), TextIndex(doc.lines), doc)
 
 
 def _cover(fields: dict[str, ParsedField], cover: list[Line]) -> None:
@@ -1057,14 +1048,14 @@ def _chapter2(fields: dict[str, ParsedField], doc: Document) -> None:
     fields["chairman"] = raw3.capture("chairman", trustee, group=3)
 
 
-def _chapter4(fields: dict[str, ParsedField], doc: Document, put: Callable) -> None:
+def _chapter4(fields: FieldsBuilder, doc: Document) -> None:
     ch4 = doc.articles(4)
 
     def art(n: int) -> list[Line]:
         return doc.span_lines(ch4.get(n))
 
-    put("subscription_start", art(1), r"開始受理申購日期：" + D, parse_date)
-    put("subscription_end", art(1), r"結束受理申購日期：" + D, parse_date)
+    fields.put("subscription_start", art(1), r"開始受理申購日期：" + D, parse_date)
+    fields.put("subscription_end", art(1), r"結束受理申購日期：" + D, parse_date)
     fields.update(fee_rates(art(2)))
     amount = rf"\d+單位商品面額，即([\d,]+)({CCY})"
     subscribe = rf"本商品最低申購金額為{amount}；並以{amount}為累加申購金額"
@@ -1116,60 +1107,24 @@ def _distributor_names(doc: Document) -> ParsedField:
 # ---------------------------------------------------------------- 出處清單
 
 
-def _occurrences(fields: dict[str, ParsedField]) -> None:
-    occ = Occurrence
-    fields["min_amounts"] = standard_fields.occurrences(
-        "min_amounts",
-        [
-            occ(
-                "minimum_subscription",
-                "minimum_subscription",
-                "第四章第 4 項最低申購金額",
-                fields["minimum_subscription"],
-            ),
-            occ("minimum_additional", "minimum_additional", "第四章第 4 項累加申購金額", fields["minimum_additional"]),
-            occ("minimum_redemption", "minimum_redemption", "第四章第 8 項最低贖回金額", fields["minimum_redemption"]),
-            occ(
-                "redemption_increment",
-                "redemption_increment",
-                "第四章第 8 項累加贖回金額",
-                fields["redemption_increment"],
-            ),
-        ],
-    )
-    fields["subscription_dates"] = standard_fields.occurrences(
-        "subscription_dates",
-        [
-            occ(
-                "subscription_start",
-                "subscription_start",
-                "第四章第 1 項開始受理申購日期",
-                fields["subscription_start"],
-            ),
-            occ("subscription_end", "subscription_end", "第四章第 1 項結束受理申購日期", fields["subscription_end"]),
-        ],
-    )
-    fields["print_dates"] = standard_fields.occurrences(
-        "print_dates", [occ("print_date", "print_date", "第 2 頁中文產品說明書刊印日期", fields["print_date"])]
-    )
-    fields["issue_price_others"] = standard_fields.occurrences(
-        "issue_price_others",
-        [occ("issue_price_ch4", "issue_price_subscription", "第四章第 5 項申購價金之計算", fields["issue_price_ch4"])],
-    )
-    fields["distributor_phone_ch4"] = standard_fields.absent("distributor_phone_ch4", "第四章受託機構電話")
+def _occurrences(fields: FieldsBuilder) -> None:
+    fields.occur("minimum_subscription", "第四章第 4 項最低申購金額")
+    fields.occur("minimum_additional", "第四章第 4 項累加申購金額")
+    fields.occur("minimum_redemption", "第四章第 8 項最低贖回金額")
+    fields.occur("redemption_increment", "第四章第 8 項累加贖回金額")
+    fields.occur("subscription_start", "第四章第 1 項開始受理申購日期")
+    fields.occur("subscription_end", "第四章第 1 項結束受理申購日期")
+    fields.occur("print_date", "第 2 頁中文產品說明書刊印日期")
+    fields.occur("issue_price_ch4", "第四章第 5 項申購價金之計算", code="issue_price_subscription")
     fields.update(
         standard_fields.absent_all(
             [x for x in standard_fields.DISTRIBUTOR_OTHERS if x != "distributor_names_others"],
             "受託機構地址、負責人的其他出處",
         )
     )
-    currencies = (  # 金額旁的幣別字（Issue #170）：價格表貨幣欄不列入；說明文字與情境另在 read 加入（Issue #318）
-        ("denomination_currency", "denomination_currency", "第一章第 5 項每單位商品面額"),
-        ("minimum_subscription_currency", "minimum_subscription_currency", "第四章第 4 項最低申購金額"),
-        ("minimum_additional_currency", "minimum_additional_currency", "第四章第 4 項累加申購金額"),
-        ("minimum_redemption_currency", "minimum_redemption_currency", "第四章第 8 項最低贖回金額"),
-        ("redemption_increment_currency", "redemption_increment_currency", "第四章第 8 項累加贖回金額"),
-    )
-    fields["currency_others"] = standard_fields.occurrences(
-        "currency_others", [occ(key, label, where, fields[key]) for key, label, where in currencies]
-    )
+    # 金額旁的幣別字（Issue #170）：價格表貨幣欄不列入；說明文字與情境另在 read 加入（Issue #318）
+    fields.occur("denomination_currency", "第一章第 5 項每單位商品面額")
+    fields.occur("minimum_subscription_currency", "第四章第 4 項最低申購金額")
+    fields.occur("minimum_additional_currency", "第四章第 4 項累加申購金額")
+    fields.occur("minimum_redemption_currency", "第四章第 8 項最低贖回金額")
+    fields.occur("redemption_increment_currency", "第四章第 8 項累加贖回金額")
