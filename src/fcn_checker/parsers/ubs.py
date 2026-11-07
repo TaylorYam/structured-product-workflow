@@ -325,9 +325,7 @@ def _cover(fields: FieldsBuilder, doc: UbsDocument) -> None:
         "distributor_address_cover", r"地址\s*[:：]\s*(.+?)\s*$", without_place_note
     )
     fields.put("approval_date", cover, r"九、" + D + r"經受託機構", parse_date)
-    fields["print_date"] = capture(
-        "print_date", TextIndex(cover), r"本產品說明書[刋刊]印日期[:：]" + D, parse_date, whole_match=True
-    )
+    fields.put("print_date", cover, r"本產品說明書[刋刊]印日期[:：]" + D, parse_date)
 
 
 # ---------------------------------------------------------------- 商品基本資料八：面額、配息表、KO、KI、價格表
@@ -377,9 +375,7 @@ def _article8(fields: FieldsBuilder, art8: list[Line]) -> None:
     trade = rf"最低(?:申購)?交易金額[:：]{AMOUNT}"
     fields["minimum_trade"] = capture_group(art8, trade, 1, "minimum_trade", number)
     fields["minimum_trade_currency"] = capture_group(art8, trade, 2, "minimum_trade_currency")
-    fields["redemption_currency"] = capture(
-        "redemption_currency", TextIndex(art8), rf"以({CCY})支付剩餘金額", whole_match=True
-    )
+    fields.put("redemption_currency", art8, rf"以({CCY})支付剩餘金額")
     _coupon_table(fields, ti)
     coupon = r"固定配息率[:：]" + PCT + r"。?（年化配息率(?:為)?" + PCT + r"）"
     fields["monthly_coupon_pct"] = capture("monthly_coupon_pct", ti, coupon, Decimal, whole_match=True)
@@ -873,24 +869,17 @@ def _occurrences(fields: FieldsBuilder) -> None:
     fields.occur("redemption_increment", "一般交易事項八最低累加投資人提前贖回單位數")
     fields.occur("subscription_start", "一般交易事項一商品申購開始受理日")
     fields.occur("print_date", "第 1 頁本產品說明書刊印日期")
-    currencies = (  # 金額旁的幣別字（Issue #170）：價格表幣別字（標的報價幣別）、到期交割句的股價與情境算式不列入
-        ("issue_price_currency", "issue_price_amount_currency", "商品基本資料八發行價格"),
-        ("denomination_currency", "denomination_currency", "商品基本資料八每單位面額"),
-        ("minimum_trade_currency", "minimum_trade_currency", "商品基本資料八最低交易金額"),
-        ("redemption_currency", "remainder_currency", "商品基本資料八到期日給付「以X支付剩餘金額」"),
-        ("denomination_ch4_currency", "denomination_currency", "一般交易事項四每單位面額"),
-        ("minimum_subscription_currency", "minimum_subscription_currency", "一般交易事項四最低申購金額"),
-        ("subscription_amount_ch5_currency", "subscription_price_currency", "一般交易事項五申購價金之計算"),
-        ("minimum_additional_currency", "minimum_additional_currency", "一般交易事項四最低累加申購金額"),
-        ("minimum_redemption_currency", "minimum_redemption_currency", "一般交易事項八最低投資人提前贖回單位數"),
-        (
-            "redemption_increment_currency",
-            "redemption_increment_currency",
-            "一般交易事項八最低累加投資人提前贖回單位數",
-        ),
-        ("scenario_denomination_currency", "scenario_denomination_currency", "商品基本資料十五設定參數每單位面額"),
-        ("scenario_investment_currency", "scenario_investment_currency", "商品基本資料十五設定參數初始投資金額"),
-    )
-    for key, code, where in currencies:
-        if fields[key].status != FieldStatus.NOT_APPLICABLE:  # 發行價格寫「每單位面額之100%」時沒有金額，不是幣別出處
-            fields.occur(key, where, code=code)
+    # 金額旁的幣別字（Issue #170）：價格表幣別字（標的報價幣別）、到期交割句的股價與情境算式不列入
+    if fields["issue_price_currency"].status != FieldStatus.NOT_APPLICABLE:  # 寫「每單位面額之100%」時沒有金額
+        fields.occur("issue_price_currency", "商品基本資料八發行價格", code="issue_price_amount_currency")
+    fields.occur("denomination_currency", "商品基本資料八每單位面額")
+    fields.occur("minimum_trade_currency", "商品基本資料八最低交易金額")
+    fields.occur("redemption_currency", "商品基本資料八到期日給付「以X支付剩餘金額」", code="remainder_currency")
+    fields.occur("denomination_ch4_currency", "一般交易事項四每單位面額", code="denomination_currency")
+    fields.occur("minimum_subscription_currency", "一般交易事項四最低申購金額")
+    fields.occur("subscription_amount_ch5_currency", "一般交易事項五申購價金之計算", code="subscription_price_currency")
+    fields.occur("minimum_additional_currency", "一般交易事項四最低累加申購金額")
+    fields.occur("minimum_redemption_currency", "一般交易事項八最低投資人提前贖回單位數")
+    fields.occur("redemption_increment_currency", "一般交易事項八最低累加投資人提前贖回單位數")
+    fields.occur("scenario_denomination_currency", "商品基本資料十五設定參數每單位面額")
+    fields.occur("scenario_investment_currency", "商品基本資料十五設定參數初始投資金額")

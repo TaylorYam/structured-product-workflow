@@ -30,6 +30,8 @@ def present(name: str, value: object = "x") -> ParsedField:
 
 def test_occurrence_lists_are_one_list_per_code_and_known_codes():
     assert set(OCCURRENCE_LISTS) <= set(OCCURRENCE_NAMES)
+    codes = [code for codes in standard_fields._LIST_CODES.values() for code in codes]
+    assert len(codes) == len(set(codes)) == len(OCCURRENCE_LISTS)  # 一個代號只屬於一張清單
     assert set(OCCURRENCE_LISTS.values()) == {
         "print_dates",
         "subscription_dates",

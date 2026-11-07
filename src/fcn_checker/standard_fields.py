@@ -248,6 +248,7 @@ _LIST_CODES: dict[str, tuple[str, ...]] = {
         "early_redemption_increment",
     ),
     "issue_price_others": ("issue_price_subscription", "issue_price_scenario", "issue_price_principal"),
+    # 金額旁的幣別：代號一律以 _currency 結尾（`OCCURRENCE_NAMES` 的命名），其他清單的代號不用這個結尾
     "currency_others": tuple(code for code in OCCURRENCE_NAMES if code.endswith("_currency")),
 }
 OCCURRENCE_LISTS: dict[str, str] = {code: name for name, codes in _LIST_CODES.items() for code in codes}
@@ -442,7 +443,7 @@ STANDARD_FIELDS: dict[str, str] = {
 # 受託機構名稱、地址、負責人的其他出處（Issue #305）：BBVA 範本有、Natixis 有名稱（Issue #318），其他上手一起交出 absent（`absent_all`）
 DISTRIBUTOR_OTHERS = ("distributor_names_others", "distributor_addresses_others", "chairman_others")
 
-# 「範本可無」的欄位 → 說明書 parser 沒交出時補的 absent 說明（Issue #487，ADR 0009 修訂）：`parsers.fields_builder` 收尾時補上；
+# 「範本可無」的欄位 → 說明書 parser 沒交出時補的 absent 說明（Issue #487）：`parsers.fields_builder` 收尾時補上；
 # 說法不同的上手自己先交出 absent。其他沒交出的欄位仍是 `not_provided`（缺漏，相關規則轉人工覆核）。
 MAY_BE_ABSENT: dict[str, str] = {
     "issuer_name_ch1": "第一章只寫中文的發行機構名稱",

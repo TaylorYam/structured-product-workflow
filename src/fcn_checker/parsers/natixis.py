@@ -475,16 +475,14 @@ def read(lines: Sequence[Line], variant: Variant = FCN) -> NatixisTermSheet:
     return NatixisTermSheet(fields.build(), TextIndex(doc.lines), doc)
 
 
-def _cover(fields: dict[str, ParsedField], cover: list[Line]) -> None:
+def _cover(fields: FieldsBuilder, cover: list[Line]) -> None:
     """封面：標題名稱、商品代號與 ISIN、「標籤：值」各欄、第 2 頁末刊印日期。"""
     ti = TextIndex(cover)
     code = PRODUCT_CODES
-    fields["product_code"] = capture("product_code", ti, code, whole_match=True)
+    fields.put("product_code", cover, code)
     fields["isin"] = capture_group(cover, code, 3, "isin")
     fields["distributor_code"] = distributor_code(ti, code)
-    fields["name_title"] = capture(
-        "name_title", ti, r"^中文產品說明書\(適用於專業投資人及OSU客戶\)(.+?)TDCC商品代號為", whole_match=True
-    )
+    fields.put("name_title", cover, r"^中文產品說明書\(適用於專業投資人及OSU客戶\)(.+?)TDCC商品代號為")
     rows = cover_rows(cover)
     fields["name_zh"] = _row_field("name_zh", _row(rows, "商品中文名稱"), r"^(.+?)\s*\(下稱「本商品」\)", squash)
     fields["name_en"] = _row_field("name_en", _row(rows, "商品英文名稱"), r"^(Natixis.+?)\s*$")
@@ -508,7 +506,7 @@ def _cover(fields: dict[str, ParsedField], cover: list[Line]) -> None:
         r"(\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日)",
         parse_date,
     )
-    fields["print_date"] = capture("print_date", ti, r"中文產品說明書刊印日期：" + D, parse_date, whole_match=True)
+    fields.put("print_date", cover, r"中文產品說明書刊印日期：" + D, parse_date)
 
 
 # ---------------------------------------------------------------- 第 9 項價格表、第 16 項情境價格表

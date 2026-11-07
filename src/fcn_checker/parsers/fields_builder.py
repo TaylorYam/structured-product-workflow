@@ -29,16 +29,8 @@ class FieldsBuilder(dict[str, ParsedField]):
         super().__init__()
         self._lists: dict[str, list[Occurrence]] = {}
 
-    def put(
-        self,
-        name: str,
-        lines: Sequence[Line],
-        pattern: str,
-        convert: Callable = lambda x: x,
-        *,
-        whole_match: bool = True,
-    ) -> ParsedField:
-        self[name] = capture(name, TextIndex(lines), pattern, convert, whole_match=whole_match)
+    def put(self, name: str, lines: Sequence[Line], pattern: str, convert: Callable = lambda x: x) -> ParsedField:
+        self[name] = capture(name, TextIndex(lines), pattern, convert, whole_match=True)
         return self[name]
 
     def occur(
