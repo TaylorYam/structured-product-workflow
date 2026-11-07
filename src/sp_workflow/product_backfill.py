@@ -49,6 +49,7 @@ from fcn_checker.products import FCN, PRODUCT_RULES, product_name
 from sp_workflow import import_run
 from sp_workflow.check_terms import DONE
 from sp_workflow.database import OperatorError
+from sp_workflow.import_config import ImportConfig
 from sp_workflow.legacy_backfill import (
     EXISTING,
     REQUIRED_PRICES,
@@ -82,7 +83,6 @@ if TYPE_CHECKING:
 
     from fcn_checker.config import ReferenceFormat
     from fcn_checker.orders.reference import OrderRecord
-    from sp_workflow.product_terms import ImportConfig
 
 IMPORTED = "已匯入"  # 已存在、不匯入同舊商品補資料
 ERROR_BOOK = "其他商品回補錯誤_{stamp}.xlsx"

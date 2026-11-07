@@ -7,7 +7,7 @@ from collections.abc import Callable, Iterable
 from tkinter import messagebox, ttk
 
 from sp_workflow.check_terms import DONE, STATUSES, CalcLine
-from sp_workflow.product_terms import ImportConfig
+from sp_workflow.import_config import ImportConfig
 from sp_workflow.tabs.base import TITLE, ActionRunner, DatabaseLogin, Tab
 from sp_workflow.window_actions import Recalc, release_line
 

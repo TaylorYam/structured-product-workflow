@@ -15,7 +15,8 @@ from order_synth import CONFIG, A, open_terms, order_row
 from sp_workflow.check_terms import WAIT_TRADES, recalculate
 from sp_workflow.credit_ratings import FITCH, GUARANTOR, ISSUER, MOODYS, SP, Entity, Rating, RatingRows
 from sp_workflow.daily_import import import_daily
-from sp_workflow.product_terms import drafts_from, load_risk_underlyings, write, write_batch
+from sp_workflow.import_config import load_risk_underlyings
+from sp_workflow.product_terms import drafts_from, write, write_batch
 from sp_workflow.risk_level import (
     BACKFILLED,
     DONE,

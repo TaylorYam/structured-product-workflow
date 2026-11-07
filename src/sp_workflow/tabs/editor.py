@@ -29,9 +29,10 @@ from sp_workflow.editor_cells import (
     trade_cell_states,
     trade_texts,
 )
+from sp_workflow.import_config import ImportConfig
 from sp_workflow.order_terms import TDCC_FIELD, OrderRow, describe, format_field
 from sp_workflow.product_record import CHOICES, FIELDS
-from sp_workflow.product_terms import Draft, ImportConfig, problems
+from sp_workflow.product_terms import Draft, problems
 from sp_workflow.trade_rows import FIELDS as TRADE_ROW_FIELDS
 from sp_workflow.trade_rows import TradeRowsDraft
 

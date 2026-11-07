@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 from fcn_checker.fields import PRICE_FIELDS
 from sp_workflow.database import OperatorError, require_in_transaction
+from sp_workflow.import_config import ImportConfig
 from sp_workflow.product_record import UnderlyingPrice, missing_fields, plain, price_at, round_price
 from sp_workflow.product_store import BLANK as _BLANK
 from sp_workflow.product_store import CURRENCY, TRADE_DATE, UF, Difference, Stored, locked, read, read_many
@@ -50,7 +51,6 @@ if TYPE_CHECKING:
     import psycopg
 
     from fcn_checker.trading_calendar import Market, TradingCalendar
-    from sp_workflow.product_terms import ImportConfig
 
 # 狀態
 DONE = CheckTerms.DONE

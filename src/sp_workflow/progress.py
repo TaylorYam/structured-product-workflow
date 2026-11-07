@@ -26,10 +26,10 @@ from typing import TYPE_CHECKING
 
 from sp_workflow.database import require_in_transaction
 from sp_workflow.file_tools import save_rows
+from sp_workflow.import_config import ImportConfig
 from sp_workflow.lifecycle import Objection, lifecycle_status, open_objections
 from sp_workflow.product_record import PRICING_FIELD, REQUIRED, missing_fields
 from sp_workflow.product_store import issuer_code, locked, read_many, terms_imported
-from sp_workflow.product_terms import ImportConfig
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource, Progress
 from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP, SENT_STEP
 

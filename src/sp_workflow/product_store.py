@@ -318,7 +318,7 @@ def locked(stored: Stored | None) -> bool:
 
 
 class IssuerLookup(Protocol):
-    """`issuer_code` 用到的兩張對照；`product_terms.ImportConfig` 就是一份（核對讀資料庫另組一份，`check_source`）。"""
+    """`issuer_code` 用到的兩張對照；`import_config.ImportConfig` 就是一份（核對讀資料庫另組一份，`check_source`）。"""
 
     @property
     def issuer_prefixes(self) -> Mapping[str, str]: ...  # TDCC 前三碼 → 上手代號
