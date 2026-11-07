@@ -251,7 +251,19 @@ _LIST_CODES: dict[str, tuple[str, ...]] = {
     # 金額旁的幣別：代號一律以 _currency 結尾（`OCCURRENCE_NAMES` 的命名），其他清單的代號不用這個結尾
     "currency_others": tuple(code for code in OCCURRENCE_NAMES if code.endswith("_currency")),
 }
-OCCURRENCE_LISTS: dict[str, str] = {code: name for name, codes in _LIST_CODES.items() for code in codes}
+
+
+def _lists_by_code(lists: dict[str, tuple[str, ...]]) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for name, codes in lists.items():
+        for code in codes:
+            if code in out:  # 一個代號只屬於一張清單，否則自動分組會悄悄放錯
+                raise ValueError(f"出處代號 {code} 同時在 {out[code]} 與 {name}")
+            out[code] = name
+    return out
+
+
+OCCURRENCE_LISTS: dict[str, str] = _lists_by_code(_LIST_CODES)
 
 
 def occurrence_list(code: str) -> str:

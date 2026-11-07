@@ -12,7 +12,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,12 +25,16 @@ from .layout import TextIndex, capture
 class FieldsBuilder(dict[str, ParsedField]):
     """一份說明書的欄位，邊讀邊累積；見 module 說明。"""
 
-    def __init__(self) -> None:
+    def __init__(self, *, unify_brackets: bool = False) -> None:
+        """`unify_brackets`：`put` 整句擷取前先把括號統一成全形（MS 條款句全形、半形混用）。"""
         super().__init__()
         self._lists: dict[str, list[Occurrence]] = {}
+        self._unify_brackets = unify_brackets
 
     def put(self, name: str, lines: Sequence[Line], pattern: str, convert: Callable = lambda x: x) -> ParsedField:
-        self[name] = capture(name, TextIndex(lines), pattern, convert, whole_match=True)
+        self[name] = capture(
+            name, TextIndex(lines, unify_brackets=self._unify_brackets), pattern, convert, whole_match=True
+        )
         return self[name]
 
     def occur(
@@ -51,6 +55,12 @@ class FieldsBuilder(dict[str, ParsedField]):
         for name, what in standard_fields.MAY_BE_ABSENT.items():
             out.setdefault(name, standard_fields.absent(name, what))
         return out
+
+
+def occurrence_of(fields: Mapping[str, ParsedField], name: str, where: str) -> Occurrence:
+    """出處代號就是欄位名、值是同名欄位的一處（`FieldsBuilder.occur` 的同義寫法）：給回傳出處清單的 helper 用，
+    例如 MS FCN 與 MS BEN 共用的幣別出處（BEN 先過濾再交出，不經過 `FieldsBuilder`）。"""
+    return Occurrence(name, name, where, fields[name])
 
 
 @dataclass
