@@ -220,9 +220,10 @@ class PersonForm(Form):
         )
         self.row += 1
         if before:
-            self.note("改名時他的別名會跟著改。名字不分大小寫不能和別人重複。", wraplength=380)
+            note = "改名時他的別名會跟著改。名字不分大小寫不能和別人重複。"
         else:
-            self.note("名字要和交易明細上的 FC 名字一樣（不分大小寫）；寫法不同時另加別名。", wraplength=380)
+            note = "名字要和交易明細上的 FC 名字一樣（不分大小寫）；寫法不同時另加別名。"
+        self.note(note, wraplength=380)
         self.finish_layout()
 
     def read(self) -> Person:
