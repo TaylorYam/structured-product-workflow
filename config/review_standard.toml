@@ -165,7 +165,7 @@ pages = 4
 #
 # 上手不同的基準寫在 [issuer.<上手代號小寫>]，一家一張表（Issue #128）；新上手只加一張表，不改程式。
 # 沒寫的欄位：fixed_warning、fixed_warning_occurrences 用上面 [risk] 的共用值，risk_level_formats 為【{level}】，
-# 其他視為該上手沒有這項基準（見下列說明）。可用的欄位與檢查只定義在 src/fcn_checker/config.py 的 ISSUER_FIELDS，
+# 其他視為該上手沒有這項基準（見下列說明）。可用的欄位與檢查只定義在 src/fcn_checker/config.py 的 ISSUER_KEYS，
 # 寫錯欄位名稱或值時載入設定就回報。
 #
 # issuer_name：發行機構中英文法人全名，封面「發行機構」與第二章「發行機構」條的「事業名稱」；範本另有只寫中文的出處
