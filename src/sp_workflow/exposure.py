@@ -15,7 +15,8 @@
 - 分類（`assess`）：核對條件不是完成（同比價只比完成的）、缺 KI 型態、有 KI 卻沒有下限價、缺價格的無法計算；
   MKI 不比、人工確認。其他看最差標的（收盤價 ÷ 進場價最低）：收盤價 < 執行價，且沒有 KI、收盤價 < 下限價或比價已記
   AKI 觸及 → 會接股；< 執行價但還在下限價之上 → KI 未破下限；還在執行價之上、距執行價 10% 以內 → 接近執行價；
-  其他是高於執行價。分類只用在視窗的匯出結果檔數。
+  其他是高於執行價。分類只用在視窗的匯出結果檔數。價格齊全就記下最差標的，算不出只影響分類（#482）；
+  「全部商品」的無法計算不寫最差標的。只看執行價（盤勢速報，#471）讀 `Assessed.to_strike`。
 - 全部商品（#354、#358）：一檔一列。狀態只標跌破KI（跌破下限價或比價已記 AKI 觸及）、跌破K，那一格填淺紅色，
   未跌破留空；已比價、無法計算照分類。最差表現用 100 為基數（100 + 表現 %，例 −26.1% → 73.9）。
   後面接交易明細的分公司_1、FC_1、面額_1、分公司_2…，依面額大到小；沒有交易明細的用庫存的分公司配置（FC 寫 `-`）。
@@ -39,6 +40,7 @@ from typing import TYPE_CHECKING
 from openpyxl.styles import Alignment, PatternFill
 
 from sp_workflow.check_terms import NO_BARRIER
+from sp_workflow.close_prices import latest_closes
 from sp_workflow.daily_import import FC_LABEL_SQL
 from sp_workflow.file_tools import excel_value, save_export, table_book, text_cell
 from sp_workflow.lifecycle import IN_STOCK, lifecycle_status
@@ -122,12 +124,24 @@ class Position:
 
 @dataclass(frozen=True)
 class Assessed:
-    """一檔的分類與最差標的。"""
+    """一檔的分類與最差標的。`worst` 只要每個標的都有進場價、執行價、收盤價就有，分類是無法計算也有（#482）。"""
 
     position: Position
     category: str
     worst: Leg | None
     reason: str = ""
+
+    @property
+    def strike_judged(self) -> bool:
+        """只看執行價時判斷不判斷（盤勢速報，#471）：已比價、核對條件未完成、缺價格的不判斷；
+        KI 不管——MKI、缺 KI 型態或下限價（分類是無法計算）照樣判斷。"""
+        return self.category != FIXED and self.position.terms_status == CheckTerms.DONE and self.worst is not None
+
+    @property
+    def to_strike(self) -> Decimal | None:
+        """只看執行價時最差標的收盤價距執行價（負的是低於）；不判斷時 None。"""
+        worst = self.worst if self.strike_judged else None
+        return None if worst is None else worst.to_strike
 
     @property
     def notional(self) -> Decimal:
@@ -150,11 +164,12 @@ class Assessed:
 def assess(position: Position, today: dt.date | None = None) -> Assessed:
     """依最差標的判斷一檔的分類（見 module 說明）；給 `today` 時，最終比價日早於它的是已比價。"""
 
-    def unknown(reason: str) -> Assessed:
-        return Assessed(position, UNKNOWN, None, reason)
-
     priced = all(leg.strike is not None for leg in position.legs)
     worst = lowest(position.legs) if priced else None
+
+    def unknown(reason: str) -> Assessed:
+        return Assessed(position, UNKNOWN, worst, reason)  # 最差標的照留，只看執行價還要用（#482）
+
     final = position.final_date
     if today is not None and final is not None and final < today:
         return Assessed(position, FIXED, worst, f"{final} 已比價，結果以最終比價日為準，不用最新收盤價判斷")
@@ -192,7 +207,7 @@ def load_choices(conn: psycopg.Connection) -> list[Choice]:
     for tdcc, code in rows:
         if statuses[tdcc].status == IN_STOCK:
             by_code[code].add(tdcc)
-    latest = _latest_closes(conn, by_code)
+    latest = latest_closes(conn, by_code)
     by_ticker: dict[str, list[str]] = defaultdict(list)
     for code in by_code:
         by_ticker[ticker_of(code)].append(code)
@@ -239,7 +254,7 @@ def load_positions(
         )
     }
     holdings = _holdings(conn, tdccs)
-    latest = _latest_closes(conn, {u.code for s in found for u in s.prices})
+    latest = latest_closes(conn, {u.code for s in found for u in s.prices})
     book = SplitBook(load_splits(conn))
     positions = []
     for s in found:
@@ -291,15 +306,6 @@ def _holdings(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, list[
         if tdcc not in traded:
             found[tdcc].append(Holding(branch, NO_FC, amount))
     return found
-
-
-def _latest_closes(conn: psycopg.Connection, codes: Iterable[str]) -> dict[str, tuple[dt.date, Decimal]]:
-    rows = conn.execute(
-        "SELECT DISTINCT ON (code) code, close_date, close FROM workflow.close_price"
-        " WHERE code = ANY(%s) ORDER BY code, close_date DESC",
-        (sorted(set(codes)),),
-    ).fetchall()
-    return {code: (day, close) for code, day, close in rows}
 
 
 # ---------------------------------------------------------------- 匯出
@@ -438,7 +444,8 @@ def _write(results: Sequence[Assessed], path: Path, today: dt.date) -> None:
 
 def _row(r: Assessed, today: dt.date) -> tuple[object, ...]:
     """全部商品的一列：一檔一列，後面接交易明細的分公司、FC、面額，依面額大到小（#358）。"""
-    p, w = r.position, r.worst
+    p = r.position
+    w = None if r.category == UNKNOWN else r.worst  # 無法計算不寫最差標的
     holdings = sorted(p.holdings, key=lambda h: -h.amount)
     return (
         r.status or None,  # 未跌破留空

@@ -24,6 +24,7 @@ from sp_workflow.market_brief import (
     export_brief,
     heat_fill,
     heatmap,
+    load_brief,
     month_columns,
     months_before,
     nice_step,
@@ -196,46 +197,17 @@ def test_heatmap_puts_strikes_in_todays_price_basis() -> None:
     assert h.bands[row].low > h.line, "執行價高於昨收，在線之上"
 
 
-def test_mki_is_judged_by_the_strike_and_unknown_is_not() -> None:
-    mki = exposure("1", leg(1, "AAA UW", "50"), barrier="MKI")  # KI 不看了，執行價可以比（#471）
-    pending = Exposure(
-        assess(
-            Position(
-                "2",
-                "FCN",
-                "XBANK",
-                "USD",
-                dt.date(2026, 11, 20),
-                "EKI",
-                "",
-                "待確認",
-                None,
-                (leg(1, "AAA UW", "50"),),
-                (Holding("台北", "Amy", D(1)),),
-            ),
-            DAY,
-        ),
-        D(1),
-    )
+def test_products_not_judged_by_the_strike_are_left_out_of_the_groups() -> None:
+    """判斷不判斷照 `Assessed.strike_judged`（test_exposure 測，#482）；這裡只看分組。"""
+    mki = exposure("1", leg(1, "AAA UW", "50"), barrier="MKI")
+    no_ki = exposure("2", leg(1, "AAA UW", "70", ki=None))  # 曝險分析歸無法計算
+    no_close = exposure("3", leg(1, "AAA UW", "70"), leg(2, "BBB UN", None), barrier="MKI")  # 不判斷
 
-    assert overview_row(mki) == "跌破K"
-    assert overview_row(pending) is None, "核對條件未完成不判斷"
-    assert broken([mki, pending]) == [mki]
-    row = ticker_rows([mki, pending], {})[0]
-    assert (row.products, row.k_count) == (2, 1), "檔數照算，無法計算的不算跌破"
-
-
-def test_missing_ki_terms_do_not_stop_judging_by_the_strike() -> None:
-    # EKI 沒有下限價：曝險分析歸無法計算，只看 K 照樣判斷
-    no_ki = exposure("1", leg(1, "AAA UW", "70", ki=None), barrier="EKI")
-    # MKI 缺收盤價：算不出來，任何地方都不算跌破
-    no_close = exposure("2", leg(1, "AAA UW", "70"), leg(2, "BBB UN", None), barrier="MKI")
-
-    assert no_ki.result.category == "無法計算"
-    assert overview_row(no_ki) == "跌破K"
-    assert overview_row(no_close) is None
-    rows = {r.ticker: r for r in ticker_rows([no_ki, no_close], {})}
-    assert rows["AAA"].k_count == 1, "缺收盤價那檔的 AAA 雖然低於執行價，整檔不判斷就不算"
+    assert [overview_row(e) for e in (mki, no_ki, no_close)] == ["跌破K", "跌破K", None]
+    assert broken([mki, no_ki, no_close]) == [mki, no_ki]
+    assert distance_bucket(no_close) is None, "不判斷的不列進重災區"
+    rows = {r.ticker: r for r in ticker_rows([mki, no_ki, no_close], {})}
+    assert (rows["AAA"].products, rows["AAA"].k_count) == (3, 2), "檔數照算；不判斷那檔的 AAA 低於執行價也不算跌破"
 
 
 def test_other_exchange_strikes_are_scaled_to_the_main_close() -> None:
@@ -397,6 +369,29 @@ def test_heatmap_sheet_draws_the_close_line(seeded, tmp_path: Path) -> None:
     line_row = 3 + 3  # 表頭第 3 列，72-75 是第 3 格資料
     assert sheet.cell(line_row, 1).border.bottom.style == "thick"
     assert sheet.cell(line_row - 1, 1).border.bottom.style != "thick"
+
+
+@pytest.mark.db
+def test_quotes_read_the_latest_close_and_the_one_before(seeded) -> None:
+    """視窗的漲跌% 用最新一筆與它前一筆（#482 改成共用 `latest_closes`、前一筆另外取）。"""
+    (import_id,) = seeded.execute("SELECT max(import_id) FROM workflow.close_price_import").fetchone()
+    seeded.execute(  # 更早的一筆不影響「前一筆」
+        "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES ('2026-09-25', 'AAA UW', 90, %s)",
+        (import_id,),
+    )
+    seed(seeded, AUD, ["EEE UN", "BBB UN"])
+    seeded.execute(  # EEE 只有一筆收盤價
+        "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES (%s, 'EEE UN', 50, %s)",
+        (DAY, import_id),
+    )
+
+    quotes = {r.ticker: r.quote for r in load_brief(seeded, DAY).rows}
+
+    aaa = quotes["AAA"]
+    assert aaa is not None and (aaa.day, aaa.close, aaa.previous) == (DAY, D(72), D(100)), "前一筆是 10/27，不是 9/25"
+    assert aaa.change == D("-0.28")
+    eee = quotes["EEE"]
+    assert eee is not None and (eee.day, eee.close, eee.previous, eee.change) == (DAY, D(50), None, None)
 
 
 @pytest.mark.db
