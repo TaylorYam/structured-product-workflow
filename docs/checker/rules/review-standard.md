@@ -13,7 +13,7 @@
 
 核對開始時先載入審查標準；報告要記錄本次使用的審查標準版本。
 
-**版面**（Issue #128）：所有上手共用的基準放在頂層各表（`[distributor]`、`[risk]`、`[fees]`、`[issue_price]`、`[wording]`、`[currency]`、`[currency_code_aliases]`、`[denomination]`、`[iis]`）；上手不同的基準**每家上手一張表** `[issuer.<上手代號小寫>]`（例 `[issuer.bnp]`，商品名稱樣板等子表為 `[issuer.bnp.product_name]`）。上手表可用的欄位與檢查只定義在 `src/fcn_checker/config.py` 的 `ISSUER_FIELDS`，下表 `issuer.<上手>.*` 各列即這些欄位；寫錯欄位名稱或值時載入設定就回報。沒寫的欄位：`fixed_warning`、`fixed_warning_occurrences` 用 `[risk]` 的共用值，`risk_level_formats` 為【{level}】，其他視為該上手沒有這項基準（依各列說明轉人工覆核或不核對）。規則一律讀已解析的上手審查標準，沒有依上手代號的分支，所以新上手只加一張表、不改程式。
+**版面**（Issue #128）：所有上手共用的基準放在頂層各表（`[distributor]`、`[risk]`、`[fees]`、`[issue_price]`、`[wording]`、`[currency]`、`[currency_code_aliases]`、`[denomination]`、`[iis]`）；上手不同的基準**每家上手一張表** `[issuer.<上手代號小寫>]`（例 `[issuer.bnp]`，商品名稱樣板等子表為 `[issuer.bnp.product_name]`）。上手表可用的欄位、檢查與沒寫時的值只定義在 `src/fcn_checker/config.py` 的 `ISSUER_KEYS`（一個鍵一列，Issue #490），下表 `issuer.<上手>.*` 各列即這些欄位；寫錯欄位名稱或值時載入設定就回報。沒寫的欄位：`fixed_warning`、`fixed_warning_occurrences` 用 `[risk]` 的共用值，`risk_level_formats` 為【{level}】，其他視為該上手沒有這項基準（依各列說明轉人工覆核或不核對）。規則一律讀已解析的上手審查標準，沒有依上手代號的分支，所以新上手只加一張表、不改程式。
 
 舊版面（每種基準一個表、底下分上手，例如 `[product_name.<上手>]`、`[risk.level_formats]`）載入時會停止並提示轉換指令。一次性轉換：在專案資料夾執行 `fcn-config-migrate config/review_standard.toml`（沒有這個指令時用 `python -m fcn_checker.config_migrate config/review_standard.toml`）；舊表裡每個上手的值連同註解搬到該上手的表，舊表開頭的說明收在上手表前，原檔另存 `review_standard.toml.bak`。轉換前後的值完全相同才會寫入。
 
@@ -112,7 +112,7 @@
 | `normalize_zh = ["brackets"]` | 中文全形／半形括號不計（中文一律忽略空白）；不寫也是這個預設 | `normalize_brackets = true` |
 | `normalize_en = ["whitespace"]` | 英文忽略所有空白與換行；不寫時連續空白視為一個 | `ignore_whitespace_en = true` |
 
-`*`、`[`、`]` 是保留字，只能用在上表兩個位置（各最多一處、`[…]` 不能巢狀）；寫錯位置或還用舊鍵時，載入審查標準就回報設定錯誤並寫出新寫法。
+`*`、`[`、`]` 是保留字，只能用在上表兩個位置（各最多一處、`[…]` 不能巢狀）；寫錯位置或還用舊鍵時，載入審查標準就回報設定錯誤並寫出新寫法。`[…]` 裡也可以寫佔位符，一樣會填值；天期 1 個月時 `Months` 改單數只作用在主體，不動 `[…]` 那一段。
 
 樣板設 `single_unsupported = true` 時，標的只有 1 檔的名稱轉人工覆核（沒有樣本、寫法未知；`single_*` 可不設，DBS，Issue #280）。樣板出現上表以外的佔位符，或用了 `{underlying_*}` 卻沒設定 `single_*`（`single_unsupported` 時免設）／`basket_*` 時，載入審查標準就回報設定錯誤（`config_invalid`，整批不核對），不會在核對途中才出錯。`issuer.<上手>.risk_level_formats`、`issuer.<上手>.fixed_warning_openings`、`issuer_name_ignore` 寫法有誤時同樣在載入時回報。
 
