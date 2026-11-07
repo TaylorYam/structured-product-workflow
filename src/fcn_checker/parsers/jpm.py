@@ -18,7 +18,7 @@ from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence, ScenarioParam, ScenarioPrice
 from ..text import squash
 from . import money, price_table, ratings, schedule
-from .common import NUM, Mention, dec, derived, number
+from .common import NUM, Mention, dec, derived, fee_rates_by_pattern, number
 from .layout import DATE_RE, Document, LayoutSpec, TextIndex, capture, join_text, parse_date
 from .underlying_notes import NameColumn, underlying_notes
 
@@ -70,7 +70,6 @@ D = r"(\d{4}年\d{1,2}月\d{1,2}日)"
 PCT = r"(\d+(?:\.\d+)?)%"
 CCY = money.CURRENCY
 FN = r"\d?"  # 夾在本文中的註腳上標數字（去空白後緊接在標籤後）
-FEES = ("申購費用", "提前贖回費用", "分銷費用")
 RATE = r"(\d+(?:\.\d+)?%[~～]\d+(?:\.\d+)?%)"
 FEE_PATTERNS = {  # 第 IV 部分 2. 費用表（去空白）：費用項目 → 該列「費率（百分比）」欄
     "申購費用": r"申購費用申購價金的" + RATE,
@@ -441,10 +440,7 @@ def read(lines: Sequence[Line]) -> JpmTermSheet:
     # 第 IV 部分
     ch4 = doc.articles(4)
     put("subscription_start", doc.span_lines(ch4.get(1)), r"開始受理申購日期：" + D, parse_date)
-    fee_ti = TextIndex(doc.span_lines(ch4.get(2)))
-    for label in FEES:
-        key = standard_fields.fee_field(label)
-        fields[key] = capture(key, fee_ti, FEE_PATTERNS[label], whole_match=True)
+    fields.update(fee_rates_by_pattern(doc.span_lines(ch4.get(2)), FEE_PATTERNS))
     art4 = doc.span_lines(ch4.get(4))
     put("minimum_subscription", art4, r"最低申購金額：" + NUM + CCY, number)
     put("minimum_additional", art4, r"最低加購金額：" + NUM + CCY, number)

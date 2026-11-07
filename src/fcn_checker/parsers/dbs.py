@@ -20,7 +20,7 @@ from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence, ScenarioParam, ScenarioPrice
 from ..text import full_brackets, squash
 from . import money, price_table, ratings, schedule
-from .common import RawText, capture_group, compat_normalized, derived, fee_rates, number
+from .common import FEE_RATE, RawText, capture_group, compat_normalized, derived, fee_rates, number
 from .layout import TextIndex, capture, join_wrapped_tickers, parse_date
 from .underlying_notes import Markers, underlying_notes
 
@@ -679,7 +679,10 @@ def _trading(fields: dict[str, ParsedField], sec: list[Line], put: Callable) -> 
 def distribution_fee(lines: list[Line], shared: ParsedField) -> ParsedField:
     """說明書分銷費用的子列標籤（報酬／費用／折讓）佔了「費率」欄，費率在右邊一欄：取「費用」子列、子列標籤右邊到
     「收取方式」欄之前的文字（範本規格 §5.3）；下一個子列可能在下一頁（Issue #295）。共用 `fee_rates` 讀得到（投資人
-    須知的版面）時用它。"""
+    須知的版面）時用它。
+
+    不併進 `fee_rates`（Issue #486）：讀的是分銷費用那一列底下的子列、費率在子列標籤右邊另一欄，不是費用項目那一列的
+    費率欄；只是共用版讀不到時的補讀。"""
     if shared.ok:
         return shared
     name = shared.name
@@ -705,7 +708,7 @@ def distribution_fee(lines: list[Line], shared: ParsedField) -> ParsedField:
         ),
         key=lambda x: (x.y0, x.x0),
     )
-    rates = re.findall(r"(\d+(?:\.\d+)?%[~～]\d+(?:\.\d+)?%)", "".join(squash(ln.text) for ln in cells))
+    rates = re.findall(FEE_RATE, "".join(squash(ln.text) for ln in cells))
     if len(rates) != 1:
         return ParsedField.invalid(name, [top, *cells], "費用表「分銷費用」的「費用」子列沒有剛好一個「X%~Y%」")
     return ParsedField.present(name, rates[0], [top, *cells])

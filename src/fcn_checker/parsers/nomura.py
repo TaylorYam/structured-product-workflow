@@ -17,7 +17,23 @@ from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence, ScenarioParam
 from ..text import squash
 from . import iis, money, price_table, ratings, schedule
-from .common import Hit, Mention, RawText, capture_group, derived, hits, number, one
+from .common import (
+    EXACT_ROWS,
+    FEE_CHECKED,
+    ByPosition,
+    FeeTable,
+    Hit,
+    Mention,
+    PrefixedRate,
+    RawText,
+    capture_group,
+    derived,
+    fee_rates,
+    hits,
+    nearest_column_grid,
+    number,
+    one,
+)
 from .layout import Document, LayoutSpec, TextIndex, capture, parse_date
 from .underlying_notes import Markers, underlying_notes
 
@@ -75,21 +91,15 @@ ZH_CCY = "(?:" + "|".join(sorted(money.CURRENCY_WORDS, key=len, reverse=True)) +
 X = r"[x×]"
 AMOUNT = rf"([\d,]+(?:\.\d+)?)({CCY})"  # 金額與旁邊的幣別字（去空白後）
 WARNING_HEAD = "◎本商品之投資風險警語"
-FEE_PREFIX = {
-    "申購費用": "申購價金的",
-    "提前贖回費用": "投資人提前贖回價金的",
-    "分銷費用": "申購價金的",
-}  # 費率格的寫法
-FEE_ITEMS = (
-    "申購費用",
-    "提前贖回費用",
-    "管理費用",
-    "分銷費用",
-    "保費費用",
-    "解約費用",
-    "其他費用",
-)  # 費用表各列（左欄開頭）
-FEE_RATE = r"(\d+(?:\.\d+)?%[~～]\d+(?:\.\d+)?%)"
+# 費用表（說明書第四章 2.、投資人須知第七）：費率欄是表頭「費率(百分比)」右邊最近的一欄；項目名稱與費率都可能拆行
+# （例：`投資人提前` / `贖回價金的` / `0%~5%`），費率欄各行由上到下接起來 = 前綴＋區間
+FEE_TABLE = FeeTable(
+    grid=nearest_column_grid,
+    band=ByPosition(by_x=False),
+    rate=PrefixedRate({"申購費用": "申購價金的", "提前贖回費用": "投資人提前贖回價金的", "分銷費用": "申購價金的"}),
+    rows=EXACT_ROWS,
+    fees=FEE_CHECKED,
+)
 # 第 14 項百分比表的欄（表頭文字 → 欄）；欄位順序以表頭出現位置為準
 HEADERS = (("initial", "期初價格"), ("strike", "執行價"), ("ko", "自動提前出場價"), ("ki", "下限觸發價"))
 # 第 7 項價格表：每檔一列、以左邊界的列號切列（`1`、`2 KAWASAKI`），表頭 %「(期初價格之X% )」
@@ -366,7 +376,7 @@ def read(lines: Sequence[Line]) -> NomuraTermSheet:
     fields["redemption_later_text"] = raw1.capture(
         "redemption_later_text", r"\(4\)\s*後續受理投資人贖回日期：\s*(.+?)\s*\(5\)\s*每營業日"
     )
-    fields.update(fee_rates(ch4_article(2)))
+    fields.update(fee_rates(ch4_article(2), FEE_TABLE))
     art4 = ch4_article(4)
     subscribe = rf"最低申購金額：{AMOUNT}（相當1單位商品面額）最低加價申購金額：{AMOUNT}"
     put("minimum_subscription", art4, subscribe, number)
@@ -576,51 +586,6 @@ def _table_region(art7: list[Line]) -> list[Line]:
 
 
 # ---------------------------------------------------------------- 費用表
-
-
-def fee_rates(lines: list[Line]) -> dict[str, ParsedField]:
-    """費用表（說明書第四章 2.、投資人須知第七）各費用項目的費率區間（標準欄位 `fee_<費用項目>`）。
-
-    依座標讀：費率欄是表頭「費率(百分比)」右邊最近的一欄；每個費用項目一列，從左欄項目名稱那一行到下一個項目名稱之前
-    （項目名稱與費率都可能拆行，例：`投資人提前` / `贖回價金的` / `0%~5%`），費率欄各行由上到下接起來後 =
-    「申購價金的X%~Y%」等寫法。"""
-    out = {label: standard_fields.fee_field(label) for label in FEE_PREFIX}
-    head = next((ln for ln in lines if squash(ln.text) == "費率(百分比)"), None)
-    if head is None:
-        return {name: ParsedField.missing(name, "找不到費用表表頭「費率(百分比)」") for name in out.values()}
-    lo = head.x0 - 10
-    rate_x = min((ln.x0 for ln in lines if ln.x0 >= lo and (ln.page, ln.y0) > (head.page, head.y0 + 3)), default=None)
-    starts = [
-        (ln, item)
-        for ln in lines
-        if ln.x0 < lo and (item := next((i for i in FEE_ITEMS if squash(ln.text).startswith(i)), None))
-    ]
-    fields: dict[str, ParsedField] = {}
-    for label, prefix in FEE_PREFIX.items():
-        name = out[label]
-        rows = [k for k, (_, item) in enumerate(starts) if item == label]
-        if len(rows) != 1 or rate_x is None:
-            fields[name] = ParsedField.missing(name, f"費用表找不到「{label}」這一列或出現多次")
-            continue
-        k = rows[0]
-        top = starts[k][0]
-        bottom = starts[k + 1][0] if k + 1 < len(starts) else None
-        cells = [
-            ln
-            for ln in lines
-            if abs(ln.x0 - rate_x) <= 10
-            and (ln.page, ln.y0 + 3) >= (top.page, top.y0)
-            and (bottom is None or (ln.page, ln.y0 + 3) < (bottom.page, bottom.y0))
-        ]
-        cells.sort(key=lambda x: (x.page, x.y0))
-        text = "".join(squash(ln.text) for ln in cells)
-        m = re.fullmatch(re.escape(prefix) + FEE_RATE, text)
-        fields[name] = (
-            ParsedField.present(name, m[1], [top, *cells])
-            if m
-            else ParsedField.invalid(name, [top, *cells], f"費用表「{label}」的費率不是「{prefix}X%~Y%」")
-        )
-    return fields
 
 
 # ---------------------------------------------------------------- 第 8、9 項

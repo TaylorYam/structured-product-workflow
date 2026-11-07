@@ -13,7 +13,7 @@ from ..standard_fields import ScenarioParam, ScenarioPrice
 from ..text import full_brackets, squash
 from . import hsbc_tables as tables
 from . import money, price_table, ratings, schedule
-from .common import derived
+from .common import EXACT_ROWS, FEE_CHECKED, EachRate, FeeTable, FixedColumns, SamePage, derived, fee_rates
 from .layout import Document, LayoutSpec, TextIndex, capture, parse_date
 from .underlying_notes import Paragraphs, underlying_notes
 
@@ -58,6 +58,15 @@ PRICE_TABLE = price_table.TableSpec(
     ),
 )
 SCENARIO_TABLE = replace(PRICE_TABLE, where="第一章第 18 條情境價格表")
+# 第四章費用表：左欄 x < 100、費率欄固定在 x 150～230；每一處區間都算、只引費率所在的行
+FEE_TABLE = FeeTable(
+    grid=FixedColumns(edge=100, lo=150, hi=230),
+    band=SamePage(tail=100),
+    rate=EachRate(),
+    rows=EXACT_ROWS,
+    fees=FEE_CHECKED,
+    duplicate="費用列錨點缺漏／重複",
+)
 
 
 # 商品家族：英文名稱（去空白）；FCN_Express 多「Express」（workflow #306）
@@ -447,27 +456,7 @@ def read(lines: Sequence[Line]) -> HsbcTermSheet:
         ("minimum_additional_currency", rf"最低加購金額[:：]({ccy}){amount}元", str),
     ]:
         put(name, ch4, pattern, convert)
-    for label in ["申購費用", "提前贖回費用", "分銷費用"]:
-        fee = standard_fields.fee_field(label)
-        anchors = [ln for ln in ch4 if ln.x0 < 100 and squash(ln.text).startswith(label)]
-        if len(anchors) != 1:
-            fields[fee] = ParsedField.missing(fee, "費用列錨點缺漏／重複")
-            continue
-        lab = anchors[0]
-        next_rows = [
-            ln.y0
-            for ln in ch4
-            if ln.page == lab.page
-            and ln.x0 < 100
-            and ln.y0 > lab.y0 + 1
-            and any(
-                squash(ln.text).startswith(x)
-                for x in ["申購費用", "提前贖回費用", "管理費用", "分銷費用", "保費費用", "解約費用", "其他費用"]
-            )
-        ]
-        end = min(next_rows) if next_rows else lab.y0 + 100
-        region = [ln for ln in ch4 if ln.page == lab.page and 150 < ln.x0 < 230 and lab.y0 - 1 <= ln.y0 < end - 1]
-        put(fee, region, r"(\d+(?:\.\d+)?%[~～]\d+(?:\.\d+)?%)")
+    fields.update(fee_rates(ch4, FEE_TABLE))
     occ = standard_fields.Occurrence
     fields["min_amounts"] = standard_fields.occurrences(
         "min_amounts",

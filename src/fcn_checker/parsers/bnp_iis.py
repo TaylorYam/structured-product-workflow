@@ -17,6 +17,7 @@ from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence
 from ..text import squash
 from . import bnp, bnp_tables, iis, money, ratings
+from .common import EXACT_ROWS, FeeTable, LabelEdge, OneRate, fee_rates, rows_in_order
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "bnp-zh-iis"
@@ -51,8 +52,18 @@ KO_EVENT = (
     r"「自動提前贖回事件」[:：]計算代理機構將依專業合理的方式釐定，若於任一自動提前贖回評價日，(.+?)，"
     r"則視為發生自動提前贖回事件"
 )
-FEE_ROWS = ("申購費用", "提前贖回費用", "管理費用", "分銷費用", "保費費用", "解約費用", "其他費用")  # 費用表列首
-FEE_LABEL_EDGE = 60  # 費用表第一欄（列首）的左緣上限（pt）；其他欄都在右邊
+# 費用表：每列從列首（第一欄，左緣 < 60 pt）到下一個列首之間，其他欄只有費率欄寫百分比，取剛好一個區間（例 0%~5%）。
+# 格內文字的擷取順序因樣本而異（列首換行的續行可能排在費率之前或之後，跨欄的格也可能黏成一行），所以不依座標拆欄；
+# 列首和其他欄黏成一行時（Super Bull 樣本），列首之後的字也算
+FEE_TABLE = FeeTable(
+    grid=LabelEdge(60),
+    band=rows_in_order,
+    rate=OneRate(iis.RATE, note="費用表「{fee}」列的費率不是剛好一個區間", with_label=True),
+    rows=EXACT_ROWS,
+    fees=iis.FEES,
+    duplicate="費用表「{fee}」列重複",
+    unlisted="費用表找不到「{fee}」列",
+)
 PROVIDED = frozenset(
     {
         "page_totals",
@@ -153,34 +164,6 @@ def _ko_terms(ti: TextIndex) -> dict[str, ParsedField]:
         }
     m = p_hits[0]
     return {"ko_observation": ParsedField.present("ko_observation", "P", ti.lines_for(m.start(), m.end()))}
-
-
-def _fees(lines: list[Line]) -> dict[str, ParsedField]:
-    """費用表：每列從列首（第一欄）到下一個列首之間，其他欄只有費率欄寫百分比，取剛好一個區間（例 0%~5%）。
-
-    格內文字的擷取順序因樣本而異（列首換行的續行可能排在費率之前或之後，跨欄的格也可能黏成一行），所以不依座標拆欄。
-    """
-    heads = [i for i, ln in enumerate(lines) if ln.x0 < FEE_LABEL_EDGE and squash(ln.text).startswith(FEE_ROWS)]
-    out: dict[str, ParsedField] = {}
-    for label in iis.FEES:
-        name = standard_fields.fee_field(label)
-        rows = [k for k, i in enumerate(heads) if squash(lines[i].text).startswith(label)]
-        if len(rows) != 1:
-            out[name] = ParsedField.missing(
-                name, f"費用表找不到「{label}」列" if not rows else f"費用表「{label}」列重複"
-            )
-            continue
-        a = heads[rows[0]]
-        b = heads[rows[0] + 1] if rows[0] + 1 < len(heads) else len(lines)
-        cells = [ln for ln in lines[a + 1 : b] if ln.x0 >= FEE_LABEL_EDGE]
-        head = squash(lines[a].text)[len(label) :]  # 列首和其他欄黏成一行時（Super Bull 樣本），列首之後的字也算
-        rates = re.findall(iis.RATE, head + "".join(squash(ln.text) for ln in cells))
-        out[name] = (
-            ParsedField.present(name, rates[0], [lines[a], *cells])
-            if len(rates) == 1
-            else ParsedField.invalid(name, [lines[a], *cells], f"費用表「{label}」列的費率不是剛好一個區間")
-        )
-    return out
 
 
 def read(lines: Sequence[Line], redemption_section: tuple[str, str] = REDEMPTION_SECTION) -> iis.IisSheet:
@@ -335,6 +318,6 @@ def read(lines: Sequence[Line], redemption_section: tuple[str, str] = REDEMPTION
             )
         ],
     )
-    fields.update(_fees(text_lines))
+    fields.update(fee_rates(text_lines, FEE_TABLE))
     fields.update(ratings.fields(text_lines, RATINGS, GUARANTOR_RATINGS))
     return iis.IisSheet(fields, ti, frozenset(provided))

@@ -13,6 +13,7 @@ from .. import standard_fields
 from ..investor_sheet import IisSheet
 from ..schema import Line, ParsedField
 from ..standard_fields import Occurrence
+from .common import FEE_CHECKED
 from .layout import TextIndex, capture, join_text
 
 __all__ = [
@@ -33,7 +34,7 @@ __all__ = [
 
 DATE = r"(\d{4}年\d{1,2}月\d{1,2}日)"
 RATE = r"(\d+(?:\.\d+)?%~\d+(?:\.\d+)?%)"
-FEES = ("申購費用", "提前贖回費用", "分銷費用")  # 範本費用表的項目（審查標準 [fees] 的鍵）
+FEES = FEE_CHECKED  # 範本費用表的項目（審查標準 [fees] 的鍵）
 
 
 def number(text: str) -> Decimal:

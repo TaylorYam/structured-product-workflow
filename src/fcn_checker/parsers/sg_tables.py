@@ -13,7 +13,7 @@ from ..schema import Line, ParsedField
 from ..text import squash
 from . import money
 from . import price_table as price_table_module
-from .layout import DATE_RE, TextIndex, capture, parse_date
+from .layout import DATE_RE, parse_date
 
 CCY = money.CURRENCY
 # 第 8 項價格表（表頭沒有百分比）與第 15 項重印價格表（表頭帶「(期初價格的X%)」）
@@ -172,11 +172,3 @@ def date_table(lines: list[Line]) -> ParsedField:
 
 
 # ---------------------------------------------------------------- 費用表
-
-
-def fee(label: str, name: str, lines: list[Line]) -> ParsedField:
-    """第四章 §2 費用表：該費用項目那一列「費率 (百分比)」欄的區間（例 0%~5%）；寫法見 FEE_PATTERNS。"""
-    pattern = FEE_PATTERNS.get(label)
-    if pattern is None:
-        return ParsedField.missing(name, f"範本沒有費用項目「{label}」的寫法")
-    return capture(name, TextIndex(lines), pattern, whole_match=True)

@@ -15,7 +15,7 @@ from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence, ScenarioParam, ScenarioPrice
 from ..text import squash
 from . import bnp_scenario, bnp_tables, money, price_table, ratings, schedule
-from .common import NUM, Hit, Mention, derived, number
+from .common import NUM, Hit, Mention, derived, fee_rates_by_pattern, number
 from .layout import Document, LayoutSpec, Span, TextIndex, capture, join_text, parse_date
 from .underlying_notes import Markers, underlying_notes
 
@@ -65,7 +65,6 @@ ISSUER_EN = "BNP Paribas Issuance B.V."
 D = r"(\d{4}年\d{1,2}月\d{1,2}日)"
 PCT = r"(\d+(?:\.\d+)?)%"
 CCY = money.CURRENCY
-FEES = ("申購費用", "提前贖回費用", "分銷費用")
 # 自動提前贖回事件定義句（第 16 項與第 20 項(1)）：記憶式有「曾經於…或之前任一自動提前贖回評價日」，非記憶式只看當日
 MEMORY_MARK = "或之前任一自動提前贖回評價日"
 NON_MEMORY = re.compile(r"^(每一連結標的之收盤價格皆|連結標的之收盤價格)大於或等於其(各自)?自動提前贖回價格$")
@@ -452,10 +451,7 @@ def read(lines: Sequence[Line]) -> BnpTermSheet:
         r"商品開始受理申購日期：\d{4}年\d{1,2}月\d{1,2}日至" + D,
         parse_date,
     )
-    for label in FEES:
-        fields[standard_fields.fee_field(label)] = bnp_tables.fee(
-            label, standard_fields.fee_field(label), doc.span_lines(ch4.get(2))
-        )
+    fields.update(fee_rates_by_pattern(doc.span_lines(ch4.get(2)), bnp_tables.FEE_PATTERNS))
     art4 = doc.span_lines(ch4.get(4))
     put("minimum_subscription", art4, r"最低申購金額：" + NUM + CCY, number)
     put("minimum_additional", art4, r"最低加購金額：" + NUM + CCY, number)

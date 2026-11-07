@@ -15,6 +15,7 @@ from .. import standard_fields
 from ..schema import DetectionResult, Evidence, Line, ParsedField
 from ..text import squash
 from . import iis, money, nomura, ratings
+from .common import fee_rates
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "nomura-zh-iis"
@@ -297,6 +298,6 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
             }
         )
     else:
-        fields.update(nomura.fee_rates(fees))
+        fields.update(fee_rates(fees, nomura.FEE_TABLE))
     fields.update(ratings.fields(text_lines, guarantor=GUARANTOR_RATINGS, issuer_unrated=ISSUER_UNRATED))
     return iis.IisSheet(fields, ti, PROVIDED)

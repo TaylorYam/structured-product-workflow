@@ -18,7 +18,17 @@ from ..standard_fields import ScenarioParam
 from ..text import squash
 from . import barc_schedule as schedule
 from . import money, price_table, ratings
-from .common import by_value, derived
+from .common import (
+    EXACT_ROWS,
+    FEE_ROWS,
+    EachRate,
+    FeeTable,
+    by_value,
+    derived,
+    fee_rates,
+    next_row_on_page,
+    titled_grid,
+)
 from .layout import Document, LayoutSpec, Span, TextIndex, capture, join_text, parse_date
 from .underlying_notes import Markers, underlying_notes
 
@@ -564,48 +574,18 @@ def _distributor_cover(lines: list[Line]) -> dict[str, ParsedField]:
     return {k: ParsedField.present(k, v, lns) for k, v in zip(keys, m.groups(), strict=True)}
 
 
-FEE_LABELS = ("申購費用", "提前贖回費用", "管理費用", "分銷費用", "保費費用", "解約費用", "其他費用")
-_FEE_RANGE = re.compile(r"([\d.]+%~[\d.]+%)")
-
-
-def _fee_missing(label: str, note: str) -> ParsedField:
-    return ParsedField.missing(standard_fields.fee_field(label), note)
-
-
-def _fees(ch4: list[Line]) -> dict[str, ParsedField]:
-    """第四章「投資人應負擔的各項費用」表：各費用項目的費率區間（費率欄，位於費用項目欄與收取時點欄之間）。"""
-    out: dict[str, ParsedField] = {}
-    start = next((i for i, ln in enumerate(ch4) if ln.text.startswith("投資人應負擔的各項費用")), None)
-    if start is None:
-        return {(pf := _fee_missing(lab, "第四章找不到費用表")).name: pf for lab in FEE_LABELS}
-    seg = ch4[start:]
-    end = next((i for i, ln in enumerate(seg) if ln.text.startswith("附註")), len(seg))
-    seg = seg[:end]
-    item_hdr = next((ln for ln in seg if ln.text == "費用項目"), None)
-    when_hdr = next((ln for ln in seg if ln.text == "收取時點"), None)
-    if item_hdr is None or when_hdr is None:
-        return {(pf := _fee_missing(lab, "費用表表頭不完整")).name: pf for lab in FEE_LABELS}
-    rows = [ln for ln in seg if ln.x1 <= item_hdr.x1 + 80 and ln.x0 < item_hdr.x0 and ln.text.startswith(FEE_LABELS)]
-    for k, row in enumerate(rows):
-        label = next(lab for lab in FEE_LABELS if row.text.startswith(lab))
-        nxt = rows[k + 1] if k + 1 < len(rows) else None
-        cells = [
-            ln
-            for ln in seg
-            if ln.page == row.page
-            and item_hdr.x1 < ln.x0 < when_hdr.x0 - 15
-            and row.y0 - 3 <= ln.y0
-            and (nxt is None or nxt.page != row.page or ln.y0 < nxt.y0 - 3)
-        ]
-        ranges = _FEE_RANGE.findall(squash(join_text(cells)))
-        name = standard_fields.fee_field(label)
-        if not ranges:
-            out[name] = ParsedField.missing(name, f"「{label}」沒有費率區間")
-        else:
-            out[name] = _distinct(name, [(r, [row, *cells]) for r in ranges])
-    for lab in FEE_LABELS:
-        out.setdefault(standard_fields.fee_field(lab), _fee_missing(lab, f"費用表找不到「{lab}」"))
-    return out
+# 第四章「投資人應負擔的各項費用」表：七個費用項目都交出，費率欄每一處區間都引整列；重複的列取最後一列
+FEE_TABLE = FeeTable(
+    grid=titled_grid,
+    band=next_row_on_page,
+    rate=EachRate(
+        r"([\d.]+%~[\d.]+%)", missing="「{fee}」沒有費率區間", ambiguous="說明書中出現多個不同的值", row=True
+    ),
+    rows=EXACT_ROWS,
+    fees=FEE_ROWS,
+    unlisted="費用表找不到「{fee}」",
+    last=True,
+)
 
 
 def _scenario_notional(ti: TextIndex) -> ParsedField:
@@ -857,7 +837,7 @@ def read(lines: Sequence[Line]) -> BarcTermSheet:
     flds["currency_others"] = standard_fields.occurrences(
         "currency_others", _currency_occurrences(doc, arts.get(6), s16, ch4)
     )
-    flds.update(_fees(ch4))
+    flds.update(fee_rates(ch4, FEE_TABLE))
     flds["min_subscription"] = _amount(ch4, r"最低申購金額依受託或銷售機構規定，至少為([\d,]+)", "min_subscription")
     flds["min_redemption"] = _amount(ch4, r"最低贖回商品面額為([\d,]+)", "min_redemption")
     occ = standard_fields.Occurrence
