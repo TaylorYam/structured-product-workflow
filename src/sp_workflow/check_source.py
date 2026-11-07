@@ -38,10 +38,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from fcn_checker.backfill_values import CHECKED_MARKS, LOOKBACK_END_DATE, ROW_FIELDS
+from fcn_checker.backfill_values import CHECKED_MARKS, ROW_FIELDS
 from fcn_checker.condition_source import ConditionSource
 from fcn_checker.config import RISK_LEVEL_PENDING
-from fcn_checker.fields import PRICE_COLUMNS
 from fcn_checker.orders.reference import OrderRecord, Table
 from fcn_checker.rating_formats import AGENCY_KEYS, RATING_FIELDS
 from sp_workflow.check_terms import DONE
@@ -50,6 +49,7 @@ from sp_workflow.database import ConnectionSettings, DatabaseError, SchemaOutdat
 from sp_workflow.product_record import missing_fields, same_value
 from sp_workflow.product_store import Stored, issuer_code, locked, read, read_many
 from sp_workflow.product_terms import backfill, lock_checked
+from sp_workflow.reference_values import sheet_values
 from sp_workflow.risk_level import PENDING, RiskLevel, risk_level_of, risk_levels
 
 if TYPE_CHECKING:
@@ -60,13 +60,8 @@ if TYPE_CHECKING:
     from fcn_checker.issuers import Issuer
     from fcn_checker.saving import SaveReceipt
 
-SLOTS = 12
-UNDERLYINGS = 5
 CHECKED_FIELDS = tuple(m.field for m in CHECKED_MARKS)  # TS、IIS 欄（回填欄位宣告在 backfill_values）
 RISK_FIELD = "risk_level"  # 參考條件表的風險等級（#239；不在匯入格式裡；欄序依設定檔，#445）
-PARTICIPATION_FIELD = "participation_pct"  # 參考條件表的參與率（#373；只有 BEN 有，不在匯入格式裡）
-COUPON_BARRIER_FIELD = "coupon_barrier_pct"  # 參考條件表的配息門檻（#367；不在匯入格式裡）
-LOOKBACK_FIELD = LOOKBACK_END_DATE.field  # 參考條件表的回顧結束日（#376；回填欄位，不在匯入格式裡）
 
 
 class CheckSourceError(Exception):
@@ -140,52 +135,12 @@ def _absent_reason(found: Stored | None) -> str:
 def _row(found: Stored, fmt: ReferenceFormat, ratings: _Ratings, risk: RiskLevel | None) -> dict[str, Any]:
     """一檔商品 → {標準欄位: 值}（沒有標準欄位的 UF、交易日期、分公司欄以欄名為鍵；排成表由 `Table.of` 做）。
     空值寫法用在 KI NONE、沒有的標的與不需要填的比價日。`risk` 是存好的風險等級（還沒算過是 None，風險等級欄空白）。"""
-    p, empty = found.columns, fmt.empty_value
-    no_ki = p["barrier_type"] == "NONE"
-    prices = {price.seq: price for price in found.prices}
-    values: dict[str, Any] = {
-        "product_code": found.tdcc,
-        "product": p["product"],
-        "isin": found.isin,
-        "denomination": p["denomination"],
-        "currency": p["currency"],
-        "trade_date": p["trade_date"],
-        "issue_date": p["issue_date"],
-        "final_valuation_date": p["final_valuation_date"],
-        "maturity_date": p["maturity_date"],
-        "initial_pricing": p["initial_pricing"],
-        "ko_pct": empty if p["ko_pct"] is None else p["ko_pct"],  # BEN 預設沒有 KO（#406）
-        "ko_observation": p["ko_freq"],
-        "ko_memory": p["ko_memory"],
-        "strike_pct": p["strike_pct"],
-        "ki_pct": empty if no_ki else p["ki_pct"],
-        "ki_type": p["ki_freq"],
-        "coupon_pa_pct": p["coupon_pct"],
-        COUPON_BARRIER_FIELD: empty if p["coupon_barrier_pct"] is None else p["coupon_barrier_pct"],
-        "tenor_months": p["tenor_months"],
-        "first_callable_period": p["non_call_months"],
-        RISK_FIELD: _risk_cell(risk),
-        PARTICIPATION_FIELD: p["participation_pct"],
-        LOOKBACK_FIELD: p["lookback_end_date"],
-    }
+    p = found.columns
+    values = sheet_values(found, fmt.empty_value)  # 商品條件、比價日、標的與價格（#498）
+    values[RISK_FIELD] = _risk_cell(risk)
     values.update(ratings.columns(found.tdcc, p["issuer"], p["trade_date"]))
     if locked(found):
         values.update(dict.fromkeys(CHECKED_FIELDS, fmt.checked_value))
-    for slot in range(1, SLOTS + 1):
-        if found.autocall is not None:
-            values[f"autocall_date_{slot}"] = found.autocall.get(slot) or empty
-    for i in range(1, UNDERLYINGS + 1):
-        code = p[f"underlying_{i}"]
-        values[f"underlying_{i}"] = code or empty
-        price = prices.get(i)
-        for col, column in PRICE_COLUMNS.items():
-            key = f"underlying_{i}_{column}"
-            if not code or (col == "ki" and no_ki) or (col == "ko" and p["ko_pct"] is None):  # BEN 預設沒有 KO
-                values[key] = empty
-            elif col == "strike":
-                values[key] = found.original_strike(i)  # lookback（#374）：核對比的是 TS 的期初執行價
-            else:
-                values[key] = None if price is None else getattr(price, col)  # VWAP 還沒回填時空白，核對通過後回填
     extra_columns = fmt.extra  # 發行機構、UF、交易日期、分公司欄（#433）：沒有標準欄位，以欄名為鍵
     values[fmt.issuer_column] = p["issuer"]
     values[extra_columns.upfront] = p["upfront_pct"]
