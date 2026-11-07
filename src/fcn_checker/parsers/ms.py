@@ -15,7 +15,7 @@ from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import ScenarioParam, ScenarioPrice
 from ..text import full_brackets, squash
 from . import money, ms_scenario, ms_tables, ms_wording, price_table, ratings, schedule
-from .common import NO_AUTOCALL_KO_PCT, NUM, Hit, Mention, derived, ko_at_initial, number
+from .common import NO_AUTOCALL_KO_PCT, NUM, Hit, Mention, derived, fee_rates, ko_at_initial, number
 from .layout import Document, LayoutSpec, TextIndex, capture, join_text, parse_date
 from .underlying_notes import Markers, underlying_notes
 
@@ -286,8 +286,7 @@ def read(lines: Sequence[Line]) -> MsTermSheet:
     # 第四章：條號縮排不固定（第 1 項有時與子項同欄），以各項的標籤定位
     ch4 = doc.chapter_lines(4)
     put("redemption_start", ch4, r"（1）開始受理贖回日期：" + D, parse_date)
-    for label in FEES:
-        fields[standard_fields.fee_field(label)] = ms_tables.fee(label, standard_fields.fee_field(label), ch4)
+    fields.update(fee_rates(ch4, ms_tables.FEE_TABLE))
     put("minimum_subscription", ch4, r"最低申購金額為[^，。]*，即\D{0,4}?" + NUM + r"元", number)
     put("minimum_additional", ch4, r"並以\D{0,4}?" + NUM + r"元(?:（[^）]*）)?為最低加購單位", number)
     put("minimum_redemption", ch4, r"最低贖回金額為[^，。]*，即\D{0,4}?" + NUM + r"元", number)

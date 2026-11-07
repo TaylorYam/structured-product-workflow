@@ -11,6 +11,7 @@ from dataclasses import replace
 from ..schema import Line, ParsedField
 from ..text import full_brackets, squash
 from . import price_table as price_table_module
+from .common import FEE_CHECKED, FEE_ROWS, EachRate, FeeTable, SamePage, item_header_grid
 from .layout import DATE_RE, TextIndex, join_text, parse_date
 
 # 日期表：標題 → 表型；表頭（去空白、括號統一全形）
@@ -190,33 +191,12 @@ def underlying_names(lines: list[Line]) -> ParsedField:
     return ParsedField.present(name, names, [ln for r in rows for ln in r])
 
 
-FEE_ROWS = ("申購費用", "提前贖回費用", "管理費用", "分銷費用", "保費費用", "解約費用", "其他費用")
-
-
-def fee(label: str, name: str, lines: list[Line]) -> ParsedField:
-    """第四章費用表：該費用項目那一列「費率」欄的區間（例 0%~5%）。
-
-    費率欄從表頭「費用項目」的右緣起、到「收取時點」之前：表頭「費率」可能置中拆成兩行（`費率` / `(百分比)`），
-    比費率格右移 20 pt 以上，不能拿它的 x 當左界（Issue #310）；費用項目名稱換行仍從左欄起頭，不會落進這個範圍。"""
-    anchors = [ln for ln in lines if ln.x0 < 100 and squash(ln.text).startswith(label)]
-    if len(anchors) != 1:
-        return ParsedField.missing(name, "費用列錨點缺漏／重複")
-    lab = anchors[0]
-    rate_hdr = [ln for ln in lines if ln.page == lab.page and squash(ln.text).startswith("費率")]
-    item_hdr = [ln for ln in lines if ln.page == lab.page and squash(ln.text) == "費用項目"]
-    if len(rate_hdr) != 1 or len(item_hdr) != 1:
-        return ParsedField.missing(name, "找不到費用表「費用項目」或「費率」欄")
-    left = item_hdr[0].x1
-    right = next((ln.x0 for ln in lines if ln.page == lab.page and squash(ln.text) == "收取時點"), rate_hdr[0].x0 + 65)
-    nexts = [
-        ln.y0
-        for ln in lines
-        if ln.page == lab.page and ln.x0 < 100 and ln.y0 > lab.y0 + 1 and squash(ln.text).startswith(FEE_ROWS)
-    ]
-    bottom = min(nexts) if nexts else lab.y0 + 100
-    region = [
-        ln for ln in lines if ln.page == lab.page and left <= ln.x0 < right - 5 and lab.y0 - 1 <= ln.y0 < bottom - 1
-    ]
-    ti = TextIndex(region)
-    hits = [(m[1], ti.lines_for(m.start(), m.end())) for m in ti.finditer(r"(\d+(?:\.\d+)?%[~～]\d+(?:\.\d+)?%)")]
-    return ParsedField.from_hits(name, hits, missing_note="費率欄找不到費率區間")
+# 第四章費用表：費率欄依同一頁表頭「費用項目」「收取時點」定位，每一處區間都算、只引費率所在的行
+FEE_TABLE = FeeTable(
+    grid=item_header_grid,
+    band=SamePage(above=1, below=1, tail=100),
+    rate=EachRate(missing="費率欄找不到費率區間"),
+    rows={label: label for label in FEE_ROWS},
+    fees=FEE_CHECKED,
+    duplicate="費用列錨點缺漏／重複",
+)

@@ -16,6 +16,7 @@ from ..schema import DetectionResult, Evidence, Line, ParsedField
 from ..standard_fields import Occurrence
 from ..text import squash
 from . import iis, money, price_table, ratings, sg, sg_tables
+from .common import fee_rates_by_pattern
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "sg-zh-iis"
@@ -360,12 +361,7 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         ),
     )
     fees = iis.section(ti, ("肆、費用", "伍、"))
-    for label in iis.FEES:
-        name = standard_fields.fee_field(label)
-        fields[name] = (
-            sg_tables.fee(label, name, fees)
-            if fees is not None
-            else ParsedField.missing(name, "找不到「肆、費用」段落")
-        )
+    patterns = {label: sg_tables.FEE_PATTERNS[label] for label in iis.FEES}
+    fields.update(fee_rates_by_pattern(fees, patterns, no_table="找不到「肆、費用」段落"))
     fields.update(ratings.fields(text_lines, guarantor=GUARANTOR_RATINGS, issuer_unrated=ISSUER_UNRATED))
     return iis.IisSheet(fields, ti, frozenset(provided))

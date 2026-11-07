@@ -17,7 +17,7 @@ from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence, ScenarioParam, ScenarioPrice
 from ..text import squash
 from . import money, price_table, ratings, schedule, sg_scenario, sg_tables
-from .common import NO_AUTOCALL_KO_PCT, NUM, Hit, Mention, derived, ko_at_initial, number
+from .common import NO_AUTOCALL_KO_PCT, NUM, Hit, Mention, derived, fee_rates_by_pattern, ko_at_initial, number
 from .layout import Document, LayoutSpec, TextIndex, capture, join_text, parse_date
 from .underlying_notes import Markers, underlying_notes
 
@@ -66,7 +66,6 @@ FOOTNOTE = re.compile(
 D = r"(\d{4}年\d{1,2}月\d{1,2}日)"
 PCT = r"(\d+(?:\.\d+)?)%"
 CCY = money.CURRENCY
-FEES = ("申購費用", "提前贖回費用", "分銷費用")
 TICKER = re.compile(r"^[A-Z0-9][A-Z0-9./-]*\s+[A-Z]{2}$")
 AUTOCALL_EVENT = "自動提前出場事件："
 MEMORY_EVENT = "記憶事件："
@@ -412,10 +411,7 @@ def read(lines: Sequence[Line]) -> SgTermSheet:
     # 第四章
     ch4 = doc.articles(4)
     put("subscription_start", doc.span_lines(ch4.get(1)), r"商品開始受理申購日期：自" + D + r"起", parse_date)
-    for label in FEES:
-        fields[standard_fields.fee_field(label)] = sg_tables.fee(
-            label, standard_fields.fee_field(label), doc.span_lines(ch4.get(2))
-        )
+    fields.update(fee_rates_by_pattern(doc.span_lines(ch4.get(2)), sg_tables.FEE_PATTERNS))
     art4 = doc.span_lines(ch4.get(4))
     put("minimum_subscription", art4, r"最低申購金額：" + NUM + CCY, number)
     put("minimum_additional", art4, r"最低加購金額：" + NUM + CCY, number)

@@ -17,7 +17,7 @@ from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import OCCURRENCE_NAMES, Occurrence, ScenarioParam
 from ..text import squash
 from . import money, price_table, ratings, schedule
-from .common import NO_AUTOCALL_KO_PCT, NUM, Mention, derived, ko_at_initial, number, zh_number
+from .common import NO_AUTOCALL_KO_PCT, NUM, Mention, derived, fee_rates_by_pattern, ko_at_initial, number, zh_number
 from .layout import DATE_RE, Document, LayoutSpec, TextIndex, capture, join_text, parse_date
 from .underlying_notes import Markers, underlying_notes
 
@@ -74,7 +74,6 @@ D = r"(\d{4}年\d{1,2}月\d{1,2}日)"
 PCT = r"(\d+(?:\.\d+)?)%"
 CCY = money.CURRENCY
 X = r"[x×]"
-FEES = ("申購費用", "提前贖回費用", "分銷費用")
 FEE_PATTERNS = {  # 第四章 §2 費用表（去空白）：費用項目 → 該列「費率(百分比)」欄；新文件分銷費用取「費用」子列
     "申購費用": r"申購費用申購價金的(\d+(?:\.\d+)?%[~～]\d+(?:\.\d+)?%)",
     "提前贖回費用": r"提前贖回費用投資人提前贖回價金的(\d+(?:\.\d+)?%[~～]\d+(?:\.\d+)?%)",
@@ -490,13 +489,7 @@ def read(lines: Sequence[Line]) -> CitiTermSheet:
     put("subscription_start", art1_ch4, r"開始受理申購日期：" + D, parse_date)
     put("subscription_end", art1_ch4, r"結束受理申購日期：" + D, parse_date)
     put("redemption_start", art1_ch4, r"開始受理贖回日期：" + D, parse_date)
-    for label in FEES:
-        fields[standard_fields.fee_field(label)] = capture(
-            standard_fields.fee_field(label),
-            TextIndex(doc.span_lines(ch4.get(2))),
-            FEE_PATTERNS[label],
-            whole_match=True,
-        )
+    fields.update(fee_rates_by_pattern(doc.span_lines(ch4.get(2)), FEE_PATTERNS))
     art4 = doc.span_lines(ch4.get(4))
     put("minimum_subscription", art4, r"最低申購金額：" + NUM + CCY, number)
     put("minimum_additional", art4, r"最低加購金額：" + NUM + CCY, number)
