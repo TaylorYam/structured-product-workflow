@@ -38,7 +38,7 @@ from typing import TYPE_CHECKING, Any
 from fcn_checker.fields import PRICE_FIELDS
 from sp_workflow.database import OperatorError, require_in_transaction
 from sp_workflow.import_config import ImportConfig
-from sp_workflow.product_record import UnderlyingPrice, missing_fields, plain, price_at, round_price
+from sp_workflow.product_record import NO_BARRIER, UnderlyingPrice, missing_fields, plain, price_at, round_price
 from sp_workflow.product_store import BLANK as _BLANK
 from sp_workflow.product_store import CURRENCY, TRADE_DATE, UF, Difference, Stored, locked, read, read_many
 from sp_workflow.risk_level import RiskLevel, fill_missing_locked, recalculate_risk
@@ -60,7 +60,6 @@ TO_CONFIRM = CheckTerms.TO_CONFIRM
 STATUSES = tuple(CheckTerms)  # 畫面列出各狀態檔數的順序
 
 CLOSE, OPEN, VWAP = "收盤價", "開盤價", "VWAP"
-NO_BARRIER = "NONE"
 _HUNDRED = Decimal(100)
 
 

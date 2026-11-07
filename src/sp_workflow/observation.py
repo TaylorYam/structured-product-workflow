@@ -50,7 +50,6 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from fcn_checker.products import rule_or_fcn
-from sp_workflow.check_terms import NO_BARRIER as NO_KI
 from sp_workflow.close_prices import latest_close_date
 from sp_workflow.lifecycle import (
     DELIVERY,
@@ -65,7 +64,18 @@ from sp_workflow.lifecycle import (
     current_events_of,
     replace_auto_events,
 )
-from sp_workflow.product_record import KO_TYPES, plain, price_at, round_price
+from sp_workflow.product_record import (
+    AKI,
+    DAILY_KO_TYPES,
+    EKI,
+    KO_TYPES,
+    MEMORY_KO_TYPES,
+    MKI,
+    plain,
+    price_at,
+    round_price,
+)
+from sp_workflow.product_record import NO_BARRIER as NO_KI
 from sp_workflow.product_store import Stored, read_many
 from sp_workflow.product_store import locked as is_locked
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource
@@ -85,9 +95,6 @@ EXITED = Pricing.EXITED
 STATUSES = tuple(Pricing)
 UNLOCKED = OrderReview.UNLOCKED
 
-MEMORY_TYPES = frozenset(("Daily Memory", "Period End Memory"))
-DAILY_TYPES = frozenset(("Daily", "Daily Memory"))
-EKI, AKI, MKI = "EKI", "AKI", "MKI"
 NO_KI_TEXT = "-"  # 沒有 KI 寫一槓，和有 KI 的代碼一眼分開
 MKI_KI = "MKI (manual)"  # MKI 不比（比價日 1～12 不是每一期，ADR 0020），KI 欄提醒人工追蹤
 MISSING_CLOSE = re.compile(
@@ -201,8 +208,8 @@ def observe(
     markets = {u.code: calendar.market_of(u.code) for u in terms.underlyings}
     final = terms.final_date
     assert final is not None and markets  # 由 _terms_problem 確認
-    daily = terms.ko_type in DAILY_TYPES
-    memory = terms.ko_type in MEMORY_TYPES
+    daily = terms.ko_type in DAILY_KO_TYPES
+    memory = terms.ko_type in MEMORY_KO_TYPES
     callable_ = tuple(d for d in terms.autocall if terms.final_date_callable or d != final)  # 可以 KO 的比價日
     no_autocall = terms.no_autocall or not callable_
     ko_days = frozenset() if no_autocall or daily else frozenset(callable_)

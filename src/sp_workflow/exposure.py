@@ -39,11 +39,11 @@ from typing import TYPE_CHECKING
 
 from openpyxl.styles import PatternFill
 
-from sp_workflow.check_terms import NO_BARRIER
 from sp_workflow.close_prices import latest_closes
 from sp_workflow.daily_import import FC_LABEL_SQL
 from sp_workflow.file_tools import save_export
 from sp_workflow.lifecycle import IN_STOCK, lifecycle_status
+from sp_workflow.product_record import AKI, MKI, NO_BARRIER
 from sp_workflow.product_store import read_many, underlying_codes
 from sp_workflow.slide_table import BROKEN_FILL, Column, list_book
 from sp_workflow.status import CheckTerms
@@ -63,8 +63,6 @@ UNKNOWN = "無法計算"
 FIXED = "已比價"  # 最終比價日早於分析日、還在庫（#352）
 CATEGORIES = (DELIVER, WATCH, NEAR, MANUAL, SAFE, FIXED, UNKNOWN)
 NEAR_BUFFER = Decimal("0.10")  # 接近執行價的門檻（距執行價，#347）
-MKI = "MKI"
-AKI = "AKI"
 NO_FC = "-"
 MAX_LEGS = 5  # 一檔最多連結幾個標的
 KI_BROKEN = "跌破KI"  # 全部商品的狀態（#354）

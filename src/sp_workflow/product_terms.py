@@ -63,6 +63,7 @@ from sp_workflow.product_record import (
     FIELDS,
     KINDS,
     LOOKBACK_FIELD,
+    NO_BARRIER,
     PARTICIPATION_FIELD,
     PRICING_FIELD,
     PRODUCT_COLUMNS,
@@ -428,9 +429,9 @@ def _value_problems(
         problems.setdefault(gap, "標的要從 BBG Code 1 依序填，中間不能空")
     if filled("Barrier Type") and "KI Barrier (%)" not in problems:
         ki = values.get("KI Barrier (%)")
-        if values["Barrier Type"] == "NONE" and ki is not None:
+        if values["Barrier Type"] == NO_BARRIER and ki is not None:
             problems["KI Barrier (%)"] = "Barrier Type 是 NONE 時要空白"
-        elif values["Barrier Type"] != "NONE" and ki is None:
+        elif values["Barrier Type"] != NO_BARRIER and ki is None:
             # 人工維護也擋：KI(%) 不在必填欄，空著存進去「檢查」找不到、寄信會寫成「-」
             hint = "；還不確定就把 Barrier Type 也先空著" if allow_blank else ""
             problems["KI Barrier (%)"] = f"有 KI 時必填{hint}"

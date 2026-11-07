@@ -32,8 +32,10 @@ from openpyxl.worksheet.formula import ArrayFormula
 from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.worksheet.worksheet import Worksheet
 
+from sp_workflow.status import Lifecycle
+
 TABLE_NAME = "總表"
-IN_STOCK = "在庫"
+IN_STOCK = Lifecycle.IN_STOCK
 ISSUER_SHEET, BRANCH_SHEET = "發行機構x幣別", "分公司x幣別"
 SHARE_SUFFIX = "占比"  # 下面那張表的表頭：發行機構占比、分公司占比
 FORMAT_ROWS, FORMAT_COLUMNS = 205, 21  # 先套格式的範圍：兩張表各 100 個名稱、20 個幣別

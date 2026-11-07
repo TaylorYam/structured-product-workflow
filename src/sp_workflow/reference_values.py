@@ -17,14 +17,14 @@ from typing import TYPE_CHECKING, Any
 from fcn_checker.backfill_values import LOOKBACK_END_DATE, SLOTS
 from fcn_checker.fields import PRICE_COLUMNS, PRICE_FIELDS, PriceField
 from fcn_checker.orders.reference import UNDERLYING_SLOTS, autocall_date_key, price_key, underlying_key
-from sp_workflow.product_record import KI_CODES, KO_CODES, UnderlyingPrice, invert_upfront
+from sp_workflow.product_record import KI_CODES, KO_CODES, NO_BARRIER, UnderlyingPrice, invert_upfront
 
 if TYPE_CHECKING:
     from fcn_checker.config import ReferenceFormat
     from fcn_checker.orders.reference import OrderRecord
     from sp_workflow.product_store import Stored
 
-NO_KI = "NONE"  # Barrier Type：沒有 KI
+NO_KI = NO_BARRIER  # Barrier Type：沒有 KI
 PARTICIPATION_KEY = (
     "participation_pct"  # 參考條件表的標準欄位（不是畫面的欄名）：參與率（#373；只有 BEN 有，不在匯入格式裡）
 )
