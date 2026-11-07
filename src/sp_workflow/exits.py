@@ -19,10 +19,10 @@ from typing import TYPE_CHECKING
 
 from sp_workflow.close_prices import latest_close_date
 from sp_workflow.file_tools import save_rows
+from sp_workflow.import_config import ImportConfig
 from sp_workflow.lifecycle import EXIT_EVENTS, exits_on
 from sp_workflow.observation import missing_close
 from sp_workflow.product_store import issuer_code, locked, read_many
-from sp_workflow.product_terms import ImportConfig
 from sp_workflow.status import OrderReview, Pricing
 
 if TYPE_CHECKING:

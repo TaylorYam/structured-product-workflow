@@ -13,8 +13,9 @@
   一起存，商品條件、交易明細各在 `workflow.term_correction`、`workflow.trade_row_correction` 留紀錄。
 - `backfill`／`lock_checked`：核對寫回寫一格並記 `workflow.backfill_log`、核對通過鎖住這檔。
 - `create_backfilled`：回補既有的 FCN 以外商品（#303，`product_backfill`）建立一檔鎖住的商品條件，來源「歷史回補」。
-- `missing_products`：人工維護「檢查」列出的商品；`load_import_config`：設定。
-不能讀設定、不能存檔時丟 `TermsError`（訊息是給作業人員看的中文）。
+- `missing_products`：人工維護「檢查」列出的商品。設定 `ImportConfig`／`load_import_config` 在 `import_config`（#493），
+  這裡留舊名字的別名一個版本。
+不能存檔時丟 `TermsError`（訊息是給作業人員看的中文）。
 
 寫入每一檔照同樣的順序：鎖住這檔的商品條件列（與交易明細列）、確認打開之後沒變、依 `Mode` 檢查、組資料庫欄位
 （上手不改、幣別沒改面額不動）、INSERT 或 UPDATE 改了的欄、重算核對條件、留紀錄、畫面換成資料庫存的值。
@@ -50,6 +51,8 @@ from fcn_checker.products import PRODUCT_RULES, SUPPORTED_PRODUCTS, product_name
 from sp_workflow import import_run
 from sp_workflow.check_terms import CalcLine, recalculate, recalculate_corrected
 from sp_workflow.database import OperatorError, require_in_transaction
+from sp_workflow.import_config import ImportConfig as ImportConfig  # 設定搬到 import_config（#493）：
+from sp_workflow.import_config import load_import_config as load_import_config  # 舊的 import 路徑留一個版本
 from sp_workflow.lifecycle import lifecycle_status
 from sp_workflow.order_terms import TDCC_FIELD, OrderRow, describe, unknown_issuer
 from sp_workflow.product_record import (
@@ -94,12 +97,8 @@ from sp_workflow.trade_rows import (
 from sp_workflow.underlying_prices import backfill_price
 
 if TYPE_CHECKING:
-    from pathlib import Path
-
     import psycopg
 
-    from fcn_checker.check_config import ConfigPaths
-    from fcn_checker.trading_calendar import TradingCalendar
 
 _IMPORTED = frozenset((ImportResult.NEW, ImportResult.OVERWRITTEN, ImportResult.SAME))
 _FIXED_IN_CORRECTION = frozenset(("Issue date",))  # TS 回填的欄，不在更正範圍
@@ -141,72 +140,8 @@ _MAINTENANCE_MODES = {
 
 
 class TermsError(OperatorError):
-    """設定檔有問題、這檔不能更正或存檔（不在資料庫、鎖住狀態不對、檢查沒過、打開後被改過）；訊息是給作業人員看的中文。"""
-
-
-# ---------- 設定 ----------
-
-
-@dataclass(frozen=True)
-class ImportConfig:
-    denominations: Mapping[str, Decimal]  # 幣別 → 單位面額預設值
-    issuer_names: Mapping[str, str]  # 上手代號 → 發行機構的寫法（同清單更新）
-    issuer_prefixes: Mapping[str, str]  # TDCC 前三碼 → 上手代號（上手編號對照）
-    calendar: TradingCalendar  # 交易所假日表（明日開盤價的 Strike date，#101）
-    index_underlyings: frozenset[str] = frozenset()  # 風險等級的指數清單（設定檔的寫法；比對規則在 `risk_level`，#238）
-    etf_underlyings: frozenset[str] = frozenset()  # 補充 ETF：白名單沒有的，和白名單的 ETF 合併（同上，#252、#273）
-    fallback_etf_underlyings: frozenset[str] = frozenset()  # 還沒匯入白名單時用的 ETF 清單（#273）
-
-
-def load_import_config(paths: ConfigPaths) -> ImportConfig:
-    """從審查標準、參考條件表格式、上手編號對照、交易所假日表與風險等級設定檔讀面額預設值、發行機構寫法、上手編號、
-    假日與指數、ETF 清單。核對條件與風險等級的重算（`check_terms.recalculate`）也用這一份。"""
-    from fcn_checker.config import (
-        load_exchange_holidays,
-        load_issuer_prefixes,
-        load_reference_format,
-        load_review_standard,
-    )
-    from fcn_checker.ingestion import IngestionError
-
-    try:
-        review = load_review_standard(paths.review_standard)
-        reference = load_reference_format(paths.reference_format)
-        prefixes = load_issuer_prefixes(paths.issuer_prefixes)
-        calendar = load_exchange_holidays(paths.exchange_holidays)
-        indices, etfs, fallback_etfs = load_risk_underlyings(paths.risk_level)
-    except IngestionError as exc:
-        raise TermsError(str(exc)) from exc
-    return ImportConfig(
-        {currency: Decimal(amount) for currency, amount in review.denomination.items()},
-        dict(reference.issuer_values),
-        prefixes,
-        calendar,
-        indices,
-        etfs,
-        fallback_etfs,
-    )
-
-
-RISK_LISTS = ("index_underlyings", "etf_underlyings", "fallback_etf_underlyings")
-
-
-def load_risk_underlyings(path: Path) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
-    """風險等級的（指數清單, 補充 ETF, 還沒匯入白名單時用的 ETF）（`config/risk_level.toml`，#238、#252、#273）：
-    彭博代碼，只去頭尾空白；比對規則在 `risk_level.underlying_key`。缺檔或格式錯誤時丟 `fcn_checker.ingestion.IngestionError`。
-    """
-    from fcn_checker.config import load_toml
-    from fcn_checker.ingestion import IngestionError
-
-    d = load_toml(path, "風險等級")
-    found = []
-    for key in RISK_LISTS:
-        codes = d.get(key)
-        if not isinstance(codes, list) or not all(isinstance(c, str) and c.strip() for c in codes):
-            raise IngestionError("config_invalid", f"風險等級設定檔的 {key} 要是彭博代碼的清單（可以空白）")
-        found.append(frozenset(c.strip() for c in codes))
-    indices, etfs, fallback_etfs = found
-    return indices, etfs, fallback_etfs
+    """這檔不能更正或存檔（不在資料庫、鎖住狀態不對、檢查沒過、打開後被改過）；訊息是給作業人員看的中文。
+    讀不到設定是 `import_config.ImportConfigError`（#493）。"""
 
 
 # ---------- 資料庫裡的這檔 ----------

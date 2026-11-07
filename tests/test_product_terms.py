@@ -29,6 +29,7 @@ from order_synth import CONFIG, PREFIXES, A, B, missing_row, open_terms, order_r
 from sp_workflow import database
 from sp_workflow.check_terms import UnderlyingPrice
 from sp_workflow.daily_import import import_daily
+from sp_workflow.import_config import load_import_config
 from sp_workflow.mail_drafts import PENDING as MAIL_PENDING
 from sp_workflow.mail_drafts import create_drafts
 from sp_workflow.order_terms import TDCC_FIELD, OrderRow, collect_orders, describe
@@ -37,7 +38,6 @@ from sp_workflow.product_terms import (
     Draft,
     Mode,
     drafts_from,
-    load_import_config,
     locked,
     problems,
     read,
