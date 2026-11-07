@@ -3,6 +3,7 @@
 `StrEnum` 的值就是資料庫、Excel 與畫面上的字串，和以前各 module 的常數相同；各 module 原本的常數名字照舊可用，
 是這裡的別名。概念與名稱見 CONTEXT.md：核對條件狀態、比價狀態、作業進度、存續狀態（ADR 0019、ADR 0020），
 另外是起單資料頁與人工維護的確認狀態，以及存進資料庫的起單資料匯入結果、商品來源（#203）。新寫的程式直接用這裡的 enum，不必再經過各 module 的別名。
+KO／KI 型態（Daily、AKI…）是商品條件的值、不是狀態，宣告在 `product_record`（#485）。
 這個 module 不 import 任何 `sp_workflow` module。
 """
 

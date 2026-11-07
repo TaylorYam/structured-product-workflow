@@ -50,8 +50,14 @@ class FieldKind(Enum):
     DATE = "日期"
 
 
-KO_TYPES = ("Daily", "Daily Memory", "Period End", "Period End Memory")
-BARRIER_TYPES = ("NONE", "EKI", "AKI")
+# KO／KI 型態（商品條件的值，不是狀態；狀態字彙在 `status`）：各 module 從這裡拿，不再自己寫字面值（#485）
+DAILY, DAILY_MEMORY, PERIOD_END, PERIOD_END_MEMORY = "Daily", "Daily Memory", "Period End", "Period End Memory"
+KO_TYPES = (DAILY, DAILY_MEMORY, PERIOD_END, PERIOD_END_MEMORY)
+DAILY_KO_TYPES = frozenset((DAILY, DAILY_MEMORY))  # 每日觀察 KO
+MEMORY_KO_TYPES = frozenset((DAILY_MEMORY, PERIOD_END_MEMORY))  # 記憶式 KO
+NO_BARRIER, EKI, AKI = "NONE", "EKI", "AKI"  # Barrier Type：沒有 KI、最終比價日觀察、每日觀察
+MKI = "MKI"  # 每期觀察 KI：起單建檔不能選（不在 BARRIER_TYPES），比價與曝險分析讀到時交給人工
+BARRIER_TYPES = (NO_BARRIER, EKI, AKI)
 OPEN = "開盤價"
 INITIAL_PRICINGS = (OPEN, "收盤價", "VWAP")
 UNDERLYINGS = tuple(f"BBG Code {n}" for n in range(1, 6))
