@@ -128,6 +128,7 @@ class Money:
 
 # 出處代號 → 項目名稱（Issue #294 留言 1）：出處清單的項目名稱只在這裡定義，上手只交出（出處代號、位置、值）。
 # 同一件事各上手用同一個代號；說明書上的寫法差異（例：第四章／第 IV 部分、警語第幾點）寫在位置裡。
+# 說明書 parser 依代號自動分組的出處清單見 `OCCURRENCE_LISTS`。
 OCCURRENCE_NAMES: dict[str, str] = {
     # 商品代號與機構名稱
     "product_code": "商品代號",
@@ -152,13 +153,13 @@ OCCURRENCE_NAMES: dict[str, str] = {
     "distributor_phone_rights": "受託機構電話（權益保護）",
     "distributor_phone_section8": "受託機構電話（第八）",
     "distributor_phone_contact": "受託機構電話（聯絡方式）",
-    # 刊印日期與受理申購日（`print_dates`、`subscription_dates`）
+    # 刊印日期與受理申購日
     "print_date": "刊印日期",
     "print_date_review": "刊印日期（參考性審閱版）",
     "print_date_final": "刊印日期（最終版）",
     "subscription_start": "開始受理申購日",
     "subscription_end": "結束受理申購日",
-    # 最低金額（`min_amounts`）
+    # 最低金額
     "minimum_subscription": "最低申購金額",
     "minimum_additional": "最低加購金額",
     "minimum_redemption": "最低贖回金額",
@@ -167,11 +168,11 @@ OCCURRENCE_NAMES: dict[str, str] = {
     "minimum_investment": "最低投資金額",
     "early_redemption_minimum": "提前贖回最低金額",
     "early_redemption_increment": "提前贖回增加單位",
-    # 發行價格的其他出處（`issue_price_others`）
+    # 發行價格的其他出處
     "issue_price_subscription": "發行價格（申購價金）",
     "issue_price_scenario": "發行價格（情境假設）",
     "issue_price_principal": "發行價格（情境投資本金）",
-    # 金額旁的幣別（`currency_others`）：一處金額與它的幣別用同一個詞
+    # 金額旁的幣別：一處金額與它的幣別用同一個詞
     "denomination_currency": "每單位面額幣別",
     "minimum_subscription_currency": "最低申購金額幣別",
     "minimum_additional_currency": "最低加購金額幣別",
@@ -229,6 +230,36 @@ OCCURRENCE_NAMES: dict[str, str] = {
     "original_principal": "原始投資本金",
     "physical_denomination": "實物交割算式的面額",
 }
+
+
+# 說明書出處清單欄位 → 依代號分到這張清單的出處代號（Issue #487）：`parsers.fields_builder` 照這張表把登記的出處分組，
+# 一個代號只屬於一張清單。不在表上的清單（例：受託機構名稱的其他出處）由 parser 自己用 `occurrences` 組。
+_LIST_CODES: dict[str, tuple[str, ...]] = {
+    "print_dates": ("print_date", "print_date_review", "print_date_final"),
+    "subscription_dates": ("subscription_start", "subscription_end"),
+    "min_amounts": (
+        "minimum_subscription",
+        "minimum_additional",
+        "minimum_redemption",
+        "redemption_increment",
+        "minimum_trade",
+        "minimum_investment",
+        "early_redemption_minimum",
+        "early_redemption_increment",
+    ),
+    "issue_price_others": ("issue_price_subscription", "issue_price_scenario", "issue_price_principal"),
+    # 金額旁的幣別：代號一律以 _currency 結尾（`OCCURRENCE_NAMES` 的命名），其他清單的代號不用這個結尾
+    "currency_others": tuple(code for code in OCCURRENCE_NAMES if code.endswith("_currency")),
+}
+OCCURRENCE_LISTS: dict[str, str] = {code: name for name, codes in _LIST_CODES.items() for code in codes}
+
+
+def occurrence_list(code: str) -> str:
+    """出處代號所屬的說明書出處清單欄位（`OCCURRENCE_LISTS`）。"""
+    try:
+        return OCCURRENCE_LISTS[code]
+    except KeyError:
+        raise ValueError(f"出處代號 {code} 不在 OCCURRENCE_LISTS，無法自動分組") from None
 
 
 @dataclass(frozen=True)
@@ -411,6 +442,16 @@ STANDARD_FIELDS: dict[str, str] = {
 }
 # 受託機構名稱、地址、負責人的其他出處（Issue #305）：BBVA 範本有、Natixis 有名稱（Issue #318），其他上手一起交出 absent（`absent_all`）
 DISTRIBUTOR_OTHERS = ("distributor_names_others", "distributor_addresses_others", "chairman_others")
+
+# 「範本可無」的欄位 → 說明書 parser 沒交出時補的 absent 說明（Issue #487）：`parsers.fields_builder` 收尾時補上；
+# 說法不同的上手自己先交出 absent。其他沒交出的欄位仍是 `not_provided`（缺漏，相關規則轉人工覆核）。
+MAY_BE_ABSENT: dict[str, str] = {
+    "issuer_name_ch1": "第一章只寫中文的發行機構名稱",
+    "distributor_phone_ch4": "第四章受託機構電話",
+    "initial_pricing": "期初定價（收盤價／VWAP）字樣",
+    "issue_price_others": "發行價格的其他出處",
+    **dict.fromkeys(DISTRIBUTOR_OTHERS, "受託機構的其他出處"),
+}
 
 # 保證機構名稱的出處（審查標準 issuer.<上手>.guarantor_name 的鍵）→ 標準欄位、說明的開頭、項目名稱；設定檔與審查標準規則共用這一份
 GUARANTOR_PLACES = {
