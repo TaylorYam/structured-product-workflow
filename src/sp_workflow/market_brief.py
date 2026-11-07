@@ -226,7 +226,9 @@ def _with_trailing(conn: psycopg.Connection, quotes: dict[str, Quote], book: Spl
 
 
 def _usd_rates(conn: psycopg.Connection, currencies: Iterable[str]) -> dict[str, Decimal]:
-    """幣別 → 1 單位折幾 USD：`XXXUSD` 在收盤價表或每日價格日期最新的一筆。"""
+    """幣別 → 1 單位折幾 USD：`XXXUSD` 在收盤價表或每日價格日期最新的一筆。
+
+    要合併每日價格（`workflow.daily_price`），所以不走 `close_prices` 的讀取端（#494 的例外）。"""
     pairs = {f"{c}USD": c for c in currencies}
     if not pairs:
         return {}

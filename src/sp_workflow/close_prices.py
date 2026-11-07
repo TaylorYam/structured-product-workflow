@@ -125,12 +125,7 @@ class HistoryReceipt:
 
 def latest_closes(conn: psycopg.Connection, codes: Iterable[str]) -> dict[str, tuple[dt.date, Decimal]]:
     """每個代碼收盤價表最新的一筆：代碼 → (收盤日, 收盤價)；沒有收盤價的代碼不在裡面。"""
-    rows = conn.execute(
-        "SELECT DISTINCT ON (code) code, close_date, close FROM workflow.close_price"
-        " WHERE code = ANY(%s) ORDER BY code, close_date DESC",
-        (sorted(set(codes)),),
-    ).fetchall()
-    return {code: (day, close) for code, day, close in rows}
+    return {code: rows[0] for code, rows in recent_closes(conn, codes, 1).items()}
 
 
 def recent_closes(conn: psycopg.Connection, codes: Iterable[str], n: int) -> dict[str, list[tuple[dt.date, Decimal]]]:
@@ -171,12 +166,13 @@ class CloseSeries(Mapping[str, Mapping[dt.date, Decimal]]):
 
 def load_closes(conn: psycopg.Connection, codes: Iterable[str], *, since: dt.date | None = None) -> CloseSeries:
     """這些代碼的收盤價（`since` 起；None 是全部），依代碼、日期排序。"""
+    query = "SELECT code, close_date, close FROM workflow.close_price WHERE code = ANY(%s)"
+    params: tuple[Any, ...] = (sorted(set(codes)),)
+    if since is not None:
+        query += " AND close_date >= %s"
+        params += (since,)
     found: dict[str, dict[dt.date, Decimal]] = {}
-    for code, day, close in conn.execute(
-        "SELECT code, close_date, close FROM workflow.close_price WHERE code = ANY(%s)"
-        " AND (%s::date IS NULL OR close_date >= %s) ORDER BY code, close_date",
-        (sorted(set(codes)), since, since),
-    ):
+    for code, day, close in conn.execute(query + " ORDER BY code, close_date", params):
         found.setdefault(code, {})[day] = close
     return CloseSeries(found)
 
