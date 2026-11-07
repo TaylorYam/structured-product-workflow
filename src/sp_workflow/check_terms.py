@@ -651,13 +651,22 @@ def _write(conn: psycopg.Connection, tdcc: str, calc: Calculation) -> None:
             None if differences is None else json.dumps(differences, ensure_ascii=False),
         ),
     )
-    conn.execute("DELETE FROM workflow.underlying_price WHERE tdcc = %s", (tdcc,))
+    # 價格基準日不是核對條件算的（`stock_splits.refresh_basis`）：同一位置同一標的保留，新的或換了標的的由下一次比價推（#491）
+    basis = {
+        (seq, code): day
+        for seq, code, day in conn.execute(
+            "DELETE FROM workflow.underlying_price WHERE tdcc = %s RETURNING seq, code, price_basis_date", (tdcc,)
+        )
+    }
     with conn.cursor() as cur:
         cur.executemany(
             "INSERT INTO workflow.underlying_price"
-            f" (tdcc, seq, code, {PRICE_SQL}, lookback_price)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-            [(tdcc, p.seq, p.code, p.initial, p.strike, p.ki, p.ko, p.lookback) for p in calc.prices],
+            f" (tdcc, seq, code, {PRICE_SQL}, lookback_price, price_basis_date)"
+            " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            [
+                (tdcc, p.seq, p.code, p.initial, p.strike, p.ki, p.ko, p.lookback, basis.get((p.seq, p.code)))
+                for p in calc.prices
+            ],
         )
     if calc.allocation is not None:
         conn.execute("DELETE FROM workflow.branch_allocation WHERE tdcc = %s", (tdcc,))

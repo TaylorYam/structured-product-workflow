@@ -15,6 +15,7 @@ ADR 0024 假設商品的進場價、執行價、下限價、KO 價都是 Strike 
 
 - **每個標的存一個價格基準日**：`workflow.underlying_price.price_basis_date`（資料表版本 0029）。空白是 Strike date；有值表示四個價格已經含到那天生效的拆股。
 - **由程式推算，不人工填**：寫價格的地方（核對條件重算、舊商品補資料、核對寫回）都不知道價格是哪一天的基準（Excel、TS 上沒有），所以比價全部時先依當時的拆股登記重算（`stock_splits.refresh_basis`），有變才寫。推法：拿進場價跟 Strike date 當天（或之前 10 天內最近一天）的收盤價比，候選是「不含」與「含到 Strike date 之後第 1、2…次拆股」，取比例最接近 1 的；最接近的也超出 0.6～1 ÷ 0.6 時留空白。確認不是拆股（1:1）不算。
+- **重算核對條件不動基準日**（#491）：核對條件重算改寫四個價格時，同一位置同一標的保留原本的基準日；新增或換了標的的位置留空白，由下一次比價推。
 - **換算往兩個方向**：收盤日在基準日之後，乘上 (基準日, 收盤日] 生效的拆股；在之前，除以 (收盤日, 基準日] 生效的拆股。
 - **對不起來就待確認**：Strike date 之後有登記拆股的標的，進場價跟 Strike date 的收盤價換到價格基準後比例超出 0.6～1 ÷ 0.6 時，比價狀態待確認，原因寫標的、進場價、收盤日與換算後的值，不比下去。
 - **重新比的已出場商品不限生效日以後出場的**：價格已經調整過的標的，生效日以前的收盤價也要換算，所以新增、刪除拆股登記後，用到這個代碼、Strike date 在生效日之前、事件全部來自比價的已出場商品都重新比（ADR 0024 原本只比最晚事件不早於生效日的）。
@@ -42,6 +43,7 @@ ADR 0024 assumes a product's initial, strike, KI, and KO prices are on the share
 
 - **Each underlying stores a price basis date**: `workflow.underlying_price.price_basis_date` (schema version 0029). Blank means the Strike date; a value means the four prices already include splits effective up to that day.
 - **Inferred by the program, not entered by hand**: the writers of prices (check-terms recalculation, old-product backfill, check write-back) do not know the basis (the Excel and the TS do not say), so observing everything first recomputes it from the current split registry (`stock_splits.refresh_basis`), writing only changes. The rule: compare the initial price with the close on the Strike date (or the latest within the 10 days before), with candidates "none" and "up to the 1st, 2nd, … split after the Strike date", taking the ratio closest to 1; when even the closest is outside 0.6 to 1 ÷ 0.6 the date stays blank. "Not a split" (1:1) entries do not count.
+- **Recalculating check terms leaves the basis date alone** (#491): when the recalculation rewrites the four prices, an underlying at the same position with the same code keeps its basis date; a new position or a changed code starts blank and the next observation infers it.
 - **Conversion works both ways**: a close after the basis date is multiplied by the splits effective in (basis, close day]; a close before it is divided by those effective in (close day, basis].
 - **A mismatch needs confirmation**: for an underlying with a registered split after the Strike date, when the initial price and the Strike-date close converted to the price basis differ by a ratio outside 0.6 to 1 ÷ 0.6, the observation status is 待確認 with the underlying, initial price, close day, and converted value, and observation stops.
 - **Re-observed exits are no longer limited to exits on or after the effective date**: for adjusted prices, closes before the effective date are converted too, so after adding or deleting an entry every exited product using the code, with a Strike date before the effective date and events all from observation, is observed again (ADR 0024 only took those whose latest event was not before the effective date).
