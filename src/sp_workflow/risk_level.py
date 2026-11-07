@@ -361,7 +361,7 @@ def recalculate_risk(conn: psycopg.Connection, found: Sequence[Stored], config: 
     assessed = _assess_all(conn, found, config)
     for tdcc, risk in assessed.items():
         if stored.get(tdcc) != risk:
-            _write(conn, tdcc, risk)
+            write_risk_level(conn, tdcc, risk)
     return assessed
 
 
@@ -376,7 +376,7 @@ def fill_missing_locked(conn: psycopg.Connection, config: ImportConfig, tdccs: S
     have = {t for (t,) in conn.execute("SELECT tdcc FROM workflow.risk_level WHERE tdcc = ANY(%s)", (candidates,))}
     missing = [tdcc for tdcc in candidates if tdcc not in have]
     for tdcc, risk in _assess_all(conn, list(read_many(conn, missing).values()), config).items():
-        _write(conn, tdcc, risk, overwrite=False)
+        write_risk_level(conn, tdcc, risk, overwrite=False)
     return len(missing)
 
 
@@ -447,8 +447,8 @@ def _volatilities(
     }
 
 
-def _write(conn: psycopg.Connection, tdcc: str, risk: RiskLevel, *, overwrite: bool = True) -> None:
-    """寫一檔；`overwrite` 是 False 時已經有的不動（補已鎖住的商品）。"""
+def write_risk_level(conn: psycopg.Connection, tdcc: str, risk: RiskLevel, *, overwrite: bool = True) -> None:
+    """寫一檔的風險等級；`overwrite` 是 False 時已經有的不動（補已鎖住的商品）。"""
     detail = None if risk.detail is None else json.dumps(_detail_json(risk.detail), ensure_ascii=False)
     conflict = (
         " ON CONFLICT (tdcc) DO UPDATE SET status = EXCLUDED.status, risk_level = EXCLUDED.risk_level,"

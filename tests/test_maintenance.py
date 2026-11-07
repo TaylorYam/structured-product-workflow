@@ -15,9 +15,17 @@ from sp_workflow.check_terms import DONE, TO_CONFIRM, recalculate
 from sp_workflow.daily_import import import_daily
 from sp_workflow.order_terms import TDCC_FIELD
 from sp_workflow.product_record import FIELDS, REQUIRED
-from sp_workflow.product_terms import _MISSING_NOTE, TermsError, missing_products, problems, write, write_batch
+from sp_workflow.product_terms import (
+    _MISSING_NOTE,
+    TermsError,
+    drafts_from,
+    missing_products,
+    problems,
+    write,
+    write_batch,
+)
 from sp_workflow.status import ImportResult, OrderReview, ProductSource
-from sp_workflow.window_actions import _drafts, open_product
+from sp_workflow.window_actions import open_product
 
 UF_215 = {"Upfront / NotePrice (%)": Decimal("97.85")}  # UF 2.15，和 db_synth 的交易列一樣
 C = "029199990003"  # 只有交易明細（BARC）
@@ -113,7 +121,7 @@ def test_a_new_product_needs_a_known_issuer() -> None:
 
 
 def import_order(pg, tdcc: str = A, **changes) -> None:
-    receipt = write_batch(pg, _drafts([order_row(tdcc, {**UF_215, **changes})], CONFIG, pg), CONFIG, user="tester")
+    receipt = write_batch(pg, drafts_from([order_row(tdcc, {**UF_215, **changes})], CONFIG, pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
 
 
@@ -439,7 +447,7 @@ def test_the_order_sheet_import_takes_over_a_manual_product(pg, tmp_path) -> Non
     draft.values["Coupon p.a. (%)"] = Decimal(11)
     write(pg, draft, CONFIG, user="operator1")
 
-    receipt = write_batch(pg, _drafts([order_row(C, UF_215)], CONFIG, pg), CONFIG, user="tester")
+    receipt = write_batch(pg, drafts_from([order_row(C, UF_215)], CONFIG, pg), CONFIG, user="tester")
 
     assert receipt.lines[0].result == ImportResult.OVERWRITTEN
     assert receipt.lines[0].detail.startswith("人工維護建立的商品改由起單資料匯入接手")

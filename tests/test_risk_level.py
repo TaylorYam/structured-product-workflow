@@ -15,7 +15,7 @@ from order_synth import CONFIG, A, open_terms, order_row
 from sp_workflow.check_terms import WAIT_TRADES, recalculate
 from sp_workflow.credit_ratings import FITCH, GUARANTOR, ISSUER, MOODYS, SP, Entity, Rating, RatingRows
 from sp_workflow.daily_import import import_daily
-from sp_workflow.product_terms import load_risk_underlyings, write, write_batch
+from sp_workflow.product_terms import drafts_from, load_risk_underlyings, write, write_batch
 from sp_workflow.risk_level import (
     BACKFILLED,
     DONE,
@@ -34,7 +34,6 @@ from sp_workflow.risk_level import (
     underlying_key,
     volatility_score,
 )
-from sp_workflow.window_actions import _drafts
 
 FIRST = dt.date(1900, 1, 1)
 TRADE = dt.date(2026, 9, 4)  # 回填期間（< 2026-10-30）
@@ -445,7 +444,7 @@ def import_prices(pg, tmp_path, day: dt.date, prices, *, trades=()) -> None:
 
 def import_order(pg, tdcc=A, **changes) -> None:
     values = {"Upfront / NotePrice (%)": Decimal("97.85"), **changes}
-    receipt = write_batch(pg, _drafts([order_row(tdcc, values)], CONFIG, pg), CONFIG, user="tester")
+    receipt = write_batch(pg, drafts_from([order_row(tdcc, values)], CONFIG, pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
 
 

@@ -106,6 +106,7 @@ from sp_workflow.product_terms import (
     Receipt,
     TermsError,
     draft_from,
+    drafts_from,
     load_import_config,
     missing_products,
     write,
@@ -453,24 +454,15 @@ def read_order_sheet(settings: ConnectionSettings | None, text: str, sheet: Path
     config = load_import_config(paths)
     rows = collect_orders(text, sheet, config.issuer_prefixes, config.calendar)
     if settings is None:
-        return ReadResult(rows, _drafts(rows, config), config, "沒有登入資料庫，沒有帶入資料庫的值")
+        return ReadResult(rows, drafts_from(rows, config), config, "沒有登入資料庫，沒有帶入資料庫的值")
     try:
         with connect(settings) as conn:
             risks = risk_levels(conn, [row.tdcc for row in rows if row.found])
-            return ReadResult(rows, _drafts(rows, config, conn), config, risks=risks)
+            return ReadResult(rows, drafts_from(rows, config, conn), config, risks=risks)
     except DatabaseError as exc:
         note = f"資料庫沒有連上，沒有帶入資料庫的值（{exc}）"
         login = None if isinstance(exc, SchemaOutdatedError) else exc  # 版本不對不是登入問題
-        return ReadResult(rows, _drafts(rows, config), config, note, login)
-
-
-def _drafts(rows: Sequence[OrderRow], config: ImportConfig, conn: psycopg.Connection | None = None) -> list[Draft]:
-    """找到的每一檔轉成確認資料；有連線時帶入資料庫的值與鎖住狀態。找不到的列沒有確認資料，畫面直接顯示讀取的問題。"""
-    return [
-        draft_from(row, None if conn is None else read(conn, row.tdcc), config, checked=conn is not None)
-        for row in rows
-        if row.found
-    ]
+        return ReadResult(rows, drafts_from(rows, config), config, note, login)
 
 
 def import_order_sheet(

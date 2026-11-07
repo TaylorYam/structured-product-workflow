@@ -18,9 +18,10 @@ from sp_workflow.documents import DocKind
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.order_terms import OrderRow
 from sp_workflow.preparation import PREPARED, SKIPPED, PreparedDocument, PrepareReceipt, ProductOutcome
+from sp_workflow.product_terms import drafts_from
 from sp_workflow.tabs import recalc
 from sp_workflow.tabs.base import DatabaseLogin
-from sp_workflow.window_actions import PrepareResult, ReadResult, _drafts
+from sp_workflow.window_actions import PrepareResult, ReadResult
 
 
 def texts(widget: tk.Misc, kind: type[tk.Misc]) -> list[str]:
@@ -126,7 +127,7 @@ def prepared_result(batch: Path) -> PrepareResult:
 
 def read_result(*rows: OrderRow) -> ReadResult:
     """讀完起單建檔的結果（沒有連資料庫）。"""
-    return ReadResult(rows, _drafts(rows, CONFIG), CONFIG)
+    return ReadResult(rows, drafts_from(rows, CONFIG), CONFIG)
 
 
 def type_into(editor, name: str, text: str) -> None:

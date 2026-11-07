@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from decimal import Decimal
 from pathlib import Path
 
 import openpyxl
@@ -11,6 +12,8 @@ import openpyxl
 from fcn_checker.products import product_name
 from sp_workflow import daily_import
 from sp_workflow.daily_import import PRICE_CSV_HEADERS, PRICE_HEADERS, TRADE_HEADERS
+from sp_workflow.product_record import UnderlyingPrice
+from sp_workflow.underlying_prices import add_prices
 
 PRICE_DATE = dt.datetime(2026, 10, 16)  # 虛構的取價日：交易日 2026-10-15 的下一份股價檔
 
@@ -236,6 +239,46 @@ def step(pg, tdcc: str, name: str, at: dt.datetime) -> None:
         "INSERT INTO workflow.step_record (tdcc, step, recorded_at, recorded_by, result) VALUES (%s, %s, %s, 'tester', '')",
         (tdcc, name, at),
     )
+
+
+# ---------------------------------------------------------------- 可以比價的商品（#497）
+
+
+def seed_observable(
+    pg,
+    tdcc: str,
+    prices: Sequence[UnderlyingPrice],
+    *,
+    autocall: Mapping[int, dt.date | None] | None = None,
+    status: str = "完成",
+    reason: str | None = None,
+) -> None:
+    """商品條件已在資料庫的一檔，補上比價、曝險與核對讀資料庫要的其他表：核對條件（`status`）、標的價格、比價日
+    （第幾個 → 日期，空白的也寫）。
+
+    標的價格走正式的寫法（`underlying_prices.add_prices`）；核對條件與比價日由測試指定，不真的算，直接寫，只在這裡寫。
+    收盤價另用 `seed_closes`。
+    """
+    check_terms(pg, tdcc, status, reason)
+    with pg.transaction():
+        add_prices(pg, tdcc, prices)
+    for slot, value in (autocall or {}).items():
+        pg.execute("INSERT INTO workflow.autocall_date (tdcc, slot, value) VALUES (%s, %s, %s)", (tdcc, slot, value))
+
+
+def seed_closes(pg, closes: Mapping[str, Mapping[dt.date, Decimal | str | int]]) -> None:
+    """收盤價表：代碼 → {收盤日: 收盤價}，記在一筆虛構的歷史收盤價匯入下；同一天同一代碼已經有的改成新的值。"""
+    (import_id,) = pg.execute(
+        "INSERT INTO workflow.close_price_import (source, file_name, file_sha256, imported_by, summary)"
+        " VALUES ('歷史收盤價', 'HP.xlsx', 'x', 'tester', '{}') RETURNING import_id"
+    ).fetchone()
+    for code, days in closes.items():
+        for day, close in days.items():
+            pg.execute(
+                "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES (%s, %s, %s, %s)"
+                " ON CONFLICT (close_date, code) DO UPDATE SET close = EXCLUDED.close",
+                (day, code, close, import_id),
+            )
 
 
 def seed_waiting_for_mail(pg, tdccs: Sequence[str]) -> None:

@@ -17,6 +17,7 @@ import pytest
 import barc_synth
 import hsbc_synth
 from barc_synth import SYNTH_ISIN, build_pdf
+from db_synth import seed_observable
 from fcn_checker.batch import Category, check_batch, failed_batch, preview_batch
 from fcn_checker.condition_source import NO_CONDITIONS, ConditionSource
 from fcn_checker.config import RISK_LEVEL_PENDING
@@ -31,8 +32,8 @@ from fcn_checker.schema import CheckStatus
 from harness import CONFIG, cli_root, with_iis
 from reference_synth import REFERENCE_HEADERS, Ratings, build_reference_sheet, issuer_value, price, reference_row
 from sp_workflow.check_source import NO_RESULT_FILE, WorkflowDatabase, conditions, write_back
-from sp_workflow.risk_level import BACKFILLED, DONE, PENDING, RiskDetail, RiskLevel
-from sp_workflow.risk_level import _write as write_risk  # 直接寫存好的風險等級（算法另有 tests/test_risk_level.py）
+from sp_workflow.product_record import UnderlyingPrice
+from sp_workflow.risk_level import BACKFILLED, DONE, PENDING, RiskDetail, RiskLevel, write_risk_level
 
 NOW = dt.datetime(2030, 2, 3, 4, 5, 6)
 FMT = CONFIG.reference_format
@@ -61,7 +62,7 @@ def seed_risk(pg, tdcc: str, risk: str | None) -> None:
         found = RiskLevel(BACKFILLED, "RR4", "缺 ZZA UN 的 200 日波動率")
     else:
         found = RiskLevel(DONE, risk, total=RISK_DETAIL.total, detail=RISK_DETAIL)
-    write_risk(pg, tdcc, found)
+    write_risk_level(pg, tdcc, found)
 
 
 def seed(
@@ -112,18 +113,21 @@ def seed(
         f"INSERT INTO workflow.product ({', '.join(product)}) VALUES ({', '.join(['%s'] * len(product))})",
         tuple(product.values()),
     )
-    pg.execute(
-        "INSERT INTO workflow.check_terms (tdcc, status, reason) VALUES (%s, %s, %s)",
-        (spec.product_code, status, reason),
-    )
     vwap = pricing == "VWAP"
-    for i, u in enumerate(spec.underlyings, 1):
-        prices = (None,) * 4 if vwap else (u.initial, price(u.initial, spec.strike), None, price(u.initial, spec.ko))
-        pg.execute(
-            "INSERT INTO workflow.underlying_price (tdcc, seq, code, initial_price, strike_price, ki_price, ko_price)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (spec.product_code, i, u.ticker, *prices),
-        )
+    seed_observable(
+        pg,
+        spec.product_code,
+        [
+            UnderlyingPrice(i, u.ticker)
+            if vwap
+            else UnderlyingPrice(
+                i, u.ticker, initial=u.initial, strike=price(u.initial, spec.strike), ko=price(u.initial, spec.ko)
+            )
+            for i, u in enumerate(spec.underlyings, 1)
+        ],
+        status=status,
+        reason=reason,
+    )
     pg.execute(
         "INSERT INTO workflow.branch_allocation (tdcc, seq, branch, amount) VALUES (%s, 1, '台北', 1000000)",
         (spec.product_code,),

@@ -12,7 +12,7 @@ from order_synth import CONFIG, MAILBOX, TRADE, A, maintenance_trades, open_term
 from sp_workflow.check_terms import DONE, recalculate
 from sp_workflow.daily_import import DIFFERENT, UNCHANGED, import_daily, trade_value
 from sp_workflow.mailbox import Mailbox
-from sp_workflow.product_terms import TermsError, write, write_batch
+from sp_workflow.product_terms import TermsError, drafts_from, write, write_batch
 from sp_workflow.status import OrderReview
 from sp_workflow.trade_rows import (
     CANCEL_NOTE,
@@ -23,7 +23,6 @@ from sp_workflow.trade_rows import (
     trade_problems,
     unmatched_names,
 )
-from sp_workflow.window_actions import _drafts
 
 
 def trades(*rows: dict[str, object], mailbox: Mailbox = MAILBOX) -> TradeRowsDraft:
@@ -154,7 +153,7 @@ def import_product(pg, tmp_path, *, locked: bool = False) -> None:
     """A 有兩列交易明細、股價與起單資料，核對條件算完；`locked` 時再鎖住（核對通過）。"""
     seed_mailbox(pg)
     import_trades(pg, tmp_path, daily_rows())
-    receipt = write_batch(pg, _drafts([order_row(A, UF_215)], CONFIG, pg), CONFIG, user="tester")
+    receipt = write_batch(pg, drafts_from([order_row(A, UF_215)], CONFIG, pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
     assert recalculate(pg, CONFIG).line_of(A).status == DONE
     if locked:

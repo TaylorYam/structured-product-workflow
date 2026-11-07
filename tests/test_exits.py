@@ -11,7 +11,7 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from db_synth import inventory, seed_products
+from db_synth import inventory, seed_closes, seed_products
 from order_synth import CONFIG
 from sp_workflow.close_prices import latest_close_date
 from sp_workflow.exits import EXPORT_COLUMNS, ExitRow, Waiting, export_exits, export_name, load_exits
@@ -35,14 +35,7 @@ def event(
 
 
 def close(pg, day: dt.date) -> None:
-    (import_id,) = pg.execute(
-        "INSERT INTO workflow.close_price_import (source, file_name, file_sha256, imported_by, summary)"
-        " VALUES ('歷史收盤價', 'HP.xlsx', 'x', 'tester', '{}') RETURNING import_id"
-    ).fetchone()
-    pg.execute(
-        "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES (%s, 'AAA UW', 10, %s)",
-        (day, import_id),
-    )
+    seed_closes(pg, {"AAA UW": {day: 10}})
 
 
 @pytest.mark.db

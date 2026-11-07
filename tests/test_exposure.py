@@ -9,7 +9,7 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from db_synth import inventory, seed_products
+from db_synth import inventory, seed_closes, seed_observable, seed_products
 from sp_workflow.exposure import (
     DELIVER,
     FIXED,
@@ -31,6 +31,7 @@ from sp_workflow.exposure import (
     load_choices,
 )
 from sp_workflow.lifecycle import KO, AutoEvent, replace_auto_events
+from sp_workflow.product_record import UnderlyingPrice
 from sp_workflow.tabs.base import one_month_later
 
 D = Decimal
@@ -205,13 +206,15 @@ def seed(pg, tdcc: str, codes: list[str], *, barrier: str = "NONE", final=dt.dat
         " WHERE tdcc = %s",
         (barrier, final, tdcc),
     )
-    pg.execute("INSERT INTO workflow.check_terms (tdcc, status) VALUES (%s, '完成')", (tdcc,))
-    for seq, code in enumerate(codes, start=1):
-        pg.execute(
-            "INSERT INTO workflow.underlying_price (tdcc, seq, code, initial_price, strike_price, ki_price, ko_price)"
-            " VALUES (%s, %s, %s, 100, 80, %s, 100)",
-            (tdcc, seq, code, None if barrier == "NONE" else 65),
-        )
+    ki = None if barrier == "NONE" else Decimal(65)
+    seed_observable(
+        pg,
+        tdcc,
+        [
+            UnderlyingPrice(seq, code, initial=Decimal(100), strike=Decimal(80), ki=ki, ko=Decimal(100))
+            for seq, code in enumerate(codes, 1)
+        ],
+    )
 
 
 def trades(pg, tdcc: str, rows: list[tuple[str, str, int]]) -> None:
@@ -228,16 +231,7 @@ def trades(pg, tdcc: str, rows: list[tuple[str, str, int]]) -> None:
 
 
 def closes(pg, prices: dict[str, str]) -> None:
-    (import_id,) = pg.execute(
-        "INSERT INTO workflow.close_price_import (source, file_name, file_sha256, imported_by, summary)"
-        " VALUES ('歷史收盤價', 'HP.xlsx', 'x', 'tester', '{}') RETURNING import_id"
-    ).fetchone()
-    for code, close in prices.items():
-        for day, value in ((DAY - dt.timedelta(days=1), "100"), (DAY, close)):
-            pg.execute(
-                "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES (%s, %s, %s, %s)",
-                (day, code, value, import_id),
-            )
+    seed_closes(pg, {code: {DAY - dt.timedelta(days=1): "100", DAY: close} for code, close in prices.items()})
 
 
 def sheet_rows(path: Path, title: str) -> list[dict[str, object]]:
