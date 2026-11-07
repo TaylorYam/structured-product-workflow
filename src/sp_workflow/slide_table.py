@@ -4,10 +4,10 @@
 - 投影片（`slide_book`、`write_slide`，盤勢速報）：A1 標題、A3 起一塊連續的表格，深藍表頭白字（可用 \\n 換兩行）、
   細框線、全部置中、關格線、不合併儲存格；複製到 PPT 不用再調整（#467、#469）。字型（#473）：活頁簿預設
   （Normal 樣式）是微軟正黑體，格子用 Calibri 覆蓋；Calibri 沒有中文字，Excel 用微軟正黑體顯示中文——英文、數字
-  是 Calibri，中文是微軟正黑體。這條規則只寫在這裡。
+  是 Calibri，中文是微軟正黑體。這兩份報表的字型規則只寫在這裡（商品總表、彙整分析有自己的版面，不用這裡）。
 - 清單（`list_book`，曝險表的「全部商品」）：`file_tools.table_book` 的版面（第 1 列粗體表頭、凍結第一列、
-  自動篩選），表頭照各欄的底色（#360）、全部置中、文字格存成文字。曝險表要不要改成投影片版面待使用者決定
-  （路線圖 500 決策記錄 #483），改的話只要換用投影片版面。
+  自動篩選），表頭照各欄的底色（#360）、全部置中、文字格存成文字。曝險表要不要改成投影片版面還沒定（#483 留言），
+  改的話只要換用投影片版面。
 報表各自的上色（跌破、合計、熱圖、昨收線）由呼叫端在寫好的格子上加。
 """
 
@@ -32,7 +32,7 @@ THIN = Side(style="thin", color="BFBFBF")  # 投影片表格的細框線
 HEADER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)  # 表頭可用 \n 換兩行
 ROW_HEIGHT = 20  # 點；20 列約 5.6 吋，放得進 16:9 投影片
 TITLE_ROW_HEIGHT = 28
-TOP = 3  # 投影片表格的表頭列
+HEADER_ROW = 3  # 投影片表格的表頭列
 
 
 def font(*, size: int = 11, bold: bool = False, color: str | None = None) -> Font:
@@ -87,11 +87,11 @@ def write_slide(sheet: Worksheet, title: str, columns: Sequence[Column], rows: S
         sheet.column_dimensions[get_column_letter(i)].width = column.width
     border = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
     for c, column in enumerate(columns, start=1):
-        cell = sheet.cell(TOP, c, column.header)
+        cell = sheet.cell(HEADER_ROW, c, column.header)
         cell.fill, cell.font, cell.alignment, cell.border = HEADER_FILL, HEADER_FONT, HEADER_ALIGN, border
     lines = max(column.header.count("\n") + 1 for column in columns)
-    sheet.row_dimensions[TOP].height = ROW_HEIGHT + 4 + 11 * (lines - 1)
-    for r, values in enumerate(rows, start=TOP + 1):
+    sheet.row_dimensions[HEADER_ROW].height = ROW_HEIGHT + 4 + 11 * (lines - 1)
+    for r, values in enumerate(rows, start=HEADER_ROW + 1):
         sheet.row_dimensions[r].height = ROW_HEIGHT
         for c, (value, column) in enumerate(zip(values, columns, strict=True), start=1):
             cell = sheet.cell(r, c, excel_value(value))
@@ -100,7 +100,7 @@ def write_slide(sheet: Worksheet, title: str, columns: Sequence[Column], rows: S
                 cell.data_type = "s"
             elif column.number_format and value is not None:
                 cell.number_format = column.number_format
-    return TOP + 1
+    return HEADER_ROW + 1
 
 
 # ---------------------------------------------------------------- 清單

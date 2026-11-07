@@ -323,14 +323,14 @@ _COLUMNS = (
     Column("狀態", 8.7, fill=BASIC_FILL),
     Column("TDCC", 14.1, fill=BASIC_FILL),
     Column("剩餘天數", 13.3, fill=BASIC_FILL),
-    Column("最終比價日", 15.9, DATE, BASIC_FILL),
+    Column("最終比價日", 15.9, DATE, fill=BASIC_FILL),
     Column("商品", 10.4, fill=BASIC_FILL),
     Column("最差表現標的", 18.4, fill=PERFORMANCE_FILL),
-    Column("最差表現", 13.3, INDEX, PERFORMANCE_FILL),
-    Column("K%", 7.4, PERCENT, PERFORMANCE_FILL),
-    Column("KI%", 8.3, PERCENT, PERFORMANCE_FILL),
+    Column("最差表現", 13.3, INDEX, fill=PERFORMANCE_FILL),
+    Column("K%", 7.4, PERCENT, fill=PERFORMANCE_FILL),
+    Column("KI%", 8.3, PERCENT, fill=PERFORMANCE_FILL),
     Column("KI種類", 11, fill=PERFORMANCE_FILL),
-    Column("面額", 11, MONEY, BASIC_FILL),  # 範本沒設寬度，同面額N
+    Column("面額", 11, MONEY, fill=BASIC_FILL),  # 範本沒設寬度，同面額N
     Column("幣別", 8.6, fill=BASIC_FILL),
     Column("發行機構", 13.3, fill=BASIC_FILL),
 )
@@ -342,7 +342,7 @@ def _holding_columns(n: int) -> tuple[Column, ...]:
     return (
         Column(f"分公司_{n}", 12, fill=HOLDING_FILL),
         Column(f"FC_{n}", 12, fill=HOLDING_FILL),
-        Column(f"面額_{n}", 11, MONEY, HOLDING_FILL),
+        Column(f"面額_{n}", 11, MONEY, fill=HOLDING_FILL),
     )
 
 
