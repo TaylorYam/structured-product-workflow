@@ -8,6 +8,8 @@
 只有 PB 承作時「不需寄送」；每日匯入略過的不支援商品標「不支援的商品類型」。符合的一檔建一封草稿：收件人是 FC1、FC2，副本是信箱的固定副本（已在收件人的不重複）。
 風險等級寫自算風險等級（#239、ADR 0023，回填的是 RR4）；待算或還沒算過時寫「待確認」，照樣建草稿，結果清單的原因寫出來，
 請寄出前補上（不自動寫 RR4，以免 2026-10-30 以後交易的商品寫錯等級）。
+信件內文是寄信格式範本（Excel，未設定時用內建範本，#279）填好值後貼上的三張表；信件表每一欄的表頭與取值只在
+`SUMMARY_COLUMNS`／`TERMS_COLUMNS` 宣告一次，沒有範本時報錯、不退回 HTML 內文（#499）。
 只建草稿、不寄出；同一檔重跑會再建一封；某一檔出錯只影響那一檔。結果寫成 `寄信草稿清單_<日期時間>.xlsx`，
 並記錄用的是哪一次每日匯入。商品資料夾只讀。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
@@ -16,12 +18,9 @@
 from __future__ import annotations
 
 import datetime as dt
-import html
-import math
 import shutil
 import tempfile
 import time
-import unicodedata
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
@@ -57,32 +56,6 @@ FAILED = "建立失敗"
 SUBJECT_FORMAT = "[中文TS/IIS] [{product}] - {tdcc}"  # 例：[中文TS/IIS] [FCN] - 029199990001
 BODY_INTRO = "FYI"
 RISK_TO_CONFIRM = "待確認"  # 風險等級待算或還沒算過時草稿上寫這個（#239）
-NAVY = "#002060"
-GREEN = "#00AB8E"
-ORANGE = "#C55A11"  # 格式檔分公司表頭：佈景主題「輔色 2、較深 25%」
-ROW_FILL = "#F0F0F0"
-DATE_FORMAT = "%m-%d-%y"
-WRAP_FROM_TEXT = "BBG Code 4"  # 使用者指定：比這欄寬的欄位才換行，每格最多兩行
-PX_PER_UNIT = 7.5  # Calibri 11pt 粗體每個半形字的約略寬度（全形算 2 個）
-FONT_FAMILY = 'font-family: Calibri; mso-fareast-font-family: "Microsoft JhengHei";'
-TEMPLATE_COLUMN_UNITS = (
-    14.140625,
-    11.5703125,
-    13.0,
-    13.0,
-    12.0,
-    12.0,
-    13.0,
-    13.0,
-    8.5703125,
-    16.140625,
-    9.28515625,
-    10.42578125,
-    10.0,
-    7.7109375,
-    13.0,
-    13.0,
-)
 
 LIST_COLUMNS = (("TDCC", 15), ("狀態", 10), ("收件人", 40), ("副本", 50), ("原因", 80))
 
@@ -91,13 +64,16 @@ class MailDraftError(OperatorError):
     """整批無法建立草稿（資料庫、信箱或路徑有問題）；訊息是給作業人員看的中文。"""
 
 
+class MailTemplateError(MailDraftError):
+    """沒有寄信格式範本可用（沒傳範本，或內建範本遺失）；不退回 HTML 內文（#499）。"""
+
+
 @dataclass(frozen=True)
 class Draft:
     tdcc: str
     to: tuple[str, ...]  # 信箱
     cc: tuple[str, ...]
     subject: str
-    html_body: str
     attachments: tuple[Path, ...]
     template_path: Path | None = None
     template_product: dict[str, Any] | None = None
@@ -131,6 +107,7 @@ BUNDLED_MAIL_TEMPLATE = Path(__file__).resolve().parent / "assets" / "TS IIS信�
 
 
 def mail_template_from_env(env_path: Path) -> Path | None:
+    """寄信格式範本：`.env` 的 SPW_MAIL_TEMPLATE；#279 起未設定時回內建範本 `BUNDLED_MAIL_TEMPLATE`（不是 None）。"""
     values = load_env_file(env_path)  # 設定檔有問題時丟 `DatabaseError`
     raw = values.get(MAIL_TEMPLATE_ENV)
     # 未設定時使用專案內建範本；設定了路徑則以該檔為準
@@ -254,7 +231,6 @@ def _draft_one(
         to=tuple(p.email for p in to),
         cc=tuple(p.email for p in cc),
         subject=SUBJECT_FORMAT.format(product=product["product"], tdcc=tdcc),
-        html_body=render_body(tdcc, product, branches, level),
         attachments=attachments,
         template_path=template_path,
         template_product=product,
@@ -308,131 +284,78 @@ def _attachments(tdcc: str, folders: Sequence[Path], unreadable: Sequence[Path])
     return files, ""
 
 
-# ---------- 信件內容 ----------
+# ---------- 信件表 ----------
 
 
-def render_body(tdcc: str, product: dict[str, Any], branches: Sequence[str], risk_level: str) -> str:
-    """`FYI` 加三個表格（版面與配色依使用者提供的寄送格式）；`risk_level` 是草稿上的風險等級（`risk_text`）。"""
-    p = product
-    terms_1 = [
-        ("TDCC", tdcc),
-        ("Trade date", _date(p["trade_date"])),
-        ("Issue date", _date(p["issue_date"])),
-        ("Final valuation date", _date(p["final_valuation_date"])),
-        ("Maturity date", _date(p["maturity_date"])),
-        ("期初價格", p["initial_pricing"] or ""),
-        ("風險等級", risk_level),
-    ]
-    terms_2 = [
-        ("Product", p["product"]),
-        ("Currency", p["currency"]),
-        ("Guaranteed Periods (m)", str(p["non_call_months"])),
-        *((f"BBG Code {i}", p[f"underlying_{i}"] or "") for i in range(1, 6)),
-        ("Strike (%)", _pct(p["strike_pct"])),
-        ("KO Type", p["ko_type"]),
-        ("KO Barrier (%)", _pct(p["ko_pct"]) if p["ko_pct"] is not None else "-"),  # BEN 預設沒有 KO（#406）
-        ("Coupon p.a. (%)", _pct(p["coupon_pct"])),
-        ("Upfront / NotePrice (%)", _pct(invert_upfront(p["upfront_pct"]))),
-        ("Tenor (m)", str(p["tenor_months"])),
-        ("Barrier Type", p["barrier_type"]),
-        ("KI Barrier (%)", _pct(p["ki_pct"]) if p["ki_pct"] is not None else "-"),
-    ]
-    branch_cells = [(f"分公司 {i}", b) for i, b in enumerate(branches, 1)]
-    parts = [
-        f"<p>{BODY_INTRO}</p>",
-        _table(terms_1, NAVY, TEMPLATE_COLUMN_UNITS[: len(terms_1)]),
-        _table(terms_2, GREEN, TEMPLATE_COLUMN_UNITS[: len(terms_2)]),
-    ]
-    if branch_cells:
-        parts.append(_table(branch_cells, ORANGE, TEMPLATE_COLUMN_UNITS[: len(branch_cells)]))
-    return f'<html><body style="{FONT_FAMILY} font-size: 11pt;">' + "<br>".join(parts) + "</body></html>"
+@dataclass(frozen=True)
+class MailRow:
+    """一封信的信件表要用的資料：TDCC、資料庫的商品條件與草稿上的風險等級（`risk_text`）。"""
+
+    tdcc: str
+    product: dict[str, Any]
+    risk_level: str
 
 
-def _table(cells: Sequence[tuple[str, str]], header_color: str, template_units: Sequence[float]) -> str:
-    """一列表頭、一列資料。比「BBG Code 4」寬的欄位換行，欄寬取能讓表頭與內容都在兩行內的最小寬度。
+@dataclass(frozen=True)
+class MailColumn:
+    """信件表的一欄：範本上印好的表頭（對照用）與這封信要貼的值。"""
 
-    Outlook 不支援 max-width，所以用 width 屬性加 white-space: normal；不需要換行的欄維持一行。
-    """
-    border = "padding: 2px 6px;"
-    head, body = [], []
-    widths = []
-    for index, (k, v) in enumerate(cells):
-        required = _wrap_width(k, v) or 0
-        if required == 0:
-            required = math.ceil(_text_units(k) * PX_PER_UNIT + 12)
-        px = max(math.ceil(template_units[index] * PX_PER_UNIT), math.ceil(required))
-        widths.append(px)
-        width = f' width="{px}"'
-        wrap = f"width: {px}px; white-space: normal;"
-        cell_style = f"{border} {wrap} {FONT_FAMILY} text-align: center; vertical-align: middle;"
-        head.append(
-            f'<th bgcolor="{header_color}" color="#FFFFFF"{width} '
-            f'style="{cell_style} background: {header_color}; color: #FFFFFF; font-weight: bold;">'
-            f"{_font_html(k, '#FFFFFF')}</th>"
-        )
-        body.append(
-            f'<td bgcolor="{ROW_FILL}"{width} style="{cell_style} background: {ROW_FILL};">{_font_html(v)}</td>'
-        )
-    table_width = sum(widths)
-    return (
-        f'<table border="0" cellpadding="2" cellspacing="0" width="{table_width}" '
-        f'style="border: 0; border-collapse: collapse; table-layout: fixed; width: {table_width}px; '
-        f"mso-table-lspace: 0pt; "
-        f'mso-table-rspace: 0pt; {FONT_FAMILY} text-align: center;">'
-        f"<tr>{''.join(head)}</tr><tr>{''.join(body)}</tr></table>"
-    )
+    header: str
+    value: Callable[[MailRow], object]
 
 
-def _wrap_width(*texts: str) -> int | None:
-    """需要換行時回傳欄寬（px），不需要回傳 None。欄寬至少是「BBG Code 4」，並讓每段文字最多兩行。"""
-    limit = _text_units(WRAP_FROM_TEXT)
-    if max(_text_units(t) for t in texts) <= limit:
-        return None
-    units = max(limit, *(_two_line_units(t) for t in texts))
-    return math.ceil(units * PX_PER_UNIT)
+def _field(name: str) -> Callable[[MailRow], object]:
+    return lambda row: row.product[name]
 
 
-def _two_line_units(text: str) -> int:
-    """在空白處斷成兩行時，較長那行最短是多少；沒有空白就只能一行。"""
-    words = text.split(" ")
-    if len(words) == 1:
-        return _text_units(text)
-    return min(max(_text_units(" ".join(words[:i])), _text_units(" ".join(words[i:]))) for i in range(1, len(words)))
+def _text(name: str) -> Callable[[MailRow], object]:
+    return lambda row: row.product[name] or ""
 
 
-def _font_html(text: str, color: str | None = None) -> str:
-    """Use explicit font tags because Outlook's Word renderer ignores some CSS font fallbacks."""
-    if not text:
-        return ""
-    runs: list[tuple[str, str]] = []
-    current_font = ""
-    current_text = []
-    for char in text:
-        font = "Microsoft JhengHei" if unicodedata.east_asian_width(char) in "WF" else "Calibri"
-        if font != current_font and current_text:
-            runs.append((current_font, "".join(current_text)))
-            current_text = []
-        current_font = font
-        current_text.append(char)
-    runs.append((current_font, "".join(current_text)))
-    color_attr = f' color="{color}"' if color else ""
-    return "".join(
-        f'<font face="{font}"{color_attr}><span style="font-family: {font};">{html.escape(value)}</span></font>'
-        for font, value in runs
-    )
+def _or_dash(name: str) -> Callable[[MailRow], object]:
+    """沒有值寫「-」：BEN 預設沒有 KO（#406）、沒有 KI 的商品沒有 KI Barrier。"""
+    return lambda row: "-" if row.product[name] is None else row.product[name]
 
 
-def _text_units(text: str) -> int:
-    """估計顯示寬度：全形字（中文）算 2，其他算 1。"""
-    return sum(2 if unicodedata.east_asian_width(ch) in "WF" else 1 for ch in text)
+def _date_cell(name: str) -> Callable[[MailRow], object]:
+    return lambda row: _excel_date(row.product[name])
 
 
-def _date(value: dt.date) -> str:
-    return value.strftime(DATE_FORMAT)
+SUMMARY_ROW, TERMS_ROW, BRANCH_ROW = 2, 5, 7  # 範本裡要填的列；表頭在上一列（分公司的表頭也由這裡寫）
+SUMMARY_COLUMNS = (  # 範本 A1:G2
+    MailColumn("TDCC", lambda row: row.tdcc),
+    MailColumn("Trade date", _date_cell("trade_date")),
+    MailColumn("Issue date", _date_cell("issue_date")),
+    MailColumn("Final valuation date", _date_cell("final_valuation_date")),
+    MailColumn("Maturity date", _date_cell("maturity_date")),
+    MailColumn("期初價格", _text("initial_pricing")),
+    MailColumn("風險等級", lambda row: row.risk_level),
+)
+TERMS_COLUMNS = (  # 範本 A4:P5
+    MailColumn("Product", _field("product")),
+    MailColumn("Currency", _field("currency")),
+    MailColumn("Guaranteed Periods (m)", _field("non_call_months")),
+    *(MailColumn(f"BBG Code {i}", _text(f"underlying_{i}")) for i in range(1, 6)),
+    MailColumn("Strike (%)", _field("strike_pct")),
+    MailColumn("KO Type", _field("ko_type")),
+    MailColumn("KO Barrier (%)", _or_dash("ko_pct")),
+    MailColumn("Coupon p.a. (%)", _field("coupon_pct")),
+    MailColumn("Upfront / NotePrice (%)", lambda row: invert_upfront(row.product["upfront_pct"])),
+    MailColumn("Tenor (m)", _field("tenor_months")),
+    MailColumn("Barrier Type", _field("barrier_type")),
+    MailColumn("KI Barrier (%)", _or_dash("ki_pct")),
+)
 
 
-def _pct(value: Decimal) -> str:
-    return f"{value:.2f}"
+def template_values(tdcc: str, product: dict[str, Any], risk_level: str) -> dict[tuple[int, int], object]:
+    """貼進範本的值：(列, 欄) → 值。Decimal 轉 float（COM 不收 Decimal）；日期是當天 UTC 午夜（#411）。"""
+    row = MailRow(tdcc, product, risk_level)
+    values: dict[tuple[int, int], object] = {}
+    for sheet_row, columns in ((SUMMARY_ROW, SUMMARY_COLUMNS), (TERMS_ROW, TERMS_COLUMNS)):
+        for column, spec in enumerate(columns, 1):
+            value = spec.value(row)
+            values[(sheet_row, column)] = float(value) if isinstance(value, Decimal) else value
+    return values
 
 
 # ---------- Outlook ----------
@@ -449,6 +372,7 @@ class OutlookDrafter:
     """用傳統版 Outlook（COM）在執行者的預設信箱建草稿；只呼叫 Save()，不會寄出。"""
 
     def __call__(self, draft: Draft) -> None:
+        template_path = _require_template(draft.template_path)
         import pythoncom
         import win32com.client
 
@@ -461,24 +385,21 @@ class OutlookDrafter:
             mail.To = "; ".join(draft.to)
             mail.CC = "; ".join(draft.cc)
             mail.Subject = draft.subject
-            if draft.template_path is None:
-                mail.HTMLBody = draft.html_body
-            else:
-                if draft.template_product is None:
-                    raise OutlookError("MAIL 草稿缺少 Excel 範本資料")
-                excel, workbook, sheet, temp_dir = self._open_template(
-                    win32com.client,
-                    draft.template_path,
-                    draft.tdcc,
-                    draft.template_product,
-                    draft.template_branches,
-                    draft.risk_level,
-                )
-                inspector = mail.GetInspector
-                inspector.Display()
-                inspector.Activate()
-                time.sleep(1)
-                self._paste_template(sheet, inspector.WordEditor, len(draft.template_branches))
+            if draft.template_product is None:
+                raise OutlookError("MAIL 草稿缺少 Excel 範本資料")
+            excel, workbook, sheet, temp_dir = self._open_template(
+                win32com.client,
+                template_path,
+                draft.tdcc,
+                draft.template_product,
+                draft.template_branches,
+                draft.risk_level,
+            )
+            inspector = mail.GetInspector
+            inspector.Display()
+            inspector.Activate()
+            time.sleep(1)
+            self._paste_template(sheet, inspector.WordEditor, len(draft.template_branches))
             for path in draft.attachments:
                 mail.Attachments.Add(str(path))
             mail.Save()
@@ -515,45 +436,16 @@ class OutlookDrafter:
         workbook = excel.Workbooks.Open(str(temp_path), ReadOnly=False)
         sheet = workbook.Worksheets(1)
         sheet.Columns(5).ColumnWidth = 12.0  # BBG Code 2：比範本略寬，避免表頭擠壓
-        values = {
-            2: _excel_date(product["trade_date"]),
-            3: _excel_date(product["issue_date"]),
-            4: _excel_date(product["final_valuation_date"]),
-            5: _excel_date(product["maturity_date"]),
-            6: product["initial_pricing"] or "",
-            7: risk_level,
-        }
-        sheet.Cells(2, 1).NumberFormat = "@"
-        sheet.Cells(2, 1).Value = str(tdcc)
-        for column, value in values.items():
-            sheet.Cells(2, column).Value = value
-        terms = (
-            product["product"],
-            product["currency"],
-            product["non_call_months"],
-            product["underlying_1"] or "",
-            product["underlying_2"] or "",
-            product["underlying_3"] or "",
-            product["underlying_4"] or "",
-            product["underlying_5"] or "",
-            product["strike_pct"],
-            product["ko_type"],
-            product["ko_pct"] if product["ko_pct"] is not None else "-",
-            product["coupon_pct"],
-            invert_upfront(product["upfront_pct"]),
-            product["tenor_months"],
-            product["barrier_type"],
-            product["ki_pct"] if product["ki_pct"] is not None else "-",
-        )
-        for column, value in enumerate(terms, 1):
-            sheet.Cells(5, column).Value = float(value) if isinstance(value, Decimal) else value
+        sheet.Cells(SUMMARY_ROW, 1).NumberFormat = "@"  # TDCC 當文字，不變成數字
+        for (row, column), value in template_values(tdcc, product, risk_level).items():
+            sheet.Cells(row, column).Value = value
         sheet.Range("A7:P8").ClearContents()
         for column, branch in enumerate(branches, 1):
             if column > 4:
                 letter = get_column_letter(column)
                 sheet.Range("D7:D8").Copy(sheet.Range(f"{letter}7"))
-            sheet.Cells(7, column).Value = f"分公司 {column}"
-            sheet.Cells(8, column).Value = branch
+            sheet.Cells(BRANCH_ROW, column).Value = f"分公司 {column}"
+            sheet.Cells(BRANCH_ROW + 1, column).Value = branch
         workbook.Save()
         return excel, workbook, sheet, temp_dir
 
@@ -562,7 +454,7 @@ class OutlookDrafter:
         selection = word_editor.Application.Selection
         selection.WholeStory()
         selection.Delete()
-        selection.TypeText("FYI")
+        selection.TypeText(BODY_INTRO)
         selection.TypeParagraph()
         selection.TypeParagraph()
         ranges = ("A1:G2", "A4:P5")
@@ -572,6 +464,20 @@ class OutlookDrafter:
             sheet.Range(address).Copy()
             selection.PasteExcelTable(False, False, False)
             selection.TypeParagraph()
+
+
+def _require_template(path: Path | None) -> Path:
+    """沒有範本就停下來（#499）：正式環境 `mail_template_from_env` 一定給路徑，沒有就是設定或安裝有問題。"""
+    if path is None:
+        raise MailTemplateError(
+            f"沒有寄信格式範本，無法建草稿：請在 .env 設定 {MAIL_TEMPLATE_ENV}，"
+            f"或確認內建範本 {BUNDLED_MAIL_TEMPLATE.name} 還在。"
+        )
+    if not path.is_file():
+        raise MailTemplateError(
+            f"寄信格式範本不見了，無法建草稿：{path}。請在 .env 設定 {MAIL_TEMPLATE_ENV}，或重新安裝補回內建範本。"
+        )
+    return path
 
 
 def _excel_date(value: dt.date) -> dt.datetime:

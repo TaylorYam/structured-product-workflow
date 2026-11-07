@@ -16,22 +16,27 @@ from db_synth import inventory, seed_mailbox, seed_products, trade, write_daily
 from sp_workflow import mail_drafts
 from sp_workflow.daily_import import import_daily
 from sp_workflow.mail_drafts import (
+    BUNDLED_MAIL_TEMPLATE,
     DRAFTED,
     FAILED,
     NOT_NEEDED,
     OUTLOOK_FAILURE,
     PENDING,
+    TERMS_COLUMNS,
     Draft,
     MailDraftError,
+    MailTemplateError,
     OutlookDrafter,
     OutlookError,
     create_drafts,
+    template_values,
 )
 from sp_workflow.mailbox import Person
 from sp_workflow.risk_level import DONE, RiskDetail, RiskLevel
 from sp_workflow.risk_level import PENDING as RISK_PENDING
 from sp_workflow.risk_level import _write as write_risk  # 測試直接寫存好的風險等級（算法另有 test_risk_level）
 from synth import snapshot
+from test_mail_excel_dates import sample_template_product
 
 pytestmark = pytest.mark.db
 
@@ -102,6 +107,11 @@ def run(db, root: Path, out: Path, text: str, drafter=None):
     return create_drafts(text, root, out, db, drafter=drafter, now=NOW), drafter
 
 
+def cells(draft: Draft) -> dict[tuple[int, int], object]:
+    """這封草稿貼進寄信格式範本的值：(列, 欄) → 值（第 2 列 A～G、第 5 列 A～P，#499）。"""
+    return template_values(draft.tdcc, draft.template_product, draft.risk_level)
+
+
 def test_ready_product_gets_one_draft_to_its_fcs_with_fixed_cc(db, tmp_path: Path, root: Path, out: Path) -> None:
     load(
         db,
@@ -118,10 +128,10 @@ def test_ready_product_gets_one_draft_to_its_fcs_with_fixed_cc(db, tmp_path: Pat
     assert draft.to == ("amy@example.com", "ben@example.com") and draft.cc == ("pat@example.com",)
     assert draft.subject == f"[中文TS/IIS] [FCN] - {A}"
     assert draft.attachments == (folder / f"{A}_TS.pdf", folder / f"{A}_IIS.pdf")
-    assert draft.html_body.count("<table") == 3 and "<p>FYI</p>" in draft.html_body
+    assert draft.template_product["product"] == "FCN" and draft.template_branches == ("北區", "南區")
 
 
-def test_body_shows_the_terms_in_the_mail_format(db, tmp_path: Path, root: Path, out: Path) -> None:
+def test_mail_table_shows_the_terms(db, tmp_path: Path, root: Path, out: Path) -> None:
     load(db, tmp_path, [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1), ("南區", 2)])])
     risk(db, A, "RR3")
     passed_folder(root, A)
@@ -133,37 +143,20 @@ def test_body_shows_the_terms_in_the_mail_format(db, tmp_path: Path, root: Path,
         and not receipt.outcomes[0].to_confirm
         and drafter.drafts[0].risk_level == "RR3"
     )
-    body = drafter.drafts[0].html_body
-    assert "RR4" not in body, "風險等級用自算的，不再寫死 RR4（#239）"
-    for expected in (
-        "10-15-26",  # Trade date
-        "04-27-27",  # Maturity date
-        "收盤價",
-        "RR3",
-        "AAA UW",
-        "80.00",  # Strike
-        "Daily Memory",
-        "100.00",  # KO Barrier
-        "12.50",  # Coupon
-        "97.85",  # NotePrice = 100 − UF 2.15
-        "EKI",
-        "65.00",  # KI Barrier
-        "分公司",
-        "南區",
-        'font-family: Calibri; mso-fareast-font-family: "Microsoft JhengHei";',
-        '<font face="Calibri"',
-        '<font face="Microsoft JhengHei"',
-        "text-align: center;",
-        'border="0"',
-        'bgcolor="#002060"',
-        'bgcolor="#F0F0F0"',
-        'cellspacing="0"',
-        'mso-fareast-font-family: "Microsoft JhengHei";',
-        "#002060",
-        "#00AB8E",
-        "background: #C55A11; color: #FFFFFF; font-weight: bold;",
-    ):
-        assert expected in body, expected
+    values = cells(drafter.drafts[0])
+    assert "RR4" not in values.values(), "風險等級用自算的，不再寫死 RR4（#239）"
+    assert values[(2, 1)] == A
+    assert values[(2, 2)] == dt.datetime(2026, 10, 15, tzinfo=dt.UTC)  # Trade date
+    assert values[(2, 5)] == dt.datetime(2027, 4, 27, tzinfo=dt.UTC)  # Maturity date
+    assert (values[(2, 6)], values[(2, 7)]) == ("收盤價", "RR3")
+    assert values[(5, 4)] == "AAA UW"
+    assert values[(5, 9)] == 80.0  # Strike
+    assert values[(5, 10)] == "Daily Memory"
+    assert values[(5, 11)] == 100.0  # KO Barrier
+    assert values[(5, 12)] == 12.5  # Coupon
+    assert values[(5, 13)] == 97.85  # NotePrice = 100 − UF 2.15
+    assert (values[(5, 15)], values[(5, 16)]) == ("EKI", 65.0)  # KI Barrier
+    assert drafter.drafts[0].template_branches == ("北區", "南區")
 
 
 @pytest.mark.parametrize(
@@ -185,7 +178,7 @@ def test_pending_or_missing_risk_level_is_marked_to_confirm(
     assert outcome.status == DRAFTED and outcome.to_confirm
     assert outcome.reason == f"{why}，草稿寫「待確認」，寄出前請補上風險等級"
     (draft,) = drafter.drafts
-    assert draft.risk_level == "待確認" and "待確認" in draft.html_body and "RR4" not in draft.html_body
+    assert draft.risk_level == "待確認" and cells(draft)[(2, 7)] == "待確認" and "RR4" not in cells(draft).values()
 
 
 def test_fixed_cc_order_prioritizes_max_bob_then_pm() -> None:
@@ -200,52 +193,14 @@ def test_fixed_cc_order_prioritizes_max_bob_then_pm() -> None:
     assert [person.name for person in mail_drafts._order_fixed_cc(people)] == ["MAX", "BOB", "PM1", "PM2", "Zed"]
 
 
-@pytest.mark.parametrize(
-    ("text", "width"),
-    [
-        ("Guaranteed Periods (m)", 98),  # 範本 C 欄寬
-        ("Upfront / NotePrice (%)", 98),  # Upfront /／NotePrice (%)：13 字
-        ("Final valuation date", 105),  # Final／valuation date：14 字
-        ("Daily Memory", 122),  # 範本 J 欄寬
-    ],
-)
-def test_wide_columns_wrap_into_at_most_two_lines(db, tmp_path: Path, root: Path, out: Path, text, width) -> None:
-    load(db, tmp_path, [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])])
-    passed_folder(root, A)
-
-    (_, drafter) = run(db, root, out, A)
-
-    assert f' width="{width}" style="padding: 2px 6px; width: {width}px; white-space: normal;' in (
-        _cell_style(drafter.drafts[0].html_body, text)
-    )
-
-
-def test_columns_no_wider_than_bbg_code_4_stay_on_one_line(db, tmp_path: Path, root: Path, out: Path) -> None:
-    load(db, tmp_path, [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])])
-    passed_folder(root, A)
-
-    (_, drafter) = run(db, root, out, A)
-
-    for narrow in ("BBG Code 4", "Product", "期初價格", "分公司 1", "Strike (%)"):
-        assert 'width="' in _cell_style(drafter.drafts[0].html_body, narrow), narrow
-
-
-def _cell_style(body: str, text: str) -> str:
-    """回傳內容是 text 的那一格（th 或 td）的開頭標籤。"""
-    try:
-        end = body.index(text)
-    except ValueError:
-        end = body.index(text.split(" ", 1)[0])
-    return body[body.rindex("<t", 0, end) : end]
-
-
 def test_no_ki_shows_none_and_a_dash(db, tmp_path: Path, root: Path, out: Path) -> None:
     load(db, tmp_path, [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)], **{"KI(Freq)": "-", "KI(%)": "-"})])
     passed_folder(root, A)
 
     (_, drafter) = run(db, root, out, A)
 
-    assert ">NONE<" in drafter.drafts[0].html_body and ">-<" in drafter.drafts[0].html_body
+    values = cells(drafter.drafts[0])
+    assert (values[(5, 15)], values[(5, 16)]) == ("NONE", "-")
 
 
 def test_pb_is_left_out_and_a_pb_only_product_needs_no_mail(db, tmp_path: Path, root: Path, out: Path) -> None:
@@ -456,25 +411,19 @@ def test_products_skipped_by_the_daily_import_are_unsupported(db, tmp_path: Path
     assert [(o.status, o.reason) for o in receipt.outcomes] == [(PENDING, reason)]
 
 
-def test_express_gets_a_draft_like_fcn(db, tmp_path: Path, root: Path, out: Path, monkeypatch) -> None:
+def test_express_gets_a_draft_like_fcn(db, tmp_path: Path, root: Path, out: Path) -> None:
     """FCN_Express 和 FCN 一樣寄（#302）：主旨與表格的 Product 帶出商品種類，Guaranteed Periods 寫 0。"""
     express = inventory(A, [("北區", 1)], Product="FCN_Express", **{"Non-Call(月)": 0})
     load(db, tmp_path, [trade(A, "Amy", "北區", 1, product="FCN_Express")], [express])
     risk(db, A, "RR4")
     passed_folder(root, A)
-    real_render, rendered = mail_drafts.render_body, []
-
-    def render(tdcc, product, branches, risk_level):
-        rendered.append((product["product"], product["non_call_months"]))
-        return real_render(tdcc, product, branches, risk_level)
-
-    monkeypatch.setattr(mail_drafts, "render_body", render)
 
     receipt, drafter = run(db, root, out, A)
 
     assert (receipt.outcomes[0].status, receipt.outcomes[0].reason) == (DRAFTED, "")
     assert drafter.drafts[0].subject == f"[中文TS/IIS] [FCN_Express] - {A}"
-    assert rendered == [("FCN_Express", 0)] and ">FCN_Express<" in drafter.drafts[0].html_body
+    values = cells(drafter.drafts[0])
+    assert (values[(5, 1)], values[(5, 3)]) == ("FCN_Express", 0)
 
 
 @pytest.mark.parametrize("product", ["Super Bull", "BEN"])
@@ -490,8 +439,10 @@ def test_super_bull_and_ben_get_a_draft_like_fcn(db, tmp_path: Path, root: Path,
 
     assert (receipt.outcomes[0].status, receipt.outcomes[0].reason) == (DRAFTED, "")
     assert drafter.drafts[0].subject == f"[中文TS/IIS] [{product}] - {A}"
-    assert f">{product}<" in drafter.drafts[0].html_body
-    assert "Participation" not in drafter.drafts[0].html_body
+    values = cells(drafter.drafts[0])
+    assert values[(5, 1)] == product and values[(5, 16)] == "-"
+    assert values[(5, 11)] == ("-" if product == "BEN" else 100.0), "BEN 預設沒有 KO（#406）"
+    assert not [c for c in TERMS_COLUMNS if "Participation" in c.header]
 
 
 def test_dacn_gets_a_draft_like_fcn_without_the_coupon_barrier(db, tmp_path: Path, root: Path, out: Path) -> None:
@@ -505,7 +456,8 @@ def test_dacn_gets_a_draft_like_fcn_without_the_coupon_barrier(db, tmp_path: Pat
 
     assert (receipt.outcomes[0].status, receipt.outcomes[0].reason) == (DRAFTED, "")
     assert drafter.drafts[0].subject == f"[中文TS/IIS] [DACN] - {A}"
-    assert ">DACN<" in drafter.drafts[0].html_body and "Coupon Barrier" not in drafter.drafts[0].html_body
+    assert cells(drafter.drafts[0])[(5, 1)] == "DACN"
+    assert not [c for c in TERMS_COLUMNS if "Coupon Barrier" in c.header]
 
 
 def test_unreadable_folders_are_mentioned(db, tmp_path: Path, root: Path, out: Path, monkeypatch) -> None:
@@ -535,18 +487,18 @@ def test_an_error_in_one_product_does_not_stop_the_batch(
     passed_folder(root, A)
     passed_folder(root, B)
     risk(db, B, "RR4")
-    real_render = mail_drafts.render_body
+    real_read = mail_drafts.read
 
-    def render(tdcc, product, branches, risk_level):
+    def read(conn, tdcc):
         if tdcc == A:
-            raise ValueError("內文產生失敗")
-        return real_render(tdcc, product, branches, risk_level)
+            raise ValueError("商品條件讀取失敗")
+        return real_read(conn, tdcc)
 
-    monkeypatch.setattr(mail_drafts, "render_body", render)
+    monkeypatch.setattr(mail_drafts, "read", read)
 
     receipt, drafter = run(db, root, out, f"{A} {B}")
 
-    assert [(o.status, o.reason) for o in receipt.outcomes] == [(FAILED, "處理失敗：內文產生失敗"), (DRAFTED, "")]
+    assert [(o.status, o.reason) for o in receipt.outcomes] == [(FAILED, "處理失敗：商品條件讀取失敗"), (DRAFTED, "")]
     assert [d.tdcc for d in drafter.drafts] == [B] and receipt.list_path.exists()
 
 
@@ -574,6 +526,7 @@ class FakeMail:
     def __init__(self) -> None:
         self.attached: list[str] = []
         self.Attachments = types.SimpleNamespace(Add=self.attached.append)
+        self.GetInspector = types.SimpleNamespace(Display=lambda: None, Activate=lambda: None, WordEditor="編輯器")
         self.saved = self.sent = False
 
     def Save(self) -> None:  # noqa: N802 — 對應 COM 方法名稱
@@ -585,12 +538,14 @@ class FakeMail:
 
 @pytest.fixture
 def fake_com(monkeypatch):
-    """用假的 pythoncom／win32com 取代真的 Outlook；筆電與 CI 都能跑（#29）。"""
+    """用假的 pythoncom／win32com 取代真的 Outlook，範本的開檔與貼上也換成記下呼叫；筆電與 CI 都能跑（#29）。"""
 
     class ComError(Exception):
         pass
 
-    state = types.SimpleNamespace(mail=FakeMail(), error=None, com_depth=0, ComError=ComError)
+    state = types.SimpleNamespace(
+        mail=FakeMail(), error=None, com_depth=0, ComError=ComError, opened=[], pasted=[], closed=[]
+    )
 
     def dispatch(name: str):
         assert name == "Outlook.Application"
@@ -603,6 +558,12 @@ def fake_com(monkeypatch):
 
         return types.SimpleNamespace(CreateItem=create_item)
 
+    def open_template(win32com, template_path, tdcc, product, branches, risk_level):
+        state.opened.append((template_path, tdcc, product["product"], branches, risk_level))
+        workbook = types.SimpleNamespace(Close=lambda SaveChanges: state.closed.append("workbook"))  # noqa: N803
+        excel = types.SimpleNamespace(Quit=lambda: state.closed.append("excel"))
+        return excel, workbook, "工作表", None
+
     pythoncom = types.ModuleType("pythoncom")
     pythoncom.com_error = ComError
     pythoncom.CoInitialize = lambda: setattr(state, "com_depth", state.com_depth + 1)
@@ -614,33 +575,70 @@ def fake_com(monkeypatch):
     monkeypatch.setitem(sys.modules, "pythoncom", pythoncom)
     monkeypatch.setitem(sys.modules, "win32com", package)
     monkeypatch.setitem(sys.modules, "win32com.client", client)
+    monkeypatch.setattr(OutlookDrafter, "_open_template", staticmethod(open_template))
+    monkeypatch.setattr(OutlookDrafter, "_paste_template", staticmethod(lambda *args: state.pasted.append(args)))
+    monkeypatch.setattr(mail_drafts.time, "sleep", lambda seconds: None)
     return state
 
 
-def sample_draft(tmp_path: Path) -> Draft:
+def sample_draft(tmp_path: Path, template: Path | None = None) -> Draft:
+    if template is None:
+        template = tmp_path / "範本.xlsx"
+        template.write_bytes(b"template")
     return Draft(
         A,
         ("amy@example.com", "ben@example.com"),
         ("pat@example.com",),
         f"[中文TS/IIS] [FCN] - {A}",
-        "<p>FYI</p>",
         (tmp_path / "a.pdf", tmp_path / "b.pdf"),
+        template_path=template,
+        template_product={"product": "FCN"},
+        template_branches=("北區",),
+        risk_level="RR3",
     )
 
 
-def test_outlook_drafter_fills_the_mail_and_only_saves_it(fake_com, tmp_path: Path) -> None:
-    OutlookDrafter()(sample_draft(tmp_path))
+def test_outlook_drafter_fills_the_mail_from_the_template_and_only_saves_it(fake_com, tmp_path: Path) -> None:
+    draft = sample_draft(tmp_path)
+
+    OutlookDrafter()(draft)
 
     mail = fake_com.mail
-    assert (mail.To, mail.CC, mail.Subject, mail.HTMLBody) == (
+    assert (mail.To, mail.CC, mail.Subject) == (
         "amy@example.com; ben@example.com",
         "pat@example.com",
         f"[中文TS/IIS] [FCN] - {A}",
-        "<p>FYI</p>",
     )
+    assert not hasattr(mail, "HTMLBody"), "內文只走範本，不寫 HTML（#499）"
+    assert fake_com.opened == [(draft.template_path, A, "FCN", ("北區",), "RR3")]
+    assert fake_com.pasted == [("工作表", "編輯器", 1)]
     assert mail.attached == [str(tmp_path / "a.pdf"), str(tmp_path / "b.pdf")]
     assert mail.saved and not mail.sent
+    assert fake_com.closed == ["workbook", "excel"]
     assert fake_com.com_depth == 0  # CoInitialize／CoUninitialize 成對
+
+
+@pytest.mark.parametrize("template", [None, "missing"])
+def test_without_a_template_no_mail_is_started(fake_com, tmp_path: Path, template) -> None:
+    """#499：沒有範本（或內建範本不見了）直接報錯、不退回 HTML 內文，也不開 Outlook。"""
+    draft = Draft(
+        A, ("amy@example.com",), (), "主旨", (), template_path=None if template is None else tmp_path / "無.xlsx"
+    )
+
+    with pytest.raises(MailTemplateError, match="SPW_MAIL_TEMPLATE"):
+        OutlookDrafter()(draft)
+
+    assert fake_com.com_depth == 0 and not fake_com.mail.saved and fake_com.opened == []
+
+
+def test_a_missing_template_marks_every_product_failed(fake_com, db, tmp_path: Path, root: Path, out: Path) -> None:
+    load(db, tmp_path, [trade(A, "Amy", "北區", 1)], [inventory(A, [("北區", 1)])])
+    passed_folder(root, A)
+
+    receipt = create_drafts(A, root, out, db, drafter=OutlookDrafter(), now=NOW, template_path=None)
+
+    (outcome,) = receipt.outcomes
+    assert outcome.status == FAILED and "沒有寄信格式範本" in outcome.reason and receipt.list_path.exists()
 
 
 def test_outlook_errors_are_explained_in_chinese(fake_com, tmp_path: Path) -> None:
@@ -658,7 +656,7 @@ def test_outlook_failure_marks_only_that_product(fake_com, db, tmp_path: Path, r
     passed_folder(root, A)
     fake_com.error = fake_com.ComError(-2147467260, "亂碼", None, None)
 
-    receipt = create_drafts(A, root, out, db, drafter=OutlookDrafter(), now=NOW)
+    receipt = create_drafts(A, root, out, db, drafter=OutlookDrafter(), now=NOW, template_path=BUNDLED_MAIL_TEMPLATE)
 
     assert receipt.outcomes[0].status == FAILED and OUTLOOK_FAILURE in receipt.outcomes[0].reason
 
@@ -675,7 +673,19 @@ def test_outlook_creates_a_draft_without_sending(tmp_path: Path) -> None:
     attachment.write_bytes(b"%PDF test")
     subject = f"SPW 測試草稿 {dt.datetime.now():%Y%m%d%H%M%S}（可刪除）"
 
-    OutlookDrafter()(Draft("000000000000", ("nobody@example.com",), (), subject, "<p>FYI</p>", (attachment,)))
+    product = {**sample_template_product(), "product": "FCN"}
+    draft = Draft(
+        "000000000000",
+        ("nobody@example.com",),
+        (),
+        subject,
+        (attachment,),
+        template_path=BUNDLED_MAIL_TEMPLATE,
+        template_product=product,
+        template_branches=("北區",),
+        risk_level="RR4",
+    )
+    OutlookDrafter()(draft)
 
     pythoncom.CoInitialize()
     try:

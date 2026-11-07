@@ -6,7 +6,14 @@ from pathlib import Path
 
 import openpyxl
 
-from sp_workflow.mail_drafts import BUNDLED_MAIL_TEMPLATE, mail_template_from_env
+from sp_workflow.mail_drafts import (
+    BUNDLED_MAIL_TEMPLATE,
+    SUMMARY_COLUMNS,
+    SUMMARY_ROW,
+    TERMS_COLUMNS,
+    TERMS_ROW,
+    mail_template_from_env,
+)
 
 
 def _env(tmp_path: Path, extra: str = "") -> Path:
@@ -31,3 +38,12 @@ def test_configured_template_overrides_the_bundled_format(tmp_path: Path) -> Non
     override = tmp_path / "other.xlsx"
     override.write_bytes(b"not used")
     assert mail_template_from_env(_env(tmp_path, f"SPW_MAIL_TEMPLATE={override}\n")) == override
+
+
+def test_declared_columns_match_the_bundled_template() -> None:
+    """信件表的欄只宣告一次（#499）：表頭和內建範本第 1、4 列一欄一欄對得上，右邊沒有多的欄。"""
+    sheet = openpyxl.load_workbook(BUNDLED_MAIL_TEMPLATE).worksheets[0]
+    for columns, row in ((SUMMARY_COLUMNS, SUMMARY_ROW - 1), (TERMS_COLUMNS, TERMS_ROW - 1)):
+        headers = [sheet.cell(row, column).value for column in range(1, len(columns) + 2)]
+        assert [h.strip() for h in headers[:-1]] == [c.header for c in columns]
+        assert headers[-1] is None

@@ -11,7 +11,15 @@ from pathlib import Path
 
 import pytest
 
-from sp_workflow.mail_drafts import DRAFTED, FAILED, NOT_NEEDED, PENDING, DraftOutcome, DraftReceipt
+from sp_workflow.mail_drafts import (
+    BUNDLED_MAIL_TEMPLATE,
+    DRAFTED,
+    FAILED,
+    NOT_NEEDED,
+    PENDING,
+    DraftOutcome,
+    DraftReceipt,
+)
 from sp_workflow.preparation import PREPARED, SKIPPED, PrepareReceipt, ProductOutcome
 from sp_workflow.returning import (
     ALREADY_THERE,
@@ -109,7 +117,7 @@ def test_each_step_writes_one_record(pg, pg_settings, tmp_path: Path, monkeypatc
 
     prepared = run_prepare(pg_settings, A, tmp_path, tmp_path)
     returned = run_return(pg_settings, tmp_path, tmp_path / "核對結果.xlsx")
-    drafted = make_mail_drafts(pg_settings, A, tmp_path, tmp_path, template_path=None)
+    drafted = make_mail_drafts(pg_settings, A, tmp_path, tmp_path, template_path=BUNDLED_MAIL_TEMPLATE)
 
     assert (prepared.recorded.count, returned.recorded.count, drafted.recorded.count) == (1, 2, 1)
     assert records(pg) == [
