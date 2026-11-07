@@ -16,6 +16,7 @@ from tkinter import messagebox, ttk
 
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import Background, NextButton
+from sp_workflow import split_calendar
 from sp_workflow.check_terms import TO_CONFIRM, CalcLine
 from sp_workflow.close_prices import CloseSummary
 from sp_workflow.daily_import import ImportReceipt, PriceCsvReceipt, PriceSummary
@@ -444,9 +445,13 @@ class DailyImportTab(Tab):
         else:
             price_text = f"{_price_text(prices)}\n{_daily_close_text(receipt)}"
         observed = ""
+        if result.splits is not None:  # 拆股行事曆（#509）：在比價之前登記、對齊
+            changed = len(result.splits.registered) + len(result.splits.moved)
+            kpis.append(("自動拆股登記（筆）", changed, False))
+            observed = f"\n{split_calendar.summary(result.splits)}"
         if receipt.closes is not None:  # 寫了收盤價才比價（#280）
             kpis += _observation_kpis(result.observation)
-            observed = f"\n{observation_text(result.observation)}{self._hand_off_exits(result.observation)}"
+            observed += f"\n{observation_text(result.observation)}{self._hand_off_exits(result.observation)}"
         self.finish(
             kpis + self._recalc_kpis(recalc),
             f"完成（第 {receipt.run_id} 次匯入）：{normal} 項正常、{problems} 項要注意；"

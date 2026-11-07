@@ -31,6 +31,8 @@ from sp_workflow.observation import EventChange, ObservationReceipt, Observed
 from sp_workflow.order_terms import PENDING as ORDER_PENDING
 from sp_workflow.order_terms import OrderRow
 from sp_workflow.product_backfill import IMPORTED, ProductBackfillReceipt
+from sp_workflow.split_calendar import CalendarReceipt, Moved
+from sp_workflow.stock_splits import Split
 from sp_workflow.window_actions import (
     DailyResult,
     HistoryResult,
@@ -365,6 +367,28 @@ def test_daily_import_says_how_many_closes_were_stored_and_observes(master, tmp_
     assert ("收盤價（筆）", 498, False) in window.daily.kpis.values
     assert ("存續事件有變（檔）", 1, False) in window.daily.kpis.values
     assert window.daily.exits_button.winfo_manager() == "pack"
+
+
+def test_daily_import_lists_splits_from_the_calendar(master, tmp_path: Path) -> None:
+    """拆股行事曆（#509）：新登記、改生效日與抓不到的來源寫在比價前面。"""
+    window = new_window(master, tmp_path)
+    result = daily_receipt(tmp_path)
+    receipt = replace(
+        result.receipt, closes=CloseSummary(3, dt.date(2026, 10, 21), dt.date(2026, 10, 21), 1, 1, 0, 0, 0)
+    )
+    split = Split("AAA UW", dt.date(2026, 11, 20), 1, 8, "自動登記：Yahoo、Nasdaq 行事曆（2026-11-08 抓取）")
+    moved = Moved(Split("BBB JT", dt.date(2026, 10, 22), 1, 5), Split("BBB JT", dt.date(2026, 10, 21), 1, 5))
+    splits = CalendarReceipt((split,), (moved,), errors=("Nasdaq 拆股行事曆沒抓到（URLError：timed out）",))
+
+    window.daily._done(DailyResult(receipt, result.recalc, Observation(OBSERVED), splits))
+
+    status = window.daily.status_var.get()
+    assert (
+        "拆股行事曆：新登記 1 筆（AAA UW 2026-11-20 1 拆 8，Yahoo、Nasdaq）。\n"
+        "拆股行事曆：依收盤價斷層改了生效日 1 筆（BBB JT 2026-10-22 → 2026-10-21）。\n"
+        "拆股行事曆：Nasdaq 拆股行事曆沒抓到（URLError：timed out）\n比價：比到 2026-10-21"
+    ) in status
+    assert ("自動拆股登記（筆）", 2, False) in window.daily.kpis.values
 
 
 def test_daily_import_without_a_calendar_says_closes_were_not_stored(master, tmp_path: Path) -> None:

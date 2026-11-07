@@ -9,6 +9,8 @@
 比價（#155）在回補股價與歷史收盤價匯入之後跑；比價失敗時匯入保留，原因放在結果裡。
 信箱維護（#158）每次存檔一個動作，寫完重讀全部人員與別名給畫面重新顯示；發行機構評等（#237）也一樣。
 拆股登記（#270）存檔後同樣重讀，並比價全部（受影響、由比價判定出場的商品重新比）；比價失敗時登記保留，原因放在結果裡。
+每日匯入有寫收盤價時，比價前先依拆股行事曆自動登記、對齊（#509，`split_calendar`）；行事曆在連資料庫之前抓，
+抓不到或登記失敗都不影響匯入，原因放在結果裡。
 可連結標的白名單（#273）分兩個動作（讀目前這一份 → 匯入），中間的確認與選檔留在視窗；匯入整份一個 transaction，
 之後的重算失敗時匯入保留。
 transaction 的範圍（#205）：每日匯入、回補股價、歷史收盤價、起單資料匯入、舊商品補資料、其他商品回補（#303）與準備、
@@ -30,6 +32,7 @@ from fcn_checker.check_config import ConfigPaths
 from fcn_checker.config import load_reference_format
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.trading_calendar import TradingCalendar
+from sp_workflow import split_calendar
 from sp_workflow.check_terms import (
     CalcLine,
     CalcReceipt,
@@ -161,6 +164,7 @@ class DailyResult:
     receipt: ImportReceipt
     recalc: Recalc = Recalc()
     observation: Observation = Observation()  # 沒有寫收盤價（只匯交易明細、讀不到假日表）時沒有跑
+    splits: split_calendar.CalendarReceipt | None = None  # 拆股行事曆（#509）；同比價，寫了收盤價才跑
 
 
 @dataclass(frozen=True)
@@ -332,12 +336,28 @@ def run_daily_import(settings: ConnectionSettings, daily: Path, paths: ConfigPat
         calendar = load_calendar(paths.exchange_holidays) if prices else None
     except CheckTermsError:
         calendar = None  # 收盤價這次不存；讀不到的原因由重算寫在結果裡
+    fetched = split_calendar.fetch(dt.date.today()) if calendar is not None else None  # 網路在連資料庫之前（#509）
     with connect(settings) as conn:
         receipt = import_daily(daily, conn, prices=prices, calendar=calendar)
         recalc = _recalculate_after_import(conn, paths)
-        if receipt.closes is None:
+        if receipt.closes is None or calendar is None or fetched is None:  # fetched 跟 calendar 一起有無；寫給型別檢查
             return DailyResult(receipt, recalc)
-        return DailyResult(receipt, recalc, _observe_after_write(conn, calendar))
+        splits = _split_calendar(conn, fetched, calendar)
+        return DailyResult(receipt, recalc, _observe_after_write(conn, calendar, splits.revisit), splits)
+
+
+def _split_calendar(
+    conn: psycopg.Connection, fetched: split_calendar.Fetched, calendar: TradingCalendar
+) -> split_calendar.CalendarReceipt:
+    """依拆股行事曆自動登記、對齊（#509），整段一個 transaction：出任何錯都整段不寫、不丟出（匯入已經寫好），
+    原因放在結果裡，接著照常比價。"""
+    try:
+        with conn.transaction():
+            return split_calendar.register_and_align(conn, fetched, calendar)
+    except Exception as exc:  # 程式錯誤也不能讓已經寫好的匯入跟著失敗
+        return split_calendar.CalendarReceipt(
+            errors=(*fetched.errors, f"自動登記沒有完成，這次沒有登記（{type(exc).__name__}：{_first_line(exc)}）")
+        )
 
 
 def run_price_csv(settings: ConnectionSettings, source: Path, paths: ConfigPaths) -> PriceCsvResult:
