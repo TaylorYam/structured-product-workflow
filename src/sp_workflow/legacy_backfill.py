@@ -11,7 +11,8 @@
 - 表上沒有、資料庫沒有、還沒鎖住、表上有兩列、代碼和資料庫不同、價格不是數字、比價日不是日期的：那一檔不匯入並
   寫出原因，其他照常；不匯入的另外寫一份錯誤清單放在來源檔旁邊。
 - 整次匯入一個 transaction；重跑同一份，補過的都是「已存在」，不重寫。
-讀格子、檢查與寫比價日的 `cell_value`／`date_problems`／`write_dates` 回補 FCN 以外商品（`product_backfill`，#303）也用。
+檢查與寫比價日的 `date_problems`／`write_dates` 回補 FCN 以外商品（`product_backfill`，#303）也用；格子的值怎麼讀
+（`cell_value`、四個價格、比價日）在 `reference_values`（#498）。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
@@ -23,26 +24,23 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 import openpyxl
 
-from fcn_checker.fields import PRICE_FIELDS
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.orders.reference import (
-    autocall_date_key,
     header_columns,
     load_reference_sheet,
     locate,
-    price_key,
     underlying_key,
 )
 from sp_workflow import import_run
 from sp_workflow.check_terms import DONE
 from sp_workflow.database import OperatorError
 from sp_workflow.lifecycle import KO, MATURITY, LifecycleError, current_events_of, record_legacy
-from sp_workflow.product_record import UnderlyingPrice
 from sp_workflow.product_store import incomplete_locked, locked, read_many
+from sp_workflow.reference_values import cell_value, sheet_dates, sheet_prices, sheet_underlying
 from sp_workflow.underlying_prices import add_prices
 
 if TYPE_CHECKING:
@@ -51,7 +49,6 @@ if TYPE_CHECKING:
     from fcn_checker.config import ReferenceFormat
     from fcn_checker.orders.reference import OrderRecord
 
-SLOTS = 12
 # 必填的價格（價格的鍵，`fcn_checker.fields`）；下限價在沒有 KI 時本來就空白
 REQUIRED_PRICES = frozenset(("initial", "strike", "ko"))
 FILLED, EXISTING, SKIPPED = "已補", "已存在", "不匯入"
@@ -265,18 +262,11 @@ def _scope_problem(found: _Product | None, rows: Sequence[OrderRecord]) -> str:
     return ""
 
 
-def cell_value(record: OrderRecord, key: str, fmt: ReferenceFormat) -> Any:
-    """一格的值；空白與空值寫法都是 None。"""
-    found = record.fields.get(key)
-    value = None if found is None else found.value
-    return None if value is None or value == fmt.empty_value else value
-
-
 def _price_problems(record: OrderRecord, found: _Product, fmt: ReferenceFormat) -> list[str]:
     problems = []
     for i, code in enumerate(found.codes, 1):
         listed = cell_value(record, underlying_key(i), fmt)
-        values = {pf: cell_value(record, price_key(i, pf.key), fmt) for pf in PRICE_FIELDS}
+        values = sheet_prices(record, i, fmt)
         if code is None:
             if listed is not None or any(v is not None for v in values.values()):
                 problems.append(f"資料庫沒有 UL_{i}，表上卻有代碼或價格")
@@ -295,8 +285,7 @@ def _price_problems(record: OrderRecord, found: _Product, fmt: ReferenceFormat) 
 
 def date_problems(record: OrderRecord, fmt: ReferenceFormat) -> list[str]:
     problems = []
-    for n in range(1, SLOTS + 1):
-        value = cell_value(record, autocall_date_key(n), fmt)
+    for n, value in sheet_dates(record, fmt).items():
         if value is not None and not isinstance(value, dt.date):
             problems.append(f"比價日_{n} 不是日期（{value}）")
     return problems
@@ -338,8 +327,7 @@ def _write_prices(
     for i, code in enumerate(found.codes, 1):
         if code is None:
             continue
-        values = {pf.key: cell_value(record, price_key(i, pf.key), fmt) for pf in PRICE_FIELDS}
-        prices.append(UnderlyingPrice(i, code, **values))
+        prices.append(sheet_underlying(record, i, code, fmt))
     add_prices(conn, tdcc, prices)
 
 
@@ -347,5 +335,5 @@ def write_dates(conn: psycopg.Connection, tdcc: str, record: OrderRecord, fmt: R
     with conn.cursor() as cur:
         cur.executemany(
             "INSERT INTO workflow.autocall_date (tdcc, slot, value) VALUES (%s, %s, %s)",
-            [(tdcc, n, cell_value(record, autocall_date_key(n), fmt)) for n in range(1, SLOTS + 1)],
+            [(tdcc, n, value) for n, value in sheet_dates(record, fmt).items()],
         )

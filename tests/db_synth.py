@@ -13,18 +13,11 @@ from fcn_checker.products import product_name
 from sp_workflow import daily_import
 from sp_workflow.daily_import import PRICE_CSV_HEADERS, PRICE_HEADERS, TRADE_HEADERS
 from sp_workflow.product_record import UnderlyingPrice
+from sp_workflow.reference_values import NO_KI, barrier_type, ko_type
 from sp_workflow.underlying_prices import add_prices
 
 PRICE_DATE = dt.datetime(2026, 10, 16)  # 虛構的取價日：交易日 2026-10-15 的下一份股價檔
-
-# 庫存總表／ELN 的代碼 → 轉換後的寫法（以前清單更新用的對照，#87 起每日匯入不再讀清單更新）
-KO_TYPES = {
-    ("D", "Y"): "Daily Memory",
-    ("D", "N"): "Daily",
-    ("P", "N"): "Period End",
-    ("P", "Y"): "Period End Memory",
-}
-BARRIER_TYPES = {"-": "NONE", "AM": "EKI", "D": "AKI", "P": "MKI"}
+EMPTY = "-"  # 庫存總表與參考條件表的空值寫法；KI(Freq)「-」是沒有 KI（代碼 → 型態用 `reference_values`，#498）
 
 
 def trade(
@@ -179,14 +172,14 @@ def seed_products(pg, inventories: Sequence[dict]) -> None:
             "strike_pct": row["K(%)"],
             "ko_freq": row["KO(Freq)"],
             "ko_memory": row["KO(memo)"],
-            "ko_type": KO_TYPES[(row["KO(Freq)"], row["KO(memo)"])],
+            "ko_type": ko_type(row["KO(Freq)"], row["KO(memo)"]),
             "ko_pct": row["KO(%)"],
             "coupon_pct": row["Coupon p.a. (%)"],
             "upfront_pct": row["UF"],
             "tenor_months": row["天期(月)"],
             "ki_freq": ki_freq,
-            "barrier_type": BARRIER_TYPES[ki_freq],
-            "ki_pct": None if ki_freq == "-" else row["KI(%)"],
+            "barrier_type": barrier_type(ki_freq, EMPTY),
+            "ki_pct": None if barrier_type(ki_freq, EMPTY) == NO_KI else row["KI(%)"],
             **({"coupon_barrier_pct": row["配息門檻(%)"]} if "配息門檻(%)" in row else {}),  # 0034 起（#367）
             "first_run_id": run_id,
             **({"status_event": "在庫"} if has_status_column else {}),

@@ -17,7 +17,7 @@ import pytest
 import barc_synth
 import hsbc_synth
 from barc_synth import SYNTH_ISIN, build_pdf
-from db_synth import seed_observable
+from db_synth import EMPTY, seed_observable
 from fcn_checker.batch import Category, check_batch, failed_batch, preview_batch
 from fcn_checker.condition_source import NO_CONDITIONS, ConditionSource
 from fcn_checker.config import RISK_LEVEL_PENDING
@@ -33,6 +33,7 @@ from harness import CONFIG, cli_root, with_iis
 from reference_synth import REFERENCE_HEADERS, Ratings, build_reference_sheet, issuer_value, price, reference_row
 from sp_workflow.check_source import NO_RESULT_FILE, WorkflowDatabase, conditions, write_back
 from sp_workflow.product_record import UnderlyingPrice
+from sp_workflow.reference_values import NO_KI, ko_type
 from sp_workflow.risk_level import BACKFILLED, DONE, PENDING, RiskDetail, RiskLevel, write_risk_level
 
 NOW = dt.datetime(2030, 2, 3, 4, 5, 6)
@@ -82,6 +83,7 @@ def seed(
         "INSERT INTO workflow.order_import (imported_by, summary) VALUES ('tester', '{}') RETURNING import_id"
     ).fetchone()
     tickers = [u.ticker for u in spec.underlyings] + [None] * (5 - len(spec.underlyings))
+    memory = "Y" if spec.memory else "N"
     product = {
         "tdcc": spec.product_code,
         "product": product,
@@ -96,14 +98,14 @@ def seed(
         **{f"underlying_{i}": t for i, t in enumerate(tickers, 1)},
         "strike_pct": spec.strike,
         "ko_freq": spec.ko_obs,
-        "ko_memory": "Y" if spec.memory else "N",
-        "ko_type": "Daily Memory",
+        "ko_memory": memory,
+        "ko_type": ko_type(spec.ko_obs, memory),
         "ko_pct": spec.ko,
         "coupon_pct": spec.annual,
         "upfront_pct": Decimal("1.59"),
         "tenor_months": spec.tenor,
-        "ki_freq": "-",
-        "barrier_type": "NONE",
+        "ki_freq": EMPTY,
+        "barrier_type": NO_KI,
         "ki_pct": None,
         "denomination": denomination or spec.denom,
         "source": "Order",

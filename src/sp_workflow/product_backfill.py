@@ -35,14 +35,13 @@ from typing import TYPE_CHECKING, Any
 
 import openpyxl
 
-from fcn_checker.fields import BARRIER_TYPE_FIELD, KO_TYPE_FIELD, NON_CALL_FIELD, PRICE_FIELDS
+from fcn_checker.fields import BARRIER_TYPE_FIELD, KO_TYPE_FIELD, NON_CALL_FIELD
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.orders.reference import (
     autocall_date_key,
     header_columns,
     load_reference_sheet,
     locate,
-    price_key,
     underlying_key,
 )
 from fcn_checker.products import FCN, PRODUCT_RULES, product_name
@@ -55,27 +54,30 @@ from sp_workflow.legacy_backfill import (
     REQUIRED_PRICES,
     SKIPPED,
     BackfillLine,
-    cell_value,
     date_problems,
     write_dates,
 )
 from sp_workflow.order_terms import describe
 from sp_workflow.product_record import (
     COUPON_BARRIER_FIELD,
-    KI_CODES,
-    KO_CODES,
     PRICING_FIELD,
     STRIKE_FIELD,
     TRADE_FIELD,
     UNDERLYINGS,
     UPFRONT_FIELD,
-    UnderlyingPrice,
     default_coupon_barrier,
-    invert_upfront,
     product_rule,
 )
 from sp_workflow.product_store import read, read_many
 from sp_workflow.product_terms import create_backfilled
+from sp_workflow.reference_values import (
+    barrier_type,
+    cell_value,
+    ko_type,
+    sheet_prices,
+    sheet_underlying,
+    upfront_field,
+)
 from sp_workflow.underlying_prices import add_prices
 
 if TYPE_CHECKING:
@@ -88,8 +90,6 @@ IMPORTED = "已匯入"  # 已存在、不匯入同舊商品補資料
 ERROR_BOOK = "其他商品回補錯誤_{stamp}.xlsx"
 ERROR_BOOK_COLUMNS = (("TDCC", 16), ("原因", 80), ("表上的列", 10))
 _TDCC = re.compile(r"[0-9]{12}")
-_KO_TYPES = {codes: name for name, codes in KO_CODES.items()}  # (KO(Freq), KO(memo)) → KO Type
-_BARRIER_TYPES = {code: name for name, code in KI_CODES.items()}  # KI(Freq) → Barrier Type
 # 參考條件表的標準欄位 → 畫面的欄（照搬的欄；KO／KI 型態、UF、Non-Call、標的另外換算）
 _COPIED = {
     "currency": "Currency",
@@ -250,16 +250,14 @@ def _values(record: OrderRecord, cells: Mapping[str, Any], fmt: ReferenceFormat)
         values[name] = value(underlying_key(n))
     ko = (value("ko_observation"), value("ko_memory"))
     fixed = product.fixed_choices()  # BEN 的 KO Type 一律 Period End，不看表上的 KO 欄（#373）
-    values[KO_TYPE_FIELD] = fixed[KO_TYPE_FIELD] if KO_TYPE_FIELD in fixed else _KO_TYPES.get(ko)  # type: ignore[arg-type]
+    values[KO_TYPE_FIELD] = fixed[KO_TYPE_FIELD] if KO_TYPE_FIELD in fixed else ko_type(*ko)
     if values[KO_TYPE_FIELD] is None:
         problems.append(f"KO(Freq)／KO(memo) 看不懂（{ko[0]}／{ko[1]}）")
-    ki = value("ki_type") or fmt.empty_value  # 空值寫法「-」就是沒有 KI
-    values[BARRIER_TYPE_FIELD] = _BARRIER_TYPES.get(ki)
+    ki = value("ki_type")
+    values[BARRIER_TYPE_FIELD] = barrier_type(ki, fmt.empty_value)
     if values[BARRIER_TYPE_FIELD] is None:
-        problems.append(f"KI(Freq)「{ki}」目前不支援")
-    uf = cells.get(fmt.extra.upfront)
-    uf = None if uf in (None, fmt.empty_value) else _number(uf)
-    values[UPFRONT_FIELD] = invert_upfront(uf) if isinstance(uf, Decimal) else uf
+        problems.append(f"KI(Freq)「{ki or fmt.empty_value}」目前不支援")
+    values[UPFRONT_FIELD] = upfront_field(_number(cells.get(fmt.extra.upfront)), fmt.empty_value)
     values["Tenor (m)"] = _whole(value("tenor_months"))
     non_call = product.fixed_non_call()  # 沒有 Non-Call 的商品一定是 0
     values[NON_CALL_FIELD] = _whole(value("first_callable_period")) if non_call is None else non_call
@@ -277,7 +275,7 @@ def _price_problems(record: OrderRecord, fmt: ReferenceFormat, product: object) 
     ignored = _ignored_prices(product)
     problems = []
     for i in range(1, len(UNDERLYINGS) + 1):
-        prices = {pf: cell_value(record, price_key(i, pf.key), fmt) for pf in PRICE_FIELDS}
+        prices = sheet_prices(record, i, fmt)
         if cell_value(record, underlying_key(i), fmt) is None:
             if any(v is not None for v in prices.values()):
                 problems.append(f"UL_{i} 沒有代碼，卻有價格")
@@ -349,11 +347,7 @@ def _write(
     for i in range(1, len(UNDERLYINGS) + 1):
         code = columns[f"underlying_{i}"]
         if code is not None:
-            values = {
-                pf.key: None if pf.key in ignored else cell_value(record, price_key(i, pf.key), fmt)
-                for pf in PRICE_FIELDS
-            }
-            prices.append(UnderlyingPrice(i, code, **values))
+            prices.append(sheet_underlying(record, i, code, fmt, ignored))
     add_prices(conn, tdcc, prices)
     write_dates(conn, tdcc, record, fmt)
     with conn.cursor() as cur:
