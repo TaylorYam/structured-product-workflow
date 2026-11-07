@@ -487,7 +487,8 @@ def test_recalculation_keeps_the_price_basis_date_of_the_same_underlying(pg, tmp
         "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES (%s, 'AAA UW', 1005, %s)",
         (THU, import_id),
     )
-    assert refresh_basis(pg, SplitBook([Split("AAA UW", MON, 1, 10)])) == 1
+    with pg.transaction():
+        assert refresh_basis(pg, SplitBook([Split("AAA UW", MON, 1, 10)])) == 1
     basis = "SELECT seq, code, price_basis_date FROM workflow.underlying_price WHERE tdcc = %s ORDER BY seq"
 
     import_order(pg, **{"Upfront / NotePrice (%)": Decimal("98.1")})  # 起單重新匯入（不比價）：有變的重算

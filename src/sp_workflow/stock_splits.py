@@ -29,6 +29,7 @@ from sp_workflow.database import OperatorError
 from sp_workflow.lifecycle import OBSERVATION
 from sp_workflow.product_record import to_json
 from sp_workflow.product_store import observed_exits_using
+from sp_workflow.underlying_prices import write_basis
 
 if TYPE_CHECKING:
     import psycopg
@@ -219,10 +220,7 @@ def refresh_basis(conn: psycopg.Connection, book: SplitBook) -> int:
         found = {} if day is None else {day: close}
         basis = None if strike is None else book.basis(code, strike, initial, book.strike_close(code, strike, found))
         if basis != stored:
-            conn.execute(
-                "UPDATE workflow.underlying_price SET price_basis_date = %s WHERE tdcc = %s AND seq = %s",
-                (basis, tdcc, seq),
-            )
+            write_basis(conn, tdcc, seq, basis)
             changed += 1
     return changed
 

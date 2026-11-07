@@ -48,6 +48,7 @@ from sp_workflow.product_record import UnderlyingPrice
 from sp_workflow.product_store import Stored
 from sp_workflow.status import ProductSource
 from sp_workflow.stock_splits import Split, SplitBook, add_split, affected_exits, delete_split
+from sp_workflow.underlying_prices import add_prices
 from sp_workflow.underlying_pricing import KiTouch
 
 COVERED = (dt.date(2026, 1, 1), dt.date(2027, 12, 31))
@@ -508,11 +509,14 @@ def seed(pg, tdcc: str, *, locked: bool = True, status: str = "完成") -> None:
         (STRIKE, FINAL, dt.datetime(2026, 11, 3, tzinfo=dt.UTC) if locked else None, tdcc),
     )
     pg.execute("INSERT INTO workflow.check_terms (tdcc, status) VALUES (%s, %s)", (tdcc, status))
-    for u in (ul(1, "AAA UW"), ul(2, "BBB UN")):
-        pg.execute(
-            "INSERT INTO workflow.underlying_price (tdcc, seq, code, initial_price, strike_price, ki_price, ko_price)"
-            " VALUES (%s, %s, %s, %s, %s, %s, %s)",
-            (tdcc, u.seq, u.code, u.initial, u.strike, u.ki, u.ko),
+    with pg.transaction():
+        add_prices(
+            pg,
+            tdcc,
+            [
+                UnderlyingPrice(u.seq, u.code, u.initial, u.strike, u.ki, u.ko)
+                for u in (ul(1, "AAA UW"), ul(2, "BBB UN"))
+            ],
         )
     for slot, value in ((1, START), (6, FINAL), (2, None)):
         pg.execute("INSERT INTO workflow.autocall_date (tdcc, slot, value) VALUES (%s, %s, %s)", (tdcc, slot, value))
