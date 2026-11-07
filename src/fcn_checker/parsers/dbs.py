@@ -11,7 +11,7 @@ K／KO／KI % 只在表1 表頭（欄序 K → KO → KI），表1 有彭博代�
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from decimal import Decimal
 
@@ -21,7 +21,8 @@ from ..standard_fields import Occurrence, ScenarioParam, ScenarioPrice
 from ..text import full_brackets, squash
 from . import money, price_table, ratings, schedule
 from .common import FEE_RATE, RawText, capture_group, compat_normalized, derived, fee_rates, number
-from .layout import TextIndex, capture, join_wrapped_tickers, parse_date
+from .fields_builder import FieldsBuilder, ParsedTermSheet
+from .layout import TextIndex, join_wrapped_tickers, parse_date
 from .underlying_notes import Markers, underlying_notes
 
 TEMPLATE_ID = "dbs-zh-pd"
@@ -205,37 +206,28 @@ def skeleton(lines: Sequence[Line]) -> Skeleton:
 
 
 @dataclass
-class DbsTermSheet:
-    fields: dict[str, ParsedField]
-    full_text: TextIndex
-
-    def f(self, name: str) -> ParsedField:
-        return standard_fields.lookup(self.fields, name)
+class DbsTermSheet(ParsedTermSheet):
+    document: None = None  # DBS 沒有版面物件（Document），基底的第三欄固定是 None
 
 
 def read(lines: Sequence[Line]) -> DbsTermSheet:
     """讀出標準欄位與 DBS 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）。"""
     text_lines = body(lines)
     secs = sections(text_lines)
-    fields: dict[str, ParsedField] = {}
+    fields = FieldsBuilder()
 
     def section(name: str) -> list[Line]:
         return secs.get(name, [])
 
-    def put(name: str, lns: list[Line], pattern: str, convert: Callable = lambda x: x) -> None:
-        fields[name] = capture(name, TextIndex(lns), pattern, convert, whole_match=True)
-
-    _cover(fields, section("cover"), put)
+    _cover(fields, section("cover"))
     basic = section("商品基本資料")
-    _basic(fields, basic, put)
+    _basic(fields, basic)
     _schedule(fields)
-    scenario_currencies = _scenario(fields, section("商品投資收益計算方法及其他資料"), put)
+    scenario_currencies = _scenario(fields, section("商品投資收益計算方法及其他資料"))
     _organisations(fields, section("相關機構事業概況"))
-    _trading(fields, section("一般交易事項"), put)
+    _trading(fields, section("一般交易事項"))
     _occurrences(fields)
-    fields["currency_others"] = standard_fields.occurrences(
-        "currency_others", [*fields["currency_others"].value, *scenario_currencies]
-    )
+    fields.add(*scenario_currencies)
     fields["initial_pricing"] = standard_fields.absent(
         "initial_pricing", "期初定價方式（說明書沒有寫開盤價／收盤價／VWAP）"
     )
@@ -244,20 +236,20 @@ def read(lines: Sequence[Line]) -> DbsTermSheet:
         text_lines, Markers(r"\d+\.(?!\d)")
     )  # 連結標的公司介紹：k.介紹（Issue #225）
     fields.update(ratings.fields(text_lines, RATINGS, no_guarantor_places=(ratings.NAME_NO_GUARANTOR,)))
-    return DbsTermSheet(fields, TextIndex(text_lines))
+    return DbsTermSheet(fields.build(), TextIndex(text_lines))
 
 
-def _cover(fields: dict[str, ParsedField], cover: list[Line], put: Callable) -> None:
+def _cover(fields: FieldsBuilder, cover: list[Line]) -> None:
     """第 1–2 頁「• 標籤：值」清單與刊印日期。"""
     raw = RawText(cover)
-    put("product_code", cover, r"•商品代號：(\d{12})")
-    put("distributor_code", cover, r"•受託或銷售機構商品代號：(\d{12})")
-    put("isin", cover, r"•國際證券編碼ISIN：([A-Z]{2}[A-Z0-9]{10})")
+    fields.put("product_code", cover, r"•商品代號：(\d{12})")
+    fields.put("distributor_code", cover, r"•受託或銷售機構商品代號：(\d{12})")
+    fields.put("isin", cover, r"•國際證券編碼ISIN：([A-Z]{2}[A-Z0-9]{10})")
     fields["name_zh"] = raw.capture("name_zh", r"•\s*商品中文名稱\s*：\s*(.+?)\s*\(下稱「本商品」\)")
     fields["name_en"] = raw.capture("name_en", r"•\s*商品英文名稱\s*：\s*(.+?)\s*•")
-    put("product_type", cover, r"•商品種類：(.+?)•")
-    put("currency_zh", cover, rf"•計價幣別：({ZH_CCY})\([A-Z]{{3}}\){CCY_NOTE}•")
-    put("currency_cover_iso", cover, rf"•計價幣別：{ZH_CCY}\(([A-Z]{{3}})\){CCY_NOTE}•")
+    fields.put("product_type", cover, r"•商品種類：(.+?)•")
+    fields.put("currency_zh", cover, rf"•計價幣別：({ZH_CCY})\([A-Z]{{3}}\){CCY_NOTE}•")
+    fields.put("currency_cover_iso", cover, rf"•計價幣別：{ZH_CCY}\(([A-Z]{{3}})\){CCY_NOTE}•")
     fields["issuer_name_cover"] = raw.capture("issuer_name_cover", r"•\s*發行機構之名稱\s*：\s*(.+?)\s*•")
     dist = (
         r"•\s*受託或銷售機構之名稱、電話及地址\s*：\s*(.+?)\s*、\s*電話\s*：\s*(.+?)\s*、\s*地址\s*：\s*(.+?)\s*。?\s*•"
@@ -265,29 +257,31 @@ def _cover(fields: dict[str, ParsedField], cover: list[Line], put: Callable) -> 
     fields["distributor_name_cover"] = raw.capture("distributor_name_cover", dist)
     fields["distributor_phone_cover"] = raw.capture("distributor_phone_cover", dist, group=2)
     fields["distributor_address_cover"] = raw.capture("distributor_address_cover", dist, group=3)
-    put("approval_date", cover, r"•受託或銷售機構審查通過之日期及文號：" + D, parse_date)
-    put("print_date", cover, r"中文產品說明書刊印日期：" + D, parse_date)
+    fields.put("approval_date", cover, r"•受託或銷售機構審查通過之日期及文號：" + D, parse_date)
+    fields.put("print_date", cover, r"中文產品說明書刊印日期：" + D, parse_date)
 
 
 # ---------------------------------------------------------------- 商品基本資料
 
 
-def _basic(fields: dict[str, ParsedField], basic: list[Line], put: Callable) -> None:
+def _basic(fields: FieldsBuilder, basic: list[Line]) -> None:
     ti = TextIndex(basic, separate_digits=True)
     fields["name_basic"] = RawText(basic).capture("name_basic", r"商品名稱\s*：\s*(.+?)\s*商品風險程度\s*：")
-    put("currency_basic", basic, rf"計價幣別：({ZH_CCY})\([A-Z]{{3}}\){CCY_NOTE}商品面額：")
-    put("currency_basic_iso", basic, rf"計價幣別：{ZH_CCY}\(([A-Z]{{3}})\){CCY_NOTE}商品面額：")
+    fields.put("currency_basic", basic, rf"計價幣別：({ZH_CCY})\([A-Z]{{3}}\){CCY_NOTE}商品面額：")
+    fields.put("currency_basic_iso", basic, rf"計價幣別：{ZH_CCY}\(([A-Z]{{3}})\){CCY_NOTE}商品面額：")
     denom = rf"商品面額：每單位({CCY})([\d,]+)發行價格："
     fields["denomination"] = capture_group(basic, denom, 2, "denomination", number)
     fields["denomination_currency"] = capture_group(basic, denom, 1, "denomination_currency")
-    put("issue_price_pct", basic, r"發行價格：商品面額的" + PCT, Decimal)
+    fields.put("issue_price_pct", basic, r"發行價格：商品面額的" + PCT, Decimal)
     fields["basic_tickers"] = basic_tickers(basic)
-    put("tenor_months", basic, r"商品年期：(\d+)個月。", int)
-    put("issue_date", basic, r"發行日：" + D, parse_date)
-    put("trade_date", basic, r"(?<!劃)(?<!定)交易日：" + D, parse_date)
-    put("observation_start", basic, r"觀察起始日：" + D, parse_date)
-    put("maturity_date", basic, r"到期日：如未依下載之強制贖回條款發生自動提前出場事件之情形，為" + D, parse_date)
-    put("final_valuation_date", basic, r"(?<!規劃)定價日：" + D + r"，如該日並非", parse_date)
+    fields.put("tenor_months", basic, r"商品年期：(\d+)個月。", int)
+    fields.put("issue_date", basic, r"發行日：" + D, parse_date)
+    fields.put("trade_date", basic, r"(?<!劃)(?<!定)交易日：" + D, parse_date)
+    fields.put("observation_start", basic, r"觀察起始日：" + D, parse_date)
+    fields.put(
+        "maturity_date", basic, r"到期日：如未依下載之強制贖回條款發生自動提前出場事件之情形，為" + D, parse_date
+    )
+    fields.put("final_valuation_date", basic, r"(?<!規劃)定價日：" + D + r"，如該日並非", parse_date)
     fields["coupon_table"] = table_a(ti)
     fields["coupon_pa_pct"] = capture_group(basic, MAX_RATE, 2, "coupon_pa_pct", Decimal)
     fields["monthly_coupon_pct"] = capture_group(basic, MAX_RATE, 1, "monthly_coupon_pct", Decimal)
@@ -451,11 +445,11 @@ def _schedule(fields: dict[str, ParsedField]) -> None:
 # ---------------------------------------------------------------- 情境分析
 
 
-def _scenario(fields: dict[str, ParsedField], sec: list[Line], put: Callable) -> list[Occurrence]:
+def _scenario(fields: FieldsBuilder, sec: list[Line]) -> list[Occurrence]:
     """基本假設（年期、面額、發行價格、投資金額、利率、KO 決定日）、情境價格表、情境一出場期、情境二年化報酬率
     （範本規格 §4.9）與情境一～三重複寫出的值（Issue #321）；回傳各情境金額旁的幣別出處（併入 `currency_others`）。"""
     ti = TextIndex(sec)
-    put("scenario_tenor", sec, r"假設：商品年期：(\d+)個月", int)
+    fields.put("scenario_tenor", sec, r"假設：商品年期：(\d+)個月", int)
     denom = rf"商品面額=({CCY})([\d,]+)發行價格=" + PCT
     fields["scenario_denomination"] = capture_group(sec, denom, 2, "scenario_denomination", number)
     fields["scenario_denomination_currency"] = capture_group(sec, denom, 1, "scenario_denomination_currency")
@@ -475,12 +469,12 @@ def _scenario(fields: dict[str, ParsedField], sec: list[Line], put: Callable) ->
     fields["scenario_full_rate_periods"] = full_rate_periods(
         "scenario_full_rate_periods", ti, r"利率：第1(?:~(\d{1,2}))?個觀察期間之利率為最大利率值"
     )
-    put("scenario_monthly_pct", sec, r"最大利率值：" + PCT + r"自動提前出場決定日", Decimal)
-    put("scenario_ko_start", sec, r"自動提前出場決定日：從第(\d{1,2})個觀察期間結束日", int)
+    fields.put("scenario_monthly_pct", sec, r"最大利率值：" + PCT + r"自動提前出場決定日", Decimal)
+    fields.put("scenario_ko_start", sec, r"自動提前出場決定日：從第(\d{1,2})個觀察期間結束日", int)
     fields["scenario_table"] = price_table.read(
         "scenario_table", table_region(sec, "各連結標的之相關價格", "1."), SCENARIO_TABLE
     )
-    put(
+    fields.put(
         "scenario_first_period",
         sec,
         r"有利情況：假設本商品於第(\d{1,2})個觀察期間的第\d+個觀察日發生自動提前出場事件",
@@ -489,7 +483,7 @@ def _scenario(fields: dict[str, ParsedField], sec: list[Line], put: Callable) ->
     a = ti.text.find("於到期最佳情況")
     b = ti.text.find("較差情況", a)
     best = ti.lines_for(a, b) if a >= 0 and b > a else []
-    put("scenario_best_annual_pct", best, r"年化平均報酬率約為" + PCT, Decimal)
+    fields.put("scenario_best_annual_pct", best, r"年化平均報酬率約為" + PCT, Decimal)
     currencies = _scenario_mentions(fields, ti)
     scenario_standard(fields)
     return currencies
@@ -656,8 +650,8 @@ def _organisations(fields: dict[str, ParsedField], sec: list[Line]) -> None:
     fields["chairman"] = raw.capture("chairman", trustee, group=3)
 
 
-def _trading(fields: dict[str, ParsedField], sec: list[Line], put: Callable) -> None:
-    put("subscription_start", sec, r"\(1\)商品開始受理申購日期：" + D, parse_date)
+def _trading(fields: FieldsBuilder, sec: list[Line]) -> None:
+    fields.put("subscription_start", sec, r"\(1\)商品開始受理申購日期：" + D, parse_date)
     ti = TextIndex(sec)
     a, b = ti.text.find("投資人應負擔的各項費用"), ti.text.find("商品交易架構")
     fees = sec[ti.line_at(a) : ti.line_at(b)] if a >= 0 and b > a else []
@@ -735,60 +729,31 @@ def _min_amount(fields: dict[str, ParsedField], name: str, units: str, amount: s
     return derived(name, shown, value)
 
 
-def _occurrences(fields: dict[str, ParsedField]) -> None:
-    occ = Occurrence
+def _occurrences(fields: FieldsBuilder) -> None:
     minimums = (
         (
-            "minimum_subscription",
             "minimum_subscription",
             "一般交易事項 4. 最低申購金額",
             "minimum_subscription_units",
             "minimum_subscription_amount",
         ),
-        ("minimum_additional", "minimum_additional", "一般交易事項 4. 最低加購金額", "minimum_subscription_step", None),
+        ("minimum_additional", "一般交易事項 4. 最低加購金額", "minimum_subscription_step", None),
         (
-            "minimum_redemption",
             "minimum_redemption",
             "一般交易事項 8.(3) 最低贖回金額",
             "minimum_redemption_units",
             "minimum_redemption_amount",
         ),
-        (
-            "redemption_increment",
-            "redemption_increment",
-            "一般交易事項 8.(3) 累加單位",
-            "minimum_redemption_step",
-            None,
-        ),
+        ("redemption_increment", "一般交易事項 8.(3) 累加單位", "minimum_redemption_step", None),
     )
-    fields["min_amounts"] = standard_fields.occurrences(
-        "min_amounts",
-        [occ(f, label, where, _min_amount(fields, f, units, amount)) for f, label, where, units, amount in minimums],
-    )
-    fields["subscription_dates"] = standard_fields.occurrences(
-        "subscription_dates",
-        [
-            occ(
-                "subscription_start",
-                "subscription_start",
-                "一般交易事項 1.(1) 商品開始受理申購日期",
-                fields["subscription_start"],
-            )
-        ],
-    )
-    fields["print_dates"] = standard_fields.occurrences(
-        "print_dates", [occ("print_date", "print_date", "第 2 頁中文產品說明書刊印日期", fields["print_date"])]
-    )
-    fields["issue_price_others"] = standard_fields.absent("issue_price_others", "發行價格的其他出處")
+    for f, where, units, amount in minimums:
+        fields.occur(f, where, value=_min_amount(fields, f, units, amount))
+    fields.occur("subscription_start", "一般交易事項 1.(1) 商品開始受理申購日期")
+    fields.occur("print_date", "第 2 頁中文產品說明書刊印日期")
     fields["distributor_phone_ch4"] = standard_fields.absent("distributor_phone_ch4", "一般交易事項受託機構電話")
-    fields.update(standard_fields.absent_all(standard_fields.DISTRIBUTOR_OTHERS, "受託機構的其他出處"))
-    currencies = (  # 金額旁的幣別字（Issue #170）：價格表幣別字（標的報價幣別）、情境股價不列入；情境一～三另在 read 加入
-        ("denomination_currency", "denomination_currency", "商品基本資料商品面額"),
-        ("minimum_subscription_currency", "minimum_subscription_currency", "一般交易事項 4. 最低申購金額"),
-        ("minimum_redemption_currency", "minimum_redemption_currency", "一般交易事項 8.(3) 最低贖回金額"),
-        ("scenario_denomination_currency", "scenario_denomination_currency", "情境分析假設商品面額"),
-        ("scenario_investment_currency", "scenario_investment_currency", "情境分析假設投資金額"),
-    )
-    fields["currency_others"] = standard_fields.occurrences(
-        "currency_others", [occ(key, label, where, fields[key]) for key, label, where in currencies]
-    )
+    # 金額旁的幣別字（Issue #170）：價格表幣別字（標的報價幣別）、情境股價不列入；情境一～三另在 read 加入
+    fields.occur("denomination_currency", "商品基本資料商品面額")
+    fields.occur("minimum_subscription_currency", "一般交易事項 4. 最低申購金額")
+    fields.occur("minimum_redemption_currency", "一般交易事項 8.(3) 最低贖回金額")
+    fields.occur("scenario_denomination_currency", "情境分析假設商品面額")
+    fields.occur("scenario_investment_currency", "情境分析假設投資金額")

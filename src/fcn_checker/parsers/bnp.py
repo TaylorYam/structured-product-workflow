@@ -16,6 +16,7 @@ from ..standard_fields import Occurrence, ScenarioParam, ScenarioPrice
 from ..text import squash
 from . import bnp_scenario, bnp_tables, money, price_table, ratings, schedule
 from .common import NUM, Hit, Mention, derived, fee_rates_by_pattern, number
+from .fields_builder import FieldsBuilder, ParsedTermSheet
 from .layout import Document, LayoutSpec, Span, TextIndex, capture, join_text, parse_date
 from .underlying_notes import Markers, underlying_notes
 
@@ -233,17 +234,12 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
 
 
 @dataclass
-class BnpTermSheet:
-    fields: dict[str, ParsedField]
-    full_text: TextIndex
+class BnpTermSheet(ParsedTermSheet):
     document: Document
     scenarios: bnp_scenario.ScenarioSection  # 第 18 項(3)
     coupon_mentions: list[Mention]  # 月配息率的每個出處（第 15 項兩處；第 18 項的交給共用情境規則）
     page_headers: list[tuple[int, int, Line]]  # 每頁頁首的（頁碼, 總頁數, 原文行）
     chapter1: Chapter1  # 第一章各項的範圍與條號（錯訊寫文件上的條號）
-
-    def f(self, name: str) -> ParsedField:
-        return standard_fields.lookup(self.fields, name)
 
 
 def labelled(name: str, lines: Sequence[Line], label: str) -> ParsedField:
@@ -305,13 +301,10 @@ def read(lines: Sequence[Line]) -> BnpTermSheet:
     art_label = ch1.label
     cover = doc.before_chapter1()
     items = cover_items(cover)
-    fields: dict[str, ParsedField] = {}
+    fields = FieldsBuilder()
 
     def article(key: str) -> list[Line]:
         return doc.span_lines(ch1.spans.get(key))
-
-    def put(name: str, lns: list[Line], pattern: str, convert: Callable = lambda x: x) -> None:
-        fields[name] = capture(name, TextIndex(lns), pattern, convert, whole_match=True)
 
     # 封面
     codes = items.get(1)
@@ -379,38 +372,38 @@ def read(lines: Sequence[Line]) -> BnpTermSheet:
         "currency_art5", currency5, currency5.value.split(RMB_NOTE, 1)[0].strip() if currency5.ok else None
     )
     art6 = article("denomination")
-    put("denomination", art6, r"商品面額：每單位商品" + NUM + CCY, number)
-    put("denomination_currency", art6, rf"商品面額：每單位商品{money.NUMBER}({CCY})")
-    put("issue_price_pct", article("issue_price"), r"發行價格：" + PCT, Decimal)
+    fields.put("denomination", art6, r"商品面額：每單位商品" + NUM + CCY, number)
+    fields.put("denomination_currency", art6, rf"商品面額：每單位商品{money.NUMBER}({CCY})")
+    fields.put("issue_price_pct", article("issue_price"), r"發行價格：" + PCT, Decimal)
     art11 = article("underlying")
     table = bnp_tables.price_table("underlying_table", _art11_region(art11), with_tickers=True)
     fields["underlying_table"] = table
     price_fields(fields, table, art11)
 
     art14 = article("dates")
-    put("tenor_months", art14, r"商品年期：(\d+)個月期", int)
-    put("trade_date", art14, r"期初訂價日：" + D, parse_date)
-    put("issue_date", art14, r"發行日：" + D, parse_date)
-    put("final_valuation_date", art14, r"期末評價日：" + D, parse_date)
-    put("maturity_date", art14, r"到期日：[^(]*?預定為" + D, parse_date)
+    fields.put("tenor_months", art14, r"商品年期：(\d+)個月期", int)
+    fields.put("trade_date", art14, r"期初訂價日：" + D, parse_date)
+    fields.put("issue_date", art14, r"發行日：" + D, parse_date)
+    fields.put("final_valuation_date", art14, r"期末評價日：" + D, parse_date)
+    fields.put("maturity_date", art14, r"到期日：[^(]*?預定為" + D, parse_date)
     fields["date_table"] = bnp_tables.date_table(art14)
     fields["ko_wording"] = _ko_wording(art14, art_label("dates"))
     _schedule(fields, art_label("dates"))
 
     art15 = article("coupon")
-    put("coupon_pa_pct", art15, r"月配息率：\d+(?:\.\d+)?%\(即年利率" + PCT + r"\)", Decimal)
-    put("monthly_coupon_pct", art15, r"月配息率：" + PCT + r"\(即年利率", Decimal)
-    put("coupon_formula_pct", art15, r"固定配息金額=每單位面額×" + PCT, Decimal)
-    put(
+    fields.put("coupon_pa_pct", art15, r"月配息率：\d+(?:\.\d+)?%\(即年利率" + PCT + r"\)", Decimal)
+    fields.put("monthly_coupon_pct", art15, r"月配息率：" + PCT + r"\(即年利率", Decimal)
+    fields.put("coupon_formula_pct", art15, r"固定配息金額=每單位面額×" + PCT, Decimal)
+    fields.put(
         "coupon_decimals",
         art15,
         r"\((四捨五入至小數點以下第二位|四捨五入至整數位)\)計算以",
         lambda x: bnp_scenario.DECIMALS[x],
     )
-    put("coupon_currency_art15", art15, rf"計算以({CCY})計值的配息款項")
+    fields.put("coupon_currency_art15", art15, rf"計算以({CCY})計值的配息款項")
     art16 = article("autocall")
-    put("autocall_redemption_pct", art16, r"自動提前贖回金額=商品面額×" + PCT, Decimal)
-    put("currency_art16", art16, rf"計算之({CCY})金額\(「自動提前贖回金額」\)")
+    fields.put("autocall_redemption_pct", art16, r"自動提前贖回金額=商品面額×" + PCT, Decimal)
+    fields.put("currency_art16", art16, rf"計算之({CCY})金額\(「自動提前贖回金額」\)")
     fields["ko_memory"] = ko_memory(
         "ko_memory",
         art16,
@@ -418,9 +411,9 @@ def read(lines: Sequence[Line]) -> BnpTermSheet:
         f"找不到{art_label('autocall')}自動提前贖回事件定義句",
     )
     art17 = article("maturity")
-    put("maturity_redemption_pct", art17, r"商品面額×" + PCT + r"；或", Decimal)
-    put("min_coupon_rate", art17, r"最低配息率為" + PCT + r"[（(]年化[）)]", Decimal)
-    put("currency_art17", art17, rf"計算之({CCY})金額或實體連結標的")
+    fields.put("maturity_redemption_pct", art17, r"商品面額×" + PCT + r"；或", Decimal)
+    fields.put("min_coupon_rate", art17, r"最低配息率為" + PCT + r"[（(]年化[）)]", Decimal)
+    fields.put("currency_art17", art17, rf"計算之({CCY})金額或實體連結標的")
     fields["ki_type"] = ki_type(art17)
     fields["ko_memory_art20"] = ko_memory(
         "ko_memory_art20",
@@ -444,8 +437,8 @@ def read(lines: Sequence[Line]) -> BnpTermSheet:
 
     # 第四章
     ch4 = doc.articles(4)
-    put("subscription_start", doc.span_lines(ch4.get(1)), r"商品開始受理申購日期：" + D + r"至", parse_date)
-    put(
+    fields.put("subscription_start", doc.span_lines(ch4.get(1)), r"商品開始受理申購日期：" + D + r"至", parse_date)
+    fields.put(
         "subscription_end",
         doc.span_lines(ch4.get(1)),
         r"商品開始受理申購日期：\d{4}年\d{1,2}月\d{1,2}日至" + D,
@@ -453,93 +446,49 @@ def read(lines: Sequence[Line]) -> BnpTermSheet:
     )
     fields.update(fee_rates_by_pattern(doc.span_lines(ch4.get(2)), bnp_tables.FEE_PATTERNS))
     art4 = doc.span_lines(ch4.get(4))
-    put("minimum_subscription", art4, r"最低申購金額：" + NUM + CCY, number)
-    put("minimum_additional", art4, r"最低加購金額：" + NUM + CCY, number)
-    put("minimum_subscription_currency", art4, rf"最低申購金額：{money.NUMBER}({CCY})")
-    put("minimum_additional_currency", art4, rf"最低加購金額：{money.NUMBER}({CCY})")
-    put("issue_price_ch4", doc.span_lines(ch4.get(5)), r"每單位商品面額×" + PCT + r"\+申購費用", Decimal)
-    put("minimum_issue_size", doc.span_lines(ch4.get(7)), r"至少達(\(等值\)[^之]*?)之總申購價值")
+    fields.put("minimum_subscription", art4, r"最低申購金額：" + NUM + CCY, number)
+    fields.put("minimum_additional", art4, r"最低加購金額：" + NUM + CCY, number)
+    fields.put("minimum_subscription_currency", art4, rf"最低申購金額：{money.NUMBER}({CCY})")
+    fields.put("minimum_additional_currency", art4, rf"最低加購金額：{money.NUMBER}({CCY})")
+    fields.put("issue_price_ch4", doc.span_lines(ch4.get(5)), r"每單位商品面額×" + PCT + r"\+申購費用", Decimal)
+    fields.put("minimum_issue_size", doc.span_lines(ch4.get(7)), r"至少達(\(等值\)[^之]*?)之總申購價值")
     art8 = doc.span_lines(ch4.get(8))
-    put("minimum_redemption", art8, r"最低贖回金額為" + NUM + CCY, number)
-    put("redemption_increment", art8, r"並以" + NUM + CCY + r"為增加贖回之單位", number)
-    put("minimum_redemption_currency", art8, rf"最低贖回金額為{money.NUMBER}({CCY})")
-    put("redemption_increment_currency", art8, rf"並以{money.NUMBER}({CCY})為增加贖回之單位")
-    fields["initial_pricing"] = standard_fields.absent("initial_pricing", "期初定價（收盤價／VWAP）字樣")
+    fields.put("minimum_redemption", art8, r"最低贖回金額為" + NUM + CCY, number)
+    fields.put("redemption_increment", art8, r"並以" + NUM + CCY + r"為增加贖回之單位", number)
+    fields.put("minimum_redemption_currency", art8, rf"最低贖回金額為{money.NUMBER}({CCY})")
+    fields.put("redemption_increment_currency", art8, rf"並以{money.NUMBER}({CCY})為增加贖回之單位")
     fields["distributor_phone_ch4"] = labelled(
         "distributor_phone_ch4", doc.span_lines(ch4.get(16)), "受託機構聯絡方式："
     )
-    fields.update(standard_fields.absent_all(standard_fields.DISTRIBUTOR_OTHERS, "受託機構的其他出處"))
 
-    occ = Occurrence
-    fields["min_amounts"] = standard_fields.occurrences(
-        "min_amounts",
-        [
-            occ(
-                "minimum_subscription",
-                "minimum_subscription",
-                "第四章第 4 項最低申購金額",
-                fields["minimum_subscription"],
-            ),
-            occ("minimum_additional", "minimum_additional", "第四章第 4 項最低加購金額", fields["minimum_additional"]),
-            occ("minimum_redemption", "minimum_redemption", "第四章第 8 項最低贖回金額", fields["minimum_redemption"]),
-            occ(
-                "redemption_increment",
-                "redemption_increment",
-                "第四章第 8 項增加贖回之單位",
-                fields["redemption_increment"],
-            ),
-        ],
+    fields.occur("minimum_subscription", "第四章第 4 項最低申購金額")
+    fields.occur("minimum_additional", "第四章第 4 項最低加購金額")
+    fields.occur("minimum_redemption", "第四章第 8 項最低贖回金額")
+    fields.occur("redemption_increment", "第四章第 8 項增加贖回之單位")
+    fields.occur("subscription_start", "第四章第 1 項商品開始受理申購日期（起）")
+    fields.occur("subscription_end", "第四章第 1 項商品開始受理申購日期（迄）")
+    fields.occur("print_date", "封面第 16 項刊印日期")
+    fields.occur(
+        "issue_price_scenario",
+        f"{art_label('scenario')}假設發行價格",
+        value=_hit_field(
+            "issue_price_scenario",
+            scenarios.issue_price,
+            f"{art_label('scenario')}假設找不到發行價格或出現多次",
+        ),
     )
-    fields["subscription_dates"] = standard_fields.occurrences(
-        "subscription_dates",
-        [
-            occ(
-                "subscription_start",
-                "subscription_start",
-                "第四章第 1 項商品開始受理申購日期（起）",
-                fields["subscription_start"],
-            ),
-            occ(
-                "subscription_end",
-                "subscription_end",
-                "第四章第 1 項商品開始受理申購日期（迄）",
-                fields["subscription_end"],
-            ),
-        ],
+    fields.occur(
+        "issue_price_principal",
+        f"{art_label('scenario')}投資本金算式",
+        value=_hit_field(
+            "issue_price_principal",
+            scenarios.principal,
+            f"{art_label('scenario')}假設找不到投資本金算式或出現多次",
+            lambda v: v.pct,
+        ),
     )
-    fields["print_dates"] = standard_fields.occurrences(
-        "print_dates", [occ("print_date", "print_date", "封面第 16 項刊印日期", fields["print_date"])]
-    )
-    fields["issue_price_others"] = standard_fields.occurrences(
-        "issue_price_others",
-        [
-            occ(
-                "issue_price_scenario",
-                "issue_price_scenario",
-                f"{art_label('scenario')}假設發行價格",
-                _hit_field(
-                    "issue_price_scenario",
-                    scenarios.issue_price,
-                    f"{art_label('scenario')}假設找不到發行價格或出現多次",
-                ),
-            ),
-            occ(
-                "issue_price_principal",
-                "issue_price_principal",
-                f"{art_label('scenario')}投資本金算式",
-                _hit_field(
-                    "issue_price_principal",
-                    scenarios.principal,
-                    f"{art_label('scenario')}假設找不到投資本金算式或出現多次",
-                    lambda v: v.pct,
-                ),
-            ),
-            occ("issue_price_ch4", "issue_price_subscription", "第四章第 5 項申購價金", fields["issue_price_ch4"]),
-        ],
-    )
-    fields["currency_others"] = standard_fields.occurrences(
-        "currency_others", _currency_occurrences(fields, scenarios, ch1)
-    )
+    fields.occur("issue_price_ch4", "第四章第 5 項申購價金", code="issue_price_subscription")
+    fields.add(*_currency_occurrences(fields, scenarios, ch1))
     _scenario_standard(fields, scenarios, ch1)
     coupons = [
         Mention.of_field(f"{art_label('coupon')}月配息率", fields["monthly_coupon_pct"]),
@@ -549,7 +498,7 @@ def read(lines: Sequence[Line]) -> BnpTermSheet:
         lines, Markers(r"\(\d+\)")
     )  # 連結標的公司介紹：行首 (k)（Issue #225）
     fields.update(ratings.fields(doc.lines, RATINGS, GUARANTOR_RATINGS))
-    return BnpTermSheet(fields, full, doc, scenarios, coupons, page_headers(lines), ch1)
+    return BnpTermSheet(fields.build(), full, doc, scenarios, coupons, page_headers(lines), ch1)
 
 
 def _hit_field(name: str, hit: Hit | None, missing: str, pick: Callable = lambda v: v) -> ParsedField:

@@ -22,6 +22,7 @@ from ..text import squash
 from ..trading_calendar import TradingCalendar
 from . import money, price_table, ratings, schedule
 from .common import RawText, capture_group, compat_normalized, derived, fee_rates, number
+from .fields_builder import FieldsBuilder, ParsedTermSheet
 from .layout import Document, LayoutSpec, TextIndex, capture, join_wrapped_tickers, parse_date
 from .underlying_notes import NameColumn, underlying_notes
 
@@ -185,63 +186,55 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
 
 
 @dataclass
-class CaTermSheet:
-    fields: dict[str, ParsedField]
-    full_text: TextIndex
+class CaTermSheet(ParsedTermSheet):
     document: Document
-
-    def f(self, name: str) -> ParsedField:
-        return standard_fields.lookup(self.fields, name)
 
 
 def read(lines: Sequence[Line]) -> CaTermSheet:
     """讀出標準欄位與 CA 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）。"""
     doc = document(lines)
     arts = doc.articles(1)
-    fields: dict[str, ParsedField] = {}
+    fields = FieldsBuilder()
 
     def article(n: int) -> list[Line]:
         return doc.span_lines(arts.get(n))
 
-    def put(name: str, lns: list[Line], pattern: str, convert: Callable = lambda x: x) -> None:
-        fields[name] = capture(name, TextIndex(lns), pattern, convert, whole_match=True)
-
-    _cover(fields, doc.before_chapter1(), put)
+    _cover(fields, doc.before_chapter1())
 
     # 第一章
     art1 = article(1)
     fields["name_art1_zh"] = RawText(art1).capture("name_art1_zh", r"1\.\s*商品名稱\s*：\s*(.+?)\s*\(ISIN")
-    put("isin_art1", art1, r"1\.商品名稱：.+?" + ISIN)
+    fields.put("isin_art1", art1, r"1\.商品名稱：.+?" + ISIN)
     fields["issuer_name_ch1"] = RawText(article(3)).capture(
         "issuer_name_ch1", r"3\.\s*發行機構\s*：\s*(.+?)\s*。\s*保證機構名稱"
     )
     art5 = article(5)
-    put("currency_art5", art5, rf"5\.計價幣別：({ZH_CCY})\([A-Z]{{3}}\)")
-    put("currency_art5_iso", art5, rf"5\.計價幣別：{ZH_CCY}\(([A-Z]{{3}})\)")
+    fields.put("currency_art5", art5, rf"5\.計價幣別：({ZH_CCY})\([A-Z]{{3}}\)")
+    fields.put("currency_art5_iso", art5, rf"5\.計價幣別：{ZH_CCY}\(([A-Z]{{3}})\)")
     art6 = article(6)
     denom = rf"每單位\(張\)商品面額為([\d,]+)({CCY})\([A-Z]{{3}}\)。"
-    put("denomination", art6, denom, number)
+    fields.put("denomination", art6, denom, number)
     fields["denomination_currency"] = capture_group(art6, denom, 2, "denomination_currency")
     issue = rf"發行價格：每單位\(張\)商品面額的{PCT}，即[\d,]+({CCY})\([A-Z]{{3}}\)"
-    put("issue_price_pct", art6, issue, Decimal)
+    fields.put("issue_price_pct", art6, issue, Decimal)
     fields["issue_price_currency"] = capture_group(art6, issue, 2, "issue_price_currency")
 
     art9 = article(9)
     _article9(fields, art9)
     fields["art10_tickers"] = art10_tickers(article(10))
-    put("tenor_months", article(13), r"\(1\)商品年期：(\d+)個月", int)
+    fields.put("tenor_months", article(13), r"\(1\)商品年期：(\d+)個月", int)
     art13 = article(13)
-    put("trade_date", art13, r"\(2\)期初訂價日：" + D, parse_date)
-    put("issue_date", art13, r"\(3\)發行日：" + D, parse_date)
-    put("final_valuation_date", art13, r"\(4\)期末訂價日：" + D, parse_date)
-    put("maturity_date", art13, r"\(5\)到期日：" + D, parse_date)
+    fields.put("trade_date", art13, r"\(2\)期初訂價日：" + D, parse_date)
+    fields.put("issue_date", art13, r"\(3\)發行日：" + D, parse_date)
+    fields.put("final_valuation_date", art13, r"\(4\)期末訂價日：" + D, parse_date)
+    fields.put("maturity_date", art13, r"\(5\)到期日：" + D, parse_date)
     fields.update(guaranteed_coupon(article(15)))
     table_fields(fields)
     _schedule(fields)
     _article16(fields, article(16))
 
     _chapter2(fields, doc)
-    _chapter4(fields, doc, put)
+    _chapter4(fields, doc)
     _occurrences(fields)
     _repeated(fields, doc, article)
     fields["initial_pricing"] = standard_fields.absent(
@@ -251,21 +244,20 @@ def read(lines: Sequence[Line]) -> CaTermSheet:
         doc.lines, NameColumn()
     )  # 連結標的公司介紹：兩欄表：左欄名稱、右欄簡介（Issue #225）
     fields.update(ratings.fields(doc.lines, guarantor=GUARANTOR_RATINGS, issuer_unrated=ISSUER_UNRATED))
-    return CaTermSheet(fields, TextIndex(doc.lines), doc)
+    return CaTermSheet(fields.build(), TextIndex(doc.lines), doc)
 
 
-def _cover(fields: dict[str, ParsedField], cover: list[Line], put: Callable) -> None:
+def _cover(fields: FieldsBuilder, cover: list[Line]) -> None:
     """第 1–2 頁「● 標籤：值」清單與刊印日期。"""
-    ti = TextIndex(cover)
     raw = RawText(cover)
-    put("product_code", cover, r"●TDCC商品代號：(\d{12})")
-    put("isin", cover, r"●商品中文名稱：.+?" + ISIN)
-    put("isin_en", cover, r"●商品英文名稱：.+?" + ISIN)
+    fields.put("product_code", cover, r"●TDCC商品代號：(\d{12})")
+    fields.put("isin", cover, r"●商品中文名稱：.+?" + ISIN)
+    fields.put("isin_en", cover, r"●商品英文名稱：.+?" + ISIN)
     fields["name_zh"] = raw.capture("name_zh", r"●\s*商品中文名稱\s*：\s*(.+?)\s*\(ISIN")
     fields["name_en"] = raw.capture("name_en", r"●\s*商品英文名稱\s*：\s*(.+?)\s*\(ISIN")
-    put("product_type", cover, r"●商品種類：(.+?)●")
-    put("currency_zh", cover, rf"●計價幣別：({ZH_CCY})\([A-Z]{{3}}\)●")
-    put("currency_cover_iso", cover, rf"●計價幣別：{ZH_CCY}\(([A-Z]{{3}})\)●")
+    fields.put("product_type", cover, r"●商品種類：(.+?)●")
+    fields.put("currency_zh", cover, rf"●計價幣別：({ZH_CCY})\([A-Z]{{3}}\)●")
+    fields.put("currency_cover_iso", cover, rf"●計價幣別：{ZH_CCY}\(([A-Z]{{3}})\)●")
     fields["issuer_name_cover"] = raw.capture(
         "issuer_name_cover", r"●\s*發行機構名稱及註冊辦公地點\s*(.+?)\s*，\s*註冊辦公地點"
     )
@@ -273,8 +265,8 @@ def _cover(fields: dict[str, ParsedField], cover: list[Line], put: Callable) -> 
     fields["distributor_name_cover"] = raw.capture("distributor_name_cover", dist)
     fields["distributor_phone_cover"] = raw.capture("distributor_phone_cover", dist, group=2)
     fields["distributor_address_cover"] = raw.capture("distributor_address_cover", dist, group=3)
-    put("approval_date", cover, r"●受託或銷售機構審查通過之日期：" + D, parse_date)
-    fields["print_date"] = capture("print_date", ti, r"●中文產品說明書刊印日期：" + D, parse_date, whole_match=True)
+    fields.put("approval_date", cover, r"●受託或銷售機構審查通過之日期：" + D, parse_date)
+    fields.put("print_date", cover, r"●中文產品說明書刊印日期：" + D, parse_date)
 
 
 # ---------------------------------------------------------------- 第 9 項：配息表、KO、到期贖回、價格表
@@ -293,14 +285,14 @@ def _rows(text: str, pattern: str) -> list[tuple]:
     return out
 
 
-def _article9(fields: dict[str, ParsedField], art9: list[Line]) -> None:
+def _article9(fields: FieldsBuilder, art9: list[Line]) -> None:
     plain = TextIndex(art9)  # 贖回 %、(a) 舉例的月配息率（Issue #319）
     for name, pattern in (
         ("ko_redemption_pct", KO_REDEMPTION),
         ("maturity_redemption_pct", MATURITY_REDEMPTION),
         ("coupon_note_pct", r"月配息率為" + PCT),
     ):
-        fields[name] = capture(name, plain, pattern, Decimal, whole_match=True)
+        fields.put(name, art9, pattern, Decimal)
     p = plain.text.find(FIRST_PERIOD_FULL_COUPON)
     lns = plain.lines_for(p, p + len(FIRST_PERIOD_FULL_COUPON)) if p >= 0 else []
     fields["first_period_full_coupon"] = ParsedField.present("first_period_full_coupon", p >= 0, lns)
@@ -855,14 +847,14 @@ def _chapter2(fields: dict[str, ParsedField], doc: Document) -> None:
     fields["chairman"] = raw3.capture("chairman", trustee, group=3)
 
 
-def _chapter4(fields: dict[str, ParsedField], doc: Document, put: Callable) -> None:
+def _chapter4(fields: FieldsBuilder, doc: Document) -> None:
     ch4 = doc.articles(4)
 
     def art(n: int) -> list[Line]:
         return doc.span_lines(ch4.get(n))
 
-    put("subscription_start", art(1), r"◎開始受理申購日期：" + D, parse_date)
-    put("subscription_end", art(1), r"◎結束受理申購日期：" + D, parse_date)
+    fields.put("subscription_start", art(1), r"◎開始受理申購日期：" + D, parse_date)
+    fields.put("subscription_end", art(1), r"◎結束受理申購日期：" + D, parse_date)
     fees = art(2)  # 表後的「附註：分銷費用…」換行後可能有一行以「分銷費用」開頭，不算費用項目
     fields.update(fee_rates(fees[: next((i for i, ln in enumerate(fees) if squash(ln.text).startswith("附註")), None)]))
     unit = r"\(相當於一單位\(張\)商品\)"
@@ -906,68 +898,31 @@ STRUCTURE_NAMES = (
 )
 
 
-def _occurrences(fields: dict[str, ParsedField]) -> None:
-    occ = Occurrence
-    fields["min_amounts"] = standard_fields.occurrences(
-        "min_amounts",
-        [
-            occ(
-                "minimum_subscription",
-                "minimum_subscription",
-                "第四章第 4 項最低申購金額",
-                fields["minimum_subscription"],
-            ),
-            occ(
-                "minimum_additional",
-                "minimum_additional",
-                "第四章第 4 項最低累加申購金額",
-                fields["minimum_additional"],
-            ),
-            occ("minimum_redemption", "minimum_redemption", "第四章第 8 項最低贖回金額", fields["minimum_redemption"]),
-        ],
-    )
-    fields["subscription_dates"] = standard_fields.occurrences(
-        "subscription_dates",
-        [
-            occ(
-                "subscription_start",
-                "subscription_start",
-                "第四章第 1 項開始受理申購日期",
-                fields["subscription_start"],
-            ),
-            occ("subscription_end", "subscription_end", "第四章第 1 項結束受理申購日期", fields["subscription_end"]),
-        ],
-    )
-    fields["print_dates"] = standard_fields.occurrences(
-        "print_dates", [occ("print_date", "print_date", "第 2 頁中文產品說明書刊印日期", fields["print_date"])]
-    )
-    fields["issue_price_others"] = standard_fields.absent("issue_price_others", "發行價格的其他出處")
-    fields["distributor_phone_ch4"] = standard_fields.absent("distributor_phone_ch4", "第四章受託機構電話")
+def _occurrences(fields: FieldsBuilder) -> None:
+    fields.occur("minimum_subscription", "第四章第 4 項最低申購金額")
+    fields.occur("minimum_additional", "第四章第 4 項最低累加申購金額")
+    fields.occur("minimum_redemption", "第四章第 8 項最低贖回金額")
+    fields.occur("subscription_start", "第四章第 1 項開始受理申購日期")
+    fields.occur("subscription_end", "第四章第 1 項結束受理申購日期")
+    fields.occur("print_date", "第 2 頁中文產品說明書刊印日期")
     fields.update(
         standard_fields.absent_all(
             [x for x in standard_fields.DISTRIBUTOR_OTHERS if x != "distributor_names_others"],
             "受託機構地址、負責人的其他出處",
         )
     )
-    currencies = (  # 金額旁的幣別字（Issue #170）：價格表幣別字（標的報價幣別）、情境三股價與股數算式不列入
-        ("denomination_currency", "denomination_currency", "第一章第 6 項商品面額"),
-        ("issue_price_currency", "issue_price_amount_currency", "第一章第 6 項發行價格"),
-        ("minimum_subscription_currency", "minimum_subscription_currency", "第四章第 4 項最低申購金額"),
-        ("minimum_additional_currency", "minimum_additional_currency", "第四章第 4 項最低累加申購金額"),
-        ("minimum_redemption_currency", "minimum_redemption_currency", "第四章第 8 項最低贖回金額"),
-        ("scenario_denomination_currency", "scenario_denomination_currency", "第一章第 16 項基本假設每單位面額"),
-        ("scenario_investment_currency", "scenario_investment_currency", "第一章第 16 項基本假設初始投資金額"),
-    )
-    fields["currency_others"] = standard_fields.occurrences(
-        "currency_others",
-        [
-            *(occ(key, label, where, fields[key]) for key, label, where in currencies),
-            *fields["scenario_currencies"].value,
-        ],
-    )
+    # 金額旁的幣別字（Issue #170）：價格表幣別字（標的報價幣別）、情境三股價與股數算式不列入
+    fields.occur("denomination_currency", "第一章第 6 項商品面額")
+    fields.occur("issue_price_currency", "第一章第 6 項發行價格", code="issue_price_amount_currency")
+    fields.occur("minimum_subscription_currency", "第四章第 4 項最低申購金額")
+    fields.occur("minimum_additional_currency", "第四章第 4 項最低累加申購金額")
+    fields.occur("minimum_redemption_currency", "第四章第 8 項最低贖回金額")
+    fields.occur("scenario_denomination_currency", "第一章第 16 項基本假設每單位面額")
+    fields.occur("scenario_investment_currency", "第一章第 16 項基本假設初始投資金額")
+    fields.add(*fields["scenario_currencies"].value)
 
 
-def _repeated(fields: dict[str, ParsedField], doc: Document, article: Callable[[int], list[Line]]) -> None:
+def _repeated(fields: FieldsBuilder, doc: Document, article: Callable[[int], list[Line]]) -> None:
     """說明文字的幣別字併入 `currency_others`；警語與交易架構的受託機構名稱 → `distributor_names_others`（Issue #319）。"""
     words = money.currency_words
     ch3, ch4 = doc.articles(3), doc.articles(4)
@@ -1009,9 +964,7 @@ def _repeated(fields: dict[str, ParsedField], doc: Document, article: Callable[[
             f"第四章 9.「{principal}」",
         ),
     )
-    fields["currency_others"] = standard_fields.occurrences(
-        "currency_others", [*fields["currency_others"].value, *wording]
-    )
+    fields.add(*wording)
     names = [
         Occurrence(field, code, where, capture(field, TextIndex(lns), pattern))
         for lns, code, specs in (

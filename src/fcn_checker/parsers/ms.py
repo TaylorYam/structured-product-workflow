@@ -16,6 +16,7 @@ from ..standard_fields import ScenarioParam, ScenarioPrice
 from ..text import full_brackets, squash
 from . import money, ms_scenario, ms_tables, ms_wording, price_table, ratings, schedule
 from .common import NO_AUTOCALL_KO_PCT, NUM, Hit, Mention, derived, fee_rates, ko_at_initial, number
+from .fields_builder import FieldsBuilder, ParsedTermSheet
 from .layout import Document, LayoutSpec, TextIndex, capture, join_text, parse_date
 from .underlying_notes import Markers, underlying_notes
 
@@ -143,15 +144,10 @@ def product_code(lines: Sequence[Line]) -> ParsedField:
 
 
 @dataclass
-class MsTermSheet:
-    fields: dict[str, ParsedField]
-    full_text: TextIndex
+class MsTermSheet(ParsedTermSheet):
     document: Document
     scenarios: ms_scenario.ScenarioSection  # 第 18 項
     coupon_mentions: list[Mention]  # 月配息率的出處（第 15 項；第 18 項的交給共用情境規則）
-
-    def f(self, name: str) -> ParsedField:
-        return standard_fields.lookup(self.fields, name)
 
 
 def _ki_type(lines: list[Line]) -> ParsedField:
@@ -190,7 +186,7 @@ def read(lines: Sequence[Line]) -> MsTermSheet:
     doc = document(lines)
     arts = doc.articles(1)
     items = cover_items(doc.before_chapter1())
-    fields: dict[str, ParsedField] = {}
+    fields = FieldsBuilder()
 
     def article(n: int) -> list[Line]:
         return doc.span_lines(arts.get(n))
@@ -297,49 +293,25 @@ def read(lines: Sequence[Line]) -> MsTermSheet:
     put("minimum_redemption_currency", ch4, rf"最低贖回金額為[^，。]*，即({ccy}){amount}元")
     put("redemption_increment_currency", ch4, rf"並以({ccy}){amount}元(?:（[^）]*）)?為累加贖回單位")
 
-    occ = standard_fields.Occurrence
-    fields["min_amounts"] = standard_fields.occurrences(
-        "min_amounts",
-        [
-            occ(
-                "minimum_subscription",
-                "minimum_subscription",
-                "第四章第 4 項最低申購金額",
-                fields["minimum_subscription"],
-            ),
-            occ("minimum_additional", "minimum_additional", "第四章第 4 項最低加購單位", fields["minimum_additional"]),
-            occ("minimum_redemption", "minimum_redemption", "第四章第 8 項最低贖回金額", fields["minimum_redemption"]),
-            occ(
-                "redemption_increment",
-                "redemption_increment",
-                "第四章第 8 項累加贖回單位",
-                fields["redemption_increment"],
-            ),
-        ],
-    )
+    fields.occur("minimum_subscription", "第四章第 4 項最低申購金額")
+    fields.occur("minimum_additional", "第四章第 4 項最低加購單位")
+    fields.occur("minimum_redemption", "第四章第 8 項最低贖回金額")
+    fields.occur("redemption_increment", "第四章第 8 項累加贖回單位")
     scenarios = ms_scenario.section(article(18))
-    fields["currency_others"] = standard_fields.occurrences("currency_others", currency_occurrences(fields, scenarios))
-    fields["issue_price_others"] = standard_fields.occurrences(
-        "issue_price_others",
-        [occ("issue_price_ch4", "issue_price_subscription", "第四章第 5 項申購價金", fields["issue_price_ch4"])],
-    )
-    fields["print_dates"] = standard_fields.occurrences(
-        "print_dates", [occ("print_date", "print_date", "封面刊印日期", fields["print_date"])]
-    )
+    fields.add(*currency_occurrences(fields, scenarios))
+    fields.occur("issue_price_ch4", "第四章第 5 項申購價金", code="issue_price_subscription")
+    fields.occur("print_date", "封面刊印日期")
     fields["subscription_dates"] = standard_fields.absent(
         "subscription_dates", "受理申購日（MS 改核對第四章開始受理贖回日期）"
     )
     fields["coupon_pa_pct"] = standard_fields.absent("coupon_pa_pct", "年利率（MS 改核對月配息率與情境年化報酬率）")
-    fields["distributor_phone_ch4"] = standard_fields.absent("distributor_phone_ch4", "第四章受託機構電話")
-    fields.update(standard_fields.absent_all(standard_fields.DISTRIBUTOR_OTHERS, "受託機構的其他出處"))
-    fields["initial_pricing"] = standard_fields.absent("initial_pricing", "期初定價（收盤價／VWAP）字樣")
 
     _scenario_standard(fields, scenarios)
     fields["underlying_notes"] = underlying_notes(
         doc.lines, Markers(r"\(\d+\)連結標的\d+：")
     )  # 連結標的公司介紹：(k)連結標的k：名稱＋介紹（Issue #225）
     fields.update(ratings.fields(doc.lines, RATINGS, no_guarantor_places=(ratings.NAME_NO_GUARANTOR,)))
-    return MsTermSheet(fields, TextIndex(doc.lines), doc, scenarios, _mentions(fields))
+    return MsTermSheet(fields.build(), TextIndex(doc.lines), doc, scenarios, _mentions(fields))
 
 
 def currency_occurrences(

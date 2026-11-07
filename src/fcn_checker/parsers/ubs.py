@@ -870,7 +870,9 @@ def _occurrences(fields: FieldsBuilder) -> None:
     fields.occur("subscription_start", "一般交易事項一商品申購開始受理日")
     fields.occur("print_date", "第 1 頁本產品說明書刊印日期")
     # 金額旁的幣別字（Issue #170）：價格表幣別字（標的報價幣別）、到期交割句的股價與情境算式不列入
-    if fields["issue_price_currency"].status != FieldStatus.NOT_APPLICABLE:  # 寫「每單位面額之100%」時沒有金額
+    # 只有發行價格幣別可能是不適用（寫「每單位面額之100%」時沒有金額，`_article8`）；其餘幣別欄位由 put／capture_group
+    # 讀出，只會是讀到、缺漏或不合法
+    if fields["issue_price_currency"].status != FieldStatus.NOT_APPLICABLE:
         fields.occur("issue_price_currency", "商品基本資料八發行價格", code="issue_price_amount_currency")
     fields.occur("denomination_currency", "商品基本資料八每單位面額")
     fields.occur("minimum_trade_currency", "商品基本資料八最低交易金額")
