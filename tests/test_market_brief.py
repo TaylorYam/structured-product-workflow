@@ -24,6 +24,7 @@ from sp_workflow.market_brief import (
     export_brief,
     heat_fill,
     heatmap,
+    load_brief,
     month_columns,
     months_before,
     nice_step,
@@ -368,6 +369,29 @@ def test_heatmap_sheet_draws_the_close_line(seeded, tmp_path: Path) -> None:
     line_row = 3 + 3  # 表頭第 3 列，72-75 是第 3 格資料
     assert sheet.cell(line_row, 1).border.bottom.style == "thick"
     assert sheet.cell(line_row - 1, 1).border.bottom.style != "thick"
+
+
+@pytest.mark.db
+def test_quotes_read_the_latest_close_and_the_one_before(seeded) -> None:
+    """視窗的漲跌% 用最新一筆與它前一筆（#482 改成共用 `latest_closes`、前一筆另外取）。"""
+    (import_id,) = seeded.execute("SELECT max(import_id) FROM workflow.close_price_import").fetchone()
+    seeded.execute(  # 更早的一筆不影響「前一筆」
+        "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES ('2026-09-25', 'AAA UW', 90, %s)",
+        (import_id,),
+    )
+    seed(seeded, AUD, ["EEE UN", "BBB UN"])
+    seeded.execute(  # EEE 只有一筆收盤價
+        "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES (%s, 'EEE UN', 50, %s)",
+        (DAY, import_id),
+    )
+
+    quotes = {r.ticker: r.quote for r in load_brief(seeded, DAY).rows}
+
+    aaa = quotes["AAA"]
+    assert aaa is not None and (aaa.day, aaa.close, aaa.previous) == (DAY, D(72), D(100)), "前一筆是 10/27，不是 9/25"
+    assert aaa.change == D("-0.28")
+    eee = quotes["EEE"]
+    assert eee is not None and (eee.day, eee.close, eee.previous, eee.change) == (DAY, D(50), None, None)
 
 
 @pytest.mark.db
