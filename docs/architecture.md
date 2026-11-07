@@ -48,7 +48,7 @@ flowchart TD
 
 | 詞 | module | 方向與內容 |
 | --- | --- | --- |
-| 回填（核對） | `fcn_checker.backfill`、`fcn_checker.backfill_values` | 說明書 → 參考條件表「回填後」或資料庫：核對後把 TS、IIS、ISIN、發行日、比價日（VWAP 時另加各標的價格）寫回空白欄位（ADR 0008、#444） |
+| 回填（核對） | `fcn_checker.backfill`、`fcn_checker.backfill_values` | 說明書 → 參考條件表「回填後」或資料庫：核對後把 TS、IIS、ISIN、發行日、比價日（VWAP 時另加各標的價格）寫回空白欄位（[核對 ADR 0008](checker/adr/0008-reference-sheet-and-import-format.md)、#444） |
 | 回填通用 | `sp_workflow.generic_backfill` | 資料庫 → Excel：ELN 通用回補格式以 TDCC 從資料庫填 ISIN、比價日、VWAP 價格（#364），方向和核對回填相反 |
 | 回補 | `sp_workflow.product_backfill` | Excel → 資料庫：既有的 FCN 以外商品一次建立鎖住的商品條件（#303、ADR 0027） |
 | 補價格與比價日 | `sp_workflow.legacy_backfill` | Excel → 資料庫：舊商品缺的各標的價格與比價日，只補缺的（#154、ADR 0020） |
@@ -90,7 +90,7 @@ Backfill vocabulary (#485): these terms mean different things. Each module name 
 
 | Term | Module | Direction and content |
 | --- | --- | --- |
-| 回填 (checking) | `fcn_checker.backfill`, `fcn_checker.backfill_values` | Term sheet → the reference sheet's 「回填後」 or the database: after checking, write TS, IIS, ISIN, issue date and valuation dates (plus per-underlying prices for VWAP) into blank fields (ADR 0008, #444) |
+| 回填 (checking) | `fcn_checker.backfill`, `fcn_checker.backfill_values` | Term sheet → the reference sheet's 「回填後」 or the database: after checking, write TS, IIS, ISIN, issue date and valuation dates (plus per-underlying prices for VWAP) into blank fields ([checker ADR 0008](checker/adr/0008-reference-sheet-and-import-format.md), #444) |
 | 回填通用 | `sp_workflow.generic_backfill` | Database → Excel: fill ISIN, valuation dates and VWAP prices into the generic ELN backfill format by TDCC (#364); the opposite direction from checking backfill |
 | 回補 | `sp_workflow.product_backfill` | Excel → database: create locked product terms for existing non-FCN products in one pass (#303, ADR 0027) |
 | 補價格與比價日 | `sp_workflow.legacy_backfill` | Excel → database: fill only the missing per-underlying prices and valuation dates of legacy products (#154, ADR 0020) |
