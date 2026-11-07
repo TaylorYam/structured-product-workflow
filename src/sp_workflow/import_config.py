@@ -1,7 +1,6 @@
 """起單資料與重算用的設定（#493）：`ImportConfig` 與讀它的 `load_import_config`、`load_risk_underlyings`。
 
-從 `product_terms`（寫入端）搬出來，讀取端（核對條件、風險等級、作業進度、出場清單、視窗）不必為了一個設定型別
-import 寫入端；這裡只 import `database`，`check_terms`、`risk_level` 可以在 module 開頭 import 它。
+從 `product_terms`（寫入端）搬出來，讀取端不必為了一個設定型別 import 寫入端；這裡只 import `database`。
 `product_terms` 留著 `ImportConfig`／`load_import_config` 的別名一個版本。讀不到設定時丟 `ImportConfigError`
 （訊息是給作業人員看的中文）。
 """
