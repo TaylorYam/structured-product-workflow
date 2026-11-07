@@ -20,9 +20,9 @@ from sp_workflow.editor_cells import (
     trade_cell_states,
     trade_texts,
 )
+from sp_workflow.product_terms import drafts_from
 from sp_workflow.status import OrderReview
 from sp_workflow.trade_rows import CANCEL_NOTE, UNMATCHED_NOTE
-from sp_workflow.window_actions import _drafts
 
 # ---------- 格子狀態：擋存檔 ＞ 和資料庫不同＋備註 ＞ 和資料庫不同 ＞ 備註 ＞ 固定 ----------
 
@@ -81,7 +81,7 @@ def test_an_untouched_cell_is_plain_and_a_fixed_one_says_so(fixed: bool, note: s
 
 def test_order_cells_prefix_reading_notes_and_use_the_given_problems() -> None:
     notes = {"Coupon p.a. (%)": "讀到「abc」，不是數字"}
-    [draft] = _drafts([order_row(notes=notes)], CONFIG)
+    [draft] = drafts_from([order_row(notes=notes)], CONFIG)
     draft.stored = {**draft.values, "Coupon p.a. (%)": 12}
 
     states = order_cell_states(draft, {"Maturity date": "必填"})

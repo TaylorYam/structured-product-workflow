@@ -11,7 +11,7 @@ from decimal import Decimal
 
 import pytest
 
-from db_synth import inventory, seed_products
+from db_synth import inventory, seed_closes, seed_observable, seed_products
 from fcn_checker.backfill_values import LOOKBACK_END_DATE
 from fcn_checker.trading_calendar import Market, TradingCalendar
 from order_synth import CONFIG, maintenance_draft, open_terms
@@ -32,7 +32,6 @@ from sp_workflow.product_record import UnderlyingPrice
 from sp_workflow.product_terms import TermsError, backfill, problems, write
 from sp_workflow.status import ProductSource
 from sp_workflow.stock_splits import Split, SplitBook
-from sp_workflow.underlying_prices import add_prices
 
 D = Decimal
 COVERED = (dt.date(2026, 1, 1), dt.date(2027, 12, 31))
@@ -268,28 +267,20 @@ def seed(pg, *, locked: bool = True, source: str = ProductSource.MANUAL, lookbac
         " coupon_barrier_pct = 80, participation_pct = 100, lookback_end_date = %s, locked_at = %s, source = %s WHERE tdcc = %s",
         (TRADE, TRADE, FINAL, lookback, dt.datetime(2026, 11, 3, tzinfo=dt.UTC) if locked else None, source, T1),
     )
-    pg.execute("INSERT INTO workflow.check_terms (tdcc, status) VALUES (%s, '完成')", (T1,))
-    with pg.transaction():
-        add_prices(
-            pg,
-            T1,
-            [UnderlyingPrice(seq, code, Decimal(100), Decimal(80)) for seq, code in ((1, "AAA UW"), (2, "BBB UN"))],
-        )
-    pg.execute("INSERT INTO workflow.autocall_date (tdcc, slot, value) VALUES (%s, 1, %s)", (T1, FINAL))
+    underlyings = [
+        UnderlyingPrice(seq, code, Decimal(100), Decimal(80)) for seq, code in ((1, "AAA UW"), (2, "BBB UN"))
+    ]
+    seed_observable(pg, T1, underlyings, autocall={1: FINAL})
 
 
 def write_closes(pg, last: dt.date, special: dict[dt.date, str]) -> None:
-    (import_id,) = pg.execute(
-        "INSERT INTO workflow.close_price_import (source, file_name, file_sha256, imported_by, summary)"
-        " VALUES ('歷史收盤價', 'HP.xlsx', 'x', 'tester', '{}') RETURNING import_id"
-    ).fetchone()
-    for code in ("AAA UW", "BBB UN"):
-        for day in days(code, last):
-            close = special.get(day, "100") if code == "AAA UW" else "100"
-            pg.execute(
-                "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES (%s, %s, %s, %s)",
-                (day, code, close, import_id),
-            )
+    seed_closes(
+        pg,
+        {
+            code: {day: special.get(day, "100") if code == "AAA UW" else "100" for day in days(code, last)}
+            for code in ("AAA UW", "BBB UN")
+        },
+    )
 
 
 def prices(pg) -> list[tuple]:

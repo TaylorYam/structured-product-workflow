@@ -26,9 +26,8 @@ from sp_workflow.check_terms import (
     release_differences,
 )
 from sp_workflow.daily_import import import_daily
-from sp_workflow.product_terms import write_batch
+from sp_workflow.product_terms import drafts_from, write_batch
 from sp_workflow.stock_splits import Split, SplitBook, refresh_basis
-from sp_workflow.window_actions import _drafts
 
 CALENDAR = CONFIG.calendar
 THU, FRI, MON, TUE = dt.date(2026, 10, 15), dt.date(2026, 10, 16), dt.date(2026, 10, 19), dt.date(2026, 10, 20)
@@ -322,7 +321,7 @@ def import_trades_and_prices(pg, tmp_path, trades, prices=None, *, price_date=dt
 
 def import_order(pg, tdcc=A, **changes):
     values = {"Upfront / NotePrice (%)": Decimal("97.85"), **changes}  # UF 2.15，和 db_synth 的交易列一樣
-    receipt = write_batch(pg, _drafts([order_row(tdcc, values)], CONFIG, pg), CONFIG, user="tester")
+    receipt = write_batch(pg, drafts_from([order_row(tdcc, values)], CONFIG, pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
 
 

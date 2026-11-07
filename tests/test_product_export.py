@@ -22,14 +22,13 @@ from sp_workflow.product_export import (
     summary_name,
     trade_columns,
 )
-from sp_workflow.product_terms import write_batch
-from sp_workflow.window_actions import _drafts
+from sp_workflow.product_terms import drafts_from, write_batch
 
 UF_215 = {"Upfront / NotePrice (%)": Decimal("97.85")}
 
 
 def import_order(pg, tdcc: str) -> None:
-    receipt = write_batch(pg, _drafts([order_row(tdcc, UF_215)], CONFIG, pg), CONFIG, user="tester")
+    receipt = write_batch(pg, drafts_from([order_row(tdcc, UF_215)], CONFIG, pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
 
 
@@ -207,7 +206,7 @@ def test_the_summary_shows_fc2_and_the_singapore_mark(pg, tmp_path: Path) -> Non
 def test_express_is_in_the_summary_like_fcn(pg, tmp_path: Path) -> None:
     """FCN_Express 和 FCN 在同一張總表（#302）：Product 寫商品種類，Non-Call 寫 0。"""
     express = order_row(A, {**UF_215, "Product": "FCN_Express", "Guaranteed Periods (m)": 0})
-    receipt = write_batch(pg, _drafts([express], CONFIG, pg), CONFIG, user="tester")
+    receipt = write_batch(pg, drafts_from([express], CONFIG, pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
     import_order(pg, B)
     path = tmp_path / "商品總表.xlsx"
@@ -232,7 +231,9 @@ BEN = {
 
 
 def import_ben(pg, tdcc: str, changes: dict[str, object] | None = None) -> None:
-    receipt = write_batch(pg, _drafts([order_row(tdcc, {**BEN, **(changes or {})})], CONFIG, pg), CONFIG, user="tester")
+    receipt = write_batch(
+        pg, drafts_from([order_row(tdcc, {**BEN, **(changes or {})})], CONFIG, pg), CONFIG, user="tester"
+    )
     assert receipt.lines[0].imported, receipt.lines[0].detail
 
 
@@ -305,7 +306,7 @@ def test_the_analysis_sheets_only_name_summary_columns(pg, tmp_path: Path) -> No
 def test_the_summary_shows_the_coupon_barrier_of_dacn(pg, tmp_path: Path) -> None:
     """DACN 的配息門檻（#367）：起單資料匯入存進資料庫，總表接在 Coupon 後面；其他商品寫 -。"""
     dacn = order_row(A, {**UF_215, "Product": "DACN", "Coupon Barrier (%)": Decimal(75)})
-    receipt = write_batch(pg, _drafts([dacn], CONFIG, pg), CONFIG, user="tester")
+    receipt = write_batch(pg, drafts_from([dacn], CONFIG, pg), CONFIG, user="tester")
     assert receipt.lines[0].imported, receipt.lines[0].detail
     import_order(pg, B)
     path = tmp_path / "商品總表.xlsx"

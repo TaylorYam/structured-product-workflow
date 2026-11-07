@@ -12,7 +12,7 @@ from decimal import Decimal
 
 import pytest
 
-from db_synth import inventory, seed_products
+from db_synth import inventory, seed_closes, seed_observable, seed_products
 from fcn_checker.trading_calendar import Market, TradingCalendar
 from order_synth import CONFIG
 from sp_workflow.exits import Waiting, load_exits
@@ -48,7 +48,6 @@ from sp_workflow.product_record import UnderlyingPrice
 from sp_workflow.product_store import Stored
 from sp_workflow.status import ProductSource
 from sp_workflow.stock_splits import Split, SplitBook, add_split, affected_exits, delete_split
-from sp_workflow.underlying_prices import add_prices
 from sp_workflow.underlying_pricing import KiTouch
 
 COVERED = (dt.date(2026, 1, 1), dt.date(2027, 12, 31))
@@ -508,32 +507,10 @@ def seed(pg, tdcc: str, *, locked: bool = True, status: str = "完成") -> None:
         "UPDATE workflow.product SET strike_date = %s, final_valuation_date = %s, locked_at = %s WHERE tdcc = %s",
         (STRIKE, FINAL, dt.datetime(2026, 11, 3, tzinfo=dt.UTC) if locked else None, tdcc),
     )
-    pg.execute("INSERT INTO workflow.check_terms (tdcc, status) VALUES (%s, %s)", (tdcc, status))
-    with pg.transaction():
-        add_prices(
-            pg,
-            tdcc,
-            [
-                UnderlyingPrice(u.seq, u.code, u.initial, u.strike, u.ki, u.ko)
-                for u in (ul(1, "AAA UW"), ul(2, "BBB UN"))
-            ],
-        )
-    for slot, value in ((1, START), (6, FINAL), (2, None)):
-        pg.execute("INSERT INTO workflow.autocall_date (tdcc, slot, value) VALUES (%s, %s, %s)", (tdcc, slot, value))
-
-
-def write_closes(pg, prices: dict[str, dict[dt.date, str]]) -> None:
-    (import_id,) = pg.execute(
-        "INSERT INTO workflow.close_price_import (source, file_name, file_sha256, imported_by, summary)"
-        " VALUES ('歷史收盤價', 'HP.xlsx', 'x', 'tester', '{}') RETURNING import_id"
-    ).fetchone()
-    for code, days in prices.items():
-        for day, close in days.items():
-            pg.execute(
-                "INSERT INTO workflow.close_price (close_date, code, close, import_id) VALUES (%s, %s, %s, %s)"
-                " ON CONFLICT (close_date, code) DO UPDATE SET close = EXCLUDED.close",
-                (day, code, close, import_id),
-            )
+    prices = [
+        UnderlyingPrice(u.seq, u.code, u.initial, u.strike, u.ki, u.ko) for u in (ul(1, "AAA UW"), ul(2, "BBB UN"))
+    ]
+    seed_observable(pg, tdcc, prices, autocall={1: START, 6: FINAL, 2: None}, status=status)
 
 
 def us_closes(last: dt.date, special: dict[dt.date, str] | None = None) -> dict[str, dict[dt.date, str]]:
@@ -564,7 +541,7 @@ KO_DAY = dt.date(2026, 11, 18)
 def test_observe_all_writes_events_and_status_only_when_changed(pg) -> None:
     seed(pg, T1)
     seed(pg, T2, locked=False)
-    write_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
+    seed_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
     pg.execute("DELETE FROM workflow.close_price WHERE code = 'BBB UN' AND close_date = %s", (KO_DAY,))  # 先缺一天
 
     first = observe_all(pg, CALENDAR, user="tester")
@@ -574,7 +551,7 @@ def test_observe_all_writes_events_and_status_only_when_changed(pg) -> None:
     assert status(pg, T2)[3] is False, "未鎖住的也比，標未鎖住"
     assert [r.tdcc for r in first.unfinished()] == [T1, T2]
 
-    write_closes(pg, {"BBB UN": {KO_DAY: "100"}})
+    seed_closes(pg, {"BBB UN": {KO_DAY: "100"}})
     second = observe_all(pg, CALENDAR, user="tester")
 
     assert status(pg, T1) == (EXITED, f"KO {KO_DAY}", KO_DAY, True)
@@ -597,7 +574,7 @@ def test_observe_all_reads_the_final_date_rule_from_the_product_type(pg) -> None
     seed(pg, T1)
     seed(pg, T2)
     pg.execute("UPDATE workflow.product SET product = 'Super Bull' WHERE tdcc = %s", (T2,))
-    write_closes(pg, us_closes(FINAL, {FINAL: "100"}))
+    seed_closes(pg, us_closes(FINAL, {FINAL: "100"}))
 
     observe_all(pg, CALENDAR, user="tester")
 
@@ -618,7 +595,7 @@ def test_a_ben_only_settles_at_maturity(pg, close, event) -> None:
     )
     pg.execute("UPDATE workflow.underlying_price SET ko_price = NULL WHERE tdcc = %s", (T1,))
     pg.execute("UPDATE workflow.autocall_date SET value = NULL WHERE tdcc = %s AND value <> %s", (T1, FINAL))
-    write_closes(pg, us_closes(FINAL, {START: "120", FINAL: close}))
+    seed_closes(pg, us_closes(FINAL, {START: "120", FINAL: close}))
 
     observe_all(pg, CALENDAR, user="tester")
 
@@ -633,7 +610,7 @@ def test_a_dacn_is_observed_like_fcn(pg, day, closes) -> None:
     """DACN（#367、ADR 0030）比價和 FCN 相同：期間全部 ≥ KO 價是 KO，最終比價日也算 KO（不追蹤每日計息）。"""
     seed(pg, T1)
     pg.execute("UPDATE workflow.product SET product = 'DACN', coupon_barrier_pct = strike_pct WHERE tdcc = %s", (T1,))
-    write_closes(pg, us_closes(day, closes))
+    seed_closes(pg, us_closes(day, closes))
 
     observe_all(pg, CALENDAR, user="tester")
 
@@ -651,7 +628,7 @@ def test_a_ben_waits_for_the_final_valuation_date(pg) -> None:
     )
     pg.execute("UPDATE workflow.underlying_price SET ko_price = NULL WHERE tdcc = %s", (T1,))
     pg.execute("UPDATE workflow.autocall_date SET value = NULL WHERE tdcc = %s AND value <> %s", (T1, FINAL))
-    write_closes(pg, us_closes(KO_DAY, {KO_DAY: "120"}))
+    seed_closes(pg, us_closes(KO_DAY, {KO_DAY: "120"}))
 
     observe_all(pg, CALENDAR, user="tester")
 
@@ -663,7 +640,7 @@ def test_a_ben_waits_for_the_final_valuation_date(pg) -> None:
 def test_a_product_stopped_at_a_missing_close_is_named_on_the_exit_list(pg) -> None:
     """#282：缺收盤價停住、那天的 KO 沒有判定的商品，出場清單寫出缺哪一天；補上後重新比價就出場。"""
     seed(pg, T1)
-    write_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
+    seed_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
     pg.execute("DELETE FROM workflow.close_price WHERE code = 'BBB UN' AND close_date = %s", (KO_DAY,))
     observe_all(pg, CALENDAR, user="tester")
 
@@ -671,7 +648,7 @@ def test_a_product_stopped_at_a_missing_close_is_named_on_the_exit_list(pg) -> N
     assert (found.rows, found.waiting) == ((), (Waiting(T1, "BBB UN", KO_DAY),))
     assert load_exits(pg, CONFIG, KO_DAY - dt.timedelta(days=1)).waiting == ()
 
-    write_closes(pg, {"BBB UN": {KO_DAY: "100"}})
+    seed_closes(pg, {"BBB UN": {KO_DAY: "100"}})
     observe_all(pg, CALENDAR, user="tester")
 
     found = load_exits(pg, CONFIG, KO_DAY)
@@ -684,13 +661,13 @@ def test_ki_is_stored_and_kept_after_exit(pg) -> None:
     seed(pg, T1)
     pg.execute("UPDATE workflow.product SET barrier_type = 'AKI' WHERE tdcc = %s", (T1,))
     touched = dt.date(2026, 11, 5)
-    write_closes(pg, us_closes(dt.date(2026, 11, 10), {touched: "60"}))
+    seed_closes(pg, us_closes(dt.date(2026, 11, 10), {touched: "60"}))
     observe_all(pg, CALENDAR)
 
     ki = f"AKI hit {touched} UL_1 AAA UW"
     assert with_ki(pg, T1) == (ON_BOOK, NON_CALL, None, ki)
 
-    write_closes(pg, us_closes(dt.date(2026, 11, 20), {touched: "60", KO_DAY: "100"}))
+    seed_closes(pg, us_closes(dt.date(2026, 11, 20), {touched: "60", KO_DAY: "100"}))
     observe_all(pg, CALENDAR)
     assert with_ki(pg, T1) == (EXITED, f"KO {KO_DAY}", KO_DAY, ki)
 
@@ -705,10 +682,10 @@ def test_ki_is_stored_and_kept_after_exit(pg) -> None:
 def test_exited_products_are_not_observed_again(pg) -> None:
     """已出場的不再比價（#169）：先假設收盤價不會事後更正，改了價格、條件或代碼事件都不動。"""
     seed(pg, T1)
-    write_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
+    seed_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
     observe_all(pg, CALENDAR)
 
-    write_closes(pg, {**us_closes(dt.date(2026, 11, 27)), "AAA UW": {KO_DAY: "99"}})
+    seed_closes(pg, {**us_closes(dt.date(2026, 11, 27)), "AAA UW": {KO_DAY: "99"}})
     pg.execute("UPDATE workflow.underlying_price SET code = 'CCC UN' WHERE tdcc = %s AND seq = 2", (T1,))
     receipt = observe_all(pg, CALENDAR)
 
@@ -720,7 +697,7 @@ def test_exited_products_are_not_observed_again(pg) -> None:
 @pytest.mark.db
 def test_exited_products_stay_exited_when_check_terms_change(pg) -> None:
     seed(pg, T1)
-    write_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
+    seed_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
     observe_all(pg, CALENDAR)
     pg.execute("UPDATE workflow.check_terms SET status = '待確認', reason = '更正後重算' WHERE tdcc = %s", (T1,))
 
@@ -734,7 +711,7 @@ def test_exited_products_stay_exited_when_check_terms_change(pg) -> None:
 def test_redeemed_products_are_not_observed(pg) -> None:
     seed(pg, T1)
     record_redemption(pg, T1, dt.date(2026, 11, 10), user="tester")
-    write_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
+    seed_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
 
     observe_all(pg, CALENDAR)
 
@@ -753,7 +730,7 @@ def test_legacy_events_stop_observation(pg) -> None:
             " VALUES (%s, 'KO', %s, '舊清單', '資料表版本 0016')",
             (tdcc, day),
         )
-    write_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
+    seed_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
 
     observe_all(pg, CALENDAR)
 
@@ -768,7 +745,7 @@ def test_legacy_events_stop_observation(pg) -> None:
 def test_products_whose_check_terms_are_no_longer_done(pg) -> None:
     seed(pg, T1)
     seed(pg, T3, status="待確認")
-    write_closes(pg, us_closes(dt.date(2026, 11, 20)))
+    seed_closes(pg, us_closes(dt.date(2026, 11, 20)))
     observe_all(pg, CALENDAR)
     assert status(pg, T3) is None, "核對條件不是完成的不比"
 
@@ -798,7 +775,7 @@ def test_an_event_that_cannot_be_written_needs_confirmation(pg, monkeypatch) -> 
     from sp_workflow.lifecycle import LifecycleError
 
     seed(pg, T1)
-    write_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
+    seed_closes(pg, us_closes(dt.date(2026, 11, 20), {KO_DAY: "100"}))
 
     def refused(conn, tdcc, events, *, user=None):
         raise LifecycleError(f"{tdcc} 已登記顧客贖回，停止比價，不寫自動事件")
@@ -879,7 +856,7 @@ def test_a_confirmed_real_drop_is_observed() -> None:
 @pytest.mark.db
 def test_changing_a_split_reobserves_affected_observation_exits(pg) -> None:
     seed(pg, T1)
-    write_closes(pg, us_closes(FINAL, {day: "9" for day in trading_days("AAA UW", SPLIT_DAY, FINAL)}))
+    seed_closes(pg, us_closes(FINAL, {day: "9" for day in trading_days("AAA UW", SPLIT_DAY, FINAL)}))
     pg.execute("UPDATE workflow.close_price SET close = 90 WHERE code = 'BBB UN'")
     replace_auto_events(pg, T1, [AutoEvent(DELIVERY, FINAL, "AAA UW")], user="tester")  # 沒有換算時判錯的接股
 
@@ -957,7 +934,7 @@ def test_raw_and_adjusted_prices_on_one_code_give_the_same_ki_and_delivery() -> 
 def test_observe_all_stores_the_basis_from_the_registered_splits(pg) -> None:
     seed(pg, T1)
     pg.execute("UPDATE workflow.underlying_price SET initial_price = 9, strike_price = 7.2, ko_price = 9 WHERE seq = 1")
-    write_closes(pg, us_closes(FINAL, {day: "8.5" for day in trading_days("AAA UW", SPLIT_DAY, FINAL)}))
+    seed_closes(pg, us_closes(FINAL, {day: "8.5" for day in trading_days("AAA UW", SPLIT_DAY, FINAL)}))
     pg.execute("UPDATE workflow.close_price SET close = 90 WHERE code = 'BBB UN'")
     add_split(pg, SPLIT, user="tester")
 

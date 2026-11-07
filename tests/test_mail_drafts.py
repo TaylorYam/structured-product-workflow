@@ -34,7 +34,9 @@ from sp_workflow.mail_drafts import (
 from sp_workflow.mailbox import Person
 from sp_workflow.risk_level import DONE, RiskDetail, RiskLevel
 from sp_workflow.risk_level import PENDING as RISK_PENDING
-from sp_workflow.risk_level import _write as write_risk  # 測試直接寫存好的風險等級（算法另有 test_risk_level）
+from sp_workflow.risk_level import (
+    write_risk_level as write_risk,  # 測試直接寫存好的風險等級（算法另有 test_risk_level）
+)
 from synth import snapshot
 from test_mail_excel_dates import sample_template_product
 

@@ -9,11 +9,12 @@ from decimal import Decimal
 
 import pytest
 
+from db_synth import seed_closes
 from sp_workflow.exposure import KI_BROKEN, assess, load_positions
 from sp_workflow.observation import observe_all
 from sp_workflow.stock_splits import Split, SplitBook
 from sp_workflow.underlying_pricing import KiTouch, Leg, converted, worst
-from test_observation import CALENDAR, FINAL, T1, seed, us_closes, write_closes
+from test_observation import CALENDAR, FINAL, T1, seed, us_closes
 
 D = Decimal
 
@@ -91,7 +92,7 @@ def test_aki_touch_is_stored_by_observation_and_read_by_exposure(pg) -> None:
     seed(pg, T1)
     pg.execute("UPDATE workflow.product SET barrier_type = 'AKI' WHERE tdcc = %s", (T1,))
     touched, today = dt.date(2026, 11, 5), dt.date(2026, 11, 10)
-    write_closes(pg, us_closes(today, {touched: "60"}))  # 11/5 跌破下限價 65，之後回到 90
+    seed_closes(pg, us_closes(today, {touched: "60"}))  # 11/5 跌破下限價 65，之後回到 90
 
     observe_all(pg, CALENDAR)
 

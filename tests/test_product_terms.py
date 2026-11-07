@@ -36,6 +36,7 @@ from sp_workflow.product_record import FIELDS, fields_of
 from sp_workflow.product_terms import (
     Draft,
     Mode,
+    drafts_from,
     load_import_config,
     locked,
     problems,
@@ -45,14 +46,13 @@ from sp_workflow.product_terms import (
     write_batch,
 )
 from sp_workflow.status import CheckTerms, ImportResult, OrderReview
-from sp_workflow.window_actions import _drafts
 
 BUILTIN = ConfigPaths.with_fallback(Path(__file__).resolve().parents[1] / "config" / "review_standard.toml")
 CONFLICT = "起單建檔裡這檔有好幾列、這欄不同，要填正確的值（正確是空白的話請改起單建檔後重新讀取）"
 
 
 def draft_of(row: OrderRow, conn=None):
-    (draft,) = _drafts([row], CONFIG, conn)
+    (draft,) = drafts_from([row], CONFIG, conn)
     return draft
 
 
@@ -74,7 +74,7 @@ def test_draft_holds_the_sheet_fields() -> None:
 def test_rows_not_in_the_sheet_have_no_draft() -> None:
     row = missing_row(A)
 
-    assert _drafts([row], CONFIG) == []
+    assert drafts_from([row], CONFIG) == []
     # 畫面照讀取狀態顯示（`tabs.orders`）
     assert (row.status, describe(row.notes)) == ("找不到", "TDCC：起單建檔_20261015.xlsm 裡沒有這檔")
 
@@ -356,7 +356,7 @@ def test_a_sheet_read_from_disk_imports_end_to_end(pg, tmp_path: Path) -> None:
     path = write_sheet(tmp_path / "起單建檔_20261015.xlsx", lines)
     rows = collect_orders(f"{A}\n{B}", path, PREFIXES, CONFIG.calendar)
 
-    receipt = write_batch(pg, _drafts(rows, CONFIG, pg), CONFIG, user="tester")
+    receipt = write_batch(pg, drafts_from(rows, CONFIG, pg), CONFIG, user="tester")
 
     assert [(line.tdcc, line.result) for line in receipt.lines] == [(A, ImportResult.NEW), (B, ImportResult.NEW)]
     assert product(pg, A)["coupon_pct"] == Decimal("12.5") and product(pg, A)["upfront_pct"] == Decimal("1.5")
@@ -371,7 +371,7 @@ def test_an_express_row_imports_with_no_non_call(pg, tmp_path: Path) -> None:
     path = write_sheet(tmp_path / "起單建檔_20261015.xlsx", lines)
     rows = collect_orders(A, path, PREFIXES, CONFIG.calendar)
 
-    receipt = write_batch(pg, _drafts(rows, CONFIG, pg), CONFIG, user="tester")
+    receipt = write_batch(pg, drafts_from(rows, CONFIG, pg), CONFIG, user="tester")
 
     assert [(line.tdcc, line.result) for line in receipt.lines] == [(A, ImportResult.NEW)]
     p = product(pg, A)
@@ -387,14 +387,14 @@ def test_a_ben_row_imports_with_the_fixed_terms_and_keeps_a_digital_participatio
     path = write_sheet(tmp_path / "起單建檔_20261015.xlsx", lines)
     rows = collect_orders(A, path, PREFIXES, CONFIG.calendar)
 
-    write_batch(pg, _drafts(rows, CONFIG, pg), CONFIG, user="tester")
+    write_batch(pg, drafts_from(rows, CONFIG, pg), CONFIG, user="tester")
 
     p = product(pg, A)
     assert (p["product"], p["non_call_months"], p["tenor_months"], p["ko_type"]) == ("BEN", 6, 6, "Period End")
     assert (p["barrier_type"], p["ki_freq"], p["ki_pct"], p["participation_pct"]) == ("NONE", "-", None, 100)
     assert (p["ko_pct"], p["coupon_barrier_pct"]) == (None, 100)  # KO 欄是配息門檻（#406）
     pg.execute("UPDATE workflow.product SET participation_pct = 0 WHERE tdcc = %s", (A,))
-    (draft,) = _drafts(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg)
+    (draft,) = drafts_from(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg)
     assert draft.values["Participation (%)"] == 0
     write_batch(pg, [draft], CONFIG, user="tester")
     assert product(pg, A)["participation_pct"] == 0
@@ -405,15 +405,15 @@ def test_a_dacn_row_defaults_its_coupon_barrier_and_keeps_an_edited_one(pg, tmp_
     """DACN（#367、ADR 0030）：起單建檔沒有配息門檻，匯入時帶執行價；重新匯入時資料庫的值還是預設值（等於執行價）
     就跟著新的執行價換，作業人員改過的值不動。"""
     path = write_sheet(tmp_path / "起單建檔_20261015.xlsx", [sheet_line(A, {"Product": "DACN"})])
-    write_batch(pg, _drafts(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg), CONFIG, user="tester")
+    write_batch(pg, drafts_from(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg), CONFIG, user="tester")
     assert product(pg, A)["coupon_barrier_pct"] == 80
 
     path = write_sheet(tmp_path / "起單建檔_20261016.xlsx", [sheet_line(A, {"Product": "DACN", "Strike (%)": 70})])
-    (draft,) = _drafts(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg)
+    (draft,) = drafts_from(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg)
     assert draft.values["Coupon Barrier (%)"] == 70
 
     pg.execute("UPDATE workflow.product SET coupon_barrier_pct = 75 WHERE tdcc = %s", (A,))
-    (draft,) = _drafts(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg)
+    (draft,) = drafts_from(collect_orders(A, path, PREFIXES, CONFIG.calendar), CONFIG, pg)
     assert draft.values["Coupon Barrier (%)"] == 75
 
 
@@ -682,10 +682,10 @@ def opened(pg, tmp_path, mode: Mode) -> Draft:
         import_daily(write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "台北", 100000)], [price("AAA UW")]), pg)
         draft = open_terms(pg, A)
     else:
-        write_batch(pg, _drafts([order_row()], CONFIG, pg), CONFIG, user="tester")
+        write_batch(pg, drafts_from([order_row()], CONFIG, pg), CONFIG, user="tester")
         if mode is Mode.CORRECT:
             pg.execute("UPDATE workflow.product SET locked_at = now() WHERE tdcc = %s", (A,))
-        (draft,) = _drafts([order_row()], CONFIG, pg) if mode is Mode.IMPORT else (open_terms(pg, A),)
+        (draft,) = drafts_from([order_row()], CONFIG, pg) if mode is Mode.IMPORT else (open_terms(pg, A),)
     assert draft.mode is mode
     return draft
 
@@ -733,7 +733,7 @@ def test_issuer_and_denomination_stay_unless_importing(pg, tmp_path, mode, issue
 
 def opened_again(pg, mode: Mode) -> Draft:
     if mode is Mode.IMPORT:
-        (draft,) = _drafts([order_row()], CONFIG, pg)
+        (draft,) = drafts_from([order_row()], CONFIG, pg)
         return draft
     return open_terms(pg, A)
 
@@ -813,8 +813,8 @@ def _wait_until_blocked(pg, pid: int) -> None:
 @pytest.mark.db
 def test_import_waits_for_a_concurrent_lock_and_reports_locked(pg) -> None:
     """核對寫回鎖住這檔的同時匯入：匯入等鎖放開後看到已鎖住，不蓋掉剛鎖住的條件。"""
-    write_batch(pg, _drafts([order_row()], CONFIG, pg), CONFIG, user="tester")
-    (draft,) = _drafts([order_row(changes={"Coupon p.a. (%)": Decimal(10)})], CONFIG, pg)
+    write_batch(pg, drafts_from([order_row()], CONFIG, pg), CONFIG, user="tester")
+    (draft,) = drafts_from([order_row(changes={"Coupon p.a. (%)": Decimal(10)})], CONFIG, pg)
     dsn = os.environ["SPW_TEST_DSN"]
     with psycopg.connect(dsn) as checker, psycopg.connect(dsn) as importer, ThreadPoolExecutor(1) as pool:
         try:
@@ -834,8 +834,8 @@ def test_import_waits_for_a_concurrent_lock_and_reports_locked(pg) -> None:
 @pytest.mark.db
 def test_a_product_created_while_importing_is_skipped_not_a_database_error(pg, monkeypatch) -> None:
     """還不存在的列 FOR UPDATE 鎖不到：讀取之後別人新增了同一檔，這檔不匯入、其他照常，不是整批出錯。"""
-    (draft,) = _drafts([order_row(changes={"Coupon p.a. (%)": Decimal(10)})], CONFIG, pg)
-    write_batch(pg, _drafts([order_row()], CONFIG, pg), CONFIG, user="other")
+    (draft,) = drafts_from([order_row(changes={"Coupon p.a. (%)": Decimal(10)})], CONFIG, pg)
+    write_batch(pg, drafts_from([order_row()], CONFIG, pg), CONFIG, user="other")
     monkeypatch.setattr("sp_workflow.product_terms.read", lambda conn, tdcc, *, lock=False: None)  # 匯入時還看不到
 
     receipt = write_batch(pg, [draft], CONFIG, user="tester")
@@ -851,7 +851,7 @@ def test_a_product_created_while_importing_is_skipped_not_a_database_error(pg, m
 
 
 def imported(pg, *tdccs: str) -> None:
-    write_batch(pg, _drafts([order_row(t) for t in tdccs], CONFIG, pg), CONFIG, user="tester")
+    write_batch(pg, drafts_from([order_row(t) for t in tdccs], CONFIG, pg), CONFIG, user="tester")
 
 
 @pytest.mark.db

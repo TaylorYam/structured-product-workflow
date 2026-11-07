@@ -356,6 +356,16 @@ def draft_from(
     return Draft(row, original, values, fields, reason, database_checked=checked)
 
 
+def drafts_from(rows: Sequence[OrderRow], config: ImportConfig, conn: psycopg.Connection | None = None) -> list[Draft]:
+    """起單建檔找到的每一檔轉成確認資料（`draft_from`）；有連線時帶入資料庫的值與鎖住狀態，沒有時當作沒連資料庫看過。
+    找不到的列沒有確認資料，畫面直接顯示讀取的問題。「2 Order 條件」讀起單建檔與測試共用（#497）。"""
+    return [
+        draft_from(row, None if conn is None else read(conn, row.tdcc), config, checked=conn is not None)
+        for row in rows
+        if row.found
+    ]
+
+
 def _maintenance_draft(tdcc: str, stored: Stored | None, config: ImportConfig, trade_product: str | None) -> Draft:
     if stored is not None:
         fields = stored.fields
