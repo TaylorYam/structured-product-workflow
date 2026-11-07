@@ -143,6 +143,42 @@ def test_mki_is_listed_for_manual_review_even_without_prices() -> None:
     assert assess(position("MKI", leg(1, "AAA UW", None))).category == MANUAL
 
 
+# ---------------------------------------------------------------- 只看執行價（盤勢速報，#471、#482）
+
+
+@pytest.mark.parametrize(
+    ("p", "category", "to_strike"),
+    [
+        (position("MKI", leg(1, "AAA UW", "50"), ki_text="MKI (manual)"), MANUAL, D("-0.375")),  # KI 不看，執行價可以比
+        (position("EKI", leg(1, "AAA UW", "70", ki=None)), UNKNOWN, D("-0.125")),  # 缺下限價：無法計算也照執行價判斷
+        (position(None, leg(1, "AAA UW", "90")), UNKNOWN, D("0.125")),  # 缺 KI 型態也照判斷
+        (position("AKI", leg(1, "AAA UW", "95"), ki_text="AKI hit 2026-10-01 UL_1 AAA UW"), SAFE, D("0.1875")),
+    ],
+)
+def test_the_strike_only_view_ignores_ki(p: Position, category: str, to_strike: Decimal) -> None:
+    result = assess(p, UNTIL)
+
+    assert result.category == category
+    assert result.strike_judged and result.to_strike == to_strike
+    assert result.worst is not None and result.worst.code == "AAA UW", "無法計算也留下最差標的（#482）"
+
+
+@pytest.mark.parametrize(
+    ("p", "today"),
+    [
+        (position("EKI", leg(1, "AAA UW", "50"), terms="待確認"), UNTIL),  # 核對條件未完成
+        (position("NONE", leg(1, "AAA UW", "50"), terms=None), UNTIL),  # 核對條件還沒算
+        (position("MKI", leg(1, "AAA UW", "70"), leg(2, "BBB UN", None)), UNTIL),  # 缺收盤價
+        (position("NONE", Leg(1, "AAA UW", D(100), None, None, D(70))), UNTIL),  # 缺執行價
+        (position("NONE", leg(1, "AAA UW", "50")), UNTIL + dt.timedelta(days=1)),  # 已比價
+    ],
+)
+def test_the_strike_only_view_skips_what_cannot_be_judged(p: Position, today: dt.date) -> None:
+    result = assess(p, today)
+
+    assert not result.strike_judged and result.to_strike is None
+
+
 def test_one_month_later_clips_to_the_month_end() -> None:
     assert one_month_later(dt.date(2026, 10, 29)) == dt.date(2026, 11, 29)
     assert one_month_later(dt.date(2027, 1, 31)) == dt.date(2027, 2, 28)
@@ -298,6 +334,7 @@ def test_export_is_one_sheet_of_every_product(seeded, tmp_path: Path) -> None:
     assert [every[B][name] for name in ("分公司_1", "FC_1", "面額_1", "分公司_2")] == ["台中", "Ben", 200000, None]
     assert (every[B]["狀態"], every[C]["狀態"], every[PENDING]["狀態"]) == ("跌破K", "跌破KI", UNKNOWN)
     assert every[C]["最差表現標的"] == "DDD JT", "最差不一定是選定標的"
+    assert (every[PENDING]["最差表現標的"], every[PENDING]["最差表現"]) == (None, None), "無法計算不寫最差標的"
     assert (every[B]["KI種類"], every[C]["KI種類"]) == ("EKI", "EKI"), "沒有 KI 的才留空（#360）"
 
     statuses = {sheet.cell(row, 2).value: sheet.cell(row, 1) for row in range(2, sheet.max_row + 1)}

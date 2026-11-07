@@ -3,10 +3,10 @@
 
 - 範圍：全部在庫且存續的商品（同 `exposure.load_positions`，不設最終比價日截止），用收盤價表最新的收盤價；
   最差標的照 `exposure.assess`。只呈現目前狀態（檔數、面額、距離），不放任何預估金額（#352）。
-- 只看執行價（#471）：一檔的狀態只看最差標的收盤價距執行價（`k_distance`）——低於是跌破K、0～10% 是距K 10% 內、
-  10% 以上是高於K 10% 以上；KI（AKI 觸及、低於下限價）不另外分類，MKI 也照執行價判斷。
-  已比價（結果以最終比價日為準）、核對條件未完成、缺進場價／執行價／收盤價的不判斷；缺 KI 型態或下限價
-  （`assess` 歸無法計算）不影響，照執行價判斷（`k_worst`）。
+- 只看執行價（#471）：一檔的狀態只看最差標的收盤價距執行價（`Assessed.to_strike`）——低於是跌破K、
+  0～10% 是距K 10% 內、10% 以上是高於K 10% 以上；KI（AKI 觸及、低於下限價）不另外分類，MKI 也照執行價判斷。
+  判斷不判斷照 `Assessed.strike_judged`（#482）：已比價、核對條件未完成、缺進場價／執行價／收盤價的不判斷；
+  缺 KI 型態或下限價（`assess` 歸無法計算）不影響。
 - 面額：交易明細（沒有時用庫存的分公司配置）合計，依商品幣別用最新的 `XXXUSD` 匯率折成 USD（收盤價表與每日價格
   取日期新的那筆），單位 M（百萬）。缺匯率的幣別不計入面額、列在 `Brief.missing_fx` 給視窗提示；檔數照算。
 - 總覽（#469、#471）：只列高於K 10% 以上、距K 10% 內、跌破K 三列，跌破K 在最下面；
@@ -46,19 +46,17 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
 from sp_workflow.exposure import (
-    FIXED,
     K_BROKEN,
     NEAR_BUFFER,
     Assessed,
     assess,
+    latest_closes,
     load_positions,
     ticker_of,
 )
 from sp_workflow.file_tools import excel_value, save_export
-from sp_workflow.status import CheckTerms
 from sp_workflow.stock_splits import SplitBook, load_splits
 from sp_workflow.underlying_pricing import Leg
-from sp_workflow.underlying_pricing import worst as lowest
 
 if TYPE_CHECKING:
     import psycopg
@@ -184,19 +182,17 @@ def load_brief(conn: psycopg.Connection, today: dt.date | None = None) -> Brief:
 
 
 def _quotes(conn: psycopg.Connection, codes: Iterable[str]) -> dict[str, Quote]:
-    rows = conn.execute(
-        "SELECT code, close_date, close FROM (SELECT code, close_date, close,"
-        " row_number() OVER (PARTITION BY code ORDER BY close_date DESC) AS n"
-        " FROM workflow.close_price WHERE code = ANY(%s)) AS latest WHERE n <= 2 ORDER BY code, n",
-        (sorted(set(codes)),),
-    ).fetchall()
-    found: dict[str, Quote] = {}
-    for code, day, close in rows:
-        if code in found:
-            found[code] = Quote(found[code].day, found[code].close, close)
-        else:
-            found[code] = Quote(day, close)
-    return found
+    """每個代碼最新的收盤價（同曝險分析，`latest_closes`），加上它前一筆（視窗的漲跌% 用）。"""
+    latest = latest_closes(conn, codes)
+    previous = dict(
+        conn.execute(
+            "SELECT DISTINCT ON (c.code) c.code, c.close FROM workflow.close_price AS c"
+            " JOIN unnest(%s::text[], %s::date[]) AS latest (code, day) ON c.code = latest.code"
+            " AND c.close_date < latest.day ORDER BY c.code, c.close_date DESC",
+            (list(latest), [day for day, _ in latest.values()]),
+        ).fetchall()
+    )
+    return {code: Quote(day, close, previous.get(code)) for code, (day, close) in latest.items()}
 
 
 def months_before(day: dt.date, n: int) -> dt.date:
@@ -285,36 +281,14 @@ def ticker_rows(exposures: Sequence[Exposure], quotes: Mapping[str, Quote]) -> l
     return sorted(rows.values(), key=lambda r: (-r.notional, r.ticker))
 
 
-def k_worst(e: Exposure) -> Leg | None:
-    """只看執行價時的最差標的（#471）：已比價、核對條件未完成、任一標的缺進場價／執行價／收盤價時 None。
-    不管 KI：MKI、缺 KI 型態或下限價的商品照樣判斷。"""
-    p = e.result.position
-    if e.result.category == FIXED or p.terms_status != CheckTerms.DONE:
-        return None
-    if any(leg.strike is None for leg in p.legs):
-        return None
-    return lowest(p.legs)
-
-
-def judged(e: Exposure) -> bool:
-    """用最新收盤價、照執行價判斷的商品。"""
-    return k_worst(e) is not None
-
-
 def below_strike(e: Exposure, legs: Iterable[Leg]) -> bool:
-    """判斷的商品裡，`legs`（某個標的本身的那幾個）有一個收盤價低於它的執行價。"""
-    return judged(e) and any(leg.below_strike for leg in legs)
-
-
-def k_distance(e: Exposure) -> Decimal | None:
-    """最差標的收盤價距執行價（負的是低於）；不判斷時 None。"""
-    worst = k_worst(e)
-    return None if worst is None else worst.to_strike
+    """只看執行價判斷的商品裡，`legs`（某個標的本身的那幾個）有一個收盤價低於它的執行價。"""
+    return e.result.strike_judged and any(leg.below_strike for leg in legs)
 
 
 def overview_row(e: Exposure) -> str | None:
     """總覽的哪一列：只看最差標的距執行價（#471）；不判斷的不列（None）。"""
-    distance = k_distance(e)
+    distance = e.result.to_strike
     if distance is None:
         return None
     if distance < 0:
@@ -324,7 +298,7 @@ def overview_row(e: Exposure) -> str | None:
 
 def broken(exposures: Iterable[Exposure]) -> list[Exposure]:
     """重災區：最差標的目前低於執行價的商品（#471 只看 K）。"""
-    return [e for e in exposures if (distance := k_distance(e)) is not None and distance < 0]
+    return [e for e in exposures if (distance := e.result.to_strike) is not None and distance < 0]
 
 
 def distance_bucket(e: Exposure) -> str | None:
@@ -334,7 +308,7 @@ def distance_bucket(e: Exposure) -> str | None:
         return None
     if row != K_BROKEN:
         return SAFE_BUCKET if row == SAFE_ROW else NEAR_BUCKET
-    to_strike = k_distance(e)
+    to_strike = e.result.to_strike
     assert to_strike is not None
     for low, label in DISTANCE_BUCKETS:
         if low is None or to_strike >= low:

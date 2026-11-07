@@ -196,46 +196,17 @@ def test_heatmap_puts_strikes_in_todays_price_basis() -> None:
     assert h.bands[row].low > h.line, "執行價高於昨收，在線之上"
 
 
-def test_mki_is_judged_by_the_strike_and_unknown_is_not() -> None:
-    mki = exposure("1", leg(1, "AAA UW", "50"), barrier="MKI")  # KI 不看了，執行價可以比（#471）
-    pending = Exposure(
-        assess(
-            Position(
-                "2",
-                "FCN",
-                "XBANK",
-                "USD",
-                dt.date(2026, 11, 20),
-                "EKI",
-                "",
-                "待確認",
-                None,
-                (leg(1, "AAA UW", "50"),),
-                (Holding("台北", "Amy", D(1)),),
-            ),
-            DAY,
-        ),
-        D(1),
-    )
+def test_products_not_judged_by_the_strike_are_left_out_of_the_groups() -> None:
+    """判斷不判斷照 `Assessed.strike_judged`（test_exposure 測，#482）；這裡只看分組。"""
+    mki = exposure("1", leg(1, "AAA UW", "50"), barrier="MKI")
+    no_ki = exposure("2", leg(1, "AAA UW", "70", ki=None))  # 曝險分析歸無法計算
+    no_close = exposure("3", leg(1, "AAA UW", "70"), leg(2, "BBB UN", None), barrier="MKI")  # 不判斷
 
-    assert overview_row(mki) == "跌破K"
-    assert overview_row(pending) is None, "核對條件未完成不判斷"
-    assert broken([mki, pending]) == [mki]
-    row = ticker_rows([mki, pending], {})[0]
-    assert (row.products, row.k_count) == (2, 1), "檔數照算，無法計算的不算跌破"
-
-
-def test_missing_ki_terms_do_not_stop_judging_by_the_strike() -> None:
-    # EKI 沒有下限價：曝險分析歸無法計算，只看 K 照樣判斷
-    no_ki = exposure("1", leg(1, "AAA UW", "70", ki=None), barrier="EKI")
-    # MKI 缺收盤價：算不出來，任何地方都不算跌破
-    no_close = exposure("2", leg(1, "AAA UW", "70"), leg(2, "BBB UN", None), barrier="MKI")
-
-    assert no_ki.result.category == "無法計算"
-    assert overview_row(no_ki) == "跌破K"
-    assert overview_row(no_close) is None
-    rows = {r.ticker: r for r in ticker_rows([no_ki, no_close], {})}
-    assert rows["AAA"].k_count == 1, "缺收盤價那檔的 AAA 雖然低於執行價，整檔不判斷就不算"
+    assert [overview_row(e) for e in (mki, no_ki, no_close)] == ["跌破K", "跌破K", None]
+    assert broken([mki, no_ki, no_close]) == [mki, no_ki]
+    assert distance_bucket(no_close) is None, "不判斷的不列進重災區"
+    rows = {r.ticker: r for r in ticker_rows([mki, no_ki, no_close], {})}
+    assert (rows["AAA"].products, rows["AAA"].k_count) == (3, 2), "檔數照算；不判斷那檔的 AAA 低於執行價也不算跌破"
 
 
 def test_other_exchange_strikes_are_scaled_to_the_main_close() -> None:
