@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING
 from openpyxl.styles import Alignment, PatternFill
 
 from sp_workflow.check_terms import NO_BARRIER
+from sp_workflow.close_prices import latest_closes
 from sp_workflow.daily_import import FC_LABEL_SQL
 from sp_workflow.file_tools import excel_value, save_export, table_book, text_cell
 from sp_workflow.lifecycle import IN_STOCK, lifecycle_status
@@ -139,7 +140,8 @@ class Assessed:
     @property
     def to_strike(self) -> Decimal | None:
         """只看執行價時最差標的收盤價距執行價（負的是低於）；不判斷時 None。"""
-        return self.worst.to_strike if self.strike_judged and self.worst is not None else None
+        worst = self.worst if self.strike_judged else None
+        return None if worst is None else worst.to_strike
 
     @property
     def notional(self) -> Decimal:
@@ -162,11 +164,12 @@ class Assessed:
 def assess(position: Position, today: dt.date | None = None) -> Assessed:
     """依最差標的判斷一檔的分類（見 module 說明）；給 `today` 時，最終比價日早於它的是已比價。"""
 
+    priced = all(leg.strike is not None for leg in position.legs)
+    worst = lowest(position.legs) if priced else None
+
     def unknown(reason: str) -> Assessed:
         return Assessed(position, UNKNOWN, worst, reason)  # 最差標的照留，只看執行價還要用（#482）
 
-    priced = all(leg.strike is not None for leg in position.legs)
-    worst = lowest(position.legs) if priced else None
     final = position.final_date
     if today is not None and final is not None and final < today:
         return Assessed(position, FIXED, worst, f"{final} 已比價，結果以最終比價日為準，不用最新收盤價判斷")
@@ -303,16 +306,6 @@ def _holdings(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, list[
         if tdcc not in traded:
             found[tdcc].append(Holding(branch, NO_FC, amount))
     return found
-
-
-def latest_closes(conn: psycopg.Connection, codes: Iterable[str]) -> dict[str, tuple[dt.date, Decimal]]:
-    """每個代碼收盤價表最新的一筆：代碼 → (收盤日, 收盤價)；沒有收盤價的代碼不在裡面。"""
-    rows = conn.execute(
-        "SELECT DISTINCT ON (code) code, close_date, close FROM workflow.close_price"
-        " WHERE code = ANY(%s) ORDER BY code, close_date DESC",
-        (sorted(set(codes)),),
-    ).fetchall()
-    return {code: (day, close) for code, day, close in rows}
 
 
 # ---------------------------------------------------------------- 匯出

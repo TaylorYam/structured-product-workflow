@@ -45,12 +45,12 @@ import openpyxl
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.utils import get_column_letter
 
+from sp_workflow.close_prices import latest_closes
 from sp_workflow.exposure import (
     K_BROKEN,
     NEAR_BUFFER,
     Assessed,
     assess,
-    latest_closes,
     load_positions,
     ticker_of,
 )

@@ -119,6 +119,16 @@ class HistoryReceipt:
     error_book_path: Path | None  # 沒有問題時不寫
 
 
+def latest_closes(conn: psycopg.Connection, codes: Iterable[str]) -> dict[str, tuple[dt.date, Decimal]]:
+    """每個代碼收盤價表最新的一筆：代碼 → (收盤日, 收盤價)；沒有收盤價的代碼不在裡面。"""
+    rows = conn.execute(
+        "SELECT DISTINCT ON (code) code, close_date, close FROM workflow.close_price"
+        " WHERE code = ANY(%s) ORDER BY code, close_date DESC",
+        (sorted(set(codes)),),
+    ).fetchall()
+    return {code: (day, close) for code, day, close in rows}
+
+
 def latest_close_date(conn: psycopg.Connection) -> dt.date | None:
     """收盤價表最新的收盤日；還沒有資料時是 None（出場清單的預設日期，#171）。"""
     (day,) = conn.execute("SELECT max(close_date) FROM workflow.close_price").fetchone()
