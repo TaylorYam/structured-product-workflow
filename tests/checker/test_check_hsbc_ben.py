@@ -15,39 +15,17 @@ from fcn_checker.schema import CheckStatus as S
 from harness import check_all, flagged, iis_path
 from harness import field_problems as problems
 from harness import results as rule
-from hsbc_synth import BEN_PRODUCT, SB_PRODUCT, BenSpec, SbSpec, Spec, build_pdf
+from hsbc_synth import BEN_PRODUCT, CHECKS, SB_PRODUCT, BenSpec, SbSpec, Spec, build_pdf, row
 from pdf_writer import Edit
-from reference_synth import REFERENCE_HEADERS, as_headers, build_reference_sheet, reference_row
+from reference_synth import REFERENCE_HEADERS, as_headers, build_reference_sheet
 
 M0 = BenSpec()  # Maxi：2 檔、6 個月、K% 90、紅利 12%
 D0 = BenSpec(kind="digital", count=1, strike=Decimal("100.0000"), ko=Decimal("100.0000"))  # Digital：1 檔、K% 100
 HEADERS = [*REFERENCE_HEADERS, "參與率(%)"]
 
 
-def row(spec: Spec, **overrides):
-    """與 `spec` 一致的參考條件表列；BEN 的 Product 填 `BEN`、參與率 Maxi 100、Digital 0。`overrides` 以 Excel 欄名覆寫。"""
-    out = reference_row(spec)
-    if isinstance(spec, BenSpec):
-        out["Product"] = BEN_PRODUCT
-        out["參與率(%)"] = 0 if spec.digital else 100
-    elif isinstance(spec, SbSpec):
-        out["Product"] = SB_PRODUCT
-    out.update(overrides)
-    return out
-
-
-def check_pair(tmp_path: Path, spec: Spec = M0, *, edits=(), sheet_row=None, headers=HEADERS, **overrides):
-    """合成說明書＋投資人須知＋參考條件表一列，經批量入口核對，回傳（說明書, 投資人須知）。"""
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", spec, edits=edits)
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [sheet_row or row(spec, **overrides)], headers)
-    outcome = check_all(sheet, [pdf, iis_path(pdf)])
-    ts = next(i for i in outcome.items if i.term_sheet == pdf)
-    return ts, next(i for i in outcome.items if i.term_sheet != pdf)
-
-
-def check(tmp_path: Path, spec: Spec = M0, **kw):
-    return check_pair(tmp_path, spec, **kw)[0].report
+FAMILY = CHECKS.family(M0, headers=HEADERS)  # 單份核對殼（harness.SynthChecks）：預設 M0、參考條件表多參與率欄
+check_pair, check = FAMILY.check_pair, FAMILY.check
 
 
 def lines_of(path: Path):

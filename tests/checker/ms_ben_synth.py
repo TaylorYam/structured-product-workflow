@@ -17,7 +17,7 @@ from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 
-from harness import STANDARD, check_all, iis_path
+from harness import STANDARD, SynthChecks, iis_path
 from ms_synth import (
     ISSUER,
     LAYOUT,
@@ -36,7 +36,6 @@ from ms_synth import (
 from pdf_writer import Edit, FlowDoc, zh_date
 from reference_synth import (
     REFERENCE_HEADERS,
-    build_reference_sheet,
     price,
     reference_row,
     weekday_on_or_after,
@@ -439,11 +438,5 @@ def row(s: BenSpec, **overrides: Any) -> dict[str, Any]:
     return out
 
 
-def check_pair(tmp_path: Path, s: BenSpec, *, edits: Sequence[Edit] = (), headers=HEADERS, **overrides: Any):
-    """合成說明書＋投資人須知＋參考條件表一列，經批量入口核對，回傳（說明書, 投資人須知）的批量核對項目。"""
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    pdf = build_pdf(tmp_path / f"{s.product_code}_TS.pdf", s, edits=edits)
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [row(s, **overrides)], headers)
-    outcome = check_all(sheet, [pdf, iis_path(pdf)])
-    ts = next(i for i in outcome.items if i.term_sheet == pdf)
-    return ts, next(i for i in outcome.items if i.term_sheet != pdf)
+CHECKS = SynthChecks(BenSpec, build_pdf, row, headers=HEADERS)  # 單份核對殼（harness.SynthChecks）
+check_pair = CHECKS.check_pair

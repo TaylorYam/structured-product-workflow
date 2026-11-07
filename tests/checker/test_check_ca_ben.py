@@ -8,7 +8,7 @@ from pathlib import Path
 import fitz
 import pytest
 
-from ca_synth import BEN_PRODUCT, SB_PRODUCT, BenSpec, SbSpec, Spec, build_pdf, row
+from ca_synth import BEN_PRODUCT, CHECKS, SB_PRODUCT, BenSpec, SbSpec, Spec, build_pdf, row
 from fcn_checker.extraction import extract_lines
 from fcn_checker.issuers import CA, CA_BEN, CA_SUPER_BULL
 from fcn_checker.parsers import ca_ben, ca_ben_iis
@@ -25,18 +25,8 @@ HEADERS = [*REFERENCE_HEADERS, "參與率(%)"]
 NO_KO = "提前出場"
 
 
-def check_pair(tmp_path: Path, spec: Spec = B0, *, edits=(), headers=HEADERS, **overrides):
-    """合成說明書＋投資人須知＋參考條件表一列，經批量入口核對，回傳（說明書, 投資人須知）。"""
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", spec, edits=edits)
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [row(spec, **overrides)], headers)
-    outcome = check_all(sheet, [pdf, iis_path(pdf)])
-    ts = next(i for i in outcome.items if i.term_sheet == pdf)
-    return ts, next(i for i in outcome.items if i.term_sheet != pdf)
-
-
-def check(tmp_path: Path, spec: Spec = B0, **kw):
-    return check_pair(tmp_path, spec, **kw)[0].report
+FAMILY = CHECKS.family(B0, headers=HEADERS)  # 單份核對殼（harness.SynthChecks）：預設 B0、參考條件表多參與率欄
+check_pair, check = FAMILY.check_pair, FAMILY.check
 
 
 def lines_of(path: Path):

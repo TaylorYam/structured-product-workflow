@@ -27,7 +27,7 @@ from typing import Any
 
 from fcn_checker.issuers import BARC, Issuer, Template
 from fcn_checker.schema import CheckReport
-from harness import STANDARD, check_sheet, iis_path
+from harness import STANDARD, SynthChecks, check_sheet, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
 from reference_synth import Q4, ProductSpec, Ratings, build_reference_sheet, price, reference_row, write_notes
 
@@ -628,25 +628,13 @@ def check_rows(
     return check_sheet(pdf, sheet)
 
 
-def check_pdf(tmp_path: Path, pdf: Path, spec: Spec | None = None, *, overrides=None, headers=None):
-    """以合成參考條件表（一列，依 spec）核對一份說明書，回傳該份的 CheckReport。"""
-    spec = spec or Spec()
-    return check_rows(tmp_path, pdf, [reference_row(spec, **(overrides or {}))], headers=headers)
+def check_pdf(tmp_path: Path, pdf: Path, spec: Spec | None = None, **overrides: Any) -> CheckReport:
+    """以合成參考條件表（一列，依 spec；`overrides` 以 Excel 欄名覆寫）核對一份現成的說明書，回傳該份的 CheckReport。"""
+    return check_rows(tmp_path, pdf, [reference_row(spec or Spec(), **overrides)])
 
 
-def check(
-    tmp_path: Path,
-    spec: Spec | None = None,
-    *,
-    pdf_spec: Spec | None = None,
-    edits: Sequence[Edit] = (),
-    overrides=None,
-    headers=None,
-):
-    """合成說明書（`pdf_spec`，預設同 `spec`；`edits` 改字）＋與 `spec` 一致的參考條件表一列，回傳該說明書的 CheckReport。"""
-    spec = spec or Spec()
-    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", pdf_spec or spec, edits=edits)
-    return check_pdf(tmp_path, pdf, spec, overrides=overrides, headers=headers)
+CHECKS = SynthChecks(Spec, build_pdf, reference_row)  # 單份核對殼（harness.SynthChecks）
+check = CHECKS.check
 
 
 def barc_adapter(**overrides: Any) -> Issuer:

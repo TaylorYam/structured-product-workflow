@@ -14,39 +14,20 @@ from fcn_checker.schema import CheckStatus as S
 from harness import check_all, flagged, iis_path
 from harness import field_problems as problems
 from harness import results as rule
-from hsbc_synth import SB_PRODUCT, SbSpec, Spec, build_pdf
+from hsbc_synth import CHECKS, SB_PRODUCT, SbSpec, Spec, build_pdf, row
 from pdf_writer import Edit
-from reference_synth import as_headers, build_reference_sheet, reference_row
+from reference_synth import as_headers, build_reference_sheet
 
 S0 = SbSpec()  # 3 檔、6 個月、第 3 個月決定一次、KO% = K% = 85、出場紅利 6%
 
 
-def row(spec: Spec, **overrides):
-    """與 `spec` 一致的參考條件表列；Super Bull 的 Product 填 `Super Bull`。`overrides` 以 Excel 欄名覆寫。"""
-    out = reference_row(spec)
-    if isinstance(spec, SbSpec):
-        out["Product"] = SB_PRODUCT
-    out.update(overrides)
-    return out
-
-
-def check_pair(tmp_path: Path, spec: Spec = S0, *, pdf_spec: Spec | None = None, edits=(), sheet_row=None, **overrides):
-    """合成說明書（`pdf_spec`，預設同 `spec`）＋投資人須知＋參考條件表一列，經批量入口核對，回傳（說明書, 投資人須知）。"""
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", pdf_spec or spec, edits=edits)
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [sheet_row or row(spec, **overrides)])
-    outcome = check_all(sheet, [pdf, iis_path(pdf)])
-    ts = next(i for i in outcome.items if i.term_sheet == pdf)
-    return ts, next(i for i in outcome.items if i.term_sheet != pdf)
+FAMILY = CHECKS.family(S0)  # 單份核對殼（harness.SynthChecks）：預設 S0
+check_pair, check = FAMILY.check_pair, FAMILY.check
 
 
 def lines_of(path: Path):
     with fitz.open(path) as doc:
         return extract_lines(doc)
-
-
-def check(tmp_path: Path, spec: Spec = S0, **kw):
-    return check_pair(tmp_path, spec, **kw)[0].report
 
 
 def compare_dates(report) -> dict:
@@ -95,10 +76,10 @@ def test_supported_super_bull_pairs_pass_and_fill_compare_dates(tmp_path, spec):
 
 def test_sheet_underlying_order_is_matched_by_code_for_super_bull_only(tmp_path):
     """HSBC Super Bull 參考條件表的標的順序和說明書不同時以代號配對（#314）；HSBC FCN 照舊依順序。"""
-    ts, _ = check_pair(tmp_path / "sb", S0, sheet_row=swapped(row(S0), 1, 3))
+    ts, _ = check_pair(tmp_path / "sb", S0, **swapped(row(S0), 1, 3))
     assert ts.report.status == S.PASS, problems(ts.report)
     fcn = Spec(product_code="325199990002", count=3)
-    ts, _ = check_pair(tmp_path / "fcn", fcn, sheet_row=swapped(row(fcn), 1, 3))
+    ts, _ = check_pair(tmp_path / "fcn", fcn, **swapped(row(fcn), 1, 3))
     assert flagged(ts.report, "field.underlyings", S.MISMATCH), problems(ts.report)
 
 

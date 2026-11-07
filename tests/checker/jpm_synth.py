@@ -18,7 +18,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
-from harness import CONFIG, STANDARD, check_all, iis_path
+from harness import STANDARD, SynthChecks, iis_path
 from pdf_writer import FONT, Edit, FlowDoc, FlowLayout, PdfWriter, require_used, split_digits
 from reference_synth import (
     FITCH,
@@ -28,7 +28,6 @@ from reference_synth import (
     UL,
     ProductSpec,
     Ratings,
-    build_reference_sheet,
     price,
     quote_currency,
     reference_row,
@@ -615,25 +614,5 @@ def row(spec: Spec, *, order: Sequence[int] | None = None, **overrides: Any) -> 
     return out
 
 
-def check_item(
-    tmp_path: Path,
-    spec: Spec | None = None,
-    *,
-    pdf_spec: Spec | None = None,
-    edits: Sequence[Edit] = (),
-    order: Sequence[int] | None = None,
-    config=CONFIG,
-    **overrides: Any,
-):
-    """合成說明書（`pdf_spec`，預設同 `spec`；`edits` 改字）＋與 `spec` 一致的參考條件表一列（`order` 改標的排序），
-    經批量入口核對，回傳說明書的批量核對項目（BatchItem，含回填決策與 `partner` 投資人須知）。"""
-    spec = spec or Spec()
-    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", pdf_spec or spec, edits=edits)
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [row(spec, order=order, **overrides)])
-    outcome = check_all(sheet, [pdf], config)
-    return next(i for i in outcome.items if i.term_sheet == pdf)
-
-
-def check(tmp_path: Path, spec: Spec | None = None, **kw: Any):
-    """同 `check_item`，回傳該說明書的 CheckReport。"""
-    return check_item(tmp_path, spec, **kw).report
+CHECKS = SynthChecks(Spec, build_pdf, row)  # 單份核對殼（harness.SynthChecks）
+check, check_item = CHECKS.check, CHECKS.check_item

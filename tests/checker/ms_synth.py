@@ -14,9 +14,8 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
-from typing import Any
 
-from harness import CONFIG, STANDARD, check_all, iis_path
+from harness import STANDARD, SynthChecks, iis_path
 from pdf_writer import FONT, Edit, FlowDoc, FlowLayout, require_used, split_digits, zh_date
 from reference_synth import (
     FITCH,
@@ -25,7 +24,6 @@ from reference_synth import (
     UL,
     ProductSpec,
     Ratings,
-    build_reference_sheet,
     price,
     reference_row,
     weekday_on_or_after,
@@ -708,40 +706,5 @@ def _iis_body(d: FlowDoc, s: Spec) -> None:
     )
 
 
-def check_pair(
-    tmp_path: Path,
-    spec: Spec | None = None,
-    *,
-    pdf_spec: Spec | None = None,
-    edits: Sequence[Edit] = (),
-    config=CONFIG,
-    **overrides: Any,
-):
-    """同 `check`，回傳（說明書, 投資人須知）兩份的批量核對項目（BatchItem）。"""
-    spec = spec or Spec()
-    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", pdf_spec or spec, edits=edits)
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [reference_row(spec, **overrides)])
-    outcome = check_all(sheet, [pdf, iis_path(pdf)], config)
-    ts = next(i for i in outcome.items if i.term_sheet == pdf)
-    return ts, next(i for i in outcome.items if i.term_sheet != pdf)
-
-
-def check(
-    tmp_path: Path,
-    spec: Spec | None = None,
-    *,
-    pdf_spec: Spec | None = None,
-    edits: Sequence[Edit] = (),
-    config=CONFIG,
-    **overrides: Any,
-):
-    """合成說明書（`pdf_spec`，預設同 `spec`；`edits` 改字）＋與 `spec` 一致的參考條件表一列，經批量入口核對，
-    回傳該說明書的 CheckReport。
-
-    `config` 換核對設定（例：改過的審查標準）。
-    """
-    spec = spec or Spec()
-    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", pdf_spec or spec, edits=edits)
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [reference_row(spec, **overrides)])
-    outcome = check_all(sheet, [pdf], config)
-    return next(i.report for i in outcome.items if i.term_sheet == pdf)
+CHECKS = SynthChecks(Spec, build_pdf, reference_row)  # 單份核對殼（harness.SynthChecks）
+check, check_pair = CHECKS.check, CHECKS.check_pair
