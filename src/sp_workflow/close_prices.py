@@ -146,7 +146,8 @@ def recent_closes(conn: psycopg.Connection, codes: Iterable[str], n: int) -> dic
 class CloseSeries(Mapping[str, Mapping[dt.date, Decimal]]):
     """`load_closes` 讀出的收盤價：代碼 → {收盤日: 收盤價}（日期由舊到新）；沒有收盤價的代碼不在裡面。
 
-    本身是 `Mapping`，`observation.observe` 的 `closes` 直接用；某日前幾天內最近一筆用 `SplitBook.strike_close`。"""
+    本身是 `Mapping`，`observation.observe` 的 `closes` 直接用；某日前幾天內最近一筆用 `SplitBook.strike_close`。
+    只保證每個代碼的日期由舊到新排列（含 `history`），不要依賴代碼之間的順序。"""
 
     by_code: Mapping[str, Mapping[dt.date, Decimal]]
 
