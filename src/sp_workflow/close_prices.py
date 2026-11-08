@@ -178,6 +178,11 @@ def load_closes(conn: psycopg.Connection, codes: Iterable[str], *, since: dt.dat
     return CloseSeries(found)
 
 
+def close_codes(conn: psycopg.Connection) -> set[str]:
+    """收盤價表裡有的全部代碼（自動拆股登記對行事曆用，#509）。"""
+    return {code for (code,) in conn.execute("SELECT DISTINCT code FROM workflow.close_price")}
+
+
 def has_closes(conn: psycopg.Connection, code: str) -> bool:
     """收盤價表有沒有這個代碼（拆股登記檢查代碼打錯用）。"""
     (found,) = conn.execute("SELECT EXISTS (SELECT 1 FROM workflow.close_price WHERE code = %s)", (code,)).fetchone()

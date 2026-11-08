@@ -9,6 +9,8 @@
 比價（#155）在回補股價與歷史收盤價匯入之後跑；比價失敗時匯入保留，原因放在結果裡。
 信箱維護（#158）每次存檔一個動作，寫完重讀全部人員與別名給畫面重新顯示；發行機構評等（#237）也一樣。
 拆股登記（#270）存檔後同樣重讀，並比價全部（受影響、由比價判定出場的商品重新比）；比價失敗時登記保留，原因放在結果裡。
+匯入自動拆股登記（#509，`split_calendar`）是每日匯入頁另一個按鈕，不碰每日匯入：連資料庫前抓行事曆，登記與對齊整段一個
+transaction（出錯整段不寫、原因放在結果裡），有改到才比價全部。
 可連結標的白名單（#273）分兩個動作（讀目前這一份 → 匯入），中間的確認與選檔留在視窗；匯入整份一個 transaction，
 之後的重算失敗時匯入保留。
 transaction 的範圍（#205）：每日匯入、回補股價、歷史收盤價、起單資料匯入、舊商品補資料、其他商品回補（#303）與準備、
@@ -30,6 +32,7 @@ from fcn_checker.check_config import ConfigPaths
 from fcn_checker.config import load_reference_format
 from fcn_checker.ingestion import IngestionError
 from fcn_checker.trading_calendar import TradingCalendar
+from sp_workflow import split_calendar
 from sp_workflow.check_terms import (
     CalcLine,
     CalcReceipt,
@@ -160,6 +163,14 @@ class DailyResult:
     receipt: ImportReceipt
     recalc: Recalc = Recalc()
     observation: Observation = Observation()  # 沒有寫收盤價（只匯交易明細、讀不到假日表）時沒有跑
+
+
+@dataclass(frozen=True)
+class SplitCalendarResult:
+    """匯入自動拆股登記（#509）與之後的比價；沒有新登記、沒有改生效日時不比價。"""
+
+    receipt: split_calendar.CalendarReceipt
+    observation: Observation = Observation()
 
 
 @dataclass(frozen=True)
@@ -399,6 +410,31 @@ def import_eln_whitelist(settings: ConnectionSettings, source: Path, paths: Conf
     with connect(settings) as conn:
         receipt = import_whitelist(conn, whitelist, source)
         return WhitelistResult(receipt, _recalculate_after_import(conn, paths))
+
+
+def import_split_calendar(settings: ConnectionSettings, paths: ConfigPaths) -> SplitCalendarResult:
+    """匯入自動拆股登記（#509）：抓 Yahoo、Nasdaq 拆股行事曆 → 登記、對齊收盤價斷層 → 有改到就比價全部
+    （受影響、由比價判定出場的重新比）。讀不到假日表時丟 `CheckTermsError`（對不到標的的交易所）。"""
+    calendar = load_calendar(paths.exchange_holidays)
+    fetched = split_calendar.fetch(dt.date.today())  # 網路在連資料庫之前
+    with connect(settings) as conn:
+        receipt = _register_from_calendar(conn, fetched, calendar)
+        if not receipt.registered and not receipt.moved:
+            return SplitCalendarResult(receipt)
+        return SplitCalendarResult(receipt, _observe_after_write(conn, calendar, receipt.revisit))
+
+
+def _register_from_calendar(
+    conn: psycopg.Connection, fetched: split_calendar.Fetched, calendar: TradingCalendar
+) -> split_calendar.CalendarReceipt:
+    """登記與對齊整段一個 transaction：出任何錯都整段不寫、不丟出，原因放在結果裡。"""
+    try:
+        with conn.transaction():
+            return split_calendar.register_and_align(conn, fetched, calendar)
+    except Exception as exc:  # 網路以外的錯（資料庫、程式）也只寫原因
+        return split_calendar.CalendarReceipt(
+            errors=(*fetched.errors, f"自動登記沒有完成，這次沒有登記（{type(exc).__name__}：{_first_line(exc)}）")
+        )
 
 
 def observe_products(settings: ConnectionSettings, paths: ConfigPaths) -> ObservationReceipt:
