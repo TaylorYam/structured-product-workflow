@@ -315,7 +315,10 @@ class FlowDoc:
     def text(
         self, x: float, text: str, cont: float | None = None, *, gap: float | None = None, size: float | None = None
     ) -> None:
-        """一段文字：先整段改字，再換行；首行 x 為 `x`、續行 x 為 `cont`（省略為 x + `indent`）。"""
+        """一段文字：先整段改字，再換行；首行 x 為 `x`、續行 x 為 `cont`（省略為 x + `indent`）。
+
+        換行後只剩空白的行不寫（舊版各家 `_Doc` 會多寫一行空字串；合成語料沒有這種段落，產出相同）。
+        """
         text = self.w.edit(text)
         if not text:
             return

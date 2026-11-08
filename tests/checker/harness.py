@@ -189,7 +189,7 @@ class SynthChecks:
         tmp_path.mkdir(parents=True, exist_ok=True)
         pdf = self.build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", pdf_spec or spec, edits=edits)
         rows = [self.row(spec, **overrides)]
-        sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", rows, headers or self.headers)
+        sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", rows, self.headers if headers is None else headers)
         return pdf, check_all(sheet, [pdf], config)
 
     def check_item(self, tmp_path: Path, spec: ProductSpec | None = None, **kw: Any) -> BatchItem:

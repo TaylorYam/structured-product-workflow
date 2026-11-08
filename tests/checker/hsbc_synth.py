@@ -912,7 +912,7 @@ def build_iis_pdf(
 
 def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
     """與 `spec` 一致的參考條件表列；BEN 的 Product 填 `BEN`、參與率 Maxi 100、Digital 0，Super Bull 的 Product 填
-    `Super Bull`。`overrides` 以 Excel 欄名覆寫。"""
+    `Super Bull`。`overrides` 以 Excel 欄名覆寫。HSBC 新增商品族時，要在這裡補該族的 Product 寫法。"""
     out = reference_row(spec)
     if isinstance(spec, BenSpec):
         out["Product"] = BEN_PRODUCT
