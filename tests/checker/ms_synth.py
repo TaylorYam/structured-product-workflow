@@ -14,12 +14,9 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
-from typing import Any
 
-import fitz
-
-from harness import CONFIG, STANDARD, check_all, iis_path
-from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
+from harness import STANDARD, SynthChecks, iis_path
+from pdf_writer import FONT, Edit, FlowDoc, FlowLayout, require_used, split_digits, zh_date
 from reference_synth import (
     FITCH,
     MOODYS,
@@ -27,7 +24,6 @@ from reference_synth import (
     UL,
     ProductSpec,
     Ratings,
-    build_reference_sheet,
     price,
     reference_row,
     weekday_on_or_after,
@@ -40,7 +36,6 @@ WARNING_CH1 = STANDARD["issuer"]["ms"]["fixed_warning_openings"][0] + WARNING[WA
 ISSUER = STANDARD["issuer"]["ms"]["issuer_name"]
 DIST = STANDARD["distributor"]
 TRADE, ISSUE, APPROVAL = dt.date(2030, 1, 7), dt.date(2030, 1, 14), dt.date(2026, 6, 11)
-NUMERIC = set("0123456789,.")
 RATING_NAMES = {MOODYS: "穆迪(Moody's)", SP: "標準普爾(S&P)", FITCH: "惠譽(Fitch)"}
 
 
@@ -154,56 +149,19 @@ class Spec(ProductSpec):
         )
 
 
-class _Doc:
-    """逐行排版；文字依目前段落代號（`section`）套用改字，超過寬度時在非數字處換行。"""
-
-    def __init__(self, edits: Sequence[Edit], kind: str, used: set[Edit] | None = None):
-        self.w = PdfWriter(edits, kind, used)
-        self.section = "cover"
-
-    @property
-    def section(self) -> str:
-        return self.w.section
-
-    @section.setter
-    def section(self, value: str) -> None:
-        self.w.section = value
-
-    def edit(self, text: str) -> str:
-        return self.w.edit(text)
-
-    def text(self, x: float, text: str, cont: float | None = None) -> None:
-        text = self.edit(text)
-        if not text:
-            return
-        width, cur, used, first = 520 - (x - 36), "", 0.0, True
-        with self.w.verbatim():
-            for ch in text:
-                cw = fitz.get_text_length(ch, fontname="helv", fontsize=10) if ord(ch) < 256 else 10
-                if used + cw > width and cur and not (cur[-1] in NUMERIC and ch in NUMERIC):
-                    self.w.line(x if first else (cont if cont is not None else x), cur)
-                    cur, used, first = "", 0.0, False
-                cur += ch
-                used += cw
-            self.w.line(x if first else (cont if cont is not None else x), cur)
-
-    def cell(self, x: float, text: str) -> None:
-        self.w.line(x, text, gap=14)  # 整格換成空字串時不畫
-
-    def chapter(self, zh: str, name: str) -> None:
-        self.w.new_page()
-        self.section = f"ch{zh}"
-        self.w.line(36, f"第{zh}章、{name}", gap=16)
-
-    def article(self, n: int, text: str) -> None:
-        self.section = f"art{n}"
-        self.text(54, f"{n}. {text}", 72)
-
-    def sub(self, n: int, text: str) -> None:
-        self.text(72, f"({n}) {text}", 72)
+LAYOUT = FlowLayout(right=556, keep_width=True, split=split_digits, cell_gap=14)
 
 
-def _price_table(d: _Doc, s: Spec, section: str) -> None:
+def _article(d: FlowDoc, n: int, text: str) -> None:
+    d.section = f"art{n}"
+    d.text(54, f"{n}. {text}", 72)
+
+
+def _sub(d: FlowDoc, n: int, text: str) -> None:
+    d.text(72, f"({n}) {text}", 72)
+
+
+def _price_table(d: FlowDoc, s: Spec, section: str) -> None:
     """價格表（真實欄列版面）：連結標的(k)、彭博代碼、期初價格、執行價、（下限價格）、（自動提前出場價），表頭每格拆成幾行。"""
     d.section = section
     heads = [
@@ -233,7 +191,7 @@ def _price_table(d: _Doc, s: Spec, section: str) -> None:
     d.w.grid(heads, rows, size=10, gap=14, breaks=(brk + 1,) if section == "art16.table" and brk else ())
 
 
-def _scenarios(d: _Doc, s: Spec) -> None:
+def _scenarios(d: FlowDoc, s: Spec) -> None:
     unit, a, n = s.currency_zh, s.coupon, s.tenor
     fmt = whole if s.integer_amounts else money  # 情境算式金額的寫法
     profit = []
@@ -291,7 +249,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     used: set[Edit] = set()  # 說明書與投資人須知共用：改字換到哪一份都算
     if iis and path.stem.endswith("_TS"):
         build_iis_pdf(iis_path(path), s, edits=edits, used=used)
-    d = _Doc(edits, "ts", used)
+    d = LAYOUT.doc(edits, used)
     w = d.w
     ends, payments, starts = s.ends, s.payments, s.starts
     cover(d, s)
@@ -316,22 +274,22 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         18: "投資收益計算方法、本金虧損之機率及以情境分析解說最大可能獲利、損失及其他狀況之年化平均報酬率：",
     }
     for n in range(1, 30):
-        d.article(n, titles.get(n, "範本說明。"))
+        _article(d, n, titles.get(n, "範本說明。"))
         if n == 11:
             underlying_table(d, s)
         elif n == 12:
             write_notes(d.w, s.underlyings, "inline", x=72, label="({k})連結標的{k}：", heading=None, width=44)
         elif n == 14:
-            d.sub(1, f"商品年期：{s.tenor} 個月期")
-            d.sub(2, f"交易日：{zh_date(s.trade_date)}")
-            d.sub(3, f"發行日：{zh_date(s.issue_date)}")
-            d.sub(4, f"到期日：{zh_date(payments[-1])}。到期日為期末定價日後至少第三個營業日之日。")
-            d.sub(5, f"期末定價日*：{zh_date(ends[-1])}，如當日非預定交易日，次一預定交易日為之。")
+            _sub(d, 1, f"商品年期：{s.tenor} 個月期")
+            _sub(d, 2, f"交易日：{zh_date(s.trade_date)}")
+            _sub(d, 3, f"發行日：{zh_date(s.issue_date)}")
+            _sub(d, 4, f"到期日：{zh_date(payments[-1])}。到期日為期末定價日後至少第三個營業日之日。")
+            _sub(d, 5, f"期末定價日*：{zh_date(ends[-1])}，如當日非預定交易日，次一預定交易日為之。")
             if s.ko_obs == "D":
-                d.sub(6, "配息週期起始日、配息週期終止日與配息日：依下表所示")
+                _sub(d, 6, "配息週期起始日、配息週期終止日與配息日：依下表所示")
                 header = ["配息觀察期間(j)", "配息週期起始日（含）", "配息週期終止日（含）", "配息日"]
             else:
-                d.sub(6, "定價日、配息日與自動提前出場日：依下表所示")
+                _sub(d, 6, "定價日、配息日與自動提前出場日：依下表所示")
                 header = ["(j)", "定價日(j)", "配息日", "自動提前出場日"]
             d.section = "art14.table"
             for x, t in zip((62, 175, 305, 473), header, strict=True):
@@ -350,11 +308,12 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                     w.new_page()
             d.section = "art14"
             d.text(72, "如配息日非營業日，則按經調整順延制之營業日慣例調整(但配息金額不變)。")
-            d.sub(7, "次級市場投資人提前贖回日：自開始受理贖回日期至結束受理贖回日期止。")
+            _sub(d, 7, "次級市場投資人提前贖回日：自開始受理贖回日期至結束受理贖回日期止。")
         elif n == 15:
-            d.sub(1, "配息頻率：每月，金額將根據以下條款所計算")
+            _sub(d, 1, "配息頻率：每月，金額將根據以下條款所計算")
             if s.ko_obs == "D":
-                d.sub(
+                _sub(
+                    d,
                     2,
                     f"於每月配息日，每單位配息金額 = 每單位商品面額 × 固定配息率 ({s.monthly}%) ，但如發生自動提前出場事件：",
                 )
@@ -362,7 +321,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                 a = s.first_callable + 1  # 比例配息最早在 Non-Call 的下一期
                 d.text(72, f"j 係為{a} 至{s.tenor} 的數字，代表第{a} 至{s.tenor} 個配息觀察期間")
             else:
-                d.sub(2, "於每月配息日，發行機構將依下列計算公式給付配息金額：")
+                _sub(d, 2, "於每月配息日，發行機構將依下列計算公式給付配息金額：")
                 d.text(72, f"每單位配息金額(j) = 每單位商品面額 ×固定配息率 ({s.monthly}%)")
                 d.text(72, f"j 係為1 至{s.tenor} 的數字，代表第1 至{s.tenor} 個觀察期間")
         elif n == 16:
@@ -390,8 +349,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             d.text(72, "、".join(names[:-1]) + "及" + names[-1] + "： 依下表所示")
             _price_table(d, s, "art16.table")
             d.section = "art16"
-            d.sub(1, "最低保證贖回率：本商品不適用。")
-            d.sub(2, "參與率：不適用。")
+            _sub(d, 1, "最低保證贖回率：本商品不適用。")
+            _sub(d, 2, "參與率：不適用。")
         elif n == 17:
             k, final = s.first_callable, ends[-1]
             cond = "所有連結標的之收盤價皆等於或高於" if len(s.underlyings) > 1 else "該連結標的之收盤價大於或等於"
@@ -425,7 +384,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                 )
             d.text(72, "自動提前出場日：自動提前出場事件發生日後的第3 個營業日。")
         elif n == 18:
-            d.sub(3, "以情境分析解說最大可能獲利、損失及其他狀況之平均年化報酬率：")
+            _sub(d, 3, "以情境分析解說最大可能獲利、損失及其他狀況之平均年化報酬率：")
             d.text(72, "假設：")
             d.text(72, f"▪ 總投資金額 = 1 單位商品面額 = {money(s.denom)} {s.currency_zh}")
             d.text(72, f"▪ 年期：{s.tenor} 個月")
@@ -436,7 +395,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     return later_chapters(d, s, edits, used, path)
 
 
-def cover(d: _Doc, s: Spec) -> None:
+def cover(d: FlowDoc, s: Spec) -> None:
     """封面 1～16 項、警語與刊印日期（MS FCN 與 BEN 同一寫法）。"""
     trustee = s.product_code if s.trustee_code is None else s.trustee_code
     d.w.line(258, "中文產品說明書", gap=16)
@@ -472,7 +431,7 @@ def cover(d: _Doc, s: Spec) -> None:
     d.text(72, f"中文產品說明書刊印日期：{zh_date(s.trade_date)}")
 
 
-def underlying_table(d: _Doc, s: Spec) -> None:
+def underlying_table(d: FlowDoc, s: Spec) -> None:
     """第一章第 11 項標的表（MS FCN 與 BEN 同一寫法）。"""
     d.text(72, "連結標的資產：")
     if len(s.underlyings) > 1:  # 多標的另有列號欄
@@ -489,7 +448,7 @@ def underlying_table(d: _Doc, s: Spec) -> None:
     d.text(72, "相對權重：不適用。")
 
 
-def later_chapters(d: _Doc, s: Spec, edits: Sequence[Edit], used: set[Edit], path: Path) -> Path:
+def later_chapters(d: FlowDoc, s: Spec, edits: Sequence[Edit], used: set[Edit], path: Path) -> Path:
     """第二章～第六章、頁底，存檔（MS FCN 與 BEN 同一寫法）。"""
     w = d.w
     d.chapter("二", "相關機構事業概況")
@@ -576,11 +535,11 @@ def build_iis_pdf(
     *,
     edits: Sequence[Edit] = (),
     used: set[Edit] | None = None,
-    body: Callable[[_Doc, Spec], None] | None = None,
+    body: Callable[[FlowDoc, Spec], None] | None = None,
 ) -> Path:
     """MS 中文投資人須知（新版，docs/checker/templates/ms-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。
     `body` 換掉境外結構型商品事項到主要投資風險（預設 FCN 的 `_iis_body`；BEN 見 ms_ben_synth.py）。"""
-    d = _Doc(edits, "iis", used)
+    d = LAYOUT.doc(edits, used, "iis")
     w = d.w
     dist, zh_issuer = DIST["name"], ISSUER.split("(")[0]
     kind = "股票與/或指數股票型基金連結結構型債券" if len(s.underlyings) > 1 else "股票或指數股票型基金連結結構型債券"
@@ -648,7 +607,7 @@ def build_iis_pdf(
     return w.save(path)
 
 
-def _iis_body(d: _Doc, s: Spec) -> None:
+def _iis_body(d: FlowDoc, s: Spec) -> None:
     """MS FCN 投資人須知：境外結構型商品事項（商品簡介、收益分配、贖回價金）與主要投資風險。"""
     w = d.w
     ends, payments, k, final = s.ends, s.payments, s.first_callable, s.ends[-1]
@@ -747,40 +706,5 @@ def _iis_body(d: _Doc, s: Spec) -> None:
     )
 
 
-def check_pair(
-    tmp_path: Path,
-    spec: Spec | None = None,
-    *,
-    pdf_spec: Spec | None = None,
-    edits: Sequence[Edit] = (),
-    config=CONFIG,
-    **overrides: Any,
-):
-    """同 `check`，回傳（說明書, 投資人須知）兩份的批量核對項目（BatchItem）。"""
-    spec = spec or Spec()
-    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", pdf_spec or spec, edits=edits)
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [reference_row(spec, **overrides)])
-    outcome = check_all(sheet, [pdf, iis_path(pdf)], config)
-    ts = next(i for i in outcome.items if i.term_sheet == pdf)
-    return ts, next(i for i in outcome.items if i.term_sheet != pdf)
-
-
-def check(
-    tmp_path: Path,
-    spec: Spec | None = None,
-    *,
-    pdf_spec: Spec | None = None,
-    edits: Sequence[Edit] = (),
-    config=CONFIG,
-    **overrides: Any,
-):
-    """合成說明書（`pdf_spec`，預設同 `spec`；`edits` 改字）＋與 `spec` 一致的參考條件表一列，經批量入口核對，
-    回傳該說明書的 CheckReport。
-
-    `config` 換核對設定（例：改過的審查標準）。
-    """
-    spec = spec or Spec()
-    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", pdf_spec or spec, edits=edits)
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [reference_row(spec, **overrides)])
-    outcome = check_all(sheet, [pdf], config)
-    return next(i.report for i in outcome.items if i.term_sheet == pdf)
+CHECKS = SynthChecks(Spec, build_pdf, reference_row)  # 單份核對殼（harness.SynthChecks）
+check, check_pair = CHECKS.check, CHECKS.check_pair

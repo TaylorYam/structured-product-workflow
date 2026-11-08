@@ -19,10 +19,8 @@ from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 
-import fitz
-
-from harness import CONFIG, STANDARD, check_all, iis_path
-from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
+from harness import STANDARD, SynthChecks, iis_path
+from pdf_writer import FONT, Edit, FlowDoc, FlowLayout, require_used, split_digits, zh_date
 from reference_synth import (
     FITCH,
     MOODYS,
@@ -30,7 +28,6 @@ from reference_synth import (
     UL,
     ProductSpec,
     Ratings,
-    build_reference_sheet,
     price,
     quote_currency,
     reference_row,
@@ -157,74 +154,41 @@ class Spec(ProductSpec):
         return f"{text} {ccy or self.currency_zh}"
 
 
-class _Doc:
-    """逐行排版；文字依目前段落代號（`section`）套用改字，超過寬度時換行（數字不拆開）。"""
+LAYOUT = FlowLayout(right=555, keep_width=True, split=split_digits, chapter_fmt="{n}、{name}", chapter_x=42)
 
-    def __init__(self, edits: Sequence[Edit], used: set[Edit], kind: str = "ts"):
-        self.w = PdfWriter(edits, kind, used)
-        self.section = "cover"
 
-    @property
-    def section(self) -> str:
-        return self.w.section
+def _numbered(d: FlowDoc, mark: str, body: str, *, legacy: bool, x: float = 42, body_x: float = 67) -> None:
+    """條號或子項：新文件標號 x 42、內容同一列 x 67；舊文件「N. 內容」同一行。"""
+    if legacy:
+        d.text(x, f"{mark} {body}", body_x)
+        return
+    d.w.need(13)
+    with d.w.verbatim():
+        d.w.put(x, d.w.y, mark)
+    d.text(body_x, body)
 
-    @section.setter
-    def section(self, value: str) -> None:
-        self.w.section = value
 
-    def text(self, x: float, text: str, cont: float | None = None) -> None:
-        text = self.w.edit(text)
-        if not text:
-            return
-        width, cur, used, first = 555 - x, "", 0.0, True
-        with self.w.verbatim():
-            for ch in text:
-                cw = fitz.get_text_length(ch, fontname="helv", fontsize=10) if ord(ch) < 256 else 10
-                if used + cw > width and cur and not (cur[-1] in "0123456789,." and ch in "0123456789,."):
-                    self.w.line(x if first else (cont if cont is not None else x), cur)
-                    cur, used, first = "", 0.0, False
-                cur += ch
-                used += cw
-            self.w.line(x if first else (cont if cont is not None else x), cur)
+def _article(d: FlowDoc, n: int, title: str, s: Spec) -> None:
+    if not (d.section.startswith("ch") and d.section != "ch一"):
+        d.section = f"art{n}"
+    _numbered(d, f"{n}.", title, legacy=s.legacy)
 
-    def cell(self, x: float, text: str) -> None:
-        self.w.line(x, text, gap=13)
 
-    def chapter(self, zh: str, name: str) -> None:
-        self.w.new_page()
-        self.section = f"ch{zh}"
-        self.w.line(42, f"{zh}、{name}", gap=16)
-
-    def numbered(self, mark: str, body: str, *, legacy: bool, x: float = 42, body_x: float = 67) -> None:
-        """條號或子項：新文件標號 x 42、內容同一列 x 67；舊文件「N. 內容」同一行。"""
-        if legacy:
-            self.text(x, f"{mark} {body}", body_x)
-            return
-        self.w.need(13)
-        with self.w.verbatim():
-            self.w.put(x, self.w.y, mark)
-        self.text(body_x, body)
-
-    def article(self, n: int, title: str, s: Spec) -> None:
-        if not (self.section.startswith("ch") and self.section != "ch一"):
-            self.section = f"art{n}"
-        self.numbered(f"{n}.", title, legacy=s.legacy)
-
-    def pair(self, label: str, values: Sequence[str]) -> None:
-        """封面兩欄表的一項：標籤 x 60 與 ‧、第一個值同一列，其餘值接在下面（x 273）。"""
-        self.w.need(13)
-        with self.w.verbatim():
-            self.w.put(60, self.w.y, self.w.edit(label))
-            self.w.put(260, self.w.y, "‧")
-        for v in values:
-            self.text(273, v)
+def _pair(d: FlowDoc, label: str, values: Sequence[str]) -> None:
+    """封面兩欄表的一項：標籤 x 60 與 ‧、第一個值同一列，其餘值接在下面（x 273）。"""
+    d.w.need(13)
+    with d.w.verbatim():
+        d.w.put(60, d.w.y, d.w.edit(label))
+        d.w.put(260, d.w.y, "‧")
+    for v in values:
+        d.text(273, v)
 
 
 # 價格表各欄的左緣（真實樣本的欄序：列號、名稱、彭博代碼、分類、交易所、期初股價、執行價、下限價、自動提前出場界限）
 TABLE_X = {"n": 48, "name": 62, "code": 150, "class": 196, "exchange": 222, "prices": (264, 344, 424, 504)}
 
 
-def _price_table(d: _Doc, s: Spec, *, reprint: bool) -> None:
+def _price_table(d: FlowDoc, s: Spec, *, reprint: bool) -> None:
     """第 9 項價格表（8 號字；`reprint` 為第 15 項假設價格表：沒有分類與交易所欄，執行價、下限價欄標「(假設)」）。
     表頭每格拆成多行（每行 6 字）；每檔一列，代碼「代號 交易所碼」下一行是「Equity」（真實樣本）。"""
     x = TABLE_X
@@ -260,7 +224,7 @@ def _price_table(d: _Doc, s: Spec, *, reprint: bool) -> None:
         d.w.row([(x["code"], "Equity"), *([] if reprint else [(x["exchange"], u.exchange[4:])])], gap=15, size=8)
 
 
-def _article8(d: _Doc, s: Spec) -> None:
+def _article8(d: FlowDoc, s: Spec) -> None:
     unit, worst = s.currency_zh, ("表現最差連結標的" if s.count > 1 else "連結標的")
     d.text(67, "(1) 配息： 本商品每月固定配息，請見下述第一章第13 項")
     d.text(67, "(2) 投資人於次級市場申請提前贖回：提前贖回之商品單位數 ×（每單位商品面額 × 提前贖回價格百分比）")
@@ -307,9 +271,10 @@ def _article8(d: _Doc, s: Spec) -> None:
         )
 
 
-def _dates(d: _Doc, s: Spec) -> None:
+def _dates(d: FlowDoc, s: Spec) -> None:
     ends, payments, k = s.ends, s.payments, s.first_callable
-    d.numbered(
+    _numbered(
+        d,
         "(1)",
         f"商品年期：{s.tenor} 個月，惟發行機構得提前贖回本商品 (請見第一章第17 項)"
         + (
@@ -321,15 +286,15 @@ def _dates(d: _Doc, s: Spec) -> None:
         ),
         legacy=s.legacy,
     )
-    d.numbered("(2)", f"交易日：{zh_date(s.trade_date)}", legacy=s.legacy)
-    d.numbered(
-        "(3)", f"期初評價日：{zh_date(s.trade_date)}，惟受限於依照下述第(8)點「附帶條件」所為之調整", legacy=s.legacy
+    _numbered(d, "(2)", f"交易日：{zh_date(s.trade_date)}", legacy=s.legacy)
+    _numbered(
+        d, "(3)", f"期初評價日：{zh_date(s.trade_date)}，惟受限於依照下述第(8)點「附帶條件」所為之調整", legacy=s.legacy
     )
-    d.numbered("(4)", f"發行日：{zh_date(s.issue_date)}", legacy=s.legacy)
-    d.numbered(
-        "(5)", f"期末評價日：{zh_date(s.final_date)}，惟受限於依照下述第(8)點「附帶條件」所為之調整", legacy=s.legacy
+    _numbered(d, "(4)", f"發行日：{zh_date(s.issue_date)}", legacy=s.legacy)
+    _numbered(
+        d, "(5)", f"期末評價日：{zh_date(s.final_date)}，惟受限於依照下述第(8)點「附帶條件」所為之調整", legacy=s.legacy
     )
-    d.numbered("(6)", f"到期日：{zh_date(s.maturity_date)}", legacy=s.legacy)
+    _numbered(d, "(6)", f"到期日：{zh_date(s.maturity_date)}", legacy=s.legacy)
     if not s.autocall:
         label, heads = "配息日：", ["配息日"]
     elif s.ko_obs == "D":
@@ -343,7 +308,7 @@ def _dates(d: _Doc, s: Spec) -> None:
         )
     else:
         label, heads = "觀察日及配息日：（惟觀察日受限於依照下述第(8)點「附帶條件」所為之調整）", ["觀察日", "配息日"]
-    d.numbered("(7)", label, legacy=s.legacy)
+    _numbered(d, "(7)", label, legacy=s.legacy)
     d.section = "art12.table"
     d.cell(48, "(t)")
     for h in heads:
@@ -360,11 +325,14 @@ def _dates(d: _Doc, s: Spec) -> None:
         d.cell(360, zh_date(payments[j - 1]))
     d.section = "art12"
     d.text(67, "每一期配息日預期將如上表所列但受限於營業日調整順延慣例。")
-    d.numbered(
-        "(8)", "附帶條件：就任一連結標的而言，若期初評價日，期末評價日或觀察日是非預定交易日，則順延。", legacy=s.legacy
+    _numbered(
+        d,
+        "(8)",
+        "附帶條件：就任一連結標的而言，若期初評價日，期末評價日或觀察日是非預定交易日，則順延。",
+        legacy=s.legacy,
     )
     if s.autocall and s.ko_obs == "D":
-        d.numbered("(9)", "自動提前出場觀察日和自動提前出場配息日：", legacy=s.legacy)
+        _numbered(d, "(9)", "自動提前出場觀察日和自動提前出場配息日：", legacy=s.legacy)
         d.text(
             67,
             f"就所有連結標的而言，於第{zh_number(k)}個配息觀察期間結束日（含當日）起至期末評價日（含當日）止之期間內，"
@@ -372,7 +340,7 @@ def _dates(d: _Doc, s: Spec) -> None:
         )
 
 
-def _article13(d: _Doc, s: Spec) -> None:
+def _article13(d: FlowDoc, s: Spec) -> None:
     unit, m, a, k = s.currency_zh, s.monthly, s.annual, s.first_callable
     if s.autocall and s.ko_obs == "D":
         d.text(67, "固定配息金額")
@@ -425,7 +393,7 @@ def _event(s: Spec) -> str:
     return "記憶式自動提前出場" if s.memory else "自動提前出場"
 
 
-def _scenarios(d: _Doc, s: Spec) -> None:
+def _scenarios(d: FlowDoc, s: Spec) -> None:
     """第 15 項各情境（Issue #314）：小表只寫表頭一行（表頭 % 依欄名核對，小表價格不核對）與 (一)、(二) 算式。"""
     unit, m, denom = s.currency_zh, s.monthly, s.denom
     coupon = (denom * m / 100).quantize(Decimal("0.01"))
@@ -463,7 +431,7 @@ def _scenarios(d: _Doc, s: Spec) -> None:
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """Citi 中文投資人須知（docs/checker/templates/citi-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
-    d = _Doc(edits, set() if used is None else used, "iis")
+    d = LAYOUT.doc(edits, used, "iis")
     w = d.w
     unit, worst = s.currency_zh, ("表現最差連結標的" if s.count > 1 else "連結標的")
     trustee = (s.product_code if s.trustee_code is None else s.trustee_code) or "[ ]"
@@ -640,29 +608,31 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     used: set[Edit] = set()  # 說明書與投資人須知共用：改字換到哪一份都算
     if iis and path.stem.endswith("_TS"):
         build_iis_pdf(iis_path(path), s, edits=edits, used=used)
-    d = _Doc(edits, used)
+    d = LAYOUT.doc(edits, used)
     w = d.w
     unit = s.currency_zh
     trustee = (s.product_code if s.trustee_code is None else s.trustee_code) or "[ ]"
     w.line(48, "中文產品說明書", gap=16)
     d.text(48, s.name_zh)
     d.text(48, f"受託或銷售機構商品代號為{trustee}，ISIN 為XS1999900001，集保商品代號為{s.product_code}")
-    d.pair("商品中文名稱：", [f"{s.name_zh}（下稱「本商品」）"])
-    d.pair("商品英文名稱：", [s.name_en])
-    d.pair("商品種類：", [PRODUCT_TYPE])
-    d.pair("發行機構註冊地：", ["美國"])
-    d.pair("計價幣別：", [unit])
-    d.pair(
+    _pair(d, "商品中文名稱：", [f"{s.name_zh}（下稱「本商品」）"])
+    _pair(d, "商品英文名稱：", [s.name_en])
+    _pair(d, "商品種類：", [PRODUCT_TYPE])
+    _pair(d, "發行機構註冊地：", ["美國"])
+    _pair(d, "計價幣別：", [unit])
+    _pair(
+        d,
         "發行機構之名稱、電話及地址：",
         [f"{ISSUER}(“CGMHI”)", "地址：1 Fictional Street, New York", "電話：+1 000 000-0000"],
     )
-    d.pair("總代理人之名稱、電話及地址：", [AGENT["cover"], "地址：臺北市信義區虛構路1 號", "電話：886-2-0000-0000"])
-    d.pair("保證機構之名稱及地址：", [GUARANTOR["cover"], "地址：1 Fictional Street, New York"])
-    d.pair(
+    _pair(d, "總代理人之名稱、電話及地址：", [AGENT["cover"], "地址：臺北市信義區虛構路1 號", "電話：886-2-0000-0000"])
+    _pair(d, "保證機構之名稱及地址：", [GUARANTOR["cover"], "地址：1 Fictional Street, New York"])
+    _pair(
+        d,
         "受託或銷售機構之名稱、電話及地址：",
         [f"{DIST['name']} (下稱「玉山證券」)", f"地址：{DIST['address']}", f"電話：{PHONE}"],
     )
-    d.pair("受託或銷售機構審查通過之日期/文號：", [zh_date(APPROVAL)])
+    _pair(d, "受託或銷售機構審查通過之日期/文號：", [zh_date(APPROVAL)])
     w.line(42, "警語：")
     warnings = _warnings()
     for n, t in enumerate(warnings, 1):
@@ -687,7 +657,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         15: "投資收益計算方法，包含本金虧損之機率及以情境分析解說最大可能獲利、損失及其他狀況之平均年化報酬率：",
     }
     for n in range(1, 25):
-        d.article(n, titles.get(n, f"第{n}項說明（不核對）"), s)
+        _article(d, n, titles.get(n, f"第{n}項說明（不核對）"), s)
         if n == 3:
             d.text(
                 67,
@@ -701,8 +671,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                 "須留意到期轉換回其他貨幣資產之匯率風險。",
             )
         elif n == 5:
-            d.numbered("(1)", f"每單位商品面額： {s.money(s.denom)}", legacy=s.legacy, x=67, body_x=90)
-            d.numbered("(2)", "發行價格： 每單位商品面額的100%", legacy=s.legacy, x=67, body_x=90)
+            _numbered(d, "(1)", f"每單位商品面額： {s.money(s.denom)}", legacy=s.legacy, x=67, body_x=90)
+            _numbered(d, "(2)", "發行價格： 每單位商品面額的100%", legacy=s.legacy, x=67, body_x=90)
         elif n == 8:
             _article8(d, s)
         elif n == 9:
@@ -746,23 +716,31 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             )
 
     d.chapter("二", "相關機構事業概況")
-    d.article(1, "發行機構", s)
-    d.numbered("(1)", f"公司名稱：{ISSUER}", legacy=s.legacy, x=66, body_x=90)
-    d.numbered("(6)", "財務狀況：請參閱下述第(8)項之說明。", legacy=s.legacy, x=66, body_x=90)
-    d.numbered("(7)", f"信用評等：長期債務信用評等為{ratings_text(s.ratings)}{AS_OF}", legacy=s.legacy, x=66, body_x=90)
-    d.article(2, "保證機構：", s)
-    d.numbered("(1)", f"公司名稱：{GUARANTOR['ch2']}", legacy=s.legacy, x=66, body_x=90)
-    d.numbered(
-        "(6)", "財務狀況：有關保證機構財務狀況的資料可於http://www.example.com取得。", legacy=s.legacy, x=66, body_x=90
+    _article(d, 1, "發行機構", s)
+    _numbered(d, "(1)", f"公司名稱：{ISSUER}", legacy=s.legacy, x=66, body_x=90)
+    _numbered(d, "(6)", "財務狀況：請參閱下述第(8)項之說明。", legacy=s.legacy, x=66, body_x=90)
+    _numbered(
+        d, "(7)", f"信用評等：長期債務信用評等為{ratings_text(s.ratings)}{AS_OF}", legacy=s.legacy, x=66, body_x=90
     )
-    d.numbered(
+    _article(d, 2, "保證機構：", s)
+    _numbered(d, "(1)", f"公司名稱：{GUARANTOR['ch2']}", legacy=s.legacy, x=66, body_x=90)
+    _numbered(
+        d,
+        "(6)",
+        "財務狀況：有關保證機構財務狀況的資料可於http://www.example.com取得。",
+        legacy=s.legacy,
+        x=66,
+        body_x=90,
+    )
+    _numbered(
+        d,
         "(7)",
         f"信用評等：長期債務信用評等為{ratings_text(s.guarantor_ratings)}{AS_OF}",
         legacy=s.legacy,
         x=66,
         body_x=90,
     )
-    d.article(3, "總代理人、計算代理機構、付款代理機構、受託或銷售機構及結算機構：", s)
+    _article(d, 3, "總代理人、計算代理機構、付款代理機構、受託或銷售機構及結算機構：", s)
     for n, (title, name, place, head) in enumerate(
         (
             ("總代理人：", AGENT["ch2"], "臺北市信義區虛構路1 號", "虛構甲"),
@@ -773,27 +751,27 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         ),
         1,
     ):
-        d.numbered(f"({n})", title, legacy=s.legacy, x=66, body_x=90)
+        _numbered(d, f"({n})", title, legacy=s.legacy, x=66, body_x=90)
         since = "2000年11月20日" if name == DIST["name"] else "2000年1月1日"  # 受託機構 = 審查標準設立日期
         for t in (f"公司名稱：{name}", f"設立日期：{since}", f"營業所在地：{place}", f"負責人姓名：{head}"):
             d.w.line(92, "•", gap=0)
             d.text(110, t)
 
     d.chapter("三", "商品風險揭露")
-    d.article(1, "基本風險資訊：本商品不保本。", s)
-    d.article(2, "個別商品風險資訊：", s)
+    _article(d, 1, "基本風險資訊：本商品不保本。", s)
+    _article(d, 2, "個別商品風險資訊：", s)
     d.text(
         67,
         f"(7) 匯兌風險：本商品係以{unit}計價，當投資人以新台幣或其他貨幣轉換成{unit}進行投資時，"
         "本金加利息轉換回新台幣或其他幣別可能產生匯兌風險。",
     )
-    d.article(3, "依境外結構型商品管理規則第二十三條第一項：不核對。", s)
-    d.article(4, "本商品之投資風險警語。", s)
+    _article(d, 3, "依境外結構型商品管理規則第二十三條第一項：不核對。", s)
+    _article(d, 4, "本商品之投資風險警語。", s)
     for n, t in enumerate(warnings, 1):
         d.text(67, f"({n}) {t}", 85)
 
     d.chapter("四", "一般交易事項")
-    d.article(1, "商品開始受理申購、結束受理申購日期、開始受理贖回日期及後續受理贖回日期：", s)
+    _article(d, 1, "商品開始受理申購、結束受理申購日期、開始受理贖回日期及後續受理贖回日期：", s)
     for t in (
         f"開始受理申購日期：{zh_date(s.trade_date)}",
         f"結束受理申購日期：{zh_date(s.trade_date)}",
@@ -801,7 +779,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     ):
         d.w.line(67, "•", gap=0)
         d.text(80, t)
-    d.article(2, "投資人應負擔的各項費用及金額或計算基準之列表：", s)
+    _article(d, 2, "投資人應負擔的各項費用及金額或計算基準之列表：", s)
     for t in ("費用項目", "費率(百分比)", "收取時點", "收取方式", "收取人"):
         d.cell(60, t)
     for t in (
@@ -849,17 +827,17 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             d.cell(60, t)
     for t in ("保費費用", "不適用", "解約費用", "不適用", "其他費用", "無"):
         d.cell(60, t)
-    d.article(3, "申購方式：不核對。", s)
-    d.article(4, "最低申購金額及最低加購金額：", s)
+    _article(d, 3, "申購方式：不核對。", s)
+    _article(d, 4, "最低申購金額及最低加購金額：", s)
     d.text(67, "最低申購金額：")
     d.text(67, s.money(s.denom))
     d.text(67, "最低加購金額：")
     d.text(67, s.money(s.denom))
-    d.article(5, "申購價金之計算：每單位商品面額 × 申購單位數 × 100%", s)
-    d.article(6, "申購手續及資金給付方式：不核對。", s)
-    d.article(7, "受託/發行不成立之情形：", s)
+    _article(d, 5, "申購價金之計算：每單位商品面額 × 申購單位數 × 100%", s)
+    _article(d, 6, "申購手續及資金給付方式：不核對。", s)
+    _article(d, 7, "受託/發行不成立之情形：", s)
     d.text(67, f"需發行機構於交易截止日或之前收到本商品有效申購金額至少達{MINIMUM_ISSUE}之總申購價值。")
-    d.article(8, f"最低贖回金額或單位數：{s.money(s.denom)}。本商品必須以面額倍數之整數贖回，不得分拆。", s)
+    _article(d, 8, f"最低贖回金額或單位數：{s.money(s.denom)}。本商品必須以面額倍數之整數贖回，不得分拆。", s)
 
     d.chapter("五", "特別記載事項")
     d.text(42, "一、 不核對。")
@@ -906,34 +884,5 @@ def row(spec: Spec, *, order: Sequence[int] | None = None, **overrides: Any) -> 
     return out
 
 
-def check(
-    tmp_path: Path,
-    spec: Spec | None = None,
-    *,
-    pdf_spec: Spec | None = None,
-    edits: Sequence[Edit] = (),
-    order: Sequence[int] | None = None,
-    config=CONFIG,
-    **overrides: Any,
-):
-    """合成說明書（`pdf_spec`，預設同 `spec`；`edits` 改字）＋與 `spec` 一致的參考條件表一列（`order` 改標的排序），
-    經批量入口核對，回傳該說明書的 CheckReport。"""
-    return check_item(tmp_path, spec, pdf_spec=pdf_spec, edits=edits, order=order, config=config, **overrides).report
-
-
-def check_item(
-    tmp_path: Path,
-    spec: Spec | None = None,
-    *,
-    pdf_spec: Spec | None = None,
-    edits: Sequence[Edit] = (),
-    order: Sequence[int] | None = None,
-    config=CONFIG,
-    **overrides: Any,
-):
-    """同 `check`，回傳說明書的批量核對項目（BatchItem，含回填決策）。"""
-    spec = spec or Spec()
-    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", pdf_spec or spec, edits=edits)
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [row(spec, order=order, **overrides)])
-    outcome = check_all(sheet, [pdf], config)
-    return next(i for i in outcome.items if i.term_sheet == pdf)
+CHECKS = SynthChecks(Spec, build_pdf, row)  # 單份核對殼（harness.SynthChecks）
+check, check_item = CHECKS.check, CHECKS.check_item

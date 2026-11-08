@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import datetime as dt
-import re
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
@@ -22,8 +21,8 @@ from typing import Any
 
 import fitz
 
-from harness import CONFIG, STANDARD, check_all, iis_path
-from pdf_writer import FONT, Edit, PdfWriter, require_used
+from harness import STANDARD, SynthChecks, iis_path
+from pdf_writer import FONT, Edit, FlowDoc, FlowLayout, require_used
 from reference_synth import (
     FITCH,
     MOODYS,
@@ -31,9 +30,9 @@ from reference_synth import (
     UL,
     ProductSpec,
     Ratings,
-    build_reference_sheet,
     price,
     reference_row,
+    set_pricing,
     weekday_on_or_after,
     write_notes,
 )
@@ -77,7 +76,6 @@ TICKERS = {  # 依代號排序（GS 說明書的順序）
 }
 EXCHANGE = {"UN": "紐約證券交易所", "UW": "納斯達克全球精選市場", "JT": "東京證券交易所"}
 QUOTE = {"US": "美元", "JT": "日圓"}  # 標的報價幣別
-PRICING = {"close": "收盤價", "open": "開盤價", "vwap": "VWAP"}  # 參考條件表「期初定價」
 ZH_NUM = ("一", "二", "三", "四", "五", "六", "七", "八", "九")
 
 
@@ -182,68 +180,27 @@ class Spec(ProductSpec):
         return f"{Decimal(x):,.0f}{' ' if space else ''}{self.currency_zh}"
 
 
-def _tokens(text: str) -> list[str]:
-    """換行單位：連續的英數字（含符號）不拆開，中文一字一個。"""
-    return re.findall(r"[\x21-\x7e]+|\s|.", text)
+LAYOUT = FlowLayout(
+    right=545,
+    keep_width=True,
+    row_gap=15,
+    chapter_fmt="第{n}章:{name}",
+    chapter_x=72,
+    chapter_gap=20,
+    article_x=72,
+    article_cont=86,
+)
 
 
-class _Doc:
-    """逐行排版；文字依目前段落代號（`section`）套用改字，超過寬度時換行（英數字不拆開）。"""
-
-    def __init__(self, edits: Sequence[Edit], used: set[Edit], kind: str = "ts", width: float = 545):
-        self.w = PdfWriter(edits, kind, used)
-        self.section = "cover"
-        self.width = width
-        self.chapters: list[tuple[int, str]] = []  # （頁索引, 章名）
-
-    @property
-    def section(self) -> str:
-        return self.w.section
-
-    @section.setter
-    def section(self, value: str) -> None:
-        self.w.section = value
-
-    def text(self, x: float, text: str, cont: float | None = None, gap: float = 13) -> None:
-        text = self.w.edit(text)
-        if not text:
-            return
-        width, cur, used, first = self.width - x, "", 0.0, True
-        with self.w.verbatim():
-            for tok in _tokens(text):
-                tw = sum(fitz.get_text_length(c, fontname="helv", fontsize=10) if ord(c) < 256 else 10 for c in tok)
-                if used + tw > width and cur.strip():
-                    self.w.line(x if first else (cont if cont is not None else x), cur.strip(), gap=gap)
-                    cur, used, first = "", 0.0, False
-                    if tok.isspace():
-                        continue
-                cur += tok
-                used += tw
-            self.w.line(x if first else (cont if cont is not None else x), cur.strip(), gap=gap)
-
-    def row(self, cells: Sequence[tuple[float, str]], gap: float = 15, size: float = 10) -> None:
-        self.w.row(cells, gap=gap, size=size)
-
-    def chapter(self, zh: str, name: str) -> None:
-        self.w.new_page()
-        self.section = f"ch{zh}"
-        self.chapters.append((len(self.w.doc) - 1, f"第{zh}章:{name}"))
-        self.w.line(72, f"第{zh}章:{name}", gap=20)
-
-    def article(self, n: int, title: str) -> None:
-        if self.section == "cover" or self.section.startswith("art") or self.section == "ch一":
-            self.section = f"art{n}"
-        self.text(72, f"{n}. {title}", 86)
-
-    def furnish(self) -> fitz.Document:
-        """第一章起每頁右上角的章名頁首、每頁頁底頁碼（真實文件的頁首頁尾，擷取時排除）。"""
-        doc = self.w.doc
-        for p, page in enumerate(doc):
-            current = [name for start, name in self.chapters if start <= p]
-            if current:
-                page.insert_text((458, 70), current[-1], fontname=FONT, fontsize=8)
-            page.insert_text((260, 800), f"第- {p + 1} -頁，共{len(doc)}頁", fontname=FONT, fontsize=8)
-        return doc
+def _furnish(d: FlowDoc) -> fitz.Document:
+    """第一章起每頁右上角的章名頁首、每頁頁底頁碼（真實文件的頁首頁尾，擷取時排除）。"""
+    doc = d.w.doc
+    for p, page in enumerate(doc):
+        current = [name for start, name in d.chapters if start <= p]
+        if current:
+            page.insert_text((458, 70), current[-1], fontname=FONT, fontsize=8)
+        page.insert_text((260, 800), f"第- {p + 1} -頁，共{len(doc)}頁", fontname=FONT, fontsize=8)
+    return doc
 
 
 def _warnings(s: Spec) -> list[str]:
@@ -265,7 +222,7 @@ def _warnings(s: Spec) -> list[str]:
 # ---------------------------------------------------------------- 說明書
 
 
-def _cover(d: _Doc, s: Spec) -> None:
+def _cover(d: FlowDoc, s: Spec) -> None:
     w = d.w
     w.line(290, "中文產品說明書", gap=20)
     w.line(86, f"受託機構商品代號為 {s.product_code}", gap=16)
@@ -297,7 +254,7 @@ def _cover(d: _Doc, s: Spec) -> None:
     d.text(86, f"本中文產品說明書刊印日期:{s.date(s.trade_date)}")
 
 
-def _article9(d: _Doc, s: Spec) -> None:
+def _article9(d: FlowDoc, s: Spec) -> None:
     """主要給付項目（Issue #317：重複寫出的面額、到期買回 %，非美元商品另有「以X支付配息金額及到期買回金額」）。"""
     par = s.money(s.denom, space=True)
     for x, t in (
@@ -317,7 +274,7 @@ def _article9(d: _Doc, s: Spec) -> None:
         )
 
 
-def _article10(d: _Doc, s: Spec) -> None:
+def _article10(d: FlowDoc, s: Spec) -> None:
     d.text(86, "(1) 連結標的資產:")
     d.row(
         [
@@ -334,7 +291,7 @@ def _article10(d: _Doc, s: Spec) -> None:
     d.text(86, "(3) 與投資績效的關連情形:於各付息日之應付配息金額於相關觀察期間依相關連結標的資產決定。")
 
 
-def _article13(d: _Doc, s: Spec) -> None:
+def _article13(d: FlowDoc, s: Spec) -> None:
     for t in (
         f"(1) 年期:如未發生自動提前出場事件，或本商品未經其他方式提前買回者，則為{s.tenor}個月",
         f"(2) 交易日:{s.date(s.trade_date)}",
@@ -362,7 +319,7 @@ def _article13(d: _Doc, s: Spec) -> None:
     d.text(86, "投資人應注意本中文產品說明書所述之付息日丶到期日及任何交割日期係指發行機構給付相關金額予受託機構之日。")
 
 
-def _article15(d: _Doc, s: Spec) -> None:
+def _article15(d: FlowDoc, s: Spec) -> None:
     i = s.i
     par = s.money(s.denom, space=True)
     worst = "於評價日表現最差之連結標的最終參考價格(i)" if s.basket else "最終參考價格"
@@ -436,7 +393,7 @@ def _article15(d: _Doc, s: Spec) -> None:
     d.text(86, "(3) 參與率:不適用。")
 
 
-def _price_table(d: _Doc, s: Spec, *, tables_iis: bool) -> None:
+def _price_table(d: FlowDoc, s: Spec, *, tables_iis: bool) -> None:
     """連結標的價格表（7 號字）：表頭一格拆成多行（K／KO／KI % 寫在表頭）；每檔一列，彭博代碼拆兩行（「代號 交易所碼」／
     「Equity」）。說明書有參考幣別欄、價格不帶幣別字；投資人須知沒有參考幣別欄、價格後接幣別字。"""
     i, ki = s.i, s.ki != "none"
@@ -496,7 +453,7 @@ def _price_table(d: _Doc, s: Spec, *, tables_iis: bool) -> None:
         row(rest, 14)
 
 
-def _article16(d: _Doc, s: Spec) -> None:
+def _article16(d: FlowDoc, s: Spec) -> None:
     if s.basket:
         d.text(
             86,
@@ -529,7 +486,7 @@ def _article16(d: _Doc, s: Spec) -> None:
     )
 
 
-def _article17(d: _Doc, s: Spec) -> None:
+def _article17(d: FlowDoc, s: Spec) -> None:
     u = s.underlyings[0]
     one = "(1)" if s.basket else ""
     final = (u.initial / 10).quantize(Q4, ROUND_HALF_UP)
@@ -579,7 +536,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     used: set[Edit] = set()
     if iis and path.stem.endswith("_TS"):
         build_iis_pdf(iis_path(path), s, edits=edits, used=used)
-    d = _Doc(edits, used)
+    d = LAYOUT.doc(edits, used)
     _cover(d, s)
 
     d.chapter("一", "商品基本資料")
@@ -732,7 +689,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     d.text(72, "1. 投資人之申購及贖回，須經發行機構確認後始生效力。")
     d.chapter("六", "定義")
     d.text(72, "1. 「共同預定交易日」指各連結標的之預定交易日。")
-    doc = d.furnish()
+    doc = _furnish(d)
     d.w.flush()
     doc.save(path)
     doc.close()
@@ -745,7 +702,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """GS 中文投資人須知（docs/checker/templates/gs-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
-    d = _Doc(edits, set() if used is None else used, "iis", width=590)
+    d = LAYOUT.doc(edits, used, "iis", right=590)
     w = d.w
     li = "利"  # 真實文件是相容字 U+F9DD；內建 CJK 字型畫不出來，合成文件寫標準字（相容字轉換由本機真實樣本測試涵蓋）
     w.line(374, f"中文投資人須知刊印日期: {s.date(s.trade_date)}", gap=12)
@@ -911,47 +868,10 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
 def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
     """與 `spec` 一致的參考條件表列：期初定價依 `pricing`（VWAP 時進場價空白）。`overrides` 以 Excel 欄名覆寫。"""
     out = reference_row(spec)
-    out["期初定價"] = PRICING[spec.pricing]
-    if spec.pricing == "vwap":
-        out.update({f"UL_{i}_進場價": None for i in range(1, spec.count + 1)})
+    set_pricing(out, spec.pricing, spec.count)
     out.update(overrides)
     return out
 
 
-def check(
-    tmp_path: Path,
-    spec: Spec | None = None,
-    *,
-    pdf_spec: Spec | None = None,
-    edits: Sequence[Edit] = (),
-    config=CONFIG,
-    **overrides: Any,
-):
-    """合成說明書（`pdf_spec`，預設同 `spec`；`edits` 改字）＋與 `spec` 一致的參考條件表一列，經批量入口核對，回傳說明書的 CheckReport。"""
-    return check_item(tmp_path, spec, pdf_spec=pdf_spec, edits=edits, config=config, **overrides).report
-
-
-def check_item(
-    tmp_path: Path,
-    spec: Spec | None = None,
-    *,
-    pdf_spec: Spec | None = None,
-    edits: Sequence[Edit] = (),
-    config=CONFIG,
-    **overrides: Any,
-):
-    """同 `check`，回傳說明書的批量核對項目（BatchItem，含回填決策）。"""
-    spec = spec or Spec()
-    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", pdf_spec or spec, edits=edits)
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [row(spec, **overrides)])
-    outcome = check_all(sheet, [pdf], config)
-    return next(i for i in outcome.items if i.term_sheet == pdf)
-
-
-def check_iis(tmp_path: Path, spec: Spec | None = None, *, edits: Sequence[Edit] = (), config=CONFIG, **overrides: Any):
-    """同 `check_item`，回傳投資人須知的批量核對項目。"""
-    spec = spec or Spec()
-    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", spec, edits=edits)
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [row(spec, **overrides)])
-    outcome = check_all(sheet, [pdf, iis_path(pdf)], config)
-    return next(i for i in outcome.items if i.term_sheet == iis_path(pdf))
+CHECKS = SynthChecks(Spec, build_pdf, row)  # 單份核對殼（harness.SynthChecks）
+check, check_item, check_iis = CHECKS.check, CHECKS.check_item, CHECKS.check_iis

@@ -1,15 +1,17 @@
-"""合成說明書與投資人須知用的 PDF 寫入工具（不分上手），以及三家共用的改字 `Edit`。
+"""合成說明書與投資人須知用的 PDF 寫入工具（不分上手），以及各家共用的改字 `Edit`。
 
-各上手的合成器（tests/checker/barc_synth.py、tests/checker/ms_synth.py、tests/checker/hsbc_synth.py）都只透過這裡的公開工具排版；
-頁尾等版面細節由各合成器自行加上。
+各上手的合成器（tests/checker/*_synth.py）都只透過這裡的公開工具排版：`PdfWriter` 逐行寫字；`FlowDoc` 在其上
+依段落代號改字、超寬自動換行，各家的差別（右邊界、行距、續行縮排、換行規則、章名寫法…）都寫在 `FlowLayout`。
+第一章各條「N. 標題」同一段的寫法用 `FlowDoc.article`；其他條號寫法、封面兩欄表、頁尾等各家獨有的版面由各合成器自行寫成函式。
 """
 
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Iterator, Sequence
+import re
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import fitz
@@ -215,3 +217,161 @@ class PdfWriter:
         self.doc.save(path)
         self.doc.close()
         return path
+
+
+def tokens(text: str) -> list[str]:
+    """換行單位：連續的英數字（含符號）不拆開，空白、中文一字一個。"""
+    return re.findall(r"[\x21-\x7e]+|\s|.", text)
+
+
+def text_width(text: str, size: float) -> float:
+    """`put` 排出來的寬度：西文字元以 Helvetica 量，其餘一字一個字級寬。"""
+    return sum(fitz.get_text_length(c, fontname="helv", fontsize=size) if ord(c) < 256 else size for c in text)
+
+
+Split = Callable[[str, float, float, float], list[str]]
+"""換行規則：（文字, 首行可用寬, 續行可用寬, 字級）→ 各行文字。"""
+
+
+def split_tokens(text: str, first: float, rest: float, size: float) -> list[str]:
+    """依 `tokens` 換行（英數字串不拆開），換行處的空白丟掉、每行去頭尾空白。"""
+    out: list[str] = []
+    cur, used, width = "", 0.0, first
+    for tok in tokens(text):
+        tw = text_width(tok, size)
+        if used + tw > width and cur.strip():
+            out.append(cur.strip())
+            cur, used, width = "", 0.0, rest
+            if tok.isspace():
+                continue
+        cur += tok
+        used += tw
+    if cur.strip():
+        out.append(cur.strip())
+    return out
+
+
+def split_digits(text: str, first: float, rest: float, size: float) -> list[str]:
+    """逐字換行，只有數字（含「,」「.」）之間不拆開；每行原樣保留（不去空白）。"""
+    out: list[str] = []
+    cur, used, width = "", 0.0, first
+    for ch in text:
+        cw = text_width(ch, size)
+        if used + cw > width and cur and not (cur[-1] in "0123456789,." and ch in "0123456789,."):
+            out.append(cur)
+            cur, used, width = "", 0.0, rest
+        cur += ch
+        used += cw
+    out.append(cur)
+    return out
+
+
+@dataclass(frozen=True)
+class FlowLayout:
+    """一家說明書／投資人須知的流式排版參數；`doc()` 開一份新文件（可就該文件改幾個參數，例：投資人須知較寬）。"""
+
+    right: float = 560  # 右邊界 x：每行可用寬 = right − 行首 x
+    gap: float = 13  # `text` 行距
+    size: float = 10  # `text` 字級
+    indent: float = 0  # 續行縮排（`text` 沒給 `cont` 時，續行 x = 首行 x + indent）
+    keep_width: bool = False  # 續行沿用首行的可用寬（不依續行 x 重算）
+    split: Split = split_tokens  # 換行規則
+    table_size: float = 8  # `centered_row` 預設字級
+    cell_gap: float = 13  # `cell` 行距
+    row_gap: float = 20  # `row` 預設列距
+    chapter_fmt: str = "第{n}章、{name}"  # 章名一行的寫法；段落代號為 ch{n}
+    chapter_x: float = 36
+    chapter_gap: float = 16
+    article_x: float = 36  # `article` 條號與標題一行的 x
+    article_cont: float = 54  # `article` 標題換行時續行 x
+
+    def doc(self, edits: Sequence[Edit], used: set[Edit] | None = None, kind: str = "ts", **changes: float) -> FlowDoc:
+        return FlowDoc(edits, used, kind, replace(self, **changes) if changes else self)
+
+
+class FlowDoc:
+    """逐行排版；文字依目前段落代號（`section`，起始為 cover）套用改字，超過寬度時依 `FlowLayout.split` 換行。
+
+    底層的 `PdfWriter` 是 `w`，各家獨有的版面（條號、兩欄表…）直接用 `w` 排。
+    """
+
+    def __init__(self, edits: Sequence[Edit], used: set[Edit] | None, kind: str, layout: FlowLayout) -> None:
+        self.w = PdfWriter(edits, kind, used)
+        self.layout = layout
+        self.section = "cover"
+        self.chapters: list[tuple[int, str]] = []  # （頁索引, 章名一行）
+
+    @property
+    def section(self) -> str:
+        return self.w.section
+
+    @section.setter
+    def section(self, value: str) -> None:
+        self.w.section = value
+
+    def edit(self, text: str) -> str:
+        return self.w.edit(text)
+
+    def text(
+        self, x: float, text: str, cont: float | None = None, *, gap: float | None = None, size: float | None = None
+    ) -> None:
+        """一段文字：先整段改字，再換行；首行 x 為 `x`、續行 x 為 `cont`（省略為 x + `indent`）。
+
+        換行後只剩空白的行不寫（舊版各家 `_Doc` 會多寫一行空字串；合成語料沒有這種段落，產出相同）。
+        """
+        text = self.w.edit(text)
+        if not text:
+            return
+        lay = self.layout
+        gap = lay.gap if gap is None else gap
+        size = lay.size if size is None else size
+        nxt = x + lay.indent if cont is None else cont
+        first = lay.right - x
+        lines = lay.split(text, first, first if lay.keep_width else lay.right - nxt, size)
+        with self.w.verbatim():
+            for k, part in enumerate(lines):
+                self.w.line(nxt if k else x, part, size=size, gap=gap)
+
+    def cell(self, x: float, text: str) -> None:
+        """一行（表格一格）不換行；整格換成空字串時不畫。"""
+        self.w.line(x, text, gap=self.layout.cell_gap)
+
+    def row(self, cells: Sequence[tuple[float, str]], gap: float | None = None, size: float | None = None) -> None:
+        """一列表格（不置中）；列距、字級省略為 `row_gap`、`size`。"""
+        lay = self.layout
+        self.w.row(cells, gap=lay.row_gap if gap is None else gap, size=lay.size if size is None else size)
+
+    def centered_row(self, cells: Sequence[tuple[float, str]], gap: float, size: float | None = None) -> None:
+        """一列表格，每格置中於欄中心 x。"""
+        size = self.layout.table_size if size is None else size
+        self.w.row([(cx - text_width(t, size) / 2, t) for cx, t in cells], gap=gap, size=size)
+
+    def chapter(self, n: str, name: str) -> None:
+        """章名一行（新頁）；段落代號 ch{n}。"""
+        lay = self.layout
+        self.w.new_page()
+        self.section = f"ch{n}"
+        title = lay.chapter_fmt.format(n=n, name=name)
+        self.chapters.append((len(self.w.doc) - 1, title))
+        self.w.line(lay.chapter_x, title, gap=lay.chapter_gap)
+
+    def enter_article(self, n: int, first_chapter: str = "ch一") -> None:
+        """進入第一章第 `n` 條：目前段落在第一章內（封面、第一章章名 `first_chapter`、前一條或其下層）時段落代號改為
+        art{n}；其他章的條沿用章的代號（ch二…）。"""
+        s = self.section
+        if s == "cover" or s.startswith("art") or s == first_chapter:
+            self.section = f"art{n}"
+
+    def article(self, n: int, title: str) -> None:
+        """一條「{n}. {title}」寫成一段（x `article_x`、續行 `article_cont`）；段落代號見 `enter_article`。"""
+        self.enter_article(n)
+        self.text(self.layout.article_x, f"{n}. {title}", self.layout.article_cont)
+
+    def number_pages(
+        self, label: str, at: tuple[float, float], *, fontname: str = FONT, size: float = 9
+    ) -> fitz.Document:
+        """每頁加頁碼 `label`（`{n}` 第幾頁、`{m}` 總頁數；真實文件的頁碼，擷取時排除），交出文件。"""
+        doc = self.w.doc
+        for p, page in enumerate(doc):
+            page.insert_text(at, label.format(n=p + 1, m=len(doc)), fontname=fontname, fontsize=size)
+        return doc

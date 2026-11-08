@@ -15,13 +15,14 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from pathlib import Path
+from typing import Any
 
 from fcn_checker.name_template import split
 from fcn_checker.parsers import hsbc_ben
 from fcn_checker.parsers.super_bull import add_months
-from harness import STANDARD, iis_path
+from harness import STANDARD, SynthChecks, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
-from reference_synth import FITCH, MOODYS, SP, UL, ProductSpec, Ratings, price, quote_iso, write_notes
+from reference_synth import FITCH, MOODYS, SP, UL, ProductSpec, Ratings, price, quote_iso, reference_row, write_notes
 
 CENT = Decimal("0.01")
 SB_PRODUCT = "Super Bull"
@@ -907,3 +908,19 @@ def build_iis_pdf(
     if used is None:
         require_used(edits, w.used)
     return w.save(path)
+
+
+def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
+    """與 `spec` 一致的參考條件表列；BEN 的 Product 填 `BEN`、參與率 Maxi 100、Digital 0，Super Bull 的 Product 填
+    `Super Bull`。`overrides` 以 Excel 欄名覆寫。HSBC 新增商品族時，要在這裡補該族的 Product 寫法。"""
+    out = reference_row(spec)
+    if isinstance(spec, BenSpec):
+        out["Product"] = BEN_PRODUCT
+        out["參與率(%)"] = 0 if spec.digital else 100
+    elif isinstance(spec, SbSpec):
+        out["Product"] = SB_PRODUCT
+    out.update(overrides)
+    return out
+
+
+CHECKS = SynthChecks(Spec, build_pdf, row)  # 單份核對殼（harness.SynthChecks）
