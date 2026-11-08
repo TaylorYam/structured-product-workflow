@@ -9,6 +9,7 @@
   舊清單的到期還本，事件日是最終比價日（資料表版本 0021 補既有的，#189）。
 - 對自動事件有意見只能提出異議（`raise_objection`／`resolve_objection`），異議不改事件。
 `workflow.product` 舊的 `status_event` 等四欄已由資料表版本 0020 移除（#172）。
+讀存續狀態（`lifecycle_status`、`Stored.lifecycle`）與事件的型別 `StoredEvent`、`Lifecycle` 在 `product_store`（#495）。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
@@ -22,17 +23,17 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from sp_workflow.database import OperatorError
-from sp_workflow.product_store import lock_product
-from sp_workflow.status import Lifecycle
+from sp_workflow.product_store import EVENT_COLUMNS, StoredEvent, lock_product
+from sp_workflow.status import Lifecycle as LifecycleState
 
 if TYPE_CHECKING:
     import psycopg
 
-IN_STOCK = Lifecycle.IN_STOCK
-KO = Lifecycle.KO
-DELIVERY = Lifecycle.DELIVERY
-MATURITY = Lifecycle.MATURITY
-REDEMPTION = Lifecycle.REDEMPTION
+IN_STOCK = LifecycleState.IN_STOCK
+KO = LifecycleState.KO
+DELIVERY = LifecycleState.DELIVERY
+MATURITY = LifecycleState.MATURITY
+REDEMPTION = LifecycleState.REDEMPTION
 AUTO_EVENTS = (KO, DELIVERY, MATURITY)
 EXIT_EVENTS = (*AUTO_EVENTS, REDEMPTION)  # 會讓商品出場的事件：自動事件加顧客贖回（#188）
 
@@ -40,8 +41,6 @@ OBSERVATION = "比價"  # 事件的來源
 MANUAL = "人工"
 LEGACY = "舊清單"  # 資料表版本 0016 轉換的舊狀態
 SOURCES = (OBSERVATION, LEGACY, MANUAL)
-
-_EVENT_COLUMNS = "event_id, tdcc, event, event_date, underlying, source, note, recorded_by, recorded_at"
 
 
 class LifecycleError(OperatorError):
@@ -62,19 +61,6 @@ class AutoEvent:
 
 
 @dataclass(frozen=True)
-class StoredEvent:
-    event_id: int
-    tdcc: str
-    event: str
-    event_date: dt.date | None
-    underlying: str | None
-    source: str
-    note: str | None
-    recorded_by: str
-    recorded_at: dt.datetime
-
-
-@dataclass(frozen=True)
 class Objection:
     """一筆還沒解除的異議與它針對的事件。"""
 
@@ -88,32 +74,11 @@ class Objection:
     raised_at: dt.datetime
 
 
-@dataclass(frozen=True)
-class Lifecycle:
-    """一檔的存續狀態與決定它的那一筆事件（在庫時沒有）。"""
-
-    status: str
-    latest: StoredEvent | None = None
-
-
-def lifecycle_status(conn: psycopg.Connection, tdccs: Iterable[str]) -> dict[str, Lifecycle]:
-    """每個 TDCC 的存續狀態（依輸入順序）：最新一筆還有效的事件（事件日最晚，同一天取後寫的），沒有就是在庫。"""
-    wanted = list(dict.fromkeys(tdccs))
-    rows = conn.execute(
-        f"SELECT DISTINCT ON (tdcc) {_EVENT_COLUMNS} FROM workflow.product_event"
-        " WHERE tdcc = ANY(%s) AND superseded_at IS NULL"
-        " ORDER BY tdcc, event_date DESC NULLS LAST, event_id DESC",
-        (wanted,),
-    ).fetchall()
-    latest = {row[1]: StoredEvent(*row) for row in rows}
-    return {t: Lifecycle(latest[t].event, latest[t]) if t in latest else Lifecycle(IN_STOCK) for t in wanted}
-
-
 def current_events_of(conn: psycopg.Connection, tdccs: Iterable[str]) -> dict[str, list[StoredEvent]]:
     """多檔一次讀：每個 TDCC 還有效的事件，依事件日、寫入先後排序；沒有事件的不放。"""
     found: dict[str, list[StoredEvent]] = {}
     for row in conn.execute(
-        f"SELECT {_EVENT_COLUMNS} FROM workflow.product_event WHERE tdcc = ANY(%s) AND superseded_at IS NULL"
+        f"SELECT {EVENT_COLUMNS} FROM workflow.product_event WHERE tdcc = ANY(%s) AND superseded_at IS NULL"
         " ORDER BY tdcc, event_date NULLS FIRST, event_id",
         (list(dict.fromkeys(tdccs)),),
     ):
@@ -124,7 +89,7 @@ def current_events_of(conn: psycopg.Connection, tdccs: Iterable[str]) -> dict[st
 def current_events(conn: psycopg.Connection, tdcc: str) -> list[StoredEvent]:
     """這檔還有效的事件，依事件日、寫入先後排序。"""
     rows = conn.execute(
-        f"SELECT {_EVENT_COLUMNS} FROM workflow.product_event WHERE tdcc = %s AND superseded_at IS NULL"
+        f"SELECT {EVENT_COLUMNS} FROM workflow.product_event WHERE tdcc = %s AND superseded_at IS NULL"
         " ORDER BY event_date NULLS FIRST, event_id",
         (tdcc,),
     ).fetchall()
@@ -134,7 +99,7 @@ def current_events(conn: psycopg.Connection, tdcc: str) -> list[StoredEvent]:
 def exits_on(conn: psycopg.Connection, day: dt.date) -> list[StoredEvent]:
     """出場清單（#171、#188）：事件日是 `day`、還有效的出場事件，來源不限（比價、舊清單、人工），依 TDCC、寫入先後排序。"""
     rows = conn.execute(
-        f"SELECT {_EVENT_COLUMNS} FROM workflow.product_event WHERE event_date = %s"
+        f"SELECT {EVENT_COLUMNS} FROM workflow.product_event WHERE event_date = %s"
         " AND event = ANY(%s) AND superseded_at IS NULL ORDER BY tdcc, event_id",
         (day, list(EXIT_EVENTS)),
     ).fetchall()
@@ -207,7 +172,7 @@ def record_redemption(
             )
         row = conn.execute(
             "INSERT INTO workflow.product_event (tdcc, event, event_date, source, note, recorded_by)"
-            f" VALUES (%s, %s, %s, %s, %s, %s) RETURNING {_EVENT_COLUMNS}",
+            f" VALUES (%s, %s, %s, %s, %s, %s) RETURNING {EVENT_COLUMNS}",
             (tdcc, REDEMPTION, event_date, MANUAL, note.strip() or None, user or getpass.getuser()),
         ).fetchone()
     return StoredEvent(*row)
@@ -229,7 +194,7 @@ def record_legacy(
             )
         row = conn.execute(
             "INSERT INTO workflow.product_event (tdcc, event, event_date, source, note, recorded_by)"
-            f" VALUES (%s, %s, %s, %s, %s, %s) RETURNING {_EVENT_COLUMNS}",
+            f" VALUES (%s, %s, %s, %s, %s, %s) RETURNING {EVENT_COLUMNS}",
             (tdcc, event, event_date, LEGACY, note.strip() or None, user or getpass.getuser()),
         ).fetchone()
     return StoredEvent(*row)

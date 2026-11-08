@@ -26,8 +26,7 @@ from openpyxl.utils import get_column_letter
 from fcn_checker.fields import PRICE_COLUMNS
 from sp_workflow.daily_import import FC_LABEL_SQL
 from sp_workflow.file_tools import MAX_WIDTH, excel_value, save_export, save_rows, table_book, text_cell
-from sp_workflow.lifecycle import Lifecycle, lifecycle_status
-from sp_workflow.product_store import read_many
+from sp_workflow.product_store import Lifecycle, read_many
 from sp_workflow.summary_analysis import add_analysis_sheets, enable_spill, summary_table
 
 if TYPE_CHECKING:
@@ -57,13 +56,18 @@ def _snapshot(conn: psycopg.Connection) -> Iterator[None]:
 
 
 def export_products(conn: psycopg.Connection, path: Path) -> ExportReceipt:
-    with _snapshot(conn), conn.cursor() as cur:  # 商品與存續事件讀同一個時間點
+    with _snapshot(conn), conn.cursor() as cur:  # 商品與存續狀態（`read_many`，#495）讀同一個時間點
         cur.execute(f"SELECT * FROM {TABLE} ORDER BY tdcc")
         columns = tuple(column.name for column in cur.description or ())
         rows = cur.fetchall()
         tdcc = columns.index("tdcc")
-        statuses = lifecycle_status(conn, (row[tdcc] for row in rows))
-    save_rows(path, TABLE, (*columns, LIFECYCLE_COLUMN), [(*row, statuses[row[tdcc]].status) for row in rows])
+        stored = read_many(conn, state=True)
+    save_rows(
+        path,
+        TABLE,
+        (*columns, LIFECYCLE_COLUMN),
+        [(*row, stored[row[tdcc]].current_lifecycle().status) for row in rows],
+    )
     return ExportReceipt(path, len(rows))
 
 
@@ -131,10 +135,9 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
     總表是 Excel 表格，後面接用公式從總表即時計算的在庫部位分析分頁（#293）。
     """
     with _snapshot(conn):  # 商品（含比價日、價格，`product_store.read_many`，#438）、事件、交易列讀同一個時間點
-        found = read_many(conn)
+        found = read_many(conn, state=True)
         products = [{**s.columns, "tdcc": s.tdcc, "isin": s.isin} for s in found.values()]
         tdccs = list(found)
-        statuses = lifecycle_status(conn, tdccs)
         autocall = {tdcc: s.autocall for tdcc, s in found.items() if s.autocall is not None}
         prices = {
             tdcc: {u.seq: {key: getattr(u, key) for key in PRICE_COLUMNS} for u in s.prices}
@@ -152,7 +155,7 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
     groups = max([MIN_TRADE_GROUPS, *(len(trades.get(tdcc, ())) for tdcc in tdccs)])
     columns = (*SUMMARY_COLUMNS, *trade_columns(groups))
     rows = [
-        _summary_cells(p, statuses[t], autocall.get(t, {}), prices.get(t, {}), trades.get(t, []))
+        _summary_cells(p, found[t].current_lifecycle(), autocall.get(t, {}), prices.get(t, {}), trades.get(t, []))
         | ({"新加坡註記": singapore[t]} if t in singapore else {})
         for p, t in zip(products, tdccs, strict=True)
     ]

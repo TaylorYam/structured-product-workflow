@@ -74,7 +74,6 @@ from sp_workflow.lifecycle import (
     OBSERVATION,
     LifecycleError,
     Objection,
-    StoredEvent,
     current_events,
     open_objections,
     raise_objection,
@@ -98,7 +97,7 @@ from sp_workflow.order_terms import OrderRow, collect_orders
 from sp_workflow.preparation import PrepareReceipt, prepare_batch
 from sp_workflow.product_backfill import ProductBackfillError, ProductBackfillReceipt, backfill_products
 from sp_workflow.product_export import ExportReceipt, export_products, export_summary
-from sp_workflow.product_store import Stored, read
+from sp_workflow.product_store import Stored, StoredEvent, read
 from sp_workflow.product_terms import (
     BatchReceipt,
     Draft,

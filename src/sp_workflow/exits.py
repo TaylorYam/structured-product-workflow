@@ -70,8 +70,8 @@ class ExitExport:
 
 
 def load_exits(conn: psycopg.Connection, config: ImportConfig, day: dt.date | None = None) -> ExitList:
-    """`day`（沒有時用最新的收盤日）還有效的出場事件，來源不限。在同一個 transaction 裡讀；商品條件經
-    `product_store.read_many`（#438）。
+    """`day`（沒有時用最新的收盤日）還有效的出場事件，來源不限。在同一個 transaction 裡讀；商品條件與比價狀態經
+    `product_store.read_many`（#438、#495）。
     """
     with conn.transaction():
         if day is None:
@@ -79,10 +79,12 @@ def load_exits(conn: psycopg.Connection, config: ImportConfig, day: dt.date | No
         if day is None:
             return ExitList(None, ())
         events = exits_on(conn, day)
-        products = read_many(conn, [e.tdcc for e in events])
-        stopped = conn.execute(
-            "SELECT tdcc, reason FROM workflow.pricing_status WHERE status = %s ORDER BY tdcc", (Pricing.WAIT_PRICES,)
-        ).fetchall()
+        products = read_many(conn, state=True)  # 等股價的不限今天出場的商品，要讀全部
+    stopped = [
+        (tdcc, s.pricing.reason)
+        for tdcc, s in products.items()
+        if s.pricing is not None and s.pricing.status == Pricing.WAIT_PRICES
+    ]
     rows = []
     for e in events:
         stored = products[e.tdcc]
@@ -101,7 +103,7 @@ def load_exits(conn: psycopg.Connection, config: ImportConfig, day: dt.date | No
         )
     rows.sort(key=lambda row: (EXIT_EVENTS.index(row.event), row.tdcc))
     # 已比到在 Non-call 期間是空白（ADR 0022），停在哪一天看原因裡缺收盤價的日期
-    missing = [(tdcc, missing_close(reason or "")) for tdcc, reason in stopped]
+    missing = [(tdcc, missing_close(reason)) for tdcc, reason in stopped]
     waiting = tuple(Waiting(tdcc, gap[0], gap[1]) for tdcc, gap in missing if gap and gap[1] <= day)
     return ExitList(day, tuple(rows), waiting)
 

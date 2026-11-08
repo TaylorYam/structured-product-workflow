@@ -60,7 +60,6 @@ from sp_workflow.lifecycle import (
     OBSERVATION,
     AutoEvent,
     LifecycleError,
-    StoredEvent,
     current_events_of,
     replace_auto_events,
 )
@@ -76,7 +75,7 @@ from sp_workflow.product_record import (
     round_price,
 )
 from sp_workflow.product_record import NO_BARRIER as NO_KI
-from sp_workflow.product_store import Stored, read_many
+from sp_workflow.product_store import PricingState, Stored, StoredEvent, read_many
 from sp_workflow.product_store import locked as is_locked
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource
 from sp_workflow.stock_splits import STRIKE_CLOSE_DAYS, Jump, SplitBook, in_range, load_splits, refresh_basis
@@ -536,19 +535,6 @@ def _seq(terms: Terms, code: str) -> int:
 
 
 @dataclass(frozen=True)
-class Observed:
-    """一檔比價後的狀態（給完成訊息看）；`workflow.pricing_status` 一列讀回來也是它（`_stored_status`）。"""
-
-    tdcc: str
-    status: str
-    reason: str
-    observed_through: dt.date | None
-    locked: bool
-    ki: str = ""  # 進度頁 KI 欄（#196）
-    ki_touch: KiTouch | None = None  # KI 第一次觸及（#442），存進比價狀態給曝險讀
-
-
-@dataclass(frozen=True)
 class EventChange:
     """這次比價改了的自動事件：[事件, 事件日, 標的]，依事件日排序。"""
 
@@ -562,7 +548,7 @@ class ObservationReceipt:
     """一次比價的結果：比到哪一天、每檔的比價狀態、這次改了的自動事件。"""
 
     through: dt.date | None  # 收盤價表最新的一天
-    results: tuple[Observed, ...] = ()
+    results: tuple[PricingState, ...] = ()
     changes: tuple[EventChange, ...] = ()
     written: int = 0  # 比價狀態有變、寫了的檔數
     errors: tuple[tuple[str, str], ...] = ()  # (TDCC, 原因)：自動事件寫不進去的
@@ -570,7 +556,7 @@ class ObservationReceipt:
     def count(self, status: str) -> int:
         return sum(r.status == status for r in self.results)
 
-    def unfinished(self) -> tuple[Observed, ...]:
+    def unfinished(self) -> tuple[PricingState, ...]:
         """還沒完成的比價狀態：等股價、待確認。"""
         return tuple(r for r in self.results if r.status in (WAIT_PRICES, TO_CONFIRM))
 
@@ -588,12 +574,11 @@ def observe_all(
         through = latest_close_date(conn)
         book = SplitBook(load_splits(conn))
         refresh_basis(conn, book)  # 價格基準日依目前的拆股登記（#275）
-        terms, locked, not_done = _load_terms(conn)
+        terms, locked, not_done, last_pricing = _load_terms(conn)
         closes = _load_closes(conn, terms)
         jumps = price_jumps(book, calendar, closes)
-        stored = _stored_status(conn)
         existing = current_events_of(conn, [t.tdcc for t in terms])
-        results: list[Observed] = []
+        results: list[PricingState] = []
         changes: list[EventChange] = []
         errors: list[tuple[str, str]] = []
         for t in terms:
@@ -602,7 +587,9 @@ def observe_all(
             # 已出場：不再比價（ADR 0020），已比到的日期與 KI 沿用上一次；沒存過 KI 的寫 KI 種類（#198）
             if events and not again:
                 results.append(
-                    _carried(stored.get(t.tdcc), t.tdcc, EXITED, _exit_reason(events), locked[t.tdcc], _ki_text(t))
+                    _carried(
+                        last_pricing.get(t.tdcc), t.tdcc, EXITED, _exit_reason(events), locked[t.tdcc], _ki_text(t)
+                    )
                 )
                 continue
             outcome = observe(t, closes, calendar, through, book, jumps)
@@ -629,7 +616,7 @@ def observe_all(
                         ki_touch=outcome.ki_touch,
                     )
             results.append(
-                Observed(
+                PricingState(
                     t.tdcc,
                     outcome.status,
                     outcome.reason,
@@ -639,33 +626,35 @@ def observe_all(
                     outcome.ki_touch,
                 )
             )
-        exited = current_events_of(conn, [tdcc for tdcc in not_done if tdcc in stored])
+        exited = current_events_of(conn, [tdcc for tdcc in not_done if tdcc in last_pricing])
         for tdcc, (status, reason) in not_done.items():
             if exited.get(tdcc):  # 已出場的商品，核對條件後來不是完成也不影響
-                results.append(_carried(stored[tdcc], tdcc, EXITED, _exit_reason(exited[tdcc]), locked[tdcc]))
-            elif tdcc in stored:
+                results.append(_carried(last_pricing[tdcc], tdcc, EXITED, _exit_reason(exited[tdcc]), locked[tdcc]))
+            elif tdcc in last_pricing:
                 text = f"核對條件{status}，這次沒有比價" + (f"：{reason}" if reason else "")
-                results.append(_carried(stored[tdcc], tdcc, TO_CONFIRM, text, locked[tdcc]))
+                results.append(_carried(last_pricing[tdcc], tdcc, TO_CONFIRM, text, locked[tdcc]))
         written = 0
         for r in results:
-            if stored.get(r.tdcc) != r:
+            if last_pricing.get(r.tdcc) != r:
                 _write_status(conn, r)
                 written += 1
     return ObservationReceipt(through, tuple(results), tuple(changes), written, tuple(errors))
 
 
 def _carried(
-    before: Observed | None, tdcc: str, status: str, reason: str, locked: bool, ki_kind: str | None = None
-) -> Observed:
+    before: PricingState | None, tdcc: str, status: str, reason: str, locked: bool, ki_kind: str | None = None
+) -> PricingState:
     """這次沒比價的商品（已出場、核對條件不是完成）：已比到的日期與 KI 沿用上一次的比價狀態 `before`。
 
     `ki_kind`：已出場、這次照條件沒比的商品給 KI 種類（`_ki_text`）；上一次沒存 KI 時寫它、KI 觸及不沿用（#198）。
     None：照存的沿用（核對條件不是完成的商品）。
     """
     if before is None:
-        return Observed(tdcc=tdcc, status=status, reason=reason, observed_through=None, locked=locked, ki=ki_kind or "")
+        return PricingState(
+            tdcc=tdcc, status=status, reason=reason, observed_through=None, locked=locked, ki=ki_kind or ""
+        )
     if ki_kind is not None and not before.ki:
-        return Observed(
+        return PricingState(
             tdcc=tdcc, status=status, reason=reason, observed_through=before.observed_through, locked=locked, ki=ki_kind
         )
     return replace(before, status=status, reason=reason, locked=locked)
@@ -695,16 +684,19 @@ def _events_text(events: Sequence[StoredEvent]) -> str:
 
 def _load_terms(
     conn: psycopg.Connection,
-) -> tuple[list[Terms], dict[str, bool], dict[str, tuple[str, str | None]]]:
-    """核對條件完成的商品的比價條件、每檔是否鎖住，以及核對條件不是完成的 {TDCC: (狀態, 原因)}（算過核對條件的商品）。
+) -> tuple[list[Terms], dict[str, bool], dict[str, tuple[str, str | None]], dict[str, PricingState]]:
+    """核對條件完成的商品的比價條件、每檔是否鎖住、核對條件不是完成的 {TDCC: (狀態, 原因)}（算過核對條件的商品），
+    以及各檔上一次的比價狀態（和這次算出的同一個型別，相等就不重寫）。
 
-    商品條件經 `product_store.read_many`（#438）。
+    商品條件與比價狀態經 `product_store.read_many`（#438、#495）。
     """
-    found = [s for s in read_many(conn).values() if s.check is not None]
+    products = read_many(conn, state=True)
+    last_pricing = {tdcc: s.pricing for tdcc, s in products.items() if s.pricing is not None}
+    found = [s for s in products.values() if s.check is not None]
     locked = {s.tdcc: is_locked(s) for s in found}
     not_done = {s.tdcc: (s.check.status, s.check.reason or None) for s in found if s.check.status != CheckTerms.DONE}
     terms = [Terms.from_stored(s) for s in found if s.check.status == CheckTerms.DONE]
-    return terms, locked, not_done
+    return terms, locked, not_done, last_pricing
 
 
 def _load_closes(conn: psycopg.Connection, terms: Collection[Terms]) -> CloseSeries:
@@ -745,27 +737,7 @@ def _text(value: Decimal | None) -> str | None:
     return None if value is None else format(plain(value), "f")
 
 
-def _stored_status(conn: psycopg.Connection) -> dict[str, Observed]:
-    """`workflow.pricing_status` 裡各檔上一次的比價狀態，和這次的 `Observed` 同一個型別（空白的原因、KI 是空字串），
-    相等就不重寫。"""
-    return {
-        tdcc: Observed(
-            tdcc=tdcc,
-            status=status,
-            reason=reason or "",
-            observed_through=observed_through,
-            locked=locked,
-            ki=ki or "",
-            ki_touch=None if touch_day is None else KiTouch(touch_day, touch_code),
-        )
-        for tdcc, status, reason, observed_through, locked, ki, touch_day, touch_code in conn.execute(
-            "SELECT tdcc, status, reason, observed_through, locked, ki, ki_touch_date, ki_touch_code"
-            " FROM workflow.pricing_status"
-        )
-    }
-
-
-def _write_status(conn: psycopg.Connection, r: Observed) -> None:
+def _write_status(conn: psycopg.Connection, r: PricingState) -> None:
     touch = r.ki_touch
     conn.execute(
         "INSERT INTO workflow.pricing_status"
