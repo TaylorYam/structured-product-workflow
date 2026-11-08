@@ -168,6 +168,9 @@ def test_read_with_state_carries_the_lifecycle_and_the_pricing_status(pg) -> Non
     assert every[c].pricing == PricingState(c, "等股價", "UL_1 缺", None, False), "空白的原因、KI 是空字串"
     assert list(some) == [A, b] and (some[A].lifecycle, some[b].pricing) == (every[A].lifecycle, every[b].pricing)
     assert all(s.lifecycle is None and s.pricing is None for s in plain.values()), "state=False 不讀"
+    with pytest.raises(ValueError, match="state=True"):
+        plain[A].current_lifecycle()
+    assert every[A].current_lifecycle() == every[A].lifecycle
 
 
 def test_check_terms_state_without_differences_defaults_to_none() -> None:

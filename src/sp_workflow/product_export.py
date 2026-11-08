@@ -26,7 +26,7 @@ from openpyxl.utils import get_column_letter
 from fcn_checker.fields import PRICE_COLUMNS
 from sp_workflow.daily_import import FC_LABEL_SQL
 from sp_workflow.file_tools import MAX_WIDTH, excel_value, save_export, save_rows, table_book, text_cell
-from sp_workflow.product_store import Lifecycle, Stored, read_many
+from sp_workflow.product_store import Lifecycle, read_many
 from sp_workflow.summary_analysis import add_analysis_sheets, enable_spill, summary_table
 
 if TYPE_CHECKING:
@@ -62,7 +62,12 @@ def export_products(conn: psycopg.Connection, path: Path) -> ExportReceipt:
         rows = cur.fetchall()
         tdcc = columns.index("tdcc")
         stored = read_many(conn, state=True)
-    save_rows(path, TABLE, (*columns, LIFECYCLE_COLUMN), [(*row, _lifecycle(stored[row[tdcc]]).status) for row in rows])
+    save_rows(
+        path,
+        TABLE,
+        (*columns, LIFECYCLE_COLUMN),
+        [(*row, stored[row[tdcc]].current_lifecycle().status) for row in rows],
+    )
     return ExportReceipt(path, len(rows))
 
 
@@ -150,7 +155,7 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
     groups = max([MIN_TRADE_GROUPS, *(len(trades.get(tdcc, ())) for tdcc in tdccs)])
     columns = (*SUMMARY_COLUMNS, *trade_columns(groups))
     rows = [
-        _summary_cells(p, _lifecycle(found[t]), autocall.get(t, {}), prices.get(t, {}), trades.get(t, []))
+        _summary_cells(p, found[t].current_lifecycle(), autocall.get(t, {}), prices.get(t, {}), trades.get(t, []))
         | ({"新加坡註記": singapore[t]} if t in singapore else {})
         for p, t in zip(products, tdccs, strict=True)
     ]
@@ -158,12 +163,6 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
     add_analysis_sheets(book, groups)
     save_export(book, path, finish=enable_spill)
     return ExportReceipt(path, len(rows))
-
-
-def _lifecycle(stored: Stored) -> Lifecycle:
-    """存續狀態（`read_many(state=True)` 讀的）：最新一筆還有效的事件，沒有是在庫。"""
-    assert stored.lifecycle is not None
-    return stored.lifecycle
 
 
 def _summary_cells(

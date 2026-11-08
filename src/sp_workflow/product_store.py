@@ -204,6 +204,12 @@ class Stored:
         """畫面的欄 → 值（`product_record.fields_of`）；用到才換算（進度頁一次讀全部商品，不需要）。"""
         return fields_of(self.columns)
 
+    def current_lifecycle(self) -> Lifecycle:
+        """存續狀態；只有 `read_many(state=True)` 讀的有，沒帶 `state` 時報錯（不會悄悄當成在庫或不在庫）。"""
+        if self.lifecycle is None:
+            raise ValueError("存續狀態要用 read_many(..., state=True) 讀")
+        return self.lifecycle
+
     @property
     def underlyings(self) -> tuple[str | None, ...]:
         """UL_1～UL_5 的代碼（空白的是 None）。"""
@@ -247,7 +253,8 @@ def read_many(
     conn: psycopg.Connection, tdccs: Sequence[str] | None = None, *, lock: bool = False, state: bool = False
 ) -> dict[str, Stored]:
     """資料庫裡這幾檔（`tdccs` 是 None 時全部）商品的條件，依 TDCC 排；資料庫沒有的檔不在結果裡（#204）。
-    `state`：多讀存續狀態（`Stored.lifecycle`）與比價狀態（`Stored.pricing`，#495）。
+    `state`：多讀存續狀態（`Stored.lifecycle`）與比價狀態（`Stored.pricing`，#495）；`lock` 只鎖商品條件列，
+    這兩樣不在鎖內。
 
     各表在同一個 transaction 裡讀。`lock`：依 TDCC 的順序鎖住這幾檔的商品條件列（`FOR UPDATE`）再讀，在呼叫端的
     transaction 裡執行，鎖到它結束。寫入商品條件、核對寫回與重算核對條件都先這樣讀：同時處理同一檔時，後到的

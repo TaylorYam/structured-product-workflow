@@ -281,9 +281,7 @@ def load_positions(
 
 
 def _in_stock(stored: Stored) -> bool:
-    """存續狀態是在庫（`read_many(state=True)` 讀的）。"""
-    assert stored.lifecycle is not None
-    return stored.lifecycle.status == IN_STOCK
+    return stored.current_lifecycle().status == IN_STOCK
 
 
 def _holdings(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, list[Holding]]:
