@@ -17,12 +17,14 @@ from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import Any
 
-from harness import STANDARD, check_all, iis_path
+from harness import STANDARD, SynthChecks, iis_path
 from ms_synth import (
     ISSUER,
+    LAYOUT,
     WARNING_CH1,
     Spec,
-    _Doc,
+    _article,
+    _sub,
     build_iis_pdf,
     cover,
     later_chapters,
@@ -31,10 +33,9 @@ from ms_synth import (
     underlying_name,
     underlying_table,
 )
-from pdf_writer import Edit, zh_date
+from pdf_writer import Edit, FlowDoc, zh_date
 from reference_synth import (
     REFERENCE_HEADERS,
-    build_reference_sheet,
     price,
     reference_row,
     weekday_on_or_after,
@@ -161,7 +162,7 @@ def _pct(x: Decimal) -> str:
     return f"{x:.2f}%"
 
 
-def _price_grid(d: _Doc, s: BenSpec, section: str, *, reprint: bool) -> None:
+def _price_grid(d: FlowDoc, s: BenSpec, section: str, *, reprint: bool) -> None:
     """§15 價格表（lookback 只有期初價格欄）或 §16 重印表（lookback 表頭寫回顧期初價格、回顧執行價）。"""
     d.section = section
     lb = s.lookback
@@ -183,7 +184,7 @@ def _price_grid(d: _Doc, s: BenSpec, section: str, *, reprint: bool) -> None:
     d.w.grid(heads, rows, size=10, gap=14)
 
 
-def _article10(d: _Doc, s: BenSpec) -> None:
+def _article10(d: FlowDoc, s: BenSpec) -> None:
     d.text(72, "主要給付項目為到期贖回金額：")
     d.text(72, HEAD)
     d.text(72, s.cash())
@@ -191,21 +192,21 @@ def _article10(d: _Doc, s: BenSpec) -> None:
     d.text(72, "詳見第15 項「到期贖回計算公式、最低保證贖回率及參與率」")
 
 
-def _article14(d: _Doc, s: BenSpec) -> None:
-    d.sub(1, f"商品年期：{s.tenor} 個月")
-    d.sub(2, f"交易日：{zh_date(s.trade_date)}")
-    d.sub(3, f"發行日：{zh_date(s.issue_date)}")
-    d.sub(4, f"到期日：{zh_date(s.maturity_date)}。到期日為期末定價日後至少第三個營業日之日。")
-    d.sub(5, f"期末定價日*：{zh_date(s.final_date)}，如當日非預定交易日，次一預定交易日為之。")
-    d.sub(6, "次級市場投資人提前贖回日：自開始受理贖回日期至結束受理贖回日期止。")
-    d.sub(7, "付款營業日：係指得在紐約從事外幣交易之任一日。")
-    d.sub(8, "營業日慣例：經調整順延制。")
+def _article14(d: FlowDoc, s: BenSpec) -> None:
+    _sub(d, 1, f"商品年期：{s.tenor} 個月")
+    _sub(d, 2, f"交易日：{zh_date(s.trade_date)}")
+    _sub(d, 3, f"發行日：{zh_date(s.issue_date)}")
+    _sub(d, 4, f"到期日：{zh_date(s.maturity_date)}。到期日為期末定價日後至少第三個營業日之日。")
+    _sub(d, 5, f"期末定價日*：{zh_date(s.final_date)}，如當日非預定交易日，次一預定交易日為之。")
+    _sub(d, 6, "次級市場投資人提前贖回日：自開始受理贖回日期至結束受理贖回日期止。")
+    _sub(d, 7, "付款營業日：係指得在紐約從事外幣交易之任一日。")
+    _sub(d, 8, "營業日慣例：經調整順延制。")
     if s.lookback:
-        d.sub(9, f"回顧觀察期間：自交易日（包含）起至{zh_date(s.lookback_end_date)}（包含）。")
+        _sub(d, 9, f"回顧觀察期間：自交易日（包含）起至{zh_date(s.lookback_end_date)}（包含）。")
 
 
-def _article15(d: _Doc, s: BenSpec) -> None:
-    d.sub(1, HEAD)
+def _article15(d: FlowDoc, s: BenSpec) -> None:
+    _sub(d, 1, HEAD)
     d.text(72, s.cash())
     d.text(72, s.delivery())
     d.text(72, "*發行機構應以實物交割時，有關風險及費用均由投資人承擔。")
@@ -229,15 +230,15 @@ def _article15(d: _Doc, s: BenSpec) -> None:
     d.text(72, "期初價格： 依下表所示" if s.lookback else "期初價格及執行價： 依下表所示")
     _price_grid(d, s, "art15.table", reprint=False)
     d.section = "art15"
-    d.sub(1, f"紅利配息率：{_pct(s.annual)}")
-    d.sub(2, MIN_RATE)
-    d.sub(3, f"參與率：{s.participation:.2f}%" if not s.digital else "參與率：0%")
+    _sub(d, 1, f"紅利配息率：{_pct(s.annual)}")
+    _sub(d, 2, MIN_RATE)
+    _sub(d, 3, f"參與率：{s.participation:.2f}%" if not s.digital else "參與率：0%")
 
 
-def _article16(d: _Doc, s: BenSpec) -> None:
+def _article16(d: FlowDoc, s: BenSpec) -> None:
     unit, denom = s.currency_zh, Decimal(s.denom)
-    d.sub(1, "投資收益計算方法：請參閱以上第15 項之「到期贖回計算公式、最低保證贖回率及參與率」。")
-    d.sub(3, "以情境分析解說最大可能獲利、損失及其他狀況之平均年化報酬率：")
+    _sub(d, 1, "投資收益計算方法：請參閱以上第15 項之「到期贖回計算公式、最低保證贖回率及參與率」。")
+    _sub(d, 3, "以情境分析解說最大可能獲利、損失及其他狀況之平均年化報酬率：")
     d.text(72, "假設：")
     d.text(72, f"▪ 總投資金額 = 1 單位商品面額 = {money(denom)} {unit}")
     d.text(72, f"▪ 年期：{s.tenor} 個月")
@@ -342,7 +343,7 @@ def build_pdf(path: Path, s: BenSpec, *, edits: Sequence[Edit] = (), iis: bool =
     used: set[Edit] = set()
     if iis and path.stem.endswith("_TS"):
         build_iis_pdf(iis_path(path), s, edits=edits, used=used, body=_iis_body)
-    d = _Doc(edits, "ts", used)
+    d = LAYOUT.doc(edits, used)
     cover(d, s)
     d.chapter("一", "商品基本資料")
     titles = {
@@ -354,7 +355,7 @@ def build_pdf(path: Path, s: BenSpec, *, edits: Sequence[Edit] = (), iis: bool =
         6: f"每單位商品面額：{s.currency_zh} {money(s.denom)} 元",
     }
     for n in ARTICLES:
-        d.article(n, titles.get(n) or "範本說明。")
+        _article(d, n, titles.get(n) or "範本說明。")
         if n == 10:
             _article10(d, s)
         elif n == 11:
@@ -374,7 +375,7 @@ def build_pdf(path: Path, s: BenSpec, *, edits: Sequence[Edit] = (), iis: bool =
     return later_chapters(d, s, edits, used, path)
 
 
-def _iis_body(d: _Doc, s: BenSpec) -> None:
+def _iis_body(d: FlowDoc, s: BenSpec) -> None:
     """MS BEN 投資人須知：商品簡介（11) 開始受理贖回日期，沒有配息項）、收益分配事項、贖回價金之計算、主要投資風險。"""
     w = d.w
     zh_issuer = ISSUER.split("(")[0]
@@ -437,11 +438,5 @@ def row(s: BenSpec, **overrides: Any) -> dict[str, Any]:
     return out
 
 
-def check_pair(tmp_path: Path, s: BenSpec, *, edits: Sequence[Edit] = (), headers=HEADERS, **overrides: Any):
-    """合成說明書＋投資人須知＋參考條件表一列，經批量入口核對，回傳（說明書, 投資人須知）的批量核對項目。"""
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    pdf = build_pdf(tmp_path / f"{s.product_code}_TS.pdf", s, edits=edits)
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [row(s, **overrides)], headers)
-    outcome = check_all(sheet, [pdf, iis_path(pdf)])
-    ts = next(i for i in outcome.items if i.term_sheet == pdf)
-    return ts, next(i for i in outcome.items if i.term_sheet != pdf)
+CHECKS = SynthChecks(BenSpec, build_pdf, row, headers=HEADERS)  # 單份核對殼（harness.SynthChecks）
+check_pair = CHECKS.check_pair

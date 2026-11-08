@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -17,8 +17,25 @@ from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence, ScenarioParam
 from ..text import squash
 from . import iis, money, price_table, ratings, schedule
-from .common import Hit, Mention, RawText, capture_group, derived, hits, number, one
-from .layout import Document, LayoutSpec, TextIndex, capture, parse_date
+from .common import (
+    EXACT_ROWS,
+    FEE_CHECKED,
+    ByPosition,
+    FeeTable,
+    Hit,
+    Mention,
+    PrefixedRate,
+    RawText,
+    capture_group,
+    derived,
+    fee_rates,
+    hits,
+    nearest_column_grid,
+    number,
+    one,
+)
+from .fields_builder import FieldsBuilder, ParsedTermSheet
+from .layout import Document, LayoutSpec, TextIndex, parse_date
 from .underlying_notes import Markers, underlying_notes
 
 TEMPLATE_ID = "nomura-zh-pd"
@@ -75,21 +92,15 @@ ZH_CCY = "(?:" + "|".join(sorted(money.CURRENCY_WORDS, key=len, reverse=True)) +
 X = r"[x×]"
 AMOUNT = rf"([\d,]+(?:\.\d+)?)({CCY})"  # 金額與旁邊的幣別字（去空白後）
 WARNING_HEAD = "◎本商品之投資風險警語"
-FEE_PREFIX = {
-    "申購費用": "申購價金的",
-    "提前贖回費用": "投資人提前贖回價金的",
-    "分銷費用": "申購價金的",
-}  # 費率格的寫法
-FEE_ITEMS = (
-    "申購費用",
-    "提前贖回費用",
-    "管理費用",
-    "分銷費用",
-    "保費費用",
-    "解約費用",
-    "其他費用",
-)  # 費用表各列（左欄開頭）
-FEE_RATE = r"(\d+(?:\.\d+)?%[~～]\d+(?:\.\d+)?%)"
+# 費用表（說明書第四章 2.、投資人須知第七）：費率欄是表頭「費率(百分比)」右邊最近的一欄；項目名稱與費率都可能拆行
+# （例：`投資人提前` / `贖回價金的` / `0%~5%`），費率欄各行由上到下接起來 = 前綴＋區間
+FEE_TABLE = FeeTable(
+    grid=nearest_column_grid,
+    band=ByPosition(by_x=False),
+    rate=PrefixedRate({"申購費用": "申購價金的", "提前贖回費用": "投資人提前贖回價金的", "分銷費用": "申購價金的"}),
+    rows=EXACT_ROWS,
+    fees=FEE_CHECKED,
+)
 # 第 14 項百分比表的欄（表頭文字 → 欄）；欄位順序以表頭出現位置為準
 HEADERS = (("initial", "期初價格"), ("strike", "執行價"), ("ko", "自動提前出場價"), ("ki", "下限觸發價"))
 # 第 7 項價格表：每檔一列、以左邊界的列號切列（`1`、`2 KAWASAKI`），表頭 %「(期初價格之X% )」
@@ -270,15 +281,10 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
 
 
 @dataclass
-class NomuraTermSheet:
-    fields: dict[str, ParsedField]
-    full_text: TextIndex
+class NomuraTermSheet(ParsedTermSheet):
     document: Document
     # 每期配息率主來源（第 7 項）以外的出處（第 15 項(1)；第 14 項設定參數的交給共用情境規則）
     coupon_mentions: list[Mention]
-
-    def f(self, name: str) -> ParsedField:
-        return standard_fields.lookup(self.fields, name)
 
 
 def _date_field(name: str, pf: ParsedField, what: str) -> ParsedField:
@@ -293,14 +299,11 @@ def read(lines: Sequence[Line]) -> NomuraTermSheet:
     doc = document(lines)
     cover = doc.before_chapter1()
     items = cover_items(cover)
-    fields: dict[str, ParsedField] = {}
+    fields = FieldsBuilder()
 
     def article(n: int, chapter: int = 1) -> list[Line]:
         """條的內文（不含條號那一行）。"""
         return article_lines(doc, n, chapter)
-
-    def put(name: str, lns: list[Line], pattern: str, convert: Callable = lambda x: x) -> None:
-        fields[name] = capture(name, TextIndex(lns), pattern, convert, whole_match=True)
 
     # 封面
     _cover(fields, items, cover)
@@ -323,24 +326,24 @@ def read(lines: Sequence[Line]) -> NomuraTermSheet:
     fields["currency_art5"] = art5.capture("currency_art5", rf"計價幣別：\s*({ZH_CCY})\s*\([A-Z]{{3}}\)")
     fields["currency_art5_iso"] = art5.capture("currency_art5_iso", rf"計價幣別：\s*{ZH_CCY}\s*\(([A-Z]{{3}})\)")
 
-    _article7(fields, article(7), put)
+    _article7(fields, article(7))
     _article8_9(fields, article(8), article(9))
 
     art11 = article(11)
-    put("tenor_months", art11, r"\(1\)商品年期：(\d+)個月", int)
-    put("trade_date", art11, r"\(2\)交易日：" + D, parse_date)
-    put("issue_date", art11, r"\(3\)發行日：" + D, parse_date)
-    put("maturity_date", art11, r"\(4\)預定到期日：" + D, parse_date)
-    put("final_valuation_date", art11, r"\(8\)最終評價日：即" + D, parse_date)
+    fields.put("tenor_months", art11, r"\(1\)商品年期：(\d+)個月", int)
+    fields.put("trade_date", art11, r"\(2\)交易日：" + D, parse_date)
+    fields.put("issue_date", art11, r"\(3\)發行日：" + D, parse_date)
+    fields.put("maturity_date", art11, r"\(4\)預定到期日：" + D, parse_date)
+    fields.put("final_valuation_date", art11, r"\(8\)最終評價日：即" + D, parse_date)
     tables = date_tables(art11)
     fields["date_table"], fields["ki_table"] = tables
     _schedule(fields)
 
-    _article14(fields, article(14), put)
-    put("coupon_art15", article(15), r"\(1\)固定配息率：就每配息日而言，" + PCT, Decimal)
+    _article14(fields, article(14))
+    fields.put("coupon_art15", article(15), r"\(1\)固定配息率：就每配息日而言，" + PCT, Decimal)
     art16 = article(16)
     early = rf"最低金額為{AMOUNT}，並以{AMOUNT}為增加贖回之單位"
-    put("early_redemption_minimum", art16, early, number)
+    fields.put("early_redemption_minimum", art16, early, number)
     fields["early_redemption_increment"] = capture_group(art16, early, 3, "early_redemption_increment", number)
     fields["early_redemption_minimum_currency"] = capture_group(art16, early, 2, "early_redemption_minimum_currency")
     fields["early_redemption_increment_currency"] = capture_group(
@@ -357,8 +360,8 @@ def read(lines: Sequence[Line]) -> NomuraTermSheet:
         return doc.span_lines(ch4.get(n))
 
     art1_ch4 = ch4_article(1)
-    put("subscription_start", art1_ch4, r"\(1\)商品開始受理申購日期：" + D, parse_date)
-    put("subscription_end", art1_ch4, r"\(2\)接受申購截止日：" + D, parse_date)
+    fields.put("subscription_start", art1_ch4, r"\(1\)商品開始受理申購日期：" + D, parse_date)
+    fields.put("subscription_end", art1_ch4, r"\(2\)接受申購截止日：" + D, parse_date)
     raw1 = RawText(art1_ch4)
     fields["redemption_start_text"] = raw1.capture(
         "redemption_start_text", r"\(3\)\s*開始受理投資人贖回日期：\s*(.+?)\s*\(4\)\s*後續受理投資人贖回日期"
@@ -366,23 +369,22 @@ def read(lines: Sequence[Line]) -> NomuraTermSheet:
     fields["redemption_later_text"] = raw1.capture(
         "redemption_later_text", r"\(4\)\s*後續受理投資人贖回日期：\s*(.+?)\s*\(5\)\s*每營業日"
     )
-    fields.update(fee_rates(ch4_article(2)))
+    fields.update(fee_rates(ch4_article(2), FEE_TABLE))
     art4 = ch4_article(4)
     subscribe = rf"最低申購金額：{AMOUNT}（相當1單位商品面額）最低加價申購金額：{AMOUNT}"
-    put("minimum_subscription", art4, subscribe, number)
+    fields.put("minimum_subscription", art4, subscribe, number)
     fields["minimum_additional"] = capture_group(art4, subscribe, 3, "minimum_additional", number)
     fields["minimum_subscription_currency"] = capture_group(art4, subscribe, 2, "minimum_subscription_currency")
     fields["minimum_additional_currency"] = capture_group(art4, subscribe, 4, "minimum_additional_currency")
-    put("issue_price_ch4", ch4_article(5), rf"申購價金之計算：每單位商品面額{X}申購單位數{X}" + PCT, Decimal)
-    put("minimum_issue_size", ch4_article(7), r"有效申購金額總計至少達(.+?)；")
+    fields.put("issue_price_ch4", ch4_article(5), rf"申購價金之計算：每單位商品面額{X}申購單位數{X}" + PCT, Decimal)
+    fields.put("minimum_issue_size", ch4_article(7), r"有效申購金額總計至少達(.+?)；")
     art8_ch4 = ch4_article(8)
     redeem = rf"最低贖回金額：{AMOUNT}（相當1單位商品面額），並以{AMOUNT}為增加贖回之單位"
-    put("minimum_redemption", art8_ch4, redeem, number)
+    fields.put("minimum_redemption", art8_ch4, redeem, number)
     fields["redemption_increment"] = capture_group(art8_ch4, redeem, 3, "redemption_increment", number)
     fields["minimum_redemption_currency"] = capture_group(art8_ch4, redeem, 2, "minimum_redemption_currency")
     fields["redemption_increment_currency"] = capture_group(art8_ch4, redeem, 4, "redemption_increment_currency")
     fields["distributor_phone_ch4"] = rest_of_line("distributor_phone_ch4", doc.chapter_lines(4), "受託機構聯絡方式：")
-    fields.update(standard_fields.absent_all(standard_fields.DISTRIBUTOR_OTHERS, "受託機構的其他出處"))
 
     _occurrences(fields)
     wording = (  # 說明文字的幣別字（Issue #316，比照 BBVA #305）
@@ -403,18 +405,16 @@ def read(lines: Sequence[Line]) -> NomuraTermSheet:
             doc.chapter_lines(3), rf"若({CCY})利率上漲", "rate_risk_currency", "wording_currency", "第三章利率風險"
         ),
     )
-    fields["currency_others"] = standard_fields.occurrences(
-        "currency_others", [*fields["currency_others"].value, *wording, _scenario3_currency(article(14))]
-    )
+    fields.add(*wording, _scenario3_currency(article(14)))
     coupons = [Mention.of_field("第 15 項(1) 固定配息率", fields["coupon_art15"])]
     fields["underlying_notes"] = underlying_notes(
         doc.lines, Markers(r"\(\d+\)連結標的\d*：")
     )  # 連結標的公司介紹：(k) 連結標的k：名稱（Issue #225）
     fields.update(ratings.fields(doc.lines, guarantor=GUARANTOR_RATINGS, issuer_unrated=ISSUER_UNRATED))
-    return NomuraTermSheet(fields, TextIndex(doc.lines), doc, coupons)
+    return NomuraTermSheet(fields.build(), TextIndex(doc.lines), doc, coupons)
 
 
-def _cover(fields: dict[str, ParsedField], items: dict[str, CoverItem], cover: list[Line]) -> None:
+def _cover(fields: FieldsBuilder, items: dict[str, CoverItem], cover: list[Line]) -> None:
     zh_label, en_label = "商品代號/商品中文名稱", "商品英文名稱"
     zh = r"(.+?)\s*\(ISIN\s*No\.\s*([A-Z]{2}[A-Z0-9]{10})\s*/\s*TDCC\s*商品\s*代號為\s*(\d{12})\s*\)"
     en = r"(.+?)\s*\(ISIN\s*No\.\s*([A-Z]{2}[A-Z0-9]{10})\s*/\s*TDCC\s*No\.\s*(\d{12})\s*\)"
@@ -438,23 +438,21 @@ def _cover(fields: dict[str, ParsedField], items: dict[str, CoverItem], cover: l
     fields["distributor_address_cover"] = _item_field(items, dist, "distributor_address_cover", contact, 3)
     approval = _item_field(items, "審查通過之日期", "approval_date")
     fields["approval_date"] = _date_field("approval_date", approval, "審查通過日期")
-    fields["print_date"] = capture(
-        "print_date", TextIndex(cover), r"產品說明書刊印日期：" + D, parse_date, whole_match=True
-    )
+    fields.put("print_date", cover, r"產品說明書刊印日期：" + D, parse_date)
 
 
 # ---------------------------------------------------------------- 第 7 項
 
 
-def _article7(fields: dict[str, ParsedField], art7: list[Line], put: Callable) -> None:
+def _article7(fields: FieldsBuilder, art7: list[Line]) -> None:
     t7 = TextIndex(art7)
     minimum, denomination = rf"最低投資金額{AMOUNT}", rf"每單位商品面額{AMOUNT}"
-    put("minimum_investment", art7, minimum, number)
+    fields.put("minimum_investment", art7, minimum, number)
     fields["minimum_investment_currency"] = capture_group(art7, minimum, 2, "minimum_investment_currency")
-    put("denomination", art7, denomination, number)
+    fields.put("denomination", art7, denomination, number)
     fields["denomination_currency"] = capture_group(art7, denomination, 2, "denomination_currency")
-    put("issue_price_pct", art7, r"發行價格每單位商品面額的(\d+(?:\.\d+)?)[％%]", Decimal)
-    put("coupon_period_pct", art7, r"固定配息率：就每配息日而言，" + PCT, Decimal)
+    fields.put("issue_price_pct", art7, r"發行價格每單位商品面額的(\d+(?:\.\d+)?)[％%]", Decimal)
+    fields.put("coupon_period_pct", art7, r"固定配息率：就每配息日而言，" + PCT, Decimal)
     fields["initial_pricing"] = standard_fields.absent("initial_pricing", "期初定價方式（價格表表頭只寫「期初價格」）")
     fields["ko_wording"] = _ko_wording(t7, art7)
     fields["ko_memory"], fields["memory_style"] = memory_terms(t7, art7)
@@ -576,51 +574,6 @@ def _table_region(art7: list[Line]) -> list[Line]:
 
 
 # ---------------------------------------------------------------- 費用表
-
-
-def fee_rates(lines: list[Line]) -> dict[str, ParsedField]:
-    """費用表（說明書第四章 2.、投資人須知第七）各費用項目的費率區間（標準欄位 `fee_<費用項目>`）。
-
-    依座標讀：費率欄是表頭「費率(百分比)」右邊最近的一欄；每個費用項目一列，從左欄項目名稱那一行到下一個項目名稱之前
-    （項目名稱與費率都可能拆行，例：`投資人提前` / `贖回價金的` / `0%~5%`），費率欄各行由上到下接起來後 =
-    「申購價金的X%~Y%」等寫法。"""
-    out = {label: standard_fields.fee_field(label) for label in FEE_PREFIX}
-    head = next((ln for ln in lines if squash(ln.text) == "費率(百分比)"), None)
-    if head is None:
-        return {name: ParsedField.missing(name, "找不到費用表表頭「費率(百分比)」") for name in out.values()}
-    lo = head.x0 - 10
-    rate_x = min((ln.x0 for ln in lines if ln.x0 >= lo and (ln.page, ln.y0) > (head.page, head.y0 + 3)), default=None)
-    starts = [
-        (ln, item)
-        for ln in lines
-        if ln.x0 < lo and (item := next((i for i in FEE_ITEMS if squash(ln.text).startswith(i)), None))
-    ]
-    fields: dict[str, ParsedField] = {}
-    for label, prefix in FEE_PREFIX.items():
-        name = out[label]
-        rows = [k for k, (_, item) in enumerate(starts) if item == label]
-        if len(rows) != 1 or rate_x is None:
-            fields[name] = ParsedField.missing(name, f"費用表找不到「{label}」這一列或出現多次")
-            continue
-        k = rows[0]
-        top = starts[k][0]
-        bottom = starts[k + 1][0] if k + 1 < len(starts) else None
-        cells = [
-            ln
-            for ln in lines
-            if abs(ln.x0 - rate_x) <= 10
-            and (ln.page, ln.y0 + 3) >= (top.page, top.y0)
-            and (bottom is None or (ln.page, ln.y0 + 3) < (bottom.page, bottom.y0))
-        ]
-        cells.sort(key=lambda x: (x.page, x.y0))
-        text = "".join(squash(ln.text) for ln in cells)
-        m = re.fullmatch(re.escape(prefix) + FEE_RATE, text)
-        fields[name] = (
-            ParsedField.present(name, m[1], [top, *cells])
-            if m
-            else ParsedField.invalid(name, [top, *cells], f"費用表「{label}」的費率不是「{prefix}X%~Y%」")
-        )
-    return fields
 
 
 # ---------------------------------------------------------------- 第 8、9 項
@@ -813,27 +766,27 @@ def _schedule(fields: dict[str, ParsedField]) -> None:
 # ---------------------------------------------------------------- 第 14 項情境分析
 
 
-def _article14(fields: dict[str, ParsedField], art14: list[Line], put: Callable) -> None:
+def _article14(fields: FieldsBuilder, art14: list[Line]) -> None:
     """設定參數（年期、面額、發行價格、固定配息率）、百分比表；情境一、二的年化報酬率 = 說明書的年利率
     `coupon_pa_pct`（範本規格 §4.6、§5.2，核對規則 §3.3）：兩處不同為歧義，任一處讀不到為不合法。"""
     t14 = TextIndex(art14)
     a = re.search(r"設定參數[:：]", t14.text)
     b = t14.text.find("情境一（")
     params = t14.lines_for(a.end(), b) if a and b > a.end() else []
-    put("scenario_tenor", params, r"年期(\d+)個月", int)
-    put("scenario_denomination", params, rf"每單位商品面額{AMOUNT}", number)
+    fields.put("scenario_tenor", params, r"年期(\d+)個月", int)
+    fields.put("scenario_denomination", params, rf"每單位商品面額{AMOUNT}", number)
     fields["scenario_denomination_currency"] = capture_group(
         params, rf"每單位商品面額{AMOUNT}", 2, "scenario_denomination_currency"
     )
-    put("scenario_issue_price", params, r"發行價格(\d+(?:\.\d+)?)%", Decimal)
+    fields.put("scenario_issue_price", params, r"發行價格(\d+(?:\.\d+)?)%", Decimal)
     investment = rf"投資金額([\d,]+)x(\d+(?:\.\d+)?)%x(\d+)={AMOUNT}"
-    put("scenario_investment", params, investment, number)
+    fields.put("scenario_investment", params, investment, number)
     fields["scenario_investment_pct"] = capture_group(params, investment, 2, "scenario_investment_pct", Decimal)
     fields["scenario_investment_units"] = capture_group(params, investment, 3, "scenario_investment_units", int)
-    put("scenario_units", params, r"投資單位數(\d+)單位", int)
+    fields.put("scenario_units", params, r"投資單位數(\d+)單位", int)
     fields["scenario_investment_amount"] = capture_group(params, investment, 4, "scenario_investment_amount", number)
     fields["scenario_investment_currency"] = capture_group(params, investment, 5, "scenario_investment_currency")
-    put("coupon_art14", params, r"固定配息率就每配息日而言，" + PCT, Decimal)
+    fields.put("coupon_art14", params, r"固定配息率就每配息日而言，" + PCT, Decimal)
     fields["scenario_table"] = _pct_table(params)  # 百分比表（= 價格表表頭 %），由 Nomura 規則核對
     # 共用情境規則（Issue #294）：百分比表不是價格表的重印、情境三／四的價格不核對
     fields["scenario_reprint_table"] = standard_fields.absent("scenario_reprint_table", "重印的價格表")
@@ -944,93 +897,29 @@ def _chapter2(fields: dict[str, ParsedField], doc: Document) -> None:
 # ---------------------------------------------------------------- 出處清單
 
 
-def _occurrences(fields: dict[str, ParsedField]) -> None:
-    occ = Occurrence
-    fields["min_amounts"] = standard_fields.occurrences(
-        "min_amounts",
-        [
-            occ("minimum_investment", "minimum_investment", "第一章第 7 項最低投資金額", fields["minimum_investment"]),
-            occ(
-                "early_redemption_minimum",
-                "early_redemption_minimum",
-                "第一章第 16 項(1) 投資人提前贖回最低金額",
-                fields["early_redemption_minimum"],
-            ),
-            occ(
-                "early_redemption_increment",
-                "early_redemption_increment",
-                "第一章第 16 項(1) 增加贖回之單位",
-                fields["early_redemption_increment"],
-            ),
-            occ(
-                "minimum_subscription",
-                "minimum_subscription",
-                "第四章第 4 項最低申購金額",
-                fields["minimum_subscription"],
-            ),
-            occ(
-                "minimum_additional",
-                "minimum_additional",
-                "第四章第 4 項最低加價申購金額",
-                fields["minimum_additional"],
-            ),
-            occ("minimum_redemption", "minimum_redemption", "第四章第 8 項最低贖回金額", fields["minimum_redemption"]),
-            occ(
-                "redemption_increment",
-                "redemption_increment",
-                "第四章第 8 項增加贖回之單位",
-                fields["redemption_increment"],
-            ),
-        ],
+def _occurrences(fields: FieldsBuilder) -> None:
+    fields.occur("minimum_investment", "第一章第 7 項最低投資金額")
+    fields.occur("early_redemption_minimum", "第一章第 16 項(1) 投資人提前贖回最低金額")
+    fields.occur("early_redemption_increment", "第一章第 16 項(1) 增加贖回之單位")
+    fields.occur("minimum_subscription", "第四章第 4 項最低申購金額")
+    fields.occur("minimum_additional", "第四章第 4 項最低加價申購金額")
+    fields.occur("minimum_redemption", "第四章第 8 項最低贖回金額")
+    fields.occur("redemption_increment", "第四章第 8 項增加贖回之單位")
+    fields.occur("subscription_start", "第四章第 1 項(1) 商品開始受理申購日期")
+    fields.occur("subscription_end", "第四章第 1 項(2) 接受申購截止日")
+    fields.occur("print_date", "封面產品說明書刊印日期")
+    fields.occur(
+        "issue_price_art14", "第一章第 14 項設定參數", code="issue_price_scenario", value=fields["scenario_issue_price"]
     )
-    fields["subscription_dates"] = standard_fields.occurrences(
-        "subscription_dates",
-        [
-            occ(
-                "subscription_start",
-                "subscription_start",
-                "第四章第 1 項(1) 商品開始受理申購日期",
-                fields["subscription_start"],
-            ),
-            occ("subscription_end", "subscription_end", "第四章第 1 項(2) 接受申購截止日", fields["subscription_end"]),
-        ],
-    )
-    fields["print_dates"] = standard_fields.occurrences(
-        "print_dates", [occ("print_date", "print_date", "封面產品說明書刊印日期", fields["print_date"])]
-    )
-    fields["issue_price_others"] = standard_fields.occurrences(
-        "issue_price_others",
-        [
-            occ(
-                "issue_price_art14",
-                "issue_price_scenario",
-                "第一章第 14 項設定參數",
-                fields["scenario_issue_price"],
-            ),
-            occ(
-                "issue_price_ch4",
-                "issue_price_subscription",
-                "第四章第 5 項申購價金之計算",
-                fields["issue_price_ch4"],
-            ),
-        ],
-    )
-    currencies = (  # 金額旁的幣別字（Issue #170）：價格表價格不列入；說明文字與情境三另在 read 加入（Issue #316）
-        ("minimum_investment_currency", "minimum_investment_currency", "第一章第 7 項最低投資金額"),
-        ("denomination_currency", "denomination_currency", "第一章第 7 項每單位商品面額"),
-        ("scenario_denomination_currency", "scenario_denomination_currency", "第一章第 14 項設定參數每單位商品面額"),
-        ("scenario_investment_currency", "scenario_investment_currency", "第一章第 14 項設定參數投資金額"),
-        ("early_redemption_minimum_currency", "early_redemption_minimum_currency", "第一章第 16 項(1) 最低金額"),
-        (
-            "early_redemption_increment_currency",
-            "early_redemption_increment_currency",
-            "第一章第 16 項(1) 增加贖回之單位",
-        ),
-        ("minimum_subscription_currency", "minimum_subscription_currency", "第四章第 4 項最低申購金額"),
-        ("minimum_additional_currency", "minimum_additional_currency", "第四章第 4 項最低加價申購金額"),
-        ("minimum_redemption_currency", "minimum_redemption_currency", "第四章第 8 項最低贖回金額"),
-        ("redemption_increment_currency", "redemption_increment_currency", "第四章第 8 項增加贖回之單位"),
-    )
-    fields["currency_others"] = standard_fields.occurrences(
-        "currency_others", [occ(key, label, where, fields[key]) for key, label, where in currencies]
-    )
+    fields.occur("issue_price_ch4", "第四章第 5 項申購價金之計算", code="issue_price_subscription")
+    # 金額旁的幣別字（Issue #170）：價格表價格不列入；說明文字與情境三另在 read 加入（Issue #316）
+    fields.occur("minimum_investment_currency", "第一章第 7 項最低投資金額")
+    fields.occur("denomination_currency", "第一章第 7 項每單位商品面額")
+    fields.occur("scenario_denomination_currency", "第一章第 14 項設定參數每單位商品面額")
+    fields.occur("scenario_investment_currency", "第一章第 14 項設定參數投資金額")
+    fields.occur("early_redemption_minimum_currency", "第一章第 16 項(1) 最低金額")
+    fields.occur("early_redemption_increment_currency", "第一章第 16 項(1) 增加贖回之單位")
+    fields.occur("minimum_subscription_currency", "第四章第 4 項最低申購金額")
+    fields.occur("minimum_additional_currency", "第四章第 4 項最低加價申購金額")
+    fields.occur("minimum_redemption_currency", "第四章第 8 項最低贖回金額")
+    fields.occur("redemption_increment_currency", "第四章第 8 項增加贖回之單位")

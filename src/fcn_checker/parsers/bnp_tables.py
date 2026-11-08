@@ -13,7 +13,7 @@ from decimal import Decimal
 from ..schema import Line, ParsedField
 from ..text import squash
 from .common import dec
-from .layout import DATE_RE, TextIndex, capture, parse_date
+from .layout import DATE_RE, TextIndex, parse_date
 from .money import CURRENCY_WORD
 
 # 標的表的列標籤（去空白；冒號全半形皆有），依出現順序；下限價格列只在有 KI 時出現
@@ -316,11 +316,3 @@ def date_table(lines: list[Line]) -> ParsedField:
     if not out or [r["period"] for r in out] != list(range(1, len(out) + 1)):
         return ParsedField.invalid(name, lines[first:end], "日期表期數不是從 1 起連續")
     return ParsedField.present(name, {"type": kind, "rows": out, "row_lines": row_lines}, lines[first:end])
-
-
-def fee(label: str, name: str, lines: list[Line]) -> ParsedField:
-    """第四章第 2 項費用表：該費用項目那一列「費率(百分比)」欄的區間（例 0%~5%）；寫法見 FEE_PATTERNS。"""
-    pattern = FEE_PATTERNS.get(label)
-    if pattern is None:
-        return ParsedField.missing(name, f"範本沒有費用項目「{label}」的寫法")
-    return capture(name, TextIndex(lines), pattern, whole_match=True)

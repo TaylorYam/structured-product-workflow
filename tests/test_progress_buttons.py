@@ -20,11 +20,11 @@ from sp_workflow.lifecycle import (
     REDEMPTION,
     AutoEvent,
     LifecycleError,
-    StoredEvent,
     current_events,
     open_objections,
     replace_auto_events,
 )
+from sp_workflow.product_store import StoredEvent
 from sp_workflow.progress import (
     DATE_COLUMNS,
     FINISHED,

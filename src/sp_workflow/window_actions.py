@@ -71,12 +71,12 @@ from sp_workflow.exposure import (
     load_choices,
 )
 from sp_workflow.generic_backfill import GenericBackfillError, GenericReceipt, backfill_generic
+from sp_workflow.import_config import ImportConfig, ImportConfigError, load_import_config
 from sp_workflow.legacy_backfill import BackfillReceipt, LegacyBackfillError, backfill_legacy
 from sp_workflow.lifecycle import (
     OBSERVATION,
     LifecycleError,
     Objection,
-    StoredEvent,
     current_events,
     open_objections,
     raise_objection,
@@ -100,17 +100,15 @@ from sp_workflow.order_terms import OrderRow, collect_orders
 from sp_workflow.preparation import PrepareReceipt, prepare_batch
 from sp_workflow.product_backfill import ProductBackfillError, ProductBackfillReceipt, backfill_products
 from sp_workflow.product_export import ExportReceipt, export_products, export_summary
-from sp_workflow.product_store import Stored, read
+from sp_workflow.product_store import Stored, StoredEvent, read
 from sp_workflow.product_terms import (
     BatchReceipt,
     Draft,
-    ImportConfig,
     MissingProduct,
     Receipt,
     TermsError,
     draft_from,
     drafts_from,
-    load_import_config,
     missing_products,
     write,
     write_batch,
@@ -303,7 +301,7 @@ def _recalculate_after_import(conn: psycopg.Connection, paths: ConfigPaths) -> R
     說明放在結果裡。"""
     try:
         config = load_import_config(paths)
-    except TermsError as exc:
+    except ImportConfigError as exc:
         return Recalc(error=_first_line(exc))
     return _recalculate(conn, config)
 
@@ -392,7 +390,7 @@ def import_other_products(settings: ConnectionSettings, source: Path, paths: Con
     try:
         fmt = load_reference_format(paths.reference_format)
         config = load_import_config(paths)
-    except (IngestionError, TermsError) as exc:
+    except (IngestionError, ImportConfigError) as exc:
         raise ProductBackfillError(f"{_first_line(exc)}，整份不匯入") from exc
     with connect(settings) as conn:
         receipt = backfill_products(conn, source, fmt, config)

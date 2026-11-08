@@ -20,9 +20,9 @@
 - 熱圖（「市價格 × 最終比價日」，#471）：連結這個標的、最終比價日不早於今天的商品，依這個標的的執行價換算成的市價格分區間（拆股換到目前的價格基準：
   執行價 × 原始收盤價 ÷ 換回價格基準的收盤價），橫的是最終比價月份；昨收所在的區間在昨收處切開，昨收線以上
   是執行價高於昨收（已跌破K）。
-- 字型（#473）：活頁簿預設微軟正黑體，格子用 Calibri 覆蓋——中文顯示微軟正黑體，英文、數字是 Calibri。
-- 版面：每個分頁 A1 是標題、A3 起是一塊連續的表格，不合併儲存格、旁邊不放東西、不用條件式格式（顏色是固定底色），
-  欄寬與列數控制在一張 16:9 投影片內，關掉格線；複製表格貼到 PPT 不用再調整。
+- 版面與字型照 `slide_table` 的投影片版面（#483：A1 標題、A3 起一塊連續的表格、微軟正黑體＋Calibri、關格線）；
+  這裡只決定欄、列與報表自己的上色。旁邊不放東西、不用條件式格式（顏色是固定底色），欄寬與列數控制在一張 16:9
+  投影片內；複製表格貼到 PPT 不用再調整。
 - 只讀資料庫，不改任何資料。
 
 `plan_bands`、`month_columns` 等只算版面、不碰資料庫；`load_brief` 讀資料庫；`export_brief` 寫 Excel。
@@ -41,11 +41,9 @@ from decimal import ROUND_FLOOR, ROUND_HALF_UP, Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-import openpyxl
-from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-from openpyxl.utils import get_column_letter
+from openpyxl.styles import Border, PatternFill, Side
 
-from sp_workflow.close_prices import latest_closes
+from sp_workflow.close_prices import load_closes, recent_closes
 from sp_workflow.exposure import (
     K_BROKEN,
     NEAR_BUFFER,
@@ -54,9 +52,10 @@ from sp_workflow.exposure import (
     load_positions,
     ticker_of,
 )
-from sp_workflow.file_tools import excel_value, save_export
+from sp_workflow.file_tools import save_export
+from sp_workflow.slide_table import BOLD_FONT, BROKEN_FILL, Column, font, slide_book, write_slide
 from sp_workflow.stock_splits import SplitBook, load_splits
-from sp_workflow.underlying_pricing import Leg
+from sp_workflow.underlying_pricing import Leg, converted
 
 if TYPE_CHECKING:
     import psycopg
@@ -182,17 +181,12 @@ def load_brief(conn: psycopg.Connection, today: dt.date | None = None) -> Brief:
 
 
 def _quotes(conn: psycopg.Connection, codes: Iterable[str]) -> dict[str, Quote]:
-    """每個代碼最新的收盤價（同曝險分析，`latest_closes`），加上它前一筆（視窗的漲跌% 用）。"""
-    latest = latest_closes(conn, codes)
-    previous = dict(
-        conn.execute(
-            "SELECT DISTINCT ON (c.code) c.code, c.close FROM workflow.close_price AS c"
-            " JOIN unnest(%s::text[], %s::date[]) AS latest (code, day) ON c.code = latest.code"
-            " AND c.close_date < latest.day ORDER BY c.code, c.close_date DESC",
-            (list(latest), [day for day, _ in latest.values()]),
-        ).fetchall()
-    )
-    return {code: Quote(day, close, previous.get(code)) for code, (day, close) in latest.items()}
+    """每個代碼最新的收盤價（同曝險分析的 `latest_closes`），加上它前一筆（視窗的漲跌% 用）。"""
+    quotes = {}
+    for code, rows in recent_closes(conn, codes, 2).items():
+        (day, close), previous = rows[0], rows[1:]
+        quotes[code] = Quote(day, close, previous[0][1] if previous else None)
+    return quotes
 
 
 def months_before(day: dt.date, n: int) -> dt.date:
@@ -217,7 +211,7 @@ def trailing_returns(
             found.append(None)
             continue
         day, close = history[i]
-        found.append(quote.close / (close * book.factor(code, quote.day, day)) - 1)
+        found.append(quote.close / converted(book, code, close, quote.day, day) - 1)
     return tuple(found)
 
 
@@ -225,18 +219,16 @@ def _with_trailing(conn: psycopg.Connection, quotes: dict[str, Quote], book: Spl
     if not quotes:
         return quotes
     since = min(months_before(q.day, max(TRAILING_MONTHS)) for q in quotes.values()) - dt.timedelta(days=STALE_DAYS)
-    history: dict[str, list[tuple[dt.date, Decimal]]] = defaultdict(list)
-    for code, day, close in conn.execute(
-        "SELECT code, close_date, close FROM workflow.close_price WHERE code = ANY(%s) AND close_date >= %s"
-        " ORDER BY code, close_date",
-        (sorted(quotes), since),
-    ):
-        history[code].append((day, close))
-    return {code: replace(q, trailing=trailing_returns(code, q, history[code], book)) for code, q in quotes.items()}
+    series = load_closes(conn, quotes, since=since)
+    return {
+        code: replace(q, trailing=trailing_returns(code, q, series.history(code), book)) for code, q in quotes.items()
+    }
 
 
 def _usd_rates(conn: psycopg.Connection, currencies: Iterable[str]) -> dict[str, Decimal]:
-    """幣別 → 1 單位折幾 USD：`XXXUSD` 在收盤價表或每日價格日期最新的一筆。"""
+    """幣別 → 1 單位折幾 USD：`XXXUSD` 在收盤價表或每日價格日期最新的一筆。
+
+    要合併每日價格（`workflow.daily_price`），所以不走 `close_prices` 的讀取端（#494 的例外）。"""
     pairs = {f"{c}USD": c for c in currencies}
     if not pairs:
         return {}
@@ -458,7 +450,10 @@ def heatmap(brief: Brief, ticker: str) -> Heatmap:
 
 def _strike_on(leg: Leg, close: Decimal | None, raw: Decimal | None) -> Decimal:
     """執行價換到昨收的尺度：執行價 × 昨收 ÷ 這個代碼換回價格基準的收盤價（同代碼時就是拆股換算，ADR 0025）。
-    沒有昨收時照這個代碼自己的原始收盤價換；都沒有收盤價時用資料庫的執行價。"""
+    沒有昨收時照這個代碼自己的原始收盤價換；都沒有收盤價時用資料庫的執行價。
+
+    不改成 `converted`：昨收可能是同一個代號在別的交易所的代碼（價格尺度不同，例：不同幣別），
+    這裡要的是兩個代碼之間的比例，不只是拆股倍數（#494）。"""
     assert leg.strike is not None
     scale = close if close is not None else raw
     if scale is None or not leg.close:
@@ -468,23 +463,9 @@ def _strike_on(leg: Leg, close: Decimal | None, raw: Decimal | None) -> Decimal:
 
 # ---------------------------------------------------------------- 匯出
 
-# 字型（#473）：活頁簿預設（Normal 樣式）是微軟正黑體，格子用 Calibri 覆蓋；Calibri 沒有中文字，
-# Excel 會用微軟正黑體顯示中文——英文、數字是 Calibri，中文是微軟正黑體
-DEFAULT_FONT_NAME = "微軟正黑體"
-FONT_NAME = "Calibri"
-HEADER_FILL = PatternFill("solid", fgColor="1F4E79")  # 表頭深藍
-HEADER_FONT = Font(name=FONT_NAME, size=11, bold=True, color="FFFFFF")
-BODY_FONT = Font(name=FONT_NAME, size=11)
-BOLD_FONT = Font(name=FONT_NAME, size=11, bold=True)
-TITLE_FONT = Font(name=FONT_NAME, size=16, bold=True)
-DOWN_FONT = Font(name=FONT_NAME, size=11, color="C00000")  # 下跌、跌破：深紅字
+DOWN_FONT = font(color="C00000")  # 下跌、跌破：深紅字
 TOTAL_FILL = PatternFill("solid", fgColor="DDEBF7")  # 合計列淺藍
-BROKEN_FILL = PatternFill("solid", fgColor="FFC7CE")  # 跌破：淺紅（同曝險分析）
-THIN = Side(style="thin", color="BFBFBF")
-THICK = Side(style="thick", color="000000")
-CENTER = Alignment(horizontal="center", vertical="center")
-HEADER_ALIGN = Alignment(horizontal="center", vertical="center", wrap_text=True)  # 表頭可用 \n 換兩行
-ROW_HEIGHT = 20  # 點；20 列約 5.6 吋，放得進 16:9 投影片
+THICK = Side(style="thick", color="000000")  # 熱圖的昨收線
 MILLIONS = '[=0]"-";[<0.05]"<0.1M";0.0"M"'  # 面額（百萬）：0 寫 -，很小寫 <0.1M
 COUNT = '[=0]"-";#,##0'
 PERCENT = "+0.0%;-0.0%;0.0%"
@@ -536,24 +517,13 @@ def export_brief(
 
 
 def write_brief(brief: Brief, tickers: Sequence[str], path: Path) -> None:
-    book = openpyxl.Workbook()
-    _default_font(book)
-    book.remove(book.active)
+    book = slide_book()
     _overview(book.create_sheet("總覽"), brief)
     _tickers(book.create_sheet("大跌標的"), brief)
     _hotspots(book.create_sheet("重災區"), brief)
     for ticker in tickers:
         _heatmap(book.create_sheet(_sheet_name(f"熱圖_{ticker}")), heatmap(brief, ticker))
     save_export(book, path)
-
-
-def _default_font(book) -> None:
-    """活頁簿預設字型改微軟正黑體（openpyxl 沒有公開的設定方式，改 Normal 樣式與第 0 號字型）。"""
-    font = Font(name=DEFAULT_FONT_NAME, size=11)
-    book._fonts[0] = font  # noqa: SLF001
-    for style in book._named_styles:  # noqa: SLF001
-        if style.name == "Normal":
-            style.font = font
 
 
 def _sheet_name(name: str) -> str:
@@ -573,38 +543,6 @@ def _day(day: dt.date | None) -> str:
     return "—" if day is None else f"{day:%Y/%m/%d}"
 
 
-def _start(sheet, title: str, widths: Sequence[float]) -> None:
-    """標題放 A1、表格從 A3 開始；關格線、設欄寬。"""
-    sheet.sheet_view.showGridLines = False
-    sheet["A1"] = title
-    sheet["A1"].font = TITLE_FONT
-    sheet.row_dimensions[1].height = 28
-    for i, width in enumerate(widths, start=1):
-        sheet.column_dimensions[get_column_letter(i)].width = width
-
-
-def _table(sheet, headers: Sequence[str], rows: Sequence[Sequence[object]], formats: Sequence[str | None]) -> int:
-    """從第 3 列寫表頭與資料、套字型框線置中；回傳資料第一列的列號。"""
-    top = 3
-    for c, header in enumerate(headers, start=1):
-        cell = sheet.cell(top, c, header)
-        cell.fill, cell.font, cell.alignment = HEADER_FILL, HEADER_FONT, HEADER_ALIGN
-        cell.border = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
-    lines = max(header.count("\n") + 1 for header in headers)
-    sheet.row_dimensions[top].height = ROW_HEIGHT + 4 + 11 * (lines - 1)
-    for r, values in enumerate(rows, start=top + 1):
-        sheet.row_dimensions[r].height = ROW_HEIGHT
-        for c, (value, fmt) in enumerate(zip(values, formats, strict=True), start=1):
-            cell = sheet.cell(r, c, excel_value(value))
-            cell.font, cell.alignment = BODY_FONT, CENTER
-            cell.border = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
-            if isinstance(value, str):
-                cell.data_type = "s"
-            elif fmt and value is not None:
-                cell.number_format = fmt
-    return top + 1
-
-
 def _overview(sheet, brief: Brief) -> None:
     total = sum((e.amount for e in brief.exposures), Decimal(0))
     counts: dict[str, int] = defaultdict(int)
@@ -619,14 +557,17 @@ def _overview(sheet, brief: Brief) -> None:
         (name, counts[name], _millions(amounts[name]), float(amounts[name] / total) if total else 0.0)
         for name in OVERVIEW_SHOWN
     ]
-    _start(
+    first = write_slide(
         sheet,
         f"盤勢總覽｜ELN 商品依表現最差標的距執行價（K）分類｜{_day(brief.close_day)} 收盤"
         f"｜在庫 {len(brief.exposures)} 檔、連結 {len(brief.rows)} 個標的",
-        (24, 12, 18, 14),
-    )
-    first = _table(
-        sheet, ("ELN商品表現最差標的", "檔數", "面額（M USD）", "面額佔比"), rows, (None, COUNT, MILLIONS, SHARE)
+        (
+            Column("ELN商品表現最差標的", 24),
+            Column("檔數", 12, COUNT),
+            Column("面額（M USD）", 18, MILLIONS),
+            Column("面額佔比", 14, SHARE),
+        ),
+        rows,
     )
     for r in range(first, first + len(rows)):
         name = sheet.cell(r, 1).value
@@ -650,25 +591,21 @@ def _tickers(sheet, brief: Brief) -> None:
                 _millions(t.k_notional),
             )
         )
-    _start(
-        sheet,
-        f"連結面額前 {TOP_TICKERS} 大標的｜{_day(brief.close_day)} 收盤｜面額單位 M USD",
-        (11, 11, *([12] * len(TRAILING_MONTHS)), 11, 11, 12, 12),
-    )
     performance = [f"標的價格\n近{n}月表現" for n in TRAILING_MONTHS]
     broken_heads = ("跌破執行價\n檔數", "跌破執行價\n面額")
-    first = _table(
+    first = write_slide(
         sheet,
+        f"連結面額前 {TOP_TICKERS} 大標的｜{_day(brief.close_day)} 收盤｜面額單位 M USD",
         (
-            "標的",
-            "昨收",
-            *performance,
-            "連結檔數",
-            "連結面額",
-            *broken_heads,
+            Column("標的", 11),
+            Column("昨收", 11, PRICE),
+            *(Column(name, 12, PERCENT) for name in performance),
+            Column("連結檔數", 11, COUNT),
+            Column("連結面額", 11, MILLIONS),
+            Column(broken_heads[0], 12, COUNT),
+            Column(broken_heads[1], 12, MILLIONS),
         ),
         rows,
-        (None, PRICE, *([PERCENT] * len(TRAILING_MONTHS)), COUNT, MILLIONS, COUNT, MILLIONS),
     )
     headers = [cell.value for cell in sheet[first - 1]]
     performance_cols = [headers.index(name) + 1 for name in performance]
@@ -705,12 +642,12 @@ def _hotspots(sheet, brief: Brief) -> None:
     names = [*distance_rows, "合計"]
     rows = [(name, *(text((name, col)) for col in [*due_cols, "合計"])) for name in names]
     total = sum((e.amount for e in hit), Decimal(0))
-    _start(
+    first = write_slide(
         sheet,
         f"重災區：最差標的跌破執行價｜{len(hit):,} 檔、{_m(total)}M USD｜依距執行價 × 距最終比價日｜面額單位 M USD",
-        (20, *([19] * len(due_cols)), 22),
+        (Column("最差標的距K", 20), *(Column(col, 19) for col in due_cols), Column("合計", 22)),
+        rows,
     )
-    first = _table(sheet, ("最差標的距K", *due_cols, "合計"), rows, [None] * (len(due_cols) + 2))
     top = max((amount[(n, c)] for n in distance_rows for c in due_cols), default=Decimal(0))
     for i, name in enumerate(names):
         r = first + i
@@ -729,12 +666,13 @@ def _heatmap(sheet, h: Heatmap) -> None:
         f"執行價 × 最終比價日 熱圖：{h.row.ticker}｜連結 {h.products:,} 檔 {_m(h.notional)}M"
         f"｜目前跌破執行價 共{h.k_count:,} 檔 {_m(h.k_notional)}M USD"
     )
-    _start(sheet, title, (22, *([10.5] * len(month_names))))
     rows = [
         (label, *(_millions(h.cells.get((r, c), Decimal(0))) for c in range(len(month_names))))
         for r, label in enumerate(labels)
     ]
-    first = _table(sheet, ("市價格＼最終比價日", *month_names), rows, (None, *([MILLIONS] * len(month_names))))
+    first = write_slide(
+        sheet, title, (Column("市價格＼最終比價日", 22), *(Column(m, 10.5, MILLIONS) for m in month_names)), rows
+    )
     top = max(h.cells.values(), default=Decimal(0))
     for (r, c), value in h.cells.items():
         if fill := heat_fill(value, top):

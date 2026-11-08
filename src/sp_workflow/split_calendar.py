@@ -24,6 +24,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
+from sp_workflow.close_prices import close_codes, load_closes
 from sp_workflow.stock_splits import (
     Split,
     SplitBook,
@@ -336,11 +337,11 @@ def _ratio(item: Announced) -> str:
 
 def known_codes(conn: psycopg.Connection, calendar: TradingCalendar) -> dict[str, tuple[str, str]]:
     """收盤價表或商品有的代碼 → 行事曆的 (市場, 代號)（同 `add_split` 收的代碼）。"""
-    rows = conn.execute(
-        "SELECT code FROM workflow.close_price UNION SELECT code FROM workflow.underlying_price WHERE code IS NOT NULL"
-    ).fetchall()
+    codes = close_codes(conn) | {
+        code for (code,) in conn.execute("SELECT DISTINCT code FROM workflow.underlying_price WHERE code IS NOT NULL")
+    }
     found = {}
-    for (code,) in rows:
+    for code in codes:
         key = source_key(code, calendar)
         if key:
             found[code] = key
@@ -417,11 +418,10 @@ def align(conn: psycopg.Connection, today: dt.date, *, user: str | None = None) 
 
 
 def _closes_around(conn: psycopg.Connection, code: str, day: dt.date) -> dict[dt.date, Decimal]:
-    rows = conn.execute(
-        "SELECT close_date, close FROM workflow.close_price WHERE code = %s AND close_date BETWEEN %s AND %s",
-        (code, day - dt.timedelta(days=CLOSE_WINDOW_DAYS), day + dt.timedelta(days=CLOSE_WINDOW_DAYS)),
-    ).fetchall()
-    return dict(rows)
+    """生效日前後 `CLOSE_WINDOW_DAYS` 天的收盤價。"""
+    last = day + dt.timedelta(days=CLOSE_WINDOW_DAYS)
+    series = load_closes(conn, [code], since=day - dt.timedelta(days=CLOSE_WINDOW_DAYS))
+    return {d: close for d, close in series.history(code) if d <= last}
 
 
 # ---------- 「匯入自動拆股登記」按鈕用 ----------

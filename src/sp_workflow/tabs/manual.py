@@ -10,13 +10,14 @@ from tkinter import filedialog, messagebox, ttk
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import NUMBER_FONT, Background, CopyArea, WrapLabel
 from sp_workflow.database import ConnectionSettings
+from sp_workflow.import_config import ImportConfig
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.order_terms import format_field
 from sp_workflow.preparation import parse_tdccs
 from sp_workflow.product_export import ExportReceipt, export_name, summary_name
 from sp_workflow.product_record import LISTED as REQUIRED_LISTED
 from sp_workflow.product_store import lookback_text
-from sp_workflow.product_terms import Draft, ImportConfig, MissingProduct, Receipt
+from sp_workflow.product_terms import Draft, MissingProduct, Receipt
 from sp_workflow.status import OrderReview
 from sp_workflow.tabs.base import CELL_COPY_HINT, TITLE, BackgroundFactory, DatabaseLogin, Tab
 from sp_workflow.tabs.cell_table import CellTable

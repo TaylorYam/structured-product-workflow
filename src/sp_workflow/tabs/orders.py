@@ -12,9 +12,10 @@ from tkinter import filedialog, messagebox, ttk
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import Background, NextButton
 from sp_workflow.check_terms import CalcLine
+from sp_workflow.import_config import ImportConfig
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.order_terms import OrderRow, describe
-from sp_workflow.product_terms import BatchReceipt, Draft, ImportConfig, ImportLine
+from sp_workflow.product_terms import BatchReceipt, Draft, ImportLine
 from sp_workflow.risk_level import RISK_LEVELS, RiskLevel
 from sp_workflow.status import ImportResult, OrderReview, Risk
 from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, Tab

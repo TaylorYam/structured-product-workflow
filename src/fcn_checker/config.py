@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime as dt
 import re
-import string
 import tomllib
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
@@ -12,20 +11,12 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from . import name_template
 from .ingestion import IngestionError
-from .products import SUPPORTED_PRODUCTS, product_name
+from .name_template import NameTemplate
 from .standard_fields import AGENT_PLACES, GUARANTOR_PLACES
 from .trading_calendar import Market, TradingCalendar
 
-# 商品名稱樣板可用的佔位符：天期、幣別，以及依說明書欄位填入的 memory（記憶式）、maxi（標的數 ≥ 2）、daily（KO 每日觀察）、
-# autocall（Non-Call < 天期，BNP）、quanto（承作幣別 ≠ 標的報價幣別，DBS）、ki（有 KI，DBS、UBS），與 underlying（標的寫法：
-# 1 檔填 single_*、2 檔以上填 basket_*）、ko_observation（KO 觀察方式：每日填 daily_*、每期填 periodic_*，UBS）、
-# payoff（到期給付：參與率 0 填 digital_*、其他填 enhanced_*，HSBC BEN）
-NAME_FLAGS = ("memory", "maxi", "daily", "autocall", "quanto", "ki", "express")
-NAME_PLACEHOLDERS = frozenset(
-    {"tenor", "ccy_zh", "ccy", "payoff_zh", "payoff_en"}
-    | {f"{f}_{lang}" for f in (*NAME_FLAGS, "underlying", "ko_observation") for lang in ("zh", "en")}
-)
 # 發行機構全名比對時可另外忽略的寫法差異（審查標準 issuer_name_ignore）→ 結果上的說明
 ISSUER_NAME_IGNORES = {"brackets": "括號（全形／半形）", "trailing_period": "英文名結尾的句點"}
 RISK_LEVEL = "{level}"  # 風險等級寫法（risk.level_formats）與固定警語中填入 RRn 的位置（固定警語：#239）
@@ -33,83 +24,9 @@ RISK_LEVEL_PENDING = "待算"  # 參考條件表「風險等級」欄的待算�
 
 
 @dataclass(frozen=True)
-class ProductNameTemplate:
-    zh: str
-    en: str
-    memory_zh: str
-    memory_en: str
-    normalize_brackets: bool
-    maxi_zh: str = ""
-    maxi_en: str = ""
-    daily_zh: str = ""
-    daily_en: str = ""
-    ignore_whitespace_en: bool = False
-    single_zh: str = ""  # {underlying_zh}／{underlying_en}：標的 1 檔時填入
-    single_en: str = ""
-    basket_zh: str = ""  # 標的 2 檔以上時填入
-    basket_en: str = ""
-    autocall_zh: str = ""  # {autocall_zh}／{autocall_en}：Non-Call < 天期（會提前出場）時填入（BNP、SG）
-    autocall_en: str = ""
-    autocall_memory_zh: str = ""  # 會提前出場且記憶式時改填這個（有設定時；SG 中文「（記憶式自動提前出場）」）
-    autocall_memory_en: str = ""
-    ccy_aliases: dict[str, str] = field(
-        default_factory=dict
-    )  # {ccy} 的其他寫法：ISO 代碼 → 名稱用的代碼（SG：CNH → CNY）
-    quanto_zh: str = ""  # {quanto_zh}／{quanto_en}：承作幣別和標的報價幣別不同時填入（DBS「Quanto」）
-    quanto_en: str = ""
-    ki_zh: str = ""  # {ki_zh}／{ki_en}：有 KI 時填入（DBS「及定價日觸發(歐式)」、UBS「（含觸及下限價事件）」）
-    ki_en: str = ""
-    # 標的 1 檔沒有樣本、名稱寫法未知：用了 {underlying_*} 而標的只有 1 檔時名稱轉人工覆核，single_* 可不設（DBS）
-    single_unsupported: bool = False
-    periodic_zh: str = ""  # {ko_observation_*}：KO 每期觀察時填入（每日時填 daily_*；UBS）
-    periodic_en: str = ""
-    express_zh: str = (
-        ""  # {express_zh}／{express_en}：沒有 Non-Call（FCN_Express）時填入（CA、HSBC「Express」，workflow #305、#306）
-    )
-    express_en: str = ""
-    ignore_prefix_en: bool = False  # 英文名稱只比結尾：前面多的字不核對（HSBC Super Bull 的「Maxi 」，#314）
-    optional_suffix_en: str = ""  # 英文名稱結尾可有可無的一段（UBS「（Non Principal Guaranteed, …）」，workflow #475）
-    digital_zh: str = ""  # {payoff_zh}／{payoff_en}：參與率 0（BEN Digital）時填入，其他填 enhanced_*（HSBC BEN，#375）
-    digital_en: str = ""
-    enhanced_zh: str = ""
-    enhanced_en: str = ""
-
-    def template(self, lang: str, tenor: int) -> str:
-        """樣板（zh／en）；天期 1 個月時英文 `{tenor} Months`／`{tenor}Months` 改成單數 `Month`（只接受單數，Issue #343）。"""
-        tpl = getattr(self, lang)
-        return re.sub(r"(\{tenor\}\s*)Months\b", r"\1Month", tpl) if tenor == 1 else tpl
-
-    def placeholders(self, lang: str) -> frozenset[str]:
-        """樣板（zh／en）用到的佔位符名稱。"""
-        return frozenset(name for _, name, _, _ in string.Formatter().parse(getattr(self, lang)) if name is not None)
-
-    def flag_text(self, flag: str, lang: str) -> str:
-        return getattr(self, f"{flag}_{lang}")
-
-    def autocall_text(self, memory: bool, lang: str) -> str:
-        """{autocall_<lang>}：會提前出場時的字樣；記憶式且有 autocall_memory_* 時用它。"""
-        special = getattr(self, f"autocall_memory_{lang}")
-        return special if memory and special else getattr(self, f"autocall_{lang}")
-
-    def ccy_text(self, iso: str) -> str:
-        return self.ccy_aliases.get(iso, iso)
-
-    def ko_observation_text(self, daily: bool, lang: str) -> str:
-        """{ko_observation_<lang>}：KO 每日觀察用 daily_*，每期觀察用 periodic_*。"""
-        return getattr(self, f"{'daily' if daily else 'periodic'}_{lang}")
-
-    def underlying_text(self, basket: bool, lang: str) -> str:
-        """{underlying_<lang>} 的標的寫法：2 檔以上用 basket_*，1 檔用 single_*。"""
-        return getattr(self, f"{'basket' if basket else 'single'}_{lang}")
-
-    def payoff_text(self, digital: bool, lang: str) -> str:
-        """{payoff_<lang>} 的到期給付寫法：參與率 0 用 digital_*，其他用 enhanced_*。"""
-        return getattr(self, f"{'digital' if digital else 'enhanced'}_{lang}")
-
-
-@dataclass(frozen=True)
 class IssuerStandard:
-    """某上手適用的審查標準：上手專屬值已解析（固定警語有上手版本就用，否則用預設）。"""
+    """某上手適用的審查標準：上手專屬值已解析（固定警語有上手版本就用，否則用預設）。由 `ReviewStandard.for_issuer` 依
+    `ISSUER_KEYS` 填值（沒寫的鍵的值也在那裡宣告），這裡只是型別化的 view。"""
 
     issuer: str
     fixed_warning: str  # {level} 處為風險等級，核對時代入期望值（#239）
@@ -119,30 +36,30 @@ class IssuerStandard:
     risk_level_formats: tuple[str, ...]  # 風險等級的寫法，{level} 處為 RRn（risk.level_formats；沒列出的上手為【RRn】）
     issuer_name: str | None  # None → 審查標準沒有該上手的值，規則轉人工覆核
     issuer_name_ignore: frozenset[str]  # 發行機構全名比對時另外忽略的寫法差異（ISSUER_NAME_IGNORES 的子集）
-    product_name: ProductNameTemplate | None
+    product_name: NameTemplate | None
     distributor_name: str
     distributor_phone: str
     distributor_phone_equivalents: tuple[str, ...]  # 電話可接受的其他寫法（所有上手適用）
     distributor_address: str
     distributor_address_equivalents: tuple[str, ...]  # 地址可接受的其他寫法（所有上手適用）
     iis_fixed_warning_occurrences: int | None  # 投資人須知的固定警語次數；None → 審查標準沒有該上手的值
-    distributor_name_equivalents: tuple[str, ...] = ()  # 名稱可接受的其他寫法（所有上手適用；SG 第二章簡稱）
+    distributor_name_equivalents: tuple[str, ...]  # 名稱可接受的其他寫法（所有上手適用；SG 第二章簡稱）
     # 下列只有審查標準有該上手分節時才核對（BNP）
-    guarantor_names: dict[str, str] = field(default_factory=dict)  # 出處（cover／ch1／ch2）→ 保證機構名稱
-    guarantor_name_equivalents: tuple[str, ...] = ()  # 投資人須知相關機構的保證機構名稱其他寫法（SG）
-    agent_names: dict[str, str] = field(default_factory=dict)  # 出處（cover／ch2）→ 總代理人名稱（SG）
-    product_type: str | None = None  # 封面商品種類固定值
-    minimum_issue_size: str | None = None  # 第四章發行不成立門檻的金額寫法
+    guarantor_names: dict[str, str]  # 出處（cover／ch1／ch2）→ 保證機構名稱
+    guarantor_name_equivalents: tuple[str, ...]  # 投資人須知相關機構的保證機構名稱其他寫法（SG）
+    agent_names: dict[str, str]  # 出處（cover／ch2）→ 總代理人名稱（SG）
+    product_type: str | None  # 封面商品種類固定值
+    minimum_issue_size: str | None  # 第四章發行不成立門檻的金額寫法
     # 最低金額出處欄位 → 單位面額的倍數（沒列為 1）；依幣別不同時為 {ISO 代碼: 倍數}（SG 最低申購金額）
-    min_amount_multiples: dict[str, int | dict[str, int]] = field(default_factory=dict)
+    min_amount_multiples: dict[str, int | dict[str, int]]
     # 開始受理贖回日期寫文字的上手：允許的寫法（文字須以其中之一開頭）；沒有 → 寫文字時轉人工覆核（Issue #227）
-    redemption_start_wordings: tuple[str, ...] = ()
-    osu_clients: bool = True  # 可否承作 OSU 客戶（issuer.<上手>.osu_clients；沒寫為可以，Issue #224）
-    distributor_name_exempt: tuple[str, ...] = ()  # 全文受託機構名稱特例放行的寫法（CA，Issue #226）
+    redemption_start_wordings: tuple[str, ...]
+    osu_clients: bool  # 可否承作 OSU 客戶（issuer.<上手>.osu_clients；沒寫為可以，Issue #224）
+    distributor_name_exempt: tuple[str, ...]  # 全文受託機構名稱特例放行的寫法（CA，Issue #226）
     # 商品種類 → 該商品的名稱樣板（issuer.<上手>.product_names."<Product>"；沒列的商品用 product_name，Super Bull #311）
-    product_names: dict[str, ProductNameTemplate] = field(default_factory=dict)
+    product_names: dict[str, NameTemplate]
 
-    def product_name_for(self, product: str | None) -> ProductNameTemplate | None:
+    def product_name_for(self, product: str | None) -> NameTemplate | None:
         """參考條件表 Product（支援的商品種類寫法；None 為空白或不認得）適用的名稱樣板。"""
         return self.product_names.get(product, self.product_name) if product is not None else self.product_name
 
@@ -186,40 +103,32 @@ class ReviewStandard:
         return next((d for d in reversed(self.approval_dates) if d <= trade_date), None)
 
     def for_issuer(self, issuer: str) -> IssuerStandard:
-        """該上手適用的審查標準：上手表有的欄位用上手的值，沒有的用共用值或視為該上手沒有這項基準。"""
-        v = self.issuers.get(issuer.lower(), {})
-        warning = v.get("fixed_warning", self.fixed_warning)
+        """該上手適用的審查標準：上手表有的欄位用上手的值，沒有的依 `ISSUER_KEYS` 用共用值或視為該上手沒有這項基準。"""
+        table = self.issuers.get(issuer.lower(), {})
+        v = {
+            name: table.get(name, getattr(self, name) if key.default is SHARED else key.default)
+            for name, key in ISSUER_KEYS.items()
+        }
+        warning = v["fixed_warning"]
         rest = warning[warning.find("。") + 1 :]  # 開頭句以後；有其他開頭寫法時載入已確認有句號
         return IssuerStandard(
             issuer=issuer,
-            fixed_warning=warning,
             fixed_warnings=(
                 warning,
-                *(alt + rest for alt in v.get("fixed_warning_openings", ())),
-                *v.get("fixed_warning_variants", ()),
+                *(alt + rest for alt in v["fixed_warning_openings"]),
+                *v["fixed_warning_variants"],
             ),
-            fixed_warning_occurrences=v.get("fixed_warning_occurrences", self.fixed_warning_occurrences),
-            risk_level_formats=v.get("risk_level_formats", ("【" + RISK_LEVEL + "】",)),
-            issuer_name=v.get("issuer_name"),
-            issuer_name_ignore=v.get("issuer_name_ignore", frozenset()),
-            product_name=v.get("product_name"),
-            product_names=dict(v.get("product_names", {})),
             distributor_name=self.distributor_name,
             distributor_phone=self.distributor_phone,
             distributor_phone_equivalents=self.distributor_phone_equivalents,
             distributor_address=self.distributor_address,
             distributor_address_equivalents=self.distributor_address_equivalents,
             distributor_name_equivalents=self.distributor_name_equivalents,
-            iis_fixed_warning_occurrences=v.get("iis_fixed_warning_occurrences"),
-            guarantor_names=dict(v.get("guarantor_name", {})),
-            guarantor_name_equivalents=v.get("guarantor_name_equivalents", ()),
-            agent_names=dict(v.get("agent_name", {})),
-            product_type=v.get("product_type"),
-            minimum_issue_size=v.get("minimum_issue_size"),
-            min_amount_multiples=dict(v.get("min_amount_multiples", {})),
-            redemption_start_wordings=v.get("redemption_start_wordings", ()),
-            osu_clients=v.get("osu_clients", True),
-            distributor_name_exempt=v.get("distributor_name_exempt", ()),
+            **{
+                key.attribute(name): dict(v[name]) if isinstance(v[name], dict) else v[name]
+                for name, key in ISSUER_KEYS.items()
+                if key.view
+            },
         )
 
 
@@ -380,132 +289,70 @@ def _min_amount_multiples(v: Any, where: str) -> dict[str, int | dict[str, int]]
     return table
 
 
-def _product_name(n: dict[str, Any], where: str) -> ProductNameTemplate:
-    tpl = ProductNameTemplate(
-        zh=n["zh"],
-        en=n["en"],
-        memory_zh=n["memory_zh"],
-        memory_en=n["memory_en"],
-        normalize_brackets=bool(n.get("normalize_brackets", True)),
-        maxi_zh=n.get("maxi_zh", ""),
-        maxi_en=n.get("maxi_en", ""),
-        daily_zh=n.get("daily_zh", ""),
-        daily_en=n.get("daily_en", ""),
-        ignore_whitespace_en=bool(n.get("ignore_whitespace_en", False)),
-        single_zh=n.get("single_zh", ""),
-        single_en=n.get("single_en", ""),
-        basket_zh=n.get("basket_zh", ""),
-        basket_en=n.get("basket_en", ""),
-        autocall_zh=n.get("autocall_zh", ""),
-        autocall_en=n.get("autocall_en", ""),
-        autocall_memory_zh=n.get("autocall_memory_zh", ""),
-        autocall_memory_en=n.get("autocall_memory_en", ""),
-        ccy_aliases=dict(n.get("ccy_aliases", {})),
-        quanto_zh=n.get("quanto_zh", ""),
-        quanto_en=n.get("quanto_en", ""),
-        ki_zh=n.get("ki_zh", ""),
-        ki_en=n.get("ki_en", ""),
-        single_unsupported=bool(n.get("single_unsupported", False)),
-        periodic_zh=n.get("periodic_zh", ""),
-        periodic_en=n.get("periodic_en", ""),
-        express_zh=n.get("express_zh", ""),
-        express_en=n.get("express_en", ""),
-        ignore_prefix_en=bool(n.get("ignore_prefix_en", False)),
-        optional_suffix_en=n.get("optional_suffix_en", ""),
-        digital_zh=n.get("digital_zh", ""),
-        digital_en=n.get("digital_en", ""),
-        enhanced_zh=n.get("enhanced_zh", ""),
-        enhanced_en=n.get("enhanced_en", ""),
-    )
-    if any(not (isinstance(k, str) and isinstance(v, str) and v) for k, v in tpl.ccy_aliases.items()):
-        raise _fail(f"審查標準商品名稱樣板 {where}.ccy_aliases 須是 ISO 代碼 → 名稱用代碼的文字表")
-    for lang in ("zh", "en"):
-        unknown = sorted(tpl.placeholders(lang) - NAME_PLACEHOLDERS)
-        if unknown:
-            raise _fail(
-                f"審查標準商品名稱樣板 {where}.{lang} 有未知的佔位符："
-                + "、".join(f"{{{u}}}" for u in unknown)
-                + "（可用："
-                + "、".join(f"{{{p}}}" for p in sorted(NAME_PLACEHOLDERS))
-                + "）",
-            )
-        need = [k for k in (f"daily_{lang}", f"periodic_{lang}") if not getattr(tpl, k)]
-        if f"ko_observation_{lang}" in tpl.placeholders(lang) and need:
-            raise _fail(
-                f"審查標準商品名稱樣板 {where}.{lang} 用了 {{ko_observation_{lang}}}，"
-                f"但沒有設定 {'、'.join(need)}（KO 每日與每期觀察的寫法）",
-            )
-        needed = (f"basket_{lang}",) if tpl.single_unsupported else (f"single_{lang}", f"basket_{lang}")
-        missing = [k for k in needed if not getattr(tpl, k)]
-        if f"underlying_{lang}" in tpl.placeholders(lang) and missing:
-            raise _fail(
-                f"審查標準商品名稱樣板 {where}.{lang} 用了 {{underlying_{lang}}}，"
-                f"但沒有設定 {'、'.join(missing)}（1 檔與 2 檔以上的標的寫法）",
-            )
-        missing = [k for k in (f"digital_{lang}", f"enhanced_{lang}") if not getattr(tpl, k)]
-        if f"payoff_{lang}" in tpl.placeholders(lang) and missing:
-            raise _fail(
-                f"審查標準商品名稱樣板 {where}.{lang} 用了 {{payoff_{lang}}}，"
-                f"但沒有設定 {'、'.join(missing)}（參與率 0 與其他的到期給付寫法）",
-            )
-    return tpl
+SHARED = object()  # IssuerKey.default：上手表沒寫時用審查標準的同名共用值（ReviewStandard 的同名欄位）
 
 
-def _product_names(n: Any, where: str) -> dict[str, ProductNameTemplate]:
-    """商品種類（參考條件表 Product 的寫法，須是支援的商品種類）→ 名稱樣板。"""
-    if not isinstance(n, dict) or not all(isinstance(v, dict) for v in n.values()):
-        raise _fail(f'審查標準 {where} 須是「商品種類 → 名稱樣板」的子表（例：[{where}."Super Bull"]）')
-    out = {}
-    for key, tpl in n.items():
-        product = product_name(key)
-        if product is None or product != key:
-            raise _fail(f"審查標準 {where} 的「{key}」不是支援的商品種類寫法（可用：{SUPPORTED_PRODUCTS}）")
-        out[product] = _product_name(tpl, f"{where}.{key}")
-    return out
+@dataclass(frozen=True)
+class IssuerKey:
+    """上手表 [issuer.<上手>] 的一個鍵（Issue #490）：讀法、沒寫時的值、對到 `IssuerStandard` 的哪個欄位、舊版面的表。"""
+
+    read: Callable[[Any, str], Any]  # 收（值, 位置）回傳解析後的值；不合法時丟 config_invalid
+    default: Any = None  # 上手表沒寫時的值；SHARED → 共用值；None → 該上手沒有這項基準
+    attr: str | None = None  # IssuerStandard 的欄位名稱；None → 同鍵名
+    legacy: tuple[str, ...] | None = None  # 舊版面（每種基準一個表、底下分上手）的表；沒有 → 新版面才有的鍵
+    view: bool = True  # False → 不直接填進 IssuerStandard（fixed_warning_openings／variants 只用來組 fixed_warnings）
+
+    def attribute(self, name: str) -> str:
+        """這個鍵（名稱 `name`）在 `IssuerStandard` 的欄位名稱。"""
+        return self.attr or name
 
 
-# 每家上手一張表 [issuer.<上手代號小寫>] 的欄位與讀法（schema 只在這裡宣告，Issue #128）：新上手只在審查標準加一張表，
-# 不改程式。讀法收（值, 位置）回傳解析後的值；沒寫的欄位用共用值，或視為該上手沒有這項基準（見 ReviewStandard.for_issuer）。
-ISSUER_FIELDS: dict[str, Callable[[Any, str], Any]] = {
-    "issuer_name": _text_value,  # 發行機構中英文法人全名；沒有 → 規則轉人工覆核
-    "issuer_name_ignore": _name_ignores,  # 全名比對另外忽略的寫法差異（ISSUER_NAME_IGNORES）
-    "fixed_warning": _text_value,  # 該上手的固定警語版本；沒有 → [risk] fixed_warning
-    "fixed_warning_occurrences": _positive_int,  # 說明書的固定警語次數；沒有 → [risk] fixed_warning_occurrences
-    "fixed_warning_openings": _texts,  # 固定警語開頭句的其他寫法
-    "fixed_warning_variants": _texts,  # 固定警語的其他完整寫法
-    "risk_level_formats": _level_formats,  # 風險等級的寫法；沒有 → 【{level}】
-    "iis_fixed_warning_occurrences": _positive_int,  # 投資人須知的固定警語次數；沒有 → 轉人工覆核
-    "product_type": _text_value,  # 封面商品種類固定值；沒有 → 不核對
-    "minimum_issue_size": _text_value,  # 發行不成立門檻的金額寫法；沒有 → 不核對
-    "guarantor_name_equivalents": _texts,  # 投資人須知相關機構的保證機構名稱其他寫法
-    "redemption_start_wordings": _texts,  # 開始受理贖回日期允許的文字寫法；沒有 → 寫文字時轉人工覆核
-    "product_name": _product_name,  # 子表 [issuer.<上手>.product_name]：商品名稱樣板；沒有 → 轉人工覆核
-    "product_names": _product_names,  # 子表 [issuer.<上手>.product_names."<Product>"]：依商品種類的名稱樣板（#311）
-    "guarantor_name": _place_texts(GUARANTOR_PLACES),  # 子表：出處 → 保證機構名稱；沒有 → 不核對
-    "agent_name": _place_texts(AGENT_PLACES),  # 子表：出處 → 總代理人名稱；沒有 → 不核對
-    "min_amount_multiples": _min_amount_multiples,  # 子表：最低金額出處 → 單位面額的倍數；沒列為 1
-    "osu_clients": _bool,  # 可否承作 OSU 客戶；沒有 → 可以（Issue #224）
-    "distributor_name_exempt": _texts,  # 全文受託機構名稱特例放行的寫法；沒有 → 不放行（Issue #226）
+# 每家上手一張表 [issuer.<上手代號小寫>] 的鍵（schema 只在這裡宣告，Issue #128、#490）：新上手只在審查標準加一張表，
+# 不改程式；新增一個鍵只在這裡加一列，並在 `IssuerStandard` 加同名欄位（型別化的 view，`for_issuer` 依這張表填值）。
+ISSUER_KEYS: dict[str, IssuerKey] = {
+    # 發行機構中英文法人全名；沒有 → 規則轉人工覆核
+    "issuer_name": IssuerKey(_text_value, legacy=("issuer_name",)),
+    # 全名比對另外忽略的寫法差異（ISSUER_NAME_IGNORES）
+    "issuer_name_ignore": IssuerKey(_name_ignores, frozenset(), legacy=("issuer_name_ignore",)),
+    # 該上手的固定警語版本；沒有 → [risk] fixed_warning
+    "fixed_warning": IssuerKey(_text_value, SHARED, legacy=("risk", "fixed_warning_by_issuer")),
+    # 說明書的固定警語次數；沒有 → [risk] fixed_warning_occurrences
+    "fixed_warning_occurrences": IssuerKey(
+        _positive_int, SHARED, legacy=("risk", "fixed_warning_occurrences_by_issuer")
+    ),
+    # 固定警語開頭句的其他寫法、其他完整寫法（組成 IssuerStandard.fixed_warnings）
+    "fixed_warning_openings": IssuerKey(_texts, (), legacy=("risk", "fixed_warning_openings"), view=False),
+    "fixed_warning_variants": IssuerKey(_texts, (), legacy=("risk", "fixed_warning_variants"), view=False),
+    # 風險等級的寫法；沒有 → 【{level}】
+    "risk_level_formats": IssuerKey(_level_formats, ("【" + RISK_LEVEL + "】",), legacy=("risk", "level_formats")),
+    # 投資人須知的固定警語次數；沒有 → 轉人工覆核
+    "iis_fixed_warning_occurrences": IssuerKey(_positive_int, legacy=("iis", "fixed_warning_occurrences")),
+    # 封面商品種類固定值；沒有 → 不核對
+    "product_type": IssuerKey(_text_value, legacy=("product_type",)),
+    # 發行不成立門檻的金額寫法；沒有 → 不核對
+    "minimum_issue_size": IssuerKey(_text_value, legacy=("minimum_issue_size",)),
+    # 投資人須知相關機構的保證機構名稱其他寫法
+    "guarantor_name_equivalents": IssuerKey(_texts, (), legacy=("guarantor_name_equivalents",)),
+    # 開始受理贖回日期允許的文字寫法；沒有 → 寫文字時轉人工覆核
+    "redemption_start_wordings": IssuerKey(_texts, ()),
+    # 子表 [issuer.<上手>.product_name]：商品名稱樣板；沒有 → 轉人工覆核
+    "product_name": IssuerKey(name_template.load, legacy=("product_name",)),
+    # 子表 [issuer.<上手>.product_names."<Product>"]：依商品種類的名稱樣板（#311）
+    "product_names": IssuerKey(name_template.load_by_product, {}),
+    # 子表：出處 → 保證機構名稱；沒有 → 不核對
+    "guarantor_name": IssuerKey(_place_texts(GUARANTOR_PLACES), {}, "guarantor_names", ("guarantor_name",)),
+    # 子表：出處 → 總代理人名稱；沒有 → 不核對
+    "agent_name": IssuerKey(_place_texts(AGENT_PLACES), {}, "agent_names", ("agent_name",)),
+    # 子表：最低金額出處 → 單位面額的倍數；沒列為 1
+    "min_amount_multiples": IssuerKey(_min_amount_multiples, {}, legacy=("min_amount_multiples",)),
+    # 可否承作 OSU 客戶；沒有 → 可以（Issue #224）
+    "osu_clients": IssuerKey(_bool, True),
+    # 全文受託機構名稱特例放行的寫法；沒有 → 不放行（Issue #226）
+    "distributor_name_exempt": IssuerKey(_texts, ()),
 }
-
-# 舊版面（每種基準一個表、底下分上手）的表 → [issuer.<上手>] 的欄位（Issue #128）；讀到舊版面時停止並提示轉換指令
-LEGACY_TABLES: dict[tuple[str, ...], str] = {
-    ("issuer_name",): "issuer_name",
-    ("issuer_name_ignore",): "issuer_name_ignore",
-    ("risk", "fixed_warning_by_issuer"): "fixed_warning",
-    ("risk", "fixed_warning_occurrences_by_issuer"): "fixed_warning_occurrences",
-    ("risk", "fixed_warning_openings"): "fixed_warning_openings",
-    ("risk", "fixed_warning_variants"): "fixed_warning_variants",
-    ("risk", "level_formats"): "risk_level_formats",
-    ("iis", "fixed_warning_occurrences"): "iis_fixed_warning_occurrences",
-    ("product_type",): "product_type",
-    ("minimum_issue_size",): "minimum_issue_size",
-    ("guarantor_name_equivalents",): "guarantor_name_equivalents",
-    ("product_name",): "product_name",
-    ("guarantor_name",): "guarantor_name",
-    ("agent_name",): "agent_name",
-    ("min_amount_multiples",): "min_amount_multiples",
-}
+ISSUER_FIELDS: dict[str, Callable[[Any, str], Any]] = {name: key.read for name, key in ISSUER_KEYS.items()}
+# 舊版面的表 → [issuer.<上手>] 的欄位（Issue #128）；讀到舊版面時停止並提示轉換指令
+LEGACY_TABLES: dict[tuple[str, ...], str] = {key.legacy: name for name, key in ISSUER_KEYS.items() if key.legacy}
 MIGRATE_COMMAND = "fcn-config-migrate"  # 舊版面轉新版面的指令（fcn_checker.config_migrate）
 
 

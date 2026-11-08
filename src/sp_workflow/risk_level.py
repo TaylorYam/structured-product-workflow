@@ -6,7 +6,7 @@
 - `assess`：一檔的計算本身（不碰資料庫）。
 - `recalculate_risk`：在核對條件重算的 transaction 裡算這幾檔，寫入有變的；`fill_missing_locked`：替還沒有風險等級的已鎖住商品算一次。
 - `risk_levels`／`risk_level_of`：讀存好的結果（起單資料頁顯示；說明書／投資人須知的 RR 核對與寄信草稿用，#239）。
-指數清單與補充、備用 ETF 由 `product_terms.load_import_config` 讀設定檔 `config/risk_level.toml`；
+指數清單與補充、備用 ETF 由 `import_config.load_import_config` 讀設定檔 `config/risk_level.toml`；
 ETF 清單以資料庫的可連結標的白名單為主（`etf_list`、`eln_whitelist`，#273）。
 
 公式：總分 = 0.4×保本率分 + 0.2×年期分 + 0.3×結構複雜度分 + 0.1×流動性分，十進位計算。
@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, Any
 
 from sp_workflow.credit_ratings import GUARANTOR, ISSUER, MOODYS, RatingRows, load_rows
 from sp_workflow.database import require_in_transaction
+from sp_workflow.import_config import ImportConfig
 from sp_workflow.product_record import plain
 from sp_workflow.product_store import Stored, issuer_code, locked_tdccs, read_many
 from sp_workflow.sheet_cells import bbg_code
@@ -50,8 +51,6 @@ from sp_workflow.status import Risk
 
 if TYPE_CHECKING:
     import psycopg
-
-    from sp_workflow.product_terms import ImportConfig
 
 # 狀態
 DONE = Risk.DONE

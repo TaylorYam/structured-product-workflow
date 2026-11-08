@@ -11,7 +11,8 @@
 同一套事實確認一次還是待寄信（`still_pending_mail`，#205）。
 比價狀態（#170、ADR 0020）照 `workflow.pricing_status` 帶出：狀態、原因、已比到的日期（只講 KO）與 KI 欄（#196、ADR 0022）；
 還沒比過的空白。
-只讀資料庫；商品條件、核對條件與標的價格經 `product_store.read_many` 讀（#204、#438），匯出 Excel 用 `file_tools.save_rows`。
+只讀資料庫；商品條件、核對條件、標的價格、存續狀態與比價狀態經 `product_store.read_many` 讀（#204、#438、#495），
+匯出 Excel 用 `file_tools.save_rows`。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
@@ -26,10 +27,10 @@ from typing import TYPE_CHECKING
 
 from sp_workflow.database import require_in_transaction
 from sp_workflow.file_tools import save_rows
-from sp_workflow.lifecycle import Objection, lifecycle_status, open_objections
+from sp_workflow.import_config import ImportConfig
+from sp_workflow.lifecycle import IN_STOCK, Objection, open_objections
 from sp_workflow.product_record import PRICING_FIELD, REQUIRED, missing_fields
-from sp_workflow.product_store import issuer_code, locked, read_many, terms_imported
-from sp_workflow.product_terms import ImportConfig
+from sp_workflow.product_store import PricingState, Stored, issuer_code, locked, read_many, terms_imported
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource, Progress
 from sp_workflow.step_records import DRAFTED_STEP, PREPARED_STEP, RETURNED_STEP, SENT_STEP
 
@@ -169,15 +170,17 @@ def _gaps(facts: Facts) -> dict[str, str]:
 
 @dataclass
 class _AllFacts:
-    """`_read_facts` 讀到的：每檔的事實（`Facts` 的欄）、資料庫的上手欄與交易日。"""
+    """`_read_facts` 讀到的：每檔的事實（`Facts` 的欄）、資料庫的上手欄與交易日，和資料庫裡的商品（`read_many`）。"""
 
     facts: dict[str, dict] = field(default_factory=dict)
     issuers: dict[str, str | None] = field(default_factory=dict)
     trade_dates: dict[str, dt.date | None] = field(default_factory=dict)
+    products: dict[str, Stored] = field(default_factory=dict)
 
 
-def _read_facts(conn: psycopg.Connection) -> _AllFacts:
-    """所有有交易明細或商品條件的商品的事實（判斷階段用的）；在呼叫端的 transaction 裡讀。"""
+def _read_facts(conn: psycopg.Connection, *, state: bool = False) -> _AllFacts:
+    """所有有交易明細或商品條件的商品的事實（判斷階段用的）；在呼叫端的 transaction 裡讀。`state`：商品一起讀存續狀態
+    與比價狀態（`read_many`，#495）。"""
     require_in_transaction(conn)
     found = _AllFacts()
     facts, trade_dates = found.facts, found.trade_dates
@@ -194,7 +197,7 @@ def _read_facts(conn: psycopg.Connection) -> _AllFacts:
         item["has_trades"] = True
         trade_dates[tdcc] = first_trade
     imported_at = terms_imported(conn)
-    products = read_many(conn)
+    products = found.products = read_many(conn, state=state)
     for tdcc, stored in products.items():
         product = stored.columns
         item = of(tdcc)
@@ -243,27 +246,17 @@ def still_pending_mail(conn: psycopg.Connection, tdccs: Sequence[str]) -> tuple[
 def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date) -> tuple[ProgressRow, ...]:
     """所有有交易明細或商品條件的商品的進度，依 TDCC 排（畫面再依天數排）。在同一個 transaction 裡讀。"""
     with conn.transaction():
-        known = _read_facts(conn)
+        known = _read_facts(conn, state=True)
         facts, trade_dates = known.facts, known.trade_dates
-        pricing = {
-            tdcc: {
-                "pricing": status,
-                "pricing_reason": reason or "",
-                "observed_through": through,
-                "pricing_unlocked": not locked,
-                "ki": ki or "",
-            }
-            for tdcc, status, reason, through, locked, ki in conn.execute(
-                "SELECT tdcc, status, reason, observed_through, locked, ki FROM workflow.pricing_status"
-            )
-        }
         tdccs = sorted(facts)
-        statuses = lifecycle_status(conn, tdccs)
         objections = open_objections(conn, tdccs)
     issuers = {tdcc: issuer_code(tdcc, issuer, config) for tdcc, issuer in known.issuers.items()}
     rows = []
     for tdcc in tdccs:
         found = Facts(**facts[tdcc])
+        stored = known.products.get(tdcc)  # 只有交易明細、還沒有商品條件的是 None：在庫、沒有比價狀態
+        lifecycle = IN_STOCK if stored is None or stored.lifecycle is None else stored.lifecycle.status
+        pricing = None if stored is None else stored.pricing
         progress, reason = progress_of(found)
         trade_date = trade_dates.get(tdcc)
         rows.append(
@@ -273,15 +266,28 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
                 trade_date,
                 None if trade_date is None else (today - trade_date).days,
                 progress,
-                statuses[tdcc].status,
+                lifecycle,
                 tuple(found.dates.get(name) for name in DATE_COLUMNS),
                 reason,
                 objection_text(objections.get(tdcc, ())),
-                **pricing.get(tdcc, {}),
+                **_pricing_columns(pricing),
                 ready=ready_of(found),
             )
         )
     return tuple(rows)
+
+
+def _pricing_columns(pricing: PricingState | None) -> dict[str, object]:
+    """進度列的比價欄（ADR 0020、0022）；還沒比過的商品用 `ProgressRow` 的預設。"""
+    if pricing is None:
+        return {}
+    return {
+        "pricing": pricing.status,
+        "pricing_reason": pricing.reason,
+        "observed_through": pricing.observed_through,
+        "pricing_unlocked": not pricing.locked,
+        "ki": pricing.ki,
+    }
 
 
 def _has_initial_prices(product: Mapping[str, object], prices: Mapping[int, Decimal | None]) -> bool:

@@ -324,7 +324,6 @@ def test_export_writes_one_table_per_sheet(seeded, tmp_path: Path) -> None:
     tickers = table(book["大跌標的"], 9)
     assert tickers[0][2:5] == ("標的價格\n近1月表現", "標的價格\n近2月表現", "標的價格\n近3月表現")
     assert tickers[0][7:9] == ("跌破執行價\n檔數", "跌破執行價\n面額")
-    assert book["大跌標的"]["C3"].alignment.wrap_text, "表頭兩行"
     assert [row[0] for row in tickers[1:]] == ["BBB", "CCC", "AAA", "DDD"], "依連結面額大到小"
     aaa = tickers[3]
     assert aaa[1:6] == (72, pytest.approx(-0.2), None, None, 2), "近 1 月 72 ÷ 90 − 1；更早沒有收盤價留空"
@@ -345,13 +344,9 @@ def test_export_writes_one_table_per_sheet(seeded, tmp_path: Path) -> None:
         "合計",
     ]
     assert grid[-1][-1] == "3.7（3檔）", "合計對得上總覽三列加總（#473）"
-    assert overview["A1"].font.name == "Calibri", "英文、數字用 Calibri"
-    assert book._fonts[0].name == "微軟正黑體", "活頁簿預設字型是微軟正黑體，中文用它顯示"  # noqa: SLF001
     for sheet in book.worksheets:
         texts = [str(v) for row in sheet.iter_rows(values_only=True) for v in row if v is not None]
         assert not [t for t in texts if "KI" in t], f"{sheet.title} 不出現 KI（#471）"
-        assert not sheet.merged_cells.ranges and not sheet.conditional_formatting, "貼到 PPT 不走樣"
-        assert sheet.sheet_view.showGridLines is False
 
 
 @pytest.mark.db

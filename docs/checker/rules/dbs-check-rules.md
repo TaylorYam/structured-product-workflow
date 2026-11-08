@@ -114,7 +114,7 @@
 - `quanto_zh = "Quanto"`、`quanto_en = "Quanto "`：**計價幣別 ≠ 標的報價幣別**時填入（表1 價格幣別字和承作幣別不同；DB1、DB4）。
 - `ki_zh = "及定價日觸發(歐式)"`、`ki_en = "European Knock-In "`：有 KI（AM）時填入（DB2、DB4）。
 - `{quanto_*}`、`{ki_*}` 是共用名稱規則新加的佔位符（[審查標準](review-standard.md) §2.3；其他上手沒有設定就不填，結果不變）；Quanto 依說明書表1 價格旁的幣別字（`PriceRow.currency`）和承作幣別比。`memory_zh`／`memory_en` 設空字串（只支援記憶式，固定文字已寫在樣板）。
-- 名稱截到 `(下稱「本商品」)` 之前；中文、英文都忽略空白（`ignore_whitespace_en = true`）、括號統一（`normalize_brackets = true`）。
+- 名稱截到 `(下稱「本商品」)` 之前；中文、英文都忽略空白（`normalize_en = ["whitespace"]`）、括號統一（`normalize_zh = ["brackets"]`）。
 - **單一標的**（沒有樣本，「一籃子中表現最差」的寫法未知）：名稱轉人工覆核（樣板 `single_unsupported = true`，共用名稱規則在標的 1 檔時不套樣板、`variant_not_covered`；2026-10-15 確認）。
 
 **發行機構名稱**（`issuer.dbs.issuer_name`）：`新加坡商星展銀行股份有限公司(DBS Bank Ltd)`；封面、相關機構事業概況 1.(1)、投資人須知相關機構 1. 都相同。2026-10-15 確認 DBS 只有這一個發行主體；其他寫法判不一致或轉人工覆核。

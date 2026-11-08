@@ -33,7 +33,7 @@ def test_all_consistent_passes_with_evidence_and_metadata(tmp_path):
     meta = report.metadata
     assert len(meta["inputs"]["term_sheet"]["sha256"]) == 64
     assert len(meta["inputs"]["reference_sheet"]["sha256"]) == 64
-    assert meta["review_standard"]["version"] == 39
+    assert meta["review_standard"]["version"] == 40
     assert meta["reference_format"]["version"] == 26
     assert meta["program_version"] and meta["extractor"].startswith("PyMuPDF")
     assert report.not_covered, "第二階段規則應列在未涵蓋清單"
@@ -82,7 +82,7 @@ def test_price_table_cross_page_thousands_and_wrapped_names(tmp_path):
 
 def test_excel_float_tail_is_cleaned(tmp_path):
     spec = Spec(strike=Decimal("63.13"))
-    report = check(tmp_path, spec, overrides={"K(%)": 63.129999999999995})
+    report = check(tmp_path, spec, **{"K(%)": 63.129999999999995})
     assert results(report, "field.strike_pct")[0].status == PASS
 
 
@@ -117,13 +117,13 @@ def test_excel_float_tail_is_cleaned(tmp_path):
     ],
 )
 def test_single_field_mismatch(tmp_path, overrides, expected):
-    report = check(tmp_path, overrides=overrides)
+    report = check(tmp_path, **overrides)
     assert problems(report) == {(rule_id, MISMATCH) for rule_id in expected}
     assert report.status == MISMATCH
 
 
 def test_ki_pct_mismatch_when_both_have_ki(tmp_path):
-    report = check(tmp_path, Spec(ki="AM"), overrides={"KI(%)": 65.0})
+    report = check(tmp_path, Spec(ki="AM"), **{"KI(%)": 65.0})
     assert problems(report) == {("field.ki_pct", MISMATCH)}
 
 
@@ -183,9 +183,9 @@ def test_non_default_denomination_requires_review(tmp_path):
 @pytest.mark.parametrize(
     ("kwargs", "rule_id"),
     [
-        ({"overrides": {"KO(Freq)": "W"}}, "field.ko_observation"),
-        ({"overrides": {"KO(memo)": "?"}}, "field.ko_memory"),
-        ({"overrides": {"KI(Freq)": "X"}}, "field.ki_type"),
+        ({"KO(Freq)": "W"}, "field.ko_observation"),
+        ({"KO(memo)": "?"}, "field.ko_memory"),
+        ({"KI(Freq)": "X"}, "field.ki_type"),
     ],
 )
 def test_unknown_order_vocabulary_requires_review(tmp_path, kwargs, rule_id):

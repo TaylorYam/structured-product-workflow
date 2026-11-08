@@ -15,13 +15,13 @@ from collections.abc import Callable
 from dataclasses import dataclass, replace
 from decimal import Decimal
 
-from ..config import ISSUER_NAME_IGNORES, NAME_FLAGS, RISK_LEVEL, RISK_LEVEL_PENDING
+from ..config import ISSUER_NAME_IGNORES, RISK_LEVEL, RISK_LEVEL_PENDING
 from ..investor_sheet import read_iis
-from ..products import product_name
 from ..schema import CheckResult, DocKind, Evidence, FieldStatus, Item, OrderValue, ParsedField
 from ..schema import CheckStatus as S
 from ..standard_fields import AGENT_PLACES, GUARANTOR_PLACES, Occurrence, fee_field
 from ..text import compat_standard, full_brackets, nearest, squash, text_fix
+from . import product_name
 from .kit import Check, Context, occurrences_of, standard_field
 
 __all__ = ["iis_review_standard_rules", "review_standard_rules"]
@@ -790,176 +790,6 @@ def _issue_price_at(ctx: Context, rid: str, field: str, pf: ParsedField, name: s
     )
 
 
-def _quanto(ctx: Context, rows) -> bool | None:
-    """承作幣別和任一檔標的報價幣別（價格旁的幣別字）不同；讀不到幣別字或對照不到 ISO 代碼時為 None。"""
-    cz = standard_field(ctx, "currency_zh")
-    to_iso = ctx.std.currency_zh_to_iso
-    quotes = [to_iso.get(r.currency) if r.currency else None for r in rows]
-    if not cz.ok or to_iso.get(cz.value) is None or None in quotes:
-        return None
-    return any(q != to_iso[cz.value] for q in quotes)
-
-
-# 名稱樣板旗標 → (讀的說明書欄位, 判斷（判斷不出為 None）, 用到它的佔位符, 欄位不適用時的值（None：照常轉人工覆核）)
-_NAME_FLAG_SOURCES = (
-    ("maxi", "underlyings", lambda ctx, v: len(v) >= 2, {"maxi_zh", "maxi_en", "underlying_zh", "underlying_en"}, None),
-    (
-        "daily",
-        "ko_observation",
-        lambda ctx, v: v == "D",
-        {"daily_zh", "daily_en", "ko_observation_zh", "ko_observation_en"},
-        None,
-    ),
-    (
-        "autocall",
-        "autocall_schedule",
-        lambda ctx, v: v.first_callable < v.periods,
-        {"autocall_zh", "autocall_en"},
-        None,
-    ),
-    ("quanto", "underlying_prices", lambda ctx, v: _quanto(ctx, v), {"quanto_zh", "quanto_en"}, None),
-    ("ki", "ki_type", lambda ctx, v: v != "none", {"ki_zh", "ki_en"}, False),
-    ("express", "autocall_schedule", lambda ctx, v: v.first_callable == 0, {"express_zh", "express_en"}, None),
-    ("digital", "participation_pct", lambda ctx, v: v == 0, {"payoff_zh", "payoff_en"}, None),
-)
-
-
-def _name_flags(ctx: Context, used: frozenset[str]) -> tuple[dict[str, bool], ParsedField | None]:
-    """名稱樣板的 maxi（標的數 ≥ 2；{underlying_*} 也依它選 1 檔或 2 檔以上的寫法）、daily（KO 每日觀察）、
-    autocall（第一個可提前出場期早於到期，即 Non-Call < 天期）、quanto（承作幣別 ≠ 標的報價幣別）、ki（有 KI）、
-    digital（參與率 0，{payoff_*} 依它選寫法）旗標；
-    只讀樣板用到的說明書欄位。不依上手分支。"""
-    flags: dict[str, bool] = {}
-    for flag, field, test, names, not_applicable in _NAME_FLAG_SOURCES:
-        if used & names:
-            pf = standard_field(ctx, field)
-            if not_applicable is not None and pf.status == FieldStatus.NOT_APPLICABLE:  # 例：無 KI 交成不適用
-                flags[flag] = not_applicable
-                continue
-            if not pf.ok:
-                return flags, pf
-            value = test(ctx, pf.value)
-            if value is None:
-                return flags, ParsedField.invalid(field, [], f"判斷不出名稱樣板的「{flag}」旗標")
-            flags[flag] = value
-    return flags, None
-
-
-def _product_name(ctx: Context) -> list[CheckResult]:
-    """用說明書的天期、幣別、是否記憶式（樣板有用到時再加標的數、KO 觀察方式）組出預期名稱後比對。
-
-    名稱樣板依上手讀取審查標準 `issuer.<上手代號小寫>.product_name`，參考條件表 Product 另有樣板時用
-    `product_names."<Product>"`（Super Bull，#311）；沒有樣板時轉人工覆核。中文名稱括號全半形不計。
-    """
-    rid, issuer = "standard.product_name", ctx.issuer
-    items = {"name_zh": Item.standard("中文商品名稱"), "name_en": Item.standard("英文商品名稱")}
-    product = ctx.order.get("product")
-    tpl = ctx.issuer_std.product_name_for(product_name(product.value) if product is not None else None)
-    if tpl is None:
-        return [
-            Check(rid, field, items[field], ctx.document)
-            .needs(pf)
-            .result(
-                S.REVIEW_REQUIRED,
-                actual=pf.value,
-                reason="standard_missing",
-                message=f"審查標準沒有 {issuer} 的商品名稱樣板（issuer.{issuer.lower()}.product_name）",
-            )
-            for field, pf in ((f, standard_field(ctx, f)) for f in ("name_zh", "name_en"))
-        ]
-    tenor, cz, mem = (
-        standard_field(ctx, "tenor_months"),
-        standard_field(ctx, "currency_zh"),
-        standard_field(ctx, "ko_memory"),
-    )
-    out = []
-    for field in ("name_zh", "name_en"):
-        pf = standard_field(ctx, field)
-        check = Check(rid, field, items[field], ctx.document).needs(pf)
-        # 組名稱要四個欄位都讀得到；結果的證據只掛名稱那一欄，守門時才把其他三個暫掛上去
-        if (problem := check.needs(tenor, cz, mem).blocked) is not None:
-            out.append(problem)
-            continue
-        iso = ctx.std.currency_zh_to_iso.get(cz.value)
-        if iso is None:
-            out.append(
-                check.result(
-                    S.REVIEW_REQUIRED,
-                    actual=pf.value,
-                    reason="currency_unknown",
-                    message="幣別不在審查標準的對照表，無法組出預期名稱",
-                )
-            )
-            continue
-        lang = "zh" if field == "name_zh" else "en"
-        flags, bad = _name_flags(ctx, tpl.placeholders(lang))
-        if bad is not None:
-            out.append(check.review(bad))
-            continue
-        if tpl.single_unsupported and flags.get("maxi") is False:
-            out.append(
-                check.result(
-                    S.REVIEW_REQUIRED,
-                    actual=pf.value,
-                    reason="variant_not_covered",
-                    message="單一標的沒有樣本，名稱寫法未知，請人工確認",
-                )
-            )
-            continue
-        flags["memory"] = bool(mem.value)
-        values = {"tenor": tenor.value, "ccy_zh": cz.value, "ccy": tpl.ccy_text(iso)}
-        for flag in NAME_FLAGS:
-            for code in ("zh", "en"):
-                values[f"{flag}_{code}"] = tpl.flag_text(flag, code) if flags.get(flag) else ""
-        if flags.get("autocall"):  # 會提前出場且記憶式時改用 autocall_memory_*（SG「（記憶式自動提前出場）」）
-            for code in ("zh", "en"):
-                values[f"autocall_{code}"] = tpl.autocall_text(flags["memory"], code)
-        if "maxi" in flags:
-            for code in ("zh", "en"):
-                values[f"underlying_{code}"] = tpl.underlying_text(flags["maxi"], code)
-        if {"ko_observation_zh", "ko_observation_en"} & tpl.placeholders(lang):
-            for code in ("zh", "en"):
-                values[f"ko_observation_{code}"] = tpl.ko_observation_text(flags["daily"], code)
-        if "digital" in flags:  # 到期給付寫法（HSBC BEN：參與率 0 是 Digital，#375）
-            for code in ("zh", "en"):
-                values[f"payoff_{code}"] = tpl.payoff_text(flags["digital"], code)
-        expected = tpl.template(lang, tenor.value).format(**values)
-        if lang == "zh":
-            norm = (lambda s: full_brackets(squash(s))) if tpl.normalize_brackets else squash
-            tol = "忽略空白；全形／半形括號不計" if tpl.normalize_brackets else "忽略空白"
-        else:
-            norm = lambda s: re.sub(r"\s+", " ", s).strip()  # noqa: E731
-            tol = "連續空白視為一個"
-            if tpl.ignore_whitespace_en:
-                norm = squash
-                tol = "忽略所有空白與換行"
-        same = norm(expected) == norm(pf.value)
-        if lang == "en" and tpl.optional_suffix_en:  # 結尾可有可無的一段（UBS，workflow #475）
-            same = same or norm(expected + tpl.optional_suffix_en) == norm(pf.value)
-            tol += f"；結尾的「{tpl.optional_suffix_en}」可有可無"
-        if lang == "en" and tpl.ignore_prefix_en:  # 前面多的字不核對（HSBC Super Bull 的「Maxi 」）
-            same = norm(pf.value).endswith(norm(expected))
-            tol += "；名稱前面多的字不核對"
-        out.append(
-            check.compare(
-                expected,
-                pf.value,
-                ok=same,
-                tolerance=tol,
-                message="依審查標準名稱樣板與說明書天期、幣別、是否記憶式"
-                + ("、標的數" if {"underlying_zh", "underlying_en"} & tpl.placeholders(lang) else "")
-                + ("、是否會提前出場" if {"autocall_zh", "autocall_en"} & tpl.placeholders(lang) else "")
-                + ("、KO 觀察方式" if {"ko_observation_zh", "ko_observation_en"} & tpl.placeholders(lang) else "")
-                + ("、是否為 Quanto" if {"quanto_zh", "quanto_en"} & tpl.placeholders(lang) else "")
-                + ("、有無 KI" if {"ki_zh", "ki_en"} & tpl.placeholders(lang) else "")
-                + ("、有無 Non-Call" if {"express_zh", "express_en"} & tpl.placeholders(lang) else "")
-                + ("、參與率（到期給付型態）" if {"payoff_zh", "payoff_en"} & tpl.placeholders(lang) else "")
-                + "組出",
-            )
-        )
-    return out
-
-
 # ---------------------------------------------------------------- 審查標準有該上手分節才核對的固定值（BNP）
 
 
@@ -1174,7 +1004,7 @@ def review_standard_rules(ctx: Context, *, reference_trade: ParsedField) -> list
         _risk_level(ctx),
         _forbidden_wording(ctx, reference_trade),
         *_osu_clients(ctx, reference_trade),
-        *_product_name(ctx),
+        *product_name.check(ctx),
         *_issuer_name(ctx),
         *_distributor_info(ctx),
         _distributor_names_in_text(ctx),

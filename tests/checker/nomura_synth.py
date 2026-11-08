@@ -25,9 +25,10 @@ from typing import Any
 
 import fitz
 
-from harness import CONFIG, STANDARD, check_all, iis_path
-from pdf_writer import Edit, PdfWriter, require_used
+from harness import STANDARD, SynthChecks, iis_path
+from pdf_writer import Edit, FlowDoc, FlowLayout, require_used
 from reference_synth import (
+    DACN_PRODUCT,
     FITCH,
     MOODYS,
     NO_RATINGS,
@@ -35,15 +36,15 @@ from reference_synth import (
     UL,
     ProductSpec,
     Ratings,
-    build_reference_sheet,
     price,
     reference_row,
+    set_dacn,
+    set_pricing,
     ul_note,
     weekday_on_or_after,
 )
 
 NAME = STANDARD["issuer"]["nomura"]["product_name"]
-DACN_PRODUCT = "DACN"
 DACN_NAME = STANDARD["issuer"]["nomura"]["product_names"][DACN_PRODUCT]
 WARNING = STANDARD["issuer"]["nomura"]["fixed_warning"]
 ISSUER = STANDARD["issuer"]["nomura"]["issuer_name"]
@@ -221,61 +222,17 @@ DACN_DEFINITIONS = (
 )
 
 
-def _tokens(text: str) -> list[str]:
-    """換行單位：連續的英數字（含符號）不拆開，中文一字一個。"""
-    return re.findall(r"[\x21-\x7e]+|\s|.", text)
+LAYOUT = FlowLayout(right=540, keep_width=True, row_gap=15, chapter_fmt="{n}、{name}", chapter_x=45, chapter_gap=20)
 
 
-class _Doc:
-    """逐行排版；文字依目前段落代號（`section`）套用改字，超過寬度時換行（英數字不拆開）。"""
-
-    def __init__(self, edits: Sequence[Edit], used: set[Edit], kind: str = "ts", width: float = 540):
-        self.w = PdfWriter(edits, kind, used)
-        self.section = "cover"
-        self.width = width
-
-    @property
-    def section(self) -> str:
-        return self.w.section
-
-    @section.setter
-    def section(self, value: str) -> None:
-        self.w.section = value
-
-    def text(self, x: float, text: str, cont: float | None = None, gap: float = 13) -> None:
-        text = self.w.edit(text)
-        if not text:
-            return
-        width, cur, used, first = self.width - x, "", 0.0, True
-        with self.w.verbatim():
-            for tok in _tokens(text):
-                tw = sum(fitz.get_text_length(c, fontname="helv", fontsize=10) if ord(c) < 256 else 10 for c in tok)
-                if used + tw > width and cur.strip():
-                    self.w.line(x if first else (cont if cont is not None else x), cur.strip(), gap=gap)
-                    cur, used, first = "", 0.0, False
-                    if tok.isspace():
-                        continue
-                cur += tok
-                used += tw
-            self.w.line(x if first else (cont if cont is not None else x), cur.strip(), gap=gap)
-
-    def row(self, cells: Sequence[tuple[float, str]], gap: float = 15, size: float = 10) -> None:
-        self.w.row(cells, gap=gap, size=size)
-
-    def chapter(self, zh: str, name: str) -> None:
-        self.w.new_page()
-        self.section = f"ch{zh}"
-        self.w.line(45, f"{zh}、{name}", gap=20)
-
-    def article(self, n: int, title: str) -> None:
-        """第一章條號：1.～9. 獨立一行（標題在下一行），10. 以後與標題同一行；其他章一律獨立一行。"""
-        if self.section == "cover" or self.section.startswith("art") or self.section == "ch一":
-            self.section = f"art{n}"
-        if n >= 10 and self.section.startswith("art"):
-            self.text(45, f"{n}. {title}", 70)
-            return
-        self.w.line(45, f"{n}.", gap=14)
-        self.text(70, title)
+def _article(d: FlowDoc, n: int, title: str) -> None:
+    """第一章條號：1.～9. 獨立一行（標題在下一行），10. 以後與標題同一行；其他章一律獨立一行。"""
+    d.enter_article(n)
+    if n >= 10 and d.section.startswith("art"):
+        d.text(45, f"{n}. {title}", 70)
+        return
+    d.w.line(45, f"{n}.", gap=14)
+    d.text(70, title)
 
 
 def _warnings() -> list[str]:
@@ -299,7 +256,7 @@ def _warnings() -> list[str]:
 # ---------------------------------------------------------------- 說明書
 
 
-def _cover(d: _Doc, s: Spec) -> None:
+def _cover(d: FlowDoc, s: Spec) -> None:
     w = d.w
     w.line(174, "(適用於專業投資人及OSU客戶)", gap=20)
     w.line(235, "中文產品說明書", gap=24)
@@ -336,7 +293,7 @@ def _cover(d: _Doc, s: Spec) -> None:
     d.text(353, f"產品說明書刊印日期：{s.date(s.trade_date)}")
 
 
-def _article7(d: _Doc, s: Spec) -> None:
+def _article7(d: FlowDoc, s: Spec) -> None:
     unit = s.currency_zh
     worst = "表現最差之連結標的" if s.basket else "連結標的"
     indiv = "個別" if s.basket else ""
@@ -438,7 +395,7 @@ def _article7(d: _Doc, s: Spec) -> None:
     d.section = "art7"
 
 
-def _dacn_coupon(d: _Doc, s: DacnSpec) -> None:
+def _dacn_coupon(d: FlowDoc, s: DacnSpec) -> None:
     """DACN 第 7 項配息段落（範本規格 §2）：每日計息配息公式、年化配息率、實際日數／總日數定義與中斷日剔除句。"""
     d.text(
         70,
@@ -458,7 +415,7 @@ def _dacn_coupon(d: _Doc, s: DacnSpec) -> None:
         d.text(70, text)
 
 
-def _price_table(d: _Doc, s: Spec) -> None:
+def _price_table(d: FlowDoc, s: Spec) -> None:
     """第 7 項標的表（7 號字）：表頭一格拆成多行（K／KO／KI % 寫在表頭）；每檔一列，名稱與彭博代碼拆兩行（單數檔
     「代號 交易所碼」／「Equity」，雙數檔「代號」／「交易所碼 Equity 交易所」）。表頭「期初價格 執行價」擠在同一行，
     執行價欄的續行對齊「執」字（真實樣本）。"""
@@ -507,7 +464,7 @@ def _price_table(d: _Doc, s: Spec) -> None:
         row([*rest, (190 if i % 2 else 200, EXCHANGE[exch][4:]), (239, "所")], 14)
 
 
-def _article8_9(d: _Doc, s: Spec, n: int) -> None:
+def _article8_9(d: FlowDoc, s: Spec, n: int) -> None:
     if n == 8:
         if s.basket:
             for i, u in enumerate(s.underlyings, 1):
@@ -523,7 +480,7 @@ def _article8_9(d: _Doc, s: Spec, n: int) -> None:
         d.text(70, f"彭博代碼：{u.ticker} Equity/交易所：{u.exchange}/相關交易所：所有交易所")
 
 
-def _article11(d: _Doc, s: Spec) -> None:
+def _article11(d: FlowDoc, s: Spec) -> None:
     d.text(70, s.sp(f"(1) 商品年期：{s.tenor}個月（可能因自動提前出場事件或計畫提前贖回事件之發生而變更）"), 94)
     d.text(70, f"(2) 交易日：{s.date(s.trade_date)}", 94)
     d.text(70, f"(3) 發行日：{s.date(s.issue_date)}", 94)
@@ -570,7 +527,7 @@ def _article11(d: _Doc, s: Spec) -> None:
     d.text(70, "(9) 中斷截止日：原預定應進行觀察或評價之日後八（8）個預定交易日之日。", 94)
 
 
-def _article14(d: _Doc, s: Spec) -> None:
+def _article14(d: FlowDoc, s: Spec) -> None:
     d.text(70, "(1) 投資收益計算方法：請見上述第7項「主要給付項目及其計算方式」。", 94)
     d.text(70, "(4) 以例示之情境分析解說最大可能獲利、損失及其他狀況之年化平均報酬率：", 94)
     d.text(94, "設定參數:")
@@ -617,7 +574,7 @@ def _article14(d: _Doc, s: Spec) -> None:
     d.text(70, "在最壞情況下，投資人將損失其投資之所有本金及利息（總報酬率則為-100%）。")
 
 
-def _dacn_scenarios(d: _Doc, s: DacnSpec) -> None:
+def _dacn_scenarios(d: FlowDoc, s: DacnSpec) -> None:
     """DACN 第 14 項情境一～四（範本規格 §2、§4.3）：情境一年化報酬率 = 年化配息率；情境二依實際日數比例算出（沒有算式）。"""
     basket = "一籃子股票中所有連結標的之收盤價"
     d.text(70, "情境一（自動提前出場）")
@@ -653,7 +610,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     used: set[Edit] = set()  # 說明書與投資人須知共用：改字換到哪一份都算
     if iis and path.stem.endswith("_TS"):
         build_iis_pdf(iis_path(path), s, edits=edits, used=used)
-    d = _Doc(edits, used)
+    d = LAYOUT.doc(edits, used)
     w = d.w
     _cover(d, s)
 
@@ -678,7 +635,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         16: "發行機構得提前贖回或投資人得提前贖回之條件及應注意事項：",
     }
     for n in range(1, 22):
-        d.article(n, titles.get(n, f"第{n}項說明（不核對）"))
+        _article(d, n, titles.get(n, f"第{n}項說明（不核對）"))
         if n == 3:
             d.text(70, f"保證機構名稱：{GUARANTOR['ch1']}")
             d.text(70, "保證機構之長期債務信用評等為：" + ratings_text(s.guarantor_ratings))
@@ -756,7 +713,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 
     d.chapter("三", "商品風險揭露")
     for n, title in ((1, "基本風險資訊："), (2, "個別商品風險資訊："), (6, "本商品之投資風險警語")):
-        d.article(n, title)
+        _article(d, n, title)
         if n == 2:  # 匯率風險的幣別說明文字（Issue #316）
             d.text(
                 71,
@@ -769,7 +726,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                 d.text(71, f"({k}) {t}", 95)
 
     d.chapter("四", "一般交易事項")
-    d.article(1, "商品開始受理申購、開始受理贖回日期及後續受理贖回日期，每營業日受理申購、贖回申請截止時間：")
+    _article(d, 1, "商品開始受理申購、開始受理贖回日期及後續受理贖回日期，每營業日受理申購、贖回申請截止時間：")
     for t in (
         f"(1) 商品開始受理申購日期：{s.date(s.trade_date)}",
         f"(2) 接受申購截止日：{s.date(s.trade_date)}",
@@ -778,7 +735,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         "(5) 每營業日受理申購、投資人贖回申請截止時間：投資人可於受託機構營業日台北下午時間三點整以前提出申請。",
     ):
         d.text(70, t, 94)
-    d.article(2, "投資人應負擔的各項費用及金額或計算基準之表列：")
+    _article(d, 2, "投資人應負擔的各項費用及金額或計算基準之表列：")
     d.text(70, "本商品係複委託項下之投資標的，投資人同意下列相關費用：")
     for row in (
         [(94, "費用項目"), (169, "費率(百分比)"), (262, "收取時點"), (382, "收取方式"), (496, "收取人")],
@@ -801,17 +758,17 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         [(71, "其他費用"), (167, "無")],
     ):
         d.row(row, gap=14)
-    d.article(3, "商品交易架構：不核對。")
-    d.article(4, "最低申購金額及最低後續申購金額：")
+    _article(d, 3, "商品交易架構：不核對。")
+    _article(d, 4, "最低申購金額及最低後續申購金額：")
     d.text(70, s.sp(f"最低申購金額：{s.money(s.denom)}（相當1單位商品面額）最低加價申購金額：{s.money(s.denom)}"))
-    d.article(5, "申購價金之計算：每單位商品面額× 申購單位數 × 100% + 申購費用")
-    d.article(6, "申購手續及資金給付方式：不核對。")
-    d.article(7, "發行不成立之情形：")
+    _article(d, 5, "申購價金之計算：每單位商品面額× 申購單位數 × 100% + 申購費用")
+    _article(d, 6, "申購手續及資金給付方式：不核對。")
+    _article(d, 7, "發行不成立之情形：")
     d.text(
         70,
         f"發行本商品之前提條件包括：(a) 發行機構於交易截止日或之前收到之本商品有效申購金額總計至少達{MINIMUM_ISSUE}；且不存在不利之市場情況。",
     )
-    d.article(8, "最低贖回金額或單位數：")
+    _article(d, 8, "最低贖回金額或單位數：")
     d.text(
         70,
         s.sp(
@@ -820,12 +777,12 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         + "本商品必須以單位商品面額之完整倍數贖回。",
     )
     for n in range(9, 17):
-        d.article(n, f"第{n}項說明（不核對）")
+        _article(d, n, f"第{n}項說明（不核對）")
         if n == 15:
             d.text(214, f"受託機構聯絡方式：{PHONE}")
 
     d.chapter("五", "特別記載事項")
-    d.article(1, "不核對。")
+    _article(d, 1, "不核對。")
     _page_marks(w.doc, 288)
     path = w.save(path)
     require_used(edits, used)
@@ -843,7 +800,7 @@ def _page_marks(doc: fitz.Document, x: float) -> None:
 
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """Nomura 中文投資人須知（docs/checker/templates/nomura-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
-    d = _Doc(edits, set() if used is None else used, "iis", width=575)
+    d = LAYOUT.doc(edits, used, "iis", right=575)
     w = d.w
     worst = "表現最差之連結標的" if s.basket else "連結標的"
     indiv = "個別" if s.basket else ""
@@ -1027,40 +984,12 @@ def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
     """與 `spec` 一致的參考條件表列；VWAP 時表上「期初定價」為 VWAP、進場價空白（NR6）。`overrides` 以 Excel 欄名覆寫。"""
     out = reference_row(spec)
     if isinstance(spec, DacnSpec):
-        out["Product"] = DACN_PRODUCT
-        out["配息門檻(%)"] = float(spec.strike if spec.barrier is None else spec.barrier)
+        set_dacn(out, spec.strike, spec.barrier)
     if spec.vwap:
-        out["期初定價"] = "VWAP"
-        out.update({f"UL_{i}_進場價": None for i in range(1, spec.count + 1)})
+        set_pricing(out, "vwap", spec.count)
     out.update(overrides)
     return out
 
 
-def check(
-    tmp_path: Path,
-    spec: Spec | None = None,
-    *,
-    pdf_spec: Spec | None = None,
-    edits: Sequence[Edit] = (),
-    config=CONFIG,
-    **overrides: Any,
-):
-    """合成說明書（`pdf_spec`，預設同 `spec`；`edits` 改字）＋與 `spec` 一致的參考條件表一列，經批量入口核對，回傳說明書的 CheckReport。"""
-    return check_item(tmp_path, spec, pdf_spec=pdf_spec, edits=edits, config=config, **overrides).report
-
-
-def check_item(
-    tmp_path: Path,
-    spec: Spec | None = None,
-    *,
-    pdf_spec: Spec | None = None,
-    edits: Sequence[Edit] = (),
-    config=CONFIG,
-    **overrides: Any,
-):
-    """同 `check`，回傳說明書的批量核對項目（BatchItem，含回填決策）。"""
-    spec = spec or Spec()
-    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", pdf_spec or spec, edits=edits)
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [row(spec, **overrides)])
-    outcome = check_all(sheet, [pdf], config)
-    return next(i for i in outcome.items if i.term_sheet == pdf)
+CHECKS = SynthChecks(Spec, build_pdf, row)  # 單份核對殼（harness.SynthChecks）
+check, check_item = CHECKS.check, CHECKS.check_item

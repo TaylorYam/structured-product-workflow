@@ -23,8 +23,9 @@ from sp_workflow.daily_import import ImportReceipt, PriceCsvReceipt, PriceSummar
 from sp_workflow.eln_whitelist import WhitelistImport
 from sp_workflow.legacy_backfill import EXISTING, FILLED, SKIPPED
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.observation import UNLOCKED, ObservationReceipt, Observed
+from sp_workflow.observation import UNLOCKED, ObservationReceipt
 from sp_workflow.product_backfill import IMPORTED
+from sp_workflow.product_store import PricingState
 from sp_workflow.tabs.base import (
     TITLE,
     BackgroundFactory,
@@ -567,7 +568,7 @@ def _observation_kpis(observation: Observation) -> list[tuple[str, int, bool]]:
     return [("存續事件有變（檔）", len(receipt.changes), False), ("比價沒完成（檔）", unfinished, unfinished > 0)]
 
 
-def _observed_detail(r: Observed) -> str:
+def _observed_detail(r: PricingState) -> str:
     through = "" if r.observed_through is None else f"（已比到 {r.observed_through:%Y-%m-%d}）"
     return f"{r.reason}{through}" + ("" if r.locked else f"；{UNLOCKED}")
 

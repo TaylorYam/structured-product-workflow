@@ -27,10 +27,11 @@ from sp_workflow.daily_import import (
 from sp_workflow.eln_whitelist import Listed, WhitelistImport, WhitelistReceipt
 from sp_workflow.legacy_backfill import EXISTING, FILLED, SKIPPED, BackfillLine, BackfillReceipt
 from sp_workflow.local_settings import FolderMemory
-from sp_workflow.observation import EventChange, ObservationReceipt, Observed
+from sp_workflow.observation import EventChange, ObservationReceipt
 from sp_workflow.order_terms import PENDING as ORDER_PENDING
 from sp_workflow.order_terms import OrderRow
 from sp_workflow.product_backfill import IMPORTED, ProductBackfillReceipt
+from sp_workflow.product_store import PricingState
 from sp_workflow.split_calendar import CalendarReceipt, Moved, Skipped
 from sp_workflow.stock_splits import Split
 from sp_workflow.window_actions import (
@@ -314,9 +315,9 @@ def test_the_first_whitelist_import_does_not_list_every_code(master, tmp_path: P
 OBSERVED = ObservationReceipt(
     dt.date(2026, 10, 21),
     (
-        Observed("147199990001", "已出場", "KO 2026-10-20", dt.date(2026, 10, 20), True),
-        Observed("147199990002", "等股價", "UL_2 BBB UN：2026-10-21 沒有收盤價", dt.date(2026, 10, 20), False),
-        Observed("147199990003", "在庫", "", dt.date(2026, 10, 21), True),
+        PricingState("147199990001", "已出場", "KO 2026-10-20", dt.date(2026, 10, 20), True),
+        PricingState("147199990002", "等股價", "UL_2 BBB UN：2026-10-21 沒有收盤價", dt.date(2026, 10, 20), False),
+        PricingState("147199990003", "在庫", "", dt.date(2026, 10, 21), True),
     ),
     (EventChange("147199990001", (), (("KO", "2026-10-20", None),)),),
     2,

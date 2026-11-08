@@ -37,14 +37,15 @@ from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from openpyxl.styles import Alignment, PatternFill
+from openpyxl.styles import PatternFill
 
-from sp_workflow.check_terms import NO_BARRIER
 from sp_workflow.close_prices import latest_closes
 from sp_workflow.daily_import import FC_LABEL_SQL
-from sp_workflow.file_tools import excel_value, save_export, table_book, text_cell
-from sp_workflow.lifecycle import IN_STOCK, lifecycle_status
-from sp_workflow.product_store import read_many, underlying_codes
+from sp_workflow.file_tools import save_export
+from sp_workflow.lifecycle import IN_STOCK
+from sp_workflow.product_record import AKI, MKI, NO_BARRIER
+from sp_workflow.product_store import Stored, read_many
+from sp_workflow.slide_table import BROKEN_FILL, Column, list_book
 from sp_workflow.status import CheckTerms
 from sp_workflow.stock_splits import SplitBook, load_splits
 from sp_workflow.underlying_pricing import KiTouch, Leg, converted
@@ -62,8 +63,6 @@ UNKNOWN = "無法計算"
 FIXED = "已比價"  # 最終比價日早於分析日、還在庫（#352）
 CATEGORIES = (DELIVER, WATCH, NEAR, MANUAL, SAFE, FIXED, UNKNOWN)
 NEAR_BUFFER = Decimal("0.10")  # 接近執行價的門檻（距執行價，#347）
-MKI = "MKI"
-AKI = "AKI"
 NO_FC = "-"
 MAX_LEGS = 5  # 一檔最多連結幾個標的
 KI_BROKEN = "跌破KI"  # 全部商品的狀態（#354）
@@ -201,12 +200,12 @@ def assess(position: Position, today: dt.date | None = None) -> Assessed:
 
 def load_choices(conn: psycopg.Connection) -> list[Choice]:
     """在庫商品連結的標的，照股票代號合併各交易所的代碼，依代號排序。"""
-    rows = underlying_codes(conn)
-    statuses = lifecycle_status(conn, [tdcc for tdcc, _ in rows])
     by_code: dict[str, set[str]] = defaultdict(set)
-    for tdcc, code in rows:
-        if statuses[tdcc].status == IN_STOCK:
-            by_code[code].add(tdcc)
+    for s in read_many(conn, state=True).values():
+        if _in_stock(s):
+            for code in s.underlyings:
+                if code is not None:
+                    by_code[code].add(s.tdcc)
     latest = latest_closes(conn, by_code)
     by_ticker: dict[str, list[str]] = defaultdict(list)
     for code in by_code:
@@ -235,31 +234,23 @@ def load_positions(
     trial = trial or {}
     today = today or dt.date.today()
     wanted = None if codes is None else set(codes)
-    due = [
+    found = [
         s
-        for s in read_many(conn).values()
+        for s in read_many(conn, state=True).values()
         if (final := s.columns["final_valuation_date"]) is not None
         and final <= until
         and (wanted is None or any(code in wanted for code in s.underlyings))
+        and _in_stock(s)
     ]
-    due.sort(key=lambda s: (s.columns["final_valuation_date"], s.tdcc))
-    statuses = lifecycle_status(conn, [s.tdcc for s in due])
-    found = [s for s in due if statuses[s.tdcc].status == IN_STOCK]
+    found.sort(key=lambda s: (s.columns["final_valuation_date"], s.tdcc))
     tdccs = [s.tdcc for s in found]
-    kis = {
-        tdcc: (ki, None if touched is None else KiTouch(touched, code))
-        for tdcc, ki, touched, code in conn.execute(
-            "SELECT tdcc, ki, ki_touch_date, ki_touch_code FROM workflow.pricing_status WHERE tdcc = ANY(%s)",
-            (tdccs,),
-        )
-    }
     holdings = _holdings(conn, tdccs)
     latest = latest_closes(conn, {u.code for s in found for u in s.prices})
     book = SplitBook(load_splits(conn))
     positions = []
     for s in found:
         p = s.columns
-        ki, touch = kis.get(s.tdcc, ("", None))
+        ki, touch = ("", None) if s.pricing is None else (s.pricing.ki, s.pricing.ki_touch)
         legs = []
         for u in s.prices:
             day, close = (today, trial[u.code]) if u.code in trial else latest.get(u.code, (None, None))
@@ -276,7 +267,7 @@ def load_positions(
                 p["currency"],
                 p["final_valuation_date"],
                 p["barrier_type"],
-                ki or "",
+                ki,
                 None if s.check is None else s.check.status,
                 None if s.check is None else s.check.reason or None,
                 tuple(legs),
@@ -287,6 +278,10 @@ def load_positions(
             )
         )
     return positions
+
+
+def _in_stock(stored: Stored) -> bool:
+    return stored.current_lifecycle().status == IN_STOCK
 
 
 def _holdings(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, list[Holding]]:
@@ -318,43 +313,31 @@ HOLDING_FILL = PatternFill("solid", fgColor="FCD5B4")  # 交易明細：淺橙
 DATE, INDEX, PERCENT, MONEY = "mm-dd-yy", "0.00", "0.0", "#,##0"  # 簡短日期、100 為基數的表現、K%／KI%、千分位
 
 
-@dataclass(frozen=True)
-class _Column:
-    name: str
-    width: float
-    fill: PatternFill
-    number_format: str | None = None
-
-
 _COLUMNS = (
-    _Column("狀態", 8.7, BASIC_FILL),
-    _Column("TDCC", 14.1, BASIC_FILL),
-    _Column("剩餘天數", 13.3, BASIC_FILL),
-    _Column("最終比價日", 15.9, BASIC_FILL, DATE),
-    _Column("商品", 10.4, BASIC_FILL),
-    _Column("最差表現標的", 18.4, PERFORMANCE_FILL),
-    _Column("最差表現", 13.3, PERFORMANCE_FILL, INDEX),
-    _Column("K%", 7.4, PERFORMANCE_FILL, PERCENT),
-    _Column("KI%", 8.3, PERFORMANCE_FILL, PERCENT),
-    _Column("KI種類", 11, PERFORMANCE_FILL),
-    _Column("面額", 11, BASIC_FILL, MONEY),  # 範本沒設寬度，同面額N
-    _Column("幣別", 8.6, BASIC_FILL),
-    _Column("發行機構", 13.3, BASIC_FILL),
+    Column("狀態", 8.7, fill=BASIC_FILL),
+    Column("TDCC", 14.1, fill=BASIC_FILL),
+    Column("剩餘天數", 13.3, fill=BASIC_FILL),
+    Column("最終比價日", 15.9, DATE, fill=BASIC_FILL),
+    Column("商品", 10.4, fill=BASIC_FILL),
+    Column("最差表現標的", 18.4, fill=PERFORMANCE_FILL),
+    Column("最差表現", 13.3, INDEX, fill=PERFORMANCE_FILL),
+    Column("K%", 7.4, PERCENT, fill=PERFORMANCE_FILL),
+    Column("KI%", 8.3, PERCENT, fill=PERFORMANCE_FILL),
+    Column("KI種類", 11, fill=PERFORMANCE_FILL),
+    Column("面額", 11, MONEY, fill=BASIC_FILL),  # 範本沒設寬度，同面額N
+    Column("幣別", 8.6, fill=BASIC_FILL),
+    Column("發行機構", 13.3, fill=BASIC_FILL),
 )
 
 
-def _holding_columns(n: int) -> tuple[_Column, ...]:
+def _holding_columns(n: int) -> tuple[Column, ...]:
     """第 n 組交易明細：分公司_n、FC_n、面額_n（同商品總表的寫法，和交易明細新版面的 FC1、FC2 欄分開，#420）。
     有 FC2 時 FC 寫「FC1／FC2」，欄寬放得下兩個名字。"""
     return (
-        _Column(f"分公司_{n}", 12, HOLDING_FILL),
-        _Column(f"FC_{n}", 12, HOLDING_FILL),
-        _Column(f"面額_{n}", 11, HOLDING_FILL, MONEY),
+        Column(f"分公司_{n}", 12, fill=HOLDING_FILL),
+        Column(f"FC_{n}", 12, fill=HOLDING_FILL),
+        Column(f"面額_{n}", 11, MONEY, fill=HOLDING_FILL),
     )
-
-
-CENTER = Alignment(horizontal="center", vertical="center")
-BROKEN_FILL = PatternFill("solid", fgColor="FFC7CE")  # 跌破K、跌破KI 的狀態格：淺紅色（Excel 內建的淺紅色填滿）
 
 
 @dataclass(frozen=True)
@@ -428,17 +411,14 @@ def export_hotspots(
 
 
 def _write(results: Sequence[Assessed], path: Path, today: dt.date) -> None:
-    """「全部商品」一個分頁；分公司N／FCN／面額N 的組數照交易明細最多那檔。"""
+    """「全部商品」一個分頁，清單版面（`slide_table.list_book`）；分公司N／FCN／面額N 的組數照交易明細最多那檔。
+    跌破K、跌破KI 只有狀態那一格填淺紅色。"""
     slots = max((len(r.position.holdings) for r in results), default=0) or 1
     columns = (*_COLUMNS, *(c for n in range(1, slots + 1) for c in _holding_columns(n)))
-    book = table_book(
-        ALL,
-        [c.name for c in columns],
-        ([excel_value(value) for value in _row(r, today)] for r in results),
-        widths=[c.width for c in columns],
-        auto_filter=True,
-    )
-    _style(book.active, columns)
+    book = list_book(ALL, columns, (_row(r, today) for r in results))
+    for row in book.active.iter_rows(min_row=2):
+        if row[0].value in BROKEN:
+            row[0].fill = BROKEN_FILL
     save_export(book, path)
 
 
@@ -468,18 +448,3 @@ def _row(r: Assessed, today: dt.date) -> tuple[object, ...]:
 def _index(performance: Decimal | None) -> Decimal | None:
     """表現換成 100 為基數：100 + 表現 %（−26.1% → 73.9）。"""
     return None if performance is None else 100 + performance * 100
-
-
-def _style(sheet, columns: Sequence[_Column]) -> None:
-    """表頭底色、數字與日期格式、全部置中；跌破K、跌破KI 只有狀態那一格填淺紅色。"""
-    for cell, column in zip(sheet[1], columns, strict=True):
-        cell.fill = column.fill
-        cell.alignment = CENTER
-    for row in sheet.iter_rows(min_row=2):
-        for cell, column in zip(row, columns, strict=True):
-            text_cell(cell)
-            if column.number_format and cell.value is not None and not isinstance(cell.value, str):
-                cell.number_format = column.number_format
-            cell.alignment = CENTER
-        if row[0].value in BROKEN:
-            row[0].fill = BROKEN_FILL

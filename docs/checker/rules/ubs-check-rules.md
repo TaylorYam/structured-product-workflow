@@ -126,7 +126,7 @@
 - 英文：`UBS {ko_observation_en} {memory_en}Callable Variable Maturity Equity Linked Notes with {ki_en}Fixed Coupon`。
 - 佔位符值：`daily_zh = "每日觀察"`、`periodic_zh = "定期觀察"`、`daily_en = "Daily"`、`periodic_en = "Periodic"`；`memory_zh = "記憶式"`、`memory_en = "Memory "`；`ki_zh = "（含觸及下限價事件）"`、`ki_en = "Kick-In Event and "`。
 - **需要新增兩組佔位符**（審查標準 §2.3，實作 PR 加入）：`{ko_observation_zh}`／`{ko_observation_en}`（KO 每日填 `daily_*`、KO 每期填 `periodic_*`；既有 `{daily_*}` 在每期時是空白，不夠用）、`{ki_zh}`／`{ki_en}`（有 KI 時填 `ki_*`，否則空白）。
-- 名稱比對：中文、英文都忽略空白（`ignore_whitespace_en = true`）、括號統一（`normalize_brackets = true`）、去掉句尾 `。`；**`瑞銀（定期觀察）`／`瑞銀（每日觀察）` 視為不加括號的寫法**（2026-10-15 確認；實作方式（名稱正規化或等價寫法設定）在實作 PR 決定，各名稱出處——說明書第 1 頁、商品基本資料一、投資人須知——都適用）。
+- 名稱比對：中文、英文都忽略空白（`normalize_en = ["whitespace"]`）、括號統一（`normalize_zh = ["brackets"]`）、去掉句尾 `。`；**`瑞銀（定期觀察）`／`瑞銀（每日觀察）` 視為不加括號的寫法**（2026-10-15 確認；實作方式（名稱正規化或等價寫法設定）在實作 PR 決定，各名稱出處——說明書第 1 頁、商品基本資料一、投資人須知——都適用）。
 - 名稱後的 `（下稱“本商品”）` 不屬於名稱。
 
 **發行機構名稱**（`issuer.ubs.issuer_name = "瑞士銀行"`）：三處的名稱本身都是 `瑞士銀行`（第 1 頁後接 `（下稱…）`、相關機構事業概況後接 `（UBS AG）`，都不屬於名稱）；發行分行見 §3.5。UBS 目前只有倫敦分行（2026-10-15 確認）。

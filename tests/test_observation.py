@@ -35,7 +35,6 @@ from sp_workflow.observation import (
     ON_BOOK,
     TO_CONFIRM,
     WAIT_PRICES,
-    Observed,
     Outcome,
     Terms,
     Underlying,
@@ -45,7 +44,7 @@ from sp_workflow.observation import (
     observe_all,
 )
 from sp_workflow.product_record import UnderlyingPrice
-from sp_workflow.product_store import Stored
+from sp_workflow.product_store import PricingState, Stored
 from sp_workflow.status import ProductSource
 from sp_workflow.stock_splits import Split, SplitBook, add_split, affected_exits, delete_split
 from sp_workflow.underlying_pricing import KiTouch
@@ -477,19 +476,19 @@ def test_from_stored_asks_the_product_rule_and_the_lock() -> None:
 def test_products_not_observed_carry_the_last_status() -> None:
     """#496：已出場、核對條件不是完成的商品沿用上一次的已比到日期與 KI；已出場時沒存過 KI 的寫 KI 種類（#198）。"""
     touch = KiTouch(dt.date(2026, 11, 5), "AAA UW")
-    before = Observed("147199990009", ON_BOOK, "", KO_DAY, False, "AKI hit 2026-11-05 UL_1 AAA UW", touch)
+    before = PricingState("147199990009", ON_BOOK, "", KO_DAY, False, "AKI hit 2026-11-05 UL_1 AAA UW", touch)
     blank = replace(before, ki="")  # 人改過資料庫：KI 欄空白、觸及還在
 
     assert _carried(before, before.tdcc, EXITED, "KO", True, "AKI") == replace(
         before, status=EXITED, reason="KO", locked=True
     )
-    assert _carried(blank, blank.tdcc, EXITED, "KO", True, "AKI") == Observed(
+    assert _carried(blank, blank.tdcc, EXITED, "KO", True, "AKI") == PricingState(
         blank.tdcc, EXITED, "KO", KO_DAY, True, "AKI"
     ), "寫 KI 種類，觸及不沿用"
     assert _carried(blank, blank.tdcc, TO_CONFIRM, "核對條件待確認", False) == replace(
         blank, status=TO_CONFIRM, reason="核對條件待確認"
     ), "核對條件不是完成：照存的沿用"
-    assert _carried(None, "147199990009", EXITED, "KO", False, "-") == Observed(
+    assert _carried(None, "147199990009", EXITED, "KO", False, "-") == PricingState(
         "147199990009", EXITED, "KO", None, False, "-"
     )
 

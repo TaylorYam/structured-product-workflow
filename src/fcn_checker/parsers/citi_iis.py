@@ -16,6 +16,7 @@ from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..standard_fields import Occurrence
 from ..text import squash
 from . import citi, iis, money, ratings
+from .common import fee_rates_by_pattern
 from .layout import TextIndex, join_text, parse_date
 
 TEMPLATE_ID = "citi-zh-iis"
@@ -335,12 +336,9 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         ),
     )
     fees = iis.section(ti, ("四、投資人應負擔的各項費用", "五、"))
-    for label in iis.FEES:
-        name = standard_fields.fee_field(label)
-        fields[name] = (
-            iis.capture(name, TextIndex(fees), FEE_PATTERNS[label])
-            if fees is not None
-            else ParsedField.missing(name, "找不到「四、投資人應負擔的各項費用」段落")
-        )
+    patterns = {label: FEE_PATTERNS[label] for label in iis.FEES}
+    fields.update(
+        fee_rates_by_pattern(fees, patterns, whole_match=False, no_table="找不到「四、投資人應負擔的各項費用」段落")
+    )
     fields.update(ratings.fields(text_lines, RATINGS, GUARANTOR_RATINGS))
     return iis.IisSheet(fields, ti, frozenset(provided))

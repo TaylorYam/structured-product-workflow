@@ -60,7 +60,7 @@ def hsbc_check(tmp_path, spec=None, overrides=None, edits=()):
 
 
 def test_barc_initial_price_difference_names_the_column_and_both_values(tmp_path):
-    report = check(tmp_path, overrides={"UL_2_進場價": 123.45})
+    report = check(tmp_path, **{"UL_2_進場價": 123.45})
 
     [r] = [r for r in issues(report) if r.rule_id == "field.underlying_prices"]
     assert r.status == CheckStatus.MISMATCH
@@ -92,7 +92,7 @@ def test_hsbc_initial_price_difference_names_the_column_and_both_values(tmp_path
     ],
 )
 def test_barc_reference_fields_use_column_name_and_both_values(tmp_path, column, value, expected):
-    report = check(tmp_path, overrides={column: value})
+    report = check(tmp_path, **{column: value})
 
     sheet_side = [r for r in issues(report) if r.rule_id.startswith("field.")]
     if column == "承作幣別":  # 金額旁每一處幣別字也和承作幣別比（Issue #170）：封面那筆之外各處也都對不起來
@@ -149,7 +149,7 @@ def test_pdfs_sharing_one_reference_row_get_a_plain_chinese_message(tmp_path, mo
 
 
 def test_missing_sheet_value_says_which_column(tmp_path):
-    report = check(tmp_path, overrides={"K(%)": None})
+    report = check(tmp_path, **{"K(%)": None})
 
     [r] = [r for r in issues(report) if r.rule_id == "field.strike_pct"]
     assert r.status == CheckStatus.REVIEW_REQUIRED
@@ -158,7 +158,7 @@ def test_missing_sheet_value_says_which_column(tmp_path):
 
 
 def test_derived_rule_names_the_blank_sheet_column(tmp_path):
-    report = check(tmp_path, overrides={"天期(月)": None})
+    report = check(tmp_path, **{"天期(月)": None})
 
     [r] = [r for r in issues(report) if r.rule_id == "derive.monthly_coupon"]
     assert problem_message(r) == "天期(月)：參考條件表沒有此欄位或值為空白"
@@ -579,7 +579,7 @@ def test_each_minimum_amount_names_itself(tmp_path):
 
 
 def test_monthly_coupon_derived_from_the_sheet_shows_the_sheet_side(tmp_path):
-    report = check(tmp_path, overrides={"Coupon p.a. (%)": 13})
+    report = check(tmp_path, **{"Coupon p.a. (%)": 13})
 
     [r] = [r for r in issues(report) if r.rule_id == "derive.monthly_coupon"]
     msg = problem_message(r)

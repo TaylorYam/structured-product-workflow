@@ -18,25 +18,14 @@ from harness import field_problems as problems
 from harness import results as rule
 from pdf_writer import Edit
 from reference_synth import REFERENCE_HEADERS, build_reference_sheet
-from sg_synth import DACN_PRODUCT, DacnSpec, Spec, build_pdf, row
+from sg_synth import CHECKS, DACN_PRODUCT, DacnSpec, Spec, build_pdf, row
 
 D0 = DacnSpec()  # 3 檔、9 個月、KO 每日＋記憶式、無 KI、保證 1 期 = Non-Call 1、年利率 13.2%（配息率 1.1000%）
 WITH_BARRIER = [*REFERENCE_HEADERS, "配息門檻(%)"]
 
 
-def check_pair(tmp_path: Path, spec: Spec = D0, *, pdf_spec: Spec | None = None, edits=(), headers=None, **overrides):
-    """合成說明書（`pdf_spec`，預設同 `spec`）＋投資人須知＋參考條件表一列（`headers` 預設沒有配息門檻欄），經批量入口核對，
-    回傳（說明書, 投資人須知）的核對項目。"""
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    pdf = build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", pdf_spec or spec, edits=edits)
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [row(spec, **overrides)], headers)
-    outcome = check_all(sheet, [pdf, iis_path(pdf)])
-    ts = next(i for i in outcome.items if i.term_sheet == pdf)
-    return ts, next(i for i in outcome.items if i.term_sheet != pdf)
-
-
-def check(tmp_path: Path, spec: Spec = D0, **kw):
-    return check_pair(tmp_path, spec, **kw)[0].report
+FAMILY = CHECKS.family(D0)  # 單份核對殼（harness.SynthChecks）：預設 D0、參考條件表預設沒有配息門檻欄
+check_pair, check = FAMILY.check_pair, FAMILY.check
 
 
 def lines_of(path: Path):

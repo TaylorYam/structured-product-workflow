@@ -278,6 +278,23 @@ def reference_row(spec: ProductSpec, **overrides: Any) -> dict[str, Any]:
     return make_row(spec.issuer, fields, **overrides)
 
 
+PRICING = {"close": "收盤價", "open": "開盤價", "vwap": "VWAP"}  # 期初定價方式 → 參考條件表「期初定價」的寫法
+DACN_PRODUCT = "DACN"  # DACN 在參考條件表 Product 欄的寫法（也是審查標準商品名稱表的鍵）
+
+
+def set_pricing(row: dict[str, Any], pricing: str, count: int) -> None:
+    """參考條件表列的「期初定價」依 `pricing`（close／open／vwap）；VWAP 時前 `count` 檔標的的進場價空白。"""
+    row["期初定價"] = PRICING[pricing]
+    if pricing == "vwap":
+        row.update({f"UL_{i}_進場價": None for i in range(1, count + 1)})
+
+
+def set_dacn(row: dict[str, Any], strike: Decimal, barrier: Decimal | None) -> None:
+    """DACN 的參考條件表列：Product 寫 DACN、「配息門檻(%)」= `barrier`（None → 同執行價 `strike`；表頭沒有這欄時不會寫出）。"""
+    row["Product"] = DACN_PRODUCT
+    row["配息門檻(%)"] = float(strike if barrier is None else barrier)
+
+
 def build_reference_sheet(
     path: Path,
     rows: list[dict[str, Any]],

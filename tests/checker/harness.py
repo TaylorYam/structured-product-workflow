@@ -8,7 +8,8 @@
 （固定警語的風險等級佔位符已代入 `SYNTH_RISK_LEVEL`）。
 
 說明書與參考條件表列由各上手的合成器產生（商品規格與參考條件表列在 tests/checker/reference_synth.py）；
-這裡不引用任何上手的版面或預設值，也不 import 合成器。
+這裡不引用任何上手的版面或預設值，也不 import 合成器。各合成器共用的單份核對殼 `SynthChecks`（`check`／`check_item`／
+`check_iis`／`check_pair`）在這裡，由合成器給規格、`build_pdf` 與參考條件表列。
 """
 
 from __future__ import annotations
@@ -18,16 +19,20 @@ import json
 import shutil
 import tomllib
 from collections.abc import Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from fcn_checker.batch import BatchOutcome, check_batch, preview_batch
+from fcn_checker.batch import BatchItem, BatchOutcome, check_batch, preview_batch
 from fcn_checker.check_config import CheckConfig, ConfigPaths
 from fcn_checker.config import RISK_LEVEL
 from fcn_checker.issuers import REGISTRY, Issuer, Template, by_code
 from fcn_checker.schema import CheckReport, CheckStatus
 from fcn_checker.trading_calendar import Market
+
+if TYPE_CHECKING:
+    from pdf_writer import Edit
+    from reference_synth import ProductSpec
 
 ROOT = Path(__file__).resolve().parents[2]
 REVIEW_STANDARD = ROOT / "config" / "review_standard.toml"
@@ -141,6 +146,71 @@ def check_all(sheet: Path, pdfs: Sequence[Path], config: CheckConfig = CONFIG) -
 def check_sheet(pdf: Path, sheet: Path, config: CheckConfig = CONFIG) -> CheckReport:
     """以既有的參考條件表核對一份說明書，回傳該份的 CheckReport。"""
     return check_all(sheet, [pdf], config).items[0].report
+
+
+@dataclass(frozen=True)
+class SynthChecks:
+    """一家上手（或商品族）合成器的單份核對殼：合成說明書＋同商品投資人須知＋參考條件表一列，經批量入口核對。
+
+    各合成器建一次（`CHECKS = SynthChecks(Spec, build_pdf, row)`），模組層再取成 `check`／`check_item`／`check_iis`／
+    `check_pair`。`default()` 是沒給規格時的商品規格；`build_pdf(path, spec, edits=...)` 寫說明書與投資人須知；
+    `row(spec, **overrides)` 是與 spec 一致的參考條件表列（Citi、JPM 另收標的排序 `order`）；`headers` 是參考條件表
+    預設欄名（None = 正式版面）。這裡只收各上手給的函式，不引用任何上手的版面或預設值。
+    """
+
+    default: Callable[[], ProductSpec]
+    build_pdf: Callable[..., Path]
+    row: Callable[..., dict[str, Any]]
+    headers: Sequence[str] | None = None
+
+    def family(self, default: ProductSpec, *, headers: Sequence[str] | None = None) -> SynthChecks:
+        """同一家的商品族（例：DACN、BEN）：預設規格換成 `default`，參考條件表預設欄名換成 `headers`。"""
+        return replace(self, default=lambda: default, headers=headers)
+
+    def run(
+        self,
+        tmp_path: Path,
+        spec: ProductSpec | None = None,
+        *,
+        pdf_spec: ProductSpec | None = None,
+        edits: Sequence[Edit] = (),
+        headers: Sequence[str] | None = None,
+        config: CheckConfig = CONFIG,
+        **overrides: Any,
+    ) -> tuple[Path, BatchOutcome]:
+        """合成說明書（`pdf_spec`，預設同 `spec`；`edits` 改字）＋投資人須知＋與 `spec` 一致的參考條件表一列（`overrides`
+        以 Excel 欄名覆寫，`headers` 預設 `self.headers`），經批量入口核對，回傳（說明書路徑, 批量核對結果）。"""
+        from reference_synth import build_reference_sheet  # reference_synth 引用本模組：呼叫時才引用，免得循環
+
+        if nested := [name for name, value in overrides.items() if isinstance(value, dict)]:
+            # 舊寫法 `overrides={…}` 會被當成一個叫 overrides 的欄、悄悄丟掉；欄名直接當關鍵字傳
+            raise TypeError(f"參考條件表覆寫要用欄名當關鍵字，不是 dict：{nested}")
+        spec = spec or self.default()
+        tmp_path.mkdir(parents=True, exist_ok=True)
+        pdf = self.build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", pdf_spec or spec, edits=edits)
+        rows = [self.row(spec, **overrides)]
+        sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", rows, self.headers if headers is None else headers)
+        return pdf, check_all(sheet, [pdf], config)
+
+    def check_item(self, tmp_path: Path, spec: ProductSpec | None = None, **kw: Any) -> BatchItem:
+        """同 `run`，回傳說明書的批量核對項目（含 `partner` 投資人須知）。"""
+        pdf, outcome = self.run(tmp_path, spec, **kw)
+        return next(i for i in outcome.items if i.term_sheet == pdf)
+
+    def check(self, tmp_path: Path, spec: ProductSpec | None = None, **kw: Any) -> CheckReport:
+        """同 `run`，回傳說明書的 CheckReport。"""
+        return self.check_item(tmp_path, spec, **kw).report
+
+    def check_iis(self, tmp_path: Path, spec: ProductSpec | None = None, **kw: Any) -> BatchItem:
+        """同 `run`，回傳投資人須知的批量核對項目。"""
+        pdf, outcome = self.run(tmp_path, spec, **kw)
+        return next(i for i in outcome.items if i.term_sheet == iis_path(pdf))
+
+    def check_pair(self, tmp_path: Path, spec: ProductSpec | None = None, **kw: Any) -> tuple[BatchItem, BatchItem]:
+        """同 `run`，回傳（說明書, 投資人須知）的批量核對項目。"""
+        pdf, outcome = self.run(tmp_path, spec, **kw)
+        ts = next(i for i in outcome.items if i.term_sheet == pdf)
+        return ts, next(i for i in outcome.items if i.term_sheet != pdf)
 
 
 # 上手規則判錯的那一處，共用規則也會報（例：括號內幣別代碼錯，`doc.currency_consistency` 和

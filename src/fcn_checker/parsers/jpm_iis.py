@@ -12,11 +12,10 @@ from collections.abc import Sequence
 from dataclasses import replace
 from decimal import Decimal
 
-from .. import standard_fields
 from ..schema import DetectionResult, Evidence, FieldStatus, Line, ParsedField
 from ..text import squash
 from . import iis, jpm, money, price_table, ratings
-from .common import derived
+from .common import derived, fee_rates_by_pattern
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "jpm-zh-iis"
@@ -274,12 +273,7 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
         ),
     )
     fees = iis.section(ti, ("四、費用", "五、"))
-    for label in iis.FEES:
-        name = standard_fields.fee_field(label)
-        fields[name] = (
-            iis.capture(name, TextIndex(fees), jpm.FEE_PATTERNS[label])
-            if fees is not None
-            else ParsedField.missing(name, "找不到「四、費用」段落")
-        )
+    patterns = {label: jpm.FEE_PATTERNS[label] for label in iis.FEES}
+    fields.update(fee_rates_by_pattern(fees, patterns, whole_match=False, no_table="找不到「四、費用」段落"))
     fields.update(ratings.fields(text_lines, guarantor=GUARANTOR_RATINGS, issuer_unrated=ISSUER_UNRATED))
     return iis.IisSheet(fields, ti, frozenset(provided))
