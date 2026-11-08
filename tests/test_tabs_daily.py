@@ -31,7 +31,7 @@ from sp_workflow.observation import EventChange, ObservationReceipt, Observed
 from sp_workflow.order_terms import PENDING as ORDER_PENDING
 from sp_workflow.order_terms import OrderRow
 from sp_workflow.product_backfill import IMPORTED, ProductBackfillReceipt
-from sp_workflow.split_calendar import CalendarReceipt, Moved
+from sp_workflow.split_calendar import CalendarReceipt, Moved, Skipped
 from sp_workflow.stock_splits import Split
 from sp_workflow.window_actions import (
     DailyResult,
@@ -41,6 +41,7 @@ from sp_workflow.window_actions import (
     OtherProductsResult,
     PriceCsvResult,
     Recalc,
+    SplitCalendarResult,
     WhitelistResult,
 )
 from window_synth import NEEDS_RELEASE, UF_DIFF, hint_change_button, new_window, read_result, release_without_database
@@ -369,28 +370,6 @@ def test_daily_import_says_how_many_closes_were_stored_and_observes(master, tmp_
     assert window.daily.exits_button.winfo_manager() == "pack"
 
 
-def test_daily_import_lists_splits_from_the_calendar(master, tmp_path: Path) -> None:
-    """拆股行事曆（#509）：新登記、改生效日與抓不到的來源寫在比價前面。"""
-    window = new_window(master, tmp_path)
-    result = daily_receipt(tmp_path)
-    receipt = replace(
-        result.receipt, closes=CloseSummary(3, dt.date(2026, 10, 21), dt.date(2026, 10, 21), 1, 1, 0, 0, 0)
-    )
-    split = Split("AAA UW", dt.date(2026, 11, 20), 1, 8, "自動登記：Yahoo、Nasdaq 行事曆（2026-11-08 抓取）")
-    moved = Moved(Split("BBB JT", dt.date(2026, 10, 22), 1, 5), Split("BBB JT", dt.date(2026, 10, 21), 1, 5))
-    splits = CalendarReceipt((split,), (moved,), errors=("Nasdaq 拆股行事曆沒抓到（URLError：timed out）",))
-
-    window.daily._done(DailyResult(receipt, result.recalc, Observation(OBSERVED), splits))
-
-    status = window.daily.status_var.get()
-    assert (
-        "拆股行事曆：新登記 1 筆（AAA UW 2026-11-20 1 拆 8，Yahoo、Nasdaq）。\n"
-        "拆股行事曆：依收盤價斷層改了生效日 1 筆（BBB JT 2026-10-22 → 2026-10-21）。\n"
-        "拆股行事曆：Nasdaq 拆股行事曆沒抓到（URLError：timed out）\n比價：比到 2026-10-21"
-    ) in status
-    assert ("自動拆股登記（筆）", 2, False) in window.daily.kpis.values
-
-
 def test_daily_import_without_a_calendar_says_closes_were_not_stored(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
 
@@ -440,6 +419,54 @@ def test_reobserve_runs_on_this_page(master, tmp_path: Path, monkeypatch, immedi
     assert window.notebook.select() == str(window.daily.frame)
     assert "完成（重新比價全部）。\n比價：比到 2026-10-21" in window.daily.status_var.get()
     assert len(window.daily.table.get_children()) == 2
+
+
+def test_split_calendar_button_lists_entries_then_observes(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    """「匯入自動拆股登記」（#509）：跟每日匯入分開的按鈕；明細列在表上，有改到才比價。"""
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
+    split = Split("AAA UW", dt.date(2026, 11, 20), 1, 8, "自動登記：Yahoo、Nasdaq 行事曆（2026-11-08 抓取）")
+    moved = Moved(Split("BBB JT", dt.date(2026, 10, 22), 1, 5), Split("BBB JT", dt.date(2026, 10, 21), 1, 5))
+    receipt = CalendarReceipt(
+        (split,),
+        (moved,),
+        (Skipped("CCC UN", "行事曆不一致（…），請人工確認後登記"),),
+        ("Nasdaq 拆股行事曆沒抓到（URLError：timed out）",),
+    )
+    monkeypatch.setattr(
+        sp_workflow.tabs.daily,
+        "import_split_calendar",
+        lambda settings, paths: SplitCalendarResult(receipt, Observation(OBSERVED)),
+    )
+
+    window.daily.splits_button.invoke()
+
+    status = window.daily.status_var.get()
+    assert status.startswith(
+        "完成（匯入自動拆股登記）。\n"
+        "拆股行事曆：新登記 1 筆、依收盤價斷層改生效日 1 筆、要人工確認 1 筆（明細在下面的表）。\n"
+        "拆股行事曆：Nasdaq 拆股行事曆沒抓到（URLError：timed out）\n比價：比到 2026-10-21"
+    )
+    rows = [window.daily.table.item(i, "values") for i in window.daily.table.get_children()]
+    assert rows[:3] == [
+        ("", "自動拆股登記", "AAA UW 2026-11-20 1 拆 8（Yahoo、Nasdaq）"),
+        ("", "改了生效日", "BBB JT 1 拆 5：2026-10-22 → 2026-10-21"),
+        ("", "沒有登記", "CCC UN：行事曆不一致（…），請人工確認後登記"),
+    ]
+    assert ("要人工確認（筆）", 1, True) in window.daily.kpis.values
+
+
+def test_split_calendar_with_nothing_new_does_not_observe(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
+    monkeypatch.setattr(
+        sp_workflow.tabs.daily,
+        "import_split_calendar",
+        lambda settings, paths: SplitCalendarResult(CalendarReceipt()),
+    )
+
+    window.daily.start_splits()
+
+    assert window.daily.status_var.get().endswith("沒有新的拆股，沒有重新比價。")
+    assert window.daily.table.get_children() == ()
 
 
 def test_legacy_backfill_runs_on_this_page_and_lists_what_changed(

@@ -1,6 +1,6 @@
 """拆股行事曆（`sp_workflow.split_calendar`，#509、ADR 0031）：解析、代碼對照、要登記的、對齊價格斷層與每日匯入。
 
-不上網：行事曆的回應用假資料（欄位照 2026-11 實際抓到的格式）；資料庫的部分對真的 PostgreSQL 跑，代碼與價格全部虛構。
+不上網：行事曆的回應用假資料（欄位照 2026-11 實際抓到的格式）；資料庫與「匯入自動拆股登記」按鈕的動作對真的 PostgreSQL 跑，代碼與價格全部虛構。
 """
 
 from __future__ import annotations
@@ -13,9 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from db_synth import price, seed_mailbox, trade, write_daily
 from fcn_checker.check_config import ConfigPaths
-from order_synth import A
 from sp_workflow import split_calendar
 from sp_workflow.check_terms import load_calendar
 from sp_workflow.split_calendar import (
@@ -25,20 +23,23 @@ from sp_workflow.split_calendar import (
     Announced,
     CalendarReceipt,
     Fetched,
+    Moved,
     Skipped,
     align,
     candidates,
     fetch,
     gap_day,
+    moved_text,
     parse_nasdaq,
     parse_yahoo,
     register,
+    registered_text,
     source_key,
     summary,
     yahoo_rows,
 )
 from sp_workflow.stock_splits import Split, SplitBook, add_split, load_splits
-from sp_workflow.window_actions import run_daily_import
+from sp_workflow.window_actions import SplitCalendarResult, import_split_calendar
 
 D = Decimal
 PATHS = ConfigPaths.with_fallback(Path(__file__).resolve().parents[1] / "config" / "review_standard.toml")
@@ -324,49 +325,42 @@ def test_align_moves_auto_entries_only(pg) -> None:
     assert align(pg, WEEK[4], user="tester").moved == (), "對齊後不再動"
 
 
+def announcing(monkeypatch, *announced: Announced, errors: tuple[str, ...] = ()) -> None:
+    """按鈕抓到的行事曆（不上網）。"""
+    monkeypatch.setattr(split_calendar, "fetch", lambda today, opener=None: Fetched(today, announced, errors))
+
+
 @pytest.mark.db
-def test_daily_import_registers_before_observing(pg, pg_settings, tmp_path: Path, monkeypatch) -> None:
-    seed_mailbox(pg)
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 100000)], [price("AAA UW")])
-    monkeypatch.setattr(
-        split_calendar,
-        "fetch",
-        lambda today, opener=None: Fetched(today, (Announced(("US", "AAA"), DAY, 1, 8, YAHOO),), ("Nasdaq 沒抓到",)),
-    )
+def test_the_button_registers_then_observes(pg, pg_settings, monkeypatch) -> None:
+    close(pg, "AAA UW", TODAY - dt.timedelta(days=3))
+    announcing(monkeypatch, Announced(("US", "AAA"), DAY, 1, 8, YAHOO), errors=("Nasdaq 沒抓到",))
 
-    result = run_daily_import(pg_settings, daily, PATHS, prices=True)
+    result = import_split_calendar(pg_settings, PATHS)
 
-    assert result.splits is not None and [s.code for s in result.splits.registered] == ["AAA UW"]
-    assert [(s.code, s.effective_date) for s in load_splits(pg)] == [("AAA UW", DAY)]
-    assert result.observation.receipt is not None
-    assert summary(result.splits).splitlines() == [
-        "拆股行事曆：新登記 1 筆（AAA UW 2026-11-20 1 拆 8，Yahoo）。",
+    assert [s.code for s in result.receipt.registered] == ["AAA UW"]
+    assert [(s.code, s.effective_date) for s in load_splits(pg)] == [("AAA UW", DAY)], "另一條連線看得到：已 commit"
+    assert result.observation.receipt is not None, "有新登記就比價全部"
+    assert summary(result.receipt).splitlines() == [
+        "拆股行事曆：新登記 1 筆、依收盤價斷層改生效日 0 筆、要人工確認 0 筆（明細在下面的表）。",
         "拆股行事曆：Nasdaq 沒抓到",
     ]
+    assert registered_text(result.receipt.registered[0]) == "AAA UW 2026-11-20 1 拆 8（Yahoo）"
 
 
 @pytest.mark.db
-def test_trades_only_import_does_not_fetch(pg, pg_settings, tmp_path: Path, monkeypatch) -> None:
-    seed_mailbox(pg)
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 100000)], [price("AAA UW")])
+def test_nothing_new_does_not_observe(pg, pg_settings, monkeypatch) -> None:
+    close(pg, "AAA UW", TODAY - dt.timedelta(days=3))
+    announcing(monkeypatch, Announced(("US", "ZZZ"), DAY, 1, 8, YAHOO))
 
-    def no_network(today, opener=None):
-        raise AssertionError("只匯交易明細不該抓行事曆")
+    result = import_split_calendar(pg_settings, PATHS)
 
-    monkeypatch.setattr(split_calendar, "fetch", no_network)
-
-    assert run_daily_import(pg_settings, daily, PATHS, prices=False).splits is None
+    assert result == SplitCalendarResult(CalendarReceipt())
 
 
 @pytest.mark.db
-def test_a_failed_registration_keeps_the_import_and_observes(pg, pg_settings, tmp_path: Path, monkeypatch) -> None:
-    seed_mailbox(pg)
-    daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 100000)], [price("AAA UW")])
-    monkeypatch.setattr(
-        split_calendar,
-        "fetch",
-        lambda today, opener=None: Fetched(today, (Announced(("US", "AAA"), DAY, 1, 8, YAHOO),), ("Nasdaq 沒抓到",)),
-    )
+def test_a_failed_registration_writes_nothing(pg, pg_settings, monkeypatch) -> None:
+    close(pg, "AAA UW", TODAY - dt.timedelta(days=3))
+    announcing(monkeypatch, Announced(("US", "AAA"), DAY, 1, 8, YAHOO), errors=("Nasdaq 沒抓到",))
 
     def broken(conn, fetched, calendar, *, user=None):
         split_calendar.register(conn, fetched, calendar, user=user)
@@ -374,15 +368,16 @@ def test_a_failed_registration_keeps_the_import_and_observes(pg, pg_settings, tm
 
     monkeypatch.setattr(split_calendar, "register_and_align", broken)
 
-    result = run_daily_import(pg_settings, daily, PATHS, prices=True)
+    result = import_split_calendar(pg_settings, PATHS)
 
-    assert result.splits == CalendarReceipt(
+    assert result.receipt == CalendarReceipt(
         errors=("Nasdaq 沒抓到", "自動登記沒有完成，這次沒有登記（RuntimeError：壞掉）")
     )
     assert load_splits(pg) == (), "整段一個 transaction：已經寫的那筆也收回"
-    assert pg.execute("SELECT count(*) FROM workflow.trade_row").fetchone()[0] == 1, "匯入照樣保留"
-    assert result.observation.receipt is not None, "照常比價"
+    assert result.observation.receipt is None
 
 
-def test_summary_when_nothing_changed() -> None:
-    assert summary(CalendarReceipt()) == "拆股行事曆：沒有新的拆股。"
+def test_moved_text() -> None:
+    moved = Moved(Split("AAA JT", WEEK[3], 1, 5), Split("AAA JT", WEEK[2], 1, 5))
+
+    assert moved_text(moved) == "AAA JT 1 拆 5：2026-11-19 → 2026-11-18"

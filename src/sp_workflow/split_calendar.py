@@ -1,4 +1,4 @@
-"""拆股行事曆（#509、ADR 0031）：每天匯入時從公開的拆股行事曆抓已公布的拆股，自動登記，生效日再對齊收盤價斷層。
+"""拆股行事曆（#509、ADR 0031）：按「匯入自動拆股登記」時從公開的拆股行事曆抓已公布的拆股，自動登記，生效日再對齊收盤價斷層。
 
 - 來源（`fetch`）：Yahoo Finance 拆股行事曆（美、日、港股，提前約 1～2 個月）與 Nasdaq 拆股行事曆（只有美股，含 ETF）。
   兩個都不是官方 API、免 key，只用標準函式庫；抓不到的來源只寫原因（`Fetched.errors`），不影響匯入。
@@ -8,7 +8,7 @@
 - 對齊（`align`）：行事曆的日期不一定是收盤價表第一次出現新股數價格的那天（日股常晚一個營業日）。
   生效日在最近 `ALIGN_DAYS` 天內的自動登記，生效日當天沒有對應的價格斷層、但前後 `ALIGN_TRADING_DAYS` 個收盤日內
   恰好有一個套用這次拆股就消失的斷層時，把生效日改到那一天（刪掉重登在同一個 transaction，各留紀錄）。人工登記的不動。
-畫面在 `sp_workflow.tabs.daily`（每日匯入的結果）；動作在 `window_actions.run_daily_import`。
+畫面是「1 每日匯入」頁的「匯入自動拆股登記」按鈕（`sp_workflow.tabs.daily`），跟每日匯入分開；動作在 `window_actions.import_split_calendar`。
 """
 
 from __future__ import annotations
@@ -95,7 +95,7 @@ class Moved:
 
 @dataclass(frozen=True)
 class CalendarReceipt:
-    """每日匯入的拆股行事曆結果；`revisit` 是要重新比價的已出場商品（`stock_splits.affected_exits`）。"""
+    """匯入自動拆股登記的結果；`revisit` 是要重新比價的已出場商品（`stock_splits.affected_exits`）。"""
 
     registered: tuple[Split, ...] = ()
     moved: tuple[Moved, ...] = ()
@@ -424,7 +424,7 @@ def _closes_around(conn: psycopg.Connection, code: str, day: dt.date) -> dict[dt
     return dict(rows)
 
 
-# ---------- 每日匯入用 ----------
+# ---------- 「匯入自動拆股登記」按鈕用 ----------
 
 
 def register_and_align(
@@ -434,20 +434,24 @@ def register_and_align(
     return register(conn, fetched, calendar, user=user).plus(align(conn, fetched.fetched_on, user=user))
 
 
+def registered_text(split: Split) -> str:
+    """一筆新登記：代碼、生效日、比例與來源。"""
+    return f"{split.code} {split.effective_date} {split.label}（{_sources(split)}）"
+
+
+def moved_text(moved: Moved) -> str:
+    """一筆改了生效日的。"""
+    return f"{moved.before.code} {moved.before.label}：{moved.before.effective_date} → {moved.after.effective_date}"
+
+
 def summary(receipt: CalendarReceipt) -> str:
-    """每日匯入結果畫面的一段。"""
-    lines = []
-    if receipt.registered:
-        listed = "、".join(f"{s.code} {s.effective_date} {s.label}，{_sources(s)}" for s in receipt.registered)
-        lines.append(f"拆股行事曆：新登記 {len(receipt.registered)} 筆（{listed}）。")
-    if receipt.moved:
-        listed = "、".join(
-            f"{m.before.code} {m.before.effective_date} → {m.after.effective_date}" for m in receipt.moved
-        )
-        lines.append(f"拆股行事曆：依收盤價斷層改了生效日 {len(receipt.moved)} 筆（{listed}）。")
-    lines += [f"拆股行事曆：{s.code} {s.reason}" for s in receipt.skipped]
+    """完成訊息的一段：新登記、改生效日與要人工確認各幾筆，抓不到的來源寫原因。"""
+    lines = [
+        f"拆股行事曆：新登記 {len(receipt.registered)} 筆、依收盤價斷層改生效日 {len(receipt.moved)} 筆、"
+        f"要人工確認 {len(receipt.skipped)} 筆（明細在下面的表）。"
+    ]
     lines += [f"拆股行事曆：{e}" for e in receipt.errors]
-    return "\n".join(lines) or "拆股行事曆：沒有新的拆股。"
+    return "\n".join(lines)
 
 
 def _sources(split: Split) -> str:

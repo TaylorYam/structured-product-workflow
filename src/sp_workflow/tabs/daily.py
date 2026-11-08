@@ -44,11 +44,13 @@ from sp_workflow.window_actions import (
     OtherProductsResult,
     PriceCsvResult,
     Recalc,
+    SplitCalendarResult,
     WhitelistResult,
     import_close_history,
     import_eln_whitelist,
     import_legacy_products,
     import_other_products,
+    import_split_calendar,
     observe_products,
     read_whitelist_import,
     run_daily_import,
@@ -88,7 +90,7 @@ class DailyImportTab(Tab):
 
         self.page_header(
             "匯入每日更新",
-            "把每日更新的 FCN 交易明細、每日股價與前一個交易日的收盤價匯入資料庫，再重算還沒鎖住的商品的核對條件並比價；信箱在資料庫直接維護。",
+            "把每日更新的 FCN 交易明細、每日股價與前一個交易日的收盤價匯入資料庫，再重算還沒鎖住的商品的核對條件並比價；信箱在資料庫直接維護。「匯入自動拆股登記」另外從公開拆股行事曆登記已公布的拆股，跟匯入分開按。",
         )
         body = self.body(self.card(1))
         row = self.field(body, 0, "每日更新", self.daily_var, lambda: ask_excel("選擇每日更新", self.daily_var))
@@ -111,13 +113,15 @@ class DailyImportTab(Tab):
         self.start_button.pack(side=tk.LEFT)
         self.csv_button = ttk.Button(self.buttons, text="回補股價", command=self.start_csv)
         self.csv_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.splits_button = ttk.Button(self.buttons, text=SPLITS_BUTTON, command=self.start_splits)
+        self.splits_button.pack(side=tk.LEFT, padx=(8, 0))
         self.releaser = Releaser(self, db, self._selected_tdcc, self._released, busy=self._busy)
         self.next_button = NextButton(self.buttons, "下一步：起單資料 →", on_next)
         self.exits_button = NextButton(self.buttons, "下一步：出場清單 →", on_exits)  # #171
         self.place_table(2)
 
     def _busy(self, busy: bool) -> None:
-        for button in (self.start_button, self.csv_button):
+        for button in (self.start_button, self.csv_button, self.splits_button):
             button.configure(state=tk.DISABLED if busy else tk.NORMAL)
 
     def _starting(self, **remember: str) -> None:
@@ -186,6 +190,36 @@ class DailyImportTab(Tab):
             f"\n錯誤清單：{receipt.error_book_path}",
         )
         self.releaser.show(recalc)
+
+    def start_splits(self) -> None:
+        """匯入自動拆股登記（#509）：跟每日匯入分開，從公開拆股行事曆登記已公布的拆股，有改到就比價全部。"""
+        paths = self.config_paths()
+        self.runner.run_action(
+            lambda settings: import_split_calendar(settings, paths),
+            "匯入自動拆股登記中…",
+            self._splits_done,
+            before=self._starting,
+        )
+
+    def _splits_done(self, result: SplitCalendarResult) -> None:
+        receipt, observation = result.receipt, result.observation
+        for split in receipt.registered:
+            self.add_row(("", "自動拆股登記", split_calendar.registered_text(split)), problem=False)
+        for moved in receipt.moved:
+            self.add_row(("", "改了生效日", split_calendar.moved_text(moved)), problem=False)
+        for skipped in receipt.skipped:
+            self.add_row(("", "沒有登記", f"{skipped.code}：{skipped.reason}"), problem=True)
+        self._show_observation(observation.receipt)
+        kpis = [
+            ("新登記（筆）", len(receipt.registered), False),
+            ("改生效日（筆）", len(receipt.moved), False),
+            ("要人工確認（筆）", len(receipt.skipped), bool(receipt.skipped)),
+        ]
+        observed = "沒有新的拆股，沒有重新比價。"
+        if receipt.registered or receipt.moved:
+            kpis += _observation_kpis(observation)
+            observed = f"{observation_text(observation, '登記')}{self._hand_off_exits(observation)}"
+        self.finish(kpis, f"完成（匯入自動拆股登記）。\n{split_calendar.summary(receipt)}\n{observed}")
 
     def can_import_history(self) -> bool:
         """維護選單的「匯入歷史收盤價…」「重新比價全部」「匯入舊商品的價格與比價日…」「匯入可連結標的白名單…」：
@@ -445,13 +479,9 @@ class DailyImportTab(Tab):
         else:
             price_text = f"{_price_text(prices)}\n{_daily_close_text(receipt)}"
         observed = ""
-        if result.splits is not None:  # 拆股行事曆（#509）：在比價之前登記、對齊
-            changed = len(result.splits.registered) + len(result.splits.moved)
-            kpis.append(("自動拆股登記（筆）", changed, False))
-            observed = f"\n{split_calendar.summary(result.splits)}"
         if receipt.closes is not None:  # 寫了收盤價才比價（#280）
             kpis += _observation_kpis(result.observation)
-            observed += f"\n{observation_text(result.observation)}{self._hand_off_exits(result.observation)}"
+            observed = f"\n{observation_text(result.observation)}{self._hand_off_exits(result.observation)}"
         self.finish(
             kpis + self._recalc_kpis(recalc),
             f"完成（第 {receipt.run_id} 次匯入）：{normal} 項正常、{problems} 項要注意；"
@@ -524,6 +554,9 @@ def _daily_close_text(receipt: ImportReceipt) -> str:
     if receipt.close_conflicts:
         text += f"去掉 Equity 這類字尾後重複、值不同、沒有存：{'、'.join(receipt.close_conflicts)}；"
     return text.rstrip("；") + "。"
+
+
+SPLITS_BUTTON = "匯入自動拆股登記"
 
 
 def _observation_kpis(observation: Observation) -> list[tuple[str, int, bool]]:

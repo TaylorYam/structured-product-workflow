@@ -18,13 +18,14 @@ ADR 0024 的拆股登記全部靠人工，實際上多半是生效後比價出�
 
 ### 決策（2026-11-08 使用者確認：自動登記）
 
-- **時機**：「1 每日匯入」有寫收盤價時，連資料庫之前抓兩個行事曆（Yahoo 抓今天前 10 天到後 120 天），寫完收盤價、比價之前登記與對齊，再照常比價全部。只匯交易明細、讀不到假日表時不抓。用標準函式庫呼叫，不加新的套件。
+- **時機（2026-11-08 使用者決定）**：「1 每日匯入」頁另一個「匯入自動拆股登記」按鈕，跟每日匯入分開按，每日匯入本身不碰：按下去先抓兩個行事曆（Yahoo 抓今天前 10 天到後 120 天），再連資料庫登記與對齊；有新登記或改了生效日才比價全部（受影響、由比價判定出場的重新比）。讀不到假日表時不做（對不到標的的交易所）。用標準函式庫呼叫，不加新的套件。
 - **登記**：只收收盤價表或商品有的代碼；代碼依假日表的交易所碼對到行事曆（美國交易所碼 → 代號、`JT` → `.T`、`HK` → 去掉前導 0 的數字）。前後股數相同、比例超過 1000 倍（現金收購少數股東）的，以及同一個代碼生效日前後 7 天內已經有登記（人工或自動、不管比例）的不收、不列出（每天都會再抓到）；兩個來源同一次拆股的日期或比例不同時不登記、列出差異。寫入用既有的 `add_split`，登記人是執行匯入的 Windows 使用者，備註「自動登記：<來源> 行事曆（抓取日）」。
 - **對齊價格斷層**：生效日在最近 30 天內的自動登記，若生效日（不是收盤日時是之後第一個收盤日）沒有對應的斷層、但前後 3 個收盤日內恰好有一個「套用這次拆股就消失」的斷層，就把生效日改到那一天（刪掉重登在同一個 transaction，各留紀錄），備註加「依收盤價斷層從 X 改到 Y」。人工登記的不動。
-- **失敗**：任一個來源抓不到只寫原因；登記與對齊整段一個 transaction，出任何錯都整段不寫，已經寫好的匯入保留、照常比價。結果在每日匯入的完成訊息與「自動拆股登記（筆）」。
+- **失敗**：任一個來源抓不到只寫原因；登記與對齊整段一個 transaction，出任何錯都整段不寫、原因寫在完成訊息。
 
 ### 考慮過的替代方案
 
+- **放在每日匯入裡一起做**：少按一個按鈕，但拆股登記出問題時可能影響原本沒有問題的每日匯入；使用者選分開。
 - **列出來讓作業人員按一下確認**：比較保險，但要每天多一步；登錯時比價會因為價格斷層停在待確認，作業人員刪掉即可，所以選自動。
 - **日股固定往前推一個營業日**：7 筆裡有 1 筆不合，改用收盤價斷層對齊，日股、港股都適用。
 - **yfinance 套件**：會帶進 pandas 等大套件；行事曆只要兩個 HTTP 呼叫，直接用標準函式庫。
@@ -50,13 +51,14 @@ Under ADR 0024 every split is registered by hand, and in practice an entry is us
 
 ### Decision (confirmed by the user 2026-11-08: register automatically)
 
-- **When**: when 「1 每日匯入」 writes closes, both calendars are fetched before connecting to the database (Yahoo from 10 days before to 120 days after today); registration and alignment run after the closes are written and before observation, which then runs as usual. Trades-only imports and a missing holiday calendar skip the fetch. The standard library is used; no new dependency.
+- **When (decided by the user 2026-11-08)**: a separate 「匯入自動拆股登記」 button on the 「1 每日匯入」 page, pressed separately so the daily import itself is untouched: it fetches both calendars first (Yahoo from 10 days before to 120 days after today), then connects to register and align; everything is observed again (exited products affected by the change re-observed) only when an entry was added or moved. Nothing happens when the holiday calendar cannot be read (exchanges cannot be matched). The standard library is used; no new dependency.
 - **Registration**: only codes in the close table or a product; codes map to calendar symbols by the holiday calendar's exchange code (US exchange codes → symbol, `JT` → `.T`, `HK` → the number without leading zeros). Equal share counts, ratios over 1000 (cash-out consolidations), and a code already registered within 7 days of the effective date (by hand or automatically, any ratio) are skipped silently, since they are fetched again every day; when the two sources disagree on the date or ratio of the same split it is not registered and the difference is listed. Writes use the existing `add_split`, recorded by the Windows user running the import, with the note 「自動登記：<source> 行事曆（fetch date）」.
 - **Aligning to the price gap**: for automatic entries effective within the last 30 days, when there is no matching gap on the effective date (or the first close after it when it is not a close date) but exactly one gap within 3 closes either side disappears once the split is applied, the effective date moves to that day (delete and re-add in one transaction, each logged) and the note gains 「依收盤價斷層從 X 改到 Y」. Manual entries are untouched.
-- **Failures**: an unreachable source only adds a reason; registration and alignment run in one transaction, so any error writes none of it, while the already-written import is kept and observation runs as usual. Results appear in the daily import message and the 「自動拆股登記（筆）」 figure.
+- **Failures**: an unreachable source only adds a reason; registration and alignment run in one transaction, so any error writes none of it and the completion message gives the reason.
 
 ### Alternatives considered
 
+- **Running inside the daily import**: one less button, but a problem in split registration could affect the daily import, which works fine today; the user chose a separate button.
 - **Listing them for one-click confirmation**: safer, but one more daily step; a wrong entry makes observation stop at 待確認 because of the price gap, and operators can delete it, so automatic registration was chosen.
 - **Shifting Japanese dates back one business day**: 1 of 7 did not fit; aligning to the close-table gap works for Japan and Hong Kong alike.
 - **The yfinance package**: brings in pandas and other large packages; the calendars need only two HTTP calls, so the standard library is used.
