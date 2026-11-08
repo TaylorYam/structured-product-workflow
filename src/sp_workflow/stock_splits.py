@@ -25,6 +25,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 
 from sp_workflow import sheet_cells
+from sp_workflow.close_prices import has_closes, load_closes
 from sp_workflow.database import OperatorError
 from sp_workflow.lifecycle import OBSERVATION
 from sp_workflow.product_record import to_json
@@ -207,17 +208,20 @@ def refresh_basis(conn: psycopg.Connection, book: SplitBook) -> int:
     只推有登記拆股的代碼，Strike date 的收盤價同 `SplitBook.strike_close`；其他代碼的基準日清成空白。
     在呼叫端的 transaction 裡執行（`observation.observe_all`）。"""
     rows = conn.execute(
-        "SELECT u.tdcc, u.seq, u.code, u.initial_price, u.price_basis_date, p.strike_date, c.close_date, c.close"
+        "SELECT u.tdcc, u.seq, u.code, u.initial_price, u.price_basis_date, p.strike_date"
         " FROM workflow.underlying_price u JOIN workflow.product p ON p.tdcc = u.tdcc"
-        " LEFT JOIN LATERAL (SELECT close_date, close FROM workflow.close_price"
-        "   WHERE code = u.code AND close_date BETWEEN p.strike_date - %(days)s AND p.strike_date"
-        "   ORDER BY close_date DESC LIMIT 1) c ON true"
         " WHERE u.code = ANY(%(codes)s) OR u.price_basis_date IS NOT NULL",
-        {"days": STRIKE_CLOSE_DAYS, "codes": list(book.by_code)},
+        {"codes": list(book.by_code)},
     ).fetchall()
+    strikes = [strike for *_, strike in rows if strike is not None]
+    closes = load_closes(
+        conn,
+        {code for _, _, code, _, _, strike in rows if strike is not None},
+        since=min(strikes) - dt.timedelta(days=STRIKE_CLOSE_DAYS) if strikes else None,
+    )
     changed = 0
-    for tdcc, seq, code, initial, stored, strike, day, close in rows:
-        found = {} if day is None else {day: close}
+    for tdcc, seq, code, initial, stored, strike in rows:
+        found = closes.get(code, {})
         basis = None if strike is None else book.basis(code, strike, initial, book.strike_close(code, strike, found))
         if basis != stored:
             write_basis(conn, tdcc, seq, basis)
@@ -240,12 +244,13 @@ def adjusted_count(conn: psycopg.Connection, split: Split) -> int:
 def add_split(conn: psycopg.Connection, split: Split, *, user: str | None = None) -> None:
     """新增一筆；收盤價表與商品都沒有這個代碼時不寫（多半是打錯）。"""
     with _explained(conn, split):
-        known = conn.execute(
-            "SELECT EXISTS (SELECT 1 FROM workflow.close_price WHERE code = %(code)s)"
-            " OR EXISTS (SELECT 1 FROM workflow.underlying_price WHERE code = %(code)s)",
-            {"code": split.code},
-        ).fetchone()
-        if not (known and known[0]):
+        known = (
+            has_closes(conn, split.code)
+            or conn.execute(
+                "SELECT EXISTS (SELECT 1 FROM workflow.underlying_price WHERE code = %s)", (split.code,)
+            ).fetchone()[0]
+        )
+        if not known:
             raise StockSplitError(f"收盤價表和商品都沒有「{split.code}」這個代碼，請確認代碼（例：AAA UW）。")
         conn.execute(
             "INSERT INTO workflow.stock_split (code, effective_date, shares_before, shares_after, note, recorded_by)"
