@@ -574,7 +574,7 @@ def observe_all(
         through = latest_close_date(conn)
         book = SplitBook(load_splits(conn))
         refresh_basis(conn, book)  # 價格基準日依目前的拆股登記（#275）
-        terms, locked, not_done, stored = _load_terms(conn)
+        terms, locked, not_done, last_pricing = _load_terms(conn)
         closes = _load_closes(conn, terms)
         jumps = price_jumps(book, calendar, closes)
         existing = current_events_of(conn, [t.tdcc for t in terms])
@@ -587,7 +587,9 @@ def observe_all(
             # 已出場：不再比價（ADR 0020），已比到的日期與 KI 沿用上一次；沒存過 KI 的寫 KI 種類（#198）
             if events and not again:
                 results.append(
-                    _carried(stored.get(t.tdcc), t.tdcc, EXITED, _exit_reason(events), locked[t.tdcc], _ki_text(t))
+                    _carried(
+                        last_pricing.get(t.tdcc), t.tdcc, EXITED, _exit_reason(events), locked[t.tdcc], _ki_text(t)
+                    )
                 )
                 continue
             outcome = observe(t, closes, calendar, through, book, jumps)
@@ -624,16 +626,16 @@ def observe_all(
                     outcome.ki_touch,
                 )
             )
-        exited = current_events_of(conn, [tdcc for tdcc in not_done if tdcc in stored])
+        exited = current_events_of(conn, [tdcc for tdcc in not_done if tdcc in last_pricing])
         for tdcc, (status, reason) in not_done.items():
             if exited.get(tdcc):  # 已出場的商品，核對條件後來不是完成也不影響
-                results.append(_carried(stored[tdcc], tdcc, EXITED, _exit_reason(exited[tdcc]), locked[tdcc]))
-            elif tdcc in stored:
+                results.append(_carried(last_pricing[tdcc], tdcc, EXITED, _exit_reason(exited[tdcc]), locked[tdcc]))
+            elif tdcc in last_pricing:
                 text = f"核對條件{status}，這次沒有比價" + (f"：{reason}" if reason else "")
-                results.append(_carried(stored[tdcc], tdcc, TO_CONFIRM, text, locked[tdcc]))
+                results.append(_carried(last_pricing[tdcc], tdcc, TO_CONFIRM, text, locked[tdcc]))
         written = 0
         for r in results:
-            if stored.get(r.tdcc) != r:
+            if last_pricing.get(r.tdcc) != r:
                 _write_status(conn, r)
                 written += 1
     return ObservationReceipt(through, tuple(results), tuple(changes), written, tuple(errors))
@@ -689,12 +691,12 @@ def _load_terms(
     商品條件與比價狀態經 `product_store.read_many`（#438、#495）。
     """
     products = read_many(conn, state=True)
-    stored = {tdcc: s.pricing for tdcc, s in products.items() if s.pricing is not None}
+    last_pricing = {tdcc: s.pricing for tdcc, s in products.items() if s.pricing is not None}
     found = [s for s in products.values() if s.check is not None]
     locked = {s.tdcc: is_locked(s) for s in found}
     not_done = {s.tdcc: (s.check.status, s.check.reason or None) for s in found if s.check.status != CheckTerms.DONE}
     terms = [Terms.from_stored(s) for s in found if s.check.status == CheckTerms.DONE]
-    return terms, locked, not_done, stored
+    return terms, locked, not_done, last_pricing
 
 
 def _load_closes(conn: psycopg.Connection, terms: Collection[Terms]) -> CloseSeries:

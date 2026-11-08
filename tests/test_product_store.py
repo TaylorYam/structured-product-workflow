@@ -184,7 +184,12 @@ def test_product_store_imports_no_writer() -> None:
     imported = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
     imported |= {alias.name for node in ast.walk(tree) if isinstance(node, ast.Import) for alias in node.names}
 
-    assert not imported & {"sp_workflow.product_terms", "sp_workflow.check_terms", "sp_workflow.risk_level"}
+    assert not imported & {
+        "sp_workflow.product_terms",
+        "sp_workflow.check_terms",
+        "sp_workflow.risk_level",
+        "sp_workflow.lifecycle",  # 存續事件的寫入端 import 這裡（`lock_product`），反過來會循環
+    }
 
 
 @pytest.mark.parametrize("name", ["check_terms.py", "risk_level.py"])
