@@ -13,7 +13,8 @@ from tkinter import ttk
 
 from fcn_checker.date_picker import DateEntry
 from fcn_checker.ui import WrapLabel
-from sp_workflow.lifecycle import Objection, StoredEvent
+from sp_workflow.lifecycle import Objection
+from sp_workflow.product_store import StoredEvent
 from sp_workflow.tabs.forms import center_over
 
 

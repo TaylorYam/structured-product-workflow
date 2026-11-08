@@ -42,9 +42,9 @@ from openpyxl.styles import PatternFill
 from sp_workflow.close_prices import latest_closes
 from sp_workflow.daily_import import FC_LABEL_SQL
 from sp_workflow.file_tools import save_export
-from sp_workflow.lifecycle import IN_STOCK, lifecycle_status
+from sp_workflow.lifecycle import IN_STOCK
 from sp_workflow.product_record import AKI, MKI, NO_BARRIER
-from sp_workflow.product_store import read_many, underlying_codes
+from sp_workflow.product_store import Stored, read_many
 from sp_workflow.slide_table import BROKEN_FILL, Column, list_book
 from sp_workflow.status import CheckTerms
 from sp_workflow.stock_splits import SplitBook, load_splits
@@ -200,12 +200,12 @@ def assess(position: Position, today: dt.date | None = None) -> Assessed:
 
 def load_choices(conn: psycopg.Connection) -> list[Choice]:
     """在庫商品連結的標的，照股票代號合併各交易所的代碼，依代號排序。"""
-    rows = underlying_codes(conn)
-    statuses = lifecycle_status(conn, [tdcc for tdcc, _ in rows])
     by_code: dict[str, set[str]] = defaultdict(set)
-    for tdcc, code in rows:
-        if statuses[tdcc].status == IN_STOCK:
-            by_code[code].add(tdcc)
+    for s in read_many(conn, state=True).values():
+        if _in_stock(s):
+            for code in s.underlyings:
+                if code is not None:
+                    by_code[code].add(s.tdcc)
     latest = latest_closes(conn, by_code)
     by_ticker: dict[str, list[str]] = defaultdict(list)
     for code in by_code:
@@ -234,31 +234,23 @@ def load_positions(
     trial = trial or {}
     today = today or dt.date.today()
     wanted = None if codes is None else set(codes)
-    due = [
+    found = [
         s
-        for s in read_many(conn).values()
+        for s in read_many(conn, state=True).values()
         if (final := s.columns["final_valuation_date"]) is not None
         and final <= until
         and (wanted is None or any(code in wanted for code in s.underlyings))
+        and _in_stock(s)
     ]
-    due.sort(key=lambda s: (s.columns["final_valuation_date"], s.tdcc))
-    statuses = lifecycle_status(conn, [s.tdcc for s in due])
-    found = [s for s in due if statuses[s.tdcc].status == IN_STOCK]
+    found.sort(key=lambda s: (s.columns["final_valuation_date"], s.tdcc))
     tdccs = [s.tdcc for s in found]
-    kis = {
-        tdcc: (ki, None if touched is None else KiTouch(touched, code))
-        for tdcc, ki, touched, code in conn.execute(
-            "SELECT tdcc, ki, ki_touch_date, ki_touch_code FROM workflow.pricing_status WHERE tdcc = ANY(%s)",
-            (tdccs,),
-        )
-    }
     holdings = _holdings(conn, tdccs)
     latest = latest_closes(conn, {u.code for s in found for u in s.prices})
     book = SplitBook(load_splits(conn))
     positions = []
     for s in found:
         p = s.columns
-        ki, touch = kis.get(s.tdcc, ("", None))
+        ki, touch = ("", None) if s.pricing is None else (s.pricing.ki, s.pricing.ki_touch)
         legs = []
         for u in s.prices:
             day, close = (today, trial[u.code]) if u.code in trial else latest.get(u.code, (None, None))
@@ -275,7 +267,7 @@ def load_positions(
                 p["currency"],
                 p["final_valuation_date"],
                 p["barrier_type"],
-                ki or "",
+                ki,
                 None if s.check is None else s.check.status,
                 None if s.check is None else s.check.reason or None,
                 tuple(legs),
@@ -286,6 +278,12 @@ def load_positions(
             )
         )
     return positions
+
+
+def _in_stock(stored: Stored) -> bool:
+    """存續狀態是在庫（`read_many(state=True)` 讀的）。"""
+    assert stored.lifecycle is not None
+    return stored.lifecycle.status == IN_STOCK
 
 
 def _holdings(conn: psycopg.Connection, tdccs: Sequence[str]) -> dict[str, list[Holding]]:

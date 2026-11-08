@@ -1,5 +1,6 @@
 """讀商品條件（`sp_workflow.product_store`，#437、#438）：`Stored` 的有效期初價格、有效執行價、原始執行價與價格基準日，
-`read_many` 帶出的價格基準日與核對條件的差異，比價與曝險換算收盤價用同一個基準日，和這個 module 不 import 寫入端。
+`read_many` 帶出的價格基準日與核對條件的差異、`state=True` 帶出的存續狀態與比價狀態（#495），比價與曝險換算收盤價
+用同一個基準日，和這個 module 不 import 寫入端。
 
 `read_many` 其餘的讀法（指定 TDCC、全部、鎖）在 test_product_terms。資料全部虛構。
 """
@@ -18,9 +19,10 @@ from db_synth import check_terms, inventory, seed_products
 from sp_workflow.exposure import load_positions
 from sp_workflow.observation import _load_closes, _load_terms, observe
 from sp_workflow.product_record import UnderlyingPrice
-from sp_workflow.product_store import CheckTermsState, Difference, Stored, read
-from sp_workflow.status import Pricing
+from sp_workflow.product_store import CheckTermsState, Difference, PricingState, Stored, read, read_many
+from sp_workflow.status import Lifecycle, Pricing
 from sp_workflow.stock_splits import Split, SplitBook, add_split, load_splits
+from sp_workflow.underlying_pricing import KiTouch
 from test_observation import CALENDAR
 
 A = "000000000001"
@@ -128,6 +130,46 @@ def test_read_carries_the_price_basis_date_and_the_differences(pg) -> None:
     assert found.check.differences[1].describe() == "UF不一致：起單資料 1.5、交易明細 0.02（換算 2）"
 
 
+@pytest.mark.db
+def test_read_with_state_carries_the_lifecycle_and_the_pricing_status(pg) -> None:
+    b, c = "000000000002", "000000000003"
+    seed_products(pg, [inventory(t, [("台北", 100)]) for t in (A, b, c)])
+    events = [  # A：比價的 KO 被取代、後來登記顧客贖回；同一天的兩筆取後寫的
+        (A, "KO", dt.date(2026, 11, 2), "AAA UW", "比價", "now()"),
+        (A, "KO", dt.date(2026, 11, 3), "AAA UW", "比價", None),
+        (A, "顧客贖回", dt.date(2026, 11, 4), None, "人工", None),
+        (A, "到期還本", dt.date(2026, 11, 4), None, "舊清單", None),
+    ]
+    for tdcc, event, day, code, source, superseded in events:
+        pg.execute(
+            "INSERT INTO workflow.product_event (tdcc, event, event_date, underlying, source, recorded_by, superseded_at)"
+            f" VALUES (%s, %s, %s, %s, %s, 'tester', {superseded or 'NULL'})",
+            (tdcc, event, day, code, source),
+        )
+    pg.execute(
+        "INSERT INTO workflow.pricing_status (tdcc, status, reason, observed_through, locked, ki, ki_touch_date,"
+        " ki_touch_code) VALUES (%s, '在庫', NULL, %s, true, 'AKI', %s, 'BBB UN'), (%s, '等股價', 'UL_1 缺', NULL, false,"
+        " NULL, NULL, NULL)",
+        (b, dt.date(2026, 11, 5), dt.date(2026, 11, 4), c),
+    )
+
+    every = read_many(pg, state=True)
+    some = read_many(pg, [A, b], state=True)
+    plain = read_many(pg, [A, b])
+
+    assert every[A].lifecycle is not None and every[A].lifecycle.latest is not None
+    assert (every[A].lifecycle.status, every[A].lifecycle.latest.source) == ("到期還本", "舊清單")
+    assert every[A].pricing is None, "還沒比過"
+    assert every[b].lifecycle is not None and every[b].lifecycle.status == Lifecycle.IN_STOCK
+    assert every[b].lifecycle.latest is None
+    assert every[b].pricing == PricingState(
+        b, "在庫", "", dt.date(2026, 11, 5), True, "AKI", KiTouch(dt.date(2026, 11, 4), "BBB UN")
+    )
+    assert every[c].pricing == PricingState(c, "等股價", "UL_1 缺", None, False), "空白的原因、KI 是空字串"
+    assert list(some) == [A, b] and (some[A].lifecycle, some[b].pricing) == (every[A].lifecycle, every[b].pricing)
+    assert all(s.lifecycle is None and s.pricing is None for s in plain.values()), "state=False 不讀"
+
+
 def test_check_terms_state_without_differences_defaults_to_none() -> None:
     state = CheckTermsState("完成", "", None, dt.datetime(2026, 10, 20, 9, 0))
 
@@ -194,7 +236,7 @@ def test_observation_and_exposure_convert_closes_from_the_same_basis(pg) -> None
     book = SplitBook(load_splits(pg))
 
     (position,) = load_positions(pg, ["AAA UW"], dt.date(2026, 11, 30))
-    (terms,), _, _ = _load_terms(pg)
+    (terms,), *_ = _load_terms(pg)
     outcome = observe(terms, _load_closes(pg, [terms]), CALENDAR, day, book)
 
     assert terms.underlyings[0].basis == strike

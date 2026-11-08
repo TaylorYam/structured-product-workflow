@@ -1,17 +1,22 @@
-"""讀商品條件（#204、#437）：資料庫裡一檔商品的條件、核對條件、標的價格、比價日、分公司配置與鎖住狀態。
+"""讀商品條件（#204、#437）：資料庫裡一檔商品的條件、核對條件、標的價格、比價日、分公司配置與鎖住狀態，
+要時一起讀存續狀態與比價狀態（#495）。
 
 「一檔商品的條件怎麼讀」只有這裡知道，讀取端各自從 `Stored` 轉成自己的形狀（#438）；寫入在 `product_terms`（ADR 0013 的核對寫回也經過它），標的價格只由 `underlying_prices` 寫（#492）。這個 module 不 import
 寫入端與算核對條件、風險等級的 module（`product_terms`、`check_terms`、`risk_level`），所以它們都可以在 module 開頭
 import 這裡，不必再用函式內的 import 繞開循環。對外：
 - `read_many`：資料庫裡這幾檔（或全部）商品的 `Stored`，caller 自己挑要的欄；`read` 是只讀一檔的寫法。`lock=True` 時
-  鎖住這幾檔的商品條件列，寫入、核對寫回與重算核對條件共用同一把鎖。
+  鎖住這幾檔的商品條件列，寫入、核對寫回與重算核對條件共用同一把鎖。`state=True` 時多讀兩樣（#495）：
+  `Stored.lifecycle` 存續狀態（最新一筆還有效的存續事件，ADR 0019）與 `Stored.pricing` 上一次的比價狀態
+  （`workflow.pricing_status`，ADR 0020）。「這檔現在什麼狀態」的四個維度——鎖住（`locked`）、核對條件
+  （`Stored.check`）、存續、比價——都從 `Stored` 讀；作業進度仍只在 `progress.progress_of` 推。
+- `lifecycle_status`：只要存續狀態、不讀條件時（人工維護看已出場的事件）。存續事件的寫入在 `lifecycle`。
 - `locked`：已鎖住了沒（`locked_at` 有值：TS 核對通過，或 migration 0006 之前就在資料庫）。
 - `Stored` 的有效期初價格、有效執行價、原始執行價：lookback（#374）之後比價改寫了執行價，「這檔的執行價是多少」
   只在這裡回答一次；人工維護畫面顯示的回顧期初價格文字是 `lookback_text`（#446）。
   價格基準日（`Stored.price_basis`，ADR 0025）也是：比價與曝險換算收盤價都問它（#438）。
 - 不讀整檔條件的具名查詢（SQL 照原本的呼叫端搬來；`locked_tdccs` 是風險等級補算那句的鎖住條件，#438）：`lock_product` 只鎖一檔的商品條件列（存續事件）；
   `locked_tdccs` 已鎖住的商品（風險等級補算）；`incomplete_locked` 已鎖住、還缺標的價格或比價日的商品（舊商品補資料）；
-  `underlying_codes` 各檔連結的標的代碼（曝險分析）；`observed_exits_using` 拆股影響的已出場商品；`terms_imported` 每檔
+  `observed_exits_using` 拆股影響的已出場商品；`terms_imported` 每檔
   商品條件匯入的時間（作業進度）。
 - `CheckTermsState`：上一次算的核對條件（含交叉比對的差異 `Difference`）。
 - `issuer_code`：TDCC 前三碼 → 上手代號（對照沒有時用資料庫的發行機構寫法反查）。
@@ -21,7 +26,7 @@ import 這裡，不必再用函式內的 import 繞開循環。對外：
 from __future__ import annotations
 
 import datetime as dt
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from decimal import Decimal
 from functools import cached_property
@@ -30,7 +35,9 @@ from typing import TYPE_CHECKING, Protocol, cast
 from fcn_checker.fields import PRICE_SQL
 from sp_workflow.database import require_in_transaction
 from sp_workflow.product_record import PRODUCT_COLUMNS, UnderlyingPrice, fields_of, plain, price_at
+from sp_workflow.status import Lifecycle as LifecycleState
 from sp_workflow.status import ProductSource
+from sp_workflow.underlying_pricing import KiTouch
 
 if TYPE_CHECKING:
     import psycopg
@@ -84,13 +91,100 @@ class CheckTermsState:
     differences: tuple[Difference, ...] = ()  # 交叉比對的差異（含放行過的）
 
 
+# ---------- 存續狀態與比價狀態（#495） ----------
+
+EVENT_COLUMNS = "event_id, tdcc, event, event_date, underlying, source, note, recorded_by, recorded_at"
+
+
+@dataclass(frozen=True)
+class StoredEvent:
+    """`workflow.product_event` 的一筆存續事件（ADR 0019；寫入在 `lifecycle`）。"""
+
+    event_id: int
+    tdcc: str
+    event: str
+    event_date: dt.date | None
+    underlying: str | None
+    source: str
+    note: str | None
+    recorded_by: str
+    recorded_at: dt.datetime
+
+
+@dataclass(frozen=True)
+class Lifecycle:
+    """一檔的存續狀態與決定它的那一筆事件（在庫時沒有）。"""
+
+    status: str
+    latest: StoredEvent | None = None
+
+
+@dataclass(frozen=True)
+class PricingState:
+    """一檔的比價狀態：`workflow.pricing_status` 一列讀回來（`Stored.pricing`），也是比價這次算出的
+    （`observation.observe_all`，相等就不重寫）。空白的原因、KI 是空字串。"""
+
+    tdcc: str
+    status: str
+    reason: str
+    observed_through: dt.date | None
+    locked: bool
+    ki: str = ""  # 進度頁 KI 欄（#196）
+    ki_touch: KiTouch | None = None  # KI 第一次觸及（#442），存進比價狀態給曝險讀
+
+
+def lifecycle_status(conn: psycopg.Connection, tdccs: Iterable[str]) -> dict[str, Lifecycle]:
+    """每個 TDCC 的存續狀態（依輸入順序）：最新一筆還有效的事件（事件日最晚，同一天取後寫的），沒有就是在庫。"""
+    wanted = list(dict.fromkeys(tdccs))
+    latest = _latest_events(conn, wanted)
+    return {t: _lifecycle(latest.get(t)) for t in wanted}
+
+
+def _latest_events(conn: psycopg.Connection, tdccs: list[str] | None) -> dict[str, StoredEvent]:
+    """這幾檔（None 時全部）各自最新一筆還有效的存續事件（事件日最晚，同一天取後寫的）；沒有事件的不放。"""
+    where, params = ("", ()) if tdccs is None else (" AND tdcc = ANY(%s)", (tdccs,))
+    rows = conn.execute(
+        f"SELECT DISTINCT ON (tdcc) {EVENT_COLUMNS} FROM workflow.product_event"
+        f" WHERE superseded_at IS NULL{where}"
+        " ORDER BY tdcc, event_date DESC NULLS LAST, event_id DESC",
+        params,
+    ).fetchall()
+    return {row[1]: StoredEvent(*row) for row in rows}
+
+
+def _lifecycle(latest: StoredEvent | None) -> Lifecycle:
+    return Lifecycle(LifecycleState.IN_STOCK) if latest is None else Lifecycle(latest.event, latest)
+
+
+def _pricing_states(conn: psycopg.Connection, where: str, params: tuple) -> dict[str, PricingState]:
+    """`workflow.pricing_status` 的列（`where` 同 `read_many` 的篩選）。"""
+    return {
+        tdcc: PricingState(
+            tdcc=tdcc,
+            status=status,
+            reason=reason or "",
+            observed_through=observed_through,
+            locked=is_locked,
+            ki=ki or "",
+            ki_touch=None if touch_day is None else KiTouch(touch_day, touch_code),
+        )
+        for tdcc, status, reason, observed_through, is_locked, ki, touch_day, touch_code in conn.execute(
+            "SELECT tdcc, status, reason, observed_through, locked, ki, ki_touch_date, ki_touch_code"
+            " FROM workflow.pricing_status" + where,
+            params,
+        )
+    }
+
+
 # ---------- 資料庫裡的這檔 ----------
 
 
 @dataclass(frozen=True)
 class Stored:
     """資料庫裡的一檔商品（`read_many`）：商品條件的欄與畫面的欄、來源、鎖住，和它的核對條件、標的價格、比價日、
-    分公司配置；caller 自己挑要的。"""
+    分公司配置；`state=True` 讀的還有存續狀態與比價狀態。caller 自己挑要的。
+
+    存續狀態與比價狀態是讀出來的衍生值，不存在商品條件裡：ADR 0019 的「存續狀態不另外存」仍成立。"""
 
     tdcc: str
     columns: dict[str, object]  # `PRODUCT_COLUMNS` → 值
@@ -102,6 +196,8 @@ class Stored:
     prices: tuple[UnderlyingPrice, ...]  # 各標的的價格，依標的序號；沒有時空的
     autocall: dict[int, dt.date | None] | None  # 第幾個比價日 → 日期；沒回填過時 None
     branches: tuple[tuple[str, Decimal], ...]  # 分公司配置（分公司, 承作金額），依序；沒有時空的
+    lifecycle: Lifecycle | None = None  # 存續狀態（沒有事件是在庫）；`state=False` 讀的是 None
+    pricing: PricingState | None = None  # 上一次的比價狀態；還沒比過或 `state=False` 讀的是 None
 
     @cached_property
     def fields(self) -> dict[str, object]:
@@ -147,8 +243,11 @@ class Stored:
         return price.strike
 
 
-def read_many(conn: psycopg.Connection, tdccs: Sequence[str] | None = None, *, lock: bool = False) -> dict[str, Stored]:
+def read_many(
+    conn: psycopg.Connection, tdccs: Sequence[str] | None = None, *, lock: bool = False, state: bool = False
+) -> dict[str, Stored]:
     """資料庫裡這幾檔（`tdccs` 是 None 時全部）商品的條件，依 TDCC 排；資料庫沒有的檔不在結果裡（#204）。
+    `state`：多讀存續狀態（`Stored.lifecycle`）與比價狀態（`Stored.pricing`，#495）。
 
     各表在同一個 transaction 裡讀。`lock`：依 TDCC 的順序鎖住這幾檔的商品條件列（`FOR UPDATE`）再讀，在呼叫端的
     transaction 裡執行，鎖到它結束。寫入商品條件、核對寫回與重算核對條件都先這樣讀：同時處理同一檔時，後到的
@@ -192,6 +291,8 @@ def read_many(conn: psycopg.Connection, tdccs: Sequence[str] | None = None, *, l
             conn.execute(f"SELECT tdcc, seq, branch, amount FROM workflow.branch_allocation{where}", params).fetchall()
         ):
             branches.setdefault(tdcc, []).append((branch, amount))
+        events = _latest_events(conn, None if tdccs is None else list(tdccs)) if state else {}
+        pricing = _pricing_states(conn, where, params) if state else {}
     n = len(PRODUCT_COLUMNS)
     found = {}
     for tdcc, *row in rows:
@@ -208,6 +309,8 @@ def read_many(conn: psycopg.Connection, tdccs: Sequence[str] | None = None, *, l
             prices=tuple(prices.get(tdcc, ())),
             autocall=autocall.get(tdcc),
             branches=tuple(branches.get(tdcc, ())),
+            lifecycle=_lifecycle(events.get(tdcc)) if state else None,
+            pricing=pricing.get(tdcc),
         )
     return found
 
@@ -242,14 +345,6 @@ def locked_tdccs(conn: psycopg.Connection, tdccs: Sequence[str] | None = None) -
             "SELECT tdcc FROM workflow.product WHERE locked_at IS NOT NULL" + where + " ORDER BY tdcc", params
         )
     ]
-
-
-def underlying_codes(conn: psycopg.Connection) -> list[tuple[str, str]]:
-    """每檔商品連結的標的代碼（TDCC, 代碼），不重複、不含空白的欄；曝險分析選標的用（`exposure.load_choices`）。"""
-    columns = ", ".join(f"underlying_{n}" for n in range(1, 6))
-    return conn.execute(
-        f"SELECT DISTINCT tdcc, code FROM workflow.product, unnest(ARRAY[{columns}]) AS code WHERE code IS NOT NULL"
-    ).fetchall()
 
 
 def observed_exits_using(conn: psycopg.Connection, code: str, day: dt.date, observed: str) -> list[str]:

@@ -19,12 +19,12 @@ from sp_workflow.lifecycle import (
     AutoEvent,
     LifecycleError,
     current_events,
-    lifecycle_status,
     raise_objection,
     record_redemption,
     replace_auto_events,
     resolve_objection,
 )
+from sp_workflow.product_store import lifecycle_status
 
 pytestmark = pytest.mark.db
 

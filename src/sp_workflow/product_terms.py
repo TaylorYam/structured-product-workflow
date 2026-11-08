@@ -53,7 +53,6 @@ from sp_workflow.check_terms import CalcLine, recalculate, recalculate_corrected
 from sp_workflow.database import OperatorError, require_in_transaction
 from sp_workflow.import_config import ImportConfig as ImportConfig  # 設定搬到 import_config（#493）：
 from sp_workflow.import_config import load_import_config as load_import_config  # 舊的 import 路徑留一個版本
-from sp_workflow.lifecycle import lifecycle_status
 from sp_workflow.order_terms import TDCC_FIELD, OrderRow, describe, unknown_issuer
 from sp_workflow.product_record import (
     CHOICES,
@@ -83,7 +82,7 @@ from sp_workflow.product_record import (
 )
 from sp_workflow.product_store import CheckTermsState as CheckTermsState  # 讀取端搬到 product_store（#437）：
 from sp_workflow.product_store import IssuerLookup as IssuerLookup  # 舊的 import 路徑留一個版本
-from sp_workflow.product_store import Stored, issuer_code, locked, read
+from sp_workflow.product_store import Stored, issuer_code, lifecycle_status, locked, read
 from sp_workflow.product_store import read_many as read_many
 from sp_workflow.status import ImportResult, OrderReview, ProductSource
 from sp_workflow.trade_rows import (
