@@ -22,6 +22,7 @@ ADR 0024 的拆股登記全部靠人工，實際上多半是生效後比價出�
 - **登記**：只收收盤價表或商品有的代碼；代碼依假日表的交易所碼對到行事曆（美國交易所碼 → 代號、`JT` → `.T`、`HK` → 去掉前導 0 的數字）。前後股數相同、比例超過 1000 倍（現金收購少數股東）的，以及同一個代碼生效日前後 7 天內已經有登記（人工或自動、不管比例）的不收、不列出（每天都會再抓到）；兩個來源同一次拆股的日期或比例不同時不登記、列出差異。寫入用既有的 `add_split`，登記人是執行匯入的 Windows 使用者，備註「自動登記：<來源> 行事曆（抓取日）」。
 - **對齊價格斷層**：生效日在最近 30 天內的自動登記，若生效日（不是收盤日時是之後第一個收盤日）沒有對應的斷層、但前後 3 個收盤日內恰好有一個「套用這次拆股就消失」的斷層，就把生效日改到那一天（刪掉重登在同一個 transaction，各留紀錄），備註加「依收盤價斷層從 X 改到 Y」。人工登記的不動。
 - **失敗**：任一個來源抓不到只寫原因；登記與對齊整段一個 transaction，出任何錯都整段不寫、原因寫在完成訊息。
+- **憑證檢查（2026-11-09 使用者同意，#523）**：連線不開 Python 3.13 預設的 `VERIFY_X509_STRICT`，憑證鏈與主機名稱照樣檢查（等於 3.12 以前的預設）。公司網路攔截 HTTPS 時換上的根憑證沒把 Basic Constraints 標成 critical，嚴格模式下 Yahoo 連不上。
 
 ### 考慮過的替代方案
 
@@ -55,6 +56,7 @@ Under ADR 0024 every split is registered by hand, and in practice an entry is us
 - **Registration**: only codes in the close table or a product; codes map to calendar symbols by the holiday calendar's exchange code (US exchange codes → symbol, `JT` → `.T`, `HK` → the number without leading zeros). Equal share counts, ratios over 1000 (cash-out consolidations), and a code already registered within 7 days of the effective date (by hand or automatically, any ratio) are skipped silently, since they are fetched again every day; when the two sources disagree on the date or ratio of the same split it is not registered and the difference is listed. Writes use the existing `add_split`, recorded by the Windows user running the import, with the note 「自動登記：<source> 行事曆（fetch date）」.
 - **Aligning to the price gap**: for automatic entries effective within the last 30 days, when there is no matching gap on the effective date (or the first close after it when it is not a close date) but exactly one gap within 3 closes either side disappears once the split is applied, the effective date moves to that day (delete and re-add in one transaction, each logged) and the note gains 「依收盤價斷層從 X 改到 Y」. Manual entries are untouched.
 - **Failures**: an unreachable source only adds a reason; registration and alignment run in one transaction, so any error writes none of it and the completion message gives the reason.
+- **Certificate checks (agreed by the user 2026-11-09, #523)**: connections drop Python 3.13's default `VERIFY_X509_STRICT`; the certificate chain and host name are still verified (the pre-3.12 default). The office network intercepts HTTPS with a root certificate whose Basic Constraints is not marked critical, so Yahoo was rejected in strict mode.
 
 ### Alternatives considered
 

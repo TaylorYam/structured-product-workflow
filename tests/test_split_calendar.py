@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import datetime as dt
 import json
+import ssl
 import urllib.error
 from decimal import Decimal
 from pathlib import Path
@@ -224,6 +225,15 @@ def test_one_source_down_keeps_the_other() -> None:
     assert {a.source for a in fetched.announced} == {YAHOO}
     (error,) = fetched.errors
     assert error.startswith("Nasdaq 拆股行事曆沒抓到（URLError")
+
+
+def test_tls_context_drops_only_the_strict_check() -> None:
+    """公司網路的根憑證沒標 critical，嚴格模式會擋（#523）；其他檢查照舊。"""
+    context = split_calendar._tls_context()
+
+    assert not context.verify_flags & ssl.VERIFY_X509_STRICT
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname
 
 
 # ---------- 對齊價格斷層 ----------
