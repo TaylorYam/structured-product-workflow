@@ -30,7 +30,7 @@
 
 資料時間點：
 
-- 波動度用 `workflow.daily_price.volatility_200d`（每日匯入的彭博 VOLATILITY_200D）。取價日＝交易日那一份股價檔（內容是交易日前一個交易日收盤算的值，和試算表一致）；那一份還沒匯入時取交易日以前最近的一份，不用交易日之後的。所有標的都從同一份檔取；標的代碼和股價檔逐字比對，同核對條件。
+- 波動度用 `workflow.daily_price.volatility_200d`（每日匯入的彭博 VOLATILITY_200D）。取價日＝交易日那一份股價檔（內容是交易日前一個交易日收盤算的值，和試算表一致）；那一份還沒匯入時取交易日以前最近的一份。那一份缺任一檔標的的代碼時（新連結的標的：彭博清單在連結後才加上，最早出現在下一個交易日的股價檔，#525），改用**交易日之後第一份標的代碼都有的**股價檔；代碼在、只是沒有 200 日波動率或股價衝突的不往後找。所有標的都從同一份檔取；標的代碼和股價檔逐字比對，同核對條件。
 - 評等用交易日查（#237 的 `RatingRows.on`：生效日 ≤ 交易日的最新一筆）。上手代碼照起單資料的規則，由 TDCC 前三碼查上手編號對照（查不到時用發行機構寫法反查）。
 
 算不出來：
@@ -42,7 +42,7 @@
 
 生命週期與保存（實作時決定，低風險、可回復）：
 
-- 加在核對條件的 `recalculate`（ADR 0012）：每日匯入、起單資料匯入、人工維護存檔、放行差異後，重算還沒鎖住的商品，結果和上一次不同才寫入。已鎖住的商品只有**還沒有風險等級時算一次**（本功能上線前就鎖住的商品，在升級後第一次重算時補上），之後凍結、不再重算；**更正已鎖住的商品（`recalculate_corrected`）也不重算風險等級**。所以已鎖住的商品一旦有了風險等級就不再改變，留下承作當時（或第一次補算時）的判斷。補算不鎖商品條件列，寫入用 `ON CONFLICT DO NOTHING`，別的連線同時補了同一檔時以先寫的為準。
+- 加在核對條件的 `recalculate`（ADR 0012）：每日匯入、起單資料匯入、人工維護存檔、放行差異後，重算還沒鎖住的商品，結果和上一次不同才寫入。已鎖住的商品只有**還沒有風險等級或還是待算時算**（本功能上線前就鎖住的商品，在升級後第一次重算時補上；鎖住時資料還不齊、還是待算的，資料補齊後下一次重算時算出，#525），有了等級（完成或回填）之後凍結、不再重算；**更正已鎖住的商品（`recalculate_corrected`）也不重算風險等級**。所以已鎖住的商品一旦有了風險等級就不再改變，留下承作當時（或第一次補算時）的判斷。補算不鎖商品條件列，寫入只蓋掉待算的那一筆（`ON CONFLICT … WHERE status = '待算'`），別的連線同時補了同一檔時以先寫的為準。
 - migration 0025 新增 `workflow.risk_level`（每檔一筆）：狀態、等級、總分、原因、用的取價日，明細（各項分數、各標的波動率、平均波動度、用的評等）放 `detail` jsonb，數字存成字串，讀回來是同一個值。`workflow.product` 不加欄位（同 ADR 0012）。資料庫檢查狀態與等級一致：完成有等級、總分、明細；回填是 RR4、沒有明細；待算沒有等級。
 - #239 讀 `sp_workflow.risk_level.risk_levels`／`risk_level_of`。
 - 重算要的設定改由 `load_import_config` 一次讀（交易所假日表、上手編號對照、參考條件表格式的發行機構寫法、審查標準、風險等級設定）；任一個讀不到時匯入照樣保留、完成訊息寫出原因（同 ADR 0012）。
@@ -97,7 +97,7 @@ The formula (recovered from the Generator's "境外結構型商品承作檢核�
 
 Data timing:
 
-- Volatility comes from `workflow.daily_price.volatility_200d` (Bloomberg VOLATILITY_200D, imported daily). Use the price file whose price date equals the trade date (it holds the value computed from the previous trading day's close, matching the spreadsheet); when that file is not imported yet, use the latest one before the trade date, never a later one. All underlyings come from that one file; codes are matched literally against the price file, as in the check terms.
+- Volatility comes from `workflow.daily_price.volatility_200d` (Bloomberg VOLATILITY_200D, imported daily). Use the price file whose price date equals the trade date (it holds the value computed from the previous trading day's close, matching the spreadsheet); when that file is not imported yet, use the latest one before the trade date. When that file lacks the code of any underlying (a newly linked underlying: Bloomberg's list gains the code only after linking, so it first appears in the next trading day's price file, #525), use **the first price file after the trade date that has every underlying's code**; a code that is present but conflicting or without a 200-day volatility does not move the file. All underlyings come from that one file; codes are matched literally against the price file, as in the check terms.
 - Ratings are looked up on the trade date (#237's `RatingRows.on`: the latest row effective on or before the trade date). The issuer code follows the order-sheet rule: the first three TDCC digits through the issuer prefix table (falling back to the issuer's written name).
 
 When it cannot be calculated:
@@ -109,7 +109,7 @@ When it cannot be calculated:
 
 Lifecycle and storage (implementation choices, low risk and reversible):
 
-- Added to the check-terms `recalculate` (ADR 0012): after a daily import, an order-sheet import, a manual-maintenance save, or a release, unlocked products are recalculated and written only when the result differs from the last one. A locked product is calculated **once, only while it has no risk level yet** (products locked before this feature shipped get theirs on the first recalculation after the upgrade) and is frozen afterwards; **correcting a locked product (`recalculate_corrected`) does not recalculate its risk level either**. So once a locked product has a risk level it never changes, recording the judgment at trade time (or at that first catch-up). The catch-up does not lock the product rows and writes with `ON CONFLICT DO NOTHING`, so if another connection fills the same product at the same time the first write wins.
+- Added to the check-terms `recalculate` (ADR 0012): after a daily import, an order-sheet import, a manual-maintenance save, or a release, unlocked products are recalculated and written only when the result differs from the last one. A locked product is calculated **only while it has no risk level yet or is still pending** (products locked before this feature shipped get theirs on the first recalculation after the upgrade; one locked while its data was incomplete and still pending is calculated on the next recalculation after the data arrives, #525) and is frozen once it has a level (done or backfilled); **correcting a locked product (`recalculate_corrected`) does not recalculate its risk level either**. So once a locked product has a risk level it never changes, recording the judgment at trade time (or at that first catch-up). The catch-up does not lock the product rows and overwrites only a pending row (`ON CONFLICT … WHERE status = '待算'`), so if another connection fills the same product at the same time the first write wins.
 - Migration 0025 adds `workflow.risk_level` (one row per product): status, level, total score, reason, and the price date used, with the breakdown (each score, each underlying's volatility, the mean volatility, the rating used) in the `detail` jsonb, numbers stored as strings so they read back unchanged. `workflow.product` gets no new columns (as in ADR 0012). Database checks keep status and level consistent: 完成 has a level, total, and detail; 回填 is RR4 without detail; 待算 has no level.
 - #239 reads `sp_workflow.risk_level.risk_levels` / `risk_level_of`.
 - The configuration the recalculation needs is now read once by `load_import_config` (exchange holidays, issuer prefixes, the issuer names of the reference-sheet format, the review standard, and the risk-level settings); if any cannot be read, the import is kept and the completion message says why (as in ADR 0012).

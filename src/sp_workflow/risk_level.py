@@ -1,10 +1,10 @@
 """自算風險等級（#238、ADR 0023）：照承辦的 Generator 試算表（「境外結構型商品承作檢核表」工作表）的公式算 FCN 的 RR（FCN_Express、Super Bull、BEN、DACN 照同一套，#310、#373、#367）。
 
 算核對條件時一起算（`check_terms.recalculate`）：還沒鎖住的商品每次都算，和上一次不同才寫入 `workflow.risk_level`；
-已鎖住的商品只在還沒有風險等級時算一次（本功能上線前就鎖住的），之後凍結、不再重算（更正已鎖住的商品也不重算），
-留下承作當時的判斷。對外：
+已鎖住的商品只在還沒有風險等級（本功能上線前就鎖住的）或還是待算時（#525）算，有了等級之後凍結、不再重算
+（更正已鎖住的商品也不重算），留下承作當時的判斷。對外：
 - `assess`：一檔的計算本身（不碰資料庫）。
-- `recalculate_risk`：在核對條件重算的 transaction 裡算這幾檔，寫入有變的；`fill_missing_locked`：替還沒有風險等級的已鎖住商品算一次。
+- `recalculate_risk`：在核對條件重算的 transaction 裡算這幾檔，寫入有變的；`fill_missing_locked`：替還沒有風險等級或還是待算的已鎖住商品算。
 - `risk_levels`／`risk_level_of`：讀存好的結果（起單資料頁顯示；說明書／投資人須知的 RR 核對與寄信草稿用，#239）。
 指數清單與補充、備用 ETF 由 `import_config.load_import_config` 讀設定檔 `config/risk_level.toml`；
 ETF 清單以資料庫的可連結標的白名單為主（`etf_list`、`eln_whitelist`，#273）。
@@ -24,7 +24,8 @@ ETF 清單以資料庫的可連結標的白名單為主（`etf_list`、`eln_whit
   A、A-、A2、A3 → 4；BBB+、Baa1 以下 → 5。
 - 轉等級（下限含）：<1.8 → RR1、<2.6 → RR2、<3.4 → RR3、<4.2 → RR4、其餘 RR5。總分剛好 3.4 是 RR4（試算表的浮點誤差不重現）。
 資料時間點：股價檔取取價日＝交易日那一份（內容是交易日前一個交易日收盤的彭博 VOLATILITY_200D，和試算表一致），
-沒有就取交易日以前最近的一份；評等用交易日查（`credit_ratings.RatingRows.on`）。標的代碼和股價檔逐字比對（同核對條件）。
+沒有就取交易日以前最近的一份；那一份缺任一檔標的的代碼時（新連結的標的，彭博清單隔一個交易日才有，#525），
+改用交易日之後第一份標的代碼都有的。所有標的都從同一份取。評等用交易日查（`credit_ratings.RatingRows.on`）。標的代碼和股價檔逐字比對（同核對條件）。
 算不出來（缺交易日、天期、標的、UL_1 或股價檔，標的不在股價檔、股價衝突或沒有 200 日波動率，上手認不出來或評等表查不到）：
 交易日在 2026-10-30 以前填 RR4、狀態「回填」；之後（或沒有交易日）狀態「待算」，資料補齊後下一次重算時算出。原因都寫出缺什麼。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
@@ -102,10 +103,31 @@ class RiskTerms:
     tenor_months: int | None
     underlyings: tuple[str | None, ...]  # UL_1～UL_5
 
-    def price_date(self, price_dates: Sequence[dt.date]) -> dt.date | None:
-        """這檔用哪一份股價檔（`price_file_on`）；沒有交易日或交易日以前（含）沒有股價檔時 None。
+    @property
+    def codes(self) -> tuple[str, ...]:
+        """非空的標的代碼。"""
+        return tuple(code for code in self.underlyings if code)
+
+    def price_date(
+        self, price_dates: Sequence[dt.date], volatilities: Mapping[tuple[dt.date, str], Volatility] | None = None
+    ) -> dt.date | None:
+        """這檔用哪一份股價檔：交易日那份，沒有就交易日以前最近的一份（`price_file_on`）；那一份缺任一檔標的的代碼時，
+        改用交易日之後第一份標的代碼都有的（新連結的標的，#525），都沒有時還是交易日那份。沒有交易日或交易日以前（含）
+        沒有股價檔時 None。`volatilities` 是 None 時不看代碼、只回交易日那份（`_volatilities` 先讀那一份）。
         `assess` 與讀波動率的 `_volatilities` 都問這裡，取價日只在一處決定（#496）。"""
-        return None if self.trade_date is None else price_file_on(self.trade_date, price_dates)
+        if self.trade_date is None:
+            return None
+        base = price_file_on(self.trade_date, price_dates)
+        if base is None or volatilities is None or self._all_in(base, volatilities):
+            return base
+        return next((d for d in self.later_dates(price_dates) if self._all_in(d, volatilities)), base)
+
+    def later_dates(self, price_dates: Sequence[dt.date]) -> Sequence[dt.date]:
+        """交易日之後的股價檔取價日（由小到大）。"""
+        return () if self.trade_date is None else price_dates[bisect.bisect_right(price_dates, self.trade_date) :]
+
+    def _all_in(self, price_date: dt.date, volatilities: Mapping[tuple[dt.date, str], Volatility]) -> bool:
+        return all((price_date, code) in volatilities for code in self.codes)
 
 
 @dataclass(frozen=True)
@@ -232,7 +254,7 @@ def assess(
         problems.append("缺標的")
     elif not first:
         problems.append("缺 UL_1（標的種類看第一檔標的）")
-    price_date = terms.price_date(price_dates)
+    price_date = terms.price_date(price_dates, volatilities)
     if trade_date is not None and price_date is None:
         problems.append(f"沒有取價日在交易日 {trade_date} 以前（含）的股價檔")
     found: list[tuple[str, Decimal]] = []
@@ -240,7 +262,7 @@ def assess(
         volatility = volatilities.get((price_date, code))
         where = f"UL_{n} {code}：股價檔（取價日 {price_date}）"
         if volatility is None:
-            problems.append(f"{where}沒有這個代碼")
+            problems.append(f"{where}沒有這個代碼，交易日之後的股價檔也還沒有")
         elif volatility.conflict:
             problems.append(f"{where}這個代碼有好幾列、值不同")
         elif volatility.value is None:
@@ -365,17 +387,25 @@ def recalculate_risk(conn: psycopg.Connection, found: Sequence[Stored], config: 
 
 
 def fill_missing_locked(conn: psycopg.Connection, config: ImportConfig, tdccs: Sequence[str] | None = None) -> int:
-    """替還沒有風險等級的已鎖住商品（`tdccs` 有值時只看這幾檔）算一次，回傳寫了幾檔；在呼叫端的 transaction 裡。
+    """替還沒有風險等級或還是待算的已鎖住商品（`tdccs` 有值時只看這幾檔）算一次，回傳算了幾檔；在呼叫端的 transaction 裡。
 
-    本功能上線前就鎖住的商品用這個補；寫了之後凍結，之後不再重算。不鎖商品條件列（已鎖住的條件只有更正會改，
-    更正不重算風險等級），寫入用 `ON CONFLICT DO NOTHING`：別的連線同時補了同一檔時以先寫的為準。
+    本功能上線前就鎖住的商品、鎖住時資料還不齊的商品（#525）用這個補；有了等級（完成或回填）之後凍結，不再重算。
+    不鎖商品條件列（已鎖住的條件只有更正會改，更正不重算風險等級），寫入只蓋掉待算的（`overwrite=False`）：
+    別的連線同時補了同一檔時以先寫的為準。
     """
     require_in_transaction(conn)
     candidates = locked_tdccs(conn, tdccs)
-    have = {t for (t,) in conn.execute("SELECT tdcc FROM workflow.risk_level WHERE tdcc = ANY(%s)", (candidates,))}
+    have = {
+        t
+        for (t,) in conn.execute(
+            "SELECT tdcc FROM workflow.risk_level WHERE tdcc = ANY(%s) AND status <> %s", (candidates, PENDING)
+        )
+    }
     missing = [tdcc for tdcc in candidates if tdcc not in have]
+    pending = risk_levels(conn, missing)
     for tdcc, risk in _assess_all(conn, list(read_many(conn, missing).values()), config).items():
-        write_risk_level(conn, tdcc, risk, overwrite=False)
+        if pending.get(tdcc) != risk:
+            write_risk_level(conn, tdcc, risk, overwrite=False)
     return len(missing)
 
 
@@ -426,14 +456,24 @@ def risk_level_of(conn: psycopg.Connection, tdcc: str) -> RiskLevel | None:
 def _volatilities(
     conn: psycopg.Connection, terms: Sequence[RiskTerms], price_dates: Sequence[dt.date]
 ) -> dict[tuple[dt.date, str], Volatility]:
-    """每檔用到的那一份股價檔裡、它的標的的 200 日波動率。"""
-    wanted = {
-        (price_date, code)
+    """每檔用到的那一份股價檔裡、它的標的的 200 日波動率：先讀交易日那份，缺代碼的檔再讀交易日之後的（#525）。"""
+    found = _read_volatilities(
+        conn, {(d, code) for t in terms if (d := t.price_date(price_dates)) is not None for code in t.codes}
+    )
+    later = {
+        (d, code)
         for t in terms
-        if (price_date := t.price_date(price_dates)) is not None
-        for code in t.underlyings
-        if code
+        if (base := t.price_date(price_dates)) is not None and any((base, code) not in found for code in t.codes)
+        for d in t.later_dates(price_dates)
+        for code in t.codes
     }
+    return {**found, **_read_volatilities(conn, later)}
+
+
+def _read_volatilities(
+    conn: psycopg.Connection, wanted: Collection[tuple[dt.date, str]]
+) -> dict[tuple[dt.date, str], Volatility]:
+    """股價檔裡這些 (取價日, 代碼) 的 200 日波動率（多讀到的組合也帶回來，不影響結果）。"""
     if not wanted:
         return {}
     return {
@@ -447,19 +487,20 @@ def _volatilities(
 
 
 def write_risk_level(conn: psycopg.Connection, tdcc: str, risk: RiskLevel, *, overwrite: bool = True) -> None:
-    """寫一檔的風險等級；`overwrite` 是 False 時已經有的不動（補已鎖住的商品）。"""
+    """寫一檔的風險等級；`overwrite` 是 False 時已經有等級的（完成、回填）不動，只蓋掉待算的（補已鎖住的商品）。"""
     detail = None if risk.detail is None else json.dumps(_detail_json(risk.detail), ensure_ascii=False)
     conflict = (
         " ON CONFLICT (tdcc) DO UPDATE SET status = EXCLUDED.status, risk_level = EXCLUDED.risk_level,"
         " total_score = EXCLUDED.total_score, reason = EXCLUDED.reason, price_date = EXCLUDED.price_date,"
         " detail = EXCLUDED.detail, calculated_at = now()"
-        if overwrite
-        else " ON CONFLICT (tdcc) DO NOTHING"
     )
+    if not overwrite:
+        conflict += " WHERE workflow.risk_level.status = %s"
     conn.execute(
         "INSERT INTO workflow.risk_level (tdcc, status, risk_level, total_score, reason, price_date, detail)"
         " VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)" + conflict,
-        (tdcc, risk.status, risk.level, risk.total, risk.reason or None, risk.price_date, detail),
+        (tdcc, risk.status, risk.level, risk.total, risk.reason or None, risk.price_date, detail)
+        + (() if overwrite else (PENDING,)),
     )
 
 

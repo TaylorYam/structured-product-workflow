@@ -313,6 +313,33 @@ def test_the_terms_choose_the_price_file_for_the_assessment_and_the_volatility_l
     assert terms(trade_date=None).price_date([sept_3]) is None
 
 
+def test_a_newly_linked_underlying_uses_the_first_later_file_that_has_every_code() -> None:
+    """#525：新連結的標的（彭博清單隔一個交易日才有）交易日那份沒有，改用交易日之後第一份標的都有的。"""
+    sept_7, sept_8 = dt.date(2026, 9, 7), dt.date(2026, 9, 8)
+    without = vols(LITE_UW="1", NBIS_UW="1")  # 交易日那份沒有 MRVL UW
+    partial = vols(sept_7, LITE_UW="1")  # 之後第一份也還缺
+    dates = (TRADE, sept_7, sept_8)
+
+    risk = assess_with(terms(), {**without, **partial, **vols(sept_8, **_SHEET)}, dates=dates)
+    waiting = assess_with(terms(), {**without, **partial}, dates=dates)
+
+    assert terms().price_date(list(dates)) == TRADE, "沒給波動率時只看交易日那份"
+    assert (risk.status, risk.price_date, risk.level, risk.total) == (DONE, sept_8, "RR4", Decimal("3.96"))
+    assert (waiting.status, waiting.price_date) == (BACKFILLED, TRADE), "交易日在切換日以前，缺資料照舊回填"
+    assert waiting.reason == "UL_3 MRVL UW：股價檔（取價日 2026-09-04）沒有這個代碼，交易日之後的股價檔也還沒有"
+
+
+def test_a_code_without_volatility_on_the_trade_date_does_not_move_the_price_file() -> None:
+    """代碼在交易日那份、只是沒有 200 日波動率：照舊用那份（待算），不往後找。"""
+    sept_8 = dt.date(2026, 9, 8)
+    found = {**vols(LITE_UW="1", NBIS_UW="1", MRVL_UW=None), **vols(sept_8, **_SHEET)}
+
+    risk = assess_with(terms(), found, dates=(TRADE, sept_8))
+
+    assert (risk.status, risk.price_date) == (BACKFILLED, TRADE)
+    assert risk.reason == "UL_3 MRVL UW：股價檔（取價日 2026-09-04）沒有 200 日波動率"
+
+
 # ---------- 算不出來：回填與待算 ----------
 
 
@@ -335,7 +362,7 @@ def test_missing_data_from_the_cutover_on_is_pending() -> None:
     assert (risk.status, risk.level, risk.price_date) == (PENDING, None, dt.date(2026, 10, 30))
     assert risk.reason == (
         "缺天期（Tenor (m)）；UL_2 NBIS UW：股價檔（取價日 2026-10-30）沒有 200 日波動率；"
-        "UL_3 MRVL UW：股價檔（取價日 2026-10-30）沒有這個代碼"
+        "UL_3 MRVL UW：股價檔（取價日 2026-10-30）沒有這個代碼，交易日之後的股價檔也還沒有"
     )
     assert risk.label == "待算"
 
@@ -511,6 +538,25 @@ def test_pending_products_are_calculated_once_the_prices_arrive(pg, tmp_path) ->
     assert first.risk.reason == "沒有取價日在交易日 2026-11-02 以前（含）的股價檔"
     assert second.risk is not None and second.risk.total == Decimal("3.56")
     assert stored_row(pg)[:2] == (DONE, "RR4")
+
+
+@pytest.mark.db
+def test_a_newly_linked_underlying_is_calculated_from_the_next_price_file(pg, tmp_path) -> None:
+    """#525：交易日那份沒有新連結的 BBB UN，下一份有了就用下一份算；鎖住時還待算的也補算，有了等級之後凍結。"""
+    nov_3 = dt.date(2026, 11, 3)
+    import_prices(pg, tmp_path, LATER, [vol_price("AAA UW", 20)])
+    import_order(pg, **{"Trade date": LATER, "Strike date": LATER})
+    recalculate(pg, CONFIG)
+    assert stored_row(pg)[:2] == (PENDING, None)
+    pg.execute("UPDATE workflow.product SET locked_at = now() WHERE tdcc = %s", (A,))
+
+    import_prices(pg, tmp_path, nov_3, [vol_price("AAA UW", 20), vol_price("BBB UN", 40)])
+    recalculate(pg, CONFIG)
+
+    assert stored_row(pg) == (DONE, "RR4", Decimal("3.56"), None, nov_3)
+    import_prices(pg, tmp_path, nov_3, [vol_price("AAA UW", 90), vol_price("BBB UN", 90)])  # 同一天整份取代
+    recalculate(pg, CONFIG)
+    assert stored_row(pg)[2] == Decimal("3.56"), "有了等級之後凍結"
 
 
 @pytest.mark.db
