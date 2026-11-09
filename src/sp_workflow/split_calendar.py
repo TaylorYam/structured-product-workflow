@@ -16,6 +16,7 @@ from __future__ import annotations
 import datetime as dt
 import http.cookiejar
 import json
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -135,7 +136,10 @@ def fetch(today: dt.date, opener: Opener | None = None) -> Fetched:
 
 def _browser() -> Opener:
     """帶 cookie 的連線（Yahoo 要先拿 cookie 才拿得到 crumb）。"""
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
+        urllib.request.HTTPSHandler(context=_tls_context()),
+    )
 
     def read(request: urllib.request.Request) -> bytes:
         request.add_header("User-Agent", USER_AGENT)
@@ -143,6 +147,17 @@ def _browser() -> Opener:
             return response.read()
 
     return read
+
+
+def _tls_context() -> ssl.SSLContext:
+    """預設的憑證檢查，但不開 Python 3.13 的 `VERIFY_X509_STRICT`（#523）。
+
+    公司網路會攔截 HTTPS、換上自己的根憑證，那張憑證的 Basic Constraints 沒標成
+    critical，嚴格模式會拒絕連線。憑證鏈與主機名稱照樣檢查。
+    """
+    context = ssl.create_default_context()
+    context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    return context
 
 
 def _yahoo(read: Opener, today: dt.date) -> list[Announced]:
