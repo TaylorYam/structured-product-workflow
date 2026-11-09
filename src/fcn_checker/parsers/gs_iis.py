@@ -22,8 +22,9 @@ from .common import Mention, RawText, compat_normalized, derived, number
 from .layout import TextIndex, parse_date
 
 TEMPLATE_ID = "gs-zh-iis"
-PARSER_VERSION = "5"  # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：警語的受託機構名稱（Issue #306）；
-# 4：重複寫出的幣別、天期、買回 %（Issue #317）；5：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #242）
+PARSER_VERSION = "6"  # 2：價格表改由 parsers/price_table.py 讀（Issue #287）；3：警語的受託機構名稱（Issue #306）；
+# 4：重複寫出的幣別、天期、買回 %（Issue #317）；5：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #242）；
+# 6：價格表中間一列的幣別字在頁底換行、`元` 在下一頁頁首（共用 price_table，workflow #530）
 # 信用評等（#242）：商品簡介 (4) 依序寫發行機構英商高盛國際公司、保證機構高盛集團有限公司（評等寫在評等機構前面，
 # 同說明書；另有 DBRS、R&I，忽略），第二個保證機構美商高盛亞洲證券「無信用評等」，不讀
 _RATINGS_HEAD = r"發行機構及各保證機構之長期債務信用評等[:：]截至本中文投資人須知刊印日期，英商高盛國際公司[:：]"

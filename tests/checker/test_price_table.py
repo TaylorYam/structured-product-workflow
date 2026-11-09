@@ -293,6 +293,37 @@ def test_rows_spread_over_two_pages_are_read_by_their_own_anchors():
     assert table.value.tickers == ["AAA UW", "BBB UN"]
 
 
+def test_currency_word_wrapped_over_a_page_break_goes_back_to_its_row():
+    """不是最後一列的一格在頁底換行（`358.2200 美` / 下一頁頁首 `元`，GS 投資人須知 OOS 樣本，2026-11-09）：
+    `元` 接回上一頁那一格，不算到下一頁的列；下一頁同一欄的值照常是下一列的。"""
+    first = [ln for ln in row(1, 750, 1, "甲公司", "AAA UW", ROW1) if ln.x0 > X["initial"] + 40 or ln.x1 < 230]
+    lines = [
+        *header(),
+        *first,
+        centered(1, X["initial"], 750, "100.0000 美"),
+        centered(2, X["initial"], 10, "元"),
+        *row(2, 20, 2, "乙公司", "BBB UN", ROW2),
+    ]
+    table = read("t", lines, SPEC)
+    assert table.ok, table.note
+    assert table.value.currencies == ["美元", "美元"]
+    assert [p["initial"] for p in table.value.prices] == [Decimal("100.0000"), Decimal("50.0000")]
+    assert "元" in [ln.text for ln in table.value.rows[0].lines]
+
+
+def test_a_value_at_the_top_of_the_next_page_is_not_joined_to_a_complete_cell():
+    """上一頁頁底那一格已完整（`100.0000 美元`）：下一頁頁首同一欄的值不接上去。"""
+    lines = [
+        *header(),
+        *row(1, 750, 1, "甲公司", "AAA UW", ROW1),
+        centered(2, X["initial"], 10, "50.0000 美元"),
+        *[ln for ln in row(2, 20, 2, "乙公司", "BBB UN", ROW2) if not (ln.x0 < X["initial"] < ln.x1)],
+    ]
+    table = read("t", lines, SPEC)
+    assert table.ok, table.note
+    assert [p["initial"] for p in table.value.prices] == [Decimal("100.0000"), Decimal("50.0000")]
+
+
 def test_content_on_a_page_two_pages_after_the_last_row_is_not_dropped_silently():
     """所在頁沒有列錨點：緊接最後一列的下一頁接到最後一列，隔更遠讀不出（不悄悄丟掉）。"""
     lines = [*header(), *row(1, 150, 1, "甲公司", "AAA UW", ROW1)]

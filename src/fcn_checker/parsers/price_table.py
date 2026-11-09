@@ -12,7 +12,8 @@ y 座標、跨頁、換行、擠格都在這裡處理（Issue #287）。
    上一頁該欄最下面的一行；橫跨兩格以上的說明文字不算；只有表頭百分比的那一格歸到正上方的欄名）。表頭從第一個兩格
    並排的列、有關鍵字的格的上緣起，更上面的文字不算；第 1 列那一頁的表頭已齊全時不往上一頁找。從表頭最後一行之下
    才開始的格（例：代碼拆三行、中間一行和列號齊平）屬於列。
-4. 其餘每行歸到同一頁 y 中心最近的列錨點；價格欄裡換行的值（`23,425.0000` / `日圓`）跟著第一行的列；最後一列
+4. 其餘每行歸到同一頁 y 中心最近的列錨點；價格欄裡換行的值（`23,425.0000` / `日圓`）跟著第一行的列，在頁底換行時
+   下一頁頁首、該頁第一個列錨點之上的續行（`358.2200美` / `元`）也接回上一頁那一格；最後一列
    下方、和該列不相接的表後說明不算進表（例外：價格欄裡單獨一個值、而該列這一欄還沒有值，是格內位置較低的那一格）。
    所在頁沒有列錨點時，只有緊接最後一列的下一頁算最後一列溢過來的部分，隔更遠就讀不出（轉人工覆核，不悄悄丟掉或
    接上）。表頭同樣只接到緊接的下一頁。
@@ -646,9 +647,29 @@ def _rows(
     column = {i: _column_of(ln, cols, others) for i, ln in enumerate(body)}
     head: dict[int, int] = {}  # 價格欄的行 → 它那一格的第一行
     text: dict[int, str] = {}  # 格的第一行 → 目前接起來的文字
-    for i in sorted((i for i in column if column[i] in prices), key=lambda i: _page_key(body[i])):
+    in_column = [i for i in column if column[i] in prices]
+
+    def page_end(j: int, page: int, last: bool) -> bool:
+        """`body[j]` 是 `page` 頁這一欄最下面（`last`）或最上面的一行。"""
+        same = [body[x].y0 for x in in_column if column[x] == column[j] and body[x].page == page]
+        return body[j].y0 == (max(same) if last else min(same))
+
+    def over_page(j: int, i: int) -> bool:
+        """跨頁換行的一格（`358.2200美` / 下一頁頁首 `元`）：上一行是上一頁這一欄最下面的一行，下一行是下一頁這一欄
+        最上面的一行、而且中心在該頁第一個列錨點的上緣之上（列距小，續行可能和下一列的錨點稍微重疊）。"""
+        upper, lower = body[j], body[i]
+        tops = [a.y0 for a in anchors if a.page == lower.page]
+        return (
+            lower.page == upper.page + 1
+            and _same_column(upper, lower)
+            and (not tops or _yc(lower) < min(tops))
+            and page_end(j, upper.page, last=True)
+            and page_end(i, lower.page, last=False)
+        )
+
+    for i in sorted(in_column, key=lambda i: _page_key(body[i])):
         ln = body[i]
-        uppers = [j for j in head if column[j] == column[i] and _adjacent(body[j], ln)]
+        uppers = [j for j in head if column[j] == column[i] and (_adjacent(body[j], ln) or over_page(j, i))]
         for j in sorted(uppers, key=lambda j: body[j].y1, reverse=True):
             if _continues(text[head[j]], squash(ln.text)):
                 joined = text[head[j]] + squash(ln.text)
