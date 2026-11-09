@@ -15,14 +15,15 @@ from fcn_checker.ui import SURFACE
 from order_synth import CONFIG, VALUES, maintenance_draft, maintenance_trades
 from sp_workflow.app import PanelWindow
 from sp_workflow.check_terms import DONE, TO_CONFIRM, CalcLine
+from sp_workflow.manual_check import ManualCheck, ManualCheckReceipt
 from sp_workflow.product_export import ExportReceipt
 from sp_workflow.product_record import FIELDS, REQUIRED
 from sp_workflow.product_terms import _MISSING_NOTE, Draft, MissingProduct, Receipt, TermsError, draft_from
 from sp_workflow.status import OrderReview
 from sp_workflow.tabs.editor import DIFFERENT_BG, PROBLEM_BG
-from sp_workflow.tabs.manual import correction_text
+from sp_workflow.tabs.manual import ManualCheckForm, correction_text
 from sp_workflow.trade_rows import CANCEL_NOTE, UNMATCHED_NOTE, TradeRowsDraft
-from sp_workflow.window_actions import Checked, Opened
+from sp_workflow.window_actions import Checked, ManualCheckResult, Opened
 from window_synth import HeldBackground, new_window, started, type_into
 
 A_TDCC, B_TDCC, NEW_TDCC = "029199990001", "029199990002", "029199990003"
@@ -581,3 +582,116 @@ def test_export_result_says_how_many_products_and_where(master, tmp_path: Path) 
     )
     assert tab.status_label.cget("style") == "Done.TLabel"
     assert str(tab.export_button.cget("state")) == "normal"
+
+
+# ---------- 人工核對完成（#527） ----------
+
+
+def test_manual_check_is_only_offered_for_unlocked_products(master, tmp_path: Path) -> None:
+    window = new_window(master, tmp_path)
+    button = window.manual.manual_check_button
+    assert str(button.cget("state")) == "disabled", "還沒打開任何一檔"
+
+    opened(window, maintenance_draft())
+    assert str(button.cget("state")) == "normal"
+    assert "人工核對完成…" in window.manual.intro_var.get()
+    opened(window, maintenance_draft(OrderReview.LOCKED))
+    assert str(button.cget("state")) == "disabled"
+    opened(window, new_product_draft())
+    assert str(button.cget("state")) == "disabled", "只有交易明細的要先存成商品條件"
+
+
+def test_manual_check_asks_to_save_unsaved_edits_first(master, tmp_path: Path, monkeypatch) -> None:
+    window = new_window(master, tmp_path)
+    errors, forms = [], []
+    monkeypatch.setattr(messagebox, "showerror", lambda title, message, **_: errors.append(message))
+    monkeypatch.setattr(sp_workflow.tabs.manual, "ask_form", forms.append)
+    editor = opened(window, maintenance_draft())
+    type_into(editor, "Coupon p.a. (%)", "11")
+
+    window.manual.manual_check()
+
+    assert errors == ["有改過、還沒存檔的內容，請先存檔再人工核對。"] and forms == []
+
+
+def test_manual_check_writes_locks_and_reopens_the_product(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
+    tab = window.manual
+    entry = ManualCheck(A_TDCC, "XS1234567890", (dt.date(2027, 1, 15), dt.date(2027, 4, 15)), {}, "不支援的上手")
+    asked, sent, questions = [], [], []
+
+    def ask(form):
+        asked.append((form.isin_var.get(), form.prices))
+        form.destroy()
+        return entry
+
+    def check(settings, found, config):
+        sent.append(found)
+        return ManualCheckResult(ManualCheckReceipt(A_TDCC, 3))
+
+    monkeypatch.setattr(sp_workflow.tabs.manual, "ask_form", ask)
+    monkeypatch.setattr(messagebox, "askyesno", lambda title, message, **_: questions.append(message) or True)
+    monkeypatch.setattr(sp_workflow.tabs.manual, "manual_check", check)
+    monkeypatch.setattr(
+        sp_workflow.tabs.manual,
+        "open_product",
+        lambda settings, tdcc, paths: Opened(maintenance_draft(OrderReview.LOCKED), CONFIG),
+    )
+    opened(window, maintenance_draft())
+
+    tab.manual_check()
+
+    assert asked == [("", {})], "收盤價的商品不用輸入進場價"
+    assert sent == [entry]
+    assert "會寫入 ISIN XS1234567890、2 個比價日，然後鎖住（跳過自動核對），接著比價。" in questions[0]
+    assert tab.status_var.get() == "已人工核對並鎖住 029199990001（寫入 3 個值）。比價：這次沒有跑。"
+    assert tab.intro_var.get().startswith("已核對通過、條件已鎖住"), "重新打開，換成更正的規則"
+    assert str(tab.manual_check_button.cget("state")) == "disabled"
+
+
+def test_saying_no_to_the_confirmation_writes_nothing(master, tmp_path: Path, monkeypatch, immediate) -> None:
+    window = new_window(master, tmp_path, background=immediate, logged_in=True)
+    sent = []
+    entry = ManualCheck(A_TDCC, "XS1234567890", (dt.date(2027, 4, 15),))
+    monkeypatch.setattr(sp_workflow.tabs.manual, "ask_form", lambda form: form.destroy() or entry)
+    monkeypatch.setattr(messagebox, "askyesno", lambda *_args, **_kwargs: False)
+    monkeypatch.setattr(sp_workflow.tabs.manual, "manual_check", lambda *args: sent.append(args))
+    opened(window, maintenance_draft())
+
+    window.manual.manual_check()
+
+    assert sent == []
+
+
+def test_the_manual_check_form_reads_dates_one_per_line_and_vwap_prices(master) -> None:
+    form = ManualCheckForm(
+        master,
+        A_TDCC,
+        isin="xs1234567890",
+        autocall=[dt.date(2027, 1, 15)],
+        final=dt.date(2027, 4, 15),
+        vwap=[(1, "AAA UW"), (2, "BBB UN")],
+        reason="不支援",
+        seen={"Coupon p.a. (%)": Decimal("12.5")},
+        lookback=True,
+    )
+    form.dates.mark_set(tk.INSERT, "end-1c")
+    assert form.dates.bind("<Return>"), "比價日欄自己接 Enter"
+    assert form._newline(None) == "break", "Enter 換行，不往上傳到視窗的「確定」"
+    form.dates.insert(tk.INSERT, "2027-04-15")
+    form.prices[1].set("50")
+    form.prices[2].set("20.1")
+
+    assert form.winfo_exists() and form.result is None
+    assert form.read() == ManualCheck(
+        A_TDCC,
+        "XS1234567890",
+        (dt.date(2027, 1, 15), dt.date(2027, 4, 15)),
+        {1: Decimal(50), 2: Decimal("20.1")},
+        "不支援",
+        {"Coupon p.a. (%)": Decimal("12.5")},
+    )
+    form.prices[2].set("abc")
+    form.confirm()
+    assert form.error_var.get() == "UL_2 進場價「abc」不是數字" and form.winfo_exists(), "看不懂時視窗不關"
+    form.destroy()

@@ -4,7 +4,7 @@
 每個標的都有進場價時期初價格空白不算缺，#182）、股價（核對條件是「完成」）。
 一檔一個階段（`progress_of`），照順序判斷、第一個符合的就是：有「已寄出」或以前清單更新建立、已鎖住、沒有步驟紀錄
 的舊商品（以前在 Excel 走完，#184）→ 完成；三件缺任一件 → 資料準備中；沒有核對結果 → 待核對；有核對結果、
-還沒鎖住 → 待修正；已鎖住 → 待寄信。
+還沒鎖住 → 待修正；已鎖住 → 待寄信。人工核對完成（#527）的一筆紀錄也算核對結果（「人工核對：跳過自動核對」）。
 商品的範圍是有交易明細或有商品條件的 TDCC。各步日期只顯示、不決定階段：交易明細匯入、商品條件匯入（Order 匯入、
 人工維護存檔或清單更新）、核對條件完成（最後一次計算）、已準備、核對、鎖住、已放回、草稿已建立、已寄出；同一步有多筆
 紀錄取最新一筆。批次登記已寄出（`sent_batch`）只登記交易日在選定日期以前（含）、目前是待寄信的商品；寫入前再用
@@ -29,6 +29,7 @@ from sp_workflow.database import require_in_transaction
 from sp_workflow.file_tools import save_rows
 from sp_workflow.import_config import ImportConfig
 from sp_workflow.lifecycle import IN_STOCK, Objection, open_objections
+from sp_workflow.manual_check import LOG_ITEM as MANUAL_CHECK
 from sp_workflow.product_record import PRICING_FIELD, REQUIRED, missing_fields
 from sp_workflow.product_store import PricingState, Stored, issuer_code, locked, read_many, terms_imported
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource, Progress
@@ -38,6 +39,7 @@ if TYPE_CHECKING:
     import psycopg
 
 _FLOW_STEPS = (PREPARED_STEP, RETURNED_STEP, DRAFTED_STEP, SENT_STEP)  # 新流程的步驟紀錄
+MANUAL_CHECK_CATEGORY = "跳過自動核對"  # 人工核對完成在核對結果裡的分類（#527）
 _EXCEL_SOURCES = (ProductSource.INVENTORY, ProductSource.BACKFILL)  # 以前在 Excel 走完、建立時就鎖住的商品
 
 PREPARING = Progress.PREPARING
@@ -225,6 +227,12 @@ def _read_facts(conn: psycopg.Connection, *, state: bool = False) -> _AllFacts:
         item = of(tdcc)
         item["checks"][kind] = category
         _latest(item["dates"], CHECKED, checked_at)
+    for tdcc, written_at in conn.execute(  # 人工核對完成（#527）：沒有說明書的核對結果，鎖住時記的那一筆
+        "SELECT tdcc, max(written_at) FROM workflow.backfill_log WHERE item = %s GROUP BY tdcc", (MANUAL_CHECK,)
+    ):
+        item = of(tdcc)
+        item["checks"][MANUAL_CHECK] = MANUAL_CHECK_CATEGORY
+        _latest(item["dates"], CHECKED, written_at)
     for tdcc, step, recorded_at in conn.execute(
         "SELECT tdcc, step, max(recorded_at) FROM workflow.step_record GROUP BY tdcc, step"
     ):

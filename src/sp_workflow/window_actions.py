@@ -94,6 +94,7 @@ from sp_workflow.mailbox import (
     save_alias,
     save_person,
 )
+from sp_workflow.manual_check import ManualCheck, ManualCheckReceipt, confirm
 from sp_workflow.market_brief import Brief, BriefReceipt, export_brief, load_brief
 from sp_workflow.observation import ObservationReceipt, observe_all
 from sp_workflow.order_terms import OrderRow, collect_orders
@@ -199,6 +200,14 @@ class OtherProductsResult:
     """回補既有的 FCN 以外商品（#303）與之後的比價。"""
 
     receipt: ProductBackfillReceipt
+    observation: Observation = Observation()
+
+
+@dataclass(frozen=True)
+class ManualCheckResult:
+    """人工核對完成（#527）：寫入並鎖住的結果與之後的比價。"""
+
+    receipt: ManualCheckReceipt
     observation: Observation = Observation()
 
 
@@ -597,6 +606,14 @@ def save_product(
     """人工維護存檔（已鎖住的照更正的規則），商品條件與交易明細一起；已出場的提醒見 `Receipt.exited`。"""
     with connect(settings) as conn:
         return write(conn, draft, config, trades=trades, reason=reason)
+
+
+def manual_check(settings: ConnectionSettings, entry: ManualCheck, config: ImportConfig) -> ManualCheckResult:
+    """人工核對完成（#527）：檢查、寫入回填值並鎖住（一個 transaction；檢查不過丟 `ManualCheckError`），再比價全部。"""
+    with connect(settings) as conn:
+        with conn.transaction():
+            receipt = confirm(conn, entry)
+        return ManualCheckResult(receipt, _observe_after_write(conn, config.calendar))
 
 
 def export_product_terms(settings: ConnectionSettings, path: Path) -> ExportReceipt:

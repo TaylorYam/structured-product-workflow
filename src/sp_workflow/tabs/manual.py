@@ -1,35 +1,43 @@
-"""「7 人工維護」分頁（#115、#116、#122、#291）：檢查缺資料的商品、補齊或更正資料庫裡的商品條件與交易明細、匯出商品條件與商品總表。"""
+"""「7 人工維護」分頁（#115、#116、#122、#291、#527）：檢查缺資料的商品、補齊或更正資料庫裡的商品條件與交易明細、
+人工核對完成（跳過自動核對、鎖住）、匯出商品條件與商品總表。"""
 
 from __future__ import annotations
 
+import datetime as dt
 import tkinter as tk
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import NUMBER_FONT, Background, CopyArea, WrapLabel
+from sp_workflow.check_terms import is_vwap
 from sp_workflow.database import ConnectionSettings
 from sp_workflow.import_config import ImportConfig
 from sp_workflow.local_settings import FolderMemory
+from sp_workflow.manual_check import ManualCheck, parse_entry
 from sp_workflow.order_terms import format_field
 from sp_workflow.preparation import parse_tdccs
 from sp_workflow.product_export import ExportReceipt, export_name, summary_name
 from sp_workflow.product_record import LISTED as REQUIRED_LISTED
-from sp_workflow.product_store import lookback_text
+from sp_workflow.product_record import PRICING_FIELD, UNDERLYINGS
+from sp_workflow.product_store import Stored, lookback_text
 from sp_workflow.product_terms import Draft, MissingProduct, Receipt
 from sp_workflow.status import OrderReview
-from sp_workflow.tabs.base import CELL_COPY_HINT, TITLE, BackgroundFactory, DatabaseLogin, Tab
+from sp_workflow.tabs.base import CELL_COPY_HINT, TITLE, BackgroundFactory, DatabaseLogin, Tab, observation_text
 from sp_workflow.tabs.cell_table import CellTable
 from sp_workflow.tabs.editor import OrderEditor, TradeRowsEditor
+from sp_workflow.tabs.forms import Form, ask_form
 from sp_workflow.tabs.recalc import calc_status
 from sp_workflow.trade_rows import TradeRowsDraft
 from sp_workflow.window_actions import (
     Checked,
+    ManualCheckResult,
     Opened,
     check_missing,
     export_product_summary,
     export_product_terms,
+    manual_check,
     open_product,
     save_product,
 )
@@ -50,7 +58,8 @@ class MaintenanceTab(Tab):
         ),
         OrderReview.UNLOCKED: (
             "還沒鎖住：存檔寫進資料庫並重算核對條件。必填欄可以先空著（淺紅底），缺欄時核對條件停在待確認、不能核對；"
-            "重新匯入起單資料時照舊整檔覆蓋。"
+            "重新匯入起單資料時照舊整檔覆蓋。系統不能自動核對的（例如不支援的上手），自己核對完說明書後按"
+            "「人工核對完成…」輸入 ISIN 與比價日，鎖住後就會比價。"
         ),
         OrderReview.TRADES_ONLY: (
             "資料庫還沒有這檔的商品條件（只有交易明細）：存檔時新增，上手依上手編號對照。"
@@ -73,6 +82,7 @@ class MaintenanceTab(Tab):
         self.memory = memory
         self.config_paths = config_paths
         self.config: ImportConfig | None = None  # 最近一次檢查或打開時讀的設定
+        self.stored: Stored | None = None  # 打開時資料庫存的這檔（人工核對帶出已有的 ISIN、比價日）
         self.checked: dict[str, MissingProduct] = {}  # 最近一次檢查的結果（依 TDCC 排）
         self.status_var.set(self.READY_TEXT)
 
@@ -137,6 +147,8 @@ class MaintenanceTab(Tab):
         self.save_button.pack(side=tk.LEFT)
         self.reload_button = ttk.Button(buttons, text="重新載入", command=self.reload)
         self.reload_button.pack(side=tk.LEFT, padx=(8, 0))
+        self.manual_check_button = ttk.Button(buttons, text="人工核對完成…", command=self.manual_check)
+        self.manual_check_button.pack(side=tk.LEFT, padx=(8, 0))
         self._busy(False)
 
     def _busy(self, busy: bool) -> None:
@@ -154,6 +166,8 @@ class MaintenanceTab(Tab):
         has_draft = state if self.editor.draft is not None else tk.DISABLED
         for widget in (self.save_button, self.reload_button, self.reason_entry):
             widget.configure(state=has_draft)
+        unlocked = self.editor.draft is not None and self.editor.draft.review == OrderReview.UNLOCKED
+        self.manual_check_button.configure(state=state if unlocked else tk.DISABLED)
 
     def has_unsaved(self) -> bool:
         """有改過、還沒存檔的內容（先把編輯區還沒解讀的輸入解讀掉），包括交易明細。"""
@@ -313,6 +327,7 @@ class MaintenanceTab(Tab):
 
     def _opened(self, result: Opened) -> None:
         self.config = result.config
+        self.stored = result.stored
         self._show(result.draft, result.trades)
         if shown := lookback_text(result.stored):  # 回顧期初價格由比價寫入，只顯示（#374）
             self.intro_var.set(f"{self.intro_var.get()}\n回顧期初價格（比價算出，執行價已改成回顧執行價）：{shown}")
@@ -372,6 +387,129 @@ class MaintenanceTab(Tab):
         else:
             del self.checked[receipt.tdcc]
         self._fill_cells()
+
+    # ---------- 人工核對完成（#527） ----------
+
+    def manual_check(self) -> None:
+        """還沒鎖住的商品：自己核對完說明書後輸入 ISIN、比價日（VWAP 加進場價），寫入、鎖住、比價。"""
+        draft, config = self.editor.draft, self.config
+        if self.working or draft is None or config is None or draft.review != OrderReview.UNLOCKED:
+            return
+        if self.has_unsaved():
+            messagebox.showerror(TITLE, "有改過、還沒存檔的內容，請先存檔再人工核對。", parent=self.master)
+            return
+        stored = self.stored if self.stored is not None and self.stored.tdcc == draft.tdcc else None
+        vwap = is_vwap(draft.values.get(PRICING_FIELD))
+        underlyings = [(n, str(code)) for n, name in enumerate(UNDERLYINGS, 1) if (code := draft.values.get(name))]
+        final = draft.values.get("Final valuation date")
+        form = ManualCheckForm(
+            self.master,
+            draft.tdcc,
+            isin=(stored.isin if stored else None) or "",
+            autocall=[day for _, day in sorted((stored.autocall or {}).items()) if day] if stored else [],
+            final=final if isinstance(final, dt.date) else None,
+            vwap=underlyings if vwap else (),
+            reason=self.reason_var.get(),
+            seen=draft.stored,
+            lookback=draft.values.get("Product") == "BEN",
+        )
+        entry = ask_form(form)
+        if not isinstance(entry, ManualCheck):
+            return
+        prices = "與各標的的價格" if entry.initial else ""
+        if not messagebox.askyesno(
+            TITLE,
+            f"確定 {draft.tdcc} 已經人工核對過說明書？\n\n"
+            f"會寫入 ISIN {entry.isin}、{len(entry.autocall)} 個比價日{prices}，然後鎖住（跳過自動核對），接著比價。\n"
+            "鎖住後商品條件只能照更正的規則改。",
+            icon=messagebox.WARNING,
+            default=messagebox.NO,
+            parent=self.master,
+        ):
+            return
+        self.runner.run_action(
+            lambda settings: manual_check(settings, entry, config),
+            f"人工核對寫入中…（{draft.tdcc}）",
+            self._manual_checked,
+            clear=False,
+            before=lambda: self.mark_done(False),
+        )
+
+    def _manual_checked(self, result: ManualCheckResult) -> None:
+        tdcc = result.receipt.tdcc
+        text = (
+            f"已人工核對並鎖住 {tdcc}（寫入 {result.receipt.changes} 個值）。"
+            f"{observation_text(result.observation, '鎖住')}"
+        )
+        if self.checked.pop(tdcc, None) is not None:
+            self._fill_cells()
+        paths = self.config_paths()
+
+        def reopened(opened: Opened) -> None:  # 重新打開：畫面換成鎖住後（更正）的規則
+            self._opened(opened)
+            self.status_var.set(text)
+            self.mark_done(True)
+
+        self.runner.run_action(
+            lambda settings: open_product(settings, tdcc, paths), f"重新讀取 {tdcc}…", reopened, clear=False
+        )
+
+
+class ManualCheckForm(Form):
+    """人工核對完成的輸入視窗：ISIN、比價日（一行一個，依序）、期初定價 VWAP 時各標的的進場價。"""
+
+    def __init__(
+        self,
+        parent: tk.Misc,
+        tdcc: str,
+        *,
+        isin: str,
+        autocall: Sequence[dt.date],
+        final: dt.date | None,
+        vwap: Sequence[tuple[int, str]],
+        reason: str,
+        seen: Mapping[str, object] | None = None,
+        lookback: bool = False,
+    ) -> None:
+        super().__init__(parent, f"人工核對完成：{tdcc}")
+        self.tdcc, self.reason, self.seen = tdcc, reason, seen
+        self.note(
+            "自己核對完說明書後，照說明書輸入下面的值。按確定會先檢查，再問一次才寫入、鎖住（跳過自動核對），接著比價。"
+        )
+        self.isin_var = self.entry("ISIN", isin, width=20)
+        self.label("比價日")
+        self.dates = tk.Text(self.body, width=20, height=8, font=(NUMBER_FONT, 10), undo=True)
+        self.dates.insert("1.0", "\n".join(day.isoformat() for day in autocall))
+        self.dates.grid(row=self.row, column=1, sticky="w", pady=(0, 4))
+        self.dates.bind("<Return>", self._newline)  # Enter 換行，不送出
+        self.fields.append(self.dates)
+        self.row += 1
+        shown = "空白" if final is None else final.isoformat()
+        self.note(f"一行一個、依序（第 1 期在最上面），1～12 期；最後一個要等於 Final valuation date {shown}。")
+        if lookback:
+            self.note(
+                "BEN：說明書有回顧期間（lookback）時，先在編輯區填 Lookback end date 存檔再按這裡；鎖住後比價照它算。"
+            )
+        self.prices: dict[int, tk.StringVar] = {}
+        if vwap:
+            self.note("期初定價是 VWAP：輸入說明書上各標的的進場價，執行價、KI、KO 價依比例算。")
+        for seq, code in vwap:
+            self.prices[seq] = self.entry(f"UL_{seq} {code} 進場價", "", width=16)
+        self.finish_layout()
+
+    def _newline(self, _event: tk.Event) -> str:
+        self.dates.insert(tk.INSERT, "\n")
+        return "break"
+
+    def read(self) -> ManualCheck:
+        return parse_entry(
+            self.tdcc,
+            self.isin_var.get(),
+            self.dates.get("1.0", tk.END),
+            {seq: var.get() for seq, var in self.prices.items()},
+            self.reason,
+            self.seen,
+        )
 
 
 def correction_text(receipt: Receipt) -> str:
