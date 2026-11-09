@@ -22,7 +22,19 @@ from fcn_checker.schema import CheckStatus as S
 from harness import also_flagged, check_all
 from harness import field_problems as problems
 from harness import results as rule
-from natixis_synth import ADDRESS, DIST, PRODUCT_TYPE, WARNING, Spec, article_title, build_pdf, check, check_item, row
+from natixis_synth import (
+    ADDRESS,
+    CHECKS,
+    DIST,
+    PRODUCT_TYPE,
+    WARNING,
+    Spec,
+    article_title,
+    build_pdf,
+    check,
+    check_item,
+    row,
+)
 from pdf_writer import Edit
 from reference_synth import build_reference_sheet, reference_row
 
@@ -73,6 +85,22 @@ def test_supported_types_pass_and_are_filled(tmp_path, spec):
     assert rule(r, "field.initial_pricing")[0].status == S.PASS  # 說明書沒寫：只檢查表上是允許值
     assert rule(r, "standard.product_name", "name_en")[0].status == S.PASS
     assert rule(r, "doc.name_consistency", "name_art1_en")[0].status == S.PASS  # 第一章「Non Principal」視為一致
+
+
+def test_non_principal_hyphen_may_be_on_any_of_the_three_names(tmp_path):
+    """封面寫「(Non Principal」、第一章第 1 項與投資人須知寫「(Non-Principal」（和慣例整個反過來，2026-11-09 OOS 樣本）：
+    意思一樣，名稱樣板、第一章 = 封面、投資人須知 = 說明書都通過（workflow #531）。"""
+    edits = [
+        Edit("(Non-Principal Protected", "(Non Principal Protected", "ts.cover"),
+        Edit("(Non Principal Protected", "(Non-Principal Protected", "ts.art1"),
+        Edit("(Non Principal Protected", "(Non-Principal Protected", "iis"),
+    ]
+    ts, iis = CHECKS.check_pair(tmp_path, edits=edits)
+    assert rule(ts.report, "standard.product_name", "name_en")[0].status == S.PASS
+    assert rule(ts.report, "doc.name_consistency", "name_art1_en")[0].status == S.PASS
+    assert rule(iis.report, "iis.name_en")[0].status == S.PASS
+    assert ts.report.status == S.PASS, problems(ts.report)
+    assert iis.report.status == S.PASS, problems(iis.report)
 
 
 def test_old_version_labels_are_read_and_blank_distributor_code_needs_review(tmp_path):
@@ -377,7 +405,7 @@ def test_periodic_table_must_cover_non_call_to_the_last_period(tmp_path):
             "field.min_amounts",
         ),
         (Edit("(3) 發行價格：100%", "(3) 發行價格：99%", "ts.art5"), "standard.issue_price"),
-        (Edit("(Non-Principal Protected", "(Non Principal Protected", "ts.cover"), "standard.product_name"),
+        (Edit("Unsecured and Non-Guaranteed)", "Unsecured and Guaranteed)", "ts.cover"), "standard.product_name"),
         (
             Edit("於中華民國境內受託買賣之投資標的", "於中華民國境內受託投資之投資標的", "ts.warn"),
             "standard.forbidden_wording",

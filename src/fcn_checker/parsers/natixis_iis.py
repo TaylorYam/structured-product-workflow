@@ -3,7 +3,7 @@
 依 8 份真實樣本建立（同說明書 NX1–NX8）。每頁頁底「第N頁/共M頁」與分類標記（`C1 - Public Natixis`、`C2 - Internal
 Natixis`）；第 1 頁第一行是標題與「刊印日期：」（同一行），中文名稱「(下稱「本商品」)」後緊接英文名稱。章名「壹、相關機構」
 …「柒、…」（第三章寫「叁」）。沒有價格表：執行／KO／界限價格只有 % 定義；KO／KI 寫法只在「貳、商品事項」到「叁、投資風險」
-之間判斷。英文名稱的「(Non Principal」視同說明書封面的「(Non-Principal」（2026-10-15 確認）。
+之間判斷。英文名稱的「(Non Principal」視同「(Non-Principal」（2026-10-15 確認；說明書封面也放寬，workflow #531）。
 """
 
 from __future__ import annotations

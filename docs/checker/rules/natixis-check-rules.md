@@ -111,7 +111,7 @@
 - 英文：`Natixis – {tenor}-Month {ccy} – Autocallable Fixed Coupon Note Linked to Basket of Equities (Non-Principal Protected, Unsecured and Non-Guaranteed)`。
 - **只有天期、幣別兩個佔位符**：不分標的數（單一標的也寫「一籃子」／`Basket of Equities`，NX8 確認）、記憶式、KO／KI 型態、Non-Call。`memory_zh`／`memory_en` 設空字串。
 - 名稱截到 `(下稱「本商品」)` 之前；中文、英文都忽略空白（`normalize_en = ["whitespace"]`）、括號統一（`normalize_zh = ["brackets"]`）。
-- **連字號**：封面英文名稱寫 `Non-Principal`（= 樣板）；第一章第 1 項、投資人須知寫 `Non Principal`（沒有連字號），視為一致（2026-10-15 確認）。建議實作：第一章第 1 項與投資人須知讀出英文名稱時，把 `(Non Principal` 正規化成 `(Non-Principal` 再交出（證據保留原文）；封面不正規化，封面寫錯仍判不一致。
+- **連字號**：封面英文名稱通常寫 `Non-Principal`（= 樣板）；第一章第 1 項、投資人須知通常寫 `Non Principal`（沒有連字號），視為一致（2026-10-15 確認）。2026-11-09 起封面也放寬（OOS 樣本封面沒有、第一章與投資人須知反而有連字號；使用者決定意思一樣，workflow #531）：封面、第一章第 1 項、投資人須知讀出英文名稱時都把 `(Non Principal` 正規化成 `(Non-Principal` 再交出（證據保留原文），任何一處有沒有連字號都接受。
 
 **發行機構名稱**（`issuer.natixis.issuer_name`）：`法國外貿銀行`；封面、第一章第 3 項、第二章 1.(1)、投資人須知壹 1. 都只寫中文。2026-10-15 確認 Natixis 只有這一個發行主體；其他寫法判不一致或轉人工覆核。
 
@@ -153,7 +153,7 @@
 | 固定警語 | Natixis 版本（= BNP 版加「*」）；說明書 3 次、投資人須知 2 次 |
 | 審查通過日期 2024-03-20 | 是真實日期，補進 `approval_dates`（所有上手生效）；實作時發現 Citi CT1 寫 2024-08-28，作業人員確認也是真實日期，一併補進 |
 | 受託機構商品代號空白 | 轉人工覆核（實作時發現 NX2、NX8，2026-10-15 確認） |
-| 英文名稱連字號 | 封面 `Non-Principal` 為準；第一章、投資人須知 `Non Principal` 視為一致 |
+| 英文名稱連字號 | `Non Principal` 與 `Non-Principal` 視為一致，封面、第一章、投資人須知都是（封面 2026-11-09 起，workflow #531） |
 | 投資人須知 KO 定義少 % | 參照說明書第一章第 14 項，不核對 KO %（Issue #272；原判不一致）；投資人須知 KO（寫出 % 時）／K／KI % 都和說明書比 |
 | 期初定價 | 不和說明書比（說明書沒寫），只檢查表上是允許值 |
 | 投資人須知頁數 | 維持剛好 4 頁；NX6 5 頁判不一致 |
@@ -218,7 +218,7 @@
 | 第 16 項情境假設 f. 年利率、各期配息「x (y%/12)」的 y = 第 13 項年利率 | 共用 `scenario.params`（Issue #294） |
 | 情境一提前到期期別 = Non-Call；情境假設 e. 的 KO 觀察寫法（每日＋起始期＋最終評價日含不含／每期）= 第 12 項 | `doc.autocall_terms` |
 | KO 每日到最終評價日含不含依參考條件表交易日（2026-10-20 起 `(含)`，Issue #351；投資人須知同一 rule_id） | `doc.ko_final_day` |
-| 封面標題、第一章第 1 項中文名稱；第一章第 1 項英文名稱（`(Non Principal` 正規化後）= 封面 | `doc.name_consistency` |
+| 封面標題、第一章第 1 項中文名稱；第一章第 1 項英文名稱 = 封面（兩邊 `(Non Principal` 都正規化後） | `doc.name_consistency` |
 | 第一章第 5 項(1) 中文幣別、ISO 代碼；封面幣別 ISO 代碼 | `doc.currency_consistency` |
 | 封面「受託機構商品代號為」空白轉人工覆核 | `doc.distributor_product_code` |
 | 期數（中英文名稱月數；情境假設 c. 天期、d. 期數由共用 `scenario.params` 核對） | `doc.coupon_periods` |
@@ -261,3 +261,4 @@ KO 型態與日期表種類不一致、P 型觀察日表的自動提前到期日
 | 2026-10-19 | OOS 回報包：KO 每日寫 `到最終評價日(含)` 是上手改條款，參考條件表交易日 2026-10-20（含）起只接受 `(含)`、以前只接受 `(不含)`，不符判不一致（不是誤報；Issue #351） |
 | 2026-10-25 | 拿回本金情境的平均年化報酬率（「為Y%」與算式結果兩處）= 年利率；實物交割情境虧損照舊不核對（Issue #228，§3.7） |
 | 2026-10-25 | 幣別代碼與價格表的標的交易幣別（Issue #227，見[共用核對規則](shared-check-rules.md) §9）：封面、第一章第 5 項(1)「中文幣別(代碼)」另由共用規則核對；第 9 項 `貨幣` 欄 = 標的交易所幣別（parser 改讀這一欄） |
+| 2026-11-09 | 英文名稱 `Non Principal`／`Non-Principal` 封面也視為一致（OOS 樣本封面沒有、第一章第 1 項與投資人須知有連字號；使用者決定意思一樣，workflow #531）；取代 2026-10-15「封面不正規化」 |
