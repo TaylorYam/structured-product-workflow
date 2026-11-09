@@ -148,6 +148,22 @@ def price_at(base: Decimal, pct: Decimal) -> Decimal:
     return round_price(base * pct / _HUNDRED)
 
 
+def derived_prices(
+    base: Decimal,
+    strike_pct: Decimal | None,
+    ki_pct: Decimal | None,
+    ko_pct: Decimal | None,
+    barrier_type: object,
+) -> tuple[Decimal | None, Decimal | None, Decimal | None]:
+    """期初價格 → (執行價, 下限價, KO 價)，各是期初價格 × 比例(%)；比例空白時空白（BEN 預設沒有 KO，#406），
+    沒有 KI（`NO_BARRIER`）時下限價空白。核對條件算期初價、更正後保留 VWAP、人工核對輸入 VWAP 共用（#529）。"""
+
+    def at(pct: Decimal | None) -> Decimal | None:
+        return None if pct is None else price_at(base, pct)
+
+    return at(strike_pct), None if barrier_type == NO_BARRIER else at(ki_pct), at(ko_pct)
+
+
 PRODUCT_COLUMNS = (
     "product", "issuer", "currency", "trade_date", "issue_date", "final_valuation_date", "maturity_date",
     "initial_pricing", "non_call_months", "underlying_1", "underlying_2", "underlying_3", "underlying_4",

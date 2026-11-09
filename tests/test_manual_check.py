@@ -125,7 +125,7 @@ def test_every_problem_is_listed_and_nothing_is_written(pg, tmp_path) -> None:
         "沒有 Issue date（鎖住後不能改，先在人工維護補上存檔）",
         "ISIN「XS123」格式不對（2 碼英文＋9 碼英數＋1 碼數字）",
         "比價日要由小到大、不重複",
-        f"最後一個比價日 {FIRST} 和 Final valuation date {FINAL} 不同",
+        f"最後一個比價日 {FIRST} 和最終比價日 {FINAL} 不同",
     )
     stored = read(pg, A)
     assert stored is not None and stored.locked_at is None and stored.isin is None

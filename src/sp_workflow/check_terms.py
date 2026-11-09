@@ -38,7 +38,14 @@ from typing import TYPE_CHECKING, Any
 from fcn_checker.fields import PRICE_FIELDS
 from sp_workflow.database import OperatorError, require_in_transaction
 from sp_workflow.import_config import ImportConfig
-from sp_workflow.product_record import NO_BARRIER, UnderlyingPrice, missing_fields, plain, price_at, round_price
+from sp_workflow.product_record import (
+    NO_BARRIER,
+    UnderlyingPrice,
+    derived_prices,
+    missing_fields,
+    plain,
+    round_price,
+)
 from sp_workflow.product_store import BLANK as _BLANK
 from sp_workflow.product_store import CURRENCY, TRADE_DATE, UF, Difference, Stored, locked, read, read_many
 from sp_workflow.risk_level import RiskLevel, fill_missing_locked, recalculate_risk
@@ -261,18 +268,8 @@ def _underlying_price(
         return blank, f"股價檔（取價日 {price_date}）沒有{column}"
     if raw <= 0:
         return blank, f"股價檔（取價日 {price_date}）的{column} {raw} 不是正數"
-    ki = None if product.barrier_type == NO_BARRIER or product.ki_pct is None else price_at(raw, product.ki_pct)
-    return (
-        UnderlyingPrice(
-            n,
-            code,
-            initial=round_price(raw),
-            strike=price_at(raw, product.strike_pct),
-            ki=ki,
-            ko=None if product.ko_pct is None else price_at(raw, product.ko_pct),  # BEN 預設沒有 KO（#406）
-        ),
-        "",
-    )
+    strike, ki, ko = derived_prices(raw, product.strike_pct, product.ki_pct, product.ko_pct, product.barrier_type)
+    return UnderlyingPrice(n, code, initial=round_price(raw), strike=strike, ki=ki, ko=ko), ""
 
 
 def _calendar_problem(calendar: TradingCalendar, code: str, strike_date: dt.date, price_date: dt.date) -> str:
@@ -477,7 +474,6 @@ def _keep_vwap(
 ) -> Calculation:
     """更正後的 VWAP 商品：保留 TS 回填的價格，只重算比例改了的；保留不了的位置寫在說明裡。"""
     kept = {p.seq: p for p in old} if _pricing(before.initial_pricing) == VWAP else {}
-    no_ki = product.barrier_type == NO_BARRIER or product.ki_pct is None
     ki_same = (product.barrier_type, product.ki_pct) == (before.barrier_type, before.ki_pct)
     prices, blank = [], []
     for price in calc.prices:
@@ -486,14 +482,17 @@ def _keep_vwap(
             prices.append(price)
             blank.append(f"UL_{price.seq} {price.code}")
             continue
+        strike, ki, ko = derived_prices(
+            was.initial, product.strike_pct, product.ki_pct, product.ko_pct, product.barrier_type
+        )
         prices.append(
             UnderlyingPrice(
                 price.seq,
                 price.code,
                 initial=was.initial,
-                strike=_kept_or_derived(was.initial, was.strike, product.strike_pct, before.strike_pct),
-                ki=None if no_ki else _kept_or_derived(was.initial, was.ki, product.ki_pct, before.ki_pct, ki_same),
-                ko=_kept_or_derived(was.initial, was.ko, product.ko_pct, before.ko_pct),
+                strike=_kept(was.strike, strike, product.strike_pct == before.strike_pct),
+                ki=_kept(was.ki, ki, ki_same),
+                ko=_kept(was.ko, ko, product.ko_pct == before.ko_pct),
             )
         )
     if not blank:
@@ -503,13 +502,10 @@ def _keep_vwap(
     return replace(calc, status=TO_CONFIRM, prices=tuple(prices), reason=reason)
 
 
-def _kept_or_derived(
-    initial: Decimal, kept: Decimal | None, pct: Decimal | None, pct_before: Decimal | None, same: bool = True
-) -> Decimal | None:
-    """比例沒改時保留 TS 回填的價格，改了由進場價重算；比例空白（BEN 預設沒有 KO，#406）時價格也空白。"""
-    if pct is None:
-        return None
-    return kept if same and pct == pct_before else price_at(initial, pct)
+def _kept(kept: Decimal | None, derived: Decimal | None, same: bool) -> Decimal | None:
+    """比例沒改（`same`）時保留 TS 回填的價格，改了用由進場價重算的（`derived_prices`）；算不出來（比例空白、
+    沒有 KI）時空白。"""
+    return kept if same and derived is not None else derived
 
 
 def release_differences(
