@@ -25,10 +25,10 @@ from typing import TYPE_CHECKING
 
 from fcn_checker.backfill_values import AUTOCALL_SLOTS, ISIN, SLOTS, Target, UnderlyingPrice
 from fcn_checker.fields import PRICE_FIELDS
-from sp_workflow.check_terms import VWAP
+from sp_workflow.check_terms import is_vwap
 from sp_workflow.database import OperatorError, require_in_transaction
 from sp_workflow.order_terms import parse_date
-from sp_workflow.product_record import NO_BARRIER, price_at
+from sp_workflow.product_record import NO_BARRIER, price_at, round_price, same_value
 from sp_workflow.product_store import Stored, locked, read
 from sp_workflow.product_terms import backfill, lock_checked
 from sp_workflow.status import CheckTerms
@@ -51,13 +51,15 @@ class ManualCheckError(OperatorError):
 
 @dataclass(frozen=True)
 class ManualCheck:
-    """人工核對要回填的值。`autocall` 是比價日（依序）；`initial` 是 VWAP 的進場價（標的序號 → 價格）。"""
+    """人工核對要回填的值。`autocall` 是比價日（依序）；`initial` 是 VWAP 的進場價（標的序號 → 價格）；
+    `seen` 是畫面打開時資料庫的條件（`Draft.stored`），和現在不同時不寫（同人工維護存檔）。"""
 
     tdcc: str
     isin: str
     autocall: tuple[dt.date, ...]
     initial: Mapping[int, Decimal] = field(default_factory=dict)
     reason: str = ""
+    seen: Mapping[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -66,7 +68,14 @@ class ManualCheckReceipt:
     changes: int  # 改了幾個值（回填紀錄的筆數，不含「人工核對」那一筆）
 
 
-def parse_entry(tdcc: str, isin: str, dates: str, prices: Mapping[int, str], reason: str = "") -> ManualCheck:
+def parse_entry(
+    tdcc: str,
+    isin: str,
+    dates: str,
+    prices: Mapping[int, str],
+    reason: str = "",
+    seen: Mapping[str, object] | None = None,
+) -> ManualCheck:
     """視窗打的字 → `ManualCheck`。比價日以換行、逗號、頓號或空白分開；看不懂的丟 `OperatorError`（全部列出）。
     格式以外的檢查（期數、順序、最終比價日、ISIN）在 `problems`。"""
     found: list[str] = []
@@ -82,17 +91,17 @@ def parse_entry(tdcc: str, isin: str, dates: str, prices: Mapping[int, str], rea
         if not cleaned:
             continue
         try:
-            initial[seq] = Decimal(cleaned)
+            initial[seq] = round_price(Decimal(cleaned))  # 同核對條件算的進場價，取到小數第 4 位
         except ArithmeticError:
             found.append(f"UL_{seq} 進場價「{text.strip()}」不是數字")
     if found:
         raise OperatorError("；".join(found))
-    return ManualCheck(tdcc, isin.strip().upper(), tuple(days), initial, reason.strip())
+    return ManualCheck(tdcc, isin.strip().upper(), tuple(days), initial, reason.strip(), seen)
 
 
 def needs_initial(stored: Stored) -> tuple[tuple[int, str], ...]:
     """期初定價是 VWAP 時要輸入進場價的標的（序號, 代碼）；不是 VWAP 時空的（價格由核對條件算好了）。"""
-    if str(stored.columns["initial_pricing"] or "").strip().upper() != VWAP:  # 同核對條件的判斷
+    if not is_vwap(stored.columns["initial_pricing"]):
         return ()
     return tuple((p.seq, p.code) for p in stored.prices)
 
@@ -103,6 +112,9 @@ def problems(stored: Stored | None, entry: ManualCheck) -> list[str]:
         return ["資料庫沒有這檔的商品條件"]
     if locked(stored):
         return ["已經鎖住（核對過了），不能再人工核對"]
+    seen = entry.seen
+    if seen is not None and any(not same_value(stored.fields[name], seen.get(name)) for name in stored.fields):
+        return ["資料庫裡這檔的條件在打開之後改過了，請重新載入"]
     found = []
     check = stored.check
     if check is None or check.status != CheckTerms.DONE:

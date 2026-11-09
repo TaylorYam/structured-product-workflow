@@ -5,13 +5,13 @@ from __future__ import annotations
 
 import datetime as dt
 import tkinter as tk
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.ui import NUMBER_FONT, Background, CopyArea, WrapLabel
-from sp_workflow.check_terms import VWAP
+from sp_workflow.check_terms import is_vwap
 from sp_workflow.database import ConnectionSettings
 from sp_workflow.import_config import ImportConfig
 from sp_workflow.local_settings import FolderMemory
@@ -399,7 +399,7 @@ class MaintenanceTab(Tab):
             messagebox.showerror(TITLE, "有改過、還沒存檔的內容，請先存檔再人工核對。", parent=self.master)
             return
         stored = self.stored if self.stored is not None and self.stored.tdcc == draft.tdcc else None
-        vwap = str(draft.values.get(PRICING_FIELD) or "").strip().upper() == VWAP
+        vwap = is_vwap(draft.values.get(PRICING_FIELD))
         underlyings = [(n, str(code)) for n, name in enumerate(UNDERLYINGS, 1) if (code := draft.values.get(name))]
         final = draft.values.get("Final valuation date")
         form = ManualCheckForm(
@@ -410,6 +410,8 @@ class MaintenanceTab(Tab):
             final=final if isinstance(final, dt.date) else None,
             vwap=underlyings if vwap else (),
             reason=self.reason_var.get(),
+            seen=draft.stored,
+            lookback=draft.values.get("Product") == "BEN",
         )
         entry = ask_form(form)
         if not isinstance(entry, ManualCheck):
@@ -466,9 +468,11 @@ class ManualCheckForm(Form):
         final: dt.date | None,
         vwap: Sequence[tuple[int, str]],
         reason: str,
+        seen: Mapping[str, object] | None = None,
+        lookback: bool = False,
     ) -> None:
         super().__init__(parent, f"人工核對完成：{tdcc}")
-        self.tdcc, self.reason = tdcc, reason
+        self.tdcc, self.reason, self.seen = tdcc, reason, seen
         self.note(
             "自己核對完說明書後，照說明書輸入下面的值。按確定會先檢查，再問一次才寫入、鎖住（跳過自動核對），接著比價。"
         )
@@ -482,6 +486,10 @@ class ManualCheckForm(Form):
         self.row += 1
         shown = "空白" if final is None else final.isoformat()
         self.note(f"一行一個、依序（第 1 期在最上面），1～12 期；最後一個要等於 Final valuation date {shown}。")
+        if lookback:
+            self.note(
+                "BEN：說明書有回顧期間（lookback）時，先在編輯區填 Lookback end date 存檔再按這裡；鎖住後比價照它算。"
+            )
         self.prices: dict[int, tk.StringVar] = {}
         if vwap:
             self.note("期初定價是 VWAP：輸入說明書上各標的的進場價，執行價、KI、KO 價依比例算。")
@@ -500,6 +508,7 @@ class ManualCheckForm(Form):
             self.dates.get("1.0", tk.END),
             {seq: var.get() for seq, var in self.prices.items()},
             self.reason,
+            self.seen,
         )
 
 

@@ -304,6 +304,11 @@ def _trading_day(market: Market, day: dt.date) -> bool:
     return day.weekday() < 5 and day not in market.holidays
 
 
+def is_vwap(text: object) -> bool:
+    """期初定價是 VWAP（價格由 TS 回填，或人工核對輸入，#527）。"""
+    return _pricing(None if text is None else str(text)) == VWAP
+
+
 def _pricing(text: str | None) -> str | None:
     """期初定價 → 收盤價／開盤價／VWAP；其他寫法 None。"""
     value = (text or "").strip()

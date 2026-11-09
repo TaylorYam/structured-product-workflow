@@ -672,6 +672,8 @@ def test_the_manual_check_form_reads_dates_one_per_line_and_vwap_prices(master) 
         final=dt.date(2027, 4, 15),
         vwap=[(1, "AAA UW"), (2, "BBB UN")],
         reason="不支援",
+        seen={"Coupon p.a. (%)": Decimal("12.5")},
+        lookback=True,
     )
     form.dates.mark_set(tk.INSERT, "end-1c")
     assert form.dates.bind("<Return>"), "比價日欄自己接 Enter"
@@ -687,6 +689,7 @@ def test_the_manual_check_form_reads_dates_one_per_line_and_vwap_prices(master) 
         (dt.date(2027, 1, 15), dt.date(2027, 4, 15)),
         {1: Decimal(50), 2: Decimal("20.1")},
         "不支援",
+        {"Coupon p.a. (%)": Decimal("12.5")},
     )
     form.prices[2].set("abc")
     form.confirm()

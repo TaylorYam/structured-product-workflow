@@ -23,7 +23,9 @@
 - 人工維護打開還沒鎖住的商品時有「人工核對完成…」：輸入 ISIN、比價日（一行一個，依序）；期初定價是 VWAP 時另外輸入各標的的進場價。原因沿用頁面上的原因欄。畫面有還沒存檔的修改時要先存檔。
 - 寫入前的檢查全部列出，任一項不過就什麼都不寫：還沒鎖住；核對條件是完成；已有 Issue date（鎖住後不能改）；ISIN 是 2 碼英文＋9 碼英數＋1 碼數字；比價日 1～12 期、由小到大不重複、最後一期等於 Final valuation date（同比價前的檢查）；VWAP 每個標的都有大於 0 的進場價。
 - 通過後在一個 transaction 裡照核對寫回的方式寫入（`product_terms.backfill`）：ISIN、比價日 1～12（沒用到的期別寫空白）、VWAP 的四個價格（執行價、KI、KO 由進場價乘比例，比例空白時空白，同更正 VWAP 的算法）。值有改變時 `workflow.backfill_log` 留原值，結果檔欄寫「人工核對（人工維護）」；另記一筆項目「人工核對」、新值是原因（沒寫時「跳過自動核對」）的紀錄，然後鎖住。接著比價全部（同其他寫入後的比價），畫面重新打開這檔，換成更正的規則。
-- 不寫核對結果（`workflow.check_result`）：沒有讀說明書，沒有核對結果可存。進度頁照「已鎖住 → 待寄信」推出階段，核對欄空白；鎖住日期照常顯示。
+- 不寫核對結果（`workflow.check_result`）：沒有讀說明書，沒有核對結果可存。進度頁把回填紀錄裡那一筆「人工核對」當成一份核對結果（「人工核對：跳過自動核對」，核對日期是寫入時間），所以沒跑過核對的商品鎖住後照常是待寄信；進度的判斷順序不變。
+- 打開之後資料庫的條件被改過（例如重新匯入起單資料）時不寫，請重新載入（同人工維護存檔）。輸入的進場價同核對條件取到小數第 4 位。
+- 是不是 lookback 看說明書，系統判斷不了：BEN 的輸入視窗提醒先在編輯區填 Lookback end date 存檔。
 
 ### 考慮過的替代方案
 
@@ -55,7 +57,9 @@ Implementation (`sp_workflow.manual_check`):
 - When an unlocked product is open on manual maintenance, "人工核對完成…" (manual check done) asks for the ISIN and the observation dates (one per line, in order); when the initial pricing is VWAP it also asks for each underlying's initial price. The reason comes from the page's reason field. Unsaved edits must be saved first.
 - All checks are listed before writing, and nothing is written if any fails: the product is unlocked; its check terms are 完成; it has an Issue date (which cannot change after locking); the ISIN is 2 letters, 9 letters or digits, and 1 digit; there are 1 to 12 observation dates, strictly increasing, the last equal to the Final valuation date (the same check observation makes); every VWAP underlying has an initial price above 0.
 - When they pass, one transaction writes the values the way the check write-back does (`product_terms.backfill`): the ISIN, observation dates 1 to 12 (unused slots blank), and the four VWAP prices (strike, KI, and KO derived from the initial price times the percentage, blank when the percentage is blank, as in VWAP corrections). Changed values keep their old value in `workflow.backfill_log` with 人工核對（人工維護） as the result file; one more row with item 人工核對 records the reason as its new value (跳過自動核對 when blank); then the product is locked. Observation then runs for all products (as after other writes), and the page reopens the product under the correction rules.
-- No check result (`workflow.check_result`) is written: no term sheet was read, so there is no result to store. The progress page derives "locked → 待寄信" as usual with a blank check column; the lock date shows as usual.
+- No check result (`workflow.check_result`) is written: no term sheet was read, so there is no result to store. The progress page treats the backfill log's 人工核對 row as one check result ("人工核對: 跳過自動核對", dated when it was written), so a product never run through the check is 待寄信 once locked; the order of the progress rules is unchanged.
+- Nothing is written when the database terms changed after opening (for example an order-sheet re-import); reload first, as with a manual-maintenance save. The entered initial prices are rounded to 4 decimals like calculated ones.
+- Whether a product has a lookback comes from the term sheet and cannot be detected: for BEN the window reminds the operator to fill Lookback end date in the editor and save first.
 
 ### Alternatives considered
 

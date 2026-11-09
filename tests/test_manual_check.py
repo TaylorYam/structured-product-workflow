@@ -24,7 +24,8 @@ from sp_workflow.manual_check import (
 from sp_workflow.observation import observe_all
 from sp_workflow.product_store import read
 from sp_workflow.product_terms import drafts_from, write_batch
-from sp_workflow.status import Pricing
+from sp_workflow.progress import load_progress
+from sp_workflow.status import Pricing, Progress
 from sp_workflow.window_actions import manual_check
 
 ISIN = "XS1234567890"
@@ -196,3 +197,34 @@ def test_the_window_action_rejects_without_writing(pg, pg_settings, tmp_path) ->
 
     stored = read(pg, A)
     assert stored is not None and stored.locked_at is None
+
+
+def test_entered_initial_prices_are_rounded_like_calculated_ones() -> None:
+    assert parse_entry(A, ISIN, "2027-04-15", {1: "12.345678"}).initial == {1: Decimal("12.3457")}
+
+
+@pytest.mark.db
+def test_terms_changed_after_opening_are_not_locked(pg, tmp_path) -> None:
+    """打開之後重新匯入起單資料（或別人存檔）改了條件：不寫、不鎖住，請重新載入。"""
+    ready(pg, tmp_path)
+    opened = read(pg, A)
+    assert opened is not None
+    pg.execute("UPDATE workflow.product SET coupon_pct = 11 WHERE tdcc = %s", (A,))
+
+    with pytest.raises(ManualCheckError) as raised:
+        confirmed(pg, entry(seen=dict(opened.fields)))
+    unchanged = confirmed(pg, entry(seen=dict(read(pg, A).fields)))
+
+    assert raised.value.problems == ("資料庫裡這檔的條件在打開之後改過了，請重新載入",)
+    assert unchanged.tdcc == A
+
+
+@pytest.mark.db
+def test_a_manually_checked_product_waits_for_mail_on_the_progress_page(pg, tmp_path) -> None:
+    """沒跑過「4 核對」、沒有說明書的核對結果：人工核對那一筆算核對結果，鎖住後是待寄信。"""
+    ready(pg, tmp_path)
+    confirmed(pg, entry())
+
+    (row,) = [r for r in load_progress(pg, CONFIG, dt.date(2026, 11, 9)) if r.tdcc == A]
+
+    assert (row.progress, row.reason) == (Progress.TO_MAIL, "")
