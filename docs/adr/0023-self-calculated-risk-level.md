@@ -30,7 +30,7 @@
 
 資料時間點：
 
-- 波動度用 `workflow.daily_price.volatility_200d`（每日匯入的彭博 VOLATILITY_200D）。取價日＝交易日那一份股價檔（內容是交易日前一個交易日收盤算的值，和試算表一致）；那一份還沒匯入時取交易日以前最近的一份。那一份缺任一檔標的的代碼時（新連結的標的：彭博清單在連結後才加上，最早出現在下一個交易日的股價檔，#525），改用**交易日之後第一份標的代碼都有的**股價檔；代碼在、只是沒有 200 日波動率或股價衝突的不往後找。所有標的都從同一份檔取；標的代碼和股價檔逐字比對，同核對條件。
+- 波動度用 `workflow.daily_price.volatility_200d`（每日匯入的彭博 VOLATILITY_200D）。取價日＝交易日那一份股價檔（內容是交易日前一個交易日收盤算的值，和試算表一致）；那一份還沒匯入時取交易日以前最近的一份。那一份缺任一檔標的的代碼時（新連結的標的：彭博清單在連結後才加上，最早出現在下一個交易日的股價檔，#525），改用**交易日之後第一份標的代碼都有的**股價檔；代碼在、只是沒有 200 日波動率或股價衝突的不往後找。因此交易日在 2026-10-30 以前、只因為缺代碼而回填 RR4 的還沒鎖住商品，下一次重算時會改算出等級。所有標的都從同一份檔取；標的代碼和股價檔逐字比對，同核對條件。
 - 評等用交易日查（#237 的 `RatingRows.on`：生效日 ≤ 交易日的最新一筆）。上手代碼照起單資料的規則，由 TDCC 前三碼查上手編號對照（查不到時用發行機構寫法反查）。
 
 算不出來：
@@ -97,7 +97,7 @@ The formula (recovered from the Generator's "境外結構型商品承作檢核�
 
 Data timing:
 
-- Volatility comes from `workflow.daily_price.volatility_200d` (Bloomberg VOLATILITY_200D, imported daily). Use the price file whose price date equals the trade date (it holds the value computed from the previous trading day's close, matching the spreadsheet); when that file is not imported yet, use the latest one before the trade date. When that file lacks the code of any underlying (a newly linked underlying: Bloomberg's list gains the code only after linking, so it first appears in the next trading day's price file, #525), use **the first price file after the trade date that has every underlying's code**; a code that is present but conflicting or without a 200-day volatility does not move the file. All underlyings come from that one file; codes are matched literally against the price file, as in the check terms.
+- Volatility comes from `workflow.daily_price.volatility_200d` (Bloomberg VOLATILITY_200D, imported daily). Use the price file whose price date equals the trade date (it holds the value computed from the previous trading day's close, matching the spreadsheet); when that file is not imported yet, use the latest one before the trade date. When that file lacks the code of any underlying (a newly linked underlying: Bloomberg's list gains the code only after linking, so it first appears in the next trading day's price file, #525), use **the first price file after the trade date that has every underlying's code**; a code that is present but conflicting or without a 200-day volatility does not move the file. So an unlocked product with a trade date before 2026-10-30 that was backfilled as RR4 only for a missing code gets a calculated level on the next recalculation. All underlyings come from that one file; codes are matched literally against the price file, as in the check terms.
 - Ratings are looked up on the trade date (#237's `RatingRows.on`: the latest row effective on or before the trade date). The issuer code follows the order-sheet rule: the first three TDCC digits through the issuer prefix table (falling back to the issuer's written name).
 
 When it cannot be calculated:

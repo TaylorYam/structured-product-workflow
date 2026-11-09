@@ -262,7 +262,7 @@ def assess(
         volatility = volatilities.get((price_date, code))
         where = f"UL_{n} {code}：股價檔（取價日 {price_date}）"
         if volatility is None:
-            problems.append(f"{where}沒有這個代碼，交易日之後的股價檔也還沒有")
+            problems.append(f"{where}沒有這個代碼，交易日之後也還沒有一份所有標的都有的股價檔")
         elif volatility.conflict:
             problems.append(f"{where}這個代碼有好幾列、值不同")
         elif volatility.value is None:
@@ -387,15 +387,15 @@ def recalculate_risk(conn: psycopg.Connection, found: Sequence[Stored], config: 
 
 
 def fill_missing_locked(conn: psycopg.Connection, config: ImportConfig, tdccs: Sequence[str] | None = None) -> int:
-    """替還沒有風險等級或還是待算的已鎖住商品（`tdccs` 有值時只看這幾檔）算一次，回傳算了幾檔；在呼叫端的 transaction 裡。
+    """替還沒有風險等級或還是待算的已鎖住商品（`tdccs` 有值時只看這幾檔）算一次，回傳寫了幾檔（結果和存的待算一樣的不寫）；在呼叫端的 transaction 裡。
 
     本功能上線前就鎖住的商品、鎖住時資料還不齊的商品（#525）用這個補；有了等級（完成或回填）之後凍結，不再重算。
-    不鎖商品條件列（已鎖住的條件只有更正會改，更正不重算風險等級），寫入只蓋掉待算的（`overwrite=False`）：
+    不鎖商品條件列（已鎖住的條件只有更正會改，更正不重算風險等級），寫入只蓋掉待算的（`pending_only`）：
     別的連線同時補了同一檔時以先寫的為準。
     """
     require_in_transaction(conn)
     candidates = locked_tdccs(conn, tdccs)
-    have = {
+    have = {  # 已經有等級（完成、回填）的凍結
         t
         for (t,) in conn.execute(
             "SELECT tdcc FROM workflow.risk_level WHERE tdcc = ANY(%s) AND status <> %s", (candidates, PENDING)
@@ -403,10 +403,12 @@ def fill_missing_locked(conn: psycopg.Connection, config: ImportConfig, tdccs: S
     }
     missing = [tdcc for tdcc in candidates if tdcc not in have]
     pending = risk_levels(conn, missing)
+    written = 0
     for tdcc, risk in _assess_all(conn, list(read_many(conn, missing).values()), config).items():
         if pending.get(tdcc) != risk:
-            write_risk_level(conn, tdcc, risk, overwrite=False)
-    return len(missing)
+            write_risk_level(conn, tdcc, risk, pending_only=True)
+            written += 1
+    return written
 
 
 def _assess_all(conn: psycopg.Connection, found: Sequence[Stored], config: ImportConfig) -> dict[str, RiskLevel]:
@@ -486,21 +488,21 @@ def _read_volatilities(
     }
 
 
-def write_risk_level(conn: psycopg.Connection, tdcc: str, risk: RiskLevel, *, overwrite: bool = True) -> None:
-    """寫一檔的風險等級；`overwrite` 是 False 時已經有等級的（完成、回填）不動，只蓋掉待算的（補已鎖住的商品）。"""
+def write_risk_level(conn: psycopg.Connection, tdcc: str, risk: RiskLevel, *, pending_only: bool = False) -> None:
+    """寫一檔的風險等級；`pending_only` 時已經有等級的（完成、回填）不動，只蓋掉待算的（補已鎖住的商品）。"""
     detail = None if risk.detail is None else json.dumps(_detail_json(risk.detail), ensure_ascii=False)
     conflict = (
         " ON CONFLICT (tdcc) DO UPDATE SET status = EXCLUDED.status, risk_level = EXCLUDED.risk_level,"
         " total_score = EXCLUDED.total_score, reason = EXCLUDED.reason, price_date = EXCLUDED.price_date,"
         " detail = EXCLUDED.detail, calculated_at = now()"
     )
-    if not overwrite:
+    if pending_only:
         conflict += " WHERE workflow.risk_level.status = %s"
     conn.execute(
         "INSERT INTO workflow.risk_level (tdcc, status, risk_level, total_score, reason, price_date, detail)"
         " VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)" + conflict,
         (tdcc, risk.status, risk.level, risk.total, risk.reason or None, risk.price_date, detail)
-        + (() if overwrite else (PENDING,)),
+        + ((PENDING,) if pending_only else ()),
     )
 
 

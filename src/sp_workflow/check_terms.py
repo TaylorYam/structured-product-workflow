@@ -372,7 +372,7 @@ CHECK_TRADE_COLUMNS = ("trade_date", "currency", "amount", "branch", "uf")
 
 def recalculate(conn: psycopg.Connection, config: ImportConfig, *, tdccs: Collection[str] | None = None) -> CalcReceipt:
     """重算還沒鎖住的商品（`tdccs` 有值時只算這幾檔）的核對條件與風險等級，和上一次不同的寫入；已鎖住、還沒有風險等級的
-    商品（本功能上線前就鎖住的）補算一次風險等級。整次在同一個 transaction 裡。
+    商品（本功能上線前就鎖住的）或還是待算的（#525）補算風險等級。整次在同一個 transaction 裡。
 
     `config` 用到交易所假日表（價格）、上手編號對照與發行機構寫法（評等查哪家上手）和指數清單（風險等級）。
     """
