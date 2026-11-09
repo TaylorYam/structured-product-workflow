@@ -33,7 +33,8 @@ TEMPLATE_ID = "natixis-zh-pd"
 # 10：確認文件寫明沒有保證機構（商品名稱「無保證機構」，Issue #243）
 # 11：辨識曾另要求沒有區間計息寫法（#436 起同一家上手由專到泛由上手註冊表決定，版本不變）；頁尾英文名稱第二行也收「Principal Protected, …」（workflow #371）
 # 12：封面商品代號與 ISIN 之間的逗號重複照常讀（workflow #476）
-PARSER_VERSION = "12"
+# 13：封面英文名稱的「(Non Principal」也視同「(Non-Principal」（workflow #531）
+PARSER_VERSION = "13"
 # 發行機構信用評等（#240）：封面「發行機構名稱」下一行 `(長期債務信用評等標準普爾評等A+/穆迪評等A2/惠譽評等A+ (高級優先債務))(截至…)`、第一章第 3 項 `發行機構長期債務信用評等(截至…)：長期債務信用評等…。`、第二章 (7) `信用評等：長期債務信用評等…(截至…)`
 RATINGS = (
     ratings.RatingPlace("封面", r"法國外貿銀行（長期債務信用評等(?P<body>.+?)）（截至"),
@@ -205,7 +206,8 @@ FCN = Variant(PRICE_TABLE, SCENARIO_COUPON_ROW, coupon_pa_terms)
 
 
 def non_principal(text: str) -> str:
-    """第一章第 1 項與投資人須知的英文名稱寫 `(Non Principal`（沒有連字號），視同封面的 `(Non-Principal`（2026-10-15 確認）。"""
+    """英文名稱的 `(Non Principal`（沒有連字號）視同 `(Non-Principal`：封面、第一章第 1 項、投資人須知都是
+    （2026-10-15 確認第一章與投資人須知；2026-11-09 封面也放寬，意思一樣，workflow #531）。"""
     return re.sub(r"\(Non\s+Principal", "(Non-Principal", text)
 
 
@@ -485,7 +487,9 @@ def _cover(fields: FieldsBuilder, cover: list[Line]) -> None:
     fields.put("name_title", cover, r"^中文產品說明書\(適用於專業投資人及OSU客戶\)(.+?)TDCC商品代號為")
     rows = cover_rows(cover)
     fields["name_zh"] = _row_field("name_zh", _row(rows, "商品中文名稱"), r"^(.+?)\s*\(下稱「本商品」\)", squash)
-    fields["name_en"] = _row_field("name_en", _row(rows, "商品英文名稱"), r"^(Natixis.+?)\s*$")
+    fields["name_en"] = _row_field(
+        "name_en", _row(rows, "商品英文名稱"), r"^(Natixis.+?)\s*$", lambda x: non_principal(x.strip())
+    )
     fields["product_type"] = _row_field("product_type", _row(rows, "商品種類"), r"^(.+?)\s*$", squash)
     fields["issuer_name_cover"] = _row_field("issuer_name_cover", _row(rows, "發行機構名稱"), r"^(.+?)\s*\(長期")
     ccy = _row(rows, "計價幣別")
