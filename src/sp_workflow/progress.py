@@ -7,6 +7,7 @@
 還沒鎖住 → 待修正；已鎖住 → 待寄信。人工核對完成（#527）的一筆紀錄也算核對結果（「人工核對：跳過自動核對」）。
 上手更正（#535，`revision_of`）：已鎖住、但說明書或投資人須知最新的核對結果是人工放行、不一致或需人工覆核的，
 寫「待更正：說明書（人工放行）」，提醒還在等上手改文字；改好的版本重新核對通過、存檔後就空白。不決定階段。
+人工核對完成（#527）鎖住的不提醒（使用者決定：自己核對過、選擇跳過自動核對）。
 商品的範圍是有交易明細或有商品條件的 TDCC。各步日期只顯示、不決定階段：交易明細匯入、商品條件匯入（Order 匯入、
 人工維護存檔或清單更新）、核對條件完成（最後一次計算）、已準備、核對、鎖住、已放回、草稿已建立、已寄出；同一步有多筆
 紀錄取最新一筆。批次登記已寄出（`sent_batch`）只登記交易日在選定日期以前（含）、目前是待寄信的商品；寫入前再用
@@ -73,7 +74,7 @@ EXPORT_COLUMNS = (
     REVISION_COLUMN, *DATE_COLUMNS, "卡住的原因",
 )  # fmt: skip
 TICK = "✓"
-# 鎖住後還算沒乾淨通過的核對結果分類（#535）：未支援上手、執行錯誤不算（人工核對完成的商品可能留著未支援的結果）
+# 鎖住後還算沒乾淨通過的核對結果分類（#535）：未支援上手、執行錯誤不算
 _PENDING_REVISION = (Category.RELEASED, Category.MISMATCH, Category.REVIEW)
 
 
@@ -158,8 +159,8 @@ def progress_of(facts: Facts) -> tuple[str, str]:
 
 def revision_of(facts: Facts) -> str:
     """上手更正（#535）：已鎖住、說明書或投資人須知最新的核對結果還沒乾淨通過時「待更正：說明書（人工放行）」
-    （說明書在前，多份用「、」接）；沒鎖住（待修正已經列出）或都通過時空白。"""
-    if LOCKED not in facts.dates:
+    （說明書在前，多份用「、」接）；沒鎖住（待修正已經列出）、人工核對完成（#527，自己核對過）或都通過時空白。"""
+    if LOCKED not in facts.dates or MANUAL_CHECK in facts.checks:
         return ""
     pending = [f"{kind}（{facts.checks[kind]}）" for kind in DocKind if facts.checks.get(kind) in _PENDING_REVISION]
     return f"待更正：{'、'.join(pending)}" if pending else ""
