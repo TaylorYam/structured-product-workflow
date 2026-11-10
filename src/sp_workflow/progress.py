@@ -28,7 +28,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fcn_checker.batch import Category
-from fcn_checker.schema import DocKind
+from fcn_checker.schema import DocKind  # 說明書／投資人須知（核對結果的 kind），不是 `sp_workflow.documents.DocKind`
 from sp_workflow.database import require_in_transaction
 from sp_workflow.file_tools import save_rows
 from sp_workflow.import_config import ImportConfig
