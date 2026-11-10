@@ -132,6 +132,25 @@ def test_pricing_status_is_shown_filtered_and_marked(master, tmp_path: Path, mon
     assert shown(tab) == ["037199990001"]
 
 
+def test_pending_revision_is_shown_marked_and_sortable(master, tmp_path: Path, monkeypatch) -> None:
+    """上手更正（#535）：接在異議後面，有內容時用問題色，點欄位排序時空白的放最後。"""
+    rows = (
+        row("037199990001", 3, FINISHED),
+        row("037199990002", 5, FINISHED, revision="待更正：說明書（人工放行）"),
+    )
+    _, tab, _ = loaded(master, tmp_path, monkeypatch, rows)
+
+    assert tab.table.heading("revision", "text") == "上手更正"
+    cells = {
+        tab.table.set(item, "tdcc"): (tab.table.set(item, "revision"), tab.table.item(item, "tags"))
+        for item in tab.table.get_children()
+    }
+    assert cells == {"037199990001": ("", ""), "037199990002": ("待更正：說明書（人工放行）", ("problem",))}
+
+    tab.sort_by("revision")
+    assert shown(tab) == ["037199990002", "037199990001"]
+
+
 def test_copy_tdccs_to_confirm_puts_only_their_tdccs_on_the_clipboard(master, tmp_path: Path, monkeypatch) -> None:
     """複製待確認 TDCC（#289）：只放畫面上比價待確認的 TDCC、一行一筆，貼到「3 準備」每筆都認得。"""
     rows = (

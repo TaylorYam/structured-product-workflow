@@ -5,6 +5,9 @@
 一檔一個階段（`progress_of`），照順序判斷、第一個符合的就是：有「已寄出」或以前清單更新建立、已鎖住、沒有步驟紀錄
 的舊商品（以前在 Excel 走完，#184）→ 完成；三件缺任一件 → 資料準備中；沒有核對結果 → 待核對；有核對結果、
 還沒鎖住 → 待修正；已鎖住 → 待寄信。人工核對完成（#527）的一筆紀錄也算核對結果（「人工核對：跳過自動核對」）。
+上手更正（#535，`revision_of`）：已鎖住、但說明書或投資人須知最新的核對結果是人工放行、不一致或需人工覆核的，
+寫「待更正：說明書（人工放行）」，提醒還在等上手改文字；改好的版本重新核對通過、存檔後就空白。不決定階段。
+人工核對完成（#527）鎖住的不提醒（使用者決定：自己核對過、選擇跳過自動核對）。
 商品的範圍是有交易明細或有商品條件的 TDCC。各步日期只顯示、不決定階段：交易明細匯入、商品條件匯入（Order 匯入、
 人工維護存檔或清單更新）、核對條件完成（最後一次計算）、已準備、核對、鎖住、已放回、草稿已建立、已寄出；同一步有多筆
 紀錄取最新一筆。批次登記已寄出（`sent_batch`）只登記交易日在選定日期以前（含）、目前是待寄信的商品；寫入前再用
@@ -25,6 +28,8 @@ from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from fcn_checker.batch import Category
+from fcn_checker.schema import DocKind  # 說明書／投資人須知（核對結果的 kind），不是 `sp_workflow.documents.DocKind`
 from sp_workflow.database import require_in_transaction
 from sp_workflow.file_tools import save_rows
 from sp_workflow.import_config import ImportConfig
@@ -62,12 +67,15 @@ DATE_COLUMNS = (
     TRADES_IMPORTED, TERMS_IMPORTED, CHECK_TERMS_DONE, PREPARED_STEP, CHECKED, LOCKED, RETURNED_STEP, DRAFTED_STEP,
     SENT_STEP,
 )  # fmt: skip
+REVISION_COLUMN = "上手更正"  # #535
 PRICING_COLUMNS = ("比價狀態", "KO比價", "比價原因", "KI")  # #170；比價三欄只講 KO，KI 另一欄（#196）
 EXPORT_COLUMNS = (
-    "TDCC", "上手", "交易日", "距今天數", "作業進度", *READY_COLUMNS, "存續狀態", *PRICING_COLUMNS, "異議", *DATE_COLUMNS,
-    "卡住的原因",
+    "TDCC", "上手", "交易日", "距今天數", "作業進度", *READY_COLUMNS, "存續狀態", *PRICING_COLUMNS, "異議",
+    REVISION_COLUMN, *DATE_COLUMNS, "卡住的原因",
 )  # fmt: skip
 TICK = "✓"
+# 鎖住後還算沒乾淨通過的核對結果分類（#535）：未支援上手、執行錯誤不算
+_PENDING_REVISION = (Category.RELEASED, Category.MISMATCH, Category.REVIEW)
 
 
 @dataclass(frozen=True)
@@ -104,6 +112,7 @@ class ProgressRow:
     pricing_unlocked: bool = False  # 比價時還沒鎖住
     ki: str = ""  # KI 欄（#196、#198）：-（沒有 KI）、EKI、AKI、MKI (manual)、`<KI 種類> hit 日期 標的`；還沒比過空白
     ready: tuple[bool, ...] = (False,) * len(READY_COLUMNS)  # 依 `READY_COLUMNS`：三件齊了沒
+    revision: str = ""  # 上手更正（#535，`revision_of`）：「待更正：說明書（人工放行）」；沒有時空白
 
     @property
     def ready_marks(self) -> tuple[str, ...]:
@@ -117,10 +126,11 @@ class ProgressRow:
 
     @property
     def problem(self) -> bool:
-        """畫面用問題色：還沒完成又有卡住的原因，或比價狀態是等股價、待確認。"""
-        return (self.progress != FINISHED and bool(self.reason)) or self.pricing in (
-            Pricing.WAIT_PRICES,
-            Pricing.TO_CONFIRM,
+        """畫面用問題色：還沒完成又有卡住的原因、還在等上手更正，或比價狀態是等股價、待確認。"""
+        return (
+            (self.progress != FINISHED and bool(self.reason))
+            or bool(self.revision)
+            or self.pricing in (Pricing.WAIT_PRICES, Pricing.TO_CONFIRM)
         )
 
 
@@ -145,6 +155,15 @@ def progress_of(facts: Facts) -> tuple[str, str]:
     if LOCKED not in dates:
         return TO_FIX, "、".join(f"{kind}：{category}" for kind, category in sorted(facts.checks.items()))
     return TO_MAIL, ""
+
+
+def revision_of(facts: Facts) -> str:
+    """上手更正（#535）：已鎖住、說明書或投資人須知最新的核對結果還沒乾淨通過時「待更正：說明書（人工放行）」
+    （說明書在前，多份用「、」接）；沒鎖住（待修正已經列出）、人工核對完成（#527，自己核對過）或都通過時空白。"""
+    if LOCKED not in facts.dates or MANUAL_CHECK in facts.checks:
+        return ""
+    pending = [f"{kind}（{facts.checks[kind]}）" for kind in DocKind if facts.checks.get(kind) in _PENDING_REVISION]
+    return f"待更正：{'、'.join(pending)}" if pending else ""
 
 
 def ready_of(facts: Facts) -> tuple[bool, ...]:
@@ -280,6 +299,7 @@ def load_progress(conn: psycopg.Connection, config: ImportConfig, today: dt.date
                 objection_text(objections.get(tdcc, ())),
                 **_pricing_columns(pricing),
                 ready=ready_of(found),
+                revision=revision_of(found),
             )
         )
     return tuple(rows)
@@ -374,7 +394,8 @@ def export_values(row: ProgressRow) -> tuple[object, ...]:
     """一列的值，依 `EXPORT_COLUMNS`。"""
     return (
         row.tdcc, row.issuer, row.trade_date, row.days, row.progress, *row.ready_marks, row.lifecycle,
-        row.pricing_text, row.observed_through, row.pricing_reason, row.ki, row.objection, *row.dates, row.reason,
+        row.pricing_text, row.observed_through, row.pricing_reason, row.ki, row.objection, row.revision, *row.dates,
+        row.reason,
     )  # fmt: skip
 
 
