@@ -1,5 +1,5 @@
 """「8 進度」分頁（#156、#186、ADR 0019）：每檔商品在五個階段的哪一個、核對前三件齊了沒、各步日期、存續狀態與
-比價狀態（#170）；篩選、排序、匯出 Excel。
+比價狀態（#170）、上手更正（#535：人工放行後還在等上手改文字）；篩選、排序、匯出 Excel。
 
 按「重新整理」在背景讀資料庫（`window_actions.load_progress_rows`），篩選與排序只在畫面上做、不再連資料庫；
 「匯出 Excel…」把目前篩選、排序後的整張表寫成一份 Excel（`progress.export_progress`）；
@@ -28,6 +28,7 @@ from sp_workflow.progress import (
     FINISHED,
     PROGRESS,
     READY_COLUMNS,
+    REVISION_COLUMN,
     ProgressExport,
     ProgressRow,
     SentBatch,
@@ -77,6 +78,7 @@ COLUMNS = (
     ("pricing_reason", "比價原因", 220),
     ("ki", "KI", 160),  # #196
     ("objection", "異議", 160),
+    ("revision", REVISION_COLUMN, 200),  # #535
     *((key, name, 95) for key, name in zip(_DATE_KEYS, DATE_COLUMNS, strict=True)),
     ("reason", "卡住的原因", 320),
 )
@@ -483,7 +485,7 @@ def _cells(row: ProgressRow) -> tuple[str, ...]:
     dates = tuple("" if value is None else f"{value.astimezone():%Y-%m-%d}" for value in row.dates)
     return (
         row.tdcc, row.issuer, trade_date, days, row.progress, *row.ready_marks, row.lifecycle, row.pricing_text,
-        through, row.pricing_reason, row.ki, row.objection, *dates, row.reason,
+        through, row.pricing_reason, row.ki, row.objection, row.revision, *dates, row.reason,
     )  # fmt: skip
 
 
@@ -502,6 +504,7 @@ def _sort_value(row: ProgressRow, index: int) -> object:
         row.pricing_reason or None,
         row.ki or None,
         row.objection or None,
+        row.revision or None,
         *row.dates,
         row.reason or None,
     )

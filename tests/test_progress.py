@@ -36,6 +36,7 @@ from sp_workflow.progress import (
     PRICING_COLUMNS,
     PROGRESS,
     READY_COLUMNS,
+    REVISION_COLUMN,
     SENT_STEP,
     TERMS_IMPORTED,
     TO_CHECK,
@@ -51,6 +52,7 @@ from sp_workflow.progress import (
     load_progress,
     progress_of,
     ready_of,
+    revision_of,
     sent_batch,
     still_pending_mail,
     to_confirm_tdccs,
@@ -112,6 +114,34 @@ def test_progress_is_the_first_stage_that_applies(facts: Facts, progress: str, r
 def test_the_three_preparations_are_ticked_independently(facts: Facts, ready: tuple[bool, ...]) -> None:
     assert READY_COLUMNS == ("交易明細", "商品條件", "股價")
     assert ready_of(facts) == ready
+
+
+@pytest.mark.parametrize(
+    ("checks", "locked", "revision"),
+    [
+        ({"說明書": "人工放行", "投資人須知": "通過"}, True, "待更正：說明書（人工放行）"),
+        ({"投資人須知": "不一致", "說明書": "人工放行"}, True, "待更正：說明書（人工放行）、投資人須知（不一致）"),
+        ({"說明書": "需人工覆核"}, True, "待更正：說明書（需人工覆核）"),  # 放行後重新核對改過的版本還是沒過
+        ({"說明書": "通過", "投資人須知": "通過"}, True, ""),  # 改好的版本通過、存檔後就空白
+        ({"說明書": "人工放行"}, False, ""),  # 沒鎖住：待修正已經列出
+        ({"說明書": "未支援上手", "人工核對": "跳過自動核對"}, True, ""),  # 人工核對完成（#527）不算
+        ({"說明書": "執行錯誤"}, True, ""),
+        ({}, True, ""),
+    ],
+)
+def test_revision_flags_locked_products_whose_documents_have_not_cleanly_passed(
+    checks: dict[str, str], locked: bool, revision: str
+) -> None:
+    """#535：人工放行、鎖住後還在等上手改文字的商品。"""
+    facts = Facts("1", **READY, checks=checks, dates={LOCKED: T} if locked else {})
+
+    assert revision_of(facts) == revision
+
+
+def test_a_pending_revision_is_a_problem_even_after_mail_is_sent() -> None:
+    assert row("1", progress=TO_MAIL, revision="待更正：說明書（人工放行）").problem
+    assert row("1", progress=FINISHED, revision="待更正：說明書（人工放行）").problem
+    assert not row("1", progress=TO_MAIL).problem
 
 
 def test_the_five_stages_are_in_order() -> None:
@@ -229,6 +259,7 @@ def test_export_writes_the_rows_as_shown(tmp_path: Path) -> None:
         observed_through=dt.date(2026, 10, 20),
         pricing_unlocked=True,
         ki="AKI",
+        revision="待更正：說明書（人工放行）",
     )
     receipt = export_progress([shown], path)
 
@@ -246,6 +277,9 @@ def test_export_writes_the_rows_as_shown(tmp_path: Path) -> None:
         "UL_1 AAA UW：2026-10-21 沒有收盤價",
         "AKI",
     )
+    revision = rows[0].index(REVISION_COLUMN)
+    assert rows[0][revision - 1 : revision + 2] == ("異議", "上手更正", DATE_COLUMNS[0]), "接在異議後面（#535）"
+    assert rows[1][revision] == "待更正：說明書（人工放行）"
     assert rows[1][-1] == "還沒有商品條件"
     assert list(tmp_path.iterdir()) == [path], "暫存檔換名後不留"
 
@@ -408,3 +442,14 @@ def test_still_pending_mail_rereads_the_same_facts_as_the_progress(pg) -> None:
 
     assert found == (A,)
     assert [t for t, progress in rows.items() if progress == TO_MAIL] == [A], "和進度頁同一個判斷"
+
+
+@pytest.mark.db
+def test_revision_is_read_from_the_latest_check_results(pg) -> None:
+    """#535：鎖住後說明書最新的核對結果是人工放行的標出來；同一檔改好的版本核對通過後空白。"""
+    seed_waiting_for_mail(pg, [A, B])
+    pg.execute("UPDATE workflow.check_result SET category = '人工放行' WHERE tdcc = %s", (A,))  # B：說明書通過
+
+    rows = {r.tdcc: (r.progress, r.revision) for r in load_progress(pg, CONFIG, dt.date(2026, 10, 22))}
+
+    assert rows == {A: (TO_MAIL, "待更正：說明書（人工放行）"), B: (TO_MAIL, "")}, "不決定階段"
