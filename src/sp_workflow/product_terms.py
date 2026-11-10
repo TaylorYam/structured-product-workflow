@@ -11,7 +11,7 @@
   留紀錄；重算核對條件、重讀資料庫的值由呼叫端另外做（ADR 0012）。
 - `write`：更正與人工維護存一檔（`Receipt`），自己一個 transaction；這檔的交易明細（`trade_rows`，#116、ADR 0018）
   一起存，商品條件、交易明細各在 `workflow.term_correction`、`workflow.trade_row_correction` 留紀錄。
-- `backfill`／`lock_checked`：核對寫回寫一格並記 `workflow.backfill_log`、核對通過鎖住這檔。
+- `backfill`／`lock_checked`：核對寫回寫一格並記 `workflow.backfill_log`（`log_backfill`）、核對通過鎖住這檔。
 - `create_backfilled`：回補既有的 FCN 以外商品（#303，`product_backfill`）建立一檔鎖住的商品條件，來源「歷史回補」。
 - `missing_products`：人工維護「檢查」列出的商品。設定 `ImportConfig`／`load_import_config` 在 `import_config`（#493），
   這裡留舊名字的別名一個版本。
@@ -30,7 +30,7 @@ from __future__ import annotations
 
 import datetime as dt
 import getpass
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
 from enum import Enum
@@ -976,12 +976,26 @@ def backfill(
             return False
     if same_value(old, value):
         return False
-    conn.execute(
-        "INSERT INTO workflow.backfill_log (tdcc, item, old_value, new_value, result_file, written_by)"
-        " VALUES (%s, %s, %s, %s, %s, %s)",
-        (tdcc, item, _text(old), _text(value), result_file, user),
-    )
+    log_backfill(conn, tdcc, [(item, _text(old), _text(value))], result_file=result_file, user=user)
     return True
+
+
+def log_backfill(
+    conn: psycopg.Connection,
+    tdcc: str,
+    changes: Iterable[tuple[str, str | None, str | None]],
+    *,
+    result_file: str,
+    user: str,
+) -> None:
+    """`workflow.backfill_log` 記這檔的幾筆（項目, 原值, 新值）；值由呼叫端轉成文字。核對寫回（`backfill`）、
+    人工核對（`manual_check`）與比價寫回顧期初價格（`observation`）共用（#529）。"""
+    with conn.cursor() as cur:
+        cur.executemany(
+            "INSERT INTO workflow.backfill_log (tdcc, item, old_value, new_value, result_file, written_by)"
+            " VALUES (%s, %s, %s, %s, %s, %s)",
+            [(tdcc, item, old, new, result_file, user) for item, old, new in changes],
+        )
 
 
 def create_backfilled(

@@ -458,18 +458,36 @@ def risk_level_of(conn: psycopg.Connection, tdcc: str) -> RiskLevel | None:
 def _volatilities(
     conn: psycopg.Connection, terms: Sequence[RiskTerms], price_dates: Sequence[dt.date]
 ) -> dict[tuple[dt.date, str], Volatility]:
-    """每檔用到的那一份股價檔裡、它的標的的 200 日波動率：先讀交易日那份，缺代碼的檔再讀交易日之後的（#525）。"""
+    """每檔用到的那一份股價檔裡、它的標的的 200 日波動率：先讀交易日那份，缺代碼的檔再讀交易日之後第一份標的代碼都有的
+    （#525；只讀那一份，不讀之後全部，#529）。"""
     found = _read_volatilities(
         conn, {(d, code) for t in terms if (d := t.price_date(price_dates)) is not None for code in t.codes}
     )
-    later = {
-        (d, code)
-        for t in terms
-        if (base := t.price_date(price_dates)) is not None and any((base, code) not in found for code in t.codes)
-        for d in t.later_dates(price_dates)
-        for code in t.codes
-    }
+    first: dict[tuple[tuple[str, ...], tuple[dt.date, ...]], dt.date | None] = {}  # 同樣標的、同樣日期只查一次
+    later = set()
+    for t in terms:
+        base = t.price_date(price_dates)
+        if base is None or all((base, code) in found for code in t.codes):
+            continue
+        key = (tuple(sorted(set(t.codes))), tuple(t.later_dates(price_dates)))
+        if key not in first:
+            first[key] = _first_with_all(conn, *key)
+        if (day := first[key]) is not None:
+            later |= {(day, code) for code in t.codes}
     return {**found, **_read_volatilities(conn, later)}
+
+
+def _first_with_all(conn: psycopg.Connection, codes: Sequence[str], dates: Sequence[dt.date]) -> dt.date | None:
+    """這幾份股價檔（取價日由小到大）裡第一份這幾個代碼都有的取價日；只看有沒有這一列（同 `RiskTerms._all_in`），
+    都沒有時 None。"""
+    if not dates or not codes:
+        return None
+    row = conn.execute(
+        "SELECT price_date FROM workflow.daily_price WHERE price_date = ANY(%s) AND code = ANY(%s)"
+        " GROUP BY price_date HAVING count(DISTINCT code) = %s ORDER BY price_date LIMIT 1",
+        (list(dates), list(codes), len(codes)),
+    ).fetchone()
+    return None if row is None else row[0]
 
 
 def _read_volatilities(

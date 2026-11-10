@@ -77,6 +77,7 @@ from sp_workflow.product_record import (
 from sp_workflow.product_record import NO_BARRIER as NO_KI
 from sp_workflow.product_store import PricingState, Stored, StoredEvent, read_many
 from sp_workflow.product_store import locked as is_locked
+from sp_workflow.product_terms import log_backfill
 from sp_workflow.status import CheckTerms, OrderReview, Pricing, ProductSource
 from sp_workflow.stock_splits import STRIKE_CLOSE_DAYS, Jump, SplitBook, in_range, load_splits, refresh_basis
 from sp_workflow.underlying_prices import write_lookback
@@ -476,6 +477,18 @@ def _maturity(terms: Terms, prices: Mapping[str, Decimal], touch: KiTouch | None
     return Outcome(EXITED, f"到期還本 {day}", day, (AutoEvent(MATURITY, day),), ki, ki_touch=touch)
 
 
+def autocall_problem(autocall: Sequence[dt.date], final: dt.date | None) -> str:
+    """比價日對不對得上最終比價日：要有最終比價日、有比價日、最後一期等於最終比價日；沒有問題時空字串。
+    比價前（`_terms_problem`）與人工核對寫入前（`manual_check`）共用（#529）。"""
+    if final is None:
+        return "沒有最終比價日"
+    if not autocall:
+        return "沒有比價日"
+    if autocall[-1] != final:
+        return f"最後一個比價日 {autocall[-1]} 和最終比價日 {final} 不同"
+    return ""
+
+
 def _terms_problem(terms: Terms, calendar: TradingCalendar) -> str:
     """比價前先確認條件齊全；有問題時回傳待確認的原因。"""
     if terms.manual_ko:
@@ -486,12 +499,9 @@ def _terms_problem(terms: Terms, calendar: TradingCalendar) -> str:
         return f"KO Type「{terms.ko_type or ''}」不認得"
     if terms.barrier_type not in (NO_KI, EKI, AKI, MKI):
         return f"Barrier Type「{terms.barrier_type or ''}」不認得"
-    if terms.final_date is None:
-        return "沒有最終比價日"
-    if not terms.autocall:
-        return "沒有比價日"
-    if terms.autocall[-1] != terms.final_date:
-        return f"最後一個比價日 {terms.autocall[-1]} 和最終比價日 {terms.final_date} 不同"
+    problem = autocall_problem(terms.autocall, terms.final_date)
+    if problem:
+        return problem
     if terms.barrier_type == AKI and terms.strike_date is None:
         return "每日觀察 KI 要有 Strike date"
     problems = []
@@ -721,16 +731,17 @@ def _write_lookback(conn: psycopg.Connection, terms: Terms, fixed: Sequence[Unde
         if (was.lookback, was.strike) == (u.lookback, u.strike):
             continue
         write_lookback(conn, terms.tdcc, u.seq, u.lookback, u.strike)
-        with conn.cursor() as cur:
-            cur.executemany(
-                "INSERT INTO workflow.backfill_log (tdcc, item, old_value, new_value, result_file, written_by)"
-                " VALUES (%s, %s, %s, %s, %s, %s)",
-                [
-                    (terms.tdcc, f"UL_{u.seq}_{item}", _text(old), _text(new), note, who)
-                    for item, old, new in (("回顧期初價格", was.lookback, u.lookback), ("執行價", was.strike, u.strike))
-                    if old != new
-                ],
-            )
+        log_backfill(
+            conn,
+            terms.tdcc,
+            [
+                (f"UL_{u.seq}_{item}", _text(old), _text(new))
+                for item, old, new in (("回顧期初價格", was.lookback, u.lookback), ("執行價", was.strike, u.strike))
+                if old != new
+            ],
+            result_file=note,
+            user=who,
+        )
 
 
 def _text(value: Decimal | None) -> str | None:

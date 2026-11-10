@@ -5,7 +5,7 @@
 - 輸入（`ManualCheck`）：ISIN、比價日（依序，1～12 期）、期初定價 VWAP 時各標的進場價；原因沿用人工維護的原因欄。
 - 檢查（`problems`，全部列出、任一項不過就什麼都不寫）：還沒鎖住；核對條件是完成；有 Issue date（鎖住後不能改）；
   ISIN 是 2 碼英文＋9 碼英數＋1 碼數字；比價日不超過 12 期、由小到大不重複、最後一期等於 Final valuation date
-  （同比價的檢查，`observation._terms_problem`）；VWAP 每個標的都有大於 0 的進場價。
+  （同比價的檢查，`observation.autocall_problem`）；VWAP 每個標的都有大於 0 的進場價。
 - 寫入（`confirm`，在呼叫端的 transaction 裡）：ISIN、比價日 1～12（沒用到的期別寫空白）、VWAP 的四個價格
   （執行價、KI、KO 由進場價乘比例算，比例空白時空白，同更正 VWAP 的算法）都走 `product_terms.backfill`，
   值有改變時 `workflow.backfill_log` 留原值；另記一筆「人工核對」（原因），結果檔欄寫 `RESULT_FILE`。最後鎖住。
@@ -27,10 +27,11 @@ from fcn_checker.backfill_values import AUTOCALL_SLOTS, ISIN, SLOTS, Target, Und
 from fcn_checker.fields import PRICE_FIELDS
 from sp_workflow.check_terms import is_vwap
 from sp_workflow.database import OperatorError, require_in_transaction
+from sp_workflow.observation import autocall_problem
 from sp_workflow.order_terms import parse_date
-from sp_workflow.product_record import NO_BARRIER, price_at, round_price, same_value
+from sp_workflow.product_record import derived_prices, round_price, same_value
 from sp_workflow.product_store import Stored, locked, read
-from sp_workflow.product_terms import backfill, lock_checked
+from sp_workflow.product_terms import backfill, lock_checked, log_backfill
 from sp_workflow.status import CheckTerms
 
 if TYPE_CHECKING:
@@ -132,18 +133,15 @@ def problems(stored: Stored | None, entry: ManualCheck) -> list[str]:
     return found
 
 
-def _autocall_problems(dates: Sequence[dt.date], final: object) -> list[str]:
-    if not dates:
-        return ["沒有比價日"]
+def _autocall_problems(dates: Sequence[dt.date], final: dt.date | None) -> list[str]:
+    """比價前的檢查（`autocall_problem`）之外，人工輸入另外檢查期數與順序。"""
     found = []
     if len(dates) > SLOTS:
         found.append(f"比價日有 {len(dates)} 期，最多 {SLOTS} 期")
     if any(b <= a for a, b in zip(dates, dates[1:], strict=False)):
         found.append("比價日要由小到大、不重複")
-    if dates[-1] != final:
-        shown = "空白" if final is None else str(final)
-        found.append(f"最後一個比價日 {dates[-1]} 和 Final valuation date {shown} 不同")
-    return found
+    problem = autocall_problem(dates, final)
+    return [*found, problem] if problem else found
 
 
 def confirm(conn: psycopg.Connection, entry: ManualCheck, *, user: str | None = None) -> ManualCheckReceipt:
@@ -163,11 +161,8 @@ def confirm(conn: psycopg.Connection, entry: ManualCheck, *, user: str | None = 
     changes = 0
     for target, value, item in values:
         changes += backfill(conn, entry.tdcc, target, value, item=item, result_file=RESULT_FILE, user=user)
-    conn.execute(
-        "INSERT INTO workflow.backfill_log (tdcc, item, old_value, new_value, result_file, written_by)"
-        " VALUES (%s, %s, NULL, %s, %s, %s)",
-        (entry.tdcc, LOG_ITEM, entry.reason.strip() or "跳過自動核對", RESULT_FILE, user),
-    )
+    reason = entry.reason.strip() or "跳過自動核對"
+    log_backfill(conn, entry.tdcc, [(LOG_ITEM, None, reason)], result_file=RESULT_FILE, user=user)
     lock_checked(conn, entry.tdcc)
     return ManualCheckReceipt(entry.tdcc, changes)
 
@@ -175,15 +170,6 @@ def confirm(conn: psycopg.Connection, entry: ManualCheck, *, user: str | None = 
 def _vwap_prices(stored: Stored, seq: int, initial: Decimal) -> list[tuple[Target, object, str]]:
     """VWAP 一個標的的四個價格：進場價照輸入，執行價、KI、KO 由進場價乘比例（比例空白時空白）。"""
     p = stored.columns
-    no_ki = p["barrier_type"] == NO_BARRIER or p["ki_pct"] is None
-    derived = {
-        "initial": initial,
-        "strike": _times(initial, p["strike_pct"]),
-        "ki": None if no_ki else _times(initial, p["ki_pct"]),
-        "ko": _times(initial, p["ko_pct"]),
-    }
+    strike, ki, ko = derived_prices(initial, p["strike_pct"], p["ki_pct"], p["ko_pct"], p["barrier_type"])
+    derived = {"initial": initial, "strike": strike, "ki": ki, "ko": ko}
     return [(UnderlyingPrice(seq, f.key), derived[f.key], f"UL_{seq}_{f.header}") for f in PRICE_FIELDS]
-
-
-def _times(initial: Decimal, pct: object) -> Decimal | None:
-    return None if pct is None else price_at(initial, Decimal(str(pct)))
