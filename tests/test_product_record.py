@@ -7,7 +7,18 @@ from decimal import Decimal
 
 import pytest
 
-from fcn_checker.products import BEN, DACN, FCN, FCN_EXPRESS, PRODUCT_RULES, SUPER_BULL, product_name
+from fcn_checker.products import (
+    BEN,
+    DACN,
+    FCN,
+    FCN_EXPRESS,
+    FCN_STEPDOWN,
+    PRODUCT_RULES,
+    SNOWBALL,
+    SNOWBALL_STEPDOWN,
+    SUPER_BULL,
+    product_name,
+)
 from sp_workflow.product_record import (
     COLUMN_FIELDS,
     DERIVED_COLUMNS,
@@ -125,28 +136,33 @@ def test_missing_fields_name_blank_required_fields_and_their_derived_codes() -> 
     assert missing_fields(columns_of(dict.fromkeys(FIELDS), None, DENOMINATIONS)) == list(REQUIRED)
 
 
-# 商品規則表（#434）：每種商品種類的 (KO% 必填, 配息門檻必填)；必填欄與缺欄都問商品規則
+# 商品規則表（#434）：每種商品種類的 (KO% 必填, 配息門檻必填, KO 降幅必填)；必填欄與缺欄都問商品規則
 RULE_TABLE = [
-    (FCN, True, False),
-    (FCN_EXPRESS, True, False),
-    (SUPER_BULL, True, False),
-    (BEN, False, True),  # 預設沒有 KO、紅利門檻存配息門檻（#406）
-    (DACN, True, True),  # 配息門檻（#367）
+    (FCN, True, False, False),
+    (FCN_EXPRESS, True, False, False),
+    (SUPER_BULL, True, False, False),
+    (BEN, False, True, False),  # 預設沒有 KO、紅利門檻存配息門檻（#406）
+    (DACN, True, True, False),  # 配息門檻（#367）
+    (FCN_STEPDOWN, True, False, True),  # KO 降幅（#537）
+    (SNOWBALL, True, False, False),  # 降幅選填：空白是不降
+    (SNOWBALL_STEPDOWN, True, False, True),
 ]
 
 
-@pytest.mark.parametrize(("product", "needs_ko", "needs_barrier"), RULE_TABLE)
-def test_required_and_missing_fields_follow_the_product_rule(product, needs_ko, needs_barrier) -> None:
+@pytest.mark.parametrize(("product", "needs_ko", "needs_barrier", "needs_step"), RULE_TABLE)
+def test_required_and_missing_fields_follow_the_product_rule(product, needs_ko, needs_barrier, needs_step) -> None:
     common = [name for name in REQUIRED if name != "KO Barrier (%)" or needs_ko]
-    expected = (*common, *(("Coupon Barrier (%)",) if needs_barrier else ()))
+    extra = (("Coupon Barrier (%)",) if needs_barrier else ()) + (("KO Step Down (%)",) if needs_step else ())
+    expected = (*common, *extra)
     blank = columns_of(
         {**VALUES, "Product": product, "Guaranteed Periods (m)": 0 if product == FCN_EXPRESS else 3}, "X", DENOMINATIONS
     )
-    blank = {**blank, "ko_pct": None, "coupon_barrier_pct": None}
+    blank = {**blank, "ko_pct": None, "coupon_barrier_pct": None, "ko_step_pct": None}
 
     assert required_fields(product) == expected
-    assert missing_fields(blank) == [n for n in ("KO Barrier (%)", "Coupon Barrier (%)") if n in expected]
-    filled = {**blank, "ko_pct": Decimal(100), "coupon_barrier_pct": Decimal(80)}
+    optional = ("KO Barrier (%)", "Coupon Barrier (%)", "KO Step Down (%)")
+    assert missing_fields(blank) == [n for n in optional if n in expected]
+    filled = {**blank, "ko_pct": Decimal(100), "coupon_barrier_pct": Decimal(80), "ko_step_pct": Decimal(3)}
     assert missing_fields(filled) == []
     assert default_coupon_barrier({"Product": product, "Strike (%)": Decimal(80)}) == (
         Decimal(80) if needs_barrier else None

@@ -24,7 +24,8 @@
 - `fcn_checker.products.PRODUCT_RULES` 新增 `FCN_Stepdown`、`Snowball`、`Snowball_Stepdown`，其他規則照 FCN。每日匯入、起單資料匯入、人工維護、回補因此會收這三種。
 - 新增商品條件欄「KO 降幅」（`KO Step Down (%)`，`workflow.product.ko_step_pct`，資料表版本 0038，不能是負數）。`ProductRule.has_ko_step` 決定有沒有這欄、`ko_step_required` 決定是不是必填：Stepdown 兩種必填，起單建檔沒有這欄，所以要在確認視窗或人工維護填，空白時核對條件待確認；Snowball 可以空白（空白等於不降）；其他商品要空白。
 - `KO Barrier (%)` 與各標的 KO 價存**第 1 期**。第 n 期 KO% = KO% − 降幅 ×（n − 1），KO 價 = 進場價 × 第 n 期 KO% ÷ 100（同其他價格取到小數第 4 位）。
-- 期別：第 n 期是比價日_{n−1} 的隔天到比價日_n（含），第 1 期從交易日開始，最後一個比價日以後算最後一期。每期型在比價日_n 用第 n 期；每日型在第 n 期每天都用第 n 期（Barclays「Autocall Observation Period」、UBS「配息觀察期間」的寫法）。記憶式照舊：標的在某天收盤 ≥ 當天的 KO 價就記住，跨期也記得。
+- 期別：第一個比價日是第 1 期（說明書的降幅表都從第一個可以出場的觀察日、100% 那一列開始），之後依比價日欄位的格數算，中間空白的格子（BNP 不適用的期別）照樣算一期。一個比價日的期別涵蓋前一個比價日的隔天到這個比價日（含），最後一個比價日以後算最後一期。每期型在比價日用那一期；每日型在那段期間每天都用那一期（Barclays「Autocall Observation Period」、UBS「配息觀察期間」的寫法）。記憶式照舊：標的在某天收盤 ≥ 當天的 KO 價就記住，跨期也記得。
+- 每日型平常只填開始與最後兩個比價日；有 KO 降幅的每日型要填每一期的結束日（人工核對完成或回補表的比價日一期一個），少了時比價待確認，因為不知道中間各期從哪天開始。
 - 比價前多一個檢查：有降幅但沒有 KO%，或最後一期的 KO% 降到 0 以下時待確認。還在庫存的比價說明寫下一天所在的期別與 KO%（例如「第 2 期 KO 97%」），方便對說明書。
 - 參考條件表（v27）多一個選填欄「KO降幅(%)」：回補讀這欄（Stepdown 類沒有這欄或空白時那一檔不匯入並寫原因），核對的資料庫來源也帶出這欄。商品總表在「Lookback 期間」後面多一欄「KO降幅(%)」（沒有降幅寫 `-`）。
 
@@ -63,7 +64,8 @@ Implementation:
   - Snowball may leave it blank (blank means no step).
   - Other products must leave it blank.
 - `KO Barrier (%)` and each underlying's KO price hold **period 1**. Period n's KO% is KO% − step × (n − 1), and its KO price is the initial price × period n's KO% ÷ 100 (rounded to 4 decimals like other prices).
-- Periods: period n runs from the day after autocall date n−1 through autocall date n inclusive. Period 1 starts at the trade date, and days after the last autocall date fall in the last period. Period-end types use period n on autocall date n. Daily types use period n on every day of period n, as Barclays' "Autocall Observation Period" and UBS's 配息觀察期間 put it. Memory works as before: an underlying is remembered once it closes at or above that day's KO price, across periods.
+- Periods: the first autocall date is period 1, because every term sheet's step table starts at the first callable observation with 100%. Later periods follow the autocall slot numbers, so a blank slot in between (a BNP period marked not applicable) still counts as a period. An autocall date's period runs from the day after the previous autocall date through that date inclusive, and days after the last autocall date fall in the last period. Period-end types use that period on the autocall date. Daily types use it on every day of the period, as Barclays' "Autocall Observation Period" and UBS's 配息觀察期間 put it. Memory works as before: an underlying is remembered once it closes at or above that day's KO price, across periods.
+- Daily types normally store only the first and last autocall dates. A daily type with a KO step must store every period's end date (one per slot in the manual check or the backfill sheet); otherwise observation goes to 待確認, because the start of each period in between is unknown.
 - One more check before observation: a step without a KO%, or a last-period KO% at or below 0, makes the product 待確認. The on-book observation note shows the period and KO% of the next day (for example 第 2 期 KO 97%), so it can be compared with the term sheet.
 - The reference sheet (v27) gains an optional 「KO降幅(%)」 column. The backfill reads it: a Stepdown-type row without the column or with it blank is not imported, and the reason is written. The checker's database source carries the column too. The product master gains a 「KO降幅(%)」 column after 「Lookback 期間」 (`-` without a step).
 

@@ -229,6 +229,21 @@ def test_memory_ko_remembers_across_periods() -> None:
     assert run(stepping("Daily"), prices).events == (AutoEvent(MATURITY, FINAL),), "非記憶式要同一天"
 
 
+def test_a_blank_autocall_slot_still_counts_as_a_period() -> None:
+    gap = {"autocall": (START, FINAL), "autocall_periods": (1, 3)}  # 比價日_2 不適用（BNP）：最終比價日是第 3 期
+    prices = closes(on({START: "96", FINAL: "91"}), on({START: "96", FINAL: "91"}))
+
+    assert run(stepping("Period End", **gap), prices).events == (AutoEvent(KO, FINAL),), "第 3 期 90"
+    assert run(stepping("Period End", autocall=(START, FINAL)), prices).events == (AutoEvent(MATURITY, FINAL),)
+
+
+def test_daily_ko_in_the_last_period() -> None:
+    day = dt.date(2026, 12, 10)  # 比價日_2 之後：第 3 期（90）
+    prices = closes(on({day: "91"}, "85"), on({day: "91"}, "85"))
+
+    assert run(stepping("Daily"), prices).events == (AutoEvent(KO, day),)
+
+
 def test_on_book_reason_names_the_next_period_ko() -> None:
     assert run(stepping("Daily"), closes(), dt.date(2026, 11, 20)) == Outcome(
         ON_BOOK, "第 2 期 KO 95%", dt.date(2026, 11, 20), ki=NO_KI_TEXT
@@ -242,6 +257,10 @@ def test_on_book_reason_names_the_next_period_ko() -> None:
     [
         ({"step": "50"}, "KO% 100 每期降 50，第 3 期變成 0%，請確認"),
         ({"ko_pct": None}, "有 KO 降幅，但沒有 KO%"),
+        (  # 每日觀察只填開始與最後（一般 D 型的填法）：不知道中間各期從哪天開始
+            {"autocall": (START, FINAL), "autocall_periods": (1, 3)},
+            "每日觀察的 KO 每期往下降：比價日要填每一期的結束日（應有 3 個，只有 2 個）",
+        ),
     ],
 )
 def test_a_step_that_cannot_work_goes_to_review(changes, reason) -> None:
@@ -507,7 +526,10 @@ def test_from_stored_puts_every_column_in_its_place() -> None:
         manual_ko=False,
         ko_pct=D(105),
         ko_step=D(3),
+        autocall_periods=(1, 3, 4),  # 比價日_2 空白：仍算一期
     )
+    later = replace(stored_product("FCN"), autocall={3: START, 4: None, 5: FINAL})  # Non-Call 3：從比價日_3 開始
+    assert Terms.from_stored(later).autocall_periods == (1, 3)
     first, second = found.underlyings
     assert (first.initial, first.strike, first.ki, first.ko, first.lookback) == (D(101), D(82), D(63), D(104), D(99))
     assert (second.initial, second.strike, second.ki, second.ko) == (D(2001), D(1602), D(1303), D(2004))

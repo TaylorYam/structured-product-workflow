@@ -147,6 +147,9 @@ class Terms:
     manual_ko: bool = False  # 只在到期判定的商品（BEN）填了 KO%：真的有 KO，會不會提前出場由人判斷（#406）
     ko_pct: Decimal | None = None  # KO%（有降幅時是第 1 期）
     ko_step: Decimal | None = None  # KO 降幅（#537）：每期降幾個百分點；空白或 0 是 KO 價固定
+    # 各比價日是第幾期（同 `autocall` 的順序，#537）：比價日欄位第幾格減第一格 + 1，中間空白的期別（例如 BNP 不適用的期別）
+    # 照樣算一期；空的時候依順序 1、2、3…
+    autocall_periods: tuple[int, ...] = ()
 
     @classmethod
     def from_stored(cls, found: Stored) -> Terms:
@@ -154,13 +157,15 @@ class Terms:
         p = found.columns
         product, non_call, tenor = p["product"], p["non_call_months"], p["tenor_months"]
         rule = rule_or_fcn(product)  # 比價政策問商品規則；不支援的商品種類照 FCN（#435）
+        filled = sorted(((slot, d) for slot, d in (found.autocall or {}).items() if d is not None), key=lambda x: x[1])
+        first_slot = min((slot for slot, _ in filled), default=1)
         return cls(
             tdcc=found.tdcc,
             ko_type=p["ko_type"],
             barrier_type=p["barrier_type"],
             strike_date=p["strike_date"],
             final_date=p["final_valuation_date"],
-            autocall=tuple(sorted(d for d in (found.autocall or {}).values() if d is not None)),
+            autocall=tuple(d for _, d in filled),
             underlyings=tuple(
                 Underlying(
                     seq=u.seq,
@@ -183,6 +188,7 @@ class Terms:
             manual_ko=rule.ko_needs_review(p["ko_pct"]),
             ko_pct=p["ko_pct"],
             ko_step=p["ko_step_pct"],
+            autocall_periods=tuple(slot - first_slot + 1 for slot, _ in filled),
         )
 
 
@@ -464,9 +470,18 @@ def _stepping(terms: Terms) -> bool:
 
 
 def _period(terms: Terms, day: dt.date) -> int:
-    """這天是第幾期（KO 降幅用，#537）：第 n 期涵蓋比價日_{n-1} 之後到比價日_n（含）。每期觀察只在比價日_n 比，
-    就是第 n 期；每日觀察在這段期間的每一天都用第 n 期的 KO%。超過最後一個比價日時算最後一期。"""
-    return min(bisect.bisect_left(terms.autocall, day) + 1, max(len(terms.autocall), 1))
+    """這天是第幾期（KO 降幅用，#537）：第一個比價日是第 1 期（說明書的降幅表從第一個可以出場的觀察日開始列），
+    期別依比價日欄位的格數算（`Terms.autocall_periods`）。這天在前一個比價日之後、這個比價日（含）以前就是這個比價日的期別：
+    每期觀察只在比價日比；每日觀察在這段期間的每一天都用這一期的 KO%。超過最後一個比價日時算最後一期。"""
+    if not terms.autocall:
+        return 1
+    i = min(bisect.bisect_left(terms.autocall, day), len(terms.autocall) - 1)
+    return terms.autocall_periods[i] if terms.autocall_periods else i + 1
+
+
+def _last_period(terms: Terms) -> int:
+    """最後一個比價日是第幾期（#537）。"""
+    return _period(terms, terms.autocall[-1]) if terms.autocall else 1
 
 
 def _period_pct(terms: Terms, period: int) -> Decimal | None:
@@ -491,10 +506,15 @@ def _step_problem(terms: Terms) -> str:
         return ""
     if terms.ko_pct is None:
         return "有 KO 降幅，但沒有 KO%"
-    last = _period_pct(terms, len(terms.autocall))
-    assert last is not None
-    if last <= 0:
-        return f"KO% {_text(terms.ko_pct)} 每期降 {_text(terms.ko_step)}，第 {len(terms.autocall)} 期變成 {_text(last)}%，請確認"
+    periods = _last_period(terms)
+    if terms.ko_type in DAILY_KO_TYPES and len(terms.autocall) < periods:  # 每日觀察要知道每一期從哪天到哪天
+        return f"每日觀察的 KO 每期往下降：比價日要填每一期的結束日（應有 {periods} 個，只有 {len(terms.autocall)} 個）"
+    last_pct = _period_pct(terms, periods)
+    assert last_pct is not None
+    if last_pct <= 0:
+        return (
+            f"KO% {_text(terms.ko_pct)} 每期降 {_text(terms.ko_step)}，第 {periods} 期變成 {_text(last_pct)}%，請確認"
+        )
     return ""
 
 
