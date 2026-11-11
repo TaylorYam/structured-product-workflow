@@ -9,6 +9,10 @@
   Non-Call 等於天期的商品不會提前出場，不觀察 KO（`ProductRule.no_early_exit`）。最終比價日不算 KO 的商品種類（Super Bull、BEN，`ProductRule.final_date_can_ko`，
   #310、ADR 0028）即使比價日裡有最終比價日，那天也只做到期判定。BEN 預設沒有 KO（KO% 空白）；填了 KO% 的 BEN 有 KO 機制，
   待確認、由人判斷會不會提前出場（`ProductRule.ko_needs_review`，#406、ADR 0029）。比價政策都問商品規則，不支援的商品種類照 FCN（#435）。
+- KO 降幅（Stepdown、Snowball，#537、ADR 0033）：KO% 每期固定往下降，第 n 期 KO% = KO% − 降幅 ×（n − 1），第 n 期涵蓋
+  比價日_{n-1} 之後到比價日_n（含）。P 型在比價日_n、D 型在第 n 期的每一天用第 n 期的 KO 價（進場價 × 當期 KO%，
+  half-up 到小數第 4 位；第 1 期用資料庫的 KO 價）；記憶式照舊，標的收盤 ≥ 當天的 KO 價就記住。在庫的原因寫下一次觀察
+  是第幾期、KO 多少；最後一期的 KO% 不大於 0 時待確認。
 - KI：EKI 只在最終比價日，收盤價 < 下限價；AKI 自 Strike date 之後、該標的市場的每個交易日；
   MKI（每期觀察）不比，KI 欄寫「MKI (manual)」，KO 照比、比價狀態照 KO 算；最終比價日沒有 KO 時待確認（#196）。
 - 比價狀態、已比到、原因只講 KO（#196、ADR 0022）：已比到第一個比價日之前、不觀察 KO 的都空白；KI 另寫一欄
@@ -41,6 +45,7 @@
 
 from __future__ import annotations
 
+import bisect
 import datetime as dt
 import getpass
 import re
@@ -140,6 +145,11 @@ class Terms:
     strike_pct: Decimal | None = None  # 執行價(%)：回顧執行價 = 回顧期初價格 × 它
     keep_strike: bool = False  # 已鎖住的歷史回補商品：回顧執行價和資料庫的不同時待確認、不覆寫（#374）
     manual_ko: bool = False  # 只在到期判定的商品（BEN）填了 KO%：真的有 KO，會不會提前出場由人判斷（#406）
+    ko_pct: Decimal | None = None  # KO%（有降幅時是第 1 期）
+    ko_step: Decimal | None = None  # KO 降幅（#537）：每期降幾個百分點；空白或 0 是 KO 價固定
+    # 各比價日是第幾期（同 `autocall` 的順序，#537）：比價日欄位第幾格減第一格 + 1，中間空白的期別（例如 BNP 不適用的期別）
+    # 照樣算一期；空的時候依順序 1、2、3…
+    autocall_periods: tuple[int, ...] = ()
 
     @classmethod
     def from_stored(cls, found: Stored) -> Terms:
@@ -147,13 +157,15 @@ class Terms:
         p = found.columns
         product, non_call, tenor = p["product"], p["non_call_months"], p["tenor_months"]
         rule = rule_or_fcn(product)  # 比價政策問商品規則；不支援的商品種類照 FCN（#435）
+        filled = sorted(((slot, d) for slot, d in (found.autocall or {}).items() if d is not None), key=lambda x: x[1])
+        first_slot = min((slot for slot, _ in filled), default=1)
         return cls(
             tdcc=found.tdcc,
             ko_type=p["ko_type"],
             barrier_type=p["barrier_type"],
             strike_date=p["strike_date"],
             final_date=p["final_valuation_date"],
-            autocall=tuple(sorted(d for d in (found.autocall or {}).values() if d is not None)),
+            autocall=tuple(d for _, d in filled),
             underlyings=tuple(
                 Underlying(
                     seq=u.seq,
@@ -174,6 +186,9 @@ class Terms:
             strike_pct=p["strike_pct"],
             keep_strike=is_locked(found) and found.source == ProductSource.BACKFILL,
             manual_ko=rule.ko_needs_review(p["ko_pct"]),
+            ko_pct=p["ko_pct"],
+            ko_step=p["ko_step_pct"],
+            autocall_periods=tuple(slot - first_slot + 1 for slot, _ in filled),
         )
 
 
@@ -317,7 +332,12 @@ def observe(
             if hit_ki:
                 touch = KiTouch(day, hit_ki[0].code)
         if ko_day:
-            hit = {u.code for u in terms.underlyings if u.ko is not None and prices[u.code] >= u.ko}
+            period = _period(terms, day)
+            hit = {
+                u.code
+                for u in terms.underlyings
+                if (ko := _ko_price(terms, u, period)) is not None and prices[u.code] >= ko
+            }
             remembered |= hit
             if (memory and remembered == set(markets)) or (not memory and hit == set(markets)):
                 ki = _ki_text(terms, touch)
@@ -327,7 +347,7 @@ def observe(
         day += dt.timedelta(days=1)
     if jump is not None:
         return result(TO_CONFIRM, _jump_reason(terms, jump), _before(jump.day, first))
-    reason = _waiting(ko_first, final) if ko_first is None or last < ko_first else ""
+    reason = _waiting(ko_first, final) if ko_first is None or last < ko_first else _step_text(terms, last)
     if fixed:
         shown = "、".join(f"{u.name} {_text(u.lookback)}" for u in fixed)
         reason = "；".join(filter(None, (reason, f"回顧期初價格 {shown}")))
@@ -444,6 +464,69 @@ def _waiting(ko_first: dt.date | None, final: dt.date) -> str:
     return f"Non-call period（第一個比價日 {ko_first}）"
 
 
+def _stepping(terms: Terms) -> bool:
+    """KO% 每期往下降（有 KO 降幅、大於 0，#537）。"""
+    return bool(terms.ko_step)
+
+
+def _period(terms: Terms, day: dt.date) -> int:
+    """這天是第幾期（KO 降幅用，#537）：第一個比價日是第 1 期（說明書的降幅表從第一個可以出場的觀察日開始列），
+    期別依比價日欄位的格數算（`Terms.autocall_periods`）。這天在前一個比價日之後、這個比價日（含）以前就是這個比價日的期別：
+    每期觀察只在比價日比；每日觀察在這段期間的每一天都用這一期的 KO%。超過最後一個比價日時算最後一期。"""
+    if not terms.autocall:
+        return 1
+    i = min(bisect.bisect_left(terms.autocall, day), len(terms.autocall) - 1)
+    return terms.autocall_periods[i] if terms.autocall_periods else i + 1
+
+
+def _last_period(terms: Terms) -> int:
+    """最後一個比價日是第幾期（#537）。"""
+    return _period(terms, terms.autocall[-1]) if terms.autocall else 1
+
+
+def _period_pct(terms: Terms, period: int) -> Decimal | None:
+    """第 `period` 期的 KO% = 第 1 期 KO% − 降幅 ×（期數 − 1）（#537）；沒有 KO% 時 None。"""
+    if terms.ko_pct is None:
+        return None
+    return terms.ko_pct - (terms.ko_step or 0) * (period - 1)
+
+
+def _ko_price(terms: Terms, u: Underlying, period: int) -> Decimal | None:
+    """這一期這個標的的 KO 價：KO% 固定（沒有降幅）或第 1 期用資料庫的 KO 價；之後各期 = 進場價 × 當期 KO%（#537）。"""
+    if not _stepping(terms) or period <= 1 or u.ko is None or u.initial is None:
+        return u.ko
+    pct = _period_pct(terms, period)
+    assert pct is not None  # 由 _step_problem 確認
+    return price_at(u.initial, pct)
+
+
+def _step_problem(terms: Terms) -> str:
+    """有 KO 降幅的商品比價前先確認：要有 KO%，最後一期的 KO% 要大於 0（#537）；沒有問題時空字串。"""
+    if not _stepping(terms) or terms.no_autocall:
+        return ""
+    if terms.ko_pct is None:
+        return "有 KO 降幅，但沒有 KO%"
+    periods = _last_period(terms)
+    if terms.ko_type in DAILY_KO_TYPES and len(terms.autocall) < periods:  # 每日觀察要知道每一期從哪天到哪天
+        return f"每日觀察的 KO 每期往下降：比價日要填每一期的結束日（應有 {periods} 個，只有 {len(terms.autocall)} 個）"
+    last_pct = _period_pct(terms, periods)
+    assert last_pct is not None
+    if last_pct <= 0:
+        return (
+            f"KO% {_text(terms.ko_pct)} 每期降 {_text(terms.ko_step)}，第 {periods} 期變成 {_text(last_pct)}%，請確認"
+        )
+    return ""
+
+
+def _step_text(terms: Terms, last: dt.date) -> str:
+    """在庫的原因（#537）：KO% 會往下降的商品寫下一次觀察是第幾期、那一期的 KO%，讓作業人員對得上 TS；其他空字串。"""
+    if not _stepping(terms):
+        return ""
+    period = _period(terms, last + dt.timedelta(days=1))
+    pct = _period_pct(terms, period)
+    return "" if pct is None else f"第 {period} 期 KO {_text(pct)}%"
+
+
 def _ki_text(terms: Terms, touch: KiTouch | None = None) -> str:
     """進度頁 KI 欄（#196）：KI 種類的英文代碼（#198），觸及時加第一次觸及的日期與標的；由觸及的結構產生（#442），
     曝險讀結構、不解析這段字。"""
@@ -500,6 +583,9 @@ def _terms_problem(terms: Terms, calendar: TradingCalendar) -> str:
     if terms.barrier_type not in (NO_KI, EKI, AKI, MKI):
         return f"Barrier Type「{terms.barrier_type or ''}」不認得"
     problem = autocall_problem(terms.autocall, terms.final_date)
+    if problem:
+        return problem
+    problem = _step_problem(terms)
     if problem:
         return problem
     if terms.barrier_type == AKI and terms.strike_date is None:

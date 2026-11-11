@@ -14,12 +14,24 @@ from fcn_checker.fields import (
     COUPON_BARRIER_FIELD,
     KI_BARRIER_FIELD,
     KO_BARRIER_FIELD,
+    KO_STEP_FIELD,
     LOOKBACK_FIELD,
     NON_CALL_FIELD,
     PARTICIPATION_FIELD,
 )
 from fcn_checker.ingestion import IngestionError
-from fcn_checker.products import BEN, DACN, FCN, FCN_EXPRESS, PRODUCT_RULES, SUPER_BULL, rule_or_fcn
+from fcn_checker.products import (
+    BEN,
+    DACN,
+    FCN,
+    FCN_EXPRESS,
+    FCN_STEPDOWN,
+    PRODUCT_RULES,
+    SNOWBALL,
+    SNOWBALL_STEPDOWN,
+    SUPER_BULL,
+    rule_or_fcn,
+)
 from fcn_checker.saving import run_batch
 from fcn_checker.schema import CheckStatus
 from fcn_checker.variants import load_auto_check_products, product_terms_text
@@ -87,7 +99,7 @@ def product_result(item):
     return r
 
 
-@pytest.mark.parametrize("product", ["FCN_Express", "FCN_Stepdown"])
+@pytest.mark.parametrize("product", ["FCN_Express", "Range Accrual"])
 def test_products_not_opened_for_the_issuer_stop_both_documents(tmp_path, product):
     config = load_config(issuer_prefixes=prefixes_with(tmp_path, EXPRESS_OPENED, "\nFCN_Express = []\n"))
     outcome = run(tmp_path, {"Product": product}, config)
@@ -163,7 +175,9 @@ def test_an_unknown_template_is_still_reported_when_the_product_is_opened_or_mis
 
 # ---------------------------------------------------------------- 商品規則回答商品條件的問題（#434）
 
-ALL = (FCN, FCN_EXPRESS, SUPER_BULL, BEN, DACN)
+ALL = (FCN, FCN_EXPRESS, SUPER_BULL, BEN, DACN, FCN_STEPDOWN, SNOWBALL, SNOWBALL_STEPDOWN)
+STEPPING = (FCN_STEPDOWN, SNOWBALL, SNOWBALL_STEPDOWN)  # 有 KO 降幅（#537）
+STEP_REQUIRED = (FCN_STEPDOWN, SNOWBALL_STEPDOWN)
 BEN_CHOICES = {"KO Type": "Period End", "Barrier Type": "NONE"}
 
 
@@ -185,13 +199,16 @@ def test_required_optional_and_blank_terms(name):
     rule = PRODUCT_RULES[name]
     ben, barrier = name == BEN, name in (BEN, DACN)
     assert rule.optional_fields() == ((KO_BARRIER_FIELD,) if ben else ())
-    assert rule.extra_required() == ((COUPON_BARRIER_FIELD,) if barrier else ())
+    assert rule.extra_required() == (
+        (COUPON_BARRIER_FIELD,) if barrier else (KO_STEP_FIELD,) if name in STEP_REQUIRED else ()
+    )
     assert rule.required_fields(("A", KO_BARRIER_FIELD, "B")) == (
         ("A", "B", COUPON_BARRIER_FIELD) if ben else ("A", KO_BARRIER_FIELD, "B", *rule.extra_required())
     )
     assert rule.blank_problem(PARTICIPATION_FIELD) == ("" if ben else f"{name} 沒有參與率，要空白")
     assert rule.blank_problem(LOOKBACK_FIELD) == ("" if ben else f"{name} 沒有回顧期間，要空白")
     assert rule.blank_problem(COUPON_BARRIER_FIELD) == ("" if barrier else f"{name} 沒有配息門檻，要空白")
+    assert rule.blank_problem(KO_STEP_FIELD) == ("" if name in STEPPING else f"{name} 沒有KO降幅，要空白")
     assert rule.has_term("Currency")
 
 
@@ -207,6 +224,21 @@ def test_required_optional_and_blank_terms(name):
 )
 def test_participation_problem(name, value, problem):
     assert PRODUCT_RULES[name].participation_problem(value) == problem
+
+
+@pytest.mark.parametrize(
+    ("name", "value", "problem"),
+    [
+        (FCN_STEPDOWN, Decimal(3), ""),
+        (FCN_STEPDOWN, None, ""),  # 必填由 extra_required 管
+        (SNOWBALL, Decimal(0), ""),
+        (SNOWBALL_STEPDOWN, Decimal(-1), "不能是負數"),
+        (FCN, None, ""),
+        (FCN, Decimal(3), "FCN 沒有KO降幅，要空白"),
+    ],
+)
+def test_ko_step_problem(name, value, problem):
+    assert PRODUCT_RULES[name].ko_step_problem(value) == problem
 
 
 @pytest.mark.parametrize("name", ALL)
@@ -253,14 +285,14 @@ def test_check_terms(name):
         (BEN, "KO(Freq) P、KO(memo) N、KI(Freq) -、Non-Call = 天期"),
         (FCN, ""),
         (DACN, ""),
-        ("FCN_Stepdown", ""),
+        ("Range Accrual", ""),
     ],
 )
 def test_variant_terms_follow_the_rule(name, text):
     assert product_terms_text(name) == text
 
 
-@pytest.mark.parametrize("product", ["FCN_Stepdown", None, 3, ""])
+@pytest.mark.parametrize("product", ["Range Accrual", None, 3, ""])
 def test_unsupported_products_follow_fcn(product):
     assert rule_or_fcn(product) is PRODUCT_RULES[FCN]
 

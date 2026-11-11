@@ -95,7 +95,7 @@ PRODUCT_FIELDS = {
     "最終比價日": "final_valuation_date", "到期日": "maturity_date", "期初定價": "initial_pricing",
     "KO(%)": "ko_pct", "KO(Freq)": "ko_freq", "KO(memo)": "ko_memory", "K(%)": "strike_pct", "KI(%)": "ki_pct",
     "KI(Freq)": "ki_freq", "UF": "upfront_pct", "Coupon p.a. (%)": "coupon_pct", "配息門檻(%)": "coupon_barrier_pct",
-    "參與率(%)": "participation_pct", "天期(月)": "tenor_months",
+    "參與率(%)": "participation_pct", "天期(月)": "tenor_months", "KO降幅(%)": "ko_step_pct",
     "Non-Call(月)": "non_call_months",
 }  # fmt: skip  # 總表欄名 → workflow.product 的欄，照欄名取值
 # 價格的鍵（`fcn_checker.fields`）→ 總表欄名 UL_n_<名稱> 的後半；表頭文字是總表自己的版面（#360），不跟參考條件表
@@ -106,7 +106,7 @@ SUMMARY_COLUMNS = (
     "Product", "發行機構", "TDCC Code", "ISIN Code", "單位面額", "承作幣別", "承作總額", "私銀註記", "新加坡註記",
     "交易日", "期初定價日", "發行日", *(f"比價日_{i}" for i in range(1, 13)), "最終比價日", "到期日",
     "期初定價", "KO(%)", "KO(Freq)", "KO(memo)", "K(%)", "KI(%)", "KI(Freq)", "UF", "Coupon p.a. (%)", "配息門檻(%)",
-    "參與率(%)", "天期(月)", "Non-Call(月)", "Lookback 期間",
+    "參與率(%)", "天期(月)", "Non-Call(月)", "Lookback 期間", "KO降幅(%)",
     *(name for n in range(1, 6) for name in (f"UL_{n}", *(f"UL_{n}_{field}" for field in UL_FIELDS.values()))),
 )  # fmt: skip
 FROZEN = f"{get_column_letter(SUMMARY_COLUMNS.index('TDCC Code') + 2)}2"  # 凍結表頭與 TDCC 以左的欄
@@ -131,7 +131,8 @@ def export_summary(conn: psycopg.Connection, path: Path) -> ExportReceipt:
     參與率（#463）只有 BEN 有；Lookback 期間（#463）是 lookback 商品的回顧期間「交易日~回顧結束日」
     （`_lookback_period`；沒有交易日寫 -，比價這時也待確認、算不出回顧期間）。
     資料庫沒有的值（含私銀註記、沒有新加坡欄的舊資料、BEN 以外商品的參與率、沒有回顧結束日的 Lookback 期間，
-    DACN、BEN 以外商品的配息門檻，#367、#406；BEN 預設沒有 KO 的 KO(%)、KO價）寫 `-`。
+    DACN、BEN 以外商品的配息門檻，#367、#406；BEN 預設沒有 KO 的 KO(%)、KO價；KO% 固定的商品的 KO降幅，#537）寫 `-`。
+    KO降幅（#537、ADR 0033）接在 Lookback 期間後面：Stepdown、Snowball 的 KO% 每期降幾個百分點，KO(%)、KO價是第 1 期。
     總表是 Excel 表格，後面接用公式從總表即時計算的在庫部位分析分頁（#293）。
     """
     with _snapshot(conn):  # 商品（含比價日、價格，`product_store.read_many`，#438）、事件、交易列讀同一個時間點

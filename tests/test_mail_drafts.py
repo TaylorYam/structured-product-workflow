@@ -400,13 +400,13 @@ def test_products_skipped_by_the_daily_import_are_unsupported(db, tmp_path: Path
     load(
         db,
         tmp_path,
-        [trade(B, "Amy", "北區", 1, product="FCN_Stepdown")],
-        [inventory(B, [("北區", 1)], Product="FCN_Stepdown")],
+        [trade(B, "Amy", "北區", 1, product="Range Accrual")],
+        [inventory(B, [("北區", 1)], Product="Range Accrual")],
     )
 
     receipt, _ = run(db, root, out, B)
 
-    reason = "不支援的商品類型：FCN_Stepdown（目前只做 FCN、FCN_Express、Super Bull、BEN、DACN）"
+    reason = "不支援的商品類型：Range Accrual（目前只做 FCN、FCN_Express、Super Bull、BEN、DACN、FCN_Stepdown、Snowball、Snowball_Stepdown）"
     assert [(o.status, o.reason) for o in receipt.outcomes] == [(PENDING, reason)]
 
 

@@ -11,6 +11,7 @@
   Period End（舊表的 KO(memo) 不看），參與率帶 100（`product_terms.draft_from`；Digital 由作業人員在人工維護改 0），Non-Call 照舊表、要等於天期；
   舊表 BEN 的 KO 欄是紅利門檻：存配息門檻、KO% 與各標的 KO 價空白（預設沒有 KO，#406）。
   要配息門檻的商品（DACN，#367；BEN）用表上的配息門檻，舊表沒有這欄（或空白）時 BEN 用 KO 欄，再沒有帶執行價。
+  KO 降幅（#537、ADR 0033）用表上的「KO降幅(%)」欄：Stepdown 沒有這欄或空白時那一檔不匯入（必填），Snowball 空白是不降。
 - 價格與比價日：UL_1～UL_5 的四個價格寫進 `workflow.underlying_price`，核對條件寫一筆「完成」；比價日 1～12 照搬
   （比價日_1 是第一個觀察日，沒有 Non-Call 的商品不能空白）。
 - 分公司配置：分公司_1～7 與承作金額寫進 `workflow.branch_allocation`。交易明細列（含 FC）不在這裡寫，
@@ -60,6 +61,7 @@ from sp_workflow.legacy_backfill import (
 from sp_workflow.order_terms import describe
 from sp_workflow.product_record import (
     COUPON_BARRIER_FIELD,
+    KO_STEP_FIELD,
     PRICING_FIELD,
     STRIKE_FIELD,
     TRADE_FIELD,
@@ -95,6 +97,7 @@ _COPIED = {
     "currency": "Currency",
     "strike_pct": "Strike (%)",
     "ko_pct": "KO Barrier (%)",
+    "ko_step_pct": KO_STEP_FIELD,  # 舊表沒有這欄（#537）：Stepdown 沒有值時這檔不匯入（必填）
     "coupon_pa_pct": "Coupon p.a. (%)",
     "ki_pct": "KI Barrier (%)",
     "trade_date": TRADE_FIELD,

@@ -92,14 +92,14 @@ def test_new_trades_and_people_are_written(pg, tmp_path: Path, mailbox) -> None:
 
 def test_other_products_are_skipped_and_counted(pg, tmp_path: Path, mailbox) -> None:
     daily = write_daily(
-        tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1), trade(D, "Amy", "北區", 1, product="FCN_Stepdown")]
+        tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1), trade(D, "Amy", "北區", 1, product="Range Accrual")]
     )
 
     receipt = import_daily(daily, pg)
 
     assert receipt.skipped_trade_rows == 1
     assert count(pg, "workflow.trade_row") == 1 and kinds(receipt, D) == []
-    assert pg.execute("SELECT tdcc, product FROM workflow.other_product").fetchall() == [(D, "FCN_Stepdown")]
+    assert pg.execute("SELECT tdcc, product FROM workflow.other_product").fetchall() == [(D, "Range Accrual")]
 
 
 def test_latest_import_describes_the_newest_run(pg, tmp_path: Path, mailbox) -> None:
