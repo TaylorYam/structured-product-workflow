@@ -7,6 +7,7 @@
   「只匯交易明細」（`prices=False`，回補時用）不讀 `BBG_Data`、不動股價，沒有這張工作表也可以。
   商品條件改由「匯入起單資料」建立（#86），每日匯入不再寫商品條件、也不做分公司對帳。
 - `交易明細` 第 1 列是欄名，必須和交易清單月份工作表的欄名與順序完全相同；不同就整份不匯入。
+  沒有 `交易明細` 時改讀唯一一張交易清單月份工作表（`YYYYMM`，欄名在 B2；多張就整份不匯入，#541）。
   2026-11 起是新版面（#420：`FC1`、`FC2`、`新加坡`）；舊版面（`FC/PB`、`前台主管/投專`）照樣可以匯入，
   這份檔案沒有的欄存空白，「已存在／內容不同」只比這一版有的欄（已停用的前台主管/投專不比）。FC1、FC2 都比對信箱。
   只收 Product 為支援的商品種類（`fcn_checker.products.PRODUCT_RULES`：FCN、FCN_Express、Super Bull、BEN、DACN、
@@ -71,6 +72,9 @@ if TYPE_CHECKING:
 
 TRADE_SHEET = "交易明細"
 PRICE_SHEET = "BBG_Data"
+# 沒有 `交易明細` 時改讀交易清單的月份工作表（#541）：名稱 YYYYMM，欄名在第 2 列、從 B 欄開始
+MONTH_SHEET = re.compile(r"\d{6}")
+TRADE_HEADER_ROWS = 2  # 欄名最晚在第幾列
 
 # 交易明細新版面（#420，2026-11 起）：FC/PB 改名 FC1、多了 FC2，前台主管/投專 換成 新加坡
 TRADE_HEADERS = (
@@ -406,10 +410,10 @@ def read_daily(path: Path, *, prices: bool) -> DailyFile:
     """
     wb = _open(path)
     try:
-        for sheet in (TRADE_SHEET, PRICE_SHEET) if prices else (TRADE_SHEET,):
-            if sheet not in wb.sheetnames:
-                raise DailyImportError(f"每日更新缺少工作表「{sheet}」")
-        layout, trade_rows = _trade_rows(wb[TRADE_SHEET])
+        trade_sheet = _trade_sheet(wb)
+        if prices and PRICE_SHEET not in wb.sheetnames:
+            raise DailyImportError(f"每日更新缺少工作表「{PRICE_SHEET}」")
+        layout, trade_rows = _trade_rows(trade_sheet)
         parsed = DailyFile(_read_prices(wb[PRICE_SHEET]) if prices else None, layout)
     finally:
         wb.close()
@@ -417,31 +421,57 @@ def read_daily(path: Path, *, prices: bool) -> DailyFile:
     return parsed
 
 
+def _trade_sheet(wb: Any) -> Any:
+    """交易明細的工作表（#541）：有 `交易明細` 就用它；沒有時用交易清單唯一一張月份工作表（`YYYYMM`）。
+    月份工作表不只一張或都沒有時整份不匯入。"""
+    if TRADE_SHEET in wb.sheetnames:
+        return wb[TRADE_SHEET]
+    months = [name for name in wb.sheetnames if MONTH_SHEET.fullmatch(name)]
+    if len(months) == 1:
+        return wb[months[0]]
+    if months:
+        raise DailyImportError(
+            f"沒有工作表「{TRADE_SHEET}」，交易清單的月份工作表有 {len(months)} 張（{'、'.join(months)}），"
+            "整份不匯入；請另存只有要匯入那個月的檔案"
+        )
+    raise DailyImportError(f"每日更新缺少工作表「{TRADE_SHEET}」（或交易清單的月份工作表，例如 202611）")
+
+
 def _trade_rows(sheet: Any) -> tuple[TradeLayout, list[_SheetRow]]:
-    """交易明細：第 1 列欄名和新版或舊版（#420）的欄名、順序完全相同（後面多出的空白欄不算），
-    回傳是哪一版與 (列號, {欄名: 值})；兩版都不同時照新版指出哪一欄不同、整份不匯入。"""
+    """交易明細：欄名和新版或舊版（#420）的欄名、順序完全相同（後面多出的空白欄不算），
+    回傳是哪一版與 (列號, {欄名: 值})；兩版都不同時照新版指出哪一欄不同、整份不匯入。
+    欄名是前 `TRADE_HEADER_ROWS` 列裡第一個有值的列，前面的空白欄略過（交易清單月份工作表的欄名在 B2，#541）。"""
     rows = sheet.iter_rows(values_only=True)
-    header = [sheet_cells.text(v) for v in next(rows, ())]
+    header: list[str | None] = []
+    header_row = 0
+    for header_row, row in enumerate(rows, 1):
+        header = [sheet_cells.text(v) for v in row]
+        if any(v is not None for v in header) or header_row >= TRADE_HEADER_ROWS:
+            break
+    offset = next((i for i, v in enumerate(header) if v is not None), 0)
+    header = header[offset:]
     while header and header[-1] is None:
         header.pop()
     layout = next((layout for layout in _LAYOUTS if tuple(header) == layout.headers), None)
     if layout is None:
-        _header_mismatch(sheet.title, header, TRADE_HEADERS)
+        _header_mismatch(sheet.title, header, TRADE_HEADERS, first_column=offset + 1)
     width = len(layout.headers)
     result = []
-    for number, row in enumerate(rows, 2):
-        values = (tuple(row) + (None,) * width)[:width]
+    for number, row in enumerate(rows, header_row + 1):
+        values = (tuple(row)[offset:] + (None,) * width)[:width]
         if any(sheet_cells.text(v) is not None for v in values):
             result.append(_SheetRow(number, dict(zip(layout.headers, values, strict=True))))
     return layout, result
 
 
-def _header_mismatch(title: str, header: Sequence[str | None], expected: Sequence[str]) -> NoReturn:
-    """欄名和 `expected` 不同：丟 `DailyImportError`，指出第一個不同的欄。"""
+def _header_mismatch(
+    title: str, header: Sequence[str | None], expected: Sequence[str], *, first_column: int = 1
+) -> NoReturn:
+    """欄名和 `expected` 不同：丟 `DailyImportError`，指出第一個不同的欄（`header[0]` 在第 `first_column` 欄）。"""
     for i, want in enumerate(expected):
         got = header[i] if i < len(header) else None
         if got != want:
-            where = openpyxl.utils.get_column_letter(i + 1)
+            where = openpyxl.utils.get_column_letter(i + first_column)
             raise DailyImportError(
                 f"「{title}」的欄名和來源表不同，整份不匯入：{where} 欄應為「{want}」，實際是「{got or '空白'}」"
             )

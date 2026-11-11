@@ -217,6 +217,52 @@ def test_a_header_matching_neither_layout_is_explained_against_the_new_one(tmp_p
         read_daily(daily, prices=True)
 
 
+def month_sheet_book(path: Path, trades: list[dict], months=("202611",)) -> Path:
+    """#541：交易清單的月份工作表：名稱 YYYYMM，第 1 列空白，欄名在第 2 列、從 B 欄開始。"""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    for month in months:
+        ws = wb.create_sheet(month)
+        ws.append([])
+        ws.append([None, *TRADE_HEADERS, None])
+        for t in trades:
+            ws.append([None, *(t.get(h) for h in TRADE_HEADERS)])
+    wb.save(path)
+    return path
+
+
+def test_trades_only_reads_a_trade_list_month_sheet(tmp_path: Path) -> None:
+    """#541：沒有交易明細工作表時讀唯一一張月份工作表，欄名在 B2；擋下的列號是工作表上的列號。"""
+    book = month_sheet_book(
+        tmp_path / "交易明細_202611.xlsx",
+        [trade(A, "Amy", "北區", 1, fc2="Ben", singapore="Y"), trade(B, None, "南區", 1)],
+    )
+
+    parsed = read_daily(book, prices=False)
+
+    assert parsed.layout.headers == TRADE_HEADERS
+    assert people(parsed) == [(A, "Amy", "Ben", "Y", None)]
+    assert [line.tdcc for line in parsed.blocked] == [B] and "第 4 列" in parsed.blocked[0].detail
+
+
+def test_several_month_sheets_reject_the_whole_file(tmp_path: Path) -> None:
+    book = month_sheet_book(tmp_path / "清單.xlsx", [trade(A, "Amy", "北區", 1)], months=("202610", "202611"))
+
+    with pytest.raises(DailyImportError, match="月份工作表有 2 張（202610、202611）"):
+        read_daily(book, prices=False)
+
+
+def test_a_month_sheet_header_mismatch_names_the_sheet_column(tmp_path: Path) -> None:
+    """欄名從 B 欄開始時，指出的是工作表上的欄（新版第 7 個欄名 FC1 在 H 欄）。"""
+    book = month_sheet_book(tmp_path / "m.xlsx", [])
+    wb = openpyxl.load_workbook(book)
+    wb["202611"]["H2"] = "FC/PB"
+    wb.save(book)
+
+    with pytest.raises(DailyImportError, match="「202611」.*H 欄應為「FC1」，實際是「FC/PB」"):
+        read_daily(book, prices=False)
+
+
 @pytest.mark.parametrize("missing", [daily_import.TRADE_SHEET, daily_import.PRICE_SHEET])
 def test_missing_sheet_rejects_the_whole_file(tmp_path: Path, missing) -> None:
     daily = write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1)], [price("AAA UW")])
