@@ -25,6 +25,8 @@
   參與率（%）起單建檔沒有這欄，預設值在 `product_terms.draft_from` 帶（資料庫已有的值優先）。
 - 配息門檻（DACN，#367）起單建檔也沒有這欄，預設值在 `product_terms.draft_from` 帶（資料庫已有、不是預設值的值優先）；
   BEN 的 KO 欄空白時同樣帶預設值（執行價）。
+- KO 降幅（Stepdown，#537、ADR 0033）起單建檔也沒有這欄、沒有預設值：Stepdown 在確認視窗填（必填），
+  資料庫已有的值由 `product_terms.draft_from` 帶。
 """
 
 from __future__ import annotations
@@ -47,6 +49,7 @@ from sp_workflow.product_record import (
     COUPON_BARRIER_FIELD,
     FIELDS,
     KINDS,
+    KO_STEP_FIELD,
     LOOKBACK_FIELD,
     OPEN,
     PARTICIPATION_FIELD,
@@ -71,7 +74,13 @@ NOT_FOUND = OrderReview.NOT_FOUND
 TDCC_FIELD = "TDCC"
 NEXT_OPEN = "明日開盤價"  # 交易日隔一個營業日的開盤價（#101）
 
-_OFF_SHEET = (STRIKE_FIELD, PARTICIPATION_FIELD, LOOKBACK_FIELD, COUPON_BARRIER_FIELD)  # 起單建檔沒有的欄
+_OFF_SHEET = (
+    STRIKE_FIELD,
+    PARTICIPATION_FIELD,
+    LOOKBACK_FIELD,
+    COUPON_BARRIER_FIELD,
+    KO_STEP_FIELD,
+)  # 起單建檔沒有的欄
 SHEET_FIELDS = tuple(name for name in FIELDS if name not in _OFF_SHEET)  # 起單建檔上有的欄
 # 起單建檔的表頭（不分大小寫）→ 欄位；UF (%) 是 2026 年起的表頭
 _HEADERS = {name.casefold(): name for name in (TDCC_FIELD, *SHEET_FIELDS)} | {"uf (%)": UPFRONT_FIELD}
@@ -219,6 +228,7 @@ def _row_for(
     values[PARTICIPATION_FIELD] = None  # 起單建檔沒有這欄；BEN 的預設值在 `product_terms.draft_from` 帶
     values[LOOKBACK_FIELD] = None  # 起單建檔沒有這欄；資料庫已有的值由 `product_terms.draft_from` 帶
     values[COUPON_BARRIER_FIELD] = None  # 起單建檔沒有這欄；DACN 的預設值在 `product_terms.draft_from` 帶
+    values[KO_STEP_FIELD] = None  # 起單建檔沒有這欄；Stepdown 在確認視窗填（#537），資料庫已有的值由 `draft_from` 帶
     rule = product_rule(values.get("Product"))
     if rule is not None:
         _apply_rule(rule, values, notes, conflicts)

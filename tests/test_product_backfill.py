@@ -129,7 +129,7 @@ def test_an_express_row_becomes_a_locked_product_with_prices_and_dates(pg, tmp_p
     other_product(pg, A)
     source = write_sheet(
         tmp_path / "FCN外商品數量.xlsx",
-        [express(A), {**express(B), "Product": "FCN"}, {**express(C), "Product": "FCN_Stepdown"}],
+        [express(A), {**express(B), "Product": "FCN"}, {**express(C), "Product": "Range Accrual"}],
     )
 
     receipt = backfill_products(pg, source, FMT, CONFIG)
@@ -238,6 +238,45 @@ def test_a_coupon_barrier_on_other_products_is_not_imported(pg, tmp_path: Path) 
     receipt = backfill_products(pg, source, FMT, CONFIG)
 
     assert lines(receipt) == {A: (SKIPPED, "Coupon Barrier (%)：FCN_Express 沒有配息門檻，要空白")}
+
+
+@pytest.mark.db
+def test_stepdown_rows_need_their_ko_step(pg, tmp_path: Path) -> None:
+    """Stepdown 的 KO 降幅必填（#537）：表上有就存；空白（或舊表沒有這欄）那一檔不匯入。Snowball 空白是不降。"""
+    stepdown = {"Product": "FCN_Stepdown", "KO(Freq)": "P", "KO(memo)": "Y"}
+    source = write_sheet(
+        tmp_path / "x.xlsx",
+        [
+            express(A, **stepdown, **{"KO降幅(%)": 3}),
+            express(B, **stepdown),
+            express(C, Product="Snowball", **{"KO(Freq)": "P", "KO(memo)": "Y"}),
+            express(D, Product="Snowball_Stepdown", **{"KO(Freq)": "P", "KO(memo)": "N", "KO降幅(%)": 1}),
+        ],
+    )
+
+    receipt = backfill_products(pg, source, FMT, CONFIG)
+
+    assert lines(receipt) == {
+        A: (IMPORTED, ""),
+        B: (SKIPPED, "KO Step Down (%)：必填"),
+        C: (IMPORTED, ""),
+        D: (IMPORTED, ""),
+    }
+    stored = {tdcc: read(pg, tdcc).columns for tdcc in (A, C, D)}
+    assert {tdcc: (c["product"], c["ko_type"], c["ko_step_pct"]) for tdcc, c in stored.items()} == {
+        A: ("FCN_Stepdown", "Period End Memory", 3),
+        C: ("Snowball", "Period End Memory", None),
+        D: ("Snowball_Stepdown", "Period End", 1),
+    }
+
+
+@pytest.mark.db
+def test_a_ko_step_on_other_products_is_not_imported(pg, tmp_path: Path) -> None:
+    source = write_sheet(tmp_path / "x.xlsx", [express(A, **{"KO降幅(%)": 3})])
+
+    receipt = backfill_products(pg, source, FMT, CONFIG)
+
+    assert lines(receipt) == {A: (SKIPPED, "KO Step Down (%)：FCN_Express 沒有KO降幅，要空白")}
 
 
 @pytest.mark.db

@@ -57,14 +57,14 @@ def test_tdcc_loses_no_leading_zero(tmp_path: Path) -> None:
 
 def test_other_products_are_skipped_and_counted(tmp_path: Path) -> None:
     daily = write_daily(
-        tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1), trade(D, "Amy", "北區", 1, product="FCN_Stepdown")]
+        tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1), trade(D, "Amy", "北區", 1, product="Range Accrual")]
     )
 
     parsed = read_daily(daily, prices=True)
 
     assert parsed.skipped_trade_rows == 1
     assert list(parsed.trades) == [A] and parsed.blocked == []
-    assert parsed.other_products == {D: "FCN_Stepdown"}
+    assert parsed.other_products == {D: "Range Accrual"}
 
 
 def test_express_rows_are_imported_like_fcn(tmp_path: Path) -> None:
@@ -83,7 +83,16 @@ def test_express_rows_are_imported_like_fcn(tmp_path: Path) -> None:
     assert parsed.other_products == {}
 
 
-@pytest.mark.parametrize(("written", "stored"), [("SUPER BULL", "Super Bull"), (" ben ", "BEN")])
+@pytest.mark.parametrize(
+    ("written", "stored"),
+    [
+        ("SUPER BULL", "Super Bull"),
+        (" ben ", "BEN"),
+        ("FCN_Stepdown", "FCN_Stepdown"),  # #537
+        ("snowball", "Snowball"),
+        ("Snowball_Stepdown", "Snowball_Stepdown"),
+    ],
+)
 def test_super_bull_and_ben_rows_are_imported_like_fcn(tmp_path: Path, written, stored) -> None:
     """Super Bull（#310）、BEN（#373）和 FCN 一樣寫進交易明細列：大小寫、空白不同也照設定的寫法存，不記成其他商品。"""
     parsed = read_daily(write_daily(tmp_path / "d.xlsx", [trade(A, "Amy", "北區", 1, product=written)]), prices=True)
@@ -137,7 +146,7 @@ def test_fcn_tdccs_are_listed_for_the_order_tab_in_first_seen_order(tmp_path: Pa
         tmp_path / "d.xlsx",
         [
             trade(C, "Amy", "北區", 1),
-            trade(D, "Amy", "北區", 1, product="FCN_Stepdown"),
+            trade(D, "Amy", "北區", 1, product="Range Accrual"),
             trade(A, "Amy", "北區", 1),
             cancelled_b,
             cancelled_c,
@@ -155,7 +164,7 @@ def test_fcn_tdccs_are_listed_for_the_order_tab_in_first_seen_order(tmp_path: Pa
 
 
 def test_no_fcn_trades_leaves_nothing_to_hand_over(tmp_path: Path) -> None:
-    daily = write_daily(tmp_path / "d.xlsx", [trade(D, "Amy", "北區", 1, product="FCN_Stepdown")])
+    daily = write_daily(tmp_path / "d.xlsx", [trade(D, "Amy", "北區", 1, product="Range Accrual")])
 
     parsed = read_daily(daily, prices=True)
 

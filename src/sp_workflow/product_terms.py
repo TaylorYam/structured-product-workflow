@@ -61,6 +61,8 @@ from sp_workflow.product_record import (
     DERIVED_COLUMNS,
     FIELDS,
     KINDS,
+    KO_STEP_FIELD,
+    LISTED,
     LOOKBACK_FIELD,
     NO_BARRIER,
     PARTICIPATION_FIELD,
@@ -112,8 +114,8 @@ _TYPES: dict[FieldKind, tuple[type, ...]] = {
 }
 
 _CONFLICT = "起單建檔裡這檔有好幾列、這欄不同，要填正確的值（正確是空白的話請改起單建檔後重新讀取）"
-# 人工維護可以空白的必填欄（#115）：資料庫的商品種類不可空白（ADR 0016）
-_BLANK_ALLOWED = frozenset((*REQUIRED, COUPON_BARRIER_FIELD)) - {"Product"}
+# 人工維護可以空白的必填欄（#115）：任一商品種類的必填欄（含配息門檻、KO 降幅，#367、#537）；資料庫的商品種類不可空白（ADR 0016）
+_BLANK_ALLOWED = frozenset(LISTED) - {"Product"}
 _ALREADY_CREATED = "打開之後資料庫已經有這檔的商品條件，請重新載入"
 _MISSING_NOTE = "缺，可以先存、之後再補"  # 還沒鎖住的商品空著的必填欄：畫面標紅但不擋存檔
 
@@ -411,6 +413,8 @@ def _value_problems(
             problems[PARTICIPATION_FIELD] = problem
         if filled(COUPON_BARRIER_FIELD) and (problem := rule.blank_problem(COUPON_BARRIER_FIELD)):
             problems[COUPON_BARRIER_FIELD] = problem
+        if filled(KO_STEP_FIELD) and (problem := rule.ko_step_problem(values[KO_STEP_FIELD])):  # type: ignore[arg-type]
+            problems[KO_STEP_FIELD] = problem  # KO 降幅（#537）：Stepdown、Snowball 以外要空白，不能是負數
     if filled("Tenor (m)") and values["Tenor (m)"] < 1:
         problems["Tenor (m)"] = "至少 1"
     if filled(TRADE_FIELD) and filled(STRIKE_FIELD) and values[STRIKE_FIELD] < values[TRADE_FIELD]:

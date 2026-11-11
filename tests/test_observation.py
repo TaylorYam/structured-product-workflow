@@ -195,6 +195,59 @@ def test_no_autocall_products_never_knock_out() -> None:
     assert run(terms(autocall=(FINAL,), no_autocall=True), prices).events == (AutoEvent(MATURITY, FINAL),)
 
 
+# ---------------------------------------------------------------- KO 降幅（#537、ADR 0033）
+
+MID = dt.date(2026, 11, 30)  # 第 2 個比價日（週一）
+
+
+def stepping(ko_type: str, step: str | None = "5", **changes) -> Terms:
+    """三期：KO% 100、每期降 5 → 第 2 期 95、第 3 期 90（KO 價 = 進場價 100 × 當期 KO%）。"""
+    values = {"autocall": (START, MID, FINAL), "ko_pct": D(100), "ko_step": None if step is None else D(step)}
+    return terms(ko_type, **{**values, **changes})
+
+
+def test_period_end_ko_uses_the_period_ko_price() -> None:
+    prices = closes(on({START: "96", MID: "96"}), on({START: "96", MID: "96"}))
+
+    assert run(stepping("Period End"), prices).events == (AutoEvent(KO, MID),), "第 1 期 100 不到，第 2 期 95 到了"
+    assert run(stepping("Period End", step=None), prices).events == (AutoEvent(MATURITY, FINAL),), "沒有降幅照 FCN"
+    assert run(stepping("Period End", step="0"), prices).events == (AutoEvent(MATURITY, FINAL),)
+
+
+def test_daily_ko_uses_the_ko_of_the_period_the_day_is_in() -> None:
+    day = dt.date(2026, 11, 20)  # 第 1 個比價日之後：第 2 期
+    prices = closes(on({START: "96", day: "96"}), on({START: "96", day: "96"}))
+
+    assert run(stepping("Daily"), prices) == Outcome(EXITED, f"KO {day}", day, (AutoEvent(KO, day),), NO_KI_TEXT)
+
+
+def test_memory_ko_remembers_across_periods() -> None:
+    first, later = dt.date(2026, 11, 20), dt.date(2026, 12, 2)  # 第 2 期（95）、第 3 期（90）
+    prices = closes(on({first: "96"}, "85"), on({later: "91"}, "85"))  # 其他天 85：第 3 期也不到
+
+    assert run(stepping("Daily Memory"), prices).events == (AutoEvent(KO, later),)
+    assert run(stepping("Daily"), prices).events == (AutoEvent(MATURITY, FINAL),), "非記憶式要同一天"
+
+
+def test_on_book_reason_names_the_next_period_ko() -> None:
+    assert run(stepping("Daily"), closes(), dt.date(2026, 11, 20)) == Outcome(
+        ON_BOOK, "第 2 期 KO 95%", dt.date(2026, 11, 20), ki=NO_KI_TEXT
+    )
+    assert run(stepping("Period End"), closes(), MID).reason == "第 3 期 KO 90%", "比價日_2 之後是第 3 期"
+    assert run(stepping("Period End", step=None), closes(), MID).reason == ""
+
+
+@pytest.mark.parametrize(
+    ("changes", "reason"),
+    [
+        ({"step": "50"}, "KO% 100 每期降 50，第 3 期變成 0%，請確認"),
+        ({"ko_pct": None}, "有 KO 降幅，但沒有 KO%"),
+    ],
+)
+def test_a_step_that_cannot_work_goes_to_review(changes, reason) -> None:
+    assert run(stepping("Daily", **changes), closes()) == Outcome(TO_CONFIRM, reason)
+
+
 # ---------------------------------------------------------------- KI 與到期
 
 
@@ -409,6 +462,7 @@ def stored_product(product: str, **columns) -> Stored:
         "lookback_end_date": dt.date(2026, 11, 6),
         "strike_pct": D(80),
         "ko_pct": D(105),
+        "ko_step_pct": D(3),
         "non_call_months": 3,
         "tenor_months": 12,
         **columns,
@@ -451,6 +505,8 @@ def test_from_stored_puts_every_column_in_its_place() -> None:
         strike_pct=D(80),
         keep_strike=False,
         manual_ko=False,
+        ko_pct=D(105),
+        ko_step=D(3),
     )
     first, second = found.underlyings
     assert (first.initial, first.strike, first.ki, first.ko, first.lookback) == (D(101), D(82), D(63), D(104), D(99))

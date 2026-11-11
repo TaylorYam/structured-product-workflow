@@ -32,14 +32,20 @@ from decimal import ROUND_HALF_UP, Decimal, InvalidOperation
 from enum import Enum
 from typing import Any
 
-from fcn_checker.fields import COUPON_BARRIER_FIELD, LOOKBACK_FIELD, PARTICIPATION_FIELD, STRIKE_PCT_FIELD
+from fcn_checker.fields import (
+    COUPON_BARRIER_FIELD,
+    KO_STEP_FIELD,
+    LOOKBACK_FIELD,
+    PARTICIPATION_FIELD,
+    STRIKE_PCT_FIELD,
+)
 from fcn_checker.products import EXTRA_REQUIRED, PRODUCT_RULES, ProductRule, product_name
 
 UPFRONT_FIELD = "Upfront / NotePrice (%)"
 TRADE_FIELD = "Trade date"
 STRIKE_FIELD = "Strike date"
 PRICING_FIELD = "期初價格"
-# 配息門檻、參與率、回顧結束日的欄名在 `fcn_checker.fields`（起單建檔沒有這三欄；哪些商品有、預設值問商品規則，#434）
+# 配息門檻、參與率、回顧結束日、KO 降幅的欄名在 `fcn_checker.fields`（起單建檔沒有這四欄；哪些商品有、預設值問商品規則，#434）
 
 
 class FieldKind(Enum):
@@ -75,6 +81,7 @@ KINDS: dict[str, FieldKind] = {
     "Strike (%)": FieldKind.PERCENT,
     "KO Type": FieldKind.CHOICE,
     "KO Barrier (%)": FieldKind.PERCENT,
+    KO_STEP_FIELD: FieldKind.PERCENT,
     "Coupon p.a. (%)": FieldKind.PERCENT,
     PARTICIPATION_FIELD: FieldKind.PERCENT,
     COUPON_BARRIER_FIELD: FieldKind.PERCENT,
@@ -170,7 +177,7 @@ PRODUCT_COLUMNS = (
     "underlying_5", "strike_pct", "ko_freq", "ko_memory", "ko_type", "ko_pct", "coupon_pct", "upfront_pct",
     "tenor_months", "ki_freq", "barrier_type", "ki_pct", "denomination", "strike_date", "participation_pct",
     "lookback_end_date",
-    "coupon_barrier_pct",
+    "coupon_barrier_pct", "ko_step_pct",
 )  # fmt: skip
 # 資料庫 workflow.product 的欄 ↔ 畫面的欄（畫面上的 Upfront / NotePrice = 100 − UF）
 COLUMN_FIELDS = {
@@ -181,6 +188,7 @@ COLUMN_FIELDS = {
     "strike_pct": "Strike (%)",
     "ko_type": "KO Type",
     "ko_pct": "KO Barrier (%)",
+    "ko_step_pct": KO_STEP_FIELD,
     "coupon_pct": "Coupon p.a. (%)",
     "participation_pct": PARTICIPATION_FIELD,
     "coupon_barrier_pct": COUPON_BARRIER_FIELD,

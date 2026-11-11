@@ -45,6 +45,7 @@ VALUES: dict[str, object] = {
     "Participation (%)": None,  # 起單建檔沒有這欄（只有 BEN 有，#373）
     "Lookback end date": None,  # 起單建檔沒有這欄（只有 lookback 的 BEN 有，#374）
     "Coupon Barrier (%)": None,  # 只有 DACN 有（#367）
+    "KO Step Down (%)": None,  # 只有 Stepdown、Snowball 有（#537）
     "Upfront / NotePrice (%)": Decimal("98.5"),
     "Tenor (m)": 6,
     "Barrier Type": "EKI",

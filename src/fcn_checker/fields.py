@@ -46,6 +46,8 @@ NON_CALL_FIELD = "Guaranteed Periods (m)"
 STRIKE_PCT_FIELD = "Strike (%)"
 KO_TYPE_FIELD = "KO Type"
 KO_BARRIER_FIELD = "KO Barrier (%)"
+# KO 降幅（Stepdown，#537、ADR 0033）：KO% 每期固定往下降的百分點；KO Barrier (%) 是第 1 期。起單建檔沒有這欄
+KO_STEP_FIELD = "KO Step Down (%)"
 BARRIER_TYPE_FIELD = "Barrier Type"
 KI_BARRIER_FIELD = "KI Barrier (%)"
 COUPON_BARRIER_FIELD = "Coupon Barrier (%)"  # 配息門檻（DACN，#367；BEN 的紅利門檻，#406）：起單建檔沒有這欄

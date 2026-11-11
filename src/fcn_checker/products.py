@@ -1,4 +1,5 @@
-"""支援的商品種類與各自的 Non-Call、比價、配息門檻規則（#302、#304、#310、#367、#373、ADR 0027、0028、0029、0030）。
+"""支援的商品種類與各自的 Non-Call、比價、配息門檻、KO 降幅規則（#302、#304、#310、#367、#373、#537、
+ADR 0027、0028、0029、0030、0033）。
 
 流程（`sp_workflow`：交易明細、起單建檔、人工維護、歷史回補、比價）與核對（說明書推得的 Non-Call 符不符合參考條件表的
 商品種類，`rules/reference.non_call_product`）共用這一份；新增商品時在 `PRODUCT_RULES` 加一筆，訂它自己的規則。
@@ -6,7 +7,7 @@
 商品條件（#434）：規則自己回答哪些欄固定成什麼（`fixed_choices`、`order_overrides`、`fixed_non_call`）、哪些必填或可以空白
 （`required_fields`、`extra_required`）、哪些要空白（`blank_problem`）、空白怎麼補（`default_participation`、
 `default_coupon_barrier`）、起單建檔與舊表的哪一欄要搬到哪（`moved_fields`、`ignored_prices`）、值合不合法
-（`non_call_problem`、`fixed_choice_problem`、`participation_problem`）。流程端只問規則，不自己比商品名或讀下面的布林。
+（`non_call_problem`、`fixed_choice_problem`、`participation_problem`、`ko_step_problem`）。流程端只問規則，不自己比商品名或讀下面的布林。
 欄名用 `fields` 的商品條件畫面欄名。
 
 比價政策與核對樣態（#435）：最終比價日算不算 KO（`final_date_can_ko`）、能不能提前出場（`no_early_exit`）、KO% 有值時
@@ -29,6 +30,7 @@ from .fields import (
     COUPON_BARRIER_FIELD,
     KI_BARRIER_FIELD,
     KO_BARRIER_FIELD,
+    KO_STEP_FIELD,
     KO_TYPE_FIELD,
     LOOKBACK_FIELD,
     NON_CALL_FIELD,
@@ -42,12 +44,22 @@ BEN = (
     "BEN"  # 沒有配息、不會提前出場、沒有 KI，只在到期依最差標的對執行價結算；紅利門檻存配息門檻（#373、#406、ADR 0029）
 )
 DACN = "DACN"  # 每日計息：依所有標的 ≥ 配息門檻的天數比例配息，其他和 FCN 相同（#367、ADR 0030）
+# KO% 每期固定往下降（KO 降幅）、其他和 FCN 相同（#537、ADR 0033）：FCN_Stepdown 有固定配息；Snowball 沒有固定配息、
+# 出場領紅利（存 `Coupon p.a. (%)`），比價不看配息。Snowball 有的也逐期降（SG），降幅可以空白（不降）
+FCN_STEPDOWN = "FCN_Stepdown"
+SNOWBALL = "Snowball"
+SNOWBALL_STEPDOWN = "Snowball_Stepdown"
 
 
 _MATURITY_ONLY_CHOICES = {KO_TYPE_FIELD: "Period End", BARRIER_TYPE_FIELD: "NONE"}  # 不會提前出場、沒有 KI
 _DEFAULT_PARTICIPATION = Decimal(100)  # 起單建檔沒有參與率：BEN 預設 100，Digital 由作業人員改 0（#373）
 # 只有某些商品種類有的欄 → 錯訊用的名稱（沒有的商品種類這欄要空白）
-_OPTIONAL_TERMS = {PARTICIPATION_FIELD: "參與率", COUPON_BARRIER_FIELD: "配息門檻", LOOKBACK_FIELD: "回顧期間"}
+_OPTIONAL_TERMS = {
+    PARTICIPATION_FIELD: "參與率",
+    COUPON_BARRIER_FIELD: "配息門檻",
+    LOOKBACK_FIELD: "回顧期間",
+    KO_STEP_FIELD: "KO降幅",
+}
 
 
 @dataclass(frozen=True)
@@ -70,6 +82,10 @@ class ProductRule:
     # True：核對只支援 KO 每期觀察、非記憶式、無 KI 的樣態（Super Bull，#309 決策、ADR 0028）。只在到期判定的商品（BEN）
     # 不必設：它的 KO Type 固定 Period End、Barrier Type 固定 NONE（`fixed_choices`），`only_periodic_no_ki` 由此推得
     periodic_no_ki_only: bool = False
+    # True：KO% 可以每期固定往下降（KO 降幅，#537、ADR 0033）；`ko_step_required` 時一定要填（Stepdown），否則空白是不降
+    # （Snowball）。False 的商品 KO 降幅要空白
+    has_ko_step: bool = False
+    ko_step_required: bool = False
 
     def non_call_problem(self, months: int, tenor: int | None = None) -> str:
         """Guaranteed Periods (m) 不符合這種商品時的說明；符合時空字串。`tenor` 是天期（月），只在到期判定的商品要等於它，
@@ -141,8 +157,12 @@ class ProductRule:
         return (KO_BARRIER_FIELD,) if self.maturity_only else ()
 
     def extra_required(self) -> tuple[str, ...]:
-        """共同的必填欄以外，這種商品也必填的欄：要配息門檻的商品（DACN、BEN）是配息門檻（#367、#406）。"""
-        return (COUPON_BARRIER_FIELD,) if self.has_coupon_barrier else ()
+        """共同的必填欄以外，這種商品也必填的欄：要配息門檻的商品（DACN、BEN）是配息門檻（#367、#406）；
+        Stepdown 是 KO 降幅（#537）。"""
+        return (
+            *((COUPON_BARRIER_FIELD,) if self.has_coupon_barrier else ()),
+            *((KO_STEP_FIELD,) if self.ko_step_required else ()),
+        )
 
     def required_fields(self, common: Sequence[str]) -> tuple[str, ...]:
         """這種商品的必填欄：共同的必填欄 `common` 扣掉 `optional_fields`，最後加上 `extra_required`。"""
@@ -150,12 +170,14 @@ class ProductRule:
         return (*(name for name in common if name not in optional), *self.extra_required())
 
     def has_term(self, name: str) -> bool:
-        """這種商品有這一欄：參與率、回顧期間只有只在到期判定的商品（BEN）有；配息門檻只有要配息門檻的商品有。
-        不是這幾個只有部分商品有的欄時一律 True。"""
+        """這種商品有這一欄：參與率、回顧期間只有只在到期判定的商品（BEN）有；配息門檻只有要配息門檻的商品有；
+        KO 降幅只有 Stepdown、Snowball 有（#537）。不是這幾個只有部分商品有的欄時一律 True。"""
         if name in (PARTICIPATION_FIELD, LOOKBACK_FIELD):
             return self.maturity_only
         if name == COUPON_BARRIER_FIELD:
             return self.has_coupon_barrier
+        if name == KO_STEP_FIELD:
+            return self.has_ko_step
         return True
 
     def blank_problem(self, name: str) -> str:
@@ -169,6 +191,12 @@ class ProductRule:
         if value is None:
             return f"{self.name} 必填（一般 100、Digital 0）"
         return "不能是負數" if value < 0 else ""
+
+    def ko_step_problem(self, value: Decimal | int | None) -> str:
+        """KO 降幅（%）的問題：沒有的商品要空白；有的不能是負數（必填由 `extra_required` 管）。沒問題時空字串（#537）。"""
+        if not self.has_term(KO_STEP_FIELD):
+            return "" if value is None else self.blank_problem(KO_STEP_FIELD)
+        return "不能是負數" if value is not None and value < 0 else ""
 
     # ---------- 空白怎麼補、哪一欄搬到哪 ----------
 
@@ -199,6 +227,9 @@ PRODUCT_RULES = {
         ProductRule(SUPER_BULL, final_date_callable=False, periodic_no_ki_only=True),
         ProductRule(BEN, final_date_callable=False, maturity_only=True, has_coupon_barrier=True),
         ProductRule(DACN, has_coupon_barrier=True, blank_coupon_barrier_is_strike=True),
+        ProductRule(FCN_STEPDOWN, has_ko_step=True, ko_step_required=True),
+        ProductRule(SNOWBALL, has_ko_step=True),
+        ProductRule(SNOWBALL_STEPDOWN, has_ko_step=True, ko_step_required=True),
     )
 }
 _PRODUCT_NAMES = {name.upper(): name for name in PRODUCT_RULES}

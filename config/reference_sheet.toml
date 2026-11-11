@@ -8,8 +8,8 @@
 # 核對結果檔「回填後」一律照 [import_format]（匯入格式）重新產生，不論表上欄位怎麼排（Issue #203）。
 # 規則說明見 docs/checker/order-formats/reference-sheet.md。
 
-version = 26
-effective_date = 2026-11-03
+version = 27
+effective_date = 2026-11-11
 
 [layout]
 # 只讀第一張工作表（不看名稱）；表頭是前 header_search_rows 列裡有 key_column 欄名的那一列，下一列起是資料（Issue #199）
@@ -33,6 +33,8 @@ optional_columns = [  # 表上沒有也照常核對
     "參與率(%)",
     # 回顧結束日（#376）：只有 lookback 的 BEN 有；舊 Excel 沒有這欄時照常讀，lookback 說明書的回填轉人工覆核
     "回顧結束日",
+    # KO 降幅（#537）：只有 Stepdown、Snowball 有；舊 Excel 沒有這欄時照常讀，回補時 Stepdown 那幾檔不匯入（必填）
+    "KO降幅(%)",
 ]
 empty_value = "-"         # 空值寫法（比價日不需要填的期別也寫 -）
 checked_value = "V"       # TS、IIS 欄的打勾寫法（半形英文字母 V，同「當日比價」「私銀註記」）
@@ -120,6 +122,7 @@ any_order_products = { "Super Bull" = ["HSBC"], BEN = ["HSBC"] }
 "KI(Freq)" = "ki_type"
 "Coupon p.a. (%)" = "coupon_pa_pct"
 "配息門檻(%)" = "coupon_barrier_pct"  # DACN 的配息門檻（#367），不在匯入格式裡
+"KO降幅(%)" = "ko_step_pct"  # Stepdown、Snowball 的 KO% 每期降幾個百分點（#537），不在匯入格式裡
 "天期(月)" = "tenor_months"
 "Non-Call(月)" = "first_callable_period"
 "比價日_1" = "autocall_date_1"

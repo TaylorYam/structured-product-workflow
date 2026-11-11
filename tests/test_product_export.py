@@ -319,6 +319,22 @@ def test_the_summary_shows_the_coupon_barrier_of_dacn(pg, tmp_path: Path) -> Non
 
 
 @pytest.mark.db
+def test_the_summary_shows_the_ko_step_of_stepdown(pg, tmp_path: Path) -> None:
+    """Stepdown 的 KO 降幅（#537）：起單資料匯入時填、存進資料庫，總表接在 Lookback 期間後面；其他商品寫 -。"""
+    stepdown = order_row(A, {**UF_215, "Product": "FCN_Stepdown", "KO Step Down (%)": Decimal(3)})
+    receipt = write_batch(pg, drafts_from([stepdown], CONFIG, pg), CONFIG, user="tester")
+    assert receipt.lines[0].imported, receipt.lines[0].detail
+    import_order(pg, B)
+    path = tmp_path / "商品總表.xlsx"
+
+    export_summary(pg, path)
+
+    a, b = as_dicts(path)
+    assert SUMMARY_COLUMNS.index("KO降幅(%)") == SUMMARY_COLUMNS.index("Lookback 期間") + 1
+    assert (a["Product"], a["KO降幅(%)"], b["KO降幅(%)"]) == ("FCN_Stepdown", 3, "-")
+
+
+@pytest.mark.db
 def test_summary_cells_are_centred_with_fonts_by_content(pg, tmp_path: Path) -> None:
     import_order(pg, A)
     add_trades(pg, A, [("台北", "Amy", 100000)])

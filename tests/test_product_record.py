@@ -44,6 +44,7 @@ VALUES: dict[str, object] = {
     PARTICIPATION_FIELD: None,
     LOOKBACK_FIELD: None,
     "Coupon Barrier (%)": None,  # 只有 DACN 有（#367）
+    "KO Step Down (%)": None,  # 只有 Stepdown、Snowball 有（#537）
     UPFRONT_FIELD: Decimal("97.14"),
     "Tenor (m)": 12,
     "Barrier Type": "AKI",
@@ -103,7 +104,7 @@ def test_blank_fields_leave_their_columns_codes_and_denomination_blank() -> None
 
     # 商品種類不可空白（ADR 0016）：寫入前由檢查擋下；不支援的商品種類同樣存空白，不猜成 FCN（#302）
     assert all(value is None for value in columns.values())
-    assert columns_of({**VALUES, "Product": "FCN_Stepdown"}, "Barclays", DENOMINATIONS)["product"] is None
+    assert columns_of({**VALUES, "Product": "Range Accrual"}, "Barclays", DENOMINATIONS)["product"] is None
 
 
 def test_fields_of_reads_back_what_columns_of_wrote() -> None:
@@ -153,9 +154,9 @@ def test_required_and_missing_fields_follow_the_product_rule(product, needs_ko, 
 
 
 def test_unsupported_products_need_the_common_fields() -> None:
-    assert required_fields("FCN_Stepdown") == REQUIRED
-    assert default_coupon_barrier({"Product": "FCN_Stepdown", "Strike (%)": Decimal(80)}) is None
-    assert LISTED == (*REQUIRED, "Coupon Barrier (%)")
+    assert required_fields("Range Accrual") == REQUIRED
+    assert default_coupon_barrier({"Product": "Range Accrual", "Strike (%)": Decimal(80)}) is None
+    assert LISTED == (*REQUIRED, "Coupon Barrier (%)", "KO Step Down (%)")
 
 
 @pytest.mark.parametrize(
@@ -166,7 +167,7 @@ def test_unsupported_products_need_the_common_fields() -> None:
         ("FCN_Express", FCN_EXPRESS),
         ("fcn_express", FCN_EXPRESS),
         (" ben ", BEN),
-        ("FCN_Stepdown", None),
+        ("Range Accrual", None),
         (None, None),
     ],
 )

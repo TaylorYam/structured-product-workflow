@@ -117,7 +117,10 @@ def test_sheet_notes_are_shown_but_do_not_block_on_their_own() -> None:
         ({"Barrier Type": "NONE"}, {"KI Barrier (%)": "Barrier Type 是 NONE 時要空白"}),
         ({"KI Barrier (%)": None}, {"KI Barrier (%)": "有 KI 時必填"}),
         ({"Currency": "TWD"}, {"Currency": "這個幣別沒有單位面額預設值"}),
-        ({"Product": "FCN_Stepdown"}, {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN、DACN"}),
+        (
+            {"Product": "Range Accrual"},
+            {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN、DACN、FCN_Stepdown、Snowball、Snowball_Stepdown"},
+        ),
         ({"Guaranteed Periods (m)": 0}, {"Guaranteed Periods (m)": "至少 1"}),
         ({"Product": "FCN_Express"}, {"Guaranteed Periods (m)": "FCN_Express 沒有 Non-Call，要填 0"}),
         ({"Product": "FCN_Express", "Guaranteed Periods (m)": 0}, {}),
@@ -131,9 +134,14 @@ def test_sheet_notes_are_shown_but_do_not_block_on_their_own() -> None:
         ),
         ({"Product": "dacn", "Coupon Barrier (%)": Decimal(75)}, {}),
         ({"Coupon Barrier (%)": Decimal(80)}, {"Coupon Barrier (%)": "FCN 沒有配息門檻，要空白"}),
+        ({"Product": "FCN_Stepdown"}, {"KO Step Down (%)": "必填"}),  # KO 降幅（#537）
+        ({"Product": "Snowball_Stepdown", "KO Step Down (%)": Decimal(1)}, {}),
+        ({"Product": "snowball"}, {}),  # Snowball 空白是不降
+        ({"Product": "Snowball", "KO Step Down (%)": Decimal(-2)}, {"KO Step Down (%)": "不能是負數"}),
+        ({"KO Step Down (%)": Decimal(3)}, {"KO Step Down (%)": "FCN 沒有KO降幅，要空白"}),
         (
-            {"Product": "FCN_Stepdown", "Guaranteed Periods (m)": 0},
-            {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN、DACN"},
+            {"Product": "Range Accrual", "Guaranteed Periods (m)": 0},
+            {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN、DACN、FCN_Stepdown、Snowball、Snowball_Stepdown"},
         ),
         ({"BBG Code 2": None, "BBG Code 3": "CCC UQ"}, {"BBG Code 2": "標的要從 BBG Code 1 依序填，中間不能空"}),
         ({"KO Type": "Weekly"}, {"KO Type": "要選 Daily／Daily Memory／Period End／Period End Memory"}),
