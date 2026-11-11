@@ -157,6 +157,42 @@ def test_super_bull_final_date_is_not_a_ko_day() -> None:
     assert run(terms("Period End"), prices).events == (AutoEvent(KO, FINAL),), "FCN 照舊：最終比價日也可以 KO"
 
 
+def star(**changes) -> Terms:
+    """FCN_Star（#538、ADR 0034）：每日記憶式、最終比價日不算 KO、沒有 KI，到期有上限價（系統不存）。"""
+    return terms("Daily Memory", NO_KI, final_date_callable=False, manual_delivery=True, **changes)
+
+
+@pytest.mark.parametrize(
+    ("a_final", "outcome"),
+    [
+        (
+            "100",
+            Outcome(EXITED, f"到期還本 {FINAL}", FINAL, (AutoEvent(MATURITY, FINAL),), NO_KI_TEXT),
+        ),  # ≥ KO 價也不算 KO
+        ("80", Outcome(EXITED, f"到期還本 {FINAL}", FINAL, (AutoEvent(MATURITY, FINAL),), NO_KI_TEXT)),  # 等於執行價
+        (
+            "79",
+            Outcome(
+                TO_CONFIRM,
+                f"最差標的 AAA UW 低於執行價：要確認最終比價日 {FINAL} 有沒有標的 ≥ 上限價（有就到期還本，沒有就接股）",
+                FINAL,
+                ki=NO_KI_TEXT,
+            ),
+        ),
+    ],
+)
+def test_star_does_not_deliver_on_its_own(a_final: str, outcome: Outcome) -> None:
+    prices = closes(on({FINAL: a_final}), on({FINAL: "100"}))
+
+    assert run(star(), prices) == outcome
+
+
+def test_star_still_kos_before_the_final_date() -> None:
+    day = dt.date(2026, 11, 20)
+
+    assert run(star(), closes(on({day: "100"}), on({day: "100"}))).events == (AutoEvent(KO, day),)
+
+
 def test_super_bull_kos_before_the_final_date_and_delivers_below_strike() -> None:
     super_bull = terms("Period End", final_date_callable=False)
 
@@ -549,6 +585,10 @@ def test_from_stored_asks_the_product_rule_and_the_lock() -> None:
     )
     assert Terms.from_stored(replace(locked, source=ProductSource.ORDER)).keep_strike is False, "只有歷史回補的"
     assert Terms.from_stored(stored_product("BEN", ko_pct=None)).manual_ko is False
+    for product in ("FCN_Star", "FCN_OneStar"):  # 到期有上限價（#538）
+        found = Terms.from_stored(stored_product(product))
+        assert (found.final_date_callable, found.manual_delivery) == (False, True)
+    assert Terms.from_stored(stored_product("FCN")).manual_delivery is False
 
 
 def test_products_not_observed_carry_the_last_status() -> None:

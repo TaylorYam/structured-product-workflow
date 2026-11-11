@@ -271,6 +271,22 @@ def test_stepdown_rows_need_their_ko_step(pg, tmp_path: Path) -> None:
 
 
 @pytest.mark.db
+def test_star_rows_are_imported_and_leave_the_other_products(pg, tmp_path: Path) -> None:
+    """FCN_Star、FCN_OneStar（#538）照 FCN 回補，寫好後從不支援商品清單移除。"""
+    other_product(pg, A, B)
+    star = {"KO(Freq)": "D", "KO(memo)": "Y"}
+    source = write_sheet(
+        tmp_path / "x.xlsx", [express(A, Product="FCN_Star", **star), express(B, Product="FCN_OneStar", **star)]
+    )
+
+    receipt = backfill_products(pg, source, FMT, CONFIG)
+
+    assert lines(receipt) == {A: (IMPORTED, ""), B: (IMPORTED, "")}
+    assert {tdcc: read(pg, tdcc).columns["product"] for tdcc in (A, B)} == {A: "FCN_Star", B: "FCN_OneStar"}
+    assert pg.execute("SELECT count(*) FROM workflow.other_product").fetchone() == (0,)
+
+
+@pytest.mark.db
 def test_a_ko_step_on_other_products_is_not_imported(pg, tmp_path: Path) -> None:
     source = write_sheet(tmp_path / "x.xlsx", [express(A, **{"KO降幅(%)": 3})])
 

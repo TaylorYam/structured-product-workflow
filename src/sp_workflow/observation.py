@@ -6,8 +6,8 @@
   先假設收盤價不會事後更正。
 - KO：收盤價 ≥ KO 價。非記憶式要同一個觀察日所有標的都達標；記憶式每檔標的在任一觀察日達標就記住，全部記過即 KO。
   D 型的觀察日是第一個比價日（資料庫最早的比價日；沒有 Non-Call 的 FCN_Express 是比價日_1，#302）起到最終比價日止、所有標的市場都開市的日子；P 型只看各期比價日。
-  Non-Call 等於天期的商品不會提前出場，不觀察 KO（`ProductRule.no_early_exit`）。最終比價日不算 KO 的商品種類（Super Bull、BEN，`ProductRule.final_date_can_ko`，
-  #310、ADR 0028）即使比價日裡有最終比價日，那天也只做到期判定。BEN 預設沒有 KO（KO% 空白）；填了 KO% 的 BEN 有 KO 機制，
+  Non-Call 等於天期的商品不會提前出場，不觀察 KO（`ProductRule.no_early_exit`）。最終比價日不算 KO 的商品種類（Super Bull、BEN、FCN_Star、FCN_OneStar，
+  `ProductRule.final_date_can_ko`，#310、#538、ADR 0028）即使比價日裡有最終比價日，那天也只做到期判定。BEN 預設沒有 KO（KO% 空白）；填了 KO% 的 BEN 有 KO 機制，
   待確認、由人判斷會不會提前出場（`ProductRule.ko_needs_review`，#406、ADR 0029）。比價政策都問商品規則，不支援的商品種類照 FCN（#435）。
 - KO 降幅（Stepdown、Snowball，#537、ADR 0033）：KO% 每期固定往下降，第 n 期 KO% = KO% − 降幅 ×（n − 1），第 n 期涵蓋
   比價日_{n-1} 之後到比價日_n（含）。P 型在比價日_n、D 型在第 n 期的每一天用第 n 期的 KO 價（進場價 × 當期 KO%，
@@ -20,6 +20,8 @@
   缺它要的價格照樣等股價。
 - 到期（最終比價日，沒有 KO）：沒有 KI，或 KI 曾觸及，且最差表現的標的（最終收盤價 ÷ 進場價最低）收盤價 < 執行價
   → 接股（記最差標的）；否則到期還本。事件日一律是觸價或判定的那個觀察日。
+  有上限價的商品（FCN_Star、FCN_OneStar，`ProductRule.delivery_needs_review`，#538、ADR 0034）要接股時改成待確認：
+  任一標的 ≥ 上限價就還本，系統不存上限價，由人判斷後登記存續事件。
 - 還在 Non-call 期間（第一個比價日之前）的在庫商品，原因寫「Non-call period（第一個比價日 …）」，每日觀察 KI 已開始比的
   也一樣；Non-Call 等於天期的還沒到最終比價日時寫「還沒到最終比價日（…）」（#194）。
 - 缺價格就停住：某標的在它市場的交易日要用到價格、收盤價表沒有，這檔停在那一天（已比到的日期是前一天），
@@ -150,6 +152,7 @@ class Terms:
     # 各比價日是第幾期（同 `autocall` 的順序，#537）：比價日欄位第幾格減第一格 + 1，中間空白的期別（例如 BNP 不適用的期別）
     # 照樣算一期；空的時候依順序 1、2、3…
     autocall_periods: tuple[int, ...] = ()
+    manual_delivery: bool = False  # 到期跌破執行價時待確認、不自動接股：有上限價的商品（FCN_Star、FCN_OneStar，#538）
 
     @classmethod
     def from_stored(cls, found: Stored) -> Terms:
@@ -189,6 +192,7 @@ class Terms:
             ko_pct=p["ko_pct"],
             ko_step=p["ko_step_pct"],
             autocall_periods=tuple(slot - first_slot + 1 for slot, _ in filled),
+            manual_delivery=rule.delivery_needs_review(),
         )
 
 
@@ -555,6 +559,14 @@ def _maturity(terms: Terms, prices: Mapping[str, Decimal], touch: KiTouch | None
     knocked = terms.barrier_type == NO_KI or touch is not None
     assert lowest is not None and lowest.strike is not None
     if knocked and lowest.below_strike:
+        if terms.manual_delivery:
+            return Outcome(
+                TO_CONFIRM,
+                f"最差標的 {lowest.code} 低於執行價：要確認最終比價日 {day} 有沒有標的 ≥ 上限價（有就到期還本，沒有就接股）",
+                day,
+                ki=ki,
+                ki_touch=touch,
+            )
         event = AutoEvent(DELIVERY, day, lowest.code)
         return Outcome(EXITED, f"接股 {lowest.code} {day}", day, (event,), ki, ki_touch=touch)
     return Outcome(EXITED, f"到期還本 {day}", day, (AutoEvent(MATURITY, day),), ki, ki_touch=touch)

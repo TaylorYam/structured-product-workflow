@@ -10,7 +10,7 @@
   2026-11 起是新版面（#420：`FC1`、`FC2`、`新加坡`）；舊版面（`FC/PB`、`前台主管/投專`）照樣可以匯入，
   這份檔案沒有的欄存空白，「已存在／內容不同」只比這一版有的欄（已停用的前台主管/投專不比）。FC1、FC2 都比對信箱。
   只收 Product 為支援的商品種類（`fcn_checker.products.PRODUCT_RULES`：FCN、FCN_Express、Super Bull、BEN、DACN、
-  FCN_Stepdown、Snowball、Snowball_Stepdown，#302、#310、#373、#367、#537）的列，商品種類存設定的寫法；
+  FCN_Stepdown、Snowball、Snowball_Stepdown、FCN_Star、FCN_OneStar，#302、#310、#373、#367、#537、#538）的列，商品種類存設定的寫法；
   其他略過並計數，略過的 TDCC 與 Product 記在 `workflow.other_product`。
   以 TDCC 為單位、第一次寫入為準：資料庫已有的交易不重複寫入，內容不同只列出差異、不覆蓋。
 - `BBG_Data`：C1 是取價日（要是日期），第 2 列 B～H 是欄名（要完全相同），第 4 列起每列一檔。

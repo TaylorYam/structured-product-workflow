@@ -91,6 +91,8 @@ def test_express_rows_are_imported_like_fcn(tmp_path: Path) -> None:
         ("FCN_Stepdown", "FCN_Stepdown"),  # #537
         ("snowball", "Snowball"),
         ("Snowball_Stepdown", "Snowball_Stepdown"),
+        ("FCN_STAR", "FCN_Star"),  # #538
+        ("FCN_OneStar", "FCN_OneStar"),
     ],
 )
 def test_super_bull_and_ben_rows_are_imported_like_fcn(tmp_path: Path, written, stored) -> None:
