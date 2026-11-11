@@ -245,6 +245,19 @@ def test_trades_only_reads_a_trade_list_month_sheet(tmp_path: Path) -> None:
     assert [line.tdcc for line in parsed.blocked] == [B] and "第 4 列" in parsed.blocked[0].detail
 
 
+def test_a_title_in_row_one_does_not_hide_the_month_sheet_header(tmp_path: Path) -> None:
+    """#541：第 1 列有字（標題、月份）時，欄名列取第 2 列對得上的那一列；工作表名前後的空白不算。"""
+    book = month_sheet_book(tmp_path / "m.xlsx", [trade(A, "Amy", "北區", 1)])
+    wb = openpyxl.load_workbook(book)
+    wb["202611"]["B1"] = "2026 年 11 月"
+    wb["202611"].title = "202611 "
+    wb.save(book)
+
+    parsed = read_daily(book, prices=False)
+
+    assert parsed.layout.headers == TRADE_HEADERS and people(parsed) == [(A, "Amy", None, "N", None)]
+
+
 def test_several_month_sheets_reject_the_whole_file(tmp_path: Path) -> None:
     book = month_sheet_book(tmp_path / "清單.xlsx", [trade(A, "Amy", "北區", 1)], months=("202610", "202611"))
 

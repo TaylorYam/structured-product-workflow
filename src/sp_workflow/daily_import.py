@@ -6,8 +6,8 @@
 - 需要 `交易明細`、`BBG_Data` 兩張工作表，少一張就整份不匯入；`清單更新` 已停用，檔案裡有也不讀（#87）。
   「只匯交易明細」（`prices=False`，回補時用）不讀 `BBG_Data`、不動股價，沒有這張工作表也可以。
   商品條件改由「匯入起單資料」建立（#86），每日匯入不再寫商品條件、也不做分公司對帳。
-- `交易明細` 第 1 列是欄名，必須和交易清單月份工作表的欄名與順序完全相同；不同就整份不匯入。
-  沒有 `交易明細` 時改讀唯一一張交易清單月份工作表（`YYYYMM`，欄名在 B2；多張就整份不匯入，#541）。
+- `交易明細` 第 1 列是欄名（第 2 列、前面有空白欄也可以），必須和交易清單月份工作表的欄名與順序完全相同；不同就整份不匯入。
+  沒有 `交易明細` 時改讀唯一一張交易清單月份工作表（`YYYYMM`，欄名在 B2；多張就整份不匯入，#541），有股價的每日匯入也一樣。
   2026-11 起是新版面（#420：`FC1`、`FC2`、`新加坡`）；舊版面（`FC/PB`、`前台主管/投專`）照樣可以匯入，
   這份檔案沒有的欄存空白，「已存在／內容不同」只比這一版有的欄（已停用的前台主管/投專不比）。FC1、FC2 都比對信箱。
   只收 Product 為支援的商品種類（`fcn_checker.products.PRODUCT_RULES`：FCN、FCN_Express、Super Bull、BEN、DACN、
@@ -39,6 +39,7 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import io
+import itertools
 import json
 import re
 from collections import Counter, defaultdict
@@ -73,8 +74,8 @@ if TYPE_CHECKING:
 TRADE_SHEET = "交易明細"
 PRICE_SHEET = "BBG_Data"
 # 沒有 `交易明細` 時改讀交易清單的月份工作表（#541）：名稱 YYYYMM，欄名在第 2 列、從 B 欄開始
-MONTH_SHEET = re.compile(r"\d{6}")
-TRADE_HEADER_ROWS = 2  # 欄名最晚在第幾列
+_MONTH_SHEET = re.compile(r"\d{6}")
+_LAST_HEADER_ROW = 2  # 欄名列最晚在第幾列
 
 # 交易明細新版面（#420，2026-11 起）：FC/PB 改名 FC1、多了 FC2，前台主管/投專 換成 新加坡
 TRADE_HEADERS = (
@@ -426,7 +427,7 @@ def _trade_sheet(wb: Any) -> Any:
     月份工作表不只一張或都沒有時整份不匯入。"""
     if TRADE_SHEET in wb.sheetnames:
         return wb[TRADE_SHEET]
-    months = [name for name in wb.sheetnames if MONTH_SHEET.fullmatch(name)]
+    months = [name for name in wb.sheetnames if _MONTH_SHEET.fullmatch(name.strip())]
     if len(months) == 1:
         return wb[months[0]]
     if months:
@@ -440,32 +441,45 @@ def _trade_sheet(wb: Any) -> Any:
 def _trade_rows(sheet: Any) -> tuple[TradeLayout, list[_SheetRow]]:
     """交易明細：欄名和新版或舊版（#420）的欄名、順序完全相同（後面多出的空白欄不算），
     回傳是哪一版與 (列號, {欄名: 值})；兩版都不同時照新版指出哪一欄不同、整份不匯入。
-    欄名是前 `TRADE_HEADER_ROWS` 列裡第一個有值的列，前面的空白欄略過（交易清單月份工作表的欄名在 B2，#541）。"""
+    欄名列是前 `_LAST_HEADER_ROW` 列裡第一個對得上某一版的列，前面的空白欄略過（交易清單月份工作表的欄名在 B2，#541）；
+    都對不上時拿第一個有值的列指出哪一欄不同。"""
     rows = sheet.iter_rows(values_only=True)
-    header: list[str | None] = []
-    header_row = 0
-    for header_row, row in enumerate(rows, 1):
-        header = [sheet_cells.text(v) for v in row]
-        if any(v is not None for v in header) or header_row >= TRADE_HEADER_ROWS:
-            break
-    offset = next((i for i, v in enumerate(header) if v is not None), 0)
-    header = header[offset:]
-    while header and header[-1] is None:
-        header.pop()
-    layout = next((layout for layout in _LAYOUTS if tuple(header) == layout.headers), None)
-    if layout is None:
+    top = list(itertools.islice(rows, _LAST_HEADER_ROW))
+    candidates = [_header_cells(row) for row in top] or [(0, [])]
+    found = next(
+        (
+            (index, offset, layout)
+            for index, (offset, header) in enumerate(candidates)
+            for layout in _LAYOUTS
+            if tuple(header) == layout.headers
+        ),
+        None,
+    )
+    if found is None:
+        offset, header = next(((o, h) for o, h in candidates if h), candidates[0])
         _header_mismatch(sheet.title, header, TRADE_HEADERS, first_column=offset + 1)
+    index, offset, layout = found
     width = len(layout.headers)
     result = []
-    for number, row in enumerate(rows, header_row + 1):
+    for number, row in enumerate(itertools.chain(top[index + 1 :], rows), index + 2):
         values = (tuple(row)[offset:] + (None,) * width)[:width]
         if any(sheet_cells.text(v) is not None for v in values):
             result.append(_SheetRow(number, dict(zip(layout.headers, values, strict=True))))
     return layout, result
 
 
+def _header_cells(row: Sequence[Any]) -> tuple[int, list[str | None]]:
+    """一列可能的欄名：(前面空白欄的數目, 去掉前後空白欄的欄名)。"""
+    header = [sheet_cells.text(v) for v in row]
+    offset = next((i for i, v in enumerate(header) if v is not None), 0)
+    header = header[offset:]
+    while header and header[-1] is None:
+        header.pop()
+    return offset, header
+
+
 def _header_mismatch(
-    title: str, header: Sequence[str | None], expected: Sequence[str], *, first_column: int = 1
+    title: str, header: Sequence[str | None], expected: Sequence[str], *, first_column: int
 ) -> NoReturn:
     """欄名和 `expected` 不同：丟 `DailyImportError`，指出第一個不同的欄（`header[0]` 在第 `first_column` 欄）。"""
     for i, want in enumerate(expected):
