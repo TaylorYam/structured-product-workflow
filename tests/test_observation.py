@@ -159,7 +159,7 @@ def test_super_bull_final_date_is_not_a_ko_day() -> None:
 
 def star(**changes) -> Terms:
     """FCN_Star（#538、ADR 0034）：每日記憶式、最終比價日不算 KO、沒有 KI，到期有上限價（系統不存）。"""
-    return terms("Daily Memory", NO_KI, final_date_callable=False, delivery_review=True, **changes)
+    return terms("Daily Memory", NO_KI, final_date_callable=False, manual_delivery=True, **changes)
 
 
 @pytest.mark.parametrize(
@@ -587,8 +587,8 @@ def test_from_stored_asks_the_product_rule_and_the_lock() -> None:
     assert Terms.from_stored(stored_product("BEN", ko_pct=None)).manual_ko is False
     for product in ("FCN_Star", "FCN_OneStar"):  # 到期有上限價（#538）
         found = Terms.from_stored(stored_product(product))
-        assert (found.final_date_callable, found.delivery_review) == (False, True)
-    assert Terms.from_stored(stored_product("FCN")).delivery_review is False
+        assert (found.final_date_callable, found.manual_delivery) == (False, True)
+    assert Terms.from_stored(stored_product("FCN")).manual_delivery is False
 
 
 def test_products_not_observed_carry_the_last_status() -> None:
