@@ -25,6 +25,8 @@ from fcn_checker.products import (
     DACN,
     FCN,
     FCN_EXPRESS,
+    FCN_ONESTAR,
+    FCN_STAR,
     FCN_STEPDOWN,
     PRODUCT_RULES,
     SNOWBALL,
@@ -175,9 +177,10 @@ def test_an_unknown_template_is_still_reported_when_the_product_is_opened_or_mis
 
 # ---------------------------------------------------------------- 商品規則回答商品條件的問題（#434）
 
-ALL = (FCN, FCN_EXPRESS, SUPER_BULL, BEN, DACN, FCN_STEPDOWN, SNOWBALL, SNOWBALL_STEPDOWN)
+ALL = (FCN, FCN_EXPRESS, SUPER_BULL, BEN, DACN, FCN_STEPDOWN, SNOWBALL, SNOWBALL_STEPDOWN, FCN_STAR, FCN_ONESTAR)
 STEPPING = (FCN_STEPDOWN, SNOWBALL, SNOWBALL_STEPDOWN)  # 有 KO 降幅（#537）
 STEP_REQUIRED = (FCN_STEPDOWN, SNOWBALL_STEPDOWN)
+CAPPED = (FCN_STAR, FCN_ONESTAR)  # 到期有上限價（#538）
 BEN_CHOICES = {"KO Type": "Period End", "Barrier Type": "NONE"}
 
 
@@ -255,7 +258,8 @@ def test_defaults_and_moved_terms(name):
 def test_observation_policy(name):
     rule = PRODUCT_RULES[name]
     ben = name == BEN
-    assert rule.final_date_can_ko() == (name not in (SUPER_BULL, BEN))
+    assert rule.final_date_can_ko() == (name not in (SUPER_BULL, BEN, *CAPPED))
+    assert rule.delivery_needs_review() == (name in CAPPED)
     assert rule.non_call_is_tenor() == ben
     assert rule.ko_needs_review(Decimal(100)) == ben
     assert not rule.ko_needs_review(None)

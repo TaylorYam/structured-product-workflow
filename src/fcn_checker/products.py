@@ -1,5 +1,5 @@
-"""支援的商品種類與各自的 Non-Call、比價、配息門檻、KO 降幅規則（#302、#304、#310、#367、#373、#537、
-ADR 0027、0028、0029、0030、0033）。
+"""支援的商品種類與各自的 Non-Call、比價、配息門檻、KO 降幅規則（#302、#304、#310、#367、#373、#537、#538、
+ADR 0027、0028、0029、0030、0033、0034）。
 
 流程（`sp_workflow`：交易明細、起單建檔、人工維護、歷史回補、比價）與核對（說明書推得的 Non-Call 符不符合參考條件表的
 商品種類，`rules/reference.non_call_product`）共用這一份；新增商品時在 `PRODUCT_RULES` 加一筆，訂它自己的規則。
@@ -11,7 +11,7 @@ ADR 0027、0028、0029、0030、0033）。
 欄名用 `fields` 的商品條件畫面欄名。
 
 比價政策與核對樣態（#435）：最終比價日算不算 KO（`final_date_can_ko`）、能不能提前出場（`no_early_exit`）、KO% 有值時
-比價要不要待確認（`ko_needs_review`）、Non-Call 是不是一定等於天期（`non_call_is_tenor`）、參考條件表要不要核對參與率
+比價要不要待確認（`ko_needs_review`）、到期跌破執行價時要不要待確認（`delivery_needs_review`，#538）、Non-Call 是不是一定等於天期（`non_call_is_tenor`）、參考條件表要不要核對參與率
 （`has_term(PARTICIPATION_FIELD)`）與配息門檻（`has_term(COUPON_BARRIER_FIELD)`）、配息門檻空白時拿 K(%) 比還是轉人工
 （`blank_coupon_barrier_uses_strike`）、辨識後只支援 KO 每期觀察＋非記憶式＋無 KI 的樣態（`only_periodic_no_ki`）。
 比價（`sp_workflow.observation`）、辨識（`variants`）、參考條件表規則（`rules/reference`）都只問規則。
@@ -49,6 +49,9 @@ DACN = "DACN"  # 每日計息：依所有標的 ≥ 配息門檻的天數比例�
 FCN_STEPDOWN = "FCN_Stepdown"
 SNOWBALL = "Snowball"
 SNOWBALL_STEPDOWN = "Snowball_Stepdown"
+# 到期有上限價（#538、ADR 0034）：任一標的期末價 ≥ 上限價就還本，否則照 FCN；最終比價日不算 KO。系統不存上限價
+FCN_STAR = "FCN_Star"
+FCN_ONESTAR = "FCN_OneStar"
 
 
 _MATURITY_ONLY_CHOICES = {KO_TYPE_FIELD: "Period End", BARRIER_TYPE_FIELD: "NONE"}  # 不會提前出場、沒有 KI
@@ -86,6 +89,9 @@ class ProductRule:
     # （Snowball）。False 的商品 KO 降幅要空白
     has_ko_step: bool = False
     ko_step_required: bool = False
+    # True：到期有上限價（FCN_Star、FCN_OneStar，#538、ADR 0034）：任一標的期末價 ≥ 上限價就還本。系統不存上限價，
+    # 所以最差標的跌破執行價時由人判斷接股或還本
+    maturity_cap: bool = False
 
     def non_call_problem(self, months: int, tenor: int | None = None) -> str:
         """Guaranteed Periods (m) 不符合這種商品時的說明；符合時空字串。`tenor` 是天期（月），只在到期判定的商品要等於它，
@@ -115,6 +121,11 @@ class ProductRule:
     def ko_needs_review(self, ko_pct: object) -> bool:
         """KO% 有值時比價待確認、由人判斷會不會提前出場：只在到期判定的商品（BEN）預設沒有 KO，填了 KO% 才有 KO 機制（#406）。"""
         return ko_pct is not None and self.maturity_only
+
+    def delivery_needs_review(self) -> bool:
+        """到期最差標的跌破執行價時比價待確認、不自動接股：有上限價的商品（FCN_Star、FCN_OneStar）任一標的期末價 ≥ 上限價
+        就還本，系統不存上限價，由人判斷（#538、ADR 0034）。"""
+        return self.maturity_cap
 
     # ---------- 核對（參考條件表與辨識，#435） ----------
 
@@ -230,6 +241,8 @@ PRODUCT_RULES = {
         ProductRule(FCN_STEPDOWN, has_ko_step=True, ko_step_required=True),
         ProductRule(SNOWBALL, has_ko_step=True),
         ProductRule(SNOWBALL_STEPDOWN, has_ko_step=True, ko_step_required=True),
+        ProductRule(FCN_STAR, final_date_callable=False, maturity_cap=True),
+        ProductRule(FCN_ONESTAR, final_date_callable=False, maturity_cap=True),
     )
 }
 _PRODUCT_NAMES = {name.upper(): name for name in PRODUCT_RULES}

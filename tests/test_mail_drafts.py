@@ -406,7 +406,7 @@ def test_products_skipped_by_the_daily_import_are_unsupported(db, tmp_path: Path
 
     receipt, _ = run(db, root, out, B)
 
-    reason = "不支援的商品類型：Range Accrual（目前只做 FCN、FCN_Express、Super Bull、BEN、DACN、FCN_Stepdown、Snowball、Snowball_Stepdown）"
+    reason = "不支援的商品類型：Range Accrual（目前只做 FCN、FCN_Express、Super Bull、BEN、DACN、FCN_Stepdown、Snowball、Snowball_Stepdown、FCN_Star、FCN_OneStar）"
     assert [(o.status, o.reason) for o in receipt.outcomes] == [(PENDING, reason)]
 
 

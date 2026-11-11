@@ -119,7 +119,9 @@ def test_sheet_notes_are_shown_but_do_not_block_on_their_own() -> None:
         ({"Currency": "TWD"}, {"Currency": "這個幣別沒有單位面額預設值"}),
         (
             {"Product": "Range Accrual"},
-            {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN、DACN、FCN_Stepdown、Snowball、Snowball_Stepdown"},
+            {
+                "Product": "目前只做 FCN、FCN_Express、Super Bull、BEN、DACN、FCN_Stepdown、Snowball、Snowball_Stepdown、FCN_Star、FCN_OneStar"
+            },
         ),
         ({"Guaranteed Periods (m)": 0}, {"Guaranteed Periods (m)": "至少 1"}),
         ({"Product": "FCN_Express"}, {"Guaranteed Periods (m)": "FCN_Express 沒有 Non-Call，要填 0"}),
@@ -141,7 +143,9 @@ def test_sheet_notes_are_shown_but_do_not_block_on_their_own() -> None:
         ({"KO Step Down (%)": Decimal(3)}, {"KO Step Down (%)": "FCN 沒有KO降幅，要空白"}),
         (
             {"Product": "Range Accrual", "Guaranteed Periods (m)": 0},
-            {"Product": "目前只做 FCN、FCN_Express、Super Bull、BEN、DACN、FCN_Stepdown、Snowball、Snowball_Stepdown"},
+            {
+                "Product": "目前只做 FCN、FCN_Express、Super Bull、BEN、DACN、FCN_Stepdown、Snowball、Snowball_Stepdown、FCN_Star、FCN_OneStar"
+            },
         ),
         ({"BBG Code 2": None, "BBG Code 3": "CCC UQ"}, {"BBG Code 2": "標的要從 BBG Code 1 依序填，中間不能空"}),
         ({"KO Type": "Weekly"}, {"KO Type": "要選 Daily／Daily Memory／Period End／Period End Memory"}),
