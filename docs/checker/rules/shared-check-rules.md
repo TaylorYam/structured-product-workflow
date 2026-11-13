@@ -258,7 +258,7 @@ FCN_Stepdown 的 KO% 從第 1 期開始每期固定往下降。各上手的寫�
 |---|---|
 | `ko_levels` | 每期 KO%：第一個可提前出場（第一個比價日）的那一期是第 1 期，依序列出（ADR 0033 的期別） |
 | `ko_pct` | 第 1 期 KO% |
-| `ko_step_pct` | 相鄰兩期的差（每期相同且大於 0）；不是固定降幅時讀不出，該上手的範本辨識轉人工（範本不支援） |
+| `ko_step_pct` | 相鄰兩期的差（每期相同且大於 0）；不是固定降幅時讀不出，該上手的範本辨識轉人工（範本不支援）。讀出的期數 ≠ `autocall_schedule` 第 k 期到末期的期數時，`ko_levels`、`ko_pct`、`ko_step_pct` 都讀不出、轉人工覆核（`matching_periods`，workflow #545），以免第 n 期 KO% 對錯比價日 |
 | `underlying_prices` 的 KO 價 | 說明書沒有 KO 價欄時 = 最初價格 × 第 1 期 KO%，四捨五入（half-up）到 4 位（同 §8 沒有 KO 欄的做法；資料庫存的也是第 1 期 KO 價） |
 | `autocall_schedule` | D 型每一期期末日都列（比價時才知道每一期從哪天到哪天）；P 型照 FCN |
 
@@ -269,4 +269,4 @@ FCN_Stepdown 的 KO% 從第 1 期開始每期固定往下降。各上手的寫�
 | `field.ko_pct` | 同 FCN（說明書值是第 1 期） |
 | `backfill.compare_dates` | D 型每一期都填（§3） |
 
-只有 Product 一定要有 KO 降幅的商品（`ko_step_required`）產生 `field.ko_step_pct`、`field.ko_levels`；Snowball、FCN 等其他商品不產生結果（表上 `KO降幅(%)` 是不是 `-` 不在核對範圍）。各上手開放的範圍、範本差異見各上手的 Stepdown 核對規則（BARC：[barc-stepdown-check-rules.md](barc-stepdown-check-rules.md)）。
+只有 Product 一定要有 KO 降幅的商品（`ko_step_required`）產生 `field.ko_step_pct`、`field.ko_levels`；Snowball、FCN 等其他商品不產生結果（表上 `KO降幅(%)` 是不是 `-` 不在核對範圍）。各上手開放的範圍、範本差異見各上手的 Stepdown 核對規則（BARC：[barc-stepdown-check-rules.md](barc-stepdown-check-rules.md)；Natixis：[natixis-stepdown-check-rules.md](natixis-stepdown-check-rules.md)）。

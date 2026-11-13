@@ -67,8 +67,8 @@ def test_no_other_issuer_is_recognised_as_gs(reports):
 
 
 def test_no_other_issuer_is_recognised_as_natixis(reports):
-    """其他上手的說明書與投資人須知都不會被判成 Natixis 範本（Issue #261）。"""
-    natixis = {"natixis-zh-pd", "natixis-zh-iis"}
+    """其他上手的說明書與投資人須知都不會被判成 Natixis 範本（Issue #261；FCN_Stepdown 範本 workflow #545）。"""
+    natixis = {"natixis-zh-pd", "natixis-zh-iis", "natixis-zh-stepdown-pd", "natixis-zh-stepdown-iis"}
     others = [i for i in reports.values() if not i.term_sheet.name.startswith("328")]
     assert others and all(i.report.template not in natixis for i in others)
 

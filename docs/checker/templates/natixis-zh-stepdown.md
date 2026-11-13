@@ -7,7 +7,7 @@
 - 商品家族：KO% 從第 1 期開始**每期固定往下降**的記憶式 FCN。配息、KI、到期贖回、日期表、情境分析都和 [Natixis FCN 範本](natixis-zh-product-description.md)（`natixis-zh-pd`）相同，差別在第 14 項：KO 價格定義改成 `為下表所列之期初進場價格`，後面接一張每期一列的自動提前到期贖回價格表；第 9 項價格表沒有 KO 欄
 - 發行機構、發行人、保證機構（無）、受託機構：同 `natixis-zh-pd`
 - 依據：2026-11-13 對 7 份真實樣本（NS01～NS07，說明書與投資人須知成對）的探勘與開發者螢光標記（workflow #545）。**作業人員獨立標記略過**（同 DACN／BEN 第一波）；核對範圍以開發者凍結的標記為準，見 [Natixis FCN_Stepdown 核對規則](../rules/natixis-stepdown-check-rules.md) §7
-- 狀態：規格（workflow #545）；實作另開 PR
+- 狀態：已實作（workflow #545：`parsers/natixis_stepdown.py`、`rules/natixis_stepdown.py`）
 
 > 真實樣本、擷取文字與比對輸出只放在被 Git 忽略的 `data/`。本文件只記錄版面、錨點與規則；所有數值範例都是虛構的。樣本代號與真實商品代號的對照只存在本機。
 

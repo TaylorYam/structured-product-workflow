@@ -5,7 +5,7 @@
 - 範本代號：`natixis-zh-stepdown-iis`
 - 對應說明書範本：[`natixis-zh-stepdown-pd`](natixis-zh-stepdown.md)；一檔商品一份說明書＋一份投資人須知（[ADR 0007](../adr/0007-iis-paired-with-term-sheet.md)）
 - 依據：2026-11-13 對 7 份真實樣本（NS01-IIS～NS07-IIS，各配對同代號說明書）的探勘與開發者螢光標記（workflow #545）
-- 狀態：規格（workflow #545）；實作另開 PR
+- 狀態：已實作（workflow #545：`parsers/natixis_stepdown_iis.py`、`rules/natixis_stepdown_iis.py`）
 
 > 真實樣本與擷取文字只放在被 Git 忽略的 `data/`。本文件的數值範例都是虛構的。
 
@@ -41,7 +41,7 @@
 
 ## 3. 早期版面（NS01-IIS、NS02-IIS）
 
-第 1 頁第 1 行只有 `中文投資人須知(適用於專業投資人及OSU客戶)`，`刊印日期：…` 在下一行（`natixis-zh-iis` 要求兩者在同一行），也有大量 CJK 相容字，部分商品簡介欄位的寫法不同。條件 1 不成立 → **三個 Natixis 投資人須知範本都不符，轉人工覆核**（和同版面的 Natixis FCN 投資人須知相同）。說明書（早期版面）照常自動核對。早期版面的投資人須知要支援時，FCN 與 Stepdown 一起另開 Issue。
+第 1 頁第 1 行只有 `中文投資人須知(適用於專業投資人及OSU客戶)`，`刊印日期：…` 在下一行（`natixis-zh-iis` 要求兩者在同一行），也有大量 CJK 相容字，部分商品簡介欄位的寫法不同。條件 1 不成立 → **停在本範本（有條件 2 的 Stepdown 標記，不退回 DACN、FCN 範本）、判範本不符，轉人工覆核**（同版面的 Natixis FCN 投資人須知也是範本不符）。說明書（早期版面）照常自動核對。早期版面的投資人須知要支援時，FCN 與 Stepdown 一起另開 Issue。
 
 ## 4. 樣本總表
 

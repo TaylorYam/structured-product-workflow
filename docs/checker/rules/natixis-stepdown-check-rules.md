@@ -3,7 +3,7 @@
 - 文件側：[Natixis FCN_Stepdown 範本規格](../templates/natixis-zh-stepdown.md)（`natixis-zh-stepdown-pd`）、[Natixis FCN_Stepdown 投資人須知範本規格](../templates/natixis-zh-stepdown-iis.md)（`natixis-zh-stepdown-iis`）
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [Natixis FCN_Stepdown 下單資料格式](../order-formats/natixis-stepdown-reference.md)
 - 商品：FCN_Stepdown（workflow ADR 0033、#537）；Barclays 先開放（workflow #544），本文件是第二家（workflow #545）。KO 降幅與每期 KO% 的核對、D 型每期比價日沿用 Barclays 實作時放進共用層的讀法與規則（`parsers/stepdown.py`、`field.ko_step_pct`、`field.ko_levels`，[共用核對規則](shared-check-rules.md)）
-- 狀態：規格（workflow #545）；實作另開 PR。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記略過**（同 DACN／BEN 第一波，§7）
+- 狀態：已實作（workflow #545：`rules/natixis_stepdown.py`、`rules/natixis_stepdown_iis.py`）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記略過**（同 DACN／BEN 第一波，§7）
 - 本文件只寫和 [Natixis 核對規則](natixis-check-rules.md)（FCN）不同或 Stepdown 特有的部分。沒提到的（審查標準、固定警語、名稱、受託機構、發行機構名稱與信用評等、幣別、費率、最低申購與贖回、受理申購日、刊印日期、審查通過日期、配息率、價格推算、表頭 %、KI、日期表、Non-Call、KO 每日到最終評價日含不含、情境分析、受託機構商品代號）照 Natixis FCN
 
 ## 1. 範圍
@@ -26,7 +26,7 @@
 
 | 檢查 | 規則 |
 |---|---|
-| 開放 | `[auto_check_products]` 的 `FCN_Stepdown` 加 `NATIXIS`（實作 PR）；沒開放的上手照未開放商品轉人工 |
+| 開放 | `[auto_check_products]` 的 `FCN_Stepdown` 含 `NATIXIS`；沒開放的上手照未開放商品轉人工 |
 | 範本版本 | 寫法和範本規格 §4 不同 → 不支援的範本版本（`template.detect`，原因 `template_unsupported`），錯訊列出不成立的條件 |
 | 商品種類一致 | 辨識到的範本商品家族 ≠ Product → 轉人工覆核（共用 `template.product_family`）；Product 空白視為 FCN |
 | 不支援樣態 | 照 Natixis FCN（沒有黑名單） |
@@ -72,7 +72,7 @@ D 型 Stepdown：`比價日_{Non-Call}`～`比價日_{天期}` = 第 12 項 (6) 
 |---|---|
 | 名稱 | = 說明書封面名稱（同 FCN 名稱樣板） |
 | KO 價格定義（`iis.ko_definition`） | 只接受參照說明書第 14 項的一句（`為中文產品說明書第一章第14項所列之期初進場價格`）；寫固定 %（`期初進場價格之Y%`）或其他寫法 → 判不一致（Stepdown 每期 KO% 不同）；同時有 `為下表所列之期初進場價格` 與參照說明書兩句（投資人須知沒有表）→ 轉人工覆核，可以人工放行（**待使用者決定**，§9） |
-| 早期版面 | 第 1 行標題與刊印日期分兩行 → 三個 Natixis 投資人須知範本都不符，轉人工覆核（同 Natixis FCN，範本規格 §3） |
+| 早期版面 | 第 1 行標題與刊印日期分兩行 → 停在 Stepdown 投資人須知範本、判範本不符，轉人工覆核（同版面的 Natixis FCN 也不支援，範本規格 §3） |
 
 ## 4. 判定原則
 
