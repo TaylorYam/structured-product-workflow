@@ -160,6 +160,7 @@ OOS 中 HSBC 週五交易、下週一刊印，以及受理申購從交易日前�
   - 一般 BEN：中文 `英商摩根士丹利發行{天期}個月期{幣別中文}計價連結{標的寫法}紅利表現結構型商品(無保證機構)(無擔保)(不保本)(下稱「本商品」)`，英文 `Morgan Stanley & Co. International Plc issuance of {天期} Months {幣別代碼} Bonus Enhanced Notes linked to {標的寫法} (non-guaranteed)(unsecured)(non-principal protected)`。
   - Digital：中文 `英商摩根士丹利發行{天期}個月期{幣別中文}計價連結{標的寫法}結構型商品(無保證機構)(無擔保)(不保本)(下稱「本商品」)`（沒有產品字樣），英文 `… {幣別代碼} Equity Linked Notes linked to {標的寫法} (non-guaranteed)(unsecured)(non-principal protected)`；名稱太通用，還要範本辨識的 Digital 條件都成立才用（2026-11-02 使用者確認（BEN-376-03），詳見本機疑慮記錄）。
   - 標的寫法佔位符、1 個月單數 `Month` 與比對方式同 MS FCN；其他審查標準和 MS FCN 相同。
+- **DACN 商品名稱樣板**（`issuer.ms.product_names.DACN`，workflow #550 規格；參考條件表 Product 是 DACN 時用這個樣板）：中文 `英商摩根士丹利發行{tenor}個月期{ccy_zh}計價連結{underlying_zh}區間累積配息{memory_zh}結構型商品(無保證機構)(無擔保)(不保本)(下稱「本商品」)`，英文 `Morgan Stanley & Co. International Plc issuance of {tenor} Months {ccy} Autocallable Range Accrual Notes linked to {underlying_en} (non-guaranteed)(unsecured)(non-principal protected)`；和 FCN 樣板只差產品字樣，標的寫法、記憶式字樣與比對方式同 FCN；2 份樣本都符合。其他審查標準和 MS FCN 相同（[MS DACN 核對規則](ms-dacn-check-rules.md) §3.6）。作業人員獨立標記不做（路線圖 #551）。
 - **發行機構全名**（`issuer.ms.issuer_name`）：英商摩根士丹利國際股份有限公司(Morgan Stanley & Co. International Plc.)；第二章寫法沒有括號與英文結尾句點，比對時忽略（`issuer.ms.issuer_name_ignore`）；第一章 §3 只寫中文，只比中文。
 - **受託機構電話**：封面寫 `+886 2 5556 1313`，`phone_equivalents` 加這個寫法。
 - **受託機構地址**：第二章「◎ 營業所在地」寫 `台北市民生東路三段158號6樓`（少「松山區」），2026-10-09 確認視為正確，`address_equivalents` 加這個寫法。

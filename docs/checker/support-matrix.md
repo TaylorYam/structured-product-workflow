@@ -68,6 +68,8 @@ BNP DACN 的文件（workflow #548 已實作）：[說明書範本](templates/bn
 
 UBS DACN 的文件（workflow #549 規格，實作另開 PR；實作前照未開放商品轉人工核對）：[說明書範本](templates/ubs-zh-dacn.md)、[投資人須知範本](templates/ubs-zh-dacn-iis.md)、[參考條件表對照](order-formats/ubs-dacn-reference.md)、[核對規則](rules/ubs-dacn-check-rules.md)（只支援現行版範本；名稱 `區間累計配息`／`Range Accrual`，靠八的變動配息率與「區間下限價」辨識；KO 每日（記憶式、非記憶式都有樣本）、多標的、無 KI、美元、保證 1 期；其他沒有樣本的型態轉人工；名稱觀察方式字樣、`一籃子`、nt 單一標的寫法、情境年化報酬率暫定做法待使用者決定）。
 
+MS DACN 的文件（workflow #550 規格，實作另開 PR；實作前照未開放商品轉人工核對）：[說明書範本](templates/ms-zh-dacn.md)、[投資人須知範本](templates/ms-zh-dacn-iis.md)、[參考條件表對照](order-formats/ms-dacn-reference.md)、[核對規則](rules/ms-dacn-check-rules.md)（只支援現行版範本；名稱 `區間累積配息`／`Range Accrual`，靠第 15 項 n(j) 比執行價辨識，配息門檻 = 執行價；KO 每日＋記憶式、多標的、KI 到期、美元、保證 1 期；KI 每期觀察（MKI）照 #386 轉人工；其他沒有樣本的型態轉人工；情境二～四依天數假設算出的配息、損益、年化報酬率暫定不核、待使用者決定）。
+
 ## 目前設定明確不支援的樣態
 
 下表是 `config/issuer_prefixes.toml` 的 `[unsupported_variants]`，不是 parser 能力或樣本涵蓋率的完整清單。參考條件表、說明書或同商品投資人須知任一邊明確是黑名單樣態，兩份都停止條件核對、不回填、不能人工放行。未列入黑名單的組合仍須通過範本、必要欄位與規則檢查。
