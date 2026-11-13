@@ -68,11 +68,11 @@ def sample_names(spec: DacnSpec) -> list[Edit]:
     [
         (D0, None),
         (D0, WITH_BARRIER),
-        (DacnSpec(memory=False, tenor=4), WITH_BARRIER),
+        (DacnSpec(memory=False, tenor=5, strike=Decimal("72.00")), WITH_BARRIER),
         (DacnSpec(annual=Decimal("10.50"), count=4, tenor=12), None),
         (B75, WITH_BARRIER),
     ],
-    ids=["no-column", "with-column", "not-memory-4m", "annual-10.5-4ul-12m", "barrier-75"],
+    ids=["no-column", "with-column", "not-memory-5m-72", "annual-10.5-4ul-12m", "barrier-75"],
 )
 def test_supported_dacn_pairs_pass_and_fill(tmp_path, spec, headers):
     ts, iis = check_pair(tmp_path, spec, headers=headers)
