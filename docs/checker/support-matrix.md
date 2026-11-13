@@ -46,7 +46,7 @@ Super Bull 只支援 KO 每期觀察＋非記憶式＋無 KI（`Period End`＋`N
 
 BEN 沒有 KO、沒有定期配息、無 KI，只在到期判定（[ADR 0029](../adr/0029-ben.md)）；參考條件表的參與率(%) 只有 BEN 核對，沒有這欄或空白轉人工。HSBC BEN 的文件：[說明書範本](templates/hsbc-zh-ben.md)、[投資人須知範本](templates/hsbc-zh-ben-iis.md)、[參考條件表對照](order-formats/hsbc-ben-reference.md)、[核對規則](rules/hsbc-ben-check-rules.md)（只支援現行版範本的 Maxi 與 Digital；Maxi 1 檔或 4 檔以上標的、Digital 2 檔以上標的、非美元轉人工；參與率由到期公式推得：Maxi 100、Digital 0）。CA BEN 的文件：[說明書範本](templates/ca-zh-ben.md)、[投資人須知範本](templates/ca-zh-ben-iis.md)、[參考條件表對照](order-formats/ca-ben-reference.md)、[核對規則](rules/ca-ben-check-rules.md)（只支援現行版 Bonus 範本；KO 價欄版、早期版與 Digital 轉人工、不能人工放行；1 檔或 3 檔以上標的、非美元、境外人民幣、標的報價幣別和計價幣別不同轉人工；K% 不是 100 照規則核對（待樣本驗證）；參與率讀第 9 項）。MS BEN 的文件：[說明書範本](templates/ms-zh-ben.md)、[投資人須知範本](templates/ms-zh-ben-iis.md)、[參考條件表對照](order-formats/ms-ben-reference.md)、[核對規則](rules/ms-ben-check-rules.md)（只支援現行版範本的一般 BEN 與 Digital，各有 lookback；一般 BEN 1 檔或 4 檔以上標的、Digital 2 檔以上標的、非美元轉人工；參與率讀說明書 §15(3)；lookback 的回顧結束日核對並回填參考條件表「回顧結束日」）。
 
-KI 每期觀察（MKI）的 DACN 在流程各階段都不支援、全程人工建檔與追蹤（2026-11-02 使用者決定，workflow #386；等量變多再另開 Issue 支援）：各上手 DACN 核對都不會自動通過（Nomura、SG、Natixis、Barclays 照沒有樣本的型態轉人工覆核；BNP 錯訊寫「每期觀察 KI 維持人工處理（#386）」；DBS 讀不到每期觀察的下限觸發事件而轉人工覆核，參考條件表寫 `P` 是 DBS 的不支援樣態；還沒開放的上手照未開放商品轉人工核對）。各家 DACN 的範本版本只看寫法、不看交易日（2026-11-02 使用者決定，workflow #409；Barclays #547、BNP #548 照同一原則）。
+KI 每期觀察（MKI）的 DACN 在流程各階段都不支援、全程人工建檔與追蹤（2026-11-02 使用者決定，workflow #386；等量變多再另開 Issue 支援）：各上手 DACN 核對都不會自動通過（Nomura、SG、Natixis、Barclays 照沒有樣本的型態轉人工覆核；BNP、UBS 錯訊寫「每期觀察 KI 維持人工處理（#386）」；DBS 讀不到每期觀察的下限觸發事件而轉人工覆核，參考條件表寫 `P` 是 DBS 的不支援樣態；還沒開放的上手照未開放商品轉人工核對）。各家 DACN 的範本版本只看寫法、不看交易日（2026-11-02 使用者決定，workflow #409；Barclays #547、BNP #548、UBS #549 照同一原則）。
 
 Nomura DACN 的文件（workflow #368 已實作）：[說明書範本](templates/nomura-zh-dacn.md)、[投資人須知範本](templates/nomura-zh-dacn-iis.md)、[參考條件表對照](order-formats/nomura-dacn-reference.md)、[核對規則](rules/nomura-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工）。
 
@@ -66,7 +66,7 @@ Barclays DACN 的文件（workflow #547 已實作）：[說明書範本](templat
 
 BNP DACN 的文件（workflow #548 已實作）：[說明書範本](templates/bnp-zh-dacn.md)、[投資人須知範本](templates/bnp-zh-dacn-iis.md)、[參考條件表對照](order-formats/bnp-dacn-reference.md)、[核對規則](rules/bnp-dacn-check-rules.md)（只支援現行版範本；靠 §15 配息公式與「定界價格」辨識，名稱另當條件；KO 每日＋記憶式、多標的、KI 每日／到期、美元、保證 1 期；KI 每期觀察（MKI）照 #386 轉人工；其他沒有樣本的型態轉人工）。
 
-UBS DACN 的文件（workflow #549 規格，實作另開 PR；實作前照未開放商品轉人工核對）：[說明書範本](templates/ubs-zh-dacn.md)、[投資人須知範本](templates/ubs-zh-dacn-iis.md)、[參考條件表對照](order-formats/ubs-dacn-reference.md)、[核對規則](rules/ubs-dacn-check-rules.md)（只支援現行版範本；名稱 `區間累計配息`／`Range Accrual`，靠八的變動配息率與「區間下限價」辨識；KO 每日（記憶式、非記憶式都有樣本）、多標的、無 KI、美元、保證 1 期；其他沒有樣本的型態轉人工；名稱觀察方式字樣、`一籃子`、nt 單一標的寫法、情境年化報酬率暫定做法待使用者決定）。
+UBS DACN 的文件（workflow #549 已實作）：[說明書範本](templates/ubs-zh-dacn.md)、[投資人須知範本](templates/ubs-zh-dacn-iis.md)、[參考條件表對照](order-formats/ubs-dacn-reference.md)、[核對規則](rules/ubs-dacn-check-rules.md)（只支援現行版範本；名稱 `區間累計配息`／`Range Accrual`，靠八的變動配息率與「區間下限價」辨識；KO 每日（記憶式、非記憶式都有樣本）、多標的、無 KI、美元、保證 1 期；其他沒有樣本的型態轉人工；名稱觀察方式字樣、`一籃子`、nt 單一標的寫法、情境年化報酬率暫定做法待使用者決定）。
 
 MS DACN 的文件（workflow #550 規格，實作另開 PR；實作前照未開放商品轉人工核對）：[說明書範本](templates/ms-zh-dacn.md)、[投資人須知範本](templates/ms-zh-dacn-iis.md)、[參考條件表對照](order-formats/ms-dacn-reference.md)、[核對規則](rules/ms-dacn-check-rules.md)（只支援現行版範本；名稱 `區間累積配息`／`Range Accrual`，靠第 15 項 n(j) 比執行價辨識，配息門檻 = 執行價；KO 每日＋記憶式、多標的、KI 到期、美元、保證 1 期；KI 每期觀察（MKI）照 #386 轉人工；其他沒有樣本的型態轉人工；情境二～四依天數假設算出的配息、損益、年化報酬率暫定不核、待使用者決定）。
 
