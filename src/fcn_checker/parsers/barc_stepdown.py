@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import re
 from collections.abc import Sequence
 from dataclasses import replace
 from decimal import Decimal
@@ -17,7 +18,7 @@ from ..text import squash
 from . import barc, stepdown
 from . import barc_schedule as schedule
 from .common import derived
-from .layout import Document, Span
+from .layout import Document, Span, TextIndex
 
 TEMPLATE_ID = "barc-zh-stepdown-pd"
 PARSER_VERSION = "1"
@@ -113,8 +114,8 @@ def detect(doc: Document) -> DetectionResult:
 
 def _memory(doc: Document, name_zh: ParsedField) -> ParsedField:
     """記憶式：第 13 條 (7) 的記憶事件句（第 15 條沒有觸發價格名詞）；須和商品名稱含「記憶式」一致（同 BARC FCN）。"""
-    lines = doc.span_lines(_art(doc, 13))
-    hits = [ln for ln in lines if MEMORY in squash(ln.text)]
+    ti = TextIndex(doc.span_lines(_art(doc, 13)))  # 和範本辨識同一種找法（整段去空白），句子斷行也找得到
+    hits = [ln for m in ti.finditer(re.escape(MEMORY)) for ln in ti.lines_for(m.start(), m.end())]
     if not hits:
         return ParsedField.missing("ko_memory", "第 13 條 (7) 找不到記憶事件句（「應視為已發生「記憶事件」」）")
     if name_zh.ok and "記憶式" not in name_zh.value:
