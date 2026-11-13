@@ -133,6 +133,7 @@ SYNTH_SPECS = [
     ("sg_synth", "Spec"),
     ("sg_synth", "DacnSpec"),
     ("ubs_synth", "Spec"),
+    ("ubs_synth", "DacnSpec"),
 ]
 
 

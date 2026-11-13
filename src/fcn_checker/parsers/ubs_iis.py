@@ -75,6 +75,13 @@ def body(lines: Sequence[Line]) -> list[Line]:
 
 
 def detect(lines: Sequence[Line]) -> DetectionResult:
+    failed, evidence = skeleton(lines, ubs.NAME_ZH_MARK, ubs.NAME_EN_MARK)
+    return DetectionResult(not failed, failed, evidence)
+
+
+def skeleton(lines: Sequence[Line], zh_mark: str, en_mark: str) -> tuple[list[str], list[Evidence]]:
+    """UBS 新版投資人須知骨架（範本規格 §5）：中英文名稱的商品標記由呼叫端給（FCN 同說明書；DACN 見
+    parsers/ubs_dacn_iis.py）。回傳不成立的條件與證據。"""
     lines = body(lines)
     text = TextIndex(lines).text
     head = squash(lines[0].text) if lines else ""
@@ -90,12 +97,12 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
             "前兩行不是「中文投資人須知」「商品中文名稱：瑞銀…」",
         ),
         (
-            zh is not None and zh[1].startswith("瑞銀") and ubs.NAME_ZH_MARK in zh[1],
-            f"中文名稱不是以「瑞銀」開頭或沒有「{ubs.NAME_ZH_MARK}」",
+            zh is not None and zh[1].startswith("瑞銀") and zh_mark in zh[1],
+            f"中文名稱不是以「瑞銀」開頭或沒有「{zh_mark}」",
         ),
         (
-            en is not None and en[1].startswith("UBS") and squash(ubs.NAME_EN_MARK) in en[1],
-            f"英文名稱不是以「UBS」開頭或沒有「{ubs.NAME_EN_MARK}」",
+            en is not None and en[1].startswith("UBS") and squash(en_mark) in en[1],
+            f"英文名稱不是以「UBS」開頭或沒有「{en_mark}」",
         ),
         # 新舊版看段落（舊版沒有「相關機構之權利、義務及責任」）；新版版面寫舊版商品種類時照新版讀，
         # 商品種類交給欄位核對列不一致（workflow #421）。沒有段名、直接寫權利義務那一項的版面，商品種類是新版寫法才算新版
@@ -117,7 +124,7 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     ):
         if not ok:
             failed.append(message)
-    return DetectionResult(not failed, failed, [Evidence.of(x) for x in lines[:2]])
+    return failed, [Evidence.of(x) for x in lines[:2]]
 
 
 def underlyings(ti: TextIndex) -> ParsedField:

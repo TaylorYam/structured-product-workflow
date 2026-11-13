@@ -35,6 +35,7 @@ FAMILY_SPECS = {
     "BARC": [("barc_synth", "Spec"), ("barc_synth", "StepdownSpec"), ("barc_synth", "DacnSpec")],
     "CA": [("ca_synth", "Spec"), ("ca_synth", "SbSpec"), ("ca_synth", "BenSpec"), ("ca_synth", "StepdownSpec")],
     "DBS": [("dbs_synth", "Spec"), ("dbs_synth", "DacnSpec")],
+    "UBS": [("ubs_synth", "Spec"), ("ubs_synth", "DacnSpec")],
 }
 
 
@@ -149,6 +150,8 @@ CLAIM_MARKS = [
     ("BARC", "barc_synth", "iis", "配息門檻"),
     ("BNP", "bnp_synth", "pd", "定界價格"),
     ("BNP", "bnp_synth", "iis", "定界價格"),
+    ("UBS", "ubs_synth", "pd", "區間下限價"),
+    ("UBS", "ubs_synth", "iis", "區間累計配息"),
 ]
 
 

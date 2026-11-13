@@ -1,0 +1,90 @@
+"""本機 UBS DACN 真實樣本（workflow #549）；交易資料不進 Git，CI 自動略過。測試碼不含真實商品代號或數值。
+
+樣本為說明書＋投資人須知成對（`real_data.DACN`）。斷言與探勘結論一致（docs/checker/templates/ubs-zh-dacn.md §4、
+docs/checker/rules/ubs-dacn-check-rules.md §5）：3 份說明書與 3 份投資人須知都是現行版、辨識成 UBS DACN；沒有一份被認成
+UBS FCN；每個欄位都讀得到。全部美元、多標的、KO 每日、無 KI、配息表保證期數 = 十四 = Non-Call = 1、配息門檻 = 轉換價 %、
+區間下限價 = 期初價格 × %；記憶式 2 份、非記憶式 1 份；nt 定義 2 份是多標的寫法、1 份是單一標的寫法。投資人須知的保證期數 =
+同商品說明書。參考條件表要另外準備，整批核對的試跑結果記在 PR。
+"""
+
+from collections import Counter
+from decimal import ROUND_HALF_UP, Decimal
+
+import fitz
+import pytest
+
+from fcn_checker.extraction import extract_lines
+from fcn_checker.issuers import UBS_DACN, detect, detect_iis
+from fcn_checker.schema import CheckStatus as S
+from fcn_checker.schema import FieldStatus
+from real_data import DACN, requires
+
+pytestmark = [pytest.mark.real_samples, requires(DACN / "092*_TS.pdf")]
+READ = (FieldStatus.PRESENT, FieldStatus.NOT_APPLICABLE)
+Q4 = Decimal("0.0001")
+
+
+def _lines(path):
+    with fitz.open(path) as doc:
+        return extract_lines(doc)
+
+
+@pytest.fixture(scope="module")
+def documents():
+    """每份樣本：（商品代號, 是否投資人須知, 辨識到的範本, 辨識結果, 讀出結果或 None）。"""
+    out = []
+    for path in sorted(DACN.glob("092*.pdf")):
+        iis = path.stem.endswith("_IIS")
+        lines = _lines(path)
+        template, result = (detect_iis if iis else detect)(lines)
+        sheet = None
+        if template is UBS_DACN and result.status == S.PASS:
+            sheet = (UBS_DACN.iis.read if iis else UBS_DACN.read)(lines)
+        out.append((path.stem[:12], iis, template, result, sheet))
+    return out
+
+
+def test_samples_are_current_ubs_dacn(documents):
+    seen = Counter((iis, r.actual) for _, iis, _, r, _ in documents)
+    assert seen == Counter({(False, UBS_DACN.template_id): 3, (True, UBS_DACN.iis.template_id): 3})
+    assert all(template is UBS_DACN for _, _, template, _, _ in documents), "沒有一份被認成 UBS FCN"
+
+
+def test_every_field_of_the_samples_is_read(documents):
+    unread = Counter(
+        (iis, name)
+        for _, iis, _, _, sheet in documents
+        if sheet is not None
+        for name, pf in sheet.fields.items()
+        if pf.status not in READ
+    )
+    assert unread == Counter()
+
+
+def test_samples_follow_the_sampled_dacn_terms(documents):
+    term_sheets = [s for _, iis, _, _, s in documents if s is not None and not iis]
+    assert len(term_sheets) == 3
+    memory, scope = Counter(), Counter()
+    for ts in term_sheets:
+        f = ts.f
+        assert (f("ko_observation").value, f("ki_type").value, f("currency_zh").value) == ("D", "none", "美元")
+        assert len(f("underlyings").value) >= 3
+        g = f("coupon_guaranteed_periods").value
+        assert g == f("guaranteed_periods_art14").value == f("first_callable_period").value == 1
+        pct = f("coupon_barrier_pct").value
+        assert pct == f("strike_pct").value
+        for row in f("underlying_prices").value:
+            assert row.prices["barrier"] == (row.prices["initial"] * pct / 100).quantize(Q4, ROUND_HALF_UP)
+        memory[f("ko_memory").value] += 1
+        scope[f("accrual_scope").value] += 1
+    assert memory == Counter({True: 2, False: 1})
+    assert scope == Counter({"all": 2, "single": 1})
+
+
+def test_investor_sheets_agree_with_their_term_sheets(documents):
+    by_code = {(code, iis): s for code, iis, _, _, s in documents if s is not None}
+    pairs = [(by_code[(code, False)], s) for (code, iis), s in by_code.items() if iis]
+    assert len(pairs) == 3
+    for ts, iis in pairs:
+        assert iis.f("guaranteed_periods").value == ts.f("coupon_guaranteed_periods").value
+        assert iis.f("name_zh").value == ts.f("name_zh").value
