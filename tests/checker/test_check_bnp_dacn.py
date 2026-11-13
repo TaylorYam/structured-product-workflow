@@ -347,6 +347,13 @@ def test_other_places_of_the_rate_must_match_article15(tmp_path, edit, rule_ids)
 P = DacnSpec(days=19, best_days=15, worse_days=5)
 
 
+def test_best_annualized_is_checked_when_n_equals_m(tmp_path):
+    """對照組：最佳情況寫的 n = M（樣本寫法）時年化 = 年利率照常核對，改錯判不一致（n ≠ M 時才跳過，見下一個測試）。"""
+    r = check(tmp_path, edits=[Edit("(年化報酬率：12.000%)", "(年化報酬率：12.345%)", "ts.scen.二")])
+    assert flagged(r, "scenario.params", S.MISMATCH), problems(r)
+    assert {rid for rid, _, _ in problems(r)} == {"scenario.params"}, problems(r)
+
+
 def test_accrual_scenarios_use_the_written_days(tmp_path):
     """第 2 期起配息、累積、總報酬率用文件寫的 n、M 驗算；假設本身不核（§18 假設行的 M 和算式不同也不判錯）。最佳情況寫的
     n ≠ M（沒有樣本）時年化依假設算出、不等於年利率：年化那一項不產生結果（不核也不轉人工），改了也不判錯。"""
