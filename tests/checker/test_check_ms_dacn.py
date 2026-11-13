@@ -53,9 +53,9 @@ def only(report, rule_id: str, status: S = S.MISMATCH) -> None:
         (D0, None),
         (D0, WITH_BARRIER),
         (DacnSpec(annual=Decimal("10.50"), count=4, tenor=12), WITH_BARRIER),
-        (DacnSpec(count=3, tenor=6, strike=Decimal("65.00")), None),
+        (DacnSpec(count=3, tenor=6, strike=Decimal("67.00")), None),
     ],
-    ids=["no-column", "with-column", "annual-10.5-4ul-12m", "3ul-6m-strike-65"],
+    ids=["no-column", "with-column", "annual-10.5-4ul-12m", "3ul-6m-strike-67"],
 )
 def test_supported_dacn_pairs_pass_and_fill(tmp_path, spec, headers):
     ts, iis = check_pair(tmp_path, spec, headers=headers)

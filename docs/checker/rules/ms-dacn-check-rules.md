@@ -30,7 +30,7 @@
 | 開放 | `[auto_check_products]` 的 `DACN` 加 `MS`；沒開放的上手照不支援樣態轉人工 |
 | 範本版本 | 寫法和現行版不同 → 不支援的範本版本（`template.detect`，原因 `template_unsupported`），錯訊列出缺的特徵；不看交易日 |
 | 商品種類一致 | 辨識到的範本商品家族 ≠ Product → 轉人工覆核（共用 `template.product_family`）；Product 空白視為 FCN |
-| 沒有樣本的型態 | 說明書讀出的型態不是「美元計價、2～4 檔標的、KO 每日＋記憶式、KI 到期觀察、保證 1 期、Non-Call 1」（KO 每期觀察也在這裡）→ 轉人工覆核（`doc.template_variant`），錯訊寫出哪一項「待樣本驗證」；KI 每期觀察照 #386 也在這裡轉人工，錯訊寫「每期觀察 KI 維持人工處理（#386）」 |
+| 沒有樣本的型態 | 說明書讀出的型態不是「美元計價、2～4 檔標的、KO 每日＋記憶式、KI 到期觀察、保證 1 期、Non-Call 1」（KO 每期觀察也在這裡）→ 轉人工覆核（`doc.template_variant`），錯訊寫出哪一項「待樣本驗證」；KI 每期觀察（MKI）由 MS 的不支援樣態清單先擋（`batch.variant`，§1），走不到這裡；清單拿掉 MKI 後才在這裡轉人工，錯訊寫「每期觀察 KI 維持人工處理（#386）」 |
 
 ### 3.2 參考條件表欄位（共用 `rules/reference.py`、`backfill.py`）
 
