@@ -386,6 +386,7 @@ class CheckTab(ttk.Frame):
     視窗本身（標題、大小、關閉）由 `sp_workflow.app` 建立；審查通過日期、匯出回報包與使用的設定檔
     在視窗的「維護」選單，選單呼叫 edit_approval_dates、export_bundle、show_config_paths。
     上一步帶入的 PDF 用 receive_pdfs；存檔成功時呼叫 on_saved(核對結果檔)，下一步按鈕由 add_next_step 加上（#76）。
+    存檔時先問外殼給的 result_folder：回傳資料夾（例：這批的批次資料夾）就直接存進去，None 才讓作業人員選（#561）。
     資料庫來源要連線前，先在主執行緒呼叫外殼給的 login（需要時問密碼，取消時回傳 False，#129）。
     工作階段有資料庫來源時（#68），卡片最上面多一列「條件來源」：資料庫（預設，#108）或 Excel 參考條件表；
     選資料庫時「參考條件表」那一列收起來。資料庫來源存檔後寫回資料庫，寫回失敗時出現「重新寫回資料庫」。
@@ -400,10 +401,11 @@ class CheckTab(ttk.Frame):
         *,
         on_saved: Callable[[Path], None] | None = None,
         login: Callable[[], bool] = lambda: True,
+        result_folder: Callable[[], Path | None] = lambda: None,
     ):
         super().__init__(parent, padding=(pixels(28), pixels(22)))
         self.root, self.session, self.pixels = self.winfo_toplevel(), session, pixels
-        self.on_saved, self.login = on_saved, login
+        self.on_saved, self.login, self.result_folder = on_saved, login, result_folder
         self.next_button: NextButton | None = None
         self.background = Background(self.root)
         self.pending: Future | None = None
@@ -824,14 +826,17 @@ class CheckTab(ttk.Frame):
         if not self.has_result or self._busy_any() or not self._database_ready():
             return
         self._busy(True)
-        destination = filedialog.askdirectory(parent=self.root, title="選取核對結果檔的保存資料夾")
-        if not destination:
-            self.status.set(self.session.save(None).summary)
-            self._busy(False)
-            return
+        destination = self.result_folder()  # 這批的批次資料夾直接存，不問（#561）
+        if destination is None:
+            chosen = filedialog.askdirectory(parent=self.root, title="選取核對結果檔的保存資料夾")
+            if not chosen:
+                self.status.set(self.session.save(None).summary)
+                self._busy(False)
+                return
+            destination = Path(chosen)
         self.status.set("儲存中…")
         self._start(
-            "save_pending", lambda: self.session.save(Path(destination)), self._show_receipt, "儲存失敗，核對結果仍保留"
+            "save_pending", lambda: self.session.save(destination), self._show_receipt, "儲存失敗，核對結果仍保留"
         )
 
     def _show_receipt(self, receipt: SaveReceipt):
