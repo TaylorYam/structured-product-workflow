@@ -60,6 +60,7 @@
 - 英文：`{天期} Months {幣別代碼} {Memory }Autocallable Equity Linked Note issued by Barclays Bank PLC (unsecured and non-guaranteed)`
 - `{記憶式}`／`{Memory }` 只在記憶式商品出現。
 - 中文名稱必須包含「（不保本）」；英文名稱不加 principal protection 相關字樣。
+- **DACN 沿用同一樣板**（workflow #547 規格）：BARC DACN 的中英文名稱和 FCN 同一句（5 份樣本），不設 `issuer.barc.product_names.DACN`；參考條件表 Product 是 DACN 時照 `issuer.barc.product_name`。其他審查標準和 BARC FCN 相同（[BARC DACN 核對規則](barc-dacn-check-rules.md) §3.7）。作業人員獨立標記不做（路線圖 #551 指示）。
 
 ### 2.2 HSBC 的差異（2026-10-01 確認，Issue #32）
 

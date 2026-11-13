@@ -57,6 +57,8 @@ Natixis DACN 的文件（workflow #371 已實作）：[說明書範本](template
 
 BARC FCN_Stepdown 的文件（workflow #544 規格，實作中；開放前 Stepdown 照未開放商品轉人工核對）：[說明書範本](templates/barc-zh-stepdown.md)、[投資人須知範本](templates/barc-zh-stepdown-iis.md)、[參考條件表對照](order-formats/barc-stepdown-reference.md)、[核對規則](rules/barc-stepdown-check-rules.md)（KO% 每期固定往下降、記憶式、KO 每日或每期觀察；非記憶式與不等距轉人工；D 型比價日每一期都填，ADR 0033）。
 
+Barclays DACN 的文件（workflow #547 規格，實作另開 PR；實作前照未開放商品轉人工核對）：[說明書範本](templates/barc-zh-dacn.md)、[投資人須知範本](templates/barc-zh-dacn-iis.md)、[參考條件表對照](order-formats/barc-dacn-reference.md)、[核對規則](rules/barc-dacn-check-rules.md)（只支援現行版範本；名稱和 FCN 相同，靠 §14 配息公式辨識；KO 每日＋記憶式、多標的、KI 無／到期、美元、保證 1 期；其他沒有樣本的型態轉人工）。
+
 ## 目前設定明確不支援的樣態
 
 下表是 `config/issuer_prefixes.toml` 的 `[unsupported_variants]`，不是 parser 能力或樣本涵蓋率的完整清單。參考條件表、說明書或同商品投資人須知任一邊明確是黑名單樣態，兩份都停止條件核對、不回填、不能人工放行。未列入黑名單的組合仍須通過範本、必要欄位與規則檢查。
