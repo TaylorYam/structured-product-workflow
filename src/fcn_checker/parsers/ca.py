@@ -131,7 +131,7 @@ SCENARIO_TABLE = replace(PRICE_TABLE, where="第 16 項情境價格表")
 @dataclass(frozen=True)
 class Variant:
     """同上手其他商品家族說明書（例：parsers/ca_stepdown.py）沿用本讀法時不同的地方：第 9 項與第 16 項價格表的欄、
-    記憶式第二句收哪些寫法。"""
+    記憶式第二句收哪些寫法。和 `ca_variants.Variant`（Super Bull、BEN 第 16 項的寫法）是不同的東西。"""
 
     table: price_table.TableSpec
     memory_same: tuple[str, ...] = (MEMORY_SAME,)
@@ -507,8 +507,8 @@ def table_fields(fields: dict[str, ParsedField]) -> None:
         bad = table if not table.ok else tickers
         fields["underlyings"] = derived("underlyings", bad)
         fields["underlying_prices"] = derived("underlying_prices", bad)
-    # 價格表表頭一定有執行價（price_table 檢查過）；FCN 一定有自動提前出場價，FCN_Stepdown 沒有這欄（KO% 由
-    # parsers/ca_stepdown.py 讀每期 KO 表）；有無下限價欄與界限事件的一致性由 ki_type 檢查
+    # 價格表表頭一定有執行價（price_table 檢查過）；自動提前出場價欄看 `Variant` 的價格表宣告（FCN 一定有；宣告拿掉時
+    # KO% 由沿用的範本另讀）；有無下限價欄與界限事件的一致性由 ki_type 檢查
     fields["strike_pct"] = derived("strike_pct", table, table.value.pcts["strike"] if table.ok else None)
     if table.ok and "ko" not in table.value.pcts:
         fields["ko_pct"] = ParsedField.missing("ko_pct", "第 9 項價格表沒有自動提前出場價欄")

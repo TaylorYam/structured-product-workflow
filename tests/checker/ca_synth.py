@@ -177,7 +177,8 @@ class StepdownSpec(Spec):
     `wording`：記憶式兩句的寫法——`stepdown`「相關自動提前出場期所適用之」＋「同一預定交易日或同一自動提前出場觀察期」
     （CS01、CS02）、`fcn` 同 FCN（CS03）、`old` 舊範本的第二句「同一預定交易日」。`layout`：`current` 現行版面、`old` 舊範本
     （每期 KO 表是觀察日表多一欄 KO 價、沒有觀察期定義句；搭配 `ko_obs="P"`）。`ko_pcts` 直接指定每期 KO 表各列的 KO%
-    （不是固定降幅的反例）；`ko_rows` 每期 KO 表的列數（None → 天期；少於配息表是反例）；`art9_ko_column` 價格表仍有 KO 欄
+    （不是固定降幅的反例）；`ko_rows` 每期 KO 表的列數（None → 天期；少於配息表是反例）；`ko_numbers` 每期 KO 表各列的期別
+    （None → 1 起連續；跳號是反例）；`art9_ko_column` 價格表仍有 KO 欄
     （反例）；`iis_period_def` 投資人須知多觀察期定義句（CS02）。"""
 
     product_code: str = "086199990004"
@@ -188,6 +189,7 @@ class StepdownSpec(Spec):
     period_def: bool = True
     ko_pcts: tuple[Decimal, ...] | None = None
     ko_rows: int | None = None
+    ko_numbers: tuple[int, ...] | None = None
     art9_ko_column: bool = False
     iis_period_def: bool = False
 
@@ -243,7 +245,8 @@ def _ko_steps(d: FlowDoc, s: StepdownSpec) -> None:
     else:
         d.w.row([(50, "自動提前出場觀察期 i"), (150, "自動提前出場觀察期結束日"), (320, "自動提前出場價")], gap=14)
         for j in range(s.tenor if s.ko_rows is None else s.ko_rows):
-            d.w.row([(70, str(j + 1)), (150, s.date(s.ends[j])), (320, f"期初訂價之{s.ko_at(j + 1):.2f}%")], gap=13)
+            i = j + 1 if s.ko_numbers is None else s.ko_numbers[j]
+            d.w.row([(70, str(i)), (150, s.date(s.ends[j])), (320, f"期初訂價之{s.ko_at(j + 1):.2f}%")], gap=13)
     d.section = "art9"
     if s.layout != "old" and s.period_def:
         d.text(36, KO_PERIOD_DEF)
@@ -411,8 +414,8 @@ def _price_table(d: FlowDoc, s: Spec, *, index: bool) -> None:
     cols = [("strike", "執行價", s.strike)]
     if s.ki != "none":
         cols.append(("ki", "下限價", s.ki_pct))
-    stepdown_ko = s.step is None or getattr(s, "art9_ko_column", False)  # Stepdown 沒有 KO 欄（workflow #546）
-    if (not isinstance(s, BenSpec) or s.ko_column) and stepdown_ko:
+    draw_ko_column = s.step is None or getattr(s, "art9_ko_column", False)  # Stepdown 沒有 KO 欄（workflow #546）
+    if (not isinstance(s, BenSpec) or s.ko_column) and draw_ko_column:
         cols.append(("ko", "自動提前出場價", s.ko))
     x = dict(HEAD_X)
     if s.ki == "none":

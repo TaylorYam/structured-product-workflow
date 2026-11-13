@@ -26,7 +26,7 @@ TEMPLATE_ID = "ca-zh-stepdown-pd"
 PARSER_VERSION = "1"
 UNSUPPORTED = "CA FCN_Stepdown 的寫法和範本不同"
 
-B, C = "(b)「自動提前出場贖回金額」", "(c)「到期贖回金額」"
+KO_ITEM, MATURITY_ITEM = "(b)「自動提前出場贖回金額」", "(c)「到期贖回金額」"  # 第 9 項 (1) 的 (b)、(c) 小項開頭
 # 商品家族標記（範本規格 §4 條件 2，去空白比對）：第 9 項 (1)(b) 有百分比；CA FCN 的這一段沒有任何百分比
 FAMILY = re.compile(r"期初訂價之\d+(?:\.\d+)?%")
 KO_WHERE = "第 9 項 (1)(b) 每期 KO 表"
@@ -34,6 +34,8 @@ KO_WHERE = "第 9 項 (1)(b) 每期 KO 表"
 HEAD = ("自動提前出場觀察期結束日", "自動提前出場價")
 OLD_HEAD = ca.KO_TABLE_HEAD + "自動提前出場價"  # i｜自動提前出場觀察日｜自動提前出場日｜自動提前出場價
 PERIOD_DEF = "自動提前出場觀察期：自動提前出場觀察期結束日「i-1」"  # 表後的觀察期定義句（現行版面）
+NO_HEAD = f"{KO_WHERE}的表頭讀不到（要有「{'」「'.join(HEAD)}」）"
+NO_ITEMS = f"第 9 項找不到 {KO_ITEM} 或 {MATURITY_ITEM}"
 KO_CELL = "期初訂價之"
 ROW = re.compile(ca.ROW + ca.D + r"\|?" + KO_CELL + r"(\d+\.\d{2})%")  # i＋結束日＋N.NN%（範本規格 §4）
 
@@ -68,8 +70,8 @@ def _article9(doc: Document) -> list[Line]:
 def _region(art9: Sequence[Line]) -> tuple[TextIndex, int, int]:
     """第 9 項 (1)(b) 的位置（找不到時 -1）。"""
     ti = TextIndex(list(art9), separate_digits=True)
-    b = ti.text.find(B)
-    c = ti.text.find(C, b) if b >= 0 else -1
+    b = ti.text.find(KO_ITEM)
+    c = ti.text.find(MATURITY_ITEM, b) if b >= 0 else -1
     return ti, b, c
 
 
@@ -89,17 +91,25 @@ def _section(art9: Sequence[Line]) -> KoSection | None:
     return KoSection(ti.text[start : end if end >= 0 else c], start, ti)
 
 
+def _head(sec: KoSection) -> str:
+    """每期 KO 表第一列之前的文字（表頭在這裡）。"""
+    first = ROW.search(sec.text)
+    return sec.text[: first.start()] if first else sec.text
+
+
+def _has_head(sec: KoSection) -> bool:
+    return all(h in _head(sec) for h in HEAD)
+
+
 def ko_table(art9: Sequence[Line]) -> ParsedField:
     """每期 KO 表：表頭（`HEAD`）後每列「i＋自動提前出場觀察期結束日＋期初訂價之N.NN%」，`i` 須從 1 起連續；表內還有讀不到的
     KO 格 → 不合法。"""
     sec = _section(art9)
     if sec is None:
-        return ParsedField.missing("ko_table", "第 9 項找不到 (b) 自動提前出場贖回金額或 (c) 到期贖回金額")
+        return ParsedField.missing("ko_table", NO_ITEMS)
     ev = sec.index.lines_for(sec.start, sec.start + len(sec.text))
-    first = ROW.search(sec.text)
-    head = sec.text[: first.start()] if first else sec.text
-    if not all(h in head for h in HEAD):
-        return ParsedField.missing("ko_table", f"{KO_WHERE}的表頭讀不到（要有「{'」「'.join(HEAD)}」）")
+    if not _has_head(sec):
+        return ParsedField.missing("ko_table", NO_HEAD)
     matches = list(ROW.finditer(sec.text))
     if not matches:
         return ParsedField.invalid("ko_table", ev, f"{KO_WHERE}讀不到任何一列")
@@ -129,18 +139,14 @@ def _head_problem(art9: Sequence[Line]) -> str:
     """每期 KO 表表頭與觀察期定義句不是現行版面時的說明；是現行版面時空字串。"""
     sec = _section(art9)
     if sec is None:
-        return f"第 9 項找不到 {B} 或 {C}"
-    first = ROW.search(sec.text)
-    head = sec.text[: first.start()] if first else sec.text
-    if not all(h in head for h in HEAD):
-        if OLD_HEAD in head:
+        return NO_ITEMS
+    if not _has_head(sec):
+        if OLD_HEAD in _head(sec):
             return f"{KO_WHERE}是舊範本的表頭（i｜自動提前出場觀察日｜自動提前出場日｜自動提前出場價）"
-        return f"{KO_WHERE}的表頭讀不到（要有「{'」「'.join(HEAD)}」）"
+        return NO_HEAD
     ti, b, c = _region(art9)
     if PERIOD_DEF not in ti.text[b:c]:
-        return (
-            "第 9 項 (1)(b) 沒有自動提前出場觀察期的定義句（「自動提前出場觀察期：自動提前出場觀察期結束日「i-1」…」）"
-        )
+        return f"第 9 項 (1)(b) 沒有自動提前出場觀察期的定義句（「{PERIOD_DEF}…」）"
     return ""
 
 
@@ -156,11 +162,13 @@ def _alignment_problem(table: ParsedField, coupon: ParsedField) -> str:
 
 
 def version_problems(doc: Document) -> list[str]:
-    """商品家族標記成立後，現行寫法（範本規格 §4）中不成立的項目（每期 KO 表讀不到也算）。"""
+    """商品家族標記成立後，現行寫法（範本規格 §4）中不成立的項目，全部列出（每期 KO 表讀不到也算；表頭不是現行版面時不再
+    讀表）。記憶式只排除確定是非記憶式的；只有一句照 CA FCN 由 `field.ko_memory` 轉人工（核對規則 §3.5）。"""
     art9 = _article9(doc)
     out = []
-    if problem := _head_problem(art9):
-        out.append(problem)
+    head = _head_problem(art9)
+    if head:
+        out.append(head)
     fields = FieldsBuilder()
     ca.article9(fields, art9, VARIANT)
     wording, memory = fields["ko_wording"], fields["ko_memory"]
@@ -169,21 +177,19 @@ def version_problems(doc: Document) -> list[str]:
             "第 9 項 (1)(b) 自動提前出場觀察日不是「自第1 個配息期結束日(含)…的每一個預定交易日」"
             "（每期觀察、Non-Call ≥ 2 沒有樣本）"
         )
-    if not (memory.ok and memory.value is True):
-        out.append("第 9 項 (1)(b) 自動提前出場事件不是範本內的記憶式寫法（非記憶式沒有樣本）")
+    if memory.ok and memory.value is False:
+        out.append("第 9 項 (1)(b) 自動提前出場事件是非記憶式（非記憶式沒有樣本）")
     region = ca.table_region(art9, "(2)連結標的：", "投資人請注意：本商品之收益")
     if price_table.read("ko_column", region, ca.PRICE_TABLE).ok:  # 照 FCN 的表頭（有 KO 欄）讀得出來
         out.append("第 9 項 (2) 價格表有自動提前出場價欄")
-    if out:
+    if head:
         return out
     table = ko_table(art9)
     if not table.ok:
-        return [f"讀不到{KO_WHERE}（{table.note or table.status.value}）"]
-    if problem := _alignment_problem(table, fields["coupon_table"]):
-        return [problem]
-    if problem := stepdown.step_problem(_ko_terms(table)):
-        return [problem]
-    return []
+        out.append(f"讀不到{KO_WHERE}（{table.note or table.status.value}）")
+    elif problem := _alignment_problem(table, fields["coupon_table"]) or stepdown.step_problem(_ko_terms(table)):
+        out.append(problem)
+    return out
 
 
 def detect(lines: Sequence[Line]) -> DetectionResult:

@@ -165,13 +165,13 @@ def test_ko_table_date_differs_from_coupon_table(tmp_path):
         (S0, Edit("期初訂價之96.00%", "期初訂價之97.00%", "ts.art9.kotable"), "不是每期固定往下降"),
         (StepdownSpec(product_code="086199990009", step=Decimal("0.00")), None, "不是每期固定往下降"),
         (StepdownSpec(product_code="086199990010", step=Decimal("-1.00")), None, "不是每期固定往下降"),
-        (StepdownSpec(product_code="086199990011", memory=False), None, "不是範本內的記憶式寫法"),
-        (StepdownSpec(product_code="086199990012", wording="old"), None, "不是範本內的記憶式寫法"),
+        (StepdownSpec(product_code="086199990011", memory=False), None, "是非記憶式"),
         (StepdownSpec(product_code="086199990013", layout="old", ko_obs="P", wording="old"), None, "舊範本的表頭"),
         (StepdownSpec(product_code="086199990014", period_def=False), None, "沒有自動提前出場觀察期的定義句"),
         (StepdownSpec(product_code="086199990015", art9_ko_column=True), None, "價格表有自動提前出場價欄"),
         (StepdownSpec(product_code="086199990016", first_callable=2), None, "Non-Call ≥ 2"),
         (StepdownSpec(product_code="086199990017", ko_rows=3), None, "有 3 期，配息表有 4 期"),
+        (StepdownSpec(product_code="086199990035", ko_numbers=(1, 3, 4, 5)), None, "期別不是從 1 起連續"),
         (S0, Edit("自動提前出場觀察期結束日", "結束日", "ts.art9.kotable"), "表頭讀不到"),
         (S0, Edit("期初訂價之98.00%", "期初訂價之98%", "ts.art9.kotable"), "有讀不到的列"),
     ],
@@ -180,12 +180,12 @@ def test_ko_table_date_differs_from_coupon_table(tmp_path):
         "flat",
         "rising",
         "no-memory",
-        "old-memory-wording",
         "old-layout",
         "no-period-definition",
         "ko-column-in-price-table",
         "non-call-2",
         "fewer-rows-than-coupon-table",
+        "period-skips-a-number",
         "no-table-head",
         "unreadable-cell",
     ],
@@ -193,6 +193,31 @@ def test_ko_table_date_differs_from_coupon_table(tmp_path):
 def test_stepdown_variants_outside_the_template_are_unsupported(tmp_path, spec, edit, reason):
     report = check(tmp_path, spec, edits=[edit] if edit else [])
     assert reason in unsupported(report)
+
+
+@pytest.mark.parametrize(
+    ("spec", "reasons"),
+    [
+        (StepdownSpec(product_code="086199990036", first_callable=2, memory=False), ("Non-Call ≥ 2", "是非記憶式")),
+        (
+            StepdownSpec(product_code="086199990037", art9_ko_column=True, ko_rows=3),
+            ("價格表有自動提前出場價欄", "有 3 期"),
+        ),
+    ],
+    ids=["non-call-2-and-no-memory", "ko-column-and-fewer-rows"],
+)
+def test_unsupported_message_lists_every_failed_condition(tmp_path, spec, reasons):
+    """範本不支援的錯訊列出所有不成立的條件（核對規則 §3.1），不是只列第一個。"""
+    message = unsupported(check(tmp_path, spec))
+    assert all(r in message for r in reasons), message
+
+
+def test_term_sheet_with_only_one_memory_sentence_goes_to_review(tmp_path):
+    """說明書記憶式只認得第一句（第二句是舊範本的寫法）→ 照 CA FCN 由 `field.ko_memory` 轉人工覆核，不判範本不支援
+    （核對規則 §3.5；確定是非記憶式才判不支援）。"""
+    report = check(tmp_path, StepdownSpec(product_code="086199990012", wording="old"))
+    assert rule(report, "template.detect")[0].status == S.PASS, problems(report)
+    assert flagged(report, "field.ko_memory", S.REVIEW_REQUIRED), problems(report)
 
 
 def test_fcn_document_with_the_stepdown_mark_stays_in_the_stepdown_template(tmp_path):
