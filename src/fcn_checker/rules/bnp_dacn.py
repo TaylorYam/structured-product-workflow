@@ -1,5 +1,5 @@
 """BNP DACN 專屬規則（docs/checker/rules/bnp-dacn-check-rules.md）：沒有樣本的型態與 MKI、配息公式保證期數 = Non-Call、§11
-定界價格列每檔價格、§17 最低配息率 = 月配息率、情境（第 g+1 期起只核期別與面額）；其他說明書內部規則照 BNP FCN
+定界價格列每檔價格、§17 最低配息率 = 月配息率、情境（第 g+1 期起依文件寫的 n、M 驗算，workflow #576）；其他說明書內部規則照 BNP FCN
 （rules/bnp.py：月配息率推算、名稱與幣別一致、天期、KO、贖回金額、日期表、基本公開說明書、頁首）。
 
 配息門檻 %（`field.coupon_barrier_pct`）、情境假設與情境試算的月配息率（`scenario.params`，含 `× X% × (n ÷ M)`）、重印標的表
@@ -24,8 +24,8 @@ NOT_COVERED = [
     },
     {
         "rule_id": "doc.scenario_calculations",
-        "description": "第 18 項自動提前贖回情況以外的情境：合格營業日總天數假設、(n ÷ M)、第 2 期起的配息金額、累積總月配息金額、"
-        "總報酬率不核對（依計息天數假設算出）；第 1 期配息、各算式的面額與月配息率、贖回金額、股數、剩餘金額、最佳情況年化逐處核對",
+        "description": "第 18 項自動提前贖回情況以外的情境：合格營業日總天數假設與 (n ÷ M) 的 n、M 本身不核對（第 2 期起的配息、"
+        "累積總月配息金額、總報酬率用文件寫的 n、M 驗算）；較差、最差情況的年化報酬率照 FCN 不核對",
     },
     {
         "rule_id": "doc.template_variants",
