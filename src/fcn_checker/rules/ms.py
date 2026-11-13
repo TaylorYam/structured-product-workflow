@@ -222,13 +222,14 @@ def autocall_dates(ctx: IssuerContext) -> CheckResult:
     return kit.structure_check(ctx, "schedule.autocall_dates", "autocall_dates", "提前出場觀察日", deps, issues)
 
 
-def run_all(ctx: IssuerContext) -> list[CheckResult]:
-    """說明書內部規則：只用讀出結果、審查標準與宣告的參考條件表欄位（年利率）。"""
+def run_all(ctx: IssuerContext, *, accrual: bool = False) -> list[CheckResult]:
+    """說明書內部規則：只用讀出結果、審查標準與宣告的參考條件表欄位（年利率）；`accrual`（DACN，rules/ms_dacn.py）時
+    情境照區間計息核（`ms_scenario.run`）。"""
     return [
         *monthly_coupon(ctx),
         *document_info(ctx),
         *periods(ctx),
         *ko_terms(ctx),
         autocall_dates(ctx),
-        *ms_scenario.run(ctx),
+        *ms_scenario.run(ctx, accrual=accrual),
     ]

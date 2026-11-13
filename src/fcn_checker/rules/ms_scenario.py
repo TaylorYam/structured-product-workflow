@@ -4,6 +4,8 @@ MS 的總配息是「已進位的每期配息 × 期數」（文件算式 `A 美
 重印價格表、假設的總投資金額與年期、各處月配息率、獲利情境年化報酬率與較差情境執行價由共用情境規則（rules/scenario.py，
 Issue #294）核對；每期配息的預期值用參考條件表年利率推得的月配息率（§3.7）。
 情境標題、期數寫法未知或算式找不到時轉人工覆核，不跳過後宣稱通過。
+DACN（MS DACN 核對規則 §3.7，`accrual=True`）：有區間計息算式 `×（n/M）` 的情境只核固定配息那一期的金額，依天數假設算出的
+配息、損益與年化報酬率不核（暫定，待使用者決定）；沒有區間計息的情境照 FCN。
 """
 
 from __future__ import annotations
@@ -35,10 +37,11 @@ def titles(ctx: IssuerContext) -> list[CheckResult]:
     ]
 
 
-def calculations(ctx: IssuerContext) -> list[CheckResult]:
+def calculations(ctx: IssuerContext, *, accrual: bool = False) -> list[CheckResult]:
     """各情境：每期配息 = 面額 × 月配息率（年利率 ÷ 12，四捨五入到 4 位），half-up 到 2 位；
     獲利情境損益 = 每期配息 × 假設的配息次數；較差情境總配息 = 每期配息 × 天期，
-    損益 = 總配息 + 文件寫的到期贖回價值 − 面額。每期配息算式要全部讀得出來，讀不出來的轉人工覆核。"""
+    損益 = 總配息 + 文件寫的到期贖回價值 − 面額。每期配息算式要全部讀得出來，讀不出來的轉人工覆核。
+    `accrual`（DACN）時區間計息算式不算每期配息算式，有區間計息的情境不核損益。"""
     f, rid = ctx.ts.f, "doc.scenario_calculations"
     denom, tenor = f("denomination"), f("tenor_months")
     annual, ov, problem = kit.annual_rate(ctx, rid, "scenario_calculations")
@@ -67,7 +70,8 @@ def calculations(ctx: IssuerContext) -> list[CheckResult]:
             if c.amount != (c.denomination * c.rate / 100).quantize(kit.Q2, ROUND_HALF_UP) or c.amount != a:
                 issues.append(f"每期配息 {c.amount} 應為 {a}（面額 × 月配息率 {monthly}%，四捨五入到 2 位）")
         evidence = [e for h in s.coupons for e in kit.evidence(h.lines)]
-        if not s.coupons or len(s.coupons) != s.coupon_formulas:
+        formulas = s.coupon_formulas - (s.accrual if accrual else 0)
+        if not s.coupons or len(s.coupons) != formulas:
             unread = "找不到每期配息算式" if not s.coupons else "有每期配息算式的寫法無法辨識"
             out.append(
                 kit.calc_result(
@@ -76,7 +80,8 @@ def calculations(ctx: IssuerContext) -> list[CheckResult]:
             )
         else:
             out.append(kit.calc_result(rid, f"{tag}_coupon", coupon_item, issues, evidence, expected=a, ov=[ov]))
-        out.append(_pnl(rid, s, tag, pnl_item, a, denom.value, tenor.value, ov))
+        if not (accrual and s.accrual):
+            out.append(_pnl(rid, s, tag, pnl_item, a, denom.value, tenor.value, ov))
     return out
 
 
@@ -122,5 +127,5 @@ def _pnl(rid, s, tag, item, a, denom, tenor, ov) -> CheckResult:
     return kit.calc_result(rid, field, item, issues, kit.evidence(h.lines), expected=expected, actual=p.pnl, ov=[ov])
 
 
-def run(ctx: IssuerContext) -> list[CheckResult]:
-    return [*titles(ctx), *calculations(ctx)]
+def run(ctx: IssuerContext, *, accrual: bool = False) -> list[CheckResult]:
+    return [*titles(ctx), *calculations(ctx, accrual=accrual)]

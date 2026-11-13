@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # 每家有多個範本的上手：（合成器模組, Spec 類別名稱, 應命中的範本 ID）；FCN 用各合成器的 `Spec`
 FAMILY_SPECS = {
     "HSBC": [("hsbc_synth", "Spec"), ("hsbc_synth", "SbSpec"), ("hsbc_synth", "BenSpec")],
-    "MS": [("ms_synth", "Spec"), ("ms_ben_synth", "BenSpec")],
+    "MS": [("ms_synth", "Spec"), ("ms_ben_synth", "BenSpec"), ("ms_synth", "DacnSpec")],
     "BNP": [("bnp_synth", "Spec"), ("bnp_synth", "SbSpec"), ("bnp_synth", "DacnSpec")],
     "SG": [("sg_synth", "Spec"), ("sg_synth", "DacnSpec")],
     "NOMURA": [("nomura_synth", "Spec"), ("nomura_synth", "DacnSpec")],
@@ -152,6 +152,8 @@ CLAIM_MARKS = [
     ("BNP", "bnp_synth", "iis", "定界價格"),
     ("UBS", "ubs_synth", "pd", "區間下限價"),
     ("UBS", "ubs_synth", "iis", "區間累計配息"),
+    ("MS", "ms_synth", "pd", "區間累積配息"),
+    ("MS", "ms_synth", "iis", "區間累積配息"),
 ]
 
 

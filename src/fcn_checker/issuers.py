@@ -38,6 +38,7 @@ from .parsers import (
     hsbc_super_bull_iis,
     jpm_iis,
     ms_ben_iis,
+    ms_dacn_iis,
     ms_iis,
     natixis_dacn_iis,
     natixis_iis,
@@ -68,6 +69,7 @@ from .parsers import hsbc_super_bull as hsbc_sb_parser
 from .parsers import jpm as jpm_parser
 from .parsers import ms as ms_parser
 from .parsers import ms_ben as ms_ben_parser
+from .parsers import ms_dacn as ms_dacn_parser
 from .parsers import natixis as natixis_parser
 from .parsers import natixis_dacn as natixis_dacn_parser
 from .parsers import natixis_stepdown as natixis_stepdown_parser
@@ -114,6 +116,8 @@ from .rules import jpm_iis as jpm_iis_rules
 from .rules import ms as ms_rules
 from .rules import ms_ben as ms_ben_rules
 from .rules import ms_ben_iis as ms_ben_iis_rules
+from .rules import ms_dacn as ms_dacn_rules
+from .rules import ms_dacn_iis as ms_dacn_iis_rules
 from .rules import ms_iis as ms_iis_rules
 from .rules import natixis as natixis_rules
 from .rules import natixis_dacn as natixis_dacn_rules
@@ -357,6 +361,29 @@ MS = Template(
         not_covered=(_IIS_SAMPLES,),
         rules=ms_iis_rules.run_all,
     ),
+)
+
+# MS DACN（workflow #550）：和 MS FCN 同一家上手、不同範本（名稱「區間累積配息」，依第 15 項 {X%×n(j)/N(j)} 與比執行價的
+# n(j) 定義辨識，排在 BEN、FCN 前面）
+MS_DACN = Template(
+    code=ms_dacn_rules.ISSUER,
+    template_id=ms_dacn_parser.TEMPLATE_ID,
+    label="MS DACN 中文產品說明書",
+    parser_version=ms_dacn_parser.PARSER_VERSION,
+    not_covered=tuple(ms_dacn_rules.NOT_COVERED),
+    detect=ms_dacn_parser.detect,
+    read=ms_dacn_parser.read,
+    rules=ms_dacn_rules.run_all,
+    iis=IisTemplate(
+        template_id=ms_dacn_iis.TEMPLATE_ID,
+        label="MS DACN 中文投資人須知",
+        parser_version=ms_dacn_iis.PARSER_VERSION,
+        detect=ms_dacn_iis.detect,
+        read=ms_dacn_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=ms_dacn_iis_rules.run_all,
+    ),
+    products=frozenset({DACN}),
 )
 
 # MS BEN（#376）：一般 BEN 與 Digital（各有 lookback）同一個範本（同 HSBC BEN）
@@ -844,7 +871,7 @@ UBS = Template(
 REGISTRY: tuple[Issuer, ...] = (
     Issuer(BARC.code, (BARC_DACN, BARC_STEPDOWN, BARC), reference_fields=barc_rules.REFERENCE_FIELDS, ratings=True),
     Issuer(HSBC.code, (HSBC_BEN, HSBC_SUPER_BULL, HSBC), ratings=True),
-    Issuer(MS.code, (MS_BEN, MS), reference_fields=ms_rules.REFERENCE_FIELDS, ratings=True),
+    Issuer(MS.code, (MS_DACN, MS_BEN, MS), reference_fields=ms_rules.REFERENCE_FIELDS, ratings=True),
     Issuer(BNP.code, (BNP_DACN, BNP_SUPER_BULL, BNP), reference_fields=bnp_rules.REFERENCE_FIELDS, ratings=True),
     Issuer(SG.code, (SG_DACN, SG), reference_fields=sg_rules.REFERENCE_FIELDS, ratings=True),
     Issuer(CITI.code, (CITI,), reference_fields=citi_rules.REFERENCE_FIELDS, ratings=True),

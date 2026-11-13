@@ -7,7 +7,7 @@
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
 # 規則說明見 docs/checker/rules/review-standard.md。
 
-version = 46
+version = 47
 effective_date = 2026-11-13
 
 [distributor]
@@ -329,6 +329,21 @@ enhanced_zh = "紅利表現結構型商品"
 enhanced_en = "Bonus Enhanced Notes"
 digital_zh = "結構型商品"
 digital_en = "Equity Linked Notes"
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
+
+[issuer.ms.product_names.DACN]
+# MS DACN 商品名稱（現行版 2 份說明書，2026-11-13 規格，workflow #550）：和 [issuer.ms.product_name] 只差產品字樣（「固定配息」
+# 改「區間累積配息」、「Fixed Coupon Notes」改「Autocallable Range Accrual Notes」）；標的寫法、記憶式字樣（英文沒有）與比對
+# 方式同 FCN。單一標的沒有樣本（核對規則轉人工）。參考條件表 Product 是 DACN 時用這個樣板。
+zh = "英商摩根士丹利發行{tenor}個月期{ccy_zh}計價連結{underlying_zh}區間累積配息{memory_zh}結構型商品(無保證機構)(無擔保)(不保本)(下稱「本商品」)"
+en = "Morgan Stanley & Co. International Plc issuance of {tenor} Months {ccy} Autocallable Range Accrual Notes linked to {underlying_en} (non-guaranteed)(unsecured)(non-principal protected)"
+memory_zh = "（記憶式自動提前出場）"
+memory_en = ""
+single_zh = "股票或指數股票型基金"
+single_en = "Shares or ETFs"
+basket_zh = "一籃子股票與/或指數股票型基金"
+basket_en = "Worst of Shares and/or ETFs"
 normalize_zh = ["brackets"]
 normalize_en = ["whitespace"]
 

@@ -102,8 +102,10 @@ def _item(items: dict[int, CoverItem], n: int, name: str, label: str, pattern: s
 # ---------------------------------------------------------------- 辨識
 
 
-def detect(lines: Sequence[Line]) -> DetectionResult:
-    """範本辨識（範本規格 §8）：全部條件成立才是新版 MS 說明書。"""
+def skeleton(lines: Sequence[Line], zh_mark: str, en_mark: str) -> tuple[Document, list[str], list[Evidence]]:
+    """新版 MS 說明書的骨架（範本規格 §8）：封面標題、發行機構、名稱（中文含 `zh_mark`、英文去空白含 `en_mark`）、第一章
+    第 1 項與條號 1–29、章名；回傳（文件、不成立的說明、證據）。FCN 與 DACN（parsers/ms_dacn.py）共用，名稱的產品字樣
+    由呼叫端給。"""
     doc = document(lines)
     cover = doc.before_chapter1()
     items = cover_items(cover)
@@ -118,12 +120,12 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
             "封面第 10 項發行機構不是英商摩根士丹利國際股份有限公司",
         ),
         (
-            zh.startswith("英商摩根士丹利發行") and "固定配息" in zh and "結構型商品" in zh,
-            "商品中文名稱不是 MS 固定配息結構型商品",
+            zh.startswith("英商摩根士丹利發行") and zh_mark in zh and "結構型商品" in zh,
+            f"商品中文名稱不是 MS {zh_mark}結構型商品",
         ),
         (
-            en.startswith("MorganStanley&Co.InternationalPlcissuanceof") and "FixedCouponNotes" in en,
-            "商品英文名稱不是新版 MS 寫法（International Plc issuance of … Fixed Coupon Notes）",
+            en.startswith("MorganStanley&Co.InternationalPlcissuanceof") and en_mark in en,
+            f"商品英文名稱不是新版 MS 寫法（International Plc issuance of … {_spaced(en_mark)}）",
         ),
         (
             art1.startswith("1.商品中文名稱") and set(range(1, 30)) <= set(arts),
@@ -133,7 +135,18 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     ):
         if not test:
             failed.append(message)
-    return DetectionResult(not failed, failed, [Evidence.of(x) for x in cover[:2]])
+    return doc, failed, [Evidence.of(x) for x in cover[:2]]
+
+
+def _spaced(mark: str) -> str:
+    """去空白的英文字樣還原字間空白（錯訊用）：FixedCouponNotes → Fixed Coupon Notes。"""
+    return re.sub(r"(?<=[a-z])(?=[A-Z])", " ", mark)
+
+
+def detect(lines: Sequence[Line]) -> DetectionResult:
+    """範本辨識（範本規格 §8）：全部條件成立才是新版 MS 說明書（固定配息商品）。"""
+    _, failed, evidence = skeleton(lines, "固定配息", "FixedCouponNotes")
+    return DetectionResult(not failed, failed, evidence)
 
 
 def product_code(lines: Sequence[Line]) -> ParsedField:
@@ -181,8 +194,9 @@ def _art17(lines: list[Line]) -> tuple[ParsedField, ParsedField]:
     return mem, obs
 
 
-def read(lines: Sequence[Line]) -> MsTermSheet:
-    """讀出標準欄位與 MS 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）。"""
+def read(lines: Sequence[Line], *, accrual: bool = False) -> MsTermSheet:
+    """讀出標準欄位與 MS 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）；`accrual`（DACN，
+    parsers/ms_dacn.py）時第 18 項照區間計息讀（`ms_scenario.section`、`_scenario_standard`）。"""
     doc = document(lines)
     arts = doc.articles(1)
     items = cover_items(doc.before_chapter1())
@@ -294,7 +308,7 @@ def read(lines: Sequence[Line]) -> MsTermSheet:
     fields.occur("minimum_additional", "第四章第 4 項最低加購單位")
     fields.occur("minimum_redemption", "第四章第 8 項最低贖回金額")
     fields.occur("redemption_increment", "第四章第 8 項累加贖回單位")
-    scenarios = ms_scenario.section(article(18))
+    scenarios = ms_scenario.section(article(18), accrual=accrual)
     fields.add(*currency_occurrences(fields, scenarios))
     fields.occur("issue_price_ch4", "第四章第 5 項申購價金", code="issue_price_subscription")
     fields.occur("print_date", "封面刊印日期")
@@ -303,7 +317,7 @@ def read(lines: Sequence[Line]) -> MsTermSheet:
     )
     fields["coupon_pa_pct"] = standard_fields.absent("coupon_pa_pct", "年利率（MS 改核對月配息率與情境年化報酬率）")
 
-    _scenario_standard(fields, scenarios)
+    _scenario_standard(fields, scenarios, accrual=accrual)
     fields["underlying_notes"] = underlying_notes(
         doc.lines, Markers(r"\(\d+\)連結標的\d+：")
     )  # 連結標的公司介紹：(k)連結標的k：名稱＋介紹（Issue #225）
@@ -442,10 +456,13 @@ def _mentions(fields: dict[str, ParsedField]) -> list[Mention]:
     return coupons
 
 
-def _scenario_standard(fields: dict[str, ParsedField], sec: ms_scenario.ScenarioSection) -> None:
+def _scenario_standard(
+    fields: dict[str, ParsedField], sec: ms_scenario.ScenarioSection, *, accrual: bool = False
+) -> None:
     """第 18 項交給共用情境規則的標準欄位（Issue #294）：重印價格表；假設的總投資金額、年期、月配息率，各情境算式的
     每個月配息率與獲利情境的年化報酬率（`scenario_params`；說明書沒有年利率，年化報酬率和參考條件表年利率比）；較差
-    情境的執行價（`scenario_prices`，依彭博代碼對到第 16 項價格表那一列）。"""
+    情境的執行價（`scenario_prices`，依彭博代碼對到第 16 項價格表那一列）。`accrual`（DACN）時有區間計息算式的情境不交
+    年化報酬率（依天數假設算出，不等於年利率；MS DACN 核對規則 §3.7）。"""
     fields["main_price_table"] = price_table.at("main_price_table", fields["price_table"], ms_tables.PRICE_TABLE)
     fields["scenario_reprint_table"] = price_table.at("scenario_reprint_table", sec.table, ms_tables.SCENARIO_TABLE)
     head = [Evidence.of(x) for x in sec.lines[:1]]
@@ -498,7 +515,7 @@ def _scenario_standard(fields: dict[str, ParsedField], sec: ms_scenario.Scenario
                 value("scenario_monthly_coupon", None, lines, f"{where}算式找不到月配息率"),
             )
         ]
-        if s.kind == "profit":
+        if s.kind == "profit" and not (accrual and s.accrual):
             params += [
                 ScenarioParam("scenario_annualized_return", where, value("scenario_annualized_return", h, [], ""))
                 for h in s.annualized
