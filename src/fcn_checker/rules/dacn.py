@@ -201,8 +201,11 @@ def _places(step: Decimal) -> str:
 def accrual_coupon(
     denomination: Decimal, rate: Decimal, days: int, total_days: int, step: Decimal, rounding: str = ROUND_HALF_UP
 ) -> Decimal | None:
-    """區間計息的每期配息 = 面額 × 月配息率 `rate`% × (n ÷ M)，依文件寫的位數（`step`，例 0.01）與進位方式（`rounding`）。
-    n、M 是文件自己寫的假設天數，本身不核對；M 是 0 時算不出（None）。"""
+    """區間計息的每期配息 = 面額 × 月配息率 `rate`% × (n ÷ M)，依文件寫的位數（`step`，例 0.01）與進位方式（`rounding`，
+    只收 `ROUNDING_ZH` 列的常數）。n、M 是文件自己寫的假設天數，本身不核對；M 是 0 時算不出（None）：呼叫端要先把 M = 0
+    轉人工覆核（各家一致，路線圖 #575），`accrual_coupon_issues` 收到 M = 0 只回一則說明以防漏接。"""
+    if rounding not in ROUNDING_ZH:
+        raise ValueError(f"不支援的進位方式 {rounding}（只收 {'、'.join(ROUNDING_ZH)}）")
     if total_days == 0:
         return None
     return (denomination * rate / 100 * days / total_days).quantize(step, rounding)

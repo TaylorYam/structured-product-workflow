@@ -5,7 +5,7 @@
 
 from __future__ import annotations
 
-from decimal import ROUND_DOWN, ROUND_HALF_UP, ROUND_UP
+from decimal import ROUND_DOWN, ROUND_HALF_EVEN, ROUND_HALF_UP, ROUND_UP
 from decimal import Decimal as D
 
 import pytest
@@ -29,6 +29,17 @@ CENT = D("0.01")
 )
 def test_accrual_coupon_follows_the_written_rounding(days, total, rounding, expected):
     assert dacn.accrual_coupon(D("10000"), D("1.2345"), days, total, CENT, rounding) == expected
+
+
+def test_accrual_coupon_rounds_half_up_at_the_midpoint():
+    """剛好落在進位點（12.345）：四捨五入是 12.35；改成浮點數或銀行家進位（12.34）時這裡會擋下。"""
+    assert dacn.accrual_coupon(D("1000"), D("1.2345"), 7, 7, CENT) == D("12.35")
+    assert dacn.accrual_coupon(D("1000"), D("1.2345"), 7, 7, CENT, ROUND_DOWN) == D("12.34")
+
+
+def test_accrual_coupon_rejects_unknown_rounding():
+    with pytest.raises(ValueError, match="不支援的進位方式"):
+        dacn.accrual_coupon(D("1000"), D("1.2345"), 7, 7, CENT, ROUND_HALF_EVEN)
 
 
 def test_accrual_coupon_rounds_to_the_written_places():
