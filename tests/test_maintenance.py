@@ -408,7 +408,7 @@ def test_changes_after_opening_block_the_save(pg, tmp_path, tdcc, meanwhile, mes
 
 @pytest.mark.db
 def test_a_product_created_by_someone_else_at_the_same_time_asks_for_a_reload(pg, tmp_path, monkeypatch) -> None:
-    """還不存在的列 FOR UPDATE 鎖不到：別人在確認之後、寫入之前新增了同一檔，請重新載入，不是資料庫錯誤。"""
+    """還不存在的列 FOR UPDATE 鎖不到：別人在確認之後、寫入之前新增了同一檔，請再按一次「打開」重讀，不是資料庫錯誤。"""
     import_trades(pg, tmp_path, C)
     draft = open_terms(pg, C, CONFIG)
     draft.values["Coupon p.a. (%)"] = Decimal(11)

@@ -1,8 +1,8 @@
 """「8 進度」分頁（#156、#186、ADR 0019）：每檔商品在五個階段的哪一個、核對前三件齊了沒、各步日期、存續狀態與
-比價狀態（#170）、上手更正（#535：人工放行後還在等上手改文字）；篩選、排序、匯出 Excel。
+比價狀態（#170）、上手更正（#535：人工放行後還在等上手改文字）；篩選、排序。
 
-按「重新整理」在背景讀資料庫（`window_actions.load_progress_rows`），篩選與排序只在畫面上做、不再連資料庫；
-「匯出 Excel…」把目前篩選、排序後的整張表寫成一份 Excel（`progress.export_progress`）。
+按「重新整理」在背景讀資料庫（`window_actions.load_progress_rows`），篩選與排序只在畫面上做、不再連資料庫
+（「匯出 Excel…」已拿掉，#558）。
 人工能做的三件事只在這一頁登記（#157）：對選中的商品「登記已寄出」「登記顧客贖回…」、對一檔的自動事件
 「提出異議…」與「解除異議…」；都在背景寫資料庫，一檔失敗只影響那一檔，寫完重新整理。
 「批次登記已寄出…」（#186）選一個交易日，重新讀進度、列出交易日在這天以前的待寄信商品，確認後各寫一筆「已寄出」。
@@ -13,14 +13,12 @@ from __future__ import annotations
 import datetime as dt
 import tkinter as tk
 from collections.abc import Callable
-from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import messagebox, ttk
 
 from fcn_checker.check_config import ConfigPaths
 from fcn_checker.date_picker import DateEntry
 from fcn_checker.ui import Background
 from sp_workflow.lifecycle import DELIVERY, IN_STOCK, KO, MATURITY, REDEMPTION
-from sp_workflow.local_settings import FolderMemory
 from sp_workflow.observation import STATUSES as PRICING_STATUSES
 from sp_workflow.progress import (
     DATE_COLUMNS,
@@ -28,12 +26,9 @@ from sp_workflow.progress import (
     PROGRESS,
     READY_COLUMNS,
     REVISION_COLUMN,
-    ProgressExport,
     ProgressRow,
     SentBatch,
     by_trade_date,
-    export_name,
-    export_progress,
     filter_rows,
 )
 from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, Tab
@@ -86,14 +81,12 @@ class ProgressTab(Tab):
     def __init__(
         self,
         notebook: ttk.Notebook,
-        memory: FolderMemory,
         db: DatabaseLogin,
         config_paths: Callable[[], ConfigPaths],
         *,
         background: BackgroundFactory = Background,
     ) -> None:
         super().__init__(notebook, "進度", COLUMNS, db, background)
-        self.memory = memory
         self.config_paths = config_paths
         self.rows: tuple[ProgressRow, ...] | None = None  # 最近一次重新整理讀到的全部商品；還沒讀過是 None
         self.shown: list[ProgressRow] = []  # 篩選、排序後畫面上的列
@@ -132,8 +125,6 @@ class ProgressTab(Tab):
         self.result_area(body, 1)
         self.refresh_button = ttk.Button(self.buttons, text="重新整理", command=self.refresh, style="Primary.TButton")
         self.refresh_button.pack(side=tk.LEFT)
-        self.export_button = ttk.Button(self.buttons, text="匯出 Excel…", command=self.export)
-        self.export_button.pack(side=tk.LEFT, padx=(8, 0))
         self.sent_button = ttk.Button(self.buttons, text="登記已寄出", command=self.record_sent)
         self.batch_sent_button = ttk.Button(self.buttons, text="批次登記已寄出…", command=self.record_sent_batch)
         self.redeem_button = ttk.Button(self.buttons, text="登記顧客贖回…", command=self.register_redemption)
@@ -162,16 +153,15 @@ class ProgressTab(Tab):
         return found
 
     def _busy(self, busy: bool) -> None:
-        """處理中：按鈕不能按、狀態列恢復一般顏色；不在處理時，匯出與登記要畫面上有列才能按。"""
+        """處理中：按鈕不能按、狀態列恢復一般顏色；不在處理時，登記要畫面上有列才能按。"""
         if busy:
             self.mark_done(False)
         self.refresh_button.configure(state=tk.DISABLED if busy else tk.NORMAL)
-        self.export_button.configure(state=tk.DISABLED if busy or not self.shown else tk.NORMAL)
         for button in self._actions():
             button.configure(state=tk.DISABLED if busy or not self.shown else tk.NORMAL)
 
     def _reset(self, clear: bool) -> None:
-        """結果表由 `refilter` 重畫，開始動作時不清（重新整理在開始前 restart，登記與匯出留著上一次的表）。"""
+        """結果表由 `refilter` 重畫，開始動作時不清（重新整理在開始前 restart，登記留著上一次的表）。"""
 
     def _actions(self) -> tuple[ttk.Button, ...]:
         """登記用的按鈕：重新整理過、沒有在背景做事時才能按。"""
@@ -436,30 +426,6 @@ class ProgressTab(Tab):
 
     def _changed(self, notice: str) -> Callable[[int], None]:
         return lambda _count: self.refresh(notice)
-
-    # ---------- 匯出 ----------
-
-    def export(self) -> None:
-        if self.working or not self.shown:
-            return
-        chosen = filedialog.asksaveasfilename(
-            title="匯出作業進度",
-            initialdir=self.memory.load().get("progress_export") or None,
-            initialfile=export_name(),
-            defaultextension=".xlsx",
-            filetypes=[("Excel 活頁簿", "*.xlsx")],
-            parent=self.master,
-        )
-        if not chosen:
-            return
-        path = Path(chosen)
-        self.memory.remember(progress_export=str(path.parent))
-        rows = list(self.shown)
-        self.runner.run_local(lambda: export_progress(rows, path), "匯出作業進度中…", self._exported)
-
-    def _exported(self, result: ProgressExport) -> None:
-        self.status_var.set(f"已匯出作業進度 {result.count} 檔（目前的篩選與排序）：{result.path}")
-        self.mark_done(True)
 
 
 def _cells(row: ProgressRow) -> tuple[str, ...]:

@@ -31,7 +31,7 @@ from sp_workflow.observation import autocall_problem
 from sp_workflow.order_terms import parse_date
 from sp_workflow.product_record import derived_prices, round_price, same_value
 from sp_workflow.product_store import Stored, locked, read
-from sp_workflow.product_terms import backfill, lock_checked, log_backfill
+from sp_workflow.product_terms import REOPEN, backfill, lock_checked, log_backfill
 from sp_workflow.status import CheckTerms
 
 if TYPE_CHECKING:
@@ -115,7 +115,7 @@ def problems(stored: Stored | None, entry: ManualCheck) -> list[str]:
         return ["已經鎖住（核對過了），不能再人工核對"]
     seen = entry.seen
     if seen is not None and any(not same_value(stored.fields[name], seen.get(name)) for name in stored.fields):
-        return ["資料庫裡這檔的條件在打開之後改過了，請重新載入"]
+        return [f"資料庫裡這檔的條件在打開之後改過了，{REOPEN}"]
     found = []
     check = stored.check
     if check is None or check.status != CheckTerms.DONE:

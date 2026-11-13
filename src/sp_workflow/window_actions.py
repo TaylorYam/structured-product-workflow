@@ -100,7 +100,7 @@ from sp_workflow.observation import ObservationReceipt, observe_all
 from sp_workflow.order_terms import OrderRow, collect_orders
 from sp_workflow.preparation import PrepareReceipt, prepare_batch
 from sp_workflow.product_backfill import ProductBackfillError, ProductBackfillReceipt, backfill_products
-from sp_workflow.product_export import ExportReceipt, export_products, export_summary
+from sp_workflow.product_export import ExportReceipt, export_summary
 from sp_workflow.product_store import Stored, StoredEvent, read
 from sp_workflow.product_terms import (
     BatchReceipt,
@@ -614,12 +614,6 @@ def manual_check(settings: ConnectionSettings, entry: ManualCheck, config: Impor
         with conn.transaction():
             receipt = confirm(conn, entry)
         return ManualCheckResult(receipt, _observe_after_write(conn, config.calendar))
-
-
-def export_product_terms(settings: ConnectionSettings, path: Path) -> ExportReceipt:
-    """把資料庫目前的商品條件整張匯出成 Excel（#122）。"""
-    with connect(settings) as conn:
-        return export_products(conn, path)
 
 
 def export_product_summary(settings: ConnectionSettings, path: Path) -> ExportReceipt:

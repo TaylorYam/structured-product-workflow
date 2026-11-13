@@ -1,5 +1,5 @@
 """「7 人工維護」分頁（#115、#116、#122、#291、#527）：檢查缺資料的商品、補齊或更正資料庫裡的商品條件與交易明細、
-人工核對完成（跳過自動核對、鎖住）、匯出商品條件與商品總表。"""
+人工核對完成（跳過自動核對、鎖住）、匯出商品總表。存檔被擋（打開之後資料庫改過）時，再按一次「打開」重讀這一檔（#558）。"""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ from sp_workflow.local_settings import FolderMemory
 from sp_workflow.manual_check import ManualCheck, parse_entry
 from sp_workflow.order_terms import format_field
 from sp_workflow.preparation import parse_tdccs
-from sp_workflow.product_export import ExportReceipt, export_name, summary_name
+from sp_workflow.product_export import ExportReceipt, summary_name
 from sp_workflow.product_record import LISTED as REQUIRED_LISTED
 from sp_workflow.product_record import PRICING_FIELD, UNDERLYINGS
 from sp_workflow.product_store import Stored, lookback_text
@@ -36,7 +36,6 @@ from sp_workflow.window_actions import (
     Opened,
     check_missing,
     export_product_summary,
-    export_product_terms,
     manual_check,
     open_product,
     save_product,
@@ -109,8 +108,6 @@ class MaintenanceTab(Tab):
         self.result_area(body, 2)
         self.check_button = ttk.Button(self.buttons, text="檢查", command=self.check, style="Primary.TButton")
         self.check_button.pack(side=tk.LEFT)
-        self.export_button = ttk.Button(self.buttons, text="匯出商品條件…", command=self.export)
-        self.export_button.pack(side=tk.LEFT, padx=(8, 0))
         self.summary_button = ttk.Button(self.buttons, text="匯出商品總表…", command=self.export_summary)
         self.summary_button.pack(side=tk.LEFT, padx=(8, 0))
 
@@ -145,14 +142,12 @@ class MaintenanceTab(Tab):
         buttons.grid(row=1, column=0, columnspan=2, sticky="e", pady=(10, 0))
         self.save_button = ttk.Button(buttons, text="存檔", command=self.save, style="Primary.TButton")
         self.save_button.pack(side=tk.LEFT)
-        self.reload_button = ttk.Button(buttons, text="重新載入", command=self.reload)
-        self.reload_button.pack(side=tk.LEFT, padx=(8, 0))
         self.manual_check_button = ttk.Button(buttons, text="人工核對完成…", command=self.manual_check)
         self.manual_check_button.pack(side=tk.LEFT, padx=(8, 0))
         self._busy(False)
 
     def _busy(self, busy: bool) -> None:
-        """處理中：按鈕與編輯區都不能用；還沒打開任何一檔時不能存檔、重新載入。
+        """處理中：按鈕與編輯區都不能用；還沒打開任何一檔時不能存檔。
 
         做完時檢查結果選回打開的那一檔（處理中點了別列、讀不到要打開的那一檔時都選回來）。
         """
@@ -161,10 +156,10 @@ class MaintenanceTab(Tab):
         self.editor.set_frozen(busy)
         self.trade_editor.set_frozen(busy)
         state = tk.DISABLED if busy else tk.NORMAL
-        for widget in (self.check_button, self.open_button, self.export_button, self.summary_button):
+        for widget in (self.check_button, self.open_button, self.summary_button):
             widget.configure(state=state)
         has_draft = state if self.editor.draft is not None else tk.DISABLED
-        for widget in (self.save_button, self.reload_button, self.reason_entry):
+        for widget in (self.save_button, self.reason_entry):
             widget.configure(state=has_draft)
         unlocked = self.editor.draft is not None and self.editor.draft.review == OrderReview.UNLOCKED
         self.manual_check_button.configure(state=state if unlocked else tk.DISABLED)
@@ -228,24 +223,14 @@ class MaintenanceTab(Tab):
         self.cells.set_rows(rows)
         self.cells.select(self._current_tdcc())
 
-    # ---------- 匯出商品條件（#122）與商品總表（#291） ----------
-
-    def export(self) -> None:
-        """選存放位置，把資料庫目前的 `workflow.product` 整張匯出成 Excel；按取消時不連資料庫。"""
-        self._export(
-            "匯出資料庫的商品條件（workflow.product）",
-            export_name(),
-            lambda settings, path: export_product_terms(settings, path),  # 寫成呼叫，參數契約才檢查得到（#208）
-            "匯出商品條件中…",
-            "商品條件（workflow.product）",
-        )
+    # ---------- 匯出商品總表（#291；匯出商品條件 #122 已拿掉，#558） ----------
 
     def export_summary(self) -> None:
         """選存放位置，把資料庫所有商品照新商品總表的欄位匯出成 Excel；按取消時不連資料庫。"""
         self._export(
             "匯出商品總表",
             summary_name(),
-            lambda settings, path: export_product_summary(settings, path),
+            lambda settings, path: export_product_summary(settings, path),  # 寫成呼叫，參數契約才檢查得到（#208）
             "匯出商品總表中…",
             "商品總表",
         )
@@ -258,7 +243,7 @@ class MaintenanceTab(Tab):
         busy: str,
         what: str,
     ) -> None:
-        """兩種匯出共用：選檔（記住上次的資料夾）、背景匯出、狀態列寫匯出了什麼（`what`）。"""
+        """匯出：選檔（記住上次的資料夾）、背景匯出、狀態列寫匯出了什麼（`what`）。"""
         if self.working:
             return
         chosen = filedialog.asksaveasfilename(
@@ -308,15 +293,9 @@ class MaintenanceTab(Tab):
             return
         self.open(tdccs[0])
 
-    def reload(self) -> None:
-        """重新讀資料庫目前的值（例如存檔時說打開之後被改過）。"""
-        tdcc = self._current_tdcc()
-        if tdcc is not None:
-            self.open(tdcc, action="重新載入")
-
-    def open(self, tdcc: str, *, action: str = "") -> None:
-        """讀這檔目前的條件到右邊；有改過、還沒存檔的先問。"""
-        if self.working or not self._may_discard(action or f"打開 {tdcc}"):
+    def open(self, tdcc: str) -> None:
+        """讀這檔目前的條件到右邊；有改過、還沒存檔的先問。打開的就是同一檔時也重讀（存檔被擋時用，#558）。"""
+        if self.working or not self._may_discard(f"打開 {tdcc}"):
             self.cells.select(self._current_tdcc())
             return
         paths = self.config_paths()
@@ -328,6 +307,7 @@ class MaintenanceTab(Tab):
     def _opened(self, result: Opened) -> None:
         self.config = result.config
         self.stored = result.stored
+        self.tdcc_var.set(result.draft.tdcc)  # 從檢查結果點開的也填上，存檔被擋時再按「打開」就重讀這一檔（#558）
         self._show(result.draft, result.trades)
         if shown := lookback_text(result.stored):  # 回顧期初價格由比價寫入，只顯示（#374）
             self.intro_var.set(f"{self.intro_var.get()}\n回顧期初價格（比價算出，執行價已改成回顧執行價）：{shown}")
@@ -357,7 +337,7 @@ class MaintenanceTab(Tab):
         self.editor.commit()
         self.trade_editor.commit()
         reason = self.reason_var.get()
-        self.runner.run_action(  # 出錯時畫面上的值不動，可以改好再存或重新載入
+        self.runner.run_action(  # 出錯時畫面上的值不動，可以改好再存，或再按「打開」重讀
             lambda settings: save_product(settings, draft, config, trades=trades, reason=reason),
             f"存檔中…（{draft.tdcc}）",
             self._saved,

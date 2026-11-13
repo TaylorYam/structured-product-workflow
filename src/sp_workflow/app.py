@@ -282,7 +282,7 @@ class PanelWindow:
         )
         self.mail = MailDraftTab(self.notebook, memory, db, self.root_folder, background=background)
         self.manual = MaintenanceTab(self.notebook, memory, db, lambda: self.session.paths, background=background)
-        self.progress = ProgressTab(self.notebook, memory, db, lambda: self.session.paths, background=background)
+        self.progress = ProgressTab(self.notebook, db, lambda: self.session.paths, background=background)
         self.exits = ExitListTab(self.notebook, memory, db, lambda: self.session.paths, background=background)
         tabs = self.notebook.tabs()
         for number, tab in enumerate(tabs, 1):

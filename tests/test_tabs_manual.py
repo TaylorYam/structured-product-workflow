@@ -1,4 +1,4 @@
-"""「7 人工維護」分頁（`sp_workflow.tabs.manual`）：檢查與補齊商品條件（#115、ADR 0017）、交易明細（#116）、檢查結果表複製（#121）、匯出商品條件（#122）與商品總表（#291）。"""
+"""「7 人工維護」分頁（`sp_workflow.tabs.manual`）：檢查與補齊商品條件（#115、ADR 0017）、交易明細（#116）、檢查結果表複製（#121）、匯出商品總表（#291）。"""
 
 from __future__ import annotations
 
@@ -234,12 +234,12 @@ def test_a_rejected_save_keeps_the_edits(master, tmp_path: Path, monkeypatch) ->
     type_into(editor, "Coupon p.a. (%)", "11")
     tab.save()
 
-    tab.background.finish(TermsError(f"{A_TDCC}：資料庫裡這檔的條件在打開之後改過了，請重新載入"))
+    tab.background.finish(TermsError(f"{A_TDCC}：資料庫裡這檔的條件在打開之後改過了，請再按一次「打開」重讀這一檔"))
 
-    assert errors == [f"{A_TDCC}：資料庫裡這檔的條件在打開之後改過了，請重新載入"]
+    assert errors == [f"{A_TDCC}：資料庫裡這檔的條件在打開之後改過了，請再按一次「打開」重讀這一檔"]
 
     assert editor.draft.values["Coupon p.a. (%)"] == Decimal(11) and tab.has_unsaved()
-    assert str(tab.save_button.cget("state")) == "normal" and str(tab.reload_button.cget("state")) == "normal"
+    assert str(tab.save_button.cget("state")) == "normal"
 
 
 def test_switching_products_with_unsaved_edits_asks_first(master, tmp_path: Path, monkeypatch) -> None:
@@ -259,13 +259,26 @@ def test_switching_products_with_unsaved_edits_asks_first(master, tmp_path: Path
     assert started(tab) == [f"讀取 {B_TDCC} 的條件中…"]
 
 
-def test_reload_reopens_the_current_product(master, tmp_path: Path) -> None:
-    window = maintenance_window(master, tmp_path)
-    opened(window, maintenance_draft())
+def test_open_again_rereads_a_product_opened_from_the_check_table(master, tmp_path: Path, monkeypatch) -> None:
+    """「重新載入」已拿掉（#558）：從左邊檢查結果點開的，TDCC 欄也填上這一檔；存檔被擋後按「打開」就重讀它，
+    有改過、還沒存的照舊先問。"""
+    window = checked_window(master, tmp_path, missing(A_TDCC, **{"Maturity date": None}))
+    tab = window.manual
+    tab.tdcc_var.set(B_TDCC)  # 上次打的是別檔
+    tab.cells._choose(A_TDCC)
+    tab.background.finish(Opened(maintenance_draft(**{"Maturity date": None}), CONFIG))
+    assert tab.tdcc_var.get() == A_TDCC
+    type_into(tab.editor, "Coupon p.a. (%)", "11")
+    tab.save()
+    monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: None)
+    tab.background.finish(TermsError(f"{A_TDCC}：資料庫裡這檔的條件在打開之後改過了，請再按一次「打開」重讀這一檔"))
+    asked = []
+    monkeypatch.setattr(messagebox, "askyesno", lambda *a, **k: asked.append(a[1]) or True)
 
-    window.manual.reload()
+    tab.open_typed()
 
-    assert started(window.manual) == [f"讀取 {A_TDCC} 的條件中…"]
+    assert len(asked) == 1 and "人工維護頁有改過、還沒存檔" in asked[0]
+    assert started(tab)[-1] == f"讀取 {A_TDCC} 的條件中…"
 
 
 def test_closing_with_unsaved_maintenance_asks_and_stays_on_the_tab(master, tmp_path: Path, monkeypatch) -> None:
@@ -334,7 +347,7 @@ def test_editing_a_trade_cell_marks_it_and_counts_as_unsaved(master, tmp_path: P
     assert amount.var.get() == "120000" and editor.trades.rows[0].values["金額"] == Decimal(120000)
     assert amount.label.cget("background") == DIFFERENT_BG and amount.note.cget("text") == "資料庫是 100000"
     assert window.manual.has_unsaved() and window.manual.status_var.get() == "029199990001 有改過、還沒存檔。"
-    editor._use_database((1, "金額"))
+    type_trade(editor, (1, "金額"), "100000")  # 自己改回資料庫的值（「用資料庫的值」已拿掉，#558）
     assert not window.manual.has_unsaved() and amount.label.cget("background") == SURFACE
 
 
@@ -509,7 +522,7 @@ def test_right_click_finds_the_cell_under_the_pointer(master, tmp_path: Path, mo
     assert below == ["全部複製（含表頭）"], "點在最後一列底下"
 
 
-# ---------------------------------------------------------------- 匯出商品條件（#122）
+# ---------------------------------------------------------------- 匯出商品總表（#291；匯出商品條件 #122 已拿掉，#558）
 
 
 def test_export_asks_where_to_save_before_connecting(master, tmp_path: Path, monkeypatch, immediate) -> None:
@@ -517,46 +530,22 @@ def test_export_asks_where_to_save_before_connecting(master, tmp_path: Path, mon
     monkeypatch.setattr(messagebox, "showerror", lambda *a, **k: pytest.fail("按取消時不連資料庫"))
     monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **k: "")
 
-    tab.export()
+    tab.export_summary()
 
 
 def test_cancelling_the_login_does_not_remember_the_folder(master, tmp_path: Path, monkeypatch, immediate) -> None:
     (tmp_path / ".env").write_text("PGDATABASE=spw_fake\nPGUSER=operator1\n", encoding="utf-8")  # 沒有密碼：要問
     tab = new_window(master, tmp_path, background=immediate).manual
     monkeypatch.setattr(simpledialog, "askstring", lambda *a, **k: None)  # 取消登入
-    monkeypatch.setattr(sp_workflow.tabs.manual, "export_product_terms", lambda *a: pytest.fail("取消登入不匯出"))
+    monkeypatch.setattr(sp_workflow.tabs.manual, "export_product_summary", lambda *a: pytest.fail("取消登入不匯出"))
     monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **k: str(tmp_path / "out" / "x.xlsx"))
 
-    tab.export()
+    tab.export_summary()
 
     assert "product_export" not in tab.memory.load()
 
 
-def test_export_remembers_the_folder_and_runs_in_the_background(master, tmp_path: Path, monkeypatch) -> None:
-    window = maintenance_window(master, tmp_path)
-    tab = window.manual
-    asked = []
-    target = tmp_path / "out" / "products.xlsx"
-
-    def ask(**options):
-        asked.append(options)
-        return str(target)
-
-    monkeypatch.setattr(filedialog, "asksaveasfilename", ask)
-
-    tab.export()
-    assert started(tab) == ["匯出商品條件中…"]
-    assert str(tab.export_button.cget("state")) == "disabled", "匯出中不能再按"
-    tab.export()
-    assert len(asked) == 1
-    tab.background.finish(ExportReceipt(target, 1))
-    tab.export()
-
-    assert asked[0]["initialfile"].startswith("workflow_product_") and asked[0]["initialfile"].endswith(".xlsx")
-    assert asked[0]["initialdir"] is None and asked[1]["initialdir"] == str(target.parent), "下次從上次的位置開始"
-
-
-def test_summary_export_runs_in_the_background_and_shares_the_folder(master, tmp_path: Path, monkeypatch) -> None:
+def test_summary_export_remembers_the_folder_and_runs_in_the_background(master, tmp_path: Path, monkeypatch) -> None:
     tab = maintenance_window(master, tmp_path).manual
     asked = []
     target = tmp_path / "out" / "summary.xlsx"
@@ -565,25 +554,36 @@ def test_summary_export_runs_in_the_background_and_shares_the_folder(master, tmp
     tab.export_summary()
     assert started(tab) == ["匯出商品總表中…"]
     assert str(tab.summary_button.cget("state")) == "disabled", "匯出中不能再按"
+    tab.export_summary()
+    assert len(asked) == 1
     tab.background.finish(ExportReceipt(target, 3))
     assert tab.status_var.get() == f"已匯出資料庫的商品總表3 檔：{target}"
-    tab.export()
+    tab.export_summary()
 
     assert asked[0]["initialfile"].startswith("商品總表_") and asked[0]["initialfile"].endswith(".xlsx")
-    assert asked[1]["initialdir"] == str(target.parent), "和匯出商品條件共用上次的位置"
+    assert asked[0]["initialdir"] is None and asked[1]["initialdir"] == str(target.parent), "下次從上次的位置開始"
 
 
 def test_export_result_says_how_many_products_and_where(master, tmp_path: Path) -> None:
     tab = new_window(master, tmp_path).manual
-    path = tmp_path / "products.xlsx"
+    path = tmp_path / "summary.xlsx"
 
-    tab._exported(ExportReceipt(path, 12), unsaved=True, what="商品條件（workflow.product）")
+    tab._exported(ExportReceipt(path, 12), unsaved=True, what="商品總表")
 
-    assert tab.status_var.get() == (
-        f"已匯出資料庫的商品條件（workflow.product）12 檔：{path}\n注意：畫面上還沒存檔的修改不在匯出檔裡。"
-    )
+    assert tab.status_var.get() == f"已匯出資料庫的商品總表12 檔：{path}\n注意：畫面上還沒存檔的修改不在匯出檔裡。"
     assert tab.status_label.cget("style") == "Done.TLabel"
-    assert str(tab.export_button.cget("state")) == "normal"
+    assert str(tab.summary_button.cget("state")) == "normal"
+
+
+def test_maintenance_buttons_left_after_the_removals(master, tmp_path: Path) -> None:
+    """#558：上方只剩「檢查」「匯出商品總表…」，編輯區下方只剩「存檔」「人工核對完成…」。"""
+    tab = new_window(master, tmp_path).manual
+
+    def texts(frame) -> list[str]:
+        return [str(w.cget("text")) for w in frame.winfo_children() if isinstance(w, ttk.Button)]
+
+    assert texts(tab.buttons) == ["檢查", "匯出商品總表…"]
+    assert texts(tab.save_button.master) == ["存檔", "人工核對完成…"]
 
 
 # ---------- 人工核對完成（#527） ----------

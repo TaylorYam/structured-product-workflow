@@ -1,5 +1,5 @@
 """作業進度（`sp_workflow.progress`，#156、#186、ADR 0019）：五個階段的推導、篩選與排序、批次登記已寄出的範圍、
-從資料庫讀、匯出 Excel。
+從資料庫讀。
 
 商品、交易明細與紀錄全部虛構。
 """
@@ -8,9 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 from decimal import Decimal
-from pathlib import Path
 
-import openpyxl
 import pytest
 
 from db_synth import (
@@ -29,14 +27,11 @@ from sp_workflow.progress import (
     CHECK_TERMS_DONE,
     CHECKED,
     DATE_COLUMNS,
-    EXPORT_COLUMNS,
     FINISHED,
     LOCKED,
     PREPARING,
-    PRICING_COLUMNS,
     PROGRESS,
     READY_COLUMNS,
-    REVISION_COLUMN,
     SENT_STEP,
     TERMS_IMPORTED,
     TO_CHECK,
@@ -47,7 +42,6 @@ from sp_workflow.progress import (
     ProgressRow,
     SentBatch,
     by_trade_date,
-    export_progress,
     filter_rows,
     load_progress,
     progress_of,
@@ -228,45 +222,6 @@ def test_default_order_puts_the_newest_trade_first() -> None:
     ]
 
     assert [r.tdcc for r in by_trade_date(rows)] == ["0", "1", "2", "3"]
-
-
-def test_export_writes_the_rows_as_shown(tmp_path: Path) -> None:
-    dates = (T, None, None, None, None, None, None, None, None)
-    path = tmp_path / "進度.xlsx"
-
-    shown = row(
-        "037199990002",
-        dates=dates,
-        reason="還沒有商品條件",
-        ready=(True, False, False),
-        pricing="等股價",
-        pricing_reason="UL_1 AAA UW：2026-10-21 沒有收盤價",
-        observed_through=dt.date(2026, 10, 20),
-        pricing_unlocked=True,
-        ki="AKI",
-        revision="待更正：說明書（人工放行）",
-    )
-    receipt = export_progress([shown], path)
-
-    assert (receipt.path, receipt.count) == (path, 1)
-    sheet = openpyxl.load_workbook(path).active
-    rows = list(sheet.iter_rows(values_only=True))
-    assert rows[0] == EXPORT_COLUMNS
-    assert rows[1][:9] == ("037199990002", "SG", dt.datetime(2026, 10, 15), 7, TO_CHECK, "✓", None, None, "在庫")
-    assert rows[0][5:8] == READY_COLUMNS, "三件打勾接在作業進度後面"
-    pricing = rows[0].index(PRICING_COLUMNS[0])
-    assert rows[0][pricing : pricing + 4] == PRICING_COLUMNS
-    assert rows[1][pricing : pricing + 4] == (
-        "等股價（未鎖住）",
-        dt.datetime(2026, 10, 20),
-        "UL_1 AAA UW：2026-10-21 沒有收盤價",
-        "AKI",
-    )
-    revision = rows[0].index(REVISION_COLUMN)
-    assert rows[0][revision - 1 : revision + 2] == ("異議", "上手更正", DATE_COLUMNS[0]), "接在異議後面（#535）"
-    assert rows[1][revision] == "待更正：說明書（人工放行）"
-    assert rows[1][-1] == "還沒有商品條件"
-    assert list(tmp_path.iterdir()) == [path], "暫存檔換名後不留"
 
 
 # ---------------------------------------------------------------- 從資料庫讀

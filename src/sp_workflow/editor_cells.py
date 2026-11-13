@@ -1,7 +1,7 @@
 """編輯區格子的規則（#127、ADR 0009、0017、0018）：起單資料、人工維護的商品條件與交易明細共用，不碰 Tk。
 
 畫面（`app.OrderEditor`、`app.TradeRowsEditor`）只照這裡的結果套顏色、寫字。對外：
-- `cell_states`：每格的底色（`Tone`）、說明、要不要提供「用資料庫的值」。優先序：擋存檔的問題 ＞ 和資料庫不同
+- `cell_states`：每格的底色（`Tone`）與說明（和資料庫不同時寫出資料庫的值）。優先序：擋存檔的問題 ＞ 和資料庫不同
   （有備註時維持紅色、兩個說明都寫）＞ 備註（讀起單建檔時的提醒、FC 名字對不到信箱）＞ 固定欄的說明。
   `order_cell_states`／`trade_cell_states` 是兩個編輯區各自的組法。
 - `commit_order`／`commit_trade_rows`：畫面上打的字解讀進 draft（規則同 `order_terms.parse_field`／
@@ -38,7 +38,6 @@ class Tone(Enum):
 class CellState:
     tone: Tone = Tone.PLAIN
     note: str = ""
-    offer_database: bool = False  # 顯示「用資料庫的值」
 
 
 # ---------- 格子狀態 ----------
@@ -65,8 +64,8 @@ def _state(
     if key in differences:
         database = f"資料庫是 {format_field(differences[key]) or '空白'}"
         if key in notes:
-            return CellState(Tone.PROBLEM, f"{notes[key]}；{database}", offer_database=True)
-        return CellState(Tone.DIFFERENT, database, offer_database=True)
+            return CellState(Tone.PROBLEM, f"{notes[key]}；{database}")
+        return CellState(Tone.DIFFERENT, database)
     if key in notes:
         return CellState(Tone.PROBLEM, notes[key])
     return CellState(Tone.PLAIN, plain_note)
