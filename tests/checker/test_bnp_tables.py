@@ -58,6 +58,85 @@ def test_reprinted_table_split_across_pages_is_stitched_back():
     assert table.value["pcts"]["ko"] == [Decimal("100.00"), Decimal("100.00")]
 
 
+def test_label_pieces_on_the_same_row_after_a_page_break_are_joined():
+    """BNP DACN 投資人須知標的表跨頁（#548）：下一頁頂端的列標籤後半被擷取成同一列的兩段（`格(Automatic`、`Early`），
+    後一段落在標籤欄與第一個價格欄之間；接回標籤欄那一行才對得到欄。表多定界價格列（`DACN_PRICE_LABELS`）。"""
+    lines = [
+        ln(1, LABEL_X, 700, "連結標的名稱："),
+        *cells(1, 700, "虛構甲公司", "虛構乙公司"),
+        ln(1, LABEL_X, 720, "期初價格(Initial Price)："),
+        *cells(1, 720, "400.0000", "200.0000"),
+        ln(1, LABEL_X, 740, "執行價格(Strike Price):"),
+        *cells(1, 740, "280.0000,即期初價格之70.00%", "140.0000,即期初價格之70.00%"),
+        ln(1, LABEL_X, 767, "自動提前贖回價"),
+        *cells(1, 766, "400.0000,即期", "200.0000,即期"),
+        ln(2, LABEL_X, 79, "格(Automatic"),
+        ln(2, 100.0, 79, "Early"),
+        ln(2, LABEL_X, 92, "Redemption Price)："),
+        *cells(2, 80, "初價格之100.00%", "初價格之100.00%"),
+        ln(2, LABEL_X, 121, "下限價格(Knock-In Price)："),
+        *cells(2, 121, "240.0000,即期初價格之60.00%", "120.0000,即期初價格之60.00%"),
+        ln(2, LABEL_X, 141, "定界價格(Barrier Price)："),
+        *cells(2, 141, "280.0000,即期初價格之70.00%", "140.0000,即期初價格之70.00%"),
+        ln(2, LABEL_X, 160, "貨幣(Currency)："),
+        *cells(2, 160, "美元", "美元"),
+    ]
+    table = bnp_tables.price_table("underlying_table", lines, with_tickers=False, labels=bnp_tables.DACN_PRICE_LABELS)
+    assert table.ok, table.note
+    rows = table.value["rows"]
+    assert [r["prices"]["ko"] for r in rows] == [Decimal("400.0000"), Decimal("200.0000")]
+    assert [r["prices"]["barrier"] for r in rows] == [Decimal("280.0000"), Decimal("140.0000")]
+    assert table.value["pcts"]["barrier"] == [Decimal("70.00"), Decimal("70.00")]
+
+
+def test_barrier_label_glued_to_the_first_price_is_split():
+    """BNP DACN 投資人須知（#548）：定界價格列標籤和第一檔價格擷取成同一行（`定界價格(Barrier Price)： 1.0000,即期初價格之`），
+    後半在下一行；拆開後照欄讀（`split_merged_cells`，範本規格 bnp-zh-dacn-iis.md §3）。"""
+    lines = [
+        ln(1, LABEL_X, 100, "連結標的名稱："),
+        *cells(1, 100, "虛構甲公司", "虛構乙公司"),
+        ln(1, LABEL_X, 120, "期初價格(Initial Price)："),
+        *cells(1, 120, "400.0000", "200.0000"),
+        ln(1, LABEL_X, 140, "執行價格(Strike Price):"),
+        *cells(1, 140, "280.0000,即期初價格之70.00%", "140.0000,即期初價格之70.00%"),
+        ln(1, LABEL_X, 160, "自動提前贖回價格(Automatic Early Redemption Price)："),
+        *cells(1, 160, "400.0000,即期初價格之100.00%", "200.0000,即期初價格之100.00%"),
+        merged(1, 180, (LABEL_X, "定界價格(Barrier Price)："), (COLS[0], "280.0000,即期初價格之")),
+        ln(1, COLS[0], 192, "70.00%"),
+        ln(1, COLS[1], 180, "140.0000,即期初價格之"),
+        ln(1, COLS[1], 192, "70.00%"),
+        ln(1, LABEL_X, 210, "貨幣(Currency)："),
+        *cells(1, 210, "美元", "美元"),
+    ]
+    table = bnp_tables.price_table("underlying_table", lines, with_tickers=False, labels=bnp_tables.DACN_PRICE_LABELS)
+    assert table.ok, table.note
+    assert [r["prices"]["barrier"] for r in table.value["rows"]] == [Decimal("280.0000"), Decimal("140.0000")]
+    assert table.value["pcts"]["barrier"] == [Decimal("70.00"), Decimal("70.00")]
+
+
+def test_fcn_table_without_a_barrier_row_reads_as_before():
+    """標的表列標籤由呼叫端給：FCN（預設 `PRICE_LABELS`）照舊；DACN 標籤遇到沒有定界價格列的表照讀、只是沒有該列
+    （配息門檻由 `parsers/bnp_dacn.barrier_pct` 判讀不到，範本辨識另判不支援的版本）。"""
+    lines = [
+        ln(1, LABEL_X, 100, "連結標的名稱："),
+        *cells(1, 100, "虛構甲公司", "虛構乙公司"),
+        ln(1, LABEL_X, 120, "期初價格(Initial Price)："),
+        *cells(1, 120, "400.0000", "200.0000"),
+        ln(1, LABEL_X, 140, "執行價格(Strike Price):"),
+        *cells(1, 140, "280.0000,即期初價格之70.00%", "140.0000,即期初價格之70.00%"),
+        ln(1, LABEL_X, 160, "自動提前贖回價格(Automatic Early Redemption Price)："),
+        *cells(1, 160, "400.0000,即期初價格之100.00%", "200.0000,即期初價格之100.00%"),
+        ln(1, LABEL_X, 180, "貨幣(Currency)："),
+        *cells(1, 180, "美元", "美元"),
+    ]
+    fcn = bnp_tables.price_table("underlying_table", lines, with_tickers=False)
+    assert fcn.ok, fcn.note
+    assert "barrier" not in fcn.value["pcts"]
+    dacn = bnp_tables.price_table("underlying_table", lines, with_tickers=False, labels=bnp_tables.DACN_PRICE_LABELS)
+    assert dacn.ok, dacn.note
+    assert dacn.value["pcts"] == fcn.value["pcts"]
+
+
 def test_initial_price_label_split_across_pages():
     """跨頁的只有期初價格標籤後半（`Price)：` 在下一頁頂端、排在各格之後）。"""
     lines = [

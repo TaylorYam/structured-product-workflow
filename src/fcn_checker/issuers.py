@@ -23,6 +23,7 @@ from .parsers import (
     barc_iis,
     barc_stepdown_iis,
     bbva_iis,
+    bnp_dacn_iis,
     bnp_iis,
     bnp_super_bull_iis,
     ca_ben_iis,
@@ -50,6 +51,7 @@ from .parsers import (
 from .parsers import barc_stepdown as barc_stepdown_parser
 from .parsers import bbva as bbva_parser
 from .parsers import bnp as bnp_parser
+from .parsers import bnp_dacn as bnp_dacn_parser
 from .parsers import bnp_super_bull as bnp_sb_parser
 from .parsers import ca as ca_parser
 from .parsers import ca_ben as ca_ben_parser
@@ -80,6 +82,8 @@ from .rules import barc_stepdown as barc_stepdown_rules
 from .rules import bbva as bbva_rules
 from .rules import bbva_iis as bbva_iis_rules
 from .rules import bnp as bnp_rules
+from .rules import bnp_dacn as bnp_dacn_rules
+from .rules import bnp_dacn_iis as bnp_dacn_iis_rules
 from .rules import bnp_super_bull as bnp_sb_rules
 from .rules import bnp_super_bull_iis as bnp_sb_iis_rules
 from .rules import ca as ca_rules
@@ -406,6 +410,29 @@ BNP_SUPER_BULL = Template(
         rules=bnp_sb_iis_rules.run_all,
     ),
     products=frozenset({SUPER_BULL}),
+)
+
+# BNP DACN（workflow #548）：和 BNP FCN、Super Bull 同一家上手、不同範本（中文名稱和 Super Bull 相同，依第 15 項配息公式與
+# 定界價格辨識，排在 Super Bull、FCN 前面）
+BNP_DACN = Template(
+    code=bnp_dacn_rules.ISSUER,
+    template_id=bnp_dacn_parser.TEMPLATE_ID,
+    label="BNP DACN 中文產品說明書",
+    parser_version=bnp_dacn_parser.PARSER_VERSION,
+    not_covered=tuple(bnp_dacn_rules.NOT_COVERED),
+    detect=bnp_dacn_parser.detect,
+    read=bnp_dacn_parser.read,
+    rules=bnp_dacn_rules.run_all,
+    iis=IisTemplate(
+        template_id=bnp_dacn_iis.TEMPLATE_ID,
+        label="BNP DACN 中文投資人須知",
+        parser_version=bnp_dacn_iis.PARSER_VERSION,
+        detect=bnp_dacn_iis.detect,
+        read=bnp_dacn_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=bnp_dacn_iis_rules.run_all,
+    ),
+    products=frozenset({DACN}),
 )
 
 SG = Template(
@@ -769,7 +796,7 @@ REGISTRY: tuple[Issuer, ...] = (
     Issuer(BARC.code, (BARC_DACN, BARC_STEPDOWN, BARC), reference_fields=barc_rules.REFERENCE_FIELDS, ratings=True),
     Issuer(HSBC.code, (HSBC_BEN, HSBC_SUPER_BULL, HSBC), ratings=True),
     Issuer(MS.code, (MS_BEN, MS), reference_fields=ms_rules.REFERENCE_FIELDS, ratings=True),
-    Issuer(BNP.code, (BNP_SUPER_BULL, BNP), reference_fields=bnp_rules.REFERENCE_FIELDS, ratings=True),
+    Issuer(BNP.code, (BNP_DACN, BNP_SUPER_BULL, BNP), reference_fields=bnp_rules.REFERENCE_FIELDS, ratings=True),
     Issuer(SG.code, (SG_DACN, SG), reference_fields=sg_rules.REFERENCE_FIELDS, ratings=True),
     Issuer(CITI.code, (CITI,), reference_fields=citi_rules.REFERENCE_FIELDS, ratings=True),
     Issuer(JPM.code, (JPM,), reference_fields=jpm_rules.REFERENCE_FIELDS, ratings=True),

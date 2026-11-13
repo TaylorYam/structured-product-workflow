@@ -43,7 +43,7 @@ IIS_FIELDS: dict[str, str] = {
     "redemption_start": "date：開始受理贖回日期",
     "memory_wording": "int：商品事項段「記憶式」出現的次數（Citi：非記憶式商品不得出現）",
     "coupon_pa_mentions": "tuple[Occurrence, ...]：年利率主來源以外的出處（JPM D 型自動提前出場配息金額；每處 = 主來源）",
-    "guaranteed_periods": "int：配息公式保證全額配息的期數（SG DACN；須等於同商品說明書）",
+    "guaranteed_periods": "int：配息公式保證全額配息的期數（SG、BNP DACN；須等於同商品說明書）",
     "accrual_ranges": "tuple[tuple[str, int, int], ...]：區間累積配息的期別範圍（出處、第一期、最後一期；SG DACN 配息公式第二行、"
     "n(i)、N(i)，須等於同商品說明書）",
     "coupon_per_period_pct": "Decimal：每期配息率 %，保留顯示位數（= 年利率 ÷ 12 四捨五入到 4 位；Nomura、BBVA P 型）",

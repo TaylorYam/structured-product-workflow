@@ -25,10 +25,12 @@ Aspect = Callable[[IssuerContext], list[str]]
 @dataclass(frozen=True)
 class Sampled:
     """一家 DACN 有樣本的型態：`checks` 依序檢查、描述依序併成訊息；`summary` 是錯訊括號裡的說明（例：「Nomura DACN 樣本
-    只有…」）。"""
+    只有…」）。`manual` 是有樣本、但使用者決定維持人工的型態，描述本身就是錯訊、不寫「待樣本驗證」（例：BNP DACN 的
+    MKI，`monthly_ki`）。"""
 
     summary: str
     checks: Sequence[Aspect]
+    manual: Sequence[Aspect] = ()
 
 
 def ko(field: str = "ko_wording", kind: Callable[[Any], str] = lambda v: v) -> Aspect:
@@ -62,6 +64,11 @@ def ki(supported: tuple[str, ...]) -> Aspect:
         return [f"KI {kit.KI_LABEL[k]}"] if k is not None and k not in supported else []
 
     return check
+
+
+def monthly_ki(ctx: IssuerContext) -> list[str]:
+    """KI 每期觀察（MKI）維持人工（workflow #386／#403；有樣本也不開放，所以不寫「待樣本驗證」）。"""
+    return ["每期觀察 KI 維持人工處理（#386）"] if kit.doc_ki(ctx.ts.f("ki_type")) == "P" else []
 
 
 def currency(supported: tuple[str, ...], *, quanto: bool = False) -> Aspect:
@@ -104,16 +111,17 @@ def non_call(supported: tuple[int, ...]) -> Aspect:
 
 
 def template_variant(ctx: IssuerContext, sampled: Sampled) -> CheckResult:
-    """沒有樣本的型態轉人工覆核（核對規則 §3.1）。"""
+    """沒有樣本的型態（待樣本驗證）與維持人工的型態轉人工覆核（核對規則 §3.1）。"""
     issues = [x for check in sampled.checks for x in check(ctx)]
+    parts = [f"{'、'.join(issues)}待樣本驗證（{sampled.summary}）"] if issues else []
+    parts += [x for check in sampled.manual for x in check(ctx)]
     return kit.doc_check(ctx, "doc.template_variant", "template_variant", "DACN 型態").compare(
         None,
         None,
-        ok=not issues,
+        ok=not parts,
         fail=S.REVIEW_REQUIRED,
         reason="template_variant_unverified",
-        message="、".join(issues),
-        fail_message=f"待樣本驗證（{sampled.summary}），請人工核對",
+        fail_message="；".join(parts) + "，請人工核對",
     )
 
 

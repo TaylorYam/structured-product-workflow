@@ -3,7 +3,7 @@
 - 文件側：[BNP DACN 範本規格](../templates/bnp-zh-dacn.md)（`bnp-zh-dacn-pd`）、[BNP DACN 投資人須知範本規格](../templates/bnp-zh-dacn-iis.md)（`bnp-zh-dacn-iis`）
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [BNP DACN 下單資料格式](../order-formats/bnp-dacn-reference.md)
 - 商品：DACN（workflow ADR 0030、#366、#367）；第二波開放順序 Barclays → BNP → UBS → MS（路線圖 #551），本文件是 BNP（workflow #548）
-- 狀態：規格（實作另開 PR）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記不做（路線圖 #551 指示，同 DACN／BEN 第一波）**（§7）
+- 狀態：已實作（workflow #548）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記不做（路線圖 #551 指示，同 DACN／BEN 第一波）**（§7）
 - 本文件只寫和 [BNP 核對規則](bnp-check-rules.md)（FCN）不同或 DACN 特有的部分。沒提到的（審查標準、固定警語與次數、保證機構三種寫法、受託機構、發行機構名稱、信用評等、商品種類、幣別、費率、最低金額、受理申購日、刊印日期、審查通過日期、價格推算與分割轉人工、KO／KI／記憶式的內部一致、D 型日期表與比價日、名稱一致、基本公開說明書日期、頁首總頁數、連結標的說明）照 BNP FCN。共用的 DACN 規則（配息門檻、商品種類一致、沒有樣本的型態轉人工、保證期數 = Non-Call）和第一波 DACN、[Barclays DACN](barc-dacn-check-rules.md) 相同
 
 ## 1. 範圍
@@ -169,12 +169,12 @@
 
 標記外、刻意不核對的段落見 §2。每條新規則實作時要有合成反例，特別是「正式條款正確、但其他出處錯」：§11 某檔定界價格 % 和其他檔不同；某檔定界價格不是期初 × %；§18 重印表定界價格列和 §11 不同；§15 第 2 或第 3 段的 X 和月配息率不同；§17 最低配息率和月配息率不同；§18 某處 `× X% × (n ÷ M)` 的 X 不同；保證期數和 Non-Call 不同（`第1到2個配息日`）；§15 第 3 段 N ≠ 天期；§15 nj 定義改成不比定界價格（→ 範本未知）；§15 其他固定字改掉（→ 不支援的範本版本）；§11 沒有定界價格列（→ 不支援的範本版本）；參考條件表配息門檻 ≠ 說明書；配息門檻欄存在但空白（→ 和 K% 比）；表上沒有配息門檻欄；Product 是 FCN 或 Super Bull 但文件是 DACN（及反過來）；交易日早於 2026-06-01 但寫法相同（→ 照常核對）；非美元、單一標的、無 KI、KI 每期觀察（→ 轉人工）；投資人須知 C、g、定界價格 % 或價格和說明書不同；投資人須知標的表列標籤和價格黏在一起、跨頁。
 
-## 8. 實作方式（workflow #548，規劃）
+## 8. 實作方式（workflow #548）
 
 | 內容 | 位置 |
 |---|---|
 | 範本辨識與讀出 | `parsers/bnp_dacn.py`、`parsers/bnp_dacn_iis.py`：先照 `parsers/bnp.py`、`bnp_iis.py` 讀出（標的表宣告多定界價格列），再改讀 §15 三段配息公式（月配息率、g、N）、§17 最低配息率（沒有 `(年化)`）、配息門檻；情境沿用 `bnp_scenario`，多認 `第2~N 個月配息金額 … × X% × (n ÷ M)` 那一行 |
-| 共用小改 | `parsers/bnp_tables.py`：標的表的列標籤由呼叫端給（預設照舊，FCN、Super Bull 結果不變）；投資人須知標的表列標籤和價格同一格時拆開（只用在 DACN）；`rules/bnp_scenario.py`：自動提前贖回情況以外的情境，累積與總報酬率可由呼叫端略過（DACN） |
+| 共用小改 | `parsers/bnp_tables.py`：標的表的列標籤由呼叫端給（預設照舊，FCN、Super Bull 結果不變）；表格跨頁時，下一頁頂端和標籤欄同一列的標籤片段接回標籤欄（`stitch_page_break`，各範本共用；本機 BNP FCN、Super Bull 文件讀出不變）；`parsers/bnp_scenario.py`：多認區間計息算式那一行，股數算式多認 `商品面額`；`rules/bnp_scenario.py`：自動提前贖回情況以外的情境，累積與總報酬率可由呼叫端略過（DACN） |
 | 上手註冊 | `issuers.py` 登記 `BNP_DACN`（`products=frozenset({DACN})`，上手代號同 `BNP`），排在 `BNP_SUPER_BULL`、`BNP` 前面 |
 | 規則 | `rules/bnp_dacn.py`（§3.1 型態宣告、§3.3 月配息率與最低配息率、§3.4 配息門檻、§3.5 保證期數、§3.7 情境，其餘沿用 `rules/bnp.py`）、`rules/bnp_dacn_iis.py`（§3.9） |
 | 設定 | `[auto_check_products]` 的 `DACN` 加 `BNP`（版本 +1）；審查標準加 `[issuer.bnp.product_names.DACN]`（版本 +1） |

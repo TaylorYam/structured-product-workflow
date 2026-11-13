@@ -11,6 +11,9 @@
 `iis.summary`（標的表 `iis.summary.table`）、`iis.coupon`、`iis.issue`、`iis.risk`、`iis.fees`、`iis.rest`。
 Super Bull（`SbSpec`，docs/checker/templates/bnp-zh-super-bull.md、bnp-zh-super-bull-iis.md，#311）：同一套排版，第 14～18 項、
 第二章交易架構與投資人須知收益分配事項改成 Super Bull 的寫法；段落代號相同，參考條件表 Product 填 `Super Bull`。
+DACN（`DacnSpec`，docs/checker/templates/bnp-zh-dacn.md、bnp-zh-dacn-iis.md，#548）：同一套排版，標的表（含重印表與投資人須知）
+多定界價格列、第 15 項改成區間計息配息公式、第 17 項最低配息率寫月配息率、第 18 項多合格營業日總天數假設與第 g+1 期起的
+`× X% × (n ÷ M)` 算式，投資人須知配息寫法改成 `C × (nj/Nj)`；段落代號相同，參考條件表 Product 填 `DACN`、配息門檻(%) 同定界價格 %。
 """
 
 from __future__ import annotations
@@ -36,6 +39,7 @@ from reference_synth import (
     Ratings,
     price,
     reference_row,
+    set_dacn,
     weekday_on_or_after,
     write_notes,
 )
@@ -159,21 +163,28 @@ class Spec(ProductSpec):
         return "美元"  # 標的都是美股（ZBn UW）
 
     @property
+    def names(self) -> dict[str, Any]:
+        """審查標準的商品名稱樣板（DACN 換成 `product_names.DACN`）。"""
+        return NAME
+
+    @property
     def name_zh(self) -> str:
-        return NAME["zh"].format(
+        names = self.names
+        return names["zh"].format(
             tenor=self.tenor,
             ccy_zh=self.currency_zh,
-            underlying_zh=NAME["basket_zh"] if self.count > 1 else NAME["single_zh"],
-            autocall_zh=NAME["autocall_zh"] if self.autocall else "",
+            underlying_zh=names["basket_zh"] if self.count > 1 else names["single_zh"],
+            autocall_zh=names["autocall_zh"] if self.autocall else "",
         )
 
     @property
     def name_en(self) -> str:
-        return NAME["en"].format(
+        names = self.names
+        return names["en"].format(
             tenor=self.tenor,
-            ccy=NAME.get("ccy_aliases", {}).get(self.ccy, self.ccy),
-            underlying_en=NAME["basket_en"] if self.count > 1 else NAME["single_en"],
-            autocall_en=NAME["autocall_en"] if self.autocall else "",
+            ccy=names.get("ccy_aliases", {}).get(self.ccy, self.ccy),
+            underlying_en=names["basket_en"] if self.count > 1 else names["single_en"],
+            autocall_en=names["autocall_en"] if self.autocall else "",
         )
 
     @property
@@ -235,6 +246,38 @@ class SbSpec(Spec):
         )
 
 
+DACN_NAME = STANDARD["issuer"]["bnp"]["product_names"]["DACN"]
+
+
+@dataclass
+class DacnSpec(Spec):
+    """BNP DACN 合成規格（docs/checker/templates/bnp-zh-dacn.md、bnp-zh-dacn-iis.md，#548）：預設照樣本型態（美元、多標的、
+    KO 每日觀察＋記憶式、KI 每日觀察、配息公式保證 1 期 = Non-Call 1）。`barrier` 是配息門檻 %（§11、§18 重印表與投資人須知
+    標的表的定界價格列、參考條件表「配息門檻(%)」；None → 同執行價）；`formula_g` 是 §15 第 2 段、§18 情境與投資人須知配息
+    寫法的保證期數（None → 同 Non-Call）；`days` 是 §18 假設的每期合格營業日總天數 M。
+    """
+
+    product_code: str = "082199990002"
+    ki: str = "D"
+    first_callable: int = 1
+    annual: Decimal = Decimal("12")  # 月配息率 1.0000%
+    barrier: Decimal | None = None
+    formula_g: int | None = None
+    days: int = 20
+
+    @property
+    def barrier_value(self) -> Decimal:
+        return self.strike if self.barrier is None else self.barrier
+
+    @property
+    def g(self) -> int:
+        return self.first_callable if self.formula_g is None else self.formula_g
+
+    @property
+    def names(self) -> dict[str, Any]:
+        return DACN_NAME
+
+
 LAYOUT = FlowLayout(right=545, keep_width=True, split=split_digits, cell_gap=14, chapter_x=50)
 
 
@@ -278,6 +321,8 @@ def _underlying_table(d: FlowDoc, s: Spec, section: str, *, reprint: bool, sep: 
     rows = [("執行價格(Strike Price):", s.strike), ("自動提前贖回價格(Automatic Early Redemption Price)：", s.ko)]
     if s.ki != "none":
         rows.append(("下限價格(Knock-In Price)：", s.ki_pct))
+    if isinstance(s, DacnSpec):
+        rows.append(("定界價格(Barrier Price)：", s.barrier_value))
     for i, (label, pct) in enumerate(rows):
         d.cell(50, label)
         for v in s.initials:
@@ -290,6 +335,8 @@ def _underlying_table(d: FlowDoc, s: Spec, section: str, *, reprint: bool, sep: 
 
 
 def _scenarios(d: FlowDoc, s: Spec) -> None:
+    """FCN 情境；DACN（`DacnSpec`）自動提前贖回情況以外的情境先寫第 1～g 個月的配息，再寫第 g+1～N 個月的區間計息
+    `× X% × (n ÷ M)`（最佳情況 n = M，較差、最差 n = 0），股數算式寫「商品面額」（範本規格 §2、§4.3）。"""
     unit, a, n, k = s.currency_zh, s.coupon, s.tenor, s.first_callable
     rounding = "四捨五入至整數位" if s.jpy else "四捨五入至小數點以下第二位"
     kinds: list[tuple[str, str]] = [("autocall", "自動提前贖回情況")]
@@ -307,11 +354,18 @@ def _scenarios(d: FlowDoc, s: Spec) -> None:
         if kind == "extreme":
             d.text(80, "如發行機構違約，投資人可能虧損100%原計價幣別投資本金。")
             continue
-        periods = k if kind == "autocall" else n
+        accrual = isinstance(s, DacnSpec) and kind != "autocall"
+        periods = k if kind == "autocall" else s.g if accrual else n
         span = f"第{periods} 個月" if periods == 1 else f"第1~{periods} 個月"
         cum = a * periods
         if s.cumulative == "exact":
             cum = (s.denom * s.monthly / 100 * periods).quantize(Decimal(1).scaleb(-s.decimals), ROUND_HALF_UP)
+        condition = ""  # DACN 假設句多的區間計息條件
+        if accrual:
+            above = "大於或等於" if kind == "best" else "小於"
+            condition = (
+                f"且於第{periods + 1} 到{n} 個配息期內所有連結標的於每個合格營業日之收盤價格皆{above}其各自定界價格，"
+            )
         if kind == "autocall":
             j = f"第1(j={n})個" if k == n else "第1 個"
             d.text(
@@ -321,17 +375,28 @@ def _scenarios(d: FlowDoc, s: Spec) -> None:
         elif kind == "best":
             d.text(
                 80,
-                "假設不曾發生任何自動提前贖回事件，且表現最差連結標的於期末評價日之收盤價格大於其執行價格，於到期日以現金結算收益：",
+                f"假設不曾發生任何自動提前贖回事件，{condition}且表現最差連結標的於期末評價日之收盤價格大於其執行價格，"
+                "於到期日以現金結算收益：",
             )
         else:
             close = Decimal("1.00") if kind == "worst" else (strike / 2).quantize(Decimal("0.01"), ROUND_HALF_UP)
             d.text(
                 80,
-                f"假設不曾發生任何自動提前贖回事件，且表現最差連結標的(假設為{s.underlyings[worst_idx].name})於期末評價日之收盤價格"
+                f"假設不曾發生任何自動提前贖回事件，{condition}且表現最差連結標的(假設為{s.underlyings[worst_idx].name})"
+                "於期末評價日之收盤價格"
                 f"{close} {s.underlying_ccy}小於其執行價格{_price_cell(strike)} {s.underlying_ccy}，於到期日以實體交付表現最差連結標的股數的形式結算收益：",
             )
         d.text(80, f"{span}配息金額 = 1 單位商品 × {s.denom:,} {unit} × {s.monthly}%")
         d.text(80, f"= {s.money(a)} {unit}({rounding})")
+        if accrual:
+            days = s.days if kind == "best" else 0
+            amount = (s.denom * s.monthly / 100 * days / s.days).quantize(Decimal(1).scaleb(-s.decimals), ROUND_HALF_UP)
+            d.text(
+                80,
+                f"第{periods + 1}~{n} 個月配息金額 = 1 單位商品 × {s.denom:,} {unit} × {s.monthly}% × ({days} ÷ {s.days})",
+            )
+            d.text(80, f"= {s.money(amount)} {unit}({rounding})")
+            cum += amount * (n - periods)
         d.text(80, f"累積總月配息金額 = {s.money(cum)} {unit}")
         if kind in ("autocall", "best"):
             label = "自動提前贖回金額" if kind == "autocall" else "到期贖回金額"
@@ -359,7 +424,8 @@ def _delivery(d: FlowDoc, s: Spec, close: Decimal, cum: Decimal | None) -> None:
     value = whole * per_share + remainder + (cum or 0)
     r = (value / s.denom * 100 - 100).quantize(Decimal("0.0001"), ROUND_HALF_UP)
     if s.fx is None:
-        d.text(80, "股數計算 = 每單位面額 ÷ 表現最差連結標的之執行價格")
+        denomination = "商品面額" if isinstance(s, DacnSpec) else "每單位面額"  # DACN 樣本寫「商品面額」
+        d.text(80, f"股數計算 = {denomination} ÷ 表現最差連結標的之執行價格")
         d.text(80, f"= {s.denom:,} {unit} ÷ {_price_cell(strike)} {uccy}")
     else:
         d.text(80, "股數計算 = (每單位面額 × 匯率) ÷ 表現最差連結標的之執行價格")
@@ -559,6 +625,17 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
     if sb:
         w.line(18, "2 收益分配事項及到期贖回金額之計算")
         d.text(18, "● 配息：不適用", 34)
+    elif isinstance(s, DacnSpec):  # 範本規格 bnp-zh-dacn-iis.md §1.1
+        w.line(18, "2 收益分配事項、自動提前贖回金額及到期贖回金額之計算")
+        first = "第1 個配息日" if s.g == 1 else f"第1 到{s.g} 個配息日"
+        d.text(
+            18,
+            f"● 配息：配息將於每個配息日支付(如有)。{first}之配息金額為商品面額 × C；第{s.g + 1}~{s.tenor} 個配息日之配息金額"
+            f"為商品面額 × C × (nj/Nj)，其中C 為{s.monthly}%。nj：指於相關第j 個配息期內籃子內所有連結標的之收盤價格皆大於"
+            "或等於其各自定界價格的合格營業日天數。Nj：指於相關第j 個配息期內合格營業日總天數。合格營業日指任一預定交易日且"
+            "籃子內所有連結標的在該日均沒有發生市場中斷事件。",
+            34,
+        )
     else:
         w.line(18, "2 收益分配事項、自動提前贖回金額及到期贖回金額之計算")
         d.text(18, f"● 配息：配息將於每個配息日支付。配息金額為商品面額 × C，其中C 為{s.monthly}%。", 34)
@@ -769,6 +846,33 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             write_notes(d.w, s.underlyings, "label", x=87, label="({k})", heading=None)
         elif n == 14:
             _dates(d, s, ends, payments, starts)
+        elif n == 15 and isinstance(s, DacnSpec):  # 範本規格 §2.1
+            rounding = "四捨五入至整數位" if s.jpy else "四捨五入至小數點以下第二位"
+            first = "第1 個配息日" if s.g == 1 else f"第1 到{s.g} 個配息日"
+            d.text(
+                87,
+                f"月配息率：{s.monthly}% (即年利率{s.annual}%)，惟實際配息金額將取決於連結標的之表現。"
+                "配息將於各配息日依以下公式計算給付：",
+            )
+            d.text(
+                87,
+                f"就每單位商品及{first}而言，由計算代理機構根據以下公式({rounding})計算以{unit}計值的配息款項："
+                f"配息金額 = 商品面額 × {s.monthly}%。",
+            )
+            d.text(
+                87,
+                f"就每單位商品及第{s.g + 1} 到{s.tenor} 個配息日而言，由計算代理機構根據以下公式({rounding})計算以{unit}計值的"
+                f"配息款項：配息金額 = 商品面額 × {s.monthly}% × (nj/Nj)。",
+            )
+            d.text(
+                87,
+                "其中：nj 指於相關第j 個配息期內籃子內所有連結標的之收盤價格皆大於或等於其各自定界價格的合格營業日天數。"
+                "Nj 指於相關第j 個配息期內合格營業日總天數。",
+            )
+            d.text(
+                87,
+                "對於配息款項而言，若於第1 個配息期結束日發生自動提前贖回事件，發行機構將於自動提前贖回日支付該配息期之配息。",
+            )
         elif n == 15 and not sb:
             d.text(87, f"月配息率：{s.monthly}% (即年利率{s.annual}%)")
             d.text(87, "配息將於各配息日依以下公式計算給付：")
@@ -845,10 +949,17 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                     87,
                     "「觸及生效事件」：若任一連結標的收盤價格於觸及生效事件觀察日小於其下限價格，則被視為發生觸及生效事件。",
                 )
-            d.text(
-                87,
-                f"最低保證配息率：若商品並無投資人提前贖回或發行機構提前買回且註銷，本商品最低配息率為{s.annual}%（年化）。",
-            )
+            if isinstance(s, DacnSpec):  # 範本規格 §2：月配息率、沒有（年化）
+                d.text(
+                    87,
+                    f"最低保證配息率：若商品並無投資人提前贖回或發行機構提前買回且註銷，本商品最低配息率為{s.monthly}%。"
+                    "惟本商品不保本，本商品之配息金額由連結標的之表現決定且其價值可能低於投資的本金。",
+                )
+            else:
+                d.text(
+                    87,
+                    f"最低保證配息率：若商品並無投資人提前贖回或發行機構提前買回且註銷，本商品最低配息率為{s.annual}%（年化）。",
+                )
             d.text(87, "參與率：不適用。")
         elif n == 18:
             _sub(d, 1, "投資收益計算方法：請參閱上述本章第10 項之說明。")
@@ -863,6 +974,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                 d.text(87, f"匯率(每一{unit}兌美元的市場中間匯率) = {s.fx}")
             if not sb:
                 d.text(87, f"每月配息率：{s.monthly}%")
+            if isinstance(s, DacnSpec):
+                d.text(87, f"每個配息期之合格營業日總天數={s.days}")
             d.text(87, "連結標的相關價格如下：")
             _underlying_table(d, s, "art18.table", reprint=True)
             if sb:
@@ -1096,10 +1209,15 @@ def _dates(d: FlowDoc, s: Spec, ends, payments, starts) -> None:
 
 
 def _row(spec: Spec, **overrides: Any) -> dict[str, Any]:
-    """參考條件表列；Super Bull 的 Product 填 `Super Bull`。"""
+    """參考條件表列；Super Bull 的 Product 填 `Super Bull`；DACN 的 Product 填 `DACN`、配息門檻(%) 填定界價格 %（表頭沒有
+    這欄時不寫出）。"""
     if isinstance(spec, SbSpec):
         overrides = {"Product": SB_PRODUCT, **overrides}
-    return reference_row(spec, **overrides)
+    out = reference_row(spec)
+    if isinstance(spec, DacnSpec):
+        set_dacn(out, spec.strike, spec.barrier)
+    out.update(overrides)
+    return out
 
 
 CHECKS = SynthChecks(Spec, build_pdf, _row)  # 單份核對殼（harness.SynthChecks）

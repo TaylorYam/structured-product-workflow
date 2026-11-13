@@ -166,8 +166,13 @@ def _ko_terms(ti: TextIndex) -> dict[str, ParsedField]:
     return {"ko_observation": ParsedField.present("ko_observation", "P", ti.lines_for(m.start(), m.end()))}
 
 
-def read(lines: Sequence[Line], redemption_section: tuple[str, str] = REDEMPTION_SECTION) -> iis.IisSheet:
-    """讀出；`redemption_section` 為 KO 事件、KI 寫法所在段落的頭尾段名（Super Bull 段名不同，parsers/bnp_super_bull_iis.py）。"""
+def read(
+    lines: Sequence[Line],
+    redemption_section: tuple[str, str] = REDEMPTION_SECTION,
+    labels: tuple[tuple[str, str], ...] = bnp_tables.PRICE_LABELS,
+) -> iis.IisSheet:
+    """讀出；`redemption_section` 為 KO 事件、KI 寫法所在段落的頭尾段名（Super Bull 段名不同，parsers/bnp_super_bull_iis.py），
+    `labels` 為標的表的列標籤（DACN 多定界價格列，parsers/bnp_dacn_iis.py）。"""
     text_lines = body(lines)
     ti = TextIndex(text_lines)
     fields: dict[str, ParsedField] = {"page_totals": iis.page_totals(lines)}
@@ -214,7 +219,7 @@ def read(lines: Sequence[Line], redemption_section: tuple[str, str] = REDEMPTION
         ),
     )
     region = _price_region(text_lines)
-    fields["underlying_table"] = bnp_tables.price_table("underlying_table", region, with_tickers=True)
+    fields["underlying_table"] = bnp_tables.price_table("underlying_table", region, with_tickers=True, labels=labels)
     bnp.price_fields(fields, fields["underlying_table"], region)
     put("tenor_months", r"商品年期[:：](\d+)個月期", int)
     put("subscription_start", r"商品開始受理申購日期[:：]" + iis.DATE + "至", parse_date)

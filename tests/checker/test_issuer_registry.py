@@ -28,7 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 FAMILY_SPECS = {
     "HSBC": [("hsbc_synth", "Spec"), ("hsbc_synth", "SbSpec"), ("hsbc_synth", "BenSpec")],
     "MS": [("ms_synth", "Spec"), ("ms_ben_synth", "BenSpec")],
-    "BNP": [("bnp_synth", "Spec"), ("bnp_synth", "SbSpec")],
+    "BNP": [("bnp_synth", "Spec"), ("bnp_synth", "SbSpec"), ("bnp_synth", "DacnSpec")],
     "SG": [("sg_synth", "Spec"), ("sg_synth", "DacnSpec")],
     "NOMURA": [("nomura_synth", "Spec"), ("nomura_synth", "DacnSpec")],
     "NATIXIS": [("natixis_synth", "Spec"), ("natixis_synth", "DacnSpec"), ("natixis_synth", "StepdownSpec")],
@@ -141,6 +141,8 @@ CLAIM_MARKS = [
     ("DBS", "dbs_synth", "iis", "其區間下限價格"),
     ("BARC", "barc_synth", "pd", "配息門檻"),
     ("BARC", "barc_synth", "iis", "配息門檻"),
+    ("BNP", "bnp_synth", "pd", "定界價格"),
+    ("BNP", "bnp_synth", "iis", "定界價格"),
 ]
 
 
