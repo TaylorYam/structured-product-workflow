@@ -34,7 +34,8 @@ TEMPLATE_ID = "natixis-zh-pd"
 # 11：辨識曾另要求沒有區間計息寫法（#436 起同一家上手由專到泛由上手註冊表決定，版本不變）；頁尾英文名稱第二行也收「Principal Protected, …」（workflow #371）
 # 12：封面商品代號與 ISIN 之間的逗號重複照常讀（workflow #476）
 # 13：封面英文名稱的「(Non Principal」也視同「(Non-Principal」（workflow #531）
-PARSER_VERSION = "13"
+# 14：情境一「在較佳情況下…」句前沒有列項符號也收（FCN_Stepdown 早期版面，workflow #545）
+PARSER_VERSION = "14"
 # 發行機構信用評等（#240）：封面「發行機構名稱」下一行 `(長期債務信用評等標準普爾評等A+/穆迪評等A2/惠譽評等A+ (高級優先債務))(截至…)`、第一章第 3 項 `發行機構長期債務信用評等(截至…)：長期債務信用評等…。`、第二章 (7) `信用評等：長期債務信用評等…(截至…)`
 RATINGS = (
     ratings.RatingPlace("封面", r"法國外貿銀行（長期債務信用評等(?P<body>.+?)）（截至"),
@@ -436,7 +437,7 @@ def read(lines: Sequence[Line], variant: Variant = FCN) -> NatixisTermSheet:
     fields.put("issue_date", art12, r"\(3\)發行日：" + D, parse_date)
     fields.put("maturity_date", art12, r"到期日：最終評價日後的第.{1,2}個營業日，即" + D, parse_date)
     fields.put("final_valuation_date", art12, r"最終評價日：" + D, parse_date)
-    _article12(fields, art12)
+    article12(fields, art12)
 
     fields["coupon_pa_pct"] = capture_group(article(13), COUPON, 2, "coupon_pa_pct", Decimal)
     fields["monthly_coupon_pct"] = capture_group(article(13), COUPON, 1, "monthly_coupon_pct", Decimal)
@@ -632,8 +633,9 @@ def _rows(text: str, pattern: re.Pattern[str]) -> list[tuple[int, list]]:
     return out
 
 
-def _article12(fields: dict[str, ParsedField], art12: list[Line]) -> None:
-    """日期表（KO 每日：配息觀察期間表；KO 每期：配息日表＋自動提前到期觀察日表）、KO 觀察寫法、觸及事件判定日。"""
+def article12(fields: dict[str, ParsedField], art12: list[Line]) -> None:
+    """日期表（KO 每日：配息觀察期間表；KO 每期：配息日表＋自動提前到期觀察日表）、KO 觀察寫法、觸及事件判定日（`date_table`、
+    `ko_wording`、`ko_final_day`、`ki_day_rule`；FCN_Stepdown 的範本辨識也用它對齊第 14 項每期 KO 表）。"""
     ti = TextIndex(art12)
     text = ti.text
     fields["ki_day_rule"] = ki_day(ti, art12, r"觸及事件判定日：(.+?)，並依「中斷日」", "第一章第 12 項")
@@ -796,7 +798,7 @@ def _article16(fields: dict[str, ParsedField], art16: list[Line], variant: Varia
     first = (
         list(
             re.finditer(
-                BULLET + r"在較佳情況下，自動提前到期事件於第" + CN_PERIOD + r"個配息觀察期間結束日發生",
+                BULLET + r"?在較佳情況下，自動提前到期事件於第" + CN_PERIOD + r"個配息觀察期間結束日發生",
                 section1[1],
             )
         )

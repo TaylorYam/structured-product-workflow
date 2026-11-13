@@ -11,6 +11,9 @@
 DACN（`DacnSpec`，docs/checker/templates/natixis-zh-dacn.md、natixis-zh-dacn-iis.md）：名稱用 DACN 樣板、頁尾英文名稱從
 「(Non」後換行、價格表執行價格欄寫「配息界限價格(每日觀察)/執行價格」、日期表多「配息金額」欄、第 13 項與投資人須知貳 2. 寫
 區間計息的固定寫法、情境配息算式寫「面額 x 月配息率 [x (n/N)] =」。
+FCN_Stepdown（`StepdownSpec`，docs/checker/templates/natixis-zh-stepdown.md、natixis-zh-stepdown-iis.md，workflow #545）：
+`step` 有值時第 9 項與情境價格表沒有 KO 欄、第 14 項 KO 定義寫「為下表所列之期初進場價格」並接每期 KO 表（段落代號
+`ts.art14.table`；KO% 從第 Non-Call 期起每期降 `step`）、投資人須知 KO 定義參照說明書第 14 項。
 """
 
 from __future__ import annotations
@@ -31,6 +34,8 @@ from reference_synth import (
     FITCH,
     MOODYS,
     SP,
+    STEPDOWN_HEADERS,
+    STEPDOWN_PRODUCT,
     UL,
     ProductSpec,
     Ratings,
@@ -111,6 +116,11 @@ class Spec(ProductSpec):
     ko_final_day: str | None = (
         None  # KO 每日觀察到最終評價日「含」／「不含」；None → 依交易日（2026-10-20 起「含」，Issue #351）
     )
+    step: Decimal | None = None  # FCN_Stepdown（workflow #545）：KO% 每期降幾個百分點；None 是 FCN
+    iis_table_def: bool = False  # Stepdown 投資人須知多一句「下表所列」的 KO 定義（NS04、NS05 的寫法）
+    ko_rows_from: int | None = (
+        None  # Stepdown D 型每期 KO 表從第幾期寫起（None → Non-Call；1 → 不可提前到期的期別也有列）
+    )
 
     def __post_init__(self) -> None:
         self.underlyings = underlyings(self.count, self.market)
@@ -177,6 +187,10 @@ class Spec(ProductSpec):
     def dacn(self) -> bool:
         return False
 
+    def ko_at(self, period: int) -> Decimal:
+        """KO 第 `period` 期的 KO%（ADR 0033：第 Non-Call 期是第 1 期）。"""
+        return self.ko - (self.step or 0) * (period - 1)
+
 
 @dataclass
 class DacnSpec(Spec):
@@ -211,6 +225,17 @@ class DacnSpec(Spec):
     @property
     def name_en(self) -> str:
         return DACN_NAME["en"].format(tenor=self.tenor, ccy=self.ccy)
+
+
+@dataclass
+class StepdownSpec(Spec):
+    """Natixis FCN_Stepdown 合成規格（workflow #545）：預設同樣本的型態（KO 每日觀察＋記憶式、Non-Call 1、起始 KO 100%、每期降
+    2 個百分點、KI 到期觀察）。"""
+
+    product_code: str = "328199990003"
+    first_callable: int = 1
+    ko: Decimal = Decimal("100.00")
+    step: Decimal | None = Decimal("2.00")
 
 
 LAYOUT = FlowLayout(right=565, gap=12, table_size=7, article_x=54, article_cont=72)
@@ -322,7 +347,9 @@ def _heads(s: Spec, *, codes: bool) -> list[tuple[float, list[str]]]:
     cols = [(60, ["i"]), (102, ["連結", "標的", "資產/", "發行", "公司(i)"])] if codes else [(80, ["連結標的(i)"])]
     if codes:
         cols += [(146, ["彭博", "代碼"]), (190, ["本交", "易所"])]
-    cols += [(235, ["期初進", "場價格"]), (330, ["自動提前到期贖回價格(期", "初進場價格", f"之{s.ko}%)"])]
+    cols.append((235, ["期初進", "場價格"]))
+    if s.step is None:  # Stepdown 沒有 KO 欄（workflow #545）
+        cols.append((330, ["自動提前到期贖回價格(期", "初進場價格", f"之{s.ko}%)"]))
     if s.ki != "none":
         cols.append((425, ["界限價", "格 (期", "初進場", "價格之", f"{s.ki_pct}%", ")"]))
     strike = ["配息界限價", "格(每日觀", "察)/執行價格"] if s.dacn else ["執行價格"]
@@ -340,10 +367,11 @@ def _table(d: FlowDoc, s: Spec, *, codes: bool) -> None:
     d.w.space(8)
     x = {k: cx for k, (cx, _) in zip(range(len(cols)), cols, strict=True)}
     xs = [cx for cx, _ in cols]
-    num_x = xs[-4:-1] if s.ki != "none" else xs[-3:-1]
+    ko_cols = 0 if s.step is not None else 1  # Stepdown 沒有 KO 欄
+    num_x = xs[-(ko_cols + (s.ki != "none") + 2) : -1]
     for n, u in enumerate(s.underlyings, 1):
         prices = (
-            [price(u.initial, s.ko)]
+            ([price(u.initial, s.ko)] if ko_cols else [])
             + ([price(u.initial, s.ki_pct)] if s.ki != "none" else [])
             + [price(u.initial, s.strike)]
         )
@@ -361,7 +389,7 @@ def _table(d: FlowDoc, s: Spec, *, codes: bool) -> None:
             init_x = x[1]
         first.append((init_x, s.initial_text(u)))
         for k, (cx, t) in enumerate(zip(num_x, texts, strict=True)):
-            if s.split_numbers and codes and k > 0:
+            if s.split_numbers and codes and k >= ko_cols:  # KO 價不拆（同真實樣本）
                 first.append((cx, t[:-2]))
                 second.append((cx, t[-2:]))
             else:
@@ -369,6 +397,38 @@ def _table(d: FlowDoc, s: Spec, *, codes: bool) -> None:
         first.append((xs[-1], QUOTE[s.market]))
         d.centered_row(first, gap=11, size=8)
         d.centered_row(second, gap=16, size=8)
+
+
+def _ko_steps(d: FlowDoc, s: Spec) -> None:
+    """Stepdown 第 14 項（workflow #545）：KO 定義「為下表所列之期初進場價格」與每期 KO 表（D：t、開始日、結束日；P：t、
+    自動提前到期觀察日），從第 Non-Call 期起每期一列，KO% 每期降 `step`。"""
+    where = "於相關配息觀察期間(t)之自動提前到期觀察日" if s.ko_obs == "D" else "於自動提前到期觀察日(t)"
+    d.text(
+        72,
+        f"「自動提前到期贖回價格」，係指就任一連結標的而言{where}，自動提前到期贖回價格為下表所列之期初進場價格，"
+        "惟可能因第一章第11 項有關連結標的調整之規定而調整。",
+    )
+    d.section = "art14.table"
+    k = s.first_callable
+    if s.ko_obs == "D":
+        k = s.ko_rows_from or k
+        d.w.row(
+            [
+                (60, "配息觀察期間(t)"),
+                (160, "配息觀察期間開始日"),
+                (290, "配息觀察期間結束日"),
+                (420, "自動提前到期贖回價格"),
+            ],
+            gap=14,
+        )
+        for n, j in enumerate(range(k - 1, s.tenor), 1):
+            cells = [(80, str(j + 1)), (160, s.date(s.starts[j])), (290, s.date(s.ends[j]))]
+            d.w.row([*cells, (420, f"{s.ko_at(n)}%期初進場價格")], gap=13)
+    else:
+        d.w.row([(60, "配息觀察期間(t)"), (200, "自動提前到期觀察日(t)"), (340, "自動提前到期贖回價格")], gap=14)
+        for n, j in enumerate(range(k - 1, s.tenor), 1):
+            d.w.row([(80, str(n)), (200, s.date(s.ends[j])), (340, f"{s.ko_at(n)}% 期初進場價格")], gap=13)
+    d.section = "art14"
 
 
 def _article12(d: FlowDoc, s: Spec) -> None:
@@ -741,9 +801,13 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                 72,
                 f"若所有連結標的在任一自動提前到期觀察日(含)之收盤價{word}其自動提前到期贖回價格，則「自動提前到期事件」視同發生。",
             )
-            d.text(
-                72, f"「自動提前到期贖回價格」，係指就任一連結標的而言，自動提前到期贖回價格為期初進場價格之{s.ko}%。"
-            )
+            if s.step is None:
+                d.text(
+                    72,
+                    f"「自動提前到期贖回價格」，係指就任一連結標的而言，自動提前到期贖回價格為期初進場價格之{s.ko}%。",
+                )
+            else:
+                _ko_steps(d, s)
             d.text(
                 72,
                 "自動提前到期贖回金額 =發生自動提前到期事件之自動提前到期觀察日持有之商品單位數x 每單位商品面額 x 100%",
@@ -855,6 +919,17 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
 # ---------------------------------------------------------------- 投資人須知
 
 
+def _iis_ko_definition(s: Spec) -> str:
+    """投資人須知貳 2. 的 KO 價格定義：FCN 寫固定 %；Stepdown（workflow #545）參照說明書第 14 項，`iis_table_def` 時前面
+    多一句「為下表所列之期初進場價格」（投資人須知沒有表，同 2 份樣本）。"""
+    if s.step is None:
+        return f"「自動提前到期贖回價格」，係指就任一連結標的而言，自動提前到期贖回價格為期初進場價格之{s.ko}%。"
+    head = "「自動提前到期贖回價格」，係指就任一連結標的而言於相關配息觀察期間(t)之自動提前到期觀察日，自動提前到期贖回價格為"
+    tail = "，惟可能因中文產品說明書第一章第11項有關連結標的調整之規定而調整。"
+    table = f"{head}下表所列之期初進場價格{tail}" if s.iis_table_def else ""
+    return f"{table}{head}中文產品說明書第一章第14 項所列之期初進場價格{tail}"
+
+
 def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[Edit] | None = None) -> Path:
     """Natixis 中文投資人須知（docs/checker/templates/natixis-zh-iis.md）：與 `s` 的說明書、參考條件表列一致，預設 4 頁；`edits` 改字。"""
     d = LAYOUT.doc(edits, used, "iis", right=585)
@@ -925,7 +1000,7 @@ def build_iis_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), used: set[
             else []
         ),
         f"自動提前到期事件：若所有連結標的在任一自動提前到期觀察日(含)之收盤價{word}其自動提前到期贖回價格，則「自動提前到期事件」視同發生。"
-        f"「自動提前到期贖回價格」，係指就任一連結標的而言，自動提前到期贖回價格為期初進場價格之{s.ko}%。",
+        + _iis_ko_definition(s),
         *(DACN_COUPON_IIS if s.dacn else ()),
         *([f"「配息界限價格」係指就任一連結標的而言，各該連結標的之期初進場價格之{s.strike}%。"] if s.dacn else []),
         f"「執行價格」係指就任一連結標的而言，各該連結標的之期初進場價格之{s.strike}%",
@@ -1002,9 +1077,12 @@ def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
     set_pricing(out, spec.pricing, spec.count)
     if isinstance(spec, DacnSpec):
         set_dacn(out, spec.strike, spec.barrier)
+    if spec.step is not None:  # Stepdown：KO(%) 與 KO 價是第 1 期（reference_row 已照 `ko` 算）
+        out.update({"Product": STEPDOWN_PRODUCT, "KO降幅(%)": float(spec.step)})
     out.update(overrides)
     return out
 
 
 CHECKS = SynthChecks(Spec, build_pdf, row)  # 單份核對殼（harness.SynthChecks）
+STEPDOWN_CHECKS = SynthChecks(StepdownSpec, build_pdf, row, STEPDOWN_HEADERS)
 check, check_item, check_iis = CHECKS.check, CHECKS.check_item, CHECKS.check_iis

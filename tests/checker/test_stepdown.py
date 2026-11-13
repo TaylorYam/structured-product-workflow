@@ -87,3 +87,24 @@ def test_period_end_schedule_is_unchanged():
     sched, table = _schedule(1, [dt.date(2026, 7, 31), dt.date(2027, 1, 28)])
     periodic = ParsedField(sched.name, sched.status, AutocallSchedule("P", 1, 2, {1: dt.date(2026, 7, 31)}), [])
     assert stepdown.every_period(periodic, table) is periodic
+
+
+def test_ko_periods_matching_the_schedule_are_unchanged():
+    terms = stepdown.ko_terms(rows("100", "98", "96"), WHERE)
+    sched, _ = _schedule(2, [dt.date(2026, 7, 31), dt.date(2026, 8, 31), dt.date(2026, 9, 30), dt.date(2027, 1, 28)])
+    assert stepdown.matching_periods(terms, sched) is terms
+
+
+def test_ko_periods_not_matching_the_schedule_are_invalid():
+    """KO% 期數 ≠ 排程第 k 期到末期的期數：三個欄位都不合法，以免第 n 期 KO% 對錯比價日。"""
+    terms = stepdown.ko_terms(rows("100", "98", "96", "94"), WHERE)
+    sched, _ = _schedule(2, [dt.date(2026, 7, 31), dt.date(2026, 8, 31), dt.date(2026, 9, 30), dt.date(2027, 1, 28)])
+    out = stepdown.matching_periods(terms, sched)
+    assert {pf.status for pf in out.values()} == {FieldStatus.INVALID}
+    assert "讀到 4 期 KO%" in out["ko_step_pct"].note and "第 2～4 期（3 期）" in out["ko_step_pct"].note
+
+
+def test_ko_periods_with_an_unread_schedule_are_unchanged():
+    terms = stepdown.ko_terms(rows("100", "98"), WHERE)
+    missing = ParsedField.missing("autocall_schedule", "讀不到")
+    assert stepdown.matching_periods(terms, missing) is terms

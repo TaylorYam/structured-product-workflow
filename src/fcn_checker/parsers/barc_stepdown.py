@@ -21,7 +21,8 @@ from .common import derived
 from .layout import Document, Span, TextIndex
 
 TEMPLATE_ID = "barc-zh-stepdown-pd"
-PARSER_VERSION = "1"
+# 2：每期 KO% 的期數須 = 提前出場排程的期數（共用 stepdown.matching_periods，workflow #545）
+PARSER_VERSION = "2"
 
 # 商品家族標記與現行寫法（範本規格 §4）：比對前去空白、冒號統一為半形
 FAMILY = "自動提前出場觸發百分比:詳見下表所示"
@@ -132,7 +133,7 @@ def _memory(doc: Document, name_zh: ParsedField) -> ParsedField:
 def read(lines: Sequence[Line]) -> barc.BarcTermSheet:
     ts = barc.read(lines, PRICE_TABLE)
     fields = dict(ts.fields)
-    fields.update(_ko_terms(fields["ko_table"]))
+    fields.update(stepdown.matching_periods(_ko_terms(fields["ko_table"]), fields["autocall_schedule"]))
     fields["ko_memory"] = _memory(ts.document, fields["name_zh"])
     fields["underlying_prices"] = stepdown.with_ko_prices(fields["underlying_prices"], fields["ko_pct"])
     fields["autocall_schedule"] = stepdown.every_period(fields["autocall_schedule"], fields["schedule_table"])

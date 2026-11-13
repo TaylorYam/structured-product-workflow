@@ -125,6 +125,7 @@ SYNTH_SPECS = [
     ("ms_ben_synth", "BenSpec"),
     ("natixis_synth", "Spec"),
     ("natixis_synth", "DacnSpec"),
+    ("natixis_synth", "StepdownSpec"),
     ("nomura_synth", "Spec"),
     ("nomura_synth", "DacnSpec"),
     ("sg_synth", "Spec"),

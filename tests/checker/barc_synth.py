@@ -37,7 +37,8 @@ from harness import STANDARD, SynthChecks, check_sheet, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
 from reference_synth import (
     Q4,
-    REFERENCE_HEADERS,
+    STEPDOWN_HEADERS,
+    STEPDOWN_PRODUCT,
     ProductSpec,
     Ratings,
     build_reference_sheet,
@@ -911,10 +912,6 @@ class StepdownSpec(Spec):
 
     product_code: str = "029199990002"
     step: Decimal | None = Decimal("2.00")
-
-
-STEPDOWN_PRODUCT = "FCN_Stepdown"
-STEPDOWN_HEADERS = [*REFERENCE_HEADERS, "KO降幅(%)"]
 
 
 def stepdown_row(spec: Spec, **overrides: Any) -> dict[str, Any]:
