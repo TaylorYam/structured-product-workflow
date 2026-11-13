@@ -61,6 +61,15 @@ def ko_terms(rows: Sequence[tuple[Decimal | None, Sequence[Line]]], where: str) 
     return {"ko_levels": level_field, "ko_pct": ko_pct, "ko_step_pct": ParsedField.invalid("ko_step_pct", [], note)}
 
 
+def apply_ko_terms(fields: dict[str, ParsedField], terms: dict[str, ParsedField]) -> None:
+    """把上手讀出的每期 KO%（`ko_terms` 的結果）放進說明書欄位（就地改 `fields`）：期數須對上提前出場排程
+    （`matching_periods`），再推得各標的第 1 期 KO 價（`with_ko_prices`）與 D 型每一期的比價日（`every_period`）。
+    `fields` 要有 `autocall_schedule`、`schedule_table`、`underlying_prices`。"""
+    fields.update(matching_periods(terms, fields["autocall_schedule"]))
+    fields["underlying_prices"] = with_ko_prices(fields["underlying_prices"], fields["ko_pct"])
+    fields["autocall_schedule"] = every_period(fields["autocall_schedule"], fields["schedule_table"])
+
+
 def matching_periods(terms: dict[str, ParsedField], schedule: ParsedField) -> dict[str, ParsedField]:
     """每期 KO% 的期數須 = 提前出場排程第 k 期到末期的期數（期數 − Non-Call + 1，ADR 0033 的 KO 期別）；不符時三個欄位
     都不合法（轉人工覆核），以免第 n 期 KO% 對錯比價日。KO% 或排程讀不到時原樣交回（各自已轉人工）。"""

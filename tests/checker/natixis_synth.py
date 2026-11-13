@@ -122,6 +122,9 @@ class Spec(ProductSpec):
         None  # Stepdown D 型每期 KO 表從第幾期寫起（None → Non-Call；1 → 不可提前到期的期別也有列）
     )
 
+    art9_ko_column: bool = False  # Stepdown 第 9 項連結標的表仍有 KO 欄（範本不支援的反例）
+    ko_table_kind: str | None = None  # Stepdown 第 14 項每期 KO 表的型態（None → 同 ko_obs；不同是範本不支援的反例）
+
     def __post_init__(self) -> None:
         self.underlyings = underlyings(self.count, self.market)
         self.final_date = self.ends[-1]
@@ -348,7 +351,7 @@ def _heads(s: Spec, *, codes: bool) -> list[tuple[float, list[str]]]:
     if codes:
         cols += [(146, ["彭博", "代碼"]), (190, ["本交", "易所"])]
     cols.append((235, ["期初進", "場價格"]))
-    if s.step is None:  # Stepdown 沒有 KO 欄（workflow #545）
+    if s.step is None or (codes and s.art9_ko_column):  # Stepdown 沒有 KO 欄（workflow #545）
         cols.append((330, ["自動提前到期贖回價格(期", "初進場價格", f"之{s.ko}%)"]))
     if s.ki != "none":
         cols.append((425, ["界限價", "格 (期", "初進場", "價格之", f"{s.ki_pct}%", ")"]))
@@ -367,7 +370,7 @@ def _table(d: FlowDoc, s: Spec, *, codes: bool) -> None:
     d.w.space(8)
     x = {k: cx for k, (cx, _) in zip(range(len(cols)), cols, strict=True)}
     xs = [cx for cx, _ in cols]
-    ko_cols = 0 if s.step is not None else 1  # Stepdown 沒有 KO 欄
+    ko_cols = 1 if s.step is None or (codes and s.art9_ko_column) else 0  # Stepdown 沒有 KO 欄
     num_x = xs[-(ko_cols + (s.ki != "none") + 2) : -1]
     for n, u in enumerate(s.underlyings, 1):
         prices = (
@@ -410,7 +413,7 @@ def _ko_steps(d: FlowDoc, s: Spec) -> None:
     )
     d.section = "art14.table"
     k = s.first_callable
-    if s.ko_obs == "D":
+    if (s.ko_table_kind or s.ko_obs) == "D":
         k = s.ko_rows_from or k
         d.w.row(
             [

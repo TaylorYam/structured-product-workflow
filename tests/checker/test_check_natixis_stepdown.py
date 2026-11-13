@@ -161,6 +161,16 @@ def test_ko_price_is_initial_times_first_period_ko(tmp_path):
     only(check(tmp_path / "bad", spec, **{"UL_1_KO價": wrong}), "field.underlying_prices")
 
 
+def test_periodic_ko_table_date_differs_from_article_12(tmp_path):
+    """P 型：每期 KO 表某一期的自動提前到期觀察日和第 12 項 (7) 同一個 `t` 不同 → `doc.ko_table_dates` 不一致。"""
+    spec = StepdownSpec(product_code="328199990023", ko_obs="P")
+    end = spec.ends[2]
+    edit = Edit(spec.date(end), spec.date(end + dt.timedelta(days=1)), "ts.art14.table")
+    report = check(tmp_path, spec, edits=[edit])
+    only(report, "doc.ko_table_dates")
+    assert "第 3 期的自動提前到期觀察日" in rule(report, "doc.ko_table_dates")[0].message
+
+
 def test_ko_table_date_differs_from_article_12(tmp_path):
     """第 14 項每期 KO 表某一期的結束日和第 12 項不同 → `doc.ko_table_dates` 不一致（同一個日期也是下一期開始日）。"""
     end = S0.ends[2]
@@ -182,7 +192,11 @@ FIXED_DEF = "「自動提前到期贖回價格」，係指就任一連結標的�
         (StepdownSpec(product_code="328199990010", step=Decimal("-1.00")), None, "不是每期固定往下降"),
         (StepdownSpec(product_code="328199990011", memory=False), None, "不是記憶式"),
         (S0, Edit("視同發生。", "視同發生。" + FIXED_DEF, "ts.art14"), "固定 % 的 KO 定義句"),
-        (S0, Edit("相對權重：不適用", "相對權重：不適用；自動提前到期贖回價格見第 14 項", "ts.art9"), "第 9 項"),
+        (
+            StepdownSpec(product_code="328199990021", art9_ko_column=True),
+            None,
+            "第 9 項連結標的表有自動提前到期贖回價格欄",
+        ),
         (S0, Edit("自動提前到期贖回價格", "贖回價格", "ts.art14.table"), "讀不到第 14 項每期 KO 表"),
         (
             StepdownSpec(product_code="328199990012", first_callable=2, ko_rows_from=1),
@@ -190,6 +204,11 @@ FIXED_DEF = "「自動提前到期贖回價格」，係指就任一連結標的�
             "和第 12 項應有的期別",
         ),
         (StepdownSpec(product_code="328199990013", tenor=2, first_callable=2), None, "只有 1 期"),
+        (
+            StepdownSpec(product_code="328199990022", ko_obs="P", ko_table_kind="D"),
+            None,
+            "是 D 型表頭，第 12 項卻是 P 型",
+        ),
     ],
     ids=[
         "uneven",
@@ -201,6 +220,7 @@ FIXED_DEF = "「自動提前到期贖回價格」，係指就任一連結標的�
         "no-ko-table",
         "rows-before-non-call",
         "single-period",
+        "table-kind-differs",
     ],
 )
 def test_stepdown_variants_outside_the_template_are_unsupported(tmp_path, spec, edit, reason):
@@ -269,6 +289,15 @@ def test_investor_sheet_with_a_fixed_ko_percentage_is_a_mismatch(tmp_path):
     """投資人須知 KO 價格定義寫固定 %（FCN 的寫法）：和說明書每期 KO 表矛盾 → 不一致（核對規則 §3.6）。"""
     edit = Edit("中文產品說明書第一章第14 項所列之期初進場價格", "期初進場價格之100.00%", "iis")
     only(check_iis(tmp_path, edits=[edit]).report, "iis.ko_definition")
+
+
+def test_investor_sheet_with_another_english_name_stops_at_stepdown(tmp_path):
+    """投資人須知有 Stepdown 標記、英文名稱卻不是 FCN 的名稱：停在 Stepdown 範本、判範本不符（不是範本不支援，範本規格 §2）。"""
+    edit = Edit("Autocallable Fixed Coupon Note", "Autocallable Floating Coupon Note", "iis")
+    pdf = build_pdf(tmp_path / f"{S0.product_code}_TS.pdf", S0, edits=[edit])
+    result = NATIXIS_STEPDOWN.iis.detect(lines_of(iis_path(pdf)))
+    assert not result.matched and result.claimed and not result.unsupported
+    assert any("英文名稱" in f for f in result.failed)
 
 
 def test_investor_sheet_with_two_ko_definitions_goes_to_review(tmp_path):

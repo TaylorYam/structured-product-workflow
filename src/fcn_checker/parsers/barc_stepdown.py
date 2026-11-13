@@ -133,8 +133,6 @@ def _memory(doc: Document, name_zh: ParsedField) -> ParsedField:
 def read(lines: Sequence[Line]) -> barc.BarcTermSheet:
     ts = barc.read(lines, PRICE_TABLE)
     fields = dict(ts.fields)
-    fields.update(stepdown.matching_periods(_ko_terms(fields["ko_table"]), fields["autocall_schedule"]))
+    stepdown.apply_ko_terms(fields, _ko_terms(fields["ko_table"]))
     fields["ko_memory"] = _memory(ts.document, fields["name_zh"])
-    fields["underlying_prices"] = stepdown.with_ko_prices(fields["underlying_prices"], fields["ko_pct"])
-    fields["autocall_schedule"] = stepdown.every_period(fields["autocall_schedule"], fields["schedule_table"])
     return replace(ts, fields=fields)

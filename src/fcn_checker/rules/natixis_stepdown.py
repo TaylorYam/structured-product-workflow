@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from ..schema import CheckResult
+from ..schema import CheckResult, ParsedField
 from . import kit, natixis
 from .kit import IssuerContext
 
@@ -24,7 +24,7 @@ NOT_COVERED = [
 ]
 
 
-def _date_issues(table, dates) -> list[str]:
+def _date_issues(table: ParsedField, dates: ParsedField) -> list[str]:
     """每期 KO 表每列的日期和第 12 項同一期不同的說明（D：開始日、結束日；P：自動提前到期觀察日）。"""
     value = dates.value
     if value["kind"] == "D":

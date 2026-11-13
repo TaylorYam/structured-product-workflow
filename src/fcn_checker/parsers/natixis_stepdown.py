@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
@@ -33,7 +34,7 @@ HEADS = {
     "D": "配息觀察期間(t)配息觀察期間開始日配息觀察期間結束日自動提前到期贖回價格",
     "P": "配息觀察期間(t)自動提前到期觀察日(t)自動提前到期贖回價格",
 }
-KO_CELL = r"(\d+(?:\.\d+)?)%期初進場價格"
+KO_CELL = r"(\d+\.\d{2})%期初進場價格"  # N.NN%（範本規格 §4）
 ROWS = {
     "D": re.compile(r"(\d{1,2})" + natixis.D * 2 + KO_CELL),
     "P": re.compile(r"(\d{1,2})" + natixis.D + KO_CELL),
@@ -50,7 +51,7 @@ class KoRow:
     """每期 KO 表的一列：期別 `t`、日期（D：開始日、結束日；P：自動提前到期觀察日）、KO%。"""
 
     t: int
-    dates: tuple
+    dates: tuple[dt.date | None, ...]
     pct: Decimal
     lines: tuple[Line, ...]
 
@@ -65,7 +66,7 @@ def _article(doc: Document, n: int) -> list[Line]:
     return doc.span_lines(doc.articles(1).get(n)) if 1 in doc.chapters else []
 
 
-def ko_table(art14: Sequence[Line]) -> ParsedField:
+def _ko_table(art14: Sequence[Line]) -> ParsedField:
     """第 14 項每期 KO 表：表頭決定 D／P，之後每列「t＋日期＋N.NN%期初進場價格」，到「自動提前到期贖回金額」為止。
     期別須連續；表內還有讀不到的 KO 格 → 不合法。"""
     ti = TextIndex(list(art14))
@@ -112,28 +113,28 @@ def _ko_terms(table: ParsedField) -> dict[str, ParsedField]:
     return stepdown.ko_terms([(r.pct, list(r.lines)) for r in table.value.rows], KO_WHERE)
 
 
-def expected_periods(fields: dict[str, ParsedField]) -> tuple[str, list[int]] | str:
-    """第 12 項的 KO 型態與每期 KO 表應有的期別（D：第 k 期到末期；P：自動提前到期觀察日表的 t）；讀不到時回傳說明。"""
+def _expected_periods(fields: dict[str, ParsedField]) -> tuple[str, list[int]] | None:
+    """第 12 項的 KO 型態與每期 KO 表應有的期別（D：第 k 期到末期；P：自動提前到期觀察日表的 t）；讀不到時 None。"""
     table, wording = fields.get("date_table"), fields.get("ko_wording")
     if table is None or wording is None or not (table.ok and wording.ok):
-        return "第 12 項日期表或自動提前到期觀察日的寫法讀不到，無法對齊每期 KO 表"
+        return None
     kind = table.value["kind"]
     if kind == "P":
         return kind, [r["t"] for r in table.value["ko_rows"]]
-    k = wording.value[1]
-    if not k:
-        return "第 12 項自動提前到期觀察日的起始期讀不到，無法對齊每期 KO 表"
-    return kind, list(range(k, len(table.value["rows"]) + 1))
+    _, first_callable = wording.value  # D：（"D", 第 12 項「從第k個配息觀察期間結束日」的 k）
+    if not first_callable:
+        return None
+    return kind, list(range(first_callable, len(table.value["rows"]) + 1))
 
 
-def alignment_problem(table: KoTable, fields: dict[str, ParsedField]) -> str:
+def _alignment_problem(table: KoTable, fields: dict[str, ParsedField]) -> str:
     """每期 KO 表的表頭型態、期別和第 12 項對不上時的說明（範本不支援）；對得上時空字串。"""
-    expected = expected_periods(fields)
-    if isinstance(expected, str):
-        return expected
+    expected = _expected_periods(fields)
+    if expected is None:
+        return "第 12 項日期表或自動提前到期觀察日（起始期）讀不到，無法對齊每期 KO 表"
     kind, periods = expected
     if table.kind != kind:
-        return f"{KO_WHERE}是{table.kind} 型表頭，第 12 項卻是 {kind} 型"
+        return f"{KO_WHERE}是 {table.kind} 型表頭，第 12 項卻是 {kind} 型"
     ts = [r.t for r in table.rows]
     if ts != periods:
         shown = "、".join(map(str, ts))
@@ -150,15 +151,15 @@ def version_problems(doc: Document) -> list[str]:
         out.append("第 14 項仍有固定 % 的 KO 定義句（「自動提前到期贖回價格為期初進場價格之Y%」）")
     if natixis.MEMORY not in text14:
         out.append("第 14 項不是記憶式寫法（非記憶式沒有樣本）")
-    if "自動提前到期贖回價格" in TextIndex(_article(doc, 9)).text:
+    if natixis.underlying_table("ko_column", _article(doc, 9)).ok:  # 照 FCN 的表頭（有 KO 欄）讀得出來
         out.append("第 9 項連結標的表有自動提前到期贖回價格欄")
-    table = ko_table(art14)
+    table = _ko_table(art14)
     if not table.ok:
         out.append(f"讀不到{KO_WHERE}（{table.note or table.status.value}）")
         return out
     fields: dict[str, ParsedField] = {}
     natixis.article12(fields, _article(doc, 12))
-    if problem := alignment_problem(table.value, fields):
+    if problem := _alignment_problem(table.value, fields):
         out.append(problem)
     elif problem := stepdown.step_problem(_ko_terms(table)):
         out.append(problem)
@@ -185,10 +186,7 @@ def read(lines: Sequence[Line]) -> natixis.NatixisTermSheet:
     """相容字轉成標準字後照 Natixis FCN 讀出（價格表沒有 KO 欄），再換掉 KO%、各標的 KO 價（第 1 期）與每日型的比價日。"""
     ts = natixis.read(compat_normalized(lines), VARIANT)
     fields = dict(ts.fields)
-    table = ko_table(_article(ts.document, 14))
-    fields["ko_table"] = table
-    fields.update(stepdown.matching_periods(_ko_terms(table), fields["autocall_schedule"]))
+    fields["ko_table"] = _ko_table(_article(ts.document, 14))
+    stepdown.apply_ko_terms(fields, _ko_terms(fields["ko_table"]))
     fields["ko_def_pct"] = standard_fields.absent("ko_def_pct", "固定的 KO %（第 14 項是每期 KO 表）")
-    fields["underlying_prices"] = stepdown.with_ko_prices(fields["underlying_prices"], fields["ko_pct"])
-    fields["autocall_schedule"] = stepdown.every_period(fields["autocall_schedule"], fields["schedule_table"])
     return replace(ts, fields=fields)
