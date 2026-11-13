@@ -5,13 +5,12 @@ from __future__ import annotations
 
 import tkinter as tk
 from collections.abc import Callable, Sequence
-from pathlib import Path
 from tkinter import ttk
 
 from fcn_checker.ui import Background, NextButton
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.preparation import PREPARED, PrepareReceipt
-from sp_workflow.tabs.base import BackgroundFactory, DatabaseLogin, RootFolder, Tab, ask_dir, open_folder, record_note
+from sp_workflow.tabs.base import BackgroundFactory, DatabaseLogin, RootFolder, Tab, ask_dir, record_note
 from sp_workflow.window_actions import PrepareResult, run_prepare
 
 
@@ -34,7 +33,6 @@ class PrepareTab(Tab):
         self.on_prepared = on_prepared
         self.memory = memory
         self.root_folder = root_folder
-        self.batch_dir: Path | None = None
         self.out_var = tk.StringVar(value=memory.load().get("out", ""))
         self.status_var.set(self.READY_TEXT)
         self.page_header(
@@ -57,8 +55,6 @@ class PrepareTab(Tab):
         self.result_area(body, row)
         self.start_button = ttk.Button(self.buttons, text="開始準備", command=self.start, style="Primary.TButton")
         self.start_button.pack(side=tk.LEFT)
-        self.open_button = ttk.Button(self.buttons, text="打開批次資料夾", command=self.open_batch, state=tk.DISABLED)
-        self.open_button.pack(side=tk.LEFT, padx=8)
         self.next_button = NextButton(self.buttons, "下一步：核對 →", on_next)
         self.place_table(3)
 
@@ -71,18 +67,14 @@ class PrepareTab(Tab):
         )
 
     def _clear_results(self) -> None:
-        """帶入新的 TDCC 前收起上一批（#286）：下一步、打開批次資料夾都是上一批的，狀態列回到說明。"""
+        """帶入新的 TDCC 前收起上一批（#286）：下一步是上一批的，狀態列回到說明。"""
         super()._clear_results()
         self.next_button.withdraw()
-        self.batch_dir = None
-        self.open_button.configure(state=tk.DISABLED)
         self.status_var.set(self.READY_TEXT)
 
     def _busy(self, busy: bool) -> None:
-        """處理中不能再按；打開批次資料夾要等準備好了才能按。"""
+        """處理中不能再按。"""
         self.start_button.configure(state=tk.DISABLED if busy else tk.NORMAL)
-        if busy:
-            self.open_button.configure(state=tk.DISABLED)
 
     def start(self) -> None:
         text = self.tdcc_text.get("1.0", tk.END)
@@ -119,11 +111,5 @@ class PrepareTab(Tab):
             ("Word 轉檔（份）", from_word, False),
         )
         self.finish(kpis, status + record_note(recorded))
-        self.batch_dir = receipt.batch_dir
-        self.open_button.configure(state=tk.NORMAL)
         if self.on_prepared(receipt):  # 核對頁真的帶入了這批 PDF，才有下一步
             self.next_button.offer()
-
-    def open_batch(self) -> None:
-        if self.batch_dir is not None:
-            open_folder(self.batch_dir)

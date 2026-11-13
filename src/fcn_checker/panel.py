@@ -431,7 +431,7 @@ class CheckTab(ttk.Frame):
             "上手由 PDF 檔名前三碼決定。按「儲存核對結果」才會寫出核對結果檔（Excel 來源不改原參考條件表；資料庫來源存檔後寫回資料庫）；錯誤清單上的說明書請交由人工核對。",
         )
         self.header.grid(row=0, column=0, sticky="ew", pady=(0, 14))
-        self.hint = HintBar(self, lambda: self.choose_files("pdf"))
+        self.hint = HintBar(self)
         self.hint.grid(row=1, column=0, sticky="ew", pady=(0, 12))
         self.hint.hide()
         card = ttk.Frame(self, style="Card.TFrame", padding=(18, 14))

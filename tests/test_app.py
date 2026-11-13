@@ -26,7 +26,7 @@ from sp_workflow.app import PanelWindow
 from sp_workflow.database import DatabaseError, SchemaOutdatedError
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.tabs.base import DatabaseLogin, RootFolder
-from window_synth import HeldBackground, hint_change_button, new_window, prepared_receipt, prepared_result, texts
+from window_synth import HeldBackground, new_window, prepared_receipt, prepared_result, texts
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -216,7 +216,7 @@ def test_window_builds_with_remembered_folders(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
 
     assert (window.root_folder.var.get(), window.prepare.out_var.get()) == ("R:/FCN", "D:/out")
-    assert str(window.prepare.open_button.cget("state")) == "disabled"
+    assert "打開批次資料夾" not in texts(window.prepare.frame, ttk.Button), "#556 拿掉"
     assert window.returning.batch_var.get() == "D:/out/待核對_1"
 
 
@@ -342,7 +342,7 @@ def test_choosing_other_pdfs_hides_the_hint(master, tmp_path: Path, monkeypatch)
     other = tmp_path / "其他" / "147000000009_TS.pdf"
     monkeypatch.setattr(fcn_checker.panel.filedialog, "askopenfilenames", lambda **kwargs: (str(other),))
 
-    hint_change_button(window.check.hint).invoke()
+    window.check.choose_files("pdf")  # 核對頁的「選取檔案…」
 
     assert window.check.pdf_paths == (other,) and not window.check.hint.shown
 
@@ -469,19 +469,26 @@ def test_pdfs_outside_one_batch_folder_leave_the_batch_folder_alone(master, tmp_
     )
 
 
-@pytest.mark.parametrize("change", ["改選", "batch"])
-def test_changing_what_was_handed_to_the_return_tab_hides_the_hint(master, tmp_path, monkeypatch, change) -> None:
+@pytest.mark.parametrize("change", ["result", "batch"])
+def test_changing_what_was_handed_to_the_return_tab_hides_the_hint(master, tmp_path, change) -> None:
     window = new_window(master, tmp_path)
     window.returning.receive(tmp_path / "核對結果.xlsx", tmp_path / "待核對_1")
     assert window.returning.hint.shown
-    if change == "改選":
-        monkeypatch.setattr(filedialog, "askopenfilename", lambda **kwargs: str(tmp_path / "另一份.xlsx"))
-        hint_change_button(window.returning.hint).invoke()
-        assert window.returning.result_var.get() == str(tmp_path / "另一份.xlsx")
+    if change == "result":
+        window.returning.result_var.set(str(tmp_path / "另一份.xlsx"))
     else:
         window.returning.batch_var.set(str(tmp_path / "待核對_2"))
 
     assert not window.returning.hint.shown
+
+
+def test_hint_bars_only_say_what_was_handed_over(master, tmp_path: Path) -> None:
+    """提示條只寫帶入了什麼，沒有「改選…」（#556）；換掉帶入的值在分頁上直接改。"""
+    window = new_window(master, tmp_path)
+    tabs = (window.orders, window.prepare, window.check, window.returning, window.mail, window.exits)
+
+    for tab in tabs:
+        assert texts(tab.hint, ttk.Button) == [], tab
 
 
 # ---------------------------------------------------------------- 蘋果 × 麥肯錫風格範本（#83、#85）
@@ -522,33 +529,15 @@ def test_sidebar_groups_steps_and_checks_finished_ones(master, tmp_path: Path) -
     assert not sidebar.done and not str(sidebar.steps[prepare].cget("image")), "重新開始就拿掉勾"
 
 
-def test_go_menu_switches_steps(master, tmp_path: Path) -> None:
-    window = new_window(master, tmp_path)
-    menu = window.go_menu
-
-    assert [menu.entrycget(i, "accelerator") for i in range(9)] == [f"Ctrl+{n}" for n in range(1, 10)]
-    assert menu.entrycget(2, "label") == "準備"
-    menu.invoke(2)
-    assert window.notebook.select() == str(window.prepare.frame)
+def test_menu_bar_has_only_maintenance_and_analysis(master, tmp_path: Path) -> None:
+    """切頁只用步驟欄與「下一步 →」：沒有「前往」選單，Ctrl+1～9（含數字鍵盤）不切頁（#556）。"""
+    new_window(master, tmp_path)
     bar = master.nametowidget(master["menu"])
+
     cascades = [bar.entrycget(i, "label") for i in range(bar.index(tk.END) + 1) if bar.type(i) == "cascade"]
-    assert cascades == ["前往", "維護", "分析"], "「前往」在最前面"
-
-
-def test_ctrl_number_switches_steps(master, tmp_path: Path) -> None:
-    window = new_window(master, tmp_path)
-    master.deiconify()
-    master.update()
-    window.daily.table.focus_force()
-    master.update()
-    focused = master.focus_get()
-    if focused is None:
-        pytest.skip("拿不到鍵盤焦點（例如畫面鎖住）")
-
-    focused.event_generate("<Control-Key-3>", when="now")
-    assert window.notebook.select() == str(window.prepare.frame)
-    focused.event_generate("<Control-Key-1>", when="now")
-    assert window.notebook.select() == str(window.daily.frame)
+    assert cascades == ["維護", "分析"]
+    for number in range(1, 10):
+        assert master.bind(f"<Control-Key-{number}>") == "" and master.bind(f"<Control-KP_{number}>") == ""
 
 
 def test_root_folder_warns_while_unset(master, tmp_path: Path) -> None:

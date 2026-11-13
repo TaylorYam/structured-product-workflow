@@ -296,15 +296,18 @@ def test_the_real_window_lists_its_menus_steps_and_tab_buttons(master, tmp_path:
     try:
         (inventory,) = records(Path(master.folder), "inventory")
         labels = {(item.get("tab"), item["label"]) for item in inventory["items"]}
-        assert {(None, "維護 > 信箱維護…"), (None, "分析 > 盤勢速報…"), (None, "前往 > 核對")} <= labels
+        assert {(None, "維護 > 信箱維護…"), (None, "分析 > 盤勢速報…")} <= labels
         assert any(tab is None and label.endswith("核對") for tab, label in labels), "步驟欄"
         assert any(tab and tab.endswith("核對") for tab, _label in labels), "核對頁的按鈕"
         assert any(tab and tab.endswith("核對 > 核對結果") for tab, _label in labels), "分頁裡的分頁由外到內接起來"
 
-        window.go_menu.invoke(window.go_menu.index("核對"))
-        master.update()
-        assert window.notebook.select() == str(window.check)
-        assert [r["label"] for r in records(Path(master.folder), "menu")] == ["前往 > 核對"]
+        opened = []
+        window.open_window = opened.append  # 不真的開盤勢速報視窗
+        bar = master.nametowidget(master["menu"])
+        analysis = master.nametowidget(bar.entrycget("分析", "menu"))
+        analysis.invoke(analysis.index("盤勢速報…"))
+        assert opened == ["盤勢速報…"]
+        assert [r["label"] for r in records(Path(master.folder), "menu")] == ["分析 > 盤勢速報…"]
     finally:
         recorder.uninstall()
 

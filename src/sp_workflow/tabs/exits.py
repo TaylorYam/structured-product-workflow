@@ -61,7 +61,7 @@ class ExitListTab(Tab):
             "出場清單",
             "某一個收盤日的 KO、接股、到期還本、顧客贖回，比價、舊清單都列；早上匯入昨日收盤價後看昨天有哪些商品出場。",
         )
-        self.hint = HintBar(self.frame, self._hint_closed)
+        self.hint = HintBar(self.frame)
         self.hint.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         self.hint.hide()
         body = self.body(self.card(2))
@@ -103,10 +103,6 @@ class ExitListTab(Tab):
         self._busy(False)
         self.hint.show(f"比價已比到 {day:%Y-%m-%d}，已帶入這一天；按「重新整理」列出那天出場的商品。")
         return True
-
-    def _hint_closed(self) -> None:
-        """提示條的「改選…」：收起提示條，自己改收盤日。"""
-        self.hint.hide()
 
     # ---------- 重新整理 ----------
 
