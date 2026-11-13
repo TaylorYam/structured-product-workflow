@@ -24,6 +24,8 @@ PRICE_LABELS = (
     ("ki", r"下限價格\(Knock-InPrice\)[:：]"),
     ("currency", r"貨幣\(Currency\)[:：]"),
 )
+# DACN 標的表：下限價格與貨幣之間多一列定界價格（配息門檻，docs/checker/templates/bnp-zh-dacn.md §5）
+DACN_PRICE_LABELS = (*PRICE_LABELS[:4], ("barrier", r"定界價格\(BarrierPrice\)[:：]"), PRICE_LABELS[4])
 PRICE = r"([\d,]+\.\d{4})"
 _CURRENCY_PEEK = 8  # 貨幣列讀不到幣別字時，帶出標籤後幾個字給人工覆核看
 # 說明書第 11 項「N 即期初價格之X%」、第 18 項「N，即期初價格之X%」；投資人須知「N,即期初價格之X%」（半形逗號）
@@ -32,7 +34,17 @@ TICKER = re.compile(r"^[A-Z0-9][A-Z0-9./-]*\s+[A-Z]{2}$")
 NAME_LABEL, TICKER_LABEL, EXCHANGE_LABEL = "連結標的名稱：", "彭博代碼：", "交易所："
 WRAP_LABELS = (NAME_LABEL, TICKER_LABEL, EXCHANGE_LABEL)
 # 標的表每一列的標籤開頭（去空白）：跨頁時用來找下一頁續行到哪裡為止
-ROW_STARTS = ("連結標的名", "彭博代碼", "交易所", "期初價格", "執行價格", "自動提前贖回", "下限價格", "貨幣")
+ROW_STARTS = (
+    "連結標的名",
+    "彭博代碼",
+    "交易所",
+    "期初價格",
+    "執行價格",
+    "自動提前贖回",
+    "下限價格",
+    "定界價格",
+    "貨幣",
+)
 
 # 日期表：表頭（去空白、接在「j」之後）→ 表型
 # 表頭（去空白）→ 表型：D 每日觀察、P 每期觀察；SB 為 Super Bull 只列評價日的表（範本規格 bnp-zh-super-bull.md §4.1，#311）
@@ -51,8 +63,11 @@ FEE_PATTERNS = {  # 第四章第 2 項費用表（去空白）：費用項目名
 }
 
 
-def price_table(name: str, lines: list[Line], *, with_tickers: bool) -> ParsedField:
-    """標的表：列標籤依序為期初價格、執行價格、自動提前贖回價格、（下限價格）、貨幣；每列每檔一格。
+def price_table(
+    name: str, lines: list[Line], *, with_tickers: bool, labels: tuple[tuple[str, str], ...] = PRICE_LABELS
+) -> ParsedField:
+    """標的表：列標籤依序為期初價格、執行價格、自動提前贖回價格、（下限價格）、貨幣；每列每檔一格。DACN 由呼叫端給
+    `DACN_PRICE_LABELS`（下限價格後多一列定界價格，欄名 `barrier`）。
 
     值：{"columns": [...], "pcts": {欄: [各檔百分比]}, "rows": [{"prices": {欄: Decimal}, "currency": 幣別字或 None}],
     "row_lines": [...], "tickers": [...]（`with_tickers` 時，第 11 項「彭博代碼」列）}。列數（標的數）由期初價格列決定，
@@ -64,7 +79,7 @@ def price_table(name: str, lines: list[Line], *, with_tickers: bool) -> ParsedFi
     lines = join_wrapped_labels(stitch_page_break(split_merged_cells(lines)))
     ti = TextIndex(lines, separate_digits=True)
     found: dict[str, re.Match[str]] = {}
-    for col, pattern in PRICE_LABELS:
+    for col, pattern in labels:
         hits = list(re.finditer(pattern, ti.text))
         if len(hits) > 1:
             return ParsedField.invalid(name, lines, f"標的表「{col}」列標籤出現多次")
@@ -73,7 +88,7 @@ def price_table(name: str, lines: list[Line], *, with_tickers: bool) -> ParsedFi
     missing = [col for col in ("initial", "strike", "ko", "currency") if col not in found]
     if missing:
         return ParsedField.invalid(name, lines, "標的表缺少列標籤：" + "、".join(missing))
-    order = [col for col, _ in PRICE_LABELS if col in found]
+    order = [col for col, _ in labels if col in found]
     starts = [found[col].start() for col in order]
     if starts != sorted(starts):
         return ParsedField.invalid(name, lines, "標的表列標籤順序不符範本（期初、執行、自動提前贖回、下限、貨幣）")
@@ -177,7 +192,8 @@ def stitch_page_break(lines: list[Line]) -> list[Line]:
             b += 1
             continue
         e = next((i for i in range(b, len(out)) if _row_start(out[i], label_x)), len(out))
-        head, block, tail = out[:b], out[b:e], out[e:]
+        head, tail = out[:b], out[e:]
+        block = _join_label_pieces(out[b:e], head, label_x)
         last_row = max((i for i, ln in enumerate(head) if _row_start(ln, label_x)), default=0)
         stay = []
         for ln in block:
@@ -188,6 +204,29 @@ def stitch_page_break(lines: list[Line]) -> list[Line]:
                 stay.append(ln)
         out = head + stay + tail
         b = len(head) + len(stay) + 1
+    return out
+
+
+def _join_label_pieces(block: list[Line], head: list[Line], label_x: float) -> list[Line]:
+    """續行裡和標籤欄那一行同一列（同頁、y 相同）、落在第一個價格欄左邊的字，接回標籤欄那一行：跨頁時英文列標籤可能
+    被擷取成兩段（投資人須知 `(Automatic` ／ `Early`，docs/checker/templates/bnp-zh-dacn-iis.md §3），不接回就對不到欄。
+    上一頁沒有價格欄時不接。"""
+    first_col = min((ln.x0 for ln in head if ln.x0 > label_x + 2), default=None)
+    if first_col is None:
+        return block
+    out: list[Line] = []
+    for ln in block:
+        prev = out[-1] if out else None
+        if (
+            prev is not None
+            and abs(prev.x0 - label_x) < 2
+            and prev.page == ln.page
+            and abs(prev.y0 - ln.y0) < 1
+            and label_x + 2 < ln.x0 < first_col - 2
+        ):
+            out[-1] = replace(prev, x1=max(prev.x1, ln.x1), text=f"{prev.text.rstrip()} {ln.text.strip()}")
+            continue
+        out.append(ln)
     return out
 
 

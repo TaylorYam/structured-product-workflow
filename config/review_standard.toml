@@ -7,7 +7,7 @@
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
 # 規則說明見 docs/checker/rules/review-standard.md。
 
-version = 43
+version = 44
 effective_date = 2026-11-13
 
 [distributor]
@@ -391,6 +391,24 @@ single_zh = "單一"
 single_en = "a Single Share/ETI"
 basket_zh = "一籃子"
 basket_en = "a Basket of Shares/ETIs"
+ccy_aliases = { CNH = "CNY" }
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
+
+[issuer.bnp.product_names.DACN]
+# BNP DACN 商品名稱（現行版 3 份說明書，2026-11-13 規格，workflow #548）：中文同 FCN 去掉「固定配息」（和 Super Bull 同一句，
+# 但「自動提前贖回」只在 Non-Call < 天期時填入，同 FCN），英文 Daily Accrual；佔位符與比對方式同 [issuer.bnp.product_name]。
+# 參考條件表 Product 是 DACN 時用這個樣板。
+zh = "法國巴黎銀行{tenor}個月期{ccy_zh}計價{autocall_zh}連結{underlying_zh}股票/交易所買賣基金結構型商品(不保本)(無擔保)"
+en = "{tenor} Months {ccy} Daily Accrual {autocall_en}Note linked to {underlying_en} issued by BNP Paribas Issuance B.V. (unsecured)"
+memory_zh = ""
+memory_en = ""
+single_zh = "單一"
+single_en = "a Single Share/ETI"
+basket_zh = "一籃子"
+basket_en = "a Basket of Shares/ETIs"
+autocall_zh = "自動提前贖回"
+autocall_en = "Early Redeemable "
 ccy_aliases = { CNH = "CNY" }
 normalize_zh = ["brackets"]
 normalize_en = ["whitespace"]

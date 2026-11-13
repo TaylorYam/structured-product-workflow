@@ -110,6 +110,7 @@ SYNTH_SPECS = [
     ("bbva_synth", "Spec"),
     ("bnp_synth", "Spec"),
     ("bnp_synth", "SbSpec"),
+    ("bnp_synth", "DacnSpec"),
     ("ca_synth", "Spec"),
     ("ca_synth", "SbSpec"),
     ("ca_synth", "BenSpec"),

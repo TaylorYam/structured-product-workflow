@@ -67,17 +67,18 @@ def monthly_coupon(ctx: IssuerContext) -> list[CheckResult]:
     )
 
 
-def min_coupon_rate(ctx: IssuerContext) -> CheckResult:
-    """第 17 項「最低配息率為Y%（年化）」= 第 15 項年利率（境外人民幣版第 18、16 項；錯訊寫文件上的條號）。"""
+def min_coupon_rate(ctx: IssuerContext, field: str = "coupon_pa_pct", what: str = "年利率") -> CheckResult:
+    """第 17 項「最低配息率為Y%（年化）」= 第 15 項年利率（境外人民幣版第 18、16 項；錯訊寫文件上的條號）。DACN 的最低
+    配息率是月配息率（`field`、`what` 換成月配息率，docs/checker/rules/bnp-dacn-check-rules.md §3.3）。"""
     f, art_label = ctx.ts.f, ctx.ts.chapter1.label
-    annual, low = f("coupon_pa_pct"), f("min_coupon_rate")
+    rate, low = f(field), f("min_coupon_rate")
     name = f"{art_label('maturity')}最低保證配息率"
-    return kit.doc_check(ctx, "doc.min_coupon_rate", "min_coupon_rate", name, annual, low).compare(
-        annual.value,
+    return kit.doc_check(ctx, "doc.min_coupon_rate", "min_coupon_rate", name, rate, low).compare(
+        rate.value,
         low.value,
-        ok=annual.ok and low.ok and kit.shown(annual.value, low.value) == low.value,
+        ok=rate.ok and low.ok and kit.shown(rate.value, low.value) == low.value,
         tolerance="依說明書顯示位數四捨五入後比對",
-        fail_message=f"{name}須等於{art_label('coupon')}年利率",
+        fail_message=f"{name}須等於{art_label('coupon')}{what}",
     )
 
 
@@ -257,11 +258,9 @@ def autocall_dates(ctx: IssuerContext) -> CheckResult:
     )
 
 
-def run_all(ctx: IssuerContext) -> list[CheckResult]:
-    """說明書內部規則：只用讀出結果、審查標準與宣告的參考條件表欄位（年利率）。"""
+def document_rules(ctx: IssuerContext) -> list[CheckResult]:
+    """FCN 與 DACN 共用的說明書內部交叉驗證、日期表、固定值與頁首（核對規則 §3.5）。"""
     return [
-        *monthly_coupon(ctx),
-        min_coupon_rate(ctx),
         *document_info(ctx),
         *periods(ctx),
         *ko_terms(ctx),
@@ -269,5 +268,9 @@ def run_all(ctx: IssuerContext) -> list[CheckResult]:
         autocall_dates(ctx),
         base_prospectus(ctx),
         page_count(ctx),
-        *bnp_scenario.run(ctx),
     ]
+
+
+def run_all(ctx: IssuerContext) -> list[CheckResult]:
+    """說明書內部規則：只用讀出結果、審查標準與宣告的參考條件表欄位（年利率）。"""
+    return [*monthly_coupon(ctx), min_coupon_rate(ctx), *document_rules(ctx), *bnp_scenario.run(ctx)]

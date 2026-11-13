@@ -294,8 +294,9 @@ def ki_type(lines: list[Line]) -> ParsedField:
     return ParsedField.invalid(name, lines, "找不到觸及生效事件觀察日定義，也不是無 KI 的到期贖回寫法")
 
 
-def read(lines: Sequence[Line]) -> BnpTermSheet:
-    """讀出標準欄位與 BNP 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）。"""
+def read(lines: Sequence[Line], labels: tuple[tuple[str, str], ...] = bnp_tables.PRICE_LABELS) -> BnpTermSheet:
+    """讀出標準欄位與 BNP 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）。`labels` 是第 11 項標的表與
+    第 18 項重印表的列標籤（DACN 多定界價格列，parsers/bnp_dacn.py）。"""
     doc = document(lines)
     ch1 = chapter1(doc)
     art_label = ch1.label
@@ -376,7 +377,7 @@ def read(lines: Sequence[Line]) -> BnpTermSheet:
     fields.put("denomination_currency", art6, rf"商品面額：每單位商品{money.NUMBER}({CCY})")
     fields.put("issue_price_pct", article("issue_price"), r"發行價格：" + PCT, Decimal)
     art11 = article("underlying")
-    table = bnp_tables.price_table("underlying_table", _art11_region(art11), with_tickers=True)
+    table = bnp_tables.price_table("underlying_table", _art11_region(art11), with_tickers=True, labels=labels)
     fields["underlying_table"] = table
     price_fields(fields, table, art11)
 
@@ -423,7 +424,7 @@ def read(lines: Sequence[Line]) -> BnpTermSheet:
     )
     pct_fields(fields, art_label("underlying"))
     scenarios = bnp_scenario.section(
-        doc.span_lines(doc.subitems(ch1.spans.get("scenario")).get(3)), art_label("scenario")
+        doc.span_lines(doc.subitems(ch1.spans.get("scenario")).get(3)), art_label("scenario"), labels
     )
 
     # 第二章
@@ -762,6 +763,13 @@ def _scenario_standard(fields: dict[str, ParsedField], sec: bnp_scenario.Scenari
         params.append(
             ScenarioParam("scenario_monthly_coupon", f"{where}配息算式的", coupon.parsed("scenario_monthly_coupon"))
         )
+        if s.accrual is not None:  # DACN 第 g+1 期起「× X% × (n ÷ M)」（FCN 沒有）
+            accrual = Mention.of_hit(f"{where}區間計息配息算式", s.accrual.value.rate, s.accrual)
+            params.append(
+                ScenarioParam(
+                    "scenario_monthly_coupon", f"{where}區間計息配息算式的", accrual.parsed("scenario_monthly_coupon")
+                )
+            )
         if s.kind in ("autocall", "best"):
             annualized = Mention.of_optional_hit(
                 f"{where}年化報酬率", s.total_return, lambda v: v.annualized, s.lines[:1]

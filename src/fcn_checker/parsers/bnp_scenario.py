@@ -53,6 +53,22 @@ class CouponCalc(NamedTuple):
     decimals: int
 
 
+class AccrualCalc(NamedTuple):
+    """DACN 第 g+1 期起「第a~b 個月配息金額 = 1 單位商品 × 面額 × 月配息率 × (n ÷ M) = 配息(四捨五入…)」（n、M 是假設的
+    合格營業日天數，docs/checker/templates/bnp-zh-dacn.md §4.3）。"""
+
+    first: int
+    last: int
+    denomination: Decimal
+    currency: str
+    rate: Decimal
+    days: int  # n
+    total_days: int  # M
+    amount: Decimal
+    amount_currency: str
+    decimals: int
+
+
 class Redemption(NamedTuple):
     """「自動提前贖回金額／到期贖回金額 = 1 單位商品 × 面額 × 100% = 金額」。"""
 
@@ -146,7 +162,8 @@ class Scenario:
     lines: list[Line]
     assumed: Hit[Assumed] | None = None  # 情境一假設的期別
     coupon: Hit[CouponCalc] | None = None  # 每期配息算式
-    coupon_count: int = 0  # 「個月配息金額」出現次數（算式應剛好一個）
+    coupon_count: int = 0  # 「個月配息金額」出現次數（FCN 算式剛好一個；DACN 非自動提前贖回情境另有區間計息那一個）
+    accrual: Hit[AccrualCalc] | None = None  # DACN 第 g+1 期起的配息算式（FCN 沒有）
     cumulative: Hit[Amount] | None = None  # 累積總月配息金額
     redemption: Hit[Redemption] | None = None
     total_return: Hit[TotalReturn] | None = None  # 獲利情境
@@ -212,6 +229,24 @@ def _scenario(number: str, title: str, lines: list[Line]) -> Scenario:
             ),
         )
     )
+    s.accrual = one(
+        hits(
+            ti,
+            rf"第(\d+)~(\d+)個月配息金額=1單位商品×{NUM}({U})×{PCT}×\((\d+)÷(\d+)\)={NUM}({U}){ROUNDING}",
+            lambda m: AccrualCalc(
+                int(m[1]),
+                int(m[2]),
+                dec(m[3]),
+                m[4],
+                Decimal(m[5]),
+                int(m[6]),
+                int(m[7]),
+                dec(m[8]),
+                m[9],
+                DECIMALS[m[10]],
+            ),
+        )
+    )
     s.cumulative = one(hits(ti, rf"累積總月配息金額={NUM}({U})", lambda m: Amount(dec(m[1]), m[2])))
     s.redemption = one(
         hits(
@@ -238,7 +273,7 @@ def _scenario(number: str, title: str, lines: list[Line]) -> Scenario:
     s.shares = one(
         hits(
             ti,
-            r"股數計算=(?:每單位面額|\(每單位面額×匯率\))÷(?:表現最差)?連結標的之?執行價格="
+            r"股數計算=(?:每單位面額|商品面額|\(每單位面額×匯率\))÷(?:表現最差)?連結標的之?執行價格="
             rf"(?:{NUM}({U})|\({NUM}({U})×(\d+(?:\.\d+)?)\))÷([\d,]+\.\d{{4}})({U})=(\d[\d,]*(?:\.\d+)?)"
             r"\(四捨五入至小數點以下第四位\)無條件捨去至整數位=(\d[\d,]*)股",  # 股數破千時有千分位逗號
             lambda m: Shares(dec(m[1] or m[3]), m[2] or m[4], _fx(m[5]), dec(m[6]), m[7], dec(m[8]), int(dec(m[9]))),
@@ -276,15 +311,20 @@ def _scenario(number: str, title: str, lines: list[Line]) -> Scenario:
     return s
 
 
-def section(lines: list[Line], where: str) -> ScenarioSection:
-    """第 18 項(3)（境外人民幣版第 19 項，`where` 為文件上的「第 N 項」）：假設（到重印表之前）、重印標的表（「連結標的相關價格如下：」到情境一之前）、各情境（依「情境X：」切開）。"""
+def section(
+    lines: list[Line], where: str, labels: tuple[tuple[str, str], ...] = bnp_tables.PRICE_LABELS
+) -> ScenarioSection:
+    """第 18 項(3)（境外人民幣版第 19 項，`where` 為文件上的「第 N 項」）：假設（到重印表之前）、重印標的表（「連結標的相關價格如下：」到情境一之前）、各情境（依「情境X：」切開）。
+    重印表的列標籤同第 11 項標的表（`labels`，DACN 多定界價格列）。"""
     heads = [i for i, ln in enumerate(lines) if SCENARIO_HEAD.match(squash(ln.text))]
     head_end = heads[0] if heads else len(lines)
     titles = [i for i, ln in enumerate(lines[:head_end]) if squash(ln.text) == TABLE_TITLE]
     assumptions = lines[: titles[0]] if titles else lines[:head_end]
     ti = TextIndex(assumptions)
     if len(titles) == 1 and heads:
-        table = bnp_tables.price_table("scenario_table", lines[titles[0] + 1 : head_end], with_tickers=False)
+        table = bnp_tables.price_table(
+            "scenario_table", lines[titles[0] + 1 : head_end], with_tickers=False, labels=labels
+        )
     else:
         table = ParsedField.missing(
             "scenario_table", f"找不到{where}重印標的表（「連結標的相關價格如下：」到情境一之前）"
