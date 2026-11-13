@@ -33,7 +33,8 @@
 說明書結果遵循 `TermSheet`：`f(name)` 交出 `ParsedField`，`full_text` 為全文索引。完整欄位清單在 `STANDARD_FIELDS`；上手可另帶專屬資料，共用規則不讀專屬解析型別。除了商品條件，也包含：
 
 - `PriceRow`：同一標的的價格、名稱與幣別；彭博代號含交易所碼，配對順序依設定。
-- `AutocallSchedule`：第一個可提前出場期及比價日序列，供 Non-Call 與回填。
+- `AutocallSchedule`：第一個可提前出場期及比價日序列，供 Non-Call 與回填；`listed` 為真時只有列出的期別有比價日（Super Bull、D 型 Stepdown 每一期期末日）。
+- `KoLevel`：KO% 每期固定往下降（Stepdown，ADR 0033）的一期：期別（第一個可提前出場的期別是第 1 期）、該期 KO% 與證據；`ko_levels` 交出每一期，`ko_step_pct` 是相鄰兩期的差。
 - `DateTable`／`DateRow`／`PeriodStart`：日期表、各期日期、證據與期始日定義，交給共用日期規則。
 - `Occurrence`：同一條件的多處出處與值，名稱依出處代號由 `OCCURRENCE_NAMES` 查出。
 - `ScenarioParam`／`ScenarioPrice`／`Money`：情境參數、情境價格與金額旁的幣別，交給共用情境規則；不表示所有情境算式都會重算。

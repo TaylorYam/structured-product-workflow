@@ -672,6 +672,16 @@ CHECKS = SynthChecks(Spec, build_pdf, reference_row)  # 單份核對殼（harnes
 check = CHECKS.check
 
 # ---- FCN_Stepdown（#544）：參考條件表 Product = FCN_Stepdown、多一欄 KO降幅(%)
+
+
+@dataclass
+class StepdownSpec(Spec):
+    """BARC FCN_Stepdown 的預設規格：D 型、記憶式、6 個月、起始 KO 100%、每期降 2 個百分點（其他同 `Spec`）。"""
+
+    product_code: str = "029199990002"
+    step: Decimal | None = Decimal("2.00")
+
+
 STEPDOWN_PRODUCT = "FCN_Stepdown"
 STEPDOWN_HEADERS = [*REFERENCE_HEADERS, "KO降幅(%)"]
 
@@ -682,9 +692,7 @@ def stepdown_row(spec: Spec, **overrides: Any) -> dict[str, Any]:
     return reference_row(spec, **{"Product": STEPDOWN_PRODUCT, "KO降幅(%)": float(spec.step), **overrides})
 
 
-STEPDOWN_CHECKS = SynthChecks(  # 預設：D 型、記憶式、6 個月、起始 KO 100%、每期降 2 個百分點
-    lambda: Spec(product_code="029199990002", step=Decimal("2.00")), build_pdf, stepdown_row, STEPDOWN_HEADERS
-)
+STEPDOWN_CHECKS = SynthChecks(StepdownSpec, build_pdf, stepdown_row, STEPDOWN_HEADERS)
 
 
 def barc_adapter(**overrides: Any) -> Issuer:

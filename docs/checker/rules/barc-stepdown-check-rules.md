@@ -50,7 +50,7 @@
 | 每期 KO% | 說明書第 n 期 KO% = 表上 `KO(%)` − `KO降幅(%)` ×（n − 1），逐期比；不一致時列出哪幾期（`field.ko_levels`）。表上兩欄有一欄讀不到 → 轉人工覆核 |
 | 起始 KO% | 第 1 期 = 表上 `KO(%)`（共用 `field.ko_pct`，同 FCN） |
 
-只有 Product 的商品規則有 KO 降幅的商品（`ProductRule.has_term(KO_STEP_FIELD)`：FCN_Stepdown、Snowball 類）產生這兩項；其他商品不產生結果。說明書 KO% 不是每期固定往下降時在範本辨識就轉人工（§3.1），不會走到這裡。
+只有一定要有 KO 降幅的商品（`ProductRule.ko_step_required`：FCN_Stepdown、Snowball_Stepdown）產生這兩項；表上降幅不是大於 0 的數字也轉人工覆核。降幅可以空白的 Snowball 未開放自動核對，不產生結果；其他商品也不產生結果。說明書 KO% 不是每期固定往下降時在範本辨識就轉人工（§3.1），不會走到這裡。
 
 ### 3.4 比價日（D 型）
 
@@ -140,7 +140,7 @@ D 型 Stepdown：`比價日_{Non-Call}`～`比價日_{期數}` = 提前出場表
 | 範本辨識與讀出 | `parsers/barc_stepdown.py`、`parsers/barc_stepdown_iis.py`：沿用 `parsers/barc.py`、`barc_iis.py` 的 `read`（價格表的宣告由參數交入：沒有 KO 欄），再換掉 KO%、記憶式、價格與比價日 |
 | 上手註冊 | `issuers.py` 登記 `BARC_STEPDOWN`（`products=frozenset({FCN_STEPDOWN})`，上手代號同 `BARC`，放在 `BARC` 前面） |
 | 規則 | `rules/barc_stepdown.py`：沿用 `rules/barc.py`，把 `doc.autocall_trigger_per_period` 換成不適用（§3.5）；共用 `field.ko_step_pct`、`field.ko_levels` 放在 `rules/reference.py` |
-| 設定 | `[auto_check_products]` 新增 `FCN_Stepdown = ["BARC"]`；名稱樣板沿用 `[issuer.barc.product_name]`（不另加 `product_names`） |
+| 設定 | `[auto_check_products]` 新增 `FCN_Stepdown = ["BARC"]`；名稱樣板 `[issuer.barc.product_names.FCN_Stepdown]`（寫法和 FCN 相同；每個家族都登記，註冊表測試會檢查） |
 | 測試 | 合成 PDF（沿用 BARC 合成樣本，改 §13(7) 與 §15）；§7 的反例；本機真實樣本辨識與讀取測試（環境變數指向本機樣本，不進 repo）；試跑（§6） |
 
 ## 9. 決策紀錄

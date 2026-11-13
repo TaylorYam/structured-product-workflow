@@ -7,8 +7,8 @@
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
 # 規則說明見 docs/checker/rules/review-standard.md。
 
-version = 40
-effective_date = 2026-11-08
+version = 41
+effective_date = 2026-11-13
 
 [distributor]
 # 受託或銷售機構審查通過之日期（說明書封面 p1）：歷次日期都保留，由舊到新。
@@ -211,6 +211,15 @@ en = "{tenor} Months {ccy} {memory_en}Autocallable Equity Linked Note issued by 
 memory_zh = "記憶式"
 memory_en = "Memory "
 # 半形／全形括號差異不視為錯誤（比對前統一為全形）
+normalize_zh = ["brackets"]
+
+[issuer.barc.product_names.FCN_Stepdown]
+# BARC FCN_Stepdown 商品名稱（6 份說明書推得，2026-11-13 規格，workflow #544）：和 FCN 相同（不能用名稱辨識 Stepdown）；
+# 參考條件表 Product 是 FCN_Stepdown 時用這個樣板，佔位符與比對方式同 [issuer.barc.product_name]。
+zh = "英商巴克萊銀行{tenor}個月{ccy_zh}計價連結股權{memory_zh}自動提前出場結構型商品（不保本）（無擔保及無保證機構）（下稱「本商品」）"
+en = "{tenor} Months {ccy} {memory_en}Autocallable Equity Linked Note issued by Barclays Bank PLC (unsecured and non-guaranteed)"
+memory_zh = "記憶式"
+memory_en = "Memory "
 normalize_zh = ["brackets"]
 
 [issuer.hsbc]

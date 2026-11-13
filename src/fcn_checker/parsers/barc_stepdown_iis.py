@@ -11,12 +11,12 @@ from dataclasses import replace
 
 from ..schema import DetectionResult, Line
 from ..text import squash
-from . import barc_iis, iis
+from . import barc_iis, barc_stepdown, iis
 
 TEMPLATE_ID = "barc-zh-stepdown-iis"
 PARSER_VERSION = "1"
 
-PRICE_TABLE = replace(barc_iis.PRICE_TABLE, columns=tuple(c for c in barc_iis.PRICE_TABLE.columns if c.key != "ko"))
+PRICE_TABLE = replace(barc_stepdown.PRICE_TABLE, where=barc_iis.PRICE_TABLE.where)  # 同說明書：沒有 KO 欄
 KO_HEADS = ("自動提前出場觸發價", "觸發水準")  # BARC FCN 投資人須知價格表 KO 欄頭的開頭（記憶式／非記憶式）
 INTRO_END = "請詳見下表所示"  # 價格表前的說明句：而「最初價格」、「執行價格」與「…」，請詳見下表所示
 INTRO_LINES = 8  # 往表頭前看幾行找說明句

@@ -19,7 +19,6 @@ from .investor_sheet import IisSheet
 from .parsers import barc as barc_parser
 from .parsers import (
     barc_iis,
-    barc_stepdown,
     barc_stepdown_iis,
     bbva_iis,
     bnp_iis,
@@ -45,6 +44,7 @@ from .parsers import (
     sg_iis,
     ubs_iis,
 )
+from .parsers import barc_stepdown as barc_stepdown_parser
 from .parsers import bbva as bbva_parser
 from .parsers import bnp as bnp_parser
 from .parsers import bnp_super_bull as bnp_sb_parser
@@ -213,12 +213,12 @@ BARC = Template(
 
 BARC_STEPDOWN = Template(
     code=barc_rules.ISSUER,
-    template_id=barc_stepdown.TEMPLATE_ID,
+    template_id=barc_stepdown_parser.TEMPLATE_ID,
     label="BARC FCN_Stepdown 中文產品說明書",
-    parser_version=barc_stepdown.PARSER_VERSION,
+    parser_version=barc_stepdown_parser.PARSER_VERSION,
     not_covered=tuple(barc_stepdown_rules.NOT_COVERED),
-    detect=lambda lines: barc_stepdown.detect(barc_parser.document(lines)),
-    read=barc_stepdown.read,
+    detect=lambda lines: barc_stepdown_parser.detect(barc_parser.document(lines)),
+    read=barc_stepdown_parser.read,
     rules=barc_stepdown_rules.run_all,
     iis=IisTemplate(
         template_id=barc_stepdown_iis.TEMPLATE_ID,

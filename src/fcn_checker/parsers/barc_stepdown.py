@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import datetime as dt
 from collections.abc import Sequence
 from dataclasses import replace
 from decimal import Decimal
@@ -47,6 +48,16 @@ def _ko_rows(table: schedule.Table) -> list[tuple[Decimal | None, list[Line]]]:
     return [(v if isinstance(v := r.get("trigger"), Decimal) else None, r.lines) for r in table.rows]
 
 
+def _dated_without_pct(table: schedule.Table) -> list[int]:
+    """有提前出場日期（D 期末日、P 自動提前出場評價日）、觸發百分比卻不是數字的列：KO 期別會和比價日錯開。"""
+    return [
+        i
+        for i, r in enumerate(table.rows, start=1)
+        if not isinstance(r.get("trigger"), Decimal)
+        and any(isinstance(r.get(k), dt.date) for k in ("end", "ko_valuation"))
+    ]
+
+
 def _ko_terms(ko_table: ParsedField) -> dict[str, ParsedField]:
     if not ko_table.ok:
         return {key: derived(key, ko_table) for key in stepdown.KEYS}
@@ -54,7 +65,7 @@ def _ko_terms(ko_table: ParsedField) -> dict[str, ParsedField]:
 
 
 def version_problems(doc: Document) -> list[str]:
-    """商品家族標記成立後，現行寫法（範本規格 §4）中不成立的項目。提前出場表讀不到時不在這裡判（由讀出結果轉人工覆核）。"""
+    """商品家族標記成立後，現行寫法（範本規格 §4）中不成立的項目（提前出場表讀不到也算）。"""
     art13 = _art(doc, 13)
     text13 = _flat(doc.span_lines(art13))
     out = []
@@ -64,13 +75,18 @@ def version_problems(doc: Document) -> list[str]:
         out.append("第 13 條 (7) 沒有記憶事件句（非記憶式沒有樣本）")
     s15 = doc.span_lines(_art(doc, 15))
     if any(
-        barc._definition_pct("ko_pct", s15, term).status != FieldStatus.MISSING
+        barc.definition_pct("ko_pct", s15, term).status != FieldStatus.MISSING
         for term in ("自動提前出場觸發價格", "觸發水準")
     ):
         out.append("第 15 條仍有 KO 定義句")
-    obs = barc._ko_observation(doc, art13)
+    obs = barc.ko_observation(doc, art13)
     ko = schedule.ko_table(schedule.find_tables(doc, art13), obs)
-    if ko.ok and (problem := stepdown.step_problem(_ko_terms(ko))):
+    if not ko.ok:
+        out.append(f"讀不到第 13 條 (7) 提前出場表（{ko.note or ko.status.value}）")
+        return out
+    if dated := _dated_without_pct(ko.value):
+        out.append(f"{KO_WHERE}第 " + "、".join(map(str, dated)) + " 列有日期、觸發百分比卻不是數字")
+    elif problem := stepdown.step_problem(_ko_terms(ko)):
         out.append(problem)
     g = schedule.guaranteed_periods(ko)
     if obs.ok and obs.value == "D" and g.ok and g.value == 0:

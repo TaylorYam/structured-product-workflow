@@ -449,10 +449,12 @@ def observation_t_range(ctx: IssuerContext) -> CheckResult:
 # ---------------------------------------------------------------- 入口
 
 
-def run_all(ctx: IssuerContext, trigger: Callable[[IssuerContext], CheckResult] | None = None) -> list[CheckResult]:
+def run_all(
+    ctx: IssuerContext, trigger: Callable[[IssuerContext], CheckResult] = trigger_per_period
+) -> list[CheckResult]:
     """月配息率推算，再加上說明書內部規則（價格推算是各上手共用規則，見 rules/derivation.py）。`trigger` 換掉每期觸發百分比的
-    規則（Stepdown 每期不同，`rules/barc_stepdown.py`）；沒給時用 `trigger_per_period`。"""
-    return [monthly_coupon(ctx), *document_rules(ctx, trigger or trigger_per_period)]
+    規則（Stepdown 每期不同，`rules/barc_stepdown.py`）。"""
+    return [monthly_coupon(ctx), *document_rules(ctx, trigger)]
 
 
 def document_rules(

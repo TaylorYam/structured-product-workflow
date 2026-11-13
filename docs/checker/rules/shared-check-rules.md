@@ -35,7 +35,7 @@
 | 交易日、最終比價日、到期日 | `trade_date`、`final_valuation_date`、`maturity_date` | 日期相等 |
 | KO(%)、K(%)、KI(%)、Coupon p.a. (%) | `ko_pct`、`strike_pct`、`ki_pct`、`coupon_pa_pct` | 依說明書顯示位數四捨五入後比對；無 KI 時 KI(%) 必須是 `-` |
 | 配息門檻(%) | `coupon_barrier_pct` | 只在 Product 有配息門檻的商品種類（`PRODUCT_RULES.has_coupon_barrier`，目前 DACN 與 BEN；BEN 的紅利門檻自 workflow #406 起接上，ADR 0029）核對，依說明書顯示位數四捨五入後比對；表上沒有這欄時和 `K(%)` 比（訊息寫明）；DACN 列空白或 `-` 也和 `K(%)` 比（訊息寫明，2026-11-02 使用者決定，DACN-409-01），BEN 列空白或 `-` 轉人工覆核（`field.coupon_barrier_pct`，workflow #368、ADR 0030） |
-| KO降幅(%) | `ko_step_pct`、`ko_levels` | 只在 Product 有 KO 降幅的商品種類（`PRODUCT_RULES.has_ko_step`：FCN_Stepdown、Snowball 類，workflow #537、ADR 0033）核對：說明書降幅 = 表上 `KO降幅(%)`（`field.ko_step_pct`）；說明書第 n 期 KO% = `KO(%)` − `KO降幅(%)` ×（n − 1）（`field.ko_levels`）。表上沒有這欄、空白或 `-` → 依 `ko_step_required` 判斷：要求一定有降幅的 Stepdown 類轉人工覆核（Snowball 類未開放自動核對，這裡不定義它空白時的核對行為）。見 §11 |
+| KO降幅(%) | `ko_step_pct`、`ko_levels` | 只在 Product 一定要有 KO 降幅的商品種類（`ProductRule.ko_step_required`：FCN_Stepdown、Snowball_Stepdown，workflow #537、ADR 0033）核對：說明書降幅 = 表上 `KO降幅(%)`（`field.ko_step_pct`）；說明書第 n 期 KO% = `KO(%)` − `KO降幅(%)` ×（n − 1）（`field.ko_levels`）。表上沒有這欄、空白、`-`、不是大於 0 的數字 → 兩項都轉人工覆核。降幅可以空白的 Snowball 未開放自動核對，這裡不定義（不產生結果）。見 §11 |
 | KO(Freq) | `ko_observation` | `D` 期間每日／`P` 每期定日 |
 | KO(memo) | `ko_memory` | `Y`／`N` |
 | KI(Freq) | `ki_type` | `-` 無／`AM` 到期觀察／`D` 每日觀察／`P` 每期觀察；是否允許先由[樣態黑名單](../support-matrix.md)決定，未知寫法或必核欄位缺漏轉人工覆核 |
@@ -264,9 +264,9 @@ FCN_Stepdown 的 KO% 從第 1 期開始每期固定往下降。各上手的寫�
 
 | 規則 | 內容 |
 |---|---|
-| `field.ko_step_pct` | 說明書降幅 = 表上 `KO降幅(%)`，依說明書顯示位數比；表上沒有這欄、空白、`-` → `ko_step_required` 的商品（FCN_Stepdown、Snowball_Stepdown）轉人工覆核；空白判定跟 `ko_step_required` 走，不跟「有沒有降幅欄」走（Snowball 類未開放自動核對，不在本規則定義） |
+| `field.ko_step_pct` | 說明書降幅 = 表上 `KO降幅(%)`，依說明書顯示位數比；表上沒有這欄、空白、`-`、不是大於 0 的數字 → 轉人工覆核（`ko_step_required` 的商品一定要有降幅）。規則跟 `ko_step_required` 走，不跟「有沒有降幅欄」走：降幅可以空白的 Snowball 未開放自動核對，不產生結果 |
 | `field.ko_levels` | 說明書每一期 KO% = 表上 `KO(%)` − `KO降幅(%)` ×（n − 1），逐期比，不一致時列出期別；表上任一欄讀不到 → 轉人工覆核 |
 | `field.ko_pct` | 同 FCN（說明書值是第 1 期） |
 | `backfill.compare_dates` | D 型每一期都填（§3） |
 
-只有 Product 的商品規則有 KO 降幅的商品產生 `field.ko_step_pct`、`field.ko_levels`；FCN 等其他商品不產生結果（表上 `KO降幅(%)` 是不是 `-` 不在核對範圍）。各上手開放的範圍、範本差異見各上手的 Stepdown 核對規則（BARC：[barc-stepdown-check-rules.md](barc-stepdown-check-rules.md)）。
+只有 Product 一定要有 KO 降幅的商品（`ko_step_required`）產生 `field.ko_step_pct`、`field.ko_levels`；Snowball、FCN 等其他商品不產生結果（表上 `KO降幅(%)` 是不是 `-` 不在核對範圍）。各上手開放的範圍、範本差異見各上手的 Stepdown 核對規則（BARC：[barc-stepdown-check-rules.md](barc-stepdown-check-rules.md)）。

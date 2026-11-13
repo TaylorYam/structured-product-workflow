@@ -242,7 +242,7 @@ def detect(doc: Document) -> DetectionResult:
 # ---------------------------------------------------------------- 第一章各欄位
 
 
-def _definition_pct(name: str, lines: list[Line], term: str) -> ParsedField:
+def definition_pct(name: str, lines: list[Line], term: str) -> ParsedField:
     """§15「X」詳見下表所示（為最初價格的N%）。"""
     hits = []
     for ln in lines:
@@ -255,8 +255,8 @@ def _definition_pct(name: str, lines: list[Line], term: str) -> ParsedField:
 
 
 def _ko_pct_and_memory(lines: list[Line], name_zh: ParsedField) -> tuple[ParsedField, ParsedField]:
-    memory = _definition_pct("ko_pct", lines, "自動提前出場觸發價格")
-    plain = _definition_pct("ko_pct", lines, "觸發水準")
+    memory = definition_pct("ko_pct", lines, "自動提前出場觸發價格")
+    plain = definition_pct("ko_pct", lines, "觸發水準")
     if memory.status != FieldStatus.MISSING and plain.status != FieldStatus.MISSING:
         ko = ParsedField.ambiguous("ko_pct", [], [], "同時出現「自動提前出場觸發價格」與「觸發水準」")
         ko.evidence = memory.evidence + plain.evidence
@@ -321,7 +321,7 @@ def _ki_type(lines: list[Line], ki_pct: ParsedField, strike: ParsedField) -> Par
     return ParsedField.invalid(name, block, "「觸及生效評價日」定義不屬於已知型態")
 
 
-def _ko_observation(doc: Document, art13: Span | None) -> ParsedField:
+def ko_observation(doc: Document, art13: Span | None) -> ParsedField:
     """§13(6)–(8) 範圍：有「期始日(含)」表頭 → D（期間每日）；有評價日表頭 → P（期末定日）。"""
     subs = doc.subitems(art13)
     if not all(n in subs for n in (6, 9)):
@@ -777,7 +777,7 @@ def read(lines: Sequence[Line], price_spec: price_table.TableSpec = PRICE_TABLE)
     flds["issue_date"] = _s13_date(doc, s13, 3, "issue_date")
     flds["final_valuation_date"] = _s13_date(doc, s13, 4, "final_valuation_date")
     flds["maturity_date"] = _s13_date(doc, s13, 5, "maturity_date")
-    flds["ko_observation"] = _ko_observation(doc, arts.get(13))
+    flds["ko_observation"] = ko_observation(doc, arts.get(13))
     flds["denomination"] = _denomination(doc, arts.get(6))
     flds["issue_price_pct"] = _issue_price(doc, arts.get(6))
     flds["art1_name"] = _article_value(doc, arts.get(1), "商品名稱", "art1_name")
@@ -789,9 +789,9 @@ def read(lines: Sequence[Line], price_spec: price_table.TableSpec = PRICE_TABLE)
     flds["monthly_coupon_pct"], flds["coupon_pa_pct"] = _coupon(doc, arts.get(14))
 
     s15 = doc.span_lines(arts.get(15))
-    flds["strike_pct"] = _definition_pct("strike_pct", s15, "執行價格")
+    flds["strike_pct"] = definition_pct("strike_pct", s15, "執行價格")
     flds["ko_pct"], flds["ko_memory"] = _ko_pct_and_memory(s15, flds["name_zh"])
-    flds["ki_pct"] = _definition_pct("ki_pct", s15, "觸及生效價格")
+    flds["ki_pct"] = definition_pct("ki_pct", s15, "觸及生效價格")
     flds["ki_type"] = _ki_type(s15, flds["ki_pct"], flds["strike_pct"])
     flds["price_table"] = _price_table(s15, "price_table", price_spec.where, _PRICE_START, _PRICE_END, price_spec)
     flds["underlying_prices"] = price_table.price_rows(flds["price_table"])  # 表上沒有代號，以 `underlyings` 同順序為準

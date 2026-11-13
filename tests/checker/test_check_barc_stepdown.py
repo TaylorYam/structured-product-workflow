@@ -97,6 +97,17 @@ def test_fcn_daily_still_fills_two_compare_dates(tmp_path):
     assert {v for c, v in slots.items() if c not in (first, last)} == {"-"}
 
 
+def test_daily_compare_dates_fill_the_blank_middle_slots(tmp_path):
+    """D 型 Stepdown 表上只填開始與最後（FCN 的填法）：開始、最後照常比對，中間空白的格子回填每一期期末日。"""
+    full = compare_slots(check(tmp_path / "full"))
+    k, n = S0.first_callable, S0.tenor
+    ends = {f"比價日_{p}": full[f"比價日_{p}"] for p in (k, n)}
+    report = check(tmp_path / "ends", **ends)
+    assert report.status == S.PASS, problems(report)
+    slots = compare_slots(report)
+    assert all(slots[f"比價日_{p}"] == full[f"比價日_{p}"] for p in range(k + 1, n))
+
+
 def test_compare_dates_on_sheet_are_checked_not_overwritten(tmp_path):
     """D 型 Stepdown 表上已填的中間比價日照常比對：和說明書不同 → 不一致、保留原值。"""
     ok = compare_slots(check(tmp_path / "ok"))["比價日_3"]
@@ -116,6 +127,13 @@ def test_ko_step_differs_from_sheet(tmp_path):
 def test_blank_ko_step_goes_to_review(tmp_path, blank):
     report = check(tmp_path, **{"KO降幅(%)": blank})
     only(report, STEP_RULES, S.REVIEW_REQUIRED)
+
+
+@pytest.mark.parametrize("value", [0.0, -2.0, "兩點"], ids=["zero", "negative", "text"])
+def test_ko_step_that_is_not_a_positive_number_goes_to_review(tmp_path, value):
+    report = check(tmp_path, **{"KO降幅(%)": value})
+    only(report, STEP_RULES, S.REVIEW_REQUIRED)
+    assert {r.reason_code for r in report.results if r.rule_id in STEP_RULES} == {"order_invalid"}
 
 
 def test_sheet_without_ko_step_column_goes_to_review(tmp_path):
@@ -162,12 +180,38 @@ def test_ko_price_is_initial_times_first_period_ko(tmp_path):
             "觸發價格",
         ),
         (Spec(product_code="029199990010", step=Decimal("2.00"), guaranteed=0), None, "第 1 期期始日就有日期"),
+        (S0, Edit("100.00%", "N/A", "ts.art13.ko.1.trigger"), "第 1 列有日期、觸發百分比卻不是數字"),
+        (S0, Edit("96.00%", "N/A", "ts.art13.ko.3.trigger"), "第 3 列有日期、觸發百分比卻不是數字"),
+        (S0, Edit("期始日(含)t", "期始日t", "ts.art13"), "讀不到第 13 條 (7) 提前出場表"),
     ],
-    ids=["uneven", "flat", "rising", "no-memory", "art15-ko-definition", "no-ko-price-definition", "D-G0"],
+    ids=[
+        "uneven",
+        "flat",
+        "rising",
+        "no-memory",
+        "art15-ko-definition",
+        "no-ko-price-definition",
+        "D-G0",
+        "dated-first-row-without-pct",
+        "dated-middle-row-without-pct",
+        "no-ko-table",
+    ],
 )
 def test_stepdown_variants_outside_the_template_are_unsupported(tmp_path, spec, edit, reason):
     report = check(tmp_path, spec, edits=[edit] if edit else [])
     assert reason in unsupported(report)
+
+
+def test_fcn_document_with_the_stepdown_mark_stays_in_the_stepdown_template(tmp_path):
+    """BARC FCN 說明書加上 Stepdown 標記：停在 Stepdown 範本、判不支援的範本版本，不退回 FCN 範本（範本規格 §4）。"""
+    mark = "自動提前出場觸發百分比:詳見下表所示。"
+    edit = Edit(
+        "指定提前現金贖回日：係指定提前贖回事件發生後第三個營業日。",
+        "指定提前現金贖回日：係指定提前贖回事件發生後第三個營業日。" + mark,
+        "ts.art13",
+    )
+    report = CHECKS.check(tmp_path, Spec(product_code="029199990014"), edits=[edit])
+    assert "觸發價格" in unsupported(report)
 
 
 def test_product_fcn_with_stepdown_document_goes_to_review(tmp_path):

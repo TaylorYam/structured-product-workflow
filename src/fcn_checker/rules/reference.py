@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
-from ..fields import COUPON_BARRIER_FIELD, KO_STEP_FIELD, PARTICIPATION_FIELD, PRICE_FIELDS
+from ..fields import COUPON_BARRIER_FIELD, PARTICIPATION_FIELD, PRICE_FIELDS
 from ..orders.reference import UNDERLYING_SLOTS
 from ..products import FCN, PRODUCT_RULES, product_name, rule_or_fcn
 from ..schema import CheckResult, DocKind, Evidence, FieldStatus, Item, OrderValue, ParsedField
@@ -719,35 +719,29 @@ def coupon_barrier(ctx: Context) -> list[CheckResult]:
 
 
 def ko_step(ctx: Context) -> list[CheckResult]:
-    """KO 降幅與每期 KO%（商品規則有 KO 降幅的商品，`ProductRule.has_term(KO_STEP_FIELD)`：FCN_Stepdown、Snowball 類，
+    """KO 降幅與每期 KO%（一定要有 KO 降幅的商品，`ProductRule.ko_step_required`：FCN_Stepdown、Snowball_Stepdown，
     workflow #544、ADR 0033）：說明書降幅 = 表上「KO降幅(%)」，依說明書顯示位數四捨五入後比（`field.ko_step_pct`）；說明書
-    第 n 期 KO% = 表上「KO(%)」−「KO降幅(%)」×（n − 1），逐期比（`field.ko_levels`）。表上沒有這欄、空白或空值寫法：一定要有
-    降幅的（`ko_step_required`：Stepdown 類）兩項都轉人工覆核；其他（Snowball 類，未開放自動核對，開放時再確認）照 ADR 0033
-    資料面視為不降（0）。其他商品不產生結果。"""
+    第 n 期 KO% = 表上「KO(%)」−「KO降幅(%)」×（n − 1），逐期比（`field.ko_levels`）。表上沒有這欄、空白、空值寫法、不是數字
+    或不大於 0 → 兩項都轉人工覆核。降幅可以空白的 Snowball 未開放自動核對，這裡不定義（不產生結果），其他商品也不產生結果。"""
     product, _ = _product(ctx)
-    rule = rule_or_fcn(product)
-    if not rule.has_term(KO_STEP_FIELD):
+    if not rule_or_fcn(product).ko_step_required:
         return []
     rid, key, name = "field.ko_step_pct", "ko_step_pct", "KO 降幅 %"
     pf, levels = standard_field(ctx, key), standard_field(ctx, "ko_levels")
     ov = ctx.sheet_field(key)
+
+    def review(reason: str, why: str) -> list[CheckResult]:
+        return [
+            order_review(rid, key, ov, pf, reason, why, name=name),
+            order_review("field.ko_levels", "ko_levels", ov, levels, reason, why, name=name),
+        ]
+
     if ov is None or ov.value is None or ov.value == ctx.fmt.empty_value:
-        if rule.ko_step_required:
-            where = "沒有「KO降幅(%)」欄" if ov is None else "該列 KO 降幅空白"
-            why = f"{product} 要有 KO 降幅，{ctx.sheet_source}{where}"
-            return [
-                order_review(rid, key, ov, pf, "order_missing", why, name=name),
-                order_review("field.ko_levels", "ko_levels", ov, levels, "order_missing", why, name=name),
-            ]
-        step = Decimal(0)
-    else:
-        step = to_decimal(ov.value)
-        if step is None:
-            why = f"{ctx.sheet_source}的值不是數字"
-            return [
-                order_review(rid, key, ov, pf, "order_invalid", why, name=name),
-                order_review("field.ko_levels", "ko_levels", ov, levels, "order_invalid", why, name=name),
-            ]
+        where = "沒有「KO降幅(%)」欄" if ov is None else "該列 KO 降幅空白"
+        return review("order_missing", f"{product} 要有 KO 降幅，{ctx.sheet_source}{where}")
+    step = to_decimal(ov.value)
+    if step is None or step <= 0:
+        return review("order_invalid", f"{ctx.sheet_source}的值不是大於 0 的數字（{product} 每期 KO% 要往下降）")
     check = Check(rid, key, Item.column(name, [ov]), ctx.document, ov=(ov,), expected=step).needs(pf)
     ok, shown_step = cmp_pct(step, pf.value) if pf.ok else (False, step)
     return [check.compare(shown_step, pf.value, ok=ok, tolerance=PCT_TOLERANCE), _ko_levels(ctx, step, ov)]
