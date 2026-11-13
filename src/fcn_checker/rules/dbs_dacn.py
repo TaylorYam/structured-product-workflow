@@ -8,13 +8,11 @@
 
 from __future__ import annotations
 
-from decimal import ROUND_HALF_UP
-
 from ..parsers import dbs_dacn
 from ..schema import CheckResult
 from ..schema import CheckStatus as S
 from . import dacn, dbs, kit
-from .kit import Q4, IssuerContext
+from .kit import IssuerContext
 
 ISSUER = dbs.ISSUER
 REFERENCE_FIELDS = dbs.REFERENCE_FIELDS
@@ -77,28 +75,8 @@ def coupon_barrier(ctx: IssuerContext) -> list[CheckResult]:
     out = []
     for i, row in enumerate(rows.value, start=1):
         label = uls.value[i - 1] if uls.ok and i <= len(uls.value) else (row.ticker or f"第 {i} 檔標的")
-        actual = row.prices.get("barrier")
         check = kit.doc_check(ctx, rid, f"{label} 區間下限價格", f"UL_{i} 區間下限價格（配息門檻價）", pct)
-        if actual is None:
-            out.append(
-                check.result(
-                    S.REVIEW_REQUIRED,
-                    reason="document_missing",
-                    message=f"表1 第 {i} 列讀不到區間下限價格",
-                    evidence=list(row.evidence),
-                )
-            )
-            continue
-        initial = row.prices["initial"]
-        out.append(
-            check.compare(
-                (initial * pct.value / 100).quantize(Q4, ROUND_HALF_UP),
-                actual,
-                evidence=[*row.evidence, *pct.evidence],
-                tolerance="四捨五入（half-up）到 4 位",
-                message=f"期初價格 {initial} × {pct.value}%",
-            )
-        )
+        out.append(dacn.barrier_price(check, row, pct, f"表1 第 {i} 列讀不到區間下限價格"))
     return out
 
 

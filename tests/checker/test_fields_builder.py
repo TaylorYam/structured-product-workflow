@@ -106,6 +106,7 @@ def test_a_list_cannot_be_both_delivered_and_registered():
 SYNTH_SPECS = [
     ("barc_synth", "Spec"),
     ("barc_synth", "StepdownSpec"),
+    ("barc_synth", "DacnSpec"),
     ("bbva_synth", "Spec"),
     ("bnp_synth", "Spec"),
     ("bnp_synth", "SbSpec"),

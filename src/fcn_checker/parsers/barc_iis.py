@@ -108,18 +108,20 @@ def price_region(lines: Sequence[Line]) -> list[Line] | None:
     return region
 
 
-def _price_table(lines: Sequence[Line], base: price_table.TableSpec = PRICE_TABLE) -> dict[str, ParsedField]:
+def price_fields(
+    lines: Sequence[Line], spec: price_table.TableSpec = PRICE_TABLE
+) -> tuple[ParsedField, dict[str, ParsedField]]:
     """收益分配事項的價格表（`parsers/price_table.py` 讀，以執行價格欄的價格切列）：每列一檔標的、名稱在左欄。
-    記憶式商品 KO 欄頭不寫百分比，那份就沒有 KO %；有 KI 欄才有 KI %。`base` 是價格表的宣告（Stepdown 沒有 KO 欄）。"""
+    記憶式商品 KO 欄頭不寫百分比，那份就沒有 KO %；有 KI 欄才有 KI %。回傳讀出的表與交出的欄位；`spec` 是表的宣告
+    （Stepdown 沒有 KO 欄；BARC DACN 多配息門檻欄、列靠上對齊）。"""
+    names = ("underlying_prices", "underlying_names", "strike_pct", "ko_pct")
     region = price_region(lines)
     if region is None:
-        return {
-            n: ParsedField.missing(n, "找不到價格表")
-            for n in ("underlying_prices", "underlying_names", "strike_pct", "ko_pct")
-        }
-    table = price_table.read("underlying_prices", region, barc.table_spec(region, base.where, base))
+        missing = ParsedField.missing("underlying_prices", "找不到價格表")
+        return missing, {n: ParsedField.missing(n, "找不到價格表") for n in names}
+    table = price_table.read("underlying_prices", region, barc.table_spec(region, spec.where, spec))
     if not table.ok:
-        return {n: derived(n, table) for n in ("underlying_prices", "underlying_names", "strike_pct", "ko_pct")}
+        return table, {n: derived(n, table) for n in names}
     t: price_table.PriceTable = table.value
     out: dict[str, ParsedField] = {}
     for key, field in PCT_FIELDS:
@@ -132,14 +134,14 @@ def _price_table(lines: Sequence[Line], base: price_table.TableSpec = PRICE_TABL
             else ParsedField.invalid(field, head, f"價格表欄頭沒有百分比：{t.heads[key]}")
         )
     out["underlying_prices"] = price_table.price_rows(table)
-    names = [squash(n) for n in t.names]
+    row_names = [squash(n) for n in t.names]
     body = [ln for r in t.rows for ln in r.lines]
     out["underlying_names"] = (
-        ParsedField.present("underlying_names", names, body)
-        if all(names)
+        ParsedField.present("underlying_names", row_names, body)
+        if all(row_names)
         else ParsedField.invalid("underlying_names", body, "價格表有一列沒有標的名稱")
     )
-    return out
+    return table, out
 
 
 def read(lines: Sequence[Line], price_spec: price_table.TableSpec = PRICE_TABLE) -> iis.IisSheet:
@@ -195,7 +197,7 @@ def read(lines: Sequence[Line], price_spec: price_table.TableSpec = PRICE_TABLE)
     put("maturity_date", r"到期日或最終實物贖回日[:：]" + iis.DATE, parse_date)
     put("monthly_coupon_pct", r"每[月次]之配息率（為([\d.]+)%", Decimal)
     put("coupon_pa_pct", r"即年利率為([\d.]+)%", Decimal)
-    fields.update(_price_table(lines, price_spec))
+    fields.update(price_fields(lines, price_spec)[1])
     provided = (PROVIDED - {"ko_pct"}) | {f for f in ("ko_pct", "ki_pct") if f in fields}
     fields["issuer_names"] = iis.occurrences(
         "issuer_names",

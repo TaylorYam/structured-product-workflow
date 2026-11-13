@@ -5,14 +5,12 @@
 
 from __future__ import annotations
 
-from decimal import ROUND_HALF_UP
-
 from ..parsers import dbs_dacn
 from ..schema import CheckResult, Item
 from ..schema import CheckStatus as S
-from . import dbs_iis
+from . import dacn, dbs_iis
 from .iis import NO_TERM_SHEET, IisIssuerContext, ts_unavailable
-from .kit import Q4, Check
+from .kit import Check
 
 
 def coupon_barrier(ctx: IisIssuerContext) -> list[CheckResult]:
@@ -36,28 +34,8 @@ def coupon_barrier(ctx: IisIssuerContext) -> list[CheckResult]:
             out.append(problem)
         else:
             for i, row in enumerate(rows.value, start=1):
-                actual = row.prices.get("barrier")
                 cell = Check(rid, f"UL_{i} 區間下限價格", Item.expected(f"UL_{i} 區間下限價格"), ctx.document)
-                if actual is None:
-                    out.append(
-                        cell.result(
-                            S.REVIEW_REQUIRED,
-                            reason="document_missing",
-                            message=f"價格表第 {i} 列讀不到區間下限價格",
-                            evidence=list(row.evidence),
-                        )
-                    )
-                    continue
-                initial = row.prices["initial"]
-                out.append(
-                    cell.compare(
-                        (initial * pct.value / 100).quantize(Q4, ROUND_HALF_UP),
-                        actual,
-                        evidence=[*row.evidence, *pct.evidence],
-                        tolerance="四捨五入（half-up）到 4 位",
-                        message=f"期初價格 {initial} × {pct.value}%",
-                    )
-                )
+                out.append(dacn.barrier_price(cell, row, pct, f"價格表第 {i} 列讀不到區間下限價格"))
     up = Check(rid, "range_upper", Item.expected("價格表區間上限價格"), ctx.document).needs(upper)
     out.append(
         up.blocked

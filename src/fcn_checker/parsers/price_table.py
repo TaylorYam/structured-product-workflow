@@ -12,7 +12,7 @@ y 座標、跨頁、換行、擠格都在這裡處理（Issue #287）。
    上一頁該欄最下面的一行；橫跨兩格以上的說明文字不算；只有表頭百分比的那一格歸到正上方的欄名）。表頭從第一個兩格
    並排的列、有關鍵字的格的上緣起，更上面的文字不算；第 1 列那一頁的表頭已齊全時不往上一頁找。從表頭最後一行之下
    才開始的格（例：代碼拆三行、中間一行和列號齊平）屬於列。
-4. 其餘每行歸到同一頁 y 中心最近的列錨點；價格欄裡換行的值（`23,425.0000` / `日圓`）跟著第一行的列，在頁底換行時
+4. 其餘每行歸到同一頁 y 中心最近的列錨點（列的字靠上對齊時，`TableSpec.align`，歸到上緣不低於它的最後一個列錨點）；價格欄裡換行的值（`23,425.0000` / `日圓`）跟著第一行的列，在頁底換行時
    下一頁頁首、該頁第一個列錨點之上的續行（`358.2200美` / `元`）也接回上一頁那一格；最後一列
    下方、和該列不相接的表後說明不算進表（例外：價格欄裡單獨一個值、而該列這一欄還沒有值，是格內位置較低的那一格）。
    所在頁沒有列錨點時，只有緊接最後一列的下一頁算最後一列溢過來的部分，隔更遠就讀不出（轉人工覆核，不悄悄丟掉或
@@ -64,6 +64,7 @@ SAME_COLUMN = 0.25  # 同一欄上下兩行的 x 重疊至少是較窄那一行�
 ADJACENT = 0.6  # 同一格上下兩行的間距上限（行高的倍數）
 GAP = 1.0  # 擷取成同一行的相鄰兩格之間至少的間隙（pt）
 ALIGN = 0.6  # 擷取成同一行的幾格：字的左緣與其他行的左緣相差幾 pt 內算同一欄的左緣
+TOP_SLACK = 3.0  # 靠上對齊的列（`TableSpec.align`）：上緣比列錨點高幾 pt 內仍算那一列
 ANCHOR_WORDS = {"number": "列號", "ticker": "彭博代碼", "price": "執行價格欄的價格"}
 
 
@@ -89,6 +90,8 @@ class TableSpec:
     pct：表頭百分比的寫法（regex，第 1 組為數字）；None 表示表頭沒有百分比。pct_label 是錯訊裡的寫法。
     code：彭博代碼欄的表頭關鍵字；None 表示表內沒有代碼。
     texts：其他要讀出文字的欄（例：HSBC 的幣別、交易所），每列讀成 `TableRow.texts`。
+    align：列的對齊方式。`center`（預設）每行歸到 y 中心最近的列；`top` 是每列的字靠上對齊（列錨點在列的第一行），每行
+    歸到同一頁上緣不低於它的最後一個列錨點（BARC DACN：名稱欄窄、長名稱折成三行時第三行離下一列較近，workflow #547）。
     """
 
     where: str
@@ -99,6 +102,7 @@ class TableSpec:
     pct_label: str = ""
     code: str | None = None
     texts: tuple[Column, ...] = ()
+    align: Literal["center", "top"] = "center"
 
     def __post_init__(self) -> None:
         if self.anchor == "ticker" and self.code is None:
@@ -208,6 +212,24 @@ def price_rows(
 def at(name: str, table: ParsedField, spec: TableSpec) -> ParsedField:
     """價格表 → 標準欄位 `main_price_table`／`scenario_reprint_table`（位置為 `spec.where`，Issue #294）；表有問題時沿用它的狀態。"""
     return derived(name, table, standard_fields.TableAt(spec.where, table.value) if table.ok else None)
+
+
+def without(table: ParsedField, key: str) -> ParsedField:
+    """價格表去掉 `key` 欄（價格、表頭百分比與欄頭）：和沒有這欄的另一張表比對用（BARC DACN 的情境重印表沒有配息門檻欄，
+    workflow #547）；表有問題時原樣交回。"""
+    if not table.ok:
+        return table
+    t: PriceTable = table.value
+    rows = tuple(replace(r, prices={k: v for k, v in r.prices.items() if k != key}) for r in t.rows)
+    value = replace(
+        t,
+        columns=tuple(c for c in t.columns if c != key),
+        pcts={k: v for k, v in t.pcts.items() if k != key},
+        rows=rows,
+        heads={k: v for k, v in t.heads.items() if k != key},
+        head_lines={k: v for k, v in t.head_lines.items() if k != key},
+    )
+    return ParsedField(table.name, table.status, value, list(table.evidence), table.candidates, table.note)
 
 
 def underlyings(table: ParsedField) -> ParsedField:
@@ -638,7 +660,8 @@ def _rows(
         if id(ln) in tail_of:
             row_of[i] = tail_of[id(ln)]
         elif same:
-            row_of[i] = min(same, key=lambda j: abs(centers[j] - _yc(ln)))
+            above = [k for k in same if anchors[k].y0 <= ln.y0 + TOP_SLACK] if spec.align == "top" else []
+            row_of[i] = above[-1] if above else min(same, key=lambda j: abs(centers[j] - _yc(ln)))
         elif ln.page == last + 1:
             row_of[i] = len(anchors) - 1
         else:

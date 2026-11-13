@@ -394,12 +394,12 @@ def test_the_export_carries_the_bonus_barrier_of_ben(pg, tmp_path) -> None:
 
 @pytest.mark.db
 def test_the_export_carries_the_coupon_barrier_and_dacn_goes_to_manual_review(pg, tmp_path) -> None:
-    """DACN 寫配息門檻，其他商品寫空值寫法；DACN 還沒開放任何上手，轉人工核對。"""
-    fcn, dacn = barc_spec(), barc_spec(product_code="029199990002")
+    """DACN 寫配息門檻，其他商品寫空值寫法；還沒開放 DACN 的上手（HSBC）轉人工核對。"""
+    fcn, dacn = barc_spec(), hsbc_synth.Spec().with_(ratings=HSBC_RATINGS)
     seed(pg, fcn)
     seed(pg, dacn, product="DACN")
     pg.execute("UPDATE workflow.product SET coupon_barrier_pct = 75 WHERE tdcc = %s", (dacn.product_code,))
-    pdfs = pdfs_of(tmp_path, fcn, dacn)
+    pdfs = with_iis([*pdfs_of(tmp_path, fcn), hsbc_synth.build_pdf(tmp_path / f"{dacn.product_code}_TS.pdf", dacn)])
 
     source = from_database(pg, pdfs)
 

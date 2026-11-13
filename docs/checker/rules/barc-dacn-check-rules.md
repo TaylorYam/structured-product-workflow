@@ -3,7 +3,7 @@
 - 文件側：[BARC DACN 範本規格](../templates/barc-zh-dacn.md)（`barc-zh-dacn-pd`）、[BARC DACN 投資人須知範本規格](../templates/barc-zh-dacn-iis.md)（`barc-zh-dacn-iis`）
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [BARC DACN 下單資料格式](../order-formats/barc-dacn-reference.md)
 - 商品：DACN（workflow ADR 0030、#366、#367）；第二波開放順序 Barclays → BNP → UBS → MS（路線圖 #551），本文件是 Barclays（workflow #547）
-- 狀態：規格（實作另開 PR）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記不做（路線圖 #551 指示，同 DACN／BEN 第一波）**（§7）
+- 狀態：已實作（workflow #547）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記不做（路線圖 #551 指示，同 DACN／BEN 第一波）**（§7）
 - 本文件只寫和 [BARC 核對規則](barc-check-rules.md)（FCN）不同或 DACN 特有的部分。沒提到的（審查標準、固定警語與次數、受託機構名稱與等價寫法、發行機構名稱、信用評等、商品種類、幣別、費率、最低金額、受理申購日、刊印日期、審查通過日期、價格推算、KO／KI／記憶式／標的的內部一致、§13(7) 自動提前出場觀察期表與比價日、名稱一致、連結標的公司介紹）照 BARC FCN。共用的 DACN 規則（配息門檻、商品種類一致、沒有樣本的型態轉人工、保證期數 = Non-Call）和第一波 DACN（[Nomura](nomura-dacn-check-rules.md)、[DBS](dbs-dacn-check-rules.md)…）相同
 
 ## 1. 範圍
@@ -153,12 +153,12 @@
 
 標記外、刻意不核對的段落見 §2。每條新規則實作時要有合成反例，特別是「正式條款正確、但其他出處錯」：§15 配息門檻欄頭 % 和 §14 定義句不同；某列配息門檻價格不是最初 × %；§14 兩個 X 不同；§15(2)、§9 段末、§9(3)、§16 某處月配息率和 §14 不同；保證期數和 Non-Call 不同（`配息率t=1到2=`）；§14 配息觀察期表少一列或末期期末日 ≠ 最終評價日；§14 nt 定義改成不比配息門檻（→ 被 FCN 認走後擋下或範本未知）；§14 其他固定字改掉（→ 不支援的範本版本）；參考條件表配息門檻 ≠ 說明書；配息門檻欄存在但空白（→ 和 K% 比）；表上沒有配息門檻欄；Product 是 FCN 但文件是 DACN（及反過來）；交易日早於 2026-06-01 但寫法相同（→ 照常核對）；非美元或單一標的（→ 轉人工）；投資人須知配息門檻 % 或價格和說明書不同；投資人須知兩個 X 不同；長名稱折三行的價格表列。
 
-## 8. 實作方式（workflow #547，規劃）
+## 8. 實作方式（workflow #547）
 
 | 內容 | 位置 |
 |---|---|
-| 範本辨識與讀出 | `parsers/barc_dacn.py`、`parsers/barc_dacn_iis.py`：先照 `parsers/barc.py`、`barc_iis.py` 讀出，再改讀 §14 月配息率與配息觀察期表、配息門檻、配息公式保證期數、價格表（多配息門檻欄、靠上對齊）、§9 段末月配息率與情境 `× X% × (n/N)` 出處；`coupon_pa_pct` 交 `absent`、情境一般情況年化不交 |
-| 共用小改 | `parsers/barc_schedule.py`：表的欄名對照與「掃哪幾行」可由呼叫端給（§14 表）、Nt 欄讀整數、§13(7) 只有表名的那一行不算定義句（FCN 樣本沒有這行，結果不變）；`parsers/price_table.py`：`TableSpec` 加靠上對齊選項（預設照舊）；`rules/dacn.py`：保證期數欄位可指定（BARC 的 `guaranteed_periods` 是 §13(7) 的 G）、價格表配息門檻價格規則抽成 DACN 共用（DBS DACN 改用它、結果不變） |
+| 範本辨識與讀出 | `parsers/barc_dacn.py`、`parsers/barc_dacn_iis.py`：先照 `parsers/barc.py`、`barc_iis.py` 讀出，再改讀 §14 月配息率與配息觀察期表、配息門檻、配息公式保證期數、價格表（多配息門檻欄、靠上對齊）、§9 段末月配息率與情境 `× X% × (n/N)` 出處；`coupon_pa_pct` 交 `absent`、情境一般情況年化不交；另交 §13(7) 推得的 Non-Call（`first_callable_period`，同 FCN 的推法），給保證期數與型態規則比 |
+| 共用小改 | `parsers/barc_schedule.py`：表的欄名對照與「掃哪幾行」可由呼叫端給（§14 表）、Nt 欄讀整數、和列號同一高度的日期即使伸到列號欄右邊界內也算同列儲存格（§14 期始日欄靠右對齊）、§13(7) 只有表名的那一行不算定義句（FCN 樣本沒有這兩種情形，結果不變）；`parsers/price_table.py`：`TableSpec` 加靠上對齊選項（預設照舊）；`rules/dacn.py`：保證期數欄位可指定（BARC 的 `guaranteed_periods` 是 §13(7) 的 G）、價格表配息門檻價格規則抽成 DACN 共用（DBS DACN 改用它、結果不變） |
 | 上手註冊 | `issuers.py` 登記 `BARC_DACN`（`products=frozenset({DACN})`，上手代號同 `BARC`），排在 `BARC` 前面 |
 | 規則 | `rules/barc_dacn.py`（§3.1 型態宣告、§3.3 月配息率出處、§3.4 配息門檻、§3.5 保證期數，其餘沿用 `rules/barc.py` 並略過年利率與一般情況總報酬率）、`rules/barc_dacn_iis.py`（§3.8） |
 | 設定 | `[auto_check_products]` 的 `DACN` 加 `BARC`（版本 +1）；審查標準加 `[issuer.barc.product_names.DACN]`（和 FCN 樣板同一句，版本 +1） |

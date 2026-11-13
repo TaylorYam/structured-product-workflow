@@ -7,7 +7,7 @@
 - 商品家族：區間計息（Daily Range Accrual）的記憶式每日觀察自動提前出場商品。第 1 期配息率 = 月配息率（保證期數 g = 1）；第 2 期起配息率 = 月配息率 × nt ÷ Nt（nt = 當期所有標的相關價格都 ≥ 其**配息門檻**的配息評價日天數，Nt = 當期一籃子預定交易日天數）；KO、KI、到期贖回、情境以外的條文和 [BARC FCN 範本](barc-zh-product-description.md)（`barc-zh-pd`）相同
 - 發行機構、總代理人、受託機構：同 `barc-zh-pd`
 - 依據：2026-11-13 對 5 份真實樣本（BK01～BK05，說明書與投資人須知成對）的探勘與開發者螢光標記（workflow #547）。**作業人員獨立標記不做（路線圖 #551 指示，同 DACN／BEN 第一波）**；核對範圍以開發者凍結的標記為準，見 [BARC DACN 核對規則](../rules/barc-dacn-check-rules.md) §7
-- 狀態：規格（實作另開 PR，workflow #547）
+- 狀態：已實作（workflow #547）
 
 > 真實樣本、擷取文字與比對輸出只放在被 Git 忽略的 `data/`。本文件只記錄版面、錨點與規則；所有數值範例都是虛構的。樣本代號與真實商品代號的對照只存在本機（`data/tmp/dacn_wave2/barc/sample_map.txt`）。
 
