@@ -150,13 +150,16 @@ def _browser() -> Opener:
 
 
 def _tls_context() -> ssl.SSLContext:
-    """預設的憑證檢查，但不開 Python 3.13 的 `VERIFY_X509_STRICT`（#523）。
+    """預設的憑證檢查，加上兩個調整。憑證鏈與主機名稱照樣檢查。
 
-    公司網路會攔截 HTTPS、換上自己的根憑證，那張憑證的 Basic Constraints 沒標成
-    critical，嚴格模式會拒絕連線。憑證鏈與主機名稱照樣檢查。
+    1. 不開 Python 3.13 的 `VERIFY_X509_STRICT`（#523）：公司網路會攔截 HTTPS、換上自己的根憑證，
+       那張憑證的 Basic Constraints 沒標成 critical，嚴格模式會拒絕連線。
+    2. 用 OpenSSL 的 `DEFAULT` cipher 清單（#568）：Nasdaq 的 CDN 會擋 Python 預設 cipher 清單的
+       TLS 握手（HTTP 403），跟 HTTP 標頭無關。
     """
     context = ssl.create_default_context()
     context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    context.set_ciphers("DEFAULT")
     return context
 
 
