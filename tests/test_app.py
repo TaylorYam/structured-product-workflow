@@ -401,6 +401,49 @@ def test_saved_check_result_is_handed_to_the_return_tab(master, tmp_path: Path) 
     assert window.notebook.select() == str(window.returning.frame)
 
 
+class RecordingSession(PanelSession):
+    """記下存到哪個資料夾；`None` 是作業人員按了取消。"""
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.saved_to: list[Path | None] = []
+
+    def save(self, out_dir: Path | None, *, now=None) -> SaveReceipt:
+        self.saved_to.append(out_dir)
+        return SaveReceipt(cancelled=True) if out_dir is None else SaveReceipt(output=out_dir / "核對結果.xlsx")
+
+
+@pytest.mark.parametrize(
+    ("where", "chosen"),
+    [("batch", ""), ("not a batch folder", "R:/結果"), ("not a batch folder", ""), ("several folders", "R:/結果")],
+)
+def test_saving_goes_straight_into_the_batch_folder(master, tmp_path, monkeypatch, where, chosen) -> None:
+    """PDF 都在「3 準備」產生的批次資料夾時，核對結果直接存進那裡、不問（#561）；不是時照舊選資料夾，取消就不存。"""
+    session = RecordingSession(install_root=tmp_path)
+    window = new_window(master, tmp_path, session)
+    batch = tmp_path / "待核對_1"
+    batch.mkdir()
+    if where == "batch":
+        (batch / "準備清單.xlsx").write_bytes(b"")
+    other = batch if where != "several folders" else tmp_path / "其他"
+    window.check.receive_pdfs((batch / "147000000001_TS.pdf", other / "147000000001_IIS.pdf"), "帶入")
+    window.check.has_result = True
+    asked = []
+    monkeypatch.setattr(fcn_checker.panel.filedialog, "askdirectory", lambda **kwargs: asked.append(kwargs) or chosen)
+    monkeypatch.setattr(window.check, "_start", lambda _name, action, finish, _failure: finish(action()))
+
+    window.check.save()
+
+    if where == "batch":
+        assert asked == [] and session.saved_to == [batch.resolve()], "直接存進批次資料夾"
+        assert window.returning.batch_var.get() == str(batch.resolve()), "放回頁照舊帶入批次資料夾"
+    else:
+        assert len(asked) == 1, "不是一個批次資料夾，照舊問"
+        assert session.saved_to == [Path(chosen) if chosen else None]
+    expected = (session.saved_to[0] / "核對結果.xlsx") if session.saved_to[0] is not None else None
+    assert window.returning.result_var.get() == ("" if expected is None else str(expected))
+
+
 def test_next_step_after_checking_waits_for_a_saved_result(master, tmp_path: Path) -> None:
     window = new_window(master, tmp_path)
 

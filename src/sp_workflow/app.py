@@ -261,7 +261,14 @@ class PanelWindow:
             on_next=lambda: self.notebook.select(self.check),
             background=background,
         )
-        self.check = CheckTab(self.notebook, self.session, self.pixels, on_saved=self._check_saved, login=db.log_in)
+        self.check = CheckTab(
+            self.notebook,
+            self.session,
+            self.pixels,
+            on_saved=self._check_saved,
+            login=db.log_in,
+            result_folder=self._batch_folder,
+        )
         self.check.add_next_step("下一步：放回 →", lambda: self.notebook.select(self.returning.frame))
         self.notebook.add(self.check, text="核對")
         self.returning = ReturnTab(
@@ -313,11 +320,18 @@ class PanelWindow:
             f"已帶入「3 準備」的批次（{len(pdfs)} 份 PDF），{then}按「載入／重新載入預覽」：\n{receipt.batch_dir}",
         )
 
-    def _check_saved(self, result: Path) -> None:
-        """核對存檔：放回頁帶入剛存的核對結果檔；PDF 都在同一個有準備清單的資料夾時，那就是這批的批次資料夾（#76）。"""
+    def _batch_folder(self) -> Path | None:
+        """核對的 PDF 都在同一個有準備清單的資料夾時，那就是這批的批次資料夾（#76）；不是時 None。
+
+        核對存檔直接存進這裡（#561），存好後也帶入放回頁。
+        """
         folders = {pdf.parent for pdf in self.session.term_sheets}
         batch = folders.pop() if len(folders) == 1 else None
-        self.returning.receive(result, batch if batch is not None and (batch / LIST_NAME).is_file() else None)
+        return batch if batch is not None and (batch / LIST_NAME).is_file() else None
+
+    def _check_saved(self, result: Path) -> None:
+        """核對存檔：放回頁帶入剛存的核對結果檔與這批的批次資料夾（#76）。"""
+        self.returning.receive(result, self._batch_folder())
 
     def _maintenance_menu(self) -> tk.Menu:
         """視窗上方的「維護」選單：不是每天的步驟，不放在分頁畫面上（#73）。"""
