@@ -725,6 +725,16 @@ def test_check_tab_tables_can_be_copied(master, tmp_path: Path) -> None:
     )
 
 
+# ---------------------------------------------------------------- 核對頁的分頁（#559）
+
+
+def test_check_tab_has_only_preview_and_results(master, tmp_path: Path) -> None:
+    """核對頁下方只有「預覽（唯讀）」「核對結果」，沒有「待處理」分頁（#559）。"""
+    tabs = new_window(master, tmp_path).check.tabs
+
+    assert [tabs.tab(tab, "text") for tab in tabs.tabs()] == ["預覽（唯讀）", "核對結果"]
+
+
 # ---------------------------------------------------------------- 視窗外殼整理（#129）
 
 
