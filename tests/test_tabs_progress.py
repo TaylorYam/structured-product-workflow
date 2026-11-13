@@ -159,7 +159,7 @@ def widgets(parent: tk.Misc) -> list[tk.Misc]:
 
 def test_progress_page_has_no_copy_to_confirm_button(master, tmp_path: Path, monkeypatch) -> None:
     """「複製待確認 TDCC」已拿掉（#557）；整張表仍可從右鍵選單「全部複製（含表頭）」複製。"""
-    rows = (row("037001023110", 3, pricing="待確認", pricing_reason="沒有比價日"),)
+    rows = (row("037199990001", 3, pricing="待確認", pricing_reason="沒有比價日"),)
     _, tab, _ = loaded(master, tmp_path, monkeypatch, rows)
 
     texts = [str(w.cget("text")) for w in widgets(tab.frame) if isinstance(w, ttk.Button)]
