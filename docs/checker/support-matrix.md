@@ -64,7 +64,7 @@ CA FCN_Stepdown 的文件（workflow #546 已實作）：[說明書範本](templ
 
 Barclays DACN 的文件（workflow #547 已實作）：[說明書範本](templates/barc-zh-dacn.md)、[投資人須知範本](templates/barc-zh-dacn-iis.md)、[參考條件表對照](order-formats/barc-dacn-reference.md)、[核對規則](rules/barc-dacn-check-rules.md)（只支援現行版範本；名稱和 FCN 相同，靠 §14 配息公式辨識；KO 每日＋記憶式、多標的、KI 無／到期、美元、保證 1 期；其他沒有樣本的型態轉人工；§16 一般、最差情況用文件寫的 n/N 驗算每期配息、累積、最終現金交割金額與總報酬率（workflow #577；n/N 本身不核，N 是 0、算式重複或金額不是 0 卻沒寫期數轉人工）；依假設算出的年化報酬率不核）。
 
-BNP DACN 的文件（workflow #548 已實作）：[說明書範本](templates/bnp-zh-dacn.md)、[投資人須知範本](templates/bnp-zh-dacn-iis.md)、[參考條件表對照](order-formats/bnp-dacn-reference.md)、[核對規則](rules/bnp-dacn-check-rules.md)（只支援現行版範本；靠 §15 配息公式與「定界價格」辨識，名稱另當條件；KO 每日＋記憶式、多標的、KI 每日／到期、美元、保證 1 期；KI 每期觀察（MKI）照 #386 轉人工；其他沒有樣本的型態轉人工）。
+BNP DACN 的文件（workflow #548 已實作）：[說明書範本](templates/bnp-zh-dacn.md)、[投資人須知範本](templates/bnp-zh-dacn-iis.md)、[參考條件表對照](order-formats/bnp-dacn-reference.md)、[核對規則](rules/bnp-dacn-check-rules.md)（只支援現行版範本；靠 §15 配息公式與「定界價格」辨識，名稱另當條件；KO 每日＋記憶式、多標的、KI 每日／到期、美元、保證 1 期；KI 每期觀察（MKI）照 #386 轉人工；其他沒有樣本的型態轉人工；§18 自動提前贖回以外的情境用文件寫的 n/M 驗算第 2 期起配息、累積與總報酬率（workflow #576；n/M 本身不核，M 是 0 或算式重複轉人工）；依假設算出的年化報酬率不核（最佳情況寫的 n ≠ M 時也不核））。
 
 UBS DACN 的文件（workflow #549 已實作）：[說明書範本](templates/ubs-zh-dacn.md)、[投資人須知範本](templates/ubs-zh-dacn-iis.md)、[參考條件表對照](order-formats/ubs-dacn-reference.md)、[核對規則](rules/ubs-dacn-check-rules.md)（只支援現行版範本；名稱 `區間累計配息`／`Range Accrual`，靠八的變動配息率與「區間下限價」辨識；KO 每日（記憶式、非記憶式都有樣本）、多標的、無 KI、美元、保證 1 期；其他沒有樣本的型態轉人工；名稱觀察方式字樣、`一籃子`、nt 單一標的寫法、情境年化報酬率暫定做法待使用者決定）。
 
