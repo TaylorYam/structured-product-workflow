@@ -1,10 +1,14 @@
 """MS 第一章第 18 項情境分析：假設、重印價格表與各情境的算式（docs/checker/templates/ms-zh-product-description.md §6、§7）。
 
 只擷取文件上寫的值與原文行；核對在 rules/ms_scenario.py。抓不到的值為 None，由規則轉人工覆核。
+DACN（docs/checker/templates/ms-zh-dacn.md §4.3，`accrual=True`）另看每個情境有沒有區間計息 `× （n/M）`、數展開成
+`金額 × X% × （n/M）` 的算式、多讀 `固定配息率（X%）`／`浮動配息率（X%）` 的配息率；較差情境執行價多認
+`連結標的（代碼）收盤價`（少「的」）的句型。
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import NamedTuple
@@ -70,6 +74,9 @@ class Scenario:
     pnl: list[Hit[ProfitPnl | WorsePnl]] = field(default_factory=list)  # 損益算式（依情境種類）
     annualized: list[Hit[Decimal]] = field(default_factory=list)  # 年化報酬率 Y%
     strike: list[Hit[WorseStrike]] = field(default_factory=list)
+    accrual: bool = False  # 有區間計息「× （n/M）」（DACN；FCN 沒有）
+    accrual_formulas: int = 0  # 展開成「金額 × X% × （n/M）」的區間計息算式處數（`coupon_formulas` 也數到它們）
+    guaranteed: list[Hit[int]] = field(default_factory=list)  # 「本商品第 g 個月發放固定配息」的 g（DACN）
     # 各金額旁的幣別字（商品幣別的出處）；股價與實物交割算式所在的行跟著標的走，不列入（money.stock_price_line）
     money: tuple[Money, ...] = ()
 
@@ -85,7 +92,9 @@ class ScenarioSection:
     scenarios: list[Scenario]
 
 
-def _scenario(number: str, title: str, lines: list[Line]) -> Scenario:
+def _scenario(number: str, title: str, lines: list[Line], *, accrual: bool = False) -> Scenario:
+    """一個情境；`accrual`（DACN）時配息率另讀 `固定配息率（X%）`、`浮動配息率（X%）`，較差情境執行價多認少「的」的句型
+    （FCN 照舊）。"""
     unit = UNIT
     kind = "default" if "無法履約" in title else "worse" if "較差" in title else "profit"
     s = Scenario(number, title, kind, lines)
@@ -103,7 +112,11 @@ def _scenario(number: str, title: str, lines: list[Line]) -> Scenario:
         lambda m: CouponCalc(dec(m[1]), Decimal(m[2]), dec(m[3])),
     )
     s.coupon_formulas = len(list(ti.finditer(rf"\d{unit}{TIMES}\d+(?:\.\d+)?%")))
-    s.rates = hits(ti, rf"(?<!%){TIMES}(\d+(?:\.\d+)?)%", lambda m: Decimal(m[1]))
+    s.accrual = re.search(rf"{TIMES}[（(]\d+/\d+[)）]", ti.text) is not None
+    s.accrual_formulas = len(list(ti.finditer(rf"\d{unit}{TIMES}\d+(?:\.\d+)?%{TIMES}[（(]\d+/\d+[)）]")))
+    s.guaranteed = hits(ti, r"本商品第(\d+)個月發放固定配息", lambda m: int(m[1]))
+    rate = rf"(?:(?<!%){TIMES}|(?:固定|浮動)配息率[（(])" if accrual else rf"(?<!%){TIMES}"
+    s.rates = hits(ti, rate + r"(\d+(?:\.\d+)?)%", lambda m: Decimal(m[1]))
     if kind == "profit":
         s.pnl = hits(
             ti,
@@ -116,17 +129,19 @@ def _scenario(number: str, title: str, lines: list[Line]) -> Scenario:
             rf"={N}{unit}{TIMES}(\d+)\+([\d,]+(?:\.\d+)?){unit}-{N}{unit}={PNL}{unit}",
             lambda m: WorsePnl(dec(m[1]), int(m[2]), dec(m[3]), dec(m[4]), dec(m[5])),
         )
+        of = "的?" if accrual else "的"
         s.strike = hits(
             ti,
-            rf"連結標的[（(]([A-Z0-9./-]+)[）)]的收盤價=[\d,]+(?:\.\d+)?{unit}小於其執行價=([\d,]+\.\d{{4}}){unit}",
+            rf"連結標的[（(]([A-Z0-9./-]+)[）)]{of}收盤價=[\d,]+(?:\.\d+)?{unit}小於其執行價=([\d,]+\.\d{{4}}){unit}",
             lambda m: WorseStrike(m[1], dec(m[2])),
         )
     s.annualized = hits(ti, r"年化報酬率為(-?\d+(?:\.\d+)?)%", lambda m: Decimal(m[1]))
     return s
 
 
-def section(lines: list[Line]) -> ScenarioSection:
-    """第 18 項：假設（到第一個情境前）、重印價格表（月配息率之後到情境一）、各情境（依「情境X：」切開）。"""
+def section(lines: list[Line], *, accrual: bool = False) -> ScenarioSection:
+    """第 18 項：假設（到第一個情境前）、重印價格表（月配息率之後到情境一）、各情境（依「情境X：」切開）；`accrual` 見
+    `_scenario`。"""
     unit = UNIT
     heads = [i for i, ln in enumerate(lines) if SCENARIO_HEAD.match(squash(ln.text))]
     head_end = heads[0] if heads else len(lines)
@@ -142,7 +157,7 @@ def section(lines: list[Line]) -> ScenarioSection:
     for k, i in enumerate(heads):
         m = SCENARIO_HEAD.match(squash(lines[i].text))
         end = heads[k + 1] if k + 1 < len(heads) else len(lines)
-        scenarios.append(_scenario(m[1], m[2], lines[i:end]))
+        scenarios.append(_scenario(m[1], m[2], lines[i:end], accrual=accrual))
     notional = rf"總投資金額=1單位商品面額=([\d,]+(?:\.\d+)?)({unit})"
     return ScenarioSection(
         lines=lines,
