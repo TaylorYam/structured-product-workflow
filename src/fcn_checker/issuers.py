@@ -157,7 +157,7 @@ class IisTemplate:
     parser_version: str
     detect: Callable[[Sequence[Line]], DetectionResult]
     read: Callable[[Sequence[Line]], IisSheet]
-    not_covered: tuple[dict[str, str], ...] = ()  # 範本未涵蓋的型態（PANEL「待處理」與核對紀錄）
+    not_covered: tuple[dict[str, str], ...] = ()  # 範本未涵蓋的型態（寫進核對紀錄）
     rules: Callable[[IisIssuerContext], list[CheckResult]] | None = None  # 範本專屬的投資人須知規則
     # 投資人須知涵蓋的商品種類；None → 同所屬說明書範本（`Template.products`）。同上手幾個商品家族的投資人須知寫法分不出來時
     # 由投資人須知範本宣告（例：CA FCN_Stepdown 的投資人須知用 CA FCN 的範本，workflow #546），商品種類由說明書把關
@@ -172,7 +172,7 @@ class Template:
     template_id: str
     label: str
     parser_version: str
-    not_covered: tuple[dict[str, str], ...]  # 「未涵蓋」的固定清單（PANEL「待處理」分頁與核對紀錄）
+    not_covered: tuple[dict[str, str], ...]  # 「未涵蓋」的固定清單（寫進核對紀錄）
     # 辨識：文字行 → 是否為這個範本（含證據）；一次核對中每份說明書只呼叫一次
     detect: Callable[[Sequence[Line]], DetectionResult]
     # 讀出：文字行 → 標準欄位（standard_fields.STANDARD_FIELDS）＋該範本規則需要的專屬資料；每份只呼叫一次

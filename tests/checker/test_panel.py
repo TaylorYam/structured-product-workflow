@@ -617,10 +617,11 @@ def test_release_only_applies_to_the_current_result(tmp_path):
         session.release(stale)
 
 
-# ---------------------------------------------------------------- 待處理
+# ---------------------------------------------------------------- 未涵蓋清單（只寫進核對紀錄，#559）
 
 
-def test_not_covered_is_grouped_by_issuer_without_overwriting(tmp_path):
+def test_not_covered_stays_in_each_report_for_the_check_record(tmp_path):
+    """PANEL 不再有「待處理」分頁；存檔後的核對紀錄 JSON 照舊每份 PDF 都有自己上手範本的未涵蓋清單。"""
     import hsbc_synth
     from fcn_checker.issuers import BARC, HSBC
 
@@ -628,25 +629,23 @@ def test_not_covered_is_grouped_by_issuer_without_overwriting(tmp_path):
     pdfs = [
         build_pdf(tmp_path / f"{barc.product_code}_TS.pdf", barc),
         hsbc_synth.build_pdf(tmp_path / f"{hsbc.product_code}_TS.pdf", hsbc),
-        build_pdf(tmp_path / "029199990002_TS.pdf", Spec(product_code="029199990002")),
     ]
-    rows = [reference_row(barc), reference_row(hsbc), reference_row(Spec(product_code="029199990002"))]
-    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", rows)
+    sheet = build_reference_sheet(tmp_path / "FCN參考條件.xlsx", [reference_row(barc), reference_row(hsbc)])
     session = session_for(tmp_path, sheet, pdfs)
     session.load_preview()
-    outcome = session.start_check()
+    session.start_check()
 
-    groups = {g.issuer: g.descriptions for g in outcome.not_covered}
-    assert list(groups) == ["BARC", "HSBC"]
-    for issuer in (BARC, HSBC):
-        expected = tuple(n["description"] for n in (*issuer.not_covered, *issuer.iis.not_covered))
-        assert groups[issuer.code] == expected, "同一家只列一次（含投資人須知範本）"
-    shared = {"doc.underlying_names", "field.monthly_ki"}
-    for rule_id in shared:  # 兩家都有、說明不同的 rule_id 各自保留
-        for issuer in (BARC, HSBC):
-            (desc,) = [n["description"] for n in issuer.not_covered if n["rule_id"] == rule_id]
-            assert desc in groups[issuer.code]
-    assert outcome.not_covered_count == sum(len(i.not_covered) + len(i.iis.not_covered) for i in (BARC, HSBC))
+    *_, record = saved(session, tmp_path)
+
+    issuers = {issuer.code: issuer for issuer in (BARC, HSBC)}
+    listed = set()
+    for item in record["items"]:
+        issuer = issuers[item["issuer"]]
+        allowed = {n["rule_id"] for n in (*issuer.not_covered, *issuer.iis.not_covered)}
+        assert {n["rule_id"] for n in item["not_covered"]} <= allowed, "各自是自己上手範本的清單"
+        if item["not_covered"]:
+            listed.add(item["issuer"])
+    assert listed == set(issuers), "兩家的說明書都有未涵蓋清單"
 
 
 # ---------------------------------------------------------------- 設定檔與啟動參數

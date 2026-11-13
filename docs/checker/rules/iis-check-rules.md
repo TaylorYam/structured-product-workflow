@@ -126,7 +126,7 @@ MS 投資人須知另外寫出交易日、期末定價日與提前出場、觸�
 
 上列各上手的「保本率」（計價貨幣本金保本率、投資本金達成保本率之各項條件）2026-10-25 起改由審查標準規則 `standard.principal_protection` 核對是否寫不保本；全文每個「玉山…」也由 `standard.distributor_names` 核對要是受託機構名稱或等價寫法（所有上手，說明書同；見[審查標準](review-standard.md) §2.20，Issue #226）。投資人須知沒有受託機構設立日期，不核對。
 
-未涵蓋（列入「待處理」）：範本規格樣本總表以外的型態（例：HSBC 有 KI 的投資人須知；MS、SG、Citi、JPM、Nomura、GS、Natixis、CA、BBVA、UBS、DBS 同各自說明書未涵蓋的型態）。遇到時範本未涵蓋的段落、欄頭或寫法轉人工覆核。
+未涵蓋（寫進核對紀錄）：範本規格樣本總表以外的型態（例：HSBC 有 KI 的投資人須知；MS、SG、Citi、JPM、Nomura、GS、Natixis、CA、BBVA、UBS、DBS 同各自說明書未涵蓋的型態）。遇到時範本未涵蓋的段落、欄頭或寫法轉人工覆核。
 
 ## 5. 決策紀錄
 

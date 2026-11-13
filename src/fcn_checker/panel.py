@@ -527,13 +527,6 @@ class CheckTab(ttk.Frame):
             self.tabs, pixels, self.session.release_state, self.session.release_plan, self.toggle_release
         )
         self.tabs.add(self.results, text="核對結果")
-        self.not_covered = ttk.Frame(self.tabs, padding=12)
-        self.tabs.add(self.not_covered, text="待處理")
-        self.not_covered.columnconfigure(0, weight=1)
-        self.not_covered.rowconfigure(1, weight=1)
-        ttk.Label(self.not_covered, text="以下項目未涵蓋，不代表通過，仍需人工核對。").grid(row=0, column=0, sticky="w")
-        self.pending_text = _text(self.not_covered, 6)
-        self.pending_text.grid(row=1, column=0, sticky="nsew", pady=(10, 0))
         self.status = tk.StringVar(value=session.message)
         self.status_label = WrapLabel(self, textvariable=self.status, wraplength=960)
         self.status_label.grid(row=4, column=0, sticky="ew")
@@ -581,8 +574,6 @@ class CheckTab(ttk.Frame):
         self._refresh_next()
         self.kpis.hide()
         self.results.clear()
-        self.tabs.tab(self.not_covered, text="待處理")
-        _write(self.pending_text, "")
 
     def _selection_changed(self):
         self.session.select(self.sheet_path, self.pdf_paths)
@@ -770,9 +761,6 @@ class CheckTab(ttk.Frame):
         self.results.show(outcome)
         self.kpis.show(outcome.kpis)
         self.has_result = True
-        groups = outcome.not_covered
-        _write(self.pending_text, "\n\n".join(f"【{g.issuer}】\n" + "\n".join(g.descriptions) for g in groups))
-        self.tabs.tab(self.not_covered, text=f"待處理（{outcome.not_covered_count}）")
         self.status.set(outcome.headline)
 
     def toggle_release(self, items):
