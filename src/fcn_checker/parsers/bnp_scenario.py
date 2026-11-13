@@ -68,6 +68,11 @@ class AccrualCalc(NamedTuple):
     amount_currency: str
     decimals: int
 
+    @property
+    def full_period(self) -> bool:
+        """n = M：每個合格營業日都符合條件（樣本的最佳情況）。"""
+        return self.days == self.total_days
+
 
 class Redemption(NamedTuple):
     """「自動提前贖回金額／到期贖回金額 = 1 單位商品 × 面額 × 100% = 金額」。"""

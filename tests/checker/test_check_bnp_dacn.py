@@ -330,8 +330,8 @@ def test_rates_of_the_formula_must_agree(tmp_path, edit):
             ),
             {"scenario.params", "doc.scenario_calculations"},
         ),
-        (Edit("× 1.0000% × (20 ÷ 20)", "× 1.1000% × (20 ÷ 20)", "ts.scen.二"), {"scenario.params"}),
-        (Edit("× 1.0000% × (0 ÷ 20)", "× 1.1000% × (0 ÷ 20)", "ts.scen.四"), {"scenario.params"}),
+        (Edit("× 1.0000% × (23 ÷ 23)", "× 1.1000% × (23 ÷ 23)", "ts.scen.二"), {"scenario.params"}),
+        (Edit("× 1.0000% × (0 ÷ 23)", "× 1.1000% × (0 ÷ 23)", "ts.scen.四"), {"scenario.params"}),
     ],
     ids=["art17", "assumption", "best-first-month", "best-accrual", "worse-accrual"],
 )
@@ -343,17 +343,117 @@ def test_other_places_of_the_rate_must_match_article15(tmp_path, edit, rule_ids)
     assert iis.report.status == S.PASS, problems(iis.report)
 
 
-def test_accrual_assumptions_of_scenarios_are_not_checked(tmp_path):
-    """合格營業日總天數假設、(n ÷ M)、第 2 期起的配息金額、累積與總報酬率依假設算出：不核對（改了也不判錯）。"""
+# (n ÷ M) 不是 1 也不是 0，第 2 期起配息要進位：100 × 15 ÷ 19 = 78.947… → 78.95、100 × 5 ÷ 19 = 26.315… → 26.32（workflow #576）
+P = DacnSpec(days=19, best_days=15, worse_days=5)
+
+
+def test_best_annualized_is_checked_when_n_equals_m(tmp_path):
+    """對照組：最佳情況寫的 n = M（樣本寫法）時年化 = 年利率照常核對，改錯判不一致（n ≠ M 時才跳過，見下一個測試）。"""
+    r = check(tmp_path, edits=[Edit("(年化報酬率：12.000%)", "(年化報酬率：12.345%)", "ts.scen.二")])
+    assert flagged(r, "scenario.params", S.MISMATCH), problems(r)
+    assert {rid for rid, _, _ in problems(r)} == {"scenario.params"}, problems(r)
+
+
+def test_accrual_scenarios_use_the_written_days(tmp_path):
+    """第 2 期起配息、累積、總報酬率用文件寫的 n、M 驗算；假設本身不核（§18 假設行的 M 和算式不同也不判錯）。最佳情況寫的
+    n ≠ M（沒有樣本）時年化依假設算出、不等於年利率：年化那一項不產生結果（不核也不轉人工），改了也不判錯。"""
     r = check(
         tmp_path,
+        P,
         edits=[
-            Edit("每個配息期之合格營業日總天數=20", "每個配息期之合格營業日總天數=22", "ts.art18"),
-            Edit("(20 ÷ 20)", "(18 ÷ 20)", "ts.scen.二"),
-            Edit("(0 ÷ 20)", "(2 ÷ 20)", "ts.scen.四"),
+            Edit("合格營業日總天數=19", "合格營業日總天數=21", "ts.art18"),
+            Edit("(年化報酬率：12.000%)", "(年化報酬率：12.345%)", "ts.scen.二"),
         ],
     )
+    calcs = {x.field: x for x in rule(r, "doc.scenario_calculations")}
+    assert all(x.status == S.PASS for x in calcs.values()), problems(r)
     assert r.status == S.PASS, problems(r)
+    annualized = [x for x in rule(r, "scenario.params") if "年化" in x.item.name]
+    assert [x.item.name for x in annualized] == ["第 18 項情境一年化報酬率"]  # 最佳情況 (A)(B) 不產生結果
+    assert (calcs["情境二_accrual"].expected, calcs["情境四_accrual"].expected) == (Decimal("78.95"), Decimal("26.32"))
+    assert (calcs["情境二_cumulative"].expected, calcs["情境五_cumulative"].expected) == (
+        Decimal("494.75"),  # 100.00 × 1 + 78.95 × 5
+        Decimal("231.60"),  # 100.00 × 1 + 26.32 × 5
+    )
+    assert {f"情境{n}_return" for n in "二三四五"} <= calcs.keys()
+
+
+@pytest.mark.parametrize(
+    ("edit", "fields"),
+    [
+        # 每期配息錯、累積照正確配息加總：累積也和文件寫的配息對不上
+        (Edit("= 78.95 美元(", "= 78.94 美元(", "ts.scen.二"), {"情境二_accrual", "情境二_cumulative"}),
+        (Edit("= 26.32 美元(", "= 26.31 美元(", "ts.scen.四"), {"情境四_accrual", "情境四_cumulative"}),
+        (Edit("(15 ÷ 19)", "(14 ÷ 19)", "ts.scen.三"), {"情境三_accrual"}),  # n 改了、配息沒跟著改
+        (Edit("第2~6 個月配息金額", "第3~6 個月配息金額", "ts.scen.五"), {"情境五_accrual", "情境五_cumulative"}),
+        (Edit("10,000 美元 × 1.0000% × (15", "1,000 美元 × 1.0000% × (15", "ts.scen.三"), {"情境三_accrual"}),
+        # 累積錯：總報酬率算式裡的累積和它不同
+        (
+            Edit("累積總月配息金額 = 494.75", "累積總月配息金額 = 494.76", "ts.scen.二"),
+            {"情境二_cumulative", "情境二_return"},
+        ),
+        (
+            Edit("累積總月配息金額 = 231.60", "累積總月配息金額 = 231.59", "ts.scen.五"),
+            {"情境五_cumulative", "情境五_return"},
+        ),
+        (Edit("= 4.9475%", "= 4.9476%", "ts.scen.三"), {"情境三_return"}),
+        (Edit("= -47.6840%", "= -47.6841%", "ts.scen.四"), {"情境四_return"}),
+        (Edit("+ 494.75 美元)", "+ 495.75 美元)", "ts.scen.二"), {"情境二_return"}),
+        (Edit("累積總月配息金額231.60", "累積總月配息金額231.70", "ts.scen.四"), {"情境四_return"}),
+    ],
+    ids=[
+        "best-accrual",
+        "worse-accrual",
+        "days-without-amount",
+        "accrual-periods",
+        "accrual-denomination",
+        "best-cumulative",
+        "worst-cumulative",
+        "best-return",
+        "worse-return",
+        "best-return-cumulative",
+        "worse-return-cumulative",
+    ],
+)
+def test_accrual_scenario_errors_are_flagged_where_they_are(tmp_path, edit, fields):
+    """§3.7 的 #576 反例：每期配息、累積、總報酬率各錯一處，只有該情境的那幾項判不一致。"""
+    r = check(tmp_path, P, edits=[edit])
+    assert {rid for rid, _, s in problems(r) if s == S.MISMATCH} == {"doc.scenario_calculations"}, problems(r)
+    assert {x.field for x in rule(r, "doc.scenario_calculations") if x.status == S.MISMATCH} == fields, problems(r)
+
+
+def test_accrual_coupon_in_yen_rounds_to_integer(tmp_path):
+    """日圓寫「四捨五入至整數位」：6,666.67 × 17 ÷ 19 = 5,964.9… → 5,965（樣本只有美元，型態另轉人工）。"""
+    spec = DacnSpec(currency_zh="日圓", annual=Decimal("8"), days=19, best_days=17)
+    r = check(tmp_path, spec)
+    accrual = rule(r, "doc.scenario_calculations", "情境二_accrual")[0]
+    assert (accrual.status, accrual.expected) == (S.PASS, Decimal("5965")), problems(r)
+    assert all(x.status == S.PASS for x in rule(r, "doc.scenario_calculations")), problems(r)
+    (tmp_path / "wrong").mkdir()
+    r = check(tmp_path / "wrong", spec, edits=[Edit("= 5,965 日圓(", "= 5,964 日圓(", "ts.scen.三")])
+    assert {x.field for x in rule(r, "doc.scenario_calculations") if x.status == S.MISMATCH} == {
+        "情境三_accrual",
+        "情境三_cumulative",
+    }
+
+
+def test_accrual_without_total_days_needs_review(tmp_path):
+    """`(n ÷ M)` 的 M 寫 0：算不出，轉人工覆核（不判成某一個值；累積照文件寫的配息加總）。"""
+    r = check(tmp_path, P, edits=[Edit("(15 ÷ 19)", "(15 ÷ 0)", "ts.scen.二")])
+    accrual = rule(r, "doc.scenario_calculations", "情境二_accrual")[0]
+    assert accrual.status == S.REVIEW_REQUIRED and "M 是 0" in accrual.message, problems(r)
+    assert not [p for p in problems(r) if p[2] == S.MISMATCH], problems(r)
+
+
+def test_two_accrual_formulas_in_one_scenario_need_review(tmp_path):
+    """同一情境兩行區間計息算式：讀不到，轉人工覆核（不判成某一個值）。"""
+    extra = (
+        "第2~6 個月配息金額 = 1 單位商品 × 10,000 美元 × 1.0000% × (15 ÷ 19) = 78.95 美元(四捨五入至小數點以下第二位)"
+    )
+    cumulative = "累積總月配息金額 = 494.75 美元"
+    r = check(tmp_path, P, edits=[Edit(cumulative, f"{extra}{cumulative}", "ts.scen.二")])
+    assert rule(r, "doc.scenario_calculations", "情境二_accrual")[0].status == S.REVIEW_REQUIRED, problems(r)
+    assert not [p for p in problems(r) if p[2] == S.MISMATCH], problems(r)
 
 
 def test_investor_sheet_rate_must_match_the_term_sheet(tmp_path):

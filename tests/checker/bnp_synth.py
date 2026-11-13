@@ -254,7 +254,8 @@ class DacnSpec(Spec):
     """BNP DACN 合成規格（docs/checker/templates/bnp-zh-dacn.md、bnp-zh-dacn-iis.md，#548）：預設照樣本型態（美元、多標的、
     KO 每日觀察＋記憶式、KI 每日觀察、配息公式保證 1 期 = Non-Call 1）。`barrier` 是配息門檻 %（§11、§18 重印表與投資人須知
     標的表的定界價格列、參考條件表「配息門檻(%)」；None → 同執行價）；`formula_g` 是 §15 第 2 段、§18 情境與投資人須知配息
-    寫法的保證期數（None → 同 Non-Call）；`days` 是 §18 假設的每期合格營業日總天數 M。
+    寫法的保證期數（None → 同 Non-Call）；`days` 是 §18 假設的每期合格營業日總天數 M，`best_days`、`worse_days` 是最佳情況
+    （None → 同 M）與較差、最差情況 `(n ÷ M)` 的 n（樣本最佳 n = M、較差最差 n = 0）。
     """
 
     product_code: str = "082199990002"
@@ -263,7 +264,9 @@ class DacnSpec(Spec):
     annual: Decimal = Decimal("12")  # 月配息率 1.0000%
     barrier: Decimal | None = None
     formula_g: int | None = None
-    days: int = 20
+    days: int = 23
+    best_days: int | None = None
+    worse_days: int = 0
 
     @property
     def barrier_value(self) -> Decimal:
@@ -389,7 +392,7 @@ def _scenarios(d: FlowDoc, s: Spec) -> None:
         d.text(80, f"{span}配息金額 = 1 單位商品 × {s.denom:,} {unit} × {s.monthly}%")
         d.text(80, f"= {s.money(a)} {unit}({rounding})")
         if accrual:
-            days = s.days if kind == "best" else 0
+            days = (s.days if s.best_days is None else s.best_days) if kind == "best" else s.worse_days
             amount = (s.denom * s.monthly / 100 * days / s.days).quantize(Decimal(1).scaleb(-s.decimals), ROUND_HALF_UP)
             d.text(
                 80,

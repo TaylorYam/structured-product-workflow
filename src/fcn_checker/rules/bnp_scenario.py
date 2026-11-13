@@ -5,9 +5,10 @@
 每期配息的預期值也用表上年利率推得的月配息率（依說明書顯示位數四捨五入）。較差／最差情境的股數、剩餘金額、總報酬率
 依文件寫的收盤價與匯率驗算（收盤價、匯率是試算值，本身不核對）。情境標題、期別寫法未知或算式找不到時轉人工覆核。
 
-DACN（`accrual=True`，docs/checker/rules/bnp-dacn-check-rules.md §3.7）：自動提前贖回情況同 FCN；其他情境的配息算式分兩行，
-第 1～g 期（保證期數）同 FCN 驗算，第 g+1～天期「× 月配息率 × (n ÷ M)」只核期別與面額（月配息率由 `scenario.params` 核對），
-累積配息與總報酬率依計息天數假設算出、不核對；贖回金額、股數、剩餘金額同 FCN。
+DACN（`accrual=True`，docs/checker/rules/bnp-dacn-check-rules.md §3.7，workflow #576）：自動提前贖回情況同 FCN；其他情境的
+配息算式分兩行，第 1～g 期（保證期數）同 FCN 驗算，第 g+1～天期「× 月配息率 × (n ÷ M)」用文件寫的 n、M 驗算（n、M 本身不核；
+共用 `dacn.accrual_coupon_issues`）；累積配息 = 兩段已進位配息 × 期數加總（`dacn.coupon_total_issues`）；贖回金額、股數、
+剩餘金額、總報酬率同 FCN（算式裡的累積 = 累積總月配息金額）。
 """
 
 from __future__ import annotations
@@ -18,7 +19,7 @@ from decimal import ROUND_DOWN, ROUND_HALF_UP, Decimal
 from ..parsers.bnp_scenario import Scenario
 from ..schema import CheckResult, Item, OrderValue
 from ..schema import CheckStatus as S
-from . import kit
+from . import dacn, kit
 from .kit import Check, IssuerContext
 
 # KI 型態 → 情境依序的種類（範本規格 §4.7）：每日／每期觀察 KI 的最佳情況分 (A)(B) 兩個，無 KI 與到期觀察 KI 各一個
@@ -92,7 +93,7 @@ class _Case:
 
     @property
     def accrual(self) -> bool:
-        """DACN 非自動提前贖回情境：配息算式分保證期與區間計息兩行，累積與總報酬率不核對。"""
+        """DACN 非自動提前贖回情境：配息算式分保證期與區間計息兩行，累積配息是兩段加總。"""
         return self.g is not None and self.s.kind != "autocall"
 
     def field(self, key: str) -> str:
@@ -136,8 +137,8 @@ def calculations(ctx: IssuerContext, *, accrual: bool = False) -> list[CheckResu
         }
         uses_g = g is not None and s.kind != "autocall"  # 自動提前贖回情況同 FCN，不看保證期數
         if uses_g:
-            items = {key: items[key] for key in ("coupon", "redemption", "shares", "remainder")}
-            items["accrual"] = Item.expected(f"{tag}區間計息配息算式")
+            del items["assumed"]
+            items["accrual"] = Item.derived(f"{tag}區間計息配息", [ov])
         bad = kit.first_bad((denom, tenor, k, g) if uses_g else (denom, tenor, k))
         if bad is not None:
             out.extend(
@@ -152,13 +153,11 @@ def calculations(ctx: IssuerContext, *, accrual: bool = False) -> list[CheckResu
             out.append(_assumed(case, items["assumed"]))
         coupon, amount = _coupon(case, items["coupon"], annual)
         out.append(coupon)
+        accrual_amount = None
         if case.accrual:
-            out.append(_accrual(case, items["accrual"]))
-            out.extend(
-                [_redemption(case, items["redemption"])] if s.kind == "best" else _worse(case, items, with_return=False)
-            )
-            continue
-        out.append(_cumulative(case, items["cumulative"], amount))
+            accrual, accrual_amount = _accrual(case, items["accrual"], annual)
+            out.append(accrual)
+        out.append(_cumulative(case, items["cumulative"], amount, accrual_amount))
         if s.kind in ("autocall", "best"):
             out.append(_redemption(case, items["redemption"]))
             out.append(_profit_return(case, items["return"]))
@@ -232,36 +231,62 @@ def _coupon(c: _Case, item: Item, annual: Decimal) -> tuple[CheckResult, Decimal
     return result, (expected if not issues else None)
 
 
-def _accrual(c: _Case, item: Item) -> CheckResult:
-    """DACN 第 g+1 期起的配息算式：期別 = 第 g+1～天期、面額 = 第一章面額；月配息率由共用情境規則 `scenario.params`
-    核對，(n ÷ M) 與配息金額依計息天數假設算出、不核對。"""
+def _accrual(c: _Case, item: Item, annual: Decimal) -> tuple[CheckResult, Decimal | None]:
+    """DACN 第 g+1 期起的配息算式：期別 = 第 g+1～天期、面額 = 第一章面額、配息 = 面額 × 月配息率 × (n ÷ M)，n、M 用文件
+    寫的值（本身不核），依寫的位數四捨五入（half-up）；M 是 0 時算不出，轉人工覆核。月配息率同 `_coupon` 由年利率推得；
+    算式寫的月配息率由共用情境規則 `scenario.params` 核對。
+
+    回傳（結果, 驗算通過時的每期配息）；累積配息用這個值，沒通過時改用文件寫的配息。
+    """
     if c.s.accrual is None:
-        return c.unread("accrual", item, "找不到第 g+1 期起的區間計息配息算式（× 月配息率 × (n ÷ M)）")
+        return c.unread("accrual", item, "找不到第 g+1 期起的區間計息配息算式（× 月配息率 × (n ÷ M)）", ov=True), None
     a = c.s.accrual.value
     want = (c.g + 1, c.tenor)
-    expected, actual = f"第{want[0]}~{want[1]}個月", f"第{a.first}~{a.last}個月"
     issues = []
     if (a.first, a.last) != want:
-        issues.append(f"區間計息配息期別寫「{actual}」，應為「{expected}」（保證期數 + 1～天期）")
+        issues.append(
+            f"區間計息配息期別寫「第{a.first}~{a.last}個月」，應為「第{want[0]}~{want[1]}個月」（保證期數 + 1～天期）"
+        )
     if a.denomination != c.denom:
         issues.append(f"區間計息配息算式中的面額 {a.denomination} 不等於第一章面額 {c.denom}")
-    return kit.calc_result(
-        c.rid, c.field("accrual"), item, issues, kit.evidence(c.s.accrual.lines), expected=expected, actual=actual
+    evidence = kit.evidence(c.s.accrual.lines)
+    if a.total_days == 0:
+        issues.append(f"區間計息配息算式 ({a.days} ÷ {a.total_days}) 的 M 是 0，算不出")
+        return kit.calc_result(c.rid, c.field("accrual"), item, issues, evidence, review=True, ov=[c.ov]), None
+    rate, step = monthly_rate(annual, a.rate), _q(a.decimals)
+    expected = dacn.accrual_coupon(Decimal(c.denom), rate, a.days, a.total_days, step)
+    issues += dacn.accrual_coupon_issues(
+        f"第{a.first}~{a.last}個月配息", a.amount, Decimal(c.denom), rate, a.days, a.total_days, step
     )
+    result = kit.calc_result(
+        c.rid, c.field("accrual"), item, issues, evidence, expected=expected, actual=a.amount, ov=[c.ov]
+    )
+    return result, (expected if not issues else None)
 
 
-def _cumulative(c: _Case, item: Item, amount: Decimal | None) -> CheckResult:
+def _cumulative(c: _Case, item: Item, amount: Decimal | None, accrual_amount: Decimal | None) -> CheckResult:
+    """累積總月配息金額：FCN = 每期配息 × 期數（另接受 #244 的算法）；DACN 非自動提前贖回情境 = 第 1～g 期配息 × 期數 +
+    第 g+1 期起配息 × 期數。期數依算式寫的期別；`amount`、`accrual_amount` 是兩段驗算通過時的每期配息，沒通過時用文件寫的。"""
     s = c.s
-    if s.cumulative is None or s.coupon is None:
+    if s.cumulative is None or s.coupon is None or (c.accrual and s.accrual is None):
         return c.unread("cumulative", item, "找不到累積總月配息金額或每期配息算式")
     calc = s.coupon.value
     periods = (calc.last if calc.last is not None else calc.first) - calc.first + 1
     per = amount if amount is not None else calc.amount
-    expected = per * periods
     actual = s.cumulative.value.amount
-    issues = kit.cumulative_coupon_issues(
-        "累積總月配息金額", actual, per, periods, calc.denomination, calc.rate, _q(calc.decimals)
-    )
+    if c.accrual:
+        a = s.accrual.value
+        legs = [
+            dacn.CouponLeg(per, periods),
+            dacn.CouponLeg(accrual_amount if accrual_amount is not None else a.amount, a.last - a.first + 1),
+        ]
+        expected = dacn.coupon_total(legs)
+        issues = dacn.coupon_total_issues("累積總月配息金額", actual, legs)
+    else:
+        expected = per * periods
+        issues = kit.cumulative_coupon_issues(
+            "累積總月配息金額", actual, per, periods, calc.denomination, calc.rate, _q(calc.decimals)
+        )
     return kit.calc_result(
         c.rid, c.field("cumulative"), item, issues, kit.evidence(s.cumulative.lines), expected=expected, actual=actual
     )
@@ -301,9 +326,9 @@ def _profit_return(c: _Case, item: Item) -> CheckResult:
     )
 
 
-def _worse(c: _Case, items: dict[str, Item], with_return: bool = True) -> list[CheckResult]:
+def _worse(c: _Case, items: dict[str, Item]) -> list[CheckResult]:
     """較差／最差情境：股數 = 面額（× 匯率）÷ 執行價（4 位）、整數股數為無條件捨去；剩餘金額 = 收盤價（÷ 匯率）× 畸零股數；
-    總報酬率 = [(整數股數 × 收盤價（÷ 匯率）+ 剩餘金額 + 累積配息) ÷ 面額] − 1（DACN 不核，`with_return=False`）。
+    總報酬率 = [(整數股數 × 收盤價（÷ 匯率）+ 剩餘金額 + 累積配息) ÷ 面額] − 1。
     收盤價與匯率是文件的試算值。
 
     後一項用到前一項的值（股數 → 剩餘金額 → 總報酬率），前一項找不到算式時後面不再驗算。
@@ -362,8 +387,6 @@ def _worse(c: _Case, items: dict[str, Item], with_return: bool = True) -> list[C
         )
     )
 
-    if not with_return:
-        return out
     if s.worse_return is None:
         return [*out, c.unread("return", items["return"], "找不到總報酬率算式")]
     wr = s.worse_return.value
