@@ -1,5 +1,5 @@
-"""DACN（區間計息）各上手共用的說明書內部規則（各家核對規則 §3.1、§3.5）：沒有樣本的型態轉人工覆核、配息公式的保證期數 =
-Non-Call。
+"""DACN（區間計息）各上手共用的說明書內部規則（各家核對規則 §3.1、§3.4、§3.5）：沒有樣本的型態轉人工覆核、配息公式的
+保證期數 = Non-Call、價格表一列的配息門檻價格 = 期初價格 × 配息門檻 %。
 
 各家只宣告「有樣本的型態」（`Sampled`：要看哪幾項、各支援哪些值、依序）與保證期數寫在第幾條；錯訊文字由宣告組出。
 配息門檻 % 的兩種來源（執行價 %、價格表欄頭 %）在說明書讀取端（parsers/dacn.py）。
@@ -9,12 +9,14 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from decimal import ROUND_HALF_UP
 from typing import Any
 
-from ..schema import CheckResult
+from ..schema import CheckResult, ParsedField
 from ..schema import CheckStatus as S
+from ..standard_fields import PriceRow
 from . import kit
-from .kit import IssuerContext
+from .kit import Q4, Check, IssuerContext
 
 # 型態的一項（Aspect）：讀出結果 → 不在樣本內的描述（依序；讀不到的欄位由各自的規則轉人工，這裡不報）
 Aspect = Callable[[IssuerContext], list[str]]
@@ -80,11 +82,12 @@ def currency(supported: tuple[str, ...], *, quanto: bool = False) -> Aspect:
     return check
 
 
-def guaranteed(supported: tuple[int, ...]) -> Aspect:
-    """配息公式保證全額配息的期數。"""
+def guaranteed(supported: tuple[int, ...], field: str = "guaranteed_periods") -> Aspect:
+    """配息公式保證全額配息的期數（讀出欄位 `field`；BARC 的 `guaranteed_periods` 是提前出場表的保證配息期，配息公式的
+    另叫 `coupon_guaranteed_periods`）。"""
 
     def check(ctx: IssuerContext) -> list[str]:
-        g = ctx.ts.f("guaranteed_periods")
+        g = ctx.ts.f(field)
         return [f"保證 {g.value} 期"] if g.ok and g.value not in supported else []
 
     return check
@@ -121,14 +124,33 @@ def guaranteed_periods(
     source: str = "配息公式保證全額配息",
     name: str = "配息公式保證期數",
     call: str = "提前出場",
+    field: str = "guaranteed_periods",
 ) -> CheckResult:
     """保證期數 = 日期表或 KO 起日推得的 Non-Call（核對規則 §3.5）：保證期數寫在第 `article` 項的 `source`（配息公式或
-    日期表），`call` 是這家對提前出場的稱呼。"""
+    日期表；讀出欄位 `field`），`call` 是這家對提前出場的稱呼。"""
     f = ctx.ts.f
-    g, k = f("guaranteed_periods"), f("first_callable_period")
-    return kit.doc_check(ctx, "doc.guaranteed_periods", "guaranteed_periods", name, k, g).compare(
+    g, k = f(field), f("first_callable_period")
+    return kit.doc_check(ctx, "doc.guaranteed_periods", field, name, k, g).compare(
         k.value,
         g.value,
         evidence=list(g.evidence),
         fail_message=f"第 {article} 項{source}的期數須等於第一個可{call}期（Non-Call）",
+    )
+
+
+def barrier_price(
+    check: Check, row: PriceRow, pct: ParsedField, missing: str, initial: str = "期初價格"
+) -> CheckResult:
+    """價格表一列的配息門檻價格（`barrier` 欄）= `initial` × 配息門檻 %，四捨五入（half-up）到 4 位（核對規則 §3.4）；
+    該列讀不到配息門檻價格時轉人工覆核（錯訊 `missing`）。說明書與投資人須知共用，各家給比對項目（`check`）與用語。"""
+    actual = row.prices.get("barrier")
+    if actual is None:
+        return check.result(S.REVIEW_REQUIRED, reason="document_missing", message=missing, evidence=list(row.evidence))
+    base = row.prices["initial"]
+    return check.compare(
+        (base * pct.value / 100).quantize(Q4, ROUND_HALF_UP),
+        actual,
+        evidence=[*row.evidence, *pct.evidence],
+        tolerance="四捨五入（half-up）到 4 位",
+        message=f"{initial} {base} × {pct.value}%",
     )

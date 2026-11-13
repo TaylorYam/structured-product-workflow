@@ -5,7 +5,7 @@
 - 範本代號：`barc-zh-dacn-iis`
 - 對應說明書範本：[`barc-zh-dacn-pd`](barc-zh-dacn.md)；一檔商品一份說明書＋一份投資人須知（[ADR 0007](../adr/0007-iis-paired-with-term-sheet.md)）
 - 依據：2026-11-13 對 5 份真實樣本（BK01-IIS～BK05-IIS，與說明書 BK01～BK05 同商品）的探勘與開發者螢光標記（workflow #547）。**作業人員獨立標記不做（路線圖 #551 指示）**
-- 狀態：規格（實作另開 PR，workflow #547）
+- 狀態：已實作（workflow #547）
 
 > 真實樣本與擷取文字只放在被 Git 忽略的 `data/`。本文件的數值範例都是虛構的；樣本代號與真實商品代號的對照只存在本機（`data/tmp/dacn_wave2/barc/sample_map.txt`）。
 

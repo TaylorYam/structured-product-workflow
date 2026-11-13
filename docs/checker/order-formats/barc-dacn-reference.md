@@ -1,7 +1,7 @@
 # 下單資料格式：BARC DACN（參考條件表）
 
 - 設定檔：所有上手共用的 [`config/reference_sheet.toml`](../../../config/reference_sheet.toml)
-- 狀態：規格（實作另開 PR，workflow #547）。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)；和 [BARC 核對規則](../rules/barc-check-rules.md) §9 相同的不重寫，本文件只寫 DACN 的差異
+- 狀態：已實作（workflow #547）。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)；和 [BARC 核對規則](../rules/barc-check-rules.md) §9 相同的不重寫，本文件只寫 DACN 的差異
 
 ## 1. 結構
 

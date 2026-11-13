@@ -39,14 +39,14 @@
 | FCN_Express | BARC（#304）、CA（#305）、HSBC（#306） |
 | Super Bull | BNP（#311）、CA（#312）、HSBC（#314） |
 | BEN | CA（#377）、HSBC（#375）、MS（#376） |
-| DACN | DBS（#370）、NATIXIS（#371）、NOMURA（#368）、SG（#369） |
+| DACN | BARC（#547）、DBS（#370）、NATIXIS（#371）、NOMURA（#368）、SG（#369） |
 | FCN_Stepdown | BARC（#544） |
 
 Super Bull 只支援 KO 每期觀察＋非記憶式＋無 KI（`Period End`＋`NONE`），其他樣態照不支援樣態轉人工，所有上手共用。BNP Super Bull 的文件：[說明書範本](templates/bnp-zh-super-bull.md)、[投資人須知範本](templates/bnp-zh-super-bull-iis.md)、[參考條件表對照](order-formats/bnp-super-bull-reference.md)、[核對規則](rules/bnp-super-bull-check-rules.md)（只支援 2026-06 以後的範本版本）。CA Super Bull 的文件：[說明書範本](templates/ca-zh-super-bull.md)、[投資人須知範本](templates/ca-zh-super-bull-iis.md)、[參考條件表對照](order-formats/ca-super-bull-reference.md)、[核對規則](rules/ca-super-bull-check-rules.md)（只支援現行版範本；境外人民幣轉人工）。HSBC Super Bull 的文件：[說明書範本](templates/hsbc-zh-super-bull.md)、[投資人須知範本](templates/hsbc-zh-super-bull-iis.md)、[參考條件表對照](order-formats/hsbc-super-bull-reference.md)、[核對規則](rules/hsbc-super-bull-check-rules.md)（只支援現行版範本；單一標的、非美元、KO% ≠ K%、多個決定日轉人工）。
 
 BEN 沒有 KO、沒有定期配息、無 KI，只在到期判定（[ADR 0029](../adr/0029-ben.md)）；參考條件表的參與率(%) 只有 BEN 核對，沒有這欄或空白轉人工。HSBC BEN 的文件：[說明書範本](templates/hsbc-zh-ben.md)、[投資人須知範本](templates/hsbc-zh-ben-iis.md)、[參考條件表對照](order-formats/hsbc-ben-reference.md)、[核對規則](rules/hsbc-ben-check-rules.md)（只支援現行版範本的 Maxi 與 Digital；Maxi 1 檔或 4 檔以上標的、Digital 2 檔以上標的、非美元轉人工；參與率由到期公式推得：Maxi 100、Digital 0）。CA BEN 的文件：[說明書範本](templates/ca-zh-ben.md)、[投資人須知範本](templates/ca-zh-ben-iis.md)、[參考條件表對照](order-formats/ca-ben-reference.md)、[核對規則](rules/ca-ben-check-rules.md)（只支援現行版 Bonus 範本；KO 價欄版、早期版與 Digital 轉人工、不能人工放行；1 檔或 3 檔以上標的、非美元、境外人民幣、標的報價幣別和計價幣別不同轉人工；K% 不是 100 照規則核對（待樣本驗證）；參與率讀第 9 項）。MS BEN 的文件：[說明書範本](templates/ms-zh-ben.md)、[投資人須知範本](templates/ms-zh-ben-iis.md)、[參考條件表對照](order-formats/ms-ben-reference.md)、[核對規則](rules/ms-ben-check-rules.md)（只支援現行版範本的一般 BEN 與 Digital，各有 lookback；一般 BEN 1 檔或 4 檔以上標的、Digital 2 檔以上標的、非美元轉人工；參與率讀說明書 §15(3)；lookback 的回顧結束日核對並回填參考條件表「回顧結束日」）。
 
-KI 每期觀察（MKI）的 DACN 在流程各階段都不支援、全程人工建檔與追蹤（2026-11-02 使用者決定，workflow #386；等量變多再另開 Issue 支援）：各上手 DACN 核對都不會自動通過（Nomura、SG、Natixis 照沒有樣本的型態轉人工覆核；DBS 讀不到每期觀察的下限觸發事件而轉人工覆核，參考條件表寫 `P` 是 DBS 的不支援樣態；還沒開放的上手照未開放商品轉人工核對）。四家 DACN 的範本版本只看寫法、不看交易日（2026-11-02 使用者決定，workflow #409）。
+KI 每期觀察（MKI）的 DACN 在流程各階段都不支援、全程人工建檔與追蹤（2026-11-02 使用者決定，workflow #386；等量變多再另開 Issue 支援）：各上手 DACN 核對都不會自動通過（Nomura、SG、Natixis、Barclays 照沒有樣本的型態轉人工覆核；DBS 讀不到每期觀察的下限觸發事件而轉人工覆核，參考條件表寫 `P` 是 DBS 的不支援樣態；還沒開放的上手照未開放商品轉人工核對）。各家 DACN 的範本版本只看寫法、不看交易日（2026-11-02 使用者決定，workflow #409；Barclays #547 照同一原則）。
 
 Nomura DACN 的文件（workflow #368 已實作）：[說明書範本](templates/nomura-zh-dacn.md)、[投資人須知範本](templates/nomura-zh-dacn-iis.md)、[參考條件表對照](order-formats/nomura-dacn-reference.md)、[核對規則](rules/nomura-dacn-check-rules.md)（只支援現行版範本；沒有樣本的型態轉人工）。
 
@@ -58,7 +58,7 @@ Natixis DACN 的文件（workflow #371 已實作）：[說明書範本](template
 
 BARC FCN_Stepdown 的文件（workflow #544 已實作；其他上手的 Stepdown 開放前照未開放商品轉人工核對）：[說明書範本](templates/barc-zh-stepdown.md)、[投資人須知範本](templates/barc-zh-stepdown-iis.md)、[參考條件表對照](order-formats/barc-stepdown-reference.md)、[核對規則](rules/barc-stepdown-check-rules.md)（KO% 每期固定往下降、記憶式、KO 每日或每期觀察；非記憶式與不等距轉人工；D 型比價日每一期都填，ADR 0033）。
 
-Barclays DACN 的文件（workflow #547 規格，實作另開 PR；實作前照未開放商品轉人工核對）：[說明書範本](templates/barc-zh-dacn.md)、[投資人須知範本](templates/barc-zh-dacn-iis.md)、[參考條件表對照](order-formats/barc-dacn-reference.md)、[核對規則](rules/barc-dacn-check-rules.md)（只支援現行版範本；名稱和 FCN 相同，靠 §14 配息公式辨識；KO 每日＋記憶式、多標的、KI 無／到期、美元、保證 1 期；其他沒有樣本的型態轉人工）。
+Barclays DACN 的文件（workflow #547 已實作）：[說明書範本](templates/barc-zh-dacn.md)、[投資人須知範本](templates/barc-zh-dacn-iis.md)、[參考條件表對照](order-formats/barc-dacn-reference.md)、[核對規則](rules/barc-dacn-check-rules.md)（只支援現行版範本；名稱和 FCN 相同，靠 §14 配息公式辨識；KO 每日＋記憶式、多標的、KI 無／到期、美元、保證 1 期；其他沒有樣本的型態轉人工）。
 
 ## 目前設定明確不支援的樣態
 

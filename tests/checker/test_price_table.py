@@ -145,6 +145,25 @@ def test_price_anchor_rows_without_row_numbers_or_tickers():
     assert [p["ko"] for p in table.value.prices] == [Decimal("100.0000"), Decimal("50.0000")]
 
 
+@pytest.mark.parametrize(
+    ("align", "names"), [("top", ["甲乙丙丁戊己庚辛壬", "子公司"]), ("center", ["甲乙丙丁戊己", "庚辛壬子公司"])]
+)
+def test_top_aligned_rows_keep_a_long_name_with_its_own_row(align, names):
+    """列靠上對齊（BARC DACN 價格表）：名稱折成三行時第三行離下一列錨點較近，靠上讀法仍歸到上方的列；置中讀法（其他上手）
+    照離列中心較近分到下一列。"""
+    spec = TableSpec(**{**SPEC.__dict__, "anchor": "price", "code": None, "align": align})
+    lines = [
+        *header(code=False),
+        *row(1, 150, None, "甲乙丙", None, ROW1),
+        centered(1, X["name"], 163, "丁戊己"),
+        centered(1, X["name"], 176, "庚辛壬"),
+        *row(1, 190, None, "子公司", None, ROW2),
+    ]
+    table = read("t", lines, spec)
+    assert table.ok, table.note
+    assert table.value.names == names
+
+
 def test_price_anchor_with_initial_price_one_line_above_the_row():
     """期初價格的數字比同列其他格高一行、幣別字和同列對齊（CA 第 16 項真實樣本，Issue #278）：仍是同一列。"""
     spec = TableSpec(**{**SPEC.__dict__, "anchor": "price", "code": None})

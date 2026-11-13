@@ -14,11 +14,17 @@ docs/checker/templates/barc-zh-product-description.md 觀察值設定。PDF 排�
 - 說明書其他各章：第二章各條 `ts.ch二.{n}`（2 = 保證機構、5 = 受託或銷售機構）、第三章 `ts.ch三`、第四章 `ts.ch四`（費用表各列
   `ts.ch四.fees.{費用項目}`）、第五章 `ts.ch五`。
 - 投資人須知：`iis.p1`～`iis.p4`（依頁；費用表各列 `iis.p3.fees.{費用項目}`）。
+
+`DacnSpec` 畫 BARC DACN（docs/checker/templates/barc-zh-dacn.md、barc-zh-dacn-iis.md）：§9(1)、§13(6)、§17 不寫配息率，
+§14 改成區間計息公式與配息觀察期表（格子 `ts.art14.coupon.{t}.{欄}`：start、end、days、payment），§15 價格表多配息門檻欄
+（格子欄名 `barrier`；列靠上對齊、名稱每行 6 字），§16 一般、最差情況第 2 期起 `× X% × (n/N)`；投資人須知收益分配事項改寫
+配息率 t、價格表多配息門檻欄。
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from decimal import ROUND_HALF_UP, Decimal
@@ -37,6 +43,7 @@ from reference_synth import (
     build_reference_sheet,
     price,
     reference_row,
+    set_dacn,
     write_notes,
 )
 
@@ -111,6 +118,61 @@ class Spec(ProductSpec):
             f"{self.tenor} Months {self.ccy} {mem}Autocallable Equity Linked Note issued by Barclays Bank PLC "
             "(unsecured and non-guaranteed)"
         )
+
+
+@dataclass
+class DacnSpec(Spec):
+    """BARC DACN 合成規格：預設同樣本的型態（美元、多標的、KO 每日觀察＋記憶式、KI 無、配息公式保證 1 期 = Non-Call 1）。
+    名稱和 FCN 同一句。`barrier` 是配息門檻 %（說明書 §14 定義句、§15 與投資人須知價格表、參考條件表「配息門檻(%)」；
+    None → 同執行價）；`formula_g` 是 §14 與投資人須知配息率 t 公式第 1 段的期數（None → 同保證配息期）。"""
+
+    barrier: Decimal | None = None
+    formula_g: int | None = None
+
+    @property
+    def barrier_value(self) -> Decimal:
+        return self.strike if self.barrier is None else self.barrier
+
+    @property
+    def g(self) -> int:
+        return self.guaranteed_value if self.formula_g is None else self.formula_g
+
+
+# DACN §15 價格表各欄（欄頭 x、數字 x），依有沒有 KI 欄（範本規格 §5；仿樣本版面）
+DACN_PRICE_COLUMNS = {
+    False: (("initial", 126.0, 127.3), ("strike", 179.7, 206.0), ("barrier", 284.5, 310.7), ("ko", 389.2, 415.5)),
+    True: (
+        ("initial", 118.9, 120.1),
+        ("strike", 173.5, 194.8),
+        ("barrier", 270.9, 292.1),
+        ("ko", 368.1, 389.4),
+        ("ki", 465.5, 486.7),
+    ),
+}
+# DACN 投資人須知價格表各欄（欄頭 x、數字 x）
+DACN_IIS_COLUMNS = (
+    ("initial", 129.4, 130.9),
+    ("strike", 206.4, 224.9),
+    ("barrier", 300.4, 318.9),
+    ("ko", 394.5, 413.0),
+    ("ki", 488.5, 507.0),
+)
+
+
+def _wrap_dacn_name(name: str) -> list[str]:
+    """DACN 價格表名稱欄較窄：每行 12 個半形寬（中文字算 2）；英文字不拆開，長名稱折成三行。"""
+    out, cur, width = [], "", 0
+    for token in re.findall(r"[A-Za-z0-9&.,'-]+|\s+|.", name):
+        if token.isspace():
+            if cur:
+                cur, width = cur + " ", width + 1
+            continue
+        w = len(token) if token.isascii() else 2 * len(token)
+        if cur and width + w > 12:
+            out.append(cur.rstrip())
+            cur, width = "", 0
+        cur, width = cur + token, width + w
+    return [*out, cur.rstrip()]
 
 
 def fmt_price(v: Decimal) -> str:
@@ -190,6 +252,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     name_en = s.expected_name_en()
     monthly = s.monthly_value
     ko_term = "自動提前出場觸發價格" if s.memory else "觸發水準"
+    dacn = s if isinstance(s, DacnSpec) else None
 
     def split_at(text: str, *cuts: int) -> list[str]:
         """整段改字後在固定位置切開（版面上分成幾行的文字，改字要看整段）。"""
@@ -277,13 +340,28 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     article(8, "投資本金達成100％保本之各項條件：不適用。")
     article(9, "主要給付項目及其計算方式：")
     sub(1, "配息金額：")
-    w.line(81.0, "以本商品未發生提前贖回或終止為前提，發行機構將於每一個「配息支付日t」支付每單位商品面額乘以每")
-    w.line(81.0, f"月之配息率（為{monthly}%(顯示至小數點後第4 位)，即年利率為{s.annual}%）所計算之配息金額。")
+    if dacn:
+        w.line(81.0, "詳細計算配息金額之方式請參閱本章第14 條之說明。")
+    else:
+        w.line(81.0, "以本商品未發生提前贖回或終止為前提，發行機構將於每一個「配息支付日t」支付每單位商品面額乘以每")
+        w.line(81.0, f"月之配息率（為{monthly}%(顯示至小數點後第4 位)，即年利率為{s.annual}%）所計算之配息金額。")
     sub(2, "到期贖回：")
     w.line(81.0, "有關到期贖回之詳細說明，請參閱本章第15 條之說明。")
     sub(3, "指定提前現金交割金額：")
     w.line(81.0, "若「指定提前贖回事件」發生，發行機構將支付商品面額100%加計「相關配息金額」。")
-    if s.ko_obs == "D":
+    if dacn and s.ko_obs == "D":
+        w.line(81.0, "「相關配息金額」係指依以下相關配息率而計算之金額：")
+        w.line(126.0, "(i) 就於第1 個自動提前出場觀察期期末日當日發生之指定提前贖回事件日而言，相關配息率為")
+        w.line(126.0, f"{monthly}%；或")
+        w.line(126.0, f"(ii) 就除(i)外之其他情況而言，相關配息率為：{monthly}% × dt/Dt")
+        w.line(126.0, "“dt”指就於某自動提前出場觀察期期間發生之指定提前贖回事件日而言，各標的資產之相關價格均")
+        w.line(126.0, "高於或等於其配息門檻之自動提前出場評價日天數。")
+        w.line(126.0, "“Dt”指該自動提前出場觀察期由計算代理機構決定之一籃子預定交易日之日數。")
+        w.line(
+            66.0, "投資人請注意，本商品於配息觀察期1 後之配息率之計算取決於相關配息觀察期內各標的資產之表現，故相關配"
+        )
+        w.line(66.0, f"息率可能遠低於月配息率{monthly}%，最壞情況下可能為零。")
+    elif s.ko_obs == "D":
         w.line(81.0, "「相關配息金額」係指依以下相關配息率而計算之金額：")
         w.line(106.1, f"(i) 就於第1 個自動提前出場觀察期期末日當日發生者而言，相關配息率為{monthly}%；或")
         w.line(106.1, f"(ii) 就除(i)外之其他情況而言，相關配息率為：{monthly}% × Ant/Dt")
@@ -323,7 +401,9 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         if s.break_coupon_after == t:
             w.new_page()
 
-    if s.ko_obs == "D" and not s.memory:
+    if dacn:
+        sub(6, "配息支付日†*：依本章第14 條下表格所示（並請參閱本條第(9)項之說明）")
+    elif s.ko_obs == "D" and not s.memory:
         sub(6, "配息支付日†*：依下表「觀察期」所示（並請參閱本條第(9)項之說明）")
     else:
         hdr = "評價日t" if (s.ko_obs == "P" and not s.memory) else "配息評價日t"
@@ -371,7 +451,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         w.para(97.7, text + "上述各期間仍不為調整（如以下「自動提前出場觀察期」一表所示）。", width=42)
         w.line(97.7, "自動提前出場評價日：指自動提前出場觀察期內之各一籃子預定交易日。")
     if s.ko_obs == "D":
-        w.line(69.4, "觀察期：")
+        w.line(69.4, "自動提前出場觀察期：" if dacn else "觀察期：")  # DACN 表名只有這幾個字（範本規格 §2）
         if s.memory:
             w.line(246.4, "自動提前出場觀察期")
             w.row([(58.1, "t"), (130.5, "期始日(含)t"), (284.3, "期末日(含)t"), (409.4, "自動提前出場觸發百分比")])
@@ -413,8 +493,11 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     w.line(81.0, "「營業日」係指倫敦及紐約之商業銀行開門營業之日。")
 
     article(14, "配息資料及其計算公式：")
-    w.line(81.0, "每單位商品面額 × 配息率")
-    w.line(81.0, f"「配息率」係指每月之配息率為{monthly}%(顯示至小數點後第4 位)（即年利率為{s.annual}%）。")
+    if dacn:
+        _dacn_art14(w, dacn, rows)
+    else:
+        w.line(81.0, "每單位商品面額 × 配息率")
+        w.line(81.0, f"「配息率」係指每月之配息率為{monthly}%(顯示至小數點後第4 位)（即年利率為{s.annual}%）。")
 
     article(15, "到期贖回計算公式，最低保證配息率及參與率:")
     sub(1, "到期贖回：", x_num=67.7, x_body=96.0)
@@ -490,12 +573,19 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             w.y += max(24, 13 * len(name_lines) + 12)
         w.section = outer
 
-    price_table("art15.price", s.cross_page_price_table)
+    if dacn:
+        _dacn_price_table(w, dacn)
+    else:
+        price_table("art15.price", s.cross_page_price_table)
     if multi:
         w.line(67.7, "「表現最差之標的資產」指於最終評價日當日價值最低之標的資產。")
     w.line(96.0, "發行機構應以實物交割時，將根據發行機構及相關結算機構規則進行交割活動。")
-    sub(2, "最低保證配息率：發行機構將於每一個配息支付日支付依下列公式計算之配息金額：", x_num=67.7, x_body=96.0)
+    when = "第1 個配息支付日" if dacn else "每一個配息支付日"
+    sub(2, f"最低保證配息率：發行機構將於{when}支付依下列公式計算之配息金額：", x_num=67.7, x_body=96.0)
     w.line(182.5, f"每單位商品面額 × {monthly}%(顯示至小數點後第4 位)")
+    if dacn:
+        w.line(96.0, "投資人請注意，本商品之後續配息的配息率取決於配息觀察期內各標的資產相關價格之表現，故後續配")
+        w.line(96.0, "息並無保證，最壞情況下可能為零。")
     sub(3, "參與率：不適用。", x_num=67.7, x_body=96.0)
     article(16, "投資收益計算方法，包含本金虧損之機率及以情境分析解說最大可能獲利、損失：")
     sub(3, "以情境分析解說最大可能獲利、損失及其他狀況之年化平均報酬率：", x_num=67.7, x_body=96.0)
@@ -507,8 +597,11 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
     w.line(77.7, "情境分析結果不保證未來績效。")
     _scenarios(w, s, notional)
     article(17, "平均年化報酬率：")
-    sub(1, "平均年化報酬率：本商品於各配息支付日支付之配息金額，")
-    w.line(97.7, f"均以每月之配息率（為{monthly}%，即年利率為{s.annual}%）乘以每單位商品面額計算。")
+    if dacn:
+        sub(1, "平均年化報酬率：請見本章第16 條情境分析中。")
+    else:
+        sub(1, "平均年化報酬率：本商品於各配息支付日支付之配息金額，")
+        w.line(97.7, f"均以每月之配息率（為{monthly}%，即年利率為{s.annual}%）乘以每單位商品面額計算。")
     article(18, "提前贖回事件：")
     w.line(81.0, "發行機構於發生違約事件時得提前贖回本商品。")
 
@@ -609,6 +702,9 @@ def _scenarios(w: PdfWriter, s: Spec, notional: str) -> None:
     w.line(77.7, f"每單位累積配息金額 = 0.00 {ccy}")
     w.line(81.0, "總報酬率(截至指定提前贖回事件日之報酬) = [(每單位指定提前現金交割金額 + 每單位累積配息金額) /")
     w.line(52.7, f"= [({gross:,.2f} {ccy} + 0.00 {ccy}) / {notional}] - 1 = {m}%(平均年化報酬率：{s.annual}%)")
+    if isinstance(s, DacnSpec):
+        _dacn_scenarios(w, s, notional)
+        return
     w.section = "art16.ii"
     w.numbered("(ii)", 77.7, 106.1, "一般情況：假設本商品未發生「指定提前贖回事件」，發行機構將於每一個「配息支付日")
     w.line(106.1, f"t」支付商品面額乘以{m}%之配息率所計算之配息金額。舉例說明如下：")
@@ -626,6 +722,132 @@ def _scenarios(w: PdfWriter, s: Spec, notional: str) -> None:
     w.line(106.1, f"商品面額乘以{m}%之配息率所計算之每單位配息金額。")
     w.line(77.7, f"每單位配息金額 = {notional} × {m}% (四捨五入至小數點後第2 位)")
     w.line(77.7, f"= [(5,000.00 {ccy})/ {notional}] - 1 = -50.00% (平均年化報酬率：-100.00%)")
+
+
+def _dacn_scenarios(w: PdfWriter, s: DacnSpec, notional: str) -> None:
+    """DACN §16(3) 一般、最差情況：第 1～g 期 `× X%`，其後 `× X% × (n/N)`（假設 10/20、0/20；範本規格 §4.3）。"""
+    m, ccy, n, g = s.monthly_value, s.currency_zh, s.tenor, s.g
+    first = (Decimal(s.denom) * m / 100).quantize(Decimal("0.01"), ROUND_HALF_UP)
+    for section, label, case, k in (
+        ("art16.ii", "(ii)", "一般情況：所有標的資產之收盤價於一籃子預定交易日僅有一半日期大於或等於其配息門檻，", 10),
+        ("art16.iii", "(iii)", "最差情況：所有標的資產之收盤價於一籃子預定交易日均無大於或等於其配息門檻，", 0),
+    ):
+        w.section = section
+        w.numbered(label, 77.7, 106.1, case)
+        w.line(106.1, "發行機構將於每一個「配息支付日t」支付商品面額乘以各配息觀察期之配息率所計算之配息金額。")
+        w.line(77.7, f"執行價格（為最初價格的{s.strike}%）")
+        w.line(77.7, "第1 個配息支付日：" if g == 1 else f"第1 到{g} 個配息支付日：")
+        w.line(77.7, f"每單位配息金額 = {notional} × {m}% (四捨五入至小數點後第2 位)")
+        w.line(77.7, f"= {first:,.2f} {ccy}")
+        rest = (Decimal(s.denom) * m / 100 * k / 20).quantize(Decimal("0.01"), ROUND_HALF_UP)
+        w.line(77.7, f"第{g + 1} 到{n} 個配息支付日：")
+        w.line(77.7, f"每單位配息金額 = {notional} × {m}% × ({k}/20) (四捨五入至小數點後第2 位)")
+        w.line(77.7, f"= {rest:,.2f} {ccy}")
+        total = first * g + rest * (n - g)
+        w.line(
+            77.7, f"每單位累積配息金額 = {first:,.2f} {ccy} × {g} + {rest:,.2f} {ccy} × {n - g} = {total:,.2f} {ccy}"
+        )
+        w.line(
+            77.7, "總報酬率(截至到期日之報酬) = [(每單位累積配息金額 + 每單位最終現金交割金額) / 每單位商品面額] - 1"
+        )
+        ret = (total / s.denom * 100).quantize(Decimal("0.01"), ROUND_HALF_UP) if k else Decimal("-50.00")
+        ann = (ret * 12 / n).quantize(Decimal("0.01"), ROUND_HALF_UP)
+        w.line(77.7, f"= [({total:,.2f} {ccy} + {notional})/ {notional}] - 1 = {ret}% (平均年化報酬率：{ann}%)")
+
+
+def _dacn_art14(w: PdfWriter, s: DacnSpec, rows: list[dict[str, Any]]) -> None:
+    """DACN §14：六段固定寫法（範本規格 §2.1）與配息觀察期表（雙層表頭、Nt 欄；格子 `art14.coupon.{t}.{欄}`）。"""
+    m, n, g = s.monthly_value, s.tenor, s.g
+    w.line(66.0, "除非於相關配息觀察期內之所有配息評價日，一籃子標的資產中任一標的之相關價格小於其配息門檻，以至於")
+    w.line(66.0, "配息率為零之情況外，發行機構將於每一個配息支付日支付依下列公式計算之配息金額。相關配息率t 將依配息")
+    w.line(66.0, "觀察期t 內各標的資產之相關價格均大於或等於其配息門檻之配息評價日天數而定。請注意,任何配息金額的支")
+    w.line(66.0, "付都以本商品未發生提前贖回或終止為前提。發行機構將於每一個配息支付日支付依下列公式計算之配息金額：")
+    w.line(237.6, "每單位商品面額 × 配息率t", gap=23)
+    w.line(66.0, "其中：", gap=23)
+    w.line(81.0, f"「t」係自1 至{n} 的數字，每個數字代表一個配息支付日及相對應的配息觀察期以及配息率;", gap=23)
+    w.line(81.0, "「配息率」", gap=23)
+    first = "配息率t=1" if g == 1 else f"配息率t=1 到{g}"
+    w.row([(241.9, "(i)"), (270.2, f"{first}={m}%;及")], gap=23)
+    w.line(224.3, f"(ii) 配息率t={g + 1} 到{n}={m}% × nt/Nt;", gap=23)
+    w.line(81.0, f"就配息支付日t={g + 1} 到{n}而言，", gap=23)
+    w.line(81.0, "「nt」指與配息支付日t相對應之配息觀察期內，各標的資產之相關價格均高於或等於其配息門檻之配息評價")
+    w.line(81.0, "日天數。", gap=23)
+    w.line(
+        81.0, "「Nt」指與配息支付日t相對應之配息觀察期內之一籃子預定交易日天數-如以下「配息觀察期」表格所示。", gap=23
+    )
+    w.line(81.0, f"「配息門檻」詳見本章第15 條之表格所示（為最初價格的{s.barrier_value}%）。", gap=23)
+    w.line(81.0, "「配息觀察期」指從相關期始日起（含）至相關期末日止（含）之各期間，縱使發生任何標的資產之中斷日")
+    w.line(81.0, "致配息評價日經延後，上述各期間仍不為調整，如下表所示:", gap=20)
+    w.need(40)
+    w.row([(59.1, "t"), (160.0, "配息觀察期*"), (302.0, "預定交易日日數(Nt)"), (443.7, "配息支付日t†*")], gap=19.5)
+    w.row([(108.4, "期始日(含)t"), (214.0, "期末日(含)t")], gap=19.5)
+    for r in rows:
+        t = r["t"]
+        text = {
+            "start": r["start"],
+            "end": r["end"],
+            "days": "N/A" if t <= g else str(20 + t % 3),
+            "payment": zh_date(r["payment"]),
+        }
+        xs = {
+            "start": 127.2 if text["start"] == "N/A" else 93.4,
+            "end": 199.0,
+            "days": 338.4 if text["days"] == "N/A" else 340.9,
+            "payment": 435.0,
+        }
+        last = t == s.tenor
+        w.need(33 if last else 19.5)
+        w.row(
+            [
+                (59.1, str(t), f"art14.coupon.{t}.t"),
+                *((xs[k], text[k], f"art14.coupon.{t}.{k}") for k in ("start", "end", "days", "payment")),
+            ],
+            gap=13 if last else 19.5,
+        )
+        if last:
+            w.line(451.3, "(即到期日)", gap=22)
+    w.line(81.0, f"*為決定配息率t（其中當t 等於{g + 1} 至{n} 的情況）之目的，第1 個配息觀察期不適用。", gap=23)
+    w.line(65.4, "投資人應注意，配息後，本商品之市場價值會相對降低。", gap=23)
+
+
+def _dacn_price_table(w: PdfWriter, s: DacnSpec) -> None:
+    """DACN §15 價格表：執行價格欄右邊多配息門檻欄；每列的字靠上對齊，名稱每行 6 字（長名稱折成三行，範本規格 §5）。
+    格子 `art15.price.{標的序}.{欄}`。"""
+    outer, w.section = w.section, "art15.price"
+    cols = DACN_PRICE_COLUMNS[s.ki != "none"]
+    ko_head = (
+        ["自動提前出場觸發價", "格（為最初價格乘以", "自動提前出場觸發百", "分比）(四捨五入至", "小數點後第4 位)"]
+        if s.memory
+        else ["觸發水準（為最初價", f"格的{s.ko}%）(四捨", "五入至小數點後第4", "位)"]
+    )
+    head = {
+        "initial": ["最初價格"],
+        "strike": ["執行價格（為最初價", f"格的{s.strike}%）(四捨", "五入至小數點後第4", "位)"],
+        "barrier": ["配息門檻（為最初價", f"格的{s.barrier_value}%）(四捨", "五入至小數點後第4", "位)"],
+        "ko": ko_head,
+        "ki": ["觸及生效價格（為最", f"初價格的{s.ki_pct}%）(", "四捨五入至小數點後", "第4 位)"],
+    }
+    rows = max(len(head[key]) for key, _, _ in cols)
+    w.need(13 * rows + 40)
+    y = w.y
+    w.put(57.1, y + 13 * (rows // 2), "標的資產")
+    for key, x, _ in cols:
+        top = y + 13 * (rows // 2) if key == "initial" else y
+        for k, t in enumerate(head[key]):
+            w.put(x, top + 13 * k, t)
+    w.y = y + 13 * rows + 10
+    pcts = {"strike": s.strike, "barrier": s.barrier_value, "ko": s.ko, "ki": s.ki_pct}
+    for i, u in enumerate(s.underlyings, 1):
+        names = _wrap_dacn_name(u.name)
+        w.need(13 * len(names) + 12)
+        y = w.y
+        for key, _, x in cols:
+            value = u.initial if key == "initial" else price(u.initial, pcts[key])
+            w.put(x, y, fmt_price(value), section=f"art15.price.{i}.{key}")
+        for k, part in enumerate(names):
+            w.put(47.2, y + 1 + 13 * k, part, section=f"art15.price.{i}.name")
+        w.y += 13 * len(names) + 12
+    w.section = outer
 
 
 def _wrap_name(name: str) -> list[str]:
@@ -665,10 +887,19 @@ def check_rows(
 
 def check_pdf(tmp_path: Path, pdf: Path, spec: Spec | None = None, **overrides: Any) -> CheckReport:
     """以合成參考條件表（一列，依 spec；`overrides` 以 Excel 欄名覆寫）核對一份現成的說明書，回傳該份的 CheckReport。"""
-    return check_rows(tmp_path, pdf, [reference_row(spec or Spec(), **overrides)])
+    return check_rows(tmp_path, pdf, [row(spec or Spec(), **overrides)])
 
 
-CHECKS = SynthChecks(Spec, build_pdf, reference_row)  # 單份核對殼（harness.SynthChecks）
+def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
+    """與 `spec` 一致的參考條件表列（DACN：Product 與配息門檻）；`overrides` 以 Excel 欄名覆寫。"""
+    out = reference_row(spec)
+    if isinstance(spec, DacnSpec):
+        set_dacn(out, spec.strike, spec.barrier)
+    out.update(overrides)
+    return out
+
+
+CHECKS = SynthChecks(Spec, build_pdf, row)  # 單份核對殼（harness.SynthChecks）
 check = CHECKS.check
 
 # ---- FCN_Stepdown（#544）：參考條件表 Product = FCN_Stepdown、多一欄 KO降幅(%)
@@ -721,6 +952,65 @@ def barc_adapter(**overrides: Any) -> Issuer:
 # ---------------------------------------------------------------- 投資人須知（docs/checker/templates/barc-zh-iis.md）
 
 IIS_PAGES = 4  # 審查標準 iis.pages
+
+
+def _dacn_iis_income(w: PdfWriter, s: DacnSpec) -> None:
+    """DACN 投資人須知收益分配事項：配息率 t 寫法（範本規格 barc-zh-dacn-iis.md §1.1，沒有年利率）與價格表（多配息門檻欄、
+    列靠上對齊、名稱每行 6 字）。"""
+    m, n, g = s.monthly_value, s.tenor, s.g
+    first = "如t=1" if g == 1 else f"如t=1 到{g}"
+    w.line(70.1, "配息金額：以提前贖回或終止未發生為前提，發行機構將於每一個「配息支付日t」支付每單位商品面", gap=11.7)
+    w.line(70.1, "額乘以相關配息率所計算之配息金額：", gap=11.7)
+    w.para(
+        70.1,
+        f"「配息率t」係指， (i){first}，為{m}%；及(ii)如t={g + 1} 到{n}，為{m}% × nt/Nt；其中：「t」係自1至{n} 的數字，"
+        "每個數字代表一個配息支付日及相對應的配息觀察期及配息率。就配息支付日t而言，「nt」指與配息支付日t 相對應之配息觀察"
+        "期內，各標的資產之相關價格高於或等於其配息門檻之配息評價日天數。「Nt」指與該配息支付日t相對應之配息觀察期內之一籃子"
+        "預定交易日天數。",
+        width=44,
+        gap=11.7,
+    )
+    w.line(48.4, "(2) 到期贖回：請參閱中文產品說明書第一章第15 條。", gap=11.7)
+    cols = [c for c in DACN_IIS_COLUMNS if c[0] != "ki" or s.ki != "none"]
+    ko_head = (
+        [
+            "自動提前出場觸",
+            "發價格（為最初",
+            "價格乘以自動提",
+            "前出場觸發百分",
+            "比）(四捨五入",
+            "至小數點後第4",
+            "位)",
+        ]
+        if s.memory
+        else ["觸發水準（為最", f"初價格的{s.ko}%", "）(四捨五入至", "小數點後第4 位", ")"]
+    )
+    head = {
+        "initial": ["最初價格"],
+        "strike": ["執行價格（為最", f"初價格的{s.strike}%", "）(四捨五入至", "小數點後第4 位", ")"],
+        "barrier": ["配息門檻（為最", f"初價格的{s.barrier_value}%", "）(四捨五入至", "小數點後第4 位", ")"],
+        "ko": ko_head,
+        "ki": ["觸及生效價格（", "為最初價格的", f"{s.ki_pct}%）(四捨五", "入至小數點後第", "4 位)"],
+    }
+    rows = max(len(head[key]) for key, _, _ in cols)
+    w.need(12 * rows + 40)
+    y = w.y
+    w.put(40.1, y + 12 * 3, "標的資產")
+    for key, x, _ in cols:
+        top = y + 12 * 3 if key == "initial" else y
+        for k, t in enumerate(head[key]):
+            w.put(x, top + 12 * k, t)
+    w.y = y + 12 * rows
+    pcts = {"strike": s.strike, "barrier": s.barrier_value, "ko": s.ko, "ki": s.ki_pct}
+    for u in s.underlyings:
+        names = _wrap_dacn_name(u.name)
+        w.need(12 * len(names) + 2)
+        for k, part in enumerate(names):
+            w.put(28.8, w.y + 12 * k, part)
+        for key, _, x in cols:
+            w.put(x, w.y, fmt_price(u.initial if key == "initial" else price(u.initial, pcts[key])))
+        w.y += 12 * len(names)
+    w.line(45.0, "「表現最差之標的資產」指於最終評價日當日價值最低之標的資產，係按下列公式計算：", gap=16)
 
 
 def build_iis_pdf(
@@ -782,6 +1072,10 @@ def build_iis_pdf(
         w.line(20.5, f"13.到期日或最終實物贖回日：{zh_date(s.maturity_date)}。")
         w.line(20.5, "14.開始受理投資人提前贖回日期：於發行日後的次一個營業日。")
         w.line(20.0, "收益分配事項：")
+        if isinstance(s, DacnSpec):
+            _dacn_iis_income(w, s)
+            w.line(48.4, "(3) 指定提前現金交割金額：請參閱中文產品說明書。")
+            return
         para(
             f"(1) 配息金額：每單位商品面額乘以每月之配息率（為{s.monthly_value}%(顯示至小數點後第4位)，"
             f"即年利率為{s.annual}%）所計算之配息金額。"

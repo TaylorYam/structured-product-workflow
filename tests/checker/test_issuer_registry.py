@@ -32,7 +32,7 @@ FAMILY_SPECS = {
     "SG": [("sg_synth", "Spec"), ("sg_synth", "DacnSpec")],
     "NOMURA": [("nomura_synth", "Spec"), ("nomura_synth", "DacnSpec")],
     "NATIXIS": [("natixis_synth", "Spec"), ("natixis_synth", "DacnSpec")],
-    "BARC": [("barc_synth", "Spec"), ("barc_synth", "StepdownSpec")],
+    "BARC": [("barc_synth", "Spec"), ("barc_synth", "StepdownSpec"), ("barc_synth", "DacnSpec")],
     "CA": [("ca_synth", "Spec"), ("ca_synth", "SbSpec"), ("ca_synth", "BenSpec")],
     "DBS": [("dbs_synth", "Spec"), ("dbs_synth", "DacnSpec")],
 }
@@ -139,6 +139,8 @@ CLAIM_MARKS = [
     ("NATIXIS", "natixis_synth", "iis", "「變動配息金額」"),
     ("DBS", "dbs_synth", "pd", "其區間下限價格"),
     ("DBS", "dbs_synth", "iis", "其區間下限價格"),
+    ("BARC", "barc_synth", "pd", "配息門檻"),
+    ("BARC", "barc_synth", "iis", "配息門檻"),
 ]
 
 

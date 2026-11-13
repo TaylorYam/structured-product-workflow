@@ -1,4 +1,5 @@
-"""BARC 說明書第一章 §13 的配息表與自動提前出場表（範本規格 §4.2、§4.3、§5.2、§5.3）。
+"""BARC 說明書第一章 §13 的配息表與自動提前出場表（範本規格 §4.2、§4.3、§5.2、§5.3）；DACN 的配息觀察期表在 §14
+（`tables_in` 搭配 `DACN_KEYS`，barc-zh-dacn 範本規格 §4.3）。
 
 表格是「每格一行文字」攤平輸出：先找表頭（同頁、y 相近的一組表頭文字），
 列首為 x<80 的期別 t（依 1、2、3… 連號），儲存格依表頭 x 中心指派；表格可能跨頁。
@@ -29,6 +30,14 @@ HEADER_KEYS = {
     "自動提前出場觸發百分比": "trigger",
     "指定提前現金贖回日": "early_redemption",
 }
+# DACN §14 配息觀察期表（期始日、期末日、預定交易日日數 Nt、配息支付日）：Nt 欄讀整數，不核對；兩層表頭（「配息觀察期*」
+# 下面才是期始日、期末日），上下兩層相差約 20 pt
+DACN_HEADER_DY = 25.0
+DACN_KEYS = {
+    **HEADER_KEYS,
+    "配息支付日t†*": "payment",
+    "預定交易日日數(Nt)": "days",
+}
 _ROW_MAX_X = 80.0
 _STOP_MAX_X = 100.0
 _HEADER_DY = 15.0
@@ -42,7 +51,7 @@ NA = "N/A"
 @dataclass
 class Cell:
     text: str
-    value: dt.date | Decimal | str | None  # 日期、百分比、"N/A"；無法辨識為 None
+    value: dt.date | Decimal | int | str | None  # 日期、百分比、整數（`days` 欄）、"N/A"；無法辨識為 None
     noncallable: bool = False  # 註記「(非自動提前出場評價日)」
 
 
@@ -66,9 +75,11 @@ class Table:
     issues: list[str] = field(default_factory=list)
 
 
-def _cell(text: str) -> Cell:
+def _cell(text: str, key: str = "") -> Cell:
     if text == NA:
         return Cell(text, NA)
+    if key == "days":
+        return Cell(text, int(text) if text.isdigit() else None)
     if "非自動提" in text:
         return Cell(text, parse_date(text), noncallable=True)
     m = _PCT_RE.match(text)
@@ -77,14 +88,16 @@ def _cell(text: str) -> Cell:
     return Cell(text, parse_date(text))
 
 
-def _header_groups(lines: list[Line]) -> list[tuple[int, list[tuple[int, Line]]]]:
-    """回傳 [(表頭最後一行的索引, [(索引, 表頭行)…])]；同頁且 y 相差 ≤ 15 pt 視為同一組表頭。"""
+def _header_groups(
+    lines: list[Line], keys: dict[str, str], dy: float = _HEADER_DY
+) -> list[tuple[int, list[tuple[int, Line]]]]:
+    """回傳 [(表頭最後一行的索引, [(索引, 表頭行)…])]；同頁且 y 相差 ≤ `dy`（預設 15 pt）視為同一組表頭。"""
     groups: list[list[tuple[int, Line]]] = []
     for i, ln in enumerate(lines):
-        if ln.text not in HEADER_KEYS:
+        if ln.text not in keys:
             continue
         g = groups[-1] if groups else None
-        if g and g[-1][1].page == ln.page and abs(g[-1][1].y0 - ln.y0) <= _HEADER_DY and i - g[-1][0] <= 6:
+        if g and g[-1][1].page == ln.page and abs(g[-1][1].y0 - ln.y0) <= dy and i - g[-1][0] <= 6:
             g.append((i, ln))
         else:
             groups.append([(i, ln)])
@@ -103,8 +116,10 @@ def _classify(keys: set[str]) -> str | None:
     return None
 
 
-def _rows(lines: list[Line], after: int, header: list[Line]) -> tuple[list[ScheduleRow], list[str]]:
-    cols = [(HEADER_KEYS[h.text], h) for h in header]
+def _rows(
+    lines: list[Line], after: int, header: list[Line], keys: dict[str, str]
+) -> tuple[list[ScheduleRow], list[str]]:
+    cols = [(keys[h.text], h) for h in header]
     header_ids = {id(h) for h in header}
     rows: list[ScheduleRow] = []
     issues: list[str] = []
@@ -116,8 +131,9 @@ def _rows(lines: list[Line], after: int, header: list[Line]) -> tuple[list[Sched
             row_lines = [ln]
             cells: dict[str, Cell] = {}
             j = i + 1
-            # 同列儲存格：直到下一個列首或停止行；換行的註記（y 不同）略過
-            while j < len(lines) and lines[j].x0 >= _STOP_MAX_X:
+            # 同列儲存格：直到下一個列首或停止行；換行的註記（y 不同）略過。和列首同一 y、x ≥ 80 的也是儲存格（DACN §14
+            # 的期始日欄靠右對齊、寬的日期伸到 x < 100）
+            while j < len(lines) and (lines[j].x0 >= _STOP_MAX_X or _same_row(lines[j], ln)):
                 j += 1
             for c in lines[i + 1 : j]:
                 if c.page != ln.page or abs(c.y0 - ln.y0) > _ROW_DY:
@@ -126,7 +142,7 @@ def _rows(lines: list[Line], after: int, header: list[Line]) -> tuple[list[Sched
                 if abs(h.xc - c.xc) > _CELL_DX or key in cells:
                     issues.append(f"第 {expect} 期儲存格「{c.text}」無法對應到唯一欄位")
                 else:
-                    cells[key] = _cell(c.text)
+                    cells[key] = _cell(c.text, key)
                 row_lines.append(c)
             missing = [k for k, _ in cols if k not in cells]
             bad = [k for k, c in cells.items() if c.value is None]
@@ -142,30 +158,39 @@ def _rows(lines: list[Line], after: int, header: list[Line]) -> tuple[list[Sched
     return rows, issues
 
 
+def _same_row(c: Line, label: Line) -> bool:
+    return c.x0 >= _ROW_MAX_X and c.page == label.page and abs(c.y0 - label.y0) <= _ROW_DY
+
+
 def find_tables(doc: Document, art13: Span | None) -> list[Table]:
     """§13 第 (6) 項起至第 (8) 項前的所有表格。"""
     subs = doc.subitems(art13)
     if 6 not in subs or 8 not in subs:
         return []
-    lines = doc.lines[subs[6].start : subs[8].start]
+    return tables_in(doc.lines[subs[6].start : subs[8].start])
+
+
+def tables_in(lines: list[Line], keys: dict[str, str] = HEADER_KEYS, header_dy: float = _HEADER_DY) -> list[Table]:
+    """`lines` 範圍內的所有表格；`keys` 是表頭文字 → 欄位鍵、`header_dy` 是同一組表頭上下相差的上限（DACN §14 用
+    `DACN_KEYS`、`DACN_HEADER_DY`）。"""
     tables: list[Table] = []
-    for last, group in _header_groups(lines):
+    for last, group in _header_groups(lines, keys, header_dy):
         header = [ln for _, ln in group]
-        keys = [HEADER_KEYS[h.text] for h in header]
-        kind = _classify(set(keys))
-        if kind is None or len(set(keys)) != len(keys):
+        cols = [keys[h.text] for h in header]
+        kind = _classify(set(cols))
+        if kind is None or len(set(cols)) != len(cols):
             continue
-        rows, issues = _rows(lines, last, header)
-        tables.append(Table(kind, keys, rows, header, issues))
+        rows, issues = _rows(lines, last, header, keys)
+        tables.append(Table(kind, cols, rows, header, issues))
     return tables
 
 
-def _table_field(name: str, tables: list[Table], kinds: tuple[str, ...]) -> ParsedField:
+def _table_field(name: str, tables: list[Table], kinds: tuple[str, ...], where: str = "第 13 條") -> ParsedField:
     hits = [t for t in tables if t.kind in kinds]
     if not hits:
-        return ParsedField.missing(name, "第 13 條找不到對應表格")
+        return ParsedField.missing(name, f"{where}找不到對應表格")
     if len(hits) > 1:
-        return ParsedField.ambiguous(name, [], [h for t in hits for h in t.header], "第 13 條出現多張同類表格")
+        return ParsedField.ambiguous(name, [], [h for t in hits for h in t.header], f"{where}出現多張同類表格")
     t = hits[0]
     ev = t.header + [ln for r in t.rows for ln in r.lines]
     if not t.rows:
@@ -175,9 +200,9 @@ def _table_field(name: str, tables: list[Table], kinds: tuple[str, ...]) -> Pars
     return ParsedField.present(name, t, ev)
 
 
-def coupon_table(tables: list[Table]) -> ParsedField:
-    """配息評價日／支付日表；觀察期合併表以期末日為評價日。"""
-    f = _table_field("coupon_table", tables, ("coupon", "combined"))
+def coupon_table(tables: list[Table], where: str = "第 13 條") -> ParsedField:
+    """配息評價日／支付日表；觀察期合併表（含 DACN §14 配息觀察期表）以期末日為評價日。"""
+    f = _table_field("coupon_table", tables, ("coupon", "combined"), where)
     if f.ok and f.value.kind == "combined":  # 複製一份，不改動兼作提前出場表的同一張表
         t = f.value
         rows = [ScheduleRow(r.t, {**r.cells, "valuation": r.cells["end"]}, r.lines) for r in t.rows]
@@ -242,7 +267,9 @@ def _observation_block(doc: Document, art13: Span | None) -> list[Line] | Parsed
     if 7 not in subs:
         return ParsedField.missing("observation_period", "找不到第 13 條第 (7) 項")
     lines = doc.span_lines(subs[7])
-    starts = [i for i, ln in enumerate(lines) if ln.text.startswith("自動提前出場觀察期：")]
+    # DACN 在表前多一行只有表名的「自動提前出場觀察期：」（barc-zh-dacn 範本規格 §7），不是定義句
+    label = "自動提前出場觀察期："
+    starts = [i for i, ln in enumerate(lines) if ln.text.startswith(label) and squash(ln.text) != label]
     if len(starts) != 1:
         return ParsedField.missing("observation_period", "第 13 條第 (7) 項沒有「自動提前出場觀察期：」定義句")
     i = starts[0]

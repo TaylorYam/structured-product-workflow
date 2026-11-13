@@ -83,12 +83,15 @@ def monthly_coupon(ctx: IssuerContext) -> CheckResult:
 
 
 def coupon_consistency(ctx: IssuerContext) -> list[CheckResult]:
-    """月配息率在 §9(1)、§14、§15(2)、§17(1) 相同；年利率在 §9(1)、§14、§17(1) 相同。"""
+    """月配息率在 §9(1)、§14、§15(2)、§17(1) 相同；年利率在 §9(1)、§14、§17(1) 相同（出處由 parser 交出；BARC DACN 沒有
+    年利率，出處是空的就不比）。"""
     rid = "doc.coupon_consistency"
     out = []
     for kind, field, name in (("monthly", "monthly_coupon_pct", "月配息率 %"), ("annual", "coupon_pa_pct", "年利率 %")):
         check = Check(rid, field, Item.expected(name), ctx.document)
         mentions = ctx.ts.coupon_mentions[kind]
+        if not mentions:
+            continue
         evidence = [Evidence.of(ln) for m in mentions for ln in m.lines]
         missing = [m.article for m in mentions if m.value.is_nan()]
         if missing:
@@ -386,13 +389,17 @@ def coupon_repeats(ctx: IssuerContext) -> list[CheckResult]:
     return out
 
 
-def scenario_returns(ctx: IssuerContext) -> list[CheckResult]:
+SCENARIOS = (("scenario_favourable", "有利情況"), ("scenario_general", "一般情況"))
+
+
+def scenario_returns(ctx: IssuerContext, cases: tuple[tuple[str, str], ...] = SCENARIOS) -> list[CheckResult]:
     """§16(3) 有利情況：總報酬率 = 月配息率 × 配息期數；一般情況：總報酬率 = 月配息率 × 總期數。一般情況平均年化報酬率
-    = 年利率由共用情境規則 `scenario.params` 核對（Issue #294）；有利情況的年化率取決於持有期間，不核對（列未涵蓋）。"""
+    = 年利率由共用情境規則 `scenario.params` 核對（Issue #294）；有利情況的年化率取決於持有期間，不核對（列未涵蓋）。
+    `cases` 是要核對的情境（BARC DACN 的一般情況依計息天數假設算出，只核有利情況）。"""
     rid = "doc.scenario_returns"
     monthly, table = ctx.ts.f("monthly_coupon_pct"), ctx.ts.f("coupon_table")
     out = []
-    for name, label in (("scenario_favourable", "有利情況"), ("scenario_general", "一般情況")):
+    for name, label in cases:
         pf, general = ctx.ts.f(name), name == "scenario_general"
         total_check = Check(rid, f"{name}_total", Item.expected(f"{label}總報酬率"), ctx.document)
         total_check = total_check.needs(*((pf, table, monthly) if general else (pf, monthly)))
@@ -458,9 +465,11 @@ def run_all(
 
 
 def document_rules(
-    ctx: IssuerContext, trigger: Callable[[IssuerContext], CheckResult] = trigger_per_period
+    ctx: IssuerContext,
+    trigger: Callable[[IssuerContext], CheckResult] = trigger_per_period,
+    scenarios: tuple[tuple[str, str], ...] = SCENARIOS,
 ) -> list[CheckResult]:
-    """說明書內部規則：不使用參考條件表的值。"""
+    """說明書內部規則：不使用參考條件表的值（`trigger` 見 `run_all`、`scenarios` 見 `scenario_returns`）。"""
     return [
         *coupon_consistency(ctx),
         *autocall_dates(ctx),
@@ -470,6 +479,6 @@ def document_rules(
         currency_consistency(ctx),
         *price_header_pct(ctx),
         *coupon_repeats(ctx),
-        *scenario_returns(ctx),
+        *scenario_returns(ctx, scenarios),
         observation_t_range(ctx),
     ]
