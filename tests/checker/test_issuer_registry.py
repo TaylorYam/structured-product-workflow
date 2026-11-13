@@ -31,7 +31,7 @@ FAMILY_SPECS = {
     "BNP": [("bnp_synth", "Spec"), ("bnp_synth", "SbSpec")],
     "SG": [("sg_synth", "Spec"), ("sg_synth", "DacnSpec")],
     "NOMURA": [("nomura_synth", "Spec"), ("nomura_synth", "DacnSpec")],
-    "NATIXIS": [("natixis_synth", "Spec"), ("natixis_synth", "DacnSpec")],
+    "NATIXIS": [("natixis_synth", "Spec"), ("natixis_synth", "DacnSpec"), ("natixis_synth", "StepdownSpec")],
     "BARC": [("barc_synth", "Spec"), ("barc_synth", "StepdownSpec"), ("barc_synth", "DacnSpec")],
     "CA": [("ca_synth", "Spec"), ("ca_synth", "SbSpec"), ("ca_synth", "BenSpec")],
     "DBS": [("dbs_synth", "Spec"), ("dbs_synth", "DacnSpec")],

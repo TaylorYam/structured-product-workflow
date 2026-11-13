@@ -7,6 +7,7 @@
 - `ko_step_pct`：相鄰兩期的差（每期相同且大於 0）；不是固定降幅時不合法，上手的範本辨識據此轉人工（範本不支援）；
 - 各標的第 1 期 KO 價：說明書沒有 KO 價欄時 = 最初價格 × 第 1 期 KO%，四捨五入（half-up）到 4 位；
 - 每日型（D）的提前出場排程：每一期期末日都列（比價時才知道每一期從哪天到哪天）。
+- 每期 KO% 的期數須 = 提前出場排程第 k 期到末期的期數（`matching_periods`，workflow #545）；不符時轉人工。
 """
 
 from __future__ import annotations
@@ -58,6 +59,32 @@ def ko_terms(rows: Sequence[tuple[Decimal | None, Sequence[Line]]], where: str) 
         step = ParsedField("ko_step_pct", FieldStatus.PRESENT, steps[0], evidence)
         return {"ko_levels": level_field, "ko_pct": ko_pct, "ko_step_pct": step}
     return {"ko_levels": level_field, "ko_pct": ko_pct, "ko_step_pct": ParsedField.invalid("ko_step_pct", [], note)}
+
+
+def apply_ko_terms(fields: dict[str, ParsedField], terms: dict[str, ParsedField]) -> None:
+    """把上手讀出的每期 KO%（`ko_terms` 的結果）放進說明書欄位（就地改 `fields`）：期數須對上提前出場排程
+    （`matching_periods`），再推得各標的第 1 期 KO 價（`with_ko_prices`）與 D 型每一期的比價日（`every_period`）。
+    `fields` 要有 `autocall_schedule`、`schedule_table`、`underlying_prices`。"""
+    fields.update(matching_periods(terms, fields["autocall_schedule"]))
+    fields["underlying_prices"] = with_ko_prices(fields["underlying_prices"], fields["ko_pct"])
+    fields["autocall_schedule"] = every_period(fields["autocall_schedule"], fields["schedule_table"])
+
+
+def matching_periods(terms: dict[str, ParsedField], schedule: ParsedField) -> dict[str, ParsedField]:
+    """每期 KO% 的期數須 = 提前出場排程第 k 期到末期的期數（期數 − Non-Call + 1，ADR 0033 的 KO 期別）；不符時三個欄位
+    都不合法（轉人工覆核），以免第 n 期 KO% 對錯比價日。KO% 或排程讀不到時原樣交回（各自已轉人工）。"""
+    levels = terms["ko_levels"]
+    if not (levels.ok and schedule.ok):
+        return terms
+    sched: AutocallSchedule = schedule.value
+    expected = sched.periods - sched.first_callable + 1
+    if len(levels.value) == expected:
+        return terms
+    note = (
+        f"讀到 {len(levels.value)} 期 KO%，提前出場排程是第 {sched.first_callable}～{sched.periods} 期"
+        f"（{expected} 期），期別對不上"
+    )
+    return _bad(FieldStatus.INVALID, levels.evidence, note)
 
 
 def step_problem(fields: dict[str, ParsedField]) -> str:

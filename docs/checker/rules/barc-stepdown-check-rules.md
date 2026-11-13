@@ -25,7 +25,7 @@
 
 | 檢查 | 規則 |
 |---|---|
-| 開放 | `[auto_check_products]` 的 `FCN_Stepdown = ["BARC"]`；沒開放的上手照未開放商品轉人工 |
+| 開放 | `[auto_check_products]` 的 `FCN_Stepdown` 含 `BARC`；沒開放的上手照未開放商品轉人工 |
 | 範本版本 | 寫法和範本規格 §4 不同 → 不支援的範本版本（`template.detect`，原因 `template_unsupported`），錯訊列出不成立的條件 |
 | 商品種類一致 | 辨識到的範本商品家族 ≠ Product → 轉人工覆核（共用 `template.product_family`）；Product 空白視為 FCN |
 | 不支援樣態 | 照 BARC FCN（KI 每期觀察） |
@@ -50,7 +50,7 @@
 | 每期 KO% | 說明書第 n 期 KO% = 表上 `KO(%)` − `KO降幅(%)` ×（n − 1），逐期比；不一致時列出哪幾期（`field.ko_levels`）。表上兩欄有一欄讀不到 → 轉人工覆核 |
 | 起始 KO% | 第 1 期 = 表上 `KO(%)`（共用 `field.ko_pct`，同 FCN） |
 
-只有一定要有 KO 降幅的商品（`ProductRule.ko_step_required`：FCN_Stepdown、Snowball_Stepdown）產生這兩項；表上降幅不是大於 0 的數字也轉人工覆核。降幅可以空白的 Snowball 未開放自動核對，不產生結果；其他商品也不產生結果。說明書 KO% 不是每期固定往下降時在範本辨識就轉人工（§3.1），不會走到這裡。
+只有一定要有 KO 降幅的商品（`ProductRule.ko_step_required`：FCN_Stepdown、Snowball_Stepdown）產生這兩項；表上降幅不是大於 0 的數字也轉人工覆核。降幅可以空白的 Snowball 未開放自動核對，不產生結果；其他商品也不產生結果。說明書 KO% 不是每期固定往下降時在範本辨識就轉人工（§3.1），不會走到這裡。讀出的 KO% 期數 ≠ 提前出場排程第 k 期到末期的期數時，三個欄位都讀不出、轉人工覆核（共用 `stepdown.matching_periods`，workflow #545 加入，[共用核對規則](shared-check-rules.md) §11）。
 
 ### 3.4 比價日（D 型）
 

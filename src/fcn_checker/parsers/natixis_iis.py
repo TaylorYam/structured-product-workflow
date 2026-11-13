@@ -36,6 +36,9 @@ RATINGS = (
 # 貳 2. KO 定義的兩種寫法：寫出 %，或沒寫 %（參照說明書第一章第 14 項，投資人須知不核對 KO %）
 KO_DEF_PCT = r"期初進場價格之(\d+(?:\.\d+)?)%"
 KO_DEF_INITIAL = "中文產品說明書第一章第14項所列之期初進場價格"
+KO_DEF = (
+    r"自動提前到期贖回價格為(.{0,40}?期初進場價格(?:之\d+(?:\.\d+)?%)?)"  # KO 價格定義句；第 1 組是寫法（上面兩種）
+)
 SECTIONS = (
     "本商品之投資風險警語",
     "壹、相關機構",
@@ -188,9 +191,7 @@ def _product_terms(ti: TextIndex, fields: dict[str, ParsedField], provided: set[
     fields["strike_pct"] = iis.capture("strike_pct", st, natixis.STRIKE_DEF, Decimal)
     # KO 價格定義：「期初進場價格之Y%」→ ko_pct = Y；寫成「…所列之期初進場價格」（沒有 %）是參照說明書第一章第 14 項，
     # 不交出 ko_pct、不核對 KO %（2026-10-15 確認，Issue #272）
-    found = list(
-        st.finditer(r"自動提前到期贖回價格為(.{0,40}?期初進場價格(?:之\d+(?:\.\d+)?%)?)")
-    )  # 值的兩種寫法見 KO_DEF_PCT／KO_DEF_INITIAL
+    found = list(st.finditer(KO_DEF))
     if len(found) != 1:
         fields["ko_definition"] = ParsedField.missing(
             "ko_definition", "找不到或有多處「自動提前到期贖回價格為…期初進場價格」"

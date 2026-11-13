@@ -7,6 +7,7 @@ review_standard.iis_review_standard_rules）。KO 定義寫了 % 時由共用規
 from __future__ import annotations
 
 import re
+from collections.abc import Callable
 
 from ..investor_sheet import read_iis
 from ..parsers.natixis_iis import KO_DEF_INITIAL, KO_DEF_PCT
@@ -42,9 +43,12 @@ def ko_final_day_terms(ctx: IisIssuerContext) -> list[CheckResult]:
     return [ko_final_day(ctx.document, trade, read_iis(ctx.sheet, "ko_final_day"), "貳、商品事項 ")]
 
 
-def run_all(ctx: IisIssuerContext) -> list[CheckResult]:
+def run_all(
+    ctx: IisIssuerContext, *, ko_check: Callable[[IisIssuerContext], CheckResult] = ko_definition
+) -> list[CheckResult]:
+    """`ko_check` 換掉 KO 價格定義的核對（FCN_Stepdown 只接受參照說明書第 14 項，workflow #545）。"""
     return [
-        ko_definition(ctx),
+        ko_check(ctx),
         *ko_final_day_terms(ctx),
         *distributor_code(ctx, read_iis(ctx.sheet, "distributor_code")),
     ]

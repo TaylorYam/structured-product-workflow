@@ -40,6 +40,7 @@ from .parsers import (
     ms_iis,
     natixis_dacn_iis,
     natixis_iis,
+    natixis_stepdown_iis,
     nomura_dacn_iis,
     nomura_iis,
     sg_dacn_iis,
@@ -65,6 +66,7 @@ from .parsers import ms as ms_parser
 from .parsers import ms_ben as ms_ben_parser
 from .parsers import natixis as natixis_parser
 from .parsers import natixis_dacn as natixis_dacn_parser
+from .parsers import natixis_stepdown as natixis_stepdown_parser
 from .parsers import nomura as nomura_parser
 from .parsers import nomura_dacn as nomura_dacn_parser
 from .parsers import sg as sg_parser
@@ -109,6 +111,8 @@ from .rules import natixis as natixis_rules
 from .rules import natixis_dacn as natixis_dacn_rules
 from .rules import natixis_dacn_iis as natixis_dacn_iis_rules
 from .rules import natixis_iis as natixis_iis_rules
+from .rules import natixis_stepdown as natixis_stepdown_rules
+from .rules import natixis_stepdown_iis as natixis_stepdown_iis_rules
 from .rules import nomura as nomura_rules
 from .rules import nomura_dacn as nomura_dacn_rules
 from .rules import nomura_dacn_iis as nomura_dacn_iis_rules
@@ -591,6 +595,29 @@ NATIXIS_DACN = Template(
     products=frozenset({DACN}),
 )
 
+# Natixis FCN_Stepdown（workflow #545）：和 Natixis FCN 同一家上手、不同範本（依第 14 項「為下表所列之期初進場價格」與每期 KO 表
+# 辨識，排在 Natixis DACN、FCN 前面）
+NATIXIS_STEPDOWN = Template(
+    code=natixis_rules.ISSUER,
+    template_id=natixis_stepdown_parser.TEMPLATE_ID,
+    label="Natixis FCN_Stepdown 中文產品說明書",
+    parser_version=natixis_stepdown_parser.PARSER_VERSION,
+    not_covered=tuple(natixis_stepdown_rules.NOT_COVERED),
+    detect=natixis_stepdown_parser.detect,
+    read=natixis_stepdown_parser.read,
+    rules=natixis_stepdown_rules.run_all,
+    iis=IisTemplate(
+        template_id=natixis_stepdown_iis.TEMPLATE_ID,
+        label="Natixis FCN_Stepdown 中文投資人須知",
+        parser_version=natixis_stepdown_iis.PARSER_VERSION,
+        detect=natixis_stepdown_iis.detect,
+        read=natixis_stepdown_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=natixis_stepdown_iis_rules.run_all,
+    ),
+    products=frozenset({FCN_STEPDOWN}),
+)
+
 CA = Template(
     code=ca_rules.ISSUER,
     template_id=ca_parser.TEMPLATE_ID,
@@ -748,7 +775,12 @@ REGISTRY: tuple[Issuer, ...] = (
     Issuer(JPM.code, (JPM,), reference_fields=jpm_rules.REFERENCE_FIELDS, ratings=True),
     Issuer(NOMURA.code, (NOMURA_DACN, NOMURA), ratings=True),
     Issuer(GS.code, (GS,), reference_fields=gs_rules.REFERENCE_FIELDS, ratings=True),
-    Issuer(NATIXIS.code, (NATIXIS_DACN, NATIXIS), reference_fields=natixis_rules.REFERENCE_FIELDS, ratings=True),
+    Issuer(
+        NATIXIS.code,
+        (NATIXIS_STEPDOWN, NATIXIS_DACN, NATIXIS),
+        reference_fields=natixis_rules.REFERENCE_FIELDS,
+        ratings=True,
+    ),
     Issuer(
         CA.code,
         (CA_BEN, CA_SUPER_BULL, CA),

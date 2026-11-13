@@ -280,6 +280,8 @@ def reference_row(spec: ProductSpec, **overrides: Any) -> dict[str, Any]:
 
 PRICING = {"close": "收盤價", "open": "開盤價", "vwap": "VWAP"}  # 期初定價方式 → 參考條件表「期初定價」的寫法
 DACN_PRODUCT = "DACN"  # DACN 在參考條件表 Product 欄的寫法（也是審查標準商品名稱表的鍵）
+STEPDOWN_PRODUCT = "FCN_Stepdown"  # FCN_Stepdown 的 Product 寫法（也是審查標準商品名稱表的鍵，ADR 0033）
+STEPDOWN_HEADERS = [*REFERENCE_HEADERS, "KO降幅(%)"]  # Stepdown 參考條件表多 KO 降幅欄
 
 
 def set_pricing(row: dict[str, Any], pricing: str, count: int) -> None:
