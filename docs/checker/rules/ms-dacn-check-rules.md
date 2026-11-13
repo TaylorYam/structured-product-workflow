@@ -3,7 +3,7 @@
 - 文件側：[MS DACN 範本規格](../templates/ms-zh-dacn.md)（`ms-zh-dacn-pd`）、[MS DACN 投資人須知範本規格](../templates/ms-zh-dacn-iis.md)（`ms-zh-dacn-iis`）
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [MS DACN 下單資料格式](../order-formats/ms-dacn-reference.md)
 - 商品：DACN（workflow ADR 0030、#366、#367）；第二波開放順序 Barclays → BNP → UBS → MS（路線圖 #551），本文件是 MS（workflow #550）
-- 狀態：已實作（workflow #550）；情境二～四的區間計息驗算（§3.7）是規格（workflow #578，路線圖 #575，實作另開 PR；實作前照 #550 只核固定期配息與 X）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記不做（路線圖 #551 指示，同 DACN／BEN 第一波）**（§7）
+- 狀態：已實作（workflow #550；情境二～四的區間計息驗算 §3.7 是 workflow #578，路線圖 #575）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記不做（路線圖 #551 指示，同 DACN／BEN 第一波）**（§7）
 - 本文件只寫和 [MS 核對規則](ms-check-rules.md)（FCN）不同或 DACN 特有的部分。沒提到的（審查標準、MS 版本固定警語與次數、受託機構、發行機構、信用評等、商品種類、幣別、費率、最低金額、發行價格、受託機構商品代號、開始受理贖回日期、名稱一致、標的代號、價格推算、KO／記憶式／KI 的內部一致、D 型日期表與比價日、期數與 `j 係為a 至N`、情境標題、假設與重印表、較差情境執行價）照 MS FCN D 型。共用的 DACN 規則（配息門檻、商品種類一致、沒有樣本的型態轉人工、保證期數 = Non-Call）和第一波 DACN、[Barclays DACN](barc-dacn-check-rules.md)、[BNP DACN](bnp-dacn-check-rules.md)、[UBS DACN](ubs-dacn-check-rules.md) 相同
 
 ## 1. 範圍
@@ -158,11 +158,11 @@
 | 內容 | 位置 |
 |---|---|
 | 範本辨識與讀出 | `parsers/ms_dacn.py`、`parsers/ms_dacn_iis.py`：照 `parsers/ms.py`、`ms_iis.py` 讀出（骨架條件共用、名稱條件由呼叫端給），另讀配息門檻（執行價表頭 %，證據附 n(j) 定義）、保證期數 g、投資人須知 g |
-| 情境 | `parsers/ms_scenario.py`、`rules/ms_scenario.py`：區分有 `×（n/M）` 的情境（#550 只核固定期配息與 X；workflow #578 另讀最後一步的區間計息算式與損益各項，驗算每期配息與損益加總，年化報酬率不核；每期配息與加總沿用 `rules/dacn.py` 的共用 n/M 配息算法 `accrual_coupon`、`CouponLeg`／`coupon_total`（路線圖 #575，#579），不另寫），沒有的照 FCN；較差情境執行價多認 DACN 句型；FCN 結果不變 |
+| 情境 | `parsers/ms_scenario.py`、`rules/ms_scenario.py`：區分有 `×（n/M）` 的情境（#550 只核固定期配息與 X；workflow #578 另讀最後一步的區間計息算式、損益各項與假設段的配息次數（`Scenario.accruals`、`pnl_sums`、`paid`），交出 `情境N_accrual`、`情境N_pnl`，年化報酬率不核；每期配息與加總沿用 `rules/dacn.py` 的共用 n/M 配息算法 `accrual_coupon`、`CouponLeg`／`coupon_total`（路線圖 #575，#579），不另寫），沒有的照 FCN；較差情境執行價多認 DACN 句型；FCN 結果不變 |
 | 上手註冊 | `issuers.py` 登記 `MS_DACN`（`products=frozenset({DACN})`，上手代號同 `MS`），排在 `MS_BEN`、`MS` 前面 |
 | 規則 | `rules/ms_dacn.py`（§3.1 型態宣告、§3.5 保證期數與第 18 項情境的 g，其餘沿用 `rules/ms.py`）、`rules/ms_dacn_iis.py`（§3.8，`dacn.iis_guaranteed_periods`） |
 | 設定 | `[auto_check_products]` 的 `DACN` 加 `MS`（版本 +1）；審查標準加 `[issuer.ms.product_names.DACN]`（版本 +1） |
-| 測試 | 合成 PDF（`tests/checker/ms_synth.py` 加 DACN 版）；§7 的反例（`tests/checker/test_check_ms_dacn.py`）；本機真實樣本辨識與讀取測試（`tests/checker/test_real_ms_dacn.py`，`FCN_DACN_DIR` 指向本機樣本，不進 repo）；試跑（§6） |
+| 測試 | 合成 PDF（`tests/checker/ms_synth.py` 加 DACN 版）；§7 的反例（`tests/checker/test_check_ms_dacn.py`，情境二～四的區間計息驗算反例是 workflow #578）；本機真實樣本辨識與讀取測試（`tests/checker/test_real_ms_dacn.py`，`FCN_DACN_DIR` 指向本機樣本，不進 repo）；試跑（§6） |
 
 ## 9. 決策紀錄
 

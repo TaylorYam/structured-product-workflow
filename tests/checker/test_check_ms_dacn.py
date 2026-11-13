@@ -1,4 +1,4 @@
-"""MS DACN 黑箱回歸（workflow #550）：合成說明書與投資人須知（ms_synth.DacnSpec）經批量入口核對。
+"""MS DACN 黑箱回歸（workflow #550；情境二～四區間計息驗算 #578）：合成說明書與投資人須知（ms_synth.DacnSpec）經批量入口核對。
 
 反例依 docs/checker/rules/ms-dacn-check-rules.md §7：正式條款正確、但其他出處錯時只判那一處。
 """
@@ -28,6 +28,9 @@ from reference_synth import DACN_PRODUCT, REFERENCE_HEADERS, build_reference_she
 # 美元、區間計息算式 ×（10/20）= 50.00 美元；情境二～四年化報酬率 9.00%、7.50%、-117.00%）、執行價 = 配息門檻 70%
 D0 = DacnSpec()
 WITH_BARRIER = [*REFERENCE_HEADERS, "配息門檻(%)"]
+# D0 情境二區間計息算式（前半段左邊是文字、最後一步才是數字）與損益算式
+ACCRUAL_2 = "x（10/20） = 10,000.00 美元×1.0000%×（10/20） = 50.00 美元"
+PNL_2 = "= 10,000.00 美元+100.00 美元x1+50.00 美元-10,000.00 美元 = 150.00 美元"
 
 FAMILY = CHECKS.family(D0)  # 單份核對殼（harness.SynthChecks）：預設 D0、參考條件表預設沒有配息門檻欄
 check_pair, check = FAMILY.check_pair, FAMILY.check
@@ -36,6 +39,12 @@ check_pair, check = FAMILY.check_pair, FAMILY.check
 def lines_of(path: Path):
     with fitz.open(path) as doc:
         return extract_lines(doc)
+
+
+def scenario_problems(report) -> dict[str, S]:
+    """`doc.scenario_calculations` 不是 PASS 的欄位與狀態（其他規則要全部通過）。"""
+    assert {r for r, _, _ in problems(report)} <= {"doc.scenario_calculations"}, problems(report)
+    return {x.field: x.status for x in rule(report, "doc.scenario_calculations") if x.status != S.PASS}
 
 
 def only(report, rule_id: str, status: S = S.MISMATCH) -> None:
@@ -88,10 +97,13 @@ def test_supported_dacn_pairs_pass_and_fill(tmp_path, spec, headers):
     assert rule(iis.report, "iis.guaranteed_periods")[0].status == S.PASS
     # 第 15 項的出處：固定配息率與 {X%×n(j)/N(j)} 各一筆
     assert len(rule(ts.report, "derive.monthly_coupon")) == 2
-    # 情境四個（不含無法履約）各有 g；有區間計息的情境二～四只核固定期配息，損益與年化報酬率不核
+    # 情境四個（不含無法履約）各有 g；有區間計息的情境二～四另驗算區間計息每期配息與損益加總（#578），年化報酬率不核
     assert len(rule(ts.report, "doc.scenario_guaranteed_periods")) == 4
-    fields = {x.field for x in rule(ts.report, "doc.scenario_calculations")}
-    assert fields == {"情境一_coupon", "情境一_pnl", "情境二_coupon", "情境三_coupon", "情境四_coupon"}
+    calcs = {x.field: x for x in rule(ts.report, "doc.scenario_calculations")}
+    accrual = {f"情境{n}_{k}" for n in "二三四" for k in ("coupon", "accrual", "pnl")}
+    assert set(calcs) == {"情境一_coupon", "情境一_pnl", *accrual}
+    assert calcs["情境二_accrual"].expected == calcs["情境三_accrual"].expected == spec.accrued
+    assert calcs["情境四_accrual"].expected == 0
     annualized = [x for x in ts.report.results if x.field.startswith("scenario_annualized_return")]
     assert len(annualized) == 1 and "情境一" in annualized[0].item.name
 
@@ -248,7 +260,7 @@ def test_barrier_evidence_cites_the_accrual_definition(tmp_path):
     [
         (Edit("{1.0000%×n(j)/N(j)}", "{1.1000%×n(j)/N(j)}", "ts.art15"), "derive.monthly_coupon"),
         (Edit("1.0000%x（10/20）", "1.1000%x（10/20）", "ts.scen.二"), "scenario.params"),
-        (Edit("1.0000%×（10/20）", "1.1000%×（10/20）", "ts.scen.三"), "scenario.params"),
+        (Edit("面額×1.0000%×（10/20）", "面額×1.1000%×（10/20）", "ts.scen.三"), "scenario.params"),
         (Edit("浮動配息率（1.0000%）", "浮動配息率（1.1000%）", "ts.scen.四"), "scenario.params"),
         (Edit("固定配息率（1.0000%）", "固定配息率（1.1000%）", "ts.scen.二"), "scenario.params"),
     ],
@@ -278,26 +290,151 @@ def test_fixed_period_coupon_of_accrual_scenarios_is_checked(tmp_path, scenario)
     assert mismatched == [f"情境{scenario}_coupon"]
 
 
-def test_accrual_assumptions_of_scenarios_are_not_checked(tmp_path):
-    """情境二～四的 n/M、依天數算出的配息、損益與年化報酬率依假設算出：不核對（改了也不判錯）。"""
+def test_annualized_returns_and_assumed_days_are_not_checked(tmp_path):
+    """情境二～四的年化報酬率依假設算出、不核；n/M 本身也不核——改成 （5/10） 算出的區間計息配息仍是 50.00，不判錯（#578）。"""
     r = check(
         tmp_path,
         edits=[
-            Edit("（10/20） = 50.00 美元", "（11/20） = 55.00 美元", "ts.scen.二"),
+            Edit(ACCRUAL_2, "x（5/10） = 10,000.00 美元×1.0000%×（5/10） = 50.00 美元", "ts.scen.二"),
             Edit("9.00%", "1.23%", "ts.scen.二"),
             Edit("7.50%", "4.56%", "ts.scen.三"),
-            Edit("x3-10,000.00 美元 = 250.00 美元", "x3-10,000.00 美元 = 999.00 美元", "ts.scen.三"),
             Edit("-117.00%", "-1.00%", "ts.scen.四"),
         ],
     )
     assert r.status == S.PASS, problems(r)
 
 
-def test_accrual_scenario_without_the_expanded_formula_is_still_accrual(tmp_path):
-    """情境四只寫 `面額×浮動配息率（X%）×（0/M） = 0`、沒有展開成金額的算式：仍是區間計息情境，損益不照 FCN 核。"""
+def test_accrual_scenario_without_the_final_formula_needs_review(tmp_path):
+    """情境四只寫 `面額×浮動配息率（X%）×（0/M） = 0`、沒有最後一步的數字算式：仍是區間計息情境（損益不照 FCN 核），
+    區間計息每期配息讀不到、損益無法驗算 → 都轉人工（#578）。"""
     edit = Edit("（0/20） = 10,000.00 美元×1.0000%×（0/20） = 0 美元", "（0/20） = 0 美元", "ts.scen.四")
     r = check(tmp_path, edits=[edit])
-    assert r.status == S.PASS, problems(r)
+    assert scenario_problems(r) == {"情境四_accrual": S.REVIEW_REQUIRED, "情境四_pnl": S.REVIEW_REQUIRED}
+
+
+def test_accrual_coupon_must_follow_its_own_rate(tmp_path):
+    """最後一步寫 `面額×1.1000%×（10/20） = 50.00`：50.00 是月配息率算的值、但不等於算式自己的 X → 區間計息每期配息判錯
+    （X 本身另由 `scenario.params` 判錯），損益照寫的金額加總、不受影響（核對規則 §3.7 ②）。"""
+    edit = Edit(
+        "= 10,000.00 美元×1.0000%×（10/20） = 50.00", "= 10,000.00 美元×1.1000%×（10/20） = 50.00", "ts.scen.二"
+    )
+    r = check(tmp_path, edits=[edit])
+    assert {rid for rid, _, _ in problems(r)} == {"scenario.params", "doc.scenario_calculations"}, problems(r)
+    assert [x.field for x in rule(r, "doc.scenario_calculations") if x.status != S.PASS] == ["情境二_accrual"]
+
+
+@pytest.mark.parametrize(("written", "expected"), [("3.13", {}), ("3.12", {"情境二_accrual": S.MISMATCH})])
+def test_accrual_coupon_rounds_half_up(tmp_path, written, expected):
+    """（1/32）：10,000.00 × 1.0000% × 1/32 = 3.125，第 15 項 (2) 四捨五入到 2 位 → 3.13；寫 3.12（half-even）判錯。
+    損益用文件寫的金額加總（同 FCN），不受影響。"""
+    pnl = Decimal("100.00") + Decimal(written)
+    edits = [
+        Edit(ACCRUAL_2, f"x（1/32） = 10,000.00 美元×1.0000%×（1/32） = {written} 美元", "ts.scen.二"),
+        Edit(PNL_2, f"= 10,000.00 美元+100.00 美元x1+{written} 美元-10,000.00 美元 = {pnl} 美元", "ts.scen.二"),
+    ]
+    assert scenario_problems(check(tmp_path, edits=edits)) == expected
+
+
+@pytest.mark.parametrize(
+    ("edits", "expected"),
+    [
+        # 區間計息每期配息算錯（損益照寫的金額一致加總）
+        (
+            [
+                Edit("（10/20） = 50.00 美元", "（10/20） = 50.01 美元", "ts.scen.二"),
+                Edit("+50.00 美元-10,000.00 美元 = 150.00", "+50.01 美元-10,000.00 美元 = 150.01", "ts.scen.二"),
+            ],
+            {"情境二_accrual": S.MISMATCH},
+        ),
+        (
+            [Edit("= 10,000.00 美元×1.0000%×（10/20）", "= 1,000.00 美元×1.0000%×（10/20）", "ts.scen.二")],
+            {"情境二_accrual": S.MISMATCH},
+        ),
+        # M 是 0 算不出 → 人工；損益照寫的金額照樣驗算
+        (
+            [Edit("×1.0000%×（10/20） = 50.00", "×1.0000%×（10/0） = 50.00", "ts.scen.三")],
+            {"情境三_accrual": S.REVIEW_REQUIRED},
+        ),
+        # 損益裡的區間計息項對不到區間計息算式的金額 → 人工（不猜）
+        (
+            [Edit("+50.00 美元-10,000.00 美元 = 150.00", "+51.00 美元-10,000.00 美元 = 151.00", "ts.scen.二")],
+            {"情境二_pnl": S.REVIEW_REQUIRED},
+        ),
+        # 同一情境兩個不同的區間計息金額（兩個算式本身都對）→ 損益人工
+        (
+            [
+                Edit(
+                    "×（10/20） = 50.00 美元",
+                    "×（10/20） = 50.00 美元；10,000.00 美元×1.0000%×（9/20） = 45.00 美元",
+                    "ts.scen.三",
+                )
+            ],
+            {"情境三_pnl": S.REVIEW_REQUIRED},
+        ),
+        # 區間計息次數合計 ≠ 配息次數 − 保證期數
+        (
+            [Edit("50.00x3-10,000.00 美元 = 250.00", "50.00x2-10,000.00 美元 = 200.00", "ts.scen.三")],
+            {"情境三_pnl": S.MISMATCH},
+        ),
+        # 固定配息項次數 ≠ 保證期數（獲利、較差情境）
+        (
+            [
+                Edit(
+                    "100.00 美元x1+50.00 美元-10,000.00 美元 = 150.00",
+                    "100.00 美元x2+50.00 美元-10,000.00 美元 = 250.00",
+                    "ts.scen.二",
+                )
+            ],
+            {"情境二_pnl": S.MISMATCH},
+        ),
+        (
+            [
+                Edit(
+                    "100.00 美元x1+6,000.00 美元-10,000.00 美元 = -3,900.00",
+                    "100.00 美元x2+6,000.00 美元-10,000.00 美元 = -3,800.00",
+                    "ts.scen.四",
+                )
+            ],
+            {"情境四_pnl": S.MISMATCH},
+        ),
+        # 加總算錯
+        (
+            [Edit("-10,000.00 美元 = 250.00 美元", "-10,000.00 美元 = 251.00 美元", "ts.scen.三")],
+            {"情境三_pnl": S.MISMATCH},
+        ),
+        # 拿回的本金、減的面額寫錯（加總照寫的數一致）
+        (
+            [Edit(PNL_2, "= 10,100.00 美元+100.00 美元x1+50.00 美元-10,000.00 美元 = 250.00 美元", "ts.scen.二")],
+            {"情境二_pnl": S.MISMATCH},
+        ),
+        (
+            [Edit("+50.00 美元-10,000.00 美元 = 150.00", "+50.00 美元-9,900.00 美元 = 250.00", "ts.scen.二")],
+            {"情境二_pnl": S.MISMATCH},
+        ),
+        # 區間計息配息不是 0 卻沒列進損益
+        (
+            [Edit("x1+50.00 美元-10,000.00 美元 = 150.00", "x1-10,000.00 美元 = 100.00", "ts.scen.二")],
+            {"情境二_pnl": S.MISMATCH},
+        ),
+    ],
+    ids=[
+        "accrual-wrong",
+        "accrual-denomination",
+        "zero-total-days",
+        "pnl-term-unmatched",
+        "two-accrual-amounts",
+        "accrual-count",
+        "fixed-times",
+        "worse-fixed-times",
+        "pnl-sum",
+        "principal",
+        "denomination-subtracted",
+        "missing-accrual",
+    ],
+)
+def test_accrual_scenario_counterexamples(tmp_path, edits, expected):
+    """核對規則 §7（#578）：只有那一個情境的那一項判錯或轉人工，其他規則照樣通過。"""
+    assert scenario_problems(check(tmp_path, edits=edits)) == expected
 
 
 def test_accrual_formula_is_still_counted_for_fcn(tmp_path):

@@ -68,7 +68,7 @@ BNP DACN 的文件（workflow #548 已實作）：[說明書範本](templates/bn
 
 UBS DACN 的文件（workflow #549 已實作）：[說明書範本](templates/ubs-zh-dacn.md)、[投資人須知範本](templates/ubs-zh-dacn-iis.md)、[參考條件表對照](order-formats/ubs-dacn-reference.md)、[核對規則](rules/ubs-dacn-check-rules.md)（只支援現行版範本；名稱 `區間累計配息`／`Range Accrual`，靠八的變動配息率與「區間下限價」辨識；KO 每日（記憶式、非記憶式都有樣本）、多標的、無 KI、美元、保證 1 期；其他沒有樣本的型態轉人工；名稱觀察方式字樣、`一籃子`、nt 單一標的寫法、情境年化報酬率暫定做法待使用者決定）。
 
-MS DACN 的文件（workflow #550 已實作）：[說明書範本](templates/ms-zh-dacn.md)、[投資人須知範本](templates/ms-zh-dacn-iis.md)、[參考條件表對照](order-formats/ms-dacn-reference.md)、[核對規則](rules/ms-dacn-check-rules.md)（只支援現行版範本；名稱 `區間累積配息`／`Range Accrual`，靠第 15 項 n(j) 比執行價辨識，配息門檻 = 執行價；KO 每日＋記憶式、2～4 檔標的、KI 到期、美元、保證 1 期；KI 每期觀察（MKI）在 MS 的不支援樣態清單，停止條件核對、不能人工放行；其他沒有樣本的型態轉人工；情境二～四目前只核固定期配息與配息率，用文件寫的 n/M 驗算區間計息每期配息與損益加總是 workflow #578 規格（實作另開 PR）；依假設算出的年化報酬率不核）。
+MS DACN 的文件（workflow #550 已實作）：[說明書範本](templates/ms-zh-dacn.md)、[投資人須知範本](templates/ms-zh-dacn-iis.md)、[參考條件表對照](order-formats/ms-dacn-reference.md)、[核對規則](rules/ms-dacn-check-rules.md)（只支援現行版範本；名稱 `區間累積配息`／`Range Accrual`，靠第 15 項 n(j) 比執行價辨識，配息門檻 = 執行價；KO 每日＋記憶式、2～4 檔標的、KI 到期、美元、保證 1 期；KI 每期觀察（MKI）在 MS 的不支援樣態清單，停止條件核對、不能人工放行；其他沒有樣本的型態轉人工；情境二～四用文件寫的 n/M 驗算區間計息每期配息與損益加總（workflow #578；n/M 本身不核，最後一步讀不出、M 是 0 或損益裡的區間計息項對不上轉人工）；依假設算出的年化報酬率不核）。
 
 ## 目前設定明確不支援的樣態
 
