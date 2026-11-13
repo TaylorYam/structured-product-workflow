@@ -9,7 +9,7 @@
 ## 1. 範圍
 
 - 依第 9 項 `(1)(b)` 有 `期初訂價之N.NN%` 辨識商品家族，不靠名稱（Stepdown 名稱和 FCN 相同）；同一家上手由專到泛，依序試 Stepdown、BEN、Super Bull、FCN 範本（`issuers.py`，#436；範本規格 §4）。說明書辨識結果和參考條件表 Product 不一致時轉人工覆核。
-- 認得出 Stepdown、但寫法不在範本規格內（舊範本表頭、KO% 不是每期固定往下降、非記憶式、k ≥ 2、價格表仍有 KO 欄、每期 KO 表期別和配息表對不上等）→ 不支援的範本版本（`template_unsupported`），轉人工覆核、不能人工放行。
+- 認得出 Stepdown、但寫法不在範本規格內（舊範本表頭、KO% 不是每期固定往下降、非記憶式、k ≥ 2、價格表仍有 KO 欄、每期 KO 表期別和配息表對不上等）→ 不支援的範本版本（`template_unsupported`），轉人工覆核、不能人工放行；作業人員人工核對完，在 workflow「7 人工維護」用「人工核對完成…」輸入 ISIN 與比價日、鎖住（workflow #527，ADR 0032）。
 - 投資人須知沒有可靠的 Stepdown 寫法，不另立範本：`ca-zh-iis` 同時涵蓋 FCN、FCN_Express 與 FCN_Stepdown（§3.6）。
 - 兩份都通過或人工放行才打 `TS`／`IIS` 的 `V` 並回填（ADR 0007）。
 
@@ -139,10 +139,10 @@ CA Stepdown 的投資人須知和 FCN 的沒有可靠的區別：CS03 和 FCN �
 | Stepdown 共用讀法 | 沿用 `parsers/stepdown.py`（#544、#545）：`ko_terms`、`apply_ko_terms`（期數檢查、KO 價、每期比價日） |
 | 範本辨識與讀出 | `parsers/ca_stepdown.py`（新）：沿用 `ca.detect` 的條件 1～6 與 `ca.read`（價格表、情境價格表的欄宣告拿掉 KO 欄；記憶式收新措辭），再讀第 9 項 `(1)(b)` 每期 KO 表，換掉 KO%、價格與比價日 |
 | 投資人須知 | 沿用 `parsers/ca_iis.py`：記憶式收新措辭；`IisTemplate` 加可選的 `products`，`ca-zh-iis` 宣告 `FCN`、`FCN_Express`、`FCN_Stepdown`；`identification._product_family` 對投資人須知改看投資人須知範本的宣告（沒有宣告時照舊用說明書範本） |
-| 上手註冊 | `issuers.py` 登記 `CA_STEPDOWN`（`products=frozenset({FCN_STEPDOWN})`，上手代號同 `CA`，順序 Stepdown → BEN → Super Bull → FCN；`iis` 同 CA FCN） |
+| 上手註冊 | `issuers.py` 登記 `CA_STEPDOWN`（`products=frozenset({FCN_STEPDOWN})`，上手代號同 `CA`，順序 Stepdown → BEN → Super Bull → FCN）。**不掛投資人須知範本**（`iis=None`）：投資人須知辨識由專到泛取第一個命中，掛同一個 `ca-zh-iis` 會讓每份 CA FCN 投資人須知都先掛在 Stepdown 範本底下；不掛時 Stepdown 的投資人須知照舊由 CA FCN 範本認走，CA FCN 投資人須知的路徑完全不變（顧問審查 #566）。`Template.iis` 的註解與註冊表測試（每個家族範本命中自己的投資人須知範本）照此改寫 |
 | 規則 | `rules/ca_stepdown.py`：沿用 `rules/ca.py`，加 `doc.ko_table_dates` |
 | 設定 | `[auto_check_products]` 的 `FCN_Stepdown` 加 `CA`；`[issuer.ca.product_names.FCN_Stepdown]`（寫法同 FCN；家族範本都要登記，`test_issuer_registry`） |
-| 測試 | 合成 PDF（沿用 CA 合成樣本，改第 9 項 `(1)(b)`、價格表與情境價格表）；§7 的反例；本機真實樣本辨識與讀取測試（環境變數指向本機樣本，不進 repo）；CA FCN 本機樣本 main 與分支逐欄比對（回歸）；試跑（§6） |
+| 測試 | 合成 PDF（沿用 CA 合成樣本，改第 9 項 `(1)(b)`、價格表與情境價格表）；§7 的反例；商品種類一致四種情況：Product 是 FCN 或 FCN_Express 配 `ca-zh-iis`（結果不變）、FCN_Stepdown 配 `ca-zh-iis`（通過）、BEN 或 Super Bull 配 `ca-zh-iis`（仍轉人工）、沒宣告的上手（例：BARC FCN 投資人須知配 FCN_Stepdown，仍轉人工）；FCN_Express 與 KO 每期觀察的 CA FCN 說明書不被 Stepdown 範本認走；本機真實樣本辨識與讀取測試（環境變數指向本機樣本，不進 repo）；CA FCN 本機樣本 main 與分支逐欄比對（回歸）；試跑（§6） |
 
 ## 9. 決策紀錄
 
@@ -150,7 +150,7 @@ CA Stepdown 的投資人須知和 FCN 的沒有可靠的區別：CS03 和 FCN �
 |---|---|
 | 2026-11-13 | 作業人員獨立標記略過（同 BARC、Natixis Stepdown），核對範圍以開發者凍結的標記為準 |
 | 2026-11-13 | 依第 9 項 `(1)(b)` 有 `期初訂價之N.NN%` 辨識 Stepdown 說明書，不看名稱（和 FCN 相同）；只開放現行版面，舊範本（P 型表頭、沒有觀察期定義句）認得出但範本不支援；版本只看寫法、不看交易日（#409） |
-| 2026-11-13 | 投資人須知不另立範本：`ca-zh-iis` 同時涵蓋 FCN、FCN_Express、FCN_Stepdown（`IisTemplate.products`），商品種類由說明書把關 |
+| 2026-11-13 | 投資人須知不另立範本：`ca-zh-iis` 同時涵蓋 FCN、FCN_Express、FCN_Stepdown（`IisTemplate.products`），商品種類由說明書把關；`CA_STEPDOWN` 不掛投資人須知範本（`iis=None`，顧問審查 #566） |
 | 2026-11-13 | 記憶式另收 `相關自動提前出場期所適用之自動提前出場價`、`無須於同一預定交易日或同一自動提前出場觀察期符合上開條件` 兩種措辭（說明書只在 Stepdown 範本收；投資人須知共用一個範本，所有 CA 投資人須知都收） |
 | 2026-11-13 | KO 期別照 ADR 0033；每期 KO 表用 `i` 對齊配息表，`i` 對不上是範本不支援，同一期結束日不同是判不一致 |
 | 2026-11-13 | 非記憶式、k ≥ 2、P 型現行版面沒有樣本 → 範本不支援；之後有樣本再開 Issue |
