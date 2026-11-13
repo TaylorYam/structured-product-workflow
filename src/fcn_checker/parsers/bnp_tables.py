@@ -24,8 +24,12 @@ PRICE_LABELS = (
     ("ki", r"下限價格\(Knock-InPrice\)[:：]"),
     ("currency", r"貨幣\(Currency\)[:：]"),
 )
-# DACN 標的表：下限價格與貨幣之間多一列定界價格（配息門檻，docs/checker/templates/bnp-zh-dacn.md §5）
-DACN_PRICE_LABELS = (*PRICE_LABELS[:4], ("barrier", r"定界價格\(BarrierPrice\)[:：]"), PRICE_LABELS[4])
+# DACN 標的表：下限價格與貨幣之間多一列定界價格（配息門檻，docs/checker/templates/bnp-zh-dacn.md §5）；說明書與投資人須知
+# 的範本辨識也用這個標籤看有沒有這一列
+BARRIER_LABEL = ("barrier", r"定界價格\(BarrierPrice\)[:：]")
+DACN_PRICE_LABELS = tuple(
+    x for label in PRICE_LABELS for x in ((label, BARRIER_LABEL) if label[0] == "ki" else (label,))
+)
 PRICE = r"([\d,]+\.\d{4})"
 _CURRENCY_PEEK = 8  # 貨幣列讀不到幣別字時，帶出標籤後幾個字給人工覆核看
 # 說明書第 11 項「N 即期初價格之X%」、第 18 項「N，即期初價格之X%」；投資人須知「N,即期初價格之X%」（半形逗號）

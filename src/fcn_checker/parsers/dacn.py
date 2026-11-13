@@ -3,6 +3,7 @@
 - 計息比的是執行價（Nomura、SG）：配息門檻 = 執行價 %，`barrier_from_strike`。
 - 計息比的是價格表的一欄（DBS 區間下限價格、Natixis 配息界限價格）：配息門檻 = 該欄欄頭 %，`barrier_from_head`。
   Barclays 說明書的配息門檻 % 取 §14 定義句（價格表欄頭由專屬規則比），投資人須知取價格表欄頭（`barrier_from_head`）。
+- BNP 標的表的定界價格列（說明書 §11、投資人須知）：配息門檻 = 該列各檔的 %（須相同），`parsers/bnp_dacn.barrier_pct`。
 
 各家只負責找到計息定義句（證據）與指出哪一欄；說明書內部規則共用的部分在 rules/dacn.py。
 """

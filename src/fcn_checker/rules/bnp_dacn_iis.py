@@ -23,7 +23,7 @@ def guaranteed_periods(ctx: IisIssuerContext) -> CheckResult:
     if ts is None or not ts.ok:
         why = NO_TERM_SHEET if ts is None else f"同商品說明書讀不到「{name}」，無法比對"
         return ts_unavailable(rid, field, name, why, pf.value, document=ctx.document)
-    return check.compare(ts.value, pf.value, message="須等於說明書第 15 項配息公式")
+    return check.compare(ts.value, pf.value, message="須等於同商品說明書配息公式的保證期數")
 
 
 def coupon_barrier(ctx: IisIssuerContext) -> list[CheckResult]:
@@ -41,13 +41,13 @@ def coupon_barrier(ctx: IisIssuerContext) -> list[CheckResult]:
         why = NO_TERM_SHEET if ts_pct is None else "同商品說明書讀不到配息門檻，無法比對"
         out.append(ts_unavailable(rid, "coupon_barrier_pct", name, why, pct.value, document=ctx.document))
     else:
-        out.append(check.compare(ts_pct.value, pct.value, message="須等於說明書第 11 項定界價格 %"))
+        out.append(check.compare(ts_pct.value, pct.value, message="須等於同商品說明書標的表的定界價格 %"))
     whole = Check(rid, "coupon_barrier_prices", Item.term_sheet("標的表定界價格"), ctx.document).needs(rows)
     if (problem := whole.blocked) is not None:
         return [*out, problem]
     ts_rows = ts.f("underlying_prices") if ts is not None else None
     for i, row in enumerate(rows.value, start=1):
-        field, item = f"UL_{i} 定界價格", f"UL_{i} 定界價格"
+        field = item = f"UL_{i} 定界價格"
         actual = row.prices.get("barrier")
         cell = Check(rid, field, Item.term_sheet(item), ctx.document)
         if actual is None:

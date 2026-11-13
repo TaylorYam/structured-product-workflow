@@ -12,7 +12,7 @@ from pathlib import Path
 import fitz
 import pytest
 
-from bnp_synth import CHECKS, SB_PRODUCT, DacnSpec, SbSpec, Spec, _row, build_pdf
+from bnp_synth import CHECKS, SB_PRODUCT, DacnSpec, SbSpec, Spec, build_pdf
 from fcn_checker.extraction import extract_lines
 from fcn_checker.issuers import BNP, BNP_DACN, BNP_SUPER_BULL
 from fcn_checker.schema import CheckStatus as S
@@ -106,8 +106,7 @@ def test_fcn_super_bull_and_dacn_templates_are_never_confused(tmp_path):
         D0.with_(product_code="082199990003"),
     )
     pdfs = [build_pdf(tmp_path / f"{s.product_code}_TS.pdf", s) for s in specs]
-    rows = [_row(s) for s in specs]
-    rows[1]["Product"] = SB_PRODUCT
+    rows = [CHECKS.row(s) for s in specs]  # Super Bull 填 `Super Bull`、DACN 填 `DACN`
     outcome = check_all(build_reference_sheet(tmp_path / "FCN參考條件.xlsx", rows), [*pdfs, *map(iis_path, pdfs)])
     detected = {i.term_sheet.name: rule(i.report, "template.detect")[0].actual for i in outcome.items}
     expected = {}
@@ -381,13 +380,29 @@ def test_last_accrual_period_must_be_the_tenor(tmp_path):
 
 
 def test_investor_sheet_guaranteed_periods_must_match_the_term_sheet(tmp_path):
+    """說明書 §15 保證 2 期、投資人須知保證 1 期：投資人須知判不一致（說明書另因保證期數 ≠ Non-Call 判錯）。"""
     edits = [
-        Edit("第1 個配息日之配息金額", "第1 到2 個配息日之配息金額", "iis.coupon"),
-        Edit("第2~6 個配息日之配息金額", "第3~6 個配息日之配息金額", "iis.coupon"),
+        Edit("及第1 個配息日而言", "及第1 到2 個配息日而言", "ts.art15"),
+        Edit("及第2 到6 個配息日而言", "及第3 到6 個配息日而言", "ts.art15"),
     ]
     ts, iis = check_pair(tmp_path, edits=edits)
-    assert ts.report.status == S.PASS, problems(ts.report)
+    assert flagged(ts.report, "doc.guaranteed_periods", S.MISMATCH), problems(ts.report)
     only(iis.report, "iis.guaranteed_periods")
+
+
+def test_investor_sheet_with_more_guaranteed_periods_is_not_read(tmp_path):
+    """投資人須知 `第1~g個配息日`（g > 1）沒有樣本：讀不到、轉人工（範本規格 §2），不判成某一個值。"""
+    _, iis = check_pair(tmp_path, D0.with_(first_callable=2))
+    assert flagged(iis.report, "iis.guaranteed_periods", S.REVIEW_REQUIRED), problems(iis.report)
+    assert not [p for p in problems(iis.report) if p[2] == S.MISMATCH], problems(iis.report)
+
+
+def test_auto_redemption_scenario_is_checked_without_the_guaranteed_periods(tmp_path):
+    """§15 三處 X 不同（保證期數讀不到）：自動提前贖回情況照 FCN 照常核對，其他情境轉人工。"""
+    r = check(tmp_path, edits=[Edit("配息金額 = 商品面額 × 1.0000%。", "配息金額 = 商品面額 × 1.1000%。", "ts.art15")])
+    calcs = rule(r, "doc.scenario_calculations")
+    assert {x.status for x in calcs if x.field.startswith("情境一_")} == {S.PASS}
+    assert {x.status for x in calcs if x.field.startswith("情境二_")} == {S.REVIEW_REQUIRED}
 
 
 @pytest.mark.parametrize(

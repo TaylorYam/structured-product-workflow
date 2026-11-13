@@ -30,7 +30,6 @@ COUPON = re.compile(
     )
 )
 NJ = re.compile(r"nj：指.+?其各自定界價格的合格營業日天數")
-BARRIER_ROW = r"定界價格\(BarrierPrice\)[:：]"
 
 
 def is_accrual(text: str) -> bool:
@@ -65,7 +64,7 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     missing = []
     if COUPON.search(text) is None:
         missing.append("收益分配事項的配息寫法和現行版不同")
-    if not re.search(BARRIER_ROW, text):
+    if not re.search(bnp_tables.BARRIER_LABEL[1], text):
         missing.append("標的表沒有「定界價格(Barrier Price)」列")
     if missing:
         return DetectionResult(False, missing, evidence, unsupported=f"{OLD_VERSION}：{'；'.join(missing)}")
@@ -83,8 +82,8 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
 
 
 def _guaranteed(ti: TextIndex, tenor: ParsedField) -> ParsedField:
-    """配息寫法的保證期數 g（`第1個配息日` → 1；`第1到g個`／`第1~g個` → g）：第二段須從 g+1 起、到 N = 天期，否則讀不到
-    （範本規格 §2）。"""
+    """配息寫法的保證期數 g（`第1個配息日` → 1）：第二段須從 g+1 起、到 N = 天期，否則讀不到（範本規格 §2）。g > 1 的
+    `第1到g個`／`第1~g個` 沒有樣本，讀不到、轉人工（範本規格 §2）。"""
     name = "guaranteed_periods"
     hits = list(ti.finditer(COUPON))
     if len(hits) != 1:
@@ -93,6 +92,8 @@ def _guaranteed(ti: TextIndex, tenor: ParsedField) -> ParsedField:
     lines = ti.lines_for(m.start(), m.end())
     g, start, last = int(m[1] or 1), int(m[2]), int(m[3])
     problems = []
+    if g > 1:
+        problems.append(f"第 1～{g} 個配息日的寫法沒有樣本")
     if start != g + 1:
         problems.append(f"第二段從第 {start} 個配息日起，不是第 {g + 1} 個")
     if tenor.ok and last != tenor.value:

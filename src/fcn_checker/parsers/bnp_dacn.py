@@ -120,7 +120,7 @@ def version_problems(doc: Document, art15: TextIndex, ch1: bnp.Chapter1) -> list
         else:
             at = m.end()
     art11 = TextIndex(doc.span_lines(ch1.spans.get("underlying"))).text
-    if not re.search(r"定界價格\(BarrierPrice\)[:：]", art11):
+    if not re.search(bnp_tables.BARRIER_LABEL[1], art11):
         out.append(f"{ch1.label('underlying')}標的表沒有「定界價格(Barrier Price)」列")
     if not re.search(MIN_RATE, TextIndex(doc.span_lines(ch1.spans.get("maturity"))).text):
         out.append(f"{ch1.label('maturity')}沒有「最低配息率為X%。」（不含年化）")

@@ -134,16 +134,17 @@ def calculations(ctx: IssuerContext, *, accrual: bool = False) -> list[CheckResu
             "remainder": Item.expected(f"{tag}剩餘金額"),
             "assumed": Item.expected(f"{tag}假設的自動提前贖回評價日"),
         }
-        if accrual and s.kind not in ("autocall", "extreme"):
+        uses_g = g is not None and s.kind != "autocall"  # 自動提前贖回情況同 FCN，不看保證期數
+        if uses_g:
             items = {key: items[key] for key in ("coupon", "redemption", "shares", "remainder")}
             items["accrual"] = Item.expected(f"{tag}區間計息配息算式")
-        bad = kit.first_bad((denom, tenor, k) if g is None else (denom, tenor, k, g))
+        bad = kit.first_bad((denom, tenor, k, g) if uses_g else (denom, tenor, k))
         if bad is not None:
             out.extend(
                 Check(rid, f"{tag}_{key}", item, ctx.document, ov=(ov,)).review(bad) for key, item in items.items()
             )
             continue
-        case = _Case(rid, tag, s, denom.value, tenor.value, k.value, ov, g.value if g is not None else None)
+        case = _Case(rid, tag, s, denom.value, tenor.value, k.value, ov, g.value if uses_g else None)
         if s.kind == "unknown":
             out.append(case.unread("coupon", items["coupon"], f"情境標題「{s.title}」不是已知的種類", ov=True))
             continue
@@ -153,7 +154,9 @@ def calculations(ctx: IssuerContext, *, accrual: bool = False) -> list[CheckResu
         out.append(coupon)
         if case.accrual:
             out.append(_accrual(case, items["accrual"]))
-            out.extend([_redemption(case, items["redemption"])] if s.kind == "best" else _worse(case, items, False))
+            out.extend(
+                [_redemption(case, items["redemption"])] if s.kind == "best" else _worse(case, items, with_return=False)
+            )
             continue
         out.append(_cumulative(case, items["cumulative"], amount))
         if s.kind in ("autocall", "best"):
