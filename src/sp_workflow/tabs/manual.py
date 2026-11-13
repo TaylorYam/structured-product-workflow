@@ -114,7 +114,7 @@ class MaintenanceTab(Tab):
         self.summary_button = ttk.Button(self.buttons, text="匯出商品總表…", command=self.export_summary)
         self.summary_button.pack(side=tk.LEFT, padx=(8, 0))
 
-        self.cell_area = CopyArea(self.frame, CELL_COPY_HINT, lambda: self.cells.copy_all())  # #121
+        self.cell_area = CopyArea(self.frame, CELL_COPY_HINT)  # #121
         self.cell_area.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(16, 0))
         self.cells = CellTable(self.cell_area.card, ("tdcc", "TDCC"), self.COLUMNS, self._selected)
         self.cells.grid(row=0, column=0, sticky="nsew")

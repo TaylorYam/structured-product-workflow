@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog
+from tkinter import filedialog, ttk
 
 import openpyxl
 
@@ -151,34 +152,22 @@ def test_pending_revision_is_shown_marked_and_sortable(master, tmp_path: Path, m
     assert shown(tab) == ["037199990002", "037199990001"]
 
 
-def test_copy_tdccs_to_confirm_puts_only_their_tdccs_on_the_clipboard(master, tmp_path: Path, monkeypatch) -> None:
-    """複製待確認 TDCC（#289）：只放畫面上比價待確認的 TDCC、一行一筆，貼到「3 準備」每筆都認得。"""
-    rows = (
-        row("037001023110", 3, pricing="待確認", pricing_reason="沒有比價日"),
-        row("082001154182", 5, pricing="在庫"),
-        row("092001743359", 7, pricing="待確認", pricing_reason="沒有比價日", pricing_unlocked=True),
-        row("147000030313", 9, pricing="等股價", issuer="BNP"),
-    )
-    window, tab, _ = loaded(master, tmp_path, monkeypatch, rows)
-    button = tab.copy_to_confirm_button
+def widgets(parent: tk.Misc) -> list[tk.Misc]:
+    """parent 底下所有的元件（含子元件的子元件）。"""
+    return [w for child in parent.winfo_children() for w in (child, *widgets(child))]
 
-    button.invoke()
 
-    assert master.clipboard_get() == "037001023110\n092001743359", "不含表頭與其他欄，照畫面的順序"
-    assert button.cget("text") == "已複製 2 筆"
-    window.prepare.tdcc_text.insert("1.0", master.clipboard_get())
-    master.update()
-    assert window.prepare.count_var.get() == "已貼 2 筆"
+def test_progress_page_has_no_copy_to_confirm_button(master, tmp_path: Path, monkeypatch) -> None:
+    """「複製待確認 TDCC」已拿掉（#557）；整張表仍可從右鍵選單「全部複製（含表頭）」複製。"""
+    rows = (row("037001023110", 3, pricing="待確認", pricing_reason="沒有比價日"),)
+    _, tab, _ = loaded(master, tmp_path, monkeypatch, rows)
 
-    tab.issuer_var.set("BNP")
-    tab.refilter()
-    master.clipboard_clear()
-    master.clipboard_append("原本的內容")
-    button.invoke()
-    assert master.clipboard_get() == "原本的內容", "畫面上沒有待確認的不動剪貼簿"
-    assert button.cget("text") == "表上沒有待確認"
+    texts = [str(w.cget("text")) for w in widgets(tab.frame) if isinstance(w, ttk.Button)]
 
-    tab.table_area.button.invoke()
+    assert "複製待確認 TDCC" not in texts
+    assert [type(w) for w in tab.table_area.bar.winfo_children()] == [ttk.Label]
+    tab.copier.fill_menu("", "")
+    tab.copier.menu.invoke(tk.END)
     assert master.clipboard_get().split("\n")[0].startswith("TDCC\t上手\t交易日"), "全部複製照舊含表頭"
 
 

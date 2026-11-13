@@ -85,7 +85,7 @@ class Tab:
         self.frame.columnconfigure(0, weight=1)
         self.status_var = tk.StringVar()
         self.runner = ActionRunner(db, self.background, self.status_var, self._busy, reset=self._reset)
-        self.table_area = CopyArea(self.frame, COPY_HINT, lambda: self.copier.copy_all())  # #121
+        self.table_area = CopyArea(self.frame, COPY_HINT)  # #121
         self.table = FitTreeview(self.table_area.card, show="headings")
         self.use_columns(columns)
         self.table.tag_configure("problem", foreground=DANGER)
@@ -252,7 +252,7 @@ class Tab:
         body.bind("<Configure>", lambda event: self.status_label.configure(wraplength=max(300, event.width - 20)))
 
     def place_table(self, row: int) -> None:
-        """結果表與上下、左右捲軸放在第 row 列，並讓它佔滿剩下的高度；表的右上方是「全部複製」（#121）。
+        """結果表與上下、左右捲軸放在第 row 列，並讓它佔滿剩下的高度。
 
         欄位比畫面寬時用下方的捲軸左右捲動，看得到最右邊的欄（#179）。
         """
