@@ -1,17 +1,14 @@
-"""「8 進度」分頁（`sp_workflow.tabs.progress`，#156、#186）：重新整理、三件打勾、篩選、點欄位排序、匯出 Excel。"""
+"""「8 進度」分頁（`sp_workflow.tabs.progress`，#156、#186）：重新整理、三件打勾、篩選、點欄位排序。"""
 
 from __future__ import annotations
 
 import datetime as dt
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, ttk
-
-import openpyxl
+from tkinter import ttk
 
 import sp_workflow.tabs.progress
 from sp_workflow.lifecycle import KO
-from sp_workflow.local_settings import FolderMemory
 from sp_workflow.progress import DATE_COLUMNS, FINISHED, PREPARING, TO_CHECK, ProgressRow
 from window_synth import HeldBackground, new_window
 
@@ -74,7 +71,7 @@ def test_refresh_lists_the_newest_trade_first(master, tmp_path: Path, monkeypatc
     assert tab.kpis.values == (("顯示（檔）", 4, False), ("還沒完成（檔）", 3, False))
     assert "共 4 檔，篩選後 4 檔；依交易日由新至舊排序。" in tab.status_var.get()
     assert tuple(tab.issuer_box.cget("values")) == ("全部", "BARC", "SG")
-    assert str(tab.export_button.cget("state")) == "normal"
+    assert str(tab.sent_button.cget("state")) == "normal"
 
 
 def test_filters_apply_without_reading_the_database_again(master, tmp_path: Path, monkeypatch) -> None:
@@ -200,24 +197,6 @@ def test_clicking_a_heading_sorts_and_clicking_again_reverses(master, tmp_path: 
     assert shown(tab)[0] == "037199990002", "作業進度依五個階段的順序"
 
 
-def test_export_writes_what_is_shown(master, tmp_path: Path, monkeypatch) -> None:
-    _, tab, actions = loaded(master, tmp_path, monkeypatch)
-    path = tmp_path / "out" / "進度.xlsx"
-    path.parent.mkdir()
-    monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **k: str(path))
-    tab.progress_vars[PREPARING].set(True)
-    tab.refilter()
-
-    tab.export()
-    action, done = actions.pop()
-    done(action())
-
-    sheet = openpyxl.load_workbook(path).active
-    assert [r[0] for r in sheet.iter_rows(min_row=2, values_only=True)] == ["037199990002"]
-    assert "已匯出作業進度 1 檔" in tab.status_var.get()
-    assert FolderMemory.under(tmp_path).load()["progress_export"] == str(path.parent)
-
-
 def test_a_refresh_with_no_products_clears_the_table(master, tmp_path: Path, monkeypatch) -> None:
     _, tab, actions = loaded(master, tmp_path, monkeypatch)
     monkeypatch.setattr(sp_workflow.tabs.progress, "load_progress_rows", lambda settings, paths: ())
@@ -228,13 +207,15 @@ def test_a_refresh_with_no_products_clears_the_table(master, tmp_path: Path, mon
 
     assert shown(tab) == [] and tab.shown == []
     assert "共 0 檔，篩選後 0 檔" in tab.status_var.get()
-    assert str(tab.export_button.cget("state")) == "disabled", "沒有列時不能匯出舊資料"
+    assert str(tab.sent_button.cget("state")) == "disabled", "沒有列時不能登記"
 
 
-def test_nothing_to_export_before_a_refresh(master, tmp_path: Path, monkeypatch) -> None:
-    window = new_window(master, tmp_path)
-    monkeypatch.setattr(filedialog, "asksaveasfilename", lambda **k: (_ for _ in ()).throw(AssertionError))
+def test_progress_page_has_no_excel_export(master, tmp_path: Path) -> None:
+    """「匯出 Excel…」已拿掉（#558）；重新整理前登記類按鈕照舊不能按。"""
+    tab = new_window(master, tmp_path).progress
 
-    window.progress.export()
+    texts = [str(w.cget("text")) for w in tab.buttons.winfo_children() if isinstance(w, ttk.Button)]
 
-    assert str(window.progress.export_button.cget("state")) == "disabled"
+    assert texts == ["重新整理", "登記已寄出", "批次登記已寄出…", "登記顧客贖回…", "提出異議…", "解除異議…"]
+    assert str(tab.refresh_button.cget("state")) == "normal"
+    assert all(str(button.cget("state")) == "disabled" for button in tab._actions())

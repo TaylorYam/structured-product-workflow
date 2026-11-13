@@ -205,7 +205,7 @@ def test_entered_initial_prices_are_rounded_like_calculated_ones() -> None:
 
 @pytest.mark.db
 def test_terms_changed_after_opening_are_not_locked(pg, tmp_path) -> None:
-    """打開之後重新匯入起單資料（或別人存檔）改了條件：不寫、不鎖住，請重新載入。"""
+    """打開之後重新匯入起單資料（或別人存檔）改了條件：不寫、不鎖住，請再按一次「打開」重讀。"""
     ready(pg, tmp_path)
     opened = read(pg, A)
     assert opened is not None
@@ -215,7 +215,7 @@ def test_terms_changed_after_opening_are_not_locked(pg, tmp_path) -> None:
         confirmed(pg, entry(seen=dict(opened.fields)))
     unchanged = confirmed(pg, entry(seen=dict(read(pg, A).fields)))
 
-    assert raised.value.problems == ("資料庫裡這檔的條件在打開之後改過了，請重新載入",)
+    assert raised.value.problems == ("資料庫裡這檔的條件在打開之後改過了，請再按一次「打開」重讀這一檔",)
     assert unchanged.tdcc == A
 
 

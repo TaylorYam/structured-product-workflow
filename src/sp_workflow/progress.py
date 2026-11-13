@@ -14,8 +14,7 @@
 同一套事實確認一次還是待寄信（`still_pending_mail`，#205）。
 比價狀態（#170、ADR 0020）照 `workflow.pricing_status` 帶出：狀態、原因、已比到的日期（只講 KO）與 KI 欄（#196、ADR 0022）；
 還沒比過的空白。
-只讀資料庫；商品條件、核對條件、標的價格、存續狀態與比價狀態經 `product_store.read_many` 讀（#204、#438、#495），
-匯出 Excel 用 `file_tools.save_rows`。
+只讀資料庫；商品條件、核對條件、標的價格、存續狀態與比價狀態經 `product_store.read_many` 讀（#204、#438、#495）。
 傳入的 `conn` 由 `database.connect` 建立，資料表版本已確認（#200），這裡不再檢查。
 """
 
@@ -25,13 +24,11 @@ import datetime as dt
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from fcn_checker.batch import Category
 from fcn_checker.schema import DocKind  # 說明書／投資人須知（核對結果的 kind），不是 `sp_workflow.documents.DocKind`
 from sp_workflow.database import require_in_transaction
-from sp_workflow.file_tools import save_rows
 from sp_workflow.import_config import ImportConfig
 from sp_workflow.lifecycle import IN_STOCK, Objection, open_objections
 from sp_workflow.manual_check import LOG_ITEM as MANUAL_CHECK
@@ -68,11 +65,6 @@ DATE_COLUMNS = (
     SENT_STEP,
 )  # fmt: skip
 REVISION_COLUMN = "上手更正"  # #535
-PRICING_COLUMNS = ("比價狀態", "KO比價", "比價原因", "KI")  # #170；比價三欄只講 KO，KI 另一欄（#196）
-EXPORT_COLUMNS = (
-    "TDCC", "上手", "交易日", "距今天數", "作業進度", *READY_COLUMNS, "存續狀態", *PRICING_COLUMNS, "異議",
-    REVISION_COLUMN, *DATE_COLUMNS, "卡住的原因",
-)  # fmt: skip
 TICK = "✓"
 # 鎖住後還算沒乾淨通過的核對結果分類（#535）：未支援上手、執行錯誤不算
 _PENDING_REVISION = (Category.RELEASED, Category.MISMATCH, Category.REVIEW)
@@ -132,12 +124,6 @@ class ProgressRow:
             or bool(self.revision)
             or self.pricing in (Pricing.WAIT_PRICES, Pricing.TO_CONFIRM)
         )
-
-
-@dataclass(frozen=True)
-class ProgressExport:
-    path: Path
-    count: int
 
 
 def progress_of(facts: Facts) -> tuple[str, str]:
@@ -372,26 +358,6 @@ def by_trade_date(rows: Iterable[ProgressRow]) -> list[ProgressRow]:
     return sorted(
         rows, key=lambda row: (row.trade_date is None, -(row.trade_date or dt.date.min).toordinal(), row.tdcc)
     )
-
-
-def export_name(now: dt.datetime | None = None) -> str:
-    """存檔視窗預設的檔名。"""
-    return f"作業進度_{now or dt.datetime.now():%Y%m%d_%H%M%S}.xlsx"
-
-
-def export_progress(rows: Sequence[ProgressRow], path: Path) -> ProgressExport:
-    """把（篩選後的）進度寫成 Excel，欄位同畫面；寫不進去時丟 `FileWriteError`、原本的同名檔不動。"""
-    save_rows(path, "作業進度", EXPORT_COLUMNS, [export_values(row) for row in rows])
-    return ProgressExport(path, len(rows))
-
-
-def export_values(row: ProgressRow) -> tuple[object, ...]:
-    """一列的值，依 `EXPORT_COLUMNS`。"""
-    return (
-        row.tdcc, row.issuer, row.trade_date, row.days, row.progress, *row.ready_marks, row.lifecycle,
-        row.pricing_text, row.observed_through, row.pricing_reason, row.ki, row.objection, row.revision, *row.dates,
-        row.reason,
-    )  # fmt: skip
 
 
 def objection_text(objections: Iterable[Objection]) -> str:

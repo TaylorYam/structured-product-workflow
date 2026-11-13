@@ -172,7 +172,7 @@ def test_a_product_changed_after_opening_must_be_reloaded(pg) -> None:
     draft.values["Coupon p.a. (%)"] = Decimal(11)
     pg.execute("UPDATE workflow.product SET tenor_months = 12 WHERE tdcc = %s", (A,))  # 別人在這之間改過
 
-    with pytest.raises(TermsError, match="重新載入"):
+    with pytest.raises(TermsError, match="重讀這一檔"):
         write(pg, draft, CONFIG, user="operator1")
 
     assert column(pg, "coupon_pct") == Decimal("12.5")

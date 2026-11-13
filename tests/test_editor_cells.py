@@ -50,14 +50,14 @@ def test_a_problem_wins_over_everything(different: bool, note: bool, fixed: bool
 def test_a_difference_with_a_note_stays_red_and_says_both(fixed: bool) -> None:
     state = one_cell(problem=False, different=True, note=True, fixed=fixed)
 
-    assert state == CellState(Tone.PROBLEM, "讀到「abc」；資料庫是 12", offer_database=True)
+    assert state == CellState(Tone.PROBLEM, "讀到「abc」；資料庫是 12")
 
 
 @pytest.mark.parametrize("fixed", [False, True])
 def test_a_difference_alone_is_yellow_and_offers_the_database_value(fixed: bool) -> None:
     state = one_cell(problem=False, different=True, note=False, fixed=fixed)
 
-    assert state == CellState(Tone.DIFFERENT, "資料庫是 12", offer_database=True)
+    assert state == CellState(Tone.DIFFERENT, "資料庫是 12")
 
 
 def test_a_blank_database_value_is_called_blank() -> None:
@@ -86,9 +86,7 @@ def test_order_cells_prefix_reading_notes_and_use_the_given_problems() -> None:
 
     states = order_cell_states(draft, {"Maturity date": "必填"})
 
-    assert states["Coupon p.a. (%)"] == CellState(
-        Tone.PROBLEM, "起單建檔：讀到「abc」，不是數字；資料庫是 12", offer_database=True
-    )
+    assert states["Coupon p.a. (%)"] == CellState(Tone.PROBLEM, "起單建檔：讀到「abc」，不是數字；資料庫是 12")
     assert states["Maturity date"] == CellState(Tone.PROBLEM, "必填")
     assert states["Currency"] == CellState()
 
@@ -117,9 +115,9 @@ def test_trade_cells_mark_edits_problems_and_unmatched_names() -> None:
 
     states = trade_cell_states(trades)
 
-    assert states[(1, "金額")] == CellState(Tone.DIFFERENT, "資料庫是 100000", offer_database=True)
+    assert states[(1, "金額")] == CellState(Tone.DIFFERENT, "資料庫是 100000")
     assert states[(1, "分公司")] == CellState(Tone.PROBLEM, "必填")
-    assert states[(1, "FC1")] == CellState(Tone.PROBLEM, f"{UNMATCHED_NOTE}；資料庫是 Amy", offer_database=True)
+    assert states[(1, "FC1")] == CellState(Tone.PROBLEM, f"{UNMATCHED_NOTE}；資料庫是 Amy")
     assert states[(1, "幣別")] == CellState()
 
 

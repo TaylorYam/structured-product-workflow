@@ -42,7 +42,7 @@ TONE_BG = {Tone.PLAIN: SURFACE, Tone.DIFFERENT: DIFFERENT_BG, Tone.PROBLEM: PROB
 
 
 class _FieldRow:
-    """編輯區的一欄：欄名、輸入框（選項用下拉）、和資料庫不同時的「用資料庫的值」；說明放在下一行，有才顯示。
+    """編輯區的一欄：欄名、輸入框（選項用下拉）；說明放在下一行，有才顯示。
 
     `follow_width` 是 False 時說明的換行寬度由呼叫端更新（會拿掉重畫的欄，不能在 parent 上留自己的事件）。
     """
@@ -53,7 +53,6 @@ class _FieldRow:
         row: int,
         name: str,
         on_commit: Callable[[str], object],
-        on_database: Callable[[str], None],
         *,
         follow_width: bool = True,
     ) -> None:
@@ -69,9 +68,6 @@ class _FieldRow:
         self.input.grid(row=row, column=1, sticky="ew", pady=(1, 0))
         for event in ("<FocusOut>", "<Return>"):
             self.input.bind(event, lambda _e: on_commit(name))
-        self.database = ttk.Button(parent, text="用資料庫的值", command=lambda: on_database(name))
-        self.database.grid(row=row, column=2, sticky="w", padx=(6, 0), pady=(1, 0))
-        self.database.grid_remove()
         self.note = WrapTkLabel(parent, anchor="w", justify=tk.LEFT, background=SURFACE, font=CAPTION_FONT, padx=6)
         self.note.grid(row=row + 1, column=0, columnspan=3, sticky="ew", pady=(0, 2))
         self.note.grid_remove()
@@ -80,7 +76,7 @@ class _FieldRow:
 
     @property
     def widgets(self) -> tuple[tk.Misc, ...]:
-        return self.label, self.input, self.database, self.note
+        return self.label, self.input, self.note
 
     def wrap(self, width: int) -> None:
         """說明依欄位區的寬度換行。"""
@@ -95,16 +91,12 @@ class _FieldRow:
             self.note.grid()
         else:
             self.note.grid_remove()
-        if state.offer_database:
-            self.database.grid()
-        else:
-            self.database.grid_remove()
 
 
 class OrderEditor(ttk.Frame):
     """起單資料頁右邊的編輯區：一次一檔，欄位是 `product_record.FIELDS`（#86、#97、ADR 0009、0010）。
 
-    擋匯入的欄與讀起單建檔時有提醒的欄淺紅底並寫原因；和資料庫不同的欄淺黃底，寫出資料庫的值，可以一鍵改回。
+    擋匯入的欄與讀起單建檔時有提醒的欄淺紅底並寫原因；和資料庫不同的欄淺黃底，寫出資料庫的值（一鍵改回的「用資料庫的值」已拿掉，#558）。
     離開欄位、按 Enter 或選了下拉時才解讀；寫錯的欄保留打的字並標紅（說明記在 `Draft.input_errors`，
     匯入時那一檔不匯入）。值真的變了才通知 `on_change`。`fixed` 的欄只顯示、不能改（已鎖住時的 Issue date，#55）。
     標紅的欄是 `product_terms.problems`：起單資料用匯入的檢查，人工維護用存檔的檢查（依 `Draft.mode`，#115）。
@@ -141,7 +133,7 @@ class OrderEditor(ttk.Frame):
         canvas = tk.Canvas(area, highlightthickness=0, background=SURFACE)
         scroll = Scrollbar(area, orient=tk.VERTICAL, command=canvas.yview)
         self.fields = tk.Frame(canvas, background=SURFACE)
-        self.fields.columnconfigure(2, weight=1)  # 「用資料庫的值」右邊的空白吃掉多的寬度
+        self.fields.columnconfigure(2, weight=1)  # 輸入框右邊的空白吃掉多的寬度
         self.fields.bind("<Configure>", lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
         window = canvas.create_window((0, 0), window=self.fields, anchor="nw")
         canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window, width=event.width))
@@ -149,8 +141,7 @@ class OrderEditor(ttk.Frame):
         canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
         scroll.pack(side=tk.LEFT, fill=tk.Y)
         self.rows = {
-            name: _FieldRow(self.fields, i, name, lambda name: self._commit([name]), self._use_database)
-            for i, name in enumerate(FIELDS)
+            name: _FieldRow(self.fields, i, name, lambda name: self._commit([name])) for i, name in enumerate(FIELDS)
         }
 
         def wheel(event: tk.Event) -> str:
@@ -225,13 +216,6 @@ class OrderEditor(ttk.Frame):
             self.on_change(draft)
         return changed
 
-    def _use_database(self, name: str) -> None:
-        draft = self.draft
-        if draft is None or draft.stored is None:
-            return
-        self.rows[name].var.set(format_field(draft.stored.get(name)))
-        self._commit([name])
-
 
 def _show_texts(rows: Mapping[K, _FieldRow], texts: Mapping[K, str]) -> None:
     """解讀後的字寫回輸入框；沒變的不動（游標留在原位）。"""
@@ -245,7 +229,7 @@ class TradeRowsEditor:
 
     畫在 `OrderEditor` 的欄位區、接在商品條件後面（同一個 grid，欄寬對齊），換檔時整段重畫。只改值，不新增、
     不刪除列。和起單資料的欄一樣：離開欄位、按 Enter 才解讀（規則同每日匯入），寫錯的保留打的字並標紅；
-    必填空白、備註改成取消標紅（擋存檔）；改過的標黃、寫出資料庫的值，可以一鍵改回；FC 名字對不到信箱標紅提示（不擋）。
+    必填空白、備註改成取消標紅（擋存檔）；改過的標黃、寫出資料庫的值；FC 名字對不到信箱標紅提示（不擋）。
     """
 
     TITLE = "交易明細"
@@ -297,7 +281,6 @@ class TradeRowsEditor:
                     row,
                     name,
                     lambda _name: self.commit(),
-                    lambda _name, key=key: self._use_database(key),
                     follow_width=False,
                 )
                 field_row.var.set(format_field(trade.values.get(name)))
@@ -332,15 +315,6 @@ class TradeRowsEditor:
             self.refresh()
             self._notify()
         return changed
-
-    def _use_database(self, key: tuple[int, str]) -> None:
-        trades = self.trades
-        if trades is None:
-            return
-        seq, name = key
-        trade = next(trade for trade in trades.rows if trade.seq == seq)
-        self.rows[key].var.set(format_field(trade.stored.get(name)))
-        self.commit()
 
     def _notify(self) -> None:
         if self.trades is not None:

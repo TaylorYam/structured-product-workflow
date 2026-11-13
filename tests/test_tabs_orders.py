@@ -200,7 +200,7 @@ def test_a_field_with_a_reading_problem_stays_red_even_when_it_differs_from_the_
     row = window.orders.editor.rows["Coupon p.a. (%)"]
     assert row.label.cget("background") == PROBLEM_BG
     assert row.note.cget("text") == "起單建檔：讀到「abc」，不是數字；資料庫是 12"
-    assert row.database.winfo_manager() == "grid"
+    assert not any(isinstance(widget, ttk.Button) for widget in row.widgets), "沒有「用資料庫的值」（#558）"
 
 
 def test_conflicting_duplicate_fields_are_red_until_filled(master, tmp_path: Path) -> None:

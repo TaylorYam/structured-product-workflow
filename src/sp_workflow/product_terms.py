@@ -116,7 +116,8 @@ _TYPES: dict[FieldKind, tuple[type, ...]] = {
 _CONFLICT = "起單建檔裡這檔有好幾列、這欄不同，要填正確的值（正確是空白的話請改起單建檔後重新讀取）"
 # 人工維護可以空白的必填欄（#115）：任一商品種類的必填欄（含配息門檻、KO 降幅，#367、#537）；資料庫的商品種類不可空白（ADR 0016）
 _BLANK_ALLOWED = frozenset(LISTED) - {"Product"}
-_ALREADY_CREATED = "打開之後資料庫已經有這檔的商品條件，請重新載入"
+REOPEN = "請再按一次「打開」重讀這一檔"  # 人工維護存檔被擋時；人工核對（`manual_check`）共用（#558）
+_ALREADY_CREATED = f"打開之後資料庫已經有這檔的商品條件，{REOPEN}"
 _MISSING_NOTE = "缺，可以先存、之後再補"  # 還沒鎖住的商品空著的必填欄：畫面標紅但不擋存檔
 
 
@@ -751,7 +752,7 @@ def _guard(
     if not reason and trades is not None:
         opened = {row.seq: row.stored for row in trades.rows}
         if read_rows(conn, trades.tdcc, lock=True) != opened:
-            reason = "資料庫裡這檔的交易明細在打開之後改過了，請重新載入"
+            reason = f"資料庫裡這檔的交易明細在打開之後改過了，{REOPEN}"
     return stored, reason
 
 
@@ -768,19 +769,19 @@ def _stale(conn: psycopg.Connection, draft: Draft, stored: Stored | None, mode: 
             return _ALREADY_CREATED
         return "" if _has_trade_rows(conn, draft.tdcc) else "交易明細已經沒有這檔，不能新增商品條件"
     if stored is None and mode is Mode.MAINTAIN:
-        return "資料庫已經沒有這檔商品，請重新載入"
+        return f"資料庫已經沒有這檔商品，{REOPEN}"
     if mode is Mode.CORRECT:
         if stored is None:
             return "資料庫沒有這檔商品"
         if not locked(stored):
-            return "還沒鎖住（還沒核對通過），不用更正；請重新載入"
+            return f"還沒鎖住（還沒核對通過），不用更正；{REOPEN}"
     assert stored is not None
     if mode is Mode.MAINTAIN and locked(stored):
-        return "打開之後已經鎖住了（核對通過），請重新載入"
+        return f"打開之後已經鎖住了（核對通過），{REOPEN}"
     seen = draft.stored or {}
     if any(not same_value(stored.fields[name], seen.get(name)) for name in stored.fields):
-        again = "再更正" if mode is Mode.CORRECT else ""
-        return f"資料庫裡這檔的條件在打開之後改過了，請重新載入{again}"
+        again = "後再更正" if mode is Mode.CORRECT else ""
+        return f"資料庫裡這檔的條件在打開之後改過了，{REOPEN}{again}"
     return ""
 
 
