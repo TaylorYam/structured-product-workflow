@@ -1,29 +1,15 @@
-"""BNP DACN 投資人須知專屬規則（docs/checker/rules/bnp-dacn-check-rules.md §3.9）：配息寫法的保證期數 = 同商品說明書第 15 項；
-標的表定界價格列的 % = 說明書配息門檻、每檔價格 = 說明書第 11 項同檔。月配息率（`其中C為X%`）、名稱、價格、KO／KI 等是各上手
-共用的投資人須知規則。
+"""BNP DACN 投資人須知專屬規則（docs/checker/rules/bnp-dacn-check-rules.md §3.9）：配息寫法「第1個配息日之配息金額」推得的
+保證期數 = 同商品說明書第 15 項（`dacn.iis_guaranteed_periods`）；標的表定界價格列的 % = 說明書配息門檻、每檔價格 = 說明書
+第 11 項同檔。月配息率（`其中C為X%`）、名稱、價格、KO／KI 等是各上手共用的投資人須知規則。
 """
 
 from __future__ import annotations
 
-from ..investor_sheet import read_iis
 from ..schema import CheckResult, Item
 from ..schema import CheckStatus as S
+from . import dacn
 from .iis import NO_TERM_SHEET, IisIssuerContext, ts_unavailable
 from .kit import Check
-
-
-def guaranteed_periods(ctx: IisIssuerContext) -> CheckResult:
-    """配息寫法「第1個配息日之配息金額」推得的保證期數 = 說明書第 15 項配息公式的保證期數。"""
-    rid, field, name = "iis.guaranteed_periods", "guaranteed_periods", "配息公式保證期數"
-    pf = read_iis(ctx.sheet, field)
-    check = Check(rid, field, Item.term_sheet(name), ctx.document).needs(pf)
-    if (problem := check.blocked) is not None:
-        return problem
-    ts = ctx.term_sheet.f("coupon_guaranteed_periods") if ctx.term_sheet is not None else None
-    if ts is None or not ts.ok:
-        why = NO_TERM_SHEET if ts is None else f"同商品說明書讀不到「{name}」，無法比對"
-        return ts_unavailable(rid, field, name, why, pf.value, document=ctx.document)
-    return check.compare(ts.value, pf.value, message="須等於同商品說明書配息公式的保證期數")
 
 
 def coupon_barrier(ctx: IisIssuerContext) -> list[CheckResult]:
@@ -65,4 +51,4 @@ def coupon_barrier(ctx: IisIssuerContext) -> list[CheckResult]:
 
 
 def run_all(ctx: IisIssuerContext) -> list[CheckResult]:
-    return [guaranteed_periods(ctx), *coupon_barrier(ctx)]
+    return [dacn.iis_guaranteed_periods(ctx), *coupon_barrier(ctx)]

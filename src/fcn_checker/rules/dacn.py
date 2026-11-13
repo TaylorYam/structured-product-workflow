@@ -12,10 +12,12 @@ from dataclasses import dataclass
 from decimal import ROUND_HALF_UP
 from typing import Any
 
-from ..schema import CheckResult, ParsedField
+from ..investor_sheet import read_iis
+from ..schema import CheckResult, Item, ParsedField
 from ..schema import CheckStatus as S
 from ..standard_fields import PriceRow
 from . import kit
+from .iis import NO_TERM_SHEET, IisIssuerContext, ts_unavailable
 from .kit import Q4, Check, IssuerContext
 
 # 型態的一項（Aspect）：讀出結果 → 不在樣本內的描述（依序；讀不到的欄位由各自的規則轉人工，這裡不報）
@@ -33,8 +35,9 @@ class Sampled:
     manual: Sequence[Aspect] = ()
 
 
-def ko(field: str = "ko_wording", kind: Callable[[Any], str] = lambda v: v) -> Aspect:
-    """KO 每日觀察＋記憶式：`kind` 把 `field` 的值轉成 `D`／`P`／`none`（無自動提前出場時不看記憶式）。"""
+def ko(field: str = "ko_wording", kind: Callable[[Any], str] = lambda v: v, *, memory_only: bool = True) -> Aspect:
+    """KO 每日觀察＋記憶式：`kind` 把 `field` 的值轉成 `D`／`P`／`none`（無自動提前出場時不看記憶式）；`memory_only` 為
+    False 時非記憶式也有樣本（UBS DACN）。"""
 
     def check(ctx: IssuerContext) -> list[str]:
         f = ctx.ts.f
@@ -43,7 +46,7 @@ def ko(field: str = "ko_wording", kind: Callable[[Any], str] = lambda v: v) -> A
         out = []
         if t is not None and t != "D":
             out.append("KO 每期觀察" if t == "P" else "無自動提前出場")
-        if memory.ok and not memory.value and t != "none":
+        if memory_only and memory.ok and not memory.value and t != "none":
             out.append("非記憶式")
         return out
 
@@ -127,23 +130,42 @@ def template_variant(ctx: IssuerContext, sampled: Sampled) -> CheckResult:
 
 def guaranteed_periods(
     ctx: IssuerContext,
-    article: int,
+    article: int | str,
     *,
     source: str = "配息公式保證全額配息",
     name: str = "配息公式保證期數",
     call: str = "提前出場",
     field: str = "guaranteed_periods",
 ) -> CheckResult:
-    """保證期數 = 日期表或 KO 起日推得的 Non-Call（核對規則 §3.5）：保證期數寫在第 `article` 項的 `source`（配息公式或
-    日期表；讀出欄位 `field`），`call` 是這家對提前出場的稱呼。"""
+    """保證期數 = 日期表或 KO 起日推得的 Non-Call（核對規則 §3.5）：保證期數寫在第 `article` 項（條號；文件用其他寫法時
+    直接給位置，例 UBS「商品基本資料八」）的 `source`（配息公式或日期表；讀出欄位 `field`），`call` 是這家對提前出場的稱呼。"""
     f = ctx.ts.f
     g, k = f(field), f("first_callable_period")
     return kit.doc_check(ctx, "doc.guaranteed_periods", field, name, k, g).compare(
         k.value,
         g.value,
         evidence=list(g.evidence),
-        fail_message=f"第 {article} 項{source}的期數須等於第一個可{call}期（Non-Call）",
+        fail_message=f"{_where(article)}{source}的期數須等於第一個可{call}期（Non-Call）",
     )
+
+
+def _where(article: int | str) -> str:
+    return f"第 {article} 項" if isinstance(article, int) else article
+
+
+def iis_guaranteed_periods(ctx: IisIssuerContext) -> CheckResult:
+    """投資人須知（`guaranteed_periods`）推得的保證期數 = 同商品說明書配息公式的保證期數（`coupon_guaranteed_periods`；
+    BNP、UBS DACN 投資人須知共用）。"""
+    rid, field, name = "iis.guaranteed_periods", "guaranteed_periods", "配息公式保證期數"
+    pf = read_iis(ctx.sheet, field)
+    check = Check(rid, field, Item.term_sheet(name), ctx.document).needs(pf)
+    if (problem := check.blocked) is not None:
+        return problem
+    ts = ctx.term_sheet.f("coupon_guaranteed_periods") if ctx.term_sheet is not None else None
+    if ts is None or not ts.ok:
+        why = NO_TERM_SHEET if ts is None else f"同商品說明書讀不到「{name}」，無法比對"
+        return ts_unavailable(rid, field, name, why, pf.value, document=ctx.document)
+    return check.compare(ts.value, pf.value, message="須等於同商品說明書配息公式的保證期數")
 
 
 def barrier_price(

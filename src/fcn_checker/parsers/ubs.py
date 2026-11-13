@@ -99,6 +99,28 @@ PRICE_TABLE = price_table.TableSpec(
 SCENARIO_TABLE = replace(PRICE_TABLE, where="商品基本資料十五情境價格表")
 
 
+@dataclass(frozen=True)
+class Variant:
+    """同一骨架、條文寫法不同的範本（UBS DACN，parsers/ubs_dacn.py）：八價格表（十五情境價格表同欄）、配息表每列日期後的
+    公式（第 1 組為「固定」或「變動」）、變動配息率句（第 1、2 組為 x、y）與要不要讀情境的平均年化報酬率。預設 `FCN`。"""
+
+    table: price_table.TableSpec
+    coupon_formula: str
+    variable_coupon: str
+    annualized_returns: bool = True
+
+    @property
+    def scenario_table(self) -> price_table.TableSpec:
+        return replace(self.table, where=SCENARIO_TABLE.where)
+
+
+FCN = Variant(
+    PRICE_TABLE,
+    r"對應的配息金額=(?:期?間)?每單位面額[xX×](固定|變動)配息率",
+    r"配息率[:：]" + PCT + r"[xX×]（nt/Nt）（年化配息率為" + PCT + r"）",
+)
+
+
 def clean_lines(lines: Sequence[Line]) -> list[Line]:
     """刪除私用區字元（U+F020）與頁底頁碼；只剩空白的行不算內文。"""
     out = []
@@ -176,6 +198,13 @@ def document(lines: Sequence[Line]) -> UbsDocument:
 
 def detect(lines: Sequence[Line]) -> DetectionResult:
     """範本辨識（範本規格 §8）：全部條件成立才是 UBS（新版）說明書。"""
+    _, failed, evidence = skeleton(lines, NAME_ZH_MARK, NAME_EN_MARK)
+    return DetectionResult(not failed, failed, evidence)
+
+
+def skeleton(lines: Sequence[Line], zh_mark: str, en_mark: str) -> tuple[UbsDocument, list[str], list[Evidence]]:
+    """UBS 新版說明書骨架（範本規格 §8 條件 1～6）：中英文名稱的商品標記由呼叫端給（FCN `NAME_ZH_MARK`、`NAME_EN_MARK`；
+    DACN 見 parsers/ubs_dacn.py）。回傳版面、不成立的條件與證據。"""
     doc = document(lines)
     cover = doc.cover()
     ti = TextIndex(cover)
@@ -192,12 +221,12 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
             "前兩行不是「中文產品說明書」「一、 商品代號：TDCC 商品代號為…」",
         ),
         (
-            zh is not None and zh[1].startswith("瑞銀") and NAME_ZH_MARK in zh[1],
-            f"第 1 頁商品中文名稱不是以「瑞銀」開頭或沒有「{NAME_ZH_MARK}」",
+            zh is not None and zh[1].startswith("瑞銀") and zh_mark in zh[1],
+            f"第 1 頁商品中文名稱不是以「瑞銀」開頭或沒有「{zh_mark}」",
         ),
         (
-            en is not None and en[1].startswith("UBS") and squash(NAME_EN_MARK) in squash(en[1]),
-            f"第 1 頁商品英文名稱不是以「UBS」開頭或沒有「{NAME_EN_MARK}」",
+            en is not None and en[1].startswith("UBS") and squash(en_mark) in squash(en[1]),
+            f"第 1 頁商品英文名稱不是以「UBS」開頭或沒有「{en_mark}」",
         ),
         (
             "四、發行機構：瑞士銀行" in ti.text and REP_LABEL in ti.text,
@@ -213,7 +242,7 @@ def detect(lines: Sequence[Line]) -> DetectionResult:
     ):
         if not test:
             failed.append(message)
-    return DetectionResult(not failed, failed, [Evidence.of(x) for x in cover[:2]])
+    return doc, failed, [Evidence.of(x) for x in cover[:2]]
 
 
 # ---------------------------------------------------------------- 讀出
@@ -224,8 +253,8 @@ class UbsTermSheet(ParsedTermSheet):
     document: UbsDocument
 
 
-def read(lines: Sequence[Line]) -> UbsTermSheet:
-    """讀出標準欄位與 UBS 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）。"""
+def read(lines: Sequence[Line], variant: Variant = FCN) -> UbsTermSheet:
+    """讀出標準欄位與 UBS 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）；`variant` 是 FCN 以外範本的條文寫法。"""
     doc = document(lines)
     fields = FieldsBuilder()
     _cover(fields, doc)
@@ -239,17 +268,17 @@ def read(lines: Sequence[Line]) -> UbsTermSheet:
     fields["issuer_name_ch1"] = derived_name(fields["issuer_full_ch1"], "issuer_name_ch1")
     fields.put("currency_art5", article(5), rf"計價幣別[:：]({ZH_CCY})")
     art8 = article(8)
-    _article8(fields, art8)
+    _article8(fields, art8, variant)
     fields["art9_table"] = art9_table(article(9))
     _dates(fields, article(12))
     _table_fields(fields)
     _schedule(fields)
-    _article15(fields, article(15))
+    _article15(fields, article(15), variant)
     fields["scenario_reprint_table"] = price_table.at(
-        "scenario_reprint_table", fields["scenario_table"], SCENARIO_TABLE
+        "scenario_reprint_table", fields["scenario_table"], variant.scenario_table
     )
     fields["scenario_prices"] = standard_fields.absent("scenario_prices", "要核對的較差情境價格")
-    scenarios = _scenarios(fields, article(15))
+    scenarios = _scenarios(fields, article(15), variant.annualized_returns)
     fields.put("isin", article(25), r"ISIN代碼[:：]([A-Z]{2}[A-Z0-9]{10})")
     _organizations(fields, doc)
     _general(fields, doc)
@@ -341,9 +370,9 @@ def _rows(text: str, pattern: str) -> list[re.Match[str]]:
     return out
 
 
-def _variable_coupon(fields: dict[str, ParsedField], lns: list[Line], prefix: str) -> None:
-    """KO 每日型的「變動配息率：x%X（nt/Nt）（年化配息率為y%）」與「t 係為a 至b 的數字」（八，及十五設定參數的重複）。"""
-    variable = r"配息率[:：]" + PCT + r"[xX×]（nt/Nt）（年化配息率為" + PCT + r"）"
+def _variable_coupon(fields: dict[str, ParsedField], lns: list[Line], prefix: str, variable: str) -> None:
+    """KO 每日型的「變動配息率：x%X（nt/Nt）（年化配息率為y%）」（寫法 `variable`）與「t 係為a 至b 的數字」（八，及十五設定參數
+    的重複）。"""
     fields[f"{prefix}variable_coupon_pct"] = capture_group(lns, variable, 1, f"{prefix}variable_coupon_pct", Decimal)
     fields[f"{prefix}variable_coupon_pa_pct"] = capture_group(
         lns, variable, 2, f"{prefix}variable_coupon_pa_pct", Decimal
@@ -359,7 +388,7 @@ def _variable_coupon(fields: dict[str, ParsedField], lns: list[Line], prefix: st
         fields[name] = ParsedField.missing(name, "找不到「t 係為a 至b 的數字」")
 
 
-def _article8(fields: FieldsBuilder, art8: list[Line]) -> None:
+def _article8(fields: FieldsBuilder, art8: list[Line], variant: Variant) -> None:
     ti = TextIndex(art8, separate_digits=True)
     issue = r"發行價格[:：](?:每單位面額之)?" + PCT
     fields.put("issue_price_pct", art8, issue, Decimal)
@@ -376,19 +405,19 @@ def _article8(fields: FieldsBuilder, art8: list[Line]) -> None:
     fields["minimum_trade"] = capture_group(art8, trade, 1, "minimum_trade", number)
     fields["minimum_trade_currency"] = capture_group(art8, trade, 2, "minimum_trade_currency")
     fields.put("redemption_currency", art8, rf"以({CCY})支付剩餘金額")
-    _coupon_table(fields, ti)
+    _coupon_table(fields, ti, variant.coupon_formula)
     coupon = r"固定配息率[:：]" + PCT + r"。?（年化配息率(?:為)?" + PCT + r"）"
     fields["monthly_coupon_pct"] = capture("monthly_coupon_pct", ti, coupon, Decimal, whole_match=True)
     fields["coupon_pa_pct"] = capture_group(art8, coupon, 2, "coupon_pa_pct", Decimal)
-    _variable_coupon(fields, art8, "")
+    _variable_coupon(fields, art8, "", variant.variable_coupon)
     fields["ko_wording_art8"] = ko_wording("ko_wording_art8", ti)
     _memory(fields, ti)
     ko_pct = list(ti.finditer(r"提前出場價（即期初價格的" + PCT + r"）"))
     table = price_table.read(
-        "underlying_table", table_region(art8, r"其中[:：]", "將四捨五入至小數點後第4位"), PRICE_TABLE
+        "underlying_table", table_region(art8, r"其中[:：]", "將四捨五入至小數點後第4位"), variant.table
     )
     fields["underlying_table"] = table
-    fields["main_price_table"] = price_table.at("main_price_table", table, PRICE_TABLE)
+    fields["main_price_table"] = price_table.at("main_price_table", table, variant.table)
     # KO 條款寫出的 KO %（UB3）：價格表表頭以外的出處
     head = table.value.header_lines if table.ok else ()
     mentions = [m for m in ko_pct if not set(ti.lines_for(m.start(), m.end())) & set(head)]
@@ -400,21 +429,14 @@ def _article8(fields: FieldsBuilder, art8: list[Line]) -> None:
     fields["ki_type"] = ki_type(ti, table)
 
 
-def _coupon_table(fields: dict[str, ParsedField], ti: TextIndex) -> None:
+def _coupon_table(fields: dict[str, ParsedField], ti: TextIndex, formula: str) -> None:
     """配息表（範本規格 §5.2）：KO 每期「第n 個月配息／配息觀察日／配息給付日」；KO 每日「第n 個配息觀察期間／開始日／
-    結束日／給付日／每單位面額x 固定（變動）配息率」。"""
+    結束日／給付日／每單位面額x 固定（變動）配息率」（公式的寫法 `formula`）。"""
     text = ti.text
     sep = r"\|?"
     daily = _rows(
         text,
-        r"第(\d{1,2})個配息觀察(?:期間|期|)"
-        + sep
-        + D
-        + sep
-        + D
-        + sep
-        + D
-        + r"對應的配息金額=(?:期?間)?每單位面額[xX×](固定|變動)配息率",
+        r"第(\d{1,2})個配息觀察(?:期間|期|)" + sep + D + sep + D + sep + D + formula,
     )
     periodic = _rows(text, r"第(\d{1,2})個月配息" + sep + D + sep + D)
     if daily and not periodic:
@@ -637,7 +659,7 @@ def _schedule(fields: dict[str, ParsedField]) -> None:
 # ---------------------------------------------------------------- 商品基本資料十五：情境設定參數
 
 
-def _article15(fields: dict[str, ParsedField], art15: list[Line]) -> None:
+def _article15(fields: dict[str, ParsedField], art15: list[Line], variant: Variant) -> None:
     ti = TextIndex(art15)
     a = ti.text.find("設定參數")
     b = ti.text.find("情境分析一", a)
@@ -678,9 +700,9 @@ def _article15(fields: dict[str, ParsedField], art15: list[Line]) -> None:
         note = "情境設定參數找不到或有多處「固定配息率：x%」"
         fields["scenario_monthly_pct"] = ParsedField.missing("scenario_monthly_pct", note)
         fields["scenario_coupon_pa_pct"] = ParsedField.missing("scenario_coupon_pa_pct", note)
-    _variable_coupon(fields, params, "scenario_")
+    _variable_coupon(fields, params, "scenario_", variant.variable_coupon)
     fields["scenario_table"] = price_table.read(
-        "scenario_table", table_region(params, r"設定參數[:：]?", "固定配息率"), SCENARIO_TABLE
+        "scenario_table", table_region(params, r"設定參數[:：]?", "固定配息率"), variant.scenario_table
     )
 
 
@@ -718,11 +740,11 @@ SCENARIO_MENTIONS = {
 }
 
 
-def _scenarios(fields: dict[str, ParsedField], art15: list[Line]) -> list[Occurrence]:
+def _scenarios(fields: dict[str, ParsedField], art15: list[Line], annualized: bool = True) -> list[Occurrence]:
     """十五重複寫出的值（Issue #320）：設定參數「配息觀察日／期間：每月（共N個）」、「提前出場觀察日」（有這句才核）、
     情境分析一～四算式代入的每單位面額與配息率；設定參數與算式代入的值交成共用情境規則的 `scenario_params`（同一個值
-    一筆，Issue #294），另交拿回本金情境的平均年化報酬率（每處一筆，Issue #228）。回傳各情境金額旁的幣別出處（併入
-    `currency_others`）。
+    一筆，Issue #294），另交拿回本金情境的平均年化報酬率（每處一筆，Issue #228；`annualized` 為 False 時不讀，DACN 依
+    計息天數假設算出）。回傳各情境金額旁的幣別出處（併入 `currency_others`）。
 
     情境的金額寫到小數 2 位（或「價值為0X」），股價寫到小數 4 位：小數 4 位的股價跟著標的走（UB3 澳幣連日股、UB6 日圓
     連美股），不列入；期末匯率、股數、結算收益與實物交割情境的報酬率不讀。"""
@@ -744,10 +766,16 @@ def _scenarios(fields: dict[str, ParsedField], art15: list[Line]) -> list[Occurr
             [
                 *_assumed(fields),
                 *(ScenarioParam(c, where, ParsedField.missing(c, note)) for c in SCENARIO_MENTIONS.values()),
-                ScenarioParam(
-                    "scenario_annualized_return",
-                    "商品基本資料十五情境分析平均",
-                    ParsedField.missing("scenario_annualized_return", note),
+                *(
+                    [
+                        ScenarioParam(
+                            "scenario_annualized_return",
+                            "商品基本資料十五情境分析平均",
+                            ParsedField.missing("scenario_annualized_return", note),
+                        )
+                    ]
+                    if annualized
+                    else []
                 ),
             ],
         )
@@ -786,7 +814,7 @@ def _scenarios(fields: dict[str, ParsedField], art15: list[Line]) -> list[Occurr
         values = by_value((v, lns) for _, v, lns in hits)  # 同一個值一筆（證據為每一處）
         params += [ScenarioParam(code, where, ParsedField.present(code, v, lns)) for v, lns in values.items()]
     code = "scenario_annualized_return"
-    for k, (start, zh) in enumerate(marks):
+    for k, (start, zh) in enumerate(marks if annualized else ()):
         stop = marks[k + 1][0] if k + 1 < len(marks) else end
         if ti.text.find(SCENARIO_PHYSICAL, start, stop) >= 0:
             continue

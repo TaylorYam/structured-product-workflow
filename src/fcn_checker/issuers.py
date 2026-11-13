@@ -46,6 +46,7 @@ from .parsers import (
     nomura_iis,
     sg_dacn_iis,
     sg_iis,
+    ubs_dacn_iis,
     ubs_iis,
 )
 from .parsers import barc_stepdown as barc_stepdown_parser
@@ -75,6 +76,7 @@ from .parsers import nomura_dacn as nomura_dacn_parser
 from .parsers import sg as sg_parser
 from .parsers import sg_dacn as sg_dacn_parser
 from .parsers import ubs as ubs_parser
+from .parsers import ubs_dacn as ubs_dacn_parser
 from .products import BEN, DACN, FCN, FCN_EXPRESS, FCN_STEPDOWN, SUPER_BULL
 from .rules import barc as barc_rules
 from .rules import barc_dacn as barc_dacn_rules
@@ -128,6 +130,8 @@ from .rules import sg_dacn as sg_dacn_rules
 from .rules import sg_dacn_iis as sg_dacn_iis_rules
 from .rules import sg_iis as sg_iis_rules
 from .rules import ubs as ubs_rules
+from .rules import ubs_dacn as ubs_dacn_rules
+from .rules import ubs_dacn_iis as ubs_dacn_iis_rules
 from .rules import ubs_iis as ubs_iis_rules
 from .rules.iis import IisIssuerContext
 from .rules.kit import IssuerContext
@@ -792,6 +796,29 @@ DBS_DACN = Template(
     products=frozenset({DACN}),
 )
 
+# UBS DACN（workflow #549）：和 UBS FCN 同一家上手、不同範本（名稱「區間累計配息」，依八的變動配息率與區間下限價辨識，
+# 排在 FCN 前面）
+UBS_DACN = Template(
+    code=ubs_dacn_rules.ISSUER,
+    template_id=ubs_dacn_parser.TEMPLATE_ID,
+    label="UBS DACN 中文產品說明書",
+    parser_version=ubs_dacn_parser.PARSER_VERSION,
+    not_covered=tuple(ubs_dacn_rules.NOT_COVERED),
+    detect=ubs_dacn_parser.detect,
+    read=ubs_dacn_parser.read,
+    rules=ubs_dacn_rules.run_all,
+    iis=IisTemplate(
+        template_id=ubs_dacn_iis.TEMPLATE_ID,
+        label="UBS DACN 中文投資人須知",
+        parser_version=ubs_dacn_iis.PARSER_VERSION,
+        detect=ubs_dacn_iis.detect,
+        read=ubs_dacn_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+        rules=ubs_dacn_iis_rules.run_all,
+    ),
+    products=frozenset({DACN}),
+)
+
 UBS = Template(
     code=ubs_rules.ISSUER,
     template_id=ubs_parser.TEMPLATE_ID,
@@ -840,7 +867,7 @@ REGISTRY: tuple[Issuer, ...] = (
     ),
     Issuer(BBVA.code, (BBVA,), reference_fields=bbva_rules.REFERENCE_FIELDS, ratings=True),
     Issuer(DBS.code, (DBS_DACN, DBS), reference_fields=dbs_rules.REFERENCE_FIELDS, ratings=True),
-    Issuer(UBS.code, (UBS,), reference_fields=ubs_rules.REFERENCE_FIELDS, ratings=True),
+    Issuer(UBS.code, (UBS_DACN, UBS), reference_fields=ubs_rules.REFERENCE_FIELDS, ratings=True),
 )
 
 
