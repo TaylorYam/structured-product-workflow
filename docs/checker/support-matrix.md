@@ -60,6 +60,8 @@ BARC FCN_Stepdown 的文件（workflow #544 已實作；其他上手的 Stepdown
 
 Natixis FCN_Stepdown 的文件（workflow #545 已實作）：[說明書範本](templates/natixis-zh-stepdown.md)、[投資人須知範本](templates/natixis-zh-stepdown-iis.md)、[參考條件表對照](order-formats/natixis-stepdown-reference.md)、[核對規則](rules/natixis-stepdown-check-rules.md)（KO% 每期固定往下降、記憶式、KO 每日或每期觀察；第 14 項每期 KO 表用 `t` 對齊第 12 項；說明書的 CJK 相容字先轉換；早期版面投資人須知轉人工；D 型比價日每一期都填，ADR 0033）。
 
+CA FCN_Stepdown 的文件（workflow #546 規格，實作另開 PR；實作前照未開放商品轉人工核對）：[說明書範本](templates/ca-zh-stepdown.md)、[參考條件表對照](order-formats/ca-stepdown-reference.md)、[核對規則](rules/ca-stepdown-check-rules.md)；投資人須知用 CA FCN 的 [`ca-zh-iis`](templates/ca-zh-iis.md)（KO% 每期固定往下降、記憶式、KO 每日、Non-Call 1；第 9 項 (1)(b) 每期 KO 表用 `i` 對齊配息表；2026-06 以前的舊範本與沒有樣本的型態轉人工；D 型比價日每一期都填，ADR 0033）。
+
 Barclays DACN 的文件（workflow #547 已實作）：[說明書範本](templates/barc-zh-dacn.md)、[投資人須知範本](templates/barc-zh-dacn-iis.md)、[參考條件表對照](order-formats/barc-dacn-reference.md)、[核對規則](rules/barc-dacn-check-rules.md)（只支援現行版範本；名稱和 FCN 相同，靠 §14 配息公式辨識；KO 每日＋記憶式、多標的、KI 無／到期、美元、保證 1 期；其他沒有樣本的型態轉人工）。
 
 BNP DACN 的文件（workflow #548 規格，實作另開 PR；實作前照未開放商品轉人工核對）：[說明書範本](templates/bnp-zh-dacn.md)、[投資人須知範本](templates/bnp-zh-dacn-iis.md)、[參考條件表對照](order-formats/bnp-dacn-reference.md)、[核對規則](rules/bnp-dacn-check-rules.md)（只支援現行版範本；靠 §15 配息公式與「定界價格」辨識，名稱另當條件；KO 每日＋記憶式、多標的、KI 每日／到期、美元、保證 1 期；KI 每期觀察（MKI）照 #386 轉人工；其他沒有樣本的型態轉人工）。

@@ -7,7 +7,7 @@
 
 和 BARC FCN 相同（商品代號前 3 碼 `029`，`發行機構` 欄寫 `Barclays`）。商品種類看 `Product` = `FCN_Stepdown`：辨識到的範本是 `barc-zh-stepdown-pd`／`barc-zh-stepdown-iis` 時，該列 Product 必須是 `FCN_Stepdown`；Product 是 `FCN_Stepdown`、文件卻是 BARC FCN 範本（或反過來）→ 商品種類不一致，轉人工覆核（共用 `template.product_family`）。
 
-開放自動核對：`config/issuer_prefixes.toml` `[auto_check_products]` 的 `FCN_Stepdown = ["BARC"]`（workflow #544）。
+開放自動核對：`config/issuer_prefixes.toml` `[auto_check_products]` 的 `FCN_Stepdown` 含 `BARC`（workflow #544；其他上手逐家開放，見[支援範圍](../support-matrix.md)）。
 
 ## 2. 欄位對照（只列和 BARC FCN 不同的）
 
