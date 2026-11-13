@@ -292,8 +292,8 @@ def test_investor_sheet_two_rates_must_agree(tmp_path):
         (Edit("1.0000%；或", "1.1000%；或", "ts.art9"), "doc.coupon_repeats"),
         (Edit("相關配息率為：1.0000% × dt/Dt", "相關配息率為：1.1000% × dt/Dt", "ts.art9"), "doc.coupon_repeats"),
         (Edit("(100% + 1.0000%)", "(100% + 1.1000%)", "ts.art16.i"), "scenario.params"),
-        (Edit("× 1.0000% × (10/20)", "× 1.1000% × (10/20)", "ts.art16.ii"), "scenario.params"),
-        (Edit("× 1.0000% × (0/20)", "× 1.1000% × (0/20)", "ts.art16.iii"), "scenario.params"),
+        (Edit("× 1.0000% × (9/21)", "× 1.1000% × (9/21)", "ts.art16.ii"), "scenario.params"),
+        (Edit("× 1.0000% × (0/21)", "× 1.1000% × (0/21)", "ts.art16.iii"), "scenario.params"),
         (Edit("× 1.0000% (四捨五入", "× 1.1000% (四捨五入", "ts.art16.iii"), "scenario.params"),
     ],
     ids=[
@@ -315,16 +315,138 @@ def test_other_places_of_the_rate_must_match_article14(tmp_path, edit, rule_id):
     assert iis.report.status == S.PASS, problems(iis.report)
 
 
-def test_accrual_assumptions_of_scenarios_are_not_checked(tmp_path):
-    """一般情況假設一半天數、總報酬率與平均年化報酬率依假設算出：不核對（改了也不判錯）。"""
-    r = check(
-        tmp_path,
-        edits=[
-            Edit("(10/20)", "(12/20)", "ts.art16.ii"),
-            Edit("(平均年化報酬率：", "(平均年化報酬率約：", "ts.art16.ii"),
-        ],
-    )
+# ---------------------------------------------------------------- §16 一般、最差情況依假設天數的算式（workflow #577）
+
+GENERAL, WORST, CALC = "ts.art16.ii", "ts.art16.iii", "doc.scenario_calculations"
+# D0：面額 10,000、月配息率 1.0000%、6 期、g = 1；一般情況 (9/21) → 42.86、累積 314.30、3.14%；最差情況 (0/21) → 0.00、
+# 累積 100.00、等值 289.30、-96.11%（合成值，見 barc_synth._dacn_scenarios）
+GENERAL_CUMULATIVE = "100.00 美元 × 1 + 42.86 美元 × 5 = 314.30 美元"
+# 第二行區間計息算式（不留空白才放得進一行）
+SECOND_ACCRUAL = "第2到6個配息支付日：每單位配息金額=10,000美元×1.0000%×(9/21)(四捨五入至小數點後第2位)=42.86美元"
+PAYS = "發行機構將於每一個「配息支付日t」支付商品面額乘以各配息觀察期之配息率所計算之配息金額。"  # 情境開頭的說明句
+
+
+def calc_problems(report) -> set[tuple[str, S]]:
+    return {(field, status) for rid, field, status in problems(report) if rid == CALC}
+
+
+@pytest.mark.parametrize("spec", [DacnSpec(days=22, general_days=13), DacnSpec(days=19, general_days=17, worst_days=3)])
+def test_scenario_calculations_use_the_written_days(tmp_path, spec):
+    """n、N 本身不核對：換成別的假設、配息、累積與總報酬率跟著算對 → 通過；平均年化報酬率不核對（改字也不判錯）；
+    最差情況累積第二段是 0、沒寫期數（樣本寫法）也照常核對。"""
+    r = check(tmp_path, spec, edits=[Edit("(平均年化報酬率：", "(平均年化報酬率約：", GENERAL)])
     assert r.status == S.PASS, problems(r)
+    fields = {x.field for x in rule(r, CALC)}
+    assert fields == {
+        f"{k}_{p}" for k in ("general", "worst") for p in ("coupon", "accrual", "cumulative", "return")
+    } | {"general_final"}
+
+
+def test_worst_cumulative_without_count_is_checked(tmp_path):
+    assert rule(check(tmp_path), CALC, "worst_cumulative")[0].status == S.PASS
+    r = check(tmp_path, edits=[Edit("+ 0.00 美元 = 100.00 美元", "+ 0.00 美元 = 100.10 美元", WORST)])
+    assert ("worst_cumulative", S.MISMATCH) in calc_problems(r), problems(r)
+
+
+@pytest.mark.parametrize(
+    ("edits", "expected"),
+    [
+        ([Edit("= 100.00 美元", "= 100.01 美元", GENERAL)], {"general_coupon", "general_cumulative"}),
+        ([Edit("= 0.00 美元", "= 0.01 美元", WORST)], {"worst_accrual", "worst_cumulative"}),
+        (
+            [
+                Edit(GENERAL_CUMULATIVE, "100.01 美元 × 1 + 42.86 美元 × 5 = 314.31 美元", GENERAL),
+                Edit("= 100.00 美元", "= 100.01 美元", GENERAL),
+                Edit("+ 314.30 美元)", "+ 314.31 美元)", GENERAL),
+            ],
+            {"general_coupon"},
+        ),
+        (
+            [
+                Edit(GENERAL_CUMULATIVE, "100.00 美元 × 1 + 42.87 美元 × 5 = 314.35 美元", GENERAL),
+                Edit("= 42.86 美元", "= 42.87 美元", GENERAL),
+                Edit("+ 314.30 美元)", "+ 314.35 美元)", GENERAL),
+            ],
+            {"general_accrual"},
+        ),
+        ([Edit("× (9/21)", "× (10/21)", GENERAL)], {"general_accrual"}),
+        ([Edit("第2 到6 個配息支付日", "第2 到5 個配息支付日", GENERAL)], {"general_accrual"}),
+        ([Edit("= 10,000 美元 × 1.0000% × (9/21)", "= 1,000 美元 × 1.0000% × (9/21)", GENERAL)], {"general_accrual"}),
+        ([Edit("第1 個配息支付日：", "第1 到2 個配息支付日：", WORST)], {"worst_coupon"}),
+        ([Edit("= 10,000 美元 × 1.0000% (四捨五入", "= 1,000 美元 × 1.0000% (四捨五入", WORST)], {"worst_coupon"}),
+        ([Edit("+ 42.86 美元 × 5", "+ 42.68 美元 × 5", GENERAL)], {"general_cumulative"}),
+        ([Edit("42.86 美元 × 5 =", "42.86 美元 × 4 =", GENERAL)], {"general_cumulative"}),
+        (
+            [
+                Edit("× 5 = 314.30 美元", "× 5 = 314.03 美元", GENERAL),
+                Edit("+ 314.30 美元)", "+ 314.03 美元)", GENERAL),
+            ],
+            {"general_cumulative"},
+        ),
+        ([Edit("× 100% = 10,000 美元", "× 100% = 10,100 美元", GENERAL)], {"general_final", "general_return"}),
+        ([Edit("= 10,000 美元 × 100%", "= 1,000 美元 × 100%", GENERAL)], {"general_final"}),
+        ([Edit("- 1 = 3.14%", "- 1 = 3.41%", GENERAL)], {"general_return"}),
+        ([Edit("- 1 = -96.11%", "- 1 = -96.12%", WORST)], {"worst_return"}),
+        ([Edit("+ 314.30 美元)", "+ 341.30 美元)", GENERAL)], {"general_return"}),
+        ([Edit("+ 289.30 美元)", "+ 298.30 美元)", WORST)], {"worst_return"}),
+        ([Edit(") / 10,000 美元] - 1 = 3.14%", ") / 1,000 美元] - 1 = 3.14%", GENERAL)], {"general_return"}),
+    ],
+    ids=[
+        "general-first-coupon",
+        "worst-accrual",
+        "coupon-carried-into-cumulative",
+        "accrual-carried-into-cumulative",
+        "days-without-amount",
+        "accrual-periods",
+        "accrual-denomination",
+        "coupon-periods",
+        "coupon-denomination",
+        "cumulative-leg-amount",
+        "cumulative-leg-periods",
+        "cumulative-total",
+        "general-final",
+        "final-denomination",
+        "general-return",
+        "worst-return",
+        "return-term-not-cumulative",
+        "return-term-not-equivalent",
+        "return-divisor",
+    ],
+)
+def test_scenario_calculations_must_follow_the_written_days(tmp_path, edits, expected):
+    """§3.9 反例：只有算錯的那幾處判不一致；每期配息算錯、累積照錯的配息加總時只報每期配息。"""
+    r = check(tmp_path, edits=edits)
+    assert calc_problems(r) == {(f, S.MISMATCH) for f in expected}, problems(r)
+    assert {rid for rid, _, _ in problems(r)} == {CALC}, problems(r)
+
+
+@pytest.mark.parametrize(
+    ("edits", "expected"),
+    [
+        ([Edit("× (9/21)", "× (9/0)", GENERAL)], {"general_accrual"}),
+        (
+            [Edit("× 1.0000% (四捨五入", "× 1.0000% × (9/21) (四捨五入", GENERAL)],
+            {"general_coupon", "general_accrual", "general_cumulative"},
+        ),
+        ([Edit(PAYS, SECOND_ACCRUAL, GENERAL)], {"general_accrual", "general_cumulative"}),
+        ([Edit("+ 42.86 美元 × 5", "+ 42.86 美元", GENERAL)], {"general_cumulative"}),
+    ],
+    ids=["zero-total-days", "first-coupon-as-accrual", "two-accrual-formulas", "count-omitted-for-nonzero"],
+)
+def test_unreadable_scenario_calculations_go_to_review(tmp_path, edits, expected):
+    """N = 0 算不出、第 1～g 期那行也寫成區間計息、同一情境兩行區間計息算式、金額不是 0 的一段沒寫期數（分不出是每期
+    還是合計）：轉人工覆核。"""
+    r = check(tmp_path, edits=edits)
+    assert calc_problems(r) == {(f, S.REVIEW_REQUIRED) for f in expected}, problems(r)
+
+
+def test_accrual_rounding_is_half_up_at_the_midpoint(tmp_path):
+    """10,000 × 1% × 5 ÷ 32 = 15.625：四捨五入是 15.63（銀行家進位的 15.62 判不一致）。"""
+    spec = DacnSpec(days=32, general_days=5)
+    assert check(tmp_path / "up", spec).status == S.PASS
+    r = check(tmp_path / "even", spec, edits=[Edit("= 15.63 美元", "= 15.62 美元", GENERAL)])
+    found = rule(r, CALC, "general_accrual")[0]
+    assert found.status == S.MISMATCH and found.expected == Decimal("15.63"), problems(r)
 
 
 def test_favourable_total_return_is_checked(tmp_path):

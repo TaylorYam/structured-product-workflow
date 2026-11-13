@@ -76,9 +76,12 @@ class Hit(Generic[T]):
     lines: tuple[Line, ...]
 
 
-def hits(ti: TextIndex, pattern: str, convert: Callable[[re.Match[str]], T]) -> list[Hit[T]]:
-    """`pattern` 在 `ti` 的每一處，`convert(match)` 為值。"""
-    return [Hit(convert(m), tuple(ti.lines_for(m.start(), m.end()))) for m in ti.finditer(pattern)]
+def hits(
+    ti: TextIndex, pattern: str, convert: Callable[[re.Match[str]], T], span: tuple[int, int] | None = None
+) -> list[Hit[T]]:
+    """`pattern` 在 `ti` 的每一處（`span` 為 `ti.text` 的起訖位置時只找這一段），`convert(match)` 為值。"""
+    found = ti.finditer(pattern) if span is None else re.compile(pattern).finditer(ti.text, *span)
+    return [Hit(convert(m), tuple(ti.lines_for(m.start(), m.end()))) for m in found]
 
 
 def one(found: list[Hit[T]]) -> Hit[T] | None:

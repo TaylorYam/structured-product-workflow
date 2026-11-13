@@ -4,7 +4,8 @@
 docs/checker/rules/barc-dacn-check-rules.md §5）：5 份說明書與 5 份投資人須知都是現行版、辨識成 BARC DACN；沒有一份被認成
 BARC FCN。讀不到的欄位和 BARC FCN 相同（說明書費用表沒有的費用項目、沒有 KI 的 KI %）。全部美元、KO 每日＋記憶式、配息公式
 保證期數 = §13(7) 保證配息期 = Non-Call = 1、配息門檻 = 執行價 %、配息門檻價格 = 最初價格 × %、§14 配息表期數 = 天期；投資人須知
-的月配息率、配息門檻、價格與名稱 = 同商品說明書（長名稱折三行的列也一樣）。參考條件表要另外準備，整批核對的試跑結果記在 PR。
+的月配息率、配息門檻、價格與名稱 = 同商品說明書（長名稱折三行的列也一樣）；§16 一般、最差情況的算式都讀得到（workflow #577）。
+參考條件表要另外準備，整批核對的試跑結果記在 PR。
 """
 
 from collections import Counter
@@ -101,3 +102,17 @@ def test_investor_sheets_agree_with_their_term_sheets(documents):
             r.prices for r in ts.f("underlying_prices").value
         ]
         assert iis.f("underlying_names").value == [squash(n) for n in ts.f("price_table").value.names]
+
+
+def test_scenario_calculations_are_read(documents):
+    """§16 一般、最差情況的兩行配息算式、累積、最終交割金額（等值）與總報酬率各讀到剛好一處（workflow #577）；最差情況
+    累積第二段寫成不帶期數的 0（範本規格 §4.3）。驗算結果記在 PR 的試跑。"""
+    term_sheets = [s for _, iis, _, _, s in documents if s is not None and not iis]
+    assert len(term_sheets) == 5
+    for ts in term_sheets:
+        for name in ("scenario_general_calc", "scenario_worst_calc"):
+            calc = ts.f(name).value
+            assert None not in (calc.coupon, calc.accrual, calc.cumulative, calc.final, calc.total_return), name
+            assert calc.accrual.value.total_days > 0
+        legs = ts.f("scenario_worst_calc").value.cumulative.value.legs
+        assert len(legs) == 2 and legs[1].periods is None and legs[1].amount == 0

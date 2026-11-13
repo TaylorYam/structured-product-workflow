@@ -1,6 +1,7 @@
 """BARC DACN 中文產品說明書（docs/checker/templates/barc-zh-dacn.md）：版面、封面、§13、§16 情境、第二章以後同 BARC FCN
 說明書（parsers/barc.py），先照它讀出，再改讀 §14 月配息率、配息公式保證期數、配息門檻與配息觀察期表、§15 價格表（多配息門檻
-欄、列靠上對齊）與月配息率的其他出處（§9 段末、§16 `× X% × (n/N)`）；範本沒有年利率。
+欄、列靠上對齊）與月配息率的其他出處（§9 段末、§16 `× X% × (n/N)`）；範本沒有年利率。§16 一般、最差情況另讀兩段配息算式、
+累積配息、最終交割金額（等值）與總報酬率算式（`scenario_general_calc`、`scenario_worst_calc`，workflow #577）。
 
 名稱和 FCN 相同，依 §14 的配息率 t 公式與 nt 定義（比配息門檻）辨識商品家族（不看名稱，workflow #366 決定 10）；只支援
 現行版範本：認得出是 BARC DACN、但現行版特徵任一項不成立時，辨識交出「不支援的範本版本」（範本規格 §1、§8）。版本只看寫法、
@@ -11,13 +12,15 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from decimal import Decimal
+from typing import NamedTuple
 
 from .. import standard_fields
 from ..schema import DetectionResult, Line, ParsedField
 from . import barc, price_table
 from . import barc_schedule as schedule
+from .common import NUM, Hit, dec, hits, one
 from .layout import Document, TextIndex
 
 TEMPLATE_ID = "barc-zh-dacn-pd"
@@ -173,6 +176,7 @@ def read(lines: Sequence[Line]) -> barc.BarcTermSheet:
         "annual": [],  # 範本沒有年利率
         "repeat": [m for m in repeats if m.article != barc.ARTICLE_16],
     }
+    f.update(scenario_calcs(s16, f["currency_zh"]))
     pcts = barc.header_pcts(table, "第15條") + barc.scenario_header_pcts(doc.span_lines(arts.get(16)))
     return barc.BarcTermSheet(f, base.full_text, doc, coupon_mentions=mentions, header_pcts=pcts)
 
@@ -207,3 +211,122 @@ def _rate(art14: TextIndex, table: ParsedField) -> tuple[ParsedField, ParsedFiel
         note = f"{WHERE_14}配息率 t 公式：" + "；".join(problems)
         return ParsedField.invalid(monthly, lines, note), ParsedField.invalid(g_name, lines, note)
     return ParsedField.present(monthly, first, lines), ParsedField.present(g_name, g, lines)
+
+
+# ---------------------------------------------------------------- §16 一般、最差情況依假設天數的算式（workflow #577）
+
+AMOUNT = r"[\d,]+(?:\.\d+)?"  # 同 NUM、不分組（累積算式各段）
+ROUND = r"\(四捨五入至小數點後第(\d+)位\)"
+_, GENERAL, WORST = barc._CASES
+# 情境（欄位, 開頭, 下一個情境的開頭；最差情況到第 16 條結尾）
+CALC_CASES = (("scenario_general_calc", GENERAL, WORST), ("scenario_worst_calc", WORST, None))
+
+
+class Coupon(NamedTuple):
+    """「第a(到b)個配息支付日：每單位配息金額 = 面額 × X% (× (n/N)) (四捨五入至小數點後第k位) = 金額」；第 1～g 期沒有 n/N。"""
+
+    first: int
+    last: int
+    denomination: Decimal
+    rate: Decimal
+    days: int | None  # n
+    total_days: int | None  # N
+    amount: Decimal
+    decimals: int
+
+
+class Leg(NamedTuple):
+    """累積配息算式的一段「金額 × 期數」；沒寫期數時 `periods` 為 None（最差情況樣本 0 那段）。"""
+
+    amount: Decimal
+    periods: int | None
+
+
+class Cumulative(NamedTuple):
+    legs: tuple[Leg, ...]
+    total: Decimal
+
+
+class Final(NamedTuple):
+    """一般情況「每單位最終現金交割金額 = 每單位商品面額 × 100% = 面額 × 100% = 金額」（`denomination` 是算式的面額）；
+    最差情況「每單位最終實物贖回權益等值 = … = 金額」（`denomination` 為 None）。"""
+
+    denomination: Decimal | None
+    amount: Decimal
+
+
+class TotalReturn(NamedTuple):
+    """「= [(加數 + 加數) / 面額] - 1 = r%」。"""
+
+    terms: tuple[Decimal, Decimal]
+    divisor: Decimal
+    pct: Decimal
+
+
+@dataclass(frozen=True)
+class ScenarioCalc:
+    """§16(3) 一般或最差情況的算式（範本規格 §4.3）；找不到、寫法不同（例：進位方式不是四捨五入）或出現多次的部分為
+    None（規則轉人工）。`title` 是情境開頭的原文行。"""
+
+    title: tuple[Line, ...]
+    coupon: Hit[Coupon] | None
+    accrual: Hit[Coupon] | None
+    cumulative: Hit[Cumulative] | None
+    final: Hit[Final] | None
+    total_return: Hit[TotalReturn] | None
+
+
+def scenario_calcs(s16: TextIndex, currency: ParsedField) -> dict[str, ParsedField]:
+    """一般、最差情況各一個欄位（值為 `ScenarioCalc`）；讀不到情境開頭或幣別時缺漏。幣別字用說明書讀出的計價幣別。"""
+    if not currency.ok:
+        why = "讀不到計價幣別，無法讀第 16 條情境算式"
+        return {name: ParsedField.missing(name, why) for name, _, _ in CALC_CASES}
+    u = re.escape(currency.value)
+    coupon = (
+        rf"第(\d+)(?:到(\d+))?個配息支付日[:：]每單位配息金額={NUM}{u}[×xX]({X})%(?:[×xX]\((\d+)/(\d+)\))?{ROUND}"
+        rf"={NUM}{u}"
+    )
+    cumulative = rf"每單位累積配息金額=((?:{AMOUNT}{u}(?:[×xX]\d+)?\+)*{AMOUNT}{u}(?:[×xX]\d+)?)={NUM}{u}"
+    cash = rf"每單位最終現金交割金額=每單位商品面額[×xX]100%={NUM}{u}[×xX]100%={NUM}{u}"
+    equivalent = rf"每單位最終實物贖回權益等值=[^總]*?={NUM}{u}{ROUND}"
+    total_return = rf"=\[\({NUM}{u}\+{NUM}{u}\)/{NUM}{u}\]-1=(-?[\d.]+)%"
+    text, out = s16.text, {}
+    for name, start_mark, end_mark in CALC_CASES:
+        start = text.find(start_mark)
+        end = len(text) if end_mark is None else text.find(end_mark)
+        if start < 0 or end < start:
+            out[name] = ParsedField.missing(name, f"第 16 條找不到「{start_mark}」")
+            continue
+        span = (start, end)
+        coupons = hits(s16, coupon, _coupon, span)
+        final = (
+            hits(s16, cash, lambda m: Final(dec(m[1]), dec(m[2])), span)
+            if end_mark is not None
+            else hits(s16, equivalent, lambda m: Final(None, dec(m[1])), span)
+        )
+        calc = ScenarioCalc(
+            title=tuple(s16.lines_for(start, start + len(start_mark))),
+            coupon=one([h for h in coupons if h.value.days is None]),
+            accrual=one([h for h in coupons if h.value.days is not None]),
+            cumulative=one(hits(s16, cumulative, lambda m: _cumulative(m, u), span)),
+            final=one(final),
+            total_return=one(hits(s16, total_return, _total_return, span)),
+        )
+        out[name] = ParsedField.present(name, calc, list(calc.title))
+    return out
+
+
+def _coupon(m: re.Match[str]) -> Coupon:
+    first = int(m[1])
+    days, total = (int(m[5]), int(m[6])) if m[5] else (None, None)
+    return Coupon(first, int(m[2]) if m[2] else first, dec(m[3]), Decimal(m[4]), days, total, dec(m[8]), int(m[7]))
+
+
+def _cumulative(m: re.Match[str], currency: str) -> Cumulative:
+    leg = rf"({AMOUNT}){currency}(?:[×xX](\d+))?"
+    legs = tuple(Leg(dec(a), int(n) if n else None) for a, n in re.findall(leg, m[1]))
+    return Cumulative(legs, dec(m[2]))
+
+
+def _total_return(m: re.Match[str]) -> TotalReturn:
+    return TotalReturn((dec(m[1]), dec(m[2])), dec(m[3]), Decimal(m[4]))

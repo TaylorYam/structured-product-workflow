@@ -125,10 +125,14 @@ class Spec(ProductSpec):
 class DacnSpec(Spec):
     """BARC DACN 合成規格：預設同樣本的型態（美元、多標的、KO 每日觀察＋記憶式、KI 無、配息公式保證 1 期 = Non-Call 1）。
     名稱和 FCN 同一句。`barrier` 是配息門檻 %（說明書 §14 定義句、§15 與投資人須知價格表、參考條件表「配息門檻(%)」；
-    None → 同執行價）；`formula_g` 是 §14 與投資人須知配息率 t 公式第 1 段的期數（None → 同保證配息期）。"""
+    None → 同執行價）；`formula_g` 是 §14 與投資人須知配息率 t 公式第 1 段的期數（None → 同保證配息期）。§16 一般、最差情況
+    第 g+1 期起寫 `× X% × (n/N)`：`days` 是 N，`general_days`、`worst_days` 是兩個情境的 n（樣本最差情況 n = 0）。"""
 
     barrier: Decimal | None = None
     formula_g: int | None = None
+    days: int = 21
+    general_days: int = 9
+    worst_days: int = 0
 
     @property
     def barrier_value(self) -> Decimal:
@@ -726,12 +730,24 @@ def _scenarios(w: PdfWriter, s: Spec, notional: str) -> None:
 
 
 def _dacn_scenarios(w: PdfWriter, s: DacnSpec, notional: str) -> None:
-    """DACN §16(3) 一般、最差情況：第 1～g 期 `× X%`，其後 `× X% × (n/N)`（假設 10/20、0/20；範本規格 §4.3）。"""
-    m, ccy, n, g = s.monthly_value, s.currency_zh, s.tenor, s.g
-    first = (Decimal(s.denom) * m / 100).quantize(Decimal("0.01"), ROUND_HALF_UP)
+    """DACN §16(3) 一般、最差情況：第 1～g 期 `× X%`，其後 `× X% × (n/N)`、累積配息、一般情況最終現金交割金額或最差情況
+    最終實物贖回權益等值、總報酬率（範本規格 §4.3；加數順序同樣本：一般情況交割金額在前、最差情況累積在前）。"""
+    m, ccy, n, g, denom = s.monthly_value, s.currency_zh, s.tenor, s.g, Decimal(s.denom)
+    cent = Decimal("0.01")
+    first = (denom * m / 100).quantize(cent, ROUND_HALF_UP)
     for section, label, case, k in (
-        ("art16.ii", "(ii)", "一般情況：所有標的資產之收盤價於一籃子預定交易日僅有一半日期大於或等於其配息門檻，", 10),
-        ("art16.iii", "(iii)", "最差情況：所有標的資產之收盤價於一籃子預定交易日均無大於或等於其配息門檻，", 0),
+        (
+            "art16.ii",
+            "(ii)",
+            "一般情況：所有標的資產之收盤價於一籃子預定交易日僅有部分日期大於或等於其配息門檻，",
+            s.general_days,
+        ),
+        (
+            "art16.iii",
+            "(iii)",
+            "最差情況：所有標的資產之收盤價於一籃子預定交易日均無大於或等於其配息門檻，",
+            s.worst_days,
+        ),
     ):
         w.section = section
         w.numbered(label, 77.7, 106.1, case)
@@ -740,20 +756,46 @@ def _dacn_scenarios(w: PdfWriter, s: DacnSpec, notional: str) -> None:
         w.line(77.7, "第1 個配息支付日：" if g == 1 else f"第1 到{g} 個配息支付日：")
         w.line(77.7, f"每單位配息金額 = {notional} × {m}% (四捨五入至小數點後第2 位)")
         w.line(77.7, f"= {first:,.2f} {ccy}")
-        rest = (Decimal(s.denom) * m / 100 * k / 20).quantize(Decimal("0.01"), ROUND_HALF_UP)
+        rest = (denom * m / 100 * k / s.days).quantize(cent, ROUND_HALF_UP)
         w.line(77.7, f"第{g + 1} 到{n} 個配息支付日：")
-        w.line(77.7, f"每單位配息金額 = {notional} × {m}% × ({k}/20) (四捨五入至小數點後第2 位)")
+        w.line(77.7, f"每單位配息金額 = {notional} × {m}% × ({k}/{s.days}) (四捨五入至小數點後第2 位)")
         w.line(77.7, f"= {rest:,.2f} {ccy}")
         total = first * g + rest * (n - g)
-        w.line(
-            77.7, f"每單位累積配息金額 = {first:,.2f} {ccy} × {g} + {rest:,.2f} {ccy} × {n - g} = {total:,.2f} {ccy}"
-        )
-        w.line(
-            77.7, "總報酬率(截至到期日之報酬) = [(每單位累積配息金額 + 每單位最終現金交割金額) / 每單位商品面額] - 1"
-        )
-        ret = (total / s.denom * 100).quantize(Decimal("0.01"), ROUND_HALF_UP) if k else Decimal("-50.00")
-        ann = (ret * 12 / n).quantize(Decimal("0.01"), ROUND_HALF_UP)
-        w.line(77.7, f"= [({total:,.2f} {ccy} + {notional})/ {notional}] - 1 = {ret}% (平均年化報酬率：{ann}%)")
+        legs = f"{rest:,.2f} {ccy} × {n - g}" if rest else f"{rest:,.2f} {ccy}"  # 樣本：0 那段不寫期數
+        w.line(77.7, f"每單位累積配息金額 = {first:,.2f} {ccy} × {g} + {legs} = {total:,.2f} {ccy}")
+        if section == "art16.ii":
+            final, terms = denom, f"{notional} + {total:,.2f} {ccy}"
+            w.line(77.7, "每單位最終現金交割金額 = 每單位商品面額 × 100%")
+            w.line(77.7, f"= {notional} × 100% = {notional}")
+            w.line(
+                77.7,
+                "總報酬率(截至到期日之報酬) = [(每單位最終現金交割金額 + 每單位累積配息金額) / 每單位商品面額] - 1",
+            )
+        else:
+            close = Decimal("2.50")  # 假設表現最差標的的最終價格（虛構）
+            strike = price(s.underlyings[0].initial, s.strike)
+            shares = (denom / strike).quantize(Decimal("0.0001"), ROUND_HALF_UP)
+            whole = int(shares)
+            remainder = (close * (shares - whole)).quantize(cent, ROUND_HALF_UP)
+            final = (close * whole + remainder).quantize(cent, ROUND_HALF_UP)
+            terms = f"{total:,.2f} {ccy} + {final:,.2f} {ccy}"
+            w.line(
+                77.7,
+                f"剩餘金額 = {shares - whole} 股 × {close} {ccy} ÷ 1.0000 = {remainder} {ccy} (四捨五入至小數點後第2 位)",
+            )
+            w.line(
+                77.7, "每單位最終實物贖回權益等值 = 表現最差之標的資產於最終評價日之相關價格 × 每單位交割股數 ÷ 交割匯"
+            )
+            w.line(77.7, "率 + 剩餘金額")
+            w.line(77.7, f"= {close} {ccy} × {whole} 股 ÷ 1.0000 + {remainder} {ccy}")
+            w.line(77.7, f"= {final:,.2f} {ccy} (四捨五入至小數點後第2 位)")
+            w.line(
+                77.7,
+                "總報酬率(截至到期日之報酬) = [(每單位累積配息金額 + 每單位最終實物贖回權益等值) / 每單位商品面額] - 1",
+            )
+        ret = ((total + final) / denom * 100 - 100).quantize(cent, ROUND_HALF_UP)
+        ann = (ret * 12 / n).quantize(cent, ROUND_HALF_UP)
+        w.line(77.7, f"= [({terms}) / {notional}] - 1 = {ret}% (平均年化報酬率：{ann}%)")
 
 
 def _dacn_art14(w: PdfWriter, s: DacnSpec, rows: list[dict[str, Any]]) -> None:
