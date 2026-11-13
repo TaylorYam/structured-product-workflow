@@ -58,11 +58,13 @@ def compare_slots(report) -> dict[str, object]:
     "spec",
     [
         S0,
-        StepdownSpec(product_code="086199990005", wording="fcn", ki="AM", ko=Decimal("105.00"), tenor=6),
+        StepdownSpec(
+            product_code="086199990005", wording="fcn", ki="AM", ko=Decimal("103.00"), step=Decimal("4.00"), tenor=6
+        ),
         StepdownSpec(product_code="086199990006", tenor=3, step=Decimal("10.00"), iis_period_def=True),
-        StepdownSpec(product_code="086199990007", ki="D", count=2, step=Decimal("3.00")),
+        StepdownSpec(product_code="086199990007", ki="D", count=2, step=Decimal("5.00")),
     ],
-    ids=["D-new-wording", "fcn-wording-KI-AM-KO105-6m", "iis-period-def-step10-3m", "KI-D-two-underlyings"],
+    ids=["D-new-wording", "fcn-wording-KI-AM-KO103-step4-6m", "iis-period-def-step10-3m", "KI-D-two-underlyings-step5"],
 )
 def test_supported_stepdown_pairs_pass_and_fill(tmp_path, spec):
     ts, iis = check_pair(tmp_path, spec)
