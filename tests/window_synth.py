@@ -6,7 +6,7 @@ import tkinter as tk
 from collections.abc import Callable
 from concurrent.futures import Future
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import messagebox
 
 from fcn_checker.panel_workflow import PanelSession
 from fcn_checker.ui import Background
@@ -99,11 +99,6 @@ class HeldBackground:
 def started(tab) -> list[str]:
     """分頁開始了、還沒做完的背景動作（`HeldBackground`；一次只跑一件）：它處理中的說明。"""
     return [tab.status_var.get()] if tab.background.held else []
-
-
-def hint_change_button(hint) -> ttk.Button:
-    (button,) = [w for w in hint.winfo_children() if isinstance(w, ttk.Button)]
-    return button
 
 
 def prepared_receipt(batch: Path) -> PrepareReceipt:

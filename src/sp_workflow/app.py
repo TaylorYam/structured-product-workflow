@@ -307,7 +307,6 @@ class PanelWindow:
         self.sidebar.refresh()
         self.maintenance = self._maintenance_menu()
         self._analysis_menu()
-        self.go_menu = self._go_menu()
         master.protocol("WM_DELETE_WINDOW", self.close)
 
     def _prepared(self, receipt: PrepareReceipt) -> bool:
@@ -359,21 +358,6 @@ class PanelWindow:
         for label in (EXPOSURE, HOTSPOTS, MARKET_BRIEF):
             menu.add_command(label=label, command=lambda name=label: self.open_window(name))
         bar.add_cascade(label="分析", menu=menu)
-
-    def _go_menu(self) -> tk.Menu:
-        """「前往」選單：步驟欄的每一步也能從選單與 Ctrl+1～9 切過去（鍵盤也能操作整個流程）。"""
-        bar = self.master.nametowidget(self.master["menu"])
-        menu = tk.Menu(bar, tearoff=False)
-        for number, tab in enumerate(self.notebook.tabs(), 1):
-            menu.add_command(
-                label=self.notebook.tab(tab, "text").partition(" ")[2],
-                accelerator=f"Ctrl+{number}",
-                command=lambda t=tab: self.notebook.select(t),
-            )
-            for key in (f"<Control-Key-{number}>", f"<Control-KP_{number}>"):
-                self.master.bind(key, lambda _event, t=tab: self.notebook.select(t))
-        bar.insert_cascade(1 if bar.type(0) == "tearoff" else 0, label="前往", menu=menu)
-        return menu
 
     def _refresh_maintenance(self) -> None:
         """每次打開「維護」選單時，依核對頁目前的狀態決定能不能按。"""

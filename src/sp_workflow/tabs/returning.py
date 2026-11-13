@@ -15,7 +15,7 @@ from fcn_checker.ui import Background, HintBar, NextButton
 from sp_workflow.generic_backfill import GenericReceipt
 from sp_workflow.local_settings import FolderMemory
 from sp_workflow.returning import PENDING_SUFFIX, ReturnReceipt
-from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, Tab, ask_dir, record_note, set_if_chosen
+from sp_workflow.tabs.base import TITLE, BackgroundFactory, DatabaseLogin, Tab, ask_dir, record_note
 from sp_workflow.window_actions import ReturnResult, fill_generic, run_return
 
 RETURN_COLUMNS = (("tdcc", "TDCC", 130), ("ts", "TS", 70), ("iis", "IIS", 70), ("reason", "原因", 450))
@@ -55,7 +55,7 @@ class ReturnTab(Tab):
             "放回商品資料夾",
             f"把核對通過的 TS／IIS 用標準檔名複製回商品資料夾；沒通過的那份檔名加「{PENDING_SUFFIX}」。",
         )
-        self.hint = HintBar(self.frame, self._change_result)
+        self.hint = HintBar(self.frame)
         self.hint.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(0, 12))
         self.hint.hide()
         body = self.body(self.card(2))
@@ -92,9 +92,6 @@ class ReturnTab(Tab):
         if self.handed_off is not None and (self.batch_var.get(), self.result_var.get()) != self.handed_off:
             self.handed_off = None
             self.hint.hide()
-
-    def _change_result(self) -> None:
-        set_if_chosen(self.result_var, self._ask_result)
 
     def _ask_result(self) -> str:
         return filedialog.askopenfilename(
