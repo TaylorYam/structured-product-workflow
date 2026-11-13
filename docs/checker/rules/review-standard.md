@@ -359,6 +359,7 @@ OOS 多家上手的舊範本寫「受託投資」（SG 投資人須知警語七�
 - **商品種類**（`issuer.ubs.product_type`）：`股權結構型商品`（舊版 `股權結構型債券` 不支援，範本辨識失敗）。
 - **最低金額倍數**（`issuer.ubs.min_amount_multiples`）：`minimum_trade = 5`（商品基本資料八 `最低交易金額`）、`minimum_subscription = 5`、`minimum_additional = 1`、`minimum_redemption = 1`、`redemption_increment = 1`（一般交易事項四、八）；不分幣別（USD、JPY、AUD 樣本都相同）。
 - **發行不成立門檻**：範本沒有（`發行機構可根據其絕對裁量權，取消任何發行`），不設 `issuer.ubs.minimum_issue_size`。
+- **DACN 商品名稱樣板**（`issuer.ubs.product_names.DACN`，workflow #549 規格；參考條件表 Product 是 DACN 時用這個樣板）：中文 `瑞銀{ko_observation_zh}{memory_zh}提前出場區間累計配息連結{underlying_zh}股票（不保本）（無擔保）（無保證機構）結構型商品`（`{underlying_zh}` 多標的填 `一籃子`），英文 `UBS {ko_observation_en} {memory_en}Callable Variable Maturity Range Accrual Equity Linked{underlying_en} Notes`（多標的填 `（Laggard）`）；單一標的沒有樣本、名稱轉人工；觀察方式字樣、記憶式與比對方式同 FCN。3 份樣本 KO 都是每日卻寫 `定期觀察`，1 份多標的沒有 `一籃子`／`（Laggard）`，暫定判不一致、待使用者決定。其他審查標準和 UBS FCN 相同（[UBS DACN 核對規則](ubs-dacn-check-rules.md) §3.8）。作業人員獨立標記不做（路線圖 #551 指示）。
 - **發行價格**：商品基本資料八 `發行價格：100%，即X幣別` 或 `每單位面額之100%`；沒有其他出處。
 - **受託機構電話**：第 1 頁七、與一般交易事項十六 `受託機構聯絡方式`（`distributor_phone_ch4`）；投資人須知末頁 `受託機構聯絡方式` 也核對。
 - **受理申購日期**：只有 `商品申購開始受理日` 1 處（= 交易日）；結束受理日只有文字，不核對。
