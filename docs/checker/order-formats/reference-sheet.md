@@ -31,7 +31,7 @@
 - `TS`、`IIS`：表上有就照 §5 回填與比對；沒有不影響核對。「回填後」是匯入格式，沒有這兩欄，改由 `TS/IIS完成檢核` 打勾（§5）。
 - `風險等級`（2026-10-26，workflow Issue #239）：表上有就是 RR 核對的期望值；沒有（舊 Excel）時 RR 核對照審查標準 `risk.level`（RR4），同以前（§3）。
 - `配息門檻(%)`（2026-10-30，workflow Issue #367、ADR 0030）：DACN 的配息門檻（最初價格的 %）；2026-11-02 起 BEN 也有（紅利門檻，workflow #406、ADR 0029），其他商品寫空值寫法 `-`。各上手開放 DACN 自動核對時拿它和說明書比；沒有這欄（舊 Excel）時比 `K(%)`。不在匯入格式裡，「回填後」不帶。
-- `KO降幅(%)`（2026-11-11，workflow Issue #537、ADR 0033）：FCN_Stepdown、Snowball、Snowball_Stepdown 的 KO% 每期往下降的百分點（`KO(%)` 是第 1 期），其他商品寫 `-`。這幾種不開放自動核對，所以不和說明書比；FCN 以外商品回補讀這欄（Stepdown 類必填）。有降幅的每日型（D）比價日要填每一期的結束日（`比價日_{Non-Call}` 到 `比價日_{期數}` 每格都填），不是只填開始與最後；少了時比價待確認。不在匯入格式裡，「回填後」不帶。
+- `KO降幅(%)`（2026-11-11，workflow Issue #537、ADR 0033）：FCN_Stepdown、Snowball、Snowball_Stepdown 的 KO% 每期往下降的百分點（`KO(%)` 是第 1 期），其他商品寫 `-`。FCN_Stepdown 依 workflow #551 逐家開放自動核對（BARC 起，#544）：和說明書的降幅、每期 KO% 比（`field.ko_step_pct`、`field.ko_levels`，見[共用核對規則](../rules/shared-check-rules.md) §11），空白或 `-` 轉人工覆核；Snowball 類不開放自動核對，不和說明書比。FCN 以外商品回補讀這欄（Stepdown 類必填）。有降幅的每日型（D）比價日要填每一期的結束日（`比價日_{Non-Call}` 到 `比價日_{期數}` 每格都填），不是只填開始與最後；少了時比價待確認。不在匯入格式裡，「回填後」不帶。
 - 其他欄（例如 `分公司_n`、`交易日期`、`下一比價日`、`TS/IIS完成檢核`、沒有表頭的欄）一律略過，重複也不提示。欄位順序不影響讀取。
 
 參考條件表的欄位順序不影響核對結果檔：「回填後」一律照**匯入格式**（設定檔 `[import_format]`，§5）重新產生（Issue #203）。
@@ -77,7 +77,7 @@
 | 發行機構評等_標準普爾／_穆迪／_惠譽、保證機構評等_標準普爾／_穆迪／_惠譽 | `issuer_rating_sp`、`issuer_rating_moodys`、`issuer_rating_fitch`、`guarantor_rating_*` | 交易日當時的長期債務信用評等（Issue #240）。不是必要欄：資料庫來源從評等表（`workflow.credit_rating`，生效日 ≤ 交易日的最新一筆）帶出，沒有保證機構或評等表沒有那家時空白；舊版 Excel 沒有這些欄時，做評等核對的上手（14 家都做，#240～#243；CA、JPM、Nomura、SG 只看保證機構評等欄，#241）評等轉人工覆核。說明書與投資人須知的評等依[共用規則](../rules/shared-check-rules.md) §10 比對。不在匯入格式內（不回填） |
 | Product | — | 不和說明書比對；決定能不能自動核對（上手編號對照的 `[auto_check_products]`，#302）：沒開放給這家上手的商品種類照不支援樣態處理，空白或沒有這欄時照 FCN |
 | 配息門檻(%) | `coupon_barrier_pct` | DACN 的配息門檻（最初價格的 %）、BEN 的紅利門檻（workflow #406），其他商品寫 `-`（workflow #367）。不是必要欄；已開放 DACN 的上手（Nomura、SG、DBS、Natixis，workflow #368～#371）與已開放 BEN 的上手（HSBC、MS、CA，紅利門檻由到期公式推得 = 執行價 %）由共用規則 `field.coupon_barrier_pct` 和說明書比，表上沒有這欄時比 `K(%)`；DACN 列空白或 `-` 也比 `K(%)`（2026-11-02 使用者決定，DACN-409-01），BEN 列空白或 `-` 轉人工覆核。不在匯入格式裡，「回填後」不帶 |
-| KO降幅(%) | `ko_step_pct` | FCN_Stepdown、Snowball、Snowball_Stepdown 的 KO 每期降幅（百分點，`KO(%)` 是第 1 期；workflow #537、ADR 0033），其他商品寫 `-`。不是必要欄，資料庫來源帶出 `product.ko_step_pct`；這幾種不開放自動核對，不和說明書比；FCN 以外商品回補讀這欄。不在匯入格式裡，「回填後」不帶 |
+| KO降幅(%) | `ko_step_pct` | FCN_Stepdown、Snowball、Snowball_Stepdown 的 KO 每期降幅（百分點，`KO(%)` 是第 1 期；workflow #537、ADR 0033），其他商品寫 `-`。不是必要欄，資料庫來源帶出 `product.ko_step_pct`；開放自動核對的 FCN_Stepdown 和說明書的降幅、每期 KO% 比（§2 說明），Snowball 類不和說明書比；FCN 以外商品回補讀這欄。不在匯入格式裡，「回填後」不帶 |
 | 庫存狀態、當日比價、私銀註記、UF、UL_n_Memo | — | 存續或內部資訊，不核對 |
 | 其他欄（分公司_n、交易日期、下一比價日、TS/IIS完成檢核等） | — | 略過 |
 
@@ -92,6 +92,7 @@ UF、交易日期、庫存狀態、分公司_n、分公司_n_承作金額不核�
 | KO(Freq) | 填法 | 日期 |
 |---|---|---|
 | `D` | 填 `比價日_{Non-Call}`（開始）與 `比價日_{期數}`（最後一期）；Non-Call = 天期時只填最後一格 | 開始那格：BARC 該期提前出場觀察期的期末日、HSBC KO 起日、MS 該期配息週期終止日；最後一期：該期期末日（= 最終比價日） |
+| `D`（有 KO 降幅：FCN_Stepdown） | 從 `比價日_{Non-Call}` 填到 `比價日_{期數}`（兩端都包含，每一期都填；ADR 0033） | 各期提前出場觀察期的期末日（最後一期 = 最終比價日）；見 [BARC FCN_Stepdown 下單資料格式](barc-stepdown-reference.md) §4 |
 | `P` | 從 `比價日_{Non-Call}` 填到 `比價日_{期數}`（兩端都包含）；Non-Call = 天期時只填最後一格 | 各期自動提前出場評價日（MS：各期定價日） |
 | `P`（Super Bull） | 每個評價日放 `比價日_{距發行日月數}`，`比價日_{天期}` 放最終比價日，其他格 `-`（workflow #309、ADR 0028） | 說明書日期表的評價日（只列評價日、間隔不固定）＋最終評價日；見 [BNP Super Bull 下單資料格式](bnp-super-bull-reference.md) §4、[CA Super Bull 下單資料格式](ca-super-bull-reference.md) §4 |
 

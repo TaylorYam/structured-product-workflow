@@ -105,6 +105,7 @@ def test_a_list_cannot_be_both_delivered_and_registered():
 # 每個說明書範本的合成文件：（合成器模組, Spec 類別名稱）；涵蓋註冊表的全部說明書範本
 SYNTH_SPECS = [
     ("barc_synth", "Spec"),
+    ("barc_synth", "StepdownSpec"),
     ("bbva_synth", "Spec"),
     ("bnp_synth", "Spec"),
     ("bnp_synth", "SbSpec"),

@@ -38,6 +38,7 @@
 ### 後果
 
 - 三種商品可以匯入、人工核對完成或回補、鎖住、比價，庫存總表包含它們。
+- 自動核對之後依 workflow #551 逐家開放 FCN_Stepdown（Barclays 起，#544）：開放的上手寫了說明書 parser，降幅與每期 KO% 和說明書比；Snowball 類仍不開放。
 - 舊回補表 CA 早期幾檔的 KO% 是第 2 期的值，086001105525 的記憶式也和說明書不符，回補前要作業人員更正（清單在 #537）。
 - 曝險表與商品總表的 KO 距離還是用第 1 期的 KO 價，不跟著期別往下降。
 - 需要資料表版本 0038。
@@ -78,6 +79,7 @@ Implementation:
 ### Consequences
 
 - The three types can be imported, manually checked or backfilled, locked, and observed, and the inventory export includes them.
+- Automatic checking of FCN_Stepdown later opens issuer by issuer under workflow #551 (Barclays first, #544): an opened issuer has a term-sheet parser, and the step and per-period KO% are compared with the term sheet. The Snowball types stay closed.
 - Before the backfill, operators must correct the old sheet (the list is in #537). Some early CA trades there hold the period-2 KO%, and 086001105525's memory flag contradicts its term sheet.
 - Distance to KO in the exposure report and the product master still uses the period-1 KO price; it does not step down with the period.
 - Schema version 0038 is required.

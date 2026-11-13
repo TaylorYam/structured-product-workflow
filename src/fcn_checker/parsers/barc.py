@@ -242,7 +242,7 @@ def detect(doc: Document) -> DetectionResult:
 # ---------------------------------------------------------------- 第一章各欄位
 
 
-def _definition_pct(name: str, lines: list[Line], term: str) -> ParsedField:
+def definition_pct(name: str, lines: list[Line], term: str) -> ParsedField:
     """§15「X」詳見下表所示（為最初價格的N%）。"""
     hits = []
     for ln in lines:
@@ -255,8 +255,8 @@ def _definition_pct(name: str, lines: list[Line], term: str) -> ParsedField:
 
 
 def _ko_pct_and_memory(lines: list[Line], name_zh: ParsedField) -> tuple[ParsedField, ParsedField]:
-    memory = _definition_pct("ko_pct", lines, "自動提前出場觸發價格")
-    plain = _definition_pct("ko_pct", lines, "觸發水準")
+    memory = definition_pct("ko_pct", lines, "自動提前出場觸發價格")
+    plain = definition_pct("ko_pct", lines, "觸發水準")
     if memory.status != FieldStatus.MISSING and plain.status != FieldStatus.MISSING:
         ko = ParsedField.ambiguous("ko_pct", [], [], "同時出現「自動提前出場觸發價格」與「觸發水準」")
         ko.evidence = memory.evidence + plain.evidence
@@ -321,7 +321,7 @@ def _ki_type(lines: list[Line], ki_pct: ParsedField, strike: ParsedField) -> Par
     return ParsedField.invalid(name, block, "「觸及生效評價日」定義不屬於已知型態")
 
 
-def _ko_observation(doc: Document, art13: Span | None) -> ParsedField:
+def ko_observation(doc: Document, art13: Span | None) -> ParsedField:
     """§13(6)–(8) 範圍：有「期始日(含)」表頭 → D（期間每日）；有評價日表頭 → P（期末定日）。"""
     subs = doc.subitems(art13)
     if not all(n in subs for n in (6, 9)):
@@ -379,20 +379,23 @@ def _table_region(lines: list[Line], start: str, end_pat: str) -> range | list[L
     return range(starts[0] + 1, end) if end is not None else None
 
 
-def _price_table(lines: list[Line], name: str, where: str, start: str, end_pat: str) -> ParsedField:
-    """各標的價格表（§15；§16(3) 情境分析重印）：開始錨點之後到結束錨點之前（範圍內表前的定義句不算表頭）。"""
+def _price_table(
+    lines: list[Line], name: str, where: str, start: str, end_pat: str, base: price_table.TableSpec = PRICE_TABLE
+) -> ParsedField:
+    """各標的價格表（§15；§16(3) 情境分析重印）：開始錨點之後到結束錨點之前（範圍內表前的定義句不算表頭）。
+    `base` 是價格表的宣告（Stepdown 沒有 KO 欄，`parsers/barc_stepdown.py`）。"""
     region = _table_region(lines, start, end_pat)
     if isinstance(region, list):
         return ParsedField.ambiguous(name, [], region, f"{where}開始錨點出現多次")
     if region is None:
         return ParsedField.missing(name, f"找不到{where}的開始或結束錨點")
     seg = [lines[i] for i in region]
-    return price_table.read(name, seg, table_spec(seg, where))
+    return price_table.read(name, seg, table_spec(seg, where, base))
 
 
-def table_spec(region: list[Line], where: str) -> price_table.TableSpec:
+def table_spec(region: list[Line], where: str, base: price_table.TableSpec = PRICE_TABLE) -> price_table.TableSpec:
     """這張價格表的宣告：KO 欄頭寫「觸發水準（…）」時 KO 欄的關鍵字換成它（說明書與投資人須知共用）。"""
-    spec = replace(PRICE_TABLE, where=where)
+    spec = replace(base, where=where)
     if any(squash(ln.text).startswith(KO_LEVEL) for ln in region):
         spec = replace(spec, columns=tuple(replace(c, word=KO_LEVEL) if c.key == "ko" else c for c in spec.columns))
     return spec
@@ -746,8 +749,9 @@ def _scenario_returns(ti: TextIndex) -> dict[str, ParsedField]:
 # ---------------------------------------------------------------- 入口
 
 
-def read(lines: Sequence[Line]) -> BarcTermSheet:
-    """讀出標準欄位與 BARC 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）。"""
+def read(lines: Sequence[Line], price_spec: price_table.TableSpec = PRICE_TABLE) -> BarcTermSheet:
+    """讀出標準欄位與 BARC 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）。`price_spec` 是 §15 與 §16(3)
+    價格表的宣告（Stepdown 沒有 KO 欄，`parsers/barc_stepdown.py`）。"""
     doc = document(lines)
     flds = FieldsBuilder()
     all_lines = list(lines)
@@ -773,7 +777,7 @@ def read(lines: Sequence[Line]) -> BarcTermSheet:
     flds["issue_date"] = _s13_date(doc, s13, 3, "issue_date")
     flds["final_valuation_date"] = _s13_date(doc, s13, 4, "final_valuation_date")
     flds["maturity_date"] = _s13_date(doc, s13, 5, "maturity_date")
-    flds["ko_observation"] = _ko_observation(doc, arts.get(13))
+    flds["ko_observation"] = ko_observation(doc, arts.get(13))
     flds["denomination"] = _denomination(doc, arts.get(6))
     flds["issue_price_pct"] = _issue_price(doc, arts.get(6))
     flds["art1_name"] = _article_value(doc, arts.get(1), "商品名稱", "art1_name")
@@ -785,18 +789,18 @@ def read(lines: Sequence[Line]) -> BarcTermSheet:
     flds["monthly_coupon_pct"], flds["coupon_pa_pct"] = _coupon(doc, arts.get(14))
 
     s15 = doc.span_lines(arts.get(15))
-    flds["strike_pct"] = _definition_pct("strike_pct", s15, "執行價格")
+    flds["strike_pct"] = definition_pct("strike_pct", s15, "執行價格")
     flds["ko_pct"], flds["ko_memory"] = _ko_pct_and_memory(s15, flds["name_zh"])
-    flds["ki_pct"] = _definition_pct("ki_pct", s15, "觸及生效價格")
+    flds["ki_pct"] = definition_pct("ki_pct", s15, "觸及生效價格")
     flds["ki_type"] = _ki_type(s15, flds["ki_pct"], flds["strike_pct"])
-    flds["price_table"] = _price_table(s15, "price_table", PRICE_TABLE.where, _PRICE_START, _PRICE_END)
+    flds["price_table"] = _price_table(s15, "price_table", price_spec.where, _PRICE_START, _PRICE_END, price_spec)
     flds["underlying_prices"] = price_table.price_rows(flds["price_table"])  # 表上沒有代號，以 `underlyings` 同順序為準
     scenario_table = _price_table(
-        doc.span_lines(arts.get(16)), "scenario_price_table", SCENARIO_WHERE, _SCENARIO_START, _SCENARIO_END
+        doc.span_lines(arts.get(16)), "scenario_price_table", SCENARIO_WHERE, _SCENARIO_START, _SCENARIO_END, price_spec
     )
-    flds["main_price_table"] = price_table.at("main_price_table", flds["price_table"], PRICE_TABLE)
+    flds["main_price_table"] = price_table.at("main_price_table", flds["price_table"], price_spec)
     flds["scenario_reprint_table"] = price_table.at(
-        "scenario_reprint_table", scenario_table, replace(PRICE_TABLE, where=SCENARIO_WHERE)
+        "scenario_reprint_table", scenario_table, replace(price_spec, where=SCENARIO_WHERE)
     )
     flds["scenario_prices"] = standard_fields.absent("scenario_prices", "要核對的較差情境價格")
 

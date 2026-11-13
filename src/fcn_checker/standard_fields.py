@@ -76,8 +76,18 @@ class AutocallSchedule:
     first_callable: int  # 第一個可以提前出場的期別（Non-Call(月)）；P 最小為 1，D 為 0 時從第 1 期期始日開始比價
     periods: int  # 期數
     dates: dict[int, dt.date]  # 期別 → 比價日；D 只有第 k 期與末期（k = 0 時第 1 期放期始日），P 為第 k 期起的每一期
-    # True：只有 `dates` 列出的期別有比價日（Super Bull：評價日的月數與天期，其他格空白，#311）
+    # True：只有 `dates` 列出的期別有比價日（Super Bull：評價日的月數與天期，其他格空白，#311；D 型 Stepdown：每一期期末日，
+    # ADR 0033、#544）
     listed: bool = False
+
+
+@dataclass(frozen=True)
+class KoLevel:
+    """KO% 每期固定往下降（Stepdown，ADR 0033）的一期：第一個可提前出場的期別是第 1 期。"""
+
+    period: int  # KO 第幾期（第一個比價日是第 1 期）
+    pct: Decimal  # 這一期的 KO%，保留說明書顯示位數
+    evidence: tuple[Evidence, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -384,6 +394,10 @@ STANDARD_FIELDS: dict[str, str] = {
     "ko_pct": "Decimal：KO 價為最初價格的 N%，保留說明書顯示位數；說明書沒有 KO 價（Non-Call = 天期）時為 100；"
     "BEN 沒有 KO 時交不適用（KO% 與 KO 價不比，ADR 0029）",
     "ki_pct": "Decimal：下限價為最初價格的 N%，保留說明書顯示位數；無 KI 時不讀",
+    "ko_levels": "tuple[KoLevel, ...]：KO% 每期固定往下降的商品（Stepdown，ADR 0033）每一期的 KO%，第一個可提前出場的期別是第 1 期"
+    "（parsers/stepdown.py）；只有 Product 有 KO 降幅的商品才和參考條件表比（`field.ko_levels`），其他範本不交",
+    "ko_step_pct": "Decimal：KO% 每期降幾個百分點（相鄰兩期的差，每期相同且大於 0；parsers/stepdown.py）；只有 Product 有 KO "
+    "降幅的商品才和「KO降幅(%)」比（`field.ko_step_pct`），其他範本不交",
     "coupon_pa_pct": "Decimal：年利率 %，保留說明書顯示位數；BEN 為到期一次付的紅利 %（不年化，ADR 0029）",
     "participation_pct": "Decimal：參與率 %（BEN；HSBC 由到期公式寫法推得：Maxi 100、Digital 0），只有參考條件表 Product 是 "
     "BEN 的列才和「參與率(%)」比（`field.participation_pct`）；其他範本不交",

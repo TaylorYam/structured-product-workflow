@@ -2,8 +2,8 @@
 
 - 文件側：[BARC FCN_Stepdown 範本規格](../templates/barc-zh-stepdown.md)（`barc-zh-stepdown-pd`）、[BARC FCN_Stepdown 投資人須知範本規格](../templates/barc-zh-stepdown-iis.md)（`barc-zh-stepdown-iis`）
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [BARC FCN_Stepdown 下單資料格式](../order-formats/barc-stepdown-reference.md)
-- 商品：FCN_Stepdown（workflow ADR 0033、#537）；Barclays 是第一家開放的上手（workflow #544），Natixis 接著做（workflow #545），共用的分流與 KO 降幅核對（本文件 §3.3）實作時寫進[共用核對規則](shared-check-rules.md)（§3 參考條件表欄位、新增 §11 Stepdown）
-- 狀態：規格（workflow #544）；實作另開 PR。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記略過**（同 DACN／BEN 第一波，§7）
+- 商品：FCN_Stepdown（workflow ADR 0033、#537）；Barclays 是第一家開放的上手（workflow #544），Natixis 接著做（workflow #545），共用的分流與 KO 降幅核對（本文件 §3.3）寫在[共用核對規則](shared-check-rules.md)（§3 參考條件表欄位、§11 Stepdown）
+- 狀態：已實作（workflow #544）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記略過**（同 DACN／BEN 第一波，§7）
 - 本文件只寫和 [BARC 核對規則](barc-check-rules.md)（FCN）不同或 Stepdown 特有的部分。沒提到的（審查標準、固定警語、受託機構名稱與其他出處、發行機構名稱、信用評等、幣別、費率、最低申購與贖回、受理申購日、刊印日期、審查通過日期、月配息率、價格推算、表頭 %、KI 的內部一致、配息表與提前出場表的日期關係、Non-Call、保證配息期、§13(7) 觀察期 t 範圍、§9(3) 與 §16 重複出現的月配息率、情境總報酬率與年化、受託機構商品代號）照 BARC FCN
 
 ## 1. 範圍
@@ -25,7 +25,7 @@
 
 | 檢查 | 規則 |
 |---|---|
-| 開放 | `[auto_check_products]` 新增 `FCN_Stepdown = ["BARC"]`（實作 PR）；沒開放的上手照未開放商品轉人工 |
+| 開放 | `[auto_check_products]` 的 `FCN_Stepdown = ["BARC"]`；沒開放的上手照未開放商品轉人工 |
 | 範本版本 | 寫法和範本規格 §4 不同 → 不支援的範本版本（`template.detect`，原因 `template_unsupported`），錯訊列出不成立的條件 |
 | 商品種類一致 | 辨識到的範本商品家族 ≠ Product → 轉人工覆核（共用 `template.product_family`）；Product 空白視為 FCN |
 | 不支援樣態 | 照 BARC FCN（KI 每期觀察） |
@@ -50,7 +50,7 @@
 | 每期 KO% | 說明書第 n 期 KO% = 表上 `KO(%)` − `KO降幅(%)` ×（n − 1），逐期比；不一致時列出哪幾期（`field.ko_levels`）。表上兩欄有一欄讀不到 → 轉人工覆核 |
 | 起始 KO% | 第 1 期 = 表上 `KO(%)`（共用 `field.ko_pct`，同 FCN） |
 
-只有 Product 的商品規則有 KO 降幅的商品（`ProductRule.has_term(KO_STEP_FIELD)`：FCN_Stepdown、Snowball 類）產生這兩項；其他商品不產生結果。說明書 KO% 不是每期固定往下降時在範本辨識就轉人工（§3.1），不會走到這裡。
+只有一定要有 KO 降幅的商品（`ProductRule.ko_step_required`：FCN_Stepdown、Snowball_Stepdown）產生這兩項；表上降幅不是大於 0 的數字也轉人工覆核。降幅可以空白的 Snowball 未開放自動核對，不產生結果；其他商品也不產生結果。說明書 KO% 不是每期固定往下降時在範本辨識就轉人工（§3.1），不會走到這裡。
 
 ### 3.4 比價日（D 型）
 
@@ -140,7 +140,7 @@ D 型 Stepdown：`比價日_{Non-Call}`～`比價日_{期數}` = 提前出場表
 | 範本辨識與讀出 | `parsers/barc_stepdown.py`、`parsers/barc_stepdown_iis.py`：沿用 `parsers/barc.py`、`barc_iis.py` 的 `read`（價格表的宣告由參數交入：沒有 KO 欄），再換掉 KO%、記憶式、價格與比價日 |
 | 上手註冊 | `issuers.py` 登記 `BARC_STEPDOWN`（`products=frozenset({FCN_STEPDOWN})`，上手代號同 `BARC`，放在 `BARC` 前面） |
 | 規則 | `rules/barc_stepdown.py`：沿用 `rules/barc.py`，把 `doc.autocall_trigger_per_period` 換成不適用（§3.5）；共用 `field.ko_step_pct`、`field.ko_levels` 放在 `rules/reference.py` |
-| 設定 | `[auto_check_products]` 新增 `FCN_Stepdown = ["BARC"]`；名稱樣板沿用 `[issuer.barc.product_name]`（不另加 `product_names`） |
+| 設定 | `[auto_check_products]` 新增 `FCN_Stepdown = ["BARC"]`；名稱樣板 `[issuer.barc.product_names.FCN_Stepdown]`（寫法和 FCN 相同；每個家族都登記，註冊表測試會檢查） |
 | 測試 | 合成 PDF（沿用 BARC 合成樣本，改 §13(7) 與 §15）；§7 的反例；本機真實樣本辨識與讀取測試（環境變數指向本機樣本，不進 repo）；試跑（§6） |
 
 ## 9. 決策紀錄
@@ -156,8 +156,6 @@ D 型 Stepdown：`比價日_{Non-Call}`～`比價日_{期數}` = 提前出場表
 | 2026-11-13 | 投資人須知要表頭沒有 KO 欄、表前說明句也不列觸發價格兩項都成立才是 Stepdown（只看表頭時，KO 欄頭讀不到的 FCN 投資人須知會被認成 Stepdown、不能人工放行） |
 
 ## 10. 規則對照
-
-新 rule_id 的名稱實作時可調整，調整後同步更新本表。
 
 | 核對規則 | rule_id |
 |---|---|

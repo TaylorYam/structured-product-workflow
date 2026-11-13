@@ -1,13 +1,13 @@
 # 下單資料格式：BARC FCN_Stepdown（參考條件表）
 
 - 設定檔：所有上手共用的 [`config/reference_sheet.toml`](../../../config/reference_sheet.toml)
-- 狀態：規格（workflow #544）；實作另開 PR。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)；和 BARC FCN 相同的不重寫，本文件只寫 FCN_Stepdown 的差異
+- 狀態：已實作（workflow #544）。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)；和 BARC FCN 相同的不重寫，本文件只寫 FCN_Stepdown 的差異
 
 ## 1. 結構
 
 和 BARC FCN 相同（商品代號前 3 碼 `029`，`發行機構` 欄寫 `Barclays`）。商品種類看 `Product` = `FCN_Stepdown`：辨識到的範本是 `barc-zh-stepdown-pd`／`barc-zh-stepdown-iis` 時，該列 Product 必須是 `FCN_Stepdown`；Product 是 `FCN_Stepdown`、文件卻是 BARC FCN 範本（或反過來）→ 商品種類不一致，轉人工覆核（共用 `template.product_family`）。
 
-開放自動核對：`config/issuer_prefixes.toml` `[auto_check_products]` 新增 `FCN_Stepdown = ["BARC"]`（實作 PR，workflow #544）。
+開放自動核對：`config/issuer_prefixes.toml` `[auto_check_products]` 的 `FCN_Stepdown = ["BARC"]`（workflow #544）。
 
 ## 2. 欄位對照（只列和 BARC FCN 不同的）
 

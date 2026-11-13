@@ -35,6 +35,7 @@
 | 交易日、最終比價日、到期日 | `trade_date`、`final_valuation_date`、`maturity_date` | 日期相等 |
 | KO(%)、K(%)、KI(%)、Coupon p.a. (%) | `ko_pct`、`strike_pct`、`ki_pct`、`coupon_pa_pct` | 依說明書顯示位數四捨五入後比對；無 KI 時 KI(%) 必須是 `-` |
 | 配息門檻(%) | `coupon_barrier_pct` | 只在 Product 有配息門檻的商品種類（`PRODUCT_RULES.has_coupon_barrier`，目前 DACN 與 BEN；BEN 的紅利門檻自 workflow #406 起接上，ADR 0029）核對，依說明書顯示位數四捨五入後比對；表上沒有這欄時和 `K(%)` 比（訊息寫明）；DACN 列空白或 `-` 也和 `K(%)` 比（訊息寫明，2026-11-02 使用者決定，DACN-409-01），BEN 列空白或 `-` 轉人工覆核（`field.coupon_barrier_pct`，workflow #368、ADR 0030） |
+| KO降幅(%) | `ko_step_pct`、`ko_levels` | 只在 Product 一定要有 KO 降幅的商品種類（`ProductRule.ko_step_required`：FCN_Stepdown、Snowball_Stepdown，workflow #537、ADR 0033）核對：說明書降幅 = 表上 `KO降幅(%)`（`field.ko_step_pct`）；說明書第 n 期 KO% = `KO(%)` − `KO降幅(%)` ×（n − 1）（`field.ko_levels`）。表上沒有這欄、空白、`-`、不是大於 0 的數字 → 兩項都轉人工覆核。降幅可以空白的 Snowball 未開放自動核對，這裡不定義（不產生結果）。見 §11 |
 | KO(Freq) | `ko_observation` | `D` 期間每日／`P` 每期定日 |
 | KO(memo) | `ko_memory` | `Y`／`N` |
 | KI(Freq) | `ki_type` | `-` 無／`AM` 到期觀察／`D` 每日觀察／`P` 每期觀察；是否允許先由[樣態黑名單](../support-matrix.md)決定，未知寫法或必核欄位缺漏轉人工覆核 |
@@ -45,7 +46,7 @@
 | UL_1～UL_5 | `underlyings` | 見 §5；`-` 表示沒有這檔標的 |
 | UL_n_進場價／執行價／下限價／KO價 | `underlying_prices` | 表上值四捨五入到 4 位後相等。同一檔標的可比對的價格欄全部與說明書差同一比例（表上值 ÷ 說明書值，4 位）且不是 1 時，該檔轉人工覆核並寫出比例（疑為股票分割調整後的價格，`split_suspected`，Issue #191）；只有部分欄位不同或比例不同時照常判不一致。無 KI 時下限價必須是 `-`。期初定價為 `VWAP` 時不比對，通過或人工放行後以說明書價格覆寫（`backfill.underlying_prices`） |
 | 最低申購、最低贖回金額 | `min_amounts`（出處清單） | 每一處 = 單位面額（`field.min_amounts`）；倍數依審查標準 `issuer.<上手>.min_amount_multiples` |
-| 比價日_1～12 | `autocall_schedule` | 回填欄位（`backfill.compare_dates`）。D：`比價日_{Non-Call}` 與 `比價日_{期數}` = 各該期比價日（Non-Call 為 0 時 `比價日_1` = 第 1 期期始日，workflow #301）；P：`比價日_{Non-Call}`～`比價日_{期數}` = 各期比價日；其他格 `-`。期數須等於天期、不超過 12；最晚的比價日須等於最終比價日 |
+| 比價日_1～12 | `autocall_schedule` | 回填欄位（`backfill.compare_dates`）。D：`比價日_{Non-Call}` 與 `比價日_{期數}` = 各該期比價日（Non-Call 為 0 時 `比價日_1` = 第 1 期期始日，workflow #301）；P：`比價日_{Non-Call}`～`比價日_{期數}` = 各期比價日；KO% 每期往下降的 D（Stepdown，§11）：`比價日_{Non-Call}`～`比價日_{期數}` 每一期的期末日都填；其他格 `-`。期數須等於天期、不超過 12；最晚的比價日須等於最終比價日 |
 | TS、IIS | — | 回填欄位：說明書與投資人須知都通過或人工放行的商品打 `V`；表上是 `V` 以外的值就是不一致、保留原值（`backfill.checked`） |
 
 ## 4. 說明書推算規則（`rules/derivation.py`）
@@ -248,3 +249,24 @@
 - 樣本（2026-10-26，#241，以初始評等表比對）：OOS 樣本 CA 22、JPM 22、Nomura 44、SG 76 組，樣本內（IS）CA 5、JPM 5、Nomura 8、SG 6 組說明書與投資人須知，每一處段落都讀到、發行機構都寫明沒有評等；除了樣本內 SG 2 檔（2023、2025 年）寫保證機構惠譽評等調升前的 A（說明書兩處、投資人須知一處，判不一致，依上面的使用者決定），全部通過。
 - 樣本（#243，2026-10-26，以初始評等表比對）：BARC OOS 54 組、樣本內（IS）6 組說明書與投資人須知，三處段落（說明書第一章第 3 項、第二章 (7)，投資人須知第 4 點）都讀到；除了樣本內 1 檔（2024 年度財報的舊文件）寫惠譽評等調升前的 A+（說明書兩處、投資人須知一處，判不一致，依上面的使用者決定），全部通過。文件寫明「無擔保及無保證機構」，沒有保證機構評等（找到這個寫法才不核對，見上面「沒有保證機構的上手」）。
 - 14 家總驗證（#243，2026-10-26，以初始評等表比對、每個商品代號一列）：OOS 582 組說明書與投資人須知的評等核對全部通過，沒有人工覆核（一次性的驗證腳本，不是可重跑的測試；可重跑的是下面的樣本內批量測試）。樣本內（IS）86 組中，不通過的只有上面各上手列出的真實評等變動（說明書與投資人須知同一批）：HSBC 2、MS 3、Natixis 4（其中 1 組在樣本內參考條件表 `核對表格式..xlsx` 沒有列、不跑評等，所以批量測試 `RATING_CHANGES` 記 3；各處說的 Natixis 舊評等都是這 4 組）、UBS 2、SG 2、Citi 3、GS 1、BARC 1 組；另有 UBS 舊版 1 組範本不支援、不跑評等。沒有讀錯或讀不出來的段落。`tests/checker/test_real_samples_batch.py` 以樣本內整批核對檢查 14 家都有評等結果、不一致的只有這些商品。
+
+## 11. KO% 每期固定降幅（Stepdown，workflow #544、ADR 0033）
+
+FCN_Stepdown 的 KO% 從第 1 期開始每期固定往下降。各上手的寫法不同（BARC 寫在提前出場表的觸發百分比欄，Natixis 寫在自動提前到期贖回價格表），由上手 adapter 讀出每期 KO% 交給共用讀法（`parsers/stepdown.py`），共用規則只看標準欄位：
+
+| 標準欄位 | 內容 |
+|---|---|
+| `ko_levels` | 每期 KO%：第一個可提前出場（第一個比價日）的那一期是第 1 期，依序列出（ADR 0033 的期別） |
+| `ko_pct` | 第 1 期 KO% |
+| `ko_step_pct` | 相鄰兩期的差（每期相同且大於 0）；不是固定降幅時讀不出，該上手的範本辨識轉人工（範本不支援） |
+| `underlying_prices` 的 KO 價 | 說明書沒有 KO 價欄時 = 最初價格 × 第 1 期 KO%，四捨五入（half-up）到 4 位（同 §8 沒有 KO 欄的做法；資料庫存的也是第 1 期 KO 價） |
+| `autocall_schedule` | D 型每一期期末日都列（比價時才知道每一期從哪天到哪天）；P 型照 FCN |
+
+| 規則 | 內容 |
+|---|---|
+| `field.ko_step_pct` | 說明書降幅 = 表上 `KO降幅(%)`，依說明書顯示位數比；表上沒有這欄、空白、`-`、不是大於 0 的數字 → 轉人工覆核（`ko_step_required` 的商品一定要有降幅）。規則跟 `ko_step_required` 走，不跟「有沒有降幅欄」走：降幅可以空白的 Snowball 未開放自動核對，不產生結果 |
+| `field.ko_levels` | 說明書每一期 KO% = 表上 `KO(%)` − `KO降幅(%)` ×（n − 1），逐期比，不一致時列出期別；表上任一欄讀不到 → 轉人工覆核 |
+| `field.ko_pct` | 同 FCN（說明書值是第 1 期） |
+| `backfill.compare_dates` | D 型每一期都填（§3） |
+
+只有 Product 一定要有 KO 降幅的商品（`ko_step_required`）產生 `field.ko_step_pct`、`field.ko_levels`；Snowball、FCN 等其他商品不產生結果（表上 `KO降幅(%)` 是不是 `-` 不在核對範圍）。各上手開放的範圍、範本差異見各上手的 Stepdown 核對規則（BARC：[barc-stepdown-check-rules.md](barc-stepdown-check-rules.md)）。

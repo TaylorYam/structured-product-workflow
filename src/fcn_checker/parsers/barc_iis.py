@@ -94,7 +94,7 @@ def _bad(note: str, lns: Sequence[Line]) -> dict[str, ParsedField]:
     }
 
 
-def _region(lines: Sequence[Line]) -> list[Line] | None:
+def price_region(lines: Sequence[Line]) -> list[Line] | None:
     """收益分配事項的價格表範圍：「標的資產」欄頭那一行起，到表格下方的整行段落、下一個子項「(N)」或下一段「N.」之前
     （可跨到下一頁）。"""
     start = next((i for i, ln in enumerate(lines) if squash(ln.text) == "標的資產"), None)
@@ -108,16 +108,16 @@ def _region(lines: Sequence[Line]) -> list[Line] | None:
     return region
 
 
-def _price_table(lines: Sequence[Line]) -> dict[str, ParsedField]:
+def _price_table(lines: Sequence[Line], base: price_table.TableSpec = PRICE_TABLE) -> dict[str, ParsedField]:
     """收益分配事項的價格表（`parsers/price_table.py` 讀，以執行價格欄的價格切列）：每列一檔標的、名稱在左欄。
-    記憶式商品 KO 欄頭不寫百分比，那份就沒有 KO %；有 KI 欄才有 KI %。"""
-    region = _region(lines)
+    記憶式商品 KO 欄頭不寫百分比，那份就沒有 KO %；有 KI 欄才有 KI %。`base` 是價格表的宣告（Stepdown 沒有 KO 欄）。"""
+    region = price_region(lines)
     if region is None:
         return {
             n: ParsedField.missing(n, "找不到價格表")
             for n in ("underlying_prices", "underlying_names", "strike_pct", "ko_pct")
         }
-    table = price_table.read("underlying_prices", region, barc.table_spec(region, PRICE_TABLE.where))
+    table = price_table.read("underlying_prices", region, barc.table_spec(region, base.where, base))
     if not table.ok:
         return {n: derived(n, table) for n in ("underlying_prices", "underlying_names", "strike_pct", "ko_pct")}
     t: price_table.PriceTable = table.value
@@ -142,7 +142,8 @@ def _price_table(lines: Sequence[Line]) -> dict[str, ParsedField]:
     return out
 
 
-def read(lines: Sequence[Line]) -> iis.IisSheet:
+def read(lines: Sequence[Line], price_spec: price_table.TableSpec = PRICE_TABLE) -> iis.IisSheet:
+    """`price_spec` 是收益分配事項價格表的宣告（Stepdown 沒有 KO 欄，`parsers/barc_stepdown_iis.py`）。"""
     ti = TextIndex(lines)
     fields: dict[str, ParsedField] = {}
 
@@ -194,7 +195,7 @@ def read(lines: Sequence[Line]) -> iis.IisSheet:
     put("maturity_date", r"到期日或最終實物贖回日[:：]" + iis.DATE, parse_date)
     put("monthly_coupon_pct", r"每[月次]之配息率（為([\d.]+)%", Decimal)
     put("coupon_pa_pct", r"即年利率為([\d.]+)%", Decimal)
-    fields.update(_price_table(lines))
+    fields.update(_price_table(lines, price_spec))
     provided = (PROVIDED - {"ko_pct"}) | {f for f in ("ko_pct", "ki_pct") if f in fields}
     fields["issuer_names"] = iis.occurrences(
         "issuer_names",

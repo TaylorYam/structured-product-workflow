@@ -29,7 +29,16 @@ from fcn_checker.issuers import BARC, Issuer, Template
 from fcn_checker.schema import CheckReport
 from harness import STANDARD, SynthChecks, check_sheet, iis_path
 from pdf_writer import FONT, Edit, PdfWriter, require_used, zh_date
-from reference_synth import Q4, ProductSpec, Ratings, build_reference_sheet, price, reference_row, write_notes
+from reference_synth import (
+    Q4,
+    REFERENCE_HEADERS,
+    ProductSpec,
+    Ratings,
+    build_reference_sheet,
+    price,
+    reference_row,
+    write_notes,
+)
 
 FIXED_WARNING = STANDARD["risk"]["fixed_warning"]
 DISTRIBUTOR = STANDARD["distributor"]
@@ -61,6 +70,9 @@ class Spec(ProductSpec):
     extra_text: str = ""  # 額外插入第五章的文字
     cross_page_price_table: bool = False  # 第 15 條價格表表頭跨頁
     break_coupon_after: int | None = None  # 第 13 條表格在第 N 期之後換頁
+    # FCN_Stepdown（#544）：KO% 每期降幾個百分點；None 是 FCN。有值時第 13 條 (7) 多記憶事件句、`自動提前出場觸發百分比:詳見下表
+    # 所示` 與觸發價格定義，提前出場表觸發百分比 = `ko` − 降幅 ×（期數 − 1），第 15 條沒有 KO 定義句、價格表與投資人須知沒有 KO 欄
+    step: Decimal | None = None
 
     def __post_init__(self) -> None:
         self.first_callable = self.guaranteed_value if self.ko_obs == "D" else self.guaranteed_value + 1
@@ -70,6 +82,10 @@ class Spec(ProductSpec):
         if self.monthly is not None:
             return self.monthly
         return (self.annual * self.tenor / 12 / self.tenor).quantize(Q4, ROUND_HALF_UP)
+
+    def ko_at(self, period: int) -> Decimal:
+        """KO 第 `period` 期的 KO%（第一個可提前出場的期別是第 1 期）；不是 Stepdown 時每期都是 `ko`。"""
+        return self.ko - (self.step or 0) * (period - 1)
 
     @property
     def guaranteed_value(self) -> int:
@@ -328,6 +344,19 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
                 table_row(r["t"], cs)
     sub(7, "指定提前贖回事件：係指倘若所有標的資產之相關價格等於或大於其觸發價格，發行機構應提前贖回本商品。")
     w.line(97.7, "指定提前現金贖回日：係指定提前贖回事件發生後第三個營業日。")
+    if s.step is not None:  # Stepdown（#544）：記憶事件句、商品家族標記與觸發價格定義
+        w.para(
+            97.7,
+            "如於任何自動提前出場評價日，一標的資產之相關價格係高於或等於其個別之自動提前出場觸發價格，"
+            "則該標的資產應視為已發生「記憶事件」。",
+            width=42,
+        )
+        w.line(97.7, "自動提前出場觸發百分比:詳見下表所示。")
+        w.para(
+            97.7,
+            "自動提前出場觸發價格：就任一標的資產而言，指該標的資產之「最初價格」乘以相對應之「自動提前出場觸發百分比」。",
+            width=42,
+        )
     if s.memory and s.ko_obs == "D":
         n, g = s.tenor, s.guaranteed_text if s.guaranteed_text is not None else s.guaranteed_value
         if g == 0:
@@ -353,11 +382,12 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             w.y += 11
             w.row([(58.1, "t"), (130.5, "期始日(含)t"), (284.3, "期末日(含)t")])
             spec = [(118.0, "start"), (271.9, "end"), (425.7, "payment")]
+        first_row = max(s.guaranteed_value, 1)  # 第一個可提前出場的列（KO 第 1 期）
         for r in rows:
             text = {
                 "start": r["start"],
                 "end": r["end"],
-                "trigger": "N/A" if r["end"] == "N/A" else f"{s.ko}%",
+                "trigger": "N/A" if r["end"] == "N/A" else f"{s.ko_at(r['t'] - first_row + 1)}%",
                 "payment": zh_date(r["payment"]),
             }
             table_row(r["t"], cells("ko", r["t"], [(x, k, text[k]) for x, k in spec]))
@@ -374,7 +404,7 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         for r in rows:
             spec_p = [
                 (145.5, "ko_valuation", zh_date(r["valuation"])),
-                (309.5, "trigger", f"{s.ko}%"),
+                (309.5, "trigger", f"{s.ko_at(r['t'])}%"),
                 (428.7, "early_redemption", zh_date(r["payment"])),
             ]
             w.row([(74.5, str(r["t"])), *cells("ko", r["t"], spec_p)])
@@ -406,12 +436,15 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
         w.line(67.7, "「觸及生效評價日」指各配息評價日；", gap=23)
     if s.ki != "none":
         w.line(67.7, f"「觸及生效價格」詳見下表所示（為最初價格的{s.ki_pct}%)；", gap=23)
-    w.line(67.7, f"「{ko_term}」詳見下表所示（為最初價格的{s.ko}%）；", gap=23)
+    if s.step is None:  # Stepdown 第 15 條沒有 KO 定義句（#544）
+        w.line(67.7, f"「{ko_term}」詳見下表所示（為最初價格的{s.ko}%）；", gap=23)
 
     def price_table(section: str, cross_page: bool) -> None:
         """價格表：表頭在段落 `section`，格子在 `section.{標的序}.{欄}`；畫完回到原段落。"""
         outer, w.section = w.section, section
         cols = [("initial", 173.3), ("strike", 251.4), ("ko", 354.5)] + ([("ki", 457.5)] if s.ki != "none" else [])
+        if s.step is not None:  # Stepdown 價格表沒有 KO 欄（#544）
+            cols = [c for c in cols if c[0] != "ko"]
         head = {
             "initial": ["最初價格"],
             "strike": ["執行價格（為最初價", f"格的{s.strike}%）(四捨", "五入至小數點後第4", "位)"],
@@ -448,6 +481,8 @@ def build_pdf(path: Path, s: Spec, *, edits: Sequence[Edit] = (), iis: bool = Tr
             for key, x in (("initial", 174.6), ("strike", 277.7), ("ko", 380.8)) + (
                 (("ki", 483.8),) if s.ki != "none" else ()
             ):
+                if key == "ko" and s.step is not None:
+                    continue
                 w.put(x, y, vals[key], section=f"{section}.{i}.{key}")
             name_lines = _wrap_name(u.name)
             for k, part in enumerate(name_lines):
@@ -636,6 +671,29 @@ def check_pdf(tmp_path: Path, pdf: Path, spec: Spec | None = None, **overrides: 
 CHECKS = SynthChecks(Spec, build_pdf, reference_row)  # 單份核對殼（harness.SynthChecks）
 check = CHECKS.check
 
+# ---- FCN_Stepdown（#544）：參考條件表 Product = FCN_Stepdown、多一欄 KO降幅(%)
+
+
+@dataclass
+class StepdownSpec(Spec):
+    """BARC FCN_Stepdown 的預設規格：D 型、記憶式、6 個月、起始 KO 100%、每期降 2 個百分點（其他同 `Spec`）。"""
+
+    product_code: str = "029199990002"
+    step: Decimal | None = Decimal("2.00")
+
+
+STEPDOWN_PRODUCT = "FCN_Stepdown"
+STEPDOWN_HEADERS = [*REFERENCE_HEADERS, "KO降幅(%)"]
+
+
+def stepdown_row(spec: Spec, **overrides: Any) -> dict[str, Any]:
+    """與 Stepdown 合成說明書一致的參考條件表列：Product = FCN_Stepdown、KO降幅(%) = `spec.step`、KO(%) 與 KO 價是第 1 期。"""
+    assert spec.step is not None, "Stepdown 的參考條件表列要有降幅"
+    return reference_row(spec, **{"Product": STEPDOWN_PRODUCT, "KO降幅(%)": float(spec.step), **overrides})
+
+
+STEPDOWN_CHECKS = SynthChecks(StepdownSpec, build_pdf, stepdown_row, STEPDOWN_HEADERS)
+
 
 def barc_adapter(**overrides: Any) -> Issuer:
     """依上手 adapter interface 建立以 BARC parser 為底、只有一個範本的測試用上手；overrides 換掉其中幾項（上手的
@@ -728,6 +786,16 @@ def build_iis_pdf(
             f"(1) 配息金額：每單位商品面額乘以每月之配息率（為{s.monthly_value}%(顯示至小數點後第4位)，"
             f"即年利率為{s.annual}%）所計算之配息金額。"
         )
+        # 價格表前的說明句列出表上的價格名詞（Stepdown 沒有觸發價格，#544）
+        terms = ["最初價格", "執行價格"]
+        if s.step is None:
+            terms.append("自動提前出場觸發價格" if s.memory else "觸發水準")
+        if s.ki != "none":
+            terms.append("觸及生效價格")
+        listed = "、".join(f"「{t}」" for t in terms[:-1]) + f"與「{terms[-1]}」"
+        para(
+            f"其中，「最終價格」就某標的資產而言，指該標的資產於「最終評價日」之「相關價格」；而{listed}，請詳見下表所示。"
+        )
         # 價格表：記憶式商品 KO 欄頭不寫百分比；有 KI 時多一欄「觸及生效價格」（docs/checker/templates/barc-zh-iis.md）
         ko_head = (
             [
@@ -746,6 +814,8 @@ def build_iis_pdf(
             (252.6, 276.6, ["執行價格（為最初", f"價格的{s.strike}%）(四", "捨五入至小數點後", "第4 位)"], s.strike),
             (363.5, 387.5, ko_head, s.ko),
         ]
+        if s.step is not None:  # Stepdown 投資人須知價格表沒有 KO 欄（#544）
+            columns.pop()
         if s.ki != "none":
             columns.append(
                 (

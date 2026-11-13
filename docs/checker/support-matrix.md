@@ -40,6 +40,7 @@
 | Super Bull | BNP（#311）、CA（#312）、HSBC（#314） |
 | BEN | CA（#377）、HSBC（#375）、MS（#376） |
 | DACN | DBS（#370）、NATIXIS（#371）、NOMURA（#368）、SG（#369） |
+| FCN_Stepdown | BARC（#544） |
 
 Super Bull 只支援 KO 每期觀察＋非記憶式＋無 KI（`Period End`＋`NONE`），其他樣態照不支援樣態轉人工，所有上手共用。BNP Super Bull 的文件：[說明書範本](templates/bnp-zh-super-bull.md)、[投資人須知範本](templates/bnp-zh-super-bull-iis.md)、[參考條件表對照](order-formats/bnp-super-bull-reference.md)、[核對規則](rules/bnp-super-bull-check-rules.md)（只支援 2026-06 以後的範本版本）。CA Super Bull 的文件：[說明書範本](templates/ca-zh-super-bull.md)、[投資人須知範本](templates/ca-zh-super-bull-iis.md)、[參考條件表對照](order-formats/ca-super-bull-reference.md)、[核對規則](rules/ca-super-bull-check-rules.md)（只支援現行版範本；境外人民幣轉人工）。HSBC Super Bull 的文件：[說明書範本](templates/hsbc-zh-super-bull.md)、[投資人須知範本](templates/hsbc-zh-super-bull-iis.md)、[參考條件表對照](order-formats/hsbc-super-bull-reference.md)、[核對規則](rules/hsbc-super-bull-check-rules.md)（只支援現行版範本；單一標的、非美元、KO% ≠ K%、多個決定日轉人工）。
 
@@ -55,7 +56,7 @@ DBS DACN 的文件（workflow #370 已實作）：[說明書範本](templates/db
 
 Natixis DACN 的文件（workflow #371 已實作）：[說明書範本](templates/natixis-zh-dacn.md)、[投資人須知範本](templates/natixis-zh-dacn-iis.md)、[參考條件表對照](order-formats/natixis-dacn-reference.md)、[核對規則](rules/natixis-dacn-check-rules.md)（只支援現行版範本；KO 每日＋記憶式、多標的、KI 無／到期／每日、美元與日圓、保證 1 期；其他沒有樣本的型態轉人工）。
 
-BARC FCN_Stepdown 的文件（workflow #544 規格，實作中；開放前 Stepdown 照未開放商品轉人工核對）：[說明書範本](templates/barc-zh-stepdown.md)、[投資人須知範本](templates/barc-zh-stepdown-iis.md)、[參考條件表對照](order-formats/barc-stepdown-reference.md)、[核對規則](rules/barc-stepdown-check-rules.md)（KO% 每期固定往下降、記憶式、KO 每日或每期觀察；非記憶式與不等距轉人工；D 型比價日每一期都填，ADR 0033）。
+BARC FCN_Stepdown 的文件（workflow #544 已實作；其他上手的 Stepdown 開放前照未開放商品轉人工核對）：[說明書範本](templates/barc-zh-stepdown.md)、[投資人須知範本](templates/barc-zh-stepdown-iis.md)、[參考條件表對照](order-formats/barc-stepdown-reference.md)、[核對規則](rules/barc-stepdown-check-rules.md)（KO% 每期固定往下降、記憶式、KO 每日或每期觀察；非記憶式與不等距轉人工；D 型比價日每一期都填，ADR 0033）。
 
 Barclays DACN 的文件（workflow #547 規格，實作另開 PR；實作前照未開放商品轉人工核對）：[說明書範本](templates/barc-zh-dacn.md)、[投資人須知範本](templates/barc-zh-dacn-iis.md)、[參考條件表對照](order-formats/barc-dacn-reference.md)、[核對規則](rules/barc-dacn-check-rules.md)（只支援現行版範本；名稱和 FCN 相同，靠 §14 配息公式辨識；KO 每日＋記憶式、多標的、KI 無／到期、美元、保證 1 期；其他沒有樣本的型態轉人工）。
 

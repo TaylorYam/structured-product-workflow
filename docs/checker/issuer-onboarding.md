@@ -140,7 +140,7 @@
 
 自動沿用（不必再寫）：
 
-- 參考條件表欄位規則（`rules/reference.py`）：商品代號、承作幣別、UL 與各標的價格、百分比、天期、日期、單位面額、最低金額、KO／KI 欄位、Non-Call。
+- 參考條件表欄位規則（`rules/reference.py`）：商品代號、承作幣別、UL 與各標的價格、百分比、天期、日期、單位面額、最低金額、KO／KI 欄位、Non-Call；KO% 每期往下降的商品（FCN_Stepdown）另比 KO 降幅與每期 KO%（`field.ko_step_pct`、`field.ko_levels`），上手把每期 KO% 交給共用讀法 `parsers/stepdown.py` 推得 `ko_levels`、`ko_step_pct`（workflow #544）。
 - 說明書推算規則（`rules/derivation.py`）：價格推算 `derive.prices`（各標的執行價／KO 價／下限價 = 最初價格 × 百分比，四捨五入到 4 位；價格表列數 = 標的數、下限價欄與 KI 型態一致），只讀 `underlyings`、`underlying_prices`、`strike_pct`／`ko_pct`／`ki_pct`、`ki_type`。
 - 日期表結構檢查（`rules/schedule.py`）：期數 = 天期、配息日與觀察日順序、末期觀察日 = 最終評價日、末期配息日 = 到期日、期始日（依上手宣告的定義），只讀 `schedule_table`、`tenor_months`、`issue_date`、`final_valuation_date`、`maturity_date`、`underlyings`；上手規則不再自寫這幾項（[共用核對規則](rules/shared-check-rules.md) §6.1）。
 - 情境分析檢查（`rules/scenario.py`，Issue #294）：情境重印的價格表 = 主價格表、情境假設值 = 說明書正式值（範本沒有正式值時比參考條件表）、較差情境寫出的執行價等 = 價格表（接受 #259 的兩種進位），只讀 `main_price_table`、`scenario_reprint_table`、`scenario_params`、`scenario_prices` 與它們對應的正式值欄位；範本沒有的那一塊交 `absent`（[共用核對規則](rules/shared-check-rules.md) §7）。
