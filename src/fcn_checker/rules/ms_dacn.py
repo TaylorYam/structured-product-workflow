@@ -1,6 +1,7 @@
 """MS DACN 專屬規則（docs/checker/rules/ms-dacn-check-rules.md）：沒有樣本的型態、第 15 項保證期數 = Non-Call、第 18 項各情境
 「本商品第 g 個月發放固定配息」的 g；其他說明書內部規則照 MS FCN（rules/ms.py：月配息率含 `{X%×n(j)/N(j)}` 的 X、受託機構
-商品代號、名稱與幣別一致、商品種類、期別範圍、KO 條款、日期表），情境照區間計息核（rules/ms_scenario.py `accrual=True`）。
+商品代號、名稱與幣別一致、商品種類、期別範圍、KO 條款、日期表），情境照區間計息核（rules/ms_scenario.py `accrual=True`：
+用文件寫的 n、M 驗算區間計息每期配息與損益加總，workflow #578）。
 
 配息門檻 %（`field.coupon_barrier_pct`，= 第 16 項執行價表頭 %）、第 18 項假設與算式的配息率（`scenario.params`；有區間計息的
 情境不交年化報酬率）、重印價格表、較差情境執行價、審查標準（名稱樣板 `product_names.DACN`）與回填是各上手共用的規則。
@@ -25,8 +26,9 @@ NOT_COVERED = [
     },
     {
         "rule_id": "doc.scenario_calculations",
-        "description": "第 18 項有區間計息算式「×（n/M）」的情境：依天數假設算出的配息、損益、總配息與年化報酬率不核對（只核"
-        "固定配息那一期的金額與各算式的配息率）；沒有區間計息的情境照 MS FCN",
+        "description": "第 18 項有區間計息算式「×（n/M）」的情境：年化報酬率不核對；假設的天數 n、M 與配息次數本身不核對"
+        "（只拿來驗算區間計息每期配息與損益加總，workflow #578）；展開到一半、左邊是文字的中間步驟不比對；沒有區間計息的"
+        "情境照 MS FCN",
     },
     {
         "rule_id": "doc.template_variants",
