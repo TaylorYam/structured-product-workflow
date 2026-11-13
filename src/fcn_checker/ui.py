@@ -764,18 +764,18 @@ class FieldBox(ttk.Frame):
 
 
 class HintBar(ttk.Frame):
-    """分頁上方的藍色提示條：寫出從上一步帶入了什麼，旁邊「改選…」可以換掉（#76）；沒有帶入時不顯示。
+    """分頁上方的藍色提示條：寫出從上一步帶入了什麼（#76）；沒有帶入時不顯示。
 
+    要換掉帶入的值就在分頁上直接改（#556 拿掉「改選…」），改了由分頁收起提示條。
     建立後由呼叫端 grid 到分頁最上方，再呼叫 hide()。
     """
 
-    def __init__(self, parent: tk.Misc, change: Callable[[], None]):
+    def __init__(self, parent: tk.Misc):
         super().__init__(parent, style="Hint.TFrame", padding=(14, 8))
         self.text = tk.StringVar()
         label = WrapLabel(self, textvariable=self.text, style="Hint.TLabel", wraplength=900)
         label.pack(side="left", fill="x", expand=True)
-        ttk.Button(self, text="改選…", command=change).pack(side="left", padx=(10, 0))
-        self.bind("<Configure>", lambda event: label.configure(wraplength=max(300, event.width - 180)))
+        self.bind("<Configure>", lambda event: label.configure(wraplength=max(300, event.width - 80)))
 
     @property
     def shown(self) -> bool:

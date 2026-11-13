@@ -10,9 +10,6 @@ from __future__ import annotations
 
 import calendar
 import datetime as dt
-import os
-import subprocess
-import sys
 import tkinter as tk
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future
@@ -112,8 +109,8 @@ class Tab:
         self.header.step.set(step)
 
     def tdcc_hint(self, row: int, columnspan: int = 2) -> None:
-        """第 row 列：從上一步帶入 TDCC 時的藍色提示條（#76）；「改選…」清掉帶入的 TDCC，讓作業人員自己貼。"""
-        self.hint = HintBar(self.frame, self._clear_handed_tdccs)
+        """第 row 列：從上一步帶入 TDCC 時的藍色提示條（#76）；自己改 TDCC 欄就收起。"""
+        self.hint = HintBar(self.frame)
         self.hint.grid(row=row, column=0, columnspan=columnspan, sticky="ew", pady=(0, 12))
         self.hint.hide()
 
@@ -214,12 +211,6 @@ class Tab:
         self.tdcc_text.delete("1.0", tk.END)
         self.tdcc_text.insert("1.0", text)
         self.count_var.set(f"已貼 {len(parse_tdccs(text))} 筆")
-
-    def _clear_handed_tdccs(self) -> None:
-        """提示條的「改選…」：清掉帶入的 TDCC，讓作業人員自己貼。"""
-        self._forget_handed_tdccs()
-        self._set_tdccs("")
-        self.tdcc_text.focus_set()
 
     def _forget_handed_tdccs(self) -> None:
         self.handed_tdccs = None
@@ -678,10 +669,3 @@ def ask_excel(title: str, current: tk.StringVar, patterns: str = "*.xlsx") -> st
 def ask_csv(title: str, current: tk.StringVar) -> str:
     start = Path(current.get()).parent if current.get() else None
     return filedialog.askopenfilename(title=title, initialdir=start, filetypes=[("CSV", "*.csv"), ("全部檔案", "*.*")])
-
-
-def open_folder(folder: Path) -> None:
-    if sys.platform == "win32":
-        os.startfile(folder)  # Windows 檔案總管
-    else:
-        subprocess.Popen(["xdg-open", str(folder)])

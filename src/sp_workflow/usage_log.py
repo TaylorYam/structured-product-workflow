@@ -9,8 +9,10 @@
 路徑（`path`）從所在視窗算起；彙整時去掉 Tk 自動編號的數字，重開的對話框、換一檔重建的欄位才對得起來。
 按鈕文字會變的（例如「人工放行…」↔「取消放行」）以按下當時的文字記。
 
-只記介面上的名稱，不記商品、客戶或檔案內容；存在 `.local/usage/YYYY-MM-DD.jsonl`，一行一筆，寫不進去就略過。
-彙整：`python -m sp_workflow.usage_log <資料夾>`。
+只記介面上的名稱，不記商品、客戶或檔案內容：視窗標題、分頁、按鈕文字裡的 TDCC（連續 6 位以上的數字，例如「人工核對完成：<TDCC>」）
+寫入前換成「＊」（#560）。存在 `.local/usage/YYYY-MM-DD.jsonl`，一行一筆，寫不進去就略過。
+彙整：`python -m sp_workflow.usage_log <資料夾>`。文字裡的筆數換成 N 再比對（「待處理（3）」→「待處理（N）」、「人工放行 3 份…」→「人工放行 N 份…」），
+同一個按鈕、分頁、對話框不因筆數分成多列；分頁與步驟欄開頭的編號照留。已經寫下的舊紀錄不改寫，彙整時一樣遮掉 TDCC、合併筆數。
 """
 
 from __future__ import annotations
@@ -29,6 +31,9 @@ from typing import Any
 
 FOLDER_NAME = "usage"
 TAB_LABEL = "（切到這一頁）"
+TDCC_MASK = "＊"
+TEXT_FIELDS = ("window", "tab", "label")  # 介面上的文字；寫入前遮掉 TDCC，彙整時合併筆數
+_TDCC = re.compile(r"\d{6,}")  # 對話框標題等文字裡的 TDCC：連續 6 位以上的數字
 BUTTON_CLASSES = ("TButton", "Button", "TCheckbutton", "Checkbutton", "TRadiobutton", "Radiobutton")
 _CLASS_BINDINGS = (
     *((name, "<ButtonPress-1>") for name in BUTTON_CLASSES),
@@ -48,7 +53,9 @@ class UsageLog:
 
     def write(self, kind: str, **fields: Any) -> None:
         now = self.clock()
-        record = {"time": now.isoformat(timespec="seconds"), "kind": kind, **fields}
+        if "items" in fields:
+            fields["items"] = [_masked(item) for item in fields["items"]]
+        record = {"time": now.isoformat(timespec="seconds"), "kind": kind, **_masked(fields)}
         try:
             self.folder.mkdir(parents=True, exist_ok=True)
             with (self.folder / f"{now:%Y-%m-%d}.jsonl").open("a", encoding="utf-8") as file:
@@ -192,6 +199,18 @@ def install(root: tk.Tk | tk.Toplevel, folder: Path) -> UsageRecorder:
     return UsageRecorder(root, UsageLog(folder)).install()
 
 
+def _masked(fields: dict[str, Any]) -> dict[str, Any]:
+    """`window`、`tab`、`label` 裡的 TDCC 換成 `TDCC_MASK`：紀錄只記介面上的名稱，不記商品。"""
+    return {
+        key: _mask_tdcc(value) if key in TEXT_FIELDS and isinstance(value, str) else value
+        for key, value in fields.items()
+    }
+
+
+def _mask_tdcc(text: str) -> str:
+    return _TDCC.sub(TDCC_MASK, text)
+
+
 def _quiet(function: Callable[..., None]) -> Callable[..., None]:
     """記錄出錯一律略過：使用紀錄不能讓面板跳錯誤或擋住原本的功能。"""
 
@@ -295,11 +314,20 @@ def read_records(folder: Path) -> Iterator[dict[str, Any]]:
 
 
 _AUTO_NUMBER = re.compile(r"(?<=[^.\d])\d+(?=\.|$)")  # Tk 自動命名的編號：!button23 → !button
+# 文字裡的筆數：括號裡的數字（「待處理（3）」「取消放行（2 份）」）、字後空一格的數字加單位（「人工放行 3 份…」「已複製 5 列」）；
+# 開頭（含「 > 」後的分頁名稱開頭）的編號前面不是「字＋空格」，不會當成筆數
+_COUNT = re.compile(r"(?<=[（(])\d+(?=\s*[份筆列檔件]?[）)])|(?<=[^\s>]\s)\d+(?=\s*[份筆列檔件])")
+
+
+def _merged_text(text: str) -> str:
+    """彙整用：遮掉 TDCC（舊紀錄）、筆數換成 N；分頁與步驟欄開頭的編號（「1 每日匯入」）後面沒有單位，照留。"""
+    return _COUNT.sub("N", _mask_tdcc(text))
 
 
 def _key(item: dict[str, Any]) -> tuple[str, str, str, str]:
     path = _AUTO_NUMBER.sub("", str(item.get("path", "")))
-    return (item.get("window", ""), item.get("tab") or "", item.get("label", ""), path)
+    window, tab, label = (_merged_text(str(item.get(name) or "")) for name in TEXT_FIELDS)
+    return (window, tab, label, path)
 
 
 @dataclass(frozen=True)

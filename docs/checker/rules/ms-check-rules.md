@@ -240,4 +240,4 @@
 
 審查標準的 MS 設定（[審查標準](review-standard.md) §2.6）：`issuer.ms.fixed_warning`、`issuer.ms.fixed_warning_openings`（第一章 §2 開頭）、`issuer.ms.risk_level_formats`（沒有【】的風險等級）、`issuer.ms.issuer_name`、`issuer.ms.issuer_name_ignore`（括號、英文名結尾句點）、`issuer.ms.product_name`（`{underlying_zh}`／`{underlying_en}`）、`distributor.phone_equivalents`（`+886 2 5556 1313`）、`distributor.address_equivalents`（第二章沒有「松山區」的地址）。
 
-未涵蓋清單（PANEL「待處理」）：`doc.underlying_names`、`doc.initial_prices`、`doc.scenario_worse_details`、`doc.template_variants`（§6 的樣本缺口）。
+未涵蓋清單（寫進核對紀錄）：`doc.underlying_names`、`doc.initial_prices`、`doc.scenario_worse_details`、`doc.template_variants`（§6 的樣本缺口）。

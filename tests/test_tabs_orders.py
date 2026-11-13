@@ -27,7 +27,6 @@ from sp_workflow.window_actions import OrderImportResult
 from window_synth import (
     NEEDS_RELEASE,
     UF_DIFF,
-    hint_change_button,
     new_window,
     prepared_result,
     read_result,
@@ -593,7 +592,7 @@ def test_a_busy_prepare_tab_is_not_handed_tdccs(master, tmp_path: Path, monkeypa
     assert pasted(window.prepare) == "" and not window.prepare.hint.shown
 
 
-def test_handing_over_clears_the_last_prepare_results_and_change_clears_the_tdccs(master, tmp_path: Path) -> None:
+def test_handing_over_clears_the_last_prepare_results(master, tmp_path: Path) -> None:
     window = imported_window(master, tmp_path)
     window.prepare._done(prepared_result(tmp_path / "待核對_1"))
     assert window.prepare.next_button.winfo_manager() == "pack"
@@ -602,12 +601,9 @@ def test_handing_over_clears_the_last_prepare_results_and_change_clears_the_tdcc
 
     prepare = window.prepare
     assert prepare.table.get_children() == () and prepare.kpis.values == ()
-    # 上一批的下一步、批次資料夾不能留著，不然會核對到上一批的 PDF（#286）
-    assert prepare.next_button.winfo_manager() == "" and prepare.batch_dir is None
-    assert str(prepare.open_button.cget("state")) == "disabled"
+    # 上一批的下一步不能留著，不然會核對到上一批的 PDF（#286）
+    assert prepare.next_button.winfo_manager() == ""
     assert prepare.status_var.get() == prepare.READY_TEXT
-    hint_change_button(window.prepare.hint).invoke()
-    assert pasted(window.prepare) == "" and not window.prepare.hint.shown
 
 
 @pytest.mark.parametrize("again", ["read", "import"])

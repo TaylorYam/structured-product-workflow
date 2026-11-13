@@ -45,7 +45,7 @@ from sp_workflow.window_actions import (
     SplitCalendarResult,
     WhitelistResult,
 )
-from window_synth import NEEDS_RELEASE, UF_DIFF, hint_change_button, new_window, read_result, release_without_database
+from window_synth import NEEDS_RELEASE, UF_DIFF, new_window, read_result, release_without_database
 
 
 def daily_receipt(
@@ -650,16 +650,6 @@ def test_the_same_tdccs_are_handed_over_again_without_asking(master, tmp_path: P
     window.daily._done(daily_receipt(tmp_path, ("147000000001",)))
 
     assert window.orders.hint.shown
-
-
-def test_change_on_the_order_hint_clears_the_handed_over_tdccs(master, tmp_path: Path) -> None:
-    window = new_window(master, tmp_path)
-    window.daily._done(daily_receipt(tmp_path, ("147000000001", "147000000002")))
-
-    hint_change_button(window.orders.hint).invoke()
-
-    assert pasted(window.orders) == "" and window.orders.count_var.get() == "已貼 0 筆"
-    assert not window.orders.hint.shown
 
 
 def test_editing_the_handed_over_tdccs_hides_the_hint(master, tmp_path: Path) -> None:

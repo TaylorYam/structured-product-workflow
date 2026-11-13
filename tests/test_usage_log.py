@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
@@ -170,6 +171,26 @@ def test_another_window_is_listed_on_its_own(window) -> None:
     assert inventory["items"] == [{"window": "信箱維護", "label": "新增人員…", "path": "!button"}], "路徑從視窗算起"
 
 
+def test_a_tdcc_in_a_dialog_title_is_masked_before_it_is_written(window) -> None:
+    """「人工核對完成：<TDCC>」對話框：清單和按下的按鈕都不把 TDCC（連續 6 位以上的數字）寫進紀錄。"""
+    dialog = tk.Toplevel(window)
+    dialog.withdraw()
+    dialog.title("人工核對完成：999999")
+    confirm = ttk.Button(dialog, text="確定")
+    confirm.pack()
+    try:
+        window.recorder.list_window(dialog)
+        click(confirm)
+    finally:
+        dialog.destroy()
+
+    folder = Path(window.folder)
+    assert re.search(r"\d{6,}", (folder / "2026-11-09.jsonl").read_text(encoding="utf-8")) is None
+    (inventory,) = records(folder, "inventory")[-1:]
+    assert inventory["items"] == [{"window": "人工核對完成：＊", "label": "確定", "path": "!button"}]
+    assert [(r["window"], r["label"]) for r in records(folder, "click")] == [("人工核對完成：＊", "確定")]
+
+
 def test_a_failing_log_never_blocks_the_panel(master, monkeypatch) -> None:
     """記錄出錯（不只是寫檔失敗）時按鈕與選單照常運作，也不跳錯誤。"""
 
@@ -276,6 +297,43 @@ def test_summary_matches_reopened_dialogs_rebuilt_rows_and_tabs(tmp_path: Path) 
     ]
 
 
+def test_summary_merges_tdccs_and_counts_in_old_records_but_keeps_step_numbers(tmp_path: Path) -> None:
+    """舊紀錄不改寫：彙整時遮掉 TDCC、合併文字裡的筆數；分頁與步驟欄開頭的編號照留。"""
+    folder = tmp_path / "usage"
+    checker = {"window": "FCN Workflow", "tab": "4 核對 > 待處理（1）", "label": TAB_LABEL}
+    write_day(
+        folder,
+        "2026-11-09",
+        {"kind": "click", "window": "人工核對完成：111111", "label": "確定", "path": "!button"},
+        {"kind": "click", "window": "人工核對完成：222222", "label": "取消", "path": "!button2"},
+        {"kind": "click", "window": "人工核對完成：333333", "label": "確定", "path": "!button"},
+        {"kind": "tab", **checker},
+        {"kind": "tab", **checker, "tab": "4 核對 > 待處理（12）"},
+        {"kind": "click", "window": "FCN Workflow", "tab": "4 核對", "label": "人工放行 2 份…", "path": ".a"},
+        {"kind": "click", "window": "FCN Workflow", "tab": "4 核對", "label": "人工放行 15 份…", "path": ".a"},
+        {"kind": "click", "window": "FCN Workflow", "tab": "4 核對", "label": "取消放行（2 份）", "path": ".a"},
+        {"kind": "click", "window": "FCN Workflow", "tab": "4 核對", "label": "取消放行（3 份）", "path": ".a"},
+        {"kind": "click", "window": "W", "tab": "3 件數 > 2 份數", "label": "匯出", "path": ".c"},
+        {"kind": "click", "window": "FCN Workflow", "label": "1   每日匯入", "path": ".s1"},
+        {"kind": "click", "window": "FCN Workflow", "label": "10   出場清單", "path": ".s10"},
+        {"kind": "tab", "window": "FCN Workflow", "tab": "1 每日匯入", "label": TAB_LABEL},
+    )
+
+    _days, rows = summarize(read_records(folder))
+
+    assert sorted((r.window, r.tab, r.label, r.total) for r in rows) == [
+        ("FCN Workflow", "", "1   每日匯入", 1),
+        ("FCN Workflow", "", "10   出場清單", 1),
+        ("FCN Workflow", "1 每日匯入", TAB_LABEL, 1),
+        ("FCN Workflow", "4 核對", "人工放行 N 份…", 2),
+        ("FCN Workflow", "4 核對", "取消放行（N 份）", 2),
+        ("FCN Workflow", "4 核對 > 待處理（N）", TAB_LABEL, 2),
+        ("W", "3 件數 > 2 份數", "匯出", 1),
+        ("人工核對完成：＊", "", "取消", 1),
+        ("人工核對完成：＊", "", "確定", 2),
+    ]
+
+
 def test_summary_command_prints_the_table(tmp_path: Path, capsys) -> None:
     folder = tmp_path / "usage"
     write_day(
@@ -296,15 +354,18 @@ def test_the_real_window_lists_its_menus_steps_and_tab_buttons(master, tmp_path:
     try:
         (inventory,) = records(Path(master.folder), "inventory")
         labels = {(item.get("tab"), item["label"]) for item in inventory["items"]}
-        assert {(None, "維護 > 信箱維護…"), (None, "分析 > 盤勢速報…"), (None, "前往 > 核對")} <= labels
+        assert {(None, "維護 > 信箱維護…"), (None, "分析 > 盤勢速報…")} <= labels
         assert any(tab is None and label.endswith("核對") for tab, label in labels), "步驟欄"
         assert any(tab and tab.endswith("核對") for tab, _label in labels), "核對頁的按鈕"
         assert any(tab and tab.endswith("核對 > 核對結果") for tab, _label in labels), "分頁裡的分頁由外到內接起來"
 
-        window.go_menu.invoke(window.go_menu.index("核對"))
-        master.update()
-        assert window.notebook.select() == str(window.check)
-        assert [r["label"] for r in records(Path(master.folder), "menu")] == ["前往 > 核對"]
+        opened = []
+        window.open_window = opened.append  # 不真的開盤勢速報視窗
+        bar = master.nametowidget(master["menu"])
+        analysis = master.nametowidget(bar.entrycget("分析", "menu"))
+        analysis.invoke(analysis.index("盤勢速報…"))
+        assert opened == ["盤勢速報…"]
+        assert [r["label"] for r in records(Path(master.folder), "menu")] == ["分析 > 盤勢速報…"]
     finally:
         recorder.uninstall()
 
