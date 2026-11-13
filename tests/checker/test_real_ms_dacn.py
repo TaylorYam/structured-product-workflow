@@ -1,9 +1,10 @@
-"""本機 MS DACN 真實樣本（workflow #550）；交易資料不進 Git，CI 自動略過。測試碼不含真實商品代號或數值。
+"""本機 MS DACN 真實樣本（workflow #550、#578）；交易資料不進 Git，CI 自動略過。測試碼不含真實商品代號或數值。
 
 樣本為說明書＋投資人須知成對（`real_data.DACN`）。斷言與探勘結論一致（docs/checker/templates/ms-zh-dacn.md §4、
 docs/checker/rules/ms-dacn-check-rules.md §5）：2 份說明書與 2 份投資人須知都是現行版、辨識成 MS DACN；沒有一份被認成
 MS FCN 或 BEN；每個欄位都讀得到。全部美元、多標的、KO 每日＋記憶式、KI 到期觀察、第 15 項保證期數 = Non-Call = 1、
-第 18 項每個情境的保證期數相同、配息門檻 = 執行價 %；有區間計息算式的情境不交年化報酬率。投資人須知的保證期數 = 同商品
+第 18 項每個情境的保證期數相同、配息門檻 = 執行價 %；有區間計息算式的情境不交年化報酬率，最後一步的區間計息算式與損益
+算式都讀得出來（#578）。投資人須知的保證期數 = 同商品
 說明書。參考條件表要另外準備，整批核對的試跑結果記在 PR。
 """
 
@@ -75,6 +76,13 @@ def test_samples_follow_the_sampled_dacn_terms(documents):
         assert [bool(s.accrual) for s in scenarios] == [False] + [True] * (len(scenarios) - 1)
         assert all(len(s.coupons) == s.coupon_formulas - s.accrual_formulas for s in scenarios)
         assert len([s for s in scenarios if s.kind == "worse" and len(s.strike) == 1]) == 1
+        # 有區間計息的情境（#578）：最後一步的區間計息算式全部讀得出、M 不是 0，每個情境一個區間計息金額與一個損益算式，
+        # 獲利情境讀得到假設的配息次數
+        for s in scenarios[1:]:
+            assert s.accruals and len(s.accruals) == s.accrual_formulas
+            assert all(h.value.total_days for h in s.accruals)
+            assert len({h.value.amount for h in s.accruals}) == 1 and len(s.pnl_sums) == 1
+            assert s.kind == "worse" or s.paid is not None
 
 
 def test_investor_sheets_agree_with_their_term_sheets(documents):

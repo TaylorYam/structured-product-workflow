@@ -3,7 +3,8 @@
 只擷取文件上寫的值與原文行；核對在 rules/ms_scenario.py。抓不到的值為 None，由規則轉人工覆核。
 DACN（docs/checker/templates/ms-zh-dacn.md §4.3，`accrual=True`）另看每個情境有沒有區間計息 `× （n/M）`、數展開成
 `金額 × X% × （n/M）` 的算式、多讀 `固定配息率（X%）`／`浮動配息率（X%）` 的配息率；較差情境執行價多認
-`連結標的（代碼）收盤價`（少「的」）的句型。
+`連結標的（代碼）收盤價`（少「的」）的句型。有區間計息的情境另讀最後一步的區間計息算式、損益算式各項與假設的配息次數
+（workflow #578）；左邊是文字的中間步驟不讀。
 """
 
 from __future__ import annotations
@@ -24,6 +25,8 @@ N = r"([\d,]+(?:\.\d{2})?)"  # 金額：2 位小數，或整數（日圓樣本�
 PNL = r"(-?[\d,]+(?:\.\d{2})?)"  # 損益（可為負）
 TIMES = "[×xX]"  # 乘號：全形 ×，也有樣本寫半形 x（Issue #181）
 UNIT = money.CURRENCY  # 金額後的幣別字（任一已知寫法；寫哪一個才對由共用規則核對，Issue #170）
+TERM_AMOUNT = r"[\d,]+(?:\.\d+)?"  # DACN 損益算式一項的金額（到期贖回價值的位數同 FCN 較差情境不限）
+TERM = rf"{TERM_AMOUNT}(?:{UNIT})?(?:{TIMES}\d+)?"  # DACN 損益算式的一項：金額（幣別）（× 次數）
 
 
 class CouponCalc(NamedTuple):
@@ -54,6 +57,36 @@ class WorsePnl(NamedTuple):
     pnl: Decimal
 
 
+class AccrualCalc(NamedTuple):
+    """DACN 區間計息算式的最後一步「面額 × X% × （n/M） = 每期配息」（左邊是文字的中間步驟不讀）。"""
+
+    denomination: Decimal
+    rate: Decimal
+    days: int  # n
+    total_days: int  # M
+    amount: Decimal
+
+
+class PnlTerm(NamedTuple):
+    """DACN 損益算式的一項「金額 × 次數」；沒寫次數是 1 次。"""
+
+    amount: Decimal
+    times: int
+
+
+class PnlSum(NamedTuple):
+    """DACN 損益算式的最後一步「= 項 + 項 + … − 面額 = 損益」：獲利情境第一項是拿回的本金、較差情境最後一項是到期贖回價值，
+    其餘是配息項。"""
+
+    terms: tuple[PnlTerm, ...]
+    denomination: Decimal
+    pnl: Decimal
+
+    def split(self, profit: bool) -> tuple[Decimal, tuple[PnlTerm, ...]]:
+        """（拿回的本金或到期贖回價值, 配息項）：獲利情境取第一項、較差情境取最後一項，其餘依序是配息項。"""
+        return (self.terms[0].amount, self.terms[1:]) if profit else (self.terms[-1].amount, self.terms[:-1])
+
+
 class WorseStrike(NamedTuple):
     """較差情境「連結標的(代碼)的收盤價 = … 小於其執行價 = N」。"""
 
@@ -77,6 +110,10 @@ class Scenario:
     accrual: bool = False  # 有區間計息「× （n/M）」（DACN；FCN 沒有）
     accrual_formulas: int = 0  # 展開成「金額 × X% × （n/M）」的區間計息算式處數（`coupon_formulas` 也數到它們）
     guaranteed: list[Hit[int]] = field(default_factory=list)  # 「本商品第 g 個月發放固定配息」的 g（DACN）
+    # 以下只在 DACN 有區間計息的情境讀（workflow #578）
+    accruals: list[Hit[AccrualCalc]] = field(default_factory=list)
+    pnl_sums: list[Hit[PnlSum]] = field(default_factory=list)  # 損益算式的最後一步
+    paid: Hit[int] | None = None  # 假設的配息次數：「假設在第k 個配息觀察期間」的 k、「假設在第a 至第N 個…」的 N
     # 各金額旁的幣別字（商品幣別的出處）；股價與實物交割算式所在的行跟著標的走，不列入（money.stock_price_line）
     money: tuple[Money, ...] = ()
 
@@ -115,6 +152,8 @@ def _scenario(number: str, title: str, lines: list[Line], *, accrual: bool = Fal
     s.accrual = re.search(rf"{TIMES}[（(]\d+/\d+[)）]", ti.text) is not None
     s.accrual_formulas = len(list(ti.finditer(rf"\d{unit}{TIMES}\d+(?:\.\d+)?%{TIMES}[（(]\d+/\d+[)）]")))
     s.guaranteed = hits(ti, r"本商品第(\d+)個月發放固定配息", lambda m: int(m[1]))
+    if accrual and s.accrual:
+        _accrual_terms(s, ti)
     rate = rf"(?:(?<!%){TIMES}|(?:固定|浮動)配息率[（(])" if accrual else rf"(?<!%){TIMES}"
     s.rates = hits(ti, rate + r"(\d+(?:\.\d+)?)%", lambda m: Decimal(m[1]))
     if kind == "profit":
@@ -137,6 +176,35 @@ def _scenario(number: str, title: str, lines: list[Line], *, accrual: bool = Fal
         )
     s.annualized = hits(ti, r"年化報酬率為(-?\d+(?:\.\d+)?)%", lambda m: Decimal(m[1]))
     return s
+
+
+def _accrual_terms(s: Scenario, ti: TextIndex) -> None:
+    """DACN 有區間計息的情境（範本規格 ms-zh-dacn.md §4.3，workflow #578）：只讀最後一步的純數字算式——區間計息
+    `面額 美元×X%×（n/M） = B 美元`、損益 `= 項+項+…-面額 美元 = 損益 美元`（項的幣別字可省略，例 `Bx11`）——與假設段的
+    配息次數。"""
+    unit = UNIT
+    s.accruals = hits(
+        ti,
+        rf"{N}{unit}{TIMES}(\d+(?:\.\d+)?)%{TIMES}[（(](\d+)/(\d+)[)）]={N}{unit}",
+        lambda m: AccrualCalc(dec(m[1]), Decimal(m[2]), int(m[3]), int(m[4]), dec(m[5])),
+    )
+    s.pnl_sums = hits(
+        ti,
+        rf"=({TERM}(?:\+{TERM})+)-{N}{unit}={PNL}{unit}",
+        lambda m: PnlSum(tuple(_term(t) for t in m[1].split("+")), dec(m[2]), dec(m[3])),
+    )
+    s.paid = one(
+        [
+            *hits(ti, r"假設在第(\d+)個配息觀察期間", lambda m: int(m[1])),
+            *hits(ti, r"假設在第\d+至第(\d+)個配息觀察期間", lambda m: int(m[1])),
+        ]
+    )
+
+
+def _term(text: str) -> PnlTerm:
+    m = re.fullmatch(rf"({TERM_AMOUNT})(?:{UNIT})?(?:{TIMES}(\d+))?", text)
+    assert m is not None  # TERM 已比對過
+    return PnlTerm(dec(m[1]), int(m[2] or 1))
 
 
 def section(lines: list[Line], *, accrual: bool = False) -> ScenarioSection:

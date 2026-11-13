@@ -6,7 +6,7 @@
 - 發行機構：英商摩根士丹利國際股份有限公司（同 [`ms-zh-pd`](ms-zh-product-description.md)）
 - 商品家族：區間累積配息（DACN）：第 1～g 期固定配息，第 g+1 期起依「籃子中表現最差的連結標的收盤價等於或大於其執行價」的配息觀察日比例配息；自動提前出場
 - 依據：2026-11-13 對 2 份真實樣本（MD1、MD2，私人雲端倉庫）的探勘與開發者螢光標記（workflow #550，路線圖 #551）
-- 狀態：已實作（workflow #550）；情境二～四的區間計息驗算（§4.3）是規格（workflow #578，實作另開 PR）
+- 狀態：已實作（workflow #550；情境二～四的區間計息驗算 §4.3 是 workflow #578）
 - 核對規則：[MS DACN 核對規則](../rules/ms-dacn-check-rules.md)；投資人須知：[`ms-zh-dacn-iis`](ms-zh-dacn-iis.md)；參考條件表：[MS DACN 下單資料格式](../order-formats/ms-dacn-reference.md)
 
 > 真實樣本、擷取文字與比對輸出只放在被 Git 忽略的資料夾；本文件的數值範例都是虛構的。MD1、MD2 與真實商品代號的對照只存在本機（`data/tmp/dacn_wave2/ms/sample_map.txt`）。
