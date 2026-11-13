@@ -236,6 +236,15 @@ def test_tls_context_drops_only_the_strict_check() -> None:
     assert context.check_hostname
 
 
+def test_tls_context_uses_openssl_default_ciphers() -> None:
+    """Nasdaq 的 CDN 擋 Python 預設的 cipher 清單（403），改用 OpenSSL 的 DEFAULT（#568）。"""
+    context = split_calendar._tls_context()
+
+    assert len(context.get_ciphers()) > len(ssl.create_default_context().get_ciphers())
+    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert context.check_hostname
+
+
 # ---------- 對齊價格斷層 ----------
 
 MON = dt.date(2026, 11, 16)
