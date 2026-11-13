@@ -55,6 +55,7 @@ from .parsers import bnp_dacn as bnp_dacn_parser
 from .parsers import bnp_super_bull as bnp_sb_parser
 from .parsers import ca as ca_parser
 from .parsers import ca_ben as ca_ben_parser
+from .parsers import ca_stepdown as ca_stepdown_parser
 from .parsers import ca_super_bull as ca_sb_parser
 from .parsers import citi as citi_parser
 from .parsers import dbs as dbs_parser
@@ -90,6 +91,7 @@ from .rules import ca as ca_rules
 from .rules import ca_ben as ca_ben_rules
 from .rules import ca_ben_iis as ca_ben_iis_rules
 from .rules import ca_iis as ca_iis_rules
+from .rules import ca_stepdown as ca_stepdown_rules
 from .rules import ca_super_bull as ca_sb_rules
 from .rules import ca_super_bull_iis as ca_sb_iis_rules
 from .rules import citi as citi_rules
@@ -149,6 +151,9 @@ class IisTemplate:
     read: Callable[[Sequence[Line]], IisSheet]
     not_covered: tuple[dict[str, str], ...] = ()  # 範本未涵蓋的型態（PANEL「待處理」與核對紀錄）
     rules: Callable[[IisIssuerContext], list[CheckResult]] | None = None  # 範本專屬的投資人須知規則
+    # 投資人須知涵蓋的商品種類；None → 同所屬說明書範本（`Template.products`）。同上手幾個商品家族的投資人須知寫法分不出來時
+    # 由投資人須知範本宣告（例：CA FCN_Stepdown 的投資人須知用 CA FCN 的範本，workflow #546），商品種類由說明書把關
+    products: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -166,7 +171,8 @@ class Template:
     read: Callable[[Sequence[Line]], TermSheet]
     # 說明書內部規則：只用讀出結果與審查標準，拿不到參考條件表的列與格式設定（可讀的欄位由上手宣告）
     rules: Callable[[IssuerContext], list[CheckResult]]
-    # 投資人須知範本；None → 這個範本的投資人須知是未支援上手
+    # 投資人須知範本；None → 這個範本沒有自己的投資人須知範本：同上手其他範本的投資人須知範本涵蓋這個商品種類時由它認
+    # （例：CA FCN_Stepdown 用 CA FCN 的 `ca-zh-iis`，workflow #546），整家上手都沒有時是未支援上手
     iis: IisTemplate | None = None
     # 範本涵蓋的商品種類（參考條件表 Product 的寫法）：辨識到的範本和該列 Product 不同時轉人工覆核（#311）；Product 空白視為 FCN
     products: frozenset[str] = frozenset({FCN, FCN_EXPRESS})
@@ -662,7 +668,23 @@ CA = Template(
         read=ca_iis.read,
         not_covered=(_IIS_SAMPLES,),
         rules=ca_iis_rules.run_all,
+        # FCN_Stepdown 的投資人須知和 FCN 分不出來（workflow #546）：也由這個範本認，商品種類由說明書把關
+        products=frozenset({FCN, FCN_EXPRESS, FCN_STEPDOWN}),
     ),
+)
+
+# CA FCN_Stepdown（#546）：名稱、骨架同 CA FCN，第 9 項 (1)(b) 有每期 KO 表。不掛投資人須知範本：投資人須知沒有可靠的
+# Stepdown 寫法，由 CA FCN 的 `ca-zh-iis` 認（掛同一個範本會讓每份 CA FCN 投資人須知都先掛在本範本底下）
+CA_STEPDOWN = Template(
+    code=ca_rules.ISSUER,
+    template_id=ca_stepdown_parser.TEMPLATE_ID,
+    label="CA FCN_Stepdown 中文產品說明書",
+    parser_version=ca_stepdown_parser.PARSER_VERSION,
+    not_covered=tuple(ca_stepdown_rules.NOT_COVERED),
+    detect=ca_stepdown_parser.detect,
+    read=ca_stepdown_parser.read,
+    rules=ca_stepdown_rules.run_all,
+    products=frozenset({FCN_STEPDOWN}),
 )
 
 # CA Super Bull（#312）：和 CA FCN 同一家上手、不同範本（商品種類須和參考條件表 Product 相同，檢查在辨識）
@@ -810,10 +832,11 @@ REGISTRY: tuple[Issuer, ...] = (
     ),
     Issuer(
         CA.code,
-        (CA_BEN, CA_SUPER_BULL, CA),
+        (CA_STEPDOWN, CA_BEN, CA_SUPER_BULL, CA),
         reference_fields=ca_rules.REFERENCE_FIELDS,
         ratings=True,
-        with_calendar=ca_parser.with_calendar,  # 只對沒有 Non-Call 的 FCN 有作用；Super Bull、BEN 的 Non-Call ≥ 1，原樣交回
+        # 只對沒有 Non-Call 的 FCN 有作用；Stepdown、Super Bull、BEN 的 Non-Call ≥ 1，原樣交回
+        with_calendar=ca_parser.with_calendar,
     ),
     Issuer(BBVA.code, (BBVA,), reference_fields=bbva_rules.REFERENCE_FIELDS, ratings=True),
     Issuer(DBS.code, (DBS_DACN, DBS), reference_fields=dbs_rules.REFERENCE_FIELDS, ratings=True),

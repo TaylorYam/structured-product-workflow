@@ -114,6 +114,7 @@ SYNTH_SPECS = [
     ("ca_synth", "Spec"),
     ("ca_synth", "SbSpec"),
     ("ca_synth", "BenSpec"),
+    ("ca_synth", "StepdownSpec"),
     ("citi_synth", "Spec"),
     ("dbs_synth", "Spec"),
     ("dbs_synth", "DacnSpec"),

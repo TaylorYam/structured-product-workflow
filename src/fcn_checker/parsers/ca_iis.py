@@ -4,6 +4,8 @@
 先做 NFKC（同 gs_iis）。第 1 頁中文名稱（帶「(ISIN：…)(下稱「商品」或「本商品」)」）後緊接英文名稱（帶「(ISIN：…)」），
 再來是「(種類：…)(TDCC 商品代號：…)」與警語 1.～12.、刊印日期。章名「一、 相關機構事業概況」～「七、…」。
 沒有價格表與 %：KO／KI 只有句型；P 型 KO 觀察日只寫參照說明書、界限事件沒有定義，只交出 D 型起始期與有無 KI。
+FCN_Stepdown 的投資人須知也用本範本（沒有可靠的 Stepdown 寫法，workflow #546）：記憶式第二句另收「無須於同一預定交易日
+或同一自動提前出場觀察期」。
 """
 
 from __future__ import annotations
@@ -22,8 +24,8 @@ from .layout import TextIndex, join_wrapped_tickers, parse_date
 TEMPLATE_ID = "ca-zh-iis"
 # 2：警語的受託機構名稱（Issue #306）；3：贖回 %、說明文字幣別（Issue #319）
 # 4：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）；5：FCN_Express 的英文名稱與自發行日起觀察 KO（workflow #305）
-# 6：標的表代碼和交易所在同一行（workflow #312）
-PARSER_VERSION = "6"
+# 6：標的表代碼和交易所在同一行（workflow #312）；7：記憶式第二句另收 FCN_Stepdown 的寫法（workflow #546）
+PARSER_VERSION = "7"
 # 保證機構信用評等（#241）：二、1. (4) `保證機構之長期債務信用評等：…，長期債務信用評等為穆迪A1/標準普爾A+/惠譽AA-。`；
 GUARANTOR_RATINGS = (
     ratings.RatingPlace("商品簡介 (4)", r"保證機構之長期債務信用評等：[^，。]+，長期債務信用評等為(?P<body>.+?)。"),
@@ -164,7 +166,9 @@ def _product_terms(ti: TextIndex, fields: dict[str, ParsedField], provided: set[
         m = events[0]
         tail = st.text[m.end() : m.end() + 40]
         wording = ParsedField.present(
-            "ko_memory_wording", ca.memory_wording(m[1], tail), st.lines_for(m.start(), m.end())
+            "ko_memory_wording",
+            ca.memory_wording(m[1], tail, ca.MEMORY_SAME_WORDINGS),
+            st.lines_for(m.start(), m.end()),
         )
         fields["ko_memory"] = ca.memory_of(wording)
     ki, plain = ca.KI_MATURITY in st.text, "期末訂價低於執行價" in st.text

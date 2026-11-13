@@ -7,7 +7,7 @@
 # 本檔只放公開的條款文字與日期，不放客戶或交易資料。
 # 規則說明見 docs/checker/rules/review-standard.md。
 
-version = 44
+version = 45
 effective_date = 2026-11-13
 
 [distributor]
@@ -728,6 +728,17 @@ en = "Crédit Agricole CIB Financial Solutions {ccy} {tenor}-Month Fixed Coupon 
 memory_zh = ""
 memory_en = ""
 express_en = "Express "  # 沒有 Non-Call（FCN_Express）時英文名稱多「Express」，中文相同（workflow #305，2 份樣本）
+normalize_zh = ["brackets"]
+normalize_en = ["whitespace"]
+
+[issuer.ca.product_names.FCN_Stepdown]
+# CA FCN_Stepdown 商品名稱（3 份說明書推得，2026-11-13 規格，workflow #546）：和 FCN 相同（不能用名稱辨識 Stepdown）；
+# 參考條件表 Product 是 FCN_Stepdown 時用這個樣板，佔位符與比對方式同 [issuer.ca.product_name]（Stepdown 的 Non-Call ≥ 1，
+# 英文名稱沒有 Express）。
+zh = "Crédit Agricole CIB Financial Solutions {tenor} 個月{ccy_zh}計價固定配息自動提前出場結構型商品(無擔保) (不保本)"
+en = "Crédit Agricole CIB Financial Solutions {ccy} {tenor}-Month Fixed Coupon Autocall Note (Unsecured)(Non-principal protected)"
+memory_zh = ""
+memory_en = ""
 normalize_zh = ["brackets"]
 normalize_en = ["whitespace"]
 

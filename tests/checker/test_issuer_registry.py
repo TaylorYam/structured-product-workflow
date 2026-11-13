@@ -18,7 +18,7 @@ import fitz
 import pytest
 
 from fcn_checker.extraction import extract_lines
-from fcn_checker.issuers import CA_BEN, CA_SUPER_BULL, REGISTRY, by_code, detect, detect_iis
+from fcn_checker.issuers import CA_BEN, CA_STEPDOWN, CA_SUPER_BULL, REGISTRY, by_code, detect, detect_iis
 from fcn_checker.products import FCN, FCN_EXPRESS
 from harness import CONFIG, iis_path
 
@@ -33,7 +33,7 @@ FAMILY_SPECS = {
     "NOMURA": [("nomura_synth", "Spec"), ("nomura_synth", "DacnSpec")],
     "NATIXIS": [("natixis_synth", "Spec"), ("natixis_synth", "DacnSpec"), ("natixis_synth", "StepdownSpec")],
     "BARC": [("barc_synth", "Spec"), ("barc_synth", "StepdownSpec"), ("barc_synth", "DacnSpec")],
-    "CA": [("ca_synth", "Spec"), ("ca_synth", "SbSpec"), ("ca_synth", "BenSpec")],
+    "CA": [("ca_synth", "Spec"), ("ca_synth", "SbSpec"), ("ca_synth", "BenSpec"), ("ca_synth", "StepdownSpec")],
     "DBS": [("dbs_synth", "Spec"), ("dbs_synth", "DacnSpec")],
 }
 
@@ -61,25 +61,29 @@ def test_issuers_are_registered_once_and_fcn_template_comes_last():
 
 @pytest.mark.parametrize("code", sorted(FAMILY_SPECS))
 def test_each_family_document_hits_exactly_its_own_template(tmp_path, code):
-    """同代號的每個商品家族：合成說明書與投資人須知在這家上手剛好命中自己的範本，在整個註冊表也只有這一個命中。"""
+    """同代號的每個商品家族：合成說明書與投資人須知在這家上手剛好命中自己的範本，在整個註冊表也只有這一個命中。
+    沒有自己投資人須知範本的家族（`Template.iis` 是 None，例：CA FCN_Stepdown，workflow #546），投資人須知由同上手的 FCN 範本認。"""
     issuer = by_code(code)
-    expected = [t.template_id for t in reversed(issuer.templates)]  # FAMILY_SPECS 依 FCN、家族的順序列
-    for (module, spec_name), template_id in zip(FAMILY_SPECS[code], expected, strict=True):
+    templates = list(reversed(issuer.templates))  # FAMILY_SPECS 依 FCN、家族的順序列
+    for (module, spec_name), template in zip(FAMILY_SPECS[code], templates, strict=True):
         synth = importlib.import_module(module)
         spec = getattr(synth, spec_name)()
         folder = tmp_path / spec_name
         folder.mkdir()
         pdf = synth.build_pdf(folder / f"{spec.product_code}_TS.pdf", spec)
         for fn, path in ((detect, pdf), (detect_iis, iis_path(pdf))):
+            want = template if fn is detect or template.iis is not None else issuer.templates[-1]
             lines = _lines(path)
             got, result = fn(lines, (issuer,))
-            assert got is not None and got.template_id == template_id, (code, spec_name, path.name, result.message)
+            assert got is want, (code, spec_name, path.name, result.message)
             whole, _ = fn(lines)
             assert whole is got, (code, spec_name, path.name)
             hits = [
-                t.template_id for t in issuer.templates if (t.detect if fn is detect else t.iis.detect)(lines).matched
+                t.template_id
+                for t in issuer.templates
+                if (fn is detect or t.iis is not None) and (t.detect if fn is detect else t.iis.detect)(lines).matched
             ]
-            assert hits[0] == template_id, (code, spec_name, path.name, hits)
+            assert hits[0] == want.template_id, (code, spec_name, path.name, hits)
 
 
 def _toml(name: str) -> dict:
@@ -97,9 +101,11 @@ def test_family_templates_are_registered_in_both_tomls():
                 assert product in names[issuer.code.lower()].get("product_names", {}), (issuer.code, product)
 
 
-@pytest.mark.parametrize(("spec_name", "template"), [("SbSpec", CA_SUPER_BULL), ("BenSpec", CA_BEN)])
+@pytest.mark.parametrize(
+    ("spec_name", "template"), [("SbSpec", CA_SUPER_BULL), ("BenSpec", CA_BEN), ("StepdownSpec", CA_STEPDOWN)]
+)
 def test_ca_calendar_step_leaves_super_bull_and_ben_unchanged(tmp_path, spec_name, template):
-    """CA 的 `with_calendar` 掛在上手、套在每個範本的讀出結果上：Super Bull、BEN 的 Non-Call ≥ 1，原樣交回。"""
+    """CA 的 `with_calendar` 掛在上手、套在每個範本的讀出結果上：Super Bull、BEN、Stepdown 的 Non-Call ≥ 1，原樣交回。"""
     ca_synth = importlib.import_module("ca_synth")
     spec = getattr(ca_synth, spec_name)()
     pdf = ca_synth.build_pdf(tmp_path / f"{spec.product_code}_TS.pdf", spec)

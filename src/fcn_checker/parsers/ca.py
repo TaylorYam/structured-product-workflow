@@ -94,6 +94,9 @@ KO_TABLE_HEAD = "i自動提前出場觀察日自動提前出場日"
 KO_EVENT = r"自動提前出場事件：(.+?)則發生自動提前出場事件。"
 MEMORY_PRIOR = "或任何先前的自動提前出場觀察日"
 MEMORY_SAME = "無須於同一自動提前出場觀察日"
+# FCN_Stepdown（workflow #546）的第二句另一種寫法；投資人須知只有一個範本，FCN 與 Stepdown 的寫法都收
+MEMORY_SAME_STEPDOWN = "無須於同一預定交易日或同一自動提前出場觀察期"
+MEMORY_SAME_WORDINGS = (MEMORY_SAME, MEMORY_SAME_STEPDOWN)
 # 多標的非記憶式：所有標的在同一個觀察日都達標（Issue #344，2026-10-19 確認）
 NON_MEMORY_ALL = "所有連結標的於預定自動提前出場觀察日之收盤價高於或等於自動提前出場價"
 # 第 9 項 (2) 界限事件（範本規格 §4.4）
@@ -123,6 +126,22 @@ PRICE_TABLE = price_table.TableSpec(
     pct_label="(期初訂價之X% )",
 )
 SCENARIO_TABLE = replace(PRICE_TABLE, where="第 16 項情境價格表")
+
+
+@dataclass(frozen=True)
+class Variant:
+    """同上手其他商品家族說明書（例：parsers/ca_stepdown.py）沿用本讀法時不同的地方：第 9 項與第 16 項價格表的欄、
+    記憶式第二句收哪些寫法。和 `ca_variants.Variant`（Super Bull、BEN 第 16 項的寫法）是不同的東西。"""
+
+    table: price_table.TableSpec
+    memory_same: tuple[str, ...] = (MEMORY_SAME,)
+
+    @property
+    def scenario_table(self) -> price_table.TableSpec:
+        return replace(self.table, where="第 16 項情境價格表")
+
+
+FCN = Variant(PRICE_TABLE)
 
 
 def document(lines: Sequence[Line]) -> Document:
@@ -190,8 +209,9 @@ class CaTermSheet(ParsedTermSheet):
     document: Document
 
 
-def read(lines: Sequence[Line]) -> CaTermSheet:
-    """讀出標準欄位與 CA 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）。"""
+def read(lines: Sequence[Line], variant: Variant = FCN) -> CaTermSheet:
+    """讀出標準欄位與 CA 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）；`variant` 是同上手其他商品家族
+    讀法不同的地方（預設 FCN）。"""
     doc = document(lines)
     arts = doc.articles(1)
     fields = FieldsBuilder()
@@ -220,7 +240,7 @@ def read(lines: Sequence[Line]) -> CaTermSheet:
     fields["issue_price_currency"] = capture_group(art6, issue, 2, "issue_price_currency")
 
     art9 = article(9)
-    _article9(fields, art9)
+    article9(fields, art9, variant)
     fields["art10_tickers"] = art10_tickers(article(10))
     fields.put("tenor_months", article(13), r"\(1\)商品年期：(\d+)個月", int)
     art13 = article(13)
@@ -231,7 +251,7 @@ def read(lines: Sequence[Line]) -> CaTermSheet:
     fields.update(guaranteed_coupon(article(15)))
     table_fields(fields)
     _schedule(fields)
-    _article16(fields, article(16))
+    _article16(fields, article(16), variant.scenario_table)
 
     _chapter2(fields, doc)
     _chapter4(fields, doc)
@@ -285,7 +305,8 @@ def _rows(text: str, pattern: str) -> list[tuple]:
     return out
 
 
-def _article9(fields: FieldsBuilder, art9: list[Line]) -> None:
+def article9(fields: FieldsBuilder, art9: list[Line], variant: Variant = FCN) -> None:
+    """第 9 項：配息表、KO 觀察寫法與記憶式、價格表、KI 型態、贖回 %（`variant` 決定價格表的欄與記憶式第二句的寫法）。"""
     plain = TextIndex(art9)  # 贖回 %、(a) 舉例的月配息率（Issue #319）
     for name, pattern in (
         ("ko_redemption_pct", KO_REDEMPTION),
@@ -308,12 +329,12 @@ def _article9(fields: FieldsBuilder, art9: list[Line]) -> None:
             fields[name] = ParsedField.missing(name, note)
         return
     _coupon_table(fields, ti, a, b)
-    _ko(fields, ti, b, c)
+    _ko(fields, ti, b, c, variant.memory_same)
     table = price_table.read(
-        "underlying_table", table_region(art9, "(2)連結標的：", "投資人請注意：本商品之收益"), PRICE_TABLE
+        "underlying_table", table_region(art9, "(2)連結標的：", "投資人請注意：本商品之收益"), variant.table
     )
     fields["underlying_table"] = table
-    fields["main_price_table"] = price_table.at("main_price_table", table, PRICE_TABLE)
+    fields["main_price_table"] = price_table.at("main_price_table", table, variant.table)
     fields["ki_type"] = ki_type(ti, c, e, table)
 
 
@@ -353,8 +374,8 @@ def _coupon_table(fields: dict[str, ParsedField], ti: TextIndex, a: int, b: int)
         fields["monthly_coupon_pct"] = derived("monthly_coupon_pct", table)
 
 
-def _ko(fields: dict[str, ParsedField], ti: TextIndex, b: int, c: int) -> None:
-    """(b)：KO 觀察寫法（每日：起始期 k；每期：觀察日表）與記憶式（範本規格 §4.1、§4.2）。"""
+def _ko(fields: dict[str, ParsedField], ti: TextIndex, b: int, c: int, same: tuple[str, ...]) -> None:
+    """(b)：KO 觀察寫法（每日：起始期 k；每期：觀察日表）與記憶式（範本規格 §4.1、§4.2；第二句收 `same` 的寫法）。"""
     text = ti.text[b:c]
     ev = ti.lines_for(b, c)
     daily = list(re.finditer(KO_DAILY, text))
@@ -383,10 +404,9 @@ def _ko(fields: dict[str, ParsedField], ti: TextIndex, b: int, c: int) -> None:
     tail = text[
         m.end() : m.end() + 40
     ]  # 「為避免疑義，所有連結標的無須於同一自動提前出場觀察日符合上開條件。」緊接在事件句後
+    wording = memory_wording(m[1], tail, same)
     fields["ko_memory_wording"] = ParsedField.present(
-        "ko_memory_wording",
-        memory_wording(m[1], tail),
-        ti.lines_for(b + m.start(), b + m.end() + (len(tail) if MEMORY_SAME in tail else 0)),
+        "ko_memory_wording", wording, ti.lines_for(b + m.start(), b + m.end() + (len(tail) if wording.same else 0))
     )
     fields["ko_memory"] = memory_of(fields["ko_memory_wording"])
 
@@ -405,9 +425,9 @@ class MemoryWording(NamedTuple):
     all_same_day: bool
 
 
-def memory_wording(event: str, tail: str) -> MemoryWording:
-    """自動提前出場事件句（`KO_EVENT` 的第 1 組）與緊接其後的文字 → 記憶式句型。"""
-    return MemoryWording(MEMORY_PRIOR in event, MEMORY_SAME in tail, event.rstrip("，,") == NON_MEMORY_ALL)
+def memory_wording(event: str, tail: str, same: Sequence[str] = (MEMORY_SAME,)) -> MemoryWording:
+    """自動提前出場事件句（`KO_EVENT` 的第 1 組）與緊接其後的文字 → 記憶式句型；第二句是 `same` 任一種寫法都算。"""
+    return MemoryWording(MEMORY_PRIOR in event, any(x in tail for x in same), event.rstrip("，,") == NON_MEMORY_ALL)
 
 
 def memory_of(wording: ParsedField) -> ParsedField:
@@ -487,9 +507,13 @@ def table_fields(fields: dict[str, ParsedField]) -> None:
         bad = table if not table.ok else tickers
         fields["underlyings"] = derived("underlyings", bad)
         fields["underlying_prices"] = derived("underlying_prices", bad)
-    # 價格表表頭一定有執行價與自動提前出場價（price_table 檢查過）；有無下限價欄與界限事件的一致性由 ki_type 檢查
-    for key, col in (("strike_pct", "strike"), ("ko_pct", "ko")):
-        fields[key] = derived(key, table, table.value.pcts[col] if table.ok else None)
+    # 價格表表頭一定有執行價（price_table 檢查過）；自動提前出場價欄看 `Variant` 的價格表宣告（FCN 一定有；宣告拿掉時
+    # KO% 由沿用的範本另讀）；有無下限價欄與界限事件的一致性由 ki_type 檢查
+    fields["strike_pct"] = derived("strike_pct", table, table.value.pcts["strike"] if table.ok else None)
+    if table.ok and "ko" not in table.value.pcts:
+        fields["ko_pct"] = ParsedField.missing("ko_pct", "第 9 項價格表沒有自動提前出場價欄")
+    else:
+        fields["ko_pct"] = derived("ko_pct", table, table.value.pcts["ko"] if table.ok else None)
     ki = fields["ki_type"]
     if ki.ok and ki.value == "none":
         fields["ki_pct"] = ParsedField(
@@ -618,7 +642,7 @@ def with_calendar(ts: CaTermSheet, calendar: TradingCalendar) -> CaTermSheet:
 # ---------------------------------------------------------------- 第 16 項情境分析
 
 
-def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> None:
+def _article16(fields: dict[str, ParsedField], art16: list[Line], scenario_spec: price_table.TableSpec) -> None:
     """基本假設（天期、面額、配息率與年化配息率）、情境價格表、情境一配息月數（範本規格 §4.9）。"""
     ti = TextIndex(art16)
     tenor = capture("scenario_tenor", ti, r"基本假設天期：(\d+)個月", int, whole_match=True)
@@ -631,9 +655,9 @@ def _article16(fields: dict[str, ParsedField], art16: list[Line]) -> None:
     monthly = capture_group(art16, coupon, 1, "scenario_monthly_pct", Decimal)
     fields["coupon_pa_pct"] = capture_group(art16, coupon, 2, "coupon_pa_pct", Decimal)
     scenario_table = price_table.read(
-        "scenario_table", table_region(art16, "(年化配息率為", "情境分析一"), SCENARIO_TABLE
+        "scenario_table", table_region(art16, "(年化配息率為", "情境分析一"), scenario_spec
     )
-    fields["scenario_reprint_table"] = price_table.at("scenario_reprint_table", scenario_table, SCENARIO_TABLE)
+    fields["scenario_reprint_table"] = price_table.at("scenario_reprint_table", scenario_table, scenario_spec)
     # 情境三的執行價不核對（未涵蓋清單 doc.scenario_calculations）
     fields["scenario_prices"] = standard_fields.absent("scenario_prices", "要核對的較差情境價格")
     assumed = [
