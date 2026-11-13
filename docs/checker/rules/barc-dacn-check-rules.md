@@ -184,8 +184,8 @@
 | §3.1 範本版本、商品種類一致、沒有樣本的型態 | `template.detect`（`template_unsupported`）、`template.product_family`、`doc.template_variant` |
 | §3.2 參考條件表欄位 | 共用 `field.*`、`field.non_call_product`、`backfill.*` |
 | §3.3 月配息率 | `derive.monthly_coupon`、`doc.coupon_consistency`、`doc.coupon_repeats`、`doc.scenario_returns`（同 BARC FCN）；共用 `scenario.params` |
-| §3.4 配息門檻 | 共用 `field.coupon_barrier_pct`；`doc.coupon_barrier`；共用 `scenario.reprint` |
+| §3.4 配息門檻 | 共用 `field.coupon_barrier_pct`；`doc.coupon_barrier`（新）；共用 `scenario.reprint` |
 | §3.5 保證期數 | `doc.guaranteed_periods`（DACN 共用）；`doc.observation_t_range`（同 BARC FCN） |
-| §3.6 內部交叉驗證 | 照 BARC FCN（`doc.*`、`schedule.*`、`derive.prices`、`scenario.*`）；`schedule.accrual_starts` |
+| §3.6 內部交叉驗證 | 照 BARC FCN（`doc.*`、`schedule.*`、`derive.prices`、`scenario.*`）；`schedule.accrual_starts`（新） |
 | §3.7 名稱樣板 | 共用 `standard.product_name` |
-| §3.8 投資人須知 | 共用 `iis.*`；照 BARC FCN；`iis.coupon_barrier` |
+| §3.8 投資人須知 | 共用 `iis.*`；照 BARC FCN；`iis.coupon_barrier`（新） |
