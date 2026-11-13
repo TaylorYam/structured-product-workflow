@@ -313,7 +313,7 @@ def test_summary_merges_tdccs_and_counts_in_old_records_but_keeps_step_numbers(t
         {"kind": "click", "window": "FCN Workflow", "tab": "4 核對", "label": "人工放行 15 份…", "path": ".a"},
         {"kind": "click", "window": "FCN Workflow", "tab": "4 核對", "label": "取消放行（2 份）", "path": ".a"},
         {"kind": "click", "window": "FCN Workflow", "tab": "4 核對", "label": "取消放行（3 份）", "path": ".a"},
-        {"kind": "click", "window": "W", "tab": "3 件數 > 2 份數", "label": "共 100,000 份", "path": ".c"},
+        {"kind": "click", "window": "W", "tab": "3 件數 > 2 份數", "label": "匯出", "path": ".c"},
         {"kind": "click", "window": "FCN Workflow", "label": "1   每日匯入", "path": ".s1"},
         {"kind": "click", "window": "FCN Workflow", "label": "10   出場清單", "path": ".s10"},
         {"kind": "tab", "window": "FCN Workflow", "tab": "1 每日匯入", "label": TAB_LABEL},
@@ -328,7 +328,7 @@ def test_summary_merges_tdccs_and_counts_in_old_records_but_keeps_step_numbers(t
         ("FCN Workflow", "4 核對", "人工放行 N 份…", 2),
         ("FCN Workflow", "4 核對", "取消放行（N 份）", 2),
         ("FCN Workflow", "4 核對 > 待處理（N）", TAB_LABEL, 2),
-        ("W", "3 件數 > 2 份數", "共 100,000 份", 1),
+        ("W", "3 件數 > 2 份數", "匯出", 1),
         ("人工核對完成：＊", "", "取消", 1),
         ("人工核對完成：＊", "", "確定", 2),
     ]
