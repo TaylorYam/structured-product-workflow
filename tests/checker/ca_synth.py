@@ -10,6 +10,10 @@
 段落代號 `iis.cover`、`iis.warn`、`iis.org`（一）、`iis.summary`（二、1.）、`iis.coupon`（二、2.）、`iis.fees`（四）、`iis.rest`。
 真實投資人須知日期的「年」是 CJK 相容字 U+F98E；合成用的字型畫不出這個字（擷取時整行後面會掉），改由
 tests/checker/test_iis_ca.py 直接以擷取後的行測正規化。
+
+FCN_Stepdown（`StepdownSpec`，docs/checker/templates/ca-zh-stepdown.md，workflow #546）：`step` 有值時第 9 項與情境價格表沒有
+KO 欄，第 9 項 (1)(b) 自動提前出場事件後接每期 KO 表（段落代號 `ts.art9.kotable`；第 i 列 = 第 i 期，KO% 每期降 `step`）與
+觀察期定義句；`wording` 決定記憶式兩句的寫法（說明書與投資人須知相同）。
 """
 
 from __future__ import annotations
@@ -29,6 +33,8 @@ from reference_synth import (
     MOODYS,
     NO_RATINGS,
     SP,
+    STEPDOWN_HEADERS,
+    STEPDOWN_PRODUCT,
     UL,
     ProductSpec,
     Ratings,
@@ -108,6 +114,7 @@ class Spec(ProductSpec):
     ratings: Ratings = NO_RATINGS  # 發行機構評等：預設文件寫發行機構沒有評等、評等表也沒有；給值時說明書第二章發行機構那段改寫評等（#241）
     guarantor_ratings: Ratings = Ratings()  # 保證機構評等（#241）
     iis_ticker_with_exchange: bool = False  # 投資人須知標的表的彭博代碼和交易所擠在同一行（真實樣本，workflow #312）
+    step: Decimal | None = None  # FCN_Stepdown（workflow #546）：KO% 每期降幾個百分點；None 是 FCN
 
     def __post_init__(self) -> None:
         self.underlyings = underlyings(self.count, self.market)
@@ -160,6 +167,86 @@ class Spec(ProductSpec):
     @property
     def print_date(self) -> dt.date:
         return self.trade_date + dt.timedelta(days=1)
+
+
+@dataclass
+class StepdownSpec(Spec):
+    """CA FCN_Stepdown 合成規格（workflow #546）：預設同樣本的型態（KO 每日＋記憶式、Non-Call 1、起始 KO 100%、每期降 2 個
+    百分點、無 KI、記憶式新寫法）。
+
+    `wording`：記憶式兩句的寫法——`stepdown`「相關自動提前出場期所適用之」＋「同一預定交易日或同一自動提前出場觀察期」
+    （CS01、CS02）、`fcn` 同 FCN（CS03）、`old` 舊範本的第二句「同一預定交易日」。`layout`：`current` 現行版面、`old` 舊範本
+    （每期 KO 表是觀察日表多一欄 KO 價、沒有觀察期定義句；搭配 `ko_obs="P"`）。`ko_pcts` 直接指定每期 KO 表各列的 KO%
+    （不是固定降幅的反例）；`ko_rows` 每期 KO 表的列數（None → 天期；少於配息表是反例）；`art9_ko_column` 價格表仍有 KO 欄
+    （反例）；`iis_period_def` 投資人須知多觀察期定義句（CS02）。"""
+
+    product_code: str = "086199990004"
+    tenor: int = 4
+    step: Decimal | None = Decimal("2.00")
+    wording: str = "stepdown"
+    layout: str = "current"
+    period_def: bool = True
+    ko_pcts: tuple[Decimal, ...] | None = None
+    ko_rows: int | None = None
+    art9_ko_column: bool = False
+    iis_period_def: bool = False
+
+    def ko_at(self, period: int) -> Decimal:
+        """每期 KO 表第 `period` 列的 KO%（第 1 列 = KO 第 1 期 = `ko`）。"""
+        if self.ko_pcts is not None:
+            return self.ko_pcts[period - 1]
+        return self.ko - (self.step or 0) * (period - 1)
+
+
+KO_PERIOD_DEF = (
+    "自動提前出場觀察期：自動提前出場觀察期結束日「i-1」（不含）至自動提前出場觀察期結束日「i」（含）結束。"
+    "第一個自動提前出場觀察期為第一個自動提前出場觀察期結束日(單日)。"
+)
+
+
+def memory_event(s: Spec) -> str:
+    """第 9 項 (b)、投資人須知二、2. 的自動提前出場事件句：記憶式兩句（Stepdown 依 `wording`）或非記憶式。"""
+    if not s.memory:
+        who = "連結標的" if s.count == 1 else "所有連結標的"
+        return (
+            f"自動提前出場事件：{who}於預定自動提前出場觀察日之收盤價高於或等於自動提前出場價，則發生自動提前出場事件。"
+        )
+    wording = getattr(s, "wording", "fcn")
+    price = "相關自動提前出場期所適用之自動提前出場價" if wording == "stepdown" else "自動提前出場價"
+    same = {
+        "stepdown": "同一預定交易日或同一自動提前出場觀察期",
+        "old": "同一預定交易日",
+    }.get(wording, "同一自動提前出場觀察日")
+    return (
+        "自動提前出場事件：所有連結標的於預定自動提前出場觀察日或任何先前的自動提前出場觀察日之收盤價高於或等於"
+        f"{price}，則發生自動提前出場事件。為避免疑義，所有連結標的無須於{same}符合上開條件。"
+    )
+
+
+def _ko_steps(d: FlowDoc, s: StepdownSpec) -> None:
+    """Stepdown 第 9 項 (1)(b) 每期 KO 表（workflow #546）：現行版面「自動提前出場觀察期 i｜…結束日｜自動提前出場價」＋觀察期
+    定義句；舊範本是觀察日表多一欄 KO 價、沒有定義句。每列 `期初訂價之N.NN%`。"""
+    d.section = "art9.kotable"
+    if s.layout == "old":
+        d.w.row([(70, "i"), (130, "自動提前出場觀察日"), (250, "自動提前出場日"), (370, "自動提前出場價")], gap=14)
+        for j in range(s.first_callable - 1, s.tenor):
+            i = j - s.first_callable + 2
+            d.w.row(
+                [
+                    (70, str(i)),
+                    (130, s.date(s.ends[j])),
+                    (250, s.date(s.payments[j])),
+                    (370, f"期初訂價之{s.ko_at(i):.2f}%"),
+                ],
+                gap=13,
+            )
+    else:
+        d.w.row([(50, "自動提前出場觀察期 i"), (150, "自動提前出場觀察期結束日"), (320, "自動提前出場價")], gap=14)
+        for j in range(s.tenor if s.ko_rows is None else s.ko_rows):
+            d.w.row([(70, str(j + 1)), (150, s.date(s.ends[j])), (320, f"期初訂價之{s.ko_at(j + 1):.2f}%")], gap=13)
+    d.section = "art9"
+    if s.layout != "old" and s.period_def:
+        d.text(36, KO_PERIOD_DEF)
 
 
 @dataclass
@@ -324,7 +411,8 @@ def _price_table(d: FlowDoc, s: Spec, *, index: bool) -> None:
     cols = [("strike", "執行價", s.strike)]
     if s.ki != "none":
         cols.append(("ki", "下限價", s.ki_pct))
-    if not isinstance(s, BenSpec) or s.ko_column:
+    stepdown_ko = s.step is None or getattr(s, "art9_ko_column", False)  # Stepdown 沒有 KO 欄（workflow #546）
+    if (not isinstance(s, BenSpec) or s.ko_column) and stepdown_ko:
         cols.append(("ko", "自動提前出場價", s.ko))
     x = dict(HEAD_X)
     if s.ki == "none":
@@ -403,21 +491,13 @@ def _article9(d: FlowDoc, s: Spec) -> None:
     d.section = "art9"
     d.text(36, f"投資人請注意：配息後本商品市場價值將相對降低（例如：月配息率為{s.monthly}%）。")
     d.text(36, "(b) 「自動提前出場贖回金額」：自動提前出場觀察日時持有之商品單位（張）數x 每單位（張）商品面額x100%")
-    if s.memory:
-        event = (
-            "自動提前出場事件：所有連結標的於預定自動提前出場觀察日或任何先前的自動提前出場觀察日之收盤價高於或等於"
-            "自動提前出場價，則發生自動提前出場事件。為避免疑義，所有連結標的無須於同一自動提前出場觀察日符合上開條件。"
-        )
-    else:
-        who = "連結標的" if s.count == 1 else "所有連結標的"
-        event = (
-            f"自動提前出場事件：{who}於預定自動提前出場觀察日之收盤價高於或等於自動提前出場價，則發生自動提前出場事件。"
-        )
-    d.text(36, event)
+    d.text(36, memory_event(s))
+    if isinstance(s, StepdownSpec):
+        _ko_steps(d, s)
     if s.ko_obs == "D":
         d.text(36, "自動提前出場日：於發生自動提前出場事件時，該自動提前出場觀察日後第二個營業日。")
         d.text(36, s.ko_daily)
-    else:
+    elif not isinstance(s, StepdownSpec):
         d.section = "art9.ko"
         d.w.row([(70, "i"), (130, "自動提前出場觀察日"), (300, "自動提前出場日")], gap=14)
         for t, j in enumerate(range(s.first_callable - 1, s.tenor), 1):
@@ -1122,18 +1202,9 @@ def _iis_payments(d: FlowDoc, s: Spec) -> None:
     d.text(30, "(a) 「配息金額」：於各配息期(i)：每單位（張）商品面額x「配息率」；")
     d.text(30, f"配息率{s.monthly}%，換算年利率為{s.annual}%")
     d.text(30, "(b) 「自動提前出場贖回金額」：自動提前出場觀察日時持有之商品單位（張）數x 每單位（張）商品面額x100%")
-    if s.memory:
-        d.text(
-            30,
-            "自動提前出場事件：所有連結標的於預定自動提前出場觀察日或任何先前的自動提前出場觀察日之收盤價高於或等於自動提前出場價，"
-            "則發生自動提前出場事件。為避免疑義，所有連結標的無須於同一自動提前出場觀察日符合上開條件。",
-        )
-    else:
-        who = "連結標的" if s.count == 1 else "所有連結標的"
-        d.text(
-            30,
-            f"自動提前出場事件：{who}於預定自動提前出場觀察日之收盤價高於或等於自動提前出場價，則發生自動提前出場事件。",
-        )
+    d.text(30, memory_event(s))
+    if getattr(s, "iis_period_def", False):
+        d.text(30, KO_PERIOD_DEF)
     if s.ko_obs == "D":
         d.text(30, "自動提前出場日：於發生自動提前出場事件時，該自動提前出場觀察日後第二個營業日。")
         d.text(30, s.ko_daily)
@@ -1202,9 +1273,12 @@ def row(spec: Spec, **overrides: Any) -> dict[str, Any]:
         out["參與率(%)"] = float(spec.participation)
     elif isinstance(spec, SbSpec):
         out["Product"] = SB_PRODUCT
+    elif spec.step is not None:  # Stepdown：KO(%) 與 KO 價是第 1 期（reference_row 已照 `ko` 算）
+        out.update({"Product": STEPDOWN_PRODUCT, "KO降幅(%)": float(spec.step)})
     out.update(overrides)
     return out
 
 
 CHECKS = SynthChecks(Spec, build_pdf, row)  # 單份核對殼（harness.SynthChecks）
+STEPDOWN_CHECKS = SynthChecks(StepdownSpec, build_pdf, row, STEPDOWN_HEADERS)
 check, check_item, check_iis, check_pair = CHECKS.check, CHECKS.check_item, CHECKS.check_iis, CHECKS.check_pair

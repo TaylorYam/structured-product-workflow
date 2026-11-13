@@ -269,4 +269,4 @@ FCN_Stepdown 的 KO% 從第 1 期開始每期固定往下降。各上手的寫�
 | `field.ko_pct` | 同 FCN（說明書值是第 1 期） |
 | `backfill.compare_dates` | D 型每一期都填（§3） |
 
-只有 Product 一定要有 KO 降幅的商品（`ko_step_required`）產生 `field.ko_step_pct`、`field.ko_levels`；Snowball、FCN 等其他商品不產生結果（表上 `KO降幅(%)` 是不是 `-` 不在核對範圍）。各上手開放的範圍、範本差異見各上手的 Stepdown 核對規則（BARC：[barc-stepdown-check-rules.md](barc-stepdown-check-rules.md)；Natixis：[natixis-stepdown-check-rules.md](natixis-stepdown-check-rules.md)）。
+只有 Product 一定要有 KO 降幅的商品（`ko_step_required`）產生 `field.ko_step_pct`、`field.ko_levels`；Snowball、FCN 等其他商品不產生結果（表上 `KO降幅(%)` 是不是 `-` 不在核對範圍）。各上手開放的範圍、範本差異見各上手的 Stepdown 核對規則（BARC：[barc-stepdown-check-rules.md](barc-stepdown-check-rules.md)；Natixis：[natixis-stepdown-check-rules.md](natixis-stepdown-check-rules.md)；CA：[ca-stepdown-check-rules.md](ca-stepdown-check-rules.md)）。

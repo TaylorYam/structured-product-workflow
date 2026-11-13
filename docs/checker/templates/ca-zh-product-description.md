@@ -323,7 +323,7 @@ CA 的 KI 叫「**界限事件**」，價格叫「**下限價**」。看第 9 �
 
 交叉驗證：商品代號前 3 碼應為 `086`；與辨識結果不一致轉人工覆核。
 
-同一家上手由專到泛（#436）：依序試 [CA FCN_Stepdown](ca-zh-stepdown.md)（第 9 項 `(1)(b)` 有 `期初訂價之N.NN%`，workflow #546 規格）、[CA BEN](ca-zh-ben.md)、[CA Super Bull](ca-zh-super-bull.md)，都不是才試本範本。FCN_Stepdown 的名稱、骨架和本範本相同，2026-06 以前的舊 Stepdown 範本目前會被本範本認成 FCN（讀到價格表才出錯），Stepdown 範本上線後改判範本不支援。
+同一家上手由專到泛（#436）：依序試 [CA FCN_Stepdown](ca-zh-stepdown.md)（第 9 項 `(1)(b)` 有 `期初訂價之N.NN%`，workflow #546）、[CA BEN](ca-zh-ben.md)、[CA Super Bull](ca-zh-super-bull.md)，都不是才試本範本。FCN_Stepdown 的名稱、骨架和本範本相同，2026-06 以前的舊 Stepdown 範本有同一個標記，停在 Stepdown 範本、判範本不支援（workflow #546 以前會被本範本認成 FCN，讀到價格表才出錯）。
 
 負面測試：本機 BARC、HSBC、MS、BNP、SG、Citi、JPM、Nomura、GS、Natixis（及 BBVA）樣本不含 `Crédit Agricole`、`東方匯理`，不應被判定為本範本；CA 樣本也不含其他範本的辨識字串（例：`英商高盛國際公司`、`CGMHI`、`SG ISSUER`、`BNP Paribas Issuance B.V.`、`J.P. Morgan Structured Products B.V.`、`Nomura International Funding Pte. Ltd.`、`法國外貿銀行`、`BBVA GLOBAL MARKETS`）。CA 投資人須知（`_IIS`，第一行 `中文投資人須知`）不應被判定為說明書範本。
 

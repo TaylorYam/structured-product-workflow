@@ -430,13 +430,15 @@ def _variant(d: _Draft) -> CheckResult | None:
 
 
 def _product_family(d: _Draft, product_value: Any) -> CheckResult | None:
-    """辨識到的範本涵蓋的商品種類要包含該列 Product（空白視為 FCN），Super Bull 另限定樣態（#311）；不符時人工覆核、不能放行。"""
+    """辨識到的範本涵蓋的商品種類要包含該列 Product（空白視為 FCN），Super Bull 另限定樣態（#311）；不符時人工覆核、不能放行。
+    投資人須知看投資人須知範本宣告的商品種類，沒宣告時同所屬說明書範本（`IisTemplate.products`，workflow #546）。"""
     if d.adapter is None:
         return None
     product = product_name(product_value) or FCN
-    if product not in d.adapter.products:
+    tpl = d.adapter.iis if d.kind == DocKind.IIS else None
+    products = tpl.products if tpl is not None and tpl.products is not None else d.adapter.products
+    if product not in products:
         shown = product_value.strip() if isinstance(product_value, str) and product_value.strip() else "空白（FCN）"
-        tpl = d.adapter.iis if d.kind == DocKind.IIS else None
         label, tid = (tpl.label, tpl.template_id) if tpl is not None else (d.adapter.label, d.adapter.template_id)
         msg = (
             f"{SOURCE} Product 是「{shown}」，但文件是 {label} 範本（{tid}）；商品種類不一致，請人工核對，不能人工放行"

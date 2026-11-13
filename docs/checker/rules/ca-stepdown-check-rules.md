@@ -3,7 +3,7 @@
 - 文件側：[CA FCN_Stepdown 範本規格](../templates/ca-zh-stepdown.md)（`ca-zh-stepdown-pd`）；投資人須知用 CA FCN 的 [`ca-zh-iis`](../templates/ca-zh-iis.md)（§3.6）
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [CA FCN_Stepdown 下單資料格式](../order-formats/ca-stepdown-reference.md)
 - 商品：FCN_Stepdown（workflow ADR 0033、#537）；BARC（workflow #544）、Natixis（workflow #545）已開放，本文件是第三家（workflow #546）。KO 降幅與每期 KO% 的核對、D 型每期比價日、KO% 期數檢查沿用共用層（`parsers/stepdown.py`、`field.ko_step_pct`、`field.ko_levels`，[共用核對規則](shared-check-rules.md) §11）
-- 狀態：規格（workflow #546）；實作另開 PR。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記略過**（同 BARC、Natixis Stepdown，§7）
+- 狀態：已實作（workflow #546：`rules/ca_stepdown.py`；投資人須知沿用 `rules/ca_iis.py`）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記略過**（同 BARC、Natixis Stepdown，§7）
 - 本文件只寫和 [CA 核對規則](ca-check-rules.md)（FCN）不同或 Stepdown 特有的部分。沒提到的（審查標準、固定警語、名稱、受託機構、發行機構名稱、幣別、費率、最低申購與贖回、受理申購日、刊印日期、配息率、價格推算、KI、配息表、Non-Call、情境分析、重複寫出處）照 CA FCN
 
 ## 1. 範圍
@@ -27,7 +27,7 @@
 
 | 檢查 | 規則 |
 |---|---|
-| 開放 | `[auto_check_products]` 的 `FCN_Stepdown` 加 `CA`（實作 PR）；沒開放的上手照未開放商品轉人工 |
+| 開放 | `[auto_check_products]` 的 `FCN_Stepdown` 含 `CA`；沒開放的上手照未開放商品轉人工 |
 | 範本版本 | 寫法和範本規格 §4 不同 → 不支援的範本版本（`template.detect`，原因 `template_unsupported`），錯訊列出不成立的條件 |
 | 商品種類一致 | 說明書辨識到的範本商品家族 ≠ Product → 轉人工覆核（共用 `template.product_family`）；Product 空白視為 FCN。投資人須知見 §3.6 |
 | 不支援樣態 | 照 CA FCN（`CA = ["ki_periodic"]`，KI 每期觀察轉人工） |
@@ -71,7 +71,7 @@ CA Stepdown 的投資人須知和 FCN 的沒有可靠的區別：CS03 和 FCN �
 | 檢查點 | Stepdown |
 |---|---|
 | 範本 | 用 `ca-zh-iis`，不另立 Stepdown 投資人須知範本；範本辨識條件不變 |
-| 商品種類一致 | 投資人須知範本自己宣告涵蓋的商品種類（實作時 `IisTemplate` 加 `products`，沒有宣告時沿用同商品說明書範本的商品種類）：`ca-zh-iis` 涵蓋 `FCN`、`FCN_Express`、`FCN_Stepdown`，所以 Product 是 `FCN_Stepdown` 的投資人須知不會被 `template.product_family` 擋下。Stepdown 和 FCN 的分辨只由說明書把關（§3.1）。其他上手的投資人須知不受影響（沒有宣告） |
+| 商品種類一致 | 投資人須知範本自己宣告涵蓋的商品種類（`IisTemplate.products`，沒有宣告時沿用同商品說明書範本的商品種類）：`ca-zh-iis` 涵蓋 `FCN`、`FCN_Express`、`FCN_Stepdown`，所以 Product 是 `FCN_Stepdown` 的投資人須知不會被 `template.product_family` 擋下。Stepdown 和 FCN 的分辨只由說明書把關（§3.1）。其他上手的投資人須知不受影響（沒有宣告） |
 | 記憶式 | 照 CA FCN 投資人須知（`ca-zh-iis` §4.2）的兩句判斷，另收 §3.5 的兩種措辭（所有 CA 投資人須知都收；CA FCN 投資人須知目前沒有這兩種措辭，結果不變） |
 | 觀察期定義句 | 不核對；不影響 `自動提前出場觀察日：` 的 D 句讀取 |
 | 其他 | 照 [投資人須知核對規則](iis-check-rules.md) §3 的 CA 欄（名稱 = 說明書、日期、標的、年期、月配息率與年利率、KO 每日起始期、有無 KI `iis.has_ki`、費率） |

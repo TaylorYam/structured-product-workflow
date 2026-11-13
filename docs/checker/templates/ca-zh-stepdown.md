@@ -7,7 +7,7 @@
 - 商品家族：KO% 從第 1 期開始**每期固定往下降**的記憶式、KO 每日觀察 FCN。配息、KI、到期贖回、配息表、情境分析都和 [CA FCN 範本](ca-zh-product-description.md)（`ca-zh-pd`）相同，差別在第 9 項 `(1)(b)`：多一張每期一列的自動提前出場價表（`期初訂價之N.NN%`），第 9 項 `(2)` 價格表與第 16 項情境價格表沒有 `自動提前出場價` 欄
 - 發行機構、總代理人、保證機構：同 `ca-zh-pd`
 - 依據：2026-11-13 對 3 份現行版面真實樣本（CS01～CS03，說明書與投資人須知成對）與 5 份 2026-06 以前的舊範本（CO1～CO5，只當參考）的探勘與開發者螢光標記（workflow #546）。**作業人員獨立標記略過**（同 BARC、Natixis Stepdown）；核對範圍以開發者凍結的標記為準，見 [CA FCN_Stepdown 核對規則](../rules/ca-stepdown-check-rules.md) §7
-- 狀態：規格（workflow #546）；實作另開 PR
+- 狀態：已實作（workflow #546：`parsers/ca_stepdown.py`、`rules/ca_stepdown.py`）
 
 > 真實樣本、擷取文字與比對輸出只放在被 Git 忽略的 `data/`。本文件只記錄版面、錨點與規則；所有數值範例都是虛構的。樣本代號與真實商品代號的對照只存在本機。
 

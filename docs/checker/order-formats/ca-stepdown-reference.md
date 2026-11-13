@@ -1,13 +1,13 @@
 # 下單資料格式：CA FCN_Stepdown（參考條件表）
 
 - 設定檔：所有上手共用的 [`config/reference_sheet.toml`](../../../config/reference_sheet.toml)
-- 狀態：規格（workflow #546）；實作另開 PR。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)；和 [CA FCN](ca-fcn-reference.md) 相同的不重寫，本文件只寫 FCN_Stepdown 的差異
+- 狀態：已實作（workflow #546）。共用的版面、配對、回填規則見[參考條件表格式](reference-sheet.md)；和 [CA FCN](ca-fcn-reference.md) 相同的不重寫，本文件只寫 FCN_Stepdown 的差異
 
 ## 1. 結構
 
 和 CA FCN 相同（商品代號前 3 碼 `086`，`發行機構` 欄寫 `CA`）。商品種類看 `Product` = `FCN_Stepdown`：說明書辨識到的範本是 `ca-zh-stepdown-pd` 時，該列 Product 必須是 `FCN_Stepdown`；Product 是 `FCN_Stepdown`、說明書卻是 CA FCN 範本（或反過來）→ 商品種類不一致，轉人工覆核（共用 `template.product_family`）。投資人須知用 CA FCN 的 `ca-zh-iis`，FCN、FCN_Express、FCN_Stepdown 都接受（[核對規則](../rules/ca-stepdown-check-rules.md) §3.6）。
 
-開放自動核對：`config/issuer_prefixes.toml` `[auto_check_products]` 的 `FCN_Stepdown` 加 `CA`（實作 PR，workflow #546）。
+開放自動核對：`config/issuer_prefixes.toml` `[auto_check_products]` 的 `FCN_Stepdown` 含 `CA`（workflow #546）。
 
 ## 2. 欄位對照（只列和 CA FCN 不同的）
 
