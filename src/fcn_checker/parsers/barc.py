@@ -379,20 +379,23 @@ def _table_region(lines: list[Line], start: str, end_pat: str) -> range | list[L
     return range(starts[0] + 1, end) if end is not None else None
 
 
-def _price_table(lines: list[Line], name: str, where: str, start: str, end_pat: str) -> ParsedField:
-    """各標的價格表（§15；§16(3) 情境分析重印）：開始錨點之後到結束錨點之前（範圍內表前的定義句不算表頭）。"""
+def _price_table(
+    lines: list[Line], name: str, where: str, start: str, end_pat: str, base: price_table.TableSpec = PRICE_TABLE
+) -> ParsedField:
+    """各標的價格表（§15；§16(3) 情境分析重印）：開始錨點之後到結束錨點之前（範圍內表前的定義句不算表頭）。
+    `base` 是價格表的宣告（Stepdown 沒有 KO 欄，`parsers/barc_stepdown.py`）。"""
     region = _table_region(lines, start, end_pat)
     if isinstance(region, list):
         return ParsedField.ambiguous(name, [], region, f"{where}開始錨點出現多次")
     if region is None:
         return ParsedField.missing(name, f"找不到{where}的開始或結束錨點")
     seg = [lines[i] for i in region]
-    return price_table.read(name, seg, table_spec(seg, where))
+    return price_table.read(name, seg, table_spec(seg, where, base))
 
 
-def table_spec(region: list[Line], where: str) -> price_table.TableSpec:
+def table_spec(region: list[Line], where: str, base: price_table.TableSpec = PRICE_TABLE) -> price_table.TableSpec:
     """這張價格表的宣告：KO 欄頭寫「觸發水準（…）」時 KO 欄的關鍵字換成它（說明書與投資人須知共用）。"""
-    spec = replace(PRICE_TABLE, where=where)
+    spec = replace(base, where=where)
     if any(squash(ln.text).startswith(KO_LEVEL) for ln in region):
         spec = replace(spec, columns=tuple(replace(c, word=KO_LEVEL) if c.key == "ko" else c for c in spec.columns))
     return spec
@@ -746,8 +749,9 @@ def _scenario_returns(ti: TextIndex) -> dict[str, ParsedField]:
 # ---------------------------------------------------------------- 入口
 
 
-def read(lines: Sequence[Line]) -> BarcTermSheet:
-    """讀出標準欄位與 BARC 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）。"""
+def read(lines: Sequence[Line], price_spec: price_table.TableSpec = PRICE_TABLE) -> BarcTermSheet:
+    """讀出標準欄位與 BARC 規則需要的專屬資料（範本辨識另由 `detect` 負責，不在這裡重做）。`price_spec` 是 §15 與 §16(3)
+    價格表的宣告（Stepdown 沒有 KO 欄，`parsers/barc_stepdown.py`）。"""
     doc = document(lines)
     flds = FieldsBuilder()
     all_lines = list(lines)
@@ -789,14 +793,14 @@ def read(lines: Sequence[Line]) -> BarcTermSheet:
     flds["ko_pct"], flds["ko_memory"] = _ko_pct_and_memory(s15, flds["name_zh"])
     flds["ki_pct"] = _definition_pct("ki_pct", s15, "觸及生效價格")
     flds["ki_type"] = _ki_type(s15, flds["ki_pct"], flds["strike_pct"])
-    flds["price_table"] = _price_table(s15, "price_table", PRICE_TABLE.where, _PRICE_START, _PRICE_END)
+    flds["price_table"] = _price_table(s15, "price_table", price_spec.where, _PRICE_START, _PRICE_END, price_spec)
     flds["underlying_prices"] = price_table.price_rows(flds["price_table"])  # 表上沒有代號，以 `underlyings` 同順序為準
     scenario_table = _price_table(
-        doc.span_lines(arts.get(16)), "scenario_price_table", SCENARIO_WHERE, _SCENARIO_START, _SCENARIO_END
+        doc.span_lines(arts.get(16)), "scenario_price_table", SCENARIO_WHERE, _SCENARIO_START, _SCENARIO_END, price_spec
     )
-    flds["main_price_table"] = price_table.at("main_price_table", flds["price_table"], PRICE_TABLE)
+    flds["main_price_table"] = price_table.at("main_price_table", flds["price_table"], price_spec)
     flds["scenario_reprint_table"] = price_table.at(
-        "scenario_reprint_table", scenario_table, replace(PRICE_TABLE, where=SCENARIO_WHERE)
+        "scenario_reprint_table", scenario_table, replace(price_spec, where=SCENARIO_WHERE)
     )
     flds["scenario_prices"] = standard_fields.absent("scenario_prices", "要核對的較差情境價格")
 

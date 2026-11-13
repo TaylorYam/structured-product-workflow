@@ -2,8 +2,8 @@
 
 - 文件側：[BARC FCN_Stepdown 範本規格](../templates/barc-zh-stepdown.md)（`barc-zh-stepdown-pd`）、[BARC FCN_Stepdown 投資人須知範本規格](../templates/barc-zh-stepdown-iis.md)（`barc-zh-stepdown-iis`）
 - 下單側：參考條件表，見[參考條件表格式](../order-formats/reference-sheet.md)與 [BARC FCN_Stepdown 下單資料格式](../order-formats/barc-stepdown-reference.md)
-- 商品：FCN_Stepdown（workflow ADR 0033、#537）；Barclays 是第一家開放的上手（workflow #544），Natixis 接著做（workflow #545），共用的分流與 KO 降幅核對（本文件 §3.3）實作時寫進[共用核對規則](shared-check-rules.md)（§3 參考條件表欄位、新增 §11 Stepdown）
-- 狀態：規格（workflow #544）；實作另開 PR。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記略過**（同 DACN／BEN 第一波，§7）
+- 商品：FCN_Stepdown（workflow ADR 0033、#537）；Barclays 是第一家開放的上手（workflow #544），Natixis 接著做（workflow #545），共用的分流與 KO 降幅核對（本文件 §3.3）寫在[共用核對規則](shared-check-rules.md)（§3 參考條件表欄位、§11 Stepdown）
+- 狀態：已實作（workflow #544）。核對範圍以開發者凍結的螢光標記為準；**作業人員獨立標記略過**（同 DACN／BEN 第一波，§7）
 - 本文件只寫和 [BARC 核對規則](barc-check-rules.md)（FCN）不同或 Stepdown 特有的部分。沒提到的（審查標準、固定警語、受託機構名稱與其他出處、發行機構名稱、信用評等、幣別、費率、最低申購與贖回、受理申購日、刊印日期、審查通過日期、月配息率、價格推算、表頭 %、KI 的內部一致、配息表與提前出場表的日期關係、Non-Call、保證配息期、§13(7) 觀察期 t 範圍、§9(3) 與 §16 重複出現的月配息率、情境總報酬率與年化、受託機構商品代號）照 BARC FCN
 
 ## 1. 範圍
@@ -25,7 +25,7 @@
 
 | 檢查 | 規則 |
 |---|---|
-| 開放 | `[auto_check_products]` 新增 `FCN_Stepdown = ["BARC"]`（實作 PR）；沒開放的上手照未開放商品轉人工 |
+| 開放 | `[auto_check_products]` 的 `FCN_Stepdown = ["BARC"]`；沒開放的上手照未開放商品轉人工 |
 | 範本版本 | 寫法和範本規格 §4 不同 → 不支援的範本版本（`template.detect`，原因 `template_unsupported`），錯訊列出不成立的條件 |
 | 商品種類一致 | 辨識到的範本商品家族 ≠ Product → 轉人工覆核（共用 `template.product_family`）；Product 空白視為 FCN |
 | 不支援樣態 | 照 BARC FCN（KI 每期觀察） |
@@ -156,8 +156,6 @@ D 型 Stepdown：`比價日_{Non-Call}`～`比價日_{期數}` = 提前出場表
 | 2026-11-13 | 投資人須知要表頭沒有 KO 欄、表前說明句也不列觸發價格兩項都成立才是 Stepdown（只看表頭時，KO 欄頭讀不到的 FCN 投資人須知會被認成 Stepdown、不能人工放行） |
 
 ## 10. 規則對照
-
-新 rule_id 的名稱實作時可調整，調整後同步更新本表。
 
 | 核對規則 | rule_id |
 |---|---|

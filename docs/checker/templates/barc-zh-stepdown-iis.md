@@ -5,7 +5,7 @@
 - 範本代號：`barc-zh-stepdown-iis`
 - 對應說明書範本：[`barc-zh-stepdown-pd`](barc-zh-stepdown.md)；一檔商品一份說明書＋一份投資人須知（[ADR 0007](../adr/0007-iis-paired-with-term-sheet.md)）
 - 依據：2026-11-13 對 6 份真實樣本（BS01-IIS～BS06-IIS，各配對同代號說明書）的探勘與開發者螢光標記（workflow #544）
-- 狀態：規格（workflow #544）；實作另開 PR
+- 狀態：已實作（workflow #544）
 
 > 真實樣本與擷取文字只放在被 Git 忽略的 `data/`。本文件的數值範例都是虛構的。
 

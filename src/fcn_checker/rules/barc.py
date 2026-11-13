@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import datetime as dt
+from collections.abc import Callable
 from decimal import ROUND_HALF_UP, Decimal
 
 from ..parsers.barc_schedule import NA, ScheduleRow, Table
@@ -448,17 +449,20 @@ def observation_t_range(ctx: IssuerContext) -> CheckResult:
 # ---------------------------------------------------------------- 入口
 
 
-def run_all(ctx: IssuerContext) -> list[CheckResult]:
-    """月配息率推算，再加上說明書內部規則（價格推算是各上手共用規則，見 rules/derivation.py）。"""
-    return [monthly_coupon(ctx), *document_rules(ctx)]
+def run_all(ctx: IssuerContext, trigger: Callable[[IssuerContext], CheckResult] | None = None) -> list[CheckResult]:
+    """月配息率推算，再加上說明書內部規則（價格推算是各上手共用規則，見 rules/derivation.py）。`trigger` 換掉每期觸發百分比的
+    規則（Stepdown 每期不同，`rules/barc_stepdown.py`）；沒給時用 `trigger_per_period`。"""
+    return [monthly_coupon(ctx), *document_rules(ctx, trigger or trigger_per_period)]
 
 
-def document_rules(ctx: IssuerContext) -> list[CheckResult]:
+def document_rules(
+    ctx: IssuerContext, trigger: Callable[[IssuerContext], CheckResult] = trigger_per_period
+) -> list[CheckResult]:
     """說明書內部規則：不使用參考條件表的值。"""
     return [
         *coupon_consistency(ctx),
         *autocall_dates(ctx),
-        trigger_per_period(ctx),
+        trigger(ctx),
         *name_consistency(ctx),
         distributor_product_code(ctx),
         currency_consistency(ctx),

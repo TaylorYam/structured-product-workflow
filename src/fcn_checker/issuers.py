@@ -19,6 +19,8 @@ from .investor_sheet import IisSheet
 from .parsers import barc as barc_parser
 from .parsers import (
     barc_iis,
+    barc_stepdown,
+    barc_stepdown_iis,
     bbva_iis,
     bnp_iis,
     bnp_super_bull_iis,
@@ -66,8 +68,9 @@ from .parsers import nomura_dacn as nomura_dacn_parser
 from .parsers import sg as sg_parser
 from .parsers import sg_dacn as sg_dacn_parser
 from .parsers import ubs as ubs_parser
-from .products import BEN, DACN, FCN, FCN_EXPRESS, SUPER_BULL
+from .products import BEN, DACN, FCN, FCN_EXPRESS, FCN_STEPDOWN, SUPER_BULL
 from .rules import barc as barc_rules
+from .rules import barc_stepdown as barc_stepdown_rules
 from .rules import bbva as bbva_rules
 from .rules import bbva_iis as bbva_iis_rules
 from .rules import bnp as bnp_rules
@@ -206,6 +209,26 @@ BARC = Template(
         read=barc_iis.read,
         not_covered=(_IIS_SAMPLES,),
     ),
+)
+
+BARC_STEPDOWN = Template(
+    code=barc_rules.ISSUER,
+    template_id=barc_stepdown.TEMPLATE_ID,
+    label="BARC FCN_Stepdown 中文產品說明書",
+    parser_version=barc_stepdown.PARSER_VERSION,
+    not_covered=tuple(barc_stepdown_rules.NOT_COVERED),
+    detect=lambda lines: barc_stepdown.detect(barc_parser.document(lines)),
+    read=barc_stepdown.read,
+    rules=barc_stepdown_rules.run_all,
+    iis=IisTemplate(
+        template_id=barc_stepdown_iis.TEMPLATE_ID,
+        label="BARC FCN_Stepdown 中文投資人須知",
+        parser_version=barc_stepdown_iis.PARSER_VERSION,
+        detect=barc_stepdown_iis.detect,
+        read=barc_stepdown_iis.read,
+        not_covered=(_IIS_SAMPLES,),
+    ),
+    products=frozenset({FCN_STEPDOWN}),
 )
 
 HSBC = Template(
@@ -689,7 +712,7 @@ UBS = Template(
 
 # 上手：範本由專到泛（商品家族在前、FCN 最後）
 REGISTRY: tuple[Issuer, ...] = (
-    Issuer(BARC.code, (BARC,), reference_fields=barc_rules.REFERENCE_FIELDS, ratings=True),
+    Issuer(BARC.code, (BARC_STEPDOWN, BARC), reference_fields=barc_rules.REFERENCE_FIELDS, ratings=True),
     Issuer(HSBC.code, (HSBC_BEN, HSBC_SUPER_BULL, HSBC), ratings=True),
     Issuer(MS.code, (MS_BEN, MS), reference_fields=ms_rules.REFERENCE_FIELDS, ratings=True),
     Issuer(BNP.code, (BNP_SUPER_BULL, BNP), reference_fields=bnp_rules.REFERENCE_FIELDS, ratings=True),

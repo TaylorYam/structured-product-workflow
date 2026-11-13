@@ -256,7 +256,9 @@ def compare_dates(ctx: Context) -> tuple[CheckResult, list[CellDecision]]:
         )
     bad = [d for d in decisions if d.action == BackfillAction.MISMATCH]
     rule = (
-        "評價日的月數與天期才填"
+        "D 且 KO% 每期往下降：第一個可提前出場期起每一期期末日都填"
+        if sched.value.listed and sched.value.observation == "D"
+        else "評價日的月數與天期才填"
         if sched.value.listed
         else "D：填第一個可提前出場期與最後一期"
         if sched.value.observation == "D"
