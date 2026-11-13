@@ -74,13 +74,13 @@
 
 | 檢查 | DACN |
 |---|---|
-| 配息表 | 從 §14 配息觀察期表讀（FCN 在 §13(6)）；日期規則（期數 = 天期、支付日遞增、末期期末日 = 最終評價日、末期支付日 = 到期日、C3、C4）同 FCN 期間型 |
+| 配息表 | 從 §14 配息觀察期表讀（FCN 在 §13(6)）；日期規則（期數 = 天期、支付日遞增、末期期末日 = 最終評價日、末期支付日 = 到期日、C3、C4）同 FCN 期間型；另核每期期始日 = §13(7) 自動提前出場觀察期表同期期始日（`schedule.accrual_starts`；期末日由 C3 核對） |
 | 價格表欄頭比例 | §15 與 §16 各情境表的執行／觸及生效欄頭 % = §15 定義句（`doc.price_header_pct`，同 FCN）；配息門檻欄頭另由 §3.4 核對 |
 | 價格表列 | §15 價格表列靠上對齊，名稱折成三行時第三行跟著上一列（範本規格 §5）；投資人須知名稱和說明書比對（`iis.underlying_names`）照 FCN |
 
 ### 3.7 審查標準
 
-照 BARC FCN（`issuer.barc`）。**商品名稱樣板沿用 `issuer.barc.product_name`**：BARC DACN 中英文名稱和 FCN 同一句（5 份），不另設 `product_names.DACN`（參考條件表 Product 是 DACN 時，沒有 DACN 樣板的上手用 `product_name`）。投資人須知同一樣板。
+照 BARC FCN（`issuer.barc`）。**商品名稱樣板 `issuer.barc.product_names.DACN`**（參考條件表 Product 是 DACN 時用）：BARC DACN 中英文名稱和 FCN 同一句（5 份），內容和 `issuer.barc.product_name` 相同；另外登記是因為每個家族範本都要在審查標準有自己的名稱樣板（#436 註冊表的一致性檢查）。投資人須知同一樣板。
 
 ### 3.8 投資人須知
 
@@ -125,7 +125,7 @@
 
 | 標記 | 條號／欄位 | 決定 |
 |---|---|---|
-| D01～D09 | 封面標題、代號與 ISIN、中英文名稱、發行機構、幣別、受託機構與審查通過日期、刊印日期、警語 1 | 照 FCN；名稱樣板沿用 FCN（§3.7） |
+| D01～D09 | 封面標題、代號與 ISIN、中英文名稱、發行機構、幣別、受託機構與審查通過日期、刊印日期、警語 1 | 照 FCN；名稱樣板和 FCN 同一句（§3.7） |
 | D10～D13 | 第一章 §1 名稱、§2 固定警語、§3 評等、§5／§6 幣別面額發行價格 | 照 FCN |
 | D14 | §9(1) 配息金額（指向 §14） | 不讀（沒有利率，範本規格 §2） |
 | D15～D17 | §9(3) 相關配息率、dt 的配息門檻、段末月配息率 | 每處 X = 月配息率（§3.3）；dt／Dt 不核算（§2）；配息門檻字樣是家族標記 |
@@ -161,7 +161,7 @@
 | 共用小改 | `parsers/barc_schedule.py`：表的欄名對照與「掃哪幾行」可由呼叫端給（§14 表）、Nt 欄讀整數、§13(7) 只有表名的那一行不算定義句（FCN 樣本沒有這行，結果不變）；`parsers/price_table.py`：`TableSpec` 加靠上對齊選項（預設照舊）；`rules/dacn.py`：保證期數欄位可指定（BARC 的 `guaranteed_periods` 是 §13(7) 的 G）、價格表配息門檻價格規則抽成 DACN 共用（DBS DACN 改用它、結果不變） |
 | 上手註冊 | `issuers.py` 登記 `BARC_DACN`（`products=frozenset({DACN})`，上手代號同 `BARC`），排在 `BARC` 前面 |
 | 規則 | `rules/barc_dacn.py`（§3.1 型態宣告、§3.3 月配息率出處、§3.4 配息門檻、§3.5 保證期數，其餘沿用 `rules/barc.py` 並略過年利率與一般情況總報酬率）、`rules/barc_dacn_iis.py`（§3.8） |
-| 設定 | `[auto_check_products]` 的 `DACN` 加 `BARC`（版本 +1）；審查標準不變（名稱沿用 FCN 樣板） |
+| 設定 | `[auto_check_products]` 的 `DACN` 加 `BARC`（版本 +1）；審查標準加 `[issuer.barc.product_names.DACN]`（和 FCN 樣板同一句，版本 +1） |
 | 測試 | 合成 PDF（`tests/checker/barc_synth.py` 加 DACN 版）；§7 的反例（`tests/checker/test_check_barc_dacn.py`）；靠上對齊（`tests/checker/test_price_table.py`）；本機真實樣本辨識與讀取測試（`tests/checker/test_real_barc_dacn.py`，`FCN_DACN_DIR` 指向本機樣本，不進 repo）；試跑（§6） |
 
 ## 9. 決策紀錄
@@ -173,7 +173,7 @@
 | 2026-11-13 | 沒有年利率：`coupon_pa_pct` 交 `absent`，表上年利率改由月配息率推算核對（同 FCN 的 `derive.monthly_coupon`）；一般情況總報酬率與年化不核對（依 n/N 假設） |
 | 2026-11-13 | 配息門檻 % 取 §14 定義句，§15 欄頭與每列價格在說明書內部核對；投資人須知價格表配息門檻欄 = 說明書；§16 重印表沒有這欄，和去掉這欄的 §15 表比 |
 | 2026-11-13 | 配息公式保證期數須 = Non-Call |
-| 2026-11-13 | 名稱樣板沿用 FCN（不設 `product_names.DACN`） |
+| 2026-11-13 | 名稱樣板 `issuer.barc.product_names.DACN` 和 FCN 同一句 |
 | 2026-11-13 | 價格表列靠上對齊（只用在 BARC DACN），修正長名稱折三行時分錯列 |
 | 2026-11-13 | 沒有樣本的型態（非美元、單一標的、KO 非每日記憶式、KI 每日、保證期數或 Non-Call ≠ 1）→ 轉人工，錯訊寫「待樣本驗證」；MKI 照 #386／#403 轉人工 |
 
@@ -186,6 +186,6 @@
 | §3.3 月配息率 | `derive.monthly_coupon`、`doc.coupon_consistency`、`doc.coupon_repeats`、`doc.scenario_returns`（同 BARC FCN）；共用 `scenario.params` |
 | §3.4 配息門檻 | 共用 `field.coupon_barrier_pct`；`doc.coupon_barrier`；共用 `scenario.reprint` |
 | §3.5 保證期數 | `doc.guaranteed_periods`（DACN 共用）；`doc.observation_t_range`（同 BARC FCN） |
-| §3.6 內部交叉驗證 | 照 BARC FCN（`doc.*`、`schedule.*`、`derive.prices`、`scenario.*`） |
+| §3.6 內部交叉驗證 | 照 BARC FCN（`doc.*`、`schedule.*`、`derive.prices`、`scenario.*`）；`schedule.accrual_starts` |
 | §3.7 名稱樣板 | 共用 `standard.product_name` |
 | §3.8 投資人須知 | 共用 `iis.*`；照 BARC FCN；`iis.coupon_barrier` |
