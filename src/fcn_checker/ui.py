@@ -212,7 +212,6 @@ def _layouts(style: ttk.Style) -> None:
         "Primary.TButton",
         "Next.TButton",
         "Step.TButton",
-        "Toolbar.TButton",
         "CurrentStep.TButton",
     ):
         style.layout(name, button)  # 拿到焦點時外框變藍，不要 clam 的虛線框
@@ -364,7 +363,6 @@ def apply_style(root: tk.Tk) -> Callable[[float], int]:
     style.map("Primary.TButton", foreground=[("disabled", SURFACE)])
     style.configure("Next.TButton", foreground=ACCENT, font=SECTION_FONT, padding=(pixels(10), pixels(5)))
     style.map("Next.TButton", foreground=[("pressed", ACCENT_PRESSED), ("active", ACCENT_ACTIVE)])
-    style.configure("Toolbar.TButton", foreground=ACCENT, padding=(pixels(10), pixels(5)), width=0)
     field = {"bordercolor": CONTROL_BORDER, "lightcolor": SURFACE, "darkcolor": SURFACE}
     focused = {"bordercolor": [("disabled", BORDER), ("focus", ACCENT)], "lightcolor": [("focus", ACCENT)]}
     style.configure("TEntry", padding=(pixels(8), pixels(5)), fieldbackground=SURFACE, **field)
@@ -487,7 +485,7 @@ def apply_style(root: tk.Tk) -> Callable[[float], int]:
     return pixels
 
 
-PARENT_FILLED = ("Next.TButton", "Step.TButton", "Toolbar.TButton", "TCheckbutton", "TRadiobutton")
+PARENT_FILLED = ("Next.TButton", "Step.TButton", "TCheckbutton", "TRadiobutton")
 # 底色要跟著放的地方的樣式：沒有外框的按鈕、勾選框與選項鈕（旁邊的字的底）
 PARENT_FILLED_CLASSES = ("TButton", "TCheckbutton", "TRadiobutton")
 
@@ -1036,68 +1034,22 @@ class Scrollbar(ttk.Scrollbar):
         super().set(first, last)
 
 
-class CopyButton(ttk.Button):
-    """結果表右上方的複製按鈕（#121）：預設是「全部複製」，一鍵把整張表（含表頭）放進剪貼簿；按完短暫顯示複製了幾列。
-
-    其他複製（例：進度頁的「複製待確認 TDCC」，#289）給自己的字：`copied_text` 用複製了幾筆填，`empty_text` 是什麼都沒複製時。
-    """
-
-    TEXT = "全部複製"
-
-    def __init__(
-        self,
-        parent: tk.Misc,
-        action: Callable[[], int],
-        text: str = TEXT,
-        *,
-        copied_text: str = "已複製 {} 列",
-        empty_text: str = "表上沒有資料",
-        width: int = 12,
-    ):
-        super().__init__(parent, text=text, command=self.copy, width=width, style="Toolbar.TButton")
-        self.action = action  # 複製並回傳複製了幾筆
-        self.idle_text = text
-        self.copied_text = copied_text
-        self.empty_text = empty_text
-        self._reset_job: str | None = None  # 換回原本的字的 after 排程
-
-    def copy(self) -> None:
-        count = self.action()
-        self.configure(text=self.copied_text.format(count) if count else self.empty_text)
-        if self._reset_job is not None:
-            self.after_cancel(self._reset_job)
-        self._reset_job = self.after(1500, self._reset)
-
-    def _reset(self) -> None:
-        self._reset_job = None
-        self.configure(text=self.idle_text)
-
-
 class CopyArea(ttk.Frame):
-    """結果表那一塊（#121）：第 0 列左邊寫怎麼複製、右邊「全部複製」；第 1 列是白色平面卡片 `card`，
-    表與捲軸由呼叫端建在 `card` 裡面（表在第 0 列第 0 欄，直捲軸在它右邊、橫捲軸在它下面）。"""
+    """結果表那一塊（#121）：第 0 列左邊寫怎麼複製（右鍵、Ctrl+A／Ctrl+C）；第 1 列是白色平面卡片 `card`，
+    表與捲軸由呼叫端建在 `card` 裡面（表在第 0 列第 0 欄，直捲軸在它右邊、橫捲軸在它下面）。
+    右上方原本的「全部複製」按鈕已拿掉（#557），整張表從右鍵選單的「全部複製（含表頭）」複製。"""
 
-    def __init__(self, parent: tk.Misc, hint: str, copy_all: Callable[[], int]):
+    def __init__(self, parent: tk.Misc, hint: str):
         super().__init__(parent)
         self.columnconfigure(0, weight=1)
         self.rowconfigure(1, weight=1)
         self.bar = ttk.Frame(self)
         self.bar.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
         ttk.Label(self.bar, text=hint, style="Caption.TLabel").pack(side="left")
-        self.button = CopyButton(self.bar, copy_all)
-        self.button.pack(side="right")
         self.card = ttk.Frame(self, style="TableCard.TFrame", padding=1)  # 平面、直角的白卡片（#264）
         self.card.grid(row=1, column=0, columnspan=2, sticky="nsew")
         self.card.columnconfigure(0, weight=1)
         self.card.rowconfigure(0, weight=1)
-
-    def add_button(
-        self, text: str, action: Callable[[], int], *, copied_text: str, empty_text: str, width: int = 12
-    ) -> CopyButton:
-        """在「全部複製」左邊多放一個複製按鈕（#289）；參數同 `CopyButton`。"""
-        button = CopyButton(self.bar, action, text, copied_text=copied_text, empty_text=empty_text, width=width)
-        button.pack(side="right", padx=(0, 8))
-        return button
 
 
 class Background:

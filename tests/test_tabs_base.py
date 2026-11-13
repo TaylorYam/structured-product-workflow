@@ -58,6 +58,24 @@ def headings(tab) -> list[str]:
     return [label for _, label, _ in tab.columns]
 
 
+def copy_whole_table(tab) -> None:
+    """按右鍵選單的最後一項「全部複製（含表頭）」。"""
+    tab.copier.fill_menu("", "")
+    assert tab.copier.menu.labels()[-1] == "全部複製（含表頭）"
+    tab.copier.menu.invoke(tk.END)
+
+
+@pytest.mark.parametrize("tab_name", [*TABLE_TABS, "progress", "exits"])
+def test_result_tables_have_no_copy_all_button(master, tmp_path: Path, tab_name) -> None:
+    """表右上方的「全部複製」已拿掉（#557）：表上方只剩左邊的說明，說明不提按鈕。"""
+    tab = getattr(new_window(master, tmp_path), tab_name)
+
+    bar = tab.table_area.bar.winfo_children()
+
+    assert [type(widget) for widget in bar] == [ttk.Label]
+    assert "全部複製" not in str(bar[0].cget("text"))
+
+
 @pytest.mark.parametrize("tab_name", TABLE_TABS)
 def test_copy_all_puts_the_whole_table_on_the_clipboard(master, tmp_path: Path, tab_name) -> None:
     tab = getattr(new_window(master, tmp_path), tab_name)
@@ -65,7 +83,7 @@ def test_copy_all_puts_the_whole_table_on_the_clipboard(master, tmp_path: Path, 
     tab.add_row(["029199990001", *(["第一行\n第二行\t尾"] * (width - 1))], True)
     tab.add_row(["029199990002", *([""] * (width - 1))], False)
 
-    tab.table_area.button.invoke()
+    copy_whole_table(tab)
 
     lines = master.clipboard_get().split("\n")
     assert lines[0] == "\t".join(headings(tab))
@@ -73,7 +91,6 @@ def test_copy_all_puts_the_whole_table_on_the_clipboard(master, tmp_path: Path, 
         "前導零保留；換行、Tab 換成空白"
     )
     assert lines[2].split("\t") == ["029199990002", *([""] * (width - 1))]
-    assert tab.table_area.button.cget("text") == "已複製 2 列"
 
 
 def test_copy_all_on_an_empty_table_leaves_the_clipboard_alone(master, tmp_path: Path) -> None:
@@ -81,10 +98,9 @@ def test_copy_all_on_an_empty_table_leaves_the_clipboard_alone(master, tmp_path:
     master.clipboard_clear()
     master.clipboard_append("原本的內容")
 
-    tab.table_area.button.invoke()
+    copy_whole_table(tab)
 
     assert master.clipboard_get() == "原本的內容"
-    assert tab.table_area.button.cget("text") == "表上沒有資料"
 
 
 def test_right_click_copies_one_cell_or_one_row(master, tmp_path: Path) -> None:

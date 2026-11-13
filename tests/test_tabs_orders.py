@@ -484,7 +484,8 @@ def test_copy_all_keeps_the_product_being_edited(master, tmp_path: Path) -> None
     click_row(tab, second)
     editing = tab.editor.draft
 
-    tab.table_area.button.invoke()
+    tab.copier.fill_menu("", "")
+    tab.copier.menu.invoke(tk.END)  # 全部複製（含表頭）
 
     assert tab.table.selection() == (second,) and tab.editor.draft is editing
     assert len(master.clipboard_get().split("\n")) == 3

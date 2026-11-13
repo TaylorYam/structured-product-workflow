@@ -6,7 +6,7 @@ import datetime as dt
 import tkinter as tk
 from decimal import Decimal
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 import pytest
 
@@ -448,13 +448,15 @@ def test_maintenance_check_table_copies_cells_rows_and_everything(master, tmp_pa
     cells = tab.cells
     cells.select(B_TDCC)
 
-    tab.cell_area.button.invoke()
+    cells.fill_menu(None, None)
+    cells.menu.invoke(tk.END)  # 全部複製（含表頭）
 
     lines = master.clipboard_get().split("\n")
     assert lines[0].split("\t") == ["TDCC", "上手", "狀態", *LISTED]
     assert lines[1].split("\t")[:3] == [B_TDCC, "BARC", OrderReview.UNLOCKED]
     assert lines[1].split("\t")[3 + REQUIRED.index("Maturity date")] == ""
-    assert len(lines) == 3 and tab.cell_area.button.cget("text") == "已複製 2 列"
+    assert len(lines) == 3
+    assert [type(w) for w in tab.cell_area.bar.winfo_children()] == [ttk.Label], "沒有「全部複製」按鈕（#557）"
 
     cells.fill_menu(NEW_TDCC, "tdcc")
     assert cells.menu.labels() == [f"複製「{NEW_TDCC}」", "複製這一列", "全部複製（含表頭）"]
