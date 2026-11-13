@@ -73,7 +73,7 @@ def test_samples_follow_the_sampled_dacn_terms(documents):
         assert [h.value for s in scenarios for h in s.guaranteed] == [1] * len(scenarios)
         # 情境一沒有區間計息；其他情境都有，且區間計息算式以外的每期配息算式都讀得出來
         assert [bool(s.accrual) for s in scenarios] == [False] + [True] * (len(scenarios) - 1)
-        assert all(len(s.coupons) == s.coupon_formulas - s.accrual for s in scenarios)
+        assert all(len(s.coupons) == s.coupon_formulas - s.accrual_formulas for s in scenarios)
         assert len([s for s in scenarios if s.kind == "worse" and len(s.strike) == 1]) == 1
 
 

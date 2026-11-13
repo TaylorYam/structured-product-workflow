@@ -30,16 +30,25 @@ NOT_COVERED = [
     },
     {
         "rule_id": "doc.template_variants",
-        "description": "依規則推得、待樣本驗證（轉人工覆核）：美元以外的幣別、單一標的、KO 非記憶式或每期觀察、無 KI、KI 每日"
-        "觀察、保證期數或 Non-Call 不是 1；KI 每期觀察（MKI）維持人工（workflow #386）；寫法和現行版不同的範本不支援（不看"
-        "交易日早晚）",
+        "description": "依規則推得、待樣本驗證（轉人工覆核）：美元以外的幣別、單一標的、5 檔以上標的、KO 非記憶式或每期觀察、"
+        "無 KI、KI 每日觀察、保證期數或 Non-Call 不是 1；KI 每期觀察（MKI）在 MS 的不支援樣態清單，整批停止條件核對"
+        "（workflow #386）；寫法和現行版不同的範本不支援（不看交易日早晚）",
     },
 ]
+
+
+def at_most_four(ctx: IssuerContext) -> list[str]:
+    """標的最多 4 檔（5 檔以上沒有樣本，範本規格 §4.5）。"""
+    uls = ctx.ts.f("underlyings")
+    return [f"{len(uls.value)} 檔標的"] if uls.ok and len(uls.value) > 4 else []
+
+
 SAMPLED = dacn.Sampled(
-    "MS DACN 樣本只有美元計價、多標的、KO 每日觀察＋記憶式、KI 到期觀察、保證 1 期、Non-Call 1",
+    "MS DACN 樣本只有美元計價、2～4 檔標的、KO 每日觀察＋記憶式、KI 到期觀察、保證 1 期、Non-Call 1",
     (
         dacn.currency(("USD",)),
         dacn.baskets,
+        at_most_four,
         dacn.ko("ko_observation"),
         dacn.ki(("AM", "P")),  # 每期觀察（MKI）另由 `dacn.monthly_ki` 維持人工
         dacn.guaranteed((1,), field="coupon_guaranteed_periods"),

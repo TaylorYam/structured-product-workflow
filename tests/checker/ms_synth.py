@@ -311,6 +311,11 @@ def _dacn_art15(d: FlowDoc, s: Spec) -> None:
     d.text(71, "投資人應注意配息後本商品價值將相對降低。")
 
 
+def _annualized(s: Spec, pnl: Decimal, months: int) -> Decimal:
+    """簡單平均年化報酬率 % = 損益 ÷ 面額 × 12 ÷ 月數（四捨五入到 2 位）。"""
+    return (pnl / s.denom * 1200 / months).quantize(Decimal("0.01"), ROUND_HALF_UP)
+
+
 def _dacn_scenarios(d: FlowDoc, s: DacnSpec) -> None:
     """DACN 第 18 項情境（ms-zh-dacn.md §4.3）：一 第 1 期提前出場（只有固定配息，同 FCN）；二 第 2 期一半天數符合後提前出場；
     三 第 2～N 期一半天數符合、到期拿回本金；四 到期觸及下限、第 2～N 期天數為 0；五 發行機構無法履約。"""
@@ -319,7 +324,9 @@ def _dacn_scenarios(d: FlowDoc, s: DacnSpec) -> None:
     paid = "本商品第1 個月發放固定配息"
     d.section = "scen.一"
     d.text(72, "情境一:較佳情況 A")
-    d.text(72, "假設在第1 個配息週期終止日，所有連結標的皆同時發生記憶事件成為自動提前出場標的，即發生自動提前出場事件：")
+    d.text(
+        72, "假設在第1 個配息週期終止日，所有連結標的皆同時發生記憶事件成為自動提前出場標的，即發生自動提前出場事件："
+    )
     d.text(72, f"{paid}，故本商品將在第1 個配息日支付配息金額予投資人。每單位商品面額配息金額為：")
     d.text(72, "每單位商品面額×固定配息率")
     d.text(72, f"= 每單位商品面額×{m}% = {denom} {unit}×{m}% = {money(a)} {unit}")
@@ -332,7 +339,9 @@ def _dacn_scenarios(d: FlowDoc, s: DacnSpec) -> None:
         "假設在第2 個配息觀察期間，僅一半天數的觀察日中，籃子中表現最差的連結標的之收盤價大於或等於其執行價，且於第2 個"
         "配息週期終止日發生自動提前出場事件：",
     )
-    d.text(72, f"{paid}，而後發放浮動配息，故本商品將在第1 至第2 個配息日支付配息金額予投資人。每單位商品面額配息金額為：")
+    d.text(
+        72, f"{paid}，而後發放浮動配息，故本商品將在第1 至第2 個配息日支付配息金額予投資人。每單位商品面額配息金額為："
+    )
     d.text(
         72,
         f"第1 固定配息期間每單位商品面額配息金額 = 每單位商品面額×固定配息率（{m}%） = {denom} {unit}×{m}% = {money(a)} {unit}",
@@ -343,7 +352,7 @@ def _dacn_scenarios(d: FlowDoc, s: DacnSpec) -> None:
         f"{money(b)} {unit}",
     )
     d.text(72, f"= {denom} {unit}+{money(a)} {unit}x1+{money(b)} {unit}-{denom} {unit} = {money(a + b)} {unit}")
-    d.text(72, "以簡單平均計算報酬率之方式以計算年化報酬率為26.63%（四捨五入至百分位後第二位）")
+    d.text(72, f"以簡單平均計算報酬率之方式以計算年化報酬率為{_annualized(s, a + b, 2)}%（四捨五入至百分位後第二位）")
     d.section = "scen.三"
     d.text(72, "情境三：一般情況")
     d.text(
@@ -353,7 +362,8 @@ def _dacn_scenarios(d: FlowDoc, s: DacnSpec) -> None:
     )
     d.text(72, f"{paid}，而後發放浮動配息，故本商品將在每個配息日支付配息金額予投資人。每單位商品面額配息金額為：")
     d.text(
-        72, f"第1 個每個配息觀察期間每單位商品面額配息金額 = 每單位商品面額×{m}% = {denom} {unit}×{m}% = {money(a)} {unit}"
+        72,
+        f"第1 個每個配息觀察期間每單位商品面額配息金額 = 每單位商品面額×{m}% = {denom} {unit}×{m}% = {money(a)} {unit}",
     )
     d.text(
         72,
@@ -362,7 +372,10 @@ def _dacn_scenarios(d: FlowDoc, s: DacnSpec) -> None:
     )
     total = money(a + b * (n - 1))
     d.text(72, f"= {denom} {unit}+{money(a)} {unit}x1+{money(b)}x{n - 1}-{denom} {unit} = {total} {unit}")
-    d.text(72, "以簡單平均計算報酬率之方式以計算年化報酬率為19.23%（四捨五入至百分位後第二位）")
+    d.text(
+        72,
+        f"以簡單平均計算報酬率之方式以計算年化報酬率為{_annualized(s, a + b * (n - 1), n)}%（四捨五入至百分位後第二位）",
+    )
     d.section = "scen.四"
     d.text(72, "情境四：較差情況")
     d.text(
@@ -389,7 +402,10 @@ def _dacn_scenarios(d: FlowDoc, s: DacnSpec) -> None:
         f"{denom} {unit}×{m}%×（0/20） = 0 {unit}",
     )
     d.text(72, f"= {money(a)} {unit}x1+{money(6000)} {unit}-{denom} {unit} = {money(a + 6000 - s.denom)} {unit}")
-    d.text(72, "以簡單平均計算報酬率之方式以計算年化報酬率為-37.04%（四捨五入至百分位後第二位）")
+    d.text(
+        72,
+        f"以簡單平均計算報酬率之方式以計算年化報酬率為{_annualized(s, a + 6000 - s.denom, n)}%（四捨五入至百分位後第二位）",
+    )
     d.text(72, f"*請注意，在情境分析四下，若在期末定價日的籃子中表現最差的連結標的（{s.tickers[0]}）收盤")
     d.text(72, "價格小於42.0000美元，投資人的本金損失可能更大。")
     d.section = "scen.五"

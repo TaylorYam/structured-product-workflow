@@ -18,12 +18,14 @@ from fcn_checker.schema import CheckStatus as S
 from harness import check_all, flagged, iis_path
 from harness import field_problems as problems
 from harness import results as rule
+from ms_ben_synth import BenSpec
+from ms_ben_synth import build_pdf as build_ben_pdf
 from ms_synth import CHECKS, DacnSpec, Spec, build_pdf
 from pdf_writer import Edit, zh_date
 from reference_synth import DACN_PRODUCT, REFERENCE_HEADERS, build_reference_sheet
 
 # 2 檔美股、4 個月、KO 每日＋記憶式、KI 到期、第 15 項保證 1 期 = Non-Call 1、年利率 12%（固定配息率 1.0000%、每期 100.00
-# 美元、區間計息算式 ×（10/20）= 50.00 美元）、執行價 = 配息門檻 70%
+# 美元、區間計息算式 ×（10/20）= 50.00 美元；情境二～四年化報酬率 9.00%、7.50%、-117.00%）、執行價 = 配息門檻 70%
 D0 = DacnSpec()
 WITH_BARRIER = [*REFERENCE_HEADERS, "配息門檻(%)"]
 
@@ -131,6 +133,15 @@ def test_fcn_documents_are_not_claimed_by_dacn(tmp_path, ko_obs):
         assert not result.matched and not result.claimed and not result.unsupported
 
 
+def test_ben_documents_are_not_claimed_by_dacn(tmp_path):
+    """MS BEN 說明書與投資人須知不被 DACN 範本收、也不攔下（範本規格 §8 負面測試）。"""
+    spec = BenSpec()
+    pdf = build_ben_pdf(tmp_path / f"{spec.product_code}_TS.pdf", spec)
+    for detect, lines in ((MS_DACN.detect, lines_of(pdf)), (MS_DACN.iis.detect, lines_of(iis_path(pdf)))):
+        result = detect(lines)
+        assert not result.matched and not result.claimed and not result.unsupported
+
+
 # ---------------------------------------------------------------- 範本版本
 
 
@@ -148,10 +159,11 @@ def unsupported(item) -> None:
         [Edit("小數點後第 2 位", "小數點後第 4 位", "ts.art15")],
         [Edit("孰先，籃子中表現最差", "孰後，籃子中表現最差", "ts.art15")],
         [Edit("持有之商品單位數×每單位配息金額(j)", "持有之商品單位數×每單位配息金額", "ts.art15")],
+        [Edit("每單位商品面額× 固定配息率", "每單位商品面額× 首期配息率", "ts.art15")],
         [Edit("即同時為所有連結標的之預定交易日之日", "即任一連結標的之預定交易日", "ts.art15")],
         [Edit(f"交易日：{zh_date(D0.trade_date)}", "交易日：另行公告", "ts.art14")],
     ],
-    ids=["Nj", "rounding", "nj-wording", "monthly-amount", "observation-day", "trade-date-unreadable"],
+    ids=["Nj", "rounding", "nj-wording", "monthly-amount", "fixed-amount", "observation-day", "trade-date-unreadable"],
 )
 def test_other_term_sheet_wording_is_not_supported(tmp_path, edits):
     ts, _ = check_pair(tmp_path, edits=edits)
@@ -159,7 +171,9 @@ def test_other_term_sheet_wording_is_not_supported(tmp_path, edits):
 
 
 def test_other_investor_sheet_wording_is_not_supported(tmp_path):
-    edit = Edit("N(j) = 於第 j 個配息觀察期間的配息觀察日總數", "N(j) = 於第 j 個配息觀察期間的交易日總數", "iis.coupon")
+    edit = Edit(
+        "N(j) = 於第 j 個配息觀察期間的配息觀察日總數", "N(j) = 於第 j 個配息觀察期間的交易日總數", "iis.coupon"
+    )
     ts, iis = check_pair(tmp_path, edits=[edit])
     assert ts.report.status == S.PASS, problems(ts.report)
     unsupported(iis)
@@ -254,11 +268,14 @@ def test_investor_sheet_formula_rate_must_match(tmp_path):
     assert {r for r, _, _ in problems(iis.report)} == {"iis.monthly_coupon"}, problems(iis.report)
 
 
-def test_fixed_period_coupon_of_accrual_scenarios_is_checked(tmp_path):
-    """情境二第 1 期固定配息算錯（面額 × 月配息率）：情境二的每期配息判錯；區間計息算式不算每期配息算式。"""
-    r = check(tmp_path, edits=[Edit("×1.0000% = 100.00 美元", "×1.0000% = 101.00 美元", "ts.scen.二")])
+@pytest.mark.parametrize("scenario", ["二", "三"])
+def test_fixed_period_coupon_of_accrual_scenarios_is_checked(tmp_path, scenario):
+    """情境二、三第 1 期固定配息算錯（面額 × 月配息率）：該情境的每期配息判錯；區間計息算式不算每期配息算式。"""
+    edit = Edit("×1.0000% = 100.00 美元", "×1.0000% = 101.00 美元", f"ts.scen.{scenario}")
+    r = check(tmp_path, edits=[edit])
     only(r, "doc.scenario_calculations")
-    assert [x.field for x in rule(r, "doc.scenario_calculations") if x.status == S.MISMATCH] == ["情境二_coupon"]
+    mismatched = [x.field for x in rule(r, "doc.scenario_calculations") if x.status == S.MISMATCH]
+    assert mismatched == [f"情境{scenario}_coupon"]
 
 
 def test_accrual_assumptions_of_scenarios_are_not_checked(tmp_path):
@@ -267,12 +284,19 @@ def test_accrual_assumptions_of_scenarios_are_not_checked(tmp_path):
         tmp_path,
         edits=[
             Edit("（10/20） = 50.00 美元", "（11/20） = 55.00 美元", "ts.scen.二"),
-            Edit("26.63%", "1.23%", "ts.scen.二"),
-            Edit("19.23%", "4.56%", "ts.scen.三"),
+            Edit("9.00%", "1.23%", "ts.scen.二"),
+            Edit("7.50%", "4.56%", "ts.scen.三"),
             Edit("x3-10,000.00 美元 = 250.00 美元", "x3-10,000.00 美元 = 999.00 美元", "ts.scen.三"),
-            Edit("-37.04%", "-1.00%", "ts.scen.四"),
+            Edit("-117.00%", "-1.00%", "ts.scen.四"),
         ],
     )
+    assert r.status == S.PASS, problems(r)
+
+
+def test_accrual_scenario_without_the_expanded_formula_is_still_accrual(tmp_path):
+    """情境四只寫 `面額×浮動配息率（X%）×（0/M） = 0`、沒有展開成金額的算式：仍是區間計息情境，損益不照 FCN 核。"""
+    edit = Edit("（0/20） = 10,000.00 美元×1.0000%×（0/20） = 0 美元", "（0/20） = 0 美元", "ts.scen.四")
+    r = check(tmp_path, edits=[edit])
     assert r.status == S.PASS, problems(r)
 
 
@@ -365,13 +389,14 @@ def test_fixed_coupon_name_on_the_cover_is_not_dacn(tmp_path):
     [
         DacnSpec(currency_zh="澳幣"),
         DacnSpec(count=1),
+        DacnSpec(count=5),
         DacnSpec(memory=False),
         DacnSpec(ko_obs="P"),
         DacnSpec(ki="none"),
         DacnSpec(ki="D"),
         DacnSpec(first_callable=2),
     ],
-    ids=["aud", "single", "not-memory", "ko-periodic", "no-ki", "ki-daily", "non-call-2"],
+    ids=["aud", "single", "five", "not-memory", "ko-periodic", "no-ki", "ki-daily", "non-call-2"],
 )
 def test_variants_without_samples_need_review(tmp_path, spec):
     r = check(tmp_path, spec)

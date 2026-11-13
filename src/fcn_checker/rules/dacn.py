@@ -155,7 +155,7 @@ def _where(article: int | str) -> str:
 
 def iis_guaranteed_periods(ctx: IisIssuerContext) -> CheckResult:
     """投資人須知（`guaranteed_periods`）推得的保證期數 = 同商品說明書配息公式的保證期數（`coupon_guaranteed_periods`；
-    BNP、UBS DACN 投資人須知共用）。"""
+    BNP、UBS、MS DACN 投資人須知共用）。"""
     rid, field, name = "iis.guaranteed_periods", "guaranteed_periods", "配息公式保證期數"
     pf = read_iis(ctx.sheet, field)
     check = Check(rid, field, Item.term_sheet(name), ctx.document).needs(pf)

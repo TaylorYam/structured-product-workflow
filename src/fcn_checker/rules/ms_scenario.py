@@ -70,7 +70,7 @@ def calculations(ctx: IssuerContext, *, accrual: bool = False) -> list[CheckResu
             if c.amount != (c.denomination * c.rate / 100).quantize(kit.Q2, ROUND_HALF_UP) or c.amount != a:
                 issues.append(f"每期配息 {c.amount} 應為 {a}（面額 × 月配息率 {monthly}%，四捨五入到 2 位）")
         evidence = [e for h in s.coupons for e in kit.evidence(h.lines)]
-        formulas = s.coupon_formulas - (s.accrual if accrual else 0)
+        formulas = s.coupon_formulas - (s.accrual_formulas if accrual else 0)
         if not s.coupons or len(s.coupons) != formulas:
             unread = "找不到每期配息算式" if not s.coupons else "有每期配息算式的寫法無法辨識"
             out.append(
