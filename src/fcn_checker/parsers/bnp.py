@@ -770,19 +770,15 @@ def _scenario_standard(fields: dict[str, ParsedField], sec: bnp_scenario.Scenari
                     "scenario_monthly_coupon", f"{where}區間計息配息算式的", accrual.parsed("scenario_monthly_coupon")
                 )
             )
-        if s.kind in ("autocall", "best"):
+        # DACN 最佳情況寫的 n ≠ M（沒有樣本）：年化依假設算出、不等於年利率，不讀不核（使用者決定，bnp-dacn-check-rules.md §3.7）
+        by_assumption = s.accrual is not None and not s.accrual.value.full_period
+        if s.kind in ("autocall", "best") and not by_assumption:
             annualized = Mention.of_optional_hit(
                 f"{where}年化報酬率", s.total_return, lambda v: v.annualized, s.lines[:1]
-            ).parsed("scenario_annualized_return")
-            if annualized.ok and s.accrual is not None and not s.accrual.value.full_period:
-                # DACN 最佳情況寫的 n ≠ M（沒有樣本）：年化依假設算出、不等於年利率，轉人工（bnp-dacn-check-rules.md §3.7，暫定）
-                annualized = ParsedField(
-                    annualized.name,
-                    FieldStatus.INVALID,
-                    evidence=[*annualized.evidence, *(Evidence.of(ln) for ln in s.accrual.lines)],
-                    note=f"{where}區間計息假設 n ≠ M，年化報酬率依假設算出、不等於年利率",
-                )
-            params.append(ScenarioParam("scenario_annualized_return", where, annualized))
+            )
+            params.append(
+                ScenarioParam("scenario_annualized_return", where, annualized.parsed("scenario_annualized_return"))
+            )
         if s.kind in ("worse", "worst"):
             row = worst_row(s, fields["underlying_prices"])
             strike = Mention.of_optional_hit(

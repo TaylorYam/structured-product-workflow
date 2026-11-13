@@ -349,14 +349,20 @@ P = DacnSpec(days=19, best_days=15, worse_days=5)
 
 def test_accrual_scenarios_use_the_written_days(tmp_path):
     """第 2 期起配息、累積、總報酬率用文件寫的 n、M 驗算；假設本身不核（§18 假設行的 M 和算式不同也不判錯）。最佳情況寫的
-    n ≠ M（沒有樣本）時年化依假設算出、不等於年利率：年化那一項轉人工，不判不一致。"""
-    r = check(tmp_path, P, edits=[Edit("合格營業日總天數=19", "合格營業日總天數=21", "ts.art18")])
+    n ≠ M（沒有樣本）時年化依假設算出、不等於年利率：年化那一項不產生結果（不核也不轉人工），改了也不判錯。"""
+    r = check(
+        tmp_path,
+        P,
+        edits=[
+            Edit("合格營業日總天數=19", "合格營業日總天數=21", "ts.art18"),
+            Edit("(年化報酬率：12.000%)", "(年化報酬率：12.345%)", "ts.scen.二"),
+        ],
+    )
     calcs = {x.field: x for x in rule(r, "doc.scenario_calculations")}
     assert all(x.status == S.PASS for x in calcs.values()), problems(r)
-    reviewed = [x for x in rule(r, "scenario.params") if x.status != S.PASS]
-    assert {x.status for x in reviewed} == {S.REVIEW_REQUIRED}, problems(r)
-    assert len(reviewed) == 2 and all("n ≠ M" in x.message for x in reviewed)  # 最佳情況 (A)(B)
-    assert {rid for rid, _, _ in problems(r)} == {"scenario.params"}, problems(r)
+    assert r.status == S.PASS, problems(r)
+    annualized = [x for x in rule(r, "scenario.params") if "年化" in x.item.name]
+    assert [x.item.name for x in annualized] == ["第 18 項情境一年化報酬率"]  # 最佳情況 (A)(B) 不產生結果
     assert (calcs["情境二_accrual"].expected, calcs["情境四_accrual"].expected) == (Decimal("78.95"), Decimal("26.32"))
     assert (calcs["情境二_cumulative"].expected, calcs["情境五_cumulative"].expected) == (
         Decimal("494.75"),  # 100.00 × 1 + 78.95 × 5
