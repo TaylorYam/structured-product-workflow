@@ -1,5 +1,6 @@
 """DACN（區間計息）各上手共用的說明書內部規則（各家核對規則 §3.1、§3.4、§3.5）：沒有樣本的型態轉人工覆核、配息公式的
-保證期數 = Non-Call、價格表一列的配息門檻價格 = 期初價格 × 配息門檻 %。
+保證期數 = Non-Call、價格表一列的配息門檻價格 = 期初價格 × 配息門檻 %；另有情境試算共用的 n/M 配息算法（路線圖 #575）：
+區間計息的每期配息、累積配息 = 各段已進位的每期配息 × 期數的加總。
 
 各家只宣告「有樣本的型態」（`Sampled`：要看哪幾項、各支援哪些值、依序）與保證期數寫在第幾條；錯訊文字由宣告組出。
 配息門檻 % 的兩種來源（執行價 %、價格表欄頭 %）在說明書讀取端（parsers/dacn.py）。
@@ -9,7 +10,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from decimal import ROUND_HALF_UP
+from decimal import ROUND_DOWN, ROUND_HALF_UP, ROUND_UP, Decimal
 from typing import Any
 
 from ..investor_sheet import read_iis
@@ -184,3 +185,66 @@ def barrier_price(
         tolerance="四捨五入（half-up）到 4 位",
         message=f"{initial} {base} × {pct.value}%",
     )
+
+
+# ---------------------------------------------------------------- 情境試算的 n/M 配息（路線圖 #575）
+
+# 文件寫的進位方式 → decimal 進位常數；各家情境的讀取端把文件用字換成常數，錯訊再換回用字
+ROUNDING_ZH = {ROUND_HALF_UP: "四捨五入", ROUND_DOWN: "無條件捨去", ROUND_UP: "無條件進位"}
+
+
+def _places(step: Decimal) -> str:
+    exp = step.as_tuple().exponent
+    return "整數" if exp == 0 else f"小數點以下 {-exp} 位"
+
+
+def accrual_coupon(
+    denomination: Decimal, rate: Decimal, days: int, total_days: int, step: Decimal, rounding: str = ROUND_HALF_UP
+) -> Decimal | None:
+    """區間計息的每期配息 = 面額 × 月配息率 `rate`% × (n ÷ M)，依文件寫的位數（`step`，例 0.01）與進位方式（`rounding`）。
+    n、M 是文件自己寫的假設天數，本身不核對；M 是 0 時算不出（None）。"""
+    if total_days == 0:
+        return None
+    return (denomination * rate / 100 * days / total_days).quantize(step, rounding)
+
+
+def accrual_coupon_issues(
+    label: str,
+    actual: Decimal,
+    denomination: Decimal,
+    rate: Decimal,
+    days: int,
+    total_days: int,
+    step: Decimal,
+    rounding: str = ROUND_HALF_UP,
+) -> list[str]:
+    """文件寫的區間計息每期配息 `actual` 和 `accrual_coupon` 不同時的錯訊（相同時空清單）。"""
+    expected = accrual_coupon(denomination, rate, days, total_days, step, rounding)
+    if expected == actual:
+        return []
+    formula = f"{denomination} × {rate}% × ({days} ÷ {total_days})"
+    if expected is None:
+        return [f"{label} {actual} 的算式 {formula} 的 M 是 0，算不出"]
+    return [f"{label} {actual} 應為 {formula} = {expected}（{ROUNDING_ZH[rounding]}到{_places(step)}）"]
+
+
+@dataclass(frozen=True)
+class CouponLeg:
+    """累積配息的一段：文件寫的（已進位的）每期配息 × 期數，例：第 1～g 期、第 g+1 期到天期。"""
+
+    amount: Decimal
+    periods: int
+
+
+def coupon_total(legs: Sequence[CouponLeg]) -> Decimal:
+    """累積（總）配息 = 各段已進位的每期配息 × 期數的加總（同各家 FCN 的累積配息算法）。"""
+    return sum((leg.amount * leg.periods for leg in legs), Decimal(0))
+
+
+def coupon_total_issues(label: str, actual: Decimal, legs: Sequence[CouponLeg]) -> list[str]:
+    """文件寫的累積配息 `actual` 和 `coupon_total` 不同時的錯訊（相同時空清單）。"""
+    expected = coupon_total(legs)
+    if expected == actual:
+        return []
+    parts = " + ".join(f"{leg.amount} × {leg.periods} 期" for leg in legs)
+    return [f"{label} {actual} 應為 {parts} = {expected}"]
