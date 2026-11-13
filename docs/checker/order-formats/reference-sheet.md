@@ -76,7 +76,7 @@
 | 發行機構 | — | 不是必要欄；表上有才確認該列屬於此上手（§2） |
 | 發行機構評等_標準普爾／_穆迪／_惠譽、保證機構評等_標準普爾／_穆迪／_惠譽 | `issuer_rating_sp`、`issuer_rating_moodys`、`issuer_rating_fitch`、`guarantor_rating_*` | 交易日當時的長期債務信用評等（Issue #240）。不是必要欄：資料庫來源從評等表（`workflow.credit_rating`，生效日 ≤ 交易日的最新一筆）帶出，沒有保證機構或評等表沒有那家時空白；舊版 Excel 沒有這些欄時，做評等核對的上手（14 家都做，#240～#243；CA、JPM、Nomura、SG 只看保證機構評等欄，#241）評等轉人工覆核。說明書與投資人須知的評等依[共用規則](../rules/shared-check-rules.md) §10 比對。不在匯入格式內（不回填） |
 | Product | — | 不和說明書比對；決定能不能自動核對（上手編號對照的 `[auto_check_products]`，#302）：沒開放給這家上手的商品種類照不支援樣態處理，空白或沒有這欄時照 FCN |
-| 配息門檻(%) | `coupon_barrier_pct` | DACN 的配息門檻（最初價格的 %）、BEN 的紅利門檻（workflow #406），其他商品寫 `-`（workflow #367）。不是必要欄；已開放 DACN 的上手（Nomura、SG、DBS、Natixis、Barclays、BNP、UBS，workflow #368～#371、#547～#549）與已開放 BEN 的上手（HSBC、MS、CA，紅利門檻由到期公式推得 = 執行價 %）由共用規則 `field.coupon_barrier_pct` 和說明書比，表上沒有這欄時比 `K(%)`；DACN 列空白或 `-` 也比 `K(%)`（2026-11-02 使用者決定，DACN-409-01），BEN 列空白或 `-` 轉人工覆核。不在匯入格式裡，「回填後」不帶 |
+| 配息門檻(%) | `coupon_barrier_pct` | DACN 的配息門檻（最初價格的 %）、BEN 的紅利門檻（workflow #406），其他商品寫 `-`（workflow #367）。不是必要欄；已開放 DACN 的上手（Nomura、SG、DBS、Natixis、Barclays、BNP、UBS、MS，workflow #368～#371、#547～#550）與已開放 BEN 的上手（HSBC、MS、CA，紅利門檻由到期公式推得 = 執行價 %）由共用規則 `field.coupon_barrier_pct` 和說明書比，表上沒有這欄時比 `K(%)`；DACN 列空白或 `-` 也比 `K(%)`（2026-11-02 使用者決定，DACN-409-01），BEN 列空白或 `-` 轉人工覆核。不在匯入格式裡，「回填後」不帶 |
 | KO降幅(%) | `ko_step_pct` | FCN_Stepdown、Snowball、Snowball_Stepdown 的 KO 每期降幅（百分點，`KO(%)` 是第 1 期；workflow #537、ADR 0033），其他商品寫 `-`。不是必要欄，資料庫來源帶出 `product.ko_step_pct`；開放自動核對的 FCN_Stepdown 和說明書的降幅、每期 KO% 比（§2 說明），Snowball 類不和說明書比；FCN 以外商品回補讀這欄。不在匯入格式裡，「回填後」不帶 |
 | 庫存狀態、當日比價、私銀註記、UF、UL_n_Memo | — | 存續或內部資訊，不核對 |
 | 其他欄（分公司_n、交易日期、下一比價日、TS/IIS完成檢核等） | — | 略過 |
