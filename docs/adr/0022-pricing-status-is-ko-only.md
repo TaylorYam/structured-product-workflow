@@ -31,7 +31,7 @@
 
 ### 後果
 
-- 進度頁與匯出多一欄 KI（進度頁的匯出已由 #558 拿掉）；已比到在 Non-call 期間空白，等股價時看原因知道缺的是 KI 要的價格。
+- 進度頁與匯出多一欄 KI；已比到在 Non-call 期間空白，等股價時看原因知道缺的是 KI 要的價格。
 - 升級後既有比價狀態的 KI 空白，下一次比價（回補股價後或「重新比價全部」）補上。
 - MKI 商品不再整檔待確認，要靠 KI 欄的提醒人工追蹤。
 
@@ -61,6 +61,6 @@ A periodic KI (MKI) made the whole product 待確認 although its KO is observed
 
 ### Consequences
 
-- The progress page and its export gain a KI column (the progress export was later removed by #558); 已比到 is blank during the non-call period, and a 等股價 reason tells when the missing price is one the daily KI needs.
+- The progress page and its export gain a KI column; 已比到 is blank during the non-call period, and a 等股價 reason tells when the missing price is one the daily KI needs.
 - After the upgrade the KI column is blank until the next observation (after the price backfill or 重新比價全部).
 - MKI products are no longer 待確認 as a whole and rely on the KI column reminder for manual follow-up.
