@@ -28,7 +28,8 @@ TEMPLATE_ID = "sg-zh-pd"
 # 5：無自動提前出場的單一評價日寫法（只有配息日欄的日期表、§12「評價日：」，Issue #130）
 # 6：連結標的公司介紹交成標準欄位 underlying_notes（Issue #225）；7：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
 # 8：辨識曾加「第 8 項沒有區間累積配息的 n(i)／N(i) 定義」（workflow #369；#436 起同一家上手由專到泛由上手註冊表決定，版本不變）
-PARSER_VERSION = "8"
+# 9：單一標的 KI 到期觀察的到期贖回寫「連結標的收盤價」（沒有「最差表現之」；workflow #592）
+PARSER_VERSION = "9"
 # 保證機構信用評等（#241）：第一章第 3 項 `保證機構名稱及其長期債務信用評等：…，截至…，長期債務信用評等標準普爾A、穆迪A1、惠譽A+。`、
 # 第二章保證機構 (7) `長期債務信用評等：標準普爾A，穆迪A1，惠譽A+。（此處引用之信評為…）`。
 GUARANTOR_RATINGS = (
@@ -489,7 +490,7 @@ def ki_type(t8: TextIndex, art8: list[Line], where: str = "第 8 項") -> Parsed
         if "下限價" in red:
             return ParsedField.invalid(name, lns, "到期贖回以執行價判，但出現下限價")
         return ParsedField.present(name, "none", lns)
-    if cases == 2 and re.search(r"\(1\)若於最終評價日最差表現之連結標的收盤價大於或等於下限價", red):
+    if cases == 2 and re.search(r"\(1\)若於最終評價日(?:最差表現之)?連結標的收盤價大於或等於下限價", red):
         return ParsedField.present(name, "AM", lns)
     if cases == 3 and "每一個預定交易日（「觀察期間」）" in red and "不曾小於下限價" in red:
         return ParsedField.present(name, "D", lns)

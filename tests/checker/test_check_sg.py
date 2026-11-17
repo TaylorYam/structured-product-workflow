@@ -41,6 +41,7 @@ from sg_synth import Spec, build_pdf, check
         ),  # 無自動提前出場、CNH quanto、舊版面
         Spec(currency_zh="日圓", ko=Decimal("105.00"), count=4),
         Spec(ko_obs="D", memory=False, ki="AM", count=2, tenor=12, first_callable=4),
+        Spec(memory=False, ki="AM", count=1, tenor=9, first_callable=2),  # 單一標的 + KI 到期觀察（workflow #592）
         Spec(autocall=False, ki="none", tenor=12, strike=Decimal("80.00"), single_valuation=True),  # Issue #130
     ],
     ids=lambda s: (
