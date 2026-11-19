@@ -2,7 +2,8 @@
 
 找全文「開始受理（投資人）（提前）贖回日（期）：」標籤後面的寫法（每家範本都有一處）：
 - 寫具體日期（MS、Citi、BBVA），或文字後寫「(即現預計為 <日期>)」（UBS 說明書）：日期 = 發行日的次一臺北營業日（交易所假日表
-  [markets.TW]；寫法要求預定交易日的另須標的交易所開市）。只核對說明書；投資人須知的日期由上手規則和同商品說明書比
+  [markets.TW]；寫法要求預定交易日的另須標的交易所開市：開始受理寫「預定交易日」（UBS），或後續受理寫「每一個預定交易日」
+  （BBVA，workflow #596）。只核對說明書；投資人須知的日期由上手規則和同商品說明書比
   （`iis.redemption_start`）。
 - 寫文字：須以審查標準 `issuer.<上手>.redemption_start_wordings` 列出的寫法之一開頭（忽略空白、括號不分全形半形；
   只收樣本看過的寫法），沒列出的寫法轉人工覆核。
@@ -26,6 +27,8 @@ RULE_WORDING = "standard.redemption_start"
 LABEL = re.compile(r"開始受理(?:投資人)?(?:提前)?(?:透過次級市場買賣之)?贖回日(?:期)?[:：]")
 _DATE = r"\d{4}年\d{1,2}月\d{1,2}日"
 _EXPECTED_AT = re.compile(r"即現預計為(" + _DATE + ")")
+# 後續受理贖回日期限每一個預定交易日（BBVA「…起往後之每一個預定交易日(並須為台北營業日)」）：開始受理日也要是預定交易日
+_LATER_TRADING_DAYS = re.compile(r"後續受理[^:：]{0,20}贖回日(?:期)?[:：][^。]*?每一個預定交易日")
 _SHOWN = 60  # 結果上顯示標籤後的前幾個字（到句號為止）
 NAME = "開始受理贖回日期"
 TAIPEI = "TW"  # 交易所假日表的臺北營業日（config/exchange_holidays.toml [markets.TW]）
@@ -83,8 +86,9 @@ def _wording(issuer: str, wordings: tuple[str, ...], m: Mention, document: DocKi
     )
 
 
-def _date(ctx: IssuerContext, m: Mention) -> CheckResult:
-    """寫出的日期 = 發行日的次一臺北營業日；寫法要求預定交易日（UBS「預定交易日（並須為臺北營業日）」）時標的交易所也要開市。
+def _date(ctx: IssuerContext, m: Mention, later_trading_days: bool) -> CheckResult:
+    """寫出的日期 = 發行日的次一臺北營業日；寫法要求預定交易日（UBS「預定交易日（並須為臺北營業日）」，或後續受理限每一個
+    預定交易日 `later_trading_days`，BBVA）時標的交易所也要開市。
     相等通過；推算結果無法確定（超出假日表涵蓋範圍、標的交易所不在假日表）而文件寫得較晚時轉人工覆核，其餘不一致。"""
     issue = kit.read_standard(ctx.ts, "issue_date")
     check = Check(RULE_DATE, "redemption_start", Item.expected(NAME), ctx.document).needs(issue)
@@ -99,7 +103,7 @@ def _date(ctx: IssuerContext, m: Mention) -> CheckResult:
             reason="calendar_missing",
             message=f"交易所假日表沒有臺北營業日（markets.{TAIPEI}），無法推算{NAME}",
         )
-    trading_day = "交易日" in m.text  # 「預定交易日（並須為臺北營業日）」：標的交易所也要開市
+    trading_day = later_trading_days or "交易日" in m.text  # 「預定交易日（並須為臺北營業日）」：標的交易所也要開市
     following = (
         ctx.calendar.next_trading_day(issue.value, kit.field_value(ctx.ts, "underlyings"), also=[taipei])
         if trading_day
@@ -128,12 +132,13 @@ def term_sheet(ctx: IssuerContext) -> list[CheckResult]:
     if not found:
         return [_missing(ctx.document)]
     wordings = ctx.issuer_std.redemption_start_wordings
+    later_trading_days = _LATER_TRADING_DAYS.search(ctx.ts.full_text.text) is not None
     out = []
     for m in found:
         if not m.dated:
             out.append(_wording(ctx.issuer, wordings, m, ctx.document))
         if m.date is not None:
-            out.append(_date(ctx, m))
+            out.append(_date(ctx, m, later_trading_days))
     return out
 
 

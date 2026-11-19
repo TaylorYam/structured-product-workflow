@@ -10,6 +10,7 @@ from dataclasses import replace
 
 import pytest
 
+import bbva_synth
 import citi_synth
 import sg_synth
 import ubs_synth
@@ -60,6 +61,21 @@ def test_ubs_expected_date_also_needs_the_underlying_exchange_open(tmp_path, cod
     [x] = rule(report, DATE)
     assert (x.status, x.expected, x.actual) == (S.MISMATCH, dt.date(2030, 1, 16), dt.date(2030, 1, 15))
     assert [w.status for w in rule(report, WORDING)] == [S.PASS]
+
+
+@pytest.mark.parametrize("code", ["TW", "US"])
+def test_bbva_date_needs_the_underlying_exchange_open_when_later_redemption_is_on_trading_days(tmp_path, code):
+    """BBVA 後續受理寫「每一個預定交易日(並須為台北營業日)」：開始受理日也要標的交易所開市，臺北或美股休市都順延
+    （workflow #596：發行日次日是美國感恩節，說明書寫再下一天）。"""
+    spec, closed, after = bbva_synth.Spec(), dt.date(2030, 1, 15), dt.date(2030, 1, 16)
+    assert spec.issue_date == dt.date(2030, 1, 14)
+    config = closed_on(closed, code)
+    [x] = rule(bbva_synth.check(tmp_path, spec, config=config), DATE)
+    assert (x.status, x.expected, x.actual) == (S.MISMATCH, after, closed)
+    edit = Edit(f"贖回日期：{spec.date(closed)}", f"贖回日期：{spec.date(after)}", "ts")
+    (moved := tmp_path / "moved").mkdir()
+    [x] = rule(bbva_synth.check(moved, spec, edits=[edit], config=config), DATE)
+    assert (x.status, x.expected, x.actual) == (S.PASS, after, after)
 
 
 def test_listed_wording_passes_in_both_documents(tmp_path):
