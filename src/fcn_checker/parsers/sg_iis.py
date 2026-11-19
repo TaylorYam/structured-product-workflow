@@ -24,7 +24,8 @@ TEMPLATE_ID = "sg-zh-iis"
 # 4：信用評等交成標準欄位 issuer_ratings／guarantor_ratings（Issue #241）
 # 5：辨識曾加「收益分配事項沒有 [n(i)/N(i)]」（workflow #369；#436 起同一家上手由專到泛由上手註冊表決定，版本不變）
 # 6：單一標的 KI 到期觀察（共用 sg.ki_type，workflow #592）
-PARSER_VERSION = "6"
+# 7：無自動提前出場 + KI 到期觀察寫「於評價日」（共用 sg.ki_type，workflow #594）
+PARSER_VERSION = "7"
 # 保證機構信用評等（#241）：商品簡介 `保證機構之長期債務信用評等：截至本中文投資人須知刋印日期，標準普爾A、穆迪A1、惠譽A+`
 # （後面直接接「本商品之發行評等」）
 GUARANTOR_RATINGS = (
