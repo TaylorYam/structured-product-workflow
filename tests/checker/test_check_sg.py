@@ -43,6 +43,7 @@ from sg_synth import Spec, build_pdf, check
         Spec(ko_obs="D", memory=False, ki="AM", count=2, tenor=12, first_callable=4),
         Spec(memory=False, ki="AM", count=1, tenor=9, first_callable=2),  # 單一標的 + KI 到期觀察（workflow #592）
         Spec(autocall=False, ki="none", tenor=12, strike=Decimal("80.00"), single_valuation=True),  # Issue #130
+        Spec(autocall=False, ki="AM", tenor=9, single_valuation=True),  # 單一評價日 + KI 到期觀察（workflow #594）
     ],
     ids=lambda s: (
         f"{'A' if s.autocall else 'none'}-{s.ko_obs}-{'mem' if s.memory else 'plain'}-KI{s.ki}-{s.count}UL-{s.tenor}m-NC{s.first_callable}-{s.ccy}"
