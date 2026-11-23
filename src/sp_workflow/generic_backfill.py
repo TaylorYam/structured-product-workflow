@@ -1,12 +1,14 @@
-"""回填通用（#364）：ELN 通用回補格式的 Excel 以 TDCC 從資料庫回填 ISIN、比價日；期初定價 VWAP 的列另回填各標的價格。
+"""回填通用（#364）：ELN 通用回補格式的 Excel 以 TDCC 從資料庫回填 ISIN、比價日；期初定價 VWAP 或 Strike date 不是
+交易日（明日開盤價，#598）的列另回填各標的價格。
 
 ELN 通用回補格式的版面同核對結果檔「回填後」（沒有分公司欄）。表頭依參考條件表格式找（只看第一張工作表、`TDCC Code`
 那一列，`fcn_checker.orders.reference.locate`），欄位依欄名對、不看欄位字母；缺回填要用的欄時整份不處理。
 - 每列以 TDCC 讀資料庫（`product_store.read_many`）：`ISIN Code` ← ISIN；`比價日_1`～`比價日_12` ← 比價日（不需要填的
-  期別寫空值寫法）；`期初定價` 是 VWAP 的列，`UL_n` 四個價格欄 ← 資料庫同代號標的的價格（依代號配對、不看順序；
+  期別寫空值寫法）；`期初定價` 是 VWAP 的列，以及資料庫的 Strike date 和 Trade date 不同的列（明日開盤價，ADR 0011、
+  #598：交易日當天還拿不到價格；不看表上的期初定價），`UL_n` 四個價格欄 ← 資料庫同代號標的的價格（依代號配對、不看順序；
   資料庫空白的價格，例如 KI 型態 NONE 的下限價，寫空值寫法）。
 - 每格沿用核對回填的決策（`fcn_checker.backfill`）：表上空白（含 `#VALUE!` 這類錯誤值）→ 回填；已有相同值 → 不動；
-  已有不同值 → 保留原值、原因寫出來；VWAP 的價格欄已有不同值時以資料庫覆寫。日期沿用表上既有日期格的顯示格式。
+  已有不同值 → 保留原值、原因寫出來；要回填的價格欄（VWAP、明日開盤價）已有不同值時以資料庫覆寫。日期沿用表上既有日期格的顯示格式。
 - 例外（#418）：`比價日_n` 表上是空值寫法（`-`）、資料庫有日期時以資料庫覆寫（回補表常照每日觀察的填法在每期觀察商品的
   中間期別先寫 `-`），覆寫的格子另外列出（`GenericLine.overwritten`），不算不一致。
 - 資料庫找不到這檔（例如 FCN_Stepdown 這類還不支援的商品）、還沒有那一項（還沒核對寫回）或標的代號對不到 → 那幾格維持空白，
@@ -112,7 +114,7 @@ class _Fill:
 
     column: int
     expected: Any  # ISIN、日期、價格或空值寫法
-    overwrite: bool  # VWAP 的價格欄：已有不同值時以資料庫覆寫
+    overwrite: bool  # 價格欄（VWAP、明日開盤價）：已有不同值時以資料庫覆寫
     overwrite_dash: bool = False  # 比價日：表上是空值寫法（`-`）、資料庫有日期時覆寫並列出（#418）
 
 
@@ -194,7 +196,9 @@ def _fill_row(
             column = columns[autocall_date_key(n)]
             fills.append(_Fill(column, empty if day is None else day, overwrite=False, overwrite_dash=day is not None))
     if fmt.initial_pricing_values.get(value("initial_pricing")) == VWAP:
-        fills += _vwap_fills(value, columns, stored, empty, reasons)
+        fills += _price_fills(value, columns, stored, empty, reasons, "VWAP 價格")
+    elif (later := _later_strike(stored)) is not None:
+        fills += _price_fills(value, columns, stored, empty, reasons, f"Strike date {later.isoformat()} 的價格")
     filled = 0
     overwritten: list[str] = []
     for f in fills:
@@ -215,10 +219,22 @@ def _fill_row(
     return GenericLine(tdcc, product, filled, tuple(reasons), tuple(overwritten))
 
 
-def _vwap_fills(
-    value: Callable[[str], Any], columns: Mapping[str, int], stored: Stored, empty: str, reasons: list[str]
+def _later_strike(stored: Stored) -> dt.date | None:
+    """資料庫的 Strike date 和 Trade date 都有值而且不同時（明日開盤價，#598）回傳 Strike date，否則 None。"""
+    strike, trade = stored.columns.get("strike_date"), stored.columns.get("trade_date")
+    return strike if isinstance(strike, dt.date) and trade is not None and strike != trade else None
+
+
+def _price_fills(
+    value: Callable[[str], Any],
+    columns: Mapping[str, int],
+    stored: Stored,
+    empty: str,
+    reasons: list[str],
+    pending: str,
 ) -> list[_Fill]:
-    """期初定價 VWAP：表上每檔標的依代號對到資料庫的價格；對不到或資料庫還沒有 VWAP 價格的那一檔不填。"""
+    """要回填價格的列：表上每檔標的依代號對到資料庫的價格；對不到或資料庫還沒有進場價（原因寫「還沒有 `pending`」）的
+    那一檔不填。"""
     prices = {price.code.strip().upper(): price for price in stored.prices}
     fills = []
     for i in range(1, UNDERLYING_SLOTS + 1):
@@ -229,7 +245,7 @@ def _vwap_fills(
         if price is None:
             reasons.append(f"UL_{i} {code} 資料庫這檔沒有這個標的")
         elif price.initial is None:
-            reasons.append(f"UL_{i} {code} 資料庫還沒有 VWAP 價格")
+            reasons.append(f"UL_{i} {code} 資料庫還沒有 {pending}")
         else:
             for col in PRICE_COLUMNS:
                 amount = getattr(price, col)

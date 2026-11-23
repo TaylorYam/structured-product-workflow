@@ -1,4 +1,5 @@
-"""回填通用（#364）：ELN 通用回補格式以 TDCC 從資料庫回填 ISIN、比價日；期初定價 VWAP 的列另回填各標的價格。
+"""回填通用（#364）：ELN 通用回補格式以 TDCC 從資料庫回填 ISIN、比價日；期初定價 VWAP 或 Strike date 不是交易日
+（明日開盤價，#598）的列另回填各標的價格。
 
 資料庫測試對真的 PostgreSQL；表、商品、價格與日期全部虛構。
 """
@@ -142,6 +143,41 @@ def test_existing_values_are_kept_unless_vwap_prices(pg, tmp_path: Path) -> None
     assert [out[B][f"UL_1_{c}"] for c in ("進場價", "執行價", "下限價", "KO價")] == [101.25, 81, 65.8125, 101.25]
     assert [out[B][f"UL_2_{c}"] for c in ("進場價", "執行價", "下限價", "KO價")] == [52, 81, "-", 52], "資料庫空白寫 -"
     assert out[B]["UL_3_進場價"] == "-", "沒有的標的不動"
+
+
+@pytest.mark.db
+def test_next_day_open_prices_are_filled_when_the_strike_date_is_after_the_trade_date(pg, tmp_path: Path) -> None:
+    """資料庫 Strike date 不是 Trade date（明日開盤價，#598）：表上期初定價是開盤價也回填價格，不同值以資料庫覆寫；
+    資料庫還沒有價格時維持空白；Strike date 等於 Trade date 的開盤價照舊不動。"""
+    for tdcc in (A, B, C):
+        filled(pg, tdcc, prices=tdcc != B)
+    pg.execute("UPDATE workflow.product SET strike_date = trade_date + 1 WHERE tdcc IN (%s, %s)", (A, B))
+    pg.execute("UPDATE workflow.product SET strike_date = trade_date WHERE tdcc = %s", (C,))
+    source = write_sheet(
+        tmp_path / "通用.xlsx",
+        [
+            sheet_row(A, 期初定價="開盤價", UL_2_進場價=None, UL_2_執行價=None),
+            sheet_row(B, 期初定價="開盤價", UL_1_進場價=None),
+            sheet_row(C, 期初定價="開盤價"),
+        ],
+    )
+
+    receipt = backfill_generic(pg, source, tmp_path / "out.xlsx", FMT)
+
+    assert lines(receipt)[A] == (13 + 8, ()), "兩檔標的各四格（含覆寫）"
+    assert lines(receipt)[B] == (
+        13,
+        (
+            "UL_1 AAA UW 資料庫還沒有 Strike date 2026-10-16 的價格",
+            "UL_2 BBB UN 資料庫還沒有 Strike date 2026-10-16 的價格",
+        ),
+    )
+    assert lines(receipt)[C] == (13, ()), "Strike date = Trade date：價格欄不動"
+    out = read_back(tmp_path / "out.xlsx")
+    assert [out[A][f"UL_1_{c}"] for c in ("進場價", "執行價", "下限價", "KO價")] == [101.25, 81, 65.8125, 101.25]
+    assert [out[A][f"UL_2_{c}"] for c in ("進場價", "執行價", "下限價", "KO價")] == [52, 81, "-", 52]
+    assert out[B]["UL_1_進場價"] is None and out[B]["UL_1_執行價"] == 80, "資料庫還沒有價格：維持原樣"
+    assert out[C]["UL_1_進場價"] == 100
 
 
 @pytest.mark.db
